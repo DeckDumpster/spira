@@ -292,8 +292,8 @@ pub trait Host: Send + Sync {
     fn dwarf_count(&self, _rune: &str) -> Option<i64> {
         None
     }
-    /// Claimable beads under a partition; `None` when this host cannot count them without `spira-claim`.
-    fn ready_count(&self, _labels: &str, _exclude: &str) -> Option<i64> {
+    /// Claimable beads under a partition as `(id, updated_at)`; `None` when this host cannot list them without `spira-claim`.
+    fn ready_rows(&self, _labels: &str, _exclude: &str) -> Option<Vec<(String, String)>> {
         None
     }
     /// Whether a leg of `batch`'s round in `repo` is running; true when that cannot be told.
@@ -523,10 +523,11 @@ impl Config {
         }
     }
 
-    fn ready_count(&self, labels: &str, exclude: &str) -> i64 {
-        match self.host.as_ref().and_then(|h| h.ready_count(labels, exclude)) {
-            Some(n) => n,
-            None => count_of(&run_cmd(&self.seams.spira_claim, &["ready-count", labels, exclude])),
+    /// The claimable beads under a partition, one read; an unreadable answer is no beads.
+    fn ready_rows(&self, labels: &str, exclude: &str) -> Vec<(String, String)> {
+        match self.host.as_ref().and_then(|h| h.ready_rows(labels, exclude)) {
+            Some(rows) => rows,
+            None => parse_ready_rows(&run_cmd(&self.seams.spira_claim, &["ready-count", labels, exclude, "--json"])),
         }
     }
 
@@ -1120,12 +1121,47 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
 // ──────────────────────────────────────────────────────────────────────────────
 
 struct FleetReadings {
-    /// `(labels, ready, live, is_task)` per builder partition.
-    rows: Vec<(String, i64, i64, bool)>,
+    /// `(labels, ready beads as (id, updated_at), live, is_task)` per builder partition.
+    rows: Vec<(String, Vec<(String, String)>, i64, bool)>,
     live_reactive: i64,
     live_total: i64,
     max_live: Option<i64>,
     pool: Option<i64>,
+}
+
+pub fn parse_ready_rows(json: &str) -> Vec<(String, String)> {
+    let Ok(serde_json::Value::Array(rows)) = serde_json::from_str(json.trim()) else { return Vec::new() };
+    let text = |r: &serde_json::Value, k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    rows.iter().map(|r| (text(r, "id"), text(r, "updated_at"))).filter(|(id, _)| !id.is_empty()).collect()
+}
+
+const GAP_BEADS_NAMED: usize = 5;
+
+fn age_label(secs: u64) -> String {
+    match secs {
+        0..=59 => format!("{secs}s"),
+        60..=3599 => format!("{}m", secs / 60),
+        3600..=86_399 => format!("{}h", secs / 3600),
+        _ => format!("{}d", secs / 86_400),
+    }
+}
+
+/// `"<n> (<id> updated <age> ago, …)"`: the beads that make a partition's desired count, at most five, then `+N more`.
+fn desired_with_beads(desired: i64, beads: &[(String, String)], now_secs: u64) -> String {
+    let named: Vec<String> = beads
+        .iter()
+        .take(GAP_BEADS_NAMED)
+        .map(|(id, updated)| match clock::epoch_of_iso(updated) {
+            Some(at) => format!("{id} updated {} ago", age_label(now_secs.saturating_sub(at))),
+            None => id.clone(),
+        })
+        .collect();
+    if named.is_empty() {
+        return desired.to_string();
+    }
+    let more = beads.len().saturating_sub(GAP_BEADS_NAMED);
+    let tail = if more > 0 { format!(", +{more} more") } else { String::new() };
+    format!("{desired} ({}{tail})", named.join(", "))
 }
 
 fn count_of(out: &str) -> i64 {
@@ -1149,7 +1185,7 @@ fn fleet_readings(cfg: &Config) -> FleetReadings {
         if labels.is_empty() {
             continue;
         }
-        let ready = cfg.ready_count(labels, exclude);
+        let ready = cfg.ready_rows(labels, exclude);
         let runes = cfg.config(&["rune", "for-labels", labels]);
         let runes: Vec<&str> = runes.split_whitespace().collect();
         let live = runes.iter().map(|f| live_of(f)).sum();
@@ -1199,13 +1235,13 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
         // bounds what is desired of it; pool 0 is an operator pause and leaves nothing desired.
         // A reactive partition draws outside the pool.
         let free = if is_task { sentinel::plan::ck7_pool(pool, live_total - live_reactive) } else { None };
-        let desired_live = ready.min(headroom).min(free.map_or(i64::MAX, |f| live + f));
+        let desired_live = (ready.len() as i64).min(headroom).min(free.map_or(i64::MAX, |f| live + f));
         let slot_free = live_total < max_live && free.is_none_or(|f| f > 0);
         let raw = if live >= desired_live || !slot_free {
             RawStatus::Satisfied
         } else {
             RawStatus::Gap {
-                desired: desired_live.to_string(),
+                desired: desired_with_beads(desired_live, &ready, cfg.now_secs),
                 observed: live.to_string(),
                 since_hint: None,
             }
@@ -3260,9 +3296,9 @@ mod tests {
         fn dwarf_count(&self, rune: &str) -> Option<i64> {
             Some(if rune == "builder" { 2 } else { 1 })
         }
-        fn ready_count(&self, labels: &str, exclude: &str) -> Option<i64> {
+        fn ready_rows(&self, labels: &str, exclude: &str) -> Option<Vec<(String, String)>> {
             assert_eq!((labels, exclude), ("plan", "poison"));
-            Some(5)
+            Some((0..5).map(|i| (format!("sp-r{i}"), "2026-11-19T00:00:00Z".to_string())).collect())
         }
         fn tmux_server(&self) -> Option<Option<String>> {
             self.server.clone()
@@ -3317,7 +3353,7 @@ mod tests {
             cfg.now_secs = 1_000 + tick * 60;
             let fleet = fleet_readings(&cfg);
             assert_eq!(fleet.live_total, 3);
-            assert_eq!(fleet.rows, vec![("plan".to_string(), 5, 2, true)]);
+            assert_eq!(fleet.rows.iter().map(|(l, r, live, t)| (l.as_str(), r.len(), *live, *t)).collect::<Vec<_>>(), vec![("plan", 5, 2, true)]);
             assert_eq!(observe_cockpit(&cfg).raw, RawStatus::Satisfied);
             let edges = observe_epic_edges(&cfg);
             assert_eq!(edges.len(), 1, "{edges:?}");
@@ -3540,6 +3576,7 @@ mod tests {
         reactive_live: i64,
         partition_rune: &'static str,
         ready: i64,
+        named: Vec<(String, String)>,
     }
 
     impl Host for Fleet {
@@ -3576,15 +3613,15 @@ mod tests {
         fn dwarf_count(&self, rune: &str) -> Option<i64> {
             Some(if rune == "builder" { self.planned_live } else { self.reactive_live })
         }
-        fn ready_count(&self, _: &str, _: &str) -> Option<i64> {
-            Some(self.ready)
+        fn ready_rows(&self, _: &str, _: &str) -> Option<Vec<(String, String)>> {
+            Some(if self.named.is_empty() { (0..self.ready).map(|i| (format!("sp-r{i}"), String::new())).collect() } else { self.named.clone() })
         }
     }
 
     fn reactive_check(planned_live: i64, ceiling: &str) -> RawStatus {
         let mut cfg = test_config();
         cfg.max_live_dwarves = ceiling.into();
-        cfg.host = Some(Arc::new(Fleet { planned_live, reactive_live: 0, partition_rune: "ops", ready: 3 }));
+        cfg.host = Some(Arc::new(Fleet { planned_live, reactive_live: 0, partition_rune: "ops", ready: 3, named: vec![] }));
         let checks = observe_fleet(&cfg);
         assert_eq!(checks.len(), 1, "{checks:?}");
         checks[0].raw.clone()
@@ -3600,11 +3637,64 @@ mod tests {
         assert_eq!(reactive_check(5, "5"), RawStatus::Satisfied);
     }
 
+    fn desired_count(raw: &RawStatus) -> (String, String) {
+        match raw {
+            RawStatus::Gap { desired, observed, .. } => (desired.split_whitespace().next().unwrap().to_string(), observed.clone()),
+            other => panic!("not a gap: {other:?}"),
+        }
+    }
+
+    fn plan_fleet(named: &[(&str, &str)]) -> Config {
+        let mut cfg = test_config();
+        cfg.max_live_dwarves = "5".into();
+        cfg.max_dwarves = "3".into();
+        cfg.now_secs = 1_793_166_343;
+        let named: Vec<(String, String)> = named.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        cfg.host = Some(Arc::new(Fleet { planned_live: 0, reactive_live: 0, partition_rune: "plan", ready: named.len() as i64, named }));
+        cfg
+    }
+
+    #[test]
+    fn a_fleet_gap_names_the_claimable_bead_behind_it_and_its_age() {
+        let cfg = plan_fleet(&[("sp-x", "2026-10-28T03:45:43Z")]);
+        let check = observe_fleet(&cfg).remove(0);
+        assert_eq!(check.key, "fleet:plan");
+        assert_eq!(check.raw, RawStatus::Gap { desired: "1 (sp-x updated 2h ago)".into(), observed: "0".into(), since_hint: None });
+        let rules = Rules { now_secs: 100, grace_secs: 0, effect_passes: 2, shadow_kinds: vec![] };
+        let acts = decide(&rules, &mut StateMap::new(), &mut PendingMap::new(), &mut AlertedSinceMap::new(), check);
+        let subject = acts.iter().find_map(|a| if let Act::Mail { mail, .. } = a { Some(mail.subject.clone()) } else { None }).expect("a page");
+        assert!(subject.contains("sp-x"), "{subject}");
+    }
+
+    #[test]
+    fn a_fleet_gap_names_at_most_five_beads_and_counts_the_rest() {
+        let named: Vec<(String, String)> = (0..7).map(|i| (format!("sp-{i}"), String::new())).collect();
+        let named: Vec<(&str, &str)> = named.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+        let mut cfg = plan_fleet(&named);
+        cfg.max_dwarves = "9".into();
+        cfg.max_live_dwarves = "9".into();
+        match observe_fleet(&cfg).remove(0).raw {
+            RawStatus::Gap { desired, .. } => assert_eq!(desired, "7 (sp-0, sp-1, sp-2, sp-3, sp-4, +2 more)"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_lane_with_no_claimable_bead_is_satisfied_and_pages_nothing_even_after_a_gap_streak() {
+        let rules = Rules { now_secs: 100, grace_secs: 0, effect_passes: 2, shadow_kinds: vec![] };
+        let mut alerted = AlertedSinceMap::new();
+        alerted.insert("fleet:plan".into(), 10);
+        let check = observe_fleet(&plan_fleet(&[])).remove(0);
+        assert_eq!(check.raw, RawStatus::Satisfied);
+        let acts = decide(&rules, &mut StateMap::new(), &mut PendingMap::new(), &mut alerted, check);
+        assert!(!acts.iter().any(|a| matches!(a, Act::Mail { .. })), "{acts:?}");
+    }
+
     fn task_check(pool: &str, builders_live: i64) -> RawStatus {
         let mut cfg = test_config();
         cfg.max_live_dwarves = "5".into();
         cfg.max_dwarves = pool.into();
-        cfg.host = Some(Arc::new(Fleet { planned_live: builders_live, reactive_live: 0, partition_rune: "builder", ready: 10 }));
+        cfg.host = Some(Arc::new(Fleet { planned_live: builders_live, reactive_live: 0, partition_rune: "builder", ready: 10, named: vec![] }));
         let checks = observe_fleet(&cfg);
         assert_eq!(checks.len(), 1, "{checks:?}");
         checks[0].raw.clone()
@@ -3622,7 +3712,7 @@ mod tests {
 
     #[test]
     fn a_task_partition_below_the_pool_cap_is_a_gap_desiring_the_pool() {
-        assert_eq!(task_check("3", 2), RawStatus::Gap { desired: "3".into(), observed: "2".into(), since_hint: None });
+        assert_eq!(desired_count(&task_check("3", 2)), ("3".to_string(), "2".to_string()));
     }
 
     #[test]
@@ -3630,8 +3720,8 @@ mod tests {
         let mut cfg = test_config();
         cfg.max_live_dwarves = "9".into();
         cfg.max_dwarves = "3".into();
-        cfg.host = Some(Arc::new(Fleet { planned_live: 2, reactive_live: 4, partition_rune: "builder", ready: 10 }));
-        assert_eq!(observe_fleet(&cfg)[0].raw, RawStatus::Gap { desired: "3".into(), observed: "2".into(), since_hint: None });
+        cfg.host = Some(Arc::new(Fleet { planned_live: 2, reactive_live: 4, partition_rune: "builder", ready: 10, named: vec![] }));
+        assert_eq!(desired_count(&observe_fleet(&cfg)[0].raw), ("3".to_string(), "2".to_string()));
     }
 
     #[test]
