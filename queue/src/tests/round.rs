@@ -9798,3 +9798,28 @@ fn an_integration_red_hands_the_mender_the_integration_output_and_the_failed_tes
     let out = spec["output"].as_str().unwrap();
     assert!(out.contains(&format!("FAIL {test}")) && out.contains(&format!("integration-tests failed: {test}")), "{out}");
 }
+
+#[test]
+fn an_ejects_red_evidence_is_kept_where_the_next_pass_start_does_not_wipe_it() {
+    let t = round_world();
+    t.env.resolved.borrow_mut().insert("SPIRA_SENDBACK_KEEP_DAYS".into(), "7".into());
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    seed_suite(&t, "test-b.sh");
+    let results = t.lib.s.run.join("rounds").join(format!("{batch}.results"));
+    fs::create_dir_all(&results).unwrap();
+    fs::write(results.join("test-b.sh.out"), "ok 1\nFAIL: b_broke_the_wal\n").unwrap();
+    let eject = ["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"];
+    assert_eq!(t.run(&eject), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow().join("\n");
+    let kept = calls
+        .split("Red evidence kept at ")
+        .nth(1)
+        .and_then(|r| r.split(".\n").next().or(Some(r)))
+        .map(|r| r.split(" Red").next().unwrap().trim_end_matches(['.', '"', ' ']).to_string())
+        .unwrap_or_else(|| panic!("the reason names no kept evidence: {calls}"));
+    fs::remove_dir_all(&results).unwrap();
+    assert!(fs::read_to_string(&kept).is_ok_and(|e| e.contains("FAIL: b_broke_the_wal")), "{kept}");
+}

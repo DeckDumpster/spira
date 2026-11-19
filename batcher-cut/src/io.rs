@@ -2557,33 +2557,60 @@ pub fn round_results_dir(run: &Path, batch: &str) -> PathBuf {
     run.join("rounds").join(format!("{batch}.results"))
 }
 
-/// Each red suite with the first FAIL line of its output in the round's results, written to
-/// `<run>/rounds/<batch>.results/red-evidence` and appended to `why`, so an abandoned red round
-/// can be attributed afterwards (law-a-failure-carries-its-own-explanation).
-pub fn keep_red_evidence(run: &Path, batch: &str, why: &str, reds: &[String]) -> String {
+/// The failed tests and first FAIL line of each red test phase (`unit.json`, `integration.json`)
+/// in the round's results, read from that phase's own output.
+fn test_phase_evidence(results: &Path) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (file, stage) in [("unit.json", "unit-tests"), ("integration.json", "integration-tests")] {
+        let Some(v) = fs::read_to_string(results.join(file)).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else {
+            continue;
+        };
+        if v["verdict"] != "red" {
+            continue;
+        }
+        let names: Vec<&str> = v["failed"].as_array().into_iter().flatten().filter_map(|n| n.as_str()).collect();
+        if !names.is_empty() {
+            lines.push(format!("{stage} failed: {}", names.join(", ")));
+        }
+        if let Some(l) = suite_first_fail(results, None, stage) {
+            lines.push(format!("{stage}: {l}"));
+        }
+    }
+    lines
+}
+
+/// The failing tests' names and each red suite's first FAIL line, kept under the send-back
+/// store, which the next pass's wipe of the round's results does not reach. Returns the kept
+/// path, or why nothing was kept.
+pub fn keep_eject_evidence(run: &Path, batch: &str, headline: &str, reds: &[String], days: u32) -> Result<(PathBuf, String), String> {
+    let results = round_results_dir(run, batch);
+    let mut lines: Vec<String> = reds
+        .iter()
+        .map(|s| {
+            let line = suite_first_fail(&results, None, s);
+            format!("{s}: {}", line.unwrap_or_else(|| "(no FAIL line in its output)".into()))
+        })
+        .collect();
+    lines.extend(test_phase_evidence(&results));
+    let body = lines.join("\n");
+    let at = spira_config::sendback::keep_text(run, "red", "red-evidence", &format!("{headline}\n{body}\n"), days)?;
+    Ok((at, body))
+}
+
+/// Keeps a red round's evidence (see [`keep_eject_evidence`]) and appends its lines to `why`, naming
+/// where it is kept (law-a-failure-carries-its-own-explanation).
+pub fn keep_red_evidence(run: &Path, batch: &str, why: &str, reds: &[String], days: Result<u32, String>) -> String {
     if reds.is_empty() || batch.is_empty() {
         return why.to_string();
     }
-    let results = run.join("rounds").join(format!("{batch}.results"));
-    let lines: Vec<String> = reds
-        .iter()
-        .map(|s| {
-            format!(
-                "{s}: {}",
-                suite_first_fail(&results, None, s)
-                    .unwrap_or_else(|| "(no FAIL line in its output)".into())
-            )
-        })
-        .collect();
-    let evidence = format!(
-        "{why}\n{}\noutput: {}\n",
-        lines.join("\n"),
-        results.display()
-    );
-    if fs::create_dir_all(&results).is_ok() {
-        let _ = fs::write(results.join("red-evidence"), &evidence);
+    named_evidence(why, days.and_then(|d| keep_eject_evidence(run, batch, why, reds, d)))
+}
+
+fn named_evidence(why: &str, kept: Result<(PathBuf, String), String>) -> String {
+    match kept {
+        Ok((p, body)) => format!("{why}\n{body}\nevidence kept: {}", p.display()),
+        Err(e) => format!("{why}\nevidence not kept: {e}"),
     }
-    evidence.trim_end().to_string()
 }
 
 /// The incident key for a local red: a bounded identity plus a short hash of the full reason,
@@ -5220,8 +5247,10 @@ mod fail_line_tests {
         .unwrap();
         fs::write(results.join("test-b.sh.out"), "not ok 2 - b broke\n").unwrap();
         let reds = vec!["test-a.sh".to_string(), "test-b.sh".to_string()];
-        let why = keep_red_evidence(run.path(), "b1", "judged red: VERDICT", &reds);
-        let kept = fs::read_to_string(results.join("red-evidence")).unwrap();
+        let why = keep_red_evidence(run.path(), "b1", "judged red: VERDICT", &reds, Ok(7));
+        let at = why.lines().last().unwrap().strip_prefix("evidence kept: ").expect(&why);
+        assert!(!at.starts_with(results.to_str().unwrap()), "{at}");
+        let kept = fs::read_to_string(at).unwrap();
         for text in [&why, &kept] {
             assert!(
                 text.contains("judged red: VERDICT")
@@ -5279,13 +5308,29 @@ mod fail_line_tests {
             "b9",
             "red",
             &["test-red.sh".to_string(), "test-nested.sh".to_string()],
+            Ok(7),
         );
         assert!(
             why.contains("test-red.sh: FAIL: it broke")
                 && why.contains("test-nested.sh: FAIL: nested"),
             "{why}"
         );
-        assert!(why.contains(kept.to_str().unwrap()), "{why}");
+        assert!(why.contains("evidence kept: "), "{why}");
+    }
+
+    #[test]
+    fn kept_red_evidence_names_the_failed_tests_of_a_phase_and_outlives_the_next_passs_wipe() {
+        let run = testkit::TempDir::new("batcher-cut-evidence-outlives");
+        let results = run.path().join("rounds").join("b1.results");
+        fs::create_dir_all(&results).unwrap();
+        let test = "the_wal_stays_within_three_checkpoint_intervals_while_reads_never_stop";
+        fs::write(results.join("integration-tests.out"), format!("running 1 test\nFAIL {test}\n")).unwrap();
+        fs::write(results.join("integration.json"), format!(r#"{{"stage":"integration-tests","verdict":"red","failed":["{test}"]}}"#)).unwrap();
+        let why = keep_red_evidence(run.path(), "b1", "red", &["unit-tests".to_string()], Ok(7));
+        fs::remove_dir_all(&results).unwrap();
+        let at = why.lines().last().unwrap().strip_prefix("evidence kept: ").expect(&why);
+        let kept = fs::read_to_string(at).unwrap();
+        assert!(kept.contains(&format!("integration-tests failed: {test}")) && kept.contains(&format!("FAIL {test}")), "{kept}");
     }
 
     fn pass_and_corpus(run: &Path, corpus_has_b: bool) -> (PathBuf, PathBuf) {
@@ -5354,7 +5399,7 @@ mod fail_line_tests {
         fs::remove_dir_all(&pass).unwrap();
         let kept = overlay_round_results(run.path(), "b1", &corpus);
         assert_eq!(fs::read_to_string(kept.join("test-a.sh.out")).unwrap(), "not ok 1 - broke\n");
-        let why = keep_red_evidence(run.path(), "b1", "red", &["test-a.sh".to_string()]);
+        let why = keep_red_evidence(run.path(), "b1", "red", &["test-a.sh".to_string()], Ok(7));
         assert!(why.contains("test-a.sh: not ok 1 - broke"), "{why}");
     }
 

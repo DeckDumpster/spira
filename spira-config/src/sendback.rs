@@ -56,6 +56,13 @@ pub fn keep(run: &Path, actor: &str, files: &[(String, Vec<u8>)], keep_days: u32
     unreachable!()
 }
 
+/// Keeps one text file as a new entry and returns the path it lives at.
+pub fn keep_text(run: &Path, actor: &str, name: &str, text: &str, days: u32) -> Result<PathBuf, String> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let id = keep(run, actor, &[(name.to_string(), text.as_bytes().to_vec())], days, now)?;
+    Ok(root(run).join(id).join(name))
+}
+
 fn prune(dir: &Path, keep_days: u32, now: i64) {
     let cutoff = now - i64::from(keep_days) * DAY_SECS;
     let Ok(rd) = fs::read_dir(dir) else { return };
