@@ -2,7 +2,7 @@
 //! `get --running` asking what it holds: its control socket, the same `scheduler` verbs
 //! `world scheduler-status` speaks.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, ErrorKind, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
@@ -11,9 +11,11 @@ const DEADLINE: Duration = Duration::from_secs(5);
 const POLLS: u32 = 20;
 const POLL_EVERY: Duration = Duration::from_millis(100);
 
-/// Why a request got no answer: the socket was never reached, or it was and said nothing usable.
+/// Why a request did not return a body: the scheduler refused it, no scheduler was reached
+/// (socket absent or refusing), or one was reached or may be and said nothing usable.
 #[derive(Debug)]
-pub enum Unanswered {
+pub enum Fault {
+    Refused(String),
     Absent(String),
     Silent(String),
 }
@@ -21,27 +23,29 @@ pub enum Unanswered {
 /// One request on the control socket: a JSON argv line out, `{"exit_code","len"}` and the body back.
 pub fn call(sock: &Path, argv: &[&str]) -> Result<String, String> {
     call_within(sock, argv, DEADLINE).map_err(|e| match e {
-        Ok(refused) => refused,
-        Err(Unanswered::Absent(why) | Unanswered::Silent(why)) => format!("the scheduler is not answering on {}: {why}", sock.display()),
+        Fault::Refused(body) => body,
+        Fault::Absent(why) | Fault::Silent(why) => format!("the scheduler is not answering on {}: {why}", sock.display()),
     })
 }
 
-/// `call` with its read and write `deadline`; `Err(Ok(body))` is the scheduler's own refusal.
-fn call_within(sock: &Path, argv: &[&str], deadline: Duration) -> Result<String, Result<String, Unanswered>> {
-    let silent = |why: &dyn std::fmt::Display| Err::<String, _>(Err(Unanswered::Silent(why.to_string())));
-    let quiet = |why: &dyn std::fmt::Display| Err(Unanswered::Silent(why.to_string()));
-    let stream = UnixStream::connect(sock).map_err(|e| Err(Unanswered::Absent(e.to_string())))?;
-    stream.set_read_timeout(Some(deadline)).and_then(|()| stream.set_write_timeout(Some(deadline))).map_err(|e| quiet(&e))?;
-    writeln!(&stream, "{}", serde_json::to_string(argv).map_err(|e| Ok(e.to_string()))?).map_err(|e| quiet(&e))?;
+/// `call` with its read and write `deadline`.
+fn call_within(sock: &Path, argv: &[&str], deadline: Duration) -> Result<String, Fault> {
+    let silent = |e: &dyn std::fmt::Display| Fault::Silent(e.to_string());
+    let stream = UnixStream::connect(sock).map_err(|e| match e.kind() {
+        ErrorKind::NotFound | ErrorKind::ConnectionRefused => Fault::Absent(e.to_string()),
+        _ => silent(&e),
+    })?;
+    stream.set_read_timeout(Some(deadline)).and_then(|()| stream.set_write_timeout(Some(deadline))).map_err(|e| silent(&e))?;
+    writeln!(&stream, "{}", serde_json::to_string(argv).map_err(|e| Fault::Refused(e.to_string()))?).map_err(|e| silent(&e))?;
     let mut reader = BufReader::new(stream);
     let mut head = String::new();
-    reader.read_line(&mut head).map_err(|e| quiet(&e))?;
-    let head: serde_json::Value = serde_json::from_str(head.trim()).map_err(|_| quiet(&"malformed reply"))?;
-    let (Some(code), Some(len)) = (head["exit_code"].as_i64(), head["len"].as_u64()) else { return silent(&"malformed reply") };
+    reader.read_line(&mut head).map_err(|e| silent(&e))?;
+    let head: serde_json::Value = serde_json::from_str(head.trim()).map_err(|_| silent(&"malformed reply"))?;
+    let (Some(code), Some(len)) = (head["exit_code"].as_i64(), head["len"].as_u64()) else { return Err(silent(&"malformed reply")) };
     let mut body = vec![0u8; len as usize];
-    reader.read_exact(&mut body).map_err(|e| quiet(&e))?;
+    reader.read_exact(&mut body).map_err(|e| silent(&e))?;
     let body = String::from_utf8_lossy(&body).into_owned();
-    if code == 0 { Ok(body) } else { Err(Ok(body)) }
+    if code == 0 { Ok(body) } else { Err(Fault::Refused(body)) }
 }
 
 /// The registry key a dotted `spira.<field>` path names; `None` for a path outside `[spira]`.
@@ -73,9 +77,9 @@ pub fn told_within(sock: Result<String, String>, key: &str, deadline: Duration) 
     let sock = Path::new(&sock);
     let reply = match call_within(sock, &["scheduler", "repin", key], deadline) {
         Ok(r) => r,
-        Err(Ok(refused)) => return (format!("written; {refused}; it reads {key} when it starts"), true),
-        Err(Err(Unanswered::Absent(e))) => return (format!("written; the scheduler is not running on {} ({e}); it reads {key} when it starts", sock.display()), true),
-        Err(Err(Unanswered::Silent(e))) => {
+        Err(Fault::Refused(refused)) => return (format!("written; {refused}; it reads {key} when it starts"), true),
+        Err(Fault::Absent(e)) => return (format!("written; the scheduler is not running on {} ({e}); it reads {key} when it starts", sock.display()), true),
+        Err(Fault::Silent(e)) => {
             let secs = if deadline.as_secs() > 0 { format!("{}s", deadline.as_secs()) } else { format!("{}ms", deadline.as_millis()) };
             return (format!("written; the scheduler on {} did not answer within {secs} ({e}) and still holds its old {key}; run the same set again, or check with spira-config get --running {key}", sock.display()), false);
         }
@@ -207,6 +211,16 @@ mod tests {
         assert!(!taken && line.contains("did not answer within") && line.contains("still holds"), "{line}");
         release.send(()).unwrap();
         held.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn a_socket_that_cannot_be_opened_for_want_of_permission_is_not_called_not_running() {
+        let dir = testkit::TempDir::new("told-denied");
+        let sock = dir.path().join("c.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+        std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0)).unwrap();
+        let (line, _) = told_within(Ok(sock.display().to_string()), "SPIRA_MAX_DWARVES", Duration::from_millis(50));
+        assert!(!line.contains("is not running"), "{line}");
     }
 
     #[test]
