@@ -12,6 +12,11 @@
 //! Widening this table is scoped to the cutover bead, where each consumer's own reads say
 //! which of the rest still need a home.
 
+/// The directory under a worktree that holds harness-owned runtime state.
+pub const RUNTIME_DIR: &str = ".runtime";
+/// The name prefix of a session's scratch directory under [`RUNTIME_DIR`]; the pid follows.
+pub const SESSION_TMP_PREFIX: &str = "session-tmp-";
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

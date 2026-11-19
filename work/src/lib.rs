@@ -7,6 +7,7 @@ pub mod contract;
 pub mod help;
 pub mod image;
 pub mod review;
+pub mod scratch;
 pub mod trusted;
 use std::ffi::OsStr;
 use std::io;

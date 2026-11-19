@@ -31,3 +31,8 @@ sha2 = "0.10"
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "session_tmp_ignored"
+path = "tests/session_tmp_ignored.rs"
+required-features = ["integration"]

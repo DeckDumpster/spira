@@ -34,3 +34,8 @@ strip = true
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "scratch_gate"
+path = "tests/scratch_gate.rs"
+required-features = ["integration"]
