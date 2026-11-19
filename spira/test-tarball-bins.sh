@@ -78,7 +78,7 @@ timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 # BINARY STUBS
 # ---------------------------------------------------------------------------
 mkdir -p "$TMP/bins"
-for _b in loom panel broker spira-supervise landing-pass reconciler-flow; do
+for _b in spira-config loom panel broker spira-supervise landing-pass reconciler-flow; do
     printf '#!/usr/bin/env bash\necho %s\n' "$_b" > "$TMP/bins/$_b"
     chmod +x "$TMP/bins/$_b"
 done

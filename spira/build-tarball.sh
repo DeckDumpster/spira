@@ -283,10 +283,10 @@ _COMPAT_PY
     # (dwarf/src/restrict.rs) — only the binaries a model may run, each linked to ../bin/,
     # so no tool in bin/ that calls bd is reachable by name from inside a dwarf's session.
     # The list is spira_config::release_env::MODEL_BINS, linked by the staged spira-config.
-    if [ -x "$stage/bin/spira-config" ]; then
-        "$stage/bin/spira-config" link-model-bin "$stage" >/dev/null || {
-            printf 'build-tarball.sh: spira-config link-model-bin failed\n' >&2; exit 1; }
-    fi
+    [ -x "$stage/bin/spira-config" ] || {
+        printf 'build-tarball.sh: bin/spira-config is not staged; it links model-bin/\n' >&2; exit 1; }
+    "$stage/bin/spira-config" link-model-bin "$stage" >/dev/null || {
+        printf 'build-tarball.sh: spira-config link-model-bin failed\n' >&2; exit 1; }
 
     # Write MANIFEST — commit, timestamp, repo identity, and sha256 per binary (and per
     # compat symlink under bin/, which sha256sum dereferences, so its hash is simply the

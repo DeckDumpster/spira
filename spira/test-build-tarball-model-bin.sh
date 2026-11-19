@@ -29,7 +29,7 @@ for l in sys.stdin:
     if m.get("reason")=="compiler-artifact" and m.get("executable") and m["target"]["name"]=="spira-config": print(m["executable"])' | tail -1)"
 [ -x "$SC" ] || { bad "built spira-config" "no executable"; tl_summary; exit 1; }
 
-want="$(sed -n 's/^pub const MODEL_BINS: &\[&str\] = &\[\(.*\)\];/\1/p' "$REPO_ROOT/spira-config/src/release_env.rs" | tr -d '" ' | tr ',' '\n' | LC_ALL=C sort)"
+want="$("$SC" model-bins | LC_ALL=C sort)"
 [ -n "$want" ] || { bad "MODEL_BINS read from source" "empty"; tl_summary; exit 1; }
 
 REPO="$TMP/repo"
@@ -45,6 +45,14 @@ env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP/home" GIT_CONFIG_GL
     GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
     bash "$HERE/build-tarball.sh" build --output "$TMP/out" --bin-dir "$TMP/bins" HEAD "$REPO" >"$TMP/build.log" 2>&1
 is "build exits 0" "0" "$?"
+
+rm -f "$TMP/bins/spira-config"
+if env -i PATH="$PATH" HOME="$TMP/home" SPIRA_RELEASE="$(tl_release)" GIT_CONFIG_GLOBAL=/dev/null \
+    bash "$HERE/build-tarball.sh" build --output "$TMP/out2" --bin-dir "$TMP/bins" HEAD "$REPO" >/dev/null 2>&1; then
+    bad "a build with no staged spira-config fails" "exit 0"
+else
+    ok "a build with no staged spira-config fails"
+fi
 
 tarball="$(find "$TMP/out" -name 'spira-*.tar.gz' | head -1)"
 mkdir -p "$TMP/unpack"; tar -xzf "$tarball" -C "$TMP/unpack"

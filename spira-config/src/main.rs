@@ -1858,6 +1858,12 @@ fn dispatch(args: &[String]) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("model-bins") => {
+            for n in spira_config::release_env::MODEL_BINS {
+                println!("{n}");
+            }
+            ExitCode::SUCCESS
+        }
         Some("registry-index") => match args.get(1) {
             Some(home) => cmd_registry_index(home),
             None => {
@@ -1901,6 +1907,7 @@ fn dispatch(args: &[String]) -> ExitCode {
                  \x20 unset [--release DIR] <dotted.path> <file>\n\
                  \x20 writeback <candidate>\n\
                  \x20 link-model-bin <release>\n\
+                 \x20 model-bins\n\
                  \x20 registry-index <home>\n\
                  \x20 schema\n\
                  \x20 path-tail\n\
