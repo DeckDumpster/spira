@@ -98,15 +98,27 @@ fn a_round_between_passes_ejects_the_recorded_member_before_the_next_pass_starts
 }
 
 #[test]
-fn a_member_ejected_for_its_gate_red_leaves_the_carried_round_and_the_round_is_cut_again_without_it() {
+fn a_member_ejected_for_its_gate_red_leaves_the_carried_round_and_the_survivors_are_certified_on_the_new_head() {
     let mut carry = recorded(State::Certifying, "t1", RED);
     let (_, acts) = ended(&carry, 1, "verdict=red\n");
     let leg = legs_of(&acts, EJECT_GATE_RED).remove(0);
     carry.repos.get_mut("spira").unwrap().leg = None;
     let (next, acts) = on_outcome(&carry, EJECT_GATE_RED, true, "{}", &leg, NOW);
-    assert_eq!(names(&acts), [ABANDON], "{acts:?}");
-    assert_eq!(legs_of(&acts, ABANDON)[0].ejected, Some(1));
-    assert!(next.repos.get("spira").is_none_or(|rc| rc.members.iter().all(|(id, _)| id != "sp-a")));
+    assert_eq!(names(&acts), [CERTIFY], "{acts:?}");
+    let survivors: Vec<String> = legs_of(&acts, CERTIFY)[0].members.iter().map(|(id, _)| id.clone()).collect();
+    assert_eq!(survivors, ["sp-b"]);
+    assert!(next.repos["spira"].members.iter().all(|(id, _)| id != "sp-a"));
+}
+
+#[test]
+fn a_leg_that_ended_without_a_verdict_does_not_eject_from_the_leg_end_but_from_the_certify_that_reruns_the_pass() {
+    let carry = recorded(State::Certifying, "t1", RED);
+    let leg = carry.repos["spira"].leg.clone().expect("a leg");
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, &leg).unwrap(), exit: runtime::units::Exit::Unknown, duration_ms: 1 };
+    let out = runtime::units::RanOutput::captured(b"", b"");
+    let (_, acts) = on_ran_with(&carry, &ran, &out, NOW).expect("the carried leg ended");
+    assert!(!acts.is_empty(), "the leg end still drives the round: {acts:?}");
+    assert!(!names(&acts).contains(&EJECT_GATE_RED), "{acts:?}");
 }
 
 #[test]

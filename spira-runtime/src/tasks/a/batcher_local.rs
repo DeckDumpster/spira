@@ -455,6 +455,8 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Corpus, Trigger::LegGreen, State::Certifying),
     (State::Attributing, Trigger::RerunMending, State::Mending),
     (State::Attributing, Trigger::RerunCertifying, State::Certifying),
+    (State::Corpus, Trigger::RerunCertifying, State::Certifying),
+    (State::Certifying, Trigger::RerunCertifying, State::Certifying),
     (State::Attributing, Trigger::RerunBlocked, State::Done),
     (State::Mending, Trigger::MendingSettled, State::Certifying),
     (State::Mending, Trigger::MendTimeout, State::Certifying),
@@ -1938,7 +1940,7 @@ impl Machine<'_> {
         if !ok && self.rc.members.is_empty() && self.end_emptied_round("its leg ended red with no member left") {
             return;
         }
-        if !ok && matches!(self.rc.state, State::Corpus | State::Certifying) && self.eject_recorded_gate_reds() {
+        if !ok && matches!(exit, Exit::Code(_)) && matches!(self.rc.state, State::Corpus | State::Certifying) && self.eject_recorded_gate_reds() {
             return;
         }
         match (self.rc.state, ok) {
@@ -2158,13 +2160,15 @@ impl Machine<'_> {
                 self.red_naming(&format!("eject of {} refused: {}", leg.bead, body.trim()), leg.reds.clone());
             }
             (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) if ok => {
-                let gone = leg.bead.split(',').count();
                 self.rc.members.retain(|(id, _)| !leg.bead.split(',').any(|b| b == id));
+                if self.rc.members.is_empty() {
+                    self.go(Trigger::RerunBlocked);
+                    self.emptied("the gate-red eject left the round with no member — nothing is left to land");
+                    return;
+                }
                 self.rc.round_key = Some(core::round_key(&self.rc.members));
-                let why = format!("{} left: its own gate went red ({}); the round is abandoned and its survivors cut again", leg.bead, leg.reds.join(" "));
-                self.go(Trigger::LegLost);
-                self.abandon_ejecting(&why, vec![], Some(gone));
-                self.finish(pace::Outcome::Quiet, "");
+                self.go(Trigger::RerunCertifying);
+                self.certify();
             }
             (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) => {
                 let why = format!("{} went red on its own gate ({}) and its eject was refused ({})", leg.bead, leg.reds.join(" "), body.trim());
