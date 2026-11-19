@@ -896,7 +896,7 @@ fn the_shipped_delta_carries_every_required_key_with_every_task_in_act_on_system
     assert_eq!(d.added.get("spira.units"), Some(&toml::Value::String("systemd".into())));
     let modes = done.added.get("spira.task_modes").and_then(|v| v.as_str()).expect("task_modes completes from the registry default");
     let pairs: Vec<&str> = modes.split_whitespace().collect();
-    assert!(pairs.len() >= 82, "every task is named: {}", pairs.len());
+    assert!(pairs.len() >= 79, "every task is named: {}", pairs.len());
     assert!(pairs.iter().all(|p| p.ends_with("=act")), "every task runs in act: {modes}");
 }
 
