@@ -20,6 +20,7 @@ const DEADLINE_MS: u64 = 10_000;
 pub const WAKE_DEADLINE_MS: u64 = 700_000;
 /// The wake child is killed this long before its effect times out, so the failure is reported as one.
 pub const WAKE_KILL_MS: u64 = WAKE_DEADLINE_MS - 5_000;
+const _: () = assert!(WAKE_KILL_MS > 600_000, "the kill must outlast the script's own 600 s hold cap");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InboxKeeper {

@@ -368,14 +368,7 @@ impl World {
         let cursor = watchd::paths::cursorfile(&run, INBOX_WATCHER);
         let dir = lock.parent().unwrap_or(&self.run_dir);
         fs::metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let waiter_alive = match fs::File::open(&lock) {
-            Ok(f) => {
-                let rc = unsafe { libc::flock(std::os::unix::io::AsRawFd::as_raw_fd(&f), libc::LOCK_EX | libc::LOCK_NB) };
-                rc != 0
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-            Err(e) => return Err(format!("{}: {e}", lock.display())),
-        };
+        let waiter_alive = watchd::lock::try_lock(&lock).map_err(|e| format!("{}: {e}", lock.display()))?.is_err();
         let log = fs::read(&self.inbox).map_err(|e| format!("{}: {e}", self.inbox.display()))?;
         let total = log.iter().filter(|&&b| b == b'\n').count() as u64;
         let (pos, cursor_mtime) = match fs::read_to_string(&cursor) {
