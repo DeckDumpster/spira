@@ -3,8 +3,7 @@
 # Reads filenames (one per line) from stdin. Acquires an exclusive lock on the
 # wiki checkout, stages each file, commits, and pushes. Serialises concurrent
 # callers; commits only the named paths (--only), leaving anything else staged untouched.
-# Exits 0 on success or nothing-to-commit, 1 on lock, stage or commit error. A failed stage
-# is never "nothing to commit". WIKI_COMMIT_LOCK_WAIT bounds (seconds) the retry on a held index.lock.
+# Exits 0 on success or nothing-to-commit, 1 on lock, stage or commit error.
 set -uo pipefail
 wiki="${1:?wiki-commit.sh: wiki dir required}"
 msg="${2:?wiki-commit.sh: commit message required}"
