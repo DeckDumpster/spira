@@ -100,7 +100,6 @@ echo "$HOLD_PID" > "$PIDFILE"
         _hb_sleep=
         [ -f "$PIDFILE" ] || exit 0
         [ -d "/proc/$HOLD_PID" ] || exit 0
-        bdq heartbeat "$ID" >/dev/null 2>&1 || exit 0
     done
 ) </dev/null >/dev/null 2>&1 &
 echo $! > "$HBFILE"

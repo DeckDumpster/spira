@@ -131,13 +131,14 @@ reclassify)
             # outcome that charged it (`sp-attempt-2-unlanded`), so the reconstructed name
             # matches no label and the removal withdraws nothing at all.
             rung="$(counter_label "$id" sp-attempt "$cur")" || rung="sp-attempt-$cur"
-            if ! bdq label remove "$id" "$rung" >/dev/null 2>&1; then
+            if ! spira-lc content label remove "$id" "$rung" >/dev/null 2>&1; then
                 printf 'REFUSED  %-20s could not remove %s — left charged, nothing recorded\n' \
                     "$id" "$rung"
                 n=$((n-1)); refused=$((refused+1))
                 continue
             fi
-            bdq note "$id" "Attempt $cur withdrawn: its session was refused by the account for want of capacity, not by anything about this work. Evidence: $SPIRA_RUN/$id.log ends in a rejected rate_limit_event." >/dev/null 2>&1
+            printf 'Attempt %s withdrawn: its session was refused by the account for want of capacity, not by anything about this work. Evidence: %s/%s.log ends in a rejected rate_limit_event.' "$cur" "$SPIRA_RUN" "$id" |
+                spira-lc content note "$id" --stdin >/dev/null 2>&1
             # A bead poisoned only by that attempt is no longer poisoned. Its hold goes with
             # it — leaving it would keep the bead out of every rune's claimable set for a
             # failure that was withdrawn, which is the whole harm this is undoing.

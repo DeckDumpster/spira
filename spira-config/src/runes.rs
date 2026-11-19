@@ -987,10 +987,10 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_runes_declare_build_disk_for_exactly_the_builder_mender_pilgrim_and_qa() {
+    fn the_shipped_runes_declare_build_disk_for_exactly_the_builder_mender_and_pilgrim() {
         let ws = testkit::TempDir::new("spira-config-runes-shipped");
         let src = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
-        for dir in [src.clone(), src.join("disabled")] {
+        for dir in [src.clone()] {
             for e in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
                 write_rune(&ws, &e.path().file_stem().unwrap().to_string_lossy(), &std::fs::read_to_string(e.path()).unwrap());
             }
@@ -1002,7 +1002,7 @@ mod tests {
             }
         }
         uses.sort();
-        assert_eq!(uses, ["builder", "mender", "pilgrim", "qa"]);
+        assert_eq!(uses, ["builder", "mender", "pilgrim"]);
     }
 
     #[test]
@@ -1010,7 +1010,7 @@ mod tests {
         let src = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
         let ws = testkit::TempDir::new("spira-config-runes-reactive-set");
         let mut any_lane = vec![];
-        for dir in [src.clone(), src.join("disabled")] {
+        for dir in [src.clone()] {
             for e in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
                 let name = e.path().file_stem().unwrap().to_string_lossy().into_owned();
                 let text = std::fs::read_to_string(e.path()).unwrap();
@@ -1023,7 +1023,7 @@ mod tests {
         assert!(any_lane.is_empty(), "RUNE_LANE no longer exists: {any_lane:?}");
         let mut reactive: Vec<String> = std::fs::read_dir(runes_dir(&ws)).unwrap().flatten().filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().into_owned())).filter(|n| rune_get(&ws, n, "RUNE_REACTIVE", "") == "1").collect();
         reactive.sort();
-        assert_eq!(reactive, ["czar", "groomer", "mender", "mimir", "ops", "pilgrim", "qa", "skuld", "warden"]);
+        assert_eq!(reactive, ["czar", "groomer", "mender", "mimir", "ops", "pilgrim", "skuld", "warden"]);
     }
 
     #[test]
@@ -1031,7 +1031,7 @@ mod tests {
         let dir = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
         let mut single = vec![];
         let mut seen = 0;
-        for d in [dir.clone(), dir.join("disabled")] {
+        for d in [dir.clone()] {
             for e in std::fs::read_dir(&d).unwrap_or_else(|e| panic!("{}: {e}", d.display())).flatten() {
                 let path = e.path();
                 if path.extension().is_none_or(|x| x != "rune") {
@@ -1048,6 +1048,6 @@ mod tests {
         }
         assert!(seen > 10, "the matcher read {seen} runes");
         single.sort();
-        assert_eq!(single, ["batcher", "czar", "groomer", "mimir", "pilgrim", "qa", "warden"]);
+        assert_eq!(single, ["batcher", "czar", "groomer", "mimir", "pilgrim", "warden"]);
     }
 }
