@@ -148,11 +148,12 @@ _lcb_run_registry() {
 }
 
 _lcb_import_drill_stamps() {
-    local db v s
+    local db v s at
     for db in $(_lcb_dbs) ${SPIRA_LC_STORE_PATH:+control}; do
         v="$(_lcb_verdict "$db")"; s="$(dirname "$v")/drill.ok"
         [ ! -e "$s" ] && [ "$(head -n1 "$v" 2>/dev/null | cut -c1-19)" = "lc-backup: drill ok" ] || continue
-        date -r "$v" +%s > "$s" && echo "lc-backup: drill: imported $db's drill.ok from its passing verdict ($(cat "$s"))"
+        at="$(date -r "$v" +%s)" && [ -n "$at" ] || continue
+        echo "$at" > "$s" && echo "lc-backup: drill: imported $db's drill.ok from its passing verdict ($at)"
     done
 }
 

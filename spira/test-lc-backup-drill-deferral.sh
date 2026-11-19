@@ -81,6 +81,12 @@ stage() { rm -f "$stamp" "$SPIRA_RUN"/lc-backup/*/drill.ok; printf '%s\n' "$1" >
 stage "lc-backup: drill ok — control: sqlite-checkpoint: /x/control.db: 482 passes: errors 0; wal 0 frames 0 B"
 cmd_run >"$T/run.out" 2>&1; exec 8>&-
 [ "$(cat "$stamp" 2>/dev/null)" = "1700000000" ] && ok "a passing verdict without a stamp is imported at the verdict's mtime" || bad "a passing verdict is imported" "$(cat "$stamp" 2>/dev/null) $(cat "$T/run.out")"
+grep -qx "lc-backup: drill: imported control's drill.ok from its passing verdict (1700000000)" "$T/run.out" && ok "the import logs the line naming store and epoch" || bad "the import logs its line" "$(cat "$T/run.out")"
+av="$SPIRA_RUN/lc-backup/alpha/drill.verdict"
+echo "lc-backup: drill ok — alpha: fine" > "$av"; touch -d @1700000001 "$av"; rm -f "$SPIRA_RUN/lc-backup/alpha/drill.ok"
+cmd_run >"$T/run.out" 2>&1; exec 8>&-
+[ "$(cat "$SPIRA_RUN/lc-backup/alpha/drill.ok" 2>/dev/null)" = "1700000001" ] && ok "a configured database's passing verdict is imported" || bad "a configured database's verdict is imported" "$(cat "$T/run.out")"
+rm -f "$SPIRA_RUN/lc-backup/alpha/drill.verdict" "$SPIRA_RUN/lc-backup/alpha/drill.ok"
 stage "lc-backup: drill: control: restore failed"
 cmd_run >"$T/run.out" 2>&1; exec 8>&-
 [ ! -e "$stamp" ] && ok "a failing verdict gets no stamp" || bad "a failing verdict gets no stamp" "stamped"
