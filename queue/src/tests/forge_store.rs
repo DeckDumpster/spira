@@ -927,3 +927,22 @@ fn a_queue_local_verdict_ignores_an_unreadable_forge_while_every_opening_record_
     assert!(!t.err().contains("cannot list"), "{}", t.err());
     assert_eq!(record(&t, "fresh").0, "OPEN");
 }
+
+#[test]
+fn a_store_batch_setup_red_is_rerun_once_across_verdict_passes() {
+    let t = forge_world();
+    seed(&t, "deck-1", "armed", 900, Some("12"));
+    *t.forge.run.borrow_mut() = Some("77".into());
+    for _ in 0..2 {
+        t.forge.status.borrow_mut().push(Some(
+            "red\nfailed-step: gate / Run bash tests/x.sh\n".into(),
+        ));
+        t.run(&["verdict", "spira"]);
+    }
+    let reruns = forge_calls(&t)
+        .iter()
+        .filter(|c| c.starts_with("workflow-rerun"))
+        .count();
+    assert_eq!(reruns, 1, "{}", t.out());
+    assert!(record(&t, "deck-1").1.get("setup_rerun").is_some());
+}

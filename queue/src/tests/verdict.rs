@@ -1530,6 +1530,77 @@ fn a_provision_failure_log_stays_setup_red_and_an_unparseable_one_still_raises_a
     }
 }
 
+fn refused_setup_red(t: &T) {
+    t.forge.status.borrow_mut().push(Some(
+        "red\nfailed-step: gate / Run bash tests/x.sh\nstep-log: boom\n".into(),
+    ));
+    *t.forge.run.borrow_mut() = Some("77".into());
+    *t.forge.rerun_decided.borrow_mut() = Some("no input changed".into());
+}
+
+#[test]
+fn a_single_member_setup_red_whose_rerun_the_forge_refuses_is_ejected_in_that_pass() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta\nopened=500\nbranch=spira/queue/x\nowner=batcher\nbatch_id=spira-1\nversion=3\n");
+    t.git.set("origin/main", "b0");
+    refused_setup_red(&t);
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(
+        t.out().contains("failed step: gate / Run bash tests/x.sh | boom") && !t.out().contains("re-running run 77 once"),
+        "{}",
+        t.out()
+    );
+    assert!(
+        t.lc.calls.borrow().iter().any(|c| c.contains("member red: sp-a")),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
+    assert!(
+        t.lc.calls.borrow().iter().any(|c| c.starts_with("eject-member spira-1 sp-a") && c.contains("gate / Run bash tests/x.sh")),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
+    assert!(
+        t.lib.calls.borrow().iter().any(|c| c.starts_with("comment sp-a")
+            && c.contains("failed step: gate / Run bash tests/x.sh")
+            && c.contains("boom")),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
+    let reruns = t.forge.calls.borrow().iter().filter(|c| c.starts_with("workflow-rerun")).count();
+    assert_eq!(reruns, 1);
+}
+
+#[test]
+fn a_multi_member_setup_red_whose_rerun_the_forge_refuses_is_abandoned_in_that_pass() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    refused_setup_red(&t);
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    let mail = t.scripts.calls.borrow().join("\n");
+    assert!(mail.contains("re-run refused: no input changed"), "{mail}");
+    assert!(
+        t.lc.calls.borrow().iter().any(|c| c.starts_with("abandon-batch spira-1")),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
+    assert!(!t.qfile("open").exists());
+}
+
+#[test]
+fn a_setup_red_whose_rerun_the_forge_fails_to_start_settles_nothing_and_records_no_rerun() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    refused_setup_red(&t);
+    *t.forge.rerun_decided.borrow_mut() = None;
+    *t.forge.rerun_refused.borrow_mut() = true;
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.err().contains("could not start"), "{}", t.err());
+    assert!(!record(&t).contains("setup_rerun"), "{}", record(&t));
+    assert!(t.qfile("open").exists());
+    assert!(!t.lc.calls.borrow().iter().any(|c| c.starts_with("abandon-batch")));
+}
+
 #[test]
 fn red_without_suites_or_without_a_batcher_is_not_judged() {
     let t = T::new(LandMode::Queue);
