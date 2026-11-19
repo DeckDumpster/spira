@@ -596,6 +596,7 @@ pub fn loaded_failed_units(listing: &str) -> Vec<String> {
 }
 
 fn is_exec(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
 
