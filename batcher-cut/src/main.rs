@@ -35,7 +35,7 @@ use batcher_cut::{endpass, io, order, pace, redtip, screen, vm};
 mod telemetry;
 
 use spira_otel::exit::ExitCode;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -380,6 +380,9 @@ struct LiveOps<'a> {
     prior: batcher::mender::Prior,
     send_back: Option<String>,
     mend_pass: std::cell::Cell<u32>,
+    lifted: Vec<vm::LiftedRow>,
+    kept: BTreeMap<String, String>,
+    restored: BTreeSet<String>,
     returns_read: std::cell::RefCell<Option<(std::time::Instant, Vec<batcher::mender::Failure>)>>,
 }
 
@@ -496,6 +499,16 @@ impl LiveOps<'_> {
             })
             .text
         );
+        self.restore_rows_of(&member.id)
+    }
+
+    fn restore_rows_of(&mut self, owner: &str) -> Result<(), String> {
+        for row in self.lifted.iter().filter(|r| r.bead == owner) {
+            if self.kept.contains_key(&row.test) || !self.restored.insert(row.test.clone()) {
+                continue;
+            }
+            io::add_row_to_pass(Path::new(&self.evidence), row)?;
+        }
         Ok(())
     }
 }
@@ -799,6 +812,46 @@ impl drive::RoundOps for LiveOps<'_> {
         Ok(())
     }
 
+    fn lifted(&self) -> Vec<(String, batcher::core::Id)> {
+        self.lifted
+            .iter()
+            .filter(|r| !self.kept.contains_key(&r.test) && !self.restored.contains(&r.test))
+            .map(|r| (r.test.clone(), r.bead.clone()))
+            .collect()
+    }
+
+    fn keep_lifted(&mut self, test: &str, owner: &batcher::core::Id, merged_lines: &[String], base_lines: &[String]) -> Result<String, String> {
+        if let Some(bead) = self.kept.get(test) {
+            return Ok(bead.clone());
+        }
+        let old_bead = self.lifted.iter().find(|r| r.test == test).map(|r| r.bead.clone()).ok_or_else(|| format!("{test} is not a row this round lifted"))?;
+        let merged = match (merged_lines, test.strip_prefix("suite:")) {
+            ([], Some(suite)) => io::suite_first_fail(Path::new(&self.evidence), self.pass.as_deref(), suite).into_iter().collect(),
+            _ => merged_lines.to_vec(),
+        };
+        let kept = io::KeptRow {
+            test: test.to_string(),
+            owner: owner.clone(),
+            old_bead,
+            round_branch: self.round_branch.clone(),
+            head: io::head_of(self.wt)?,
+            base: self.start_sha.clone(),
+            merged_lines: merged,
+            base_lines: base_lines.to_vec(),
+        };
+        let registry = spira_config::release_env::tool("test-registry")?;
+        let (env, repo) = (self.env, self.repo);
+        let row = io::keep_row_with(
+            &mut |k| io::file_kept_row_bead(env, repo, k),
+            &mut io::through_registry(&registry, env),
+            Path::new(&self.evidence),
+            &kept,
+        )?;
+        println!("batcher {}: {test} red on the merged tree and the base — row kept until {}, fix {}", repo.name, io::date_of(row.until), row.bead);
+        self.kept.insert(test.to_string(), row.bead.clone());
+        Ok(row.bead)
+    }
+
     fn record(&mut self, iteration: u32, d: &batcher::attrib::Decision) {
         for r in &d.records {
             self.first_red = Some(self.first_red.map_or(r.red_at, |f| f.min(r.red_at)));
@@ -949,7 +1002,7 @@ fn resolve_deny(env_: &Env, at: u64) -> Result<vm::DenySnapshot, pace::CutError>
 fn snapshot_from(resolved: Result<String, String>, at: u64) -> Result<vm::DenySnapshot, pace::CutError> {
     let text = resolved
         .map_err(|e| pace::CutError::new(pace::CutKind::Other, format!("no round cut — the deny list could not be resolved: {e}")))?;
-    Ok(vm::DenySnapshot { text, at })
+    Ok(vm::DenySnapshot { text, at, lifted: vec![] })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1054,6 +1107,9 @@ fn stabilize_round(
         .map(|m| (m.id.clone(), io::changed_paths(repo, start_sha, &m.tip)))
         .collect();
 
+    let member_ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
+    let (lifted_deny, lifted) = deny.lifting(&member_ids);
+    let deny = &lifted_deny;
     let mut runner =
         vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?.with_round_commits(own_commits.clone()).in_batch(batch).with_deny_list(deny)?;
     let stage_bg = match batch {
@@ -1098,6 +1154,9 @@ fn stabilize_round(
         prior: batcher::mender::Prior::default(),
         send_back: None,
         mend_pass: Default::default(),
+        lifted,
+        kept: BTreeMap::new(),
+        restored: BTreeSet::new(),
         returns_read: Default::default(),
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
@@ -1143,7 +1202,7 @@ fn stabilize_round(
                 attribution_seconds: attribution_secs,
                 regreen_seconds: ops.first_red.map(|f| now().saturating_sub(f)),
                 staged,
-                deny: Some(vm::DenySnapshot::from_pass(&runner.results).unwrap_or_else(|| deny.clone())),
+                deny: Some(vm::DenySnapshot { lifted: deny.lifted.clone(), ..vm::DenySnapshot::from_pass(&runner.results).unwrap_or_else(|| deny.clone()) }),
             }))
         }
         drive::RoundEnd::Blocked(why) => {
@@ -2413,6 +2472,9 @@ fn attribute_in(
         prior: batcher::mender::Prior::default(),
         send_back: None,
         mend_pass: Default::default(),
+        lifted: vec![],
+        kept: BTreeMap::new(),
+        restored: BTreeSet::new(),
         returns_read: Default::default(),
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
@@ -3247,6 +3309,69 @@ mod cut_tests {
         let err = io::disable_flips_with(&mut |_| Ok("sp-n".into()), &mut io::through_registry(d.join("refuse").to_str().unwrap(), &env), &results, "b", &ids).unwrap_err();
         assert!(err.contains("locked") && err.contains("sp-n"), "{err}");
         assert_eq!(std::fs::read_to_string(results.join("deny-list")).unwrap(), before);
+    }
+
+    fn kept_row() -> io::KeptRow {
+        io::KeptRow {
+            test: "suite:test-x.sh".into(),
+            owner: "sp-own".into(),
+            old_bead: "sp-own".into(),
+            round_branch: "spira/batcher-attr/fx-1".into(),
+            head: "h1".into(),
+            base: "b1".into(),
+            merged_lines: vec!["not ok 7".into()],
+            base_lines: vec![],
+        }
+    }
+
+    #[test]
+    fn a_kept_row_files_one_fix_bead_repoints_the_row_at_it_and_puts_the_row_back_in_the_deny_list() {
+        let d = testkit::TempDir::new("batcher-cut-keep-row");
+        let (env, results, bin, calls) = flip_fixture(&d);
+        let mut filed = vec![];
+        let row = io::keep_row_with(
+            &mut |k| {
+                filed.push(k.test.clone());
+                Ok("sp-fix".into())
+            },
+            &mut io::through_registry(bin.to_str().unwrap(), &env),
+            &results,
+            &kept_row(),
+        )
+        .unwrap();
+        assert_eq!((filed.as_slice(), row.bead.as_str()), (&["suite:test-x.sh".to_string()][..], "sp-fix"));
+        let calls = std::fs::read_to_string(&calls).unwrap();
+        assert!(
+            calls.starts_with("disable --json --test suite:test-x.sh --bead sp-fix --reason kept: suite:test-x.sh red on spira/batcher-attr/fx-1 and on the base b1; sp-own's landing did not clear it; re-pointed from sp-own to sp-fix"),
+            "{calls}"
+        );
+        assert_eq!(
+            vm::DenySnapshot::from_pass(&results).unwrap().text,
+            "# test-registry deny-list at=77 rows=2\ndisabled\tunit:tiny t::old\tsp-x\t900\ndisabled\tsuite:test-x.sh\tsp-fix\t5000\n"
+        );
+    }
+
+    #[test]
+    fn a_kept_row_whose_bead_cannot_be_filed_touches_neither_the_registry_nor_the_deny_list() {
+        let d = testkit::TempDir::new("batcher-cut-keep-row-fail");
+        let (env, results, bin, calls) = flip_fixture(&d);
+        let before = std::fs::read_to_string(results.join("deny-list")).unwrap();
+        let err = io::keep_row_with(&mut |_| Err("bead store down".into()), &mut io::through_registry(bin.to_str().unwrap(), &env), &results, &kept_row()).unwrap_err();
+        assert!(err.contains("bead store down"), "{err}");
+        assert!(!calls.exists());
+        assert_eq!(std::fs::read_to_string(results.join("deny-list")).unwrap(), before);
+    }
+
+    #[test]
+    fn an_ejected_owners_row_goes_back_into_the_deny_list_with_no_expiry_written_as_a_dash() {
+        let d = testkit::TempDir::new("batcher-cut-restore-row");
+        let (_, results, _, _) = flip_fixture(&d);
+        let row = vm::LiftedRow { state: "disabled".into(), test: "suite:test-y.sh".into(), bead: "sp-own".into(), until: -1 };
+        io::add_row_to_pass(&results, &row).unwrap();
+        assert_eq!(
+            vm::DenySnapshot::from_pass(&results).unwrap().text,
+            "# test-registry deny-list at=77 rows=2\ndisabled\tunit:tiny t::old\tsp-x\t900\ndisabled\tsuite:test-y.sh\tsp-own\t-\n"
+        );
     }
 
     fn lint_red_attribution(d: &Path, with_deny_list: bool) -> (Result<String, String>, PathBuf) {

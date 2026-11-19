@@ -263,6 +263,17 @@ fn subset_scope(build: &str, scope: &[String]) -> String {
 pub struct DenySnapshot {
     pub text: String,
     pub at: u64,
+    /// The registry ids of the rows `lifting` took out for this round.
+    pub lifted: Vec<String>,
+}
+
+/// A registry row the round lifted because its owning bead is a member.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LiftedRow {
+    pub state: String,
+    pub test: String,
+    pub bead: String,
+    pub until: i64,
 }
 
 impl DenySnapshot {
@@ -283,9 +294,50 @@ impl DenySnapshot {
         format!("{}/{}", self.at, self.digest())
     }
 
-    /// The `batch-round` row's two fields.
-    pub fn fields(&self) -> [(&'static str, String); 2] {
-        [("deny_list", self.label()), ("deny_rows", self.rows().to_string())]
+    /// The `batch-round` row's deny fields.
+    pub fn fields(&self) -> Vec<(&'static str, String)> {
+        let mut out = vec![("deny_list", self.label()), ("deny_rows", self.rows().to_string())];
+        if !self.lifted.is_empty() {
+            out.push(("deny_lifted", self.lifted.join(",")));
+        }
+        out
+    }
+
+    fn recounted(header: &str, rows: usize) -> String {
+        match header.split_whitespace().position(|w| w.starts_with("rows=")) {
+            Some(_) => header
+                .split_whitespace()
+                .map(|w| if w.starts_with("rows=") { format!("rows={rows}") } else { w.to_string() })
+                .collect::<Vec<_>>()
+                .join(" "),
+            None => header.to_string(),
+        }
+    }
+
+    /// This list without the rows whose bead is one of `beads`, and those rows.
+    pub fn lifting(&self, beads: &[String]) -> (DenySnapshot, Vec<LiftedRow>) {
+        let mut lines = self.text.lines();
+        let header = lines.next().unwrap_or_default();
+        let (mut kept, mut lifted) = (vec![], vec![]);
+        for line in lines {
+            let f: Vec<&str> = line.split('\t').collect();
+            match f[..] {
+                [state, test, bead, until] if beads.iter().any(|b| b == bead) => lifted.push(LiftedRow {
+                    state: state.into(),
+                    test: test.into(),
+                    bead: bead.into(),
+                    until: until.parse().unwrap_or(-1),
+                }),
+                _ => kept.push(line),
+            }
+        }
+        let mut text = format!("{}\n", Self::recounted(header, kept.len()));
+        for r in kept {
+            text.push_str(r);
+            text.push('\n');
+        }
+        let ids = lifted.iter().map(|r| r.test.clone()).collect();
+        (DenySnapshot { text, at: self.at, lifted: ids }, lifted)
     }
 
     /// This list with one more row, in the registry's own row shape; the header's count follows.
@@ -293,28 +345,22 @@ impl DenySnapshot {
         let mut lines = self.text.lines();
         let header = lines.next().unwrap_or_default();
         let rows: Vec<&str> = lines.collect();
-        let header = match header.split_whitespace().position(|w| w.starts_with("rows=")) {
-            Some(_) => header
-                .split_whitespace()
-                .map(|w| if w.starts_with("rows=") { format!("rows={}", rows.len() + 1) } else { w.to_string() })
-                .collect::<Vec<_>>()
-                .join(" "),
-            None => header.to_string(),
-        };
+        let header = Self::recounted(header, rows.len() + 1);
         let mut text = format!("{header}\n");
         for r in rows {
             text.push_str(r);
             text.push('\n');
         }
+        let until = if until < 0 { "-".to_string() } else { until.to_string() };
         text.push_str(&format!("{state}\t{test}\t{bead}\t{until}\n"));
-        DenySnapshot { text, at: self.at }
+        DenySnapshot { text, at: self.at, lifted: self.lifted.clone() }
     }
 
     /// A snapshot an earlier pass of the round wrote at `dir/deny-list`; its instant is the header's `at=`.
     pub fn from_pass(dir: &Path) -> Option<DenySnapshot> {
         let text = fs::read_to_string(dir.join(Self::FILE)).ok()?;
         let at = text.lines().next()?.split_whitespace().find_map(|w| w.strip_prefix("at=")?.parse().ok())?;
-        Some(DenySnapshot { text, at })
+        Some(DenySnapshot { text, at, lifted: vec![] })
     }
 }
 
@@ -2297,7 +2343,7 @@ mod deny_snapshot_tests {
         let (env, repo) = (lifecycle_tests_env(d.path()), repo(d.path()));
         let r = runner(&env, &repo, d.path());
         assert!(r.deny_args().is_empty(), "a runner given no list passes none");
-        let r = r.with_deny_list(&DenySnapshot { text: LIST.into(), at: 2000 }).unwrap();
+        let r = r.with_deny_list(&DenySnapshot { text: LIST.into(), at: 2000, lifted: vec![] }).unwrap();
         let file = r.results.join("deny-list");
         assert_eq!(fs::read_to_string(&file).unwrap(), LIST);
         assert_eq!(r.deny_args(), vec![std::ffi::OsString::from("--deny-list"), file.clone().into()]);
@@ -2307,7 +2353,7 @@ mod deny_snapshot_tests {
 
     #[test]
     fn a_row_added_to_a_snapshot_keeps_the_registry_shape_counts_itself_and_changes_the_digest() {
-        let s = DenySnapshot { text: LIST.into(), at: 2000 };
+        let s = DenySnapshot { text: LIST.into(), at: 2000, lifted: vec![] };
         let t = s.with_row("disabled", "unit:tiny t::flip", "sp-y", 9000);
         assert_eq!(
             t.text,
@@ -2318,14 +2364,31 @@ mod deny_snapshot_tests {
     }
 
     #[test]
+    fn lifting_drops_exactly_the_members_rows_fixes_the_count_and_names_them() {
+        let s = DenySnapshot {
+            text: "# test-registry deny-list at=2000 rows=3\ndisabled\tsuite:a.sh\tsp-m\t9000\ndisabled\tunit:tiny t::x\tsp-other\t-\ndisabled\tunit:tiny t::y\tsp-m\t-\n".into(),
+            at: 2000,
+            lifted: vec![],
+        };
+        let (rest, rows) = s.lifting(&["sp-m".to_string()]);
+        assert_eq!(rest.text, "# test-registry deny-list at=2000 rows=1\ndisabled\tunit:tiny t::x\tsp-other\t-\n");
+        assert_eq!(rest.rows(), 1);
+        assert_eq!(rows.iter().map(|r| (r.test.as_str(), r.until)).collect::<Vec<_>>(), [("suite:a.sh", 9000), ("unit:tiny t::y", -1)]);
+        assert_eq!(rest.fields()[2], ("deny_lifted", "suite:a.sh,unit:tiny t::y".to_string()));
+        let (same, none) = s.lifting(&["sp-nobody".to_string()]);
+        assert_eq!((same.text.as_str(), none.len()), (s.text.as_str(), 0));
+        assert_eq!(same.fields().len(), 2);
+    }
+
+    #[test]
     fn a_snapshot_names_its_instant_digest_and_rows_and_is_read_back_from_a_pass() {
-        let s = DenySnapshot { text: LIST.into(), at: 2000 };
+        let s = DenySnapshot { text: LIST.into(), at: 2000, lifted: vec![] };
         assert_eq!(s.rows(), 1);
         assert_eq!(s.label(), format!("2000/{}", s.digest()));
         assert_eq!(s.digest().len(), 12);
-        assert_eq!(DenySnapshot { text: "abc".into(), at: 0 }.digest(), "ba7816bf8f01", "the digest test-registry prints for the same text");
+        assert_eq!(DenySnapshot { text: "abc".into(), at: 0, lifted: vec![] }.digest(), "ba7816bf8f01", "the digest test-registry prints for the same text");
         assert_eq!(s.fields(), [("deny_list", s.label()), ("deny_rows", "1".to_string())]);
-        assert_eq!(DenySnapshot { text: String::new(), at: 1 }.rows(), 0);
+        assert_eq!(DenySnapshot { text: String::new(), at: 1, lifted: vec![] }.rows(), 0);
         let d = testkit::TempDir::new("vm-deny-pass");
         assert!(DenySnapshot::from_pass(d.path()).is_none());
         fs::write(d.path().join("deny-list"), LIST).unwrap();

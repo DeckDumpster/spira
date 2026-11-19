@@ -4512,6 +4512,57 @@ pub fn file_flip_bead(
     bead_id(&out?)
 }
 
+/// File the fix bead for a test that is red on the merged tree and on the base after its owner lifted its row.
+pub fn file_kept_row_bead(
+    env: &Env,
+    repo: &Repo,
+    kept: &KeptRow,
+) -> Result<String, String> {
+    let title = format!("{} red on the merged tree and the base after {} lifted its row — fix it", kept.test, kept.owner);
+    let lines = |ls: &[String]| if ls.is_empty() { "(none printed)".to_string() } else { ls.join("\n") };
+    let body = format!(
+        "{test} was red on the round tree and on the base, so {owner}'s landing did not clear its registry row: the row stays, now pointed at this bead (it was {old}).\n\nRound branch: {branch}\nMerged head: {head}\nBase: {base}\n\nFailing on the merged tree:\n{merged}\n\nFailing on the base:\n{base_lines}\n\nDeliverable: make {test} green on the base; its row then expires or is cleared by this bead's landing.\n",
+        test = kept.test,
+        owner = kept.owner,
+        old = kept.old_bead,
+        branch = kept.round_branch,
+        head = kept.head,
+        base = kept.base,
+        merged = lines(&kept.merged_lines),
+        base_lines = lines(&kept.base_lines),
+    );
+    file_batcher_bead(env, repo, "kept", &title, &body)
+}
+
+/// What the bead filed for a kept row says.
+pub struct KeptRow {
+    pub test: String,
+    pub owner: String,
+    pub old_bead: String,
+    pub round_branch: String,
+    pub head: String,
+    pub base: String,
+    pub merged_lines: Vec<String>,
+    pub base_lines: Vec<String>,
+}
+
+fn file_batcher_bead(env: &Env, repo: &Repo, tag: &str, title: &str, body: &str) -> Result<String, String> {
+    let tmp_dir = env.run.join("tmp");
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
+    let tmp = tmp_dir.join(format!("{tag}-{}-{}.txt", repo.name, now()));
+    fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let out = run(
+        // FORK-EDGE: bead.sh is the operator tool for filing; it stays
+        Command::new("bead.sh")
+            .args(["file", title, "--for", "batcher", "--repo", &repo.name, "--harness-title", "--body-file"])
+            .arg(&tmp)
+            .arg("--json"),
+        "bead.sh file",
+    );
+    let _ = fs::remove_file(&tmp);
+    bead_id(&out?)
+}
+
 /// A registry row a flip's disabling wrote.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DisabledRow {
@@ -4584,6 +4635,36 @@ pub fn disable_flips_with(
         rows.push(row);
     }
     Ok(rows)
+}
+
+/// Adds `row` to the deny list a pass of the round reads from `results`.
+pub fn add_row_to_pass(results: &Path, row: &crate::vm::LiftedRow) -> Result<(), String> {
+    let list = crate::vm::DenySnapshot::from_pass(results)
+        .ok_or_else(|| format!("{} holds no deny list to add {} to", results.display(), row.test))?;
+    let path = results.join(crate::vm::DenySnapshot::FILE);
+    let next = list.with_row(&row.state, &row.test, &row.bead, row.until);
+    fs::write(&path, &next.text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Keeps a lifted row that is red on the merged tree and the base: files its fix bead, re-points
+/// the registry row at it and puts the row back in the pass's deny list. Stops at the first failure.
+pub fn keep_row_with(
+    file_bead: &mut dyn FnMut(&KeptRow) -> Result<String, String>,
+    disable: &mut dyn FnMut(&str, &str, &str) -> Result<DisabledRow, String>,
+    results: &Path,
+    kept: &KeptRow,
+) -> Result<DisabledRow, String> {
+    let bead = file_bead(kept).map_err(|e| format!("cannot file the fix for {}: {e}", kept.test))?;
+    let reason = format!(
+        "kept: {} red on {} and on the base {}; {}'s landing did not clear it; re-pointed from {} to {bead}",
+        kept.test, kept.round_branch, kept.base, kept.owner, kept.old_bead
+    );
+    let row = disable(&kept.test, &bead, &reason).map_err(|e| format!("cannot re-point {} (fix {bead}): {e}", kept.test))?;
+    add_row_to_pass(
+        results,
+        &crate::vm::LiftedRow { state: row.state.clone(), test: row.test.clone(), bead: row.bead.clone(), until: row.until },
+    )?;
+    Ok(row)
 }
 
 /// The local calendar date of an epoch second.
