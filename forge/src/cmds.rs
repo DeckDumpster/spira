@@ -1192,7 +1192,7 @@ pub fn batch_ci_status(
     workflow: &str,
     branch: &str,
 ) -> Out {
-    let run_list = gh.call(
+    let run_list = gh.call_merged(
         Some(repo),
         &[
             "run",
@@ -1206,10 +1206,18 @@ pub fn batch_ci_status(
             "--limit",
             "1",
         ],
+        None,
     );
-    let rl = parse(&run_list.stdout).unwrap_or(Value::Array(vec![]));
+    let unread = |why: &str| fail(vec![format!("gh run list for {workflow} on {branch}: {why}")]);
+    if !run_list.ok() {
+        return unread(run_list.text().trim());
+    }
+    let rl = match parse(&run_list.stdout) {
+        Some(v) if v.is_array() => v,
+        _ => return unread(&format!("not a JSON array: {}", run_list.text().trim())),
+    };
     let Some(first) = first_elem(&rl) else {
-        return ok(vec![]);
+        return ok(vec!["runs: 0".into()]);
     };
     let Some(run_id) = first.get("databaseId").map(|v| v.to_string()) else {
         return ok(vec![]);

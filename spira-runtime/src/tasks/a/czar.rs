@@ -227,6 +227,8 @@ pub struct BaseCi {
     pub red_suites: Vec<String>,
     #[serde(default)]
     pub completed_at_ms: Option<u64>,
+    #[serde(default)]
+    pub no_runs: bool,
 }
 
 /// GitHub's core budget, spent and not yet reset: why base CI cannot be read, said once.
@@ -569,7 +571,7 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
     }
     for (repo, since) in &carry.base_pending {
         let in_flight = matches!(snap.open_batch.get(repo), Some(Read::Observed(Some(_)))) && snap.ci.contains_key(repo);
-        let landed = matches!(snap.base_ci.get(repo), Some(Read::Observed(b)) if b.conclusion.is_some() && b.completed_at_ms.is_some_and(|at| at > *since));
+        let landed = matches!(snap.base_ci.get(repo), Some(Read::Observed(b)) if b.no_runs || (b.conclusion.is_some() && b.completed_at_ms.is_some_and(|at| at > *since)));
         let expired = snap.now_ms.saturating_sub(*since) > BASE_PENDING_MAX_AGE_MS;
         if !in_flight && (landed || expired) {
             p.next.base_pending.remove(repo);
@@ -592,6 +594,9 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
         let safe = czar_pass::repo_safe(repo);
         let key = format!("base-red:{safe}");
         match base {
+            Read::Observed(b) if b.no_runs => {
+                p.judge(&key, RawStatus::Satisfied, 0);
+            }
             Read::Observed(b) if b.conclusion.is_some() => {
                 let raw = czar_pass::base_red(repo, "base", b.conclusion.as_deref());
                 let suites = czar_pass::suite_key(&b.red_suites);
@@ -796,7 +801,9 @@ pub fn forge_reads(rows: &[RepoRow], batches: &BTreeMap<String, Read<Option<Batc
                     run_url: czar_pass::parse_field(&out, "run-url"),
                     red_suites: out.lines().filter_map(|l| l.strip_prefix("red-suite: ").map(str::to_string)).collect(),
                     completed_at_ms: czar_pass::parse_field(&out, "run-completed-at").and_then(|v| v.trim().parse::<u64>().ok()).map(|s| s * 1000),
+                    no_runs: false,
                 }),
+                Ok(out) if czar_pass::parse_field(&out, "runs").as_deref() == Some("0") => Read::Observed(BaseCi { no_runs: true, ..BaseCi::default() }),
                 Ok(_) => Read::Observed(BaseCi::default()),
                 Err(err) => Read::Unobservable(err),
             };
@@ -1073,6 +1080,34 @@ mod tests {
         let (next, acts) = decide(&pol, &carry, &snap);
         assert!(acts.iter().any(|a| a.effect == FILE_BASE_RED));
         assert!(next.base_pending.is_empty());
+    }
+
+    fn base_read_decided(out: Result<String, String>) -> (BaseCi, Vec<Act>) {
+        let rows = [row("fa", "queue")];
+        let batches: BTreeMap<_, _> = [("fa".to_string(), Read::Observed(None))].into();
+        let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
+        let mut pol = policy();
+        pol.stages.insert("base-red".into(), Stage::Act);
+        let read = forge_reads(&rows, &batches, &carry, &|_, _| out.clone()).1.remove("fa").unwrap();
+        let first = Snapshot { now_ms: NOW + 1_000, open_batch: batches.clone(), base_ci: [("fa".to_string(), read.clone())].into(), ..Snapshot::default() };
+        let (c1, _) = decide(&pol, &carry, &first);
+        let late = Snapshot { now_ms: NOW + 1_000 + (pol.base_ci_unreadable_grace_secs + 60) * 1_000, ..first };
+        let (_, acts) = decide(&pol, &c1, &late);
+        (match read { Read::Observed(b) => b, Read::Unobservable(_) => BaseCi::default() }, acts)
+    }
+
+    #[test]
+    fn a_base_that_never_ran_its_workflow_is_satisfied_and_files_nothing() {
+        let (b, acts) = base_read_decided(Ok("runs: 0\n".into()));
+        assert!(b.no_runs);
+        assert!(!acts.iter().any(|a| a.effect == FILE_BASE_RED), "{acts:?}");
+    }
+
+    #[test]
+    fn a_failed_base_read_still_files_unreadable_with_the_forge_error() {
+        let (_, acts) = base_read_decided(Err("forge batch-ci-status exited 1: HTTP 403".into()));
+        let filed = acts.iter().find(|a| a.effect == FILE_BASE_RED).expect("files");
+        assert!(filed.input.contains("HTTP 403") && filed.input.contains("base CI status could not be read"), "{filed:?}");
     }
 
     #[test]

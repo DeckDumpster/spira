@@ -52,7 +52,7 @@ terms). Body payloads that were `stdin` in bash (`pr-create`) stay stdin.
 | `pr-red` | `<pr-number-or-branch>` | `head <sha>`, then `job <name>` and `fail-line: <text>` per failing check; nothing when not red or unreadable |
 | `pr-automerge` | `<pr-number-or-branch>` | **new**: arms squash auto-merge; exit 0/1, silent |
 | `check-status` | `<pr-number> <branch>` | `pending\|green\|red\|harness_fault\|provision_fault`, then `no-run: <workflow>` (only when the run listing succeeded and was empty), `head-sha:`/`run-url:`/`build-error:` lines, then `red-suite:`/`flaky:` lines when red |
-| `batch-ci-status` | `<branch>` | `run-id:`/`run-conclusion:`/`run-completed-at:`/`head-sha:`/`run-url:`/`queued-since:` then red-suite/flaky lines |
+| `batch-ci-status` | `<branch>` | `run-id:`/`run-conclusion:`/`run-completed-at:`/`head-sha:`/`run-url:`/`queued-since:` then red-suite/flaky lines; `runs: 0` alone when the workflow has never run on the branch; exit 1 with `gh`'s error when the run listing failed |
 | `run-id` | `<branch>` | latest CI run ID |
 | `runs-for-branch` | `<branch>` | `<id> <status>` per non-completed Gate run |
 | `runs-queue-branches` | — | `<id> <branch> <status>` per non-completed Gate run on `spira/queue/*` |

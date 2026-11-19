@@ -1041,6 +1041,11 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
             let ci_out = run_forge(&cfg.seams.forge, &["batch-ci-status", &repo_path_str, &base_branch]);
             let run_id = ci_out.as_ref().ok().and_then(|out| parse_field(out, "run-id"));
 
+            if run_id.is_none() && ci_out.as_ref().is_ok_and(|o| parse_field(o, "runs").as_deref() == Some("0")) {
+                verdicts.push(evaluate(cfg, state, &key, RawStatus::Satisfied, 0));
+                continue;
+            }
+
             if run_id.is_none() {
                 // No run at all for the base branch — the same grace period the old code
                 // gave a fresh marker file applies here as the engine's own grace_secs, so

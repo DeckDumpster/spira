@@ -1251,7 +1251,7 @@ fn run_metadata_reads_declared_timeout_and_live_job_log_activity() {
 // ── batch-ci-status ───────────────────────────────────────────────────────────────────────
 
 #[test]
-fn batch_ci_status_no_run_prints_nothing() {
+fn batch_ci_status_no_run_says_runs_zero() {
     let gh = FakeGh::default();
     gh.on(
         &[
@@ -1269,9 +1269,32 @@ fn batch_ci_status_no_run_prints_nothing() {
         0,
         "[]",
     );
-    assert!(batch_ci_status(&gh, &NoProc, repo(), "Gate", "b")
-        .lines
-        .is_empty());
+    let out = batch_ci_status(&gh, &NoProc, repo(), "Gate", "b");
+    assert_eq!((out.code, out.lines), (0, vec!["runs: 0".to_string()]));
+}
+
+#[test]
+fn batch_ci_status_failed_run_list_fails() {
+    let gh = FakeGh::default();
+    gh.on(
+        &[
+            "run",
+            "list",
+            "--branch",
+            "b",
+            "--workflow",
+            "Gate",
+            "--json",
+            "databaseId,conclusion,status,updatedAt,headSha,url",
+            "--limit",
+            "1",
+        ],
+        1,
+        "HTTP 403",
+    );
+    let out = batch_ci_status(&gh, &NoProc, repo(), "Gate", "b");
+    assert_ne!(out.code, 0);
+    assert!(out.lines.iter().any(|l| l.contains("HTTP 403")), "{:?}", out.lines);
 }
 
 #[test]
