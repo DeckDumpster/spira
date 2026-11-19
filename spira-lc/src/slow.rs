@@ -244,6 +244,25 @@ fn rss_bytes_of(status: &str) -> Option<u64> {
     Some(kb * 1024)
 }
 
+/// Anonymous resident bytes from a `/proc/<pid>/status` text: its `RssAnon` line (kB).
+fn rss_anon_bytes_of(status: &str) -> Option<u64> {
+    let kb = status.lines().find_map(|l| l.strip_prefix("RssAnon:"))?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()?;
+    Some(kb * 1024)
+}
+
+/// One log line: this process's RssAnon at `at`, or nothing where `/proc` does not say.
+pub fn rss_anon_line(at: &str) -> Option<String> {
+    let bytes = std::fs::read_to_string(format!("{}/status", system_paths::PROC_SELF)).ok().as_deref().and_then(rss_anon_bytes_of)?;
+    Some(format!("spira-lc serve: rss-anon {at} {} MB", bytes / (1024 * 1024)))
+}
+
+static VERBS_SEEN: Mutex<std::collections::BTreeSet<String>> = Mutex::new(std::collections::BTreeSet::new());
+
+/// True the first time this process is asked about `verb`.
+pub fn first_of_verb(verb: &str) -> bool {
+    VERBS_SEEN.lock().map(|mut seen| seen.insert(verb.to_string())).unwrap_or(false)
+}
+
 /// Pushes this process's resident memory as the gauge `spira_lc_rss_bytes`.
 pub fn push_rss(sink: &spira_otel::metrics::MetricsSink) {
     let Some(bytes) = std::fs::read_to_string(format!("{}/status", system_paths::PROC_SELF)).ok().as_deref().and_then(rss_bytes_of) else { return };
@@ -345,6 +364,19 @@ mod tests {
             l.record(method, t0, *ms);
         }
         (l, t0)
+    }
+
+    #[test]
+    fn rss_anon_is_read_from_its_own_status_line_not_vmrss() {
+        let status = "VmRSS:\t  900 kB\nRssAnon:\t  2048 kB\nRssFile:\t 10 kB\n";
+        assert_eq!(rss_anon_bytes_of(status), Some(2048 * 1024));
+        assert_eq!(rss_anon_bytes_of("VmRSS: 9 kB\n"), None);
+    }
+
+    #[test]
+    fn a_verb_is_first_once() {
+        assert!(first_of_verb("first-of-verb-test"));
+        assert!(!first_of_verb("first-of-verb-test"));
     }
 
     #[test]

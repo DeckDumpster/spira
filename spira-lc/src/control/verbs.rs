@@ -143,11 +143,11 @@ const NEWEST_WINDOW_SECS: i64 = 86_400;
 fn audits<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
     if args.iter().any(|a| a == "--newest") {
         let floor = crate::db::now_epoch() - NEWEST_WINDOW_SECS;
-        let read = store.audits_since(floor).map_err(|e| format!("audits: {e}"))?;
-        if !read.complete {
+        let mut newest: Option<i64> = None;
+        let complete = store.fold_audits_since(floor, |m| newest = newest.max(Some(m.at))).map_err(|e| format!("audits: {e}"))?;
+        if !complete {
             return Err("audits: the scan for the newest audit was cut short".into());
         }
-        let newest = read.audits.iter().map(|l| l.audit.at).max();
         return Ok(json!({ "newest_at": newest }).to_string());
     }
     let after = number(args, "--after", 0).map_err(|e| format!("audits: {e}"))?;
