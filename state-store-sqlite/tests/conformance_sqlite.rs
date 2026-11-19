@@ -1427,10 +1427,24 @@ mod relayout {
     }
 }
 
+const BUSY_RETRIES: u32 = 10_000;
+
+/// A commit by a writer racing a checkpoint pass: the pass's WAL restart briefly holds the write
+/// lock and the backend's writer never waits on it, so a commit may surface busy; it is retried
+/// by count, never by time.
 fn put_next(b: &SqliteBackend) {
     let head = b.head().unwrap();
     let prev = (head > 0).then(|| Rev::new(head, 0));
-    b.commit(head, &[put_write("k", &[7; 4096], head + 1, prev)]).unwrap();
+    for _ in 0..BUSY_RETRIES {
+        match b.commit(head, &[put_write("k", &[7; 4096], head + 1, prev)]) {
+            Err(e) if e.to_string().contains("database is locked") => std::thread::yield_now(),
+            r => {
+                r.unwrap();
+                return;
+            }
+        }
+    }
+    panic!("commit still busy after {BUSY_RETRIES} attempts");
 }
 
 #[test]
