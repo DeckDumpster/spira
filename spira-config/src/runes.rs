@@ -909,8 +909,8 @@ mod tests {
 
     fn shipped_rune_texts() -> Vec<(String, String)> {
         let dir = shipped_home().join("runes");
-        let mut v: Vec<(String, String)> = std::fs::read_dir(dir)
-            .unwrap()
+        let mut v: Vec<(String, String)> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("shipped runes dir {}: {e}", dir.display()))
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.extension().is_some_and(|x| x == "rune"))
             .map(|p| (p.file_stem().unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&p).unwrap()))
