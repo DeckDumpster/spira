@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=runtime
+DOC=Days of the ops sweep's run files (run/sweep-ops-*: log, brief, name) to keep; older ones are removed by the sweep's cleanup
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_OPS_SWEEP_KEEP_DAYS:=1}"
+SPIRA_CONF_DEFAULT_EOF
