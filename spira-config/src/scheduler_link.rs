@@ -197,10 +197,16 @@ mod tests {
         let dir = testkit::TempDir::new("told-silent");
         let sock = dir.path().join("c.sock");
         let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
-        let held = std::thread::spawn(move || listener.accept().map(|(s, _)| { std::thread::sleep(Duration::from_millis(400)); s }));
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let held = std::thread::spawn(move || {
+            let conn = listener.accept();
+            let _ = released.recv();
+            conn
+        });
         let (line, taken) = told_within(Ok(sock.display().to_string()), "SPIRA_MAX_DWARVES", Duration::from_millis(50));
         assert!(!taken && line.contains("did not answer within") && line.contains("still holds"), "{line}");
-        drop(held);
+        release.send(()).unwrap();
+        held.join().unwrap().unwrap();
     }
 
     #[test]
