@@ -262,11 +262,6 @@ fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[St
     rc
 }
 
-/// The lifecycle store's client: its socket in production, the declared stand-in in a fixture.
-fn lc() -> Result<spira_store::lc_call::LcClient, String> {
-    spira_store::lc_call::LcClient::configured()
-}
-
 /// The exit a store answers when it cannot tell whether a write committed.
 const CANNOT_TELL: i32 = 2;
 
@@ -946,7 +941,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = door_create(&bd_args, create_body.as_deref(), incident_parent, None, None, Some(&title_for_lookup), express, None, None);
+        let rc = door_create(&bd_args, create_body.as_deref(), incident_parent, &[], None, Some(&title_for_lookup), express, None, None);
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", ""), ("repo", repo.as_deref().unwrap_or("")), ("kind", &kind)]);
         }
