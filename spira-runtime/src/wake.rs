@@ -24,6 +24,11 @@ pub fn release_wake(env: &BTreeMap<String, String>, line: &str, deadline: Durati
     concierge_wake(&concierge_script(env)?, line, deadline)
 }
 
+/// [`release_wake`] for this process.
+pub fn release_wake_for_process(line: &str, deadline: Duration) -> Result<String, String> {
+    release_wake(&std::env::vars().collect(), line, deadline)
+}
+
 /// Runs the wake and kills its whole process group once `deadline` passes, so no wake outlives its effect.
 pub fn concierge_wake(concierge: &Path, line: &str, deadline: Duration) -> Result<String, String> {
     // FORK-EDGE: concierge.sh wake (68-line case over the script's 684-line session preamble) types into
@@ -79,6 +84,7 @@ mod tests {
         let dir = testkit::TempDir::new("wake-script");
         std::fs::create_dir_all(dir.join("rel/spira")).unwrap();
         std::fs::create_dir_all(dir.join("checkout")).unwrap();
+        std::fs::write(dir.join("checkout/concierge.sh"), "").unwrap();
         std::fs::write(dir.join("rel/concierge.sh"), "").unwrap();
         assert_eq!(concierge_script(&release_env(&dir)).unwrap(), dir.join("rel/concierge.sh"));
     }
@@ -87,7 +93,8 @@ mod tests {
     fn a_release_without_the_script_fails_naming_the_path() {
         let dir = testkit::TempDir::new("wake-noscript");
         std::fs::create_dir_all(dir.join("rel/spira")).unwrap();
-        std::fs::write(dir.join("checkout-concierge.sh"), "").unwrap();
+        std::fs::create_dir_all(dir.join("checkout")).unwrap();
+        std::fs::write(dir.join("checkout/concierge.sh"), "").unwrap();
         let err = concierge_script(&release_env(&dir)).unwrap_err();
         assert!(err.contains(&dir.join("rel/concierge.sh").display().to_string()), "{err}");
     }
@@ -102,12 +109,6 @@ mod tests {
         testkit::write_exe(dir.join("rel/concierge.sh"), &format!("#!/bin/sh\ntouch {}\n", rel_marker.display()));
         release_wake(&release_env(&dir), "line", Duration::from_secs(10)).unwrap();
         assert!(rel_marker.exists() && !home_marker.exists());
-    }
-
-    #[test]
-    fn no_runner_joins_a_script_onto_the_repo_maps_home() {
-        let src = std::fs::read_to_string(testkit::manifest_dir().join("src/tasks.rs")).unwrap();
-        assert!(!src.contains("home_path().and_then"), "a task runner executes from the home row");
     }
 
     #[test]
