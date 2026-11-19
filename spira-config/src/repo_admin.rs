@@ -568,10 +568,9 @@ impl Worktree {
 
 impl Drop for Worktree {
     fn drop(&mut self) {
-        let _ = git(
-            &self.repo,
-            &["worktree", "remove", "--force", &self.dir.display().to_string()],
-        );
+        let dir = self.dir.display().to_string();
+        let _ = git(&self.repo, &["worktree", "unlock", &dir]);
+        let _ = git(&self.repo, &["worktree", "remove", "--force", &dir]);
         let _ = git(&self.repo, &["worktree", "prune"]);
         let _ = std::fs::remove_dir_all(&self.dir);
     }
@@ -757,6 +756,37 @@ mod tests {
         for kept in ["repo-check-222-2", "repo-check-x-3", "other"] {
             assert!(d.path().join(kept).exists(), "{kept}");
         }
+    }
+
+    fn repo_with_commit(d: &Path) -> PathBuf {
+        let repo = d.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]).unwrap();
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "c"]).unwrap();
+        repo
+    }
+
+    #[test]
+    fn a_locked_check_worktree_is_removed_when_its_guard_drops() {
+        let d = testkit::TempDir::new("wt-locked");
+        let repo = repo_with_commit(d.path());
+        let root = d.path().join("wt");
+        let wt = cut_worktree_in(&root, &repo, "main").unwrap();
+        git(&repo, &["worktree", "lock", &wt.path().display().to_string()]).unwrap();
+        drop(wt);
+        let listed = git(&repo, &["worktree", "list"]).unwrap();
+        assert!(!listed.contains("repo-check-"), "{listed}");
+    }
+
+    #[test]
+    fn a_failed_cut_leaves_no_check_worktree_listed() {
+        let d = testkit::TempDir::new("wt-failed");
+        let repo = repo_with_commit(d.path());
+        let root = d.path().join("wt");
+        assert!(cut_worktree_in(&root, &repo, "no-such-ref").is_err());
+        let listed = git(&repo, &["worktree", "list"]).unwrap();
+        assert!(!listed.contains("repo-check-"), "{listed}");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
     }
 
     #[test]
