@@ -142,3 +142,7 @@ skew-refresh|log|@SPIRA_RUN@/skew-refresh.log
 # verdict=.. red=..`, which offers the incident to a matching SOP's tool first and puts the page in the
 # inbox only when none handled it.
 rounds-loop|log|@SPIRA_RUN@/rounds-loop.log
+
+# LAW-BOOK is appended by `rule enact`, `rule retire` and `rule code --land` when landing law/ fails: one
+# line naming the verb, the key and the error. A quiet log means every statute written has been submitted.
+law-book|log|@SPIRA_RUN@/law-book.log
