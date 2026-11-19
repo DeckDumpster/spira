@@ -418,7 +418,7 @@ fn plan_labelled(label: &str, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) ->
             Disp::OrphanNoBead | Disp::ArchiveTerminal => acts.push(job(jobs, ARCHIVE, &target)?),
             Disp::SendContentLanded => {
                 let ahead = u64::from(b.ahead);
-                if hel::sweep::needs_evidence(ahead, || b.has_own_commit, || b.only_stacked_base, || !b.base_names.is_empty()) {
+                if !terminal && hel::sweep::needs_evidence(ahead, || b.has_own_commit, || b.only_stacked_base, || !b.base_names.is_empty()) {
                     continue;
                 }
                 acts.push(send_leg(jobs, s, b, "hel", ahead > 0 && !terminal, true)?);

@@ -407,7 +407,7 @@ pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool,
         let superseded_ = bead.as_ref().is_some_and(superseded);
         let facts = Scanned { c: &ctx, id: &id, br, tip, merged: merged.contains(br.as_str()), base_tree: base_tree.as_deref(), bead, merge: Default::default(), ahead: Default::default(), cherry: Default::default(), by_subject: Default::default(), pr: Default::default() };
         let (mut has_own_commit, mut only_stacked_base, mut base_names) = (false, false, false);
-        if held.is_none() && !id.starts_with("round-") && judge(&facts) == Disp::SendContentLanded {
+        if held.is_none() && !id.starts_with("round-") && judge(&facts) == Disp::SendContentLanded && !facts.terminal() {
             let ahead = facts.ahead().unwrap_or(0);
             needs_evidence(
                 ahead,
@@ -709,13 +709,10 @@ impl<'a> Sweep<'a> {
                 self.orphan(c, id, br);
             }
             Disp::SendContentLanded => {
-                // EVIDENCE BEFORE DELETING, and only when there was work to land: the branch
-                // is about to vanish, and with it the only proof the bead was not closed on
-                // nothing. Zero ahead is a fast-forward (whose own commit names the bead) or
-                // empty work; only a branch with commits whose diff is nonetheless on the
-                // base is the case this records: a ContentOnBase event.
+                // Evidence before deleting, unless the lifecycle row is already terminal: its
+                // record decided the bead's fate, and a diff that is on the base loses nothing.
                 let ahead = g.ahead(lr, br).unwrap_or(0);
-                if needs_evidence(ahead, || g.has_own_commit(lr, br, id), || g.only_stacked_base(lr, br), || g.base_names(lr, id, 2000)) {
+                if !self.w.lc_terminal(id) && needs_evidence(ahead, || g.has_own_commit(lr, br, id), || g.only_stacked_base(lr, br), || g.base_names(lr, id, 2000)) {
                     self.say(&format!("KEEP   {id}  {ahead} commit(s) not in {lr}, none naming the bead — an empty diff is not evidence of landing"));
                     return;
                 }
