@@ -85,6 +85,7 @@ is "hold.sh exits 0"        0   "$rc"
 is "pidfile exists"          yes "$([ -f "$SPIRA_RUN/hold-sp-h1.pid" ] && echo yes || echo no)"
 is "pidfile contains our pid" $$ "$(cat "$SPIRA_RUN/hold-sp-h1.pid" 2>/dev/null)"
 is "heartbeat file exists"   yes "$([ -f "$SPIRA_RUN/hold-sp-h1.hb" ] && echo yes || echo no)"
+nowant "the heartbeat loop forks no bdq" "bdq" "$(cat "$HERE/hold.sh")"
 # THE HOLD IS AN OPERATOR HOLD ON spira-lc, NOT A bd claim (sp-rlyl0): bd's own status is
 # unmoved by hold.sh now — the pidfile above is what actually keeps the reaper off it, and
 # that is what holder_alive/spira_holder_witnesses below are checking.
