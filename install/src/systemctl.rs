@@ -20,6 +20,9 @@ pub trait Systemctl {
         units.iter().map(|u| self.is_active(u)).collect()
     }
     fn disable_now(&self, unit: &str) -> Result<(), String>;
+    /// `systemctl reset-failed` — systemd keeps a unit that ended failed as `not-found failed`
+    /// after its file is deleted, until this clears it.
+    fn reset_failed(&self, unit: &str) -> Result<(), String>;
     /// `systemctl disable` — unlike [`Self::disable_now`], leaves a running unit running
     /// (`unit-ensure`'s producer guard: withdrawing the opt-in stops it firing again, not
     /// mid-flight).
@@ -131,6 +134,14 @@ impl Systemctl for RealSystemctl {
             Err(err)
         }
     }
+    fn reset_failed(&self, unit: &str) -> Result<(), String> {
+        let (ok, _, err) = self.run(&["reset-failed", unit]);
+        if ok {
+            Ok(())
+        } else {
+            Err(err)
+        }
+    }
     fn disable(&self, unit: &str) -> Result<(), String> {
         let (ok, _, err) = self.run(&["disable", unit]);
         if ok {
@@ -202,6 +213,7 @@ pub struct FakeSystemctl {
     pub enabled_now: std::cell::RefCell<Vec<String>>,
     pub disabled_now: std::cell::RefCell<Vec<String>>,
     pub disabled: std::cell::RefCell<Vec<String>>,
+    pub reset_failed: std::cell::RefCell<Vec<String>>,
     pub single_queries: std::cell::Cell<u32>,
     pub batched_queries: std::cell::Cell<u32>,
     /// A running unit that reads inactive after this many more `is_active` polls.
@@ -272,6 +284,10 @@ impl Systemctl for FakeSystemctl {
         let e = m.entry(unit.to_string()).or_default();
         e.enabled = Some("disabled".into());
         e.active = false;
+        Ok(())
+    }
+    fn reset_failed(&self, unit: &str) -> Result<(), String> {
+        self.reset_failed.borrow_mut().push(unit.to_string());
         Ok(())
     }
     fn disable(&self, unit: &str) -> Result<(), String> {
