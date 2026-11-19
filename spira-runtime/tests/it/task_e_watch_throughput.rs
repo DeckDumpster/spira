@@ -802,3 +802,18 @@ fn one_bead_held_by_a_live_blocker_and_one_by_an_idle_one_files() {
     snap.landings[0].beads = vec!["sp-a".into(), "sp-b".into()];
     assert_eq!(decide(&Carry::default(), &snap, now, &config()).acts.iter().filter(|a| a.name == FILE).count(), 1);
 }
+
+#[test]
+fn a_spent_observe_bound_skips_the_ref_reread_and_a_fresh_one_allows_it() {
+    let now = 1_700_000_000u64;
+    let (dir, w, bin) = flaky_git_repo("throughput-bound", "rev-parse --verify -q local/main", true, now);
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
+    let spent = std::time::Instant::now() - std::time::Duration::from_secs(60);
+    let w_spent = spira_runtime::world::World { observe_bound: Some((spent, std::time::Duration::from_secs(10))), ..w.clone() };
+    let err = w_spent.landed_on_refs(now, "sp").expect_err("no time left, so no re-read");
+    assert!(err.contains("no landing ref resolves"), "{err}");
+    let _ = std::fs::remove_file(dir.join("repo/.git/flaky-fired"));
+    let fresh = spira_runtime::world::World { observe_bound: Some((std::time::Instant::now(), std::time::Duration::from_secs(60))), ..w };
+    fresh.landed_on_refs(now, "sp").expect("a fresh bound allows the re-read");
+}
