@@ -392,7 +392,7 @@ fn search_is_one_issues_query_locating_the_text_in_four_columns_and_a_quote_cann
     let f = Fake::default();
     answer(&f, DB, &v(&["search", "x') OR 1=1 --", "--all", "--limit", "0"])).unwrap();
     let q = first_sql(&f);
-    assert!(q.contains("LOWER('x\\') OR 1=1 --')") && !q.contains("status <> 'closed'") && !q.contains("LIMIT"), "{q}");
+    assert!(q.contains("LOWER('x\\')')") && q.contains("LOWER('OR')") && q.contains("LOWER('1=1')") && !q.contains("status <> 'closed'") && !q.contains("LIMIT"), "{q}");
 }
 
 #[test]
