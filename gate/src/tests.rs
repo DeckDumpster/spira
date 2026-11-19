@@ -3188,6 +3188,19 @@ fn a_fences_only_branch_still_reruns_the_named_suites() {
 }
 
 #[test]
+fn the_reentry_selector_defers_suites_against_the_configured_budget() {
+    let f = returned(unit_fake(&["docs/x.md"]), "test-b.sh,test-c.sh");
+    f.put_var("SPIRA_GATE_DEADLINE", "900");
+    f.put_var("SPIRA_GATE_BUDGET", "420");
+    let row = |s: &str, w: u32| format!("{{\"suite\":\"{s}\",\"ts\":\"2026-11-18T00:00:00Z\",\"wall_secs\":{w}}}\n");
+    f.files.borrow_mut().insert(PathBuf::from(format!("{RUN}/tsd/suite-timing.jsonl")), row("test-b.sh", 400) + &row("test-c.sh", 100));
+    assert_eq!(f.run(), PASS, "{}", f.verdict_line());
+    let err = f.stderr();
+    assert!(err.contains("test-c.sh deferred to the round") && err.contains("the gate's 420s suite budget"), "{err}");
+    assert!(!err.contains("test-b.sh deferred"), "400s fits a 420s budget, not a 260s literal: {err}");
+}
+
+#[test]
 fn a_beads_suites_off_certification_still_selects_its_covered_suites() {
     let f = unit_fake(&["spira-config/src/lib.rs"]);
     f.put_var("SPIRA_GATE_SUITES", "off");
