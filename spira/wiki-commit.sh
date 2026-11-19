@@ -3,7 +3,8 @@
 # Reads filenames (one per line) from stdin. Acquires an exclusive lock on the
 # wiki checkout, stages each file, commits, and pushes. Serialises concurrent
 # callers; commits only the named paths (--only), leaving anything else staged untouched.
-# Exits 0 on success or nothing-to-commit, 1 on lock or commit error.
+# Exits 0 on success or nothing-to-commit, 1 on lock, stage or commit error. A failed stage
+# is never "nothing to commit". WIKI_COMMIT_LOCK_WAIT bounds (seconds) the retry on a held index.lock.
 set -uo pipefail
 wiki="${1:?wiki-commit.sh: wiki dir required}"
 msg="${2:?wiki-commit.sh: commit message required}"
@@ -29,7 +30,26 @@ while IFS= read -r f; do
         printf 'wiki-commit.sh: refusing directory path %s — name the files, not the directory\n' "$f" >&2
         continue
     fi
-    git -C "$wiki" add -- "$f" 2>/dev/null || true
+    add_deadline=$((SECONDS + ${WIKI_COMMIT_LOCK_WAIT:-10}))
+    while ! add_err=$(git -C "$wiki" add -- "$f" 2>&1); do
+        if [ -e "$wiki/.git/index.lock" ] && [ "$SECONDS" -lt "$add_deadline" ]; then
+            sleep 0.2; continue
+        fi
+        printf 'wiki-commit.sh: git add %s failed:\n%s\n' "$f" "$add_err" >&2
+        if [ -e "$wiki/.git/index.lock" ]; then
+            age=$(( $(date +%s) - $(stat -c %Y "$wiki/.git/index.lock") ))
+            holder="holder unknown"; if command -v fuser >/dev/null; then holder=held; fuser "$wiki/.git/index.lock" >/dev/null 2>&1 || holder="held by no process"; fi
+            printf 'wiki-commit.sh: %s/.git/index.lock is %ss old, %s; clear it yourself if stale (this tool never removes another process lock)\n' "$wiki" "$age" "$holder" >&2
+        fi
+        exec {_wc_lockfd}>&-
+        exit 1
+    done
+    if ! git -C "$wiki" ls-files --error-unmatch -- "$f" >/dev/null 2>&1 \
+        && ! git -C "$wiki" cat-file -e "HEAD:$f" 2>/dev/null; then
+        printf 'wiki-commit.sh: %s is not in the index after add — nothing was staged\n' "$f" >&2
+        exec {_wc_lockfd}>&-
+        exit 1
+    fi
     paths+=("$f")
 done <<< "$files"
 
