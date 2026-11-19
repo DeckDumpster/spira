@@ -58,10 +58,11 @@ mod tests {
     fn a_wake_that_outlives_its_deadline_is_killed_and_reported_failed() {
         let dir = testkit::TempDir::new("wake-deadline");
         let script = dir.join("concierge.sh");
-        testkit::write_exe(&script, "#!/bin/sh\nsleep 30\n");
-        let started = Instant::now();
-        let r = concierge_wake(&script, "line", Duration::from_millis(100));
+        let pid_file = dir.join("pid");
+        testkit::write_exe(&script, &format!("#!/bin/sh\necho $$ > {}\nexec sleep 30\n", pid_file.display()));
+        let r = concierge_wake(&script, "line", Duration::from_millis(500));
         assert!(r.is_err());
-        assert!(started.elapsed() < Duration::from_millis(1100));
+        let pid = std::fs::read_to_string(&pid_file).expect("the script started").trim().to_string();
+        assert!(!Path::new("/proc").join(pid).exists(), "the wake outlived its deadline");
     }
 }

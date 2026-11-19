@@ -156,7 +156,7 @@ mod real_world {
     fn an_unreadable_inbox_fails_the_observe_and_the_task_reads_failed() {
         use std::os::unix::fs::PermissionsExt;
         let (_dir, world) = fixture(2, Some(0));
-        fs::set_permissions(&world.inbox, fs::Permissions::from_mode(0)).unwrap();
+        fs::set_permissions(&world.inbox, fs::Permissions::from_mode(0o0)).unwrap();
         if fs::read(&world.inbox).is_ok() {
             return;
         }
