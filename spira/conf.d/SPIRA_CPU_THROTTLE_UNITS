@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=watchtower
+DOC=SYSTEMD UNITS the sweep checks for CPU-quota throttling, space-separated
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SYSTEMD UNITS the sweep checks for CPU-quota throttling, space-separated.
+    : "${SPIRA_CPU_THROTTLE_UNITS:=dolt-beads.service spira-runtime.service}"
+SPIRA_CONF_DEFAULT_EOF

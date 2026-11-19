@@ -1,0 +1,3 @@
+removed = ["spira.self_window"]
+[spira]
+cpu_throttle_units = "dolt-beads.service spira-runtime.service"
