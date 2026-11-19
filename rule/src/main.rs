@@ -77,6 +77,7 @@ fn main() {
         "list" => cmd_list(&db),
         "show" => cmd_show(&db, &home, &rest),
         "audit" => cmd_audit(&db, &home, &rest),
+        "code" if rest.len() == 1 && rest[0] == "--land" => cmd_land_book(&db, &home),
         "code" => cmd_code(&db, &rest),
         "render-memories" => cmd_render_memories(&home, &rest),
         "system-prompt-split" => cmd_system_prompt_split(&rest),
@@ -426,21 +427,67 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
     if rc != 0 {
         return rc;
     }
-    let pointers = match read_pointers_at(&repo) {
-        Ok(p) => p,
+    let book = strings(&after);
+    let landed = read_pointers_for_write(&repo).and_then(|pointers| {
+        let caught = code::catch_up(&toc, &pointers, &book, Some((key.as_str(), part))).map_err(|e| format!("rule: {e}"))?;
+        let added = caught.iter().map(|p| p.slugs.len()).sum::<usize>() - toc.iter().map(|p| p.slugs.len()).sum::<usize>();
+        land_law(home, &repo, "enact", &key, &caught, &pointers, &book).map(|(branch, bead)| (added, branch, bead))
+    });
+    match landed {
+        Ok((n, branch, bead)) => {
+            println!("law/: {n} statute(s) added; committed on {branch}, submitted under {bead}.");
+            0
+        }
         Err(e) => {
             eprintln!("{e}");
-            eprintln!("rule: {key} IS in force but the statute book's gap could not be measured — run `rule.sh code --check` from a worktree.");
-            return 1;
+            log_law_book_failure("enact", &key, &e);
+            eprintln!("rule: {key} is in force but law/ was not submitted — run rule.sh code --land");
+            1
         }
-    };
-    let behind = code::behind(&toc, &pointers, &strings(&after));
-    if behind.is_empty() {
-        println!("law/: book is up to date with the store.");
-    } else {
-        println!("law/: book is {} behind the store ({}); add {key} under Part {part} in law/toc.toml, run rule.sh code, commit.", behind.len(), behind.join(", "));
     }
-    0
+}
+
+fn log_law_book_failure(verb: &str, key: &str, err: &str) {
+    let at = spira_config::bounded::bounded("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let line = format!("{at} rule: {verb} {key}: law/ not landed: {}; run rule.sh code --land\n", err.split_whitespace().collect::<Vec<_>>().join(" "));
+    let wrote = spira_config::process::cfg("SPIRA_RUN").map_err(|e| e.to_string()).and_then(|run| {
+        let log = Path::new(&run).join("law-book.log");
+        std::fs::OpenOptions::new().create(true).append(true).open(&log).and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes())).map_err(|e| format!("{}: {e}", log.display()))
+    });
+    if let Err(e) = wrote {
+        eprintln!("rule: the law-book log line could not be written ({e}): {}", line.trim_end());
+    }
+}
+
+fn cmd_land_book(db: &str, home: &str) -> i32 {
+    let run = || -> Result<Option<(usize, String, String)>, String> {
+        let repo = locate_repo(home)?;
+        let toc = read_toc_at(&repo)?;
+        let pointers = read_pointers_for_write(&repo)?;
+        let book = strings(&read_book(db)?);
+        let caught = code::catch_up(&toc, &pointers, &book, None).map_err(|e| format!("rule: {e}"))?;
+        let base = repo.1.clone().ok_or("rule: no landing ref resolves for the home repository — refusing")?;
+        if caught == toc && !code::book_drifted(Path::new(&repo.0), &base, &toc, &pointers, &book) {
+            return Ok(None);
+        }
+        let added = caught.iter().map(|p| p.slugs.len()).sum::<usize>() - toc.iter().map(|p| p.slugs.len()).sum::<usize>();
+        land_law(home, &repo, "code", "book", &caught, &pointers, &book).map(|(branch, bead)| Some((added, branch, bead)))
+    };
+    match run() {
+        Ok(None) => {
+            println!("law/: book is up to date with the store.");
+            0
+        }
+        Ok(Some((n, branch, bead))) => {
+            println!("law/: {n} statute(s) added; committed on {branch}, submitted under {bead}.");
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            log_law_book_failure("code", "book", &e);
+            1
+        }
+    }
 }
 
 fn land_law(home: &str, repo: &(String, Option<String>), verb: &str, key: &str, toc: &[code::Part], pointers: &code::Pointers, book: &BTreeMap<String, String>) -> Result<(String, String), String> {
@@ -842,14 +889,17 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
     if rc != 0 {
         return rc;
     }
-    match land_law(home, &repo, "retire", &key, &toc, &pointers, &strings(&after)) {
+    let book = strings(&after);
+    let landed = code::catch_up(&toc, &pointers, &book, None).map_err(|e| format!("rule: {e}")).and_then(|caught| land_law(home, &repo, "retire", &key, &caught, &pointers, &book));
+    match landed {
         Ok((branch, bead)) => {
             println!("law/: {key} keeps its number, marked retired; committed on {branch}, submitted under {bead}.");
             0
         }
         Err(e) => {
             eprintln!("{e}");
-            eprintln!("rule: {key} is retired but law/ was not submitted — run `rule.sh code`.");
+            log_law_book_failure("retire", &key, &e);
+            eprintln!("rule: {key} is retired but law/ was not submitted — run `rule.sh code --land`.");
             1
         }
     }

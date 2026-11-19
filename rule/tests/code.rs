@@ -225,3 +225,72 @@ fn behind_names_store_slugs_the_toc_and_pointers_do_not_account_for() {
     let store: BTreeMap<String, String> = ["law-one", "law-three", "law-four", "law-five", "law-six"].iter().map(|s| (s.to_string(), String::new())).collect();
     assert_eq!(rule::code::behind(&toc, &p, &store), ["law-four", "law-six"]);
 }
+
+fn store(slugs: &[&str]) -> BTreeMap<String, String> {
+    slugs.iter().map(|s| (s.to_string(), format!("Do {s}."))).collect()
+}
+
+#[test]
+fn catch_up_appends_every_behind_slug_and_numbers_the_enacted_key_in_its_part() {
+    let toc = parse_toc(TOC).unwrap();
+    let book = store(&["law-one", "law-two", "law-three", "law-four", "law-five", "law-six"]);
+    let out = rule::code::catch_up(&toc, &Pointers::default(), &book, Some(("law-six", 2))).unwrap();
+    assert_eq!(out[0].slugs, ["law-one", "law-two", "law-five", "law-four"].map(String::from));
+    assert_eq!(out[1].slugs, ["law-three", "law-six"].map(String::from));
+    assert!(rule::code::behind(&out, &Pointers::default(), &book).is_empty());
+    assert_eq!(out.iter().map(|p| p.slugs.len()).sum::<usize>(), 6);
+}
+
+fn law_repo() -> testkit::TempDir {
+    let repo = testkit::TempDir::new("rule-inflight");
+    let p = repo.path();
+    testkit::git(p, &["init", "-q", "-b", "main"]);
+    std::fs::create_dir_all(p.join("law")).unwrap();
+    std::fs::write(p.join("law/toc.toml"), TOC).unwrap();
+    testkit::git(p, &["add", "-A"]);
+    testkit::git(p, &["commit", "-q", "-m", "base"]);
+    repo
+}
+
+#[test]
+fn a_second_law_commit_is_cut_on_the_unlanded_first() {
+    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
+    let repo = law_repo();
+    let wt_root = testkit::TempDir::new("rule-inflight-wt");
+    let base_toc = parse_toc(TOC).unwrap();
+    let main_tip = testkit::git(repo.path(), &["rev-parse", "main"]);
+    let commit = |key: &str, toc: &[rule::code::Part], slugs: &[&str]| {
+        rule::code::commit_law(repo.path(), Some("main"), wt_root.path(), "enact", key, toc, &Pointers::default(), &store(slugs)).unwrap()
+    };
+    let t1 = append(&base_toc, 1, "law-four").unwrap();
+    let first = commit("law-four", &t1, &["law-one", "law-two", "law-three", "law-four"]);
+    let t2 = append(&rule::code::with_in_flight(repo.path(), Some("main"), base_toc), 1, "law-five").unwrap();
+    let second = commit("law-five", &t2, &["law-one", "law-two", "law-three", "law-four", "law-five"]);
+    let first_tip = testkit::git(repo.path(), &["rev-parse", &first]);
+    assert_eq!(testkit::git(repo.path(), &["rev-parse", &format!("{second}^")]), first_tip);
+    assert_ne!(first_tip, main_tip);
+    let toc = testkit::git(repo.path(), &["show", &format!("{second}:law/toc.toml")]);
+    assert!(toc.contains("law-four") && toc.contains("law-five"));
+}
+
+#[test]
+fn the_law_book_log_is_watched() {
+    let rows = include_str!("../../spira/watchers");
+    assert!(rows.lines().any(|l| l.starts_with("law-book|log|")), "no law-book log row in spira/watchers");
+}
+
+#[test]
+fn a_law_commit_is_cut_from_the_landing_ref_when_the_unlanded_branch_touches_more_than_the_book() {
+    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
+    let repo = law_repo();
+    let p = repo.path();
+    testkit::git(p, &["checkout", "-q", "-b", "spira/sp-other"]);
+    std::fs::write(p.join("other.rs"), "x").unwrap();
+    testkit::git(p, &["add", "-A"]);
+    testkit::git(p, &["commit", "-q", "-m", "other"]);
+    testkit::git(p, &["checkout", "-q", "main"]);
+    let wt_root = testkit::TempDir::new("rule-inflight-other-wt");
+    let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
+    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
+    assert_eq!(testkit::git(p, &["rev-parse", &format!("{branch}^")]), testkit::git(p, &["rev-parse", "main"]));
+}

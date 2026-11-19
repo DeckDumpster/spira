@@ -531,7 +531,8 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &s
         spira_config::repos::landref(&reg, &repo_path.display().to_string())
     });
     let base = base.ok_or_else(|| format!("rule: no landing ref resolves for {} — refusing to cut law/ from its checkout's HEAD", repo_path.display()))?;
-    if let Err(e) = add_worktree(repo_path, &branch, &wt_s, &base) {
+    let cut_from = newest_book_only_tip(repo_path, &base).unwrap_or(base);
+    if let Err(e) = add_worktree(repo_path, &branch, &wt_s, &cut_from) {
         let _ = git_in(repo_path, &["worktree", "remove", "--force", &wt_s]);
         let _ = git_in(repo_path, &["branch", "-D", &branch]);
         return Err(e);
@@ -590,6 +591,39 @@ pub fn land_law(repo: &LawRepo, wt_root: &Path, verb: &str, key: &str, toc: &[Pa
 pub fn behind(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Vec<String> {
     let accounted = |s: &str| toc.iter().any(|p| p.slugs.iter().any(|t| t == s)) || pointers.retired.iter().any(|r| r.slug == s) || pointers.merged.iter().any(|m| m.from == s);
     book.keys().filter(|s| !accounted(s)).cloned().collect()
+}
+
+/// `toc` with every behind slug appended in store key order under Part 1, the enacted key under
+/// its own Part. Nothing already numbered moves.
+pub fn catch_up(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>, key_part: Option<(&str, u32)>) -> Result<Vec<Part>, String> {
+    let mut out = toc.to_vec();
+    for slug in behind(toc, pointers, book) {
+        let part = match key_part {
+            Some((k, n)) if k == slug => n,
+            _ => 1,
+        };
+        out = append(&out, part, &slug)?;
+    }
+    Ok(out)
+}
+
+/// The newest unlanded `law/` or `spira/` branch whose change against `base` stays within the
+/// statute book, so a later law commit cut on it fast-forwards.
+pub fn newest_book_only_tip(repo_path: &Path, base: &str) -> Option<String> {
+    let refs = git_in(repo_path, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)", &format!("--no-merged={base}"), "refs/heads/law", "refs/heads/spira"]).ok()?;
+    refs.lines().find(|r| {
+        git_in(repo_path, &["diff", "--name-only", &format!("{base}...{r}")]).is_ok_and(|names| !names.is_empty() && names.lines().all(|n| n.starts_with("law/") || n.starts_with("spira/statutes/")))
+    }).map(str::to_string)
+}
+
+/// Whether the tree `commit_law` would cut from (the newest book-only unlanded tip, else `base`)
+/// holds anything but what `toc`, `pointers` and `book` generate.
+pub fn book_drifted(repo_path: &Path, base: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> bool {
+    let rev = newest_book_only_tip(repo_path, base).unwrap_or_else(|| base.to_string());
+    let mut files = generate(toc, pointers, |slug| book.get(slug).cloned());
+    files.insert("toc.toml".to_string(), render_toc(toc));
+    files.insert(POINTERS_FILE.to_string(), render_pointers(pointers));
+    files.iter().any(|(f, want)| git_in(repo_path, &["cat-file", "blob", &format!("{rev}:law/{f}")]).map_or(true, |have| have.trim_end() != want.trim_end()))
 }
 
 /// `toc` plus every slug that a branch not yet on `base` has filed in a Part (a `law/` branch,
