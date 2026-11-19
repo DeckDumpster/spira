@@ -465,6 +465,17 @@ fn a_kv_get_is_one_exact_read_of_the_kv_key_in_bds_json_shape() {
 }
 
 #[test]
+fn a_plain_kv_get_and_a_recall_answer_the_value_and_name_what_is_unset() {
+    let f = Fake { reply: Mutex::new(vec![json!({ "value": "text" })]), ..Fake::default() };
+    assert_eq!(answer(&f, DB, &v(&["kv", "get", "k"])).unwrap(), "text\n");
+    assert_eq!(answer(&f, DB, &v(&["recall", "sop-x"])).unwrap(), "text\n");
+    assert!(f.seen.lock().unwrap()[1].contains("`key` = 'kv.memory.sop-x'"));
+    let none = Fake::default();
+    assert_eq!(answer(&none, DB, &v(&["kv", "get", "k"])).unwrap(), "k (not set)\n");
+    assert!(matches!(answer(&none, DB, &v(&["recall", "sop-x"])), Err(Failure::Request(t)) if t.contains("sop-x")));
+}
+
+#[test]
 fn events_with_no_id_is_a_request_failure() {
     assert!(matches!(answer(&Fake::default(), DB, &v(&["events"])), Err(Failure::Request(_))));
 }

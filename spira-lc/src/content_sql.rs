@@ -165,6 +165,7 @@ pub enum Read {
     State { id: String, dimension: String },
     ConfigGet(String),
     Kv { key: String, json: bool },
+    Recall(String),
     Search { query: String, all: bool, limit: Option<u64> },
     DepList { id: String, up: bool, kind: Option<String> },
     Labels(String),
@@ -180,7 +181,7 @@ impl Read {
             Read::Comments(_) => &["comments"],
             Read::Gates { .. } | Read::Memories => &["issues", "labels", "dependencies"],
             Read::State { .. } | Read::Labels(_) => &["labels"],
-            Read::ConfigGet(_) | Read::Kv { .. } => &["config"],
+            Read::ConfigGet(_) | Read::Kv { .. } | Read::Recall(_) => &["config"],
             Read::DepList { .. } => &["dependencies"],
             Read::Events(_) => &["events"],
         }
@@ -368,6 +369,7 @@ pub fn parse(args: &[String]) -> Result<Read, String> {
         ["config", "get", key] if !key.starts_with('-') => Ok(Read::ConfigGet(key.to_string())),
         ["kv", "get", key] if !key.starts_with('-') => Ok(Read::Kv { key: key.to_string(), json: false }),
         ["kv", "get", key, "--json"] if !key.starts_with('-') => Ok(Read::Kv { key: key.to_string(), json: true }),
+        ["recall", key] if !key.starts_with('-') => Ok(Read::Recall(key.to_string())),
         ["search", ..] => parse_search(&args[1..]),
         ["dep", "list", ..] => parse_dep_list(&args[2..]),
         ["label", "list", ..] => match words(&args[2..]).as_slice() {
@@ -641,6 +643,10 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
                 (None, false) => format!("{key} (not set)\n"),
             })
         }
+        Read::Recall(key) => match kv(sql, db, &format!("memory.{key}"))? {
+            Some(text) => Ok(format!("{text}\n")),
+            None => Err(Failure::Request(format!("no memory stored under {key:?}"))),
+        },
         Read::ConfigGet(key) => {
             let rows = sql.rows(&format!("SELECT value FROM {db}.config WHERE `key` = '{}'", escape(&key)))?;
             Ok(match rows.first().and_then(|r| cell(r, "value")) {

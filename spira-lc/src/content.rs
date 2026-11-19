@@ -393,7 +393,7 @@ pub fn run(
     write: Write<'_>,
 ) -> Answer {
     if args.is_empty() {
-        return Answer { code: CANNOT_TELL, stderr: "usage: spira-lc content <list|show|ref|search|dep list|label list|events|comments|gate list|memories|state|config get|comments add|label add|label remove|note|close|update|create> …\n".into(), ..Default::default() };
+        return Answer { code: CANNOT_TELL, stderr: "usage: spira-lc content <list|show|ref|search|dep list|label list|events|comments|gate list|memories|state|config get|comments add|label add|label remove|note|close|update|create|dep add|dep remove|dep relate|set-state|duplicate|recompute-blocked|gate discover|gate check|gate resolve|kv get|kv set|kv clear|remember|forget|recall> …\n".into(), ..Default::default() };
     }
     let kind = match check(args) {
         Ok(k) => k,
@@ -1211,6 +1211,26 @@ mod tests {
         guard(&mut args, &mut body, &g, &mut Rows(None)).unwrap();
         assert_eq!((args, body), (v(&["remember", "--key", "k", "the text"]), None));
         assert!(check(&v(&["kv", "set", crate::plan::KV_KEY, "1"])).unwrap_err().contains("planning watermark"));
+    }
+
+    #[test]
+    fn the_new_writes_reach_bd_with_bdqs_argv_and_a_remembered_body_last() {
+        let ask = || Ok::<_, String>(ASK.to_string());
+        let g = Guards { caller: &caller(&[]), ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default(), cwd: Default::default() };
+        let ran: RefCell<Vec<Vec<String>>> = RefCell::new(Vec::new());
+        let write = |a: &[String], _: Option<&str>| -> Result<String, String> {
+            ran.borrow_mut().push(a.to_vec());
+            Ok(String::new())
+        };
+        let never = |_: &[String]| -> Result<String, crate::composed::ReadError> { panic!("not a read") };
+        let mut no_after = |_: &[String], _: &str| String::new();
+        let mut body = || Ok::<String, String>("the text".into());
+        let mut gd = |a: &mut Vec<String>, b: &mut Option<String>| guard(a, b, &g, &mut Rows(None));
+        for args in [&["remember", "--key", "k"][..], &["forget", "k"], &["kv", "set", "k", "1"], &["recompute-blocked"], &["duplicate", "sp-a", "--of", "sp-b"], &["update", "sp-a", "--assignee", ""]] {
+            assert_eq!(run(&v(args), &mut body, &mut gd, &mut no_after, &never, &write).code, 0, "{args:?}");
+        }
+        assert_eq!(ran.borrow()[0], v(&["remember", "--key", "k", "the text"]));
+        assert_eq!(ran.borrow()[1..].to_vec(), [v(&["forget", "k"]), v(&["kv", "set", "k", "1"]), v(&["recompute-blocked"]), v(&["duplicate", "sp-a", "--of", "sp-b"]), v(&["update", "sp-a", "--assignee", ""])]);
     }
 
     struct Recorder(Vec<Vec<String>>);
