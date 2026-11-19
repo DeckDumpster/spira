@@ -408,31 +408,24 @@ fn a_missing_landing_ref_names_the_repo_the_ref_tried_and_gits_status() {
 }
 
 /// A `git` that behaves as git does, except that the one call of a repo whose `.git/flaky`
-/// holds a pattern and matches it fails once, after running `.git/flaky-fix`. It lives beside the
-/// test binary and is never removed, so no concurrent test can find it deleted mid-exec.
-fn flaky_git_bin() -> std::path::PathBuf {
-    static BIN: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    BIN.get_or_init(|| {
-        let real = std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join("git")).find(|g| g.is_file()).expect("a git on PATH");
-        let bin = std::env::current_exe().unwrap().parent().unwrap().join("flaky-git-bin");
-        std::fs::create_dir_all(&bin).unwrap();
-        let script = format!(
-            "#!/bin/sh\nif [ \"$1\" = -C ] && [ -f \"$2/.git/flaky\" ] && [ ! -e \"$2/.git/flaky-fired\" ]; then\nread pat < \"$2/.git/flaky\"\ncase \" $* \" in *\"$pat\"*) : > \"$2/.git/flaky-fired\"; [ -f \"$2/.git/flaky-fix\" ] && {real} -C \"$2\" branch local/main; exit 1;; esac\nfi\nexec {real} \"$@\"\n",
-            real = real.display()
-        );
-        let tmp = bin.join(format!("git.{}", std::process::id()));
-        testkit::write_exe(&tmp, &script);
-        std::fs::rename(&tmp, bin.join("git")).unwrap();
-        bin
-    })
-    .clone()
+/// holds a pattern and matches it fails once, after running `.git/flaky-fix`.
+fn flaky_git_bin(dir: &std::path::Path) -> std::path::PathBuf {
+    let real = std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join("git")).find(|g| g.is_file()).expect("a git on PATH");
+    let bin = dir.join("flaky-git-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = format!(
+        "#!/bin/sh\nif [ \"$1\" = -C ] && [ -f \"$2/.git/flaky\" ] && [ ! -e \"$2/.git/flaky-fired\" ]; then\nread pat < \"$2/.git/flaky\"\ncase \" $* \" in *\"$pat\"*) : > \"$2/.git/flaky-fired\"; [ -f \"$2/.git/flaky-fix\" ] && {real} -C \"$2\" branch local/main; exit 1;; esac\nfi\nexec {real} \"$@\"\n",
+        real = real.display()
+    );
+    testkit::write_exe(bin.join("git"), &script);
+    bin
 }
 
 /// A repo with one landed bead whose next git call matching `pat` fails once; `fix` makes the
 /// failed call's ref appear behind it.
 fn flaky_git_repo(name: &str, pat: &str, fix: bool, now: u64) -> (testkit::TempDir, spira_runtime::world::World, std::path::PathBuf) {
-    let bin = flaky_git_bin();
     let dir = testkit::TempDir::new(name);
+    let bin = flaky_git_bin(&dir);
     let repo = dir.join("repo");
     std::fs::create_dir(&repo).unwrap();
     testkit::git(&repo, &["init", "-q", "-b", "other"]);
