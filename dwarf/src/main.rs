@@ -261,9 +261,6 @@ fn main() {
         { let code = rc; spira_otel::run::finish(code); std::process::exit(code) };
     }
     let bd = BdCli {
-        bdq: spira_config::release_env::tool("bdq").unwrap_or_else(|e| fatal(&format!("dwarf: {e}"))),
-        timeout_s: conf.n("BD_TIMEOUT", 180).max(1) as u64,
-        conn_retries: conf.n("SPIRA_BDQ_CONN_RETRIES", 2).max(1) as u32,
         // Not a registered config key — `Conf::or`, not the strict `Conf::s`.
         fixture: Some(conf.or("SPIRA_BDJSON_FIXTURE", "")).filter(|s| !s.is_empty()),
         env: &env,
