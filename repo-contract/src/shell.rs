@@ -56,38 +56,62 @@ pub fn parse_dev_env(json: &str) -> Result<ShellEnv, String> {
     Ok(ShellEnv { vars, key: String::new() })
 }
 
+/// What a tree's flake offers as a dev shell. `DoesNotEnter` is only ever nix's own refusal;
+/// a fault of the checker is an `Err` beside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DevShell {
+    Entered(ShellEnv),
+    Undeclared,
+    DoesNotEnter(String),
+}
+
 /// Whether a `flake.nix` names `devShells`.
 pub fn declares_dev_shell(flake_nix: &[u8]) -> bool {
     String::from_utf8_lossy(flake_nix).contains("devShells")
 }
 
-/// The tree's flake dev shell environment; `None` (nothing spawned) when it has no `flake.nix`
+/// The tree's flake dev shell; `Undeclared` (nothing spawned) when it has no `flake.nix`
 /// or its flake names no `devShells`: `print-dev-env` would otherwise fall back to a package's
 /// build environment, which is not a shell anyone declared.
 /// Cached at `<cache>/<cache_key>.json`.
-pub fn shell_env(tree: &Path, nix_bin: &Path, cache: &Path) -> Result<Option<ShellEnv>, String> {
+pub fn shell_env(tree: &Path, nix_bin: &Path, cache: &Path) -> Result<DevShell, String> {
     let Ok(flake_nix) = std::fs::read(tree.join("flake.nix")) else {
-        return Ok(None);
+        return Ok(DevShell::Undeclared);
     };
     if !declares_dev_shell(&flake_nix) {
-        return Ok(None);
+        return Ok(DevShell::Undeclared);
     }
     let flake_lock = std::fs::read(tree.join("flake.lock")).unwrap_or_default();
     let key = cache_key(&flake_nix, &flake_lock);
     let cached = cache.join(format!("{key}.json"));
     if let Some(env) = std::fs::read_to_string(&cached).ok().and_then(|j| parse_dev_env(&j).ok()).filter(|e| e.path_dirs().iter().all(|d| d.is_dir())) {
-        return Ok(Some(ShellEnv { key, ..env }));
+        return Ok(DevShell::Entered(ShellEnv { key, ..env }));
     }
     let out = spira_config::bounded::bounded_for(nix_bin, "600").args(["print-dev-env", "--json"]).arg(tree).output().map_err(|e| format!("cannot run {}: {e}", nix_bin.display()))?;
+    if !matches!(out.status.code(), Some(c) if !TIMEOUT_OWN_CODES.contains(&c)) {
+        return Err(format!("cannot run {}: {}", nix_bin.display(), exit_words(&out)));
+    }
     if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        return Ok(DevShell::DoesNotEnter(String::from_utf8_lossy(&out.stderr).trim().to_string()));
     }
     let json = String::from_utf8_lossy(&out.stdout);
     let env = ShellEnv { key, ..parse_dev_env(&json)? };
     std::fs::create_dir_all(cache).map_err(|e| format!("cannot create {}: {e}", cache.display()))?;
     let tmp = cached.with_extension(format!("{}.tmp", std::process::id()));
     std::fs::write(&tmp, json.as_bytes()).and_then(|()| std::fs::rename(&tmp, &cached)).map_err(|e| format!("cannot write {}: {e}", cached.display()))?;
-    Ok(Some(env))
+    Ok(DevShell::Entered(env))
+}
+
+/// The statuses `timeout` itself gives (deadline, bad deadline, not executable, not found): the
+/// run never reached nix's verdict on the flake.
+const TIMEOUT_OWN_CODES: [i32; 4] = [124, 125, 126, 127];
+
+fn exit_words(out: &std::process::Output) -> String {
+    match out.status.code() {
+        Some(124) => "it hit its deadline".into(),
+        Some(c) => format!("it exited {c}"),
+        None => "it was killed by a signal".into(),
+    }
 }
 
 /// The cache directory under the run dir.
@@ -140,7 +164,7 @@ mod tests {
     fn a_tree_without_a_flake_has_no_shell_and_spawns_nothing() {
         let dir = testkit::TempDir::new("repo-contract-noflake");
         let r = shell_env(&dir, &dir.join("no-nix"), &dir.join("cache"));
-        assert_eq!(r, Ok(None));
+        assert_eq!(r, Ok(DevShell::Undeclared));
     }
 
     #[test]
@@ -160,7 +184,7 @@ mod tests {
         let dir = testkit::TempDir::new("repo-contract-nodevshell");
         std::fs::write(dir.join("flake.nix"), "{ outputs = _: { packages = {}; }; }").unwrap();
         let r = shell_env(&dir, &dir.join("no-nix"), &dir.join("cache"));
-        assert_eq!(r, Ok(None));
+        assert_eq!(r, Ok(DevShell::Undeclared));
     }
 
     #[test]
@@ -172,6 +196,39 @@ mod tests {
         let live = format!(r#"{{"variables":{{"PATH":{{"type":"exported","value":"{}"}}}}}}"#, dir.display());
         std::fs::write(cache.join(format!("{}.json", cache_key(b"devShells", b""))), live).unwrap();
         let r = shell_env(&dir, &dir.join("no-nix"), &cache);
-        assert!(r.unwrap().unwrap().vars.contains_key("PATH"));
+        assert!(matches!(r.unwrap(), DevShell::Entered(e) if e.vars.contains_key("PATH")));
+    }
+
+    fn fake_nix(dir: &Path, body: &str) -> PathBuf {
+        let nix = dir.join("nix");
+        testkit::write_exe(&nix, &format!("#!/bin/sh\n{body}\n"));
+        nix
+    }
+
+    #[test]
+    fn a_nix_that_refuses_the_flake_is_a_shell_that_does_not_enter() {
+        let dir = testkit::TempDir::new("repo-contract-refused");
+        std::fs::write(dir.join("flake.nix"), "devShells").unwrap();
+        let nix = fake_nix(&dir, "echo boom >&2; exit 1");
+        assert_eq!(shell_env(&dir, &nix, &dir.join("cache")), Ok(DevShell::DoesNotEnter("boom".into())));
+    }
+
+    #[test]
+    fn a_nix_that_cannot_be_run_is_a_fault_of_the_checker() {
+        let dir = testkit::TempDir::new("repo-contract-nonix");
+        std::fs::write(dir.join("flake.nix"), "devShells").unwrap();
+        assert!(shell_env(&dir, &dir.join("no-nix"), &dir.join("cache")).unwrap_err().contains("cannot run"));
+    }
+
+    #[test]
+    fn a_nix_that_prints_a_dev_env_enters_and_is_cached() {
+        let dir = testkit::TempDir::new("repo-contract-enters");
+        std::fs::write(dir.join("flake.nix"), "devShells").unwrap();
+        let json = dir.join("out.json");
+        std::fs::write(&json, FIXTURE).unwrap();
+        let nix = fake_nix(&dir, &format!("cat {}", json.display()));
+        let cache = dir.join("cache");
+        assert!(matches!(shell_env(&dir, &nix, &cache), Ok(DevShell::Entered(e)) if e.path_dirs().len() == 3));
+        assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 1);
     }
 }

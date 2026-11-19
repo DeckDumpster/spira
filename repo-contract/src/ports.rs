@@ -1,6 +1,6 @@
 //! What the clauses read from the world; the real implementation is `real::Real`.
 
-use crate::shell::ShellEnv;
+use crate::shell::{DevShell, ShellEnv};
 use std::path::Path;
 
 /// A registration piece, as `spira-config repo check` reports it.
@@ -16,8 +16,8 @@ pub struct Piece {
 pub trait Ports {
     /// A file of `tree`, or of the repository's landing ref when `tree` is `None`; `None` when absent.
     fn read(&self, repo: &str, tree: Option<&Path>, rel: &str) -> Result<Option<String>, String>;
-    /// The tree's flake dev shell; `Ok(None)` when it declares none.
-    fn shell_env(&self, repo: &str, tree: Option<&Path>) -> Result<Option<ShellEnv>, String>;
+    /// The tree's flake dev shell; `Err` when the checker could not find out.
+    fn shell_env(&self, repo: &str, tree: Option<&Path>) -> Result<DevShell, String>;
     fn on_path(&self, env: &ShellEnv, program: &str) -> bool;
     fn landing_pieces(&self, repo: &str) -> Vec<Piece>;
     fn land_mode(&self, repo: &str) -> String;
