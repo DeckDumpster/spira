@@ -480,7 +480,6 @@ fn live_over(content: spira_store::lc_call::Reply, show: spira_store::lc_call::R
         }
     }
     let store = crate::store::Store {
-        bdq: "nonexistent/bdq".into(),
         lc: LcClient::over(Arc::new(Two(content, show)), true),
         lc_bin: "nonexistent/spira-lc".into(),
         timeout: std::time::Duration::from_secs(1),
@@ -520,4 +519,23 @@ fn a_content_failure_is_absence_only_when_the_machine_has_no_row() {
     assert!(w.bead("sp-a").is_err());
     let mut w = live_over(reply(2, "no issue found matching sp-a"), reply(1, ""));
     assert!(w.bead("sp-a").is_err(), "only exit 1 can mean absent; a deadline or crash cannot tell");
+}
+
+#[test]
+fn an_unpoison_note_is_a_door_note_from_the_body() {
+    use spira_store::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+    struct Fake(Mutex<Vec<(Vec<String>, Option<String>)>>);
+    impl Transport for Fake {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push((argv.to_vec(), stdin.map(String::from)));
+            Ok(Reply { code: 0, out: String::new(), err: String::new() })
+        }
+    }
+    let fake = Arc::new(Fake(Mutex::new(Vec::new())));
+    let mut w = live_over(reply(0, ""), reply(0, ""));
+    w.store.lc = LcClient::over(fake.clone(), true);
+    World::note(&mut w, "sp-a", "unpoisoned: why").unwrap();
+    let seen = fake.0.lock().unwrap().clone();
+    assert_eq!(seen, [(vec!["content".to_string(), "note".into(), "sp-a".into(), "--stdin".into()], Some("unpoisoned: why".to_string()))]);
 }

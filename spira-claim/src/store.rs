@@ -1,11 +1,9 @@
-//! The only I/O: reading the store through bdq and the lifecycle service ([`LcClient`],
+//! The only I/O: reading the store through the lifecycle service ([`LcClient`],
 //! in-process over its socket), and config through spira-config. Every read is bounded in
 //! time and in argv size. DESIGN.md §2 "Data in".
 
 use std::collections::HashMap;
-use std::io::Read;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::events::{self, EventRow};
 use lifecycle::bead::BeadState;
@@ -19,7 +17,6 @@ pub const LIST_CHUNK: usize = 100;
 
 #[derive(Clone)]
 pub struct Store {
-    pub bdq: String,
     /// The lifecycle service: every verb it serves goes here, no process launched.
     pub lc: LcClient,
     /// The `spira-lc` CLI, for the verbs the socket does not serve (`close`, `reopen`).
@@ -31,7 +28,7 @@ pub struct Store {
 
 impl std::fmt::Debug for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Store").field("bdq", &self.bdq).field("lc_socket", &self.lc.is_socket()).field("lc_bin", &self.lc_bin).field("timeout", &self.timeout).finish()
+        f.debug_struct("Store").field("lc_socket", &self.lc.is_socket()).field("lc_bin", &self.lc_bin).field("timeout", &self.timeout).finish()
     }
 }
 
@@ -58,10 +55,6 @@ pub struct Config {
     pub queue_wait_label: String,
     /// `spira.open_children_label` — ditto.
     pub open_children_label: String,
-    /// `spira.claim_retries` — `SPIRA_CLAIM_RETRIES`.
-    pub claim_retries: u32,
-    /// `spira.claim_retry_delay_s` — `SPIRA_CLAIM_RETRY_DELAY_S`.
-    pub claim_retry_delay_s: u32,
     /// `spira.runes` (`SPIRA_RUNES`, a list) — the roster override `rune-exclude`/
     /// `rune-ready`/`bulk-ready-by-rune` pass to `spira_config::runes::spira_runes`;
     /// "" means no override (per Ryan 2026-10-05: no direct env read — `roster` used to
@@ -91,8 +84,6 @@ pub fn load_config() -> Result<Config, String> {
         no_loop_label: spira_config::process::cfg("SPIRA_NO_LOOP_LABEL")?,
         queue_wait_label: spira_config::process::cfg("SPIRA_QUEUE_WAIT_LABEL")?,
         open_children_label: spira_config::process::cfg("SPIRA_OPEN_CHILDREN_LABEL")?,
-        claim_retries: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRIES")?,
-        claim_retry_delay_s: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRY_DELAY_S")?,
         runes: spira_config::process::cfg("SPIRA_RUNES")?,
         incident_label: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
         pilgrim_label: spira_config::process::cfg("SPIRA_PILGRIM_LABEL")?,
@@ -105,7 +96,7 @@ impl Store {
     pub fn new(timeout_s: u64) -> Result<Store, String> {
         let lc_bin = spira_store::lifecycle_row::lc_bin()?;
         let timeout = Duration::from_secs(timeout_s.max(1));
-        Ok(Store { bdq: spira_config::release_env::tool("bdq")?, lc: LcClient::for_bin(&lc_bin)?.within(timeout), lc_bin, timeout, views: store_view::shared() })
+        Ok(Store { lc: LcClient::for_bin(&lc_bin)?.within(timeout), lc_bin, timeout, views: store_view::shared() })
     }
 
     /// One lifecycle request; any exit code is an answer. `Err` only when there is none.
@@ -125,18 +116,12 @@ impl Store {
         Ok(r.stdout)
     }
 
-    /// bdq for what the lifecycle service does not serve: `note --stdin`, `update --set-metadata`
-    /// and `claim-retry`'s arbitrary ready queries. Content reads and label writes go through [`Store::lc`].
-    pub fn bdq_cmd(&self, args: &[&str]) -> Command {
-        let mut c = Command::new(&self.bdq);
-        c.args(args);
-        c
-    }
-
-    /// Run `bdq <args>` to completion; `Err` names the verb and bd's own first stderr line
-    /// (or the timeout/spawn failure).
-    pub fn bdq(&self, args: &[&str]) -> Result<String, String> {
-        run(self.bdq_cmd(args), self.timeout).map_err(|e| format!("bd {}: {e}", args.first().unwrap_or(&"")))
+    /// [`lc_full`](Self::lc_full) with `stdin` as the request body.
+    pub fn lc_stdin<S: AsRef<str>>(&self, args: &[S], stdin: &str) -> Result<Ran, String> {
+        match self.lc.call_stdin(args, stdin) {
+            Ok(r) => Ok(Ran { code: r.code, stdout: r.out, stderr: r.err }),
+            Err(LcError::Refused(m) | LcError::Fault(m) | LcError::NotRunning(m)) => Err(m),
+        }
     }
 
     /// Every folded event for `ids`, one query per [`EVENT_CHUNK`] ids: bd's own rows (its
@@ -394,73 +379,12 @@ pub struct ViewRow {
 /// The condition key a refused readiness publish raises.
 pub const READINESS_ALERT: &str = "claim-readiness-refused";
 
-/// Run a command to completion within `timeout`; stdout on exit 0, else an error naming
-/// the first stderr line. A timed-out child is killed.
-pub fn run(cmd: Command, timeout: Duration) -> Result<String, String> {
-    let r = run_full(cmd, timeout, None)?;
-    if r.code != 0 {
-        let first = r.stderr.lines().next().unwrap_or("no stderr").to_string();
-        return Err(format!("exit {}: {first}", r.code));
-    }
-    Ok(r.stdout)
-}
-
 /// What a finished child said: its exit code (-1 when killed by a signal) and both streams.
 #[derive(Debug, Clone, Default)]
 pub struct Ran {
     pub code: i32,
     pub stdout: String,
     pub stderr: String,
-}
-
-/// Run a command within `timeout`, feeding `input` on stdin (law-payloads-go-on-stdin) or
-/// /dev/null when there is none. Err only when it could not start, or timed out (killed).
-pub fn run_full(mut cmd: Command, timeout: Duration, input: Option<&[u8]>) -> Result<Ran, String> {
-    cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("cannot start: {e}"))?;
-    let t_in = input.map(|b| {
-        let mut sin = child.stdin.take().unwrap();
-        let b = b.to_vec();
-        std::thread::spawn(move || {
-            use std::io::Write;
-            let _ = sin.write_all(&b);
-        })
-    });
-    let mut so = child.stdout.take().unwrap();
-    let mut se = child.stderr.take().unwrap();
-    let t_out = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = so.read_to_end(&mut b);
-        b
-    });
-    let t_err = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = se.read_to_end(&mut b);
-        b
-    });
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
-            Ok(None) if start.elapsed() >= timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("timed out after {}s", timeout.as_secs()));
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
-            Err(e) => return Err(format!("wait: {e}")),
-        }
-    };
-    if let Some(t) = t_in {
-        let _ = t.join();
-    }
-    Ok(Ran {
-        code: status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&t_out.join().unwrap_or_default()).into_owned(),
-        stderr: String::from_utf8_lossy(&t_err.join().unwrap_or_default()).into_owned(),
-    })
 }
 
 #[cfg(test)]
@@ -490,7 +414,7 @@ mod tests {
 
     fn store_over_views(reply: fn(&[String]) -> Reply, views: Option<Arc<store_view::Projection>>) -> (Store, Arc<Scripted>) {
         let t = Arc::new(Scripted { seen: Mutex::new(Vec::new()), reply });
-        let st = Store { bdq: "nonexistent/bdq".into(), lc: LcClient::over(t.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views };
+        let st = Store { lc: LcClient::over(t.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views };
         (st, t)
     }
 

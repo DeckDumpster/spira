@@ -44,7 +44,7 @@ impl Outcome {
     }
 }
 
-const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--json]
+pub(crate) const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--json]
        spira-claim requeues <bead> [--events F] [--json]
        spira-claim counts [--events F]                      (ids on stdin)
        spira-claim decide [thresholds] [--] <n> <requeues> <reclaims> <labels> <stamp> [poisoned]
@@ -57,7 +57,6 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim shared-exclude                                            (ready_shared_exclude)
        spira-claim ready-count <labels> [<exclude-labels>] [--json] [--express]          (ready_count; prints '0' on a failed query too; --json: the rows)
        spira-claim urgent [<rune>...]                                                  (claimable P0 and REWORK beads: id, priority, rework 0|1, express 0|1, tab-separated)
-       spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
        spira-claim rune-exclude <rune> [own-exclusions]                    (rune_exclude; resolves $SPIRA_HOME in-process, $SPIRA_RUNES)
        spira-claim rune-ready <rune> [--json [--freshness]] [--express]                             (rune_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
        spira-claim bulk-ready-by-rune                                      (bulk_ready_by_rune; the machine's claimable set)
@@ -219,16 +218,6 @@ pub fn dispatch(raw: &[String], stdin: &mut dyn Read) -> Outcome {
 pub fn dispatch_in(raw: &[String], stdin: &mut dyn Read, env: &dyn Fn(&str) -> Option<String>) -> Outcome {
     let lookup = env;
     let Some(verb) = raw.first() else { return Outcome::usage("missing verb") };
-    // `claim-retry` takes ARBITRARY bd query argv (claim_retry "${READY_ARGS[@]}" ... in
-    // bash) — flags meant for bd (`--label`, `--claim`, ...) cannot be told apart from
-    // spira-claim's own by the generic `Args` parser, so this verb bypasses it entirely and
-    // takes `raw[1..]` as the literal bd argv, never parsed here.
-    if verb == "claim-retry" {
-        return match store::load_config() {
-            Ok(cfg) => cmd_claim_retry(&raw[1..], &cfg),
-            Err(e) => Outcome::error(format!("config: {e}")),
-        };
-    }
     let a = match Args::parse(&raw[1..]) {
         Ok(a) => a,
         Err(e) => return Outcome::usage(e),
@@ -833,39 +822,6 @@ fn ready_rows_json(a: &Args, env: &Env, st: &Store, labels: &str, exclude: &str)
     };
     let mine = ready::matching(&rows, &ready::split_csv(labels), &ready::split_csv(exclude));
     Outcome::ok(format!("{}\n", serde_json::to_string(&mine).unwrap()))
-}
-
-/// bd query argv, retried (lib.sh:609 `claim_retry`). Dispatched from `dispatch()` before
-/// `Args::parse` ever sees the argv — see the comment there.
-fn cmd_claim_retry(bd_args: &[String], cfg: &Config) -> Outcome {
-    if bd_args.is_empty() {
-        return Outcome::usage("claim-retry needs bd query arguments");
-    }
-    let tries = cfg.claim_retries.max(1);
-    let delay = std::time::Duration::from_secs(cfg.claim_retry_delay_s as u64);
-    let st = match Store::new(60) {
-        Ok(s) => s,
-        Err(e) => return Outcome::error(e),
-    };
-    let mut args: Vec<&str> = bd_args.iter().map(String::as_str).collect();
-    args.push("--json");
-    let mut last = String::new();
-    for attempt in 1..=tries {
-        match st.bdq(&args) {
-            Ok(out) => return Outcome::ok(bead::bdq::json_only(&out).to_string()),
-            Err(e) => {
-                last = e;
-                if attempt < tries {
-                    std::thread::sleep(delay);
-                }
-            }
-        }
-    }
-    Outcome {
-        code: 1,
-        out: String::new(),
-        err: format!("spira-claim: claim_retry: query failed after {tries} attempt(s): {}", first_line(&last)),
-    }
 }
 
 /// `spira_runes`'s roster, as a `Vec<String>` — `rune-exclude`/`rune-ready`/

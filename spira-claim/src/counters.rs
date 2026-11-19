@@ -17,7 +17,7 @@
 
 use serde_json::Value;
 
-use crate::store::{self, Store};
+use crate::store::Store;
 use crate::unpoison::bounded_cause;
 
 // =========================================================================================
@@ -159,8 +159,8 @@ pub fn thrash_streak_bump(store: &Store, id: &str, tip: &str, note: &str) -> u32
     let tip_arg = format!("thrash_tip={tip}");
     let streak_arg = format!("thrash_streak={streak}");
     let last_arg = format!("thrash_last={note}");
-    let args = ["update", id, "--set-metadata", &tip_arg, "--set-metadata", &streak_arg, "--set-metadata", &last_arg];
-    let _ = store::run_full(store.bdq_cmd(&args), store.timeout, None);
+    let args = ["content", "update", id, "--set-metadata", &tip_arg, "--set-metadata", &streak_arg, "--set-metadata", &last_arg];
+    let _ = store.lc_full(&args);
     streak
 }
 
