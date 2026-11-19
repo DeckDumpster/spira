@@ -147,19 +147,37 @@ impl World for Real {
         let since = since.filter(|&s| s > 0);
         let since_formatted = since.map(|s| self.format_epoch_utc(s));
         let causes = self.deliberate_cause_names();
-        let rows = self.fact_rows(since)?;
-        let bd_query = crate::sql::events_sql_with(since_formatted.as_deref(), &causes, &Self::recorded_cause_ids(&rows)?);
         let delay = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
-        retry_sql("census_events_run_sql", delay, || self.run_both_sql(&bd_query, || Ok(crate::facts::events(&rows, since, &causes))))
+        retry_sql("census_events_run_sql", delay, || {
+            let rows = match self.fact_rows(since) {
+                Ok(rows) => rows,
+                Err(e) => return (false, String::new(), e),
+            };
+            let recorded = match Self::recorded_cause_ids(&rows) {
+                Ok(ids) => ids,
+                Err(e) => return (false, String::new(), e),
+            };
+            let bd_query = crate::sql::events_sql_with(since_formatted.as_deref(), &causes, &recorded);
+            self.run_both_sql(&bd_query, || Ok(crate::facts::events(&rows, since, &causes)))
+        })
     }
     fn census_event_rows_run_sql(&self, since: Option<i64>) -> Result<String, String> {
         let since = since.filter(|&s| s > 0);
         let since_formatted = since.map(|s| self.format_epoch_utc(s));
         let causes = self.deliberate_cause_names();
-        let rows = self.fact_rows(since)?;
-        let bd_query = crate::sql::event_rows_sql(since_formatted.as_deref(), &causes, &Self::recorded_cause_ids(&rows)?);
         let delay = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
-        retry_sql("census_event_rows_run_sql", delay, || self.run_both_sql(&bd_query, || Ok(crate::facts::event_rows(&rows, since, &causes))))
+        retry_sql("census_event_rows_run_sql", delay, || {
+            let rows = match self.fact_rows(since) {
+                Ok(rows) => rows,
+                Err(e) => return (false, String::new(), e),
+            };
+            let recorded = match Self::recorded_cause_ids(&rows) {
+                Ok(ids) => ids,
+                Err(e) => return (false, String::new(), e),
+            };
+            let bd_query = crate::sql::event_rows_sql(since_formatted.as_deref(), &causes, &recorded);
+            self.run_both_sql(&bd_query, || Ok(crate::facts::event_rows(&rows, since, &causes)))
+        })
     }
     fn census_handwritten_run_sql(&self) -> String {
         self.run_both_sql(&crate::sql::handwritten_sql(), || self.fact_rows(None).map(|rows| crate::facts::handwritten(&rows))).1
@@ -397,5 +415,22 @@ mod tests {
         real.census_handwritten_run_sql();
         let argv = std::fs::read_to_string(&calls).unwrap();
         assert_eq!(argv.lines().collect::<Vec<_>>(), ["fact list --kinds requeued,reclaimed,recurred,lapsed,reopen"; 2]);
+    }
+
+    #[test]
+    fn deliberate_reads_since_the_watermark_and_handwritten_renders_what_it_fetched() {
+        let tmp = testkit::TempDir::new("census-tables");
+        let rows = r#"[
+            {"issue_id":"sp-a","event_type":"reopen","new_value":"eject","actor":"harness","created_at":"2023-11-14T22:13:30Z"},
+            {"issue_id":"sp-b","event_type":"requeued","new_value":"gate-red","actor":"alice","created_at":"2023-11-14T22:13:40Z"}
+        ]"#;
+        let (real, calls) = real_over(tmp.path(), rows);
+        let deliberate = real.census_deliberate_run_sql(Some(1_700_000_000));
+        let handwritten = real.census_handwritten_run_sql();
+        let argv = std::fs::read_to_string(&calls).unwrap();
+        let kinds = "fact list --kinds requeued,reclaimed,recurred,lapsed,reopen";
+        assert_eq!(argv.lines().collect::<Vec<_>>(), [format!("{kinds} --since 1700000000"), kinds.to_string()]);
+        assert_eq!(deliberate.trim(), "| bd | row |", "no cause list is resolvable here, so the fact leg adds nothing");
+        assert!(handwritten.contains("| requeued | gate-red | alice | 1 | 1 |"), "{handwritten}");
     }
 }

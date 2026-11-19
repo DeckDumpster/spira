@@ -19,32 +19,13 @@ pub struct FactRow {
     pub at: i64,
 }
 
-fn civil_days(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-/// The epoch second of `YYYY-MM-DDTHH:MM:SSZ`, the `created_at` `fact list` answers.
-fn epoch_of(text: &str) -> Option<i64> {
-    let (date, time) = text.trim_end_matches('Z').split_once(['T', ' '])?;
-    let mut d = date.split('-').map(|p| p.parse::<i64>().ok());
-    let mut t = time.split(':').map(|p| p.parse::<i64>().ok());
-    let (y, mo, da) = (d.next()??, d.next()??, d.next()??);
-    let (h, mi, s) = (t.next()??, t.next()??, t.next()??);
-    Some(civil_days(y, mo, da) * 86_400 + h * 3_600 + mi * 60 + s)
-}
-
 /// The rows of `fact list` output.
 pub fn parse(json: &str) -> Result<Vec<FactRow>, String> {
     let rows: Vec<Value> = serde_json::from_str(json).map_err(|e| e.to_string())?;
     rows.iter()
         .map(|r| {
             let s = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-            let at = epoch_of(&s("created_at"))
+            let at = strand::timefmt::parse_rfc3339(&s("created_at"))
                 .ok_or_else(|| format!("unreadable created_at {:?}", s("created_at")))?;
             Ok(FactRow {
                 event_type: s("event_type"),
@@ -368,6 +349,7 @@ mod tests {
             row("sp-i", "reopen", "eject", "harness", 1000),
             row("sp-i", "reopen", "work-close-converted", "harness", 1100),
             row("sp-j", "reopen", "recurrence", "harness", 1200),
+            row("sp-j", "reopen", "closed-while-live", "harness", 1210),
             row("sp-k", "requeued", "gate-red", "operator", 1300),
             row("sp-k", "reclaimed", "lease-expired", "human", 1400),
             row("sp-l", "reopen", "eject", "alice", 1500),
