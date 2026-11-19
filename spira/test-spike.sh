@@ -112,6 +112,11 @@ beads
 
 want "the shipped rune is discovered without being listed" "spike" "$(spira_runes)"
 
+for fn in bdq bdjson _bdq_check_repo_label json_count; do
+    declare -F "$fn" >/dev/null; wantrc "lib_sh_defines_no_bdq: $fn is not a function" 1 "$?"
+done
+is "lib_sh_defines_no_bdq: json_only is a plain stdin filter" "[1]" "$(printf 'warn\n[1]\n' | json_only)"
+
 beads "$(bead sp-spike-1 "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL")"
 is "a spike bead is in the spike's partition" 1 "$(rune_ready spike)"
 is "and not in the builder's"                 0 "$(rune_ready builder)"
