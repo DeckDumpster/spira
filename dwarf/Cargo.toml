@@ -2,6 +2,7 @@
 name = "dwarf"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "dwarf — the runner called to claim one bead, build its worktree, render its brief, run the model session and account for the outcome (replaces spira/dwarf.sh)."
 
 [lib]
