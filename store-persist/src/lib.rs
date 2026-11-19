@@ -618,7 +618,8 @@ fn squash_history(cfg: &Config, l: &Layout, dolt: &dyn Dolt, conn: &Conn, db: &s
     });
     match rewrite {
         Ok(()) => {
-            out.report(format!("{db}: history squashed, {len} commits -> {}", dolt.history_len(conn, &cfg.data, db)?), false);
+            let now = dolt.history_len(conn, &cfg.data, db).map_or_else(|e| format!("unreadable ({e})"), |n| n.to_string());
+            out.report(format!("{db}: history squashed, {len} commits -> {now}"), false);
             Ok(true)
         }
         Err(e) => {
