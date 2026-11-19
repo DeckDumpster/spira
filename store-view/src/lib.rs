@@ -190,6 +190,9 @@ impl Memo {
     }
 }
 
+/// The most terminal rows kept; at the bound the set is dropped whole and refilled by what is asked next.
+const TERMINAL_KEPT: usize = 4_096;
+
 /// The terminal rows the store was asked for, kept until a change names them or the views reload:
 /// the live set never holds one, and a reader that names one would otherwise ask the store each time.
 #[derive(Default)]
@@ -754,6 +757,9 @@ impl Projection {
             let mut t = self.terminal();
             if t.generation == generation {
                 for row in learned.iter().filter(|r| r["state"].as_str().is_some_and(lc_state::is_terminal)) {
+                    if t.rows.len() >= TERMINAL_KEPT {
+                        t.rows.clear();
+                    }
                     if let Some(id) = row["bead_id"].as_str() {
                         t.rows.insert(id.to_string(), row.clone());
                     }

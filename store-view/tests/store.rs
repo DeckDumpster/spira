@@ -663,3 +663,22 @@ fn a_terminal_row_is_asked_of_the_store_once_and_forgotten_when_a_change_names_i
         assert_eq!(asks(&w), 1);
     });
 }
+
+#[test]
+fn the_remembered_terminal_rows_are_bounded() {
+    within(|| {
+        let many: Vec<Value> = (0..5_000).map(|i| bead(&format!("sp-{i:05}"), "DONE", "[]", None, false)).collect();
+        let w = world(Script { list_rev: 9, rows: many, ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        let ids: Vec<String> = (0..5_000).map(|i| format!("sp-{i:05}")).collect();
+        for chunk in ids.chunks(200) {
+            w.p.ids_answer(chunk).unwrap();
+        }
+        let asks = |w: &World| w.script.lock().unwrap().seen.iter().filter(|a| a[..2] == ["list", "--ids"]).count();
+        let before = asks(&w);
+        w.p.ids_answer(&ids[4_900..4_950]).unwrap();
+        assert_eq!(asks(&w), before, "the newest rows are still remembered");
+        w.p.ids_answer(&ids[..50]).unwrap();
+        assert_eq!(asks(&w), before + 1, "the oldest were dropped at the bound and are asked again");
+    });
+}
