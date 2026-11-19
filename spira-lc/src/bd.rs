@@ -374,7 +374,8 @@ pub fn ask_operator_classed(from: &str, subject: &str, default: &str, class: Opt
     // mail, by name on the launcher's PATH (sp-gypjk); SPIRA_MAIL_SH is the harness-wide
     // binary-override seam.
     let mail_sh = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string());
-    let mut cmd = spira_config::bounded::bounded(&mail_sh);
+    // An ask files its decision bead, so it is a filing and waits as one.
+    let mut cmd = spira_config::bounded::bounded_for(&mail_sh, FILING_SECS);
     cmd.args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id]);
     if let Some(c) = class {
         cmd.args(["--class", c]);
@@ -584,6 +585,17 @@ mod filing_tests {
         let prog = slow_bead_sh(dir.path());
         let err = bead_sh_via(&prog, "0.2", &["label", "add", "sp-x", "split"]).unwrap_err();
         assert!(err.contains("label add sp-x split") && err.contains("timed out"), "{err:?}");
+    }
+
+    #[test]
+    fn an_ask_whose_mail_files_past_the_plain_call_deadline_is_delivered() {
+        let dir = testkit::TempDir::new("ask-slow-mail");
+        let p = dir.path().join("mail");
+        let plain: u64 = spira_config::bounded::CALL_TIMEOUT_SECS.parse().unwrap();
+        testkit::write_exe(&p, &format!("#!/bin/sh\ncat >/dev/null\necho 'mail: blocking edge refused — wiring relates_to instead (override: SPIRA_MAIL_ALLOW_BLOCKING=1)' >&2\nsleep {}\n", plain + 1));
+        let _env = testkit::env(&[("SPIRA_MAIL_SH", Some(&p.to_string_lossy()))]);
+        let r = ask_operator_classed("dwarf <dwarf@spira>", "Retire as superseded by sp-b?", "supersede", Some("policy"), "sp-a", "## Question\nq\n");
+        assert!(r.is_ok(), "an ask mail still filing at the plain call deadline was cut and read as undelivered: {r:?}");
     }
 
     #[test]
