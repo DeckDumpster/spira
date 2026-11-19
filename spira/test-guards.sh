@@ -328,7 +328,9 @@ for rune in builder ops groomer; do
     for c in 'bd create x' '~/.local/bin/bd create x' 'BEADS_DIR=/x/.beads ~/.local/bin/bd create x' \
              'cd /x && bd list' '$SPIRA_RELEASE/bin/bdq create -t bug x' '/r/bin/bdq --help' \
              'bash -c "bd show sp-1"' 'env FOO=1 bd-embedded list' 'export BEADS_DIR=/x' \
-             'sudo -u root bd list' 'timeout 5 /usr/bin/bd list'; do
+             'sudo -u root bd list' 'timeout 5 /usr/bin/bd list' 'echo `bd create x`' 'echo $(bd list)' \
+             'ls | xargs bd show' 'find . -exec bd list {} +' 'eval "bd create x"' 'bash -lc "BEADS_DIR=/x true"' \
+             'declare -x BEADS_DIR=/x'; do
         out="$(fence_bd "$c" SPIRA_RUNE="$rune")"
         want "sp-dxbocs/$rune/refused: $c" '"decision":"block"' "$out"
         want "sp-dxbocs/$rune/names-the-exit: $c" 'work file' "$out"

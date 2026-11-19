@@ -398,11 +398,12 @@ if hit(sys.stdin.read()): print("1")
         reason="dwarves may not kill by pattern (pkill, killall, pgrep|xargs kill match other sessions' processes, the Concierge's included; law-guard-binds-the-caller): kill by PID after reading /proc/<pid>/cmdline, or stop a systemd unit by name with systemctl --user stop <unit>; SPIRA_DWARF_OVERRIDE=1 for Ops incidents"
 fi
 
+# Reverses the 2026-10-05 no-bd-rule ruling (sp-j7l3q) on 2026-11-18 (sp-dxbocs): a restricted PATH does not stop an absolute path.
 if [ -z "$reason" ]; then
     _direct_bd="$(printf '%s' "$cmd" | python3 -c '
 import re, shlex, sys
 BD = {"bd", "bd-embedded", "bdq"}
-PREFIX = {"sudo", "env", "timeout", "nohup", "nice", "command", "exec", "time"}
+PREFIX = {"sudo", "env", "timeout", "nohup", "nice", "command", "exec", "time", "xargs"}
 ARGFLAGS = {"-u", "-g", "-U", "-C", "-n", "-s", "-k"}
 ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 def strip_heredocs(text):
@@ -418,6 +419,7 @@ def strip_heredocs(text):
             end = m.group(1)
     return " ; ".join(out)
 def segments(text):
+    text = text.replace("`", " ; ").replace("$(", " ; ")
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
@@ -458,11 +460,17 @@ def hit(text, depth=0):
             j = flag[0]
             if j + 1 < len(rest) and hit(strip_heredocs(rest[j + 1]), depth + 1):
                 return True
+        if name == "eval" and depth < 3 and hit(" ".join(rest), depth + 1):
+            return True
+        if name == "find" and depth < 3:
+            for k, w in enumerate(rest):
+                if w in ("-exec", "-execdir", "-ok", "-okdir") and hit(shlex.join(rest[k + 1:]), depth + 1):
+                    return True
     return False
 if hit(strip_heredocs(sys.stdin.read())): print("1")
 ' 2>/dev/null)"
     [ "$_direct_bd" = "1" ] && \
-        reason="dwarves may not run bd/bdq directly (law-only-spira-lc-talks-to-the-stores; reverses the 2026-10-05 no-bd-rule ruling of sp-j7l3q on 2026-11-18, sp-dxbocs): file with work file \"<title>\" --for builder --repo <name> --body-file -, note with work note-on <id> -, find with work search \"<q>\"; SPIRA_DWARF_OVERRIDE=1 for Ops incidents"
+        reason="dwarves may not run bd/bdq directly (law-only-spira-lc-talks-to-the-stores): file with work file \"<title>\" --for builder --repo <name> --body-file -, note with work note-on <id> -, find with work search \"<q>\"; SPIRA_DWARF_OVERRIDE=1 for Ops incidents"
 fi
 
 [ -n "$reason" ] || exit 0
