@@ -75,18 +75,22 @@ pub fn find_message_by_id(mail_root: &Path, msgid: &str) -> Option<PathBuf> {
     None
 }
 
-/// `_reply_mailbox`: the sender's own mailbox, unless the local part names a runes
-/// persona (transient — nobody would read it), or no such mailbox exists — either way,
-/// `concierge`.
-pub fn reply_mailbox(from: &str, home: &Path, mail_root: &Path) -> String {
+fn from_localpart(from: &str) -> String {
     let angled = Regex::new(r"<([^@>]+)@").unwrap();
     let bare = Regex::new(r"^([^@\s]+)@").unwrap();
-    let localpart = angled
+    angled
         .captures(from)
         .or_else(|| bare.captures(from))
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// `_reply_mailbox`: the sender's own mailbox, unless the local part names a runes
+/// persona (transient — nobody would read it), or no such mailbox exists — either way,
+/// `concierge`.
+pub fn reply_mailbox(from: &str, home: &Path, mail_root: &Path) -> String {
+    let localpart = from_localpart(from);
 
     if !localpart.is_empty() && home.join("runes").join(format!("{localpart}.md")).is_file() {
         return "concierge".to_string();
@@ -141,7 +145,8 @@ pub fn sendmail_to(home: &Path, mail_root: &Path, mute: bool, raw: &str, to: Opt
     maildir::mail_ensure(&dir).map_err(|e| format!("cannot ensure mailbox {dest_mailbox}: {e}"))?;
     let msgid = maildir::mint_msgid();
     fs::write(dir.join("tmp").join(&msgid), raw).map_err(|e| format!("cannot write message: {e}"))?;
-    let delivered_path = maildir::mail_deliver(&dir, &msgid, mute).map_err(|e| format!("cannot deliver message: {e}"))?;
+    let own_mailbox = to.is_none() && from_localpart(&message::header_ci_before_blank(raw, "from")) == dest_mailbox;
+    let delivered_path = maildir::mail_deliver(&dir, &msgid, mute || own_mailbox).map_err(|e| format!("cannot deliver message: {e}"))?;
 
     Ok(SendmailOutcome { dest_mailbox, delivered_path })
 }
@@ -307,6 +312,35 @@ mod tests {
         fs::create_dir_all(home.join("runes")).unwrap();
         let out = sendmail(&home, d.path(), false, &reply_raw(None)).unwrap();
         assert_eq!(out.dest_mailbox, "concierge");
+    }
+
+    #[test]
+    fn a_reply_routed_to_its_own_senders_mailbox_is_filed_read() {
+        let d = testkit::TempDir::new("mail-sendmail");
+        let home = d.path().join("home");
+        fs::create_dir_all(home.join("runes")).unwrap();
+        fs::write(home.join("runes/builder.md"), "# builder persona\n").unwrap();
+        let msgid = send_plain(d.path(), "builder", "Builder <builder@spira>", "ask");
+        let raw = format!("From: Concierge <concierge@spira>\nSubject: Re: ask\nIn-Reply-To: <{msgid}@spira>\n\nDone.\n");
+        let out = sendmail(&home, d.path(), false, &raw).unwrap();
+        assert_eq!(out.dest_mailbox, "concierge");
+        let names = |mb: &str, sub: &str| -> Vec<String> { fs::read_dir(d.path().join(mb).join(sub)).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect() };
+        assert!(names("concierge", "new").is_empty());
+        let cur = names("concierge", "cur");
+        assert_eq!(cur.len(), 1);
+        assert!(cur[0].ends_with(":2,S"), "{cur:?}");
+        assert_eq!(names("builder", "cur"), vec![format!("{msgid}:2,RS")]);
+    }
+
+    #[test]
+    fn a_reply_from_another_sender_routed_to_concierge_stays_new() {
+        let d = testkit::TempDir::new("mail-sendmail");
+        let home = d.path().join("home");
+        fs::create_dir_all(home.join("runes")).unwrap();
+        fs::write(home.join("runes/builder.md"), "# builder persona\n").unwrap();
+        let msgid = send_plain(d.path(), "builder", "Builder <builder@spira>", "ask");
+        sendmail(&home, d.path(), false, &reply_raw(Some(&msgid))).unwrap();
+        assert_eq!(fs::read_dir(d.path().join("concierge/new")).unwrap().count(), 1);
     }
 
     // covers: UC-operator-channel-07
