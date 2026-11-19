@@ -417,10 +417,13 @@ fn flaky_git_repo(name: &str, pat: &str, on_fail: &str, now: u64) -> (testkit::T
     let bin = dir.join("bin");
     std::fs::create_dir(&bin).unwrap();
     let marker = dir.join("failed-once");
+    let real_git = std::env::split_paths(&std::env::var_os("PATH").unwrap()).filter(|d| !d.starts_with(dir.parent().unwrap())).map(|d| d.join("git")).find(|g| g.is_file()).expect("a git on PATH");
+    let on_fail = on_fail.replace("GIT", &real_git.display().to_string());
     testkit::write_exe(
         bin.join("git"),
         &format!(
-            "#!/bin/sh\ncase \"$*\" in *{repo}*{pat}*)\n[ -e {m} ] || {{ : > {m}; {on_fail}; exit 1; }};;\nesac\nexec /usr/bin/git \"$@\"\n",
+            "#!/bin/sh\ncase \"$*\" in *{repo}*{pat}*)\n[ -e {m} ] || {{ : > {m}; {on_fail}; exit 1; }};;\nesac\nexec {git} \"$@\"\n",
+            git = real_git.display(),
             repo = repo.display(),
             m = marker.display()
         ),
@@ -434,7 +437,7 @@ fn flaky_git_repo(name: &str, pat: &str, on_fail: &str, now: u64) -> (testkit::T
 #[test]
 fn a_landing_ref_that_fails_once_and_resolves_on_the_second_read_is_read() {
     let now = 1_700_000_000u64;
-    let (dir, w, bin) = flaky_git_repo("throughput-reread", "rev-parse*local/main", "/usr/bin/git -C $2 branch local/main", now);
+    let (dir, w, bin) = flaky_git_repo("throughput-reread", "rev-parse*local/main", "GIT -C $2 branch local/main", now);
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
     let landings = w.landed_on_refs(now, "sp").expect("the second read resolves the ref");
