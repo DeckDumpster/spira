@@ -47,10 +47,10 @@ pub fn thresholds(d: &SweepData, cfg: &Cfg, raise: Raise) {
 }
 
 /// The failed-unit alarm for `unit`, failing since `first_seen` (epoch seconds) at `now`.
-pub fn failed_unit_finding(db: &str, home_repo: &str, unit: &str, first_seen: i64, now: i64) -> Finding {
+pub fn failed_unit_finding(db: &str, home_repo: &str, unit: &str, invocation: &str, first_seen: i64, now: i64) -> Finding {
     let first_disp = crate::log::fmt_iso(first_seen);
     let age_mins = (now - first_seen) / 60;
-    let body = format!("{unit} has been failing for {age_mins}m (first seen failing {first_disp})\n\nCheck: systemctl --user status {unit}\n");
+    let body = format!("{unit} has one failed run (invocation {invocation}) standing for {age_mins}m (it failed at {first_disp}); it has not been re-run since\n\nCheck: systemctl --user status {unit}\n");
     Finding::new(db, home_repo, &format!("FAILED UNIT: {unit} failing for {age_mins}m"), &body).priority(1).reference(format!("incident:failed-unit-{unit}")).cause("failed-unit")
 }
 
@@ -77,18 +77,19 @@ fn tracked_by_open_bead(cfg: &Cfg, unit: &str) -> bool {
 
 fn failed_units_escalation(d: &SweepData, cfg: &Cfg) {
     let Some(units) = &d.failed_units else { return };
+    let invocation_of = |u: &str| d.failed_invocations.get(u).cloned().unwrap_or_default();
     let state_path = cfg.failed_units_state();
     let prev_rows = failed_units::read_state_file(&state_path);
     let inc = usable_inc(cfg);
     let mut new_rows = Vec::new();
     for unit in units {
         let prev = prev_rows.iter().find(|r| &r.unit == unit);
-        let (row, decided) = failed_units::decide(d.now, unit, prev, cfg.failed_units_warn_mins);
+        let (row, decided) = failed_units::decide(d.now, unit, &invocation_of(unit), prev, cfg.failed_units_warn_mins);
         let should_escalate = decided || (row.escalated && !tracked_by_open_bead(cfg, unit));
         if should_escalate {
             if let Some(inc) = inc {
                 let age_mins = (d.now - row.first_seen) / 60;
-                incident::alarm(inc, &failed_unit_finding(&cfg.db, &cfg.home_repo, unit, row.first_seen, d.now));
+                incident::alarm(inc, &failed_unit_finding(&cfg.db, &cfg.home_repo, unit, &row.invocation, row.first_seen, d.now));
                 log(&format!("watchtower: failed-unit escalation filed ({unit}, {age_mins}m)"));
             } else {
                 log(&format!("watchtower: {} is missing — failed-unit escalation not filed", cfg.incident_sh));

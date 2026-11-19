@@ -151,6 +151,9 @@ pub struct Snapshot {
     pub draining: bool,
     /// `None` when the failed-unit list could not be read.
     pub failed_units: Option<Vec<String>>,
+    /// Failed unit → the `InvocationID` of the run that failed.
+    #[serde(default)]
+    pub failed_invocations: BTreeMap<String, String>,
     pub cpu_throttle: BTreeMap<String, u64>,
     /// The cockpit's `SP_*` counters.
     pub counters: BTreeMap<String, String>,
@@ -201,13 +204,36 @@ pub struct Snapshot {
     pub escalations: Vec<watchtower::incident::Finding>,
 }
 
+/// A failed unit's first-seen second and failing invocation. A carry from before invocations
+/// held the bare second; it reads with no invocation, so its age restarts once.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct FailedRow {
+    pub first_seen: u64,
+    pub invocation: String,
+}
+
+impl<'de> Deserialize<'de> for FailedRow {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Old(u64),
+            New { first_seen: u64, #[serde(default)] invocation: String },
+        }
+        Ok(match Wire::deserialize(d)? {
+            Wire::Old(first_seen) => FailedRow { first_seen, invocation: String::new() },
+            Wire::New { first_seen, invocation } => FailedRow { first_seen, invocation },
+        })
+    }
+}
+
 /// `{ lapsed_marker, failed_units rows, cpu_throttle samples, prompt }`; `prompt` is the last
 /// `SWEEP:NOMINAL` line, so an unchanged nominal sweep rewrites nothing.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Carry {
     pub lapsed_marker: Option<String>,
-    pub failed_units: BTreeMap<String, u64>,
+    pub failed_units: BTreeMap<String, FailedRow>,
     pub cpu_throttle: BTreeMap<String, u64>,
     pub prompt: Option<String>,
     /// The failed units already escalated (`failed-units.state`'s third column).
@@ -293,15 +319,16 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     if let Some(units) = &snap.failed_units {
         let (mut rows, mut escalated) = (BTreeMap::new(), std::collections::BTreeSet::new());
         for unit in units {
-            let prev = carry.failed_units.get(unit).map(|t| watchtower::failed_units::StateRow { unit: unit.clone(), first_seen: *t as i64, escalated: carry.escalated.contains(unit) });
-            let (row, decided) = watchtower::failed_units::decide(now as i64, unit, prev.as_ref(), FAILED_UNITS_WARN_MINS);
+            let prev = carry.failed_units.get(unit).map(|r| watchtower::failed_units::StateRow { unit: unit.clone(), first_seen: r.first_seen as i64, escalated: carry.escalated.contains(unit), invocation: r.invocation.clone() });
+            let invocation = snap.failed_invocations.get(unit).map_or("", String::as_str);
+            let (row, decided) = watchtower::failed_units::decide(now as i64, unit, invocation, prev.as_ref(), FAILED_UNITS_WARN_MINS);
             if decided || (row.escalated && !snap.filed_incidents.contains_key(unit)) {
-                raise(&mut next, watchtower::sweep::escalate::failed_unit_finding(&cfg.db, &cfg.home_repo, unit, row.first_seen, now as i64));
+                raise(&mut next, watchtower::sweep::escalate::failed_unit_finding(&cfg.db, &cfg.home_repo, unit, &row.invocation, row.first_seen, now as i64));
             }
             if row.escalated {
                 escalated.insert(unit.clone());
             }
-            rows.insert(unit.clone(), u64::try_from(row.first_seen).unwrap_or(0));
+            rows.insert(unit.clone(), FailedRow { first_seen: u64::try_from(row.first_seen).unwrap_or(0), invocation: row.invocation });
         }
         next.failed_units = rows;
         next.escalated = escalated;
@@ -337,6 +364,7 @@ pub fn observe() -> Result<String, String> {
         halted: d.halt.is_some(),
         draining: matches!(d.drain, Drain::Draining { .. }),
         failed_units: d.failed_units.clone(),
+        failed_invocations: d.failed_invocations.clone(),
         gate_wait_s: d.gate_wait.oldest_wait.and_then(|w| u64::try_from(w).ok()),
         gate_slow: d.gate_slow.is_some(),
         noverdict: d.nv_worst_key.clone().map(|k| (k, u64::try_from(d.nv_worst).unwrap_or(0))).into_iter().collect(),
