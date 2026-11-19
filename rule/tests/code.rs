@@ -278,3 +278,19 @@ fn the_law_book_log_is_watched() {
     let rows = include_str!("../../spira/watchers");
     assert!(rows.lines().any(|l| l.starts_with("law-book|log|")), "no law-book log row in spira/watchers");
 }
+
+#[test]
+fn a_law_commit_is_cut_from_the_landing_ref_when_the_unlanded_branch_touches_more_than_the_book() {
+    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
+    let repo = law_repo();
+    let p = repo.path();
+    testkit::git(p, &["checkout", "-q", "-b", "spira/sp-other"]);
+    std::fs::write(p.join("other.rs"), "x").unwrap();
+    testkit::git(p, &["add", "-A"]);
+    testkit::git(p, &["commit", "-q", "-m", "other"]);
+    testkit::git(p, &["checkout", "-q", "main"]);
+    let wt_root = testkit::TempDir::new("rule-inflight-other-wt");
+    let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
+    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
+    assert_eq!(testkit::git(p, &["rev-parse", &format!("{branch}^")]), testkit::git(p, &["rev-parse", "main"]));
+}

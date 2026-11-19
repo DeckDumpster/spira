@@ -448,11 +448,14 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
 }
 
 fn log_law_book_failure(verb: &str, key: &str, err: &str) {
-    let Ok(run) = spira_config::process::cfg("SPIRA_RUN") else { return };
     let at = spira_config::bounded::bounded("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     let line = format!("{at} rule: {verb} {key}: law/ not landed: {}; run rule.sh code --land\n", err.split_whitespace().collect::<Vec<_>>().join(" "));
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(Path::new(&run).join("law-book.log")) {
-        let _ = std::io::Write::write_all(&mut f, line.as_bytes());
+    let wrote = spira_config::process::cfg("SPIRA_RUN").map_err(|e| e.to_string()).and_then(|run| {
+        let log = Path::new(&run).join("law-book.log");
+        std::fs::OpenOptions::new().create(true).append(true).open(&log).and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes())).map_err(|e| format!("{}: {e}", log.display()))
+    });
+    if let Err(e) = wrote {
+        eprintln!("rule: the law-book log line could not be written ({e}): {}", line.trim_end());
     }
 }
 

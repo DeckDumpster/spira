@@ -604,9 +604,6 @@ pub fn catch_up(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, Strin
         };
         out = append(&out, part, &slug)?;
     }
-    if let Some((k, n)) = key_part {
-        out = append(&out, n, k)?;
-    }
     Ok(out)
 }
 
