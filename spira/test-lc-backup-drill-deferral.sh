@@ -67,10 +67,31 @@ stamp="$SPIRA_RUN/lc-backup/control/drill.ok"
 rm -f "$stamp"
 PATH="$T/bin:$PATH" STUB_RC=0 STUB_SAY=fine _lcb_drill_control >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "a passing control drill exits green" || bad "a passing control drill exits green" "rc=$rc"
-[ -s "$stamp" ] && [ "$(cat "$stamp")" -gt 1700000000 ] && ok "a passing control drill writes the epoch stamp the watcher reads" || bad "a passing control drill writes the epoch stamp" "$(cat "$stamp" 2>/dev/null)"
+[ -s "$stamp" ] && [ "$(cat "$stamp")" -gt 1700000000 ] && ok "a passing control drill writes the epoch stamp the watcher reads" || bad "a passing control drill writes the epoch stamp" "$(cat "$stamp" 2>/dev/null) $(cat "$T/run.out")"
 echo 1700000000 > "$stamp"
 PATH="$T/bin:$PATH" STUB_RC=1 STUB_SAY=broken _lcb_drill_control >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "a failing control drill exits red" || bad "a failing control drill exits red" "rc=$rc"
 [ "$(cat "$stamp")" = "1700000000" ] && ok "a failing control drill leaves the prior stamp" || bad "a failing control drill leaves the prior stamp" "$(cat "$stamp")"
+
+SPIRA_LC_STORE_PATH="$T/store"
+_lcb_refuse_unconfigured() { return 0; }; _lcb_refuse_same_disk() { return 0; }
+_lcb_run_db() { return 0; }; _lcb_run_registry() { return 0; }
+cv="$SPIRA_RUN/lc-backup/control/drill.verdict"
+stage() { rm -f "$stamp" "$SPIRA_RUN"/lc-backup/*/drill.ok; printf '%s\n' "$1" > "$cv"; touch -d @1700000000 "$cv"; }
+stage "lc-backup: drill ok — control: sqlite-checkpoint: /x/control.db: 482 passes: errors 0; wal 0 frames 0 B"
+cmd_run >"$T/run.out" 2>&1; exec 8>&-
+[ "$(cat "$stamp" 2>/dev/null)" = "1700000000" ] && ok "a passing verdict without a stamp is imported at the verdict's mtime" || bad "a passing verdict is imported" "$(cat "$stamp" 2>/dev/null) $(cat "$T/run.out")"
+stage "lc-backup: drill: control: restore failed"
+cmd_run >"$T/run.out" 2>&1; exec 8>&-
+[ ! -e "$stamp" ] && ok "a failing verdict gets no stamp" || bad "a failing verdict gets no stamp" "stamped"
+stage "lc-backup: drill: DEFERRED past 0s, never ran — x"
+cmd_run >"$T/run.out" 2>&1; exec 8>&-
+[ ! -e "$stamp" ] && ok "a deferred verdict gets no stamp" || bad "a deferred verdict gets no stamp" "stamped"
+stage "lc-backup: drill ok — control: fine"; echo 1600000000 > "$stamp"
+cmd_run >"$T/run.out" 2>&1; exec 8>&-
+[ "$(cat "$stamp")" = "1600000000" ] && ok "an existing stamp is never rewritten" || bad "an existing stamp is never rewritten" "$(cat "$stamp")"
+stage "lc-backup: drill ok — control: fine"
+PATH="$T/bin:$PATH" STUB_RC=1 STUB_SAY=broken cmd_drill --db control >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && [ "$(cat "$stamp" 2>/dev/null)" = "1700000000" ] && ok "cmd_drill imports before a failing drill and keeps the stamp" || bad "cmd_drill imports before a failing drill" "rc=$rc $(cat "$stamp" 2>/dev/null)"
 
 tl_summary
