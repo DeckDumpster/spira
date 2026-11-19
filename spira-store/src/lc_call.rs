@@ -877,6 +877,17 @@ mod tests {
     }
 
     #[test]
+    fn a_thread_spawned_inside_a_task_sends_the_name_it_is_handed_and_none_otherwise() {
+        as_task("outer", || {
+            let task = current_task();
+            assert_eq!(std::thread::spawn(current_task).join().unwrap(), None, "a spawned thread starts unnamed");
+            let carried = std::thread::spawn(move || as_task_of(task.as_deref(), current_task)).join().unwrap();
+            assert_eq!(carried.as_deref(), Some("outer"));
+        });
+        assert_eq!(as_task_of(None, current_task), None);
+    }
+
+    #[test]
     fn as_task_restores_the_outer_name() {
         assert_eq!(current_task(), None);
         as_task("outer", || {
