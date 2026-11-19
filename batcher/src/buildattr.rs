@@ -2,6 +2,8 @@
 //!
 //! An error at a file one member touches ejects it. When the error names an item another member's
 //! diff defines, the member whose code lacks it is sequenced behind the definer instead. Any
+//! error at a Cargo manifest two or more members touch, with no provider, ejects the last of them:
+//! git merged their lines cleanly and cargo refuses the pair. Any other
 //! error that maps to no single member leaves the whole verdict empty — a partial ejection
 //! would re-cut a tree that still does not build.
 
@@ -191,6 +193,22 @@ fn one(e: &CompileError, members: &[MemberDiff]) -> Option<Action> {
             id: touchers[0].id.clone(),
             line,
         }),
+        _ if providers.is_empty()
+            && touchers.len() > 1
+            && e.file.rsplit('/').next() == Some("Cargo.toml") =>
+        {
+            let (last, earlier) = touchers.split_last()?;
+            let earlier: Vec<&str> = earlier.iter().map(|m| m.id.as_str()).collect();
+            let verb = if earlier.len() == 1 { "stays" } else { "stay" };
+            Some(Action::Eject {
+                id: last.id.clone(),
+                line: format!(
+                    "{line} — {} is also changed by {}, which {verb}; rebase onto them and drop the duplicate",
+                    e.file,
+                    earlier.join(", ")
+                ),
+            })
+        }
         _ => None,
     }
 }
