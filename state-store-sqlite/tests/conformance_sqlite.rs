@@ -964,6 +964,26 @@ fn a_scan_resumes_from_its_persisted_cursor_and_drains_once_the_stamped_event_ag
 }
 
 #[test]
+fn a_reopen_mid_deletion_does_not_rescan_the_unstamped_events_it_already_passed() {
+    let dir = TempDir::new("sqlite-event-reopen-mid-deletion");
+    let wall = VirtualClock::new(D0 + 60 * DAY_MS);
+    let (path, b) = seeded_store(&dir, &wall, &many_unstamped_then_one_stamped());
+    let mut i = 0;
+    while events_left(&path) == 20_001 {
+        live_commit(&b, i);
+        i += 1;
+        assert!(i < 100, "the scan never reached the deletion");
+    }
+    b.take_drain_rows();
+    drop(b);
+    let b = open_day(&path, &wall);
+    live_commit(&b, 1_000);
+    let rows = b.take_drain_rows();
+    assert!(rows <= DRAIN_PER_COMMIT as u64, "the first commit after the reopen examined {rows} rows");
+    assert!(events_left(&path) < 20_001 - DRAIN_PER_COMMIT as i64, "the reopen did not go on deleting");
+}
+
+#[test]
 fn a_commit_that_drains_records_a_drain_phase() {
     let dir = TempDir::new("sqlite-drain-phase");
     let wall = VirtualClock::new(D0 + 30 * DAY_MS);

@@ -729,6 +729,23 @@ fn meta(conn: &Connection, name: &str) -> Result<Option<u64>> {
 
 const EVENTS_DUE: &str = "events_due";
 const EVENTS_SCAN_FROM: &str = "events_scan_from";
+const EVENTS_STAMPED: &str = "events_stamped";
+
+/// The first stamped event a finished scan found: its `at` (8 bytes, big-endian) then its key,
+/// as one blob.
+fn stamped_found(conn: &Connection) -> Result<Option<(Vec<u8>, u64)>> {
+    let blob = conn
+        .prepare_cached("SELECT value FROM meta WHERE name = ?1")
+        .and_then(|mut s| s.query_row([EVENTS_STAMPED], |r| r.get::<_, Vec<u8>>(0)).optional())
+        .map_err(db)?;
+    Ok(blob.and_then(|b| Some((b.get(8..)?.to_vec(), u64::from_be_bytes(b.get(..8)?.try_into().ok()?)))))
+}
+
+fn set_stamped_found(conn: &Connection, key: &[u8], at: u64) -> Result<()> {
+    let mut blob = at.to_be_bytes().to_vec();
+    blob.extend_from_slice(key);
+    exec(conn, "INSERT OR REPLACE INTO meta (name, value) VALUES (?1, ?2)", params![EVENTS_STAMPED, blob]).map(drop)
+}
 
 /// The persisted cursor of an unfinished event scan, stored as a blob: SQLite keeps whatever
 /// type it is given in an INTEGER column.
@@ -1239,6 +1256,7 @@ impl SqliteBackend {
         let receipts_from_at = meta(&conn, "receipts_from_at")?.unwrap_or(now);
         let events_due = meta(&conn, EVENTS_DUE)?.unwrap_or(0);
         let events_scan_from = scan_from(&conn)?;
+        let events_stamped = stamped_found(&conn)?;
         let outbox = opts
             .outbox
             .then(|| Outbox::open(&outbox_dir(path), head, opts.outbox_segment_bytes))
@@ -1310,7 +1328,7 @@ impl SqliteBackend {
             incremental,
             events_due: AtomicU64::new(events_due),
             events_scan_from: Mutex::new(events_scan_from),
-            events_stamped: Mutex::new(None),
+            events_stamped: Mutex::new(events_stamped),
             drain_rows: AtomicU64::new(0),
             read_steps: AtomicU64::new(0),
             shm: File::open(format!("{}-shm", path.display())).ok(),
@@ -1452,6 +1470,7 @@ impl SqliteBackend {
                     });
                     match first_stamped_from(&tx, resume, hi.as_deref(), DRAIN_PER_COMMIT, &self.0.drain_rows)? {
                         Scan::Found(k, at) => {
+                            set_stamped_found(&tx, &k, at)?;
                             *lock(&self.0.events_stamped) = Some((k, at));
                             Some(at)
                         }
