@@ -227,6 +227,8 @@ pub struct Config {
     pub stranded_min_age: u64,
     /// Per repo, the epoch CI was last seen in flight while a trailing sweep is still owed.
     pub stranded_seen_path: PathBuf,
+    /// Builder starts in flight per rune: begun by the sentinel, no dwarf live yet.
+    pub starting: std::collections::BTreeMap<String, u64>,
 }
 
 pub const MAIN_REF: &str = "local/main";
@@ -411,6 +413,7 @@ impl Config {
             memo: Arc::default(),
             stranded_min_age: parsed::<u64>(get, "SPIRA_STRANDED_RUNNER_MIN_AGE")?,
             stranded_seen_path: paths::stranded_seen(&spira_run),
+            starting: Default::default(),
             seams,
             spira_run,
             spira_home,
@@ -647,6 +650,8 @@ pub fn log_print(cfg: &Config, msg: &str) {
 pub enum Remedy {
     /// No deterministic fix — a gap here always escalates to the Concierge.
     Escalate,
+    /// Asks the sentinel's call pass to run, for a gap that is a refill it has not yet made.
+    CallWanted,
     Command { program: String, args: Vec<String> },
     /// Every step runs, in order, whether or not an earlier one succeeded.
     Sequence(Vec<(String, Vec<String>)>),
@@ -655,7 +660,7 @@ pub enum Remedy {
 impl Remedy {
     pub fn steps(&self) -> Vec<(&str, Vec<&str>)> {
         match self {
-            Remedy::Escalate => Vec::new(),
+            Remedy::Escalate | Remedy::CallWanted => Vec::new(),
             Remedy::Command { program, args } => vec![(program.as_str(), args.iter().map(String::as_str).collect())],
             Remedy::Sequence(steps) => steps
                 .iter()
@@ -665,6 +670,9 @@ impl Remedy {
     }
 
     pub fn describe(&self) -> String {
+        if matches!(self, Remedy::CallWanted) {
+            return "asked the sentinel's call pass to run (call.wanted)".into();
+        }
         self.steps().iter().map(|(p, a)| format!("{} {}", p, a.join(" "))).collect::<Vec<_>>().join(" ; ")
     }
 }
@@ -1176,7 +1184,7 @@ fn count_of(out: &str) -> i64 {
 fn fleet_readings(cfg: &Config) -> FleetReadings {
     let words = |out: String| out.split_whitespace().map(String::from).collect::<Vec<_>>();
     let task_runes = words(cfg.config(&["rune", "task"]));
-    let live_of = |rune: &str| cfg.dwarf_count(rune);
+    let live_of = |rune: &str| cfg.dwarf_count(rune) + cfg.starting.get(rune).map_or(0, |n| *n as i64);
 
     let reactive_runes: Vec<String> = words(cfg.config(&["rune", "reactive"])).into_iter().filter(|f| !task_runes.contains(f)).collect();
     let live_reactive: i64 = reactive_runes.iter().map(|f| live_of(f)).sum();
@@ -1249,7 +1257,7 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
                 since_hint: None,
             }
         };
-        checks.push(Check { key: format!("fleet:{}", labels), raw, remedy: Remedy::Escalate });
+        checks.push(Check { key: format!("fleet:{}", labels), raw, remedy: Remedy::CallWanted });
     }
     checks
 }
@@ -2233,6 +2241,8 @@ pub enum Act {
     Event(EventRow),
     /// Every step runs, in order, whether or not an earlier one succeeded.
     Remedy { key: String, steps: Vec<(String, Vec<String>)> },
+    /// The redrive of the sentinel's call pass; only the scheduler can send it.
+    CallWanted { key: String },
     /// `unalert` is the escalation to forget when the mail does not go, so the next pass sends it again.
     Mail { mail: Mail, unalert: Option<String>, what: String },
 }
@@ -2260,7 +2270,7 @@ fn note_concierge(subject: String, body: String, what: String) -> Act {
     Act::Mail { mail: Mail { mailbox: "concierge".into(), subject, kind: "note".into(), default: None, class: None, bead: None, body }, unalert: None, what }
 }
 
-fn judge_pending(rules: &Rules, acts: &mut Vec<Act>, pending: &mut PendingMap, key: &str, after: f64) {
+fn judge_pending(rules: &Rules, acts: &mut Vec<Act>, pending: &mut PendingMap, key: &str, after: f64, remedy: &Remedy) {
     let Some(prior) = pending.remove(key) else { return };
     match measure(prior.clone(), after, rules.effect_passes) {
         Outcome::Pending(p) => {
@@ -2272,6 +2282,9 @@ fn judge_pending(rules: &Rules, acts: &mut Vec<Act>, pending: &mut PendingMap, k
         Outcome::NoEffect { before, after } => {
             event(acts, "no-effect", key, &prior.action, before, Some(after));
             acts.push(Act::Log(format!("reconciler: {} → remedy had no effect", key)));
+            if matches!(remedy, Remedy::CallWanted) {
+                return;
+            }
             let subject = format!("RECONCILER: remedy for {} had no effect", key);
             let body = format!("## Note\n\n{}", compose_no_effect(key, &prior, after, rules.now_secs, rules.effect_passes));
             acts.push(note_concierge(subject, body, format!("{key} → no-effect mail")));
@@ -2291,7 +2304,7 @@ pub fn decide(rules: &Rules, state: &mut StateMap, pending: &mut PendingMap, ale
         verdict.is_gap = false;
     }
     acts.push(Act::Status(status_record(&check.key, &verdict)));
-    judge_pending(rules, &mut acts, pending, &check.key, metric_now);
+    judge_pending(rules, &mut acts, pending, &check.key, metric_now, &check.remedy);
 
     if verdict.is_gap {
         if verdict.remedy_failed {
@@ -2308,8 +2321,12 @@ pub fn decide(rules: &Rules, state: &mut StateMap, pending: &mut PendingMap, ale
                     } else {
                         acts.push(Act::Log(format!("reconciler: {} → remedy: {}", check.key, desc)));
                         event(&mut acts, "remedy", &check.key, &desc, metric_now, None);
-                        let steps = remedy.steps().into_iter().map(|(p, a)| (p.to_string(), a.into_iter().map(String::from).collect())).collect();
-                        acts.push(Act::Remedy { key: check.key.clone(), steps });
+                        if matches!(remedy, Remedy::CallWanted) {
+                            acts.push(Act::CallWanted { key: check.key.clone() });
+                        } else {
+                            let steps = remedy.steps().into_iter().map(|(p, a)| (p.to_string(), a.into_iter().map(String::from).collect())).collect();
+                            acts.push(Act::Remedy { key: check.key.clone(), steps });
+                        }
                         record_remedy(&mut next, rules.now_secs, &desc);
                         pending.insert(
                             check.key.clone(),
@@ -2365,6 +2382,7 @@ pub fn perform(cfg: &Config, alerted: &mut AlertedSinceMap, acts: Vec<Act>) {
                     let _ = run_cmd_ok(program, &argv);
                 }
             }
+            Act::CallWanted { key } => log_print(cfg, &format!("reconciler: {key} → call.wanted needs the scheduler; not sent")),
             Act::Mail { mail, unalert, what } => {
                 if let Err(e) = cfg.send_mail(&mail) {
                     log_print(cfg, &format!("reconciler: {what} failed: {e}"));
@@ -2513,7 +2531,7 @@ pub fn judge_holds(rules: &Rules, pending: &mut PendingMap, report: &HoldsReport
     }
     let judged: Vec<String> = pending.keys().filter(|k| k.starts_with("holds:")).cloned().collect();
     for key in judged {
-        judge_pending(rules, &mut acts, pending, &key, if report.wanted.contains(&key) { 1.0 } else { 0.0 });
+        judge_pending(rules, &mut acts, pending, &key, if report.wanted.contains(&key) { 1.0 } else { 0.0 }, &Remedy::Escalate);
     }
     for note in &report.skipped {
         acts.push(Act::Log(format!("reconciler: holds: skipped {note}")));
@@ -3665,8 +3683,14 @@ mod tests {
         assert_eq!(check.key, "fleet:plan");
         assert_eq!(check.raw, RawStatus::Gap { desired: "1 (sp-x updated 2h ago)".into(), observed: "0".into(), since_hint: None });
         let rules = Rules { now_secs: 100, grace_secs: 0, effect_passes: 2, shadow_kinds: vec![] };
-        let acts = decide(&rules, &mut StateMap::new(), &mut PendingMap::new(), &mut AlertedSinceMap::new(), check);
-        let subject = acts.iter().find_map(|a| if let Act::Mail { mail, .. } = a { Some(mail.subject.clone()) } else { None }).expect("a page");
+        let (mut state, mut pending, mut alerted) = (StateMap::new(), PendingMap::new(), AlertedSinceMap::new());
+        let mut subject = None;
+        for pass in 0..4 {
+            let rules = Rules { now_secs: 100 + pass, ..rules.clone() };
+            let acts = decide(&rules, &mut state, &mut pending, &mut alerted, observe_fleet(&cfg).remove(0));
+            subject = subject.or(acts.iter().find_map(|a| if let Act::Mail { mail, .. } = a { Some(mail.subject.clone()) } else { None }));
+        }
+        let subject = subject.expect("a page");
         assert!(subject.contains("sp-x"), "{subject}");
     }
 
@@ -3739,6 +3763,93 @@ mod tests {
         assert_eq!(task_check("0", 0), RawStatus::Satisfied);
     }
 
+
+    #[test]
+    fn a_task_partition_with_a_start_in_flight_is_satisfied_and_without_it_a_gap() {
+        let check = |starting: &[(&str, u64)]| {
+            let mut cfg = test_config();
+            cfg.max_live_dwarves = "5".into();
+            cfg.max_dwarves = "3".into();
+            cfg.starting = starting.iter().map(|(r, n)| (r.to_string(), *n)).collect();
+            cfg.host = Some(Arc::new(Fleet { planned_live: 2, reactive_live: 0, partition_rune: "builder", ready: 5, named: vec![] }));
+            observe_fleet(&cfg)[0].raw.clone()
+        };
+        assert_eq!(check(&[("builder", 1)]), RawStatus::Satisfied);
+        assert_eq!(check(&[]), RawStatus::Gap { desired: "3 (sp-r0, sp-r1, sp-r2, sp-r3, sp-r4)".into(), observed: "2".into(), since_hint: None });
+    }
+
+    fn redrive_pass(d: &mut (StateMap, PendingMap, AlertedSinceMap), now_secs: u64, gap: bool) -> Vec<Act> {
+        let rules = Rules { now_secs, grace_secs: 100, effect_passes: 2, shadow_kinds: vec![] };
+        let raw = if gap { RawStatus::Gap { desired: "3".into(), observed: "2".into(), since_hint: None } } else { RawStatus::Satisfied };
+        decide(&rules, &mut d.0, &mut d.1, &mut d.2, Check { key: "fleet:a".into(), raw, remedy: Remedy::CallWanted })
+    }
+
+    fn mails(acts: &[Act]) -> Vec<&Mail> {
+        acts.iter().filter_map(|a| if let Act::Mail { mail, .. } = a { Some(mail) } else { None }).collect()
+    }
+
+    #[test]
+    fn a_fleet_gap_past_grace_redrives_the_sentinel_then_pages_once_naming_the_redrive() {
+        let mut d = Default::default();
+        assert!(redrive_pass(&mut d, 1000, true).iter().all(|a| !matches!(a, Act::CallWanted { .. } | Act::Mail { .. })));
+        let first = redrive_pass(&mut d, 1200, true);
+        assert!(first.contains(&Act::CallWanted { key: "fleet:a".into() }));
+        assert!(mails(&first).is_empty());
+        let mut sent = Vec::new();
+        for i in 1..=6 {
+            let acts = redrive_pass(&mut d, 1200 + i * 100, true);
+            sent.extend(mails(&acts).into_iter().cloned());
+        }
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0].mailbox, "concierge");
+        assert!(sent[0].body.contains("last remedy tried: asked the sentinel's call pass to run (call.wanted)"), "{}", sent[0].body);
+    }
+
+    #[test]
+    fn a_fleet_gap_that_closes_after_the_redrive_sends_no_mail() {
+        let mut d = Default::default();
+        redrive_pass(&mut d, 1000, true);
+        assert!(redrive_pass(&mut d, 1200, true).contains(&Act::CallWanted { key: "fleet:a".into() }));
+        for now in [1300, 1400, 1500, 1600] {
+            assert!(mails(&redrive_pass(&mut d, now, false)).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_redrive_with_no_effect_is_paged_once_by_the_escalation_and_not_by_a_second_note() {
+        let mut d = Default::default();
+        let mut all = Vec::new();
+        for now in [1000, 1200, 1300, 1400, 1500, 1600, 1700] {
+            all.extend(redrive_pass(&mut d, now, true));
+        }
+        assert_eq!(mails(&all).len(), 1);
+        assert!(!mails(&all)[0].subject.contains("had no effect"));
+        assert!(all.iter().any(|a| matches!(a, Act::Event(e) if e.event == "no-effect")));
+    }
+
+    #[test]
+    fn another_remedys_no_effect_still_sends_its_note() {
+        let rules = Rules { now_secs: 0, grace_secs: 0, effect_passes: 1, shadow_kinds: vec![] };
+        let mut d: (StateMap, PendingMap, AlertedSinceMap) = Default::default();
+        let gap = || RawStatus::Gap { desired: "up".into(), observed: "down".into(), since_hint: None };
+        let remedy = || Remedy::Command { program: "fix".into(), args: vec![] };
+        let mut all = Vec::new();
+        for now in [10, 20, 30, 40] {
+            let rules = Rules { now_secs: now, ..rules.clone() };
+            all.extend(decide(&rules, &mut d.0, &mut d.1, &mut d.2, Check { key: "disk:/".into(), raw: gap(), remedy: remedy() }));
+        }
+        assert!(mails(&all).iter().any(|m| m.subject.contains("had no effect")), "{all:?}");
+    }
+
+    #[test]
+    fn the_shell_pass_logs_the_redrive_it_cannot_send() {
+        let d = testkit::TempDir::new("redrive-log");
+        let mut cfg = test_config();
+        cfg.log = d.join("log");
+        perform(&cfg, &mut AlertedSinceMap::new(), vec![Act::CallWanted { key: "fleet:a".into() }]);
+        assert!(fs::read_to_string(&cfg.log).unwrap().contains("reconciler: fleet:a → call.wanted needs the scheduler; not sent"));
+    }
+
     pub(super) fn test_config() -> Config {
         Config {
             seams: Seams::bare(),
@@ -3782,6 +3893,7 @@ mod tests {
             memo: Arc::default(),
             stranded_min_age: 600,
             stranded_seen_path: PathBuf::from(system_paths::DEV_NULL),
+            starting: Default::default(),
         }
     }
 

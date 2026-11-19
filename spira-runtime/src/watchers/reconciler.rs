@@ -10,6 +10,7 @@ use reconciler::{checks_of, decide, judge_holds, prune, Act, Book, EventRow, Mai
 use reconciler_engine::io::StatusRecord;
 use runtime::event::*;
 use runtime::rows::Part;
+use crate::tasks::a::{kit, sentinel_call};
 use serde::{Deserialize, Serialize};
 
 pub const STREAM: &str = "watch.reconciler";
@@ -45,6 +46,9 @@ pub struct ObserveIn {
     /// The keys the observers read, as the scheduler holds them for this tick.
     #[serde(default)]
     pub values: BTreeMap<String, String>,
+    /// The sentinel's call carry's starts with no `unit.ran` yet, as `{unit → rune}`; the ones already live are counted as dwarves, not as starts.
+    #[serde(default)]
+    pub starting: BTreeMap<String, String>,
 }
 
 /// Telemetry for the metrics store: a status row per check every pass, and the remedy events.
@@ -115,12 +119,17 @@ impl Reconciler {
         let mut record = Record { at: ev.at, ..Record::default() };
         let mut cmds = vec![];
         let mut remedies = vec![];
+        let mut cmds_wake = vec![];
         for act in acts {
             match act {
                 Act::Status(row) => record.status.push(row),
                 Act::Event(e) => record.events.push(e),
                 Act::Log(line) => record.log.push(line),
                 Act::Remedy { key, steps } => remedies.push(RemedyJob { key, steps }),
+                Act::CallWanted { .. } => cmds_wake.push(Command::EmitTo {
+                    stream: StreamKey(sentinel_call::STREAM.into()),
+                    kind: EventKind::new(sentinel_call::CALL_WANTED, r#"{"rune":"reconciler"}"#),
+                }),
                 Act::Mail { mail, unalert, what } => mails.push(MailJob { mail, unalert, remind: None, what }),
             }
         }
@@ -136,6 +145,7 @@ impl Reconciler {
             let rows = Record { events: vec![], log: vec![], ..record };
             cmds.push(Command::Probe(spec(RECORD, RECORD.into(), &rows, EFFECT_DEADLINE_MS)));
         }
+        cmds.extend(cmds_wake);
         cmds.extend(remedies.iter().map(|r| Command::Effect(spec(REMEDY, format!("{NAME}:remedy:{}", r.key), r, OBSERVE_DEADLINE_MS))));
         cmds.extend(mails.iter().map(|m| Command::Effect(spec(MAIL, format!("{NAME}:mail:{}:{:016x}", ev.at, runtime::event::fnv1a(&m.what)), m, EFFECT_DEADLINE_MS))));
         cmds
@@ -166,7 +176,8 @@ impl Handler for Reconciler {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            let input = ObserveIn { at: ev.at, reminded: Self::book(view, &ev.stream).reminded, values: self.values.clone() };
+            let starting = kit::carry::<sentinel_call::Carry>(&sentinel_call::SHAPE, view).in_flight;
+            let input = ObserveIn { at: ev.at, reminded: Self::book(view, &ev.stream).reminded, values: self.values.clone(), starting };
             return vec![
                 Command::Probe(spec(OBSERVE, OBSERVE.into(), &input, OBSERVE_DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },

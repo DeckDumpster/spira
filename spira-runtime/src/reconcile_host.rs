@@ -262,6 +262,24 @@ pub fn send_mail(env: Option<&mail::env::Env>, m: &Mail) -> Result<(), String> {
     mail::cmds::send(&bd, env, &args, m.body.clone()).map(|_| ())
 }
 
+impl RuntimeHost {
+    /// Starts per rune whose unit is not yet live: a live one is already in `dwarf_count`.
+    pub fn starts_not_yet_live(&self, in_flight: &BTreeMap<String, String>) -> BTreeMap<String, u64> {
+        not_yet_live(in_flight, &self.units().map(|u| u.active.clone()).unwrap_or_default())
+    }
+}
+
+fn not_yet_live(in_flight: &BTreeMap<String, String>, active: &BTreeMap<String, String>) -> BTreeMap<String, u64> {
+    let mut starting = BTreeMap::new();
+    for (unit, rune) in in_flight {
+        let live = active.get(unit).is_some_and(|state| runtime::units::is_live_dwarf(unit, runtime::units::state_of_word(state)));
+        if !live {
+            *starting.entry(rune.clone()).or_insert(0) += 1;
+        }
+    }
+    starting
+}
+
 impl Host for RuntimeHost {
     fn unit_listing(&self) -> Result<(), String> {
         self.units().map(|_| ())
@@ -399,6 +417,14 @@ impl Host for RuntimeHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_start_already_live_is_not_counted_twice_as_a_start_in_flight() {
+        let unit = |rune: &str, n: u32| runtime::units::unit_name("sentinel-call", &format!("{rune}-1000-{n}")).unwrap();
+        let in_flight: BTreeMap<String, String> = [(unit("builder", 0), "builder".to_string()), (unit("builder", 1), "builder".to_string()), (unit("ops", 0), "ops".to_string())].into();
+        let active: BTreeMap<String, String> = [(unit("builder", 0), "active".to_string()), (unit("ops", 0), "inactive".to_string())].into();
+        assert_eq!(not_yet_live(&in_flight, &active), BTreeMap::from([("builder".to_string(), 1), ("ops".to_string(), 1)]));
+    }
 
     #[test]
     fn a_unit_listing_that_cannot_reach_the_bus_is_an_error_from_the_one_cached_read() {
