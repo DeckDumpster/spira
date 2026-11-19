@@ -64,7 +64,7 @@ impl Rule for EnvEditSharedBinary {
     }
 
     fn applies_to(&self, e: &Entry) -> bool {
-        e.path.ends_with(".rs") && e.path.contains("/tests/") && !e.path.starts_with("testkit/") && !e.path.starts_with("target/")
+        e.path.ends_with(".rs") && !e.path.starts_with("testkit/") && !e.path.starts_with("target/")
     }
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
@@ -78,7 +78,7 @@ impl Rule for EnvEditSharedBinary {
         let test_attr = re(&TEST_ATTR, r"#\s*\[\s*test\s*\]");
         let mut out = Vec::new();
         for (e, _) in &shapes {
-            if !whole.contains(&e.path) {
+            if !e.path.contains("/tests/") || !whole.contains(&e.path) {
                 continue;
             }
             let Some(src) = tree.content(e) else { continue };
