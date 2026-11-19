@@ -1086,7 +1086,8 @@ impl<'w, W: World> Trial<'w, W> {
         }
         if parse::cache_transport_failure(&out) {
             return v(NOVERDICT, "build-cache-fault", format!(
-                "gate: {name}'s build lost its compiler cache (sccache transport error) — the host's cache server, not a fault in {br}.\n{}",
+                "gate: {name}'s build lost its compiler cache — the host's cache server, not a fault in {br}: {}\n{}",
+                parse::cache_failure_line(&out).unwrap_or_default(),
                 parse::tail_bytes(&out, 4000)));
         }
         if let Some(d) = parse::harness_fault_detail(&out) {
@@ -1407,7 +1408,8 @@ impl<'w, W: World> Trial<'w, W> {
         }
         if parse::cache_transport_failure(&base_out) {
             return v(NOVERDICT, "build-cache-fault", format!(
-                "gate: {name}'s base trial lost its compiler cache (sccache transport error); it judged neither {base} nor {br}.\n{}",
+                "gate: {name}'s base trial lost its compiler cache — the host's cache server; it judged neither {base} nor {br}: {}\n{}",
+                parse::cache_failure_line(&base_out).unwrap_or_default(),
                 parse::tail_bytes(&base_out, 4000)));
         }
         let spaced = |v: &[String]| v.join(" ");

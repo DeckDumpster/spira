@@ -4522,6 +4522,45 @@ fn a_trial_that_loses_sccache_retries_once_without_the_cache() {
     assert!(meter(&f).contains(" phases=gate:7,gate:7 deny_list=1000000/e3b0c44298fc test_clock=14s"), "{}", meter(&f));
 }
 
+const TEMP_DIR_FAULT: &str = "sccache: error: Failed to create temp dir\nsccache: caused by: Failed to create temp dir\nsccache: caused by: No such file or directory (os error 2) at path \"/w/sp-x/.runtime/session-tmp-1/sccacheAbC\"";
+
+/// An sccache server that cannot create its temporary folder is a lost cache: the trial is
+/// retried once without it.
+#[test]
+fn a_trial_whose_cache_server_cannot_create_its_temp_dir_retries_without_the_cache() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, format!("test-a.sh RED\n{TEMP_DIR_FAULT}")));
+    f.runs.borrow_mut().insert(format!("{MERGE_SHA}:uncached"), (0, String::new()));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.stderr().contains("retrying the trial once without the compiler cache"), "{}", f.stderr());
+    let n = f.ran.borrow().len();
+    assert_eq!(f.env_of(n - 1, "RUSTC_WRAPPER"), "");
+}
+
+/// A trial that loses the cache on both runs is build-cache-fault quoting the server's line.
+#[test]
+fn a_trial_that_cannot_create_the_cache_temp_dir_twice_is_build_cache_fault() {
+    let f = Fake::new();
+    let out = format!("test-a.sh RED\n{TEMP_DIR_FAULT}");
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, out.clone()));
+    f.runs.borrow_mut().insert(format!("{MERGE_SHA}:uncached"), (1, out));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=build-cache-fault"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("os error 2) at path"), "{}", f.stderr());
+}
+
+/// The same fault on the base re-run, twice, is build-cache-fault quoting the server's line.
+#[test]
+fn a_base_rerun_that_cannot_create_the_cache_temp_dir_twice_is_build_cache_fault() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.reruns.borrow_mut().insert((BASE.into(), SUITE.into()), (1, TEMP_DIR_FAULT.into()));
+    f.reruns.borrow_mut().insert((format!("{BASE}:uncached"), SUITE.into()), (1, TEMP_DIR_FAULT.into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=build-cache-fault"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("os error 2) at path"), "{}", f.stderr());
+}
+
 /// A base re-run that loses its sccache server is run once more with the cache off; a
 /// re-run that then passes lets the branch's red stand as the branch's own.
 #[test]
