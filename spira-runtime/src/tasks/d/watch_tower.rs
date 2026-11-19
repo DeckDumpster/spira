@@ -236,8 +236,8 @@ pub struct Prompt {
 }
 
 /// `render::is_nominal` over the snapshot: nothing lapsed, a fresh snapshot, no no-verdict
-/// streak at the escalation bar, not draining, not throttled, no disk/mem/CPU breach, no slow probe, and the failed
-/// units known and empty.
+/// streak at the escalation bar, not draining, not throttled, no disk/mem/CPU breach, no slow
+/// probe, and the failed units known and empty.
 pub fn is_nominal(s: &Snapshot, snap_stale_s: u64, noverdict_max: u64) -> bool {
     !s.lapsed_unknown
         && s.lapsed.is_empty()

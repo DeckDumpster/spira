@@ -138,12 +138,8 @@ impl SweepData {
     }
 }
 
-/// The worst no-verdict streak still in force: the largest counter under `dir` whose file was
-/// written inside `window_s`. A counter is only cleared by a PASS on its own branch
-/// (`landing-pass/src/records.rs` `clear_noverdict`), so one for a branch that never passed
-/// outlives the branch; without the window the field reports an all-time maximum under a label
-/// that reads as a current streak, and `is_nominal` can never be true again. `window_s <= 0`
-/// keeps the all-time reading.
+/// Largest counter under `dir` written within `window_s`; `window_s <= 0` reads all time.
+/// Counters are cleared only by a PASS on their own branch, so a dead branch's would pin it.
 fn worst_noverdict(dir: &std::path::Path, now: i64, window_s: i64) -> (i64, Option<String>) {
     let mut worst = 0i64;
     let mut key: Option<String> = None;
@@ -299,13 +295,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
             env.merge_lines(&String::from_utf8_lossy(&out.stdout), "YIELD_");
         }
     }
-    let yield_win_label = if cfg.yield_window_s >= 86400 {
-        format!("last {}d", cfg.yield_window_s / 86400)
-    } else if cfg.yield_window_s >= 3600 {
-        format!("last {}h", cfg.yield_window_s / 3600)
-    } else {
-        format!("last {}m", cfg.yield_window_s / 60)
-    };
+    let yield_win_label = win_label(cfg.yield_window_s);
     let yield_note = match env.raw("YIELD_RECORDER") {
         Some("silent") => format!(
             "   <- the gate meter saw {} red(s) and none reached the record: THE RECORDER IS NOT RUNNING",
