@@ -31,105 +31,27 @@ pub fn read_psi(path: &str, kind: &str, field: &str) -> Option<f64> {
     std::fs::read_to_string(path).ok().and_then(|t| parse_psi(&t, kind, field))
 }
 
-/// The seconds of history a pressure is judged on, and the cadence the sampler keeps.
-pub const WINDOW_SECS: u64 = 300;
-pub const SAMPLE_EVERY_SECS: u64 = 10;
-/// The sampler's state file under the run directory.
-pub const SAMPLES_FILE: &str = "psi-samples";
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Basis {
-    Tm90,
-    Avg300,
-}
-
-/// A pressure reading and the measure it is: the five-minute tm90, or the kernel's `avg300`
-/// when the sampler has not kept half the window.
+/// A pressure reading: the kernel's own `avg300`, its five-minute average.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pressure {
     pub value: f64,
-    pub basis: Basis,
 }
 
 impl std::fmt::Display for Pressure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.basis {
-            Basis::Tm90 => write!(f, "5m tm90 {:.1}", self.value),
-            Basis::Avg300 => write!(f, "avg300 {:.1} (fewer than half the 5m samples)", self.value),
-        }
+        write!(f, "avg300 {:.1}", self.value)
     }
-}
-
-/// The mean of the samples with the top tenth dropped; `None` for no samples.
-pub fn tm90(samples: &[f64]) -> Option<f64> {
-    let mut v = samples.to_vec();
-    v.sort_by(|a, b| a.total_cmp(b));
-    v.truncate(v.len() - v.len() / 10);
-    (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64)
-}
-
-/// The tm90 of `samples` when at least half the window's samples are present, else `avg300`.
-pub fn pressure(samples: &[f64], avg300: Option<f64>) -> Option<Pressure> {
-    if samples.len() as u64 * 2 >= WINDOW_SECS / SAMPLE_EVERY_SECS {
-        return tm90(samples).map(|value| Pressure { value, basis: Basis::Tm90 });
-    }
-    avg300.map(|value| Pressure { value, basis: Basis::Avg300 })
-}
-
-/// One sampler tick: the `avg10` of io `full` and cpu `some`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Sample {
-    pub at: u64,
-    pub io_full: f64,
-    pub cpu_some: f64,
-}
-
-pub fn read_samples(path: &std::path::Path, now: u64) -> Vec<Sample> {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
-    text.lines()
-        .filter_map(|l| {
-            let mut f = l.split_whitespace();
-            Some(Sample { at: f.next()?.parse().ok()?, io_full: f.next()?.parse().ok()?, cpu_some: f.next()?.parse().ok()? })
-        })
-        .filter(|s| s.at > now.saturating_sub(WINDOW_SECS) && s.at <= now)
-        .collect()
-}
-
-/// Appends `sample` to the file, keeping only the window; replaced whole so a reader never sees half a line.
-pub fn record_sample(path: &std::path::Path, sample: Sample) -> std::io::Result<()> {
-    let mut kept = read_samples(path, sample.at);
-    kept.push(sample);
-    let body: String = kept.iter().map(|s| format!("{} {} {}\n", s.at, s.io_full, s.cpu_some)).collect();
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, body)?;
-    std::fs::rename(&tmp, path)
-}
-
-/// Reads the kernel's `avg10` at `now` into the file; unreadable pressure records nothing.
-pub fn sample_now(path: &std::path::Path, now: u64) -> Result<Sample, String> {
-    let io_full = read_psi(PSI_IO, "full", "avg10").ok_or("io pressure is unreadable")?;
-    let cpu_some = read_psi(PSI_CPU, "some", "avg10").ok_or("cpu pressure is unreadable")?;
-    let sample = Sample { at: now, io_full, cpu_some };
-    record_sample(path, sample).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(sample)
-}
-
-pub fn unix_now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 /// The host's io `full` and cpu `some` pressure as the placement judges them.
-pub fn host_load(run_dir: &std::path::Path, now: u64) -> HostLoad {
-    host_load_with(run_dir, now, read_psi(PSI_IO, "full", "avg300"), read_psi(PSI_CPU, "some", "avg300"))
+pub fn host_load() -> HostLoad {
+    host_load_with(read_psi(PSI_IO, "full", "avg300"), read_psi(PSI_CPU, "some", "avg300"))
 }
 
-pub fn host_load_with(run_dir: &std::path::Path, now: u64, io_avg300: Option<f64>, cpu_avg300: Option<f64>) -> HostLoad {
-    let samples = read_samples(&run_dir.join(SAMPLES_FILE), now);
-    let io: Vec<f64> = samples.iter().map(|s| s.io_full).collect();
-    let cpu: Vec<f64> = samples.iter().map(|s| s.cpu_some).collect();
+pub fn host_load_with(io_avg300: Option<f64>, cpu_avg300: Option<f64>) -> HostLoad {
     HostLoad {
-        io_full: pressure(&io, io_avg300),
-        cpu_some: pressure(&cpu, cpu_avg300),
+        io_full: io_avg300.map(|value| Pressure { value }),
+        cpu_some: cpu_avg300.map(|value| Pressure { value }),
     }
 }
 
@@ -215,7 +137,7 @@ mod tests {
     const PSI: &str = "some avg10=1.00 avg60=2.00 avg300=3.00 total=10\nfull avg10=0.50 avg60=41.25 avg300=9.00 total=5\n";
 
     fn tm(value: f64) -> Pressure {
-        Pressure { value, basis: Basis::Tm90 }
+        Pressure { value }
     }
 
     #[test]
@@ -228,7 +150,7 @@ mod tests {
     #[test]
     fn pressure_above_the_threshold_spills_and_below_it_stays_local() {
         assert!(
-            matches!(decide(&RULE, false, None, Some(tm(41.25))), Place::Ec2(r) if r.contains("5m tm90 41.2"))
+            matches!(decide(&RULE, false, None, Some(tm(41.25))), Place::Ec2(r) if r.contains("avg300 41.2"))
         );
         assert_eq!(decide(&RULE, false, None, Some(tm(12.0))), Place::Local);
         assert_eq!(decide(&RULE, false, None, Some(tm(30.0))), Place::Local);
@@ -264,7 +186,7 @@ mod tests {
     }
 
     const HOST: HostRule = HostRule { io_full_5m_tm90: 50.0, cpu_some_5m_tm90: 60.0 };
-    const CALM: HostLoad = HostLoad { io_full: Some(Pressure { value: 1.0, basis: Basis::Tm90 }), cpu_some: Some(Pressure { value: 2.0, basis: Basis::Tm90 }) };
+    const CALM: HostLoad = HostLoad { io_full: Some(Pressure { value: 1.0 }), cpu_some: Some(Pressure { value: 2.0 }) };
 
     #[test]
     fn a_free_host_slot_under_both_thresholds_runs_the_round_on_the_host() {
@@ -275,9 +197,15 @@ mod tests {
     }
 
     #[test]
-    fn the_host_line_names_the_measure() {
-        let load = HostLoad { io_full: Some(tm(37.25)), ..CALM };
-        assert_eq!(decide_host(&HOST, true, load), HostPlace::Host("host io pressure full 5m tm90 37.2 at or under 50.0 — on the host".into()));
+    fn the_host_line_names_the_kernels_five_minute_average() {
+        assert_eq!(
+            decide_host(&HOST, true, host_load_with(Some(70.0), Some(1.0))),
+            HostPlace::Ec2("host io pressure full avg300 70.0 above 50.0".into())
+        );
+        assert_eq!(
+            decide_host(&HOST, true, host_load_with(Some(37.25), Some(1.0))),
+            HostPlace::Host("host io pressure full avg300 37.2 at or under 50.0 — on the host".into())
+        );
     }
 
     #[test]
@@ -289,50 +217,8 @@ mod tests {
     #[test]
     fn host_pressure_over_either_threshold_spills() {
         let io = HostLoad { io_full: Some(tm(61.25)), ..CALM };
-        assert!(matches!(decide_host(&HOST, true, io), HostPlace::Ec2(r) if r.contains("io") && r.contains("61.2") && r.contains("5m tm90")));
+        assert!(matches!(decide_host(&HOST, true, io), HostPlace::Ec2(r) if r.contains("io") && r.contains("61.2") && r.contains("avg300")));
         let cpu = HostLoad { cpu_some: Some(tm(75.0)), ..CALM };
         assert!(matches!(decide_host(&HOST, true, cpu), HostPlace::Ec2(r) if r.contains("cpu") && r.contains("75.0")));
-    }
-
-    #[test]
-    fn three_spikes_in_thirty_samples_do_not_move_the_round_off_the_host() {
-        let mut s = vec![10.0; 27];
-        s.extend([95.0; 3]);
-        assert_eq!(tm90(&s), Some(10.0));
-        let load = HostLoad { io_full: pressure(&s, Some(99.0)), ..CALM };
-        assert!(matches!(decide_host(&HOST, true, load), HostPlace::Host(_)));
-    }
-
-    #[test]
-    fn thirty_samples_of_sixty_spill() {
-        let load = HostLoad { io_full: pressure(&[60.0; 30], Some(0.0)), ..CALM };
-        assert!(matches!(decide_host(&HOST, true, load), HostPlace::Ec2(r) if r.contains("5m tm90 60.0")));
-    }
-
-    #[test]
-    fn fewer_than_half_the_samples_judge_on_avg300_and_say_so() {
-        let load = HostLoad { io_full: pressure(&[0.0; 14], Some(70.0)), ..CALM };
-        assert!(matches!(decide_host(&HOST, true, load), HostPlace::Ec2(r) if r.contains("avg300 70.0") && r.contains("fewer than half")));
-        let calm = HostLoad { io_full: pressure(&[90.0; 10], Some(5.0)), ..CALM };
-        assert!(matches!(decide_host(&HOST, true, calm), HostPlace::Host(l) if l.contains("avg300 5.0")));
-        assert_eq!(pressure(&[0.0; 15], Some(70.0)).map(|p| p.basis), Some(Basis::Tm90));
-        assert_eq!(pressure(&[], None), None);
-    }
-
-    #[test]
-    fn the_sampler_keeps_five_minutes_and_the_host_load_reads_them() {
-        let tmp = testkit::TempDir::new("psi-samples");
-        let dir = tmp.path().to_path_buf();
-        let file = dir.join(SAMPLES_FILE);
-        for i in 0..40u64 {
-            record_sample(&file, Sample { at: 1000 + i * SAMPLE_EVERY_SECS, io_full: i as f64, cpu_some: 1.0 }).unwrap();
-        }
-        let now = 1000 + 39 * SAMPLE_EVERY_SECS;
-        let kept = read_samples(&file, now);
-        assert_eq!(kept.len(), 30);
-        assert_eq!(kept[0].io_full, 10.0);
-        assert_eq!(host_load_with(&dir, now, Some(99.0), None).io_full.map(|p| p.basis), Some(Basis::Tm90));
-        let stale = host_load_with(&dir, now + 3600, Some(99.0), None);
-        assert_eq!(stale.io_full, Some(Pressure { value: 99.0, basis: Basis::Avg300 }));
     }
 }

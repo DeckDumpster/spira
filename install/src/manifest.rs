@@ -28,15 +28,8 @@ pub struct Inputs {
     /// `SPIRA_SCCACHE_DAV_ADDR` is non-empty (sp-xtdqi): this box names its own LAN address
     /// for the shared compilation cache.
     pub sccache_dav_addr_set: bool,
-    /// The resolved `SPIRA_REPO` (`bootstrap::units_repo`'s own choice: the repo map's
-    /// home-repo root when that is a git checkout, else the release directory) is itself a
-    /// git checkout. The cert-sweep units run `git rev-parse --repo` at every tick; a fresh
-    /// install with no mapped harness checkout resolves `--repo` to the release directory,
-    /// which has no `.git`, so both units failed every run with "not a git repository"
-    /// (sp-8lztt). False on a fresh install with no harness checkout mapped.
-    ///
-    /// No template is gated on it since the cert sweeps became scheduler tasks (`cert.full`,
-    /// `cert.sample`); the field stays because the root installer and acceptance still report it.
+    /// The resolved `SPIRA_REPO` (`bootstrap::units_repo`'s own choice) is itself a git
+    /// checkout. No template is gated on it; the root installer and acceptance still report it.
     pub repo_is_git_checkout: bool,
     /// The root installer's `--system-user` phase has installed the SYSTEM spira-lc unit
     /// (`spira_config::resolve::lc_system_mode`). Off is same-user mode, the default: this
@@ -98,8 +91,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-runtime.service", true));
     m.units.push(t("spira-vm-pool-section.service", false));
     m.units.push(t("spira-vm-pool-section.timer", true));
-    m.units.push(t("spira-psi-sample.service", false));
-    m.units.push(t("spira-psi-sample.timer", true));
     // The one timer outside the scheduler (S15): it restarts and pages when the scheduler is
     // wedged or absent. Rendered from watchdog::render, not from a template file.
     m.units.push(t("spira-watchdog.service", false));
@@ -134,12 +125,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         m.units.push(t("spira-dolt-boot-check.timer", true));
         if inputs.dolt_durable_set {
             m.units.push(t("dolt-persist.service", true));
-            m.units.push(t("dolt-persist-compact.service", false));
-            m.units.push(t("dolt-persist-compact.timer", true));
         } else {
             m.optional.push("dolt-persist.service".into());
-            m.optional.push("dolt-persist-compact.service".into());
-            m.optional.push("dolt-persist-compact.timer".into());
         }
     } else {
         m.optional.push("dolt-beads.service".into());
@@ -148,8 +135,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         m.optional.push("spira-dolt-boot-check.service".into());
         m.optional.push("spira-dolt-boot-check.timer".into());
         m.optional.push("dolt-persist.service".into());
-        m.optional.push("dolt-persist-compact.service".into());
-        m.optional.push("dolt-persist-compact.timer".into());
         m.notes.push("SPIRA_DOLT_DATA is empty — not installing dolt-beads.service.".into());
         m.notes.push("Start your Dolt server yourself, or set it in spira.conf.".into());
     }
@@ -362,16 +347,28 @@ mod tests {
     }
 
     #[test]
-    fn the_pressure_sampler_is_a_ten_second_timer_the_manifest_enables() {
+    fn no_pressure_sampler_unit_is_shipped() {
         let m = build(&inputs()).unwrap();
-        assert!(m.units.iter().any(|u| u.name == "spira-psi-sample.timer" && u.enable));
-        assert!(m.units.iter().any(|u| u.name == "spira-psi-sample.service" && !u.enable), "the timer runs it, never boot");
-        assert!(m.enable("prod").contains(&"spira-psi-sample-prod.timer".to_string()));
+        assert!(!m.units.iter().any(|u| u.name.starts_with("spira-psi-sample")));
         let dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
-        let timer = std::fs::read_to_string(dir.join("spira-psi-sample.timer")).unwrap();
-        assert!(timer.contains("OnUnitActiveSec=10s"), "{timer}");
-        let service = std::fs::read_to_string(dir.join("spira-psi-sample.service")).unwrap();
-        assert!(service.contains("bin/round-vm psi-sample"), "{service}");
+        assert!(!dir.join("spira-psi-sample.timer").exists());
+        assert!(!dir.join("spira-psi-sample.service").exists());
+    }
+
+    #[test]
+    fn no_retired_upkeep_unit_is_shipped() {
+        let mut i = inputs();
+        i.dolt_data_set = true;
+        i.dolt_durable_set = true;
+        let m = build(&i).unwrap();
+        let named = |n: &String| n.starts_with("spira-psi-sample") || n.starts_with("dolt-persist-compact");
+        assert!(!m.units.iter().map(|u| &u.name).any(named));
+        assert!(!m.optional.iter().any(named));
+        let dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
+        for n in ["dolt-persist-compact.timer", "dolt-persist-compact.service", "spira-psi-sample.timer", "spira-psi-sample.service"] {
+            assert!(!dir.join(n).exists(), "{n}");
+        }
+        assert!(m.units.iter().any(|u| u.name == "lc-backup-drill.timer" && u.enable));
     }
 
     #[test]
@@ -453,8 +450,6 @@ mod tests {
         i.dolt_durable_set = true;
         let m = build(&i).unwrap();
         assert!(m.units.iter().any(|u| u.name == "dolt-persist.service" && u.enable));
-        assert!(m.units.iter().any(|u| u.name == "dolt-persist-compact.timer" && u.enable));
-        assert!(m.units.iter().any(|u| u.name == "dolt-persist-compact.service" && !u.enable), "the timer runs it, never boot");
         assert!(union_template_names().contains(&"dolt-persist.service".to_string()), "uninstall knows the unit");
     }
 

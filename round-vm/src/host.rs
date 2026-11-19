@@ -42,12 +42,11 @@ impl HostPlan {
                 Some(v) => v.parse().map_err(|_| format!("round-vm: {key} = {v:?} is not a number")),
             }
         };
-        let sampled_dir = run_dir.to_path_buf();
         Ok(Some(HostPlan {
             rule: HostRule { io_full_5m_tm90: num("SPIRA_ROUND_VM_HOST_IO_FULL_5M_TM90", 50.0)?, cpu_some_5m_tm90: num("SPIRA_ROUND_VM_HOST_CPU_SOME_5M_TM90", 60.0)? },
             home: round_home(run_dir),
             remote: Box::new(LocalRemote { home: round_home(run_dir) }),
-            load: Box::new(move || crate::spill::host_load(&sampled_dir, crate::spill::unix_now())),
+            load: Box::new(crate::spill::host_load),
         }))
     }
 }
@@ -474,17 +473,17 @@ mod tests {
     }
 
     #[test]
-    fn the_plans_load_is_the_samples_file_not_the_kernels_one_minute_reading() {
+    fn the_plans_load_ignores_a_samples_file_and_reads_the_kernels_five_minute_average() {
         let tmp = testkit::TempDir::new("host-plan-load");
-        let now = crate::spill::unix_now();
-        for i in 0..30u64 {
-            let io_full = if i >= 27 { 95.0 } else { 10.0 };
-            let at = now - (29 - i) * crate::spill::SAMPLE_EVERY_SECS;
-            crate::spill::record_sample(&tmp.path().join(crate::spill::SAMPLES_FILE), crate::spill::Sample { at, io_full, cpu_some: 1.0 }).unwrap();
-        }
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let body: String = (0..30u64).map(|i| format!("{} 95 1\n", now - 10 * i)).collect();
+        std::fs::write(tmp.path().join("psi-samples"), body).unwrap();
         let plan = HostPlan::from_config(tmp.path(), &|_| None).unwrap().unwrap();
-        let load = (plan.load)();
-        assert_eq!(load.io_full.map(|p| (p.value, p.basis)), Some((10.0, crate::spill::Basis::Tm90)));
+        let line = match crate::spill::decide_host(&plan.rule, true, (plan.load)()) {
+            crate::spill::HostPlace::Host(l) | crate::spill::HostPlace::Ec2(l) => l,
+        };
+        assert!(!line.contains("tm90"), "{line}");
+        assert!(!line.contains("pressure") || line.contains("avg300") || line.contains("unreadable"), "{line}");
         assert_eq!(plan.rule.io_full_5m_tm90, 50.0);
     }
 }

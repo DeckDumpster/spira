@@ -719,7 +719,7 @@ mod tests {
         let (unit_dir, tmpl_dir) = (td.join("units"), td.join("templates"));
         fs::create_dir_all(&unit_dir).unwrap();
         fs::create_dir_all(&tmpl_dir).unwrap();
-        let pairs = ["spira-watchdog", "cockpit-ensure", "concierge", "lc-backup"];
+        let pairs = ["spira-watchdog", "cockpit-ensure", "concierge", "lc-backup", "lc-backup-drill"];
         let inputs = Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) };
         let mut manifest = build(&inputs).unwrap();
         manifest.units.retain(|u| pairs.iter().any(|p| u.name == format!("{p}.service") || u.name == format!("{p}.timer")));
@@ -1001,7 +1001,7 @@ mod tests {
     /// scheduler's keep list (design W2): its watchdog, the store's boot check, the VmPool
     /// section's publisher.
     fn outside_the_keep_list(rendered: &[(String, String, String)]) -> Vec<String> {
-        const KEEP: [&str; 4] = ["spira-watchdog-prod.timer", "spira-dolt-boot-check-prod.timer", "spira-vm-pool-section-prod.timer", "spira-psi-sample-prod.timer"];
+        const KEEP: [&str; 3] = ["spira-watchdog-prod.timer", "spira-dolt-boot-check-prod.timer", "spira-vm-pool-section-prod.timer"];
         rendered.iter().map(|(u, _, _)| u.as_str()).filter(|u| (u.starts_with("spira-") && u.ends_with("-prod.timer")) || u.starts_with("spira-watch-")).filter(|u| !KEEP.contains(u)).map(str::to_string).collect()
     }
 

@@ -5139,7 +5139,7 @@ mod tests {
         row["where"].as_str().unwrap().to_string()
     }
 
-    const CALM: crate::spill::HostLoad = crate::spill::HostLoad { io_full: Some(crate::spill::Pressure { value: 1.0, basis: crate::spill::Basis::Tm90 }), cpu_some: Some(crate::spill::Pressure { value: 1.0, basis: crate::spill::Basis::Tm90 }) };
+    const CALM: crate::spill::HostLoad = crate::spill::HostLoad { io_full: Some(crate::spill::Pressure { value: 1.0 }), cpu_some: Some(crate::spill::Pressure { value: 1.0 }) };
 
     #[test]
     fn a_round_with_the_host_slot_free_runs_on_the_host_and_leases_no_vm() {
@@ -5278,7 +5278,7 @@ mod tests {
     fn a_round_cut_under_host_pressure_does_not_run_on_the_host() {
         let fx = fixture();
         let vm_remote = FakeRemote::green();
-        let hot = crate::spill::HostLoad { io_full: Some(crate::spill::Pressure { value: 55.0, basis: crate::spill::Basis::Tm90 }), ..CALM };
+        let hot = crate::spill::HostLoad { io_full: Some(crate::spill::Pressure { value: 55.0 }), ..CALM };
         let plan = host_plan(FakeRemote::green(), hot);
         go_with_host(&fx, &vm_remote, &plan, &round_args(&fx));
         assert_eq!(fx.fp.count("clone"), 1);

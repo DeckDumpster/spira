@@ -102,9 +102,7 @@ pub fn release_values(rel: &Path) -> BTreeMap<String, String> {
 }
 
 /// `@SPIRA_REPO@` for a unit: the repo map's home-repo root when that is a git checkout,
-/// else the release directory. The release directory has no `.git`, so a unit that runs
-/// git against `--repo` (both cert-sweep units) exited 2 on every run and deploy's
-/// pre-health refused on it (sp-b2jsl; install's renderer took the same rule in sp-7i16g).
+/// else the release directory, which has no `.git`.
 pub fn units_repo(mapped: Option<String>, rel: &Path, is_git: impl Fn(&Path) -> bool) -> String {
     match mapped.filter(|m| !m.is_empty() && is_git(Path::new(m))) {
         Some(m) => m,
