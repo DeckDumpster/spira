@@ -63,3 +63,8 @@ spira/test-gate-fences.sh
 # window. The remaining suites cover install/uninstall/configure/ready/owned/build paths;
 # regressions in those paths are caught within one timed-run window, not at landing. Promote
 # one when the budget allows.
+
+# RETIRED, NOT RUN: test-concierge-acceptance (cgroup survival under a real systemd oneshot,
+# the cockpit layout pane). It skipped on every lane, and no lane has a systemd --user session
+# and a populated statute book together, so a `# bare-host:` marker would have bought nothing.
+# The gap is recorded on UC-operator-channel-40 in docs/test-plan/operator-channel.md.

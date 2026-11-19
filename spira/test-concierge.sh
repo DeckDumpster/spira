@@ -2,8 +2,8 @@
 #
 # test-concierge.sh — the Concierge persona: brief composition, resume/HEADLESS handling,
 #   and the ways the operator's way in has broken before. No systemd, no tmux, no live
-#   statute book — see test-concierge-acceptance.sh for the host-only remainder (cgroup
-#   survival, the launcher under a real systemd oneshot, the cockpit layout pane).
+#   statute book. Cgroup survival under a real systemd oneshot and the cockpit layout pane
+#   have no suite (UC-operator-channel-40 in docs/test-plan/operator-channel.md).
 #
 # UC-operator-channel-41 — DEMOTED TO T1 (coverage map row 41): the brief-composition
 # section used to skip outright when the live statute book was empty, so a container run
@@ -541,8 +541,7 @@ want "the unit is a oneshot, whose cgroup is reaped when start returns" "Type=on
 # THE MECHANISM IS IN THE SCRIPT, not the unit: concierge.sh start wraps tmux new-session
 # with systemd-run --remain-after-exit, putting the server in its own transient cgroup that
 # outlives the oneshot. This assert confirms the mechanism is visible in the script where
-# maintainers look; the behavioural version (does the session actually survive) is host-only
-# and lives in test-concierge-acceptance.sh.
+# maintainers look; the behavioural version (does the session actually survive) has no suite.
 want "start escapes the oneshot cgroup via systemd-run --remain-after-exit" \
     "remain-after-exit" "$(cat "$HARNESS/concierge.sh")"
 
@@ -1001,8 +1000,8 @@ nowant "the retry regenerates rather than filtering the launcher" 'LAUNCHER.nore
 echo
 echo "sp-aaew9: an intact transcript is never discarded for a resume that merely exited"
 
-# THE DEFECT THIS FIXES, as source shape (the live behaviour is exercised in
-# test-concierge-acceptance.sh, which needs a real tmux/systemd session to run the launcher).
+# THE DEFECT THIS FIXES, as source shape (the live behaviour has no suite:
+# it needs a real tmux/systemd session to run the launcher).
 # The old code deleted the session file unconditionally the moment --resume failed to stay
 # up for 3s; a fast exit for ANY reason — another holder, an eviction — was indistinguishable
 # from "the id cannot be resumed" and threw the real conversation away.
