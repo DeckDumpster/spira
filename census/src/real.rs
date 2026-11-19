@@ -414,7 +414,7 @@ mod tests {
 
     fn real_over(dir: &std::path::Path, fact_list_out: &str) -> (Real, std::path::PathBuf) {
         let calls = dir.join("lc-calls");
-        let lc = script(dir, "lc", &format!("[ \"$1\" = admin-store ] && {{ echo '| bd | row |'; exit 0; }}\necho \"$*\" >> '{}'\ncat <<'EOF'\n{fact_list_out}\nEOF", calls.display()));
+        let lc = script(dir, "lc", &format!("[ \"$1\" = admin-store ] && {{ cat >/dev/null; echo '| bd | row |'; exit 0; }}\necho \"$*\" >> '{}'\ncat <<'EOF'\n{fact_list_out}\nEOF", calls.display()));
         (Real { home: dir.to_path_buf(), lc, child_env: Vec::new() }, calls)
     }
 
