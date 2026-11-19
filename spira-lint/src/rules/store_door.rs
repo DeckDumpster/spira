@@ -525,6 +525,22 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_list_counts_the_known_executors() {
+        let list = parse_count_allow(ALLOW_FILE, include_str!("../../store-door-allow")).unwrap();
+        for p in ["bead/src/main.rs", "dwarf/src/bd.rs", "spira-claim/src/store.rs", "mail/src/bead.rs", "incident/src/real.rs", "spira/lib.sh"] {
+            assert!(list.contains_key(p), "{p} missing from the allow list");
+        }
+    }
+
+    #[test]
+    fn a_shell_function_named_bdq_and_the_calls_in_its_body_are_both_counted() {
+        let t = TempDir::new("sd-fn");
+        t.write("spira/lib.sh", "bdq() {\n  bd \"$@\"\n}\nbdjson() { bdq \"$@\" --json; }\n");
+        let got = run(&t, &["spira/lib.sh"]).unwrap();
+        assert_eq!(got.len(), 4, "{got:?}");
+    }
+
+    #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("sd-none");
         t.write("README.md", "bd\n");
