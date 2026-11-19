@@ -5167,6 +5167,24 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_prior_manifest_error_at_a_file_two_members_change_ejects_the_later_and_lands_the_rest() {
+        let prior = "error: duplicate key\n  --> spira-lc/Cargo.toml:44:1\n   |\n44 | libc = \"0.2\"\n   | ^^^^\n";
+        let (f, ops, end) = run_prior_build(
+            prior,
+            vec![
+                md("m1", "spira-lc/Cargo.toml", "+libc = \"0.2\"\n"),
+                md("m2", "spira-lc/Cargo.toml", "+libc = \"0.2\"\n"),
+                md("m3", "doc/y.md", "+q\n"),
+            ],
+            vec![member("m1"), member("m2"), member("m3")],
+        );
+        let RoundEnd::Land { members, .. } = end else { panic!("{end:?}") };
+        assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["m1", "m3"]);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
+        assert!(f.main_kind.is_empty(), "{:?}", f.main_kind);
+    }
+
+    #[test]
     fn a_prior_build_red_naming_a_file_no_member_changes_runs_the_corpus_as_before() {
         let (f, ops, _) = run_prior_build(
             E0004,

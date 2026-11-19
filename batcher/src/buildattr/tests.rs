@@ -212,3 +212,44 @@ fn runner_touchers_match_the_directories_and_not_their_lookalikes() {
     let ids: Vec<&str> = runner_touchers(&ds).iter().map(|d| d.id.as_str()).collect();
     assert_eq!(ids, ["a", "b"]);
 }
+
+const DUP_KEY: &str = "error: duplicate key\n  --> spira-lc/Cargo.toml:44:1\n   |\n44 | libc = \"0.2\"\n   | ^^^^\nerror: failed to load manifest for workspace member `/home/ryan/spira/run/host-round/round-work/loom`\n";
+
+#[test]
+fn a_manifest_error_at_a_file_two_members_touch_ejects_the_later_one() {
+    let members = vec![
+        diff("a", &["spira-lc/Cargo.toml"], "+libc = \"0.2\"\n"),
+        diff("b", &["spira-lc/Cargo.toml"], "+libc = \"0.2\"\n"),
+    ];
+    let acts = attribute(&compile_errors(DUP_KEY), &members);
+    assert_eq!(acts.len(), 1, "{acts:?}");
+    let Action::Eject { id, line } = &acts[0] else {
+        panic!("{acts:?}")
+    };
+    assert_eq!(id, "b");
+    assert!(
+        line.contains("spira-lc/Cargo.toml:44") && line.contains("duplicate key"),
+        "{line}"
+    );
+    assert!(line.contains("also changed by a, which stays"), "{line}");
+}
+
+#[test]
+fn with_three_manifest_touchers_only_the_last_is_ejected() {
+    let members = ["a", "b", "c"]
+        .map(|i| diff(i, &["spira-lc/Cargo.toml"], "+libc = \"0.2\"\n"))
+        .to_vec();
+    let acts = attribute(&compile_errors(DUP_KEY), &members);
+    assert_eq!(acts.len(), 1, "{acts:?}");
+    assert!(matches!(&acts[0], Action::Eject { id, .. } if id == "c"), "{acts:?}");
+}
+
+#[test]
+fn two_touchers_of_a_source_file_with_no_provider_stay_unattributed() {
+    let err = "error[E0599]: no method named `reclaim` found for struct `Pool` in the current scope\n --> q/src/pool.rs:40:10\n";
+    let members = vec![
+        diff("a", &["q/src/pool.rs"], "+let x = 1;\n"),
+        diff("b", &["q/src/pool.rs"], "+let y = 2;\n"),
+    ];
+    assert!(attribute(&compile_errors(err), &members).is_empty());
+}
