@@ -38,7 +38,6 @@
 3 perf-watch/src/lib.rs
 5 reconciler/src/hold_sweep.rs
 7 reconciler/src/lib.rs
-2 rule/src/code.rs
 2 runtime-watch/src/real.rs
 1 skew/src/real.rs
 1 spira-runtime/src/reconcile_host.rs
