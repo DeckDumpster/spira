@@ -571,6 +571,7 @@ mod tests {
             (&["set-state", "sp-a", "branch=spira/sp-a"], Kind::Write { body: false }),
             (&["set-state", "sp-a", "lane=builder"], Kind::Write { body: false }),
             (&["update", "sp-a", "--priority", "1"], Kind::Write { body: false }),
+            (&["update", "sp-a", "-p", "2"], Kind::Write { body: false }),
             (&["update", "sp-a", "--body-file", "-", "--force-claimed", "why"], Kind::Write { body: true }),
             (&["create", "t"], Kind::Write { body: false }),
             (&["create", "T", "-t", "bug", "-p", "2", "--labels", "a,b", "--external-ref", "gh-1", "--body-file", "-", "--silent"], Kind::Write { body: true }),
@@ -622,6 +623,9 @@ mod tests {
             &["update", "sp-a", "--priority", "9"],
             &["update", "sp-a", "--force-claimed", "why"],
             &["set-state", "sp-a", "branch="],
+            &["update", "sp-a", "-p", "5"],
+            &["update", "sp-a", "--body-file", "-", "--force-claimed", " "],
+            &["dep", "add", "sp-a", "sp-b", "--type"],
             &["gate", "resolve", "x"],
             &[][..],
         ] {
@@ -1020,6 +1024,18 @@ mod tests {
         let mut m = Recorder(Vec::new());
         after(&v(&["dep", "relate", "sp-a", "sp-b"]), "", &mut m, &mut NoBd, 0);
         assert!(m.0.iter().all(|c| !c[0].starts_with("dep-")), "a relate is no lifecycle edge: {:?}", m.0);
+    }
+
+    #[test]
+    fn a_dep_mirror_the_machine_refuses_is_reported_and_bds_write_stands() {
+        struct Down;
+        impl crate::callers::Machine for Down {
+            fn call(&mut self, _: &[String]) -> (i32, String) {
+                (1, "store down".into())
+            }
+        }
+        let report = after(&v(&["dep", "add", "sp-a", "sp-b"]), "", &mut Down, &mut NoBd, 0);
+        assert!(report.contains("dep-add sp-a -> sp-b is in bd but was not mirrored") && report.contains("store down"), "{report}");
     }
 
     #[test]
