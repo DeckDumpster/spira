@@ -974,13 +974,14 @@ fn a_reopen_mid_deletion_does_not_rescan_the_unstamped_events_it_already_passed(
         i += 1;
         assert!(i < 100, "the scan never reached the deletion");
     }
+    let before = events_left(&path);
     b.take_drain_rows();
     drop(b);
     let b = open_day(&path, &wall);
     live_commit(&b, 1_000);
     let rows = b.take_drain_rows();
     assert!(rows <= DRAIN_PER_COMMIT as u64, "the first commit after the reopen examined {rows} rows");
-    assert!(events_left(&path) < 20_001 - DRAIN_PER_COMMIT as i64, "the reopen did not go on deleting");
+    assert_eq!(events_left(&path), before - DRAIN_PER_COMMIT as i64, "the reopen did not go on deleting");
 }
 
 #[test]
