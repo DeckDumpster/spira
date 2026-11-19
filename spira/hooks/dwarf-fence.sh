@@ -441,7 +441,7 @@ def hit(text, depth=0):
             t = toks[i]
             if t.startswith("BEADS_DIR=") or (t in ("export", "declare", "typeset", "local", "readonly") and any(w.startswith("BEADS_DIR") for w in toks[i + 1:])):
                 return True
-            if ASSIGN.match(t) or t in ("do", "then", "{", "!"):
+            if ASSIGN.match(t) or t in ("do", "then", "{", "!", "if", "while", "until", "else", "elif"):
                 i += 1; continue
             if t.split("/")[-1] in PREFIX:
                 i += 1

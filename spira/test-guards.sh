@@ -330,7 +330,8 @@ for rune in builder ops groomer; do
              'bash -c "bd show sp-1"' 'env FOO=1 bd-embedded list' 'export BEADS_DIR=/x' \
              'sudo -u root bd list' 'timeout 5 /usr/bin/bd list' 'echo `bd create x`' 'echo $(bd list)' \
              'ls | xargs bd show' 'find . -exec bd list {} +' 'eval "bd create x"' 'bash -lc "BEADS_DIR=/x true"' \
-             'declare -x BEADS_DIR=/x'; do
+             'declare -x BEADS_DIR=/x' 'if bd list; then true; fi' 'while bd list; do true; done' \
+             'nice -n 5 bd list' 'xargs -n 1 bd show' 'time bd list' 'nohup bd list' "$(printf 'true\nbd list')"; do
         out="$(fence_bd "$c" SPIRA_RUNE="$rune")"
         want "sp-dxbocs/$rune/refused: $c" '"decision":"block"' "$out"
         want "sp-dxbocs/$rune/names-the-exit: $c" 'work file' "$out"
