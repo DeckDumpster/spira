@@ -373,21 +373,22 @@ mod tests {
         assert!(found.iter().all(|f| f.path != TASK_MODES), "{:?}", found.iter().map(|f| &f.message).collect::<Vec<_>>());
     }
 
-    /// `commits`: (rev, status rows against its parent, DELTA text at that rev).
+    /// `commits`: (rev, status rows against its parent, DELTA at the rev, DELTA at its parent).
     fn folded_tree(
         t: &TempDir,
         status: &'static str,
         base_file: &'static str,
         frags: &'static [(&'static str, &'static str)],
-        commits: &'static [(&'static str, &'static str, &'static str)],
+        commits: &'static [(&'static str, &'static str, &'static str, &'static str)],
     ) -> Tree {
         Tree::from_paths(t.path(), [DELTA], Vec::<String>::new()).with_base(Some("main".into())).with_git(Box::new(move |a| match a {
             ["rev-parse", ..] | ["merge-base", ..] => Ok(b"B\n".to_vec()),
             ["diff", "--name-status", "--no-renames", _, "--", ..] => Ok(status.as_bytes().to_vec()),
             ["diff", "--name-status", "--no-renames", p, c, "--", ..] => commits
                 .iter()
+                
                 .find(|(r, ..)| format!("{r}^") == *p && r == c)
-                .map(|(_, st, _)| st.as_bytes().to_vec())
+                .map(|(_, st, ..)| st.as_bytes().to_vec())
                 .ok_or_else(|| format!("unexpected {a:?}")),
             ["rev-list", "--no-merges", "B..HEAD", "--", ..] => Ok(commits.iter().rev().map(|(r, ..)| format!("{r}\n")).collect::<String>().into_bytes()),
             ["show", spec] => {
@@ -396,10 +397,10 @@ mod tests {
                     if rev == "B" {
                         return Ok(base_file.as_bytes().to_vec());
                     }
-                    if let Some((_, _, d)) = commits.iter().find(|(r, ..)| *r == rev) {
+                    if let Some((_, _, d, _)) = commits.iter().find(|(r, ..)| *r == rev) {
                         return Ok(d.as_bytes().to_vec());
                     }
-                    if let Some((_, _, d)) = commits.iter().find(|(r, ..)| format!("{r}^") == rev) {
+                    if let Some((.., d)) = commits.iter().find(|(r, ..)| format!("{r}^") == rev) {
                         return Ok(d.as_bytes().to_vec());
                     }
                 }
@@ -418,7 +419,7 @@ mod tests {
     fn a_branch_editing_the_folded_delta_gets_one_finding() {
         let t = TempDir::new("folded-edit");
         t.write(DELTA, A);
-        let f = ConfigDeltaFolded.check(&folded_tree(&t, "M\tspira/config-delta.toml\n", "", &[], &[("E", "M\tspira/config-delta.toml\n", A)])).unwrap();
+        let f = ConfigDeltaFolded.check(&folded_tree(&t, "M\tspira/config-delta.toml\n", "", &[], &[("E", "M\tspira/config-delta.toml\n", A, "")])).unwrap();
         assert_eq!(f.len(), 1, "{f:?}");
         assert!(f[0].message.contains("spira/config-delta.d/<bead>.toml"));
     }
@@ -427,7 +428,7 @@ mod tests {
     fn a_tree_whose_diff_is_exactly_a_fold_gets_none() {
         let t = TempDir::new("folded-fold");
         t.write(DELTA, AB);
-        let tree = folded_tree(&t, FOLD_ST, A, FRAG_A, &[("F", FOLD_ST, AB)]);
+        let tree = folded_tree(&t, FOLD_ST, A, FRAG_A, &[("F", FOLD_ST, AB, A)]);
         assert!(ConfigDeltaFolded.check(&tree).unwrap().is_empty());
     }
 
@@ -435,7 +436,7 @@ mod tests {
     fn a_round_fold_of_a_fragment_its_own_member_added_gets_none() {
         let t = TempDir::new("folded-member");
         t.write(DELTA, AB);
-        let tree = folded_tree(&t, "M\tspira/config-delta.toml\n", A, FRAG_A, &[("F", FOLD_ST, AB)]);
+        let tree = folded_tree(&t, "M\tspira/config-delta.toml\n", A, FRAG_A, &[("F", FOLD_ST, AB, A)]);
         assert!(ConfigDeltaFolded.check(&tree).unwrap().is_empty());
     }
 
@@ -444,7 +445,7 @@ mod tests {
         let t = TempDir::new("folded-hand");
         const EDIT: &str = "removed = [\"spira.a\", \"spira.b\", \"spira.c\"]\n";
         t.write(DELTA, EDIT);
-        let tree = folded_tree(&t, "M\tspira/config-delta.toml\n", A, FRAG_A, &[("F", FOLD_ST, AB), ("H", "M\tspira/config-delta.toml\n", EDIT)]);
+        let tree = folded_tree(&t, "M\tspira/config-delta.toml\n", A, FRAG_A, &[("F", FOLD_ST, AB, A), ("H", "M\tspira/config-delta.toml\n", EDIT, AB)]);
         assert_eq!(ConfigDeltaFolded.check(&tree).unwrap().len(), 1);
     }
 
@@ -452,15 +453,24 @@ mod tests {
     fn a_fold_that_drops_an_entry_is_refused() {
         let t = TempDir::new("folded-drop");
         t.write(DELTA, A);
-        let tree = folded_tree(&t, FOLD_ST, A, FRAG_A, &[("F", FOLD_ST, A)]);
+        let tree = folded_tree(&t, FOLD_ST, A, FRAG_A, &[("F", FOLD_ST, A, A)]);
         assert_eq!(ConfigDeltaFolded.check(&tree).unwrap().len(), 1, "a fold that drops the fragment's entry is an edit");
+    }
+
+    #[test]
+    fn a_commit_adding_a_fragment_beside_the_fold_is_not_a_fold() {
+        let t = TempDir::new("folded-extra");
+        t.write(DELTA, AB);
+        const EXTRA_ST: &str = "M\tspira/config-delta.toml\nD\tspira/config-delta.d/sp-a.toml\nA\tspira/config-delta.d/sp-b.toml\n";
+        let tree = folded_tree(&t, "M\tspira/config-delta.toml\n", A, FRAG_A, &[("F", EXTRA_ST, AB, A)]);
+        assert_eq!(ConfigDeltaFolded.check(&tree).unwrap().len(), 1);
     }
 
     #[test]
     fn a_worktree_edit_on_top_of_an_exact_fold_is_refused() {
         let t = TempDir::new("folded-worktree");
         t.write(DELTA, "removed = [\"spira.a\", \"spira.b\", \"spira.z\"]\n");
-        let tree = folded_tree(&t, "M\tspira/config-delta.toml\n", A, FRAG_A, &[("F", FOLD_ST, AB)]);
+        let tree = folded_tree(&t, "M\tspira/config-delta.toml\n", A, FRAG_A, &[("F", FOLD_ST, AB, A)]);
         assert_eq!(ConfigDeltaFolded.check(&tree).unwrap().len(), 1);
     }
 
