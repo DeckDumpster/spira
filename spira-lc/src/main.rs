@@ -303,7 +303,7 @@ pub fn dispatch(args: &[String]) -> (i32, String) {
         // A round assembled behind a running one, and its promotion (queue round stage/promote).
         Some("admin-create-store") => control::served::create_store(),
         Some("admin-drop-lifecycle") => admin_drop::run(&args[1..]),
-        Some("admin-store") => std::process::exit(admin_store::run(&args[1..])),
+        Some("admin-store") => (admin_store::run(&args[1..]), String::new()),
         Some("admin-provision-reader") => admin_reader::run(&args[1..]),
         // The ops read model: a view as JSON.
         Some("ops-view") => ops::cmd_ops_view(&args[1..]),
