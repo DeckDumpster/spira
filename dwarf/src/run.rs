@@ -1840,11 +1840,7 @@ pub fn dwarf_settings(home: &Path, run: &Path, prod: Option<&Path>, habits: bool
         }
     };
     let mail = home.join("hooks").join("dwarf-mail-deliver.sh");
-    let deliver = home.join("bd-unacked-comment-deliver.sh");
-    let mut post = vec![hook(&mail)];
-    if is_executable(&deliver) {
-        post.push(hook(&deliver));
-    }
+    let post = vec![hook(&mail)];
     let habits_bin = home.parent().unwrap_or(home).join("bin").join("habits");
     let mut groups = vec![format!("{{\"hooks\": [{}]}}", post.join(", "))];
     let habits = habits && is_executable(&habits_bin);
@@ -1860,7 +1856,6 @@ pub fn dwarf_settings(home: &Path, run: &Path, prod: Option<&Path>, habits: bool
         home.join("hooks").join("dwarf-fence.sh"),
         home.join("hooks").join("dwarf-amend-block.sh"),
         home.join("hooks").join("statute-check-hook.sh"),
-        home.join("bd-close-unacked-guard.sh"),
         home.join("script-running-guard.sh"),
     ] {
         if is_executable(&p) {
@@ -1883,6 +1878,19 @@ pub fn dwarf_settings(home: &Path, run: &Path, prod: Option<&Path>, habits: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_session_hooks_name_no_bd_hook() {
+        let rel = testkit::TempDir::new("dwarf-settings-nobd");
+        let home = rel.path().join("spira");
+        std::fs::create_dir_all(&home).unwrap();
+        for n in ["bd-close-unacked-guard.sh", "bd-unacked-comment-deliver.sh"] {
+            testkit::write_exe(&home.join(n), "#!/bin/sh\n");
+        }
+        let json = dwarf_settings(&home, Path::new("r/run"), None, false, None);
+        assert!(!json.contains("bd-close-unacked-guard.sh"), "{json}");
+        assert!(!json.contains("bd-unacked-comment-deliver.sh"), "{json}");
+    }
 
     #[test]
     fn habits_group_only_when_the_rune_sets_it() {

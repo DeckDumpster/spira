@@ -1,20 +1,14 @@
 #!/usr/bin/env bash
-# test-guards.sh — the two live PreToolUse guards, table-style: hooks/dwarf-fence.sh and
-# bd-close-unacked-guard.sh (+ its PostToolUse pair bd-unacked-comment-deliver.sh).
+# test-guards.sh — the live PreToolUse guard, table-style: hooks/dwarf-fence.sh.
 #
 # Merges test-dwarf-fence.sh, test-dwarf-fence-bd-create.sh and test-bd-close-unacked-guard.sh
 # (sp-qsr44, D1/D2). UC-06..13's original guards (bd-delivers-label, bd-remember,
 # bd-update-inflight, focus-close, null-close-reason, mail-fence, testenv-batch-fence,
 # schema-migration-guard) were retired by sp-fjsxb and are not re-created here.
 #
-# Section-5 seam for UC-04/05: bd-close-unacked-guard.sh and its deliver hook are driven
-# through a stub $SPIRA_BD answering `show --format json` / `comments --json` from canned
-# fixture files, so timestamp ordering is explicit and no sleep or real Dolt is needed.
-# The same stub answers `create ... --dry-run` for UC-03's fallback arm.
-#
 # defect: sp-kz8ob sp-mvg44
 # tier: T1
-# covers: spira/hooks/dwarf-fence.sh spira/bd-close-unacked-guard.sh spira/bd-unacked-comment-deliver.sh dwarf/src/* testenv/src/suites/* UC-safety-fences-01 UC-safety-fences-02 UC-safety-fences-03 UC-safety-fences-04 UC-safety-fences-05 UC-safety-fences-15
+# covers: spira/hooks/dwarf-fence.sh dwarf/src/* testenv/src/suites/* UC-safety-fences-01 UC-safety-fences-02 UC-safety-fences-03 UC-safety-fences-15
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -22,11 +16,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 echo "test-guards.sh"
 
 FENCE="$HERE/hooks/dwarf-fence.sh"
-BDCLOSE_GUARD="$HERE/bd-close-unacked-guard.sh"
-BDCLOSE_DELIVER="$HERE/bd-unacked-comment-deliver.sh"
 [ -x "$FENCE" ]          || bail "hooks/dwarf-fence.sh missing or not executable"
-[ -x "$BDCLOSE_GUARD" ]  || bail "bd-close-unacked-guard.sh missing or not executable"
-[ -x "$BDCLOSE_DELIVER" ] || bail "bd-unacked-comment-deliver.sh missing or not executable"
 
 # UC-safety-fences-16 RETIRED (sp-j89pd, wave 4.2): dwarf_settings (lib.sh) had zero live
 # callers — dwarf::run::dwarf_settings is the Rust port, a pure function with a fixed
@@ -37,10 +27,9 @@ BDCLOSE_DELIVER="$HERE/bd-unacked-comment-deliver.sh"
 # and the [use_case.uncovered] marker on UC-safety-fences-16.
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
-FAKE_RUN="$TMP/run"; FAKE_PROD="$TMP/prod"; FIXDIR="$TMP/fixtures"
+FAKE_RUN="$TMP/run"; FAKE_PROD="$TMP/prod";
 FAKE_CONFIG="$TMP/.config/spira"
-mkdir -p "$FAKE_RUN" "$FAKE_PROD" "$FIXDIR" "$FAKE_CONFIG"
-BDCLOSE_RC=""
+mkdir -p "$FAKE_RUN" "$FAKE_PROD" "$FAKE_CONFIG"
 ACTOR="guard-test-actor"
 
 # ---------------------------------------------------------------------------
@@ -57,26 +46,6 @@ bash_rib_payload() {  # bash_rib_payload <cmd> <0|1> -> PreToolUse JSON for Bash
     python3 -c 'import json,sys
 print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1],"run_in_background":sys.argv[2]=="1"}}))' "$1" "$2"
 }
-
-# ---------------------------------------------------------------------------
-# Stub bd — implements only the three calls these two guards shell out to.
-# ---------------------------------------------------------------------------
-STUB_BD="$TMP/bd"
-cat > "$STUB_BD" <<'STUBEOF'
-#!/usr/bin/env bash
-set -u
-FIXDIR="${STUB_FIXDIR:-}"
-args=("$@")
-[ "${args[0]:-}" = "-C" ] && args=("${args[@]:2}")
-sub="${args[0]:-}"
-case "$sub" in
-    create)   exit 0 ;;
-    show)     cat "$FIXDIR/${args[1]:-}.show.json" 2>/dev/null || echo '{}'; exit 0 ;;
-    comments) cat "$FIXDIR/${args[1]:-}.comments.json" 2>/dev/null || echo '[]'; exit 0 ;;
-    *) exit 0 ;;
-esac
-STUBEOF
-chmod +x "$STUB_BD"
 
 # ---------------------------------------------------------------------------
 # Guard runners
@@ -109,32 +78,6 @@ fence_run_raw() {  # fence_run_raw <raw-stdin> [ENV..] -- for malformed/empty pa
         bash "$FENCE" 2>/dev/null
 }
 
-BDCLOSE_DB="$TMP/fakedb"
-mkfix() {  # mkfix <bid> <started_at> <notes> <comments-json>
-    python3 -c 'import json,sys; print(json.dumps({"started_at":sys.argv[1],"notes":sys.argv[2]}))' \
-        "$2" "$3" > "$FIXDIR/$1.show.json"
-    printf '%s' "$4" > "$FIXDIR/$1.comments.json"
-}
-# bdclose_run <bid> <cmd> [ENV=val ...] -> prints combined output on stdout; the function's
-# own exit status IS the guard's exit status (0 allow / 2 block). Never call this through a
-# command-substitution wrapper without also capturing "$?" in the SAME statement — "$(...)"
-# forks a subshell, so a status stashed in a variable from inside the function would be lost
-# the moment that subshell exits. BDCLOSE_RC is set by the caller, immediately after, from
-# "$?" — never from inside this function.
-bdclose_run() {
-    local bid="$1" cmd="$2"; shift 2
-    bash_payload "$cmd" | env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
-        SPIRA_DWARF=1 BEAD_ID="$bid" BEADS_ACTOR="$ACTOR" \
-        SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
-        "$@" bash "$BDCLOSE_GUARD" 2>&1
-}
-close_cmd_for() { printf 'bd -C %s close %s --reason done' "$BDCLOSE_DB" "$1"; }
-deliver_run() {  # deliver_run <bid> <run-tmp> -> stdout
-    printf '{}' | env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
-        BEAD_ID="$1" BEADS_ACTOR="$ACTOR" \
-        SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" SPIRA_RUN="$2" \
-        bash "$BDCLOSE_DELIVER" 2>/dev/null
-}
 
 # ===========================================================================
 echo
@@ -314,6 +257,8 @@ nowant "sp-ozym9/override-bypasses-queue-write-block" '"decision":"block"' "$out
 echo
 echo "UC-safety-fences-03 — dwarf session: direct bd/bdq calls are refused, by any path (sp-dxbocs):"
 # ===========================================================================
+STUB_BD="$TMP/bd"
+printf '#!/bin/sh\nexit 0\n' > "$STUB_BD"; chmod +x "$STUB_BD"
 # Reverses the 2026-10-05 no-bd-rule ruling (sp-j7l3q) on 2026-11-18: ops sweeps reached the
 # store by absolute path, past a PATH that held only `work`.
 BDCREATE_DB="$TMP/prod-db"
@@ -349,77 +294,6 @@ done
 
 # ===========================================================================
 echo
-echo "UC-safety-fences-04 — bd close refused while a post-claim comment is unacknowledged:"
-# ===========================================================================
-mkfix "bc1" "2026-01-01T00:00:00Z" "" \
-  '[{"id":"11111111-1111-1111-1111-111111111111","author":"operator","created_at":"2026-01-02T00:00:00Z","text":"Amendment: use approach B, not A"}]'
-out="$(bdclose_run bc1 "$(close_cmd_for bc1)")"
-BDCLOSE_RC=$?
-is   "UC-safety-fences-04/positive-control-blocks-rc"      2                                     "$BDCLOSE_RC"
-want "UC-safety-fences-04/positive-control-blocks-message" "BLOCKED by bd-close-unacked-guard"    "$out"
-want "UC-safety-fences-04/names-comment-id"                "11111111-1111-1111-1111-111111111111" "$out"
-want "UC-safety-fences-04/names-override"                  "SPIRA_CLOSE_UNACKED_CONSIDERED"        "$out"
-
-mkfix "bc2" "2026-01-01T00:00:00Z" "ACK 11111111-1111-1111-1111-111111111111: applied — will use approach B" \
-  '[{"id":"11111111-1111-1111-1111-111111111111","author":"operator","created_at":"2026-01-02T00:00:00Z","text":"Amendment"}]'
-bdclose_run bc2 "$(close_cmd_for bc2)" >/dev/null
-BDCLOSE_RC=$?
-is "UC-safety-fences-04/ack-note-allows" 0 "$BDCLOSE_RC"
-
-bdclose_run bc1 "$(close_cmd_for bc1)" SPIRA_CLOSE_UNACKED_CONSIDERED="set aside for now" >/dev/null
-BDCLOSE_RC=$?
-is "UC-safety-fences-04/env-override-allows" 0 "$BDCLOSE_RC"
-
-bdclose_run bc1 "SPIRA_CLOSE_UNACKED_CONSIDERED=deliberate bd -C $BDCLOSE_DB close bc1 --reason done" >/dev/null
-BDCLOSE_RC=$?
-is "UC-safety-fences-04/inline-override-allows" 0 "$BDCLOSE_RC"
-
-mkfix "bc3" "2026-01-01T00:00:00Z" "" '[]'
-bdclose_run bc3 "$(close_cmd_for bc3)" >/dev/null
-BDCLOSE_RC=$?
-is "UC-safety-fences-04/no-comments-allows" 0 "$BDCLOSE_RC"
-
-mkfix "bc4" "2026-01-02T00:00:00Z" "" \
-  '[{"id":"22222222-2222-2222-2222-222222222222","author":"operator","created_at":"2026-01-01T00:00:00Z","text":"pre-claim"}]'
-bdclose_run bc4 "$(close_cmd_for bc4)" >/dev/null
-BDCLOSE_RC=$?
-is "UC-safety-fences-04/pre-claim-comment-allows" 0 "$BDCLOSE_RC"
-
-mkfix "bc5" "2026-01-01T00:00:00Z" "" \
-  "[{\"id\":\"33333333-3333-3333-3333-333333333333\",\"author\":\"$ACTOR\",\"created_at\":\"2026-01-02T00:00:00Z\",\"text\":\"self\"}]"
-bdclose_run bc5 "$(close_cmd_for bc5)" >/dev/null
-BDCLOSE_RC=$?
-is "UC-safety-fences-04/self-comment-allows" 0 "$BDCLOSE_RC"
-
-mkfix "bc6" "2026-01-01T00:00:00Z" "" \
-  '[{"id":"44444444-4444-4444-4444-444444444444","author":"operator","created_at":"2026-01-02T00:00:00Z","text":"note"}]'
-bdclose_run bc6 "bd -C $BDCLOSE_DB update bc6 --status in_progress" >/dev/null
-BDCLOSE_RC=$?
-is "UC-safety-fences-04/non-close-command-allows" 0 "$BDCLOSE_RC"
-
-# ===========================================================================
-echo
-echo "UC-safety-fences-05 — unacked comment delivered once as PostToolUse additionalContext:"
-# ===========================================================================
-DELIVER_TMP1="$TMP/deliver-1"; mkdir -p "$DELIVER_TMP1"
-out="$(deliver_run bc1 "$DELIVER_TMP1")"
-want "UC-safety-fences-05/delivers-additionalContext" "additionalContext"                        "$out"
-want "UC-safety-fences-05/names-comment-id"           "11111111-1111-1111-1111-111111111111"     "$out"
-want "UC-safety-fences-05/names-ack-command"          "ACK 11111111-1111-1111-1111-111111111111" "$out"
-
-out2="$(deliver_run bc1 "$DELIVER_TMP1")"
-nowant "UC-safety-fences-05/idempotent-second-call-empty" "additionalContext" "$out2"
-
-DELIVER_TMP4="$TMP/deliver-4"; mkdir -p "$DELIVER_TMP4"
-out4="$(deliver_run bc4 "$DELIVER_TMP4")"
-nowant "UC-safety-fences-05/pre-claim-not-delivered" "additionalContext" "$out4"
-
-DELIVER_TMP5="$TMP/deliver-5"; mkdir -p "$DELIVER_TMP5"
-out5="$(deliver_run bc5 "$DELIVER_TMP5")"
-nowant "UC-safety-fences-05/self-comment-not-delivered" "additionalContext" "$out5"
-
-# ===========================================================================
-echo
 echo "UC-safety-fences-15 — shared PreToolUse pass-through block (D1), applied to both guards:"
 # ===========================================================================
 FENCE_REP_CMD="bash spira/landing.sh spira"
@@ -442,41 +316,6 @@ nowant "UC-safety-fences-15/fence-heredoc-prose-allows" '"decision":"block"' "$o
 # variant for this guard, unlike the two below.
 out="$(fence_run "$FENCE_REP_CMD" SPIRA_DWARF=test-dwarf SPIRA_DWARF_OVERRIDE=1)"
 nowant "UC-safety-fences-15/fence-override-allows" '"decision":"block"' "$out"
-
-BDCLOSE_REP="$(close_cmd_for bc1)"
-
-out=$(printf '%s' "$(bash_payload "$BDCLOSE_REP")" | env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
-    BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
-    bash "$BDCLOSE_GUARD" 2>&1); rc=$?
-is "UC-safety-fences-15/bdclose-no-SPIRA_DWARF-allows" 0 "$rc"
-
-out=$(printf '{"tool_name":"Read","tool_input":{"file_path":"/tmp/x"}}' | env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
-    SPIRA_DWARF=1 BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
-    bash "$BDCLOSE_GUARD" 2>&1); rc=$?
-is "UC-safety-fences-15/bdclose-non-Bash-tool-allows" 0 "$rc"
-
-bdclose_run bc1 "echo 'bd -C $BDCLOSE_DB close bc1 --reason done'" >/dev/null
-BDCLOSE_RC=$?
-is "UC-safety-fences-15/bdclose-single-quoted-prose-allows" 0 "$BDCLOSE_RC"
-
-bdclose_run bc1 "$(close_cmd_for bc1)" SPIRA_CLOSE_UNACKED_CONSIDERED="set aside" >/dev/null
-BDCLOSE_RC=$?
-is "UC-safety-fences-15/bdclose-env-override-allows" 0 "$BDCLOSE_RC"
-
-bdclose_run bc1 "SPIRA_CLOSE_UNACKED_CONSIDERED=x bd -C $BDCLOSE_DB close bc1 --reason done" >/dev/null
-BDCLOSE_RC=$?
-is "UC-safety-fences-15/bdclose-inline-override-allows" 0 "$BDCLOSE_RC"
-
-# Heredoc prose is NOT exempted for this guard: its close-detector splits the command on
-# newlines (among other separators) before regex-matching "bd ... close", so a heredoc BODY
-# line that merely mentions closing is indistinguishable from a real close invocation on its
-# own line. This blocks a non-close command (a false positive, not a false pass — the guard
-# still never lets an unacknowledged close through) and is pinned here as documented,
-# undecided-not-fixed behaviour rather than an assumed pass. Filed as sp-fel4v.
-heredoc_close="$(printf "bd -C %s comment bc1 note <<'EOF'\nplease run bd -C %s close bc1 --reason done\nEOF" "$BDCLOSE_DB" "$BDCLOSE_DB")"
-bdclose_run bc1 "$heredoc_close" >/dev/null
-BDCLOSE_RC=$?
-is "UC-safety-fences-15/bdclose-heredoc-prose-currently-blocks-sp-fel4v" 2 "$BDCLOSE_RC"
 
 # ===========================================================================
 echo
@@ -545,27 +384,13 @@ nowant "gap7/fence-malformed-payload-fails-open" '"decision":"block"' "$out"
 out="$(fence_run_raw '' SPIRA_DWARF=test-dwarf)"
 nowant "gap7/fence-empty-payload-fails-open" '"decision":"block"' "$out"
 
-out=$(printf 'not json at all' | env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
-    SPIRA_DWARF=1 BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
-    bash "$BDCLOSE_GUARD" 2>&1); rc=$?
-is "gap7/bdclose-malformed-payload-fails-open" 0 "$rc"
-
-out=$(printf '' | env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
-    SPIRA_DWARF=1 BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
-    bash "$BDCLOSE_GUARD" 2>&1); rc=$?
-is "gap7/bdclose-empty-payload-fails-open" 0 "$rc"
 
 # ===========================================================================
 echo
-echo "Gap 8 — two refusal protocols, asserted structurally (not just substring text):"
+echo "Gap 8 — the fence refuses on stdout and exits 0:"
 # ===========================================================================
 rc="$(fence_rc "$FENCE_REP_CMD" SPIRA_DWARF=test-dwarf)"
 is "gap8/fence-protocol-always-exits-0-even-when-blocking" 0 "$rc"
-
-out="$(bdclose_run bc1 "$(close_cmd_for bc1)")"
-BDCLOSE_RC=$?
-is     "gap8/bdclose-protocol-exits-2-when-blocking"          2                     "$BDCLOSE_RC"
-nowant "gap8/bdclose-protocol-does-not-emit-decision-json"    '"decision":"block"'  "$out"
 
 # ===========================================================================
 echo

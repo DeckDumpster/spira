@@ -23,7 +23,6 @@ spira/runes/batcher.rune
 spira/runes/builder.rune
 spira/runes/concierge.rune
 spira/runes/czar.rune
-spira/runes/disabled/qa.rune
 spira/runes/groomer.rune
 spira/runes/groomer.md
 spira/runes/mimir.rune

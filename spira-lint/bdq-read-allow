@@ -59,14 +59,12 @@
 2 spira-world/src/bin/world.rs
 1 spira-world/src/checkpoint.rs
 1 spira-world/src/freeze.rs
-2 spira/citations.sh
 1 spira/confine.sh
 2 spira/first-run.sh
 1 spira/law-synth.sh
 2 spira/pilgrimage.sh
 1 spira/ready.sh
 2 spira/reflect.sh
-1 spira/released-defects.sh
 1 spira/seed.sh
 3 spira/verify-landed.sh
 7 watchtower/src/lc.rs
