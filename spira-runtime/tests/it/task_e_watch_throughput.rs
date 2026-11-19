@@ -421,7 +421,7 @@ fn a_landing_ref_that_fails_once_and_resolves_on_the_second_read_is_read() {
     let marker = dir.join("failed-once");
     // The first rev-parse of this repo fails and the ref appears behind it; every other git call is git's own.
     testkit::write_exe(
-        &bin.join("git"),
+        bin.join("git"),
         &format!(
             "#!/bin/sh\ncase \"$*\" in *{repo}*rev-parse*local/main*)\n[ -e {m} ] || {{ : > {m}; /usr/bin/git -C {repo} branch local/main; exit 1; }};;\nesac\nexec /usr/bin/git \"$@\"\n",
             repo = repo.display(),
