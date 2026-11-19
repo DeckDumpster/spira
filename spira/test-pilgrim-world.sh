@@ -86,8 +86,17 @@ is "Loom shows A blocked" 0 "$loom_rc"
 loom_view | jq -e "[.view.next[].id] | index(\"$A\") == null" >/dev/null
 is "Loom does not offer A as claimable while B is open" 0 "$?"
 
-closed="$(pilgrim_work "$T/pilgrim" close-other "$B" --evidence walk-closes-the-blocker 2>&1)"
-is "close-other exits 0: $closed" 0 "$?"
+close_once() { pilgrim_work "$T/pilgrim" close-other "$B" --evidence walk-closes-the-blocker 2>&1; }
+# A client waits a bounded time for the service's answer and a late one is "cannot tell"; groomer close is a no-op on a closed bead, so ask again and say so.
+for attempt in 1 2 3; do
+    closed="$(close_once)"
+    close_rc=$?
+    [ "$close_rc" -eq 0 ] && break
+    echo "# close-other attempt $attempt exit $close_rc: $closed"
+    echo "# lc-serve.log: $(tail -c 1500 "$T/pilgrim/lc-serve.log")"
+    [[ "$closed" == *"cannot tell"* ]] || break
+done
+is "close-other exits 0: $closed" 0 "$close_rc"
 once="$(in_world "$T/pilgrim" "lc-view once" | plain)"
 nowant "lc-view no longer shows A blocked" "$A <- $B" "$once"
 want "lc-view offers A as claimable" "P2 $A" "$(echo "$once" | sed -n '/^NEXT/,/^[A-Z]/p')"
