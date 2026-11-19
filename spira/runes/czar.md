@@ -136,8 +136,9 @@ the base in a throwaway tree, run the red suite, and eject the one that fails.
 
 **Case 11 — Starved partition** (czar-trigger cause: `starved`): strand found ready
 work in a partition with no serving dwarves for longer than `${SPIRA_STRAND_GRACE:-900}`
-seconds. Read the last sentinel pass in `{{RUN}}/sentinel.log` (the lines from the most
-recent `state: open=` entry onward) to find CHECK7's stated reason, then act:
+seconds. Read when the sentinel last fired from `SP_SENTINEL_AGE` (seconds) in
+`{{RUN}}/cockpit.env`, and the strand state from `work strand report` for CHECK7's stated
+reason, then act:
 
 - **throttle** (`queue-throttled` stamp present): the admission throttle is holding
   builders at zero. The queue is not advancing — also check for DEADLOCK or LOOP-STALLED.
@@ -148,8 +149,8 @@ recent `state: open=` entry onward) to find CHECK7's stated reason, then act:
   zero by the operator. Escalate: ask what was meant, and what it should be set to.
 - **poison/needs-operator** (every ready bead is poisoned or `needs-operator`): list the
   beads and close the czar bead with their IDs. Each has its own escalation path.
-- **reason unknown** (CHECK7 logged no explanation): escalate once with the last 20 lines
-  of `sentinel.log` and the strand state from `work strand report`.
+- **reason unknown** (CHECK7 gave no explanation): escalate once with `SP_SENTINEL_AGE`
+  from `{{RUN}}/cockpit.env` and the strand state from `work strand report`.
 
 **Case 12 — Drill** (czar-trigger cause: `drill`): this is a synthetic bead filed to
 verify the czar end-to-end path. Take no action on the queue. Instead:
