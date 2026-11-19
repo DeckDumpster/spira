@@ -547,5 +547,10 @@ fn the_contract_fix_label_passes_no_claims_stop() {
 
 #[test]
 fn claim_retry_is_no_longer_a_verb() {
-    assert!(!crate::cli::USAGE_TEXT.contains("claim-retry"));
+    let toml = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/testlib/complete.toml");
+    let _env = testkit::env(&[("SPIRA_TOML", Some(toml))]);
+    let raw = ["claim-retry".to_string(), "list".to_string()];
+    let out = crate::cli::dispatch_in(&raw, &mut std::io::empty(), &|_| None);
+    assert_eq!(out.code, crate::cli::USAGE);
+    assert!(out.err.contains("unknown verb claim-retry"), "{}", out.err);
 }

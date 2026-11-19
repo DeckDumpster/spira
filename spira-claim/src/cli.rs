@@ -44,7 +44,7 @@ impl Outcome {
     }
 }
 
-pub(crate) const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--json]
+const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--json]
        spira-claim requeues <bead> [--events F] [--json]
        spira-claim counts [--events F]                      (ids on stdin)
        spira-claim decide [thresholds] [--] <n> <requeues> <reclaims> <labels> <stamp> [poisoned]
