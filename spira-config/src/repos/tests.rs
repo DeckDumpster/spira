@@ -328,6 +328,14 @@ oldshape | h/old | pr | fmt-tool | gate --flag
     }
 
     #[test]
+    fn a_deadline_a_missing_ref_and_a_lock_read_differently() {
+        assert_eq!(exit_words(Some(124), ""), "exit 124 (deadline)");
+        assert_eq!(exit_words(Some(1), ""), "exit 1");
+        assert_eq!(exit_words(Some(128), " fatal: Unable to create '.git/index.lock' \n"), "exit 128: fatal: Unable to create '.git/index.lock'");
+        assert_eq!(exit_words(None, ""), "killed by a signal");
+    }
+
+    #[test]
     fn landref_explained_equals_landref_on_a_resolvable_repo() {
         let d = real_repo("local/main");
         let reg = registry_for(&format!("r|{}|queue.local|local/main||\n", d.display()), "r");

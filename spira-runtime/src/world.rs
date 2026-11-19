@@ -1000,6 +1000,12 @@ impl World {
         reg.names().into_iter().map(|name| Repo { path: reg.root(&name).unwrap_or_default(), name, error: String::new() }).collect()
     }
 
+    /// A git re-read is spent only while less than half the observe bound is gone, so the store
+    /// reads after it keep the time they need to answer inside the deadline.
+    fn has_time_to_reread(&self) -> bool {
+        self.observe_bound.is_none_or(|(began, total)| began.elapsed() < total / 2)
+    }
+
     /// The beads landed over the 24 h ending `now`, per registered repo, read from its landing ref
     /// as `spira_landref` resolves it (the map row's `base`, else the remote's default; never the
     /// lane name): by hour of the last commit naming each bead, the oldest hour first, and the
@@ -1013,11 +1019,11 @@ impl World {
         let mut out = vec![];
         for row in map_rows(&map) {
             let land = spira_config::repos::landref_explained(&reg, &row.name)
-                .or_else(|_| spira_config::repos::landref_explained(&reg, &row.name))
+                .or_else(|e| if self.has_time_to_reread() { spira_config::repos::landref_explained(&reg, &row.name) } else { Err(e) })
                 .map_err(|why| format!("{}: no landing ref resolves: {why}", row.name))?;
             let log_args = ["log", land.as_str(), &since, "--format=%ct %s"];
             let log = git_ok(Path::new(&row.path), &log_args)
-                .or_else(|_| git_ok(Path::new(&row.path), &log_args))
+                .or_else(|e| if self.has_time_to_reread() { git_ok(Path::new(&row.path), &log_args) } else { Err(e) })
                 .map_err(|e| format!("{}: git log {land} in {}: {e}", row.name, row.path))?;
             let mut landed: BTreeMap<String, u64> = BTreeMap::new();
             for line in String::from_utf8_lossy(&log).lines() {

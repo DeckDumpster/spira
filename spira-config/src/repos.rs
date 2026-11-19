@@ -482,9 +482,18 @@ fn verify_ref_explained(repo: &str, r: &str) -> Result<(), String> {
     if out.status.success() {
         return Ok(());
     }
-    let code = out.status.code().map_or_else(|| "killed by a signal".to_string(), |c| if c == 124 { "exit 124 (deadline)".to_string() } else { format!("exit {c}") });
-    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    Err(if err.is_empty() { code } else { format!("{code}: {err}") })
+    Err(exit_words(out.status.code(), &String::from_utf8_lossy(&out.stderr)))
+}
+
+/// A failed git call in its own words; `bounded` reports its deadline as exit 124.
+fn exit_words(code: Option<i32>, stderr: &str) -> String {
+    let code = match code {
+        Some(124) => "exit 124 (deadline)".to_string(),
+        Some(c) => format!("exit {c}"),
+        None => "killed by a signal".to_string(),
+    };
+    let err = stderr.trim();
+    if err.is_empty() { code } else { format!("{code}: {err}") }
 }
 
 fn verify_ref(repo: &str, r: &str) -> bool {

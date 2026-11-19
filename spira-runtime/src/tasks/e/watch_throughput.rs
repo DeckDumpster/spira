@@ -31,7 +31,8 @@
 //!
 //! A landing is a commit naming a bead on a repo's landing ref (resolved as `spira_landref` does,
 //! never the lane name): the ref is the authority on what landed. A count that cannot be read
-//! pages BLIND on the first unreadable tick, and files nothing. A git ref or log read is retried once in the same pass; store reads are not.
+//! pages BLIND on the first unreadable tick, and files nothing. A git ref read is
+//! retried once in the same pass; store reads are not.
 
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
