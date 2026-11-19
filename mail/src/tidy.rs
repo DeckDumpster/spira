@@ -127,6 +127,7 @@ pub fn condition_raised(key: &str) -> bool {
 
 fn ask_owner(program: &str, envs: &[(String, String)], detail: &str) -> bool {
     let null = std::process::Stdio::null;
+    // FORK-EDGE: the owner's own binary is the only reader of its condition state
     spira_config::bounded::bounded(program).args(["condition", detail]).envs(envs.iter().map(|(k, v)| (k, v))).stdin(null()).stdout(null()).stderr(null()).status().map_or(true, |s| s.code() != Some(CONDITION_ENDED))
 }
 
