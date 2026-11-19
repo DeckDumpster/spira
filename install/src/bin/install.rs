@@ -2331,7 +2331,7 @@ mod nix_gc_tests {
         std::fs::create_dir_all(&root).unwrap();
         let (bin, run) = (td.path().join("p/bin"), td.path().join("r"));
         let g = gc_plan(Ok(bin.display().to_string()), Ok(run.display().to_string()), &root).unwrap();
-        assert_eq!((g.profile_bin, g.log, g.key), (bin, run.join("nix-gc.log"), "spira-rel9".to_string()));
+        assert_eq!((g.profile_bin, g.log, g.key), (bin.clone(), run.join("nix-gc.log"), "spira-rel9".to_string()));
         assert_eq!(gc_plan(Err("no profile".into()), Ok(run.display().to_string()), &root).err().as_deref(), Some("no profile"));
         assert_eq!(gc_plan(Ok(bin.display().to_string()), Err("no run".into()), &root).err().as_deref(), Some("no run"));
     }
