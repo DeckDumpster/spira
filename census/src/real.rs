@@ -471,7 +471,7 @@ mod tests {
         let real = Real { home: dir.to_path_buf(), lc, child_env: Vec::new() };
         let row = real.bd_sql_utc_now_row().unwrap();
         assert_eq!(row, "| 2026-01-01 00:00:00 |");
-        assert_eq!(real.run_bd_sql("SELECT 1").0, true);
+        assert!(real.run_bd_sql("SELECT 1").0);
         let got = real.bd_list_all_json("covers:*");
         assert_eq!(serde_json::from_str::<serde_json::Value>(&got).unwrap(), serde_json::json!([{"id":"sp-a","labels":["covers:x"]}]));
         let calls = std::fs::read_to_string(&log).unwrap();

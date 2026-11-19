@@ -16,7 +16,7 @@ use std::time::Duration;
 pub struct Real {
     pub home: PathBuf, // the spira/ directory conf.sh and lib.sh live in
     pub env: BTreeMap<String, String>,
-    /// `spira-lc`: `SPIRA_LC_BIN`, else the declared release's.
+    /// `spira-lc`, the declared release's.
     pub lc: String,
     /// `PATH`/`SPIRA_RELEASE` every conf.sh/lib.sh child runs under, from the declared release.
     pub child_env: Vec<(String, String)>,
@@ -35,11 +35,7 @@ impl Real {
         let child_env = spira_config::release_env::child_path_env_for_process().map_err(|e| format!("doctor: {e}"))?;
         let mut env = Self::capture_env(&home, &child_env);
         env.entry("SPIRA_HOME".to_string()).or_insert_with(|| home.display().to_string());
-        let lc = match std::env::var("SPIRA_LC_BIN").ok().filter(|v| !v.is_empty()) {
-            Some(v) => v,
-            None => spira_config::release_env::tool("spira-lc")?,
-        };
-        Ok(Real { home, env, lc, child_env })
+        Ok(Real { home, env, lc: spira_config::release_env::tool("spira-lc")?, child_env })
     }
 
     pub fn new() -> Real {
