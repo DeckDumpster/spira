@@ -352,3 +352,12 @@ fn the_swept_head_is_recorded_only_when_the_unit_starts() {
     let (bad, _) = decide(&starting, &Input::Failed { effect: UNIT_START.into(), error: "boom".into() }).unwrap();
     assert_eq!(bad.swept_head.as_deref(), Some("older"));
 }
+
+#[test]
+fn the_swept_head_survives_the_stored_rows_once_the_unit_has_started() {
+    let r = mid_run();
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&r, NAME);
+    assert!(rows.iter().any(|k| k == "swept_head") && rows.iter().any(|k| k == "head"), "{rows:?}");
+    let carried = spira_runtime::watchers::carried::<Carry>(r.engine().projection(), &StreamKey(STREAM.into()), STATE);
+    assert_eq!(carried.swept_head.as_deref(), Some("a changed prompt head"));
+}

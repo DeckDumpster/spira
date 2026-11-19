@@ -411,7 +411,7 @@ impl PersonaOps {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("run_id"), runtime::rows::Part::Field("name"), runtime::rows::Part::Field("started_at"), runtime::rows::Part::Field("red"), runtime::rows::Part::Field("red_why")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("run_id"), runtime::rows::Part::Field("name"), runtime::rows::Part::Field("started_at"), runtime::rows::Part::Field("red"), runtime::rows::Part::Field("red_why"), runtime::rows::Part::Field("head"), runtime::rows::Part::Field("swept_head")];
 
 impl Handler for PersonaOps {
     fn interests(&self) -> &[EventKindTag] {
