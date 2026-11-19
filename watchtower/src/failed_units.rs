@@ -23,6 +23,16 @@ pub const SHARED_UNITS: &[&str] = &[
 /// not be asked, rendered `?`, never an empty (all-clear) list. A unit whose file is gone is
 /// `Absent`, not failed.
 pub fn gather(units: &dyn Units) -> Option<Vec<String>> {
+    Some(gather_runs(units)?.into_iter().map(|(name, _)| name).collect())
+}
+
+/// `gather`, each failed unit with the `InvocationID` of the run that failed ("" if systemd gave none).
+pub fn gather_runs(units: &dyn Units) -> Option<Vec<(String, String)>> {
+    let names = gather_names(units)?;
+    Some(names.into_iter().map(|n| { let inv = units.detail(&UnitHandle::named(&n)).ok().and_then(|d| d.invocation_id).unwrap_or_default(); (n, inv) }).collect())
+}
+
+fn gather_names(units: &dyn Units) -> Option<Vec<String>> {
     let mut failed: Vec<String> = units.list("*").ok()?.into_iter().filter(|d| d.state == UnitState::Failed).map(|d| d.name).collect();
     for name in SHARED_UNITS {
         if !failed.iter().any(|f| f == name) && units.facts(&UnitHandle::named(name)).ok()?.state == UnitState::Failed {
@@ -37,13 +47,14 @@ pub struct StateRow {
     pub unit: String,
     pub first_seen: i64,
     pub escalated: bool,
+    pub invocation: String,
 }
 
 pub fn parse_state(text: &str) -> Vec<StateRow> {
     let mut out = Vec::new();
     for line in text.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() != 3 {
+        if parts.len() != 3 && parts.len() != 4 {
             continue;
         }
         let Ok(first_seen) = parts[1].parse::<i64>() else {
@@ -53,6 +64,7 @@ pub fn parse_state(text: &str) -> Vec<StateRow> {
             unit: parts[0].to_string(),
             first_seen,
             escalated: parts[2] == "1",
+            invocation: parts.get(3).filter(|i| **i != "-").map(|i| i.to_string()).unwrap_or_default(),
         });
     }
     out
@@ -61,17 +73,18 @@ pub fn parse_state(text: &str) -> Vec<StateRow> {
 pub fn render_state(rows: &[StateRow]) -> String {
     let mut s = String::new();
     for r in rows {
-        s.push_str(&format!("{} {} {}\n", r.unit, r.first_seen, if r.escalated { 1 } else { 0 }));
+        s.push_str(&format!("{} {} {} {}\n", r.unit, r.first_seen, if r.escalated { 1 } else { 0 }, if r.invocation.is_empty() { "-" } else { &r.invocation }));
     }
     s
 }
 
 /// The pure per-unit decision: given what the state file had for this unit (or none, a
-/// first sighting), what its new row should be and whether this pass must escalate.
-pub fn decide(now: i64, unit: &str, prev: Option<&StateRow>, warn_mins: i64) -> (StateRow, bool) {
+/// first sighting), what its new row should be and whether this pass must escalate. The age
+/// is of one failed invocation: a row of another invocation starts over.
+pub fn decide(now: i64, unit: &str, invocation: &str, prev: Option<&StateRow>, warn_mins: i64) -> (StateRow, bool) {
     let (first_seen, escalated) = match prev {
-        Some(r) => (r.first_seen, r.escalated),
-        None => (now, false),
+        Some(r) if r.invocation == invocation => (r.first_seen, r.escalated),
+        _ => (now, false),
     };
     let age_mins = (now - first_seen) / 60;
     let should_escalate = !escalated && age_mins >= warn_mins;
@@ -81,6 +94,7 @@ pub fn decide(now: i64, unit: &str, prev: Option<&StateRow>, warn_mins: i64) -> 
             unit: unit.to_string(),
             first_seen,
             escalated: new_escalated,
+            invocation: invocation.to_string(),
         },
         should_escalate,
     )
@@ -165,7 +179,7 @@ mod tests {
 
     #[test]
     fn first_sighting_never_escalates_immediately() {
-        let (row, esc) = decide(1_000_000, "spira-x.service", None, 15);
+        let (row, esc) = decide(1_000_000, "spira-x.service", "i1", None, 15);
         assert!(!esc);
         assert_eq!(row.first_seen, 1_000_000);
         assert!(!row.escalated);
@@ -177,13 +191,14 @@ mod tests {
             unit: "spira-x.service".into(),
             first_seen: 1_000_000,
             escalated: false,
+            invocation: "i1".into(),
         };
         // 14 minutes: not yet.
-        let (row, esc) = decide(1_000_000 + 14 * 60, "spira-x.service", Some(&prev), 15);
+        let (row, esc) = decide(1_000_000 + 14 * 60, "spira-x.service", "i1", Some(&prev), 15);
         assert!(!esc);
         assert!(!row.escalated);
         // 15 minutes: fires, and the row records it as escalated.
-        let (row2, esc2) = decide(1_000_000 + 15 * 60, "spira-x.service", Some(&prev), 15);
+        let (row2, esc2) = decide(1_000_000 + 15 * 60, "spira-x.service", "i1", Some(&prev), 15);
         assert!(esc2);
         assert!(row2.escalated);
     }
@@ -194,8 +209,9 @@ mod tests {
             unit: "spira-x.service".into(),
             first_seen: 1_000_000,
             escalated: true,
+            invocation: "i1".into(),
         };
-        let (row, esc) = decide(1_000_000 + 999 * 60, "spira-x.service", Some(&prev), 15);
+        let (row, esc) = decide(1_000_000 + 999 * 60, "spira-x.service", "i1", Some(&prev), 15);
         assert!(!esc);
         assert!(row.escalated);
     }
@@ -203,10 +219,47 @@ mod tests {
     #[test]
     fn state_file_round_trips_through_parse_and_render() {
         let rows = vec![
-            StateRow { unit: "a.service".into(), first_seen: 100, escalated: true },
-            StateRow { unit: "b.service".into(), first_seen: 200, escalated: false },
+            StateRow { unit: "a.service".into(), first_seen: 100, escalated: true, invocation: "i1".into() },
+            StateRow { unit: "b.service".into(), first_seen: 200, escalated: false, invocation: String::new() },
         ];
         let text = render_state(&rows);
         assert_eq!(parse_state(&text), rows);
+    }
+
+    #[test]
+    fn a_new_invocation_restarts_the_age_and_clears_escalated() {
+        let prev = StateRow { unit: "u".into(), first_seen: 1_000_000, escalated: true, invocation: "i1".into() };
+        let now = 1_000_000 + 29 * 60;
+        let (row, esc) = decide(now, "u", "i2", Some(&prev), 15);
+        assert!(!esc);
+        assert_eq!((row.first_seen, row.escalated, row.invocation.as_str()), (now, false, "i2"));
+    }
+
+    #[test]
+    fn one_invocation_escalates_once_at_16_minutes_and_not_again_at_46() {
+        let prev = StateRow { unit: "u".into(), first_seen: 1_000_000, escalated: false, invocation: "i1".into() };
+        let (row, esc) = decide(1_000_000 + 16 * 60, "u", "i1", Some(&prev), 15);
+        assert!(esc && row.escalated);
+        let (_, again) = decide(1_000_000 + 46 * 60, "u", "i1", Some(&row), 15);
+        assert!(!again);
+    }
+
+    #[test]
+    fn a_state_row_written_before_invocations_reads_as_another_invocation() {
+        let rows = parse_state("u 1000000 1\n");
+        assert_eq!(rows[0].invocation, "");
+        let (row, esc) = decide(1_000_000 + 60 * 60, "u", "i1", Some(&rows[0]), 15);
+        assert!(!esc);
+        assert_eq!(row.first_seen, 1_000_000 + 60 * 60);
+    }
+
+    #[test]
+    fn gather_runs_names_each_failed_units_invocation() {
+        let u = units();
+        let mut d = UnitDetail::from_facts("spira-a.service", &UnitFacts { state: UnitState::Failed, main_pid: None, exit: None, since_ms: None });
+        d.load_state = Some("loaded".into());
+        d.invocation_id = Some("abc".into());
+        u.install_detail(d);
+        assert_eq!(gather_runs(&u), Some(vec![("spira-a.service".to_string(), "abc".to_string())]));
     }
 }

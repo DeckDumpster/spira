@@ -128,3 +128,25 @@ fn a_boot_repeats_no_side_effect_and_misses_none() {
 fn a_boot_does_not_rewrite_the_nominal_prompt_it_already_wrote() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(nominal_prompt_written, || WatchTower::new(config()).registration(), STREAM, WatchTower::boot().2);
 }
+
+#[test]
+fn two_failures_of_different_invocations_half_an_hour_apart_raise_no_failed_unit_alarm() {
+    let on = |inv: &str| Snapshot { failed_invocations: [("spira-gate-prod.service".to_string(), inv.to_string())].into(), ..failing() };
+    let w = Arc::new(Mutex::new(on("i1")));
+    let mut r = rig(1, w.clone());
+    *w.lock().unwrap() = on("i2");
+    r.advance(CADENCE_MS).unwrap();
+    acc::assert_healthy(&r, STREAM);
+    let a = asked(&r, ALARM);
+    assert!(a.is_empty(), "{a:?}");
+}
+
+#[test]
+fn a_carry_from_before_invocations_loads_and_restarts_the_unit_age() {
+    let old: Carry = serde_json::from_str(r#"{"failed_units":{"spira-gate-prod.service":1000}}"#).unwrap();
+    assert_eq!(old.failed_units["spira-gate-prod.service"], FailedRow { first_seen: 1000, invocation: String::new() });
+    let snap = Snapshot { failed_invocations: [("spira-gate-prod.service".to_string(), "i1".to_string())].into(), ..failing() };
+    let (next, acts) = decide(&old, &snap, 1000 * 1000 + 40 * 60_000, &config());
+    assert!(acts.iter().all(|a| a.name != ALARM));
+    assert_eq!(next.failed_units["spira-gate-prod.service"].first_seen, 1000 + 40 * 60);
+}

@@ -48,6 +48,7 @@ pub struct SweepData {
     pub cpu_throttle_breach: bool,
     pub cpu_throttle_disp: String,
     pub failed_units: Option<Vec<String>>,
+    pub failed_invocations: std::collections::BTreeMap<String, String>,
     pub failed_unit_names: String,
     pub failed_units_warn_mins: i64,
 
@@ -114,6 +115,7 @@ impl SweepData {
             cpu_throttle_breach: false,
             cpu_throttle_disp: "baseline".to_string(),
             failed_units: Some(Vec::new()),
+            failed_invocations: Default::default(),
             failed_unit_names: String::new(),
             failed_units_warn_mins: 15,
             czar_block: "  class\n".to_string(),
@@ -181,7 +183,9 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     let drain = read_drain(run, now);
 
     // FAILED UNITS ---------------------------------------------------------------------
-    let failed_units = failed_units::gather(&*cfg.units);
+    let failed_runs = failed_units::gather_runs(&*cfg.units);
+    let failed_units = failed_runs.as_ref().map(|r| r.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>());
+    let failed_invocations: std::collections::BTreeMap<String, String> = failed_runs.unwrap_or_default().into_iter().collect();
     let cpu_cfg = cpu_throttle::Cfg {
         units: cfg.cpu_throttle_units.clone(),
         warn_pct: cfg.cpu_throttle_warn_pct,
@@ -386,6 +390,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         cpu_throttle_breach,
         cpu_throttle_disp,
         failed_units,
+        failed_invocations,
         failed_unit_names,
         failed_units_warn_mins: cfg.failed_units_warn_mins,
         czar_block,
