@@ -446,6 +446,36 @@ fn events_is_one_typed_query_over_the_ids_and_chunks_by_id_chunk() {
 }
 
 #[test]
+fn events_carry_the_actor() {
+    let f = Fake { reply: Mutex::new(vec![json!({ "issue_id": "sp-a", "event_type": "claimed", "new_value": "", "actor": "dwarf-1", "created_at": "2026-11-01T00:00:00Z" })]), ..Fake::default() };
+    let out = answer(&f, DB, &v(&["events", "--id", "sp-a", "--json"])).unwrap();
+    assert!(first_sql(&f).contains(" actor,"), "the query selects the actor: {}", first_sql(&f));
+    assert_eq!(serde_json::from_str::<Value>(&out).unwrap()[0]["actor"], "dwarf-1");
+}
+
+#[test]
+fn a_kv_get_is_one_exact_read_of_the_kv_key_in_bds_json_shape() {
+    let f = Fake { reply: Mutex::new(vec![json!({ "value": "a@b" })]), ..Fake::default() };
+    let out: Value = serde_json::from_str(&answer(&f, DB, &v(&["kv", "get", "k", "--json"])).unwrap()).unwrap();
+    assert_eq!(out, json!({ "key": "k", "value": "a@b", "found": true }));
+    assert!(first_sql(&f).contains("`key` = 'kv.k'"), "{}", first_sql(&f));
+    let none = Fake::default();
+    let out: Value = serde_json::from_str(&answer(&none, DB, &v(&["kv", "get", "k", "--json"])).unwrap()).unwrap();
+    assert_eq!(out["found"], false);
+}
+
+#[test]
+fn a_plain_kv_get_and_a_recall_answer_the_value_and_name_what_is_unset() {
+    let f = Fake { reply: Mutex::new(vec![json!({ "value": "text" })]), ..Fake::default() };
+    assert_eq!(answer(&f, DB, &v(&["kv", "get", "k"])).unwrap(), "text\n");
+    assert_eq!(answer(&f, DB, &v(&["recall", "sop-x"])).unwrap(), "text\n");
+    assert!(f.seen.lock().unwrap()[1].contains("`key` = 'kv.memory.sop-x'"));
+    let none = Fake::default();
+    assert_eq!(answer(&none, DB, &v(&["kv", "get", "k"])).unwrap(), "k (not set)\n");
+    assert!(matches!(answer(&none, DB, &v(&["recall", "sop-x"])), Err(Failure::Request(t)) if t.contains("sop-x")));
+}
+
+#[test]
 fn events_with_no_id_is_a_request_failure() {
     assert!(matches!(answer(&Fake::default(), DB, &v(&["events"])), Err(Failure::Request(_))));
 }
