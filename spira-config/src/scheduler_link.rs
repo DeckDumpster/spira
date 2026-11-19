@@ -218,7 +218,7 @@ mod tests {
         let dir = testkit::TempDir::new("told-denied");
         let sock = dir.path().join("c.sock");
         let _listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
-        std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0)).unwrap();
+        std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o000)).unwrap();
         let (line, _) = told_within(Ok(sock.display().to_string()), "SPIRA_MAX_DWARVES", Duration::from_millis(50));
         assert!(!line.contains("is not running"), "{line}");
     }
