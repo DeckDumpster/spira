@@ -64,7 +64,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--contract-fix] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--part N (proposal)] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh ideas [--json]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--contract-fix] [--depends-on <id>]... [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--part N (proposal)] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh ideas [--json]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -146,6 +146,12 @@ fn door(args: &[String]) -> (i32, String) {
     }
 }
 
+/// The row `id` shows through the door, or `None` when there is no such bead.
+fn shown_row(id: &str) -> Option<bead::ShowRow> {
+    let (_, out) = door(&s(&["show", id, "--json"]));
+    parse_show_row(&out)
+}
+
 /// The labels of `id`; empty when it cannot be read. A bd parent cannot be blocked on its own
 /// child, so a remedy filed under an incident is wired as a plain blocks edge instead.
 fn parent_labels(id: &str) -> Vec<String> {
@@ -157,8 +163,8 @@ fn parent_labels(id: &str) -> Vec<String> {
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
 #[allow(clippy::too_many_arguments)]
-fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, stack_after: Option<&str>, title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
-    if incident.is_none() && stack_after.is_none() && lookup_title.is_none() && !express {
+fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
+    if incident.is_none() && blockers.is_empty() && lookup_title.is_none() && !express {
         return bdq_status(home, args);
     }
     let since = bead::bdq::utc_stamp_nanos(std::time::SystemTime::now() - std::time::Duration::from_secs(60));
@@ -240,18 +246,18 @@ fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, 
             rc |= r;
         }
     }
-    if let Some(base) = stack_after {
-        let r = bdq_status(home, &s(&["dep", "add", &new_id, base, "--type", "blocks"]));
-        if r != 0 {
-            eprintln!("bead: file: {new_id} filed but the stack edge {new_id} -> {base} failed; add it: bead.sh dep add {new_id} {base}");
-        }
-        rc |= r;
-    }
-    if title.is_some() && submitted_tip.is_none() {
+    let promote_row = title.is_some() && submitted_tip.is_none();
+    let mut promote = || {
         if let Err(e) = spira_store::lifecycle_row::promote(&new_id) {
             eprintln!("bead: file: {new_id} filed but its row was not promoted from OPEN: {e}; the OPEN sweep promotes it, or: spira-lc promote-filed {new_id}");
         }
-    }
+    };
+    rc |= bead::filing::edges_then_promote(
+        &new_id,
+        blockers,
+        &mut |from, to| bdq_status(home, &s(&["dep", "add", from, to, "--type", "blocks"])),
+        promote_row.then_some(&mut promote as &mut dyn FnMut()),
+    );
     rc
 }
 
@@ -260,25 +266,12 @@ fn lc() -> Result<spira_store::lc_call::LcClient, String> {
     spira_store::lc_call::LcClient::configured()
 }
 
-const ROW_ATTEMPTS: u32 = 3;
-
 /// The exit a store answers when it cannot tell whether a write committed.
 const CANNOT_TELL: i32 = 2;
 
-/// Filing is two writes; a transient store error on the second must not strand the first.
+/// Filing is two writes; the second is retried through a store restart, so it never strands the first.
 fn create_row_retrying(id: &str, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
-    let client = lc()?;
-    let mut last = String::new();
-    for attempt in 0..ROW_ATTEMPTS {
-        if attempt > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
-        match bead::lc::create_row(&client, id, tip, repo) {
-            Ok(()) => return Ok(()),
-            Err(e) => last = e,
-        }
-    }
-    Err(last)
+    bead::lc::create_row_retrying(&lc()?, id, tip, repo, &spira_store::lifecycle_row::Retry::configured()?)
 }
 
 fn s(strs: &[&str]) -> Vec<String> {
@@ -543,6 +536,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     let mut stack_after: Option<String> = None;
     let mut part: Option<String> = None;
     let mut drafted_by: Option<String> = None;
+    let mut depends_on: Vec<String> = Vec::new();
 
     let mut i = 1;
     while i < args.len() {
@@ -562,6 +556,16 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             "--stack-after" => {
                 i += 1;
                 stack_after = args.get(i).cloned();
+            }
+            "--depends-on" => {
+                i += 1;
+                match args.get(i) {
+                    Some(id) => depends_on.push(id.clone()),
+                    None => {
+                        eprintln!("bead: --depends-on needs a bead id");
+                        return 2;
+                    }
+                }
             }
             "--for" => {
                 i += 1;
@@ -624,6 +628,10 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             Ok(id) => id,
             Err(rc) => return rc,
         };
+        if let Some(why) = bead::depends_refusal(&body, &depends_on) {
+            eprintln!("bead: refusing: {why}");
+            return 2;
+        }
         let path = env::temp_dir().join(format!("bead-drafted-{}.md", std::process::id()));
         if let Err(e) = std::fs::write(&path, format!("Drafted by Skuld: {id}\n\n{body}")) {
             eprintln!("bead: writing {}: {e}", path.display());
@@ -826,10 +834,17 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             Err(r) => return refused(r),
         }
 
+        for dep in &depends_on {
+            if shown_row(dep).is_none() {
+                eprintln!("bead: --depends-on {dep}: no such bead");
+                return 2;
+            }
+        }
+
         if let Some(base) = &stack_after {
-            let (_, shown) = door(&s(&["show", base, "--json"]));
+            let shown = shown_row(base);
             let terminal = bead::lc_done(&bead::door::DoorSource::lifecycle_only(vec![base.clone()], lifecycle_rows), &mut None, base);
-            if let Some(why) = stack_after_refusal(base, parse_show_row(&shown).as_ref(), terminal, &repo) {
+            if let Some(why) = stack_after_refusal(base, shown.as_ref(), terminal, &repo) {
                 eprintln!("bead: {why}");
                 return 2;
             }
@@ -862,14 +877,14 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = bdq_create(home, &bd_args, incident_parent, stack_after.as_deref(), Some(&title_for_row), Some(&title_for_row), express, tip.as_deref(), Some(repo.as_str()));
+        let rc = bdq_create(home, &bd_args, incident_parent, &bead::filing::blockers(stack_after.as_deref(), &depends_on), Some(&title_for_row), Some(&title_for_row), express, tip.as_deref(), Some(repo.as_str()));
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", &for_rune), ("repo", &repo), ("kind", "work")]);
         }
         rc
     } else {
-        if stack_after.is_some() {
-            eprintln!("bead: --stack-after applies only to work beads");
+        if stack_after.is_some() || !depends_on.is_empty() {
+            eprintln!("bead: --stack-after and --depends-on apply only to work beads");
             return 2;
         }
         let scope_label = schema_name(home, "scope");
@@ -916,7 +931,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = bdq_create(home, &bd_args, incident_parent, None, None, Some(&title_for_lookup), express, None, None);
+        let rc = bdq_create(home, &bd_args, incident_parent, &[], None, Some(&title_for_lookup), express, None, None);
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", ""), ("repo", repo.as_deref().unwrap_or("")), ("kind", &kind)]);
         }

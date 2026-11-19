@@ -4,6 +4,7 @@
 //! `timeout spira-lc …` child; the store's socket answers them now.
 
 use spira_store::lc_call::{LcClient, LcError};
+use spira_store::lifecycle_row::{write_idempotent, Retry};
 
 /// `create-bead <id> [--submitted-tip S] [--repo R]`.
 pub fn create_bead_argv(id: &str, tip: Option<&str>, repo: Option<&str>) -> Vec<String> {
@@ -16,13 +17,14 @@ pub fn create_bead_argv(id: &str, tip: Option<&str>, repo: Option<&str>) -> Vec<
     argv
 }
 
-/// The bead's lifecycle row; `Err` names why it was not written.
+/// The bead's lifecycle row, one attempt; `Err` names why it was not written.
 pub fn create_row(lc: &LcClient, id: &str, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
-    match lc.call(&create_bead_argv(id, tip, repo)) {
-        Ok(r) if r.code == 0 => Ok(()),
-        Ok(r) => Err(format!("spira-lc create-bead exited {}: {}", r.code, r.text())),
-        Err(e) => Err(e.to_string()),
-    }
+    create_row_retrying(lc, id, tip, repo, &Retry::once())
+}
+
+/// [`create_row`], asked again while the store cannot tell, until `retry`'s bound runs out.
+pub fn create_row_retrying(lc: &LcClient, id: &str, tip: Option<&str>, repo: Option<&str>, retry: &Retry) -> Result<(), String> {
+    write_idempotent(lc, &create_bead_argv(id, tip, repo), retry).map_err(|e| format!("spira-lc {e}"))
 }
 
 /// `dep-add`/`dep-remove <id> <depid> [--type T]`.

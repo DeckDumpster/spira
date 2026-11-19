@@ -28,6 +28,35 @@ fn refuse(code: i32, text: impl Into<String>) -> Refusal {
     Refusal { code, text: format!("{}\n", text.into()) }
 }
 
+/// The `blocks` edges a new bead is filed with: the stack base, then each `--depends-on`, once each.
+pub fn blockers(stack_after: Option<&str>, depends_on: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for b in stack_after.into_iter().map(str::to_string).chain(depends_on.iter().cloned()) {
+        if !out.contains(&b) {
+            out.push(b);
+        }
+    }
+    out
+}
+
+/// Writes `new_id`'s `blocks` edges through `dep_add(from, to)` (its exit code), then `promote`:
+/// a row promoted from OPEN is claimable, so every edge is on it first. A failed edge is
+/// reported with its repair and leaves the row unpromoted. Returns the edges' exit codes OR-ed.
+pub fn edges_then_promote(new_id: &str, blockers: &[String], dep_add: &mut dyn FnMut(&str, &str) -> i32, promote: Option<&mut dyn FnMut()>) -> i32 {
+    let mut rc = 0;
+    for base in blockers {
+        let r = dep_add(new_id, base);
+        if r != 0 {
+            eprintln!("bead: file: {new_id} filed but the blocks edge {new_id} -> {base} failed; add it: bead.sh dep add {new_id} {base}");
+        }
+        rc |= r;
+    }
+    if let (0, Some(promote)) = (rc, promote) {
+        promote();
+    }
+    rc
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Persona {
     pub name: String,
@@ -405,6 +434,32 @@ pub fn amend_text(args: &mut [String], body: &mut Option<String>, repo: &dyn Fn(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn depends_on_edges_are_written_before_the_row_is_promoted() {
+        let calls = std::cell::RefCell::new(Vec::<String>::new());
+        let blockers = blockers(None, &["sp-a".to_string(), "sp-b".to_string()]);
+        let rc = edges_then_promote(
+            "sp-new",
+            &blockers,
+            &mut |from, to| {
+                calls.borrow_mut().push(format!("dep add {from} {to} --type blocks"));
+                0
+            },
+            Some(&mut || calls.borrow_mut().push("promote-filed sp-new".to_string())),
+        );
+        assert_eq!(rc, 0);
+        assert_eq!(*calls.borrow(), ["dep add sp-new sp-a --type blocks", "dep add sp-new sp-b --type blocks", "promote-filed sp-new"]);
+    }
+
+    #[test]
+    fn a_failed_edge_leaves_the_row_unpromoted_and_stack_and_depends_share_one_edge() {
+        let promoted = std::cell::Cell::new(false);
+        let rc = edges_then_promote("sp-new", &["sp-a".to_string()], &mut |_, _| 1, Some(&mut || promoted.set(true)));
+        assert_eq!(rc, 1);
+        assert!(!promoted.get());
+        assert_eq!(blockers(Some("sp-a"), &["sp-a".to_string(), "sp-b".to_string()]), ["sp-a", "sp-b"]);
+    }
+
     use super::*;
 
     fn persona(name: &str, labels: &[&str], spec: bool) -> Persona {
