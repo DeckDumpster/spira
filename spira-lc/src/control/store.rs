@@ -77,6 +77,9 @@ pub type ExternalRefs = std::sync::Arc<dyn Fn(&str) -> std::result::Result<Optio
 const PASS_CHUNK: usize = state_store::limits::MAX_TXN_OPS - 2;
 /// How often a read-merge-write is re-planned after losing its compare before it gives up.
 const MERGE_ATTEMPTS: usize = 5;
+/// Records a page read holds at once, and the smaller chunk a fold holds.
+const RECORD_CHUNK: usize = 1_000;
+const FOLD_CHUNK: usize = 100;
 
 fn sub_request(req: &Request, part: &str, evidence: Value) -> Request {
     Request {
@@ -317,18 +320,42 @@ impl<B: Backend> Store<B> {
         limit: Option<usize>,
         keep: impl Fn(&LifecycleRecord) -> bool,
     ) -> Result<Vec<Read<LifecycleRecord>>> {
-        const CHUNK: usize = 1_000;
         let want = limit.unwrap_or(usize::MAX);
-        let chunk = limit.map_or(CHUNK, |l| l.clamp(1, CHUNK));
+        let chunk = limit.map_or(RECORD_CHUNK, |l| l.clamp(1, RECORD_CHUNK));
         let mut out = Vec::new();
-        let mut take = |item: &Item| -> Result<bool> {
-            if let Some(id) = keys::id_of(keys::LIFECYCLE, &item.key) {
-                let r = self.projected(id, item, rev)?;
-                if keep(&r.value) {
-                    out.push(r);
-                }
+        self.walk_records(rev, states, ids, after, chunk, |r| {
+            if keep(&r.value) {
+                out.push(r);
             }
-            Ok(out.len() >= want)
+            out.len() >= want
+        })?;
+        Ok(out)
+    }
+
+    /// Hands `visit` each record of `states` at `rev` in id order, reading `chunk` at a time and
+    /// holding none past its visit: the call's memory is a chunk, not the states. `visit`
+    /// returns true to stop.
+    pub fn fold_records(&self, rev: u64, states: &[BeadState], mut visit: impl FnMut(LifecycleRecord)) -> Result<()> {
+        self.walk_records(rev, Some(states), None, None, FOLD_CHUNK, |r| {
+            visit(r.value);
+            false
+        })
+    }
+
+    fn walk_records(
+        &self,
+        rev: u64,
+        states: Option<&[BeadState]>,
+        ids: Option<&[String]>,
+        after: Option<&str>,
+        chunk: usize,
+        mut visit: impl FnMut(Read<LifecycleRecord>) -> bool,
+    ) -> Result<()> {
+        let mut take = |item: &Item| -> Result<bool> {
+            match keys::id_of(keys::LIFECYCLE, &item.key) {
+                Some(id) => Ok(visit(self.projected(id, item, rev)?)),
+                None => Ok(false),
+            }
         };
         let start = after.map(keys::lifecycle);
         if let Some(ids) = ids {
@@ -390,7 +417,7 @@ impl<B: Backend> Store<B> {
                     .range_at(keys::LIFECYCLE, cursor.as_deref(), chunk, rev)?;
                 for item in &page {
                     if take(item)? {
-                        return Ok(out);
+                        return Ok(());
                     }
                 }
                 if page.len() < chunk {
@@ -399,7 +426,7 @@ impl<B: Backend> Store<B> {
                 cursor = page.last().map(|i| i.key.clone());
             }
         }
-        Ok(out)
+        Ok(())
     }
 
     /// `item`, the record of `id` at `rev`, with its lease projected from the claim lock then.
@@ -434,7 +461,6 @@ impl<B: Backend> Store<B> {
         rev: u64,
     ) -> Result<std::collections::BTreeMap<String, Readiness>> {
         const BY_KEY_MAX: usize = 256;
-        const CHUNK: usize = 1_000;
         let mut out = std::collections::BTreeMap::new();
         let wanted: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
         let (Some(first), Some(last)) = (wanted.first(), wanted.last()) else {
@@ -458,7 +484,7 @@ impl<B: Backend> Store<B> {
             let page = self
                 .contract
                 .backend()
-                .range(keys::READINESS, Some(&cursor), CHUNK, rev)?;
+                .range(keys::READINESS, Some(&cursor), RECORD_CHUNK, rev)?;
             for (key, version) in &page {
                 if *key > end {
                     return Ok(out);
@@ -468,7 +494,7 @@ impl<B: Backend> Store<B> {
                 }
             }
             match page.last() {
-                Some((k, _)) if page.len() == CHUNK => cursor = k.clone(),
+                Some((k, _)) if page.len() == RECORD_CHUNK => cursor = k.clone(),
                 _ => return Ok(out),
             }
         }

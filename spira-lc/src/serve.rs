@@ -16,7 +16,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -140,7 +140,50 @@ fn live_work() -> Work {
     })
 }
 
+/// Arenas glibc may give the connection threads between them: a thread per connection otherwise
+/// grows an arena of its own, and what it frees stays there.
+const MALLOC_ARENAS: libc::c_int = 2;
+
+const TRIM_EVERY_MS: u64 = 1_000;
+
+/// A thread answering a request: a connection's or a worker that outlives its deadline. The
+/// memory they freed goes back to the system when the last one ends.
+struct Busy;
+
+static BUSY: AtomicUsize = AtomicUsize::new(0);
+
+impl Busy {
+    fn enter() -> Busy {
+        BUSY.fetch_add(1, Ordering::SeqCst);
+        Busy
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        return_freed_memory(BUSY.fetch_sub(1, Ordering::SeqCst) == 1);
+    }
+}
+
+/// Gives the system the memory the request threads freed: glibc keeps it in its arenas
+/// otherwise. Always when `idle`, and otherwise at most once a second.
+fn return_freed_memory(idle: bool) {
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let now = wall_ms();
+    let last = LAST.load(Ordering::Relaxed);
+    if (idle || now.saturating_sub(last) >= TRIM_EVERY_MS) && LAST.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+        // SAFETY: malloc_trim only returns free pages to the system.
+        unsafe {
+            libc::malloc_trim(0);
+        }
+    }
+}
+
 pub fn run(args: &[String]) -> i32 {
+    // SAFETY: mallopt only sets a glibc tunable, before any thread exists.
+    unsafe {
+        libc::mallopt(libc::M_ARENA_MAX, MALLOC_ARENAS);
+    }
     // An explicit argv[0] (the launching unit's own ExecStart) wins outright; otherwise the
     // one source of config (per Ryan 2026-10-05): $SPIRA_TOML's declared socket path, never
     // this process's own environment, and no literal fallback.
@@ -434,6 +477,7 @@ impl Flights {
         self.open.lock().unwrap().push((id, slot.clone()));
         CURRENT.with(|c| *c.borrow_mut() = Some(slot));
         let _leave = Leave(self, id);
+        let _busy = Busy::enter();
         f(stream);
     }
 
@@ -879,6 +923,7 @@ fn bind_deadline(received: Instant, limit: Duration) -> state_store::phases::Dea
 fn within<T: Send + 'static>(deadline: Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
+        let _busy = Busy::enter();
         let _ = tx.send(f());
     });
     rx.recv_timeout(deadline).ok()

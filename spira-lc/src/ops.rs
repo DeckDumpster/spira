@@ -9,7 +9,7 @@ use lifecycle::bead::BeadState;
 use serde_json::{json, Map, Value};
 use state_store::Backend;
 
-use crate::control::audits::{Logged, Move};
+use crate::control::audits::Move;
 use crate::control::store::Store;
 
 /// The only views `ops-view` will name; the argument is matched, never interpolated.
@@ -147,34 +147,35 @@ fn ops_round<B: Backend>(store: &Store<B>) -> Result<Vec<Value>, String> {
     Ok(out)
 }
 
-/// `ops_recent`: the beads that landed in the last day.
+/// `ops_recent`: the beads that landed in the last day, folded from the LANDED records a chunk at a time.
 fn ops_recent<B: Backend>(store: &Store<B>, now: i64) -> Result<Vec<Value>, String> {
     let rev = store.contract().head().map_err(|e| e.to_string())?;
-    let landed = store
-        .records_page(rev, Some(&[BeadState::Landed]), None, None, None, |r| r.row.since.is_some_and(|s| s >= now - DAY_S))
+    let mut landed = Vec::new();
+    store
+        .fold_records(rev, &[BeadState::Landed], |r| {
+            if r.row.since.is_some_and(|s| s >= now - DAY_S) {
+                landed.push(r);
+            }
+        })
         .map_err(|e| e.to_string())?;
-    let plan = planned(&landed.iter().map(|r| r.value.row.bead_id.clone()).collect::<Vec<_>>());
+    let plan = planned(&landed.iter().map(|r| r.row.bead_id.clone()).collect::<Vec<_>>());
     let mut out: Vec<Value> = landed
         .iter()
         .map(|r| {
-            let (title, priority) = title_cols(&plan, &r.value.row.bead_id);
+            let (title, priority) = title_cols(&plan, &r.row.bead_id);
             object(vec![
-                ("bead_id", text(&r.value.row.bead_id)),
-                ("state", text(r.value.row.state.as_str())),
-                ("since", opt(r.value.row.since)),
-                ("updated_at", text(r.value.updated_at)),
+                ("bead_id", text(&r.row.bead_id)),
+                ("state", text(r.row.state.as_str())),
+                ("since", opt(r.row.since)),
+                ("updated_at", text(r.updated_at)),
                 ("priority", priority),
                 ("title", title),
-                ("repo", opt(r.value.repo.as_ref())),
+                ("repo", opt(r.repo.as_ref())),
             ])
         })
         .collect();
     out.sort_by(|a, b| a["bead_id"].as_str().cmp(&b["bead_id"].as_str()));
     Ok(out)
-}
-
-fn applied_moves<'a>(logged: &'a [Logged], machine: &'a str) -> impl Iterator<Item = &'a Logged> {
-    logged.iter().filter(move |l| l.audit.machine == machine && l.audit.applied && l.audit.from_state != l.audit.to_state)
 }
 
 type Tally = (u64, u64, i64);
@@ -315,11 +316,16 @@ fn ops_dwell<B: Backend>(store: &Store<B>, now: i64) -> Result<Vec<Value>, Strin
     Ok(out)
 }
 
-fn transitions(logged: &[Logged], machine: &str, now: i64) -> Vec<Value> {
-    applied_moves(logged, machine)
-        .filter(|l| l.audit.at >= now - DAY_S)
-        .map(|l| object(vec![("seq", text(l.rev)), ("bead_id", text(&l.audit.lc_key)), ("event", text(&l.audit.event)), ("from_state", text(&l.audit.from_state)), ("to_state", text(&l.audit.to_state)), ("at", text(l.audit.at))]))
-        .collect()
+/// The day's applied state changes of `machine`, oldest first.
+fn transitions<B: Backend>(store: &Store<B>, machine: &str, now: i64) -> Result<Vec<Value>, String> {
+    let mut rows = Vec::new();
+    folded(store, now, DAY_S, |m| {
+        if m.machine == machine && m.applied && m.from_state != m.to_state {
+            rows.push(object(vec![("seq", text(m.rev)), ("bead_id", text(m.lc_key)), ("event", text(m.event)), ("from_state", text(m.from_state)), ("to_state", text(m.to_state)), ("at", text(m.at))]));
+        }
+    })?;
+    rows.reverse();
+    Ok(rows)
 }
 
 /// Refused bead events inside the window, one row per (actor, event, from_state, refusal) with
@@ -385,15 +391,6 @@ fn with_store(f: impl FnOnce(&Store<crate::control::served::Served>) -> (i32, St
     }
 }
 
-/// The audit log back to `now - span`, or why it cannot be read that far.
-fn logged<B: Backend>(store: &Store<B>, now: i64, span: i64) -> Result<Vec<Logged>, String> {
-    let scan = store.audits_since(now - span).map_err(|e| e.to_string())?;
-    if !scan.complete {
-        return Err(format!("the audit log is too long to read back {span}s in one call"));
-    }
-    Ok(scan.audits)
-}
-
 /// Folds the audits of the last `span` seconds into `visit`, newest first, holding none of them.
 fn folded<B: Backend>(store: &Store<B>, now: i64, span: i64, visit: impl FnMut(Move)) -> Result<(), String> {
     match store.fold_audits_since(now - span, visit) {
@@ -445,8 +442,8 @@ pub fn cmd_ops_transitions(args: &[String]) -> (i32, String) {
     };
     with_store(|store| {
         let now = crate::db::now_epoch();
-        match logged(store, now, DAY_S) {
-            Ok(a) => (0, json!({ "now": now, "events": transitions(&a, machine, now) }).to_string()),
+        match transitions(store, machine, now) {
+            Ok(events) => (0, json!({ "now": now, "events": events }).to_string()),
             Err(e) => cannot(e),
         }
     })
@@ -544,10 +541,11 @@ fn graph_json(machine: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::audits::Logged;
     use crate::control::records::Audit;
     use lifecycle::bead::{BeadEvent, BeadEventKind};
     use runtime::ports::VirtualClock;
-    use state_store::{Config, Contract, MemBackend, Ports, Request};
+    use state_store::{Backend, Config, Contract, MemBackend, Ports, Request};
 
     fn store() -> Store<MemBackend> {
         let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
@@ -563,7 +561,24 @@ mod tests {
 
     fn move_of(l: &Logged) -> Move<'_> {
         let a = &l.audit;
-        Move { machine: &a.machine, lc_key: &a.lc_key, event: &a.event, from_state: &a.from_state, to_state: &a.to_state, applied: a.applied, refusal: a.refusal.as_deref(), actor: &a.actor, at: a.at }
+        Move { rev: l.rev, machine: &a.machine, lc_key: &a.lc_key, event: &a.event, from_state: &a.from_state, to_state: &a.to_state, applied: a.applied, refusal: a.refusal.as_deref(), actor: &a.actor, at: a.at }
+    }
+
+    /// A sqlite store whose log holds `log`, one revision per audit.
+    fn logged_store(log: &[Logged]) -> Store<state_store_sqlite::SqliteBackend> {
+        use state_store::{events_key, Object, Rev, Write};
+        use state_store_sqlite::{Options, SqliteBackend};
+        let dir = Box::leak(Box::new(testkit::TempDir::new("spira-lc-ops-log")));
+        let b = SqliteBackend::open(&dir.path().join("control.db"), Options::default()).unwrap();
+        let mut head = b.head().unwrap();
+        for l in log {
+            let a = serde_json::to_value(&l.audit).unwrap();
+            let events = json!({ "refused": !l.audit.applied, "evidence": { if l.audit.applied { "then" } else { "else" }: [a] } });
+            let write = Write::Put { key: events_key(head + 1), value: Object::new(events).encode(), create_rev: Rev::new(head + 1, 0), prev: None };
+            head = b.commit(head, &[write]).unwrap();
+        }
+        let c = Contract::open(b, Ports::virtual_clock(&VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        Store::new(c, 1_000)
     }
 
     #[test]
@@ -624,9 +639,10 @@ mod tests {
             audit("sp-a", "Submit", "WORKING", "SUBMITTED", false, "d", now - 8),
             audit("sp-b", "Claim", "READY", "WORKING", true, "d", now - DAY_S - 1),
         ];
-        let rows = transitions(&log, "bead", now);
-        assert_eq!(rows, [json!({"seq": (now - 10).to_string(), "bead_id": "sp-a", "event": "Claim", "from_state": "READY", "to_state": "WORKING", "at": (now - 10).to_string()})]);
-        assert!(transitions(&log, "batch", now).is_empty());
+        let s = logged_store(&log);
+        let rows = transitions(&s, "bead", now).unwrap();
+        assert_eq!(rows, [json!({"seq": "1", "bead_id": "sp-a", "event": "Claim", "from_state": "READY", "to_state": "WORKING", "at": (now - 10).to_string()})]);
+        assert!(transitions(&s, "batch", now).unwrap().is_empty());
     }
 
     #[test]
@@ -720,7 +736,7 @@ mod tests {
         let mut head = b.head().unwrap();
         for n in 0..audits {
             let (from, to) = (states[(n % 4) as usize], states[((n + 1) % 4) as usize]);
-            let at = now - 13 * DAY_S + (n as i64) * (12 * DAY_S) / audits as i64;
+            let at = now - 13 * DAY_S + (n as i64) * (13 * DAY_S) / audits as i64;
             let a = json!({ "machine": "bead", "lc_key": format!("sp-{:04}", n % 300), "event": "Claim", "expect": from, "from_state": from, "to_state": to, "applied": true, "refusal": null, "evidence": { "bulk": bulk }, "actor": "a", "at": at });
             let events = json!({ "refused": false, "evidence": { "then": [a] } });
             let write = Write::Put { key: events_key(head + 1), value: Object::new(events).encode(), create_rev: Rev::new(head + 1, 0), prev: None };
@@ -728,6 +744,101 @@ mod tests {
         }
         let c = Contract::open(b, Ports::virtual_clock(&VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
         (Store::new(c, 1_000), now, dir)
+    }
+
+    /// `fortnight`, plus a quarter as many LANDED records (ten landed in the last day) and a few
+    /// live ones: the records grow with the history, the answers to the day's questions do not.
+    fn with_records(audits: u64) -> (Store<state_store_sqlite::SqliteBackend>, i64, testkit::TempDir) {
+        use crate::control::{keys, records::{encode, LifecycleRecord}};
+        use state_store::{Backend, Object, Rev, Write};
+        let (store, now, dir) = fortnight(audits);
+        let b = store.contract().backend();
+        let mut head = b.head().unwrap();
+        let live = [BeadState::Ready, BeadState::Working, BeadState::Submitted, BeadState::Certified];
+        let mut writes = Vec::new();
+        for n in 0..audits / 4 + 20 {
+            let mut rec = LifecycleRecord::born(&format!("sp-{n:05}"), Some("harness"), None, now - 5 * DAY_S);
+            if n < 20 {
+                rec.row.state = live[n as usize % 4];
+            } else {
+                rec.row.state = BeadState::Landed;
+                rec.row.since = Some(if n < 30 { now - 100 } else { now - 5 * DAY_S });
+                rec.updated_at = rec.row.since.unwrap();
+            }
+            head += 1;
+            writes.push(Write::Put { key: keys::lifecycle(&rec.row.bead_id), value: Object::new(encode(&rec).unwrap()).encode(), create_rev: Rev::new(head, 0), prev: None });
+        }
+        b.commit(b.head().unwrap(), &writes).unwrap();
+        (store, now, dir)
+    }
+
+    type Sqlite = Store<state_store_sqlite::SqliteBackend>;
+    type Call = Box<dyn Fn(&Sqlite, i64) -> (i32, String)>;
+
+    /// Every read verb of the production mix that this store answers, as (name, call).
+    fn verbs() -> Vec<(&'static str, Call)> {
+        use crate::control::{claimable, state, verbs as control_verbs};
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+        let mut out: Vec<(&'static str, Call)> = Vec::new();
+        for v in VIEWS {
+            out.push((v, Box::new(move |s, now| view_rows(s, v, now))));
+        }
+        out.push(("ops-transitions", Box::new(|s, now| match transitions(s, "bead", now) {
+            Ok(e) => (0, json!(e).to_string()),
+            Err(e) => (2, e),
+        })));
+        out.push(("ops-refusals", Box::new(|s, now| {
+            let mut refused = Refusals::new(now - 14 * DAY_S);
+            match folded(s, now, 14 * DAY_S, |m| refused.take(&m)) {
+                Ok(()) => (0, json!(refused.rows()).to_string()),
+                Err(e) => (2, e),
+            }
+        })));
+        for (name, argv) in [
+            ("list --live", args(&["list", "--live"])),
+            ("list --ids", args(&["list", "--ids", "sp-00001,sp-00002,sp-00030"])),
+            ("list --batches", args(&["list", "--batches"])),
+            ("show", args(&["show", "sp-00001"])),
+        ] {
+            out.push((name, Box::new(move |s, now| state::run(s, &argv, &state::Call { now, request: "r", inputs: &claimable::FIXED }))));
+        }
+        out.push(("claimable", Box::new(|s, now| claimable::run(s, &["claimable".to_string()], &claimable::FIXED, &state::Call { now, request: "r", inputs: &claimable::FIXED }))));
+        for (name, argv) in [
+            ("dwell", args(&["dwell", "--window", "86400"])),
+            ("watch", args(&["watch", "life/", "--from-rev", "0", "--wait-ms", "0"])),
+            ("audits", args(&["audits", "--limit", "50"])),
+            ("audits --newest", args(&["audits", "--newest"])),
+        ] {
+            out.push((name, Box::new(move |s, now| {
+                let mut argv = argv.clone();
+                if argv[0] == "dwell" {
+                    argv.extend(["--now".to_string(), now.to_string()]);
+                }
+                control_verbs::run(s, &argv)
+            })));
+        }
+        out
+    }
+
+    #[test]
+    fn every_read_verb_holds_no_more_memory_for_a_longer_history() {
+        let mut table = Vec::new();
+        let mut grown = Vec::new();
+        let (short_fixture, long_fixture) = (with_records(2_000), with_records(8_000));
+        for (name, call) in verbs() {
+            let held = |f: &(Store<state_store_sqlite::SqliteBackend>, i64, testkit::TempDir)| {
+                let ((rc, out), peak) = crate::peak_alloc::peak_of(|| call(&f.0, f.1));
+                assert!(rc == 0 || rc == 1, "{name}: {rc} {out}");
+                peak
+            };
+            let (short, long) = (held(&short_fixture), held(&long_fixture));
+            table.push(format!("{name}: {short} B at 2000, {long} B at 8000"));
+            if long >= short * 3 / 2 {
+                grown.push(name);
+            }
+        }
+        assert!(grown.is_empty(), "peak grows with history for {grown:?}:\n{}", table.join("\n"));
+        eprintln!("{}", table.join("\n"));
     }
 
     #[test]
