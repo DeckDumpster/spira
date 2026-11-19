@@ -4,7 +4,11 @@
 use serde_json::{json, Map, Value};
 use state_store::{Backend, Event, Rev, MAX_WATCH_WAIT_MS};
 
+use std::collections::BTreeSet;
+
 use super::feed::Feed;
+use super::state::{self, Call};
+use crate::control::keys;
 use super::records::encode;
 use super::store::Store;
 use crate::{flag, CANNOT_TELL};
@@ -27,6 +31,33 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
         Ok(out) => (0, out),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
     }
+}
+
+/// `run`, and for `watch ... --rows` the composed lifecycle rows (as `list --ids` answers them) of the
+/// beads the events name under `rows`, so a watcher applies a wake without a second round trip.
+pub fn run_with_rows<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
+    let (code, out) = run(store, args);
+    if code != 0 || args.first().map(String::as_str) != Some("watch") {
+        return (code, out);
+    }
+    let Ok(Value::Object(mut answer)) = serde_json::from_str::<Value>(&out) else { return (code, out) };
+    let Some(events) = answer.get("events").and_then(Value::as_array) else { return (code, out) };
+    let ids: BTreeSet<&str> = events
+        .iter()
+        .filter_map(|e| e["key"].as_str())
+        .filter_map(|k| k.strip_prefix(keys::LIFECYCLE).or_else(|| k.strip_prefix(keys::READINESS)))
+        .collect();
+    let rows = if ids.is_empty() {
+        Value::Array(Vec::new())
+    } else {
+        let (code, listed) = state::run(store, &["list".into(), "--ids".into(), ids.into_iter().collect::<Vec<_>>().join(",")], call);
+        match serde_json::from_str(&listed) {
+            Ok(rows) if code == 0 => rows,
+            _ => return (code, listed),
+        }
+    };
+    answer.insert("rows".into(), rows);
+    (0, Value::Object(answer).to_string())
 }
 
 fn number(args: &[String], name: &str, default: u64) -> Result<u64, String> {

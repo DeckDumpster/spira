@@ -509,7 +509,7 @@ impl Projection {
         let (from_s, wait) = (from.to_string(), WATCH_WAIT_MS.to_string());
         // The prefixes this view applies or holds answers under, as one watch (over-broad-scopes #10):
         // a watch of `""` woke every holder on every event, telemetry and lock write it then discarded.
-        let w = json_of(&self.client.answer(&["watch", BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY, "--from-rev", &from_s, "--wait-ms", &wait])?, "watch")?;
+        let w = json_of(&self.client.answer(&["watch", BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY, "--from-rev", &from_s, "--wait-ms", &wait, "--rows"])?, "watch")?;
         if let Some(p) = w["progress_rev"].as_u64() {
             let mut s = self.lock();
             s.rev = Some(p.max(from));
@@ -533,11 +533,18 @@ impl Projection {
                 dirty.insert(id.to_string());
             }
         }
+        let named = if w.get("rows").is_some() { dirty.clone() } else { BTreeSet::new() };
+        let carried: BTreeMap<String, Bead> = match w.get("rows") {
+            Some(rows) => beads_of(&rows.to_string())?.into_iter().collect(),
+            None => BTreeMap::new(),
+        };
         if let Some(beads) = self.lock().beads.as_ref() {
             dirty = with_waiters(beads, dirty);
         }
         let dirty: Vec<String> = dirty.into_iter().collect();
-        let fresh: BTreeMap<String, Bead> = self.list_ids(&dirty)?.into_iter().collect();
+        let mut fresh = carried;
+        let wanted: Vec<String> = dirty.iter().filter(|id| !named.contains(*id)).cloned().collect();
+        fresh.extend(self.list_ids(&wanted)?);
         let mut s = self.lock();
         self.end_held(ended_by(&s, events));
         for (key, value, create_rev) in batch_puts {
