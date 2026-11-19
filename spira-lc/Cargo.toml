@@ -31,6 +31,7 @@ spira-otel = { path = "../spira-otel" }
 spira-desired-state = { path = "../desired-state" }
 serde_path_to_error = "0.1"
 sha2 = "0.10"
+libc = "0.2"
 state-store = { path = "../state-store" }
 state-store-sqlite = { path = "../state-store-sqlite" }
 runtime = { path = "../runtime" }

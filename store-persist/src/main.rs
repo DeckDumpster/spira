@@ -1,4 +1,4 @@
-//! store-persist restore | pass [--offline] | run | seed --from DIR | gc | age
+//! store-persist restore | pass [--offline] | run | seed --from DIR | age
 //!
 //! Exit 0 done; 1 the operation failed (or `age` is past the bound); 2 usage or config.
 
@@ -9,7 +9,7 @@ use std::process::{Command, ExitCode, Stdio};
 use store_persist::ports::{Clock, Conn, Dolt};
 use store_persist::{Config, Mode};
 
-const USAGE: &str = "usage: store-persist restore | pass [--offline] | run | seed --from DIR | gc | age";
+const USAGE: &str = "usage: store-persist restore | pass [--offline] | run | seed --from DIR | age";
 
 struct RealClock;
 
@@ -69,9 +69,19 @@ impl Dolt for RealDolt {
         self.sql(cmd, &format!("CALL DOLT_BACKUP('sync-url', '{url}');\n")).map(|_| ())
     }
 
-    fn gc(&self, conn: &Conn, data: &Path, db: &str) -> Result<(), String> {
+    fn gc(&self, _conn: &Conn, _data: &Path, db: &str) -> Result<(), String> {
+        let lc = spira_config::release_env::tool("spira-lc")?;
         // batch-job: a gc rewrites the whole live store
-        self.sql(Self::command(conn, data, db), "CALL DOLT_GC();\n").map(|_| ())
+        let out = Command::new(&lc)
+            .args(["admin-store-gc", "--db", db])
+            .envs(spira_config::release_env::child_path_env_for_process()?)
+            .output()
+            .map_err(|e| format!("cannot run {lc}: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let said = [out.stderr, out.stdout].iter().map(|b| String::from_utf8_lossy(b).trim().to_string()).find(|s| !s.is_empty()).unwrap_or_default();
+        Err(format!("spira-lc admin-store-gc exited {}: {said}", out.status))
     }
 
     fn verify(&self, db_dir: &Path) -> Result<String, String> {
@@ -138,7 +148,6 @@ fn run(argv: &[String], sink: &spira_otel::metrics::MetricsSink) -> u8 {
         }
         ["seed", "--from", dir] => store_persist::seed(&cfg, &PathBuf::from(dir), &dolt, &clock)
             .map(|st| vec![format!("store-persist: seeded {} from {dir}", st.dbs.join(","))]),
-        ["gc"] => store_persist::gc(&cfg, &dolt).map(|v| v.into_iter().map(|l| format!("store-persist: {l}")).collect()),
         ["age"] => store_persist::age(&cfg, clock.now_ms()).and_then(|(lag, stale)| {
             sink.push(&[spira_otel::metrics::Point::Gauge { name: "spira_store_persist_lag_seconds", value: lag as f64 / 1000.0 }], &[("component", "store-persist")]);
             if stale {

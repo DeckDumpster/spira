@@ -26,7 +26,7 @@ pub(crate) fn administrator(get: impl Fn(&str) -> Option<String>, provisioned: i
     provisioned()?.ok_or_else(|| "no administrator credential: set SPIRA_LC_ADMIN_USER and SPIRA_LC_ADMIN_PASSWORD_FILE".to_string())
 }
 
-fn provisioned() -> Result<Option<(String, String)>, String> {
+pub(crate) fn provisioned() -> Result<Option<(String, String)>, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
     let Some(path) = spira_config::resolve::lc_admin_password_file(&env) else { return Ok(None) };
     let password = std::fs::read_to_string(&path).map_err(|e| format!("reading {path}: {e}"))?;

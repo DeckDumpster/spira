@@ -12,8 +12,8 @@ off the serving path:
   copied in. A database already in RAM is newer than its copy and is kept.
 - **pass** — every database is synced into the copy; the pass records the moment it began.
 - **run** — a pass every `SPIRA_DOLT_PERSIST_INTERVAL_SECS`, through the running server.
-- **daily rebuild** — once a day `run` collects each live database, then rebuilds a copy grown past `SPIRA_DOLT_PERSIST_COMPACT_PCT` of its live size. A failed collection or rebuild appends one line, with Dolt's own error, to `<run>/dolt-collect.log`, which `spira/watchers` reads.
-- **collect** — `run` also calls `dolt_gc()` on each live database every `SPIRA_DOLT_PERSIST_GC_INTERVAL_SECS` (0 disables). A collection is never refused for want of space: a Dolt error is the report. Both schedules are kept in `<durable>/upkeep.state`, so a restart does not reset them.
+- **daily rebuild** — once a day `run` collects each live database (through `spira-lc admin-store-gc --db <db>`; store-persist runs no `dolt` for it), then rebuilds a copy grown past `SPIRA_DOLT_PERSIST_COMPACT_PCT` of its live size. A failed collection or rebuild appends one line, with Dolt's own error, to `<run>/dolt-collect.log`, which `spira/watchers` reads.
+- **collect** — `run` also collects each live database every `SPIRA_DOLT_PERSIST_GC_INTERVAL_SECS` (0 disables). A collection is never refused for want of space: a Dolt error is the report. Both schedules are kept in `<durable>/upkeep.state`, so a restart does not reset them.
 - **age** — red once the newest finished pass began more than `SPIRA_DOLT_PERSIST_MAX_LAG_SECS` ago.
 
 **The loss bound.** Every write committed before the newest finished pass began is on disk. A
