@@ -639,3 +639,27 @@ fn a_wake_that_carries_rows_asks_only_for_the_waiters_it_did_not_carry() {
         assert_eq!(w.p.ready_counts().unwrap().value.judged_claimable, 1);
     });
 }
+
+#[test]
+fn a_terminal_row_is_asked_of_the_store_once_and_forgotten_when_a_change_names_it() {
+    within(|| {
+        let w = world(
+            Script { list_rev: 9, rows: vec![bead("sp-a", "READY", "[]", None, false), bead("sp-old", "LANDED", "[]", None, false)], ..Default::default() },
+            Duration::from_secs(10),
+        );
+        w.p.poll().unwrap();
+        let ids = ["sp-a".to_string(), "sp-old".to_string()];
+        let states = |w: &World| w.p.ids_answer(&ids).unwrap().value.iter().map(|r| r["state"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        let asks = |w: &World| w.script.lock().unwrap().seen.iter().filter(|a| a[..2] == ["list", "--ids"]).count();
+        assert_eq!(states(&w), ["READY", "LANDED"]);
+        assert_eq!(asks(&w), 1);
+        assert_eq!(states(&w), ["READY", "LANDED"]);
+        assert_eq!(asks(&w), 1, "the terminal row is remembered");
+
+        w.script.lock().unwrap().rows = vec![bead("sp-a", "READY", "[]", None, false), bead("sp-old", "REWORK", "[]", None, false)];
+        w.watch(json!({ "events": [{ "key": "lifecycle/sp-old", "rev": rev(10), "value": {}, "create_rev": null, "prev_mod_rev": null }], "through": 10, "rows": [bead("sp-old", "REWORK", "[]", None, false)] }));
+        w.p.poll().unwrap();
+        assert_eq!(states(&w), ["READY", "REWORK"], "a reopened bead is live again and held");
+        assert_eq!(asks(&w), 1);
+    });
+}

@@ -190,6 +190,24 @@ impl Memo {
     }
 }
 
+/// The terminal rows the store was asked for, kept until a change names them or the views reload:
+/// the live set never holds one, and a reader that names one would otherwise ask the store each time.
+#[derive(Default)]
+struct Terminal {
+    generation: u64,
+    rows: HashMap<String, Value>,
+}
+
+impl Terminal {
+    fn forget(&mut self, ids: Option<&[String]>) {
+        self.generation += 1;
+        match ids {
+            Some(ids) => ids.iter().for_each(|id| drop(self.rows.remove(id))),
+            None => self.rows.clear(),
+        }
+    }
+}
+
 pub type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
 
 /// The in-memory views and the watch that keeps them current.
@@ -199,6 +217,7 @@ pub struct Projection {
     clock: Clock,
     state: Mutex<State>,
     memo: Mutex<Memo>,
+    terminal: Mutex<Terminal>,
     watching: AtomicBool,
     /// Why the last poll failed; cleared by one that applied.
     lost: Mutex<Option<String>>,
@@ -227,13 +246,21 @@ pub fn held_list(argv: &[&str]) -> Option<Result<String, LcError>> {
 pub fn held_read(argv: &[&str]) -> Option<Result<String, LcError>> {
     let p = shared()?;
     if argv.first() == Some(&"list") {
-        return p.list_answer(argv);
+        return p.list_answer(argv).or_else(|| ids_only(argv).map(|ids| p.ids_answer(&ids).map(|r| Value::Array(r.value).to_string())));
     }
     classes_of(argv)?;
     Some(p.answer(argv).and_then(|r| match r.value.code {
         0 => Ok(r.value.out),
         _ => Err(LcError::Fault(r.value.why())),
     }))
+}
+
+/// The ids of a `list --ids a,b` that names nothing else.
+pub fn ids_only(argv: &[&str]) -> Option<Vec<String>> {
+    match argv {
+        ["list", "--ids", ids] => Some(ids.split(',').map(str::to_string).collect()),
+        _ => None,
+    }
 }
 
 /// `argv` answered by this process's projection when it holds the read, else by `client`. A stale
@@ -245,22 +272,11 @@ pub fn call_held(client: &LcClient, argv: &[&str]) -> Result<Reply, String> {
     }
 }
 
-/// `list --ids` rows: the held ones, and the store only for ids the projection does not hold.
+/// `list --ids` rows, answered by this process's projection when it keeps one.
 pub fn rows_by_ids(client: &LcClient, ids: &[String]) -> Result<Vec<Row>, String> {
     let Some(p) = shared() else { return lc_state::list_ids_on(client, ids) };
-    let mut held = Vec::new();
-    let mut missing = Vec::new();
-    for id in ids {
-        match p.rows(&RowQuery { ids: Some(std::slice::from_ref(id)), ..Default::default() }) {
-            Some(read) => held.extend(read.map_err(|e| e.to_string())?.value),
-            None => missing.push(id.clone()),
-        }
-    }
-    let mut rows = lc_state::parse_rows(&Value::Array(held).to_string())?;
-    if !missing.is_empty() {
-        rows.extend(lc_state::list_ids_on(client, &missing)?);
-    }
-    Ok(rows)
+    let rows = p.ids_answer(ids).map_err(|e| e.to_string())?.value;
+    lc_state::parse_rows(&Value::Array(rows).to_string())
 }
 
 fn fault(e: impl std::fmt::Display) -> LcError {
@@ -406,7 +422,7 @@ fn beads_of(raw: &str) -> Result<Vec<(String, Bead)>, LcError> {
 
 impl Projection {
     pub fn new(client: LcClient, stale_after: Duration, clock: Clock) -> Self {
-        Projection { client, stale_after, clock, state: Mutex::new(State::default()), memo: Mutex::new(Memo::default()), watching: AtomicBool::new(false), lost: Mutex::new(None) }
+        Projection { client, stale_after, clock, state: Mutex::new(State::default()), memo: Mutex::new(Memo::default()), terminal: Mutex::new(Terminal::default()), watching: AtomicBool::new(false), lost: Mutex::new(None) }
     }
 
     /// This process's installed projection, else a fresh one on `client`. Pair it with
@@ -448,6 +464,10 @@ impl Projection {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    fn terminal(&self) -> std::sync::MutexGuard<'_, Terminal> {
+        self.terminal.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn end_held(&self, classes: u8) {
         self.memo.lock().unwrap_or_else(|e| e.into_inner()).end(classes);
     }
@@ -476,6 +496,7 @@ impl Projection {
         let batches = batches_of(items);
         let mut s = self.lock();
         self.end_held(ALL);
+        self.terminal().forget(None);
         *s = State { rev: Some(rev), confirmed: Some((self.clock)()), batches, beads: Some(beads.into_iter().collect()) };
         Ok(())
     }
@@ -488,6 +509,7 @@ impl Projection {
         let batches = batches_of(items);
         let mut s = self.lock();
         self.end_held(ALL);
+        self.terminal().forget(None);
         *s = State { rev: Some(rev), confirmed: Some((self.clock)()), batches, beads: None };
         Ok(())
     }
@@ -547,6 +569,7 @@ impl Projection {
         fresh.extend(self.list_ids(&wanted)?);
         let mut s = self.lock();
         self.end_held(ended_by(&s, events));
+        self.terminal().forget(Some(&dirty));
         for (key, value, create_rev) in batch_puts {
             match value {
                 None => {
@@ -691,6 +714,48 @@ impl Projection {
             };
             Ok(beads.values().filter(kept).map(|b| b.raw.clone()).collect())
         }))
+    }
+
+    /// `list --ids`'s rows for `ids`, in id order: the held live rows, the terminal rows already
+    /// asked for, and the store for the rest, once. A terminal row is kept until a change names it.
+    pub fn ids_answer(&self, ids: &[String]) -> Result<Read<Vec<Value>>, LcError> {
+        let (rev, held, unheld) = {
+            let r = self.read(|s| {
+                let beads = s.beads.as_ref().ok_or_else(|| LcError::Refused("the lifecycle rows are not loaded: the views hold the batch records only".into()))?;
+                let (held, unheld): (Vec<&String>, Vec<&String>) = ids.iter().partition(|id| beads.contains_key(*id));
+                Ok((held.iter().map(|id| beads[*id].raw.clone()).collect::<Vec<_>>(), unheld.into_iter().cloned().collect::<Vec<_>>()))
+            })?;
+            (r.rev, r.value.0, r.value.1)
+        };
+        let mut rows = held;
+        let (remembered, generation) = {
+            let t = self.terminal();
+            (unheld.iter().filter_map(|id| t.rows.get(id).cloned()).collect::<Vec<_>>(), t.generation)
+        };
+        let known: BTreeSet<&str> = remembered.iter().filter_map(|r| r["bead_id"].as_str()).collect();
+        let asked: Vec<String> = unheld.iter().filter(|id| !known.contains(id.as_str())).cloned().collect();
+        rows.extend(remembered.iter().cloned());
+        let mut learned = Vec::new();
+        for chunk in asked.chunks(IDS_PER_READ) {
+            let text = self.client.answer(&["list", "--ids", &chunk.join(",")])?;
+            match json_of(&text, "list")? {
+                Value::Array(found) => learned.extend(found),
+                other => return Err(fault(format!("list: not an array: {other}"))),
+            }
+        }
+        {
+            let mut t = self.terminal();
+            if t.generation == generation {
+                for row in learned.iter().filter(|r| r["state"].as_str().is_some_and(lc_state::is_terminal)) {
+                    if let Some(id) = row["bead_id"].as_str() {
+                        t.rows.insert(id.to_string(), row.clone());
+                    }
+                }
+            }
+        }
+        rows.extend(learned);
+        rows.sort_by(|a, b| a["bead_id"].as_str().cmp(&b["bead_id"].as_str()));
+        Ok(Read { rev, value: rows })
     }
 
     /// `argv`'s answer when it is a `list` wholly inside the held live rows, rendered as the
