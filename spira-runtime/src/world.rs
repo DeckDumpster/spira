@@ -1,6 +1,7 @@
 //! Where the watchers' snapshots come from: files under the run directory and the lifecycle
 //! store through spira-lc's socket. No process is launched here; the wiki's git is `wiki_git`.
 
+use std::sync::{Arc, Mutex};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -650,7 +651,16 @@ impl World {
     }
 
     fn lc_json(&self, argv: &[&str]) -> Result<Value, String> {
-        let text = match store_view::held_read(argv) {
+        let held = match self.observe_bound {
+            Some((began, total)) if store_view::shared().is_some() => {
+                let owned: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
+                let left = total.saturating_sub(began.elapsed());
+                run_within(left, move || store_view::held_read(&owned.iter().map(String::as_str).collect::<Vec<_>>()))
+                    .ok_or_else(|| format!("store unavailable: the view's answer to spira-lc {} was not ready in the observe's bound of {} s", argv.join(" "), total.as_secs()))?
+            }
+            _ => store_view::held_read(argv),
+        };
+        let text = match held {
             Some(held) => held.map_err(|e| e.to_string())?,
             None if self.observe_bound.is_some() => self.lc_named(argv)?,
             None => lc_call(&self.lc_socket, argv).map_err(|e| e.to_string())?,
@@ -1033,6 +1043,35 @@ impl World {
     }
 
     fn transitions_observed(&self, input: &str) -> Result<String, String> {
+        self.transitions_phased(input, Arc::new(|_| {}))
+    }
+
+    /// Every phase of the observe runs on a worker the caller waits for only what is left of the
+    /// bound, so a phase that hangs is a BLIND snapshot naming it. `enter` is called as each phase begins.
+    fn transitions_phased(&self, input: &str, enter: Arc<dyn Fn(&str) + Send + Sync>) -> Result<String, String> {
+        let progress: Arc<Mutex<Phases>> = Arc::default();
+        let Some((began, total)) = self.observe_bound else {
+            return self.transitions_phases(input, &progress, &*enter);
+        };
+        let (world, text, track) = (self.clone(), input.to_string(), Arc::clone(&progress));
+        let answered = run_within(total.saturating_sub(began.elapsed()) + PHASE_GRACE, move || world.transitions_phases(&text, &track, &*enter));
+        let phases = progress.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        self.push_phase_durations(&phases);
+        answered.unwrap_or_else(|| {
+            let why = format!("store unavailable: the {} phase of the observe had not answered in its bound of {} s", phases.current, total.as_secs());
+            let blind = crate::tasks::e::watch_transitions::Snapshot { activated_at: crate::watchers::last_activation(&self.run_dir), halt: read_halt(&self.run_dir), ..crate::tasks::e::watch_transitions::blind(&why) };
+            serde_json::to_string(&blind).map_err(|e| e.to_string())
+        })
+    }
+
+    fn push_phase_durations(&self, phases: &Phases) {
+        let mut points: Vec<spira_otel::metrics::Point> = phases.done.iter().map(|(name, secs)| spira_otel::metrics::Point::Gauge { name, value: *secs }).collect();
+        points.push(spira_otel::metrics::Point::Gauge { name: "spira_observe_phase_seconds_open", value: phases.since.elapsed().as_secs_f64() });
+        let sink = spira_otel::metrics::MetricsSink::for_component(self.metrics_endpoint.as_deref(), "spira-runtime");
+        sink.push(&points, &[("component", "spira-runtime"), ("operation", "watch.transitions"), ("open_phase", phases.current)]);
+    }
+
+    fn transitions_phases(&self, input: &str, progress: &Mutex<Phases>, enter: &dyn Fn(&str)) -> Result<String, String> {
         use crate::tasks::e::watch_transitions as wt;
         #[derive(serde::Deserialize)]
         struct P {
@@ -1042,7 +1081,12 @@ impl World {
         }
         let p: P =
             serde_json::from_str(input).map_err(|e| format!("transitions params unparsed: {e}"))?;
+        let phase = |name: &'static str| {
+            progress.lock().unwrap_or_else(|e| e.into_inner()).enter(name);
+            enter(name);
+        };
         let ancestor = wt::repo_ancestor(&self.repo_map, &p.release_repo);
+        phase("dwell");
         let mut snap = wt::observe(
             &self.run_dir,
             &p.releases,
@@ -1051,16 +1095,20 @@ impl World {
             &ancestor,
             p.window_s,
         );
+        phase("open_rounds");
         snap.open_rounds = self.open_rounds();
         snap.halt = read_halt(&self.run_dir);
+        phase("mark_landed");
         wt::mark_landed(&mut snap, &|repo, tip| {
             let root = wt::repo_root(&self.repo_map, repo).or_else(|_| wt::repo_root(&self.repo_map, &p.release_repo))?;
             wt::ancestor_in(&root, tip, &crate::tasks::e::watch_transitions::landing_ref(&root))
         });
+        phase("mark_gated");
         wt::mark_gated(
             &mut snap,
             &wt::gates_of(&landing_pass::gateq::GateQueue::new(&self.run_dir).pending(), &spira_config::admission::gate_occupancy(&self.run_dir, 0).holders),
         );
+        progress.lock().unwrap_or_else(|e| e.into_inner()).enter("done");
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 
@@ -1129,6 +1177,49 @@ impl World {
 struct ThroughputParams {
     now: u64,
     abandon_window_s: u64,
+}
+
+/// The phase an observe is in and how long each finished one took, seconds, as gauge names.
+#[derive(Clone)]
+struct Phases {
+    current: &'static str,
+    since: std::time::Instant,
+    done: Vec<(&'static str, f64)>,
+}
+
+impl Default for Phases {
+    fn default() -> Self {
+        Phases { current: "start", since: std::time::Instant::now(), done: vec![] }
+    }
+}
+
+impl Phases {
+    fn enter(&mut self, next: &'static str) {
+        let name = match self.current {
+            "dwell" => "spira_observe_phase_seconds_dwell",
+            "open_rounds" => "spira_observe_phase_seconds_open_rounds",
+            "mark_landed" => "spira_observe_phase_seconds_mark_landed",
+            "mark_gated" => "spira_observe_phase_seconds_mark_gated",
+            _ => "",
+        };
+        if !name.is_empty() {
+            self.done.push((name, self.since.elapsed().as_secs_f64()));
+        }
+        self.current = next;
+        self.since = std::time::Instant::now();
+    }
+}
+
+/// How long the observe's worker is awaited past the bound, so a store read that gives up on the bound names itself before the worker is abandoned.
+const PHASE_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// `f` on a worker, abandoned when it has not answered within `left`: `None`.
+fn run_within<T: Send + 'static>(left: std::time::Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(left).ok()
 }
 
 /// One store call held to what is left of its observe's bound; an absent store, a silent one, or no time left,
@@ -1530,5 +1621,60 @@ mod bounded_store_tests {
         let input = serde_json::json!({ "window_s": 3600, "releases": rel, "release_repo": "spira" }).to_string();
         let snap: crate::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&world.transitions_observed(&input).unwrap()).unwrap();
         assert!(!snap.readable && snap.why.contains("store unavailable"), "{}", snap.why);
+    }
+
+    fn blocked_in(phase: &'static str, release: Arc<(Mutex<bool>, std::sync::Condvar)>) -> Arc<dyn Fn(&str) + Send + Sync> {
+        Arc::new(move |entered| {
+            if entered == phase {
+                let (m, c) = &*release;
+                let _held = c.wait_while(m.lock().unwrap(), |open| !*open).unwrap();
+            }
+        })
+    }
+
+    fn slow_phase_is_blind(phase: &'static str) {
+        let t = testkit::TempDir::new("observe-phase");
+        let rel = t.path().join("releases");
+        std::fs::create_dir_all(&rel).unwrap();
+        release::machine::enter(&t.path().join("release"), &"a".repeat(40), release::machine::ReleaseState::Activated, "current switched").unwrap();
+        let bound = Duration::from_millis(1500);
+        let listener = std::os::unix::net::UnixListener::bind(t.path().join("hangup.sock")).unwrap();
+        std::thread::spawn(move || listener.incoming().flatten().for_each(drop));
+        let world = super::World { run_dir: t.path().into(), repo_map: t.path().join("map"), lc_socket: t.path().join("hangup.sock"), observe_bound: Some((std::time::Instant::now(), bound)), ..Default::default() };
+        let input = serde_json::json!({ "window_s": 3600, "releases": rel, "release_repo": "spira" }).to_string();
+        let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let hook = blocked_in(phase, release.clone());
+        let snap: crate::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&world.transitions_phased(&input, hook).unwrap()).unwrap();
+        assert!(!snap.readable && snap.why.contains("store unavailable") && snap.why.contains(phase), "{}", snap.why);
+        *release.0.lock().unwrap() = true;
+        release.1.notify_all();
+    }
+
+    #[test]
+    fn a_held_read_that_blocks_past_the_bound_is_blind_naming_the_dwell_phase() {
+        slow_phase_is_blind("dwell");
+    }
+
+    #[test]
+    fn a_slow_open_rounds_read_is_blind_naming_its_phase() {
+        slow_phase_is_blind("open_rounds");
+    }
+
+    #[test]
+    fn a_slow_landed_ancestry_is_blind_naming_mark_landed() {
+        slow_phase_is_blind("mark_landed");
+    }
+
+    #[test]
+    fn a_held_read_not_ready_within_what_is_left_gives_up() {
+        let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let r2 = release.clone();
+        let got = super::run_within(Duration::from_millis(200), move || {
+            let (m, c) = &*r2;
+            drop(c.wait_while(m.lock().unwrap(), |open| !*open).unwrap());
+        });
+        assert!(got.is_none(), "the worker is still blocked, so the call returned on its bound");
+        *release.0.lock().unwrap() = true;
+        release.1.notify_all();
     }
 }
