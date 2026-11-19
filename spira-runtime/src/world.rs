@@ -25,6 +25,7 @@ use crate::watchers::reconciler_flow::{FlowSnapshot, Params, Slots, Stage, Statu
 use crate::watchers::halt::Halt;
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
+const INBOX_WATCHER: &str = "concierge-inbox";
 const STORE_ATTEMPTS: u32 = 3;
 /// Ids per `plan items` call when the flow pass reads the live beads' type and labels.
 const FLOW_CONTENT_CHUNK: usize = 200;
@@ -358,14 +359,34 @@ impl World {
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 
-    /// Whether any process's command line names inbox-triage, and when the inbox last changed.
-    pub fn keeper_snapshot(&self) -> Result<String, String> {
-        let alive = fs::read_dir(&self.proc_dir).map_err(|e| format!("{}: {e}", self.proc_dir.display()))?.flatten().any(|e| {
-            e.file_name().to_str().is_some_and(|n| n.bytes().next().is_some_and(|b| b.is_ascii_digit()))
-                && fs::read(e.path().join("cmdline")).is_ok_and(|raw| String::from_utf8_lossy(&raw).replace('\0', " ").contains("inbox-triage"))
-        });
-        let inbox_mtime = fs::metadata(&self.inbox).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
-        serde_json::to_string(&inbox_keeper::Snapshot { triage_alive: alive, inbox_mtime }).map_err(|e| e.to_string())
+    /// Whether watchd's reader lock on the Concierge inbox is held, and how many inbox lines lie past
+    /// its cursor; `Err` naming the path that could not be read. `input` is the keeper's carry.
+    pub fn keeper_snapshot(&self, input: &str) -> Result<String, String> {
+        let carry: inbox_keeper::Carry = serde_json::from_str(input).unwrap_or_default();
+        let run = self.run_dir.to_string_lossy();
+        let lock = watchd::paths::tail_lockfile(&run, INBOX_WATCHER);
+        let cursor = watchd::paths::cursorfile(&run, INBOX_WATCHER);
+        let dir = lock.parent().unwrap_or(&self.run_dir);
+        fs::metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let waiter_alive = match fs::File::open(&lock) {
+            Ok(f) => {
+                let rc = unsafe { libc::flock(std::os::unix::io::AsRawFd::as_raw_fd(&f), libc::LOCK_EX | libc::LOCK_NB) };
+                rc != 0
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => return Err(format!("{}: {e}", lock.display())),
+        };
+        let log = fs::read(&self.inbox).map_err(|e| format!("{}: {e}", self.inbox.display()))?;
+        let total = log.iter().filter(|&&b| b == b'\n').count() as u64;
+        let (pos, cursor_mtime) = match fs::read_to_string(&cursor) {
+            Ok(text) => {
+                let mtime = fs::metadata(&cursor).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+                (watchd::cursor::clamp_pos(watchd::cursor::parse_cursor(&text), total), mtime)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (0, 0),
+            Err(e) => return Err(format!("{}: {e}", cursor.display())),
+        };
+        inbox_keeper::observed(&carry, inbox_keeper::Snapshot { waiter_alive, unread: total - pos, cursor_mtime })
     }
 
     /// The PRs the harness opened and recorded, asked of the forge by number, with the PRs already
