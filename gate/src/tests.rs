@@ -2952,6 +2952,10 @@ fn a_tree_with_no_build_tier_runs_no_build_phase() {
 /// A fake whose gate command declares three steps and is killed at the gate phase's cap.
 fn capped_with_steps() -> Fake {
     let f = Fake::new();
+    // Non-defaults, and the production relationship: the budget is a share of the deadline,
+    // so a phase cut at the budget is not the whole gate running out of clock.
+    f.put_var("SPIRA_GATE_DEADLINE", "900");
+    f.put_var("SPIRA_GATE_BUDGET", "260");
     f.phase_secs.set(260);
     *f.steps_written.borrow_mut() = vec![(0, "build tree".into()), (20, "fences".into()), (30, "suites".into())];
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (124, "== suites\n".into()));
@@ -4803,27 +4807,38 @@ fn an_operator_timeout_shorter_than_the_deadline_stays_a_timeout() {
 }
 
 #[test]
-fn phase_caps_sum_under_the_deadline() {
-    let fixed: u64 = ["tools", "gate"].iter().filter_map(|p| crate::engine::phase_cap(p)).sum();
-    assert!(fixed <= 300, "{fixed}");
-    let reg = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("conf.d/SPIRA_GATE_BUDGET")).unwrap();
-    let budget: u64 = reg.split("SPIRA_GATE_BUDGET:=").nth(1).unwrap().split(|c: char| !c.is_ascii_digit()).next().unwrap().parse().unwrap();
-    assert!(crate::engine::phase_cap("gate").unwrap() >= budget, "the gate phase is cut before testenv's budget {budget}");
-    assert_eq!(crate::engine::phase_cap("base-tools"), crate::engine::phase_cap("tools"));
-    assert_eq!(crate::engine::phase_cap("reentry"), None);
-    assert_eq!(crate::engine::phase_cap("publish"), None);
+fn the_gate_phase_is_cut_at_the_configured_budget_never_a_literal() {
+    // Both keys pinned to non-defaults: asserting against the shipped default passes just as
+    // well when the code carries the number, which is how a 260s literal outlived a 300s
+    // budget and a 900s deadline in production.
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_DEADLINE", "900");
+    f.put_var("SPIRA_GATE_BUDGET", "420");
+    f.repo_build_secs.set(Some(30));
+    f.phase_secs.set(200);
+    assert_eq!(f.run(), PASS, "{}", f.verdict_line());
+    let t = f.timeouts.borrow().clone();
+    let (_, to) = t
+        .iter()
+        .find(|(c, _)| c.contains("testenv") && !c.contains("--suites build") && !c.contains("--share-publish"))
+        .expect("a gate phase ran");
+    assert_eq!(to, "420", "the gate phase's cutoff is the configured budget: {t:?}");
+    assert_eq!(crate::engine::phase_cap("base-gate", 420), Some(420));
+    assert_eq!(crate::engine::phase_cap("reentry", 420), None);
+    assert_eq!(crate::engine::phase_cap("publish", 420), None);
+    assert_eq!(crate::engine::phase_cap("tools", 420), None);
 }
 
 #[test]
 fn a_phase_killed_at_its_cap_is_not_a_deadline() {
     use crate::engine::killed_verdict;
     let ph = |n: &str, s: u64| vec![("tools".to_string(), 8), (n.to_string(), s)];
-    let at_cap = killed_verdict(&ph("gate", 260), 300, 270, "c", "o");
+    let at_cap = killed_verdict(&ph("gate", 260), 260, 300, 270, "c", "o");
     assert_eq!(at_cap.reason, "phase-cap");
     assert!(at_cap.msg.contains("`gate`") && at_cap.msg.contains("260s cap"), "{}", at_cap.msg);
-    assert_eq!(killed_verdict(&ph("gate", 40), 300, 300, "c", "o").reason, "deadline");
-    assert_eq!(killed_verdict(&ph("gate", 260), 270, 270, "c", "o").reason, "deadline");
-    assert_eq!(killed_verdict(&ph("reentry", 500), 300, 100, "c", "o").reason, "deadline");
+    assert_eq!(killed_verdict(&ph("gate", 40), 260, 300, 300, "c", "o").reason, "deadline");
+    assert_eq!(killed_verdict(&ph("gate", 260), 260, 270, 270, "c", "o").reason, "deadline");
+    assert_eq!(killed_verdict(&ph("reentry", 500), 260, 300, 100, "c", "o").reason, "deadline");
 }
 
 #[test]
@@ -5664,20 +5679,4 @@ fn a_unit_run_cut_at_its_deadline_without_a_summary_is_not_the_missing_report_fa
     f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (124, String::new()));
     f.run();
     assert!(!f.stderr().contains("printed no `Summary [` line"), "{}", f.stderr());
-}
-
-#[test]
-fn the_gate_phase_is_bounded_by_the_configured_budget_not_a_literal() {
-    let f = Fake::new();
-    f.repo_build_secs.set(Some(30));
-    f.phase_secs.set(200);
-    f.put_var("SPIRA_GATE_DEADLINE", "900");
-    f.put_var("SPIRA_GATE_BUDGET", "300");
-    assert_eq!(f.run(), PASS, "{}", f.verdict_line());
-    let t = f.timeouts.borrow().clone();
-    let (_, to) = t
-        .iter()
-        .find(|(c, _)| c.contains("testenv") && !c.contains("--suites build") && !c.contains("--share-publish"))
-        .expect("a gate phase ran");
-    assert_eq!(to, "300", "the gate phase's cutoff is the configured budget: {t:?}");
 }
