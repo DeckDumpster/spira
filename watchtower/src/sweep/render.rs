@@ -289,7 +289,7 @@ Run the scans named in the menu above if you have wall time remaining.
         suites_block = d.suites_block.trim_end(),
         guard_block = d.guard_block.trim_end(),
         snap_age_disp = d.snap_age_disp,
-        sentinel_armed = match &*d.env.g("SP_SENTINEL_TIMER") { "1" => "armed", "0" => "not armed", _ => "?" },
+        sentinel_armed = match d.env.g("SP_SENTINEL_TIMER") { "1" => "armed", "0" => "not armed", _ => "?" },
         sp_sentinel_age = d.env.g("SP_SENTINEL_AGE"),
     )
 }
