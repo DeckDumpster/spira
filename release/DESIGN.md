@@ -5,8 +5,8 @@ brain `wiki/projects/spira/designs/runtime-is-a-release-2026-09-29.md`). It repl
 local use, the Makefile's `install` target, `spira/activate.sh` and `spira/build-tarball.sh`.
 
 **sp-jsnbm** (wave 2 of the rewrite programme) extends it to the public (GitHub tag/tarball)
-pipeline: `install-tarball`, `stage` and `canary` move `spira/activate.sh`, `spira/stage.sh`
-and `spira/canary.sh` into this crate, so the GitHub acceptance workflow and `install.sh` call
+pipeline: `install-tarball`, `stage` move `spira/activate.sh`, `spira/stage.sh`
+into this crate, so the GitHub acceptance workflow and `install.sh` call
 the same binary the local path does. `spira/build-tarball.sh` stays bash (it produces the
 tarball `install-tarball` consumes; a separate concern, untouched here — DESIGN.md "Callers").
 
@@ -32,8 +32,6 @@ release prune [--keep N]                                keep the newest N releas
 release status                                          current, previous, RUNNING UNLANDED, ALERT
 release install-tarball <tarball> [--dry-run] [--settle S]   the public pipeline's own install
 release stage up [ROOT] | down <ROOT>                   an isolated Spira for testing
-release canary [--stage ROOT] [--deadline S]            end-to-end pipeline canary on a stage
-release canary-worker                                   the stage's synthetic dwarf (internal)
 release acceptance <tag> --scratch-repo P [...]         release acceptance on a clean machine (DESIGN.md "acceptance")
 release session-hook install|status|uninstall|prune S  the client's SessionStart hook + statusLine (DESIGN.md "session-hook")
 release intake install|status|uninstall                 wire systemd alert units into incident intake (DESIGN.md "intake")
@@ -358,7 +356,7 @@ private `bin/bd` symlink so nothing this stage runs can resolve the caller's rea
 own `SPIRA_RUN`, a minimal runes (one `canary` rune, `RUNE_SINGLE_FLIGHT=1`), a
 six-column `repo-map` line, and the two synthetic dispatch scripts `sentinel` needs in place
 of `systemd-run`: `fake-call.sh` (execs `release canary-worker` synchronously) and
-`fake-launch.sh` (records the landing dispatch timestamp and exits 0 — `release canary` runs
+`fake-launch.sh` (records the landing dispatch timestamp and exits 0 — a stage's caller runs
 `landing-pass land` directly so it controls the timing).
 
 Every non-test `.sh`/`.py` file directly under `$SPIRA_RELEASE/spira/` (the release stage is
@@ -372,31 +370,6 @@ and an arbitrary `rm -rf`.
 `SPIRA_SCOPE_LABEL` is always empty in a stage's own env, never read from the caller's: the
 `spira.conf` default of `spira` would make sentinel query for `spira,plan` while the bead is
 created with `plan` only, and `plan_ready` stays 0 (the same reasoning `stage.sh` documented).
-
-### canary
-
-`spira/canary.sh`'s replacement: an end-to-end pipeline canary on a `stage`. Files a
-synthetic bead, runs the real `sentinel` (which dispatches `release canary-worker` via
-`SPIRA_CALL`), runs the real `landing-pass land` directly, and asserts a commit naming the
-bead id appears on `origin/main` inside `--deadline` (default 120s). **The one thing that is
-fake is the model:** `canary-worker` claims, commits and closes the bead without invoking
-Claude — the model is the one part canary cannot test, and `SPIRA_CALL`/`SPIRA_LAUNCH` are
-exactly that boundary.
-
-On failure it files a `spira,incident` bead in the **production** database — the caller's own
-`SPIRA_DB`, captured before a stage's env (own or `--stage`'s) replaces it — never the
-stage's, and never lets a forensics failure change canary's own exit status.
-
-`canary-worker` claims the first bead of the one ready set a dwarf claims from (`spira-claim
-rune-ready canary --json`: the machine's READY/REWORK rows) the way a dwarf claims it — the
-lifecycle Claim event (lib.sh `lc_claim_bead`, a refusal falling through to the next
-candidate; a give-up is `spira-lc unclaim`) — never a `bd ready --claim` of its own
-(sp-7g5q6). It then creates branch
-`spira/<id>`, commits a marker file as `canary`/`canary@example.invalid`, pushes, records
-`branch=<name>` on the bead, and closes it. It is invoked only by `fake-call.sh`, inheriting
-the full stage env; there is no per-stage copy of it (unlike `stage.sh`'s own
-`canary-worker.sh`, written fresh into every stage) because it is a subcommand of the one
-binary already on every launcher's `PATH`.
 
 ### acceptance
 
@@ -695,7 +668,6 @@ only `HOME` is required of the caller.
 | `prune` | prune |
 | `install` | `install-tarball`: unpack, swap, restart, prune a timestamp-named release |
 | `stage` | stand up / tear down an isolated Spira; the rune, repo-map and dispatch-script content |
-| `canary` | the end-to-end canary run, and `canary-worker`, the synthetic dwarf |
 | `acceptance` | `release acceptance`: the release acceptance run (phases A-D), its checks, forensics and note |
 | `session_hook` | `release session-hook`: the client's `SessionStart` hook and `statusLine` |
 | `intake` | `release intake`: systemd alert templates wired to `incident.sh` via a drop-in |
@@ -707,10 +679,7 @@ directory; `install-tarball` against a fake `Systemctl` and a fake `Unpack` (no 
 `session_hook`'s JSON transformation is pure and needs no fake at all; one further test
 (`release/tests/session_hook_minimal_env.rs`) runs the real `session.sh`/`ctx-meter.sh`
 through a really-built `spira-config` (sp-7jr34's own requirement 3). Nothing in a test
-touches the host's systemd, a real tarball, or a real `bd`/`git`/`sentinel` — `stage` and
-`canary`'s own orchestration is proved instead by running them for real, once, against a
-scratch `STAGE_ROOT` and the real `sentinel`/`landing-pass` binaries (this bead's own delivery
-evidence; `test-canary.sh` repeats this under the gate/round).
+touches the host's systemd, a real tarball, or a real `bd`/`git`.
 
 ## Callers
 
@@ -730,8 +699,7 @@ sibling of the releases dir — DESIGN.md "install-tarball" resolves `state_dir(
 unconditionally; sp-ak7qm replaced acceptance-lib.sh's `_install_from_tarball`) and
 `install.sh`'s own messages. `release acceptance` replaces `spira/acceptance-run.sh` and
 `spira/acceptance-lib.sh`, which are deleted: `acceptance-ci.sh` (acceptance.yml) and
-`acceptance-local.sh` run the candidate tarball's own `bin/release acceptance`. `stage`/`canary` replace `spira/stage.sh` and `spira/canary.sh`,
-which are deleted; today's only caller is their own suite, `test-canary.sh`. `systemd/render.py`
+`acceptance-local.sh` run the candidate tarball's own `bin/release acceptance`. `stage` replaces `spira/stage.sh`, which is deleted. `systemd/render.py`
 remains for `install.sh` and `unit-ensure.sh`, which own unit membership.
 
 `release session-hook` replaces `spira/install-session-hook.sh`, which is deleted: every

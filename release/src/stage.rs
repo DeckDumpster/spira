@@ -3,7 +3,7 @@
 //! `SPIRA_RUN`, a minimal runes, and the synthetic dispatch scripts that replace
 //! `systemd-run` at the two harness seams `sentinel` needs (`SPIRA_CALL`, `SPIRA_LAUNCH`).
 //! Nothing inside a stage touches the caller's `SPIRA_DB`, `SPIRA_RUN`, or any real git
-//! repository. Replaces `spira/stage.sh`; `crate::canary` is the caller that most needs it.
+//! repository. Replaces `spira/stage.sh`.
 //!
 //! ISOLATION IS ASSERTED AT BUILD TIME: [`up`] refuses to return an env block where any of
 //! `SPIRA_DB`, `SPIRA_RUN` or `SPIRA_HOME` — or the control store's path — resolves outside the stage root, so a misconfiguration fails closed rather than silently
@@ -17,10 +17,10 @@
 //! - `SPIRA_CALL` replaces `systemd-run` for sentinel's dwarf-call check. The stage
 //!   writes `fake-call.sh` here; it ignores every systemd flag and execs `release
 //!   canary-worker` synchronously in the inherited stage env — the model is the one part
-//!   canary cannot test, and this is the boundary.
+//!   a stage's caller cannot test, and this is the boundary.
 //! - `SPIRA_LAUNCH` replaces `systemd-run` for sentinel's landing-dispatch check. The stage
 //!   writes `fake-launch.sh` here; it records the dispatch timestamp (keeping sentinel's
-//!   staleness accounting correct) and exits 0. `release canary` runs `landing-pass land`
+//!   staleness accounting correct) and exits 0. A stage's caller runs `landing-pass land`
 //!   directly when it wants a landing pass.
 
 use crate::fsutil;
@@ -56,7 +56,7 @@ pub struct StageOpts {
     pub scope_label: String,
 }
 
-/// A stood-up stage: its root, and the environment `release canary` (or a caller) must
+/// A stood-up stage: its root, and the environment a stage's caller must
 /// export into every process it launches against it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stage {

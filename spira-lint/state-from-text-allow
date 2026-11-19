@@ -24,7 +24,6 @@
 1 output release/src/canary.rs
 1 unit-name release/src/intake.rs
 2 unit-name release/src/units.rs
-1 output sentinel/src/pass.rs
 1 unit-name sim/src/units.rs
 2 unit-name spira-config/src/release_tag.rs
 1 output spira-runtime/src/reconcile_host.rs

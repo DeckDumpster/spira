@@ -35,3 +35,8 @@ runtime = { path = "../runtime" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "canary_verb"
+path = "tests/canary_verb.rs"
+required-features = ["integration"]

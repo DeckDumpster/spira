@@ -22,8 +22,7 @@ pub fn send(m: &Mail) -> Result<(), String> {
         env.repeat_considered = Some("sentinel-own-dedup".into());
     }
     mail::maildir::mailbox_valid(m.mailbox).map_err(|e| format!("mailbox {}: {e}", m.mailbox))?;
-    let bdq = spira_config::release_env::tool("bdq")?;
-    let bd = mail::bead::BdCli { bdq, conn_retries: env.bd_conn_retries };
+    let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
     let args = mail::cmds::SendArgs { mailbox: m.mailbox, from: Some(m.from), subject: m.subject, kind: m.kind, default: m.default, class: "", bead: m.bead, urgent: false, digest: false, dry_run: false, requested_by: "" };
     let body = m.body.to_string();
     let result = mail::cmds::send(&bd, &env, &args, body.clone());

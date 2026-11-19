@@ -27,9 +27,5 @@ watchtower = { path = "../watchtower" }
 spira-desired-state = { path = "../desired-state" }
 reconciler-engine = { path = "../reconciler-engine" }
 
-[[bin]]
-name = "sentinel"
-path = "src/main.rs"
-
 [dev-dependencies]
 testkit = { path = "../testkit" }
