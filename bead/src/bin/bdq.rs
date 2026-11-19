@@ -476,10 +476,6 @@ fn now_epoch() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-fn util_json_only(raw: &str) -> String {
-    json_only(raw).to_string()
-}
-
 /// stdout of one bd call, stderr dropped; empty on any failure.
 fn bd_capture(timeout_s: &str, bd_bin: &str, db: &str, args: &[&str]) -> String {
     // FORK-EDGE: content store — bdq's own bd call; the content store is out of scope.
@@ -496,9 +492,6 @@ fn bd_capture(timeout_s: &str, bd_bin: &str, db: &str, args: &[&str]) -> String 
         .unwrap_or_default()
 }
 
-/// An overridden edit is its own acknowledgment: re-stamp the baseline so the close-time check
-/// does not reopen a close nobody did anything wrong on, file the note, and tell the holder.
-/// These are direct bd calls, not nested bdq calls — a metadata write is not a description edit.
 fn acknowledge_forced_edit(timeout_s: &str, bd_bin: &str, db: &str, id: &str, claim: &claimdesc::LiveClaim, reason: &str) {
     let actor = env_nonempty("BEADS_ACTOR")
         .or_else(|| {
@@ -511,19 +504,14 @@ fn acknowledge_forced_edit(timeout_s: &str, bd_bin: &str, db: &str, id: &str, cl
         })
         .or_else(|| env_nonempty("USER"))
         .unwrap_or_else(|| "unknown".to_string());
-    if let Some(hash) = claimdesc::desc_hash(&util_json_only(&bd_capture(timeout_s, bd_bin, db, &["show", id, "--json"]))) {
-        bd_capture(timeout_s, bd_bin, db, &["update", id, "--set-metadata", &format!("{}={hash}", claimdesc::HASH_KEY)]);
+    let show = |id: &str| bd_capture(timeout_s, bd_bin, db, &["show", id, "--json"]);
+    let mut write = |args: &[&str]| {
+        bd_capture(timeout_s, bd_bin, db, args);
         spira_store::planning::stamp_after("bdq");
-    }
-    bd_capture(timeout_s, bd_bin, db, &["note", id, &claimdesc::override_note(&actor, claim, reason)]);
-    spira_store::planning::stamp_after("bdq");
-    // Best-effort notification: by this point `cfg` has already resolved successfully at
-    // least once in this process (SPIRA_DB/SPIRA_BD above), so these two cannot newly
-    // fail; `unwrap_or_default` only ever matters if SPIRA_RUN/SPIRA_MAIL themselves
-    // resolve empty, which `notify_live_dwarf` already treats as "nothing to notify".
+    };
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
     let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
-    claimdesc::notify_live_dwarf(id, &claimdesc::holder_message(&actor, reason), &run, &mail);
+    claimdesc::acknowledge_forced_edit(&show, &mut write, &actor, id, claim, reason, (&run, &mail));
 }
 
 #[cfg(test)]

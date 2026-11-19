@@ -148,6 +148,18 @@ pub fn parse_iso(s: &str) -> Option<i64> {
     Some(epoch - off)
 }
 
+/// An overridden edit is its own acknowledgment: re-stamp the baseline so the close-time check
+/// does not reopen a close nobody did anything wrong on, file the note, and tell the holder.
+/// `show` answers the bead's JSON; `write` runs one metadata or note write (never a description
+/// edit, so it does not re-enter the claim check).
+pub fn acknowledge_forced_edit(show: &dyn Fn(&str) -> String, write: &mut dyn FnMut(&[&str]), actor: &str, id: &str, claim: &LiveClaim, reason: &str, (run, mail): (&str, &str)) {
+    if let Some(hash) = desc_hash(crate::bdq::json_only(&show(id))) {
+        write(&["update", id, "--set-metadata", &format!("{HASH_KEY}={hash}")]);
+    }
+    write(&["note", id, &override_note(actor, claim, reason)]);
+    notify_live_dwarf(id, &holder_message(actor, reason), run, mail);
+}
+
 /// Mails the dwarf actually working `id`, if one is alive and its mailbox is open.
 ///
 /// `run`/`mail` are `SPIRA_RUN`/`SPIRA_MAIL` (both registered config keys) — this is pure

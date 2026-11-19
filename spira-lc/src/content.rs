@@ -37,6 +37,10 @@ pub fn check(args: &[String]) -> Result<Kind, String> {
         ["label", "add" | "remove", id, label] if word(id) && word(label) => WRITE,
         ["note", id, "--stdin"] if word(id) => Ok(Kind::Write { body: true }),
         ["note", id, text] if word(id) && !text.starts_with('-') && !text.trim().is_empty() => WRITE,
+        ["dep", "add", id, dep] if word(id) && word(dep) => WRITE,
+        ["dep", "add", id, dep, "--type", t] if word(id) && word(dep) && DEP_TYPES.contains(t) => WRITE,
+        ["dep", "remove" | "relate", a, b] if word(a) && word(b) => WRITE,
+        ["set-state", id, kv] if word(id) && settable_state(kv) => WRITE,
         ["close", id] if word(id) => WRITE,
         ["close", id, "--reason", reason] if word(id) && !reason.trim().is_empty() => WRITE,
         ["update", id, flags @ ..] if !id.starts_with('-') && !flags.is_empty() => update_flags(flags),
@@ -50,21 +54,33 @@ pub fn check(args: &[String]) -> Result<Kind, String> {
     }
 }
 
+const DEP_TYPES: &[&str] = &["blocks", "relates-to", "parent-child", "discovered-from"];
+
+/// The state dimensions a caller may set through the door: a branch or a lane, with a value.
+fn settable_state(kv: &str) -> bool {
+    matches!(kv.split_once('='), Some(("branch" | "lane", v)) if !v.is_empty())
+}
+
 fn unserved(verb: &str, instead: &str) -> String {
     format!("`{verb}` is not a content verb; use {instead}")
 }
 
 fn update_flags(flags: &[&str]) -> Result<Kind, String> {
     let mut it = flags.iter();
-    let mut body = false;
+    let (mut body, mut forced) = (false, false);
     while let Some(f) = it.next() {
         match (*f, it.next()) {
+            ("--priority" | "-p", Some(p)) if matches!(*p, "0" | "1" | "2" | "3" | "4") => {}
+            (bead::claimdesc::FORCE_FLAG, Some(reason)) if !reason.trim().is_empty() => forced = true,
             ("--add-label" | "--remove-label", Some(l)) if !l.is_empty() => {}
             ("--set-metadata", Some(kv)) if kv.split_once('=').is_some_and(|(k, _)| word(k)) => {}
             ("--body-file", Some(&"-")) => body = true,
             ("--body-file", _) => return Err("update takes its description only as --body-file - (the request body)".into()),
-            _ => return Err(format!("update takes only --add-label/--remove-label <label> and --set-metadata <key=value>, not `{f}`")),
+            _ => return Err(format!("update takes only --add-label/--remove-label <label>, --set-metadata <key=value>, --priority 0-4 and --force-claimed <reason> with a body, not `{f}`")),
         }
+    }
+    if forced && !body {
+        return Err(format!("update takes {} only with --body-file - (a claimed description edit)", bead::claimdesc::FORCE_FLAG));
     }
     Ok(Kind::Write { body })
 }
@@ -130,7 +146,20 @@ pub struct Guards<'a> {
     pub policy: &'a dyn Fn() -> Result<bead::filing::Policy, String>,
     /// A bead's `repo:` label, for the guards on text written to an existing bead.
     pub repo_of: &'a dyn Fn(&str) -> Option<String>,
+    /// A dependency target as bd shows it, for the refusals on a `blocks` edge.
+    pub target_of: &'a dyn Fn(&str) -> Option<bead::ShowRow>,
+    /// `SPIRA_INCIDENT_LABEL`, this installation's, resolved only by a `blocks` edge.
+    pub incident_label: &'a dyn Fn() -> Result<String, String>,
     pub now: i64,
+    /// A forced edit the guard admitted, for [`acknowledge`] once bd has applied it.
+    pub forced: std::cell::RefCell<Option<Forced>>,
+}
+
+/// A claimed description edit admitted under `--force-claimed`.
+pub struct Forced {
+    pub id: String,
+    pub claim: bead::claimdesc::LiveClaim,
+    pub reason: String,
 }
 
 /// bdq's write guards on a content write (`bead::guard::write`), in bdq's order: the
@@ -139,7 +168,7 @@ pub struct Guards<'a> {
 /// request body a create judges as its description. A refusal is bdq's: exit 1 and its text,
 /// so a write through this door is refused whenever the same write through bdq would be.
 /// `Ok` carries the lines to log (an overridden state write).
-pub fn guard(args: &mut [String], body: &mut Option<String>, g: &Guards, m: &mut dyn crate::callers::Machine) -> Result<String, Answer> {
+pub fn guard(args: &mut Vec<String>, body: &mut Option<String>, g: &Guards, m: &mut dyn crate::callers::Machine) -> Result<String, Answer> {
     let rows = std::cell::RefCell::new(m);
     let row = |id: &str| match rows.borrow_mut().call(&["show".to_string(), id.to_string()]) {
         (0, out) => spira_store::lc_state::parse_show(&out).ok().flatten(),
@@ -147,12 +176,15 @@ pub fn guard(args: &mut [String], body: &mut Option<String>, g: &Guards, m: &mut
     };
     let vars = |k: &str| g.caller.get(k).cloned();
     let ctx = bead::guard::Ctx { who: "spira-lc content", vars: &vars, rows: &row, now: g.now, ask_label: g.ask_label, registry: g.registry };
+    blocks_edge(args, g)?;
     let mut log = match bead::guard::write(args, body.as_deref(), &ctx) {
         Ok(bead::guard::Admit { claim: bead::guard::Claim::Free, log }) => log,
-        // The door takes no --force-claimed (`check`), so an acknowledged edit never reaches
-        // here; were one to, it is refused rather than written without its acknowledgment.
-        Ok(bead::guard::Admit { claim: bead::guard::Claim::Forced { id, .. }, .. }) => {
-            return Err(Answer { code: REFUSED, stderr: format!("spira-lc content: {id}: a claimed edit is acknowledged only through bdq's --force-claimed\n"), ..Default::default() })
+        Ok(bead::guard::Admit { claim: bead::guard::Claim::Forced { id, claim, reason }, log }) => {
+            let rest = bead::claimdesc::parse_update_args(&args[1..]).passthrough;
+            args.truncate(1);
+            args.extend(rest);
+            *g.forced.borrow_mut() = Some(Forced { id, claim, reason });
+            log
         }
         Err(r) => return Err(Answer { code: r.code, stderr: r.text, ..Default::default() }),
     };
@@ -170,6 +202,29 @@ pub fn guard(args: &mut [String], body: &mut Option<String>, g: &Guards, m: &mut
     .map_err(|r| Answer { code: r.code, stderr: r.text, ..Default::default() })?;
     log.push_str(&shown);
     Ok(log)
+}
+
+/// The refusals `bead.sh dep add` gives a `blocks` edge: onto an epic, or onto an incident.
+fn blocks_edge(args: &[String], g: &Guards) -> Result<(), Answer> {
+    let a: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (id, dep, t) = match a.as_slice() {
+        ["dep", "add", id, dep] => (id, dep, None),
+        ["dep", "add", id, dep, "--type", t] => (id, dep, Some(*t)),
+        _ => return Ok(()),
+    };
+    if !bead::is_blocks_type(t) {
+        return Ok(());
+    }
+    let refuse = |text: String| Answer { code: bead::guard::REFUSED, stderr: format!("{text}\n"), ..Default::default() };
+    let incident = (g.incident_label)().map_err(|e| refuse(format!("spira-lc content: the incident label cannot be read: {}", e.trim_end())))?;
+    let Some(target) = (g.target_of)(dep) else { return Ok(()) };
+    if target.issue_type == "epic" {
+        return Err(refuse(bead::epic_blocks_refusal(id, dep)));
+    }
+    if target.labels.contains(&incident) {
+        return Err(refuse(bead::incident_blocks_refusal(id, dep, &incident)));
+    }
+    Ok(())
 }
 
 /// Whether the filing contract has anything to say about `args`: a create, a partition-label
@@ -192,6 +247,7 @@ const ROW_ATTEMPTS: u32 = 3;
 /// (the returned stderr lines), never swallowed and never a reason to repeat the bd write.
 pub fn after(args: &[String], stdout: &str, m: &mut dyn crate::callers::Machine, bd: &mut dyn crate::callers::Bd, backoff_ms: u64) -> String {
     let (mut report, rowed) = rows_after(args, stdout, m, bd, backoff_ms);
+    report.push_str(&mirror_after(args, m));
     let ids: Vec<String> = spira_store::planning::claim_inputs_changed(args, stdout).into_iter().filter(|i| rowed.as_ref().is_none_or(|ok| ok.contains(i))).collect();
     if !ids.is_empty() && !crate::settle::owe_claims(&ids, false) {
         let ans = crate::claim_sync::run(&ids, m, bd);
@@ -200,6 +256,32 @@ pub fn after(args: &[String], stdout: &str, m: &mut dyn crate::callers::Machine,
         }
     }
     report
+}
+
+/// A `dep add`/`dep remove` bd applied is mirrored into the lifecycle store, as `bead.sh` does.
+fn mirror_after(args: &[String], m: &mut dyn crate::callers::Machine) -> String {
+    let a: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (verb, id, dep, t) = match a.as_slice() {
+        ["dep", "add", id, dep] => ("dep-add", id, dep, None),
+        ["dep", "add", id, dep, "--type", t] => ("dep-add", id, dep, Some(*t)),
+        ["dep", "remove", id, dep] => ("dep-remove", id, dep, None),
+        _ => return String::new(),
+    };
+    match m.call(&bead::lc::dep_argv(verb, id, dep, t)) {
+        (0, _) => String::new(),
+        (code, out) => format!("spira-lc content: LIFECYCLE: {verb} {id} -> {dep} is in bd but was not mirrored to the lifecycle store (exit {code}: {}); re-run the `dep` verb to mirror it\n", out.trim()),
+    }
+}
+
+/// A forced edit bd applied: bdq's acknowledgment, through the door's own reads and writes.
+pub fn acknowledge(forced: Forced, read: &dyn Fn(&[String]) -> Result<String, crate::composed::ReadError>, write: Write<'_>, run: &str, mail: &str) {
+    let show = |id: &str| read(&["show".to_string(), id.to_string(), "--json".to_string()]).unwrap_or_default();
+    let mut put = |a: &[&str]| {
+        let argv: Vec<String> = a.iter().map(|s| s.to_string()).collect();
+        let _ = write(&argv, None);
+    };
+    let actor = ["BEADS_ACTOR", "USER"].iter().find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty())).unwrap_or_else(|| "unknown".into());
+    bead::claimdesc::acknowledge_forced_edit(&show, &mut put, &actor, &forced.id, &forced.claim, &forced.reason, (run, mail));
 }
 
 /// The lifecycle half of [`after`]: its report, and, for a create, the ids whose row now exists.
@@ -253,7 +335,7 @@ fn rows_after(args: &[String], stdout: &str, m: &mut dyn crate::callers::Machine
 
 /// A content write's guards: `Ok` is the lines to log, `Err` the refusal answered instead of
 /// the write. Given the write's argv and its request body.
-pub type Guard<'a> = &'a mut dyn FnMut(&mut [String], &mut Option<String>) -> Result<String, Answer>;
+pub type Guard<'a> = &'a mut dyn FnMut(&mut Vec<String>, &mut Option<String>) -> Result<String, Answer>;
 /// What a write bd applied owes the lifecycle machine: the lines reporting any that failed.
 pub type After<'a> = &'a mut dyn FnMut(&[String], &str) -> String;
 
@@ -482,6 +564,15 @@ mod tests {
             (&["note", "sp-a", "--stdin"], Kind::Write { body: true }),
             (&["close", "sp-a"], Kind::Write { body: false }),
             (&["close", "sp-a", "--reason", "r"], Kind::Write { body: false }),
+            (&["dep", "add", "sp-a", "sp-b"], Kind::Write { body: false }),
+            (&["dep", "add", "sp-a", "sp-b", "--type", "blocks"], Kind::Write { body: false }),
+            (&["dep", "remove", "sp-a", "sp-b"], Kind::Write { body: false }),
+            (&["dep", "relate", "sp-a", "sp-b"], Kind::Write { body: false }),
+            (&["set-state", "sp-a", "branch=spira/sp-a"], Kind::Write { body: false }),
+            (&["set-state", "sp-a", "lane=builder"], Kind::Write { body: false }),
+            (&["update", "sp-a", "--priority", "1"], Kind::Write { body: false }),
+            (&["update", "sp-a", "-p", "2"], Kind::Write { body: false }),
+            (&["update", "sp-a", "--body-file", "-", "--force-claimed", "why"], Kind::Write { body: true }),
             (&["create", "t"], Kind::Write { body: false }),
             (&["create", "T", "-t", "bug", "-p", "2", "--labels", "a,b", "--external-ref", "gh-1", "--body-file", "-", "--silent"], Kind::Write { body: true }),
             (&["create", "--parent", "sp-e", "--silent", "--title", "T"], Kind::Write { body: false }),
@@ -527,7 +618,14 @@ mod tests {
             &["delete", "sp-a"],
             &["reopen", "sp-a"],
             &["set-state", "sp-a", "rune=x"],
-            &["dep", "add", "sp-a", "sp-b"],
+            &["dep", "add", "sp-a"],
+            &["dep", "add", "sp-a", "sp-b", "--type", "bogus"],
+            &["update", "sp-a", "--priority", "9"],
+            &["update", "sp-a", "--force-claimed", "why"],
+            &["set-state", "sp-a", "branch="],
+            &["update", "sp-a", "-p", "5"],
+            &["update", "sp-a", "--body-file", "-", "--force-claimed", " "],
+            &["dep", "add", "sp-a", "sp-b", "--type"],
             &["gate", "resolve", "x"],
             &[][..],
         ] {
@@ -559,6 +657,13 @@ mod tests {
 
     // literal-ok: test fixture label
     const ASK: &str = "needs-ryan";
+
+    fn incident() -> Result<String, String> {
+        Ok(INCIDENT.to_string())
+    }
+
+    // literal-ok: test fixture label
+    const INCIDENT: &str = "alarm-x";
 
     fn no_policy() -> Result<bead::filing::Policy, String> {
         Ok(bead::filing::Policy::none())
@@ -593,7 +698,7 @@ mod tests {
     /// the row off the machine.
     fn through_content(args: &[String], body: Option<&str>, env: &BTreeMap<String, String>, row: Option<&serde_json::Value>) -> Verdict {
         let ask = || Ok::<_, String>(ASK.to_string());
-        let g = Guards { caller: env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, now: NOW };
+        let g = Guards { caller: env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default() };
         guard(&mut args.to_vec(), &mut body.map(str::to_string), &g, &mut Rows(row.cloned())).map(|_| ()).map_err(|a| (a.code, a.stderr))
     }
 
@@ -721,7 +826,7 @@ mod tests {
     fn filing_guard(args: &[String], body: Option<&str>, env: &BTreeMap<String, String>) -> (Verdict, Vec<String>, Option<String>) {
         let ask = || Ok::<_, String>(ASK.to_string());
         let policy = || Ok(filing_policy());
-        let g = Guards { caller: env, ask_label: &ask, registry: &registry, policy: &policy, repo_of: &|id| (id == "sp-a").then(|| "spira".to_string()), now: NOW };
+        let g = Guards { caller: env, ask_label: &ask, registry: &registry, policy: &policy, repo_of: &|id| (id == "sp-a").then(|| "spira".to_string()), target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default() };
         let (mut args, mut body) = (args.to_vec(), body.map(str::to_string));
         let verdict = guard(&mut args, &mut body, &g, &mut Rows(None)).map(|_| ()).map_err(|a| (a.code, a.stderr));
         (verdict, args, body)
@@ -873,6 +978,94 @@ mod tests {
         assert!(verdict.unwrap_err().1.contains("is claimed by dwarf-sp-a"));
     }
 
+    fn blocks_edge_guard(args: &[&str], target: serde_json::Value, bd_ran: &std::cell::Cell<bool>) -> Answer {
+        let env = caller(&[]);
+        let ask = || Ok::<_, String>(ASK.to_string());
+        let shown = |_: &str| bead::parse_show_row(&target.to_string());
+        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &shown, incident_label: &incident, now: NOW, forced: Default::default() };
+        let mut gd = |a: &mut Vec<String>, b: &mut Option<String>| guard(a, b, &g, &mut Rows(None));
+        let ran = |_: &[String], _: Option<&str>| -> Result<String, String> {
+            bd_ran.set(true);
+            Ok(String::new())
+        };
+        let mut no_after = |_: &[String], _: &str| String::new();
+        let mut body = || Ok::<String, String>(String::new());
+        run(&v(args), &mut body, &mut gd, &mut no_after, &|_| Ok(String::new()), &ran)
+    }
+
+    #[test]
+    fn a_blocks_edge_onto_an_epic_or_an_incident_is_refused_through_the_door() {
+        let ran = std::cell::Cell::new(false);
+        let epic = serde_json::json!({"id": "sp-b", "issue_type": "epic", "labels": []});
+        let alarm = serde_json::json!({"id": "sp-b", "issue_type": "task", "labels": [INCIDENT]});
+        for args in [&["dep", "add", "sp-a", "sp-b"][..], &["dep", "add", "sp-a", "sp-b", "--type", "blocks"]] {
+            let ans = blocks_edge_guard(args, epic.clone(), &ran);
+            assert_eq!((ans.code, ans.stderr), (1, format!("{}\n", bead::epic_blocks_refusal("sp-a", "sp-b"))), "{args:?}");
+            let ans = blocks_edge_guard(args, alarm.clone(), &ran);
+            assert_eq!((ans.code, ans.stderr), (1, format!("{}\n", bead::incident_blocks_refusal("sp-a", "sp-b", INCIDENT))), "{args:?}");
+        }
+        for args in [&["dep", "add", "sp-a", "sp-b", "--type", "parent-child"][..], &["dep", "add", "sp-a", "sp-b", "--type", "relates-to"]] {
+            assert_eq!(blocks_edge_guard(args, epic.clone(), &ran).code, 0, "{args:?}: only a blocks edge is refused");
+        }
+        assert!(ran.get(), "the non-blocks edges reached bd");
+        ran.set(false);
+        blocks_edge_guard(&["dep", "add", "sp-a", "sp-b"], epic, &ran);
+        assert!(!ran.get(), "a refused edge never reaches bd");
+    }
+
+    #[test]
+    fn a_dep_add_through_the_door_is_mirrored_to_the_lifecycle_store() {
+        let mut m = Recorder(Vec::new());
+        assert_eq!(after(&v(&["dep", "add", "sp-a", "sp-b", "--type", "blocks"]), "", &mut m, &mut NoBd, 0), "");
+        assert_eq!(m.0[0], v(&["dep-add", "sp-a", "sp-b", "--type", "blocks"]));
+        let mut m = Recorder(Vec::new());
+        after(&v(&["dep", "remove", "sp-a", "sp-b"]), "", &mut m, &mut NoBd, 0);
+        assert_eq!(m.0[0], v(&["dep-remove", "sp-a", "sp-b"]));
+        let mut m = Recorder(Vec::new());
+        after(&v(&["dep", "relate", "sp-a", "sp-b"]), "", &mut m, &mut NoBd, 0);
+        assert!(m.0.iter().all(|c| !c[0].starts_with("dep-")), "a relate is no lifecycle edge: {:?}", m.0);
+    }
+
+    #[test]
+    fn a_dep_mirror_the_machine_refuses_is_reported_and_bds_write_stands() {
+        struct Down;
+        impl crate::callers::Machine for Down {
+            fn call(&mut self, _: &[String]) -> (i32, String) {
+                (1, "store down".into())
+            }
+        }
+        let report = after(&v(&["dep", "add", "sp-a", "sp-b"]), "", &mut Down, &mut NoBd, 0);
+        assert!(report.contains("dep-add sp-a -> sp-b is in bd but was not mirrored") && report.contains("store down"), "{report}");
+    }
+
+    #[test]
+    fn a_forced_edit_through_the_door_is_acknowledged() {
+        let held = serde_json::json!({"bead_id": "sp-a", "state": "WORKING", "holder": "dwarf-sp-a", "lease_until": NOW + 600});
+        let env = caller(&[]);
+        let ask = || Ok::<_, String>(ASK.to_string());
+        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default() };
+        let wrote = std::cell::RefCell::new(Vec::<String>::new());
+        let write = |a: &[String], body: Option<&str>| -> Result<String, String> {
+            wrote.borrow_mut().push(format!("{} <<{}", a.join(" "), body.unwrap_or("")));
+            Ok(String::new())
+        };
+        let read = |_: &[String]| -> Result<String, crate::composed::ReadError> { Ok("[{\"description\": \"new\"}]".into()) };
+        let mut gd = |a: &mut Vec<String>, b: &mut Option<String>| guard(a, b, &g, &mut Rows(Some(held.clone())));
+        let mut after = |_: &[String], _: &str| {
+            acknowledge(g.forced.take().expect("the guard admitted a forced edit"), &read, &write, "", "");
+            String::new()
+        };
+        let mut body = || Ok::<String, String>("new".into());
+        let ans = run(&v(&["update", "sp-a", "--body-file", "-", "--force-claimed", "why"]), &mut body, &mut gd, &mut after, &read, &write);
+        assert_eq!(ans.code, 0, "{ans:?}");
+        let wrote = wrote.into_inner();
+        assert_eq!(wrote[0], "update sp-a --body-file - <<new", "bd never sees spira's own flag");
+        let hash = bead::claimdesc::desc_hash("[{\"description\": \"new\"}]").unwrap();
+        assert_eq!(wrote[1], format!("update sp-a --set-metadata {}={hash} <<", bead::claimdesc::HASH_KEY));
+        assert!(wrote[2].starts_with("note sp-a ") && wrote[2].contains("why"), "{}", wrote[2]);
+        assert_eq!(wrote.len(), 3);
+    }
+
     #[test]
     fn every_variable_the_filing_contract_reads_reaches_the_service() {
         for var in bead::filing::VARS {
@@ -884,7 +1077,7 @@ mod tests {
     fn an_overridden_state_write_is_admitted_and_logged() {
         let env = caller(&[("SPIRA_BDQ_STATE_WRITE", "landing")]);
         let ask = || Ok::<_, String>(ASK.to_string());
-        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, now: NOW };
+        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default() };
         assert_eq!(
             guard(&mut v(&["close", "sp-a"]), &mut None, &g, &mut Rows(None)).map_err(|a| a.stderr),
             Ok("spira-lc content: STATE WRITE OVERRIDE (close sp-a) — bd's status moved outside the lifecycle machine: landing\n".into())
@@ -897,18 +1090,18 @@ mod tests {
         let never = |_: &[String]| -> Result<String, crate::composed::ReadError> { panic!("bd must not run") };
         let env = caller(&[("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock")]);
         let ask = || Ok::<_, String>(ASK.to_string());
-        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, now: NOW };
+        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default() };
         let mut machine = Rows(None);
-        let mut gd = |a: &mut [String], b: &mut Option<String>| guard(a, b, &g, &mut machine);
+        let mut gd = |a: &mut Vec<String>, b: &mut Option<String>| guard(a, b, &g, &mut machine);
         let mut no_after = |_: &[String], _: &str| -> String { panic!("nothing was written") };
         let mut body = || Ok::<String, String>("never read".into());
         let ans = run(&v(&["update", "sp-a", "--add-label", "x"]), &mut body, &mut gd, &mut no_after, &never, &never_w);
         assert_eq!((ans.code, ans.stderr.as_str()), (1, "czar-fence: deadlock is shadow — mutation refused (SPIRA_CZAR_STAGE_DEADLOCK=act to enable)\n"));
-        let mut gd = |a: &mut [String], b: &mut Option<String>| guard(a, b, &g, &mut Rows(None));
+        let mut gd = |a: &mut Vec<String>, b: &mut Option<String>| guard(a, b, &g, &mut Rows(None));
         let mut ask_body = || Ok::<String, String>("no shape at all".into());
         let ans = run(&v(&["create", "Pick", "--labels", ASK, "--body-file", "-"]), &mut ask_body, &mut gd, &mut no_after, &never, &never_w);
         assert_eq!(ans.code, 1, "the request body is judged as the ask's description: {ans:?}");
-        let mut refuse_all = |_: &mut [String], _: &mut Option<String>| Err(Answer { code: 1, stderr: "no\n".into(), ..Default::default() });
+        let mut refuse_all = |_: &mut Vec<String>, _: &mut Option<String>| Err(Answer { code: 1, stderr: "no\n".into(), ..Default::default() });
         let ans = run(&v(&["show", "sp-a"]), &mut body, &mut refuse_all, &mut no_after, &|_| Ok("read".into()), &never_w);
         assert_eq!((ans.code, ans.stdout.as_str()), (0, "read"), "a read is never guarded");
     }
@@ -977,7 +1170,7 @@ mod tests {
     #[test]
     fn a_lifecycle_write_that_fails_after_bd_applied_is_reported_with_bds_answer() {
         let w = |_: &[String], _: Option<&str>| Ok::<_, String>("sp-new\n".to_string());
-        let mut admit = |_: &mut [String], _: &mut Option<String>| Ok(String::new());
+        let mut admit = |_: &mut Vec<String>, _: &mut Option<String>| Ok(String::new());
         let mut failed = |_: &[String], out: &str| format!("LIFECYCLE: {} has no row\n", out.trim());
         let mut body = || Err::<String, String>("none".into());
         let ans = run(&v(&["create", "T", "--silent"]), &mut body, &mut admit, &mut failed, &|_| panic!(), &w);
@@ -993,7 +1186,7 @@ mod tests {
         let never = |_: &[String]| -> Result<String, crate::composed::ReadError> { panic!("bd must not run") };
         let never_w = |_: &[String], _: Option<&str>| -> Result<String, String> { panic!("bd must not run") };
         let mut no_stdin = || Err::<String, String>("nothing was sent".into());
-        let mut admit = |_: &mut [String], _: &mut Option<String>| Ok(String::new());
+        let mut admit = |_: &mut Vec<String>, _: &mut Option<String>| Ok(String::new());
         let mut no_after = |_: &[String], _: &str| String::new();
         let ans = run(&v(&["delete", "sp-a"]), &mut no_stdin, &mut admit, &mut no_after, &never, &never_w);
         assert_eq!(ans.code, REFUSED);

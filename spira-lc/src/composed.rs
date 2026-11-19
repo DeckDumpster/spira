@@ -56,6 +56,11 @@ pub trait Content {
     fn ask_label(&self) -> Result<String, String>;
     /// The repo map a create's `repo:` label is judged against.
     fn registry(&self) -> spira_config::repos::Registry;
+    /// The incident label (`SPIRA_INCIDENT_LABEL`) a `blocks` edge is refused onto; a double
+    /// that sets none holds no incident bead.
+    fn incident_label(&self) -> Result<String, String> {
+        Ok(String::new())
+    }
     /// The filing contract's policy; a double that holds no personas files nothing under it.
     fn policy(&self) -> Result<bead::filing::Policy, String> {
         Ok(bead::filing::Policy::none())
@@ -106,6 +111,9 @@ impl Content for LiveContent {
     }
     /// This installation's map, resolved the way bdq resolves it for a bare process
     /// (`Registry::from_env`), from this process's own environment and configuration.
+    fn incident_label(&self) -> Result<String, String> {
+        spira_config::process::cfg("SPIRA_INCIDENT_LABEL")
+    }
     fn registry(&self) -> spira_config::repos::Registry {
         let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
         let home = std::path::PathBuf::from(env.get("SPIRA_HOME").cloned().unwrap_or_default());
@@ -207,10 +215,20 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
                 let shown = content.read(&["show".to_string(), id.to_string(), "--json".to_string()]).ok()?;
                 bead::parse_show_row(&shown)?.labels.iter().find_map(|l| l.strip_prefix("repo:").map(str::to_string))
             };
-            let guards = crate::content::Guards { caller, ask_label: &ask_label, registry: &registry, policy: &policy, repo_of: &repo_of, now };
+            let target_of = |id: &str| bead::parse_show_row(&content.read(&["show".to_string(), id.to_string(), "--json".to_string()]).ok()?);
+            let incident_label = || content.incident_label();
+            let guards = crate::content::Guards { caller, ask_label: &ask_label, registry: &registry, policy: &policy, repo_of: &repo_of, target_of: &target_of, incident_label: &incident_label, now, forced: Default::default() };
             let (m, bd) = (std::cell::RefCell::new(m), std::cell::RefCell::new(bd));
-            let mut guard = |a: &mut [String], body: &mut Option<String>| crate::content::guard(a, body, &guards, &mut **m.borrow_mut());
-            let mut after = |a: &[String], out: &str| crate::content::after(a, out, &mut **m.borrow_mut(), &mut **bd.borrow_mut(), ROW_BACKOFF_MS);
+            let mut guard = |a: &mut Vec<String>, body: &mut Option<String>| crate::content::guard(a, body, &guards, &mut **m.borrow_mut());
+            let mut after = |a: &[String], out: &str| {
+                let report = crate::content::after(a, out, &mut **m.borrow_mut(), &mut **bd.borrow_mut(), ROW_BACKOFF_MS);
+                if let Some(forced) = guards.forced.take() {
+                    let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
+                    let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
+                    crate::content::acknowledge(forced, &|a| content.read(a), &|a, body| content.write_stdin(a, body), &run, &mail);
+                }
+                report
+            };
             crate::content::run(rest, stdin, &mut guard, &mut after, &|a| content.read(a), &|a, body| content.write_stdin(a, body))
         }
         "close-epic" => callers::close_epic(rest, m, bd),

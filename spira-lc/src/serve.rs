@@ -2266,9 +2266,9 @@ mod tests {
             (&["delete", "sp-a"][..], "`delete sp-a` is not a content verb"),
             (&["reopen", "sp-a"], "`reopen sp-a` is not a content verb"),
             (&["set-state", "sp-a", "rune=x"], "`set-state sp-a rune=x` is not a content verb"),
-            (&["dep", "add", "sp-a", "sp-b"], "`dep add sp-a sp-b` is not a content verb"),
+            (&["dep", "add", "sp-a"], "`dep add sp-a` is not a content verb"),
             (&["close", "sp-a", "--reason", "r", "--force"], "`close sp-a --reason r --force` is not a content verb"),
-            (&["update", "sp-a", "--status", "open"], "update takes only --add-label/--remove-label <label> and --set-metadata <key=value>, not `--status`"),
+            (&["update", "sp-a", "--status", "open"], "update takes only --add-label/--remove-label <label>, --set-metadata <key=value>, --priority 0-4 and --force-claimed <reason> with a body, not `--status`"),
             (&["create", "T", "--body-file", system_paths::ETC_PASSWD], "create takes its body only as --body-file - (the request body)"),
         ] {
             let ((code, out, err), wrote) = content_write(argv, None);
