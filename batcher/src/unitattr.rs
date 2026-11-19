@@ -12,6 +12,8 @@ use suite_select::readers::readers_of;
 pub struct PackageGraph {
     pub dirs: BTreeMap<String, String>,
     pub deps: BTreeMap<String, Vec<String>>,
+    /// Test target name -> the packages with a test target of that name.
+    pub tests: BTreeMap<String, Vec<String>>,
 }
 
 impl PackageGraph {
@@ -40,18 +42,23 @@ impl PackageGraph {
 }
 
 impl PackageGraph {
-    /// Each `dir:<directory>` word (what a plain `cargo test` log can name) as the package that
-    /// lives there; a word no package owns stays as it is, and so maps to no member.
+    /// Each `dir:<directory>` word as the package that lives there, and each `test:<target>` word
+    /// as the sole package with a test target of that name (what a plain `cargo test` log can
+    /// name); a word no package, or more than one, owns stays as it is, and so maps to no member.
     pub fn resolve(&self, packages: &[String]) -> Vec<String> {
         packages
             .iter()
-            .map(|p| match p.strip_prefix("dir:") {
-                Some(dir) => self
+            .map(|p| match (p.strip_prefix("dir:"), p.strip_prefix("test:")) {
+                (Some(dir), _) => self
                     .dirs
                     .iter()
                     .find(|(_, d)| d.as_str() == if dir == "." { "" } else { dir })
                     .map_or(p.clone(), |(name, _)| name.clone()),
-                None => p.clone(),
+                (_, Some(target)) => match self.tests.get(target).map(Vec::as_slice) {
+                    Some([only]) => only.clone(),
+                    _ => p.clone(),
+                },
+                _ => p.clone(),
             })
             .collect()
     }
@@ -179,6 +186,7 @@ mod tests {
                 .map(|(p, d)| (p.to_string(), d.to_string()))
                 .collect(),
             deps: BTreeMap::from([("loom".to_string(), vec!["runtime".to_string()])]),
+            ..Default::default()
         }
     }
 
@@ -195,6 +203,7 @@ mod tests {
         let g = PackageGraph {
             dirs: [("testenv".to_string(), "testenv".to_string())].into(),
             deps: BTreeMap::new(),
+            ..Default::default()
         };
         let failed = vec!["FAIL dir:testenv lint_does_not_refuse_a_key".to_string()];
         assert_eq!(rerun_scope(&failed, Some(&g)), vec!["testenv=lint_does_not_refuse_a_key"]);
@@ -237,6 +246,7 @@ mod tests {
         let g = PackageGraph {
             dirs: [("release", "release"), ("spira-world", "spira-world")].iter().map(|(p, d)| (p.to_string(), d.to_string())).collect(),
             deps: BTreeMap::new(),
+            ..Default::default()
         };
         let d = [diff("a", "spira/config-delta.d/x.toml"), diff("b", "docs/x.md")];
         let got = reaching(&g, &["release".to_string()], &d);
@@ -259,6 +269,7 @@ mod tests {
         let root = PackageGraph {
             dirs: BTreeMap::from([("root".to_string(), String::new())]),
             deps: BTreeMap::new(),
+            ..Default::default()
         };
         assert_eq!(root.resolve(&["dir:.".into()]), ["root"]);
     }
@@ -278,6 +289,7 @@ mod tests {
                 ("gate".to_string(), "gate".to_string()),
             ]),
             deps: BTreeMap::new(),
+            ..Default::default()
         };
         let d = [diff("a", "gate/src/x.rs"), diff("b", "Cargo.toml")];
         assert_eq!(
@@ -286,6 +298,24 @@ mod tests {
                 .map(|(i, _)| i.to_string())
                 .collect::<Vec<_>>(),
             ["b"]
+        );
+    }
+
+    #[test]
+    fn a_test_word_resolves_to_its_sole_owner_and_stays_unresolved_otherwise() {
+        let g = PackageGraph {
+            dirs: [("a".to_string(), "a".to_string()), ("b".to_string(), "b".to_string())].into(),
+            tests: [
+                ("solo".to_string(), vec!["a".to_string()]),
+                ("shared".to_string(), vec!["a".to_string(), "b".to_string()]),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        let words = |w: &[&str]| w.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            g.resolve(&words(&["test:solo", "test:shared", "test:none"])),
+            words(&["a", "test:shared", "test:none"])
         );
     }
 }

@@ -2325,6 +2325,12 @@ pub fn package_graph(metadata_json: &str) -> Option<batcher::unitattr::PackageGr
     for p in packages {
         let deps = p["dependencies"].as_array()?.iter().filter_map(|d| d["name"].as_str()).filter(|n| g.dirs.contains_key(*n)).map(str::to_string).collect();
         g.deps.insert(p["name"].as_str()?.to_string(), deps);
+        for t in p["targets"].as_array().into_iter().flatten() {
+            let is_test = t["kind"].as_array().is_some_and(|k| k.iter().any(|k| k == "test"));
+            if let (true, Some(name)) = (is_test, t["name"].as_str()) {
+                g.tests.entry(name.to_string()).or_default().push(p["name"].as_str()?.to_string());
+            }
+        }
     }
     Some(g)
 }
@@ -6067,6 +6073,19 @@ mod abandon_hold_tests {
         assert_eq!(g.dirs["runtime"], "spira-runtime");
         assert_eq!(g.deps["loom"], ["runtime"]);
         assert!(package_graph("not json").is_none());
+    }
+
+    #[test]
+    fn the_package_graph_maps_each_test_target_to_the_packages_that_have_it() {
+        let meta = r#"{"workspace_root":"/w","packages":[
+            {"name":"store","manifest_path":"/w/store/Cargo.toml","dependencies":[],"targets":[
+                {"name":"store","kind":["lib"]},{"name":"conformance","kind":["test"]}]},
+            {"name":"other","manifest_path":"/w/other/Cargo.toml","dependencies":[],"targets":[
+                {"name":"conformance","kind":["test"]},{"name":"solo","kind":["test"]}]}]}"#;
+        let g = package_graph(meta).unwrap();
+        assert_eq!(g.tests["conformance"], ["store", "other"]);
+        assert_eq!(g.tests["solo"], ["other"]);
+        assert!(!g.tests.contains_key("store"));
     }
 
 }

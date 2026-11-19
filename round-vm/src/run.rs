@@ -663,11 +663,14 @@ test_phase_bound() {
 nextest_reds() {
     awk '/^ *Summary \[/ { exit } match($0, /^ *(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[[ >]*[0-9.]+s\] +\( *[0-9]+\/[0-9]+\) +[^ ]+ +/) { n = split(substr($0, 1, RLENGTH), head, " "); print $1, substr($0, RLENGTH + 1), head[n] }' "$1"
 }
-# `FAIL dir:<crate directory> <test>` per failed test of a plain `cargo test` log, the directory read off the
-# `Running <dir>/tests/...` line of the binary that ran it.
+# One line per failed test of a plain `cargo test` log: `FAIL dir:<directory> <test>` when cargo printed a
+# path that names the test's directory, else (a path relative to its package) `FAIL test:<target> <test>`,
+# the target read off the `(<exe>-<hash>)` of the `Running` line.
 cargo_test_reds() {
-    awk '/^ *Running / { d = ""; if (match($0, /[^ ]*\/?tests\//)) { d = substr($0, RSTART, RLENGTH); sub(/\/?tests\/$/, "", d); if (d == "") d = "." } }
-         d != "" && /^test .* \.\.\. FAILED/ { print "FAIL dir:" d, $2 }' "$1"
+    awk '/^ *Running / { d = ""; t = ""
+           if (match($0, /\(.*\)/)) { t = substr($0, RSTART + 1, RLENGTH - 2); sub(/.*\//, "", t); n = length(t); if (substr(t, n - 16, 1) == "-" && substr(t, n - 15) ~ /^[0-9a-f]+$/) t = substr(t, 1, n - 17) }
+           if (match($0, /[^ ]*\/?tests\//)) { d = substr($0, RSTART, RLENGTH); sub(/\/?tests\/$/, "", d); if (d == "") d = "." } }
+         d != "" && /^test .* \.\.\. FAILED/ { if (d == "." && t != "") print "FAIL test:" t, $2; else print "FAIL dir:" d, $2 }' "$1"
 }
 # A red with no failing test, classified by what happened: "<KIND> binary=<name> [detail]" with
 # KIND SIGNAL (a test binary killed), TIMEOUT (the guard killed the phase) or BUILD (cargo could not
@@ -4135,7 +4138,7 @@ mod tests {
 
     #[test]
     fn a_plain_cargo_test_log_yields_one_fail_line_per_failed_test_naming_its_crate_directory() {
-        let log = "     Running tests/it/main.rs (target/unittest/deps/it-1)\ntest a::b ... FAILED\n     Running spira-runtime/tests/it/x.rs (target/y)\ntest c ... ok\ntest d::e ... FAILED\n     Running unittests src/lib.rs (t)\ntest z ... FAILED\n";
+        let log = "     Running tests/it/main.rs (target/unittest/deps/it-0123456789abcdef)\ntest a::b ... FAILED\n     Running spira-runtime/tests/it/x.rs (target/y)\ntest c ... ok\ntest d::e ... FAILED\n     Running unittests src/lib.rs (t)\ntest z ... FAILED\n";
         let f = REMOTE_SCRIPT.find("cargo_test_reds() {").unwrap();
         let func = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap() + 3];
         let d = crate::testutil::TempDir::new();
@@ -4144,7 +4147,7 @@ mod tests {
             .args(["-c", &format!("{func}\ncargo_test_reds \"$1\""), "bash", d.path().join("log").to_str().unwrap()])
             .output()
             .unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "FAIL dir:. a::b\nFAIL dir:spira-runtime d::e\n");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "FAIL test:it a::b\nFAIL dir:spira-runtime d::e\n");
     }
 
     #[test]

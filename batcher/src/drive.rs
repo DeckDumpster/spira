@@ -968,8 +968,8 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
     })
 }
 
-/// The registry id of each failing test line, `None` when one cannot be named: a `dir:` word
-/// no package owns, or a line that is not `<STATUS> <binary> <test>`.
+/// The registry id of each failing test line, `None` when one cannot be named: a `dir:` or
+/// `test:` word no single package owns, or a line that is not `<STATUS> <binary> <test>`.
 pub fn flip_ids(failed: &[String], graph: Option<&PackageGraph>) -> Option<Vec<String>> {
     let mut ids: Vec<String> = vec![];
     for line in failed {
@@ -978,9 +978,9 @@ pub fn flip_ids(failed: &[String], graph: Option<&PackageGraph>) -> Option<Vec<S
         else {
             return None;
         };
-        let id = if binary.starts_with("dir:") {
+        let id = if binary.starts_with("dir:") || binary.starts_with("test:") {
             let package = graph?.resolve(&[binary.to_string()]).remove(0);
-            if package.starts_with("dir:") {
+            if package.starts_with("dir:") || package.starts_with("test:") {
                 return None;
             }
             format!("integration:{package} {test}")
@@ -4537,6 +4537,7 @@ pub(crate) mod tests {
                 "loom".to_string(),
                 vec!["runtime".to_string()],
             )]),
+            ..Default::default()
         }
     }
 
@@ -4622,6 +4623,7 @@ pub(crate) mod tests {
             .map(|(p, d)| (p.to_string(), d.to_string()))
             .collect(),
             deps: std::collections::BTreeMap::new(),
+            ..Default::default()
         }
     }
 
@@ -6182,6 +6184,7 @@ pub(crate) mod tests {
         let graph = PackageGraph {
             dirs: [("testenv".to_string(), "testenv".to_string())].into(),
             deps: Default::default(),
+            ..Default::default()
         };
         let mut ops = Ops {
             graph: Some(graph),
@@ -6193,6 +6196,44 @@ pub(crate) mod tests {
             vec![vec!["integration:testenv lint_x".to_string()]]
         );
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn an_integration_flip_is_named_by_the_package_its_test_target_resolves_to() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(red_once_on_the_whole_tree(FilterRed {
+            name: "integration-tests".into(),
+            named: vec![],
+            failed: vec!["FAIL test:conformance_sqlite the_wal_x".into()],
+        }));
+        f.bisects = true;
+        f.rerun_green = true;
+        let graph = PackageGraph {
+            dirs: [("state-store-sqlite".to_string(), "state-store-sqlite".to_string())].into(),
+            tests: [("conformance_sqlite".to_string(), vec!["state-store-sqlite".to_string()])].into(),
+            ..Default::default()
+        };
+        let mut ops = Ops {
+            graph: Some(graph),
+            ..Ops::default()
+        };
+        let end = flip_round(&mut f, &mut ops);
+        assert_eq!(
+            ops.disabled,
+            vec![vec!["integration:state-store-sqlite the_wal_x".to_string()]]
+        );
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn a_flip_in_a_test_target_two_packages_or_none_own_is_not_a_flip() {
+        let graph = PackageGraph {
+            dirs: [("a".to_string(), "a".to_string()), ("b".to_string(), "b".to_string())].into(),
+            tests: [("it".to_string(), vec!["a".to_string(), "b".to_string()])].into(),
+            ..Default::default()
+        };
+        assert_eq!(flip_ids(&["FAIL test:it t".into()], Some(&graph)), None);
+        assert_eq!(flip_ids(&["FAIL test:none t".into()], Some(&graph)), None);
     }
 
     #[test]
@@ -6328,6 +6369,7 @@ pub(crate) mod tests {
             graph: Some(PackageGraph {
                 dirs: [("testenv".to_string(), "testenv".to_string())].into(),
                 deps: Default::default(),
+                ..Default::default()
             }),
             ..Ops::default()
         };
@@ -6383,6 +6425,7 @@ pub(crate) mod tests {
             graph: Some(PackageGraph {
                 dirs: [("testenv".to_string(), "testenv".to_string())].into(),
                 deps: Default::default(),
+                ..Default::default()
             }),
             ..Ops::default()
         };

@@ -174,3 +174,34 @@ fn a_test_red_once_on_the_round_tree_is_disabled_through_the_rounds_own_path_and
     assert_eq!(code, Some(0), "{log}");
     assert!(log.contains("t::keep") && !log.contains("t::drop"), "the re-certifying pass does not run the disabled test: {log}");
 }
+
+#[test]
+fn an_integration_test_red_in_a_member_crate_is_named_by_its_package_through_real_cargo() {
+    let cargo_home = std::env::var("CARGO_HOME").unwrap_or_else(|_| format!("{}/.cargo", std::env::var("HOME").unwrap()));
+    let tmp = testkit::TempDir::new("integration-flip-real");
+    let dir = tmp.path().to_path_buf();
+    std::fs::create_dir_all(dir.join("member/src")).unwrap();
+    std::fs::create_dir_all(dir.join("member/tests")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[workspace]\nresolver = \"2\"\nmembers = [\"member\"]\n").unwrap();
+    std::fs::write(dir.join("member/Cargo.toml"), "[package]\nname = \"memb\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+    std::fs::write(dir.join("member/src/lib.rs"), "").unwrap();
+    std::fs::write(dir.join("member/tests/flaky.rs"), "#[test]\nfn flaked() { panic!(\"flaked\"); }\n").unwrap();
+    std::fs::write(dir.join("rust-toolchain.toml"), include_str!("../../rust-toolchain.toml")).unwrap();
+
+    let script = "export CARGO_HOME=\"$2\" RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\ncargo test --offline --test '*' > test.log 2>&1\ncargo metadata --no-deps --format-version 1 > meta.json\n";
+    let mut cmd = Command::new("bash");
+    cmd.arg("-c").arg(script).arg("bash").arg("").arg(&cargo_home).current_dir(&dir).env_clear().env("HOME", std::env::var("HOME").unwrap()).env("PATH", format!("{cargo_home}/bin:/usr/local/bin:/usr/bin:/bin"));
+    for k in ["RUSTUP_TOOLCHAIN", "RUSTUP_HOME"] {
+        if let Some(v) = std::env::var_os(k) {
+            cmd.env(k, v);
+        }
+    }
+    assert!(cmd.status().unwrap().success());
+    let log = std::fs::read_to_string(dir.join("test.log")).unwrap();
+    assert!(log.contains("flaked ... FAILED"), "control: the test failed: {log}");
+
+    let reds = Command::new("bash").arg("-c").arg(format!("{}\ncargo_test_reds test.log\n", function("cargo_test_reds"))).current_dir(&dir).output().unwrap();
+    let failed = batcher::unitattr::failing_lines(&String::from_utf8_lossy(&reds.stdout));
+    let graph = batcher_cut::io::package_graph(&std::fs::read_to_string(dir.join("meta.json")).unwrap()).unwrap();
+    assert_eq!(batcher::drive::flip_ids(&failed, Some(&graph)).unwrap(), ["integration:memb flaked"], "{failed:?}\n{log}");
+}
