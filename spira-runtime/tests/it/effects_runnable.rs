@@ -30,3 +30,10 @@ fn no_task_named_watch_warm_full_is_registered() {
 fn no_task_named_sweep_nix_gc_is_registered() {
     assert!(!tasks::all().chain(tasks::pending()).any(|t| t.name == "sweep.nix_gc"));
 }
+
+#[test]
+fn the_unit_install_starts_to_collect_nix_garbage_belongs_to_no_task() {
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(install::NIX_GC_UNIT_TASK, "rel1").unwrap(), exit: runtime::units::Exit::Code(0), duration_ms: 1 };
+    assert!(ran.key_for(install::NIX_GC_UNIT_TASK).is_some(), "control: the key reads back for the task name the unit carries");
+    assert!(tasks::all().chain(tasks::pending()).all(|t| ran.key_for(t.name).is_none()), "a task would take the collection's end as its own");
+}

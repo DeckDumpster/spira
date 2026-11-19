@@ -253,10 +253,10 @@ fn build_spira_env(dry: bool, home: &str, release_root: Option<&Path>) -> Result
         info("skipping spira-env: nix is not installed (doctor reports tools resolved outside it)");
         return Ok(());
     }
-    let gc = match (spira_config::process::cfg("SPIRA_NIX_PROFILE_BIN"), spira_config::process::cfg("SPIRA_RUN")) {
-        (Ok(profile_bin), Ok(run_dir)) => Some(GcPlan { profile_bin: PathBuf::from(profile_bin), log: Path::new(&run_dir).join("nix-gc.log"), key: root_key(root) }),
-        (a, b) => {
-            warn(&format!("nix garbage will not be collected by this install: {}", a.err().or(b.err()).unwrap_or_default()));
+    let gc = match gc_plan(spira_config::process::cfg("SPIRA_NIX_PROFILE_BIN"), spira_config::process::cfg("SPIRA_RUN"), root) {
+        Ok(g) => Some(g),
+        Err(e) => {
+            warn(&format!("nix garbage will not be collected by this install: {e}"));
             None
         }
     };
@@ -277,6 +277,10 @@ struct GcPlan {
     profile_bin: PathBuf,
     log: PathBuf,
     key: String,
+}
+
+fn gc_plan(profile_bin: Result<String, String>, run_dir: Result<String, String>, root: &Path) -> Result<GcPlan, String> {
+    Ok(GcPlan { profile_bin: PathBuf::from(profile_bin?), log: Path::new(&run_dir?).join("nix-gc.log"), key: root_key(root) })
 }
 
 fn root_key(root: &Path) -> String {
@@ -325,7 +329,7 @@ fn collect_nix_garbage(units: &dyn runtime::units::Units, gc: &GcPlan, env: &Pat
         warn("nix garbage will not be collected: nix-collect-garbage was found neither in the profile nor in the spira-env");
         return;
     };
-    let spec = UnitSpec { task: "nix-gc".into(), key: gc.key.clone(), argv: vec![bin.display().to_string()], env: vec![], cwd: None };
+    let spec = UnitSpec { task: install::NIX_GC_UNIT_TASK.into(), key: gc.key.clone(), argv: vec![bin.display().to_string()], env: vec![], cwd: None };
     let props = UnitProps { cpu_quota_pct: Some(20), nice: Some(10), io_class: Some("idle".into()), runtime_max_ms: Some(1_800_000), output_append: Some(gc.log.clone()), ..UnitProps::default() };
     match units.start_with(&spec, &props) {
         Ok(h) => info(&format!("started nix garbage collection as {}", h.name)),
@@ -2263,7 +2267,7 @@ mod nix_gc_tests {
         let bin = profile.join("nix-collect-garbage");
         testkit::write_exe(&bin, "#!/bin/sh\n");
         let units = Arc::new(ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0))));
-        units.script("nix-gc", 1_000, runtime::units::Exit::Code(0));
+        units.script(install::NIX_GC_UNIT_TASK, 1_000, runtime::units::Exit::Code(0));
         let gc = GcPlan { profile_bin: profile, log: td.path().join("run/nix-gc.log"), key: "rel1".into() };
         Fixture { td, root, units, gc }
     }
@@ -2303,7 +2307,7 @@ mod nix_gc_tests {
         assert_eq!(*calls.borrow(), ["nix", "nix-store"]);
         let started = f.units.calls();
         assert_eq!(started.len(), 1, "{started:?}");
-        let name = runtime::units::UnitHandle::of("nix-gc", "rel1").unwrap().name;
+        let name = runtime::units::UnitHandle::of(install::NIX_GC_UNIT_TASK, "rel1").unwrap().name;
         assert!(started[0].contains(&name), "{started:?}");
         let props = f.units.props(&name);
         assert_eq!((props.cpu_quota_pct, props.nice, props.io_class.as_deref(), props.runtime_max_ms), (Some(20), Some(10), Some("idle"), Some(1_800_000)));
@@ -2318,6 +2322,17 @@ mod nix_gc_tests {
         build_spira_env_with(false, &home, &f.root, &runner(&f, "old", &calls, false), Some(&*f.units as &dyn Units), Some(&f.gc)).unwrap();
         assert_eq!(*calls.borrow(), ["nix"]);
         assert_eq!(f.units.calls().len(), 1);
+    }
+
+    #[test]
+    fn the_plan_takes_the_profile_bin_the_run_dir_and_the_release_name_and_refuses_what_does_not_resolve() {
+        let td = testkit::TempDir::new("nix-gc-plan");
+        let root = td.path().join("spira-rel9");
+        std::fs::create_dir_all(&root).unwrap();
+        let g = gc_plan(Ok("/p/bin".into()), Ok("/r".into()), &root).unwrap();
+        assert_eq!((g.profile_bin, g.log, g.key), (PathBuf::from("/p/bin"), PathBuf::from("/r/nix-gc.log"), "spira-rel9".to_string()));
+        assert_eq!(gc_plan(Err("no profile".into()), Ok("/r".into()), &root).err().as_deref(), Some("no profile"));
+        assert_eq!(gc_plan(Ok("/p".into()), Err("no run".into()), &root).err().as_deref(), Some("no run"));
     }
 
     #[test]
