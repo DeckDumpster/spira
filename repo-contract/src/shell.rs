@@ -221,6 +221,28 @@ mod tests {
     }
 
     #[test]
+    fn a_nix_that_the_timeout_could_not_run_or_cut_is_a_fault_of_the_checker() {
+        let dir = testkit::TempDir::new("repo-contract-timeout-codes");
+        std::fs::write(dir.join("flake.nix"), "devShells").unwrap();
+        for code in [124, 127] {
+            let nix = fake_nix(&dir, &format!("exit {code}"));
+            assert!(shell_env(&dir, &nix, &dir.join("cache")).unwrap_err().contains("cannot run"), "{code}");
+        }
+    }
+
+    #[test]
+    fn a_cache_that_cannot_be_written_is_a_fault_of_the_checker() {
+        let dir = testkit::TempDir::new("repo-contract-cache-fault");
+        std::fs::write(dir.join("flake.nix"), "devShells").unwrap();
+        let json = dir.join("out.json");
+        std::fs::write(&json, FIXTURE).unwrap();
+        let nix = fake_nix(&dir, &format!("cat {}", json.display()));
+        let cache = dir.join("cache-is-a-file");
+        std::fs::write(&cache, "").unwrap();
+        assert!(shell_env(&dir, &nix, &cache).unwrap_err().contains("cannot create"));
+    }
+
+    #[test]
     fn a_nix_that_prints_a_dev_env_enters_and_is_cached() {
         let dir = testkit::TempDir::new("repo-contract-enters");
         std::fs::write(dir.join("flake.nix"), "devShells").unwrap();
