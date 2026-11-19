@@ -2,6 +2,7 @@
 name = "release"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "release — the release producer (sp-m3ipc): build, verify, activate (with --hotfix), rollback and prune spira-releases/<sha>. Replaces make install, spira/activate.sh and spira/build-tarball.sh for local use."
 
 [lib]
