@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn the_unit_list_is_the_registered_keys_and_names_no_retired_unit() {
-        let registered = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d/SPIRA_CPU_THROTTLE_UNITS")).unwrap();
+        let registered = std::fs::read_to_string(testkit::manifest_dir().join("../spira/conf.d/SPIRA_CPU_THROTTLE_UNITS")).unwrap();
         let default = registered.lines().find_map(|l| l.trim().strip_prefix(": \"${SPIRA_CPU_THROTTLE_UNITS:=")).and_then(|l| l.strip_suffix("}\"")).unwrap();
         assert_eq!(units_of(default), vec!["dolt-beads.service", "spira-runtime.service"]);
         assert_eq!(units_of("a.service  b.service"), vec!["a.service", "b.service"]);
