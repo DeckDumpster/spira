@@ -58,8 +58,8 @@ impl HostCheck for Real {
     fn count(&self, flag: &str) -> Option<String> {
         // host-check.sh on the launcher's PATH (sp-gypjk); absent or not executable is None.
         let script = crate::util::which_in(&self.path, "host-check.sh")?;
-        // batch-job: child is spawned or exec-replaced, not awaited under a deadline
         let envs = spira_config::release_env::child_path_env_for_process().ok()?;
+        // batch-job: child is spawned or exec-replaced, not awaited under a deadline
         let mut child = Command::new("bash")
             .envs(envs)
             .arg(&script)
