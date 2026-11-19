@@ -197,18 +197,20 @@ pub fn write_crates(repo: &Path, base: &str, rev: &str, tree: &Path, tests: Opti
             .env_remove("GIT_WORK_TREE"),
     )
     .map_err(|e| format!("git diff {base}...{rev}: {e}"))?;
-    let meta = output(Command::new("cargo").current_dir(tree).args(["metadata", "--format-version", "1", "--no-deps", "--offline"]))
-        .map_err(|e| format!("cargo metadata: {e}"))?;
-    let meta = String::from_utf8_lossy(&meta);
+    let meta = workspace_metadata(tree)?;
     let picked = pick(&diff, &meta, tree, tests, transitive)?;
     write_picked(tree, &meta, picked)
 }
 
-/// Like [`write_crates`] for a list the caller named: the diff selects nothing.
-pub fn write_named(tree: &Path, named: &[String], tests: Option<&[String]>) -> Result<Picked, String> {
+fn workspace_metadata(tree: &Path) -> Result<String, String> {
     let meta = output(Command::new("cargo").current_dir(tree).args(["metadata", "--format-version", "1", "--no-deps", "--offline"]))
         .map_err(|e| format!("cargo metadata: {e}"))?;
-    let meta = String::from_utf8_lossy(&meta);
+    Ok(String::from_utf8_lossy(&meta).into_owned())
+}
+
+/// Like [`write_crates`] for a list the caller named: the diff selects nothing.
+pub fn write_named(tree: &Path, named: &[String], tests: Option<&[String]>) -> Result<Picked, String> {
+    let meta = workspace_metadata(tree)?;
     let picked = pick_named(&meta, tree, named, tests)?;
     write_picked(tree, &meta, picked)
 }

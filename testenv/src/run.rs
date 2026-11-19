@@ -1426,7 +1426,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                 deps.log(&format!(
                     "unit-tests: {} affected crate(s) (selection={}): {}",
                     c.len(),
-                    if args.direct { "direct" } else { "transitive" },
+                    if args.crates.is_some() { "crates" } else if args.direct { "direct" } else { "transitive" },
                     c.join(" ")
                 ));
                 // law-absence-needs-a-positive-control: an empty list over a wrong base would
