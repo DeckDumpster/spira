@@ -136,6 +136,13 @@ fn cmd_dwarves_live_total(args: Vec<String>) -> i32 {
     0
 }
 
+fn door_or_die() -> spira_store::lc_call::LcClient {
+    spira_store::lc_call::LcClient::configured().unwrap_or_else(|e| {
+        check::warn(&format!("FATAL {e}"));
+        std::process::exit(2)
+    })
+}
+
 /// Every detector prints its rows newline-terminated (bash: one `printf '...\n'` per row)
 /// and nothing at all when there are none — never a bare trailing blank line.
 fn print_lines(s: &str) {
@@ -150,7 +157,7 @@ fn cmd_detect_livelocked(args: Vec<String>) -> i32 {
         return die("detect-livelocked");
     }
     let cfg = cfg_or_die();
-    print_lines(&detectors::detect_livelocked(&cfg));
+    print_lines(&detectors::detect_livelocked(&cfg, &door_or_die()));
     0
 }
 
@@ -161,7 +168,7 @@ fn cmd_detect_incident_needs_builder(args: Vec<String>) -> i32 {
         return die("detect-incident-needs-builder");
     }
     let cfg = cfg_or_die();
-    match detectors::detect_incident_needs_builder(&cfg) {
+    match detectors::detect_incident_needs_builder(&cfg, &door_or_die()) {
         Ok(s) => {
             print_lines(&s);
             0
@@ -179,7 +186,7 @@ fn cmd_detect_invalid_closed(args: Vec<String>) -> i32 {
         return die("detect-invalid-closed");
     }
     let cfg = cfg_or_die();
-    print_lines(&detectors::detect_invalid_closed(&cfg));
+    print_lines(&detectors::detect_invalid_closed(&cfg, &door_or_die()));
     0
 }
 
@@ -190,7 +197,7 @@ fn cmd_all_partition_members(args: Vec<String>) -> i32 {
         return die("all-partition-members");
     }
     let cfg = cfg_or_die();
-    print_lines(&detectors::all_partition_members(&cfg));
+    print_lines(&detectors::all_partition_members(&cfg, &door_or_die()));
     0
 }
 

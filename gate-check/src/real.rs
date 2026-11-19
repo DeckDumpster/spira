@@ -1,4 +1,4 @@
-//! The production [`crate::ports::World`]: `bdq`, `gh`, `git`, `bead.sh`, `tsd-ingest.sh`,
+//! The production [`crate::ports::World`]: the store's content door, `gh`, `git`, `bead.sh`, `tsd-ingest.sh`,
 //! and the `lib.sh` repository-map seam (the same one-shot context call `gate`/`gate-run`
 //! use).
 
@@ -8,11 +8,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use spira_otel::metrics::MetricsSink;
+use spira_store::lc_call::{LcClient, Reply};
 
 pub struct Real {
     pub home: PathBuf,
-    /// The store door; it addresses the configured database itself.
-    bdq: String,
+    lc: Result<LcClient, String>,
     /// `SPIRA_FLAKY_GH_REPO`, resolved the same way — empty means "no scan" per
     /// `spira/conf.d/SPIRA_FLAKY_GH_REPO`.
     flaky_repo: Option<String>,
@@ -20,8 +20,8 @@ pub struct Real {
 }
 
 impl Real {
-    pub fn new(home: PathBuf, bdq: String, flaky_repo: Option<String>) -> Real {
-        Real { home, bdq, flaky_repo, registry: OnceCell::new() }
+    pub fn new(home: PathBuf, lc: Result<LcClient, String>, flaky_repo: Option<String>) -> Real {
+        Real { home, lc, flaky_repo, registry: OnceCell::new() }
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
@@ -35,15 +35,19 @@ impl Real {
         self.registry.get_or_init(|| spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home))
     }
 
-    fn bd(&self) -> Command {
-        let mut c = Command::new(&self.bdq);
-        c.stdin(Stdio::null());
-        c
+    /// One `content` request; `None` when the door gave no answer.
+    fn door(&self, args: &[&str], body: Option<&str>) -> Option<Reply> {
+        let lc = self.lc.as_ref().ok()?;
+        let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
+        match body {
+            Some(b) => lc.call_stdin(&argv, b),
+            None => lc.call(&argv),
+        }
+        .ok()
     }
 
-    fn combined(mut c: Command) -> String {
-        c.stderr(Stdio::null());
-        c.output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+    fn door_out(&self, args: &[&str]) -> String {
+        self.door(args, None).map(|r| r.out).unwrap_or_default()
     }
 
     fn seam(&self, body: &str, args: &[&str]) -> String {
@@ -115,37 +119,24 @@ impl World for Real {
     }
 
     fn bd_gate_list_json(&self) -> String {
-        let mut c = self.bd();
-        c.arg("gate").arg("list").arg("--json");
-        Self::combined(c)
+        self.door_out(&["gate", "list", "--json"])
     }
 
-    fn bd_gate_discover(&self, repo: &Path, branch: &str) {
-        let mut c = self.bd();
-        c.current_dir(repo).arg("gate").arg("discover").arg("--branch").arg(branch);
-        let _ = c.stderr(Stdio::null()).stdout(Stdio::null()).status();
+    fn bd_gate_discover(&self, repo: &str, branch: &str) {
+        let _ = self.door(&["gate", "discover", "--branch", branch, "--repo", repo], None);
     }
 
     fn bd_gate_check(&self) -> String {
-        // `2>&1` in the bash: stdout and stderr interleaved, captured as one stream — the
-        // ESCALATE/stuck lines this leg parses can land on either.
-        let mut c = self.bd();
-        c.arg("gate").arg("check").arg("--type=gh:run");
-        c.stderr(Stdio::piped());
-        let Ok(out) = c.output() else { return String::new() };
-        format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
+        // The ESCALATE/stuck lines this leg parses can land on either stream.
+        self.door(&["gate", "check", "--type=gh:run"], None).map(|r| format!("{}{}", r.out, r.err)).unwrap_or_default()
     }
 
     fn bd_show_json(&self, id: &str) -> String {
-        let mut c = self.bd();
-        c.arg("show").arg(id).arg("--json");
-        Self::combined(c)
+        self.door_out(&["show", id, "--json"])
     }
 
     fn bd_gate_resolve(&self, id: &str) {
-        let mut c = self.bd();
-        c.arg("gate").arg("resolve").arg(id);
-        let _ = c.stderr(Stdio::null()).stdout(Stdio::null()).status();
+        let _ = self.door(&["gate", "resolve", id], None);
     }
 
     fn spira_event(&self, kind: &str, subject: &str, summary: &str, detail: &str) {
@@ -153,9 +144,7 @@ impl World for Real {
     }
 
     fn bd_list_json(&self) -> String {
-        let mut c = self.bd();
-        c.arg("list").arg("--all").arg("--json");
-        Self::combined(c)
+        self.door_out(&["list", "--all", "--limit", "0", "--json"])
     }
 
     fn lc_rows(&self) -> Result<crate::engine::Lc, String> {
@@ -163,15 +152,11 @@ impl World for Real {
     }
 
     fn bd_priority(&self, id: &str, p: i64) {
-        let mut c = self.bd();
-        c.arg("priority").arg(id).arg(p.to_string());
-        let _ = c.stderr(Stdio::null()).stdout(Stdio::null()).status();
+        let _ = self.door(&["update", id, "--priority", &p.to_string()], None);
     }
 
     fn bd_note(&self, id: &str, text: &str) {
-        let mut c = self.bd();
-        c.arg("note").arg(id).arg(text);
-        let _ = c.stderr(Stdio::null()).stdout(Stdio::null()).status();
+        let _ = self.door(&["note", id, "--stdin"], Some(text));
     }
 
     fn file_bead(&self, title: &str, repo: &str, priority: i64, body: &str) {
@@ -260,6 +245,51 @@ mod failed_runs_tests {
         assert_eq!(got, Some(vec![("42".into(), "abc".into()), ("7".into(), "def".into())]));
         assert_eq!(failed_runs_of("42\tabc\n"), None, "tab-separated text is not the answer");
         assert_eq!(failed_runs_of("[]"), Some(vec![]));
+    }
+}
+
+#[cfg(test)]
+mod door_tests {
+    use super::*;
+    use spira_store::lc_call::fake::Content;
+    use std::sync::Arc;
+
+    struct Stderr;
+
+    impl spira_store::lc_call::Transport for Stderr {
+        fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
+            Ok(Reply { code: 0, out: "out\n".into(), err: "⚠ zq-9k2: ESCALATE red\n".into() })
+        }
+    }
+
+    #[test]
+    fn a_gate_check_answer_carries_both_streams() {
+        let world = Real::new(PathBuf::new(), Ok(LcClient::over(Arc::new(Stderr), true)), None);
+        assert_eq!(world.bd_gate_check(), "out\n⚠ zq-9k2: ESCALATE red\n");
+    }
+
+    #[test]
+    fn the_stores_verbs_are_content_requests() {
+        let door = Arc::new(Content::new(vec![]));
+        let world = Real::new(PathBuf::new(), Ok(LcClient::over(door.clone(), true)), None);
+        world.bd_priority("sp-a", 1);
+        world.bd_note("sp-a", "text");
+        world.bd_gate_discover("spira", "b");
+        world.bd_gate_resolve("sp-g");
+        let _ = world.bd_gate_check();
+        let _ = world.bd_list_json();
+        let seen: Vec<String> = door.requests().iter().map(|r| r.join(" ")).collect();
+        assert_eq!(
+            seen,
+            [
+                "content update sp-a --priority 1",
+                "content note sp-a --stdin",
+                "content gate discover --branch b --repo spira",
+                "content gate resolve sp-g",
+                "content gate check --type=gh:run",
+                "content list --all --limit 0 --json",
+            ]
+        );
     }
 }
 

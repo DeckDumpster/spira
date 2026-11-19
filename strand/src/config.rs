@@ -11,10 +11,8 @@ use crate::classify::Vocab;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub db: Option<String>,
     pub run: Option<PathBuf>,
     pub home: Option<PathBuf>,
-    pub bd: String,
     pub vocab: Vocab,
     pub ci_label: String,
     pub scope_label: String,
@@ -31,7 +29,6 @@ pub struct Config {
     pub exclude_labels: Option<String>,
     pub strand_grace: i64,
     pub event_cooldown: i64,
-    pub bd_timeout: String,
     pub systemctl: String,
     pub call: String,
     pub capacity_pause: Option<PathBuf>,
@@ -89,10 +86,8 @@ impl Config {
     /// registered key once `resolve` reads it through the process-wide `cfg` door).
     pub fn test_fixture() -> Config {
         Config {
-            db: None,
             run: None,
             home: None,
-            bd: "bd".into(),
             vocab: Vocab {
                 // literal-ok: a test fixture declaring its own label values
                 ask: "needs-operator".into(),
@@ -115,7 +110,6 @@ impl Config {
             exclude_labels: None,
             strand_grace: 900,
             event_cooldown: 3600,
-            bd_timeout: "180".into(),
             systemctl: "systemctl".into(),
             call: "systemd-run".into(),
             capacity_pause: None,
@@ -143,12 +137,6 @@ impl Config {
     /// declaration (per Ryan 2026-10-05: one source of config). `Err` here means the config
     /// itself could not be resolved (or named a key `conf.d` does not register) — a named
     /// refusal, propagated to the caller, never a guessed value.
-    ///
-    /// `SPIRA_BD` is the one exception worth flagging: `spira/conf.d/SPIRA_BD` carries no
-    /// default anywhere in `conf.sh` — it resolves empty unless some `spira.toml` sets it
-    /// explicitly. Before this, strand's own Rust-side default of the literal `"bd"` was the
-    /// ONLY place in the whole harness that ever supplied one. Deleting it means an install
-    /// that never set `spira.bd` now refuses here instead of silently finding `bd` on PATH.
     pub fn resolve(src: &dyn Source) -> Result<Config, String> {
         use spira_config::process::cfg;
 
@@ -178,19 +166,9 @@ impl Config {
                 .map_err(|e| format!("SPIRA_MAX_LIVE_DWARVES = {max_live_raw:?} in spira.toml does not parse: {e}"))?
         };
 
-        let bd = cfg("SPIRA_BD")?;
-        if bd.is_empty() {
-            return Err(
-                "SPIRA_BD is empty in spira.toml — set spira.bd to the bd binary this install uses (no default exists for this key)"
-                    .to_string(),
-            );
-        }
-
         Ok(Config {
-            db: nonempty(cfg("SPIRA_DB")?),
             run: nonempty(cfg("SPIRA_RUN")?).map(PathBuf::from),
             home: home_of(src),
-            bd,
             vocab: Vocab {
                 ask: cfg("SPIRA_ASK_LABEL")?,
                 submitted: cfg("SPIRA_SUBMITTED_LABEL")?,
@@ -210,7 +188,6 @@ impl Config {
             exclude_labels: src.env("SPIRA_EXCLUDE_LABELS").filter(|v| !v.is_empty()),
             strand_grace: num_env("SPIRA_STRAND_GRACE", 900),
             event_cooldown: num_env("SPIRA_EVENT_COOLDOWN", 3600),
-            bd_timeout: str_env("BD_TIMEOUT", "180"),
             systemctl: str_env("SPIRA_SYSTEMCTL", "systemctl"),
             call: str_env("SPIRA_CALL", "systemd-run"),
             capacity_pause: path("SPIRA_CAPACITY_PAUSE"),

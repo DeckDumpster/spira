@@ -9,7 +9,7 @@ struct Fake {
     root: TempDir,
     gates: &'static str,
     check: &'static str,
-    discovered: RefCell<Vec<(PathBuf, String)>>,
+    discovered: RefCell<Vec<(String, String)>>,
     resolved: RefCell<Vec<String>>,
     printed: RefCell<String>,
 }
@@ -45,8 +45,8 @@ impl World for Fake {
     fn bd_gate_list_json(&self) -> String {
         self.gates.into()
     }
-    fn bd_gate_discover(&self, repo: &Path, branch: &str) {
-        self.discovered.borrow_mut().push((repo.to_path_buf(), branch.into()));
+    fn bd_gate_discover(&self, repo: &str, branch: &str) {
+        self.discovered.borrow_mut().push((repo.into(), branch.into()));
     }
     fn bd_gate_check(&self) -> String {
         self.check.into()
@@ -115,7 +115,7 @@ fn an_unbound_gate_branch_is_discovered_once_in_pr_repos_only_and_a_stuck_gate_i
     let found = w.discovered.borrow();
     assert_eq!(found.len(), 1, "one discover per distinct branch, pr repos only: {found:?}");
     assert_eq!(found[0].1, "spira/sp-1");
-    assert!(found[0].0.to_string_lossy().ends_with("prrepo"));
+    assert_eq!(found[0].0, "prrepo");
     assert!(w.printed.borrow().contains("1 stuck: no await_id"));
     assert!(w.printed.borrow().contains("ESCALATE red"), "gate check ran and its output is shown");
     assert_eq!(*w.resolved.borrow(), vec!["zq-9k2".to_string()], "any id prefix is parsed");

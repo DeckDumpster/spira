@@ -1,9 +1,7 @@
-//! The bead store, through `bdq <verb> …`. A trait
+//! The bead store, through the content door. A trait
 //! so every subcommand's argument-construction is testable against a recording fake
 //! without a live Dolt server (law-gates-run-in-a-clean-environment) — the same split
 //! `rebase-stale::seam::Seam` uses for the lib.sh boundary.
-
-use std::process::{Command, Stdio};
 
 pub trait Bd {
     /// `label add <id> <label>`.
@@ -33,65 +31,27 @@ pub trait Bd {
     fn dep_add(&self, bug_id: &str, fix_id: &str) -> Result<(), String>;
 }
 
-/// Shells to `bdq …`, which addresses the configured database itself.
+/// Every verb goes to the store's content door, which applies every protection bdq applies and
+/// writes a created bead's lifecycle row in the same request.
 pub struct RealBd {
-    pub bdq: String,
+    pub lc: Result<spira_store::lc_call::LcClient, String>,
 }
 
 impl RealBd {
-    fn cmd(&self) -> Command {
-        // FORK-EDGE: label list, set-state and dep add — the content door serves none of them
-        Command::new(&self.bdq)
-    }
-
-    /// Captures stdout — for a call whose value this needs to read.
-    fn run(&self, args: &[&str]) -> Result<std::process::Output, String> {
-        self.cmd()
-            .args(args)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| format!("{} {}: {e}", self.bdq, args.join(" ")))
-    }
-
-    /// Discards bd's own stdout (a write verb's confirmation chatter), keeping stderr
-    /// visible so a real failure still surfaces. `groomer.sh` redirected most of these
-    /// write calls to `/dev/null` for exactly this reason: `split-piece`'s own stdout
-    /// contract is the new id alone, and nothing here should leak bd's own text into a
-    /// caller's command substitution — `split-piece`'s `set-state`/`label remove` were
-    /// the two call sites the original script was explicit about; the rest (label
-    /// add/remove, note, supersede, dep add) never had a test that needed their real-bd
-    /// stdout visible either, so the same treatment is both safe and consistent.
-    fn run_inherit(&self, args: &[&str]) -> Result<std::process::ExitStatus, String> {
-        self.cmd()
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .status()
-            .map_err(|e| format!("{} {}: {e}", self.bdq, args.join(" ")))
-    }
-
-    /// One call through the store's content door, which applies every protection bdq applies
-    /// and writes a created bead's lifecycle row in the same request: its stdout when it applied.
+    /// One call through the door: its stdout when it applied, its stderr left visible.
     fn content(&self, argv: &[&str], body: Option<&str>) -> Result<String, String> {
-        let lc = spira_store::lc_call::LcClient::configured()?;
+        let lc = self.lc.as_ref().map_err(Clone::clone)?;
         let argv: Vec<&str> = std::iter::once("content").chain(argv.iter().copied()).collect();
         let r = match body {
             Some(b) => lc.call_stdin(&argv, b),
             None => lc.call(&argv),
         }
         .map_err(|e| format!("{}: {e}", argv.join(" ")))?;
+        eprint!("{}", r.err);
         if r.code != 0 {
             return Err(format!("{} exited {}: {}", argv[1], r.code, r.why()));
         }
         Ok(r.out)
-    }
-
-    fn ok(status: std::process::ExitStatus, what: &str) -> Result<(), String> {
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!("{what} exited {}", status.code().unwrap_or(-1)))
-        }
     }
 }
 
@@ -128,8 +88,7 @@ impl Bd for RealBd {
     }
 
     fn label_list(&self, id: &str) -> Result<String, String> {
-        let o = self.run(&["label", "list", id])?;
-        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+        self.content(&["label", "list", id], None)
     }
 
     fn close(&self, id: &str, reason: &str) -> Result<(), String> {
@@ -156,7 +115,7 @@ impl Bd for RealBd {
     }
 
     fn set_state(&self, id: &str, kv: &str) -> Result<(), String> {
-        Self::ok(self.run_inherit(&["set-state", id, kv])?, "set-state")
+        self.content(&["set-state", id, kv], None).map(drop)
     }
 
     fn supersede(&self, id: &str, with: &str) -> Result<(), String> {
@@ -171,12 +130,27 @@ impl Bd for RealBd {
     }
 
     fn dep_add(&self, bug_id: &str, fix_id: &str) -> Result<(), String> {
-        Self::ok(self.run_inherit(&["dep", "add", bug_id, fix_id])?, "dep add")
+        self.content(&["dep", "add", bug_id, fix_id], None).map(drop)
     }
 }
 
 #[cfg(test)]
 mod argv_tests {
+    use super::*;
+    use spira_store::lc_call::{fake::Content, LcClient};
+    use std::sync::Arc;
+
+    #[test]
+    fn set_state_and_dep_add_are_content_requests() {
+        let door = Arc::new(Content::new(vec![]));
+        let bd = RealBd { lc: Ok(LcClient::over(door.clone(), true)) };
+        bd.set_state("sp-a", "branch=x").unwrap();
+        bd.dep_add("sp-b", "sp-a").unwrap();
+        bd.label_list("sp-a").unwrap();
+        let seen: Vec<String> = door.requests().iter().map(|r| r.join(" ")).collect();
+        assert_eq!(seen, ["content set-state sp-a branch=x", "content dep add sp-b sp-a", "content label list sp-a"]);
+    }
+
     #[test]
     fn a_split_pieces_title_comes_first_whatever_its_place_among_the_flags() {
         let extra: Vec<String> = ["-p", "2", "Piece two", "-l", "a,b", "--description", "-- not a flag"].iter().map(|s| s.to_string()).collect();

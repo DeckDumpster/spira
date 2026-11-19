@@ -144,7 +144,13 @@ impl World for Real {
     }
 
     fn detect_invalid_closed(&self) -> String {
-        strand::detectors::detect_invalid_closed(self.strand_cfg())
+        match spira_store::lc_call::LcClient::configured() {
+            Ok(lc) => strand::detectors::detect_invalid_closed(self.strand_cfg(), &lc),
+            Err(e) => {
+                eprintln!("mimir-trigger: invalid-closed not read: {e}");
+                String::new()
+            }
+        }
     }
 
     fn create_bead(&self, title: &str, labels: &str, description: &str) -> Result<(), String> {

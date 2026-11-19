@@ -388,12 +388,12 @@ pub fn decide(r: &AgedRow, dry: bool, strand_grace: i64) -> Step {
 }
 
 pub fn check(cfg: &Config, c: Classified, dry: bool) -> i32 {
-    check_raising(cfg, c, dry, &mut |part, kind, id, detail, action| escalate(cfg, part, kind, id, detail, action))
+    check_raising(cfg, &spira_store::lc_call::LcClient::configured(), c, dry, &mut |part, kind, id, detail, action| escalate(cfg, part, kind, id, detail, action))
 }
 
 type Raise<'a> = dyn FnMut(&str, &str, &str, &str, &str) + 'a;
 
-fn check_raising(cfg: &Config, c: Classified, dry: bool, raise: &mut Raise) -> i32 {
+fn check_raising(cfg: &Config, door: &Result<spira_store::lc_call::LcClient, String>, c: Classified, dry: bool, raise: &mut Raise) -> i32 {
     let Some(state_path) = cfg.state_path() else {
         warn("FATAL SPIRA_RUN is unknown — cannot keep episode state");
         return 2;
@@ -437,7 +437,7 @@ fn check_raising(cfg: &Config, c: Classified, dry: bool, raise: &mut Raise) -> i
             }
             Step::Act => {
                 if r.row.kind.as_str() == "stale-blocked" {
-                    let _ = probe::bd(cfg, &["recompute-blocked"], None);
+                    let _ = probe::recompute_blocked(door);
                     println!("RECOMPUTED is_blocked — {} stuck with every blocker closed", r.row.id);
                 }
                 mark(&state_path, &mut keep, &r.part, &r.row, Mark::Acted);
@@ -724,6 +724,23 @@ mod tests {
         assert!(l.contains("sp-x") && l.contains("no persona") && l.contains("roster it"), "{l}");
     }
 
+    fn no_door() -> Result<spira_store::lc_call::LcClient, String> {
+        Err("no door in this test".into())
+    }
+
+    // covers: UC-ops-detection-remediation-21
+    #[test]
+    fn a_stale_blocked_act_sends_recompute_blocked_to_the_door() {
+        use spira_store::lc_call::{fake::Content, LcClient};
+        let run = testkit::TempDir::new("strand-check-recompute");
+        let cfg = Config { run: Some(run.to_path_buf()), strand_grace: 0, ..Config::test_fixture() };
+        let rows = vec![PartRow { part: "spira,plan".into(), row: Row::new("stale-blocked", "sp-x", Disposition::Act, "d".into(), "a".into()) }];
+        let door = std::sync::Arc::new(Content::new(vec![]));
+        let rc = check_raising(&cfg, &Ok(LcClient::over(door.clone(), true)), Classified { rows, watching: Vec::new(), live: Vec::new() }, false, &mut |_, _, _, _, _| {});
+        assert_eq!(rc, 0);
+        assert_eq!(door.requests(), vec![vec!["content".to_string(), "recompute-blocked".to_string()]]);
+    }
+
     fn escalating_fixture(run: &Path, disp: Disposition) -> (Config, Classified) {
         let cfg = Config { run: Some(run.to_path_buf()), strand_grace: 0, ..Config::test_fixture() };
         let rows = vec![PartRow { part: "spira,plan".into(), row: Row::new("stuck", "sp-x", disp, "d".into(), "a".into()) }];
@@ -737,18 +754,18 @@ mod tests {
         let (cfg, c) = escalating_fixture(&run, Disposition::Escalate);
         let mut raised = 0;
         let mut inner_rc = None;
-        let rc = check_raising(&cfg, c, false, &mut |_, _, _, _, _| {
+        let rc = check_raising(&cfg, &no_door(), c, false, &mut |_, _, _, _, _| {
             raised += 1;
             // The first runner is inside its critical section, holding the lock, right now.
             let (cfg2, c2) = escalating_fixture(&run, Disposition::Escalate);
-            inner_rc = Some(check_raising(&cfg2, c2, false, &mut |_, _, _, _, _| panic!("a declined runner raised an escalation")));
+            inner_rc = Some(check_raising(&cfg2, &no_door(), c2, false, &mut |_, _, _, _, _| panic!("a declined runner raised an escalation")));
         });
         assert_eq!(rc, 0);
         assert_eq!(inner_rc, Some(0), "the second runner declines cleanly");
         assert_eq!(raised, 1);
 
         let (cfg3, c3) = escalating_fixture(&run, Disposition::Escalate);
-        let rc = check_raising(&cfg3, c3, false, &mut |_, _, _, _, _| panic!("the same episode escalated again"));
+        let rc = check_raising(&cfg3, &no_door(), c3, false, &mut |_, _, _, _, _| panic!("the same episode escalated again"));
         assert_eq!(rc, 0, "a later runner finds the episode already escalated");
     }
 
@@ -757,7 +774,7 @@ mod tests {
     fn an_info_row_never_raises_an_escalation() {
         let run = testkit::TempDir::new("strand-check-info");
         let (cfg, c) = escalating_fixture(&run, Disposition::Info);
-        let rc = check_raising(&cfg, c, false, &mut |_, _, _, _, _| panic!("an info row reached the escalation path"));
+        let rc = check_raising(&cfg, &no_door(), c, false, &mut |_, _, _, _, _| panic!("an info row reached the escalation path"));
         assert_eq!(rc, 0);
     }
 

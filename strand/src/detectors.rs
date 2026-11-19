@@ -25,6 +25,7 @@ use std::path::Path;
 use std::process::Stdio;
 
 use spira_config::repos::Registry;
+use spira_store::lc_call::LcClient;
 
 use crate::config::Config;
 use crate::model::{self, Bead};
@@ -50,14 +51,13 @@ fn registry(cfg: &Config) -> Registry {
     Registry::from_env(std::env::vars().collect(), &home)
 }
 
-/// Best-effort `bd list`: a transient failure reads exactly as "no rows", matching every
-/// bash caller's own `2>/dev/null` plus `[ -n "$raw" ] || return 0` guard — this family
+/// Best-effort `content list`: a transient failure reads exactly as "no rows" — this family
 /// never turns a flaky query into a propagated error.
-fn list_beads(cfg: &Config, args: &[&str]) -> Vec<Bead> {
-    let mut full = vec!["list"];
+fn list_beads(lc: &LcClient, args: &[&str]) -> Vec<Bead> {
+    let mut full = vec!["content", "list"];
     full.extend_from_slice(args);
     full.extend(["--limit", "0", "--json"]);
-    let raw = probe::bd(cfg, &full, None).unwrap_or_default();
+    let raw = lc.answer(&full).unwrap_or_default();
     if raw.trim().is_empty() {
         return Vec::new();
     }
@@ -99,7 +99,7 @@ fn git_rev_list_count(repo: &Path, range: &str) -> Option<u64> {
 /// per line, first-seen order, deduplicated. "Unfinished" is the lifecycle row's answer
 /// (READY, WORKING or REWORK — what bd's `open,in_progress` meant), never bd's status
 /// (sp-mve9i); with the machine unreadable there is no answer, so no members.
-pub fn all_partition_members(cfg: &Config) -> String {
+pub fn all_partition_members(cfg: &Config, lc_door: &LcClient) -> String {
     let specs = probe::roster(cfg, None).unwrap_or_default();
     let Ok(lc) = spira_store::lc_state::list_live().map(spira_store::lc_state::index) else {
         return String::new();
@@ -107,7 +107,7 @@ pub fn all_partition_members(cfg: &Config) -> String {
     let per_spec = specs
         .iter()
         .filter(|spec| !spec.labels.is_empty())
-        .map(|spec| list_beads(cfg, &["--all", "--label", spec.labels.as_str()]).into_iter().map(|b| b.id).collect())
+        .map(|spec| list_beads(lc_door, &["--all", "--label", spec.labels.as_str()]).into_iter().map(|b| b.id).collect())
         .collect();
     unfinished_members(per_spec, &lc).join("\n")
 }
@@ -143,7 +143,7 @@ pub fn unfinished_members(per_spec: Vec<Vec<String>>, lc: &std::collections::Has
 /// the labelled beads' content, and "unfinished" (what bd's open/in_progress meant) is the
 /// lifecycle row's READY/WORKING/REWORK — [`unfinished_incidents`]. A machine that cannot
 /// answer is an Err, never "no incident".
-pub fn detect_incident_needs_builder(cfg: &Config) -> Result<String, String> {
+pub fn detect_incident_needs_builder(cfg: &Config, door: &LcClient) -> Result<String, String> {
     if cfg.incident_label.is_empty() {
         return Err("SPIRA_INCIDENT_LABEL is unset — source conf.sh".into());
     }
@@ -151,7 +151,7 @@ pub fn detect_incident_needs_builder(cfg: &Config) -> Result<String, String> {
     let reg = registry(cfg);
     let home = reg.home_repo().to_string();
     let mut out = Vec::new();
-    let labelled = list_beads(cfg, &["--all", "--label", cfg.incident_label.as_str()]);
+    let labelled = list_beads(door, &["--all", "--label", cfg.incident_label.as_str()]);
     for b in unfinished_incidents(labelled, &lc) {
         let Some(br) = label_value(&b.labels, "branch:") else { continue };
         let br = br.to_string();
@@ -209,7 +209,7 @@ fn unclaimable_lines(cfg: &Config) -> String {
 /// categories — `unclaimable` (reused, see [`unclaimable_lines`]), `ask-no-overseer`,
 /// `ci-stuck`, `unmapped-repo`. Never fails outright: a sub-query that cannot run reads as
 /// "nothing in that category", matching every bash `2>/dev/null` guard in the original.
-pub fn detect_livelocked(cfg: &Config) -> String {
+pub fn detect_livelocked(cfg: &Config, door: &LcClient) -> String {
     let reg = registry(cfg);
     let held: HashSet<String> = spira_store::lc_state::list_live()
         .map(|rows| rows.into_iter().filter(|r| r.held("ask") || r.held("poison")).map(|r| r.bead_id).collect())
@@ -219,9 +219,9 @@ pub fn detect_livelocked(cfg: &Config) -> String {
         &reg,
         &held,
         &unclaimable_lines(cfg),
-        &list_beads(cfg, &["--label", cfg.vocab.ask.as_str()]),
-        &list_beads(cfg, &["--all", "--label", cfg.ci_label.as_str()]),
-        &list_beads(cfg, &[]),
+        &list_beads(door, &["--label", cfg.vocab.ask.as_str()]),
+        &list_beads(door, &["--label", cfg.ci_label.as_str()]),
+        &list_beads(door, &[]),
     )
 }
 
@@ -306,20 +306,53 @@ fn with_close_reason(raw: &str) -> String {
     }
 }
 
+fn watermark_path(cfg: &Config) -> Option<std::path::PathBuf> {
+    cfg.run.as_ref().filter(|r| !r.as_os_str().is_empty()).map(|r| r.join("strand").join("invalid-closed.watermark"))
+}
+
+/// The newest `closed_at` among `rows`, as the store prints it.
+fn newest_close(raw: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(raw.trim()).ok()?;
+    v.as_array()?.iter().filter_map(|r| r.get("closed_at")?.as_str()).max().map(str::to_string)
+}
+
 /// lib.sh `detect_invalid_closed`: `INVALID-CLOSED`/`UNFILED-FOLLOW`/`ALLOWED-IC` lines for
 /// closed beads whose close reasons admit unfinished work or imply untracked follow-on work.
-pub fn detect_invalid_closed(cfg: &Config) -> String {
-    let mut args: Vec<&str> = vec!["list", "--all", "--limit", "0", "--json"];
+/// Reads only closes after the watermark file's instant, so each close is classified once; an
+/// absent watermark reads the whole history. The watermark moves only after a successful read.
+pub fn detect_invalid_closed(cfg: &Config, door: &LcClient) -> String {
+    let mark_file = watermark_path(cfg);
+    let mark = mark_file.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let Some(raw) = read_closed(cfg, door, mark.as_deref()) else { return String::new() };
+    if let (Some(p), Some(newest)) = (&mark_file, newest_close(&raw)) {
+        let _ = std::fs::create_dir_all(p.parent().unwrap_or(p));
+        let _ = std::fs::write(p, format!("{newest}\n"));
+    }
+    classify_closed(&raw, cfg)
+}
+
+/// [`detect_invalid_closed`] over the closes after `after`, with no watermark read or moved:
+/// a display that must not take rows from the pass that acts on them.
+pub fn detect_invalid_closed_since(cfg: &Config, door: &LcClient, after: &str) -> String {
+    read_closed(cfg, door, Some(after)).map(|raw| classify_closed(&raw, cfg)).unwrap_or_default()
+}
+
+fn read_closed(cfg: &Config, door: &LcClient, after: Option<&str>) -> Option<String> {
+    let mut args: Vec<&str> = vec!["content", "list", "--all"];
     if !cfg.scope_label.is_empty() {
-        args = vec!["list", "--all", "--label", &cfg.scope_label, "--limit", "0", "--json"];
+        args.extend(["--label", &cfg.scope_label]);
     }
-    let raw = probe::bd(cfg, &args, None).unwrap_or_default();
-    if raw.trim().is_empty() {
-        return String::new();
+    if let Some(t) = after {
+        args.extend(["--closed-after", t]);
     }
+    args.extend(["--limit", "0", "--json"]);
+    door.answer(&args).ok().filter(|raw| !raw.trim().is_empty())
+}
+
+fn classify_closed(raw: &str, cfg: &Config) -> String {
     // The close records are the subject: a bead that carries a close reason, whatever bd's
     // status says (sp-mve9i: bd status is not read for a work bead; the reason is content).
-    classify_invalid_closed(&with_close_reason(&raw), cfg)
+    classify_invalid_closed(&with_close_reason(raw), cfg)
 }
 
 fn py_repr(s: &str) -> String {
@@ -431,6 +464,53 @@ mod tests {
             .collect();
         let ids: Vec<String> = unfinished_incidents(beads, &lc).into_iter().map(|b| b.id).collect();
         assert_eq!(ids, vec!["a", "c"]);
+    }
+
+    struct Closes(std::sync::Mutex<Vec<Vec<String>>>, &'static str, i32);
+
+    impl spira_store::lc_call::Transport for Closes {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+            self.0.lock().unwrap().push(argv.to_vec());
+            Ok(spira_store::lc_call::Reply { code: self.2, out: self.1.into(), err: String::new() })
+        }
+    }
+
+    #[test]
+    fn detect_invalid_closed_reads_only_closes_after_its_watermark() {
+        let run = testkit::TempDir::new("strand-ic-watermark");
+        let cfg = Config { run: Some(run.to_path_buf()), ..Config::test_fixture() };
+        let rows = r#"[{"id":"sp-a","closed_at":"2026-11-01T00:00:00Z","close_reason":"done"},{"id":"sp-b","closed_at":"2026-11-03T00:00:00Z","close_reason":"done"}]"#;
+        let first = std::sync::Arc::new(Closes(Default::default(), rows, 0));
+        detect_invalid_closed(&cfg, &LcClient::over(first.clone(), true));
+        let seen = first.0.lock().unwrap().clone();
+        assert!(!seen[0].iter().any(|a| a == "--closed-after"), "an absent watermark reads from the start: {seen:?}");
+        let file = run.join("strand").join("invalid-closed.watermark");
+        assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "2026-11-03T00:00:00Z");
+
+        let second = std::sync::Arc::new(Closes(Default::default(), "[]", 0));
+        detect_invalid_closed(&cfg, &LcClient::over(second.clone(), true));
+        let seen = second.0.lock().unwrap().clone();
+        assert_eq!(seen[0], ["content", "list", "--all", "--closed-after", "2026-11-03T00:00:00Z", "--limit", "0", "--json"]);
+        assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "2026-11-03T00:00:00Z", "an empty read leaves the watermark");
+    }
+
+    #[test]
+    fn a_refused_read_leaves_the_watermark_where_it_was() {
+        let run = testkit::TempDir::new("strand-ic-refused");
+        let cfg = Config { run: Some(run.to_path_buf()), ..Config::test_fixture() };
+        let file = run.join("strand").join("invalid-closed.watermark");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "2026-11-03T00:00:00Z\n").unwrap();
+        let refused = std::sync::Arc::new(Closes(Default::default(), "", 3));
+        assert_eq!(detect_invalid_closed(&cfg, &LcClient::over(refused, true)), "");
+        assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "2026-11-03T00:00:00Z");
+    }
+
+    #[test]
+    fn the_listings_go_to_the_content_door_with_no_bound_but_their_label() {
+        let door = std::sync::Arc::new(Closes(Default::default(), "[]", 0));
+        list_beads(&LcClient::over(door.clone(), true), &["--all", "--label", "incident"]);
+        assert_eq!(door.0.lock().unwrap()[0], ["content", "list", "--all", "--label", "incident", "--limit", "0", "--json"]);
     }
 
     #[test]

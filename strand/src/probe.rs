@@ -54,34 +54,6 @@ pub fn run(program: &str, args: &[&str], stdin: Option<&[u8]>, env: &[(&str, &st
     }
 }
 
-// ------------------------------------------------------------------------------------------
-// bd
-// ------------------------------------------------------------------------------------------
-
-/// `timeout <BD_TIMEOUT> <bd> -C <SPIRA_DB> <args>`, retried once on a pooled connection the
-/// server already dropped ("invalid connection" — the query never ran). Refuses outright
-/// when SPIRA_DB is unset: `bd -C ""` would walk up to whatever store it finds.
-pub fn bd(cfg: &Config, args: &[&str], stdin: Option<&[u8]>) -> Result<String, String> {
-    let db = cfg
-        .db
-        .as_deref()
-        .ok_or("refusing to run bd: SPIRA_DB is empty/unset (would fall through to bd auto-discovery)")?;
-    let mut full: Vec<&str> = vec![cfg.bd_timeout.as_str(), cfg.bd.as_str(), "-C", db];
-    full.extend_from_slice(args);
-    let mut last = String::new();
-    for _ in 0..2 {
-        let o = run("timeout", &full, stdin, &[]);
-        if o.ok {
-            return Ok(o.stdout);
-        }
-        last = format!("bd {}: {}", args.first().unwrap_or(&""), o.stderr.trim());
-        if !o.stderr.contains("invalid connection") {
-            break;
-        }
-    }
-    Err(last)
-}
-
 /// The store view the classification needs, in two door reads: the open beads, then by id
 /// every closed bead an open one names as a blocker or parent (R1: a blocker's status is a
 /// lookup, never an inference from its absence). A refused or failed read is `Err`.
@@ -133,15 +105,10 @@ pub fn show(lc: &LcClient, id: &str) -> Option<Bead> {
     parse_beads(&raw).ok()?.into_iter().next()
 }
 
-/// `bd sql --json <query>` → the first column of the first row, as an integer. bd sql has
-/// no stdin form; every query built here carries only validated ids and fixed words.
-pub fn sql_count(cfg: &Config, query: &str) -> Option<i64> {
-    let raw = bd(cfg, &["sql", "--json", query], None).ok()?;
-    let start = raw.find('[')?;
-    let v: serde_json::Value = serde_json::from_str(&raw[start..]).ok()?;
-    let row = v.as_array()?.first()?.as_object()?;
-    let cell = row.values().next()?;
-    cell.as_i64().or_else(|| cell.as_str()?.trim().parse().ok())
+/// Sends `recompute-blocked` to the content door; `Err` names why it did not apply.
+pub fn recompute_blocked(lc: &Result<LcClient, String>) -> Result<(), String> {
+    let lc = lc.as_ref().map_err(Clone::clone)?;
+    lc.answer(&["content", "recompute-blocked"]).map(drop).map_err(|e| format!("content recompute-blocked: {e}"))
 }
 
 /// An id or actor fit to appear inside a SQL literal: bead-id characters only.

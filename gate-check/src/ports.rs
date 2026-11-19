@@ -15,9 +15,9 @@ pub trait World {
     fn home_repo(&self) -> String;
 
     fn bd_gate_list_json(&self) -> String;
-    /// `(cd <repo>; bd gate discover --branch <branch>)`, best-effort — its exit code and
+    /// `gate discover --branch <branch> --repo <repo name>`, best-effort — its exit code and
     /// output are never read, same as the bash's `|| true`.
-    fn bd_gate_discover(&self, repo: &Path, branch: &str);
+    fn bd_gate_discover(&self, repo: &str, branch: &str);
     /// `bd gate check --type=gh:run`, combined output.
     fn bd_gate_check(&self) -> String;
     fn bd_show_json(&self, id: &str) -> String;

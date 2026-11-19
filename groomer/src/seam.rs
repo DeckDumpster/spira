@@ -143,7 +143,7 @@ impl Seam for LibSeam {
     }
 
     fn all_partition_members(&self) -> Result<String, String> {
-        Ok(strand::detectors::all_partition_members(self.strand_cfg()))
+        Ok(strand::detectors::all_partition_members(self.strand_cfg(), self.lc()?))
     }
 
     fn bead_repo(&self, id: &str) -> Result<String, String> {
