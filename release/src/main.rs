@@ -449,6 +449,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         if let (Some(sha), Some(releases), Ok(me)) = (rest.first(), releases, std::env::current_exe()) {
             if let Some(target) = activate::delegate_target_in(&releases, sha, &me).map_err(fail)? {
                 use std::os::unix::process::CommandExt;
+                // batch-job: exec replaces this process with the delegate release's own binary
                 let e = std::process::Command::new(&target).args(argv).exec();
                 return Err(fail(format!("cannot exec {}: {e}", target.display())));
             }
