@@ -1565,7 +1565,7 @@ fn an_activation_that_changes_the_backup_script_starts_the_drill_once_after_rest
     let order = sc.order.borrow();
     let last_restart = order.iter().rposition(|c| c.starts_with("restart "));
     let start = order.iter().position(|c| c.starts_with("start ")).unwrap();
-    assert!(last_restart.map_or(true, |r| r < start), "{order:?}");
+    assert!(last_restart.is_none_or(|r| r < start), "{order:?}");
 }
 
 #[test]
