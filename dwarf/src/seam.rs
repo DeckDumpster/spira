@@ -79,7 +79,7 @@ _dwarf_rune_ready() {
     rune_ready "$RUNE"
 }
 _dwarf_ready_set() {
-    _spira_claim rune-ready "$RUNE" --json ${SPIRA_REQUIRE_EXPRESS:+--express}
+    _spira_claim rune-ready "$RUNE" --json --dropped ${SPIRA_REQUIRE_EXPRESS:+--express}
 }
 _dwarf_call_argv() {
     call_argv "$RUNE"

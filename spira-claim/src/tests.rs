@@ -411,8 +411,44 @@ mod claim_view_read {
     fn rune_ready_lists_the_beads_the_view_says_the_rune_would_take() {
         let (_, st) = setup(0);
         let view = env_over(|env| claimable_over(&Args::parse(&[]).unwrap(), env, &st).unwrap());
-        assert_eq!(ids(&taken_by(&view, "builder").into_iter().cloned().collect::<Vec<_>>()), ["sp-a"]);
-        assert!(taken_by(&view, "ops").is_empty(), "a rune the view does not name takes nothing");
+        assert_eq!(ids(&taken_split(&view, "builder").0.into_iter().cloned().collect::<Vec<_>>()), ["sp-a"]);
+        assert!(taken_split(&view, "ops").0.is_empty(), "a rune the view does not name takes nothing");
+    }
+
+    struct ReworkAndFresh;
+
+    impl Transport for ReworkAndFresh {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            let out = match argv.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+                ["claimable"] => json!({ "rev": 1, "cannot_tell": 0, "beads": [
+                    { "bead_id": "sp-rw", "verdict": "claimable", "blocker": null, "runes": ["builder"], "row": row("sp-rw", "REWORK"), "content": item("sp-rw") },
+                    { "bead_id": "sp-fresh", "verdict": "claimable", "blocker": null, "runes": ["builder"], "row": row("sp-fresh", "READY"), "content": item("sp-fresh") },
+                ] })
+                .to_string(),
+                _ => String::new(),
+            };
+            Ok(Reply { code: 0, out, err: String::new() })
+        }
+    }
+
+    #[test]
+    fn rune_ready_names_a_rework_bead_a_live_process_occupies_and_the_rule_that_dropped_it() {
+        let t = testkit::TempDir::new("claim-dropped-occupied");
+        let run = t.join("run");
+        let tree = run.join("worktree/sp-rw");
+        std::fs::create_dir_all(&tree).unwrap();
+        let mut holder = std::process::Command::new("sleep").arg("60").current_dir(&tree).spawn().unwrap();
+        let st = Store { lc: LcClient::over(Arc::new(ReworkAndFresh), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let mut stdin = std::io::empty();
+        let none = |_: &str| None;
+        let config = Config { control_store: true, run: run.display().to_string(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
+        let view = viewed(&Args::parse(&[]).unwrap(), &Env { stdin: &mut stdin, config, lookup: &none }, &st).unwrap();
+        let _ = holder.kill();
+        let _ = holder.wait();
+        let (mine, dropped) = taken_split(&view, "builder");
+        let json = dropped_json(&mine, &dropped);
+        assert_eq!(json["rows"].as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap()).collect::<Vec<_>>(), ["sp-fresh"]);
+        assert_eq!(json["dropped"], json!([{ "id": "sp-rw", "rule": "occupied" }]));
     }
 
     #[test]

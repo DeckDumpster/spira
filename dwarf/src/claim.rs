@@ -260,6 +260,20 @@ pub fn double_hold(exec: &dyn Exec, mine: &str, live: &dyn Fn(&str) -> bool) -> 
     }))
 }
 
+/// Splits `rune-ready --json --dropped` into the ready rows' JSON and one line per REWORK bead
+/// the claim path left out. A bare array (no `dropped`) passes through whole.
+pub fn split_ready(json: &str, who: &str) -> (String, Vec<String>) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else { return (json.to_string(), Vec::new()) };
+    let Some(rows) = v.get("rows").filter(|_| v.get("dropped").is_some()) else { return (json.to_string(), Vec::new()) };
+    let lines = v["dropped"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|d| format!("{who}: REWORK {} not offered to this claim: {}", d["id"].as_str().unwrap_or("?"), d["rule"].as_str().unwrap_or("?")))
+        .collect();
+    (rows.to_string(), lines)
+}
+
 /// One claim attempt's exit code and, for a refusal, the lifecycle's own words.
 pub struct Attempt {
     pub rc: i32,
@@ -323,6 +337,14 @@ pub fn lc_claim_loop<A: Into<Attempt>>(
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn split_ready_separates_rows_from_the_rework_beads_left_out() {
+        let (rows, lines) = split_ready(r#"{"rows":[{"id":"sp-f"}],"dropped":[{"id":"sp-r","rule":"occupied"}]}"#, "b");
+        assert_eq!(rows, r#"[{"id":"sp-f"}]"#);
+        assert_eq!(lines, ["b: REWORK sp-r not offered to this claim: occupied"]);
+        assert_eq!(split_ready(r#"[{"id":"sp-f"}]"#, "b"), (r#"[{"id":"sp-f"}]"#.to_string(), vec![]));
+    }
 
     struct FakeExec {
         #[allow(clippy::type_complexity)]
