@@ -1515,18 +1515,18 @@ mod store_tests {
     }
 
     #[test]
-    fn the_lifecycle_probe_and_certify_are_store_calls() {
+    fn the_lifecycle_waiting_read_and_certify_are_store_calls() {
         let (s, c) = store(|a| match a[0].as_str() {
-            "list" => (0, "[]".into()),
+            "list" => (0, r#"[{"bead_id":"sp-a","repo":"r","tip":"t1"},{"bead_id":"sp-b","repo":"r","tip":""}]"#.into()),
             "certify" => (0, "certified\n".into()),
             _ => (2, "cannot tell".into()),
         });
         let lc = RealLc { bin: None, client: Some(c) };
-        assert_eq!(lc.probe(), Ok(()));
+        assert_eq!(lc.waiting(), Ok(vec![crate::lifecycle::Waiting { repo: "r".into(), id: "sp-a".into(), tip: "t1".into() }]));
         assert_eq!(lc.certify("sp-a", "t", "pass", "d").as_deref(), Ok("certified"));
         let e = lc.resubmit_submitted("sp-a", "t").unwrap_err();
         assert!(e.contains("exited 2: cannot tell"), "{e}");
-        assert_eq!(s.seen.lock().unwrap()[0], "list --state IN_DELIVERY");
+        assert_eq!(s.seen.lock().unwrap()[0], "list --state SUBMITTED,CERTIFIED");
     }
 }
 

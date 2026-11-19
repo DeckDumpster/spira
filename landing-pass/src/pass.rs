@@ -37,7 +37,7 @@ pub struct Pass<'a> {
     pub clock: &'a dyn Clock,
     /// Consulted only with the lifecycle switch ON (DESIGN.md §9).
     pub lc: &'a dyn crate::lifecycle::Lc,
-    pub lc_state: std::cell::OnceCell<Result<(), String>>,
+    pub lc_state: std::cell::OnceCell<Result<Vec<crate::lifecycle::Waiting>, String>>,
     pub out: &'a Reporter,
     pub files: Files,
     pub start: u64,
@@ -118,9 +118,14 @@ impl<'a> Pass<'a> {
         });
     }
 
-    /// Is spira-lc reachable? Probed once per pass.
+    /// The waiting rows, read once per pass: reachability and the settle sweep share the one read.
+    fn lc_waiting(&self) -> &Result<Vec<crate::lifecycle::Waiting>, String> {
+        self.lc_state.get_or_init(|| self.lc.waiting())
+    }
+
+    /// Is spira-lc reachable?
     pub(crate) fn lc_ready(&self) -> Result<(), String> {
-        self.lc_state.get_or_init(|| self.lc.probe()).clone()
+        self.lc_waiting().as_ref().map(|_| ()).map_err(Clone::clone)
     }
 
     /// The bead's lifecycle state, re-read live (sp-mve9i: never bd's status).
@@ -283,8 +288,8 @@ impl<'a> Pass<'a> {
         if !repo.mode.queued() || !repo.path.join(".git").exists() {
             return;
         }
-        let rows = match self.lc.waiting_tips(&repo.name) {
-            Ok(r) => r,
+        let rows: Vec<(String, String)> = match self.lc_waiting() {
+            Ok(all) => all.iter().filter(|w| w.repo == repo.name).map(|w| (w.id.clone(), w.tip.clone())).collect(),
             Err(e) => {
                 self.log(&format!("CHECK6 {}: waiting rows unreadable ({e}) — none settled against {base_fq} this pass", repo.name));
                 return;
