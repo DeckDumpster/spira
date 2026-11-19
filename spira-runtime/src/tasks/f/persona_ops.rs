@@ -54,7 +54,8 @@
 //!
 //! # Silence
 //!
-//! The idle tick is Observing → Idle on `SWEEP:NOMINAL`, halted, or rune absent: the probe only,
+//! The idle tick is Observing → Idle on `SWEEP:NOMINAL`, halted, rune absent, or a snapshot head
+//! already swept (its session started): the probe only,
 //! no ledger line, no inbox line, no Emit. Today's nominal `ops.log` line is dropped.
 //!
 //! # Replaces
@@ -161,6 +162,12 @@ pub struct Carry {
     /// Consecutive harness-reds whose failing line is `red_why`.
     pub red: u32,
     pub red_why: Option<String>,
+    /// The head of the snapshot this run is for.
+    #[serde(default)]
+    pub head: Option<String>,
+    /// The head of the last snapshot whose session started.
+    #[serde(default)]
+    pub swept_head: Option<String>,
 }
 
 /// What the machine is handed: its tick, the observe answer, an effect's outcome by name, its
@@ -235,7 +242,7 @@ fn ledger(carry: &Carry, what: &str, detail: &str, rc: Option<i32>) -> EffectSpe
 
 /// The carry of an attempt that ended without a session: the red count outlives it.
 fn fresh(carry: &Carry, state: State) -> Carry {
-    Carry { state, red: carry.red, red_why: carry.red_why.clone(), ..Carry::default() }
+    Carry { state, red: carry.red, red_why: carry.red_why.clone(), swept_head: carry.swept_head.clone(), ..Carry::default() }
 }
 
 /// A sweep that failed before its session started: the ledger line carrying why, the brief
@@ -280,7 +287,7 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
     let out = match input {
         Input::Tick => (with(carry, go("tick")?), vec![EffectSpec::probe(OBSERVE, String::new(), OBSERVE_DEADLINE_MS)]),
         Input::Observed(snap) => {
-            if snap.halted || !snap.rune_present || snap.prompt_head.trim() == NOMINAL {
+            if snap.halted || !snap.rune_present || snap.prompt_head.trim() == NOMINAL || carry.swept_head.as_deref() == Some(snap.prompt_head.trim()) {
                 (fresh(carry, go("skip")?), vec![])
             } else if snap.live >= snap.max || snap.draining || snap.pause != Pause::Open {
                 let why = if snap.live >= snap.max {
@@ -292,7 +299,7 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
                 };
                 (fresh(carry, go("busy")?), vec![ledger(carry, "awake", why, None)])
             } else {
-                let next = with(carry, go("go")?);
+                let next = Carry { head: Some(snap.prompt_head.trim().to_string()), ..with(carry, go("go")?) };
                 (next, vec![EffectSpec::keyed(INTAKE_INSTALL, format!("ops/{}/intake", run_of(carry)), String::new(), PREPARE_DEADLINE_MS), EffectSpec::keyed(INCIDENT_DRAIN, format!("ops/{}/drain", run_of(carry)), String::new(), PREPARE_DEADLINE_MS)])
             }
         }
@@ -318,7 +325,7 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
                 harness_red(carry, go("no-argv")?, error)
             }
         }
-        Input::Succeeded { effect, .. } if effect == UNIT_START => (Carry { red: 0, red_why: None, ..with(carry, go("started")?) }, vec![ledger(carry, "awake", "sweep", None)]),
+        Input::Succeeded { effect, .. } if effect == UNIT_START => (Carry { red: 0, red_why: None, swept_head: carry.head.clone(), ..with(carry, go("started")?) }, vec![ledger(carry, "awake", "sweep", None)]),
         Input::Failed { effect, error } if effect == UNIT_START => harness_red(carry, go("start-failed")?, error),
         Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == CLEANUP => (fresh(carry, go("recorded")?), vec![]),
         Input::Succeeded { effect, .. } | Input::Failed { effect, .. } => return Err(format!("{NAME}: {s:?} expects no outcome of {effect}")),
