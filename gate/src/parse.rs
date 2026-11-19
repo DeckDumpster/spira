@@ -323,9 +323,12 @@ pub fn cache_transport_failure(out: &str) -> bool {
 /// The server's own words for a cache fault: the first `caused by:` line after the first
 /// `sccache: error` line that names a path or an os error, else the error line itself.
 pub fn cache_failure_line(out: &str) -> Option<&str> {
-    let mut lines = out.lines().map(str::trim).skip_while(|l| !l.starts_with("sccache: error"));
+    let mut lines = out.lines().map(str::trim).skip_while(|l| !l.to_lowercase().starts_with("sccache: error"));
     let head = lines.next()?;
-    let cause = lines.find(|l| l.contains("caused by:") && (l.contains("os error") || l.contains("path ")));
+    let cause = lines.find(|l| {
+        let l = l.to_lowercase();
+        l.contains("caused by:") && (l.contains("os error") || l.contains("path "))
+    });
     Some(cause.unwrap_or(head))
 }
 
@@ -497,6 +500,7 @@ mod tests {
         assert!(cache_failure_line(tmp).unwrap().ends_with("os error 2) at path \"/w/.runtime/session-tmp-1/sccache29LXwu\""));
         assert_eq!(cache_failure_line("sccache: error: failed to execute compile\n"), Some("sccache: error: failed to execute compile"));
         assert_eq!(cache_failure_line("error[E0308]\n"), None);
+        assert_eq!(cache_failure_line("SCCACHE: Error: Failed to create temp dir\n"), Some("SCCACHE: Error: Failed to create temp dir"));
     }
 
     #[test]

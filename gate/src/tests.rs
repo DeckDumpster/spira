@@ -4537,6 +4537,18 @@ fn a_trial_whose_cache_server_cannot_create_its_temp_dir_retries_without_the_cac
     assert_eq!(f.env_of(n - 1, "RUSTC_WRAPPER"), "");
 }
 
+/// A trial that loses the cache on both runs is build-cache-fault quoting the server's line.
+#[test]
+fn a_trial_that_cannot_create_the_cache_temp_dir_twice_is_build_cache_fault() {
+    let f = Fake::new();
+    let out = format!("test-a.sh RED\n{TEMP_DIR_FAULT}");
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, out.clone()));
+    f.runs.borrow_mut().insert(format!("{MERGE_SHA}:uncached"), (1, out));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=build-cache-fault"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("os error 2) at path"), "{}", f.stderr());
+}
+
 /// The same fault on the base re-run, twice, is build-cache-fault quoting the server's line.
 #[test]
 fn a_base_rerun_that_cannot_create_the_cache_temp_dir_twice_is_build_cache_fault() {
