@@ -716,6 +716,13 @@ impl Projection {
         }))
     }
 
+    /// [`rows`](Self::rows), and for a query that only names ids, the terminal rows among them too
+    /// ([`ids_answer`](Self::ids_answer)): `None` only for a read the views cannot answer.
+    pub fn rows_held(&self, q: &RowQuery) -> Option<Result<Read<Vec<Value>>, LcError>> {
+        let by_ids_only = q.states.is_empty() && q.repo.is_none() && !q.live && q.hold.is_none() && !q.express;
+        self.rows(q).or_else(|| q.ids.filter(|_| by_ids_only).map(|ids| self.ids_answer(ids)))
+    }
+
     /// `list --ids`'s rows for `ids`, in id order: the held live rows, the terminal rows already
     /// asked for, and the store for the rest, once. A terminal row is kept until a change names it.
     pub fn ids_answer(&self, ids: &[String]) -> Result<Read<Vec<Value>>, LcError> {

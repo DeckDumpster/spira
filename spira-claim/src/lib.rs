@@ -19,7 +19,7 @@ mod rank;
 mod readiness;
 mod ready;
 mod reopen;
-mod store;
+pub mod store;
 mod unpoison;
 pub mod verdicts;
 

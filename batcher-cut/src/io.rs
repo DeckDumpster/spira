@@ -303,7 +303,7 @@ pub fn lc_rows_of(env: &Env, ids: &[String]) -> Result<Vec<serde_json::Value>, S
     }
     if let Some(views) = store_view::shared() {
         let q = store_view::RowQuery { ids: Some(ids), ..Default::default() };
-        if let Some(rows) = views.rows(&q) {
+        if let Some(rows) = views.rows_held(&q) {
             return rows.map(|r| r.value).map_err(|e| format!("could not say: {e}"));
         }
     }

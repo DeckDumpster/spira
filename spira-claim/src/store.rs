@@ -189,16 +189,8 @@ impl Store {
             }
             return Ok(out);
         };
-        let mut unheld: Vec<String> = Vec::new();
-        for id in ids {
-            match views.list_answer(&["list", "--ids", id]) { // BDQ_READ_CONSIDERED="the held-view door: a projection answer, no bdq"
-                Some(answer) => out.extend(crate::rank::parse_lifecycle(&answer.map_err(|e| format!("spira-lc list: {e}"))?)?),
-                None => unheld.push(id.clone()),
-            }
-        }
-        for chunk in unheld.chunks(EVENT_CHUNK) {
-            out.extend(self.lc_list(&["--ids", &chunk.join(",")], false)?);
-        }
+        let rows = views.ids_answer(ids).map_err(|e| format!("spira-lc list: {e}"))?.value; // BDQ_READ_CONSIDERED="the held-view door: a projection answer, no bdq"
+        out.extend(crate::rank::parse_lifecycle(&serde_json::Value::Array(rows).to_string())?);
         Ok(out)
     }
 
@@ -279,7 +271,8 @@ impl Store {
     pub fn dependents_of(&self, ids: &[String]) -> Result<std::collections::BTreeSet<String>, String> {
         let mut out = std::collections::BTreeSet::new();
         for chunk in ids.chunks(LIST_CHUNK) {
-            let text = self.lc_run(&["plan", "edges", "--ids", &chunk.join(","), "--dependents"]).map_err(|e| format!("spira-lc plan edges: {e}"))?;
+            let argv = ["plan", "edges", "--ids", &chunk.join(","), "--dependents"].map(String::from);
+            let text = self.read_held(&argv).map_err(|e| format!("spira-lc plan edges: {e}"))?;
             let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc plan edges: not JSON: {e}"))?;
             let edges = v.get("edges").and_then(serde_json::Value::as_array).ok_or("spira-lc plan edges: no edges array")?;
             for e in edges {

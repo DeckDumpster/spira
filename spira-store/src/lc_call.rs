@@ -254,6 +254,14 @@ pub fn as_task<T>(task: &str, f: impl FnOnce() -> T) -> T {
     f()
 }
 
+/// `f` under `task` when one is given, else as it stands: how a thread spawned inside a task carries its name.
+pub fn as_task_of<T>(task: Option<&str>, f: impl FnOnce() -> T) -> T {
+    match task {
+        Some(task) => as_task(task, f),
+        None => f(),
+    }
+}
+
 /// The task this thread's calls are made for; an empty name is none.
 pub fn current_task() -> Option<String> {
     TASK.with(|t| Some(t.borrow().clone()).filter(|t| !t.is_empty()))
