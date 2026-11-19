@@ -199,6 +199,7 @@ impl Effects {
         }, run, r.home.clone(), at, reconciler_engine::clock::iso_of(at))?.with_desired_state().with_host(Arc::new(host));
         cfg = cfg.with_memo(self.memo.clone());
         cfg.skip_units = own_skip_units(&instance);
+        cfg.starting = input.starting;
         let observation = reconciler::observe(&cfg, &input.reminded);
         serde_json::to_string(&observation).map_err(|e| e.to_string())
     }

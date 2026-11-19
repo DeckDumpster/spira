@@ -95,3 +95,14 @@ fn a_repinned_cap_reaches_the_observation_the_next_tick_asks_for() {
     let input: ObserveIn = serde_json::from_str(&asked.input).unwrap();
     assert_eq!(input.values["SPIRA_MAX_DWARVES"], "3");
 }
+
+#[test]
+fn a_fleet_gap_past_grace_wakes_the_sentinel_call_pass_instead_of_mailing() {
+    let mut rig = passes_then(Remedy::CallWanted, &[1000, 2900], 4700);
+    rig.run_until_idle().unwrap();
+    let journal = rig.journaled();
+    let woke: Vec<_> = journal.iter().filter(|e| e.stream.0 == "task.sentinel-call" && e.kind.tag == "call.wanted").collect();
+    assert_eq!(woke.len(), 1, "{journal:?}");
+    assert_eq!(woke[0].kind.body, r#"{"rune":"reconciler"}"#);
+    assert!(!rig.requested().iter().any(|r| r.name == MAIL && r.input.contains("last remedy tried: none attempted")));
+}
