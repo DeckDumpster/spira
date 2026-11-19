@@ -1434,7 +1434,7 @@ impl Remote for SshRemote {
     }
 
     fn run_attr(&self, addr: &str, job: &crate::spool::AttrJob) -> Result<i32, String> {
-        let mut child = command("ssh")
+        let child = command("ssh")
             .args(self.ssh_opts())
             .arg(format!("{}@{addr}", self.user))
             .arg(crate::spool::attr_command(job))
@@ -1442,9 +1442,7 @@ impl Remote for SshRemote {
             .stdout(Stdio::null())
             .spawn()
             .map_err(|e| format!("ssh: {e}"))?;
-        crate::procs::feed_script(&mut child, crate::spool::REMOTE_ATTR_SCRIPT.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
-        let st = child.wait().map_err(|e| format!("ssh: {e}"))?;
-        Ok(st.code().unwrap_or(255))
+        feed_and_wait(child, crate::spool::REMOTE_ATTR_SCRIPT.as_bytes())
     }
 
     fn push(&self, addr: &str, local: &Path, remote_path: &str) -> Result<(), String> {
@@ -1481,6 +1479,12 @@ impl Remote for SshRemote {
             Err(format!("rsync {remote_path} exited {}: {}", st.status.code().unwrap_or(-1), rsync_said(&st.stderr)))
         }
     }
+}
+
+fn feed_and_wait(mut child: std::process::Child, script: &[u8]) -> Result<i32, String> {
+    crate::procs::feed_script(&mut child, script).map_err(|e| format!("ssh stdin: {e}"))?;
+    let st = child.wait().map_err(|e| format!("ssh: {e}"))?;
+    Ok(st.code().unwrap_or(255))
 }
 
 pub struct GitHost {
@@ -5479,9 +5483,7 @@ mod tests {
 
     #[test]
     fn an_ssh_that_exits_before_reading_the_script_is_reported_by_its_exit_not_as_a_stdin_error() {
-        let d = TempDir::new();
-        let remote = SshRemote { user: "u".into(), port: 1, key: d.path().join("no-key") };
-        let job = crate::spool::AttrJob { host_addr: "h".into(), mirror_port: 1, job: "j".into(), mirror_ref: "r".into(), suites: String::new(), build: crate::spool::Build::Artifacts, toolchain: None };
-        assert_eq!(remote.run_attr("127.0.0.1", &job).expect("ssh's exit, not a stdin error"), 255);
+        let child = command("sh").args(["-c", "exit 255"]).stdin(Stdio::piped()).spawn().unwrap();
+        assert_eq!(feed_and_wait(child, &vec![b'#'; 200_000]).expect("the exit, not a stdin error"), 255);
     }
 }
