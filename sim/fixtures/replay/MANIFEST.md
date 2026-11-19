@@ -38,7 +38,7 @@ Each slice also holds the earlier events of every batch opened up to 6 h before 
 
 ## Provenance
 
-Captured by the operator's capture program (`replay-capture/capture.sh <capture-dir> <worktree>` at tools commit 087d2ad, kept with the operator's tools, outside this repository). It reads production and never writes it: the lifecycle through read-only `spira-lc facts-query` SELECTs in 2-hour chunks, `run/tsd` and two logs by copying the window's lines, git through `git log` on each repo's landing ref.
+Captured by the operator's capture program (`replay-capture/capture.sh <capture-dir> <worktree>` at tools commit 087d2ad, kept with the operator's tools, outside this repository). It reads production and never writes it: the lifecycle through read-only `spira-lc fact list --since` reads in 2-hour chunks, `run/tsd` and two logs by copying the window's lines, git through `git log` on each repo's landing ref.
 
 | Step | Captured (UTC) |
 |---|---|

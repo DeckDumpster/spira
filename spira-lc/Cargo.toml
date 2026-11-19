@@ -35,7 +35,6 @@ state-store = { path = "../state-store" }
 state-store-sqlite = { path = "../state-store-sqlite" }
 runtime = { path = "../runtime" }
 tsd = { path = "../tsd" }
-rusqlite = { version = "0.37", features = ["bundled", "functions", "hooks"] }
 
 [[bin]]
 name = "spira-lc"

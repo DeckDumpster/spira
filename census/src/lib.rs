@@ -3,6 +3,7 @@
 //! written from the script's intent (bd sp-yyk47). The SQL itself is unchanged (DESIGN.md §2);
 //! the classification pipeline is [`pipeline`].
 
+pub mod facts;
 pub mod pipeline;
 pub mod ports;
 pub mod real;

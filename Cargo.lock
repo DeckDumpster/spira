@@ -214,6 +214,8 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-store",
+ "strand",
+ "testkit",
 ]
 
 [[package]]
@@ -2185,7 +2187,6 @@ dependencies = [
  "reconciler-engine",
  "round-vm",
  "runtime",
- "rusqlite",
  "sentinel",
  "serde",
  "serde_json",

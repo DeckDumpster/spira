@@ -69,9 +69,6 @@ fn the_ported_verbs_answer_from_the_control_store() {
     assert_eq!(facts.as_array().unwrap().iter().map(|f| f["event_type"].as_str().unwrap()).collect::<Vec<_>>(), ["claimed", "requeued"]);
     assert_eq!(facts[1]["new_value"], "gate-red");
     assert_eq!(json(&["fact", "list", "--kinds", "claimed"]).as_array().unwrap().len(), 1);
-    let table = ok(&["facts-query", "SELECT event_type, COUNT(*) AS n FROM events GROUP BY event_type ORDER BY event_type"]);
-    assert!(table.contains("| claimed | 1 |") && table.contains("| requeued | 1 |"), "{table}");
-    assert_eq!(w.run(&["facts-query", "SELECT 1 FROM bead"]).0, 3);
 
     let turn = r#"{"state":[{"task":"t","skey":"k","value":"v","at":1}],"schedules":[{"id":"r1","at":5,"stream":"s","kind":{"tag":"tick","body":""},"cause":null,"correlation":"c"}]}"#;
     ok(&["journal", "turn", turn]);
