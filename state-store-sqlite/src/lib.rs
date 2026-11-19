@@ -287,23 +287,20 @@ fn restart_wal(writer: &Mutex<Writer>, max_read_ms: u64) -> std::result::Result<
     Ok(pass)
 }
 
-/// What one checkpoint step did: the PASSIVE pass (when taken) and the WAL restart.
-struct Step {
-    passive_complete: Option<bool>,
-    restart: Checkpoint,
-}
-
 /// One pass of the checkpointer's work, shared by its thread and the bench: PASSIVE when
-/// `passive`, then the TRUNCATE restart.
+/// `passive` (its result reaches `on_passive` before the restart runs, so a failed restart
+/// does not lose it), then the TRUNCATE restart.
 fn checkpoint_step(
     conn: &Connection,
     writer: &Mutex<Writer>,
     max_read_ms: u64,
     passive: bool,
-) -> std::result::Result<Step, String> {
-    let passive_complete = if passive { Some(passive_complete(conn)?) } else { None };
-    let restart = restart_wal(writer, max_read_ms)?;
-    Ok(Step { passive_complete, restart })
+    on_passive: impl FnOnce(bool),
+) -> std::result::Result<Checkpoint, String> {
+    if passive {
+        on_passive(passive_complete(conn)?);
+    }
+    restart_wal(writer, max_read_ms)
 }
 
 fn checkpoint_row(r: &rusqlite::Row) -> rusqlite::Result<Checkpoint> {
@@ -401,23 +398,24 @@ impl Checkpointer {
             };
             wait = GAUGE_EVERY;
             if seen >= self.every || owed {
-                let step = checkpoint_step(&conn, &writer, max_read_ms.load(Ordering::SeqCst), seen >= self.every).map(|s| {
-                    if let Some(done) = s.passive_complete {
-                        if done {
-                            counts.passive_complete += 1;
-                            lock(&self.state).pending -= seen;
-                        } else {
-                            counts.passive_incomplete += 1;
-                        }
+                let mut passive_done = None;
+                let step = checkpoint_step(&conn, &writer, max_read_ms.load(Ordering::SeqCst), seen >= self.every, |done| {
+                    passive_done = Some(done);
+                    if done {
+                        counts.passive_complete += 1;
+                        lock(&self.state).pending -= seen;
+                    } else {
+                        counts.passive_incomplete += 1;
                     }
-                    let p = s.restart;
+                })
+                .map(|p| {
                     counts.wal_frames = p.wal_frames;
                     owed = p.busy;
                     if p.busy {
                         counts.restart_busy += 1;
                     } else {
                         counts.restart_done += 1;
-                        if s.passive_complete == Some(false) {
+                        if passive_done == Some(false) {
                             let mut st = lock(&self.state);
                             st.pending = st.pending.saturating_sub(seen);
                         }

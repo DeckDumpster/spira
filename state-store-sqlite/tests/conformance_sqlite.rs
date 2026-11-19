@@ -1554,6 +1554,18 @@ fn the_wal_stays_within_three_checkpoint_intervals_while_reads_never_stop() {
 }
 
 #[test]
+fn a_checkpoint_pass_on_an_idle_store_restarts_the_wal() {
+    let dir = TempDir::new("sqlite-checkpoint-pass-idle");
+    let path = dir.path().join("s.db");
+    let b = SqliteBackend::open(&path, Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
+    for _ in 0..4 {
+        put_next(&b);
+    }
+    assert!(state_store_sqlite::bench::checkpoint_pass(&b).unwrap());
+    assert_eq!(std::fs::metadata(format!("{}-wal", path.display())).unwrap().len(), 0);
+}
+
+#[test]
 #[should_panic(expected = "exceeds")]
 fn the_wal_bound_fails_when_no_checkpoint_pass_runs() {
     let dir = TempDir::new("sqlite-bounded-wal-unchecked");

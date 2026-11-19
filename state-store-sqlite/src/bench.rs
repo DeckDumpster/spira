@@ -94,8 +94,8 @@ pub fn checkpoint_pass(b: &SqliteBackend) -> Result<bool, String> {
     let conn = crate::connect(&b.0.path).map_err(|e| e.to_string())?;
     conn.busy_timeout(Duration::ZERO).map_err(|e| e.to_string())?;
     let max_read_ms = b.0.max_read_ms.load(Ordering::SeqCst);
-    let step = crate::checkpoint_step(&conn, &b.0.writer, max_read_ms, true)?;
-    Ok(!step.restart.busy)
+    let pass = crate::checkpoint_step(&conn, &b.0.writer, max_read_ms, true, |_| {})?;
+    Ok(!pass.busy)
 }
 
 /// `nBackfill` of the open store at `db`: the WAL frames a checkpoint has copied home.
