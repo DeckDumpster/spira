@@ -96,8 +96,8 @@ const PRE_BEGIN: [&str; 4] = ["spawn", "load", "config", "prelaunch"];
 
 /// This process's kernel start in epoch microseconds, or `None` when `/proc` cannot say.
 fn kernel_start_us() -> Option<u64> {
-    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
-    let system = std::fs::read_to_string("/proc/stat").ok()?;
+    let stat = std::fs::read_to_string(std::path::Path::new(system_paths::PROC_SELF).join("stat")).ok()?;
+    let system = std::fs::read_to_string(std::path::Path::new(system_paths::PROC).join("stat")).ok()?;
     let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
     proc_start_epoch_us(&stat, &system, u64::try_from(ticks).ok()?)
 }
