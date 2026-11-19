@@ -832,7 +832,9 @@ mod door_tests {
     fn no_bdq_resolution_remains() {
         let resolve = concat!("tool(\"", "bdq\")");
         let ghq = concat!("\"__", "ghq\"");
-        let offends = |src: &str| name_code(src).contains(resolve) || name_code(src).contains(ghq);
+        let bounded = concat!("bounded(\"", "bdq\")");
+        let offends = |src: &str| [resolve, ghq, bounded].iter().any(|p| name_code(src).contains(p));
+        assert!(offends(&format!("let c = {bounded};")), "the matcher finds a planted bounded resolution");
         assert!(offends(&format!("let b = spira_config::release_env::{resolve}?;")), "the matcher finds a planted resolution");
         assert!(offends(&format!("c.arg({ghq});")), "the matcher finds a planted gh-through-bdq");
         for (name, src) in [

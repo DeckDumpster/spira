@@ -5,7 +5,6 @@ use crate::decide::{status_of_lc, BeadRow, BeadStatus, Scope};
 use crate::ports::{Bd, Clock, Mailer};
 
 pub struct RealBd {
-    pub retries: u32,
     /// The store client; `None` builds the configured one at each call.
     pub lc: Option<spira_store::lc_call::LcClient>,
 }
@@ -13,22 +12,14 @@ pub struct RealBd {
 impl RealBd {
     pub fn from_env() -> Result<RealBd, String> {
         Ok(RealBd {
-            retries: spira_config::process::cfg("SPIRA_BDQ_CONN_RETRIES").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             lc: None,
         })
     }
 
     /// A content write through the door; the database is the service's own, so `_db` is not passed on.
     pub(crate) fn run(&self, _db: &str, args: &[&str]) -> Result<(i32, String, String), String> {
-        let mut attempt = 0u32;
-        loop {
-            attempt += 1;
-            let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
-            let (rc, stdout, stderr) = self.run_lc(&argv)?;
-            if rc == 0 || attempt >= self.retries.max(1) || !stderr.contains("invalid connection") {
-                return Ok((rc, stdout, stderr));
-            }
-        }
+        let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
+        self.run_lc(&argv)
     }
 
     fn with_client<T>(&self, f: impl FnOnce(&spira_store::lc_call::LcClient) -> Result<T, String>) -> Result<T, String> {
@@ -359,7 +350,7 @@ mod tests {
     #[test]
     fn facts_go_through_the_store_client() {
         let t = std::sync::Arc::new(Scripted(Default::default(), "[{\"kind\":\"k\"},{\"kind\":\"k\"}]".into()));
-        let bd = RealBd { retries: 1, lc: Some(spira_store::lc_call::LcClient::over(t.clone(), true)) };
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(t.clone(), true)) };
         assert!(bd.fact("sp-1", "k", "why"));
         assert_eq!(bd.fact_count("sp-1", "k"), Some(2));
         let verbs: Vec<String> = t.0.lock().unwrap().iter().map(|a| a[..2].join(" ")).collect();
@@ -369,7 +360,7 @@ mod tests {
     #[test]
     fn incident_writes_go_through_the_door() {
         let t = std::sync::Arc::new(Scripted(Default::default(), "sp-new\n".into()));
-        let bd = RealBd { retries: 1, lc: Some(spira_store::lc_call::LcClient::over(t.clone(), true)) };
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(t.clone(), true)) };
         assert!(bd.duplicate("db", "sp-a", "sp-b"));
         assert!(bd.relate("db", "sp-a", "sp-b"));
         assert!(bd.label_add("db", "sp-a", "x"));
@@ -403,7 +394,7 @@ mod tests {
     fn label_list_reads_payload_hash_labels_through_the_door() {
         let rows = vec![serde_json::json!({"id": "sp-1", "labels": ["payload-hash:abc", "incident"]})];
         let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows));
-        let bd = RealBd { retries: 1, lc: Some(spira_store::lc_call::LcClient::over(fake, true)) };
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake, true)) };
         assert_eq!(bd.label_list("", "sp-1"), vec!["payload-hash:abc", "incident"]);
         assert_eq!(bd.show_closed_at("", "sp-1"), None);
         assert!(bd.reachable(""));
@@ -415,7 +406,7 @@ mod tests {
         let live: Vec<_> = (0..250).map(|i| serde_json::json!({"bead_id": format!("sp-{i:03}"), "state": "READY"})).collect();
         let rows: Vec<_> = (0..250).map(|i| serde_json::json!({"id": format!("sp-{i:03}"), "status": "open", "labels": ["incident"]})).collect();
         let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows).with_live(live));
-        let bd = RealBd { retries: 1, lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
         assert_eq!(bd.list("", Scope::Unfinished, Some("incident"), None).unwrap().len(), 250);
         let seen = fake.requests();
         assert_eq!(seen.len(), 1 + 3, "{seen:?}");
@@ -428,7 +419,7 @@ mod tests {
         let rows = vec![serde_json::json!({"id": "sp-1", "labels": ["incident"]})];
         let live = vec![serde_json::json!({"bead_id": "sp-1", "state": "LANDED"})];
         let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows).with_live(live));
-        let bd = RealBd { retries: 1, lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
         bd.list("", Scope::HandedOn, Some("incident"), Some("2026-01-01")).unwrap();
         let seen = fake.requests();
         let lists: Vec<_> = seen.iter().filter(|r| r.iter().any(|a| a == "--closed-after")).collect();
@@ -438,7 +429,7 @@ mod tests {
     #[test]
     fn a_reply_that_is_not_json_is_an_error_never_no_incident() {
         let t = std::sync::Arc::new(Scripted(Default::default(), "garbled".into()));
-        let bd = RealBd { retries: 1, lc: Some(spira_store::lc_call::LcClient::over(t, true)) };
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(t, true)) };
         assert!(bd.list_json(&["--id", "sp-1"]).is_err());
     }
 
@@ -454,7 +445,7 @@ mod tests {
             serde_json::json!({"bead_id": "sp-done", "state": "LANDED"}),
         ];
         let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows).with_live(live));
-        let bd = RealBd { retries: 1, lc: Some(spira_store::lc_call::LcClient::over(fake, true)) };
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake, true)) };
         assert_eq!(bd.live_successor("", "sp-a"), Some("sp-live".to_string()));
         assert_eq!(bd.live_successor("", "sp-b"), None);
     }
