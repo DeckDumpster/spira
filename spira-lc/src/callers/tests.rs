@@ -542,16 +542,31 @@ fn list_held_never_names_a_terminal_bead() {
 // ---- certification ---------------------------------------------------------------------
 
 #[test]
-fn certify_submits_a_working_bead_before_the_verdict_lands() {
+fn certify_on_a_bead_a_dwarf_is_working_sends_neither_submit_nor_verdict() {
+    let tip = "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6";
+    for verdict in [&["pass", "keyB", "gate"][..], &["red", "suites-failed", "gate"][..]] {
+        let mut f = Fake::default();
+        f.bead("sp-w", BeadState::Working).holder = Some("dwarf-nordri".into());
+        let mut args = vec!["sp-w", tip];
+        args.extend_from_slice(verdict);
+        let a = go(&mut f, "certify", &args);
+        assert_eq!((a.code, a.cert_log.map(|c| c.0)), (REFUSED, Some("skip".into())), "{verdict:?}");
+        assert!(f.events.is_empty(), "{verdict:?}");
+        assert_eq!(f.state("sp-w"), "WORKING");
+        assert_eq!(f.beads["sp-w"].holder.as_deref(), Some("dwarf-nordri"));
+    }
+}
+
+#[test]
+fn certify_by_queue_submit_still_walks_a_working_bead_through_submit_to_its_verdict() {
+    let tip = "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6";
     let mut f = Fake::default();
     f.bead("sp-w", BeadState::Working).holder = Some("dwarf".into());
-    let a = go(&mut f, "certify", &["sp-w", "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6", "pass", "keyB", "gate"]);
-    assert_eq!((a.code, a.cert_log.clone()), (APPLIED, Some(("applied".into(), "pass tip=f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6".into()))));
-    assert_eq!(f.state("sp-w"), "CERTIFIED");
-    assert_eq!(f.beads["sp-w"].gate_key.as_deref(), Some("keyB"));
-    let kinds: Vec<&str> = f.events.iter().map(|e| e.5.as_str()).collect();
-    assert_eq!(kinds, [r#"{"Submit":{"tip":"f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6"}}"#, r#"{"GatePass":{"tip":"f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6","gate_key":"keyB"}}"#]);
-    assert!(f.events.iter().all(|e| e.4 == "gate"));
+    let a = go(&mut f, "certify", &["sp-w", tip, "pass", "queue-submit"]);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!((f.state("sp-w"), f.beads["sp-w"].tip.as_deref()), ("CERTIFIED", Some(tip)));
+    let kinds: Vec<String> = f.events.iter().map(|e| e.5.chars().skip(2).take_while(|c| c.is_alphabetic()).collect()).collect();
+    assert_eq!(kinds, ["Submit", "GatePass"]);
 }
 
 #[test]
@@ -622,14 +637,14 @@ fn certify_records_a_moved_tip_on_a_submitted_bead_before_a_pass_and_never_befor
 fn a_red_certify_records_the_step_and_message_on_the_gate_red_and_omits_them_when_empty() {
     let tip = "dddddddddddddddddddddddddddddddddddddddd";
     let mut f = Fake::default();
-    f.bead("sp-r", BeadState::Working);
+    f.bead("sp-r", BeadState::Submitted).tip = Some(tip.into());
     let a = go(&mut f, "certify", &["sp-r", tip, "red", "branch-red", "landing-pass", "fixture-config", "SPIRA_X is not declared"]);
     assert_eq!(a.code, APPLIED);
-    assert_eq!(f.events[1].5, format!(r#"{{"GateRed":{{"tip":"{tip}","reason":"suites-failed","step":"fixture-config","message":"SPIRA_X is not declared"}}}}"#));
+    assert_eq!(f.events[0].5, format!(r#"{{"GateRed":{{"tip":"{tip}","reason":"suites-failed","step":"fixture-config","message":"SPIRA_X is not declared"}}}}"#));
     let mut f = Fake::default();
-    f.bead("sp-q", BeadState::Working);
+    f.bead("sp-q", BeadState::Submitted).tip = Some(tip.into());
     go(&mut f, "certify", &["sp-q", tip, "red", "branch-red", "landing-pass", "", ""]);
-    assert_eq!(f.events[1].5, format!(r#"{{"GateRed":{{"tip":"{tip}","reason":"suites-failed"}}}}"#));
+    assert_eq!(f.events[0].5, format!(r#"{{"GateRed":{{"tip":"{tip}","reason":"suites-failed"}}}}"#));
 }
 
 #[test]
@@ -646,15 +661,15 @@ fn certify_skips_an_infra_verdict_on_a_tip_the_row_has_left() {
 fn certify_maps_red_reasons_and_infra_and_refuses_what_it_cannot_reach() {
     for (raw, want) in [("branch-red", "suites-failed"), ("syntax", "syntax"), ("beads-data", "policy-violation"), ("foreign-harness", "policy-violation"), ("no-rebase", "no-rebase"), ("timeout", "timeout"), ("confine", "confine"), ("phantom-bead-id", "phantom-bead-id"), ("a-reason-never-heard-of", "suites-failed")] {
         let mut f = Fake::default();
-        f.bead("sp-r", BeadState::Working);
+        f.bead("sp-r", BeadState::Submitted).tip = Some("dddddddddddddddddddddddddddddddddddddddd".into());
         assert_eq!(go(&mut f, "certify", &["sp-r", "dddddddddddddddddddddddddddddddddddddddd", "red", raw]).code, APPLIED, "{raw}");
-        assert_eq!(f.events[1].5, format!(r#"{{"GateRed":{{"tip":"dddddddddddddddddddddddddddddddddddddddd","reason":"{want}"}}}}"#));
+        assert_eq!(f.events[0].5, format!(r#"{{"GateRed":{{"tip":"dddddddddddddddddddddddddddddddddddddddd","reason":"{want}"}}}}"#));
         assert_eq!(f.state("sp-r"), "REWORK");
     }
     let mut f = Fake::default();
-    f.bead("sp-i", BeadState::Working);
+    f.bead("sp-i", BeadState::Submitted).tip = Some("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into());
     assert_eq!(go(&mut f, "certify", &["sp-i", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "infra", "-"]).code, APPLIED);
-    assert_eq!(f.events[1].5, r#"{"GateInfra":{"tip":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}}"#);
+    assert_eq!(f.events[0].5, r#"{"GateInfra":{"tip":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}}"#);
     assert_eq!(f.state("sp-i"), "SUBMITTED", "an infra verdict is a retry: the row stays SUBMITTED");
     // REWORK: lifecycle-cert.sh tried Submit from REWORK too, but the machine has no such
     // transition (a REWORK bead is re-claimed first) — the attempt is refused, the row is
@@ -667,7 +682,7 @@ fn certify_maps_red_reasons_and_infra_and_refuses_what_it_cannot_reach() {
     assert_eq!((a.code, a.cert_log.unwrap()), (CANNOT_TELL, ("cannot-tell".into(), "no lifecycle row yet".into())));
     f.bead("sp-rd", BeadState::Ready);
     assert_eq!(go(&mut f, "certify", &["sp-rd", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "pass", "k"]).code, REFUSED, "READY never reaches SUBMITTED");
-    f.bead("sp-o", BeadState::Working);
+    f.bead("sp-o", BeadState::Submitted).tip = Some("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into());
     let a = go(&mut f, "certify", &["sp-o", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "bogus", "k"]);
     assert_eq!((a.code, a.cert_log.unwrap().1), (CANNOT_TELL, "unknown outcome bogus".into()));
 }
