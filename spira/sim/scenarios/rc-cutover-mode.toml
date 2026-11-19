@@ -24,6 +24,17 @@ every = 60000
 duration_min = 1000
 duration_max = 3000
 
+# The call. A claim, until the walk begins, is `dwarf builder` through the world's SPIRA_CALL seam; the
+# serve task that decides when to call is tested in sim/tests/it. In the window the dwarf actor
+# below is the one that must decline.
+[[actor]]
+name = "call"
+command = '[ "$(cat "$SIM_WORLD/cutover.phase" 2>/dev/null || echo wait)" != wait ] || "$SPIRA_CALL" --property=TimeoutStartSec=3600 --setenv=SPIRA_RELEASE="$SPIRA_RELEASE" --setenv=PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:/usr/local/bin:/usr/bin:/bin" --setenv=HOME="$HOME" --setenv=SPIRA_TOML="$SPIRA_TOML" "$SPIRA_RELEASE/bin/dwarf" --home "$SPIRA_HOME" builder'
+first = 10000
+every = 60000
+duration_min = 1000
+duration_max = 3000
+
 [[actor]]
 name = "dwarf"
 command = 'sh spira/sim/scenarios/steps/rc-cutover-actor.sh dwarves dwarf --home "$(cd "$SPIRA_HOME" && pwd -P)" builder'
@@ -213,7 +224,7 @@ sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (
 
 [[invariant]]
 name = "a_held_actor_ran_under_cutover_mode"
-sql = "SELECT seq, actor, exit FROM events WHERE kind = 'complete' AND actor IN ('dwarf', 'landing', 'czar-pass', 'heimdall', 'reconciler') AND exit <> 0"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'complete' AND actor IN ('call', 'dwarf', 'landing', 'czar-pass', 'heimdall', 'reconciler') AND exit <> 0"
 
 [[invariant]]
 name = "the_window_claimed_a_bead"
