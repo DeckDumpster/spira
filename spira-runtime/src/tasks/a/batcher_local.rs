@@ -1618,6 +1618,8 @@ impl Machine<'_> {
             recertify = open.phase != "green" && self.rc.certify_head.is_empty() && matches!(self.rc.state, State::Corpus | State::Certifying);
             self.rc.certify_head.clear();
             eprintln!("{NAME} {}: round head moved {} -> {}: the step started for the old head is discarded", self.repo, self.rc.leg_head, open.head);
+            self.rc.moved_from.clear();
+            self.rc.moved_ejected.clear();
             if recertify {
                 self.stop_carried_leg();
                 self.rc.moved_from = self.rc.leg_head.clone();

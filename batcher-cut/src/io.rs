@@ -3646,6 +3646,11 @@ fn red_suites_of(red: &str) -> Vec<String> {
     red.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
 }
 
+/// The bead ids of a round record's `ejected` value: space-separated, as `queue round eject` writes it.
+fn ejected_of(ejected: &str) -> Vec<String> {
+    ejected.split_whitespace().map(String::from).collect()
+}
+
 /// `members` as `queue round status` writes them, `id:tip` apiece, split into ids and tips.
 fn split_members(members: &str) -> (Vec<String>, Vec<String>) {
     members.split_whitespace().map(|m| m.split_once(':').map_or((m, ""), |(i, t)| (i, t))).map(|(i, t)| (i.to_string(), t.to_string())).unzip()
@@ -3681,7 +3686,7 @@ fn open_round_of(r: &store_view::Round, now: u64) -> OpenRound {
         phase: r.phase.clone(),
         red: !get("red").is_empty(),
         red_suites: red_suites_of(get("red")),
-        ejected: get("ejected").split_whitespace().map(String::from).collect(),
+        ejected: ejected_of(get("ejected")),
         age_secs: get("opened").parse().map_or(0, |t: u64| now.saturating_sub(t)),
     }
 }
@@ -3706,7 +3711,7 @@ fn open_rounds_of(out: &str) -> Vec<OpenRound> {
                 },
                 red: !get("red").is_empty(),
                 red_suites: red_suites_of(&get("red")),
-                ejected: get("ejected").split_whitespace().map(String::from).collect(),
+                ejected: ejected_of(&get("ejected")),
                 age_secs: get("wall_secs").parse().unwrap_or(0),
             })
         })
@@ -5637,6 +5642,13 @@ mod land_exit_tests {
         assert_eq!(rounds[0].tips, ["ta", "tb"]);
         assert_eq!(split_members("sp-a:ta sp-b"), (vec!["sp-a".to_string(), "sp-b".to_string()], vec!["ta".to_string(), String::new()]));
         assert!(open_rounds_of("round=none\nrepo=spira\n").is_empty());
+    }
+
+    #[test]
+    fn status_lists_the_beads_a_round_has_had_ejected() {
+        let out = "round=open\nbatch_id=r1\nejected=sp-a sp-b \nround2=open\nround2_batch_id=r2\nround2_ejected=sp-c \n";
+        let rounds = open_rounds_of(out);
+        assert_eq!((rounds[0].ejected.clone(), rounds[1].ejected.clone()), (vec!["sp-a".to_string(), "sp-b".to_string()], vec!["sp-c".to_string()]));
     }
 }
 

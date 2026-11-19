@@ -147,6 +147,8 @@ fn assert_stops_old_and_certifies_new(state: State, leg: &str) {
     assert_ne!(new.unit, leg);
     assert_eq!(next.repos["spira"].leg.as_deref(), Some(new.unit.as_str()));
     assert_eq!(next.repos["spira"].state, State::Certifying);
+    let (_, again) = decide(&next, &ejected_snapshot(REBUILT, NOW));
+    assert!(again.is_empty(), "a head move is handled once: {again:?}");
 }
 
 #[test]
