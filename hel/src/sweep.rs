@@ -713,6 +713,14 @@ impl<'a> Sweep<'a> {
                 // record is the proof, and a diff that is on the base loses nothing.
                 let ahead = g.ahead(lr, br).unwrap_or(0);
                 if !self.w.lc_landed(id) && needs_evidence(ahead, || g.has_own_commit(lr, br, id), || g.only_stacked_base(lr, br), || g.base_names(lr, id, 2000)) {
+                    if self.w.lc_terminal(id) {
+                        if dry {
+                            self.say(&format!("WOULD  {id}  archive branch {br} ({ahead} commit(s) naming no bead, content already in {lr}) to refs/archive/{br}"));
+                        } else {
+                            self.orphan(c, id, br);
+                        }
+                        return;
+                    }
                     self.say(&format!("KEEP   {id}  {ahead} commit(s) not in {lr}, none naming the bead — an empty diff is not evidence of landing"));
                     return;
                 }
