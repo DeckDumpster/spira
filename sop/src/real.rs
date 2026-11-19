@@ -1,101 +1,75 @@
 use crate::ports::{Bd, Clock, Proc};
 use std::io::Write;
+use spira_store::lc_call::{LcClient, Reply};
 use std::process::{Command, Stdio};
 
-/// Shells out to `lib.sh` exactly as `gate-check`'s Rust port already shells out to
-/// `repo_root` — see `ports.rs`'s `Bd` doc comment for why this is the right boundary
-/// rather than reimplementing `bdq`.
+/// The store, reached only through the content door.
 pub struct RealBd {
-    pub spira_home: String,
+    lc: LcClient,
 }
 
-const FORGET_SCRIPT: &str = "bdq forget \"$1\" >/dev/null";
-const RECALL_SCRIPT: &str =
-    "e=$(mktemp) || exit 1; bdq recall \"$1\" 2>\"$e\"; rc=$?; [ $rc -eq 0 ] || cat \"$e\" >&2; rm -f \"$e\"; exit $rc";
-
 impl RealBd {
-    /// `body` references its arguments as `"$1"`, `"$2"`, ... — passed as real argv
-    /// entries, never interpolated into the script text, so a SOP's own text can never be
-    /// read as shell syntax.
-    fn seam(&self, body: &str, args: &[&str], stdin: Option<&[u8]>) -> (bool, Vec<u8>) {
-        let script = format!(". \"$0\" >/dev/null || {{ echo \"sop: cannot source $0 (set SPIRA_HOME)\" >&2; exit 96; }}\n{body}");
-        let envs = match spira_config::release_env::child_path_env_for_process() {
-            Ok(e) => e,
+    pub fn configured() -> Result<Self, String> {
+        Ok(RealBd { lc: LcClient::configured()? })
+    }
+
+    pub fn over(lc: LcClient) -> Self {
+        RealBd { lc }
+    }
+
+    fn content(&self, argv: &[&str], body: Option<&str>) -> Option<Reply> {
+        let sent = match body {
+            Some(b) => self.lc.call_stdin(argv, b),
+            None => self.lc.call(argv),
+        };
+        match sent {
+            Ok(r) => Some(r),
             Err(e) => {
                 eprintln!("sop: {e}");
-                return (false, Vec::new());
-            }
-        };
-        let mut cmd = spira_config::bounded::bounded("bash");
-        cmd.envs(envs);
-        cmd.arg("-c").arg(script).arg(format!("{}/lib.sh", self.spira_home)).args(args);
-        cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
-        cmd.stdout(Stdio::piped()).stderr(Stdio::inherit());
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(_) => return (false, Vec::new()),
-        };
-        if let Some(bytes) = stdin {
-            if let Some(mut si) = child.stdin.take() {
-                let _ = si.write_all(bytes);
+                None
             }
         }
-        match child.wait_with_output() {
-            Ok(out) => {
-                if out.status.code() == Some(96) {
-                    eprintln!("sop: cannot source {}/lib.sh (set SPIRA_HOME) - shelf unreadable, NOT empty", self.spira_home);
-                }
-                (out.status.success(), out.stdout)
-            }
-            Err(_) => (false, Vec::new()),
-        }
+    }
+}
+
+fn json_only(s: &str) -> String {
+    match s.lines().position(|l| l.starts_with('[') || l.starts_with('{')) {
+        Some(n) => s.lines().skip(n).collect::<Vec<_>>().join("\n"),
+        None => String::new(),
     }
 }
 
 impl Bd for RealBd {
     fn remember(&self, key: &str, text: &str) -> Result<(), String> {
-        // stderr folded into stdout so the failure cause survives; exit status appended.
-        let (ok, out) = self.seam(
-            "o=$(bdq remember --key \"$1\" \"$2\" 2>&1 >/dev/null); rc=$?; printf '%s\nexit=%s' \"$o\" \"$rc\"; exit $rc",
-            &[key, text],
-            None,
-        );
-        if ok {
-            Ok(())
-        } else {
-            Err(String::from_utf8_lossy(&out).trim().to_string())
+        match self.content(&["content", "remember", "--key", key], Some(text)) {
+            Some(r) if r.code == 0 => Ok(()),
+            Some(r) => Err(format!("{}\nexit={}", r.err.trim(), r.code).trim().to_string()),
+            None => Err("the content door did not answer".to_string()),
         }
     }
 
     fn recall(&self, key: &str) -> Option<String> {
-        let (ok, out) = self.seam(
-            RECALL_SCRIPT,
-            &[key],
-            None,
-        );
-        if !ok {
+        let r = self.content(&["content", "recall", key], None)?;
+        if r.code != 0 {
+            eprint!("{}", r.err);
             return None;
         }
-        let s = String::from_utf8_lossy(&out).into_owned();
-        if s.trim().is_empty() {
-            None
-        } else {
-            Some(s)
-        }
+        (!r.out.trim().is_empty()).then_some(r.out)
     }
 
     fn forget(&self, key: &str) -> bool {
-        self.seam(FORGET_SCRIPT, &[key], None).0
+        self.content(&["content", "forget", key], None).is_some_and(|r| r.code == 0)
     }
 
     fn memories_json(&self) -> Option<String> {
-        // Retry with backoff: under host load bd times out transiently. A failed or empty
+        // Retry with backoff: under host load the store times out transiently. A failed or empty
         // read is None, never an empty shelf (law-a-control-that-cannot-check-must-refuse).
         for attempt in 0..4u64 {
-            let (ok, out) = self.seam("bdjson memories 2>/dev/null", &[], None);
-            let s = String::from_utf8_lossy(&out).into_owned();
-            if ok && !s.trim().is_empty() {
-                return Some(s);
+            if let Some(r) = self.content(&["content", "memories", "--json"], None) {
+                let s = json_only(&r.out);
+                if r.code == 0 && !s.trim().is_empty() {
+                    return Some(s);
+                }
             }
             std::thread::sleep(std::time::Duration::from_secs(1 << attempt));
         }
@@ -103,7 +77,7 @@ impl Bd for RealBd {
     }
 
     fn note(&self, bead: &str, text: &str) -> bool {
-        self.seam("bdq note \"$1\" --stdin >/dev/null 2>&1", &[bead], Some(text.as_bytes())).0
+        self.content(&["content", "note", bead, "--stdin"], Some(text)).is_some_and(|r| r.code == 0)
     }
 }
 
@@ -313,5 +287,59 @@ mod vtime_tests {
     fn real_clock_honours_spira_now() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealClock { tz: "UTC".into() }.now().0);
         assert_eq!(got, 1_900_000_000);
+    }
+}
+
+#[cfg(test)]
+mod door_tests {
+    use super::*;
+    use spira_store::lc_call::Transport;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    struct Recorded(Mutex<Vec<(Vec<String>, Option<String>)>>);
+
+    impl Transport for Recorded {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push((argv.to_vec(), stdin.map(String::from)));
+            let out = if argv[1] == "memories" { "warning\n{\"sop-a\":\"x\"}" } else { "body" };
+            Ok(Reply { code: 0, out: out.into(), err: String::new() })
+        }
+    }
+
+    #[test]
+    fn forget_recall_remember_note_and_memories_are_content_requests() {
+        let t = Arc::new(Recorded(Mutex::default()));
+        let bd = RealBd::over(LcClient::over(t.clone(), true));
+        assert!(bd.forget("sop-a"));
+        assert_eq!(bd.recall("sop-a").as_deref(), Some("body"));
+        assert!(bd.remember("sop-a", "the text").is_ok());
+        assert!(bd.note("sp-1", "a note"));
+        assert_eq!(bd.memories_json().as_deref(), Some("{\"sop-a\":\"x\"}"));
+        let got = t.0.lock().unwrap().clone();
+        let v = |a: &[&str], s: Option<&str>| (a.iter().map(|x| x.to_string()).collect::<Vec<_>>(), s.map(String::from));
+        assert_eq!(
+            got,
+            vec![
+                v(&["content", "forget", "sop-a"], None),
+                v(&["content", "recall", "sop-a"], None),
+                v(&["content", "remember", "--key", "sop-a"], Some("the text")),
+                v(&["content", "note", "sp-1", "--stdin"], Some("a note")),
+                v(&["content", "memories", "--json"], None),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_refused_remember_carries_the_stores_text_and_the_exit() {
+        struct Refuses;
+        impl Transport for Refuses {
+            fn exchange(&self, _a: &[String], _s: Option<&str>, _d: Duration) -> Result<Reply, String> {
+                Ok(Reply { code: 3, out: String::new(), err: "refused: no\n".into() })
+            }
+        }
+        let bd = RealBd::over(LcClient::over(Arc::new(Refuses), true));
+        assert_eq!(bd.remember("k", "t"), Err("refused: no\nexit=3".to_string()));
+        assert!(!bd.forget("k") && !bd.note("sp-1", "n") && bd.recall("k").is_none());
     }
 }

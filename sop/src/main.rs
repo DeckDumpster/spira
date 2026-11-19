@@ -142,15 +142,13 @@ fn main() -> ExitCode {
 }
 
 fn dispatch(args: &[String]) -> ExitCode {
-    let home = match harness_home() {
-        Ok(h) => h,
+    let bd = match RealBd::configured() {
+        Ok(b) => b,
         Err(e) => {
-            eprintln!("sop: cannot source lib.sh: {e}");
+            eprintln!("sop: the content door is not configured: {e}");
             return ExitCode::from(2);
         }
     };
-    let spira_home = home.to_string_lossy().into_owned();
-    let bd = RealBd { spira_home };
     let proc = RealProc;
 
     let Some(sub) = args.first().map(String::as_str) else {
