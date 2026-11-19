@@ -656,3 +656,57 @@ mod scan {
         assert_eq!(rest.branches.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["sp-d", "sp-e", "sp-f"]);
     }
 }
+
+mod closed_bead_branch {
+    use super::*;
+
+    fn sweep(terminal: bool, dry: bool) -> (PathBuf, Vec<String>) {
+        let t = Box::leak(Box::new(testkit::TempDir::new("hel-closed")));
+        let root = t.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        git(&root, &["checkout", "-q", "-b", "spira/sp-x", "main"]);
+        std::fs::write(root.join("f.txt"), "work\n").unwrap();
+        git(&root, &["add", "f.txt"]);
+        git(&root, &["commit", "-q", "-m", "the work"]);
+        git(&root, &["checkout", "-q", "main"]);
+        std::fs::write(root.join("f.txt"), "work\n").unwrap();
+        git(&root, &["add", "f.txt"]);
+        git(&root, &["commit", "-q", "-m", "landed by another route"]);
+        let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
+        let beads = [("sp-x".to_string(), serde_json::json!({"id": "sp-x", "labels": []}))].into();
+        let lc_terminal = if terminal { ["sp-x".to_string()].into() } else { Default::default() };
+        let f = Fake { base: Some(base), beads, wts: t.path().join("wt"), lc_terminal, ..Default::default() };
+        let opts = crate::sweep::Opts { dry, fetch: false, only: None, scope: Scope::All, budget: None, pace: Default::default() };
+        let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
+        s.run(&[crate::ports::Repo { name: "spira".into(), root: Some(root.clone()), forge_queued: false }]);
+        let out = f.out.borrow().clone();
+        (root, out)
+    }
+
+    fn has_branch(root: &Path) -> bool {
+        Git(root).branch_exists("spira/sp-x")
+    }
+
+    #[test]
+    fn a_closed_beads_branch_whose_content_is_on_the_base_is_archived_though_no_commit_names_the_bead() {
+        let (root, out) = sweep(true, false);
+        assert!(!has_branch(&root), "{out:?}");
+        assert!(Git(&root).verify("refs/archive/spira/sp-x").is_some(), "{out:?}");
+    }
+
+    #[test]
+    fn a_dry_run_says_it_would_archive_a_closed_beads_content_landed_branch_and_touches_nothing() {
+        let (root, out) = sweep(true, true);
+        assert!(has_branch(&root));
+        assert!(out.iter().any(|l| l.starts_with("WOULD  sp-x  archive")), "{out:?}");
+    }
+
+    #[test]
+    fn a_live_beads_content_landed_branch_with_no_naming_commit_is_still_kept() {
+        let (root, out) = sweep(false, false);
+        assert!(has_branch(&root));
+        assert!(out.iter().any(|l| l.starts_with("KEEP   sp-x")), "{out:?}");
+    }
+}
