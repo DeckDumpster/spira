@@ -335,6 +335,15 @@ mod tests {
         assert!(found.is_empty(), "{:?}", found.iter().map(|f| &f.message).collect::<Vec<_>>());
     }
 
+    #[test]
+    fn a_side_without_a_task_modes_file_skips_the_task_check() {
+        let (t, _) = task_tree("a=act b=act", "a=act");
+        t.remove("spira/conf.d/SPIRA_TASK_MODES");
+        let tree = Tree::from_git(t.path()).unwrap().with_base(Some("main".into()));
+        let found = ConfigDelta::default().check(&tree).unwrap();
+        assert!(found.iter().all(|f| f.path != TASK_MODES), "{:?}", found.iter().map(|f| &f.message).collect::<Vec<_>>());
+    }
+
     fn folded_tree(t: &TempDir, status: &'static str, base_file: &'static str, frag: &'static str) -> Tree {
         Tree::from_paths(t.path(), [DELTA], Vec::<String>::new()).with_base(Some("main".into())).with_git(Box::new(move |a| match a {
             ["rev-parse", ..] => Ok(b"B\n".to_vec()),
