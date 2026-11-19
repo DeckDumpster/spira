@@ -246,10 +246,21 @@ enum ServerUnit {
 
 /// The folder the unit's server's temporary files live in: its own, so no session's removed
 /// `TMPDIR` can break a compile. Created here, before the unit starts.
-fn server_tmp_dir() -> Result<PathBuf, String> {
+fn server_tmp_dir(fx: &dyn ServerEffectors, sccache_bin: &Path) -> Result<PathBuf, String> {
     let dir = Path::new(&crate::process::cfg("SPIRA_RUN")?).join("sccache-server").join("tmp");
+    reclaim_if_root_missing(fx, sccache_bin, &dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     Ok(dir)
+}
+
+/// A running server whose scratch root is gone would lose its compile outputs: stop it so the
+/// next start gets a fresh root. Returns whether it did.
+fn reclaim_if_root_missing(fx: &dyn ServerEffectors, sccache_bin: &Path, root: &Path) -> bool {
+    if root.exists() {
+        return false;
+    }
+    fx.stop_server(sccache_bin);
+    true
 }
 
 /// Starts [`SERVER_UNIT`]. A unit that is not active afterwards lost its port to a server some
@@ -267,7 +278,7 @@ fn ensure_server_unit(fx: &dyn ServerEffectors, sccache_bin: &Path, store: &Stor
 }
 
 fn ensure_server_unit_on_host(sccache_bin: &Path, store: &Store) -> Option<ServerUnit> {
-    match server_tmp_dir() {
+    match server_tmp_dir(&SystemEffectors, sccache_bin) {
         Ok(tmp) => Some(ensure_server_unit(&SystemEffectors, sccache_bin, store, &tmp)),
         Err(e) => {
             eprintln!("spira_config::build: {SERVER_UNIT} not started: {e}");
@@ -560,6 +571,18 @@ mod tests {
         let (r, calls) = ensure_with(true);
         assert_eq!(calls, ["start", "is-active"]);
         assert_eq!(r, ServerUnit::Running);
+    }
+
+    #[test]
+    fn a_server_whose_scratch_root_is_gone_is_stopped_and_a_present_root_is_left_alone() {
+        let tmp = testkit::TempDir::new("spira-config-scratch-root");
+        let base = tmp.to_path_buf();
+        let fx = Recorder { calls: Default::default(), active: true };
+        assert!(reclaim_if_root_missing(&fx, Path::new("opt/bin/sccache"), &base.join("gone")));
+        assert_eq!(fx.calls.borrow().as_slice(), ["stop-server"]);
+        let fx = Recorder { calls: Default::default(), active: true };
+        assert!(!reclaim_if_root_missing(&fx, Path::new("opt/bin/sccache"), &base));
+        assert!(fx.calls.borrow().is_empty());
     }
 
     // ------------------------------------------------------------- Store (sp-xtdqi)
