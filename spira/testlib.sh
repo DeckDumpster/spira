@@ -437,14 +437,20 @@ _tl_psi() {     # _tl_psi <file>: the "some" avg10 value, or - when the kernel h
     echo -
 }
 
-_tl_hung() {    # _tl_hung <suite-pid> <deadline> <case-number> <last-assertion-where> <case-start-us>
-    local top="$1" dl="$2" n="$3" loc="$4" start_us="$5" name load1 cpus cpu io
+_tl_deadline_red() {   # _tl_deadline_red <deadline> <case-number> <last-assertion-where> <case-start-us>
+    local dl="$1" n="$2" loc="$3" start_us="$4" name load1 cpus cpu io
     read -r load1 _ < /proc/loadavg 2>/dev/null
     cpus="$(getconf _NPROCESSORS_ONLN 2>/dev/null)"
     cpu="$(_tl_psi /proc/pressure/cpu)"
     io="$(_tl_psi /proc/pressure/io)"
     name="case $n exceeded its ${dl}s deadline"
-    printf 'not ok %s - %s\n# at %s\n# deadline secs=%s load1=%s cpus=%s cpu_some_avg10=%s io_some_avg10=%s\n#ms=%s\nBail out! %s\n' "$n" "$name" "$loc" "$dl" "${load1:--}" "${cpus:--}" "$cpu" "$io" "$(( (${EPOCHREALTIME/./} - start_us) / 1000 ))" "$name" > "/proc/$top/fd/1" 2>/dev/null
+    printf 'not ok %s - %s\n# at %s\n# deadline secs=%s load1=%s cpus=%s cpu_some_avg10=%s io_some_avg10=%s\n#ms=%s\nBail out! %s\n' "$n" "$name" "$loc" "$dl" "${load1:--}" "${cpus:--}" "$cpu" "$io" "$(( (${EPOCHREALTIME/./} - start_us) / 1000 ))" "$name"
+}
+
+_tl_hung() {    # _tl_hung <suite-pid> <deadline> <case-number> <last-assertion-where> <case-start-us>
+    local top="$1" dl="$2" n="$3" loc="$4" start_us="$5"
+    _tl_deadline_red "$dl" "$n" "$loc" "$start_us" > "/proc/$top/fd/1" 2>/dev/null
+    local name="case $n exceeded its ${dl}s deadline"
     _tl_jsonl "$name" fail "last assertion at $loc"
     # Gathered before the suite's shell is signalled: once it is gone its children are
     # reparented and no longer found by their parent.
@@ -492,9 +498,29 @@ _tl_stop() {
     exit 1
 }
 
+_tl_check_late() {   # a case that ends past its deadline is red even if the watcher never woke
+    [ -n "$_TL_WATCH_DIR" ] || return 0
+    local dl="" start_us="" n="" loc="" now
+    read -r dl < "$_TL_WATCH_DIR/deadline" 2>/dev/null
+    { read -r start_us n; read -r loc; } < "$_TL_WATCH_DIR/state" 2>/dev/null
+    [ -n "$dl" ] && [ "$dl" -gt 0 ] && [ -n "$n" ] || return 0
+    now="${EPOCHREALTIME/./}"
+    [ $(( now - start_us )) -ge $(( dl * 1000000 )) ] || return 0
+    printf '0\n' > "$_TL_WATCH_DIR/deadline"
+    _tl_deadline_red "$dl" $(( n + 1 )) "$loc" "$start_us"
+    _tl_jsonl "case $(( n + 1 )) exceeded its ${dl}s deadline" fail "last assertion at $loc"
+    if [ "$BASHPID" = "$_TL_TOP" ]; then
+        _tl_counts_cleanup
+        exit 1
+    fi
+    kill -TERM "$_TL_TOP" 2>/dev/null
+    exit 1
+}
+
 ok() {
     _tl_init
     _tl_counts_load
+    _tl_check_late
     _TL_NUM=$((_TL_NUM + 1)); _TL_PASS=$((_TL_PASS + 1))
     printf 'ok %s - %s\n' "$_TL_NUM" "$1"
     _tl_case_ms
@@ -507,6 +533,7 @@ ok() {
 bad() {
     _tl_init
     _tl_counts_load
+    _tl_check_late
     _TL_NUM=$((_TL_NUM + 1)); _TL_FAIL=$((_TL_FAIL + 1))
     printf 'not ok %s - %s\n' "$_TL_NUM" "$1"
     [ -n "${2:-}" ] && printf '# %s\n' "$2"
