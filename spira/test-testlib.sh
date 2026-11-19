@@ -6,7 +6,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/testlib.sh"
 
 TESTLIB="$HERE/testlib.sh"
-SCRATCH="$(mktemp -d)"
+SCRATCH="$(mktemp -d)"; export SCRATCH
 trap 'rm -rf "$SCRATCH"' EXIT INT TERM
 
 # _run <script-body-on-stdin> -> writes it to a scratch file (sourcing the real testlib.sh
@@ -150,10 +150,13 @@ esac
 
 _run <<'EOF4'
 tl_config SPIRA_TEST_CASE_DEADLINE=1
+pgrep -P $$ > "$SCRATCH/watcher"
+pkill -STOP -P $$
 sleep 3
 ok "after a long arrangement"
 tl_summary
 EOF4
+kill -CONT $(<"$SCRATCH/watcher") 2>/dev/null
 want "tl_arrange: without it a long arrangement trips the case deadline (pre-fix shape)" "exceeded its 1s deadline" "$_RUN_OUT"
 
 want "tl_arrange: the deadline red carries the box's load" "# deadline secs=1 load1=" "$_RUN_OUT"
@@ -182,12 +185,23 @@ nowant "tl_arrange: no deadline trips during the arrangement" "exceeded its" "$_
 _run <<'EOF4'
 tl_config SPIRA_TEST_CASE_DEADLINE=1
 tl_arrange true
+pgrep -P $$ > "$SCRATCH/watcher"
+pkill -STOP -P $$
 sleep 3
 ok "never"
 tl_summary
 EOF4
+kill -CONT $(<"$SCRATCH/watcher") 2>/dev/null
 want "tl_arrange: the guard is armed again once the arrangement ends" "exceeded its 1s deadline" "$_RUN_OUT"
 [ "$_RUN_RC" != 0 ] && ok "tl_arrange: a hang after the arrangement still fails the suite" || bad "tl_arrange: a hang after the arrangement still fails the suite" "$_RUN_OUT"
+
+_run <<'EOF4'
+tl_config SPIRA_TEST_CASE_DEADLINE=1
+sleep 30
+tl_summary
+EOF4
+want "the watcher still kills a case that never ends" "exceeded its 1s deadline" "$_RUN_OUT"
+[ "$_RUN_RC" != 0 ] && ok "the watcher's kill fails the suite" || bad "the watcher's kill fails the suite" "$_RUN_OUT"
 
 _run <<'EOF4'
 tl_arrange false; echo "rc=$?"
