@@ -660,9 +660,9 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
 }
 
 // =========================================================================================
-// ready / claim (wave 4.25, sp-obhv6, row F): READY_ARGS, ready_count, claim_retry,
+// ready / claim (wave 4.25, sp-obhv6, row F): READY_ARGS, ready_count,
 // rune_exclude, rune_ready, bulk_ready_by_rune. See ready.rs for the pure predicate
-// logic and store.rs for the bd calls; this is env/flag wiring only, same split as the
+// logic and store.rs for the reads; this is env/flag wiring only, same split as the
 // rest of this file.
 // =========================================================================================
 
@@ -677,8 +677,7 @@ fn rune_home() -> Result<std::path::PathBuf, String> {
 /// fixture) if given and non-empty, else `env.config`'s own already-resolved value — the
 /// ONE source of config (per Ryan 2026-10-05): `Config` (see store.rs) is the only reader
 /// of `SPIRA_QUEUE_WAIT_LABEL`/`SPIRA_OPEN_CHILDREN_LABEL`/`SPIRA_SCOPE_LABEL`/
-/// `SPIRA_NO_LOOP_LABEL`/`SPIRA_SUBMITTED_LABEL`/`SPIRA_CLAIM_RETRIES`/
-/// `SPIRA_CLAIM_RETRY_DELAY_S`, and it already refused at construction if any could not
+/// `SPIRA_NO_LOOP_LABEL`/`SPIRA_SUBMITTED_LABEL`, and it already refused at construction if any could not
 /// resolve — no caller-side default survives here.
 fn resolved_label(flag: Option<&str>, configured: &str) -> String {
     match flag {

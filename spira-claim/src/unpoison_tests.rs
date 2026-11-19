@@ -539,3 +539,18 @@ fn an_unpoison_note_is_a_door_note_from_the_body() {
     let seen = fake.0.lock().unwrap().clone();
     assert_eq!(seen, [(vec!["content".to_string(), "note".into(), "sp-a".into(), "--stdin".into()], Some("unpoisoned: why".to_string()))]);
 }
+
+#[test]
+fn a_refused_door_note_keeps_the_exit_and_first_stderr_line() {
+    let w = live_over(reply(0, ""), reply(0, ""));
+    assert!(w.door_note("sp-a", "x").is_ok());
+    struct Refuse;
+    impl spira_store::lc_call::Transport for Refuse {
+        fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+            Ok(spira_store::lc_call::Reply { code: 3, out: String::new(), err: "no such bead\nsecond".into() })
+        }
+    }
+    let mut w = w;
+    w.store.lc = spira_store::lc_call::LcClient::over(std::sync::Arc::new(Refuse), true);
+    assert_eq!(w.door_note("sp-a", "x"), Err("content note exit 3: no such bead".to_string()));
+}

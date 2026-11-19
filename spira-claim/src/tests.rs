@@ -16,7 +16,7 @@ use super::*;
 
 // ---- ready / claim CLI (wave 4.25, sp-obhv6) -------------------------------------------
 //
-// `rune-ready`/`rune-exclude`/`bulk-ready-by-rune`/read real process
+// `rune-ready`/`rune-exclude`/`bulk-ready-by-rune` read real process
 // environment (`SPIRA_HOME`, `SPIRA_TOML`, ...) — unlike the rest of this
 // file's tests, which thread every input through a file or a hand-built `Store`. These
 // edit the environment only through `testkit::env`, which serializes them against every
