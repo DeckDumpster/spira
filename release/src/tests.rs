@@ -171,6 +171,7 @@ struct FakeSystemctl {
     restarts: RefCell<Vec<String>>,
     /// `start_no_block` calls, in order; it fails for a unit named in `start_fails`.
     starts: RefCell<Vec<String>>,
+    order: RefCell<Vec<String>>,
     start_fails: BTreeSet<String>,
     kills: RefCell<Vec<String>>,
     resets: RefCell<Vec<String>>,
@@ -213,6 +214,7 @@ impl FakeSystemctl {
             states: RefCell::new(s),
             restarts: RefCell::new(vec![]),
             starts: RefCell::new(vec![]),
+            order: RefCell::new(vec![]),
             start_fails: BTreeSet::new(),
             kills: RefCell::new(vec![]),
             resets: RefCell::new(vec![]),
@@ -283,6 +285,7 @@ impl Systemctl for FakeSystemctl {
     }
     fn start_no_block(&self, unit: &str) -> Result<(), String> {
         self.starts.borrow_mut().push(unit.into());
+        self.order.borrow_mut().push(format!("start {unit}"));
         if self.start_fails.contains(unit) {
             return Err(format!("{unit}: simulated start failure"));
         }
@@ -293,6 +296,7 @@ impl Systemctl for FakeSystemctl {
             return Err(format!("{unit}: RefuseManualStop=yes denies a restart job"));
         }
         self.restarts.borrow_mut().push(unit.into());
+        self.order.borrow_mut().push(format!("restart {unit}"));
         if let (Some(to), false) = (&self.restart_lands, self.pinned.contains(unit)) {
             self.exes.borrow_mut().insert(unit.into(), to.clone());
         }
@@ -1558,6 +1562,10 @@ fn an_activation_that_changes_the_backup_script_starts_the_drill_once_after_rest
     assert_eq!(*sc.starts.borrow(), vec!["lc-backup-drill.service".to_string()]);
     assert_eq!(out.started.len(), 1, "{:?}", out.started);
     assert!(out.started[0].contains("spira/lc-backup.sh changed"), "{:?}", out.started);
+    let order = sc.order.borrow();
+    let last_restart = order.iter().rposition(|c| c.starts_with("restart "));
+    let start = order.iter().position(|c| c.starts_with("start ")).unwrap();
+    assert!(last_restart.map_or(true, |r| r < start), "{order:?}");
 }
 
 #[test]
