@@ -20,7 +20,6 @@ pub mod watch_pass_rate;
 pub mod watch_testenv_cap;
 pub mod watch_throughput;
 pub mod watch_transitions;
-pub mod watch_warm_full;
 
 pub static TASKS: &[Task] = &[
     Task { name: inbox_notify::NAME, plane: runtime::Plane::Work, signal: &[inbox_notify::ASK, inbox_notify::CONCIERGE_NOTE], boot: inbox_notify::InboxNotify::boot, cadence_ms: |_| inbox_notify::CADENCE_MS, effects: inbox_notify::EFFECTS, runners: &[(inbox_notify::OBSERVE, |e, _, _| inbox_notify::observe(e.units.as_deref())), (inbox_notify::ASK, |_, _, s| inbox_notify::ask(&s.input)), (inbox_notify::SOP_MATCH, |_, _, s| inbox_notify::sop_match(&s.input)), (inbox_notify::SOP_APPLIED, |_, _, s| inbox_notify::sop_applied(&s.input)), (inbox_notify::CONCIERGE_NOTE, |_, _, s| inbox_notify::concierge_note(&s.input)), (inbox_notify::MAIL_HEALTH, |_, _, _| inbox_notify::mail_health())], keys: &[inbox_notify::KEYS], build: |_| inbox_notify::InboxNotify::pinned().registration() },
@@ -33,7 +32,6 @@ pub static TASKS: &[Task] = &[
     Task { name: watch_testenv_cap::NAME, plane: runtime::Plane::Work, signal: &[], boot: watch_testenv_cap::WatchTestenvCap::boot, cadence_ms: |_| watch_testenv_cap::CADENCE_MS, effects: watch_testenv_cap::EFFECTS, runners: &[(watch_testenv_cap::OBSERVE, |_, _, _| watch_testenv_cap::observe()), (watch_testenv_cap::KILL, |_, _, s| watch_testenv_cap::kill(&s.input)), (watch_testenv_cap::METRIC, |_, _, s| watch_testenv_cap::metric(&s.input))], keys: &[watch_testenv_cap::KEYS], build: |_| watch_testenv_cap::WatchTestenvCap::pinned().registration() },
     Task { name: watch_throughput::NAME, plane: runtime::Plane::Work, signal: &[], boot: watch_throughput::WatchThroughput::boot, cadence_ms: |_| watch_throughput::CADENCE_MS, effects: watch_throughput::EFFECTS, runners: &[(watch_throughput::OBSERVE, |e, _, s| e.world.throughput_snapshot(&s.input)), (watch_throughput::FILE, |_, _, s| watch_throughput::file(&s.input)), (watch_throughput::CLEAR, |e, _, s| e.world.clear_round_records(&s.input))], keys: &[watch_throughput::KEYS], build: |_| watch_throughput::WatchThroughput::pinned().registration() },
     Task { name: watch_transitions::NAME, plane: runtime::Plane::Work, signal: &[], boot: watch_transitions::WatchTransitions::boot, cadence_ms: |_| watch_transitions::cadence_ms(), effects: watch_transitions::EFFECTS, runners: &[(watch_transitions::OBSERVE, |e, _, s| e.world.transitions_snapshot(&s.input))], keys: &[watch_transitions::KEYS], build: |_| watch_transitions::WatchTransitions::pinned().registration() },
-    Task { name: watch_warm_full::NAME, plane: runtime::Plane::Work, signal: &[], boot: watch_warm_full::WatchWarmFull::boot, cadence_ms: |_| watch_warm_full::CADENCE_MS, effects: watch_warm_full::EFFECTS, runners: &[(watch_warm_full::OBSERVE, |_, _, _| watch_warm_full::observe()), (watch_warm_full::REAP, |_, _, s| watch_warm_full::reap(&s.input))], keys: &[watch_warm_full::KEYS], build: |_| watch_warm_full::WatchWarmFull::pinned().registration() },
 ];
 
 /// Every row of the family is ported; see `tasks`.

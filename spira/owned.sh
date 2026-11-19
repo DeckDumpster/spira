@@ -66,8 +66,8 @@ done < <(units-install --list-manifest) || exit 1
 # silently drops out of `--list-manifest`. A removal pass driven by that list alone then
 # leaves the unit file on disk; the positive-control stray sweep below only REPORTS what it
 # finds unlisted, it never removes. Acceptance hit exactly this (run 37222619835): install
-# resolved the repo as a git checkout and installed spira-cert-sweep-{full,sample}-prod's
-# four units; uninstall's own re-resolution saw it as not one, and all four survived
+# resolved the repo as a git checkout and installed a git-checkout-only
+# unit; uninstall's own re-resolution saw it as not one, and it survived
 # `uninstall.sh --yes` as reported strays.
 #
 # `--list-manifest-union` (install/src/manifest.rs's `union_installed_names`) is bounded to

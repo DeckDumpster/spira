@@ -296,7 +296,6 @@ SPIRA_HOME bead/src/bin/bdq.rs
 SPIRA_HOME bead/src/main.rs
 SPIRA_HOME broker/src/main.rs
 SPIRA_HOME broker/src/repo_map.rs
-SPIRA_HOME cert-sweep/src/main.rs
 SPIRA_HOME cockpit-collect/src/io.rs
 SPIRA_HOME cockpit/ops/src/conf.rs
 SPIRA_HOME cockpit/ops/src/rebuild.rs
@@ -585,7 +584,6 @@ SPIRA_RELEASE_SKEW_MAX_SECS sentinel/src/tower.rs
 SPIRA_RELEASE_SKEW_MAX_SECS watchtower/src/main.rs
 SPIRA_REPO bead/src/bdq.rs
 SPIRA_REPO broker/src/main.rs
-SPIRA_REPO cert-sweep/src/main.rs
 SPIRA_REPO cockpit-collect/src/io.rs
 SPIRA_REPO cockpit-collect/src/probes/mod.rs
 SPIRA_REPO cockpit/ops/src/conf.rs
@@ -647,9 +645,7 @@ SPIRA_RESOLVE_SH watchtower/src/process.rs
 SPIRA_ROSTER_WARN_STAMP sentinel/src/cfg.rs
 SPIRA_ROUND_BATCH_ID testenv/src/settings.rs
 SPIRA_ROUND_MEMBERS testenv/src/settings.rs
-SPIRA_ROUND_VM_ACQUIRE_DEADLINE cert-sweep/src/main.rs
 SPIRA_ROUND_VM_ACQUIRE_DEADLINE round-vm/src/config.rs
-SPIRA_ROUND_VM_ACQUIRE_DEADLINE spira-runtime/src/tasks/d/cert_full.rs
 SPIRA_ROUND_VM_ATTR_LINGER round-vm/src/config.rs
 SPIRA_ROUND_VM_BOOT_POLL round-vm/src/config.rs
 SPIRA_ROUND_VM_BOOT_TRIES round-vm/src/config.rs

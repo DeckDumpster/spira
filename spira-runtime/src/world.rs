@@ -1041,7 +1041,7 @@ impl World {
         snap.halt = read_halt(&self.run_dir);
         wt::mark_landed(&mut snap, &|repo, tip| {
             let root = wt::repo_root(&self.repo_map, repo).or_else(|_| wt::repo_root(&self.repo_map, &p.release_repo))?;
-            wt::ancestor_in(&root, tip, &crate::tasks::d::sweep::landing_ref(&root))
+            wt::ancestor_in(&root, tip, &crate::tasks::e::watch_transitions::landing_ref(&root))
         });
         wt::mark_gated(
             &mut snap,

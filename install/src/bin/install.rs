@@ -242,7 +242,8 @@ fn spira_env_target(root: &Path) -> String {
 
 /// Builds the pinned tool environment (`flake.nix` at the release root) into
 /// `~/.local/lib/spira-env`; every unit's PATH and `dolt-beads.service`'s ExecStart resolve
-/// dolt and bd from it. Idempotent: an unchanged lock rebuilds to the same store path.
+/// dolt and bd from it. Idempotent: an unchanged lock rebuilds to the same store path. Once the
+/// previous env is rooted it starts a garbage collection, which the install does not wait for.
 fn build_spira_env(dry: bool, home: &str, release_root: Option<&Path>) -> Result<(), String> {
     let Some(root) = release_root.filter(|r| r.join("flake.nix").is_file() && r.join("flake.lock").is_file()) else {
         info("skipping spira-env: no flake.nix/flake.lock in this release");
@@ -252,28 +253,82 @@ fn build_spira_env(dry: bool, home: &str, release_root: Option<&Path>) -> Result
         info("skipping spira-env: nix is not installed (doctor reports tools resolved outside it)");
         return Ok(());
     }
+    let gc = match (spira_config::process::cfg("SPIRA_NIX_PROFILE_BIN"), spira_config::process::cfg("SPIRA_RUN")) {
+        (Ok(profile_bin), Ok(run_dir)) => Some(GcPlan { profile_bin: PathBuf::from(profile_bin), log: Path::new(&run_dir).join("nix-gc.log"), key: root_key(root) }),
+        (a, b) => {
+            warn(&format!("nix garbage will not be collected by this install: {}", a.err().or(b.err()).unwrap_or_default()));
+            None
+        }
+    };
+    let backend = runtime::units::from_env(std::sync::Arc::new(runtime::ports::WallClock));
+    let units = match &backend {
+        Ok(b) => Some(b.units()),
+        Err(e) => {
+            warn(&format!("nix garbage will not be collected by this install: {e}"));
+            None
+        }
+    };
+    build_spira_env_with(dry, home, root, &run_ok, units.as_deref(), gc.as_ref())
+}
+
+/// What the collection unit needs besides the env: where `nix-collect-garbage` may live, where its
+/// output goes, and the key that makes one install start one unit.
+struct GcPlan {
+    profile_bin: PathBuf,
+    log: PathBuf,
+    key: String,
+}
+
+fn root_key(root: &Path) -> String {
+    std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+fn build_spira_env_with(dry: bool, home: &str, root: &Path, run: &dyn Fn(&str, &[&str]) -> Result<(), String>, units: Option<&dyn runtime::units::Units>, gc: Option<&GcPlan>) -> Result<(), String> {
     let out = Path::new(home).join(spira_config::SPIRA_ENV_REL);
     let target = spira_env_target(root);
     if dry {
         would(&format!("run: nix build {target} -o {}", out.display()));
+        would("start nix-collect-garbage as a background unit once the previous spira-env is rooted");
         return Ok(());
     }
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
     let before = std::fs::canonicalize(&out).ok();
-    run_ok("nix", &["--extra-experimental-features", "nix-command flakes", "build", &target, "-o", &out.display().to_string()])
+    run("nix", &["--extra-experimental-features", "nix-command flakes", "build", &target, "-o", &out.display().to_string()])
         .map_err(|e| format!("cannot build spira-env (is nix installed?): {e}"))?;
     if let (Some(old), Ok(new)) = (before, std::fs::canonicalize(&out)) {
         if old != new {
             let prev = Path::new(home).join(spira_config::SPIRA_ENV_PREV_REL);
-            run_ok("nix-store", &["--add-root", &prev.display().to_string(), "--indirect", "--realise", &old.display().to_string()])
+            run("nix-store", &["--add-root", &prev.display().to_string(), "--indirect", "--realise", &old.display().to_string()])
                 .map_err(|e| format!("cannot root the previous spira-env {}: {e}", old.display()))?;
             info(&format!("kept previous spira-env {} as a GC root at {}", old.display(), prev.display()));
         }
     }
     info(&format!("built spira-env at {}", out.display()));
+    if let (Some(units), Some(gc)) = (units, gc) {
+        collect_nix_garbage(units, gc, &out);
+    }
     Ok(())
+}
+
+/// Starts `nix-collect-garbage` as a background unit and returns at once. Without `-d` it removes
+/// only store paths no GC root reaches, so the current env, the rooted previous env and every
+/// path a running process holds survive. A failure to start costs only a warning.
+fn collect_nix_garbage(units: &dyn runtime::units::Units, gc: &GcPlan, env: &Path) {
+    use runtime::units::{UnitProps, UnitSpec};
+    use std::os::unix::fs::PermissionsExt;
+    let executable = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
+    let Some(bin) = [gc.profile_bin.clone(), env.join("bin")].into_iter().map(|d| d.join("nix-collect-garbage")).find(|p| executable(p)) else {
+        warn("nix garbage will not be collected: nix-collect-garbage was found neither in the profile nor in the spira-env");
+        return;
+    };
+    let spec = UnitSpec { task: "nix-gc".into(), key: gc.key.clone(), argv: vec![bin.display().to_string()], env: vec![], cwd: None };
+    let props = UnitProps { cpu_quota_pct: Some(20), nice: Some(10), io_class: Some("idle".into()), runtime_max_ms: Some(1_800_000), output_append: Some(gc.log.clone()), ..UnitProps::default() };
+    match units.start_with(&spec, &props) {
+        Ok(h) => info(&format!("started nix garbage collection as {}", h.name)),
+        Err(e) => warn(&format!("nix garbage collection did not start: {e}")),
+    }
 }
 
 fn bd_config_path() -> Option<PathBuf> {
@@ -636,6 +691,9 @@ fn skip(s: &str) {
 }
 fn would(s: &str) {
     println!("  would: {s}");
+}
+fn warn(s: &str) {
+    eprintln!("  WARN: {s}");
 }
 
 /// Run a bare-name tool, inheriting stdio, returning its exit code (127 on a spawn failure).
@@ -2177,5 +2235,127 @@ mod dolt_metrics_tests {
         let path = td.path().join("config_global.json");
         std::fs::write(&path, "not json").unwrap();
         assert!(set_dolt_metrics_disabled(&path).is_err());
+    }
+}
+
+#[cfg(test)]
+mod nix_gc_tests {
+    use super::*;
+    use runtime::units::{ScriptedUnits, Units};
+    use std::cell::RefCell;
+    use std::sync::Arc;
+
+    struct Fixture {
+        td: testkit::TempDir,
+        root: PathBuf,
+        units: Arc<ScriptedUnits>,
+        gc: GcPlan,
+    }
+
+    fn fixture() -> Fixture {
+        let td = testkit::TempDir::new("nix-gc");
+        let root = td.path().join("spira-rel");
+        std::fs::create_dir_all(&root).unwrap();
+        let profile = td.path().join("profile/bin");
+        std::fs::create_dir_all(&profile).unwrap();
+        let bin = profile.join("nix-collect-garbage");
+        testkit::write_exe(&bin, "#!/bin/sh\n");
+        let units = Arc::new(ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0))));
+        units.script("nix-gc", 1_000, runtime::units::Exit::Code(0));
+        let gc = GcPlan { profile_bin: profile, log: td.path().join("run/nix-gc.log"), key: "rel1".into() };
+        Fixture { td, root, units, gc }
+    }
+
+    /// A `nix build` that repoints the env link at `store/<n>`, and a `nix-store` that records its call.
+    fn runner<'a>(f: &'a Fixture, next: &'a str, calls: &'a RefCell<Vec<String>>, root_fails: bool) -> impl Fn(&str, &[&str]) -> Result<(), String> + 'a {
+        move |prog, args| {
+            calls.borrow_mut().push(prog.to_string());
+            if prog == "nix" {
+                let out = args[args.iter().position(|a| *a == "-o").unwrap() + 1];
+                let dest = f.td.path().join("store").join(next);
+                std::fs::create_dir_all(dest.join("bin")).unwrap();
+                let _ = std::fs::remove_file(out);
+                std::os::unix::fs::symlink(&dest, out).unwrap();
+                return Ok(());
+            }
+            if root_fails { Err("no root".into()) } else { Ok(()) }
+        }
+    }
+
+    fn home_with_env(f: &Fixture) -> String {
+        let home = f.td.path().join("home");
+        let out = home.join(spira_config::SPIRA_ENV_REL);
+        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        let old = f.td.path().join("store/old");
+        std::fs::create_dir_all(old.join("bin")).unwrap();
+        std::os::unix::fs::symlink(&old, &out).unwrap();
+        home.display().to_string()
+    }
+
+    #[test]
+    fn a_switched_env_link_is_rooted_then_collected_by_one_background_unit_under_the_idle_limits() {
+        let f = fixture();
+        let home = home_with_env(&f);
+        let calls = RefCell::new(vec![]);
+        build_spira_env_with(false, &home, &f.root, &runner(&f, "new", &calls, false), Some(&*f.units as &dyn Units), Some(&f.gc)).unwrap();
+        assert_eq!(*calls.borrow(), ["nix", "nix-store"]);
+        let started = f.units.calls();
+        assert_eq!(started.len(), 1, "{started:?}");
+        let name = runtime::units::UnitHandle::of("nix-gc", "rel1").unwrap().name;
+        assert!(started[0].contains(&name), "{started:?}");
+        let props = f.units.props(&name);
+        assert_eq!((props.cpu_quota_pct, props.nice, props.io_class.as_deref(), props.runtime_max_ms), (Some(20), Some(10), Some("idle"), Some(1_800_000)));
+        assert_eq!(props.output_append, Some(f.gc.log.clone()));
+    }
+
+    #[test]
+    fn an_unchanged_env_link_still_collects() {
+        let f = fixture();
+        let home = home_with_env(&f);
+        let calls = RefCell::new(vec![]);
+        build_spira_env_with(false, &home, &f.root, &runner(&f, "old", &calls, false), Some(&*f.units as &dyn Units), Some(&f.gc)).unwrap();
+        assert_eq!(*calls.borrow(), ["nix"]);
+        assert_eq!(f.units.calls().len(), 1);
+    }
+
+    #[test]
+    fn a_dry_run_starts_nothing() {
+        let f = fixture();
+        let home = home_with_env(&f);
+        let calls = RefCell::new(vec![]);
+        build_spira_env_with(true, &home, &f.root, &runner(&f, "new", &calls, false), Some(&*f.units as &dyn Units), Some(&f.gc)).unwrap();
+        assert!(calls.borrow().is_empty());
+        assert!(f.units.calls().is_empty());
+    }
+
+    #[test]
+    fn a_failed_previous_env_root_returns_the_error_and_starts_nothing() {
+        let f = fixture();
+        let home = home_with_env(&f);
+        let calls = RefCell::new(vec![]);
+        let err = build_spira_env_with(false, &home, &f.root, &runner(&f, "new", &calls, true), Some(&*f.units as &dyn Units), Some(&f.gc)).unwrap_err();
+        assert!(err.contains("cannot root the previous spira-env"), "{err}");
+        assert!(f.units.calls().is_empty());
+    }
+
+    #[test]
+    fn a_unit_the_manager_refuses_leaves_the_install_succeeding() {
+        let f = fixture();
+        let home = home_with_env(&f);
+        let calls = RefCell::new(vec![]);
+        let unscripted = ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0)));
+        build_spira_env_with(false, &home, &f.root, &runner(&f, "new", &calls, false), Some(&unscripted as &dyn Units), Some(&f.gc)).unwrap();
+        assert!(unscripted.calls().is_empty());
+    }
+
+    #[test]
+    fn a_missing_binary_starts_no_unit_and_leaves_the_install_succeeding() {
+        let f = fixture();
+        let home = home_with_env(&f);
+        let calls = RefCell::new(vec![]);
+        let mut gc = GcPlan { profile_bin: f.gc.profile_bin.clone(), log: f.gc.log.clone(), key: f.gc.key.clone() };
+        gc.profile_bin = f.td.path().join("nowhere");
+        build_spira_env_with(false, &home, &f.root, &runner(&f, "new", &calls, false), Some(&*f.units as &dyn Units), Some(&gc)).unwrap();
+        assert!(f.units.calls().is_empty(), "no binary, no unit");
     }
 }

@@ -1,42 +1,10 @@
-//! Lossless build-cache reclamation. Everything removed here is rebuildable.
+//! Lossless reclamation of idle tmp directories and the shared compilation cache. Everything removed here is rebuildable.
 
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 const TMP_GRACE_SECS: u64 = 3600;
-
-pub fn wild(pat: &str, text: &str) -> bool {
-    match pat.split_once('*') {
-        None => pat == text,
-        Some((head, rest)) => {
-            let Some(tail) = text.strip_prefix(head) else { return false };
-            (0..=tail.len()).filter(|i| tail.is_char_boundary(*i)).any(|i| wild(rest, &tail[i..]))
-        }
-    }
-}
-
-pub fn glob(pattern: &str) -> Vec<PathBuf> {
-    let mut cur = vec![PathBuf::from(if pattern.starts_with('/') { "/" } else { "." })];
-    for comp in pattern.split('/').filter(|c| !c.is_empty()) {
-        let mut next = Vec::new();
-        for base in &cur {
-            if !comp.contains('*') {
-                let p = base.join(comp);
-                if fs::symlink_metadata(&p).is_ok() {
-                    next.push(p);
-                }
-                continue;
-            }
-            let Ok(rd) = fs::read_dir(base) else { continue };
-            let mut names: Vec<_> = rd.flatten().map(|e| e.file_name()).collect();
-            names.sort();
-            next.extend(names.into_iter().filter(|n| wild(comp, &n.to_string_lossy())).map(|n| base.join(n)));
-        }
-        cur = next;
-    }
-    cur
-}
 
 pub struct Usage {
     pub bytes: u64,
@@ -57,13 +25,6 @@ pub fn usage(p: &Path) -> Usage {
         }
     }
     u
-}
-
-pub fn protected(c: &Path) -> &Path {
-    match (c.file_name().and_then(|n| n.to_str()), c.parent()) {
-        (Some("target"), Some(parent)) => parent,
-        _ => c,
-    }
 }
 
 /// Paths a live process stands in: cwd, open files, and the CARGO_TARGET_DIR it was handed.
@@ -103,29 +64,19 @@ pub struct Candidate {
     pub verdict: Verdict,
 }
 
-pub fn judge(c: &Path, now: u64, idle_secs: u64, held: &[PathBuf], lease_dir: Option<&Path>) -> Candidate {
+pub fn judge(c: &Path, now: u64, idle_secs: u64, held: &[PathBuf]) -> Candidate {
     let u = usage(c);
     let age = now.saturating_sub(u.newest);
-    let prot = protected(c);
     let verdict = if fs::symlink_metadata(c).map(|m| m.file_type().is_symlink()).unwrap_or(true) {
         Verdict::Skip("symlink".into())
-    } else if held.iter().any(|h| h.starts_with(prot)) {
+    } else if held.iter().any(|h| h.starts_with(c)) {
         Verdict::Skip("held by a live process".into())
-    } else if lease_dir.zip(prot.file_name()).is_some_and(|(d, n)| d.join(format!("{}.lease", n.to_string_lossy())).exists()) {
-        Verdict::Skip("leased".into())
     } else if age < idle_secs {
         Verdict::Skip(format!("touched {age}s ago"))
     } else {
         Verdict::Reclaim
     };
     Candidate { path: c.to_path_buf(), bytes: u.bytes, age, verdict }
-}
-
-/// Reclaimable candidates, oldest first.
-pub fn plan(patterns: &[String], now: u64, idle_secs: u64, held: &[PathBuf], lease_dir: Option<&Path>) -> Vec<Candidate> {
-    let mut v: Vec<Candidate> = patterns.iter().flat_map(|p| glob(p)).filter(|p| p.is_dir()).map(|p| judge(&p, now, idle_secs, held, lease_dir)).collect();
-    v.sort_by_key(|c| std::cmp::Reverse(c.age));
-    v
 }
 
 /// The uid this process runs as: the owner of its own `/proc` entry.
@@ -163,7 +114,7 @@ pub fn tmp_plan(root: &Path, uid: u32, now: u64, idle_secs: u64, held: &[PathBuf
             (md.uid() == uid && (md.is_dir() || md.file_type().is_symlink())).then(|| e.path())
         })
         .map(|p| {
-            let mut c = judge(&p, now, idle_secs, held, None);
+            let mut c = judge(&p, now, idle_secs, held);
             let unjudged_by_age = matches!(&c.verdict, Verdict::Reclaim) || matches!(&c.verdict, Verdict::Skip(w) if w.starts_with("touched"));
             if unjudged_by_age && holds_socket_or_fifo(&p) {
                 c.verdict = Verdict::Skip("holds a socket or fifo".into());
@@ -200,7 +151,7 @@ pub fn cache_files(root: &Path, now: u64) -> Vec<(u64, u64, PathBuf)> {
 }
 
 /// The files to remove, oldest first, until the total of `files` (oldest first) is at or under
-/// `cap_bytes`. Pure: `trim_cache` and the scheduler's `sweep.reclaim` both choose with it.
+/// `cap_bytes`. Pure.
 pub fn trim_selection<P: Clone>(files: &[(u64, u64, P)], cap_bytes: u64) -> Vec<P> {
     let mut total: u64 = files.iter().map(|f| f.1).sum();
     let mut out = vec![];
@@ -212,133 +163,6 @@ pub fn trim_selection<P: Clone>(files: &[(u64, u64, P)], cap_bytes: u64) -> Vec<
         out.push(p.clone());
     }
     out
-}
-
-pub fn trim_cache(root: &Path, cap_bytes: u64, now: u64, dry: bool) -> (u64, u64) {
-    let files = cache_files(root, now);
-    let mut total: u64 = files.iter().map(|f| f.1).sum();
-    let (mut n, mut freed) = (0, 0);
-    for (_, sz, p) in files {
-        if total <= cap_bytes {
-            break;
-        }
-        if dry || fs::remove_file(&p).is_ok() {
-            total -= sz;
-            freed += sz;
-            n += 1;
-        }
-    }
-    (n, freed)
-}
-
-/// The only podman arguments a prune may carry: lossless, never `-a` or `--volumes`.
-pub const PODMAN_PRUNE_ARGS: [&str; 3] = ["system", "prune", "-f"];
-
-/// The directory whose filesystem's free space decides a pass: the first existing ancestor of
-/// the first pattern's fixed prefix.
-pub fn free_probe(patterns: &[String]) -> PathBuf {
-    let probe = patterns.iter().find_map(|p| p.split('*').next().map(PathBuf::from)).unwrap_or_default();
-    probe.ancestors().find(|a| a.exists()).unwrap_or(Path::new("/")).to_path_buf()
-}
-
-/// The first `require` pattern that matches nothing: the failed positive control.
-pub fn unmatched_require(require: &[String]) -> Option<&String> {
-    require.iter().find(|r| glob(r).is_empty())
-}
-
-pub struct Config {
-    pub patterns: Vec<String>,
-    pub require: Vec<String>,
-    pub lease_dir: Option<PathBuf>,
-    pub idle_secs: u64,
-    pub min_free_mib: u64,
-    pub target_free_mib: u64,
-    pub cache_dir: Option<PathBuf>,
-    pub cache_cap_bytes: u64,
-    pub podman: Option<PathBuf>,
-    pub podman_dir: Option<PathBuf>,
-    pub podman_cap_bytes: u64,
-    pub tmp_root: Option<PathBuf>,
-    pub tmp_idle_secs: u64,
-    pub dry: bool,
-}
-
-/// Lossless only: `system prune -f` without `-a` or `--volumes` removes dangling images, stopped containers and build cache.
-fn prune_podman(bin: &Path, why: &str, dry: bool, say: &mut dyn FnMut(String)) {
-    if dry {
-        say(format!("podman: {why}: would run system prune -f (dry)"));
-        return;
-    }
-    // batch-job: a prune of tens of GB of images runs as long as its work, under the unit's CPUQuota
-    match std::process::Command::new(bin).args(PODMAN_PRUNE_ARGS).output() {
-        Ok(o) if o.status.success() => {
-            let out = String::from_utf8_lossy(&o.stdout);
-            let line = out.lines().rev().find(|l| l.contains("reclaimed")).unwrap_or("reclaimed size not reported");
-            say(format!("podman: {why}: system prune -f: {}", line.trim()));
-        }
-        Ok(o) => say(format!("podman: system prune -f failed ({}): {}", o.status, String::from_utf8_lossy(&o.stderr).trim())),
-        Err(e) => say(format!("podman: cannot run {}: {e}", bin.display())),
-    }
-}
-
-/// Err is the failed positive control: nothing has been removed.
-pub fn run(cfg: &Config, now: u64, held: &[PathBuf], free_mib: &dyn Fn() -> Option<u64>, say: &mut dyn FnMut(String)) -> Result<u64, String> {
-    let mut freed = 0u64;
-    if let Some(root) = &cfg.tmp_root {
-        for c in tmp_plan(root, own_uid(), now, cfg.tmp_idle_secs, held) {
-            if let Verdict::Skip(why) = &c.verdict {
-                say(format!("kept {} ({why})", c.path.display()));
-            } else if cfg.dry || fs::remove_dir_all(&c.path).is_ok() {
-                freed += c.bytes;
-                say(format!("reclaimed {} {} MiB age {}s{}", c.path.display(), c.bytes >> 20, c.age, if cfg.dry { " (dry)" } else { "" }));
-            } else {
-                say(format!("failed to remove {}", c.path.display()));
-            }
-        }
-    }
-    if let Some(r) = unmatched_require(&cfg.require) {
-        return Err(format!("positive control failed: {r} matches nothing, so an empty sweep proves nothing"));
-    }
-    let free = free_mib().ok_or("cannot read free space")?;
-    if free >= cfg.min_free_mib {
-        say(format!("free {free} MiB >= trigger {} MiB: no target directory is touched", cfg.min_free_mib));
-    } else {
-        if let Some(bin) = &cfg.podman {
-            prune_podman(bin, "root under the floor", cfg.dry, say);
-        }
-        let cands = plan(&cfg.patterns, now, cfg.idle_secs, held, cfg.lease_dir.as_deref());
-        say(format!("free {free} MiB < trigger {} MiB: {} candidate(s)", cfg.min_free_mib, cands.len()));
-        for c in cands {
-            if let Verdict::Skip(why) = &c.verdict {
-                say(format!("kept {} ({why})", c.path.display()));
-                continue;
-            }
-            if free_mib().is_some_and(|f| f >= cfg.target_free_mib) {
-                say(format!("kept {} (target free space reached)", c.path.display()));
-                continue;
-            }
-            if cfg.dry || fs::remove_dir_all(&c.path).is_ok() {
-                freed += c.bytes;
-                say(format!("reclaimed {} {} MiB age {}s{}", c.path.display(), c.bytes >> 20, c.age, if cfg.dry { " (dry)" } else { "" }));
-            } else {
-                say(format!("failed to remove {}", c.path.display()));
-            }
-        }
-    }
-    if let (Some(bin), Some(dir)) = (&cfg.podman, &cfg.podman_dir) {
-        if free >= cfg.min_free_mib {
-            let size = usage(dir).bytes;
-            if size > cfg.podman_cap_bytes {
-                prune_podman(bin, &format!("storage {} MiB over cap {} MiB", size >> 20, cfg.podman_cap_bytes >> 20), cfg.dry, say);
-            }
-        }
-    }
-    if let Some(dir) = &cfg.cache_dir {
-        let (n, b) = trim_cache(dir, cfg.cache_cap_bytes, now, cfg.dry);
-        freed += b;
-        say(format!("cache {}: trimmed {n} file(s), {} MiB, cap {} MiB", dir.display(), b >> 20, cfg.cache_cap_bytes >> 20));
-    }
-    Ok(freed)
 }
 
 #[cfg(test)]

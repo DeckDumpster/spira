@@ -1613,7 +1613,7 @@ fn green(w: &World, c: &Ctx, b: &Batch, base: &str, out: &str) -> i32 {
     let base_branch = ref_branch(base).to_string();
     let current = w.git.rev_parse(b.path, base);
     if current.as_deref() == Some(b.base_sha.as_str()) {
-        return fast_forward(w, c, b, base, &remote, &base_branch, out);
+        return fast_forward(w, c, b, base, &remote, &base_branch);
     }
     base_moved(w, c, b, &remote, current)
 }
@@ -1626,7 +1626,6 @@ fn fast_forward(
     base: &str,
     remote: &str,
     base_branch: &str,
-    out: &str,
 ) -> i32 {
     let (name, pr) = (b.name, &b.pr);
     if !w
@@ -1651,9 +1650,6 @@ fn fast_forward(
     }
     for m in &b.members {
         land_member(w, c, b.path, m, &b.head);
-    }
-    for suite in tagged(out, "flaky: ") {
-        w.scripts.observe_flake(suite.trim(), &b.head);
     }
     drop_record(w, c, b);
     if !b.branch.is_empty() {

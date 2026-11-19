@@ -324,8 +324,6 @@ pub trait Scripts {
         members: &str,
         evidence: &str,
     ) -> RunOut;
-    /// `testenv suites observe-flake <suite> <sha>`, best-effort.
-    fn observe_flake(&self, suite: &str, sha: &str);
     /// `mail send operator --from "Spira Queue <queue@spira>" --subject S`, body on stdin.
     fn mail_operator(&self, subject: &str, body: &str);
     fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool) -> i32;

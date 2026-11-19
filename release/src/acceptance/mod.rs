@@ -484,7 +484,7 @@ pub fn land_modes_missing(modes: &[String]) -> Vec<&'static str> {
 
 /// Units installed only while `SPIRA_REPO` is a git checkout. A deploy re-renders under the
 /// release directory, which is not one, so an upgrade and a rollback never keep these.
-const GIT_CHECKOUT_UNITS: [&str; 2] = ["spira-cert-sweep-", "spira-round-template-"];
+const GIT_CHECKOUT_UNITS: [&str; 1] = ["spira-round-template-"];
 
 /// One row of `systemctl list-unit-files --output=json`.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -19,7 +19,6 @@ pub mod roundvm_drain;
 pub mod sweep_archive;
 pub mod sweep_escape_census;
 pub mod sweep_export_beads;
-pub mod sweep_nix_gc;
 pub mod sweep_reclaim;
 pub mod sweep_tsd;
 
@@ -33,7 +32,6 @@ use roundvm_drain::RoundvmDrain;
 use sweep_archive::SweepArchive;
 use sweep_escape_census::SweepEscapeCensus;
 use sweep_export_beads::SweepExportBeads;
-use sweep_nix_gc::SweepNixGc;
 use sweep_reclaim::SweepReclaim;
 use sweep_tsd::SweepTsd;
 
@@ -111,9 +109,7 @@ pub static TASKS: &[Task] = &[
         effects: sweep_reclaim::EFFECTS,
         runners: &[
             (sweep_reclaim::OBSERVE, |e, _, _| sweep_reclaim::observe(&sweep_reclaim::Pinned::read(&pinned)?, &e.world.proc_dir, e.world.repos())),
-            (sweep_reclaim::REMOVE_TARGET, |e, _, s| sweep_reclaim::remove_target(&sweep_reclaim::Pinned::read(&pinned)?, &e.world.proc_dir, &s.input)),
             (sweep_reclaim::REMOVE_TMP, |e, _, s| sweep_reclaim::remove_tmp(&sweep_reclaim::Pinned::read(&pinned)?, &e.world.proc_dir, &s.input)),
-            (sweep_reclaim::PODMAN_PRUNE, |_, _, s| sweep_reclaim::podman_prune(&sweep_reclaim::Pinned::read(&pinned)?, &runtime::ports::SysProc, &s.input)),
             (sweep_reclaim::TRIM_CACHE, |_, _, s| sweep_reclaim::trim_cache(&sweep_reclaim::Pinned::read(&pinned)?, &s.input)),
             (sweep_reclaim::MAINTAIN, |_, _, s| sweep_reclaim::maintain(&runtime::ports::SysProc, &s.input)),
         ],
@@ -147,20 +143,6 @@ pub static TASKS: &[Task] = &[
         ],
         keys: &[sweep_archive::KEYS],
         build: build::<SweepArchive>,
-    },
-    Task {
-        name: sweep_nix_gc::NAME,
-        plane: runtime::Plane::Work,
-        signal: &[],
-        boot: SweepNixGc::boot,
-        cadence_ms: cadence_ms::<SweepNixGc>,
-        effects: sweep_nix_gc::EFFECTS,
-        runners: &[
-            (sweep_nix_gc::OBSERVE, |_, _, _| serde_json::to_string(&sweep_nix_gc::observe(&spira_config::process::cfg("SPIRA_NIX_ENV_LINK")?, &spira_config::process::cfg("SPIRA_NIX_PROFILE_BIN")?)).map_err(|e| e.to_string())),
-            (sweep_nix_gc::COLLECT, |e, _, s| sweep_nix_gc::collect(e.units.as_deref(), &spira_config::process::cfg("SPIRA_NIX_ENV_LINK")?, &spira_config::process::cfg("SPIRA_NIX_PROFILE_BIN")?, &s.input)),
-        ],
-        keys: &[sweep_nix_gc::KEYS],
-        build: build::<SweepNixGc>,
     },
     Task {
         name: sweep_export_beads::NAME,

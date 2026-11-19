@@ -3,5 +3,5 @@
 # One test name per line. A run whose --tests names any of these runs in the container.
 
 # Pushes its invocation metrics to an OTLP endpoint, which the sandbox's empty network has no route to
-# (cert-sweep/tests/telemetry.rs, reconciler/tests/otel.rs; found 2026-11-02 by the sp-2ndkkd port).
+# (reconciler/tests/otel.rs; found 2026-11-02 by the sp-2ndkkd port).
 a_run_pushes_its_invocation_duration_and_outcome

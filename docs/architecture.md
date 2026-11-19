@@ -153,7 +153,7 @@ Several programs exist only to notice the loop failing and turn that into work o
 silence: `watchtower` (hands `ops` the pipeline's vital signs), `czar-pass` (30 s queue-stall
 detection with deterministic remedies), `reconciler` (declared structural invariants: remedy or
 escalate), `heimdall` (escalates a stalled loop and does nothing else), `strand` (stranded-work
-detector), `cert-sweep` (re-certifies the landing ref's tip on a schedule), `refusal-watch`,
+detector), `refusal-watch`,
 and `mend-watch`. The control store itself refuses an event that does not continue its key's
 previous one, so no scan looks for a gap after the fact. `cockpit-collect` and `cockpit/`
 present the same stores to the operator.

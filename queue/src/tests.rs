@@ -599,11 +599,6 @@ impl Scripts for FScripts {
         ));
         self.judgement.borrow().clone()
     }
-    fn observe_flake(&self, suite: &str, sha: &str) {
-        self.calls
-            .borrow_mut()
-            .push(format!("observe-flake {suite} {sha}"));
-    }
     fn mail_operator(&self, subject: &str, body: &str) {
         self.calls
             .borrow_mut()

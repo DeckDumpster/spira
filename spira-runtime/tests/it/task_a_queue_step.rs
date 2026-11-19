@@ -43,6 +43,11 @@ fn effects(acts: &[Act]) -> Vec<&str> {
 }
 
 #[test]
+fn queue_step_declares_no_flake_effect() {
+    assert!(EFFECTS.iter().all(|e| !e.contains("flake")), "{EFFECTS:?}");
+}
+
+#[test]
 fn t3_every_row_of_the_state_table_is_taken() {
     for (from, on, to) in TABLE {
         assert_eq!(step(*from, *on), Ok(*to), "{from:?} × {on:?}");

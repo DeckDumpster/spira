@@ -68,7 +68,7 @@ impl Run<'_> {
     }
 
     /// `deploy.sh` re-renders units, so it needs the `SPIRA_HOME_REPO` the install had: without
-    /// it the cert-sweep and round-template units resolve out of the manifest and are pruned.
+    /// it the round-template units resolve out of the manifest and are pruned.
     fn deploy_sh(&self) -> Cmd {
         self.forge(self.tool("deploy.sh")).env("SPIRA_HOME_REPO", self.o.scratch_name())
     }
@@ -96,9 +96,8 @@ impl Run<'_> {
     /// install it is undoing. Without it, `owned.sh list` (which `uninstall.sh` asks what it
     /// owns) re-derives `repo_is_git_checkout` from scratch under bare `launcher_env()` —
     /// no home-repo override there, so it resolves a different answer than install saw — and
-    /// the cert-sweep units (optional on that flag, manifest.rs) installed under one answer
-    /// go unlisted, hence unremoved, under the other: `spira-cert-sweep-{full,sample}.{service,timer}`
-    /// left running after every `uninstall.sh --yes` in this harness (sp-dn2rl).
+    /// the round-template units (optional on that flag, manifest.rs) installed under one answer
+    /// go unlisted, hence unremoved, under the other.
     fn uninstall(&self) -> Cmd {
         self.tool("uninstall.sh").env("SPIRA_HOME_REPO", self.o.scratch_name()).arg("--yes")
     }

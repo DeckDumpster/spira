@@ -18,7 +18,6 @@ members = [
     "exec-census",
     "spira-runtime",
     "tsd",
-    "cert-sweep",
     "desired-state",
     "batcher",
     "batcher-cut",

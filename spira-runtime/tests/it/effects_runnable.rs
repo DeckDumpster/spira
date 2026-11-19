@@ -20,3 +20,13 @@ fn every_declared_effect_has_a_real_runner_and_a_sim_double() {
 fn no_task_named_sweep_repo_contract_is_registered() {
     assert!(!tasks::all().any(|t| t.name == "sweep.repo_contract"));
 }
+
+#[test]
+fn no_task_named_watch_warm_full_is_registered() {
+    assert!(!tasks::all().chain(tasks::pending()).any(|t| t.name == "watch.warm_full"));
+}
+
+#[test]
+fn no_task_named_sweep_nix_gc_is_registered() {
+    assert!(!tasks::all().chain(tasks::pending()).any(|t| t.name == "sweep.nix_gc"));
+}

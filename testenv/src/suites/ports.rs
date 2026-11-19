@@ -1,5 +1,5 @@
 //! Every effect `testenv suites` has outside its own state directory, as a trait
-//! (DESIGN-suites.md §5): the lib.sh seam, incident.sh, host-check.sh, the clock and the
+//! (DESIGN-suites.md §5): host-check.sh, the clock and the
 //! two output streams. `real.rs` implements them against the host; the unit tests implement them as
 //! fakes.
 
@@ -19,8 +19,6 @@ pub struct Settings {
     pub stale: u64,
     pub priority: u8,
     pub gate_list: PathBuf,
-    pub flake_at: u64,
-    pub flake_window: u64,
 }
 
 /// SPIRA_SUITES_PRIORITY's declared range (0..=4) — pure, so a unit test can drive it
@@ -44,8 +42,6 @@ impl Settings {
             stale: cfg_parse("SPIRA_SUITES_STALE")?,
             priority,
             gate_list,
-            flake_at: cfg_parse("SPIRA_FLAKE_QUARANTINE_AT")?,
-            flake_window: cfg_parse("SPIRA_FLAKE_WINDOW")?,
             root: root.to_path_buf(),
             suite_dir,
         })
@@ -59,40 +55,8 @@ impl Settings {
     }
 }
 
-/// What the lib.sh seam answers (DESIGN-suites.md §4, S1).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Conf {
-    pub home_repo: String,
-    /// `SPIRA_SCOPE_LABEL` when set (possibly empty); None when unset.
-    pub scope_label: Option<String>,
-    pub db: String,
-}
-
-/// The finding observe-flake files through incident.sh (DESIGN-suites.md §3.5).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FlakeFiling {
-    pub suite: String,
-    pub title: String,
-    pub priority: u8,
-    pub labels: String,
-    pub repo: String,
-    pub reference: String,
-    pub path: PathBuf,
-    pub db: String,
-    pub payload: String,
-}
-
 pub trait Clock {
     fn now(&self) -> u64;
-}
-
-pub trait LibSeam {
-    fn conf(&self) -> Result<Conf, String>;
-}
-
-pub trait Intake {
-    /// Run `incident.sh file <title> -`; Ok(its stdout) or Err(the diagnostic).
-    fn file(&self, f: &FlakeFiling) -> Result<String, String>;
 }
 
 pub trait HostCheck {
@@ -110,8 +74,6 @@ pub trait Emit {
 pub struct World<'a> {
     pub s: &'a Settings,
     pub clock: &'a dyn Clock,
-    pub lib: &'a dyn LibSeam,
-    pub intake: &'a dyn Intake,
     pub host: &'a dyn HostCheck,
     pub io: &'a dyn Emit,
 }

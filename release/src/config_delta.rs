@@ -751,4 +751,29 @@ mod retire_tests {
         let delta = Delta::parse(&spira_config::delta::delta_text(&t.path().join("spira")).unwrap().unwrap()).unwrap();
         assert_eq!(drop_removed_tasks(live, &default(&after), &delta.removed_tasks).unwrap(), "alpha=act");
     }
+
+    fn shipped() -> (String, Delta) {
+        let root = spira_config::resolve::checkout_root_for_process().unwrap();
+        let delta = load(&root).unwrap().expect("the checkout ships a config delta");
+        let reg = spira_config::registry::load(&root.join("spira/conf.d")).unwrap();
+        (reg["SPIRA_TASK_MODES"].default_expr().unwrap().to_string(), delta)
+    }
+
+    #[test]
+    fn the_shipped_delta_removes_the_retired_tasks() {
+        let (_, delta) = shipped();
+        for task in ["cert.full", "cert.sample", "watch.warm_full", "sweep.nix_gc"] {
+            assert!(delta.removed_tasks.iter().any(|t| t == task), "{task} in {:?}", delta.removed_tasks);
+        }
+    }
+
+    #[test]
+    fn the_host_cert_sweep_modes_are_dropped() {
+        let (default, delta) = shipped();
+        let live = format!("{default} cert.full=observe cert.sample=observe");
+        let kept = drop_removed_tasks(&live, &default, &delta.removed_tasks).unwrap();
+        let names: Vec<&str> = kept.split_whitespace().map(entry_name).collect();
+        assert!(!names.contains(&"cert.full") && !names.contains(&"cert.sample"), "{kept}");
+        assert!(drop_removed_tasks(&live, &default, &[]).is_err(), "control: without the delta the entries are refused");
+    }
 }

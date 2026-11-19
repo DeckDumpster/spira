@@ -3,7 +3,7 @@
 
 /// `(path or directory prefix ending in '/', crates whose tests read it)`.
 const READERS: &[(&str, &[&str])] = &[
-    ("systemd/", &["release", "spira-world", "cert-sweep"]),
+    ("systemd/", &["release", "spira-world"]),
     ("spira/conf.d/SPIRA_BD_TAG", &["spira-lc"]),
     ("spira/bd-pin.sh", &["spira-lc"]),
     ("spira/build-bd.sh", &["spira-lc"]),
@@ -49,7 +49,7 @@ mod tests {
     #[test]
     fn the_bd_pin_and_the_units_keep_their_readers() {
         assert_eq!(readers_of("spira/bd-pin.sh"), ["spira-lc"]);
-        assert_eq!(readers_of("systemd/a.service"), ["release", "spira-world", "cert-sweep"]);
+        assert_eq!(readers_of("systemd/a.service"), ["release", "spira-world"]);
         assert!(readers_of("spira/conf.d/SPIRA_BD_TAG").contains(&"spira-lc"));
     }
 }

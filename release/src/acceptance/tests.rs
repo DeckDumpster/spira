@@ -53,7 +53,7 @@ fn unit_set_is_sorted_spira_units_without_transient_ones() {
 
 #[test]
 fn unit_set_leaves_out_units_a_release_directory_render_never_keeps() {
-    let t = r#"[{"unit_file":"spira-cert-sweep-full-prod.timer","state":"enabled"},{"unit_file":"spira-round-template-prod.service","state":"static"},{"unit_file":"spira-a.service","state":"static"}]"#;
+    let t = r#"[{"unit_file":"spira-round-template-prod.service","state":"static"},{"unit_file":"spira-a.service","state":"static"}]"#;
     assert_eq!(unit_set(&files(t)), s(&["spira-a.service static"]));
 }
 

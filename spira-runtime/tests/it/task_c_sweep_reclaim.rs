@@ -4,13 +4,13 @@
 use spira_runtime::tasks::b::kit::{names, testing as t, Input};
 use spira_runtime::tasks::c::sweep_reclaim::{self as task, CacheFile, Candidate, Carry, Phase, Snapshot, SweepReclaim as H, Verdict};
 
-const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "3600"), (task::MIN_FREE_KEY, "70"), (task::TARGET_FREE_KEY, "100"), (task::PODMAN_CAP_KEY, "40"), (task::CACHE_CAP_KEY, "40"), ("SPIRA_RECLAIM_IDLE_DAYS", "2"), (task::TMP_ROOT_KEY, "tmp"), (task::TMP_IDLE_KEY, "6")];
+const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "3600"), (task::CACHE_CAP_KEY, "40"), (task::TMP_ROOT_KEY, "tmp"), (task::TMP_IDLE_KEY, "6")];
 const HOUR: u64 = 3_600_000;
 const GIB: u64 = 1 << 30;
 
-/// 90 GiB free, podman at 10 GiB, the cache at 1 GiB.
+/// The cache at 1 GiB under a 40 GiB cap, nothing to reap.
 fn idle() -> Snapshot {
-    Snapshot { repos: vec![], require_ok: vec![("r/worktree".into(), true)], free_mib: 90 * 1024, candidates: vec![], podman_bytes: 10 * GIB, cache: vec![CacheFile { mtime: 1, bytes: GIB, path: "r/sccache-dav/a".into() }], tmp: vec![] }
+    Snapshot { repos: vec![], cache: vec![CacheFile { mtime: 1, bytes: GIB, path: "r/sccache-dav/a".into() }], tmp: vec![] }
 }
 
 fn json(s: &Snapshot) -> String {
@@ -23,22 +23,19 @@ fn t1_registered_boots_and_arms_an_hourly_tick() {
 }
 
 #[test]
-fn t2_plenty_free_and_everything_under_its_cap_is_the_probe_alone() {
+fn t2_a_cache_under_its_cap_and_nothing_idle_is_the_probe_alone() {
     t::t2_silent::<H>(SET, &json(&idle()));
 }
 
 #[test]
-fn t3_a_pass_reclaims_or_refuses_and_a_tick_while_reclaiming_is_refused() {
+fn t3_a_pass_reclaims_and_a_tick_while_reclaiming_is_refused() {
     let h = t::handler::<H>(SET);
     let observing = Carry { phase: Phase::Observing, ..Carry::default() };
-    let low = Snapshot { free_mib: 60 * 1024, candidates: vec![Candidate { path: "r/worktree/a/target".into(), bytes: 50 * GIB, age: 9, verdict: Verdict::Reclaim }], ..idle() };
-    let (c, _) = task::decide(&h.cfg, &observing, &Input::Observed(low), HOUR).unwrap();
+    let tmp = Snapshot { tmp: vec![Candidate { path: "tmp/tmp.a".into(), bytes: GIB, age: 9, verdict: Verdict::Reclaim }], ..idle() };
+    let (c, _) = task::decide(&h.cfg, &observing, &Input::Observed(tmp), HOUR).unwrap();
     assert_eq!(c.phase, Phase::Reclaiming);
     let refused = task::decide(&h.cfg, &c, &Input::Fire, 2 * HOUR).unwrap_err();
     assert!(refused.contains("reclaiming"), "{refused}");
-    let (c, acts) = task::decide(&h.cfg, &observing, &Input::Observed(Snapshot { require_ok: vec![("r/worktree".into(), false)], ..idle() }), HOUR).unwrap();
-    assert_eq!((c.phase, acts.len()), (Phase::Refused, 0));
-    assert!(c.refused_cause.is_some_and(|w| w.contains("r/worktree")));
 }
 
 #[test]
@@ -48,15 +45,25 @@ fn t4_its_effects_are_runnable_and_the_module_spawns_nothing() {
 }
 
 #[test]
-fn t5_low_space_prunes_podman_then_the_oldest_targets_and_a_fat_podman_alone_prunes() {
+fn low_free_space_and_a_fat_podman_request_only_the_kept_cleanups() {
+    let world = r#"{"free_mib":1024,"candidates":[{"path":"r/worktree/a/target","bytes":53687091200,"age":9,"verdict":"reclaim"}],"podman_bytes":53687091200,"cache":[],"tmp":[{"path":"tmp/tmp.a","bytes":1,"age":9,"verdict":"reclaim"}]}"#;
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.to_string())).double(task::REMOVE_TMP, |_| Ok("reclaimed".into()));
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.run_until_idle().unwrap();
+    let asked: Vec<String> = r.requested().iter().map(|q| q.name.clone()).collect();
+    assert_eq!(asked, [task::OBSERVE, task::REMOVE_TMP], "{asked:?}");
+}
+
+#[test]
+fn a_cache_over_its_cap_is_trimmed_oldest_first() {
     let h = t::handler::<H>(SET);
     let observing = Carry { phase: Phase::Observing, ..Carry::default() };
-    let cand = |p: &str, gib: u64, v| Candidate { path: p.into(), bytes: gib * GIB, age: 9, verdict: v };
-    let low = Snapshot { free_mib: 60 * 1024, candidates: vec![cand("old", 30, Verdict::Reclaim), cand("held", 30, Verdict::Held), cand("newer", 30, Verdict::Reclaim), cand("newest", 30, Verdict::Reclaim)], ..idle() };
-    let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(low), HOUR).unwrap();
-    assert_eq!(names(&acts), [task::PODMAN_PRUNE, task::REMOVE_TARGET, task::REMOVE_TARGET], "reclaimed old, newer (dry); kept held; target 100 GiB reached");
-    let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(Snapshot { podman_bytes: 50 * GIB, ..idle() }), HOUR).unwrap();
-    assert_eq!(names(&acts), [task::PODMAN_PRUNE], "podman: system prune -f would run");
+    let file = |mtime, path: &str| CacheFile { mtime, bytes: 30 * GIB, path: path.into() };
+    let snap = Snapshot { cache: vec![file(1, "c/old"), file(2, "c/mid"), file(3, "c/new")], ..idle() };
+    let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(snap), HOUR).unwrap();
+    assert_eq!(names(&acts), [task::TRIM_CACHE]);
+    assert_eq!(acts[0].input, r#"["c/old","c/mid"]"#, "90 GiB over a 40 GiB cap drops the two oldest");
 }
 
 #[test]
@@ -74,9 +81,9 @@ use runtime::taskrig::TaskRig;
 use spira_runtime::tasks::a::kit;
 use spira_runtime::tasks::b::kit::FIRE;
 
-/// A pass refused because a positive control matched nothing.
-fn refused_by_a_failed_control() -> TaskRig {
-    let world = json(&Snapshot { require_ok: vec![("r/worktree".into(), false)], ..idle() });
+/// A pass that reaps one idle tmp directory.
+fn reclaiming_one_tmp_dir() -> TaskRig {
+    let world = json(&Snapshot { tmp: vec![Candidate { path: "tmp/tmp.a".into(), bytes: GIB, age: 9, verdict: Verdict::Reclaim }], ..idle() });
     let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone()));
     let (_, stream, kind) = H::boot();
     r.tick(stream, kind).unwrap();
@@ -85,15 +92,15 @@ fn refused_by_a_failed_control() -> TaskRig {
 
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
-    let rows = kit::assert_kept_as_rows(&refused_by_a_failed_control(), task::NAME);
-    for key in ["phase", "refused_cause", "pending"] {
+    let rows = kit::assert_kept_as_rows(&reclaiming_one_tmp_dir(), task::NAME);
+    for key in ["phase", "pending"] {
         assert!(rows.iter().any(|k| k == key), "{key} in {rows:?}");
     }
 }
 
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    kit::assert_boot_matches_an_unstopped_run(refused_by_a_failed_control, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+    kit::assert_boot_matches_an_unstopped_run(reclaiming_one_tmp_dir, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
 }
 
 fn git(dir: &std::path::Path, args: &[&str]) -> String {

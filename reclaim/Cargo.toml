@@ -2,24 +2,17 @@
 name = "reclaim"
 version = "0.1.0"
 edition = "2021"
-description = "reclaim — loses nothing: removes rebuildable build-target directories no live process or lease holds once the disk is short, and caps the shared compilation cache by size."
+description = "reclaim — loses nothing: judges idle top-level tmp directories no live process holds, and chooses the oldest compilation-cache files to trim to a size cap."
 
 [lib]
 name = "reclaim"
 path = "src/lib.rs"
 
-[[bin]]
-name = "reclaim"
-path = "src/main.rs"
-test = false
-
 [features]
-integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration", "system-paths/integration"]
+integration = ["testkit/integration", "system-paths/integration"]
 
 [dependencies]
 system-paths = { path = "../system-paths" }
-spira-config = { path = "../spira-config" }
-spira-otel = { path = "../spira-otel" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
