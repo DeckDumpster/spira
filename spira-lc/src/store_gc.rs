@@ -190,12 +190,12 @@ mod tests {
     #[test]
     fn the_noms_size_counts_every_file_under_nested_directories() {
         let d = testkit::TempDir::new("store-gc-noms");
-        let noms = d.path().join("beads/.dolt/noms");
+        let noms = d.path().join("store_a/.dolt/noms");
         std::fs::create_dir_all(noms.join("oldgen")).unwrap();
         std::fs::write(noms.join("a"), [0u8; 10]).unwrap();
         std::fs::write(noms.join("oldgen/b"), [0u8; 5]).unwrap();
         let live = Live { admin: Conn::unreachable(), data: d.path().to_path_buf() };
-        assert_eq!(live.noms_bytes("beads"), 15);
+        assert_eq!(live.noms_bytes("store_a"), 15);
         assert_eq!(live.noms_bytes("absent"), 0);
         assert!(live.free_bytes().unwrap() > 0);
         let gone = Live { admin: Conn::unreachable(), data: d.path().join("nowhere") };
