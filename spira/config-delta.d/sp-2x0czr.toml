@@ -1,2 +1,0 @@
-removed_tasks = ["cert.full", "cert.sample", "watch.warm_full", "sweep.nix_gc"]
-removed = ["spira.dwarf_warm_base", "spira.dwarf_warm_cap_mib", "spira.runtime_sweep_nix_gc_calendar", "spira.runtime_sweep_nix_gc_jitter_secs", "spira.nix_env_link", "spira.flake_quarantine_at", "spira.flake_window", "spira.reclaim_globs", "spira.reclaim_require", "spira.reclaim_lease_dir", "spira.reclaim_idle_days", "spira.reclaim_min_free_gib", "spira.reclaim_target_free_gib", "spira.reclaim_podman", "spira.reclaim_podman_dir", "spira.reclaim_podman_cap_gib"]
