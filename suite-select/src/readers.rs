@@ -7,6 +7,7 @@ const READERS: &[(&str, &[&str])] = &[
     ("spira/conf.d/SPIRA_BD_TAG", &["spira-lc"]),
     ("spira/bd-pin.sh", &["spira-lc"]),
     ("spira/build-bd.sh", &["spira-lc"]),
+    ("spira/runes/", &["spira-config", "dwarf"]),
     ("spira/conf.d/", CONFIG_READERS),
     ("spira/conf.toml.d/", CONFIG_READERS),
     ("spira/config-delta.toml", CONFIG_READERS),
@@ -36,6 +37,12 @@ pub fn readers_of(path: &str) -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shipped_rune_is_read_by_spira_config_and_dwarf() {
+        let r = readers_of("spira/runes/disabled/qa.rune");
+        assert!(r.contains(&"spira-config") && r.contains(&"dwarf"), "{r:?}");
+    }
 
     #[test]
     fn a_registry_key_and_a_delta_file_are_read_by_release_and_an_ordinary_source_file_by_none() {
