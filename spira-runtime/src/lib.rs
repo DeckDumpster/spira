@@ -125,6 +125,8 @@ pub struct Effects {
     /// The programs the reconciler launches and the bus it reads, when not the installed ones.
     pub seams: Option<reconciler::Seams>,
     pub bus: Option<String>,
+    /// The scheduler's status board, which the fleet check reads the sentinel's last pass from.
+    pub board: Option<Arc<runtime::engine::StatusBoard>>,
     pub enabled: OnceLock<String>,
     pub reconciling: AtomicBool,
     pub concierge_mail: Option<Arc<mail::env::Env>>,
@@ -194,6 +196,7 @@ impl Effects {
         let mut host = reconcile_host::RuntimeHost::new(self.world.clone(), self.forge.clone(), self.mail.clone(), r.home.clone().into(), pinned("SPIRA_RUNES")?, min_age, at, enabled, self.landrefs.clone());
         host.bus = self.bus.clone();
         let starting = host.starts_not_yet_live(&input.starting);
+        host.board = self.board.clone();
         let mut cfg = reconciler::Config::from_lookup(&pinned, match self.seams.clone() {
             Some(s) => s,
             None => reconciler::Seams::production()?,

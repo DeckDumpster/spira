@@ -80,13 +80,15 @@ pub struct RuntimeHost {
     pub landrefs: Arc<Landrefs>,
     /// The user manager's bus socket; `None` finds it from the environment.
     pub bus: Option<String>,
+    /// The scheduler's status board, where the sentinel's last pass is carried; `None` where no scheduler runs.
+    pub board: Option<Arc<runtime::engine::StatusBoard>>,
     units: OnceLock<Result<Units, String>>,
 }
 
 impl RuntimeHost {
     #[allow(clippy::too_many_arguments)]
     pub fn new(world: World, forge: Forge, mail: Option<Arc<mail::env::Env>>, home: PathBuf, runes: String, stranded_min_age: u64, now: u64, enabled: String, landrefs: Arc<Landrefs>) -> RuntimeHost {
-        RuntimeHost { world, forge, mail, home, runes, stranded_min_age, now, enabled, landrefs, bus: None, units: OnceLock::new() }
+        RuntimeHost { world, forge, mail, home, runes, stranded_min_age, now, enabled, landrefs, bus: None, board: None, units: OnceLock::new() }
     }
 
     fn units(&self) -> Result<&Units, String> {
@@ -281,6 +283,15 @@ fn not_yet_live(in_flight: &BTreeMap<String, String>, active: &BTreeMap<String, 
 }
 
 impl Host for RuntimeHost {
+    fn uncalled(&self) -> Option<Result<BTreeMap<String, String>, String>> {
+        let board = self.board.as_ref()?;
+        Some(match crate::status::sentinel_carry(board) {
+            Ok(carry) => carry.uncalled.ok_or_else(|| "no sentinel pass yet".to_string()),
+            Err(e) if e.to_string() == crate::status::NO_PASS => Err("no sentinel pass yet".into()),
+            Err(e) => Err(e.to_string()),
+        })
+    }
+
     fn unit_listing(&self) -> Result<(), String> {
         self.units().map(|_| ())
     }

@@ -159,3 +159,21 @@ fn scheduler_uncalled_refuses_before_the_first_pass_and_answers_the_carried_map(
     let got: serde_json::Value = serde_json::from_str(&lc_call(&path, &["scheduler", "uncalled"]).unwrap()).unwrap();
     assert_eq!(got, serde_json::json!({"skuld": "yielding — urgent bead(s) unclaimed: sp-x"}));
 }
+
+#[test]
+fn the_reconciler_host_reads_uncalled_from_the_carry_scheduler_uncalled_serves() {
+    use reconciler::Host;
+    let clock = VirtualClock::new(0);
+    let board = Arc::new(StatusBoard::default());
+    let body = r#"{"uncalled":{"mender":"yielding — urgent bead(s) unclaimed: sp-x"}}"#;
+    let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), vec![Registration::new("sentinel-call", Passed(body))], 1).unwrap().with_status_board(board.clone());
+    let mut host = spira_runtime::reconcile_host::RuntimeHost::new(Default::default(), Default::default(), None, std::path::PathBuf::new(), String::new(), 0, 0, String::new(), Default::default());
+    assert!(host.uncalled().is_none(), "a host with no board cannot tell");
+    host.board = Some(board);
+    assert_eq!(host.uncalled(), Some(Err("no sentinel pass yet".into())));
+    e.submit("t1", "t", EventKind::new("tick", "")).unwrap();
+    clock.advance_to(10);
+    e.run_until_idle().unwrap();
+    let want = std::collections::BTreeMap::from([("mender".to_string(), "yielding — urgent bead(s) unclaimed: sp-x".to_string())]);
+    assert_eq!(host.uncalled(), Some(Ok(want)));
+}
