@@ -186,7 +186,7 @@ before anything else, because each answers a question the numbers above cannot.
 ### Can this snapshot be believed?
 
   collector snapshot age              {snap_age_disp}
-  scheduler (spira-runtime)           {sp_sentinel_timer}   sentinel pass {sp_sentinel_age}s ago
+  sentinel-pass task                  {sentinel_armed} / last fired {sp_sentinel_age}s ago
 
 ## Your task
 
@@ -289,7 +289,7 @@ Run the scans named in the menu above if you have wall time remaining.
         suites_block = d.suites_block.trim_end(),
         guard_block = d.guard_block.trim_end(),
         snap_age_disp = d.snap_age_disp,
-        sp_sentinel_timer = d.env.g("SP_SENTINEL_TIMER"),
+        sentinel_armed = match &*d.env.g("SP_SENTINEL_TIMER") { "1" => "armed", "0" => "not armed", _ => "?" },
         sp_sentinel_age = d.env.g("SP_SENTINEL_AGE"),
     )
 }
@@ -313,8 +313,8 @@ mod tests {
     fn the_sweep_names_the_scheduler_not_a_sentinel_timer() {
         let out = render(&SweepData::fixture_nominal(1_700_000_000));
         assert!(!out.contains("sentinel timer"));
-        let line = out.lines().find(|l| l.contains("scheduler (spira-runtime)")).expect("scheduler line");
-        assert!(line.contains("sentinel pass") && !line.contains('{'), "{line}");
+        let line = out.lines().find(|l| l.contains("sentinel-pass task")).expect("sentinel-pass line");
+        assert!(line.contains("last fired") && !line.contains('{'), "{line}");
     }
 
     #[test]
