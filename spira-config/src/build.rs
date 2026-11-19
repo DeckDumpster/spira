@@ -221,6 +221,28 @@ impl ServerEffectors for SystemEffectors {
     }
 
     fn unit_active(&self) -> bool {
+        let active = || crate::bounded::bounded(Path::new("systemctl")).args(["--user", "is-active", "--quiet", SERVER_UNIT]).output().map(|o| o.status.success()).unwrap_or(false);
+        // A server that cannot bind its port fails moments after the start: active must hold across polls.
+        for _ in 0..3 {
+            if !active() {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200)); // waits-on: the unit's state; cap 3 polls
+        }
+        true
+    }
+
+    fn stop_server(&self, sccache_bin: &Path);
+}
+
+struct SystemEffectors;
+
+impl ServerEffectors for SystemEffectors {
+    fn start_unit(&self, args: &[String]) {
+        let _ = crate::bounded::bounded(Path::new("systemd-run")).args(args).output();
+    }
+
+    fn unit_active(&self) -> bool {
         // A server that cannot bind its port fails within moments of the start; look after that.
         std::thread::sleep(std::time::Duration::from_millis(500)); // clock-safe: a fixed settle before reading systemd state, no unit test reaches it
         crate::bounded::bounded(Path::new("systemctl")).args(["--user", "is-active", "--quiet", SERVER_UNIT]).output().map(|o| o.status.success()).unwrap_or(false)
