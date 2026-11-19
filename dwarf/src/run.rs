@@ -697,7 +697,6 @@ impl<'a> Run<'a> {
             Ok((j, dropped)) => {
                 for l in dropped {
                     self.log(&l);
-                    self.s.refused.push(l);
                 }
                 j
             }

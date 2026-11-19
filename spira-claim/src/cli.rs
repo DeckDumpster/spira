@@ -1223,11 +1223,11 @@ fn cmd_rune_ready(a: &Args, env: &mut Env) -> Outcome {
     };
     spira_otel::run::phase("store", store_read.elapsed().as_millis() as u64);
     let (mine, dropped) = taken_split(&view, &me);
+    if json && a.has("--freshness") {
+        return Outcome::ok(format!("{}\n", serde_json::json!({ "freshness": serde_json::Value::Null, "rows": mine, "dropped": a.has("--dropped").then_some(&dropped) })));
+    }
     if json && a.has("--dropped") {
         return Outcome::ok(format!("{}\n", dropped_json(&mine, &dropped)));
-    }
-    if json && a.has("--freshness") {
-        return Outcome::ok(format!("{}\n", serde_json::json!({ "freshness": serde_json::Value::Null, "rows": mine })));
     }
     if json {
         return Outcome::ok(format!("{}\n", serde_json::to_string(&mine).unwrap()));
