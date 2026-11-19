@@ -14,7 +14,7 @@ const READERS: &[(&str, &[&str])] = &[
 ];
 
 /// Crates whose tests read the tree's config registry or delta.
-pub const REGISTRY_READERS: &[&str] = &["bead", "gate", "loom", "queue", "release", "spira-config", "spira-runtime", "testenv", "watchdog", "watchtower"];
+pub const REGISTRY_READERS: &[&str] = &["bead", "gate", "loom", "queue", "release", "spira-config", "spira-runtime", "testenv", "watchdog"];
 const CONFIG_READERS: &[&str] = REGISTRY_READERS;
 
 /// The workspace crates whose tests read `path`, whatever directory the path sits in.

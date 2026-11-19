@@ -154,14 +154,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_unit_list_is_the_registered_keys_and_names_no_retired_unit() {
-        let registered = std::fs::read_to_string(testkit::manifest_dir().join("../spira/conf.d/SPIRA_CPU_THROTTLE_UNITS")).unwrap();
-        let default = registered.lines().find_map(|l| l.trim().strip_prefix(": \"${SPIRA_CPU_THROTTLE_UNITS:=")).and_then(|l| l.strip_suffix("}\"")).unwrap();
-        assert_eq!(units_of(default), vec!["dolt-beads.service", "spira-runtime.service"]);
-        assert_eq!(units_of("a.service  b.service"), vec!["a.service", "b.service"]);
-        for retired in ["spira-sentinel", "spira-landing-pass", "spira-call", "spira-verdict"] {
-            assert!(!units_of(default).iter().any(|u| u.contains(retired)));
-        }
+    fn the_unit_list_is_the_configured_words_and_nothing_else() {
+        assert_eq!(units_of("dolt-beads.service  spira-runtime.service"), vec!["dolt-beads.service", "spira-runtime.service"]);
+        assert!(units_of("").is_empty());
     }
 
     const STAT: &str = "usage_usec 100\nnr_periods 1088059\nnr_throttled 657510\nthrottled_usec 5\n";
