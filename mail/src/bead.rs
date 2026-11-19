@@ -4,9 +4,6 @@
 //! and `sweep-dismissed` make. One seam (`Bd`) so every one of these is a unit test against
 //! a fake, never a real store (matching dwarf's/queue's own ports/real split).
 
-use std::io::Write;
-use std::process::Stdio;
-
 use serde_json::Value;
 use spira_store::lc_call::LcError;
 
@@ -42,41 +39,56 @@ pub trait Bd {
     fn ensure_ask(&self, id: &str, work_bead: &str) -> Result<(), String>;
 }
 
-/// The store: its `content` door for every verb the door serves ([`door`]), `bdq` for the rest
-/// (`dep add`, `dep list`, `history`), which locates the database itself. `conn_retries` (>= 1)
-/// retries only a call whose stderr names a dropped pooled connection
-/// (`bead::bdq::should_retry`); every other failure surfaces on the first try.
+/// The store, through its `content` door: every verb mail sends goes there ([`door`]), and a
+/// verb the door does not serve answers nonzero without a spawn. `conn_retries` (>= 1) retries
+/// only a call whose stderr names a dropped pooled connection (`bead::bdq::should_retry`);
+/// every other failure surfaces on the first try.
 pub struct BdCli {
+    /// Unread; removed with the bdq deletion.
     pub bdq: String,
     pub conn_retries: u32,
 }
 
 impl BdCli {
-    /// The store as this release declares it: its `bdq`, and `conn_retries`.
     pub fn configured(conn_retries: u32) -> Result<BdCli, String> {
-        Ok(BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries })
+        Ok(BdCli { bdq: String::new(), conn_retries })
     }
 }
 
-/// Where one bd argv goes.
+/// Where one bd argv goes: the argv after `content`, and the request body.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Door {
-    /// The store's content door: the argv after `content`, and the request body. The server
-    /// applies every protection bdq applies, and writes a create's lifecycle row itself.
-    Content(Vec<String>, Option<String>),
-    /// `bdq`: a verb the door does not serve.
-    Bdq,
+pub struct Door(pub Vec<String>, pub Option<String>);
+
+/// The door for `args` (with `stdin`), or the verb it does not serve. A `note`'s text goes as
+/// the request body (`note <id> --stdin`) so no text is mistaken for a flag; `history <id>
+/// --events` is the door's `events --id <id>`.
+pub fn door(args: &[String], stdin: Option<&str>) -> Result<Door, String> {
+    let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    match (words.as_slice(), stdin) {
+        (["show" | "list", ..], None) => Ok(Door(args.to_vec(), None)),
+        (["create", ..], body) => Ok(Door(args.to_vec(), body.map(str::to_string))),
+        (["note", id, text], None) if !id.starts_with('-') => Ok(Door(s(&["note", id, "--stdin"]), Some(text.to_string()))),
+        (["dep", "add" | "list", ..], None) => Ok(Door(args.to_vec(), None)),
+        (["history", id, "--events", "--json"], None) => Ok(Door(s(&["events", "--id", id, "--json"]), None)),
+        _ => Err(format!("mail: `{}` is not a content verb", words.first().copied().unwrap_or(""))),
+    }
 }
 
-/// The door for `args` (with `stdin`): reads (`show`, `list`), a `create` (its body as the
-/// request body), and a `note`, whose text goes as the request body (`note <id> --stdin`) so no
-/// text is mistaken for a flag. Everything else is bdq's.
-pub fn door(args: &[String], stdin: Option<&str>) -> Door {
-    match (args.iter().map(String::as_str).collect::<Vec<_>>().as_slice(), stdin) {
-        (["show" | "list", ..], None) => Door::Content(args.to_vec(), None),
-        (["create", ..], body) => Door::Content(args.to_vec(), body.map(str::to_string)),
-        (["note", id, text], None) if !id.starts_with('-') => Door::Content(vec!["note".into(), id.to_string(), "--stdin".into()], Some(text.to_string())),
-        _ => Door::Bdq,
+/// One request through `lc`: `door(args)` as a `content` call.
+pub fn send(lc: &spira_store::lc_call::LcClient, args: &[String], stdin: Option<&str>) -> BdOut {
+    let Door(argv, body) = match door(args, stdin) {
+        Ok(d) => d,
+        Err(e) => return BdOut::fail(2, e),
+    };
+    let argv: Vec<String> = std::iter::once("content".to_string()).chain(argv).collect();
+    let reply = match body {
+        Some(b) => lc.call_stdin(&argv, &b),
+        None => lc.call(&argv),
+    };
+    match reply {
+        Ok(r) => BdOut { code: r.code, stdout: r.out, stderr: r.err },
+        Err(e) => BdOut::fail(2, e.to_string()),
     }
 }
 
@@ -88,60 +100,19 @@ impl Bd for BdCli {
         spira_store::lifecycle_row::close_as(id, reason, "mail")
     }
     fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut {
+        let lc = match spira_store::lc_call::LcClient::configured() {
+            Ok(c) => c,
+            Err(e) => return BdOut::fail(2, e),
+        };
         let tries = self.conn_retries.max(1);
         let mut last = BdOut::default();
         for t in 1..=tries {
-            last = self.run_once(args, stdin);
+            last = send(&lc, args, stdin);
             if !bead::bdq::should_retry(last.code, t, tries, last.stderr.contains("invalid connection")) {
                 break;
             }
         }
         last
-    }
-}
-
-impl BdCli {
-    fn run_once(&self, args: &[String], stdin: Option<&str>) -> BdOut {
-        let Door::Content(argv, body) = door(args, stdin) else { return self.run_bdq(args, stdin) };
-        let lc = match spira_store::lc_call::LcClient::configured() {
-            Ok(c) => c,
-            Err(e) => return BdOut::fail(2, e),
-        };
-        let argv: Vec<String> = std::iter::once("content".to_string()).chain(argv).collect();
-        let reply = match body {
-            Some(b) => lc.call_stdin(&argv, &b),
-            None => lc.call(&argv),
-        };
-        match reply {
-            Ok(r) => BdOut { code: r.code, stdout: r.out, stderr: r.err },
-            Err(e) => BdOut::fail(2, e.to_string()),
-        }
-    }
-
-    fn run_bdq(&self, args: &[String], stdin: Option<&str>) -> BdOut {
-        // FORK-EDGE: unserved verb content (history, dep list) and dep add — the content door serves neither
-        let mut cmd = spira_config::bounded::bounded(&self.bdq);
-        cmd.args(args);
-        cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => return BdOut::fail(127, format!("spawn failed: {e}")),
-        };
-        if let Some(s) = stdin {
-            if let Some(mut si) = child.stdin.take() {
-                let _ = si.write_all(s.as_bytes());
-            }
-        }
-        match child.wait_with_output() {
-            Ok(o) => BdOut {
-                code: o.status.code().unwrap_or(1),
-                stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-            },
-            Err(e) => BdOut::fail(127, format!("wait failed: {e}")),
-        }
     }
 }
 
@@ -767,14 +738,14 @@ mod tests {
 mod after_create_not_discarded {
     #[test]
     fn no_caller_discards_after_create_failure() {
-        // Every create goes through bdq, which writes the lifecycle row; nothing else calls it.
-        let sources = [("bdq", include_str!("../../bead/src/bin/bdq.rs"))];
+        // Every create's lifecycle-row write is the door's `after`; nothing else writes it.
+        let sources = [("content", include_str!("../../spira-lc/src/content.rs"))];
         for (name, src) in sources {
-            assert!(src.contains("lifecycle_row::after_create"), "{name}: positive control: caller not found");
+            assert!(src.contains("lifecycle_row::created_ids"), "{name}: positive control: caller not found");
             for line in src.lines() {
                 let l = line.trim_start();
-                if l.starts_with("let _ =") && l.contains("after_create") {
-                    panic!("{name}: discards after_create failure: {l}");
+                if l.starts_with("let _ =") && (l.contains("created_ids") || l.contains("create-bead")) {
+                    panic!("{name}: discards the create's lifecycle write: {l}");
                 }
             }
         }
@@ -784,19 +755,113 @@ mod after_create_not_discarded {
 #[cfg(test)]
 mod door_tests {
     use super::*;
+    use spira_store::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    fn v(s: &[&str]) -> Vec<String> {
+        s.iter().map(|x| x.to_string()).collect()
+    }
+
+    struct Recorder {
+        seen: Mutex<Vec<Vec<String>>>,
+        out: String,
+    }
+
+    impl Transport for Recorder {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            self.seen.lock().unwrap().push(argv.to_vec());
+            Ok(Reply { code: 0, out: self.out.clone(), err: String::new() })
+        }
+    }
+
+    fn recorder(out: &str) -> (Arc<Recorder>, LcClient) {
+        let r = Arc::new(Recorder { seen: Mutex::new(vec![]), out: out.into() });
+        let lc = LcClient::over(r.clone(), true);
+        (r, lc)
+    }
 
     #[test]
-    fn the_content_door_takes_every_verb_it_serves_and_bdq_keeps_the_rest() {
-        let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        assert_eq!(door(&v(&["show", "sp-a", "--json"]), None), Door::Content(v(&["show", "sp-a", "--json"]), None));
-        // literal-ok: test fixture label
-        assert_eq!(door(&v(&["list", "--all", "--label", "needs-ryan", "--json"]), None), Door::Content(v(&["list", "--all", "--label", "needs-ryan", "--json"]), None));
+    fn every_verb_mail_sends_goes_to_the_content_door() {
+        let (r, lc) = recorder("[]");
+        for argv in [&["dep", "add", "sp-a", "sp-b", "--type", "blocks"][..], &["dep", "list", "sp-a", "--direction=up", "--json"], &["history", "sp-a", "--events", "--json"]] {
+            assert_eq!(send(&lc, &v(argv), None).code, 0, "{argv:?}");
+        }
+        let seen = r.seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 3);
+        assert_eq!(seen[0], v(&["content", "dep", "add", "sp-a", "sp-b", "--type", "blocks"]));
+        assert_eq!(seen[2], v(&["content", "events", "--id", "sp-a", "--json"]));
+
+        let refused = send(&lc, &v(&["gate", "list"]), None);
+        assert_eq!(refused.code, 2);
+        assert!(refused.stderr.contains("gate"), "{}", refused.stderr);
+        assert_eq!(r.seen.lock().unwrap().len(), 3, "an unserved verb sends nothing");
+    }
+
+    #[test]
+    fn the_content_door_takes_each_verb_mail_sends() {
+        assert_eq!(door(&v(&["show", "sp-a", "--json"]), None), Ok(Door(v(&["show", "sp-a", "--json"]), None)));
         // literal-ok: test fixture label
         let create = v(&["create", "Q?", "-l", "needs-ryan", "--type", "decision", "--body-file", "-", "--silent"]);
-        assert_eq!(door(&create, Some("body")), Door::Content(create.clone(), Some("body".into())));
-        assert_eq!(door(&v(&["note", "sp-a", "-- a note that looks like a flag"]), None), Door::Content(v(&["note", "sp-a", "--stdin"]), Some("-- a note that looks like a flag".into())));
-        for bdq in [&["dep", "add", "sp-a", "sp-b", "--type", "related"][..], &["dep", "list", "sp-a", "--direction=up", "--json"], &["history", "sp-a", "--events", "--json"]] {
-            assert_eq!(door(&v(bdq), None), Door::Bdq, "{bdq:?}");
+        assert_eq!(door(&create, Some("body")), Ok(Door(create.clone(), Some("body".into()))));
+        assert_eq!(door(&v(&["note", "sp-a", "-- a note that looks like a flag"]), None), Ok(Door(v(&["note", "sp-a", "--stdin"]), Some("-- a note that looks like a flag".into()))));
+    }
+
+    #[test]
+    fn bead_replied_reads_the_actor_off_the_events_answer() {
+        let (_, lc) = recorder(r#"[{"actor":"ryan"},{"actor":"dwarf"}]"#);
+        let bd = Fixed(lc);
+        assert!(bead_replied(&bd, true, "sp-a", "ryan"));
+        assert!(!bead_replied(&bd, true, "sp-a", "nobody"));
+    }
+
+    struct Fixed(LcClient);
+    impl Bd for Fixed {
+        fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut {
+            send(&self.0, args, stdin)
         }
+        fn close(&self, _: &str, _: &str) -> Result<(), LcError> {
+            unreachable!()
+        }
+        fn ensure_ask(&self, _: &str, _: &str) -> Result<(), String> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn no_bdq_resolution_remains() {
+        let resolve = concat!("tool(\"", "bdq\")");
+        let ghq = concat!("\"__", "ghq\"");
+        let offends = |src: &str| name_code(src).contains(resolve) || name_code(src).contains(ghq);
+        assert!(offends(&format!("let b = spira_config::release_env::{resolve}?;")), "the matcher finds a planted resolution");
+        assert!(offends(&format!("c.arg({ghq});")), "the matcher finds a planted gh-through-bdq");
+        for (name, src) in [
+            ("mail/src/bead.rs", include_str!("bead.rs")),
+            ("mail/src/main.rs", include_str!("main.rs")),
+            ("incident/src/main.rs", include_str!("../../incident/src/main.rs")),
+            ("incident/src/real.rs", include_str!("../../incident/src/real.rs")),
+            ("gh-intake/src/main.rs", include_str!("../../gh-intake/src/main.rs")),
+            ("gh-intake/src/real.rs", include_str!("../../gh-intake/src/real.rs")),
+            ("landing-pass/src/main.rs", include_str!("../../landing-pass/src/main.rs")),
+            ("landing-pass/src/real.rs", include_str!("../../landing-pass/src/real.rs")),
+            ("landing-pass/src/land_verify.rs", include_str!("../../landing-pass/src/land_verify.rs")),
+            ("idea-prompt/src/real.rs", include_str!("../../idea-prompt/src/real.rs")),
+            ("watchd/src/send.rs", include_str!("../../watchd/src/send.rs")),
+            ("watchd/src/context.rs", include_str!("../../watchd/src/context.rs")),
+            ("spira-world/src/mail_out.rs", include_str!("../../spira-world/src/mail_out.rs")),
+            ("spira-runtime/src/tasks/b/incident_settle.rs", include_str!("../../spira-runtime/src/tasks/b/incident_settle.rs")),
+            ("spira-runtime/src/tasks/b/incident_alarms.rs", include_str!("../../spira-runtime/src/tasks/b/incident_alarms.rs")),
+            ("spira-runtime/src/tasks/b/mail_reconcile.rs", include_str!("../../spira-runtime/src/tasks/b/mail_reconcile.rs")),
+            ("spira-runtime/src/tasks/e/incident_probe.rs", include_str!("../../spira-runtime/src/tasks/e/incident_probe.rs")),
+            ("spira-runtime/src/tasks/f/intake_gh.rs", include_str!("../../spira-runtime/src/tasks/f/intake_gh.rs")),
+            ("spira-runtime/src/tasks/f/intake_gh_closeout.rs", include_str!("../../spira-runtime/src/tasks/f/intake_gh_closeout.rs")),
+        ] {
+            assert!(!offends(src), "{name} resolves bdq or runs gh through it");
+        }
+    }
+
+    /// The source before its test module.
+    fn name_code(src: &str) -> &str {
+        src.split("#[cfg(test)]").next().unwrap_or(src)
     }
 }

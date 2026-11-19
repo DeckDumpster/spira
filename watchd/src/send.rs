@@ -53,14 +53,14 @@ pub fn alert_operator(bd: &dyn Bd, env: &Env, subject: &str, body: &str) -> Resu
 
 pub fn alert_operator_configured(subject: &str, body: &str) -> Result<(), String> {
     let env = Env::load().map_err(|e| format!("mail: {e}"))?;
-    let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+    let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
     alert_operator(&bd, &env, subject, body)
 }
 
 /// [`send`] with the configured store and environment, as the `mail` binary builds them.
 pub fn send_configured(letter: &Letter) -> Result<(), String> {
     let env = Env::load().map_err(|e| format!("mail: {e}"))?;
-    let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+    let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
     send(&bd, &env, letter)
 }
 

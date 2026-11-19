@@ -383,13 +383,11 @@ pub fn cmd_restart(rows: &[Row], ops: &dyn Ops, ctx: &Context, only: Option<&str
 
 pub fn cmd_health_ids(ctx: &Context, file: &str) -> i32 {
     let mut prefix = String::new();
-    if !ctx.bdq.is_empty() {
-        // The planning store's own prefix, through the store's content door.
-        let asked = spira_store::lc_call::LcClient::configured().and_then(|c| c.call(&["content", "config", "get", "issue_prefix"]).map_err(String::from));
-        if let Ok(r) = asked.as_ref() {
-            if r.code == 0 {
-                prefix = r.out.trim().to_string();
-            }
+    // The planning store's own prefix, through the store's content door.
+    let asked = spira_store::lc_call::LcClient::configured().and_then(|c| c.call(&["content", "config", "get", "issue_prefix"]).map_err(String::from));
+    if let Ok(r) = asked.as_ref() {
+        if r.code == 0 {
+            prefix = r.out.trim().to_string();
         }
     }
     if prefix.is_empty() {
@@ -505,7 +503,6 @@ mod tests {
             health_timeout: "10".into(),
             notify_age: "1800".into(),
             id_prefix: String::new(),
-            bdq: String::new(),
             placeholders: Default::default(),
             systemctl: "systemctl".into(),
             systemctl_override: None,
@@ -635,9 +632,8 @@ mod tests {
         const DB_PREFIX: &str = "sptest";
         const CONF_PREFIX: &str = "notthedb";
 
-        fn ctx_for(bdq: &str, id_prefix: &str) -> Context {
+        fn ctx_for(id_prefix: &str) -> Context {
             let mut c = ctx("tmp/unused");
-            bdq.clone_into(&mut c.bdq);
             id_prefix.clone_into(&mut c.id_prefix);
             c
         }
@@ -647,7 +643,7 @@ mod tests {
             let d = TempDir::new("watchd-health-ids");
             let state = d.join("state-good.json");
             std::fs::write(&state, format!(r#"{{"seen":["{DB_PREFIX}-abc1"]}}"#)).unwrap();
-            let c = ctx_for("", CONF_PREFIX);
+            let c = ctx_for(CONF_PREFIX);
             assert_eq!(cmd_health_ids(&c, state.to_str().unwrap()), 1);
         }
     }

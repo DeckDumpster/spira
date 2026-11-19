@@ -397,7 +397,7 @@ fn get<'a>(cfg: &'a BTreeMap<String, String>, k: &str) -> &'a str {
 }
 
 fn bd() -> Result<gh_intake::real::RealBd, String> {
-    Ok(gh_intake::real::RealBd { bdq: spira_config::release_env::tool("bdq")? })
+    Ok(gh_intake::real::RealBd::default())
 }
 
 fn mail(cfg: &BTreeMap<String, String>) -> gh_intake::real::RealMail {

@@ -508,7 +508,7 @@ impl Delivery {
     /// The configured delivery: the process's mail environment, as `incident alarms-pass` built it.
     pub fn configured(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path) -> Result<Delivery, String> {
         let env = mail::env::Env::load()?;
-        let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+        let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
         let fallback = incident::alarms_pass::MaildirFallback { mail_root: env.mail_root.clone(), mute: env.mute };
         let cfg = incident::alarms_pass::Config { run_dir: run_dir.into(), host: incident::intake::hostname(), deadman_secs: 0, heartbeat_url: String::new(), fallback: true, floor_proposal: None };
         Ok(Delivery { lc: reconciler_engine::goodput_pass::Socket(lc.clone()), primary: incident::alarms_pass::MailPrimary { env, bd }, fallback, cfg })

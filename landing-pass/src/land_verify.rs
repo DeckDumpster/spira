@@ -8,7 +8,7 @@
 //!
 //! The close goes through the lifecycle library (whose `close` still runs the CLI: the socket
 //! does not serve it) and the branch reap through `hel::verbs`, in-process; `pr_merged` asks
-//! GitHub through `bdq __ghq`, the one child left here.
+//! GitHub through `gh`, the one child left here.
 
 use crate::model::BeadRow;
 use crate::ports::Git;
@@ -57,13 +57,14 @@ pub fn is_work_type(t: &str, close_types: &str) -> bool {
 /// Evidence for not reopening, never for deleting (`content_on_base` is the exact, local
 /// check a destroying caller must use instead).
 ///
-/// `ghq` IS NOT A PROGRAM. lib.sh's `ghq() { command bdq __ghq "$@"; }` is itself a shim
-/// onto `bdq`'s internal `__ghq` subcommand (`timeout $GH_TIMEOUT $SPIRA_GH "$@"`, bdq.rs
-/// `cmd_ghq`) — there is no `ghq` binary on PATH to exec. This calls that same subcommand
-/// directly, exactly what the bash shim would have called.
+/// gh runs as `forge::real` runs it: `timeout $GH_TIMEOUT $SPIRA_GH <args>`; an empty
+/// `SPIRA_GH` is the system gh.
 pub fn pr_merged(repo: &Path, branch: &str) -> bool {
-    let mut c = spira_config::bounded::bounded("bdq");
-    c.current_dir(repo).arg("__ghq").args(["pr", "view", branch, "--json", "state", "-q", ".state"]);
+    let gh = spira_config::process::cfg("SPIRA_GH").ok().filter(|g| !g.is_empty()).unwrap_or_else(|| "gh".into());
+    let secs = std::env::var("GH_TIMEOUT").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "120".into());
+    // FORK-EDGE: gh stays the child, under timeout
+    let mut c = std::process::Command::new("timeout");
+    c.current_dir(repo).arg(secs).arg(gh).args(["pr", "view", branch, "--json", "state", "-q", ".state"]);
     c.stdin(Stdio::null()).stderr(Stdio::null());
     match c.output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim() == "MERGED",

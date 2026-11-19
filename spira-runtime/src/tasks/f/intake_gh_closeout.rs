@@ -80,8 +80,7 @@ pub fn run_observe(e: &crate::Effects, _key: &str, _s: &EffectSpec) -> Result<St
 pub fn run_drain(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
     let config = config_of(s)?;
     let home = spira_config::resolve::locate_home_for_process()?;
-    let bdq = spira_config::release_env::tool("bdq")?;
-    let (bd, gh) = (RealBd { bdq: bdq.clone() }, RealGh { bdq_bin: bdq });
+    let (bd, gh) = (RealBd { lc: Some(LcClient::socket(&e.world.lc_socket)) }, RealGh);
     let repo = RealRepo { spira_home: home.to_string_lossy().into_owned() };
     let mail = RealMail::new(config.get("SPIRA_MAIL_BIN").cloned().filter(|m| !m.is_empty()));
     let lc = RealLifecycle::over(LcClient::socket(&e.world.lc_socket));

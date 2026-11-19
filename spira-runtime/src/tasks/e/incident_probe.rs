@@ -54,7 +54,7 @@
 //! ## Replaces
 //!
 //! - `spira-watch-alarms-probe-prod.service`; row `spira/watchers:193-196`.
-//! - Children: `bdq` via `BdCli` (`main.rs:695`); `with_ports` also builds `spira_lc()` and a `systemctl is-enabled` closure (`main.rs:699-705`) that the probe never calls — neither is carried over.
+//! - Children: none; `BdCli` calls the content door (`main.rs:695`); `with_ports` also builds `spira_lc()` and a `systemctl is-enabled` closure (`main.rs:699-705`) that the probe never calls — neither is carried over.
 //! - Files: `run/watchd/alarms-probe.{log,restarts}` retired; `run/tsd/alarm-attempt.jsonl` kept (shared with the alarms pass).
 //!
 //! ## Reverse
@@ -155,7 +155,7 @@ pub fn send(input: &str) -> Result<String, String> {
     }
     let config = Config::pinned()?;
     let env = mail::env::Env::load()?;
-    let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+    let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
     let primary = incident::alarms_pass::MailPrimary { env, bd };
     let host = incident::intake::hostname();
     match incident::alarms_pass::probe_primary(&primary, &runtime::ports::WallClock, std::path::Path::new(&config.run), &host, &s.mailbox) {

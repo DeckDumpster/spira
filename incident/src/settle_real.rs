@@ -226,7 +226,7 @@ mod tests {
         let fake = std::sync::Arc::new(
             spira_store::lc_call::fake::Content::new(rows).with_live(vec![live("sp-i1", "READY"), live("sp-i2", "REWORK"), live("sp-f1", "LANDED")]),
         );
-        let bd = RealBd { bdq: "nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
+        let bd = RealBd { retries: 1, lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
         let s = settler(&bd);
         let cands = s.candidates().unwrap();
         assert_eq!(cands.iter().map(|c| c.fixes.clone()).collect::<Vec<_>>(), vec![vec!["sp-f1".to_string()]; 2]);

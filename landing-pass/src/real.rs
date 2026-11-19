@@ -297,7 +297,7 @@ impl<'a> RealLib<'a> {
 fn mail_send(to: &str, from: &str, subject: &str, kind: &str, default: Option<&str>, bead: &str, body: &str) -> Result<(), String> {
     let env = mail::env::Env::load()?;
     mail::maildir::mailbox_valid(to).map_err(|e| format!("send: {e}"))?;
-    let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+    let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
     let args = mail::cmds::SendArgs { mailbox: to, from: Some(from), subject, kind, default: default.unwrap_or(""), class: "", bead, urgent: false, digest: false, dry_run: false, requested_by: "" };
     mail::cmds::send_recorded(&bd, &env, &args, body.to_string()).map(|_| ()).map_err(|e| format!("send: {e}"))
 }
@@ -586,7 +586,6 @@ impl<'a> Lib for RealLib<'a> {
 #[derive(Clone)]
 pub struct RealBeads {
     pub home: PathBuf,
-    pub bdq: String,
     pub timeout: u64,
     pub home_repo: String,
     pub fixture: Option<PathBuf>,
@@ -1391,7 +1390,7 @@ mod store_tests {
     }
 
     fn beads(c: &LcClient) -> RealBeads {
-        RealBeads { home: PathBuf::from(system_paths::NONEXISTENT), bdq: String::new(), timeout: 5, home_repo: "spira".into(), fixture: None, lc_bin: None, client: Some(c.clone()) }
+        RealBeads { home: PathBuf::from(system_paths::NONEXISTENT), timeout: 5, home_repo: "spira".into(), fixture: None, lc_bin: None, client: Some(c.clone()) }
     }
 
     #[test]

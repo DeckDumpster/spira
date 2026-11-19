@@ -64,7 +64,7 @@ fn dispatch(cmd: &str, rest: &[String]) -> ExitCode {
 }
 
 fn bd_cli(env: &Env) -> Result<BdCli, String> {
-    Ok(BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries })
+    BdCli::configured(env.bd_conn_retries)
 }
 
 fn fail(msg: impl AsRef<str>) -> ExitCode {
