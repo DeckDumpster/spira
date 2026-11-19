@@ -98,8 +98,8 @@ mod tests {
         std::fs::create_dir_all(dir.join("rel/spira")).unwrap();
         std::fs::create_dir_all(dir.join("checkout")).unwrap();
         let (home_marker, rel_marker) = (dir.join("home-ran"), dir.join("rel-ran"));
-        testkit::write_exe(&dir.join("checkout/concierge.sh"), &format!("#!/bin/sh\ntouch {}\n", home_marker.display()));
-        testkit::write_exe(&dir.join("rel/concierge.sh"), &format!("#!/bin/sh\ntouch {}\n", rel_marker.display()));
+        testkit::write_exe(dir.join("checkout/concierge.sh"), &format!("#!/bin/sh\ntouch {}\n", home_marker.display()));
+        testkit::write_exe(dir.join("rel/concierge.sh"), &format!("#!/bin/sh\ntouch {}\n", rel_marker.display()));
         release_wake(&release_env(&dir), "line", Duration::from_secs(10)).unwrap();
         assert!(rel_marker.exists() && !home_marker.exists());
     }
