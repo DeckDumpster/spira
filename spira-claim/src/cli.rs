@@ -886,6 +886,18 @@ struct Viewed {
     runes: HashMap<String, Vec<String>>,
     lifecycle: HashMap<String, LifecycleRow>,
     express: BTreeSet<String>,
+    /// The REWORK beads the claim path left out, with the rule that did it.
+    dropped: Vec<Dropped>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+struct Dropped {
+    id: String,
+    rule: String,
+}
+
+fn dropped_by(ids: impl IntoIterator<Item = String>, rule: &str) -> Vec<Dropped> {
+    ids.into_iter().map(|id| Dropped { id, rule: rule.to_string() }).collect()
 }
 
 /// What the claim view says is claimable now, asked of the control store when it is read; the
@@ -900,14 +912,27 @@ fn viewed(a: &Args, env: &Env, st: &Store) -> Result<Viewed, String> {
             rows.push(content);
         }
     }
-    rows.retain(|r| ready::in_scope(r, &scope, &no_loop));
-    retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
-    retain_unoccupied(&mut rows, std::path::Path::new(system_paths::PROC), std::path::Path::new(&env.config.run));
+    let mut dropped: Vec<Dropped> = view
+        .iter()
+        .filter(|v| v.verdict != verdicts::Kind::Claimable && v.lifecycle.state == lifecycle::bead::BeadState::Rework)
+        .map(|v| Dropped { id: v.id.clone(), rule: kind_word(v.verdict) })
+        .collect();
+    let (mut out_of_scope, mut unscoped) = (Vec::new(), Vec::new());
+    for r in std::mem::take(&mut rows) {
+        if ready::in_scope(&r, &scope, &no_loop) { unscoped.push(r) } else { out_of_scope.push(r.id) }
+    }
+    rows = unscoped;
+    let is_rework = |id: &String| view.iter().any(|v| &v.id == id && v.lifecycle.state == lifecycle::bead::BeadState::Rework);
+    dropped.extend(dropped_by(out_of_scope.into_iter().filter(is_rework), "out-of-scope"));
+    let stopped = retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
+    dropped.extend(dropped_by(stopped.into_iter().filter(is_rework), "stopped"));
+    let occupied = retain_unoccupied(&mut rows, std::path::Path::new(system_paths::PROC), std::path::Path::new(&env.config.run));
+    dropped.extend(dropped_by(occupied.into_iter().filter(is_rework), "occupied"));
     rows.sort_by(|x, y| x.id.cmp(&y.id));
     let express = view.iter().filter(|v| v.express).map(|v| v.id.clone()).collect();
     let runes = view.iter().map(|v| (v.id.clone(), v.runes.clone())).collect();
     let lifecycle = view.into_iter().map(|v| (v.id, v.lifecycle)).collect();
-    Ok(Viewed { rows, runes, lifecycle, express })
+    Ok(Viewed { rows, runes, lifecycle, express, dropped })
 }
 
 /// The claimable rows by the claim view, only the express ones when `--express` is given.
@@ -1098,10 +1123,38 @@ fn retain_unoccupied(rows: &mut Vec<rank::ReadyRow>, proc_root: &std::path::Path
     dropped
 }
 
+fn dropped_json(mine: &[&rank::ReadyRow], dropped: &[Dropped]) -> serde_json::Value {
+    serde_json::json!({ "rows": mine, "dropped": dropped })
+}
+
+fn kind_word(k: verdicts::Kind) -> String {
+    serde_json::to_value(k).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default()
+}
+
 /// The claimable rows the claim view says `rune` would take, bd's deferral aside.
 fn taken_by<'a>(view: &'a Viewed, rune: &str) -> Vec<&'a rank::ReadyRow> {
+    taken_split(view, rune).0
+}
+
+/// [`taken_by`] and, for each REWORK row of the view it leaves out, the rule that did.
+fn taken_split<'a>(view: &'a Viewed, rune: &str) -> (Vec<&'a rank::ReadyRow>, Vec<Dropped>) {
     let now = ready::now_epoch();
-    view.rows.iter().filter(|r| !ready::is_deferred(r, now) && view.runes.get(&r.id).is_some_and(|taking| taking.iter().any(|t| t == rune))).collect()
+    let mut dropped = view.dropped.clone();
+    let mut mine = Vec::new();
+    for r in &view.rows {
+        let rule = if ready::is_deferred(r, now) {
+            "deferred"
+        } else if !view.runes.get(&r.id).is_some_and(|taking| taking.iter().any(|t| t == rune)) {
+            "not-taken"
+        } else {
+            mine.push(r);
+            continue;
+        };
+        if view.lifecycle.get(&r.id).is_some_and(|l| l.state == lifecycle::bead::BeadState::Rework) {
+            dropped.push(Dropped { id: r.id.clone(), rule: rule.to_string() });
+        }
+    }
+    (mine, dropped)
 }
 
 /// `rune-ready <rune>`: `rune_ready` (lib.sh:693). Exit code names which of FOUR things
@@ -1134,7 +1187,7 @@ fn taken_by<'a>(view: &'a Viewed, rune: &str) -> Vec<&'a rank::ReadyRow> {
 /// `{freshness, rows}` instead, `freshness` naming the planning watermark and judgement time
 /// which is `null`: the claim view is answered when it is read and has no age.
 fn cmd_rune_ready(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json", "--express", "--freshness"]) {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json", "--express", "--freshness", "--dropped"]) {
         return Outcome::usage(e);
     }
     let me = match a.pos.first() {
@@ -1173,7 +1226,10 @@ fn cmd_rune_ready(a: &Args, env: &mut Env) -> Outcome {
         Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: rune_ready: {}", first_line(&e)) },
     };
     spira_otel::run::phase("store", store_read.elapsed().as_millis() as u64);
-    let mine = taken_by(&view, &me);
+    let (mine, dropped) = taken_split(&view, &me);
+    if json && a.has("--dropped") {
+        return Outcome::ok(format!("{}\n", dropped_json(&mine, &dropped)));
+    }
     if json && a.has("--freshness") {
         return Outcome::ok(format!("{}\n", serde_json::json!({ "freshness": serde_json::Value::Null, "rows": mine })));
     }

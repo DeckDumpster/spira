@@ -535,13 +535,13 @@ impl<'a> Run<'a> {
     /// The ready set, as JSON: spira-claim's `rune-ready --json`, the lifecycle machine's
     /// claimable rows in this rune's partition — the rows CHECK 7 counted when it called
     /// this dwarf; bd supplies only their content.
-    fn ready_set(&self, tries: u32, delay: Duration) -> Result<String, String> {
+    fn ready_set(&self, tries: u32, delay: Duration) -> Result<(String, Vec<String>), String> {
         let tries = tries.max(1);
         let mut last = Out::default();
         for i in 1..=tries {
             last = self.d.seam.call("_dwarf_ready_set", &[]);
             if last.success() {
-                return Ok(util::json_only(&last.stdout));
+                return Ok(claim::split_ready(&util::json_only(&last.stdout), &self.f()));
             }
             if i < tries {
                 (self.d.sleep)(delay);
@@ -568,7 +568,7 @@ impl<'a> Run<'a> {
 
     fn dry_run(&self) -> i32 {
         self.log(&format!("{}: dry run — candidates:", self.f()));
-        let rows: serde_json::Value = self.ready_set(1, Duration::ZERO).ok().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
+        let rows: serde_json::Value = self.ready_set(1, Duration::ZERO).ok().and_then(|(j, _)| serde_json::from_str(&j).ok()).unwrap_or_default();
         for r in rows.as_array().into_iter().flatten().take(10) {
             self.d.sink.out(r["id"].as_str().unwrap_or("?"));
         }
@@ -694,7 +694,13 @@ impl<'a> Run<'a> {
         let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
         let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
         let ready = match self.ready_set(tries, delay) {
-            Ok(j) => j,
+            Ok((j, dropped)) => {
+                for l in dropped {
+                    self.log(&l);
+                    self.s.refused.push(l);
+                }
+                j
+            }
             Err(e) => {
                 let e = if e.is_empty() { "bd gave no reason".to_string() } else { e };
                 self.log(&format!("{}: claim-error {e} — retries exhausted, not reporting idle for a query that never completed", self.f()));
