@@ -4830,6 +4830,31 @@ fn the_gate_phase_is_cut_at_the_configured_budget_never_a_literal() {
 }
 
 #[test]
+fn the_declared_build_tier_gate_phase_alone_hands_testenv_the_budget() {
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_DEADLINE", "900");
+    f.put_var("SPIRA_GATE_BUDGET", "420");
+    f.repo_build_secs.set(Some(30));
+    assert_eq!(f.run(), PASS, "{}", f.verdict_line());
+    let t = f.timeouts.borrow().clone();
+    let has = |pick: &dyn Fn(&str) -> bool| t.iter().find(|(c, _)| c.contains("testenv") && pick(c)).map(|(c, _)| c.clone()).expect("phase ran");
+    let gate = has(&|c| !c.contains("--suites build") && !c.contains("--share-publish"));
+    assert!(gate.contains("--deadline 420 "), "{gate}");
+    assert!(!has(&|c| c.contains("--suites build")).contains("--deadline"));
+    assert!(!has(&|c| c.contains("--share-publish")).contains("--deadline"));
+}
+
+#[test]
+fn an_unparsable_gate_budget_refuses_naming_the_key() {
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_BUDGET", "abc");
+    assert_eq!(f.run(), NOVERDICT);
+    let l = f.verdict_line();
+    assert!(l.contains("reason=config"), "{l}");
+    assert!(f.stderr().contains("SPIRA_GATE_BUDGET"), "{}", f.stderr());
+}
+
+#[test]
 fn a_phase_killed_at_its_cap_is_not_a_deadline() {
     use crate::engine::killed_verdict;
     let ph = |n: &str, s: u64| vec![("tools".to_string(), 8), (n.to_string(), s)];

@@ -1268,12 +1268,12 @@ cgroup-aware core count, so `SPIRA_GATE_HOST_CORES` is gone.
 
 `SPIRA_GATE_DEADLINE` is the tests' clock. The phases `tools`, `fences` and `build` (`base-` ignored) are
 not charged to it and have no cap; the other phases and the base side's reruns are, and a charged phase runs
-under `min(SPIRA_GATE_TIMEOUT, what is left of the deadline)`, the `gate` phase also under its 260 s cap. A kill
+under `min(SPIRA_GATE_TIMEOUT, what is left of the deadline)`, the `gate` phase also under `SPIRA_GATE_BUDGET`. A kill
 at either is NO_VERDICT `deadline` (or `phase-cap`) naming the test phase. `gate.log` carries `test_clock=<s>`,
 the seconds charged, beside `ran=`.
 
 A repository that declares `[tier.build]` runs three phases: `build` (`testenv --suites build --share-keep K`),
-`gate` (`--share-keep K`, under the 260 s cap, ending at testenv's verdict) and then `publish`
+`gate` (`--deadline <SPIRA_GATE_BUDGET> --share-keep K`, so testenv cuts its own run and names the suites it cut, ending at testenv's verdict) and then `publish`
 (`testenv --share-publish K`), which merges the warm build cache. `publish` is uncharged and uncapped, bounded only by
 `SPIRA_GATE_TIMEOUT` and the stall watch; its rc is ignored, its output goes to the gate log, never into the verdict's
 text, and its wall shows in the meter as `publish:<s>`. testenv makes one non-blocking attempt at the cache lock and

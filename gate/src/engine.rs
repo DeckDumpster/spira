@@ -2347,15 +2347,16 @@ pub fn base_rerun_cmd(suites: &[String]) -> String {
 }
 
 fn testenv_suites_cmd(list: &str) -> String {
-    testenv_cmd(Some(list), None)
+    testenv_cmd(Some(list), None, None)
 }
 
 /// The testenv call a gate phase makes: the named suites or the declaration's default
 /// tiers, in a share (`(key, keep)`) that a later call continues or finishes.
-fn testenv_cmd(suites: Option<&str>, share: Option<(&str, bool)>) -> String {
+fn testenv_cmd(suites: Option<&str>, share: Option<(&str, bool)>, deadline: Option<u64>) -> String {
+    let deadline = deadline.map_or(String::new(), |d| format!("--deadline {d} "));
     let suites = suites.map_or(String::new(), |l| format!("--suites {l} "));
     let share = share.map_or(String::new(), |(k, keep)| format!("{} {k} ", if keep { "--share-keep" } else { "--share" }));
-    testenv_call(&format!("{suites}{share}"))
+    testenv_call(&format!("{suites}{deadline}{share}"))
 }
 
 /// The call that merges a kept share into the warm cache; it runs no tier and judges nothing.
@@ -2626,13 +2627,13 @@ pub fn run_composed<W: World>(
     let cmd = if declared {
         let repo = env.iter().find(|(k, _)| k == "SPIRA_GATE_REPO_NAME").map_or("the repository", |(_, v)| v.as_str());
         w.eprint(&format!("gate: {repo} declares [tier.build] in .spira/testenv.toml: the gate phase runs testenv's default tiers, not the repo-map gate column"));
-        testenv_cmd(None, prefix.is_empty().then_some((share_key.as_str(), true)))
+        testenv_cmd(None, prefix.is_empty().then_some((share_key.as_str(), true)), Some(limits.budget))
     } else {
         cmd
     };
     let cmd = cmd.as_str();
     if prefix.is_empty() && declared {
-        let build_cmd = testenv_cmd(Some("build"), Some((&share_key, true)));
+        let build_cmd = testenv_cmd(Some("build"), Some((&share_key, true)), None);
         let (rc, out, wall) = go("build", env, &build_cmd, test_secs);
         phases.push(("build".to_string(), wall));
         if rc != 0 || w.signalled() {
