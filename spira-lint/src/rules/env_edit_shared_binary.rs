@@ -212,7 +212,7 @@ mod tests {
     fn a_nested_crate_path_is_still_a_multi_file_target() {
         let t = TempDir::new("envshared-nested");
         t.write("spira/sim/tests/it/x.rs", EDIT);
-        t.write("spira/sim/tests/one.rs", &format!("{EDIT}"));
+        t.write("spira/sim/tests/one.rs", EDIT);
         let got = run(&t, &["spira/sim/tests/it/x.rs", "spira/sim/tests/one.rs"]).unwrap();
         assert_eq!(got.len(), 1, "{got:?}");
         assert!(got[0].contains("spira/sim/tests/it/x.rs"), "{got:?}");
