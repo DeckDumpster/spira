@@ -511,7 +511,7 @@ fn acknowledge_forced_edit(timeout_s: &str, bd_bin: &str, db: &str, id: &str, cl
     };
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
     let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
-    claimdesc::acknowledge_forced_edit(&show, &mut write, &actor, id, claim, reason, &run, &mail);
+    claimdesc::acknowledge_forced_edit(&show, &mut write, &actor, id, claim, reason, (&run, &mail));
 }
 
 #[cfg(test)]

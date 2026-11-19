@@ -152,7 +152,7 @@ pub fn parse_iso(s: &str) -> Option<i64> {
 /// does not reopen a close nobody did anything wrong on, file the note, and tell the holder.
 /// `show` answers the bead's JSON; `write` runs one metadata or note write (never a description
 /// edit, so it does not re-enter the claim check).
-pub fn acknowledge_forced_edit(show: &dyn Fn(&str) -> String, write: &mut dyn FnMut(&[&str]), actor: &str, id: &str, claim: &LiveClaim, reason: &str, run: &str, mail: &str) {
+pub fn acknowledge_forced_edit(show: &dyn Fn(&str) -> String, write: &mut dyn FnMut(&[&str]), actor: &str, id: &str, claim: &LiveClaim, reason: &str, (run, mail): (&str, &str)) {
     if let Some(hash) = desc_hash(crate::bdq::json_only(&show(id))) {
         write(&["update", id, "--set-metadata", &format!("{HASH_KEY}={hash}")]);
     }

@@ -281,7 +281,7 @@ pub fn acknowledge(forced: Forced, read: &dyn Fn(&[String]) -> Result<String, cr
         let _ = write(&argv, None);
     };
     let actor = ["BEADS_ACTOR", "USER"].iter().find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty())).unwrap_or_else(|| "unknown".into());
-    bead::claimdesc::acknowledge_forced_edit(&show, &mut put, &actor, &forced.id, &forced.claim, &forced.reason, run, mail);
+    bead::claimdesc::acknowledge_forced_edit(&show, &mut put, &actor, &forced.id, &forced.claim, &forced.reason, (run, mail));
 }
 
 /// The lifecycle half of [`after`]: its report, and, for a create, the ids whose row now exists.
