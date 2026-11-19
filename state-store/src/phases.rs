@@ -13,9 +13,10 @@ pub enum Phase {
     Commit,
     ReaderWait,
     Read,
+    Drain,
 }
 
-const PHASES: usize = 5;
+const PHASES: usize = 6;
 
 impl Phase {
     pub fn name(self) -> &'static str {
@@ -25,6 +26,7 @@ impl Phase {
             Phase::Commit => "commit",
             Phase::ReaderWait => "reader_wait",
             Phase::Read => "read",
+            Phase::Drain => "drain",
         }
     }
 
@@ -34,6 +36,7 @@ impl Phase {
         Phase::Commit,
         Phase::ReaderWait,
         Phase::Read,
+        Phase::Drain,
     ];
 }
 
