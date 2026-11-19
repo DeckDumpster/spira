@@ -51,7 +51,8 @@ canonical reader is now this binary.
 watchd manifest                every valid row, expanded: name|kind|target|health
 watchd units                   the unit name of every `daemon` row, one per line
 watchd keys                    the placeholders a row may name, one per line
-watchd next <name> [--timeout SECS]  block until the row has an unread line that survives the inbox drop/dedup rules (`inbox-rules`), print it, advance the cursor, exit 0; exit 124 on timeout, 3 if another reader holds the row
+watchd next <name> [--timeout SECS]  block until the row has an unread line that survives the inbox drop/dedup rules (`inbox-rules`), print it, advance the cursor, exit 0; exit 124 on timeout, 3 if another reader holds the row. Each delivery's text is kept in `<name>.delivered`; if `<name>.redeliver` exists `next` prints it first, marked `[redelivered] `, removes it and records the delivery again, leaving the cursor and dedup memory alone
+watchd undeliver <name> [--session PID]  with no live reader (the reader lock is free) and, given `--session`, a record whose `ancestors` holds that pid, copy the last delivery's text to `<name>.redeliver`; exit 0 on a live reader or missing record, 1 on an unreadable one
 watchd exec <name>              become that watcher; this is what ExecStart calls
 watchd status                  a table, one line per watcher, then a DEGRADED/NOT INSTALLED block
 watchd drain [name] [--all]    print what nobody has read, and mark it read

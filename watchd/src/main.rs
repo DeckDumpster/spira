@@ -7,7 +7,7 @@ use manifest::Row;
 use ops::Real;
 
 fn usage() -> &'static str {
-    "usage: watchd manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover] [--from-start]|next <name> [--timeout SECS]|tailers|restart [name]|notify|page <row> <text> [key=value ...]|prune|health-ids <file>"
+    "usage: watchd manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover] [--from-start]|next <name> [--timeout SECS]|undeliver <name> [--session PID]|tailers|restart [name]|notify|page <row> <text> [key=value ...]|prune|health-ids <file>"
 }
 
 fn load_context() -> context::Context {
@@ -165,6 +165,18 @@ fn main() {
                 }
                 Err(code) => code,
             }
+        }
+        "undeliver" => {
+            let (name, session) = match rest {
+                [n] => (n, None),
+                [n, f, pid] if f == "--session" && pid.parse::<u32>().is_ok() => (n, pid.parse().ok()),
+                _ => {
+                    eprintln!("usage: watchd undeliver <name> [--session PID]");
+                    std::process::exit(2);
+                }
+            };
+            let ctx = load_context();
+            next::cmd_undeliver(&ctx.run, name, session)
         }
         "tailers" => {
             let ctx = load_context();
