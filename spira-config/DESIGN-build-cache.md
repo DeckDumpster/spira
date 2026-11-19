@@ -196,6 +196,13 @@ box; the fixture image waives it, `spira/testenv/doctor-waivers`): the cache liv
 * **`SCCACHE_IGNORE_SERVER_IO_ERROR=1`.** The server is spawned by whichever client first
   needs it and dies with that client's systemd unit; a compile whose server vanished falls
   back to a local rustc instead of failing the build.
+* **The one server runs only as the `spira-sccache-server` user unit** (`Wrapper::env` starts
+  it through `systemd-run`): `Restart=always`, `SCCACHE_IDLE_TIMEOUT=0`, and `TMPDIR` set to
+  `<SPIRA_RUN>/sccache-server/tmp`. A server inherits its starter's `TMPDIR`; one a builder
+  session started kept that session's folder, and removing it failed every compile on the box
+  (`Failed to create temp dir`). If the unit is not active after the start, a server started
+  by another command holds the port: build setup runs `sccache --stop-server`, starts the unit
+  again and logs one stderr line saying so.
 * **Dropped: `land-build-ensure.sh` and its two suites** (`test-land-build-ensure.sh`,
   `test-landing-build.sh`). It ran `build.sh` (`make build` = `cargo build --release
   --workspace`, 5–6 minutes, measured 2026-09-29 in `landing.log`) in `SPIRA_REPO` after
