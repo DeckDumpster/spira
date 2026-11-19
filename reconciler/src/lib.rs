@@ -1122,12 +1122,15 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
 
 struct FleetReadings {
     /// `(labels, ready beads as (id, updated_at), live, is_task)` per builder partition.
-    rows: Vec<(String, Vec<(String, String)>, i64, bool)>,
+    rows: Vec<(String, Vec<ReadyBead>, i64, bool)>,
     live_reactive: i64,
     live_total: i64,
     max_live: Option<i64>,
     pool: Option<i64>,
 }
+
+/// A claimable bead: `(id, updated_at)`.
+pub type ReadyBead = (String, String);
 
 pub fn parse_ready_rows(json: &str) -> Vec<(String, String)> {
     let Ok(serde_json::Value::Array(rows)) = serde_json::from_str(json.trim()) else { return Vec::new() };
