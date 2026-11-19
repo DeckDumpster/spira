@@ -2830,9 +2830,9 @@ mod tests {
         let status = testkit::git(&wt, &["status", "--porcelain"]);
         assert!(status.trim().is_empty(), "the fold is committed, not left dirty: {status}");
         assert!(testkit::git(&wt, &["log", "-1", "--format=%B"]).contains("Members: sp-a sp-b"));
-        let head = testkit::git(&wt, &["rev-parse", "HEAD"]).trim().to_string();
         let own = vm::RoundCommits::default();
         merge_round(&env, &repo, &wt, &base, merged.clone(), &own).unwrap();
+        let head = testkit::git(&wt, &["rev-parse", "HEAD"]).trim().to_string();
         assert_eq!(*own.borrow(), vec![head], "the fold commit's sha is recorded as the round's own");
         merge_round(&env, &repo, &wt, &base, merged.clone(), &Default::default()).unwrap();
         assert_eq!(testkit::git(&wt, &["rev-list", "--count", &format!("{base}..HEAD")]).trim(), "5", "a rebuild folds once from a reset tree: two members, two merges, one fold");
