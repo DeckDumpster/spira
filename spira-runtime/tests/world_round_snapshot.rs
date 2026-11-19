@@ -30,6 +30,7 @@ fn world(batches_answer: bool) -> (testkit::TempDir, World) {
 
 #[test]
 fn unheld_submitted_beads_are_counted_and_an_open_state_round_is_reported_unadvanced() {
+    let _env = testkit::env_read();
     let (_dir, w) = world(true);
     let snap: Snapshot = serde_json::from_str(&w.round_snapshot("{}").unwrap()).unwrap();
     assert_eq!((snap.submitted, snap.submitted_by_repo.as_str()), (2, "alpha=2"));
@@ -39,6 +40,7 @@ fn unheld_submitted_beads_are_counted_and_an_open_state_round_is_reported_unadva
 
 #[test]
 fn a_round_the_store_holds_open_is_open_though_the_queue_directory_has_no_record_of_it() {
+    let _env = testkit::env_read();
     let (dir, w) = world(true);
     assert!(!dir.path().join("queue/alpha").exists());
     let snap: Snapshot = serde_json::from_str(&w.round_snapshot("{}").unwrap()).unwrap();
@@ -47,6 +49,7 @@ fn a_round_the_store_holds_open_is_open_though_the_queue_directory_has_no_record
 
 #[test]
 fn an_unreadable_round_source_is_unknown_never_none() {
+    let _env = testkit::env_read();
     let (_dir, w) = world(false);
     let snap: Snapshot = serde_json::from_str(&w.round_snapshot("{}").unwrap()).unwrap();
     assert_eq!(snap.state, RoundState::Unknown);
@@ -58,6 +61,7 @@ fn cfg() -> RoundDuty {
 
 #[test]
 fn a_certifying_round_with_a_certified_bead_set_aside_pages_nothing_and_no_round_pages_once() {
+    let _env = testkit::env_read();
     let (_dir, w) = world(true);
     let snap: Snapshot = serde_json::from_str(&w.round_snapshot("{}").unwrap()).unwrap();
     assert_eq!(snap.certified, 1);
@@ -78,6 +82,7 @@ fn a_certifying_round_with_a_certified_bead_set_aside_pages_nothing_and_no_round
 
 #[test]
 fn a_work_halt_stamp_reaches_the_snapshot_with_its_reason_and_no_stamp_is_no_halt() {
+    let _env = testkit::env_read();
     let (dir, w) = world(true);
     let snap: Snapshot = serde_json::from_str(&w.round_snapshot("{}").unwrap()).unwrap();
     assert_eq!(snap.halt, None);
@@ -96,6 +101,7 @@ fn stamp(dir: &testkit::TempDir) {
 
 #[test]
 fn the_throughput_and_transitions_snapshots_carry_the_halt_even_when_unreadable() {
+    let _env = testkit::env_read();
     let (dir, w) = world(true);
     stamp(&dir);
     let t: spira_runtime::tasks::e::watch_throughput::Snapshot = serde_json::from_str(&w.throughput_snapshot(r#"{"now":1700000000,"abandon_window_s":3600}"#).unwrap()).unwrap();

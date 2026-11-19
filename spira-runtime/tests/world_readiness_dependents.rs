@@ -89,6 +89,7 @@ fn serve(replies: fn(&[String]) -> Option<String>) -> (testkit::TempDir, std::pa
 
 #[test]
 fn reconcile_content_reads_only_the_head_of_the_event_log() {
+    let _env = testkit::env_read();
     let (dir, path, sent) = serve(|argv| match argv[0].as_str() {
         "reconcile-content" => Some(String::new()),
         "event-seq" => Some(serde_json::json!({ "seq": 7, "keys": [] }).to_string()),
@@ -102,6 +103,7 @@ fn reconcile_content_reads_only_the_head_of_the_event_log() {
 
 #[test]
 fn reconcile_content_since_asks_the_store_from_the_cursor_and_reads_its_through_seq() {
+    let _env = testkit::env_read();
     let (dir, path, sent) = serve(|argv| match argv[0].as_str() {
         "reconcile-content" => Some("would close sp-a (done)\nthrough-seq: 52\n".into()),
         _ => None,
@@ -114,6 +116,7 @@ fn reconcile_content_since_asks_the_store_from_the_cursor_and_reads_its_through_
 
 #[test]
 fn reconcile_content_full_reads_the_head_then_the_whole_dry_run() {
+    let _env = testkit::env_read();
     let (dir, path, sent) = serve(|argv| match argv[0].as_str() {
         "reconcile-content" => Some(String::new()),
         "event-seq" => Some(serde_json::json!({ "seq": 9, "keys": [] }).to_string()),
@@ -127,6 +130,7 @@ fn reconcile_content_full_reads_the_head_then_the_whole_dry_run() {
 
 #[test]
 fn reconcile_content_observe_names_an_unknown_input() {
+    let _env = testkit::env_read();
     let (dir, path, _) = serve(|_| None);
     let lc = spira_store::lc_call::LcClient::socket(path);
     let err = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "weekly").unwrap_err();
@@ -135,6 +139,7 @@ fn reconcile_content_observe_names_an_unknown_input() {
 
 #[test]
 fn reconcile_content_observe_reports_a_halted_world_without_asking_the_store() {
+    let _env = testkit::env_read();
     let (dir, path, sent) = serve(|_| None);
     std::fs::write(dir.path().join("world.halted"), "").unwrap();
     let lc = spira_store::lc_call::LcClient::socket(path);

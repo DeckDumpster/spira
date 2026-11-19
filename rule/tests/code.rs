@@ -35,6 +35,7 @@ fn book(slug: &str) -> Option<String> {
 
 #[test]
 fn three_statutes_in_two_parts_generate_the_expected_tree() {
+    let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
     let tree = generate(&parts, &Pointers::default(), book);
     let want: BTreeMap<&str, &str> = BTreeMap::from([
@@ -51,11 +52,13 @@ fn three_statutes_in_two_parts_generate_the_expected_tree() {
 
 #[test]
 fn toc_renders_to_itself() {
+    let _env = testkit::env_read();
     assert_eq!(render_toc(&parse_toc(TOC).unwrap()), TOC);
 }
 
 #[test]
 fn a_hand_edit_or_a_stray_file_is_drift() {
+    let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
     let tree = generate(&parts, &Pointers::default(), book);
     let dir = testkit::TempDir::new("law-drift");
@@ -77,6 +80,7 @@ fn a_hand_edit_or_a_stray_file_is_drift() {
 
 #[test]
 fn append_adds_at_the_end_and_moves_nothing() {
+    let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
     let before = generate(&parts, &Pointers::default(), book);
     let after = append(&parts, 1, "law-four").unwrap();
@@ -92,6 +96,7 @@ fn append_adds_at_the_end_and_moves_nothing() {
 
 #[test]
 fn append_refuses_an_unknown_part_and_a_slug_in_another_part() {
+    let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
     assert!(append(&parts, 9, "law-four").unwrap_err().contains("no Part 9"));
     assert!(append(&parts, 2, "law-one").unwrap_err().contains("Part 1"));
@@ -100,6 +105,7 @@ fn append_refuses_an_unknown_part_and_a_slug_in_another_part() {
 
 #[test]
 fn a_retired_slug_keeps_its_number() {
+    let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
     let gone = |s: &str| if s == "law-one" { None } else { book(s) };
     let tree = generate(&parts, &Pointers::default(), gone);
@@ -114,6 +120,7 @@ fn a_retired_slug_keeps_its_number() {
 
 #[test]
 fn a_merged_slug_renders_where_it_went() {
+    let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
     let p = Pointers { merged: vec![Merged { from: "law-one".into(), into: "law-three".into(), reason: "Same rule.".into(), on: "2026-10-28".into() }], ..Pointers::default() };
     let tree = generate(&parts, &p, |s| if s == "law-one" { None } else { book(s) });
@@ -122,6 +129,7 @@ fn a_merged_slug_renders_where_it_went() {
 
 #[test]
 fn pointers_render_to_themselves_and_refuse_what_they_do_not_know() {
+    let _env = testkit::env_read();
     let p = Pointers {
         moved: vec![Moved { section: "1.2".into(), slug: "law-two".into(), on: "2026-10-28".into() }],
         merged: vec![Merged { from: "law-one".into(), into: "law-two".into(), reason: "Same.".into(), on: "2026-10-28".into() }],
@@ -141,6 +149,7 @@ fn ptrs(toml_rows: &str) -> Pointers {
 
 #[test]
 fn a_retired_slug_with_no_replacement_ends_the_chain_with_its_reason() {
+    let _env = testkit::env_read();
     let toc = parse_toc(TOC).unwrap();
     let p = ptrs("[[retired]]\nslug = \"law-three\"\nreason = \"Obsolete.\"\non = \"d\"\n");
     let r = resolve(&toc, &p, "2.1").unwrap();
@@ -149,6 +158,7 @@ fn a_retired_slug_with_no_replacement_ends_the_chain_with_its_reason() {
 
 #[test]
 fn a_toc_that_drops_a_numbered_slug_is_refused_by_name() {
+    let _env = testkit::env_read();
     let old = BTreeMap::from([("law-one".to_string(), "1.1".to_string())]);
     let toc = parse_toc(&TOC.replace("  \"law-one\",\n", "")).unwrap();
     assert!(record_moves(&old, &toc, &Pointers::default(), "d").unwrap_err().contains("law-one"));
@@ -156,6 +166,7 @@ fn a_toc_that_drops_a_numbered_slug_is_refused_by_name() {
 
 #[test]
 fn a_move_records_the_old_number_once() {
+    let _env = testkit::env_read();
     let old = BTreeMap::from([("law-one".to_string(), "1.1".to_string()), ("law-two".to_string(), "1.2".to_string())]);
     let toc = parse_toc(&TOC.replace("  \"law-two\",\n", "").replace("  \"law-three\",", "  \"law-three\",\n  \"law-two\",")).unwrap();
     let p = record_moves(&old, &toc, &Pointers::default(), "2026-10-28").unwrap();
@@ -165,12 +176,14 @@ fn a_move_records_the_old_number_once() {
 
 #[test]
 fn a_slug_in_two_parts_is_refused() {
+    let _env = testkit::env_read();
     let bad = format!("{TOC}\n[[part]]\nnumber = 3\nname = \"C\"\nslug = \"c\"\nscope = \"s\"\nslugs = [\"law-one\"]\n");
     assert!(parse_toc(&bad).unwrap_err().contains("law-one"));
 }
 
 #[test]
 fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesis_stays_in() {
+    let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
     let tree = generate(&parts, &Pointers::default(), |slug| match slug {
         "law-one" => Some("Do one. (per the case that produced it: details.)\n".into()),
@@ -185,6 +198,7 @@ fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesi
 
 #[test]
 fn law_submission_runs_queue_submit_with_no_call_timeout_so_the_gate_survives() {
+    let _env = testkit::env_read();
     let c = rule::code::queue_submit_command("queue", "spira/sp-x", "spira");
     let program = std::path::Path::new(c.get_program());
     assert_eq!(program.file_name().and_then(|n| n.to_str()), Some("queue"), "queue submit must not run under a call-timeout wrapper: it runs the gate");
@@ -194,6 +208,7 @@ fn law_submission_runs_queue_submit_with_no_call_timeout_so_the_gate_survives() 
 
 #[test]
 fn code_check_reports_a_store_slug_the_toc_lacks() {
+    let _env = testkit::env_read();
     let repo = testkit::TempDir::new("rule-behind");
     std::fs::create_dir_all(repo.path().join("law")).unwrap();
     std::fs::write(repo.path().join("law/toc.toml"), TOC).unwrap();
@@ -220,6 +235,7 @@ fn code_check_reports_a_store_slug_the_toc_lacks() {
 
 #[test]
 fn behind_names_store_slugs_the_toc_and_pointers_do_not_account_for() {
+    let _env = testkit::env_read();
     let toc = parse_toc(TOC).unwrap();
     let p = ptrs("[[retired]]\nslug = \"law-five\"\nreason = \"Gone.\"\non = \"d\"\n");
     let store: BTreeMap<String, String> = ["law-one", "law-three", "law-four", "law-five", "law-six"].iter().map(|s| (s.to_string(), String::new())).collect();
@@ -232,6 +248,7 @@ fn store(slugs: &[&str]) -> BTreeMap<String, String> {
 
 #[test]
 fn catch_up_appends_every_behind_slug_and_numbers_the_enacted_key_in_its_part() {
+    let _env = testkit::env_read();
     let toc = parse_toc(TOC).unwrap();
     let book = store(&["law-one", "law-two", "law-three", "law-four", "law-five", "law-six"]);
     let out = rule::code::catch_up(&toc, &Pointers::default(), &book, Some(("law-six", 2))).unwrap();
@@ -275,6 +292,7 @@ fn a_second_law_commit_is_cut_on_the_unlanded_first() {
 
 #[test]
 fn the_law_book_log_is_watched() {
+    let _env = testkit::env_read();
     let rows = include_str!("../../spira/watchers");
     assert!(rows.lines().any(|l| l.starts_with("law-book|log|")), "no law-book log row in spira/watchers");
 }

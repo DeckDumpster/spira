@@ -107,6 +107,7 @@ fn count(f: &Fake, prefix: &str) -> usize {
 
 #[test]
 fn the_certificate_expiry_is_read_from_the_der() {
+    let _env = testkit::env_read();
     let b = plan(true);
     seed_cert(&b, FIXTURE_CERT);
     assert_eq!(cert_days(Path::new(&b.plan.cert), NOT_AFTER - 10 * DAY), Some(10));
@@ -117,6 +118,7 @@ fn the_certificate_expiry_is_read_from_the_der() {
 
 #[test]
 fn a_renewal_that_changes_nothing_does_not_restart() {
+    let _env = testkit::env_read();
     let b = plan(true);
     seed_cert(&b, FIXTURE_CERT);
     let mut f = fake(NOT_AFTER - 10 * DAY);
@@ -128,6 +130,7 @@ fn a_renewal_that_changes_nothing_does_not_restart() {
 
 #[test]
 fn a_missing_certificate_is_fetched() {
+    let _env = testkit::env_read();
     let b = plan(true);
     let f = fake(NOT_AFTER - 60 * DAY);
     provision(&Cert(&f), &b.plan);
@@ -137,6 +140,7 @@ fn a_missing_certificate_is_fetched() {
 
 #[test]
 fn an_unconfigured_install_gets_the_tailnet_address_and_its_files_configured() {
+    let _env = testkit::env_read();
     let b = plan(false);
     let f = fake(NOT_AFTER - 60 * DAY);
     let r = provision(&Cert(&f), &b.plan);
@@ -160,6 +164,7 @@ fn an_unconfigured_install_gets_the_tailnet_address_and_its_files_configured() {
 
 #[test]
 fn an_address_the_operator_chose_is_not_overwritten() {
+    let _env = testkit::env_read();
     let mut b = plan(true);
     b.plan.addr = "100.64.0.77".into();
     seed_cert(&b, FIXTURE_CERT);
@@ -170,6 +175,7 @@ fn an_address_the_operator_chose_is_not_overwritten() {
 
 #[test]
 fn without_tailscale_nothing_is_configured() {
+    let _env = testkit::env_read();
     let b = plan(false);
     let mut f = fake(0);
     f.tailscale_up = false;
@@ -181,6 +187,7 @@ fn without_tailscale_nothing_is_configured() {
 
 #[test]
 fn the_password_file_follows_the_users_file_and_drift_is_seen() {
+    let _env = testkit::env_read();
     let b = plan(true);
     seed_cert(&b, FIXTURE_CERT);
     let pw = b.plan.password_file.clone();
@@ -208,6 +215,7 @@ fn the_password_file_follows_the_users_file_and_drift_is_seen() {
 
 #[test]
 fn the_derived_line_is_a_credential_the_server_accepts() {
+    let _env = testkit::env_read();
     let line = derive_line(&format!("operator:{HASH}:1000:1000::/h\n"), "operator").unwrap();
     let c = spira_submission::credential::Credential::parse(&line, "operator").unwrap();
     assert_eq!(c, spira_submission::credential::Credential::parse(HASH, "operator").unwrap());
@@ -216,6 +224,7 @@ fn the_derived_line_is_a_credential_the_server_accepts() {
 
 #[test]
 fn a_firewall_that_cannot_be_opened_is_an_error_carrying_the_root_command() {
+    let _env = testkit::env_read();
     let b = plan(true);
     seed_cert(&b, FIXTURE_CERT);
     let mut f = fake(NOT_AFTER - 60 * DAY);
@@ -226,6 +235,7 @@ fn a_firewall_that_cannot_be_opened_is_an_error_carrying_the_root_command() {
 
 #[test]
 fn ufw_rules_are_matched_by_port_and_interface() {
+    let _env = testkit::env_read();
     let st = "To  Action  From\n2587/tcp on tailscale0  ALLOW  Anywhere\n22/tcp  ALLOW  Anywhere\n";
     assert!(ufw_allows(st, 2587, "tailscale0"));
     assert!(!ufw_allows(st, 2587, "eth0"));
@@ -236,6 +246,7 @@ fn ufw_rules_are_matched_by_port_and_interface() {
 
 #[test]
 fn the_firewall_state_distinguishes_absent_closed_open_and_unreadable() {
+    let _env = testkit::env_read();
     let b = plan(true);
     let f = fake(0);
     assert_eq!(firewall_state(&f, &b.plan, "tailscale0"), Firewall::Closed);
@@ -270,6 +281,7 @@ impl Host for NoOperator<'_> {
 
 #[test]
 fn the_address_is_written_last() {
+    let _env = testkit::env_read();
     let b = plan(false);
     let f = fake(NOT_AFTER - 60 * DAY);
     provision(&Cert(&f), &b.plan);

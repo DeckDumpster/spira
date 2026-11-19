@@ -5,6 +5,10 @@
 //! `tests/world_readiness_dependents_off.rs` each point `SPIRA_TOML` at a fixture with a
 //! different `SPIRA_LC_STORE_PATH`, and `spira_config::process::config()` resolves once per
 //! process, so whichever ran first would decide the other's store.
+//!
+//! `tests/persona_ops_brief.rs` is its own target because it swaps `SPIRA_HOME` and `SPIRA_TOML`
+//! for a whole `run_brief`, and a test of this binary that reads them unlocked would see the swap
+//! (spira-lint `env-edit-shared-binary`).
 
 mod boot_stagger;
 mod check_config;
