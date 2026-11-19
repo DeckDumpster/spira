@@ -1840,7 +1840,7 @@ pub fn dwarf_settings(home: &Path, run: &Path, prod: Option<&Path>, habits: bool
         }
     };
     let mail = home.join("hooks").join("dwarf-mail-deliver.sh");
-    let post = vec![hook(&mail)];
+    let post = [hook(&mail)];
     let habits_bin = home.parent().unwrap_or(home).join("bin").join("habits");
     let mut groups = vec![format!("{{\"hooks\": [{}]}}", post.join(", "))];
     let habits = habits && is_executable(&habits_bin);
@@ -1885,7 +1885,7 @@ mod tests {
         let home = rel.path().join("spira");
         std::fs::create_dir_all(&home).unwrap();
         for n in ["bd-close-unacked-guard.sh", "bd-unacked-comment-deliver.sh"] {
-            testkit::write_exe(&home.join(n), "#!/bin/sh\n");
+            testkit::write_exe(home.join(n), "#!/bin/sh\n");
         }
         let json = dwarf_settings(&home, Path::new("r/run"), None, false, None);
         assert!(!json.contains("bd-close-unacked-guard.sh"), "{json}");

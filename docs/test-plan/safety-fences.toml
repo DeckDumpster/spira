@@ -17,16 +17,6 @@ tier = "T1"
 statement = "dwarf-fence refuses a dwarf's direct `bd`, `bd-embedded` or `bdq` call under any path (bare, absolute, `$VAR/…`, after env/sudo/timeout/`bash -c`/`cd … &&`) and any `BEADS_DIR` assignment, naming `work file` / `work note-on` / `work search`; prose, heredoc bodies and `work` calls pass; SPIRA_DWARF_OVERRIDE=1 bypasses. Reverses the 2026-10-05 no-bd-rule ruling (sp-j7l3q) on 2026-11-18, after ops sweeps wrote to the store by absolute path (sp-dxbocs)"
 
 [[use_case]]
-id = "UC-safety-fences-04"
-tier = "T1"
-statement = "a dwarf may not `bd close` while an operator comment posted after its claim is unacknowledged; an `ACK <uuid>` note satisfies the guard; pre-claim and the dwarf's own comments are exempt, and the refusal names the comment id and `SPIRA_CLOSE_UNACKED_CONSIDERED`"
-
-[[use_case]]
-id = "UC-safety-fences-05"
-tier = "T1"
-statement = "a post-claim operator comment is delivered to the dwarf exactly once as PostToolUse `additionalContext`, naming the ACK command; pre-claim and self comments are not delivered"
-
-[[use_case]]
 id = "UC-safety-fences-13"
 tier = "T1"
 statement = "`DELETE FROM schema_migrations` is refused at `bdq create` (case- and whitespace-insensitive) even with the ask label, and the refusal points at `bd migrate schema`"
