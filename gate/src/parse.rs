@@ -309,14 +309,24 @@ pub fn red_units(out: &str, tiers: &[Tier]) -> Vec<String> {
     units
 }
 
-/// A build whose compiler-cache server dropped the connection: the cache's fault, never a
-/// red on either side of the base comparison.
+/// The compiler-cache server could not serve the compile (lost connection, or could not
+/// create its temporary folder): the cache's fault, never a red on either side of the base
+/// comparison.
 pub fn cache_transport_failure(out: &str) -> bool {
     let lower = out.to_lowercase();
     lower.contains("sccache: error")
-        && ["connection reset", "connection refused", "failed to execute compile"]
+        && ["connection reset", "connection refused", "failed to execute compile", "failed to create temp dir"]
             .iter()
             .any(|m| lower.contains(m))
+}
+
+/// The server's own words for a cache fault: the first `caused by:` line after the first
+/// `sccache: error` line that names a path or an os error, else the error line itself.
+pub fn cache_failure_line(out: &str) -> Option<&str> {
+    let mut lines = out.lines().map(str::trim).skip_while(|l| !l.starts_with("sccache: error"));
+    let head = lines.next()?;
+    let cause = lines.find(|l| l.contains("caused by:") && (l.contains("os error") || l.contains("path ")));
+    Some(cause.unwrap_or(head))
 }
 
 /// A test that could not find a binary cargo built for it: the output names a
@@ -481,6 +491,12 @@ mod tests {
         assert!(cache_transport_failure(wedged));
         assert!(!cache_transport_failure("error[E0308]: mismatched types\n --> src/lib.rs:1:1\n"));
         assert!(!cache_transport_failure("test result: FAILED. Connection reset by peer in a test\n"));
+        let tmp = "sccache: error: Failed to create temp dir\nsccache: caused by: Failed to create temp dir\nsccache: caused by: No such file or directory (os error 2) at path \"/w/.runtime/session-tmp-1/sccache29LXwu\"\n";
+        assert!(cache_transport_failure(tmp));
+        assert!(!cache_transport_failure("test x ... FAILED: Failed to create temp dir\n"));
+        assert!(cache_failure_line(tmp).unwrap().ends_with("os error 2) at path \"/w/.runtime/session-tmp-1/sccache29LXwu\""));
+        assert_eq!(cache_failure_line("sccache: error: failed to execute compile\n"), Some("sccache: error: failed to execute compile"));
+        assert_eq!(cache_failure_line("error[E0308]\n"), None);
     }
 
     #[test]
