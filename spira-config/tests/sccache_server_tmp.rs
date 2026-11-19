@@ -27,9 +27,9 @@ fn a_session_tmpdir_removed_under_the_server_does_not_break_a_compile() {
         }
     }
     let mut child = server.spawn().unwrap();
-    let ready = (0..100).any(|_| {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        Command::new(sc).arg("--show-stats").envs(base.iter().cloned()).output().map(|o| o.status.success()).unwrap_or(false)
+    let ready = (0..200).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(50)); // clock-safe: caps a wait for the server's port to accept
+        std::net::TcpStream::connect(("127.0.0.1", port.parse::<u16>().unwrap())).is_ok()
     });
     assert!(ready, "the server never answered");
     std::fs::remove_dir_all(&session).unwrap();
