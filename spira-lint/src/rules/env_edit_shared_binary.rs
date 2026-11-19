@@ -52,10 +52,10 @@ fn called(body: &[u8], name: &str) -> bool {
     Regex::new(&pat).expect("escaped name").is_match(body)
 }
 
-/// `<crate>/tests/<dir>/…`: a module of a multi-file target.
+/// `<crate>/tests/<dir>/…` at any crate depth: a module of a multi-file target.
 fn in_multi_file_target(path: &str) -> bool {
-    let mut parts = path.split('/');
-    matches!((parts.next(), parts.next(), parts.next(), parts.next()), (Some(_), Some("tests"), Some(_), Some(_)))
+    let parts: Vec<&str> = path.split('/').collect();
+    parts.iter().skip(1).position(|p| *p == "tests").is_some_and(|i| parts.len() > i + 3)
 }
 
 impl Rule for EnvEditSharedBinary {
@@ -204,5 +204,17 @@ mod tests {
         t.write("a/tests/it/x.rs", "// testkit::env(&[]) is how\nconst S: &str = \"testkit::env(\";\n#[test]\nfn t() {}\n");
         t.write("a/tests/y.rs", "/* testkit::env( */\n#[test]\nfn a() {}\n#[test]\nfn b() {}\n");
         assert_eq!(run(&t, &["a/tests/it/x.rs", "a/tests/y.rs"]).unwrap(), Vec::<String>::new());
+        t.write("a/tests/y.rs", "fn f() { let _e = testkit::env(&[]); }\n#[test]\nfn a() {}\n#[test]\nfn b() {}\n");
+        assert_eq!(run(&t, &["a/tests/y.rs"]).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_nested_crate_path_is_still_a_multi_file_target() {
+        let t = TempDir::new("envshared-nested");
+        t.write("spira/sim/tests/it/x.rs", EDIT);
+        t.write("spira/sim/tests/one.rs", &format!("{EDIT}"));
+        let got = run(&t, &["spira/sim/tests/it/x.rs", "spira/sim/tests/one.rs"]).unwrap();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].contains("spira/sim/tests/it/x.rs"), "{got:?}");
     }
 }
