@@ -47,6 +47,11 @@ path = "tests/retire.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "sccache_server_tmp"
+path = "tests/sccache_server_tmp.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "set_release"
 path = "tests/set_release.rs"
 required-features = ["integration"]

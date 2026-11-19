@@ -181,13 +181,13 @@ fn is_webdav_location(line: &str) -> bool {
 /// always talks to, or spawns, the daemon, so this is not free.
 fn ensure_store_backend(sccache_bin: &Path, store: &Store) -> BackendCheck {
     let extra = store.env_pairs();
-    start_server_unit(sccache_bin, store);
+    ensure_server_unit_on_host(sccache_bin, store);
     match show_stats_cache_location(sccache_bin, &extra) {
         None => BackendCheck::Unknown,
         Some(line) if is_webdav_location(&line) => BackendCheck::Matches,
         Some(line) => {
-            let _ = crate::bounded::bounded(sccache_bin).arg("--stop-server").output();
-            start_server_unit(sccache_bin, store);
+            SystemEffectors.stop_server(sccache_bin);
+            ensure_server_unit_on_host(sccache_bin, store);
             BackendCheck::Restarted(line)
         }
     }
@@ -199,17 +199,81 @@ fn ensure_store_backend(sccache_bin: &Path, store: &Store) -> BackendCheck {
 pub const SERVER_UNIT: &str = "spira-sccache-server";
 
 /// `systemd-run` arguments that run the sccache server in the foreground as [`SERVER_UNIT`].
-pub fn server_unit_args(sccache_bin: &Path, store: &Store) -> Vec<String> {
-    let mut args: Vec<String> = ["--user", "--quiet", "--collect", &format!("--unit={SERVER_UNIT}"), "--setenv=SCCACHE_START_SERVER=1", "--setenv=SCCACHE_NO_DAEMON=1"].iter().map(|s| s.to_string()).collect();
+pub fn server_unit_args(sccache_bin: &Path, store: &Store, tmp: &Path) -> Vec<String> {
+    let mut args: Vec<String> = ["--user", "--quiet", "--collect", &format!("--unit={SERVER_UNIT}"), "--property=Restart=always", "--property=RestartSec=2", "--setenv=SCCACHE_START_SERVER=1", "--setenv=SCCACHE_NO_DAEMON=1", "--setenv=SCCACHE_IDLE_TIMEOUT=0", &format!("--setenv=TMPDIR={}", tmp.display())].iter().map(|s| s.to_string()).collect();
     args.extend(store.env_pairs().iter().map(|(k, v)| format!("--setenv={k}={v}")));
     args.push(sccache_bin.display().to_string());
     args
 }
 
-/// Starts the server as its own unit unless one is already running; a host without a user
-/// manager, or a unit already there, leaves the server to be spawned by its first client.
-fn start_server_unit(sccache_bin: &Path, store: &Store) {
-    let _ = crate::bounded::bounded(Path::new("systemd-run")).args(server_unit_args(sccache_bin, store)).output();
+/// What the server-unit start does to the machine, behind a seam so a unit test spawns nothing.
+trait ServerEffectors {
+    fn start_unit(&self, args: &[String]);
+    fn unit_active(&self) -> bool;
+    fn stop_server(&self, sccache_bin: &Path);
+}
+
+struct SystemEffectors;
+
+impl ServerEffectors for SystemEffectors {
+    fn start_unit(&self, args: &[String]) {
+        let _ = crate::bounded::bounded(Path::new("systemd-run")).args(args).output();
+    }
+
+    fn unit_active(&self) -> bool {
+        let active = || crate::bounded::bounded(Path::new("systemctl")).args(["--user", "is-active", "--quiet", SERVER_UNIT]).output().map(|o| o.status.success()).unwrap_or(false);
+        // A server that cannot bind its port fails moments after the start: active must hold across polls.
+        for _ in 0..3 {
+            if !active() {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200)); // waits-on: the unit's state; cap 3 polls
+        }
+        true
+    }
+
+    fn stop_server(&self, sccache_bin: &Path) {
+        let _ = crate::bounded::bounded(sccache_bin).arg("--stop-server").output();
+    }
+}
+
+/// What [`ensure_server_unit`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ServerUnit {
+    Running,
+    StrayReplaced,
+}
+
+/// The folder the unit's server's temporary files live in: its own, so no session's removed
+/// `TMPDIR` can break a compile. Created here, before the unit starts.
+fn server_tmp_dir() -> Result<PathBuf, String> {
+    let dir = Path::new(&crate::process::cfg("SPIRA_RUN")?).join("sccache-server").join("tmp");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    Ok(dir)
+}
+
+/// Starts [`SERVER_UNIT`]. A unit that is not active afterwards lost its port to a server some
+/// client spawned (in that client's cgroup and environment): stop that one and start the unit.
+fn ensure_server_unit(fx: &dyn ServerEffectors, sccache_bin: &Path, store: &Store, tmp: &Path) -> ServerUnit {
+    let args = server_unit_args(sccache_bin, store, tmp);
+    fx.start_unit(&args);
+    if fx.unit_active() {
+        return ServerUnit::Running;
+    }
+    fx.stop_server(sccache_bin);
+    fx.start_unit(&args);
+    eprintln!("spira_config::build: a sccache server outside {SERVER_UNIT} held the port — stopped it and started the unit");
+    ServerUnit::StrayReplaced
+}
+
+fn ensure_server_unit_on_host(sccache_bin: &Path, store: &Store) -> Option<ServerUnit> {
+    match server_tmp_dir() {
+        Ok(tmp) => Some(ensure_server_unit(&SystemEffectors, sccache_bin, store, &tmp)),
+        Err(e) => {
+            eprintln!("spira_config::build: {SERVER_UNIT} not started: {e}");
+            None
+        }
+    }
 }
 
 /// [`ensure_store_backend`] plus the two `SCCACHE_WEBDAV_*` vars, in one call — the one place
@@ -451,12 +515,51 @@ mod tests {
     #[test]
     fn the_shared_server_runs_as_its_own_foreground_unit_on_the_configured_store() {
         let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
-        let args = server_unit_args(Path::new("opt/bin/sccache"), &store);
+        let args = server_unit_args(Path::new("opt/bin/sccache"), &store, Path::new("run/tmp"));
         assert!(args.contains(&"--user".to_string()) && args.contains(&format!("--unit={SERVER_UNIT}")), "{args:?}");
-        for want in ["--setenv=SCCACHE_START_SERVER=1", "--setenv=SCCACHE_NO_DAEMON=1", "--setenv=SCCACHE_WEBDAV_ENDPOINT=http://box:9431", "--setenv=SCCACHE_WEBDAV_KEY_PREFIX=/"] {
+        for want in ["--setenv=SCCACHE_START_SERVER=1", "--setenv=SCCACHE_NO_DAEMON=1", "--setenv=SCCACHE_WEBDAV_ENDPOINT=http://box:9431", "--setenv=SCCACHE_WEBDAV_KEY_PREFIX=/", "--setenv=TMPDIR=run/tmp", "--setenv=SCCACHE_IDLE_TIMEOUT=0", "--property=Restart=always", "--property=RestartSec=2"] {
             assert!(args.contains(&want.to_string()), "{want} in {args:?}");
         }
         assert_eq!(args.last().map(String::as_str), Some("opt/bin/sccache"), "the command comes after every option");
+    }
+
+    struct Recorder {
+        calls: std::cell::RefCell<Vec<&'static str>>,
+        active: bool,
+    }
+
+    impl ServerEffectors for Recorder {
+        fn start_unit(&self, _: &[String]) {
+            self.calls.borrow_mut().push("start");
+        }
+        fn unit_active(&self) -> bool {
+            self.calls.borrow_mut().push("is-active");
+            self.active
+        }
+        fn stop_server(&self, _: &Path) {
+            self.calls.borrow_mut().push("stop-server");
+        }
+    }
+
+    fn ensure_with(active: bool) -> (ServerUnit, Vec<&'static str>) {
+        let fx = Recorder { calls: Default::default(), active };
+        let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
+        let r = ensure_server_unit(&fx, Path::new("opt/bin/sccache"), &store, Path::new("run/tmp"));
+        (r, fx.calls.into_inner())
+    }
+
+    #[test]
+    fn an_inactive_unit_after_the_first_start_means_a_stray_holds_the_port_and_is_replaced() {
+        let (r, calls) = ensure_with(false);
+        assert_eq!(calls, ["start", "is-active", "stop-server", "start"]);
+        assert_eq!(r, ServerUnit::StrayReplaced);
+    }
+
+    #[test]
+    fn an_active_unit_is_left_alone() {
+        let (r, calls) = ensure_with(true);
+        assert_eq!(calls, ["start", "is-active"]);
+        assert_eq!(r, ServerUnit::Running);
     }
 
     // ------------------------------------------------------------- Store (sp-xtdqi)
