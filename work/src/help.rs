@@ -344,7 +344,7 @@ pub static ENTRIES: &[Entry] = &[
     lane("reopen", "Reopens a bead.", "A lane persona returns work to the queue.", &["<bead-id>"]),
     lane("close-other", "Closes another bead with a reason.", "A lane persona retires work.", &["<bead-id>", "<reason>"]),
     lane("close-ask", "Closes an ask in the operator mailbox.", "The decision that settled it is known.", &["<ask-id>", "<what decided it>"]),
-    lane("file", "Files a bead outside any parent.", "A lane persona with a remit to file.", &["<title>", "--kind <kind>", "--body-file -"]),
+    lane("file", "Files a bead outside any parent.", "A lane persona with a remit to file.", &["<title> --for <persona> --repo <name> --body-file -   (work)", "<title> --kind <kind> --body-file -   (a record)"]),
     lane("groom", "Runs the groomer.", "Grooming persona only.", &["<sub>"]),
     lane("incident", "Runs the incident tool.", "Operations persona only.", &["<sub>"]),
     lane("sop", "Reads or writes standing procedures.", "Operations persona only.", &["<sub>"]),
@@ -470,6 +470,13 @@ pub fn prime() -> String {
 mod tests {
     use super::*;
     use crate::{BOUND_VERBS, LANE_VERBS};
+
+    #[test]
+    fn the_file_entry_names_both_forms_with_the_repo() {
+        let e = ENTRIES.iter().find(|e| e.verb == "file").unwrap();
+        let args = e.args.join(" ");
+        assert!(args.contains("--for <persona> --repo <name>") && args.contains("--kind <kind>"), "{args}");
+    }
 
     #[test]
     fn no_entry_is_listed_twice() {

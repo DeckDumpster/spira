@@ -354,9 +354,8 @@ Checks:
 Files a bead outside any parent.
 Use when: A lane persona with a remit to file.
 Arguments:
-  <title>
-  --kind <kind>
-  --body-file -
+  <title> --for <persona> --repo <name> --body-file -   (work)
+  <title> --kind <kind> --body-file -   (a record)
 Checks:
   - the broker's allow row for your persona names this verb
 
