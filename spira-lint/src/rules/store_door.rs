@@ -1,11 +1,14 @@
 //! `store-door` — only the store's own door invokes dolt or bd. Everything else reads and
 //! writes the store through spira-lc, so one program owns its credentials, deadlines and
 //! lifecycle rules. Three forms are refused: a Rust `Command::new`/`bounded`/`bounded_for` of
-//! `dolt` or `bd` — by literal, or by a name its crate binds from a program key (`SPIRA_BD`,
+//! `dolt`, `bd`, `bd-embedded` or `bdq` — by literal, or by a name its crate binds from a program key (`SPIRA_BD`,
 //! `SPIRA_DOLT_BIN`) — a shell command word that names either (`bd`, `$SPIRA_BD`, …), and a
 //! MySQL connection to the dolt server.
 //!
 //! `STORE_DOOR_CONSIDERED="<why>"` on the offending line passes it and logs the reason.
+//! Executors that predate the rule are counted per file in `spira-lint/store-door-allow`, which
+//! only shrinks: a file over its count, or unlisted, is refused; one under it passes, so
+//! migrations that lower the same file do not collide.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
@@ -13,19 +16,20 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 use crate::lex::{rust, shell};
+use crate::rules::call_deadline::parse_count_allow;
 use crate::{Entry, Finding, LintError, Rule, Tree};
 
 pub struct StoreDoor;
 
 const NAME: &str = "store-door";
 const OVERRIDE: &str = "STORE_DOOR_CONSIDERED=";
+const ALLOW_FILE: &str = "spira-lint/store-door-allow";
 
 /// Path prefixes (or exact files) allowed to invoke the store, each with why.
 const DOORS: &[(&str, &str)] = &[
     ("spira-lc/", "the door: the one program that talks to the stores"),
-    ("bead/", "the sanctioned bd wrapper for bead content"),
+    ("bead/src/bin/bdq.rs", "bdq itself, until it is deleted"),
     ("spira/bead.sh", "the sanctioned bd wrapper (bead) for content"),
-    ("spira/bdq.sh", "the sanctioned bd wrapper (bdq) for content"),
     ("spira-lint/", "the rule's own fixtures and detectors name the programs it refuses"),
     ("lifecycle-guard/", "detectors for direct bd calls carry them as fixtures"),
     ("testenv/", "builds and tears down the throwaway fixture databases tests run on"),
@@ -35,12 +39,8 @@ const DOORS: &[(&str, &str)] = &[
     ("spira/build-bd.sh", "builds the bd binary"),
     ("spira/bd-pin.sh", "pins the bd binary version"),
     ("spira/test-", "legacy: suite fixtures drive the throwaway store they created; shrink-only"),
-    ("release/", "legacy: stages spira-lc and its tests boot a dolt server to test it; shrink-only"),
     ("store-persist/", "legacy: the persistence probe operates dolt itself; shrink-only"),
     ("spira/lc-backup.sh", "legacy: dolt backup and restore of the stores; shrink-only"),
-    ("spira/acceptance-ci.sh", "legacy: prints the bd version into the acceptance report; shrink-only"),
-    ("concierge.sh", "legacy: bd ping liveness probe; shrink-only"),
-    ("rule/src/main.rs", "legacy: statute reads through bd; shrink-only"),
     ("docs/spikes/", "recorded measurement reruns of bd, never run by the loop"),
 ];
 
@@ -142,11 +142,11 @@ pub(crate) fn rust_text(src: &[u8]) -> String {
     String::from_utf8_lossy(&rust::classify(src).without_comments()).into_owned()
 }
 
-/// `"bd"`, `"/opt/x/dolt"`, or `tool("bd")`: the store's program named outright.
+/// `"bd"`, `"/opt/x/bdq"`, or `tool("bdq")?`: a store program named outright.
 fn names_store_literally(expr: &str) -> bool {
     static LIT: OnceLock<Regex> = OnceLock::new();
     let e = expr.trim_start().trim_start_matches('&');
-    re(&LIT, r#"^\s*(?:"(?:[^"]*/)?(?:dolt|bd)"|[\w:]*\btool\s*\(\s*"(?:dolt|bd)"\s*\))\s*(?:\.(?:to_string|to_owned|into)\(\)|\.\s*clone\(\))?\s*(?:$|[,;)}])"#).is_match(e)
+    re(&LIT, r#"^\s*(?:"(?:[^"]*/)?(?:dolt|bd-embedded|bdq|bd)"|[\w:]*\btool\s*\(\s*"(?:dolt|bd-embedded|bdq|bd)"\s*\)\s*\??)\s*(?:(?:\.(?:to_string|to_owned|into)\(\)|\.\s*clone\(\))?\s*(?:$|[,;)}])|\.\s*(?:unwrap|expect|unwrap_or\w*)\s*\()"#).is_match(e)
 }
 
 /// The top-level elements of an array literal whose `[` has been consumed.
@@ -176,12 +176,15 @@ fn rust_hits(text: &str, tainted: &BTreeSet<String>) -> Vec<(usize, &'static str
     static CMD: OnceLock<Regex> = OnceLock::new();
     static SQL: OnceLock<Regex> = OnceLock::new();
     let mut out = Vec::new();
-    for m in re(&CMD, r"\b(?:Command::new|bounded|bounded_for)\s*\(|\.(arg|args)\s*\(").find_iter(text) {
+    for m in re(&CMD, r"\b(?:Command::new|bounded|bounded_for)\s*\(|\.(arg|args)\s*\(|\bprog\s*:").find_iter(text) {
         let arg = first_arg(text, m.end() - 1);
         let hit = if m.as_str().starts_with(".args") {
             // A wrapper's argv: `.args([secs, &bd, "-C", db])`.
             let inner = arg.trim().trim_start_matches('&').trim_start_matches("vec!").trim();
             inner.strip_prefix('[').is_some_and(|rest| elements(rest).iter().any(|e| is_program(e, tainted)))
+        } else if m.as_str().starts_with("prog") {
+            // A spawn spec's program field: `Spec { prog: &self.bdq, … }`.
+            names_store_literally(arg) || is_program(arg, tainted)
         } else if m.as_str().starts_with(".arg") {
             is_program(arg, tainted)
         } else {
@@ -205,7 +208,8 @@ fn rust_hits(text: &str, tainted: &BTreeSet<String>) -> Vec<(usize, &'static str
 fn store_program(word: &str) -> bool {
     static VAR: OnceLock<Regex> = OnceLock::new();
     let base = word.rsplit('/').next().unwrap_or("");
-    matches!(base, "dolt" | "bd") || re(&VAR, r"^\$(?:\{(?:SPIRA_BD|SPIRA_DOLT_BIN|DOLT|BD|BD_BIN)(?::?[-=][^}]*)?\}|(?:SPIRA_BD|SPIRA_DOLT_BIN|DOLT|BD|BD_BIN)$)").is_match(word)
+    matches!(base, "dolt" | "bd" | "bd-embedded" | "bdq" | "bdjson")
+        || re(&VAR, r"^\$(?:\{(?:SPIRA_BD|SPIRA_BDQ|SPIRA_DOLT_BIN|DOLT|BD|BDQ|BD_BIN)(?::?[-=][^}]*)?\}|(?:SPIRA_BD|SPIRA_BDQ|SPIRA_DOLT_BIN|DOLT|BD|BDQ|BD_BIN)$)").is_match(word)
 }
 
 /// The argv a wrapper (`exec`, `command`, `timeout DUR`) runs.
@@ -275,6 +279,48 @@ fn is_script(e: &Entry) -> bool {
     e.path.ends_with(".sh") || e.path.ends_with(".bash")
 }
 
+/// Every unexcused executor in the walk, before the allow list.
+fn violations(tree: &Tree) -> Result<Vec<Finding>, LintError> {
+    let files = crate::scope(tree, &StoreDoor)?;
+    let mut crates: BTreeMap<&str, Vec<RustFile>> = BTreeMap::new();
+    let mut out = Vec::new();
+    for e in files.iter().filter(|e| !door(&e.path)) {
+        let Some(c) = tree.content(e) else { continue };
+        if e.path.ends_with(".rs") {
+            crates.entry(crate_of(&e.path)).or_default().push((&e.path, c, rust_text(c)));
+        } else {
+            out.extend(scan(&e.path, c, shell_hits(c)));
+        }
+    }
+    for files in crates.values() {
+        let texts: Vec<String> = files.iter().map(|(_, _, t)| t.clone()).collect();
+        let tainted = tainted_names(&texts);
+        for (path, src, text) in files {
+            out.extend(scan(path, src, rust_hits(text, &tainted)));
+        }
+    }
+    Ok(out)
+}
+
+/// The allow file's text for the tree as it stands: what `--emit-allow` prints.
+pub fn render_allow(tree: &Tree) -> Result<String, LintError> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for f in violations(tree)? {
+        *counts.entry(f.path).or_default() += 1;
+    }
+    let mut s = String::from(
+        "# store-door: files that execute bd, bd-embedded, bdq or dolt, as `<count> <path>`. Generated:\n\
+# spira-lint --only store-door --emit-allow.\n\
+#\n\
+# SHRINK-ONLY. A count goes down as callers move to spira-lc; nothing is raised for a NEW\n\
+# executor. A count above the file's is refused; a count below it passes.\n",
+    );
+    for (p, n) in counts {
+        s.push_str(&format!("{n} {p}\n"));
+    }
+    Ok(s)
+}
+
 impl Rule for StoreDoor {
     fn name(&self) -> &'static str {
         NAME
@@ -284,32 +330,37 @@ impl Rule for StoreDoor {
         (e.path.ends_with(".rs") || is_script(e)) && !e.path.starts_with("target/")
     }
 
+    fn allow_file(&self) -> Option<&'static str> {
+        Some(ALLOW_FILE)
+    }
+
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
-        let files = crate::scope(tree, self)?;
-        let mut crates: BTreeMap<&str, Vec<RustFile>> = BTreeMap::new();
-        let mut out = Vec::new();
-        for e in files.iter().filter(|e| !door(&e.path)) {
-            let Some(c) = tree.content(e) else { continue };
-            if e.path.ends_with(".rs") {
-                crates.entry(crate_of(&e.path)).or_default().push((&e.path, c, rust_text(c)));
-            } else {
-                out.extend(scan(&e.path, c, shell_hits(c)));
-            }
+        let allow = parse_count_allow(ALLOW_FILE, &tree.read_text(ALLOW_FILE))?;
+        let mut by_path: BTreeMap<String, Vec<Finding>> = BTreeMap::new();
+        for f in violations(tree)? {
+            by_path.entry(f.path.clone()).or_default().push(f);
         }
-        for files in crates.values() {
-            let texts: Vec<String> = files.iter().map(|(_, _, t)| t.clone()).collect();
-            let tainted = tainted_names(&texts);
-            for (path, src, text) in files {
-                out.extend(scan(path, src, rust_hits(text, &tainted)));
+        let mut out = Vec::new();
+        for (path, fs) in by_path {
+            let allowed = allow.get(&path).map_or(0, |a| a.0);
+            if fs.len() <= allowed {
+                continue;
             }
+            let note = if allowed == 0 { String::new() } else { format!(" ({} allowed, {} found)", allowed, fs.len()) };
+            out.extend(fs.into_iter().map(|mut f| {
+                f.message.push_str(&note);
+                f
+            }));
         }
         Ok(out)
     }
 
     fn hint(&self) -> &'static str {
-        "Only spira-lc (and the bead/bdq content wrappers) talk to the store. Read state with \
-spira-lc and write content through `spira-lc content …`; add the verb there if it is missing. \
-A reasoned exception carries STORE_DOOR_CONSIDERED=\"<why>\" on the line."
+        "Only spira-lc talks to the store. Read state with spira-lc and write content through \
+`spira-lc content <verb>`; add the verb to spira-lc/src/content.rs `check()` if it is missing. \
+Existing executors are counted in spira-lint/store-door-allow, which only shrinks; regenerate \
+with `spira-lint --only store-door --emit-allow`. A reasoned exception carries \
+STORE_DOOR_CONSIDERED=\"<why>\" on the line."
     }
 }
 
@@ -401,6 +452,92 @@ mod tests {
         t.write("foo/src/a.rs", "fn f(&self) { let git = cfg(\"SPIRA_GIT\")?; Command::new(&git); let bd = cfg(\"SPIRA_BD\")?; self.bd(&[\"x\"]); Command::new(\"spira-lc\").env(\"X\", &bd); }\n");
         t.write("foo/x.sh", "\"$SPIRA_LC\" list\necho \"$SPIRA_BD\"\n");
         assert_eq!(run(&t, &["foo/src/a.rs", "foo/x.sh"]).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_bdq_bound_from_the_release_is_caught() {
+        let t = TempDir::new("sd-bdq");
+        t.write("foo/src/main.rs", "fn main() { let bdq = spira_config::release_env::tool(\"bdq\")?; }\n");
+        t.write("foo/src/real.rs", "fn f(&self) { Command::new(&self.bdq); }\n");
+        let got = run(&t, &["foo/src/main.rs", "foo/src/real.rs"]).unwrap();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].contains("foo/src/real.rs:1"), "{got:?}");
+        t.write("foo/src/main.rs", "fn main() { let bdq = release_env::tool(\"bdq\").unwrap_or_else(|_| \"bdq\".into()); }\n");
+        assert_eq!(run(&t, &["foo/src/main.rs", "foo/src/real.rs"]).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_spawn_spec_program_field_is_caught() {
+        let t = TempDir::new("sd-spec");
+        t.write("foo/src/main.rs", "fn main() { let c = C { bdq: tool(\"bdq\").unwrap_or_else(|e| fatal(e)) }; }\n");
+        t.write("foo/src/bd.rs", "fn f(&self) { util::run(Spec {\n    prog: &self.bdq,\n    args: a,\n}); }\n");
+        let got = run(&t, &["foo/src/main.rs", "foo/src/bd.rs"]).unwrap();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].contains("foo/src/bd.rs:2"), "{got:?}");
+    }
+
+    #[test]
+    fn shell_bdq_bdjson_and_bd_embedded_are_caught() {
+        let t = TempDir::new("sd-shbdq");
+        t.write("foo/x.sh", "bdq note sp-a x\nbdjson show sp-a\ntimeout 5 bd-embedded init\ncommand bdq list\n");
+        assert_eq!(run(&t, &["foo/x.sh"]).unwrap().len(), 4);
+    }
+
+    #[test]
+    fn bead_sh_and_spira_lc_pass() {
+        let t = TempDir::new("sd-door-cmds");
+        t.write("foo/x.sh", "bead.sh file T --for builder --repo spira\nspira-lc content note sp-a x\n");
+        assert_eq!(run(&t, &["foo/x.sh"]).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_bdq_spawn_inside_bead_but_outside_bdq_rs_is_caught() {
+        let t = TempDir::new("sd-bead");
+        t.write("bead/src/main.rs", "fn f() { Command::new(tool(\"bdq\")?); }\n");
+        t.write("bead/src/bin/bdq.rs", "fn f() { Command::new(tool(\"bdq\")?); }\n");
+        assert_eq!(run(&t, &["bead/src/main.rs", "bead/src/bin/bdq.rs"]).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_allow_list_counts_and_never_adds() {
+        let t = TempDir::new("sd-allow");
+        t.write("spira/x.sh", "bdq note a x\nbdq note b y\n");
+        t.write(ALLOW_FILE, "2 spira/x.sh\n");
+        assert_eq!(run(&t, &["spira/x.sh"]).unwrap(), Vec::<String>::new());
+        t.write("spira/x.sh", "bdq note a x\nbdq note b y\nbdq note c z\n");
+        let got = run(&t, &["spira/x.sh"]).unwrap();
+        assert_eq!(got.len(), 3);
+        assert!(got[0].ends_with("(2 allowed, 3 found)"), "{got:?}");
+        t.write("spira/y.sh", "bdq note a x\n");
+        t.write("spira/x.sh", "bdq note a x\n");
+        assert_eq!(run(&t, &["spira/x.sh", "spira/y.sh"]).unwrap().len(), 1, "an unlisted file is refused; a file under its count passes");
+    }
+
+    #[test]
+    fn render_allow_round_trips() {
+        let t = TempDir::new("sd-render");
+        t.write("spira/x.sh", "bdq note a x\nbdq note b y\n");
+        let tree = Tree::from_paths(t.path(), ["spira/x.sh"], std::iter::empty::<&str>());
+        let text = render_allow(&tree).unwrap();
+        assert!(text.contains("\n2 spira/x.sh\n"), "{text}");
+        t.write(ALLOW_FILE, &text);
+        assert_eq!(run(&t, &["spira/x.sh"]).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_shipped_list_counts_the_known_executors() {
+        let list = parse_count_allow(ALLOW_FILE, include_str!("../../store-door-allow")).unwrap();
+        for p in ["bead/src/main.rs", "dwarf/src/bd.rs", "spira-claim/src/store.rs", "mail/src/bead.rs", "incident/src/real.rs", "spira/lib.sh"] {
+            assert!(list.contains_key(p), "{p} missing from the allow list");
+        }
+    }
+
+    #[test]
+    fn a_shell_function_named_bdq_and_the_calls_in_its_body_are_both_counted() {
+        let t = TempDir::new("sd-fn");
+        t.write("spira/lib.sh", "bdq() {\n  bd \"$@\"\n}\nbdjson() { bdq \"$@\" --json; }\n");
+        let got = run(&t, &["spira/lib.sh"]).unwrap();
+        assert_eq!(got.len(), 4, "{got:?}");
     }
 
     #[test]

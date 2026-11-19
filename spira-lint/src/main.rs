@@ -123,6 +123,7 @@ fn real_main() -> ExitCode {
         let (name, render): (&str, fn(&Tree) -> Result<String, spira_lint::LintError>) = match only.as_deref() {
             Some("call-deadline") => ("call-deadline", spira_lint::rules::call_deadline::render_allow),
             Some("bdq-read") => ("bdq-read", spira_lint::rules::bdq_read::render_allow),
+            Some("store-door") => ("store-door", spira_lint::rules::store_door::render_allow),
             Some("hash-iter-output") => ("hash-iter-output", spira_lint::rules::hash_iter_output::render_allow),
             Some("config-key-registered") => ("config-key-registered", spira_lint::rules::config_key_registered::render_allow),
             Some("state-from-text") => ("state-from-text", spira_lint::rules::state_from_text::render_allow),
@@ -131,7 +132,7 @@ fn real_main() -> ExitCode {
                 return ExitCode::SUCCESS;
             }
             _ => {
-                eprintln!("spira-lint: --emit-allow is only supported with --only call-deadline, hash-iter-output, config-key-registered, state-from-text, bdq-read or loop-blocking\n{USAGE}");
+                eprintln!("spira-lint: --emit-allow is only supported with --only call-deadline, hash-iter-output, config-key-registered, state-from-text, bdq-read, store-door or loop-blocking\n{USAGE}");
                 return ExitCode::from(2);
             }
         };
