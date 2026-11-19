@@ -179,11 +179,11 @@ fi
 
 if [ -z "$reason" ]; then
     # queue.sh is the queue binary now (queue/DESIGN.md §7.2 row 18), invoked by name:
-    # match either, bare or by path; `stats` and `churn` are the read-only verbs.
+    # match either, bare or by path; `stats` is the read-only verb.
     case "$cmd" in
         *queue*)
-            { [ "$(_exec_ctx "queue.sh" "$cmd" stats,churn)" = "1" ] || [ "$(_exec_ctx "queue" "$cmd" stats,churn)" = "1" ]; } && \
-                reason="dwarves may not operate the queue (sp-kz8ob: queue stats and queue churn are the only read-only subcommands; use SPIRA_DWARF_OVERRIDE=1 for Ops incidents)" ;;
+            { [ "$(_exec_ctx "queue.sh" "$cmd" stats)" = "1" ] || [ "$(_exec_ctx "queue" "$cmd" stats)" = "1" ]; } && \
+                reason="dwarves may not operate the queue (sp-kz8ob: queue stats is the only read-only subcommand; use SPIRA_DWARF_OVERRIDE=1 for Ops incidents)" ;;
     esac
 fi
 

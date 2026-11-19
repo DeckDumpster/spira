@@ -1078,7 +1078,6 @@ type SharedView = std::rc::Rc<RefCell<Option<BatchView>>>;
 struct FLc {
     /// A fresh read whose argv contains `.0` is refused with `.1`.
     fresh_refused: RefCell<Option<(&'static str, String)>>,
-    churn: RefCell<Option<String>>,
     available: Cell<bool>,
     bead_rows: RefCell<std::collections::HashMap<String, (String, String)>>,
     rows: RefCell<Result<Vec<LcBeadRow>, String>>,
@@ -1150,7 +1149,6 @@ impl Default for FLc {
     fn default() -> Self {
         FLc {
             fresh_refused: RefCell::default(),
-            churn: RefCell::default(),
             available: Cell::new(false),
             bead_rows: RefCell::default(),
             rows: RefCell::new(Ok(Vec::new())),
@@ -1299,12 +1297,6 @@ impl Lc for FLc {
             Some((_, _, n, p)) => Some((*n, p.clone())),
             None => Some((1, "suites".into())),
         }
-    }
-    fn churn_facts(&self, _: i64) -> Result<String, String> {
-        self.churn
-            .borrow()
-            .clone()
-            .ok_or_else(|| "no lifecycle".to_string())
     }
     fn create_bead(&self, id: &str) {
         self.calls.borrow_mut().push(format!("create-bead {id}"));
@@ -4242,33 +4234,6 @@ fn stats_reads_the_landing_log() {
     fs::write(t.s().run.join("landing.log"), "QUEUE CAUGHT 1 branch=x\n").unwrap();
     assert_eq!(t.run(&["stats"]), 0);
     assert!(t.out().starts_with("caught:          1\n"));
-}
-
-#[test]
-fn churn_measures_the_lifecycles_rows_and_diffs_the_tips_through_git() {
-    let t = T::new(LandMode::Queue);
-    t.git.stat("from1", "to1", &[("a.rs", 2, 1)]);
-    let now = t.clock.now();
-    let facts = format!(
-        r#"{{"ejects":[{{"batch_id":"b1","evidence":"{{\"Eject\":{{\"bead_id\":\"sp-a\",\"reason\":\"red\"}}}}","at":"{}"}}],
-            "members":[{{"batch_id":"b1","bead_id":"sp-a","tip":"from1"}}],
-            "landed_at":[{{"bead":"sp-a","at":"{}"}}],"landed_tip":[{{"bead_id":"sp-a","tip":"to1"}}],
-            "mendings":[],"mends":[],"pass_ends":[]}}"#,
-        now - 100,
-        now - 50
-    );
-    *t.lc.churn.borrow_mut() = Some(facts);
-    assert_eq!(t.run(&["churn", "--since", "1d"]), 0);
-    let out = t.out();
-    assert!(out.contains("beads sent back:       1"), "{out}");
-    assert!(out.contains("landed with <= 4 lines:  1"), "{out}");
-    assert!(
-        out.contains("p95 failure-to-outcome:      ? (target < 300s) NO DATA"),
-        "{out}"
-    );
-    *t.lc.churn.borrow_mut() = None;
-    assert_eq!(t.run(&["churn"]), 1);
-    assert_eq!(t.run(&["churn", "--since", "soon"]), 2);
 }
 
 #[test]

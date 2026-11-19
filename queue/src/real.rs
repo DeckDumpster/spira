@@ -2371,9 +2371,6 @@ impl Lc for RealLc {
             .filter_map(|(k, t)| t.as_str().map(|t| (k, t.to_string())))
             .collect())
     }
-    fn churn_facts(&self, since: i64) -> Result<String, String> {
-        self.stdout(&["churn-facts", "--since", &since.to_string()])
-    }
     fn certify(
         &self,
         bead: &str,

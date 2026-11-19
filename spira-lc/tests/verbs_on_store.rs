@@ -87,6 +87,5 @@ fn the_ported_verbs_answer_from_the_control_store() {
     assert_eq!(w.run(&["ops-bead", "sp-none"]).0, 1);
     assert!(!json(&["ops-graph"]).as_array().unwrap().is_empty());
 
-    assert!(json(&["churn-facts", "--since", "0"])["mendings"].is_array());
     ok(&["mend-watch"]);
 }

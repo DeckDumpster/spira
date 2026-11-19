@@ -1,7 +1,6 @@
 //! queue — the merge queue's operator and landing tool. See DESIGN.md.
 
 pub mod batches;
-pub mod churn;
 pub mod cli;
 pub mod conf;
 pub mod ident;
@@ -36,9 +35,6 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
         Cmd::Submit { branch, repo } => simple::submit(w, branch, repo.as_deref()),
         Cmd::Protect { repo } => simple::protect(w, repo.as_deref()),
         Cmd::Stats => simple::stats(w),
-        Cmd::Churn { since, until, repo } => {
-            simple::churn(w, since.as_deref(), until.as_deref(), repo.as_deref())
-        }
         Cmd::BackfillCarriers { apply } => integrate::backfill_carriers(w, *apply),
         Cmd::Flush { repo } => simple::flush(w, repo.as_deref()),
         Cmd::Step { repo } => simple::step(w, repo),
