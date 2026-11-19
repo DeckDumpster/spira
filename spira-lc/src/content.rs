@@ -689,7 +689,10 @@ mod tests {
             &["remember", "--key", "-x"],
             &["update", "sp-a", "--body-file", "-", "--force-claimed", " "],
             &["dep", "add", "sp-a", "sp-b", "--type"],
-                        &[][..],
+            &[][..],
+            &["gate", "resolve"],
+            &["gate", "check"],
+            &["gate", "resolve", "-x"],
         ] {
             assert!(check(&v(bad)).is_err(), "{bad:?}");
         }
