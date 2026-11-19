@@ -644,8 +644,8 @@ pub fn run_cleanup(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
     if !id.is_empty() {
         dwarf::ops_sweep::cleanup(&run, RUNE, id);
     }
-    let num = |k: &str| get(&p.cfg, k).parse::<u64>().map_err(|_| format!("{NAME}: {k} missing or not a number"));
+    let num = |k: &str| get(&p.cfg, k).parse::<u32>().map_err(|_| format!("{NAME}: {k} missing or not a number"));
     let (days, max) = (num("SPIRA_OPS_SWEEP_KEEP_DAYS")?, num("SPIRA_RESULTS_PRUNE_MAX")?);
-    let gone = dwarf::ops_sweep::prune(&run, RUNE, id, days as u32, max as usize, now_secs() as u64);
+    let gone = dwarf::ops_sweep::prune(&run, RUNE, id, days, max as usize, now_secs() as u64);
     Ok(format!("cleaned; pruned {} ({} over-age left)", gone.removed, gone.left))
 }

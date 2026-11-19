@@ -254,6 +254,18 @@ fn the_ledger_line_ends_in_why_and_ops_log_holds_the_whole_error() {
 }
 
 #[test]
+fn cleanup_with_no_run_id_still_prunes_over_age_sweep_files() {
+    let dir = testkit::TempDir::new("ops-cleanup-noid");
+    let old = dir.path().join("sweep-ops-rOLD.log");
+    std::fs::write(&old, "x").unwrap();
+    std::fs::File::open(&old).unwrap().set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86400)).unwrap();
+    let cfg = BTreeMap::from([("SPIRA_RUN", dir.path().display().to_string()), ("SPIRA_OPS_SWEEP_KEEP_DAYS", "1".into()), ("SPIRA_RESULTS_PRUNE_MAX", "50".into())]);
+    let clean = runtime::EffectSpec::keyed(CLEANUP, "c".to_string(), serde_json::json!({ "cfg": cfg, "act": null }).to_string(), 5_000);
+    run_cleanup(&spira_runtime::Effects::default(), "c", &clean).unwrap();
+    assert!(!old.exists());
+}
+
+#[test]
 fn cleanup_without_the_keep_days_key_errs_naming_it_after_removing_the_brief_files() {
     let dir = testkit::TempDir::new("ops-cleanup-nokey");
     let cfg = BTreeMap::from([("SPIRA_RUN".to_string(), dir.path().display().to_string()), ("SPIRA_RESULTS_PRUNE_MAX".to_string(), "50".to_string())]);
