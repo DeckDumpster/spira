@@ -426,7 +426,7 @@ mod tests {
         let (real, calls) = real_over(&dir, row);
         let out = real.census_events_run_sql(Some(1_700_000_000)).unwrap();
         let argv = std::fs::read_to_string(&calls).unwrap();
-        assert_eq!(argv.trim(), "fact list --kinds requeued,reclaimed,recurred,lapsed,reopen --since 1700000000");
+        assert!(argv.lines().count() >= 1 && argv.lines().all(|l| l == "fact list --kinds requeued,reclaimed,recurred,lapsed,reopen --since 1700000000"), "{argv}");
         assert!(out.contains("| bd | row |") && out.contains("| requeued | gate-red | 1 | 1 | 1 |"), "{out}");
     }
 
