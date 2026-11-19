@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use crate::callers::{Bd, Machine, NO_ROW};
+use crate::callers::{Answer, Bd, Machine, NO_ROW};
 use crate::claim_sync::{self, ONLY_IF_UNSET};
 
 const RETRY_AFTER: Duration = Duration::from_secs(5);
@@ -51,15 +51,32 @@ fn current() -> Option<Arc<Settler>> {
     SETTLER.get().cloned()
 }
 
-/// Queues the claim-input sync of `ids`; `false` when no settler is installed (outside lc-serve)
-/// and the caller writes inline.
-pub fn owe_claims(ids: &[String], only_if_unset: bool) -> bool {
-    let Some(s) = current() else { return false };
-    let mut g = s.owed.lock().unwrap_or_else(|e| e.into_inner());
-    let into = if only_if_unset { &mut g.only_if_unset } else { &mut g.claims };
-    into.extend(ids.iter().cloned());
-    s.wake.notify_one();
-    true
+pub fn has_settler() -> bool {
+    current().is_some()
+}
+
+/// Writes the claim inputs of `ids` now, under the caller's deadline. Inside lc-serve a write
+/// the store refused is owed to the settler and not reported; outside it the inline answer stands.
+pub fn sync_claims(ids: &[String], only_if_unset: bool, m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let flag = || only_if_unset.then(|| ONLY_IF_UNSET.to_string());
+    let Some(s) = current() else {
+        return claim_sync::run(&flag().into_iter().chain(ids.iter().cloned()).collect::<Vec<_>>(), m, bd);
+    };
+    let mut refused = Vec::new();
+    for id in ids {
+        let args: Vec<String> = flag().into_iter().chain([id.clone()]).collect();
+        let ans = claim_sync::run(&args, m, bd);
+        if ans.code != 0 && ans.code != NO_ROW {
+            refused.push(id.clone());
+        }
+    }
+    if !refused.is_empty() {
+        let mut g = s.owed.lock().unwrap_or_else(|e| e.into_inner());
+        let into = if only_if_unset { &mut g.only_if_unset } else { &mut g.claims };
+        into.extend(refused);
+        s.wake.notify_one();
+    }
+    Answer::default()
 }
 
 /// Queues one watermark advance; `false` when no settler is installed.
@@ -221,12 +238,37 @@ mod tests {
     }
 
     #[test]
+    fn a_dep_add_through_the_content_door_has_written_the_claim_inputs_when_it_answers() {
+        let w = World::new();
+        w.file("sp-a", "task", Some("sp-e"), &[]);
+        w.file("sp-b", "task", Some("sp-e"), &[]);
+        w.ok(&["create-bead", "sp-a", "--ready"]);
+        w.ok(&["create-bead", "sp-b", "--ready"]);
+        w.plan.borrow_mut().get_mut("sp-a").unwrap().dependencies.push(("sp-b".to_string(), "blocks".to_string()));
+        let settler = installed();
+        crate::content::after(&["dep", "add", "sp-a", "sp-b"].map(String::from), "", &mut &w, &mut &w, 0);
+        assert_eq!(claim_of(&w, "sp-a")["blocks"], serde_json::json!(["sp-b"]));
+        assert!(!settler.owes());
+    }
+
+    #[test]
+    fn a_create_bead_has_written_its_claim_inputs_when_it_answers() {
+        let w = World::new();
+        w.file("sp-new", "task", Some("sp-e"), &["incident"]);
+        let settler = installed();
+        let req = crate::serve::Request { argv: ["create-bead", "sp-new", "--repo", "spira", "--ready"].map(String::from).to_vec(), stdin: None, caller: Default::default(), task: None, request_id: None };
+        let ans = crate::serve::answer(req, &mut &w, &mut &w, &NoContent, &|| Err("no run dir here".to_string()));
+        assert_eq!((ans.code, ans.stderr.as_str()), (0, ""), "{ans:?}");
+        assert_eq!(claim_of(&w, "sp-new")["parent"], "sp-e");
+        assert!(!settler.owes());
+    }
+
+    #[test]
     fn a_refused_claim_sync_stays_owed_and_the_next_pass_writes_it() {
         let w = World::new();
         w.file("sp-a", "task", Some("sp-e"), &[]);
         w.ok(&["create-bead", "sp-a", "--ready"]);
         let settler = installed();
-        assert!(owe_claims(&["sp-a".to_string()], false));
         struct Refuses<'w>(&'w World, bool);
         impl Machine for Refuses<'_> {
             fn call(&mut self, args: &[String]) -> (i32, String) {
@@ -238,8 +280,10 @@ mod tests {
             }
         }
         let mut m = Refuses(&w, true);
-        settler.pass(&mut m, &mut &w, &mut || Ok(1));
+        let ans = sync_claims(&["sp-a".to_string()], false, &mut m, &mut &w);
+        assert_eq!((ans.code, ans.stderr.as_str()), (0, ""), "owed, not lost");
         assert!(settler.owes() && claim_of(&w, "sp-a") == serde_json::Value::Null);
+        settler.pass(&mut m, &mut &w, &mut || Ok(1));
         settler.pass(&mut m, &mut &w, &mut || Ok(1));
         assert!(!settler.owes());
         assert_eq!(claim_of(&w, "sp-a")["parent"], "sp-e");
