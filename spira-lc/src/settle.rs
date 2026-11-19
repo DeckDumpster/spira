@@ -269,7 +269,6 @@ mod tests {
         w.file("sp-a", "task", Some("sp-e"), &[]);
         w.ok(&["create-bead", "sp-a", "--ready"]);
         let settler = installed();
-        settler.owed.lock().unwrap().claims.insert("sp-a".to_string());
         struct Refuses<'w>(&'w World, bool);
         impl Machine for Refuses<'_> {
             fn call(&mut self, args: &[String]) -> (i32, String) {
@@ -281,8 +280,10 @@ mod tests {
             }
         }
         let mut m = Refuses(&w, true);
-        settler.pass(&mut m, &mut &w, &mut || Ok(1));
+        let ans = sync_claims(&["sp-a".to_string()], false, &mut m, &mut &w);
+        assert_eq!((ans.code, ans.stderr.as_str()), (0, ""), "owed, not lost");
         assert!(settler.owes() && claim_of(&w, "sp-a") == serde_json::Value::Null);
+        settler.pass(&mut m, &mut &w, &mut || Ok(1));
         settler.pass(&mut m, &mut &w, &mut || Ok(1));
         assert!(!settler.owes());
         assert_eq!(claim_of(&w, "sp-a")["parent"], "sp-e");
