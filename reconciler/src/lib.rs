@@ -3823,7 +3823,7 @@ mod tests {
             cfg.max_live_dwarves = "5".into();
             cfg.max_dwarves = "3".into();
             cfg.starting = starting.iter().map(|(r, n)| (r.to_string(), *n)).collect();
-            cfg.host = Some(Arc::new(Fleet { planned_live: 2, reactive_live: 0, partition_rune: "builder", ready: 5, named: vec![] }));
+            cfg.host = Some(Arc::new(Fleet { planned_live: 2, reactive_live: 0, partition_rune: "builder", ready: 5, named: vec![], uncalled: None }));
             observe_fleet(&cfg)[0].raw.clone()
         };
         assert_eq!(check(&[("builder", 1)]), RawStatus::Satisfied);
