@@ -1603,6 +1603,22 @@ fn mx_frame(path: &Path) -> u32 {
 }
 
 const BOUND_EVERY: u64 = 8;
+const BUSY_RETRIES: u32 = 10_000;
+
+/// `put_next` for a writer racing a checkpoint pass: the pass's WAL restart briefly holds the write
+/// lock and the backend's writer never waits on it, so a commit may surface busy; it is retried
+/// by count, never by time.
+fn put_next_retrying_busy(b: &SqliteBackend) {
+    let head = b.head().unwrap();
+    let prev = (head > 0).then(|| Rev::new(head, 0));
+    for _ in 0..BUSY_RETRIES {
+        match b.commit(head, &[put_write("k", &[7; 4096], head + 1, prev)]) {
+            Err(e) if e.to_string().contains("database is locked") => std::thread::yield_now(),
+            r => return drop(r.unwrap()),
+        }
+    }
+    panic!("commit still busy after {BUSY_RETRIES} attempts");
+}
 /// A hang guard on waiting for a checkpoint, sized for a loaded round; never the verdict.
 const CHECKPOINT_CAP: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -1624,7 +1640,7 @@ fn bounded_wal_workload(path: &Path, checkpoint: bool) -> SqliteBackend {
     };
     for interval in 0..400 / BOUND_EVERY {
         for _ in 0..BOUND_EVERY {
-            put_next(&b);
+            put_next_retrying_busy(&b);
         }
         if checkpoint && interval + 1 < 400 / BOUND_EVERY {
             while !state_store_sqlite::bench::checkpoint_pass(&b).unwrap() {}
