@@ -673,6 +673,8 @@ mod tests {
         assert!(body.contains("hel --dry-run <bead-id>"), "{body}");
         assert!(!body.contains("Run: hel --dry-run  to see each branch"), "{body}");
         assert!(body.contains("resumes from its cursor"), "{body}");
+        assert!(body.contains("manual hold on a live lifecycle row still refuses it"), "{body}");
+        assert!(body.contains("terminal row's manual hold no longer does"), "{body}");
         assert_eq!(filed[0].reference.as_deref(), Some("incident:hel-closed-stranded"));
     }
 
