@@ -1052,13 +1052,17 @@ struct Filing<'a> {
     body: Option<&'a str>,
 }
 
+/// A pilgrim files what its walk found; a defect against a repo that does not meet the landing
+/// contract is exactly what must be queued, so the broker states the reason the guard asks for.
+const PILGRIM_CONTRACT_REASON: &str = "filed from a pilgrimage: the defect is the finding, whatever state the repo is in";
+
 /// The store refuses a bead blocked by its own descendant, so a filing with a blocks edge to or
 /// from the bound bead is filed unparented.
 fn file_and_bind(f: &Filing, register: impl FnOnce(&str) -> (i32, String)) -> (i32, String) {
     let (verb, bead_id) = (f.verb, f.bound);
     let waits = blocking_edge(verb, f.actor, bead_id, bead_id).is_some();
     let parent = if f.after_landing || waits { None } else { Some(bead_id) };
-    match crate::bd::file_child(f.title, f.persona, f.repo, parent, f.body) {
+    match crate::bd::file_child(f.title, f.persona, f.repo, parent, f.body, waits.then_some(PILGRIM_CONTRACT_REASON)) {
         Ok(new_id) => match register(&new_id) {
             (0, _) if f.after_landing => match crate::bd::add_blocker(&new_id, bead_id) {
                 Ok(()) => (0, new_id),
@@ -2194,7 +2198,7 @@ mod store_tests {
         if std::env::var_os("SPIRA_DB").is_none() {
             return;
         }
-        let pilgrimage = crate::bd::file_child("walk", "builder", "spira", None, Some(BODY)).unwrap();
+        let pilgrimage = crate::bd::file_child("walk", "builder", "spira", None, Some(BODY), None).unwrap();
         let filing = super::Filing { verb: "file-followup", actor: "pilgrim", title: "a defect", persona: "builder", repo: "spira", bound: &pilgrimage, after_landing: false, body: Some(BODY) };
         let (code, defect) = super::file_and_bind(&filing, |_| (0, String::new()));
         assert_eq!(code, 0, "{defect}");

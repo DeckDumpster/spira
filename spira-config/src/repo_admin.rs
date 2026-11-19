@@ -568,10 +568,9 @@ impl Worktree {
 
 impl Drop for Worktree {
     fn drop(&mut self) {
-        let _ = git(
-            &self.repo,
-            &["worktree", "remove", "--force", &self.dir.display().to_string()],
-        );
+        let dir = self.dir.display().to_string();
+        let _ = git(&self.repo, &["worktree", "unlock", &dir]);
+        let _ = git(&self.repo, &["worktree", "remove", "--force", &dir]);
         let _ = git(&self.repo, &["worktree", "prune"]);
         let _ = std::fs::remove_dir_all(&self.dir);
     }
@@ -594,6 +593,14 @@ fn pid_alive(pid: u32) -> bool {
     rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
+/// A killed check leaves its registration locked, and `git worktree prune` skips a locked one.
+fn unlock_registration(tree: &Path) {
+    let Ok(pointer) = std::fs::read_to_string(tree.join(".git")) else { return };
+    if let Some(admin) = pointer.trim().strip_prefix("gitdir:") {
+        let _ = std::fs::remove_file(Path::new(admin.trim()).join("locked"));
+    }
+}
+
 /// Remove every `repo-check-<pid>-*` entry under `root` whose pid is gone; a name whose pid
 /// does not parse is kept. Returns the number removed.
 pub fn reap_dead_checks(root: &Path, pid_alive: &dyn Fn(u32) -> bool) -> usize {
@@ -606,6 +613,7 @@ pub fn reap_dead_checks(root: &Path, pid_alive: &dyn Fn(u32) -> bool) -> usize {
         if pid_alive(pid) {
             continue;
         }
+        unlock_registration(&e.path());
         if std::fs::remove_dir_all(e.path()).is_ok() {
             eprintln!("repo-check: reaped {} (pid {pid} gone)", e.path().display());
             n += 1;
@@ -757,6 +765,55 @@ mod tests {
         for kept in ["repo-check-222-2", "repo-check-x-3", "other"] {
             assert!(d.path().join(kept).exists(), "{kept}");
         }
+    }
+
+    fn repo_with_commit(d: &Path) -> PathBuf {
+        let repo = d.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]).unwrap();
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "c"]).unwrap();
+        repo
+    }
+
+    #[test]
+    fn a_locked_check_worktree_is_removed_when_its_guard_drops() {
+        let d = testkit::TempDir::new("wt-locked");
+        let repo = repo_with_commit(d.path());
+        let root = d.path().join("wt");
+        let wt = cut_worktree_in(&root, &repo, "main").unwrap();
+        git(&repo, &["worktree", "lock", &wt.path().display().to_string()]).unwrap();
+        drop(wt);
+        let listed = git(&repo, &["worktree", "list"]).unwrap();
+        assert!(!listed.contains("repo-check-"), "{listed}");
+    }
+
+    #[test]
+    fn a_dead_pids_locked_check_registration_is_pruned_by_the_next_cut() {
+        let d = testkit::TempDir::new("wt-dead-locked");
+        let repo = repo_with_commit(d.path());
+        let root = d.path().join("wt");
+        let wt = cut_worktree_in(&root, &repo, "main").unwrap();
+        let tree = wt.path();
+        git(&repo, &["worktree", "lock", &tree.display().to_string()]).unwrap();
+        std::mem::forget(wt);
+        let dead = tree.file_name().unwrap().to_string_lossy().replace(&std::process::id().to_string(), "1");
+        std::fs::rename(&tree, root.join(&dead)).unwrap();
+        git(&repo, &["worktree", "repair", &root.join(&dead).display().to_string()]).unwrap();
+        assert_eq!(reap_dead_checks(&root, &|_| false), 1);
+        git(&repo, &["worktree", "prune"]).unwrap();
+        let listed = git(&repo, &["worktree", "list"]).unwrap();
+        assert!(!listed.contains("repo-check-"), "{listed}");
+    }
+
+    #[test]
+    fn a_failed_cut_leaves_no_check_worktree_listed() {
+        let d = testkit::TempDir::new("wt-failed");
+        let repo = repo_with_commit(d.path());
+        let root = d.path().join("wt");
+        assert!(cut_worktree_in(&root, &repo, "no-such-ref").is_err());
+        let listed = git(&repo, &["worktree", "list"]).unwrap();
+        assert!(!listed.contains("repo-check-"), "{listed}");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
     }
 
     #[test]
