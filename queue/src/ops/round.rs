@@ -585,8 +585,8 @@ fn raise_unreported_reds(w: &World, c: &Ctx, batch: &str, kv: &Kv, reds: &[Strin
     let results = rd.join(format!("{batch}.results"));
     let mut file = String::new();
     for s in reds.iter().filter(|s| *s != BUILD_RED) {
-        let out = suite_output(&results, s, 0)
-            .map(|o| tail(&o, 80))
+        let out = phase_evidence(&results, s, |o| tail(o, 80))
+            .or_else(|| suite_output(&results, s, 0).map(|o| tail(&o, 80)))
             .unwrap_or_default();
         file.push_str(&format!("@@ {s}\n{out}\n"));
     }
@@ -640,6 +640,7 @@ pub(super) fn call_mender(
     let results = rounds_dir(c).join(format!("{batch}.results"));
     let output = output
         .map(str::to_string)
+        .or_else(|| phase_evidence(&results, suite, failure_excerpt))
         .or_else(|| suite_output(&results, suite, 0).map(|o| failure_excerpt(&o)))
         .unwrap_or_else(|| "(the suite left no output in the round's results)".into());
     if let Some(cause) = repo_config_refusal(&output) {
@@ -820,6 +821,60 @@ pub(super) fn retire_failure_mender(w: &World, c: &Ctx, batch: &str, pass: u32, 
     if !id.is_empty() && !done.exists() {
         retire_filed_mender(w, id, batch, reason, &done);
     }
+}
+
+/// Keeps the red evidence of an eject (the failing tests' names, each red suite's first FAIL line,
+/// the mender's excerpt) under the send-back store, which the next pass's wipe of the round's
+/// results does not reach, and names where it is kept after the reason's first line.
+fn with_kept_evidence(w: &World, c: &Ctx, batch: &str, reason: &str, suites: &str) -> String {
+    let results = rounds_dir(c).join(format!("{batch}.results"));
+    let mut text = format!("{reason}\n");
+    for s in suites.split(',').filter(|s| !s.is_empty()) {
+        let fail = suite_output(&results, s, 0)
+            .or_else(|| phase_evidence(&results, s, |o| o.to_string()))
+            .and_then(|o| o.lines().find(|l| l.contains("FAIL") || l.trim_start().starts_with("not ok")).map(|l| l.trim().to_string()))
+            .unwrap_or_else(|| "(no FAIL line in its output)".into());
+        text.push_str(&format!("{s}: {fail}\n"));
+        if let Some(e) = phase_evidence(&results, s, failure_excerpt) {
+            text.push_str(&format!("{e}\n"));
+        }
+    }
+    let kept = w
+        .env
+        .config("SPIRA_SENDBACK_KEEP_DAYS")
+        .and_then(|d| d.trim().parse::<u32>().map_err(|e| e.to_string()))
+        .and_then(|days| spira_config::sendback::keep_text(&c.s.run, "eject", "red-evidence", &text, days));
+    let line = match kept {
+        Ok(p) => format!("Red evidence kept at {}.", p.display()),
+        Err(e) => format!("Red evidence not kept: {e}."),
+    };
+    match reason.split_once('\n') {
+        Some((first, rest)) => format!("{first}\n{line}\n{rest}"),
+        None => format!("{reason}\n{line}"),
+    }
+}
+
+/// For the `unit-tests` step, each red test phase's own output (`<stage>.out`) behind the names
+/// of its failed tests; `None` when no phase record in `results` is red.
+fn phase_evidence(results: &Path, suite: &str, excerpt: impl Fn(&str) -> String) -> Option<String> {
+    if suite != UNIT_RED {
+        return None;
+    }
+    let parts: Vec<String> = phase_reds(results)
+        .iter()
+        .map(|p| {
+            let mut part = String::new();
+            if !p.failed.is_empty() {
+                part.push_str(&format!("{} failed: {}\n", p.stage, p.failed.join(", ")));
+            }
+            if let Some(o) = suite_output(results, &p.stage, 0) {
+                part.push_str(&excerpt(&o));
+            }
+            part
+        })
+        .filter(|p| !p.trim().is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("\n"))
 }
 
 fn suite_output(dir: &Path, suite: &str, depth: u32) -> Option<String> {
@@ -4687,6 +4742,7 @@ fn eject(
         }
     }
 
+    let reason = with_kept_evidence(w, &c, batch, &reason, suites);
     let why = bounded_text(&reason);
     if let Err((rc, out)) = lc_eject_member(w, batch, id, LC_ACTOR, &why) {
         if new_head != old_head {

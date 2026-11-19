@@ -3168,7 +3168,7 @@ pub mod edge {
             io::round_abandon(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.why, super::NO_DRIVER);
             return Ok("{}".into());
         }
-        let why = io::keep_red_evidence(&env.run, &leg.batch, &leg.why, &leg.reds);
+        let why = io::keep_red_evidence(&env.run, &leg.batch, &leg.why, &leg.reds, spira_config::process::cfg_parse::<u32>("SPIRA_SENDBACK_KEEP_DAYS"));
         io::round_abandon_ejecting(&env, &repo_of(&env, &leg)?, &leg.batch, &why, "red", leg.ejected);
         io::write_local_verdict(&env, &leg.repo, "red", &why);
         Ok("{}".into())
