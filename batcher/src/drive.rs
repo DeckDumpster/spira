@@ -4803,6 +4803,7 @@ pub(crate) mod tests {
     fn config_red_when(culprit: &'static str) -> FilterFn {
         Box::new(move |tree| {
             tree.contains(culprit).then(|| FilterRed {
+                harness: vec![],
                 name: "unit-tests".into(),
                 named: vec![],
                 failed: vec![CONFIG_FAILING.to_string()],
