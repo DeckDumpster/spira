@@ -215,14 +215,14 @@ impl Remote for LocalRemote {
         Ok(String::new())
     }
 
-    fn pull(&self, _addr: &str, remote_path: &str, local: &Path) -> Result<(), String> {
+    fn pull(&self, _addr: &str, remote_path: &str, local: &Path) -> Result<(), crate::run::PullError> {
         let from = self.at(remote_path);
         if from.is_dir() {
-            Self::copy_dir(&from, local)
+            Ok(Self::copy_dir(&from, local)?)
         } else {
             fs::create_dir_all(local).map_err(|e| format!("{}: {e}", local.display()))?;
             let to = local.join(from.file_name().ok_or_else(|| format!("{remote_path}: no file name"))?);
-            fs::copy(&from, &to).map(|_| ()).map_err(|e| format!("{}: {e}", from.display()))
+            Ok(fs::copy(&from, &to).map(|_| ()).map_err(|e| format!("{}: {e}", from.display()))?)
         }
     }
 

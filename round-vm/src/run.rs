@@ -179,6 +179,33 @@ pub struct BatchJob {
     pub cancel: std::sync::atomic::AtomicBool,
 }
 
+/// Why a pull failed: a folder the VM never made is settled, anything else may pass on a retry.
+#[derive(Debug, PartialEq)]
+pub enum PullError {
+    Missing(String),
+    Failed(String),
+}
+
+impl std::fmt::Display for PullError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PullError::Missing(m) | PullError::Failed(m) => f.write_str(m),
+        }
+    }
+}
+
+impl From<String> for PullError {
+    fn from(m: String) -> Self {
+        PullError::Failed(m)
+    }
+}
+
+impl From<&str> for PullError {
+    fn from(m: &str) -> Self {
+        PullError::Failed(m.to_string())
+    }
+}
+
 /// The VM side, reached only by address.
 pub trait Remote: Sync {
     fn reachable(&self, addr: &str) -> bool;
@@ -189,7 +216,7 @@ pub trait Remote: Sync {
     /// The tail of the VM's cloud-init output and kernel log, for a VM that never began the round.
     fn boot_log_tail(&self, addr: &str) -> Result<String, String>;
     /// Copies the remote directory `remote_path` into `local`.
-    fn pull(&self, addr: &str, remote_path: &str, local: &Path) -> Result<(), String>;
+    fn pull(&self, addr: &str, remote_path: &str, local: &Path) -> Result<(), PullError>;
     /// Copies the local directory `local` into the remote `remote_path`.
     fn push(&self, addr: &str, local: &Path, remote_path: &str) -> Result<(), String>;
     /// After the batch's ssh dropped: reconnects until the runner's exit code is recorded on the
@@ -1462,7 +1489,7 @@ impl Remote for SshRemote {
         }
     }
 
-    fn pull(&self, addr: &str, remote_path: &str, local: &Path) -> Result<(), String> {
+    fn pull(&self, addr: &str, remote_path: &str, local: &Path) -> Result<(), PullError> {
         fs::create_dir_all(local).map_err(|e| format!("{}: {e}", local.display()))?;
         let st = command("rsync")
             .arg("-a")
@@ -1476,7 +1503,7 @@ impl Remote for SshRemote {
         if st.status.success() {
             Ok(())
         } else {
-            Err(format!("rsync {remote_path} exited {}: {}", st.status.code().unwrap_or(-1), rsync_said(&st.stderr)))
+            Err(classify_pull_failure(remote_path, st.status.code().unwrap_or(-1), &st.stderr))
         }
     }
 }
@@ -1485,6 +1512,16 @@ fn feed_and_wait(mut child: std::process::Child, script: &[u8]) -> Result<i32, S
     crate::procs::feed_script(&mut child, script).map_err(|e| format!("ssh stdin: {e}"))?;
     let st = child.wait().map_err(|e| format!("ssh: {e}"))?;
     Ok(st.code().unwrap_or(255))
+}
+
+fn classify_pull_failure(remote_path: &str, code: i32, stderr: &[u8]) -> PullError {
+    let said = rsync_said(stderr);
+    let msg = format!("rsync {remote_path} exited {code}: {said}");
+    if code == 23 && said.contains("change_dir") && said.contains("failed: No such file or directory") {
+        PullError::Missing(msg)
+    } else {
+        PullError::Failed(msg)
+    }
 }
 
 pub struct GitHost {
@@ -2995,7 +3032,11 @@ fn pull_retry(remote: &dyn Remote, cfg: &Config, addr: &str, remote_path: &str, 
         }
         match remote.pull(addr, remote_path, local) {
             Ok(()) => return true,
-            Err(e) => {
+            Err(PullError::Missing(_)) => {
+                eprintln!("round-vm run: pull {remote_path}: the VM has no such folder; nothing to pull");
+                return false;
+            }
+            Err(PullError::Failed(e)) => {
                 eprintln!("round-vm run: pull {remote_path} try {} of {tries}: {e}", i + 1);
                 if let Some(report) = host_disk_report(&e, local) {
                     eprintln!("round-vm run: {report}");
@@ -4611,6 +4652,8 @@ mod tests {
         result_pulls: std::sync::atomic::AtomicUsize,
         /// how many results pulls fail before one succeeds
         fail_result_pulls: std::sync::atomic::AtomicUsize,
+        /// every path pulled from the files map, in order
+        pull_paths: Mutex<Vec<String>>,
         /// the VM is stopped under the batch, as a hard-stop would
         kill_vm: Option<crate::testutil::FakeProvider>,
         /// the exit code the runner recorded on the VM, as a dropped session finds it
@@ -4643,6 +4686,7 @@ mod tests {
                 rc: Ok(0),
                 files,
                 jobs: Mutex::new(vec![]),
+                pull_paths: Mutex::new(vec![]),
                 pushes: Mutex::new(vec![]),
                 hold_for_attr: false,
                 attrs: Mutex::new(vec![]),
@@ -4721,7 +4765,7 @@ mod tests {
             self.pushes.lock().unwrap().push((local.to_path_buf(), remote_path.to_string()));
             Ok(())
         }
-        fn pull(&self, _: &str, remote_path: &str, local: &Path) -> Result<(), String> {
+        fn pull(&self, _: &str, remote_path: &str, local: &Path) -> Result<(), PullError> {
             if remote_path == REMOTE_RESULTS {
                 self.result_pulls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let failing = self.fail_result_pulls.try_update(std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst, |n| n.checked_sub(1)).is_ok();
@@ -4729,7 +4773,8 @@ mod tests {
                     return Err("rsync exited 255".into());
                 }
             }
-            let files = self.files.get(remote_path).ok_or("no such remote dir")?;
+            self.pull_paths.lock().unwrap().push(remote_path.to_string());
+            let files = self.files.get(remote_path).ok_or_else(|| PullError::Missing("no such remote dir".into()))?;
             for (rel, body) in files {
                 let p = local.join(rel);
                 fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -5163,7 +5208,7 @@ mod tests {
         fn run_batch(&self, a: &str, j: &BatchJob) -> Result<i32, String> { self.0.run_batch(a, j) }
         fn round_started(&self, a: &str) -> bool { self.0.round_started(a) }
         fn boot_log_tail(&self, a: &str) -> Result<String, String> { self.0.boot_log_tail(a) }
-        fn pull(&self, a: &str, r: &str, l: &Path) -> Result<(), String> { self.0.pull(a, r, l) }
+        fn pull(&self, a: &str, r: &str, l: &Path) -> Result<(), PullError> { self.0.pull(a, r, l) }
         fn push(&self, a: &str, l: &Path, r: &str) -> Result<(), String> { self.0.push(a, l, r) }
         fn await_exit(&self, a: &str, w: Duration, s: &Path) -> Result<Option<i32>, String> { self.0.await_exit(a, w, s) }
         fn run_attr(&self, a: &str, j: &crate::spool::AttrJob) -> Result<i32, String> { self.0.run_attr(a, j) }
@@ -5401,6 +5446,54 @@ mod tests {
         let scratch = fx.cfg.state_dir.join(".salvage-fail");
         assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5)), None);
         assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5)), Some(2), "the re-pull recovers every result");
+    }
+
+    fn pulls_of(remote: &FakeRemote, path: &str) -> usize {
+        remote.pull_paths.lock().unwrap().iter().filter(|p| *p == path).count()
+    }
+
+    #[test]
+    fn a_round_whose_vm_made_no_bins_or_tsd_folder_pulls_each_once() {
+        let fx = fixture();
+        let mut remote = FakeRemote::green();
+        remote.files.remove(REMOTE_BINS);
+        remote.files.remove(TSD_DIR);
+        let a = RunArgs { tree_dir: fx.d.path().join("tree"), maxpar: Some(24), base: Some("main".into()), ..Default::default() };
+        go(&fx, &remote, &a);
+        assert_eq!(pulls_of(&remote, REMOTE_BINS), 1);
+        assert_eq!(pulls_of(&remote, TSD_DIR), 1);
+    }
+
+    #[test]
+    fn a_failed_results_pull_is_retried_up_to_ssh_tries() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        remote.fail_result_pulls.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+        let scratch = fx.cfg.state_dir.join(".retry-failed");
+        assert!(!pull_retry(&remote, &fx.cfg, "addr", REMOTE_RESULTS, &scratch));
+        assert_eq!(remote.result_pulls.load(std::sync::atomic::Ordering::SeqCst), fx.cfg.ssh_tries.max(3) as usize);
+    }
+
+    #[test]
+    fn a_missing_remote_folder_is_pulled_once_not_retried() {
+        let fx = fixture();
+        let mut remote = FakeRemote::green();
+        remote.files.remove(REMOTE_BINS);
+        remote.files.remove(TSD_DIR);
+        let scratch = fx.cfg.state_dir.join(".retry-missing");
+        assert!(!pull_retry(&remote, &fx.cfg, "addr", REMOTE_BINS, &scratch));
+        assert!(!pull_retry(&remote, &fx.cfg, "addr", TSD_DIR, &scratch));
+        assert_eq!(pulls_of(&remote, REMOTE_BINS), 1);
+        assert_eq!(pulls_of(&remote, TSD_DIR), 1);
+    }
+
+    #[test]
+    fn rsync_stderr_for_a_missing_source_is_missing_and_an_ssh_drop_is_failed() {
+        let said = b"rsync: [sender] change_dir \"/root/round-bins\" failed: No such file or directory (2)\nrsync error: some files/attrs were not transferred (code 23)\n";
+        assert!(matches!(classify_pull_failure("round-bins/", 23, said), PullError::Missing(_)));
+        assert!(matches!(classify_pull_failure("round-bins/", 255, b"ssh: connect to host x port 22: Connection refused\n"), PullError::Failed(_)));
+        assert!(matches!(classify_pull_failure("round-bins/", 23, b"rsync: send_files failed to open: Permission denied (13)\n"), PullError::Failed(_)));
+        assert!(matches!(classify_pull_failure("round-bins/", 255, said), PullError::Failed(_)), "only exit 23 settles it");
     }
 
     #[test]
