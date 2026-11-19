@@ -310,6 +310,31 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(landref(&reg, "r"), None, "mapped but not a real checkout");
     }
 
+    fn real_repo(branch: &str) -> testkit::TempDir {
+        let d = testkit::TempDir::new("repos-landref-explained");
+        let git = |a: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&*d).args(a).output().unwrap().status.success());
+        git(&["init", "-q", "-b", branch]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]);
+        d
+    }
+
+    #[test]
+    fn landref_explained_names_the_ref_tried_when_it_is_absent() {
+        let d = real_repo("other");
+        let reg = registry_for(&format!("r|{}|queue.local|local/main||\n", d.display()), "r");
+        let why = landref_explained(&reg, "r").unwrap_err();
+        assert!(why.contains("local/main") && why.contains("exit 1"), "{why}");
+        assert_eq!(landref(&reg, "r"), None);
+    }
+
+    #[test]
+    fn landref_explained_equals_landref_on_a_resolvable_repo() {
+        let d = real_repo("local/main");
+        let reg = registry_for(&format!("r|{}|queue.local|local/main||\n", d.display()), "r");
+        assert_eq!(landref_explained(&reg, "r").ok(), landref(&reg, "r"));
+        assert_eq!(landref_explained(&reg, "r"), Ok("local/main".to_string()));
+    }
+
     #[test]
     fn publish_mode_is_pr_unless_the_row_declares_push() {
         let mut reg = Registry::new(None, &env(&[]), Path::new("q"));

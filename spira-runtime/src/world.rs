@@ -1012,8 +1012,13 @@ impl World {
         let since = format!("--since=@{}", now.saturating_sub(day));
         let mut out = vec![];
         for row in map_rows(&map) {
-            let land = spira_config::repos::landref(&reg, &row.name).ok_or_else(|| format!("{}: no landing ref resolves", row.name))?;
-            let log = git_ok(Path::new(&row.path), &["log", &land, &since, "--format=%ct %s"]).map_err(|e| format!("{}: git log {land} in {}: {e}", row.name, row.path))?;
+            let land = spira_config::repos::landref_explained(&reg, &row.name)
+                .or_else(|_| spira_config::repos::landref_explained(&reg, &row.name))
+                .map_err(|why| format!("{}: no landing ref resolves: {why}", row.name))?;
+            let log_args = ["log", land.as_str(), &since, "--format=%ct %s"];
+            let log = git_ok(Path::new(&row.path), &log_args)
+                .or_else(|_| git_ok(Path::new(&row.path), &log_args))
+                .map_err(|e| format!("{}: git log {land} in {}: {e}", row.name, row.path))?;
             let mut landed: BTreeMap<String, u64> = BTreeMap::new();
             for line in String::from_utf8_lossy(&log).lines() {
                 let Some((at, subject)) = line.split_once(' ') else { continue };

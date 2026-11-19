@@ -475,48 +475,75 @@ fn git_remotes(repo: &str) -> Vec<String> {
     }
 }
 
-/// `git rev-parse --verify -q <r>` — whether `r` resolves to an object in `repo`, discarding
-/// git's own error text exactly as bash's `>/dev/null 2>&1` does.
+/// `git rev-parse --verify -q <r>` — whether `r` resolves to an object in `repo`; the `Err` is
+/// git's own words: its stderr (empty under `-q`, so its exit status too), or the deadline (124).
+fn verify_ref_explained(repo: &str, r: &str) -> Result<(), String> {
+    let out = crate::bounded::bounded("git").arg("-C").arg(repo).args(["rev-parse", "--verify", "-q", r]).output().map_err(|e| format!("git did not run: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let code = out.status.code().map_or_else(|| "killed by a signal".to_string(), |c| if c == 124 { "exit 124 (deadline)".to_string() } else { format!("exit {c}") });
+    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Err(if err.is_empty() { code } else { format!("{code}: {err}") })
+}
+
 fn verify_ref(repo: &str, r: &str) -> bool {
-    git_status_ok(repo, &["rev-parse", "--verify", "-q", r])
+    verify_ref_explained(repo, r).is_ok()
 }
 
 fn symbolic_ref_short(repo: &str, r: &str) -> Option<String> {
     git_stdout(repo, &["symbolic-ref", "-q", "--short", r])
 }
 
-/// `spira_landref [repo-path-or-name]` -> the base ref, or `None` if unresolvable. `arg`
-/// containing a `/` is a repository PATH (lib.sh's own `*/*` case pattern); otherwise it is a
-/// NAME (empty meaning the home repo), resolved through `reg.root`.
+/// `spira_landref [repo-path-or-name]` -> the base ref, or `None` if unresolvable.
 pub fn landref(reg: &Registry, arg: &str) -> Option<String> {
+    landref_explained(reg, arg).ok()
+}
+
+/// [`landref`] with the reason: an `Err` names each ref tried and git's own exit status or
+/// stderr, so a lock, a missing ref and a deadline read differently. `arg` containing a `/` is a
+/// repository PATH; otherwise it is a NAME (empty meaning the home repo), resolved through `reg.root`.
+pub fn landref_explained(reg: &Registry, arg: &str) -> Result<String, String> {
     let mut name = String::new();
     let repo = if arg.contains('/') {
         arg.to_string()
     } else {
         name = if arg.is_empty() { reg.home_repo().to_string() } else { arg.to_string() };
-        reg.root(&name)?
+        reg.root(&name).ok_or_else(|| format!("no repository named {name:?}"))?
     };
     if name.is_empty() {
         name = reg.name_at(&repo).unwrap_or_default();
     }
     // `[ -e "$repo/.git" ]` — exists, not is-dir: a worktree's `.git` is a file.
     if !Path::new(&repo).join(".git").exists() {
-        return None;
+        return Err(format!("{repo} is not a git checkout"));
     }
+    let mut tried: Vec<String> = Vec::new();
+    let mut try_ref = |r: &str| match verify_ref_explained(&repo, r) {
+        Ok(()) => true,
+        Err(why) => {
+            tried.push(format!("{r}: {why}"));
+            false
+        }
+    };
+    let none = |tried: Vec<String>| Err(if tried.is_empty() { "no ref to try".to_string() } else { format!("tried {}", tried.join("; ")) });
 
     // 1 — declared. A row with no `base` column, an unmapped name, or an absent map all read
     // as "" here, same as repo_field's own return convention.
     if !name.is_empty() {
         let r = reg.base(&name).unwrap_or_default();
         if !r.is_empty() {
-            return verify_ref(&repo, &r).then_some(r);
+            if try_ref(&r) {
+                return Ok(r);
+            }
+            return none(tried);
         }
     }
 
     // 2 — the remote's own declared default, as cached locally.
     if let Some(r) = symbolic_ref_short(&repo, "refs/remotes/origin/HEAD") {
-        if verify_ref(&repo, &r) {
-            return Some(r);
+        if try_ref(&r) {
+            return Ok(r);
         }
     }
 
@@ -536,23 +563,23 @@ pub fn landref(reg: &Registry, arg: &str) -> Option<String> {
         if let Some(remote) = remote {
             if git_status_ok(&repo, &["remote", "set-head", &remote, "--auto"]) {
                 if let Some(r) = symbolic_ref_short(&repo, &format!("refs/remotes/{remote}/HEAD")) {
-                    if verify_ref(&repo, &r) {
-                        return Some(r);
+                    if try_ref(&r) {
+                        return Ok(r);
                     }
                 }
             }
         }
-        return None;
+        return none(tried);
     }
 
     // 4 — no remote at all: the repository's own current branch, the only rung that reads
     // a checkout's HEAD at all.
     if let Some(r) = symbolic_ref_short(&repo, "HEAD") {
-        if verify_ref(&repo, &r) {
-            return Some(r);
+        if try_ref(&r) {
+            return Ok(r);
         }
     }
-    None
+    none(tried)
 }
 
 /// `ref_remote <ref> [repo]` -> the remote name before the first `/`, or `None` when `ref`
