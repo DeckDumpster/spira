@@ -9771,3 +9771,30 @@ fn resubmit_at_the_ejected_red_tip_clears_the_batchers_own_red_tip_record() {
     );
     assert!(!rec.exists());
 }
+
+#[test]
+fn an_integration_red_hands_the_mender_the_integration_output_and_the_failed_test_names() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    let results = t.lib.s.run.join("rounds").join(format!("{batch}.results"));
+    fs::create_dir_all(&results).unwrap();
+    let test = "the_wal_stays_within_three_checkpoint_intervals_while_reads_never_stop";
+    fs::write(results.join("integration-tests.out"), format!("running 1 test\nFAIL {test}\n")).unwrap();
+    fs::write(
+        results.join("integration.json"),
+        format!(r#"{{"stage":"integration-tests","verdict":"red","failed":["{test}"],"cause":"x","secs":3}}"#),
+    )
+    .unwrap();
+    assert_eq!(t.run(&["round", "failed", &batch, "--suite", "unit-tests"]), 0, "{}", t.err());
+    let spec = fs::read_dir(t.lib.s.run.join("rounds"))
+        .unwrap()
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().contains(".spec-1-unit-tests.json"))
+        .expect("a failure spec");
+    let spec: serde_json::Value = serde_json::from_str(&fs::read_to_string(spec.path()).unwrap()).unwrap();
+    let out = spec["output"].as_str().unwrap();
+    assert!(out.contains(&format!("FAIL {test}")) && out.contains(&format!("integration-tests failed: {test}")), "{out}");
+}

@@ -585,8 +585,8 @@ fn raise_unreported_reds(w: &World, c: &Ctx, batch: &str, kv: &Kv, reds: &[Strin
     let results = rd.join(format!("{batch}.results"));
     let mut file = String::new();
     for s in reds.iter().filter(|s| *s != BUILD_RED) {
-        let out = suite_output(&results, s, 0)
-            .map(|o| tail(&o, 80))
+        let out = phase_evidence(&results, s, |o| tail(o, 80))
+            .or_else(|| suite_output(&results, s, 0).map(|o| tail(&o, 80)))
             .unwrap_or_default();
         file.push_str(&format!("@@ {s}\n{out}\n"));
     }
@@ -640,6 +640,7 @@ pub(super) fn call_mender(
     let results = rounds_dir(c).join(format!("{batch}.results"));
     let output = output
         .map(str::to_string)
+        .or_else(|| phase_evidence(&results, suite, failure_excerpt))
         .or_else(|| suite_output(&results, suite, 0).map(|o| failure_excerpt(&o)))
         .unwrap_or_else(|| "(the suite left no output in the round's results)".into());
     if let Some(cause) = repo_config_refusal(&output) {
@@ -820,6 +821,29 @@ pub(super) fn retire_failure_mender(w: &World, c: &Ctx, batch: &str, pass: u32, 
     if !id.is_empty() && !done.exists() {
         retire_filed_mender(w, id, batch, reason, &done);
     }
+}
+
+/// For the `unit-tests` step, each red test phase's own output (`<stage>.out`) behind the names
+/// of its failed tests; `None` when no phase record in `results` is red.
+fn phase_evidence(results: &Path, suite: &str, excerpt: impl Fn(&str) -> String) -> Option<String> {
+    if suite != UNIT_RED {
+        return None;
+    }
+    let parts: Vec<String> = phase_reds(results)
+        .iter()
+        .map(|p| {
+            let mut part = String::new();
+            if !p.failed.is_empty() {
+                part.push_str(&format!("{} failed: {}\n", p.stage, p.failed.join(", ")));
+            }
+            if let Some(o) = suite_output(results, &p.stage, 0) {
+                part.push_str(&excerpt(&o));
+            }
+            part
+        })
+        .filter(|p| !p.trim().is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("\n"))
 }
 
 fn suite_output(dir: &Path, suite: &str, depth: u32) -> Option<String> {
