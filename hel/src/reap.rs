@@ -185,7 +185,7 @@ pub fn holder_witnesses(run: &Path, id: &str, lc: &dyn ClaimProbe) -> Option<Str
         // No row: the machine answered that it has none, and a bead with no lifecycle row can
         // never be claimed — nobody is home (as for a branch whose bead never existed).
         Ok(None) => None,
-        Ok(Some(row)) if row.held("manual") => Some("a manual hold — a steward is working it outside the loop".to_string()),
+        Ok(Some(row)) if row.held("manual") && !row.terminal() => Some("a manual hold — a steward is working it outside the loop".to_string()),
         Ok(Some(row)) if row.working() => Some("WORKING — the lease has not been released".to_string()),
         Ok(Some(_)) => None,
     }
@@ -880,6 +880,28 @@ mod tests {
         assert_eq!(holder_witnesses(&run, "sp-w5", &FakeBd { state: Some(String::new()) }), None);
     }
 
+
+    /// A terminal row admits no event at all, so an Unhold there is refused and a `manual`
+    /// hold it still lists can never be lifted: read as somebody home it hoards the branch
+    /// and the worktree for ever. Terminal is nobody home, holds or not.
+    #[test]
+    fn a_manual_hold_on_a_terminal_row_is_nobody_home() {
+        struct Row(&'static str, Vec<String>);
+        impl ClaimProbe for Row {
+            fn probe(&self, id: &str) -> Result<Option<spira_store::lc_state::Row>, String> {
+                Ok(Some(spira_store::lc_state::Row { bead_id: id.into(), state: self.0.into(), holds: self.1.clone(), ..Default::default() }))
+            }
+        }
+        let run = tempdir().path().to_path_buf();
+        let manual = || vec!["manual".to_string()];
+        for state in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
+            assert_eq!(holder_witnesses(&run, "sp-t1", &Row(state, manual())), None, "{state} with a manual hold");
+        }
+        // THE POSITIVE CONTROL: a live state's manual hold is still somebody home.
+        for state in ["READY", "REWORK", "SUBMITTED"] {
+            assert!(holder_witnesses(&run, "sp-t2", &Row(state, manual())).is_some(), "{state} with a manual hold");
+        }
+    }
 
     #[test]
     fn a_manual_hold_is_somebody_home_though_the_bead_is_unclaimed() {

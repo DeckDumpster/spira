@@ -309,7 +309,7 @@ fn closed_stranded(d: &SweepData, cfg: &Cfg, raise: Raise) {
         return;
     };
     let body = format!(
-        "Closed-bead branches not reaped: oldest {oldest}h (threshold {}h)\n\nThese branches belong to CLOSED beads but the Hel has kept them every pass because none of its reap rules matched. Each pass makes a GitHub API call per branch and logs a KEEP line.\n\nRun: hel --dry-run  to see each branch and the rule it failed.\n\nCommon causes:\n  - work landed via a batch PR whose commit names the bead (check: git log --grep=<id> origin/main)\n  - a superseded bead with an empty branch (check n>0 guard)\n  - a non-code deliverable bead with no delivers: label\n\nReap by hand if confirmed safe: spira_destroy_branch / spira_destroy_worktree via `hel <bead-id>` (one bead).\n",
+        "Closed-bead branches not reaped: oldest {oldest}h (threshold {}h)\n\nThese branches belong to CLOSED beads but the Hel has kept them every pass because none of its reap rules matched. Each pass makes a GitHub API call per branch and logs a KEEP line.\n\nRun: hel --dry-run <bead-id>  to judge one branch and see the rule it failed. A full `hel --dry-run` resumes from its cursor and does not judge every branch.\n\nCommon causes:\n  - work landed via a batch PR whose commit names the bead (check: git log --grep=<id> origin/main)\n  - a superseded bead with an empty branch (check n>0 guard)\n  - a non-code deliverable bead with no delivers: label\n\nReap by hand if confirmed safe: spira_destroy_branch / spira_destroy_worktree via `hel <bead-id>` (one bead). A manual hold on a live lifecycle row still refuses it; a terminal row's manual hold no longer does.\n",
         cfg.closed_stranded_warn_h
     );
     let f = Finding::new(&cfg.db, &cfg.home_repo, "HEL: closed-bead branch not reaped above threshold", &body)
@@ -659,6 +659,21 @@ mod tests {
         assert_eq!(at("24", 24)[0].reference, filed[0].reference, "the same ref on every pass");
         assert_eq!(at("5", 4).len(), 1, "the threshold is the configured one, not a literal");
         assert!(at("0", 24).is_empty() && at("?", 0).is_empty());
+    }
+
+    // covers: UC-ops-detection-remediation-27
+    #[test]
+    fn the_closed_stranded_escalation_prescribes_the_per_bead_dry_run_not_the_cursor_resumed_one() {
+        let filed = raised("wt-esc-stranded", closed_stranded, &|d, c| {
+            d.env.set("SP_CLOSED_STRANDED_OLDEST_H", "441");
+            c.closed_stranded_warn_h = 24;
+        });
+        assert_eq!(filed.len(), 1);
+        let body = &filed[0].body;
+        assert!(body.contains("hel --dry-run <bead-id>"), "{body}");
+        assert!(!body.contains("Run: hel --dry-run  to see each branch"), "{body}");
+        assert!(body.contains("resumes from its cursor"), "{body}");
+        assert_eq!(filed[0].reference.as_deref(), Some("incident:hel-closed-stranded"));
     }
 
     // covers: UC-ops-detection-remediation-27
