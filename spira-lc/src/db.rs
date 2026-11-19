@@ -18,6 +18,9 @@ pub const DEADLINE_MESSAGE: &str = "deadline";
 // batch-job: one-off admin statement, bounded at 120 s; not a query on any serving path.
 pub const ADMIN_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// The socket limit of a collection, which answers only when the whole live store is rewritten.
+pub const GC_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4 * 3600); // batch-job: a gc rewrites the whole live store
+
 /// A connect that fails is retried this many times in all: nothing has been sent, so a
 /// retry cannot double a write.
 const CONNECT_ATTEMPTS: u32 = 3;

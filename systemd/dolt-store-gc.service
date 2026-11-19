@@ -1,0 +1,14 @@
+[Unit]
+Description=Collect the live Dolt store online (DOLT_GC) and report the mount's free space
+Documentation=file://@SPIRA_HOME@/README.md
+After=dolt-beads.service
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc admin-store-gc
+TimeoutStartSec=4h
+StandardOutput=append:@SPIRA_RUN@/dolt-store-gc.log
+StandardError=append:@SPIRA_RUN@/dolt-store-gc.log
