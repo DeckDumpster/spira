@@ -10,7 +10,7 @@ pub fn added_scratch(added: &[String]) -> Vec<String> {
         .iter()
         .filter(|p| {
             let mut parts = p.split('/');
-            parts.next() == Some(RUNTIME_DIR) && parts.next().is_some_and(|d| d.starts_with(SESSION_TMP_PREFIX)) && parts.next().is_some()
+            parts.next() == Some(RUNTIME_DIR) && parts.next().is_some_and(|d| d.starts_with(SESSION_TMP_PREFIX))
         })
         .cloned()
         .collect()
@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn paths_that_only_resemble_scratch_are_not() {
-        assert!(added_scratch(&v(&["src/.runtime/session-tmp-1/x", ".runtime/spira/state", "fixtures/a.rm", ".runtime/session-tmp-1"])).is_empty());
+        assert!(added_scratch(&v(&["src/.runtime/session-tmp-1/x", ".runtime/spira/state", "fixtures/a.rm"])).is_empty());
     }
 
     #[test]
