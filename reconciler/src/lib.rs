@@ -3670,6 +3670,12 @@ mod tests {
     }
 
     #[test]
+    fn ready_rows_read_from_the_json_and_an_unreadable_answer_is_no_beads() {
+        assert_eq!(parse_ready_rows(r#"[{"id":"sp-a","updated_at":"2026-11-19T00:00:00Z"},{"id":"sp-b"}]"#), vec![("sp-a".into(), "2026-11-19T00:00:00Z".into()), ("sp-b".into(), String::new())]);
+        assert!(parse_ready_rows("0").is_empty() && parse_ready_rows("").is_empty());
+    }
+
+    #[test]
     fn a_fleet_gap_names_at_most_five_beads_and_counts_the_rest() {
         let named: Vec<(String, String)> = (0..7).map(|i| (format!("sp-{i}"), String::new())).collect();
         let named: Vec<(&str, &str)> = named.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
