@@ -458,8 +458,12 @@ struct FakeLc {
     waiting: RefCell<Vec<(String, String)>>,
 }
 impl crate::lifecycle::Lc for FakeLc {
-    fn waiting_tips(&self, _: &str) -> Result<Vec<(String, String)>, String> {
-        Ok(self.waiting.borrow().clone())
+    fn waiting(&self) -> Result<Vec<crate::lifecycle::Waiting>, String> {
+        self.probes.set(self.probes.get() + 1);
+        if let Some(e) = self.down.borrow().clone() {
+            return Err(e);
+        }
+        Ok(self.waiting.borrow().iter().map(|(id, tip)| crate::lifecycle::Waiting { repo: "spira".into(), id: id.clone(), tip: tip.clone() }).collect())
     }
     fn certify(&self, id: &str, tip: &str, outcome: &str, _: &str) -> Result<String, String> {
         self.certified.borrow_mut().push(format!("{id} {tip} {outcome}"));
@@ -484,13 +488,6 @@ impl crate::lifecycle::Lc for FakeLc {
         }
         *self.held_tip.borrow_mut() = Some(tip.to_string());
         Ok("applied".into())
-    }
-    fn probe(&self) -> Result<(), String> {
-        self.probes.set(self.probes.get() + 1);
-        match self.down.borrow().clone() {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
     }
 }
 
@@ -1306,6 +1303,17 @@ fn a_terminal_bead_off_the_base_costs_no_content_read_in_a_queued_repository() {
     h.run();
     assert!(h.logged("spira/sp-d is DROPPED — the batcher's now, not certified again"), "{:?}", h.out.lines());
     assert!(!h.git.called("content_on_base", "spira/sp-d"), "{:?}", h.git.calls.borrow());
+}
+
+#[test]
+fn one_pass_makes_one_lifecycle_list_read_for_reachability_and_the_settle_sweep() {
+    let h = H::new(LandMode::QueueLocal);
+    h.git.shas.borrow_mut().insert("local/main".into(), "b00".into());
+    h.lc.waiting.borrow_mut().push(("sp-w".to_string(), "tw".to_string()));
+    h.bead("sp-a", "SUBMITTED", &[]);
+    h.git.add("spira/sp-a", "t1");
+    h.run();
+    assert_eq!(h.lc.probes.get(), 1, "the pass reads the waiting rows once");
 }
 
 #[test]

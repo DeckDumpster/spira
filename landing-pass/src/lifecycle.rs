@@ -4,10 +4,16 @@
 
 use spira_store::lc_call::LcClient;
 
+/// A SUBMITTED or CERTIFIED row, as far as the pass needs it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Waiting {
+    pub repo: String,
+    pub id: String,
+    pub tip: String,
+}
+
 /// The lifecycle machine, as far as this pass needs it: is it there?
 pub trait Lc {
-    /// `spira-lc list --state IN_DELIVERY`, parsed.
-    fn probe(&self) -> Result<(), String>;
     /// `spira-lc certify <id> <tip> <pass|red|infra> <detail>`: the gate outcome as an event.
     fn certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> Result<String, String>;
     /// A red `certify` that also names the step it failed at and that step's last output line.
@@ -18,8 +24,8 @@ pub trait Lc {
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String>;
     /// `spira-lc hold <id> wait snooze-until:<until> <why>`: a self-lifting hold.
     fn hold_wait(&self, id: &str, until: u64, why: &str) -> Result<String, String>;
-    /// `spira-lc list --state SUBMITTED,CERTIFIED --repo <name>`: each waiting row's `(id, tip)`; a row with no tip is omitted.
-    fn waiting_tips(&self, repo: &str) -> Result<Vec<(String, String)>, String>;
+    /// `spira-lc list --state SUBMITTED,CERTIFIED`: each waiting row's `(repo, id, tip)`, every repo's in one read; a row with no tip is omitted. The pass's only `list`: its answer is also the proof the store is reachable.
+    fn waiting(&self) -> Result<Vec<Waiting>, String>;
 }
 
 /// The store's client: `pinned` (a test's scripted one) when given, else the route the
@@ -62,15 +68,6 @@ impl RealLc {
 }
 
 impl Lc for RealLc {
-    fn probe(&self) -> Result<(), String> {
-        let c = client(self.client.as_ref(), self.bin.as_deref())?;
-        let (rc, so, se) = run(&c, &["list", "--state", "IN_DELIVERY"]);
-        if rc != 0 {
-            return Err(format!("spira-lc list exited {rc}: {}", se.lines().next().unwrap_or("")));
-        }
-        serde_json::from_str::<serde_json::Value>(&so).map(|_| ()).map_err(|e| format!("spira-lc list: {e}"))
-    }
-
     fn certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> Result<String, String> {
         self.certify_at(id, tip, outcome, detail, "", "")
     }
@@ -79,9 +76,9 @@ impl Lc for RealLc {
         self.certify_at(id, tip, "red", reason, step, message)
     }
 
-    fn waiting_tips(&self, repo: &str) -> Result<Vec<(String, String)>, String> {
+    fn waiting(&self) -> Result<Vec<Waiting>, String> {
         let c = client(self.client.as_ref(), self.bin.as_deref())?;
-        let (rc, so, se) = run(&c, &["list", "--state", "SUBMITTED,CERTIFIED", "--repo", repo]);
+        let (rc, so, se) = run(&c, &["list", "--state", "SUBMITTED,CERTIFIED"]);
         if rc != 0 {
             return Err(format!("spira-lc list exited {rc}: {}", se.lines().next().unwrap_or("")));
         }
@@ -90,7 +87,7 @@ impl Lc for RealLc {
             .iter()
             .filter_map(|r| {
                 let tip = r["tip"].as_str().filter(|t| !t.is_empty())?;
-                Some((r["bead_id"].as_str()?.to_string(), tip.to_string()))
+                Some(Waiting { repo: r["repo"].as_str().unwrap_or_default().to_string(), id: r["bead_id"].as_str()?.to_string(), tip: tip.to_string() })
             })
             .collect())
     }

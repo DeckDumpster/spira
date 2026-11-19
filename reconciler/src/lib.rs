@@ -2568,8 +2568,15 @@ pub fn observe_groups(cfg: &Config) -> Vec<Group> {
         ("main-health", Box::new(|| observe_main_health(cfg))),
     ];
     debug_assert!(jobs.iter().map(|(n, _)| *n).eq(INVARIANTS));
+    let task = spira_store::lc_call::current_task();
     std::thread::scope(|scope| {
-        let handles: Vec<_> = jobs.into_iter().map(|(name, job)| (name, scope.spawn(move || observed(cfg, name, job)))).collect();
+        let handles: Vec<_> = jobs
+            .into_iter()
+            .map(|(name, job)| {
+                let task = task.clone();
+                (name, scope.spawn(move || spira_store::lc_call::as_task_of(task.as_deref(), || observed(cfg, name, job))))
+            })
+            .collect();
         handles
             .into_iter()
             .map(|(name, h)| match h.join() {

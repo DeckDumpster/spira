@@ -189,16 +189,8 @@ impl Store {
             }
             return Ok(out);
         };
-        let mut unheld: Vec<String> = Vec::new();
-        for id in ids {
-            match views.list_answer(&["list", "--ids", id]) { // BDQ_READ_CONSIDERED="the held-view door: a projection answer, no bdq"
-                Some(answer) => out.extend(crate::rank::parse_lifecycle(&answer.map_err(|e| format!("spira-lc list: {e}"))?)?),
-                None => unheld.push(id.clone()),
-            }
-        }
-        for chunk in unheld.chunks(EVENT_CHUNK) {
-            out.extend(self.lc_list(&["--ids", &chunk.join(",")], false)?);
-        }
+        let rows = views.ids_answer(ids).map_err(|e| format!("spira-lc list: {e}"))?.value; // BDQ_READ_CONSIDERED="the held-view door: a projection answer, no bdq"
+        out.extend(crate::rank::parse_lifecycle(&serde_json::Value::Array(rows).to_string())?);
         Ok(out)
     }
 
@@ -279,7 +271,8 @@ impl Store {
     pub fn dependents_of(&self, ids: &[String]) -> Result<std::collections::BTreeSet<String>, String> {
         let mut out = std::collections::BTreeSet::new();
         for chunk in ids.chunks(LIST_CHUNK) {
-            let text = self.lc_run(&["plan", "edges", "--ids", &chunk.join(","), "--dependents"]).map_err(|e| format!("spira-lc plan edges: {e}"))?;
+            let argv = ["plan", "edges", "--ids", &chunk.join(","), "--dependents"].map(String::from);
+            let text = self.read_held(&argv).map_err(|e| format!("spira-lc plan edges: {e}"))?;
             let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc plan edges: not JSON: {e}"))?;
             let edges = v.get("edges").and_then(serde_json::Value::as_array).ok_or("spira-lc plan edges: no edges array")?;
             for e in edges {
@@ -445,7 +438,7 @@ mod tests {
                 _ => Reply { code: 0, out: r#"[{"bead_id":"sp-a","state":"READY","version":1,"holds":[],"express":"1","updated_at":4000000000},{"bead_id":"sp-b","state":"LANDED","version":1,"holds":[],"express":"0","updated_at":4000000000},{"bead_id":"sp-c","state":"REWORK","version":1,"holds":[],"express":"0","updated_at":4000000000}]"#.into(), err: String::new() },
             },
         });
-        let view = Arc::new(store_view::Projection::new(LcClient::over(held, true), Duration::from_secs(60), Arc::new(std::time::Instant::now)));
+        let view = Arc::new(store_view::Projection::new(LcClient::over(held.clone(), true), Duration::from_secs(60), Arc::new(std::time::Instant::now)));
         view.load().unwrap();
         let (st, t) = store_over_views(|_| Reply { code: 0, out: "[]".into(), err: String::new() }, Some(view));
         let ready = st.lifecycle_in_states(&["READY", "REWORK"]).unwrap();
@@ -455,7 +448,8 @@ mod tests {
         assert!(st.lifecycle_of(&["sp-a".into()]).unwrap().contains_key("sp-a"));
         assert!(t.seen.lock().unwrap().is_empty(), "a held row is not asked of the socket");
         st.lifecycle_of(&["sp-a".into(), "sp-z".into()]).unwrap();
-        assert_eq!(t.seen.lock().unwrap().iter().map(|a| a.join(" ")).collect::<Vec<_>>(), ["list --ids sp-z"], "only the id the view does not hold is asked");
+        assert!(t.seen.lock().unwrap().is_empty(), "the view asks for the id it does not hold, not the store's socket");
+        assert_eq!(held.seen.lock().unwrap().last().map(|a| a.join(" ")).as_deref(), Some("list --ids sp-z"), "only the id the view does not hold is asked");
     }
 
     #[test]

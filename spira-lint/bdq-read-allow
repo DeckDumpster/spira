@@ -28,7 +28,7 @@
 1 groomer/src/section.rs
 6 incident/src/stub_bd.rs
 2 kit-bump/src/real.rs
-2 landing-pass/src/lifecycle.rs
+1 landing-pass/src/lifecycle.rs
 1 landing-pass/src/pr.rs
 1 landing-pass/src/real.rs
 1 lifecycle-guard/src/bd_read.rs

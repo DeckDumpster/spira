@@ -542,3 +542,40 @@ fn store_usage_families_names_each_family_file_size_and_mark_and_flags_the_file_
     let shm = file(&events, &format!("control.events-{}.db-shm", date_of(today - 15)));
     assert_eq!((shm["bytes"].as_u64(), shm["behind_mark"].as_bool()), (Some(60), Some(true)), "{out}");
 }
+
+fn watch_rows<B: Backend>(s: &Store<B>, prefixes: &[&str], from: u64) -> Value {
+    let from = from.to_string();
+    let mut args: Vec<String> = std::iter::once("watch").chain(prefixes.iter().copied()).map(String::from).collect();
+    args.extend(["--from-rev", &from, "--wait-ms", "0", "--rows"].map(String::from));
+    let request = crate::control::served::call_request_id();
+    let call = crate::control::state::Call { now: 300, request: &request, inputs: &crate::control::claimable::FIXED };
+    let (code, out) = verbs::run_with_rows(s, &args, &call);
+    assert_eq!(code, 0, "{out}");
+    serde_json::from_str(&out).unwrap()
+}
+
+fn a_watch_with_rows_carries_the_lifecycle_rows_its_events_name<B: Backend>(s: &Store<B>) {
+    create(s, "sp-a");
+    create(s, "sp-b");
+    let from = s.contract().head().unwrap();
+    toggle(s, "sp-a", 1);
+    let plain = watch(s, keys::LIFECYCLE, from);
+    assert!(plain.get("rows").is_none(), "without --rows the answer is as before: {plain}");
+    let w = watch_rows(s, &[keys::LIFECYCLE], from);
+    let ids: Vec<&str> = w["rows"].as_array().unwrap().iter().map(|r| r["bead_id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["sp-a"], "only the bead the events name: {w}");
+    assert_eq!(w["events"], plain["events"]);
+    let request = crate::control::served::call_request_id();
+    let call = crate::control::state::Call { now: 300, request: &request, inputs: &crate::control::claimable::FIXED };
+    let (_, listed) = crate::control::state::run(s, &["list".into(), "--ids".into(), "sp-a".into()], &call);
+    assert_eq!(w["rows"], serde_json::from_str::<Value>(&listed).unwrap(), "the rows are what `list --ids` composes: {w}");
+    assert_eq!(w["rows"][0]["express"], "1");
+    assert!(w["rows"][0].get("claim_view").is_some(), "the claim verdict rides with it: {w}");
+    let head = s.contract().head().unwrap();
+    assert_eq!(watch_rows(s, &[keys::LIFECYCLE], head)["progress_rev"], head, "a quiet watch carries no rows");
+}
+
+#[test]
+fn a_mem_watch_with_rows_carries_the_lifecycle_rows_its_events_name() {
+    on_mem(a_watch_with_rows_carries_the_lifecycle_rows_its_events_name);
+}

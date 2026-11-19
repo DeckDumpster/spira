@@ -597,3 +597,88 @@ fn a_rounds_list_is_the_stores_answer_at_the_same_revision_held_until_a_round_ch
         });
     });
 }
+
+#[test]
+fn a_wake_that_carries_its_rows_is_one_store_call_whatever_the_number_of_keys() {
+    within(|| {
+        let w = world(
+            Script { list_rev: 9, rows: vec![bead("sp-a", "READY", "[]", Some("claimable"), false), bead("sp-b", "READY", "[]", Some("claimable"), false), bead("sp-c", "READY", "[]", None, false)], ..Default::default() },
+            Duration::from_secs(10),
+        );
+        w.p.poll().unwrap();
+        let before = w.script.lock().unwrap().seen.len();
+        let moved = |id: &str, state: &str| bead(id, state, "[]", None, false);
+        let events: Vec<Value> = ["lifecycle/sp-a", "readiness/sp-b", "lifecycle/sp-c"].iter().map(|k| json!({ "key": k, "rev": rev(10), "value": {}, "create_rev": null, "prev_mod_rev": null })).collect();
+        w.watch(json!({ "events": events, "through": 10, "rows": [moved("sp-a", "WORKING"), moved("sp-b", "WORKING"), moved("sp-c", "LANDED")] }));
+        w.p.poll().unwrap();
+        let calls: Vec<Vec<String>> = w.script.lock().unwrap().seen[before..].to_vec();
+        assert_eq!(calls.len(), 1, "one call for the wake: {calls:?}");
+        assert_eq!(calls[0][0], "watch");
+        assert!(calls[0].iter().any(|a| a == "--rows"), "{calls:?}");
+        assert_eq!(w.p.ready_counts().unwrap().value.by_state.get("WORKING"), Some(&2));
+        assert_eq!(w.p.ready_counts().unwrap().value.by_state.get("READY"), None, "the carried LANDED row left the held set");
+    });
+}
+
+#[test]
+fn a_wake_that_carries_rows_asks_only_for_the_waiters_it_did_not_carry() {
+    within(|| {
+        let mut waiting = bead("sp-a", "READY", "[]", Some("blocked"), false);
+        waiting["blocked_by"] = json!(["sp-b"]);
+        let w = world(Script { list_rev: 9, rows: vec![bead("sp-b", "READY", "[]", Some("claimable"), false), waiting], ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        w.script.lock().unwrap().rows = vec![bead("sp-b", "LANDED", "[]", None, false), bead("sp-a", "READY", "[]", Some("claimable"), false)];
+        w.watch(json!({
+            "events": [{ "key": "lifecycle/sp-b", "rev": rev(10), "value": {}, "create_rev": null, "prev_mod_rev": null }],
+            "through": 10,
+            "rows": [bead("sp-b", "LANDED", "[]", None, false)],
+        }));
+        w.p.poll().unwrap();
+        let last = w.script.lock().unwrap().seen.last().cloned().unwrap();
+        assert_eq!(&last, &["list", "--ids", "sp-a"].map(String::from));
+        assert_eq!(w.p.ready_counts().unwrap().value.judged_claimable, 1);
+    });
+}
+
+#[test]
+fn a_terminal_row_is_asked_of_the_store_once_and_forgotten_when_a_change_names_it() {
+    within(|| {
+        let w = world(
+            Script { list_rev: 9, rows: vec![bead("sp-a", "READY", "[]", None, false), bead("sp-old", "LANDED", "[]", None, false)], ..Default::default() },
+            Duration::from_secs(10),
+        );
+        w.p.poll().unwrap();
+        let ids = ["sp-a".to_string(), "sp-old".to_string()];
+        let states = |w: &World| w.p.ids_answer(&ids).unwrap().value.iter().map(|r| r["state"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        let asks = |w: &World| w.script.lock().unwrap().seen.iter().filter(|a| a[..2] == ["list", "--ids"]).count();
+        assert_eq!(states(&w), ["READY", "LANDED"]);
+        assert_eq!(asks(&w), 1);
+        assert_eq!(states(&w), ["READY", "LANDED"]);
+        assert_eq!(asks(&w), 1, "the terminal row is remembered");
+
+        w.script.lock().unwrap().rows = vec![bead("sp-a", "READY", "[]", None, false), bead("sp-old", "REWORK", "[]", None, false)];
+        w.watch(json!({ "events": [{ "key": "lifecycle/sp-old", "rev": rev(10), "value": {}, "create_rev": null, "prev_mod_rev": null }], "through": 10, "rows": [bead("sp-old", "REWORK", "[]", None, false)] }));
+        w.p.poll().unwrap();
+        assert_eq!(states(&w), ["READY", "REWORK"], "a reopened bead is live again and held");
+        assert_eq!(asks(&w), 1);
+    });
+}
+
+#[test]
+fn the_remembered_terminal_rows_are_bounded() {
+    within(|| {
+        let many: Vec<Value> = (0..5_000).map(|i| bead(&format!("sp-{i:05}"), "DONE", "[]", None, false)).collect();
+        let w = world(Script { list_rev: 9, rows: many, ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        let ids: Vec<String> = (0..5_000).map(|i| format!("sp-{i:05}")).collect();
+        for chunk in ids.chunks(200) {
+            w.p.ids_answer(chunk).unwrap();
+        }
+        let asks = |w: &World| w.script.lock().unwrap().seen.iter().filter(|a| a[..2] == ["list", "--ids"]).count();
+        let before = asks(&w);
+        w.p.ids_answer(&ids[4_900..4_950]).unwrap();
+        assert_eq!(asks(&w), before, "the newest rows are still remembered");
+        w.p.ids_answer(&ids[..50]).unwrap();
+        assert_eq!(asks(&w), before + 1, "the oldest were dropped at the bound and are asked again");
+    });
+}

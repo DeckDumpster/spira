@@ -254,6 +254,14 @@ pub fn as_task<T>(task: &str, f: impl FnOnce() -> T) -> T {
     f()
 }
 
+/// `f` under `task` when one is given, else as it stands: how a thread spawned inside a task carries its name.
+pub fn as_task_of<T>(task: Option<&str>, f: impl FnOnce() -> T) -> T {
+    match task {
+        Some(task) => as_task(task, f),
+        None => f(),
+    }
+}
+
 /// The task this thread's calls are made for; an empty name is none.
 pub fn current_task() -> Option<String> {
     TASK.with(|t| Some(t.borrow().clone()).filter(|t| !t.is_empty()))
@@ -866,6 +874,17 @@ mod tests {
         let tasked: serde_json::Value = serde_json::from_str(head_of(Some("asks")).trim()).unwrap();
         assert_eq!((tasked["task"].as_str(), tasked["argv"][0].as_str()), (Some("asks"), Some("list")));
         assert_eq!(head_of(None).trim(), r#"["list"]"#, "outside a task the wire is unchanged");
+    }
+
+    #[test]
+    fn a_thread_spawned_inside_a_task_sends_the_name_it_is_handed_and_none_otherwise() {
+        as_task("outer", || {
+            let task = current_task();
+            assert_eq!(std::thread::spawn(current_task).join().unwrap(), None, "a spawned thread starts unnamed");
+            let carried = std::thread::spawn(move || as_task_of(task.as_deref(), current_task)).join().unwrap();
+            assert_eq!(carried.as_deref(), Some("outer"));
+        });
+        assert_eq!(as_task_of(None, current_task), None);
     }
 
     #[test]

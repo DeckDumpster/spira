@@ -94,7 +94,7 @@ fn lcq_held_with(lc: &LcClient, args: &[&str]) -> Result<String, String> {
 /// The held lifecycle rows `q` keeps, as `list` printed them; `None` when the process keeps no
 /// watch or `q` reaches rows it does not hold.
 fn held_rows(q: &store_view::RowQuery) -> Option<Result<Vec<Value>, String>> {
-    let rows = store_view::shared()?.rows(q)?;
+    let rows = store_view::shared()?.rows_held(q)?;
     Some(rows.map(|r| r.value).map_err(|e| format!("could not say: {e}")))
 }
 

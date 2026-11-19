@@ -297,6 +297,11 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
             }
         }
         Ok(store) if closeout => super::gh_closeout::run(&store, args, &call_request_id()),
+        Ok(store) if args.iter().any(|a| a == "--rows") => {
+            let request = call_request_id();
+            let call = state::Call { now: crate::db::now_epoch(), request: &request, inputs: &crate::control::claimable::Live };
+            verbs::run_with_rows(&store, args, &call)
+        }
         Ok(store) => verbs::run(&store, args),
         Err(e) => (CANNOT_TELL, format!("cannot tell: the control store: {e}")),
     })
