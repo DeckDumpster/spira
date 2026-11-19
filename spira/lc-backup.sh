@@ -4,7 +4,7 @@
 #
 #   lc-backup.sh run                 per database: sync the local backup dir, upload its new table files and a new manifest, stamp it
 #   lc-backup.sh age [--now EPOCH]   exit 0 when every database's newest good backup is younger than SPIRA_LC_BACKUP_MAX_AGE
-#   lc-backup.sh drill [--db NAME]   per database: restore the newest uploaded manifest's file set into a scratch dir; row counts must equal live; exit 1 with a recorded DEFERRED verdict when the store stays busy past the wait cap (once a day, no second slot). With SPIRA_LC_STORE_PATH set, the control store (--db control) first: spira-lc admin-drill
+#   lc-backup.sh drill [--db NAME]   per database: restore the newest uploaded manifest's file set into a scratch dir; row counts must equal live; exit 1 with a recorded DEFERRED verdict when the store stays busy past the wait cap (once a week, no second slot). With SPIRA_LC_STORE_PATH set, the control store (--db control) first: spira-lc admin-drill
 #   lc-backup.sh watch [--interval S] [--ticks N]   watchd daemon: mails the crossing into and out of stale
 #   lc-backup.sh health              exit non-zero when the watch loop has stopped polling
 #   lc-backup.sh explain             after a failed run: put the log's last error line on stderr and in the journal
@@ -333,6 +333,7 @@ _lcb_drill_control() {
     printf '%s\n' "$out"
     if [ "$rc" -eq 0 ]; then
         echo "lc-backup: drill ok — control: $(head -n1 <<<"$out")" > "$verdict"
+        date +%s > "$SPIRA_RUN/lc-backup/control/drill.ok"
     else
         printf 'lc-backup: drill: control: %s\n' "$out" > "$verdict"
     fi

@@ -1,8 +1,8 @@
 [Unit]
-Description=Prove the off-box backups restore, once a day
+Description=Prove the off-box backups restore, once a week
 
 [Timer]
-OnCalendar=*-*-* 04:50:00
+OnCalendar=Sun *-*-* 04:50:00
 Persistent=true
 AccuracySec=5min
 RandomizedDelaySec=300

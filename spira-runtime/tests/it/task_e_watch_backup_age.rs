@@ -9,7 +9,7 @@ use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_backup_age::*;
 
 fn config() -> Config {
-    Config { url: "s3://b/lc".into(), db: "spira_aux".into(), max_age_s: 25_200, run: "r".into() }
+    Config { url: "s3://b/lc".into(), db: "spira_aux".into(), max_age_s: 25_200, lc_store_path: String::new(), run: "r".into() }
 }
 
 fn dbs(state: Db) -> Snapshot {
@@ -114,4 +114,43 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(red, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+}
+
+fn timer_calendar(unit: &str) -> runtime::calendar::Calendar {
+    let root = spira_config::resolve::checkout_root_for_process().unwrap();
+    let text = std::fs::read_to_string(root.join("systemd").join(unit)).unwrap();
+    let spec = text.lines().find_map(|l| l.strip_prefix("OnCalendar=")).expect("an OnCalendar line");
+    runtime::calendar::Calendar::parse(spec).unwrap()
+}
+
+fn gaps(cal: &runtime::calendar::Calendar, elapses: usize) -> Vec<u64> {
+    let mut at = cal.at_or_after(1_000_000_000_000);
+    let mut out = Vec::new();
+    for _ in 0..elapses {
+        let next = cal.next_after(at);
+        out.push((next - at) / 1000);
+        at = next;
+    }
+    out
+}
+
+#[test]
+fn the_backup_timer_fires_every_twelve_hours_and_the_age_alarm_fits_it() {
+    assert!(gaps(&timer_calendar("lc-backup.timer"), 4).iter().all(|g| *g == 43_200));
+    let home = spira_config::resolve::checkout_root_for_process().unwrap().join("spira");
+    let registry = spira_config::registry::Registry::from_dirs(&home).unwrap();
+    let default: u64 = registry.get("SPIRA_LC_BACKUP_MAX_AGE").unwrap().default_expr().unwrap().parse().unwrap();
+    assert!(default > 43_200 + 5_400 && default < 2 * 43_200, "{default}");
+    let (now, h) = (10_000_000, 3600);
+    assert!(matches!(measure_db(Some(&format!("{}\n", now - 13 * h)), now, default), Db::Ok { .. }));
+    assert!(matches!(measure_db(Some(&format!("{}\n", now - 14 * h - 1)), now, default), Db::Stale { .. }));
+}
+
+#[test]
+fn the_drill_timer_fires_weekly_and_its_alarm_tolerates_one_slot() {
+    assert!(gaps(&timer_calendar("lc-backup-drill.timer"), 4).iter().all(|g| *g == 604_800));
+    let root = spira_config::resolve::checkout_root_for_process().unwrap();
+    let service = std::fs::read_to_string(root.join("systemd/lc-backup-drill.service")).unwrap();
+    let hours: u64 = service.lines().find_map(|l| l.strip_prefix("TimeoutStartSec=")?.strip_suffix('h')?.parse().ok()).expect("TimeoutStartSec in hours");
+    assert!(DRILL_STALE_S > 604_800 + hours * 3600 && DRILL_STALE_S < 2 * 604_800, "{DRILL_STALE_S}");
 }

@@ -1,7 +1,11 @@
 [Unit]
 Description=Prove the newest off-box backups restore (lc-backup drill)
 Documentation=file://@SPIRA_HOME@/lc-backup.sh
-After=lc-serve.service dolt-beads.service
+Wants=lc-backup.service
+After=lc-serve.service dolt-beads.service lc-backup.service
+# A release that changes the backup or restore logic, or the control store's schema, starts this
+# unit at activation (release::activate), so the drill restores a backup the new code wrote.
+X-Spira-StartWhenChanged=spira/lc-backup.sh spira-lc/src/durability.rs state-store-sqlite/src/durability/ state-store-sqlite/src/migrations.rs
 X-Spira-NoDrain=true
 
 [Service]
