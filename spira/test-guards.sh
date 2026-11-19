@@ -264,7 +264,7 @@ out="$(fence_run "bash ${FAKE_PROD}/census --with-suppressed" SPIRA_DWARF=test-d
 nowant "UC-safety-fences-02/census-allowed" '"decision":"block"' "$out"
 
 _dflag="--description"
-_bd_cmd="$(printf "bd -C /db create title %s - <<'DESC'\nbash \"%s/census\" and /verdict.sh are mentioned\nDESC" "$_dflag" "${FAKE_PROD}")"
+_bd_cmd="$(printf "work file title %s - <<'DESC'\nbash \"%s/census\" and /verdict.sh are mentioned\nDESC" "$_dflag" "${FAKE_PROD}")"
 out="$(fence_run "$_bd_cmd" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-02/prod-path-in-heredoc-allowed" '"decision":"block"' "$out"
 
@@ -300,7 +300,7 @@ out="$(fence_run "grep -l '^LANDED' ${FAKE_RUN}/queue/*" SPIRA_DWARF=test-dwarf)
 nowant "sp-ozym9/grep-queue-allowed" '"decision":"block"' "$out"
 
 _ldflag="--description"
-_ld_cmd="$(printf "bd -C /db create title %s - <<'DESC'\nsee %s/queue/sp-7youp for evidence\nDESC" "$_ldflag" "${FAKE_RUN}")"
+_ld_cmd="$(printf "work file title %s - <<'DESC'\nsee %s/queue/sp-7youp for evidence\nDESC" "$_ldflag" "${FAKE_RUN}")"
 out="$(fence_run "$_ld_cmd" SPIRA_DWARF=test-dwarf)"
 nowant "sp-ozym9/queue-path-in-heredoc-allowed" '"decision":"block"' "$out"
 
@@ -312,11 +312,10 @@ nowant "sp-ozym9/override-bypasses-queue-write-block" '"decision":"block"' "$out
 
 # ===========================================================================
 echo
-echo "UC-safety-fences-03 — dwarf session: no bd create rule — no dwarf persona has bd (sp-j7l3q):"
+echo "UC-safety-fences-03 — dwarf session: direct bd/bdq calls are refused, by any path (sp-dxbocs):"
 # ===========================================================================
-# Ryan 2026-10-05: the model's PATH holds only `work` (sp-zf4q3) and every persona's bead
-# operations are `work` verbs (sp-st0mm); the fence's old test-data / unmapped-repo /
-# unclaimable heuristic is gone for every persona, the builder included.
+# Reverses the 2026-10-05 no-bd-rule ruling (sp-j7l3q) on 2026-11-18: ops sweeps reached the
+# store by absolute path, past a PATH that held only `work`.
 BDCREATE_DB="$TMP/prod-db"
 fence_bd() {  # fence_bd <cmd> [ENV..] -> fence stdout with a production SPIRA_DB in scope
     local cmd="$1"; shift
@@ -324,10 +323,29 @@ fence_bd() {  # fence_bd <cmd> [ENV..] -> fence stdout with a production SPIRA_D
         SPIRA_DWARF=test-dwarf SPIRA_DB="$BDCREATE_DB" SPIRA_BD="$STUB_BD" "$@" \
         bash "$FENCE" 2>/dev/null
 }
-out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan\"" SPIRA_RUNE=builder)"
-nowant "sp-j7l3q/builder-bd-rules-removed" '"decision":"block"' "$out"
-out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan,repo:fixture-repo\"" SPIRA_RUNE=groomer)"
-nowant "sp-j7l3q/no-persona-bd-create-rule" '"decision":"block"' "$out"
+_bd_heredoc="$(printf 'work note-on sp-1 - <<EOF\nbd create x\nEOF')"
+for rune in builder ops groomer; do
+    for c in 'bd create x' '~/.local/bin/bd create x' 'BEADS_DIR=/x/.beads ~/.local/bin/bd create x' \
+             'cd /x && bd list' '$SPIRA_RELEASE/bin/bdq create -t bug x' '/r/bin/bdq --help' \
+             'bash -c "bd show sp-1"' 'env FOO=1 bd-embedded list' 'export BEADS_DIR=/x' \
+             'sudo -u root bd list' 'timeout 5 /usr/bin/bd list' 'echo `bd create x`' 'echo $(bd list)' \
+             'ls | xargs bd show' 'find . -exec bd list {} +' 'eval "bd create x"' 'bash -lc "BEADS_DIR=/x true"' \
+             'declare -x BEADS_DIR=/x' 'if bd list; then true; fi' 'while bd list; do true; done' \
+             'nice -n 5 bd list' 'xargs -n 1 bd show' 'time bd list' 'nohup bd list' "$(printf 'true\nbd list')"; do
+        out="$(fence_bd "$c" SPIRA_RUNE="$rune")"
+        want "sp-dxbocs/$rune/refused: $c" '"decision":"block"' "$out"
+        want "sp-dxbocs/$rune/names-the-exit: $c" 'work file' "$out"
+    done
+    for c in 'work file "bd is broken" --for builder --repo spira --body-file -' 'grep -n bd foo.rs' \
+             'echo "run bd"' "$_bd_heredoc" 'cargo test -p bead' 'echo BEADS_DIR=x'; do
+        out="$(fence_bd "$c" SPIRA_RUNE="$rune")"
+        nowant "sp-dxbocs/$rune/allowed: $c" '"decision":"block"' "$out"
+    done
+    out="$(fence_bd 'bd create x' SPIRA_RUNE="$rune" SPIRA_DWARF_OVERRIDE=1)"
+    nowant "sp-dxbocs/$rune/override-bypasses" '"decision":"block"' "$out"
+    out="$(bash_payload 'bd create x' | env -i PATH="$PATH" HOME="$TMP" SPIRA_RUNE="$rune" bash "$FENCE" 2>/dev/null)"
+    nowant "sp-dxbocs/$rune/silent-outside-dwarf" '"decision":"block"' "$out"
+done
 
 # ===========================================================================
 echo
@@ -415,9 +433,7 @@ nowant "UC-safety-fences-15/fence-non-Bash-tool-allows" '"decision":"block"' "$o
 out="$(fence_run "echo '$FENCE_REP_CMD'" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-15/fence-single-quoted-prose-allows" '"decision":"block"' "$out"
 
-# The verb is a %s argument so this fixture is not itself a bare-dash bd create in source
-# (spira-lint's bd-stdin-lint rule lints every script for one).
-heredoc_cmd="$(printf "bd -C /db %s title --description - <<'DESC'\n%s\nDESC" create "$FENCE_REP_CMD")"
+heredoc_cmd="$(printf "work file title --body-file - <<'DESC'\n%s\nDESC" "$FENCE_REP_CMD")"
 out="$(fence_run "$heredoc_cmd" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-15/fence-heredoc-prose-allows" '"decision":"block"' "$out"
 
