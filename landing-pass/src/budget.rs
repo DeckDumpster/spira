@@ -11,14 +11,13 @@ pub fn gate_fits(maxsec: i64, pass_start: u64, reserve: i64, now: u64) -> bool {
     maxsec - spent >= reserve
 }
 
-/// The wait handed to gate.sh as SPIRA_GATE_LOCK_WAIT: an explicit setting unchanged, else twice
-/// the gate timeout. Never shortened by the pass budget: a gate admitted past the budget (a
-/// base fix) would get a zero wait and end NO_VERDICT lock-timeout on its first busy tree.
+/// The wait handed to gate.sh as SPIRA_GATE_LOCK_WAIT: twice the gate timeout, which an explicit
+/// setting may only raise (gate-worker's rule). Never shortened by the pass budget: a gate
+/// admitted past it (a base fix) would get a zero wait and end NO_VERDICT lock-timeout.
 pub fn gate_lock_wait(gate_timeout: i64, explicit: Option<&str>) -> String {
-    match explicit.filter(|e| !e.is_empty()) {
-        Some(e) => e.to_string(),
-        None => (gate_timeout * 2).to_string(),
-    }
+    let floor = gate_timeout * 2;
+    let e = explicit.and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(floor);
+    e.max(floor).to_string()
 }
 
 #[cfg(test)]
@@ -35,7 +34,8 @@ mod tests {
     #[test]
     fn lock_wait_is_twice_the_gate_timeout_and_an_exhausted_pass_budget_does_not_shorten_it() {
         assert_eq!(gate_lock_wait(700, None), "1400");
-        assert_eq!(gate_lock_wait(700, Some("7")), "7");
+        assert_eq!(gate_lock_wait(700, Some("7")), "1400");
+        assert_eq!(gate_lock_wait(700, Some("9000")), "9000");
         assert_eq!(gate_lock_wait(700, Some("")), "1400");
     }
 }
