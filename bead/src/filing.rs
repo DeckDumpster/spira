@@ -542,6 +542,13 @@ mod tests {
     }
 
     #[test]
+    fn a_checker_fault_is_refused_as_cannot_tell_never_as_a_failed_contract() {
+        let fault = checker(Some(2), "cannot tell environment: cannot cut a worktree from local/main: boom\n", "");
+        let r = file(&deck_policy(fault), "builder-lane,repo:deck", &[]).expect_err("filing admitted");
+        assert!(r.text.contains("cannot tell whether deck meets the landing contract") && !r.text.contains("does not meet"), "{}", r.text);
+    }
+
+    #[test]
     fn a_met_contract_admits_and_records_nothing() {
         let p = deck_policy(checker(Some(0), "met environment: ok\n", ""));
         let mut args = a(&["create", "T", "--labels", "builder-lane,repo:deck", "--description", "d"]);

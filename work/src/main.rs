@@ -1002,7 +1002,12 @@ fn flake_shell(root: &std::path::Path) -> Result<Option<repo_contract::shell::Sh
     if !std::fs::read(root.join("flake.nix")).is_ok_and(|f| repo_contract::shell::declares_dev_shell(&f)) {
         return Ok(None);
     }
-    repo_contract::shell::shell_env(root, &repo_contract::shell::nix_bin()?, &repo_contract::shell::cache_dir()?)
+    use repo_contract::shell::DevShell;
+    match repo_contract::shell::shell_env(root, &repo_contract::shell::nix_bin()?, &repo_contract::shell::cache_dir()?)? {
+        DevShell::Entered(env) => Ok(Some(env)),
+        DevShell::Undeclared => Ok(None),
+        DevShell::DoesNotEnter(e) => Err(e),
+    }
 }
 
 /// Programs `work review` and `work checks` will exec that resolve nowhere, named so a missing

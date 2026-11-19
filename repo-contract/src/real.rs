@@ -59,7 +59,7 @@ impl Ports for Real {
         Ok(Some(String::from_utf8_lossy(&out.stdout).into_owned()))
     }
 
-    fn shell_env(&self, repo: &str, tree: Option<&Path>) -> Result<Option<ShellEnv>, String> {
+    fn shell_env(&self, repo: &str, tree: Option<&Path>) -> Result<shell::DevShell, String> {
         let (nix, cache) = (shell::nix_bin()?, shell::cache_dir()?);
         self.in_tree(repo, tree, |t| shell::shell_env(t, &nix, &cache))
     }

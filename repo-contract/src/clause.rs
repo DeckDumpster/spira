@@ -2,6 +2,7 @@
 //! The check is read-only: it judges files and refs and runs no suite.
 
 use crate::ports::Ports;
+use crate::shell::DevShell;
 use std::path::Path;
 
 pub const CHECKS: &str = ".spira/checks.toml";
@@ -79,10 +80,10 @@ fn environment(p: &dyn Ports, repo: &str, tree: Option<&Path>) -> Judged {
             return Ok(Outcome::NotMet(format!("{f} is not in the tree")));
         }
     }
-    let env = match p.shell_env(repo, tree) {
-        Ok(Some(e)) => e,
-        Ok(None) => return Ok(Outcome::NotMet("flake.nix declares no devShells".into())),
-        Err(e) => return Ok(Outcome::NotMet(format!("the flake's dev shell does not enter: {e}"))),
+    let env = match p.shell_env(repo, tree)? {
+        DevShell::Entered(e) => e,
+        DevShell::Undeclared => return Ok(Outcome::NotMet("flake.nix declares no devShells".into())),
+        DevShell::DoesNotEnter(e) => return Ok(Outcome::NotMet(format!("the flake's dev shell does not enter: {e}"))),
     };
     let rows = match p.read(repo, tree, CHECKS)? {
         Some(t) => habits::config::parse_checks(&t).map_err(|e| format!("{CHECKS}: {e}"))?,
@@ -195,7 +196,7 @@ pub fn without_home(all: Vec<String>, home: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::ports::Piece;
-    use crate::shell::ShellEnv;
+    use crate::shell::{DevShell, ShellEnv};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
@@ -203,7 +204,7 @@ mod tests {
     struct Fake {
         files: BTreeMap<String, String>,
         shell: Option<Vec<&'static str>>,
-        shell_err: Option<String>,
+        shell_fault: Option<Result<String, String>>,
         bad_piece: Option<(&'static str, &'static str)>,
         mode: &'static str,
         workflow: &'static str,
@@ -220,11 +221,16 @@ mod tests {
             };
             Ok(files.get(rel).cloned())
         }
-        fn shell_env(&self, _: &str, _: Option<&Path>) -> Result<Option<ShellEnv>, String> {
-            if let Some(e) = &self.shell_err {
-                return Err(e.clone());
+        fn shell_env(&self, _: &str, _: Option<&Path>) -> Result<DevShell, String> {
+            match &self.shell_fault {
+                Some(Err(e)) => return Err(e.clone()),
+                Some(Ok(e)) => return Ok(DevShell::DoesNotEnter(e.clone())),
+                None => {}
             }
-            Ok(self.shell.as_ref().map(|progs| ShellEnv { vars: progs.iter().map(|p| (format!("has:{p}"), String::new())).collect(), key: "k1".into() }))
+            Ok(match self.shell.as_ref() {
+                Some(progs) => DevShell::Entered(ShellEnv { vars: progs.iter().map(|p| (format!("has:{p}"), String::new())).collect(), key: "k1".into() }),
+                None => DevShell::Undeclared,
+            })
         }
         fn on_path(&self, env: &ShellEnv, program: &str) -> bool {
             env.vars.contains_key(&format!("has:{program}"))
@@ -299,8 +305,16 @@ mod tests {
         f.shell = None;
         assert!(line(&f, Clause::Environment).contains("declares no devShells"));
         let mut f = green();
-        f.shell_err = Some("boom".into());
+        f.shell_fault = Some(Ok("boom".into()));
         assert_eq!(line(&f, Clause::Environment), "not met environment: the flake's dev shell does not enter: boom");
+    }
+
+    #[test]
+    fn a_checker_fault_entering_the_shell_is_cannot_tell_and_exits_two() {
+        let mut f = green();
+        f.shell_fault = Some(Err("cannot cut a worktree from local/main: boom".into()));
+        assert_eq!(line(&f, Clause::Environment), "cannot tell environment: cannot cut a worktree from local/main: boom");
+        assert_eq!(run(&f, "r", None, &[Clause::Environment], &mut |_| {}), 2);
     }
 
     #[test]
@@ -423,7 +437,7 @@ mod tests {
             fn read(&self, _: &str, _: Option<&Path>, _: &str) -> Result<Option<String>, String> {
                 Err("git unreadable".into())
             }
-            fn shell_env(&self, r: &str, t: Option<&Path>) -> Result<Option<ShellEnv>, String> { self.0.shell_env(r, t) }
+            fn shell_env(&self, r: &str, t: Option<&Path>) -> Result<DevShell, String> { self.0.shell_env(r, t) }
             fn on_path(&self, e: &ShellEnv, p: &str) -> bool { self.0.on_path(e, p) }
             fn landing_pieces(&self, r: &str) -> Vec<Piece> { self.0.landing_pieces(r) }
             fn land_mode(&self, r: &str) -> String { self.0.land_mode(r) }
