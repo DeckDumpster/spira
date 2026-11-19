@@ -265,9 +265,16 @@ fn cmd_get(path: &str, file: Option<&str>) -> ExitCode {
 /// A write typed against a staged release is not the config the scheduler runs on.
 fn tell_scheduler(written: ExitCode, in_force: bool, path: &str) -> ExitCode {
     if let (true, true, Some(key)) = (in_force, format!("{written:?}") == format!("{:?}", ExitCode::SUCCESS), spira_config::scheduler_link::key_of_path(path)) {
-        println!("{}", spira_config::scheduler_link::told(spira_config::process::cfg("SPIRA_RUNTIME_SOCKET"), &key));
+        let (line, taken) = spira_config::scheduler_link::told(spira_config::process::cfg("SPIRA_RUNTIME_SOCKET"), &key);
+        println!("{line}");
+        return exit_for_told(taken);
     }
     written
+}
+
+/// A scheduler that was reached and kept its old value has not taken the write: not success.
+fn exit_for_told(taken: bool) -> ExitCode {
+    if taken { ExitCode::SUCCESS } else { ExitCode::FAILURE }
 }
 
 /// `get --running <KEY>` — the value the running scheduler holds for `KEY`, which is the one
@@ -1927,5 +1934,17 @@ mod contract_tests {
         assert_eq!(contract_hint("probe", red).unwrap(), "bring it in line: file a bead for probe that runs repo-contract scaffold with `bead.sh file ... --contract-fix`");
         assert_eq!(contract_hint("probe", "met deploy: x\n"), None);
         assert_eq!(contract_hint("probe", ""), None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exit_for_told;
+    use std::process::ExitCode;
+
+    #[test]
+    fn only_a_connected_but_silent_scheduler_exits_non_zero() {
+        assert_eq!(format!("{:?}", exit_for_told(false)), format!("{:?}", ExitCode::FAILURE));
+        assert_eq!(format!("{:?}", exit_for_told(true)), format!("{:?}", ExitCode::SUCCESS));
     }
 }

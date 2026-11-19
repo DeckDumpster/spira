@@ -2,7 +2,7 @@
 //! `get --running` asking what it holds: its control socket, the same `scheduler` verbs
 //! `world scheduler-status` speaks.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, ErrorKind, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
@@ -11,21 +11,41 @@ const DEADLINE: Duration = Duration::from_secs(5);
 const POLLS: u32 = 20;
 const POLL_EVERY: Duration = Duration::from_millis(100);
 
+/// Why a request did not return a body: the scheduler refused it, no scheduler was reached
+/// (socket absent or refusing), or one was reached or may be and said nothing usable.
+#[derive(Debug)]
+pub enum Fault {
+    Refused(String),
+    Absent(String),
+    Silent(String),
+}
+
 /// One request on the control socket: a JSON argv line out, `{"exit_code","len"}` and the body back.
 pub fn call(sock: &Path, argv: &[&str]) -> Result<String, String> {
-    let down = |why: &dyn std::fmt::Display| format!("the scheduler is not answering on {}: {why}", sock.display());
-    let stream = UnixStream::connect(sock).map_err(|e| down(&e))?;
-    stream.set_read_timeout(Some(DEADLINE)).and_then(|()| stream.set_write_timeout(Some(DEADLINE))).map_err(|e| down(&e))?;
-    writeln!(&stream, "{}", serde_json::to_string(argv).map_err(|e| e.to_string())?).map_err(|e| down(&e))?;
+    call_within(sock, argv, DEADLINE).map_err(|e| match e {
+        Fault::Refused(body) => body,
+        Fault::Absent(why) | Fault::Silent(why) => format!("the scheduler is not answering on {}: {why}", sock.display()),
+    })
+}
+
+/// `call` with its read and write `deadline`.
+fn call_within(sock: &Path, argv: &[&str], deadline: Duration) -> Result<String, Fault> {
+    let silent = |e: &dyn std::fmt::Display| Fault::Silent(e.to_string());
+    let stream = UnixStream::connect(sock).map_err(|e| match e.kind() {
+        ErrorKind::NotFound | ErrorKind::ConnectionRefused => Fault::Absent(e.to_string()),
+        _ => silent(&e),
+    })?;
+    stream.set_read_timeout(Some(deadline)).and_then(|()| stream.set_write_timeout(Some(deadline))).map_err(|e| silent(&e))?;
+    writeln!(&stream, "{}", serde_json::to_string(argv).map_err(|e| Fault::Refused(e.to_string()))?).map_err(|e| silent(&e))?;
     let mut reader = BufReader::new(stream);
     let mut head = String::new();
-    reader.read_line(&mut head).map_err(|e| down(&e))?;
-    let head: serde_json::Value = serde_json::from_str(head.trim()).map_err(|_| down(&"malformed reply"))?;
-    let (Some(code), Some(len)) = (head["exit_code"].as_i64(), head["len"].as_u64()) else { return Err(down(&"malformed reply")) };
+    reader.read_line(&mut head).map_err(|e| silent(&e))?;
+    let head: serde_json::Value = serde_json::from_str(head.trim()).map_err(|_| silent(&"malformed reply"))?;
+    let (Some(code), Some(len)) = (head["exit_code"].as_i64(), head["len"].as_u64()) else { return Err(silent(&"malformed reply")) };
     let mut body = vec![0u8; len as usize];
-    reader.read_exact(&mut body).map_err(|e| down(&e))?;
+    reader.read_exact(&mut body).map_err(|e| silent(&e))?;
     let body = String::from_utf8_lossy(&body).into_owned();
-    if code == 0 { Ok(body) } else { Err(body) }
+    if code == 0 { Ok(body) } else { Err(Fault::Refused(body)) }
 }
 
 /// The registry key a dotted `spira.<field>` path names; `None` for a path outside `[spira]`.
@@ -41,26 +61,38 @@ pub fn key_of_path(path: &str) -> Option<String> {
 /// The line `set` or `unset` prints for `key` after its write: whether the scheduler took the
 /// new value or still holds the old one, and what it waits for. `sock` is the control socket,
 /// or why it could not be found.
-pub fn told(sock: Result<String, String>, key: &str) -> String {
+pub fn told(sock: Result<String, String>, key: &str) -> (String, bool) {
+    told_within(sock, key, DEADLINE)
+}
+
+/// `told` with `deadline` for the scheduler's reply. The flag is false only when a scheduler
+/// accepted the connection and did not answer: it still holds its old value, so the new one is
+/// not in force. Every other outcome, no scheduler running included, leaves nothing to retry.
+pub fn told_within(sock: Result<String, String>, key: &str, deadline: Duration) -> (String, bool) {
     let sock = match sock {
         Ok(s) if !s.trim().is_empty() => s,
-        Ok(_) => return format!("written; no scheduler control socket is configured, so {key} reaches a scheduler when it starts"),
-        Err(e) => return format!("written; cannot tell whether a scheduler holds the old value of {key}: {e}"),
+        Ok(_) => return (format!("written; no scheduler control socket is configured, so {key} reaches a scheduler when it starts"), true),
+        Err(e) => return (format!("written; cannot tell whether a scheduler holds the old value of {key}: {e}"), true),
     };
     let sock = Path::new(&sock);
-    let reply = match call(sock, &["scheduler", "repin", key]) {
+    let reply = match call_within(sock, &["scheduler", "repin", key], deadline) {
         Ok(r) => r,
-        Err(e) => return format!("written; {e}; it reads {key} when it starts"),
+        Err(Fault::Refused(refused)) => return (format!("written; {refused}; it reads {key} when it starts"), true),
+        Err(Fault::Absent(e)) => return (format!("written; the scheduler is not running on {} ({e}); it reads {key} when it starts", sock.display()), true),
+        Err(Fault::Silent(e)) => {
+            let secs = if deadline.as_secs() > 0 { format!("{}s", deadline.as_secs()) } else { format!("{}ms", deadline.as_millis()) };
+            return (format!("written; the scheduler on {} did not answer within {secs} ({e}) and still holds its old {key}; run the same set again, or check with spira-config get --running {key}", sock.display()), false);
+        }
     };
     let v: serde_json::Value = serde_json::from_str(&reply).unwrap_or_default();
     let (held, wanted) = (v["held"].as_str().unwrap_or("").to_string(), v["wanted"].as_str().unwrap_or("").to_string());
-    match v["state"].as_str() {
+    let line = match v["state"].as_str() {
         Some("unchanged") => format!("scheduler already holds {held} for {key}"),
         Some("restart") => format!("written; the scheduler reads {key} only when it starts and holds {held}; restart it to take {wanted}"),
         Some("pending") => {
             for _ in 0..POLLS {
                 if call(sock, &["scheduler", "running", key]).is_ok_and(|r| r == wanted) {
-                    return format!("scheduler re-pinned {key}");
+                    return (format!("scheduler re-pinned {key}"), true);
                 }
                 std::thread::sleep(POLL_EVERY);
             }
@@ -69,7 +101,8 @@ pub fn told(sock: Result<String, String>, key: &str) -> String {
             format!("written; the scheduler still holds {held_now} for {key} and takes {wanted} at its next safe point ({waits})")
         }
         _ => format!("written; the scheduler's answer about {key} was not understood: {reply}"),
-    }
+    };
+    (line, true)
 }
 
 /// `get --running <key>`: the value the scheduler holds for `key`.
@@ -159,8 +192,44 @@ impl Limit {
 
 #[cfg(test)]
 mod tests {
-    use super::{key_of_path, Limit, Pending};
+    use super::{key_of_path, told_within, Limit, Pending};
     use serde_json::json;
+    use std::time::Duration;
+
+    #[test]
+    fn a_scheduler_that_accepts_and_never_replies_is_reported_as_still_holding_the_old_value() {
+        let dir = testkit::TempDir::new("told-silent");
+        let sock = dir.path().join("c.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let held = std::thread::spawn(move || {
+            let conn = listener.accept();
+            let _ = released.recv();
+            conn
+        });
+        let (line, taken) = told_within(Ok(sock.display().to_string()), "SPIRA_MAX_DWARVES", Duration::from_millis(50));
+        assert!(!taken && line.contains("did not answer within") && line.contains("still holds"), "{line}");
+        release.send(()).unwrap();
+        held.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn a_socket_that_cannot_be_opened_for_want_of_permission_is_not_called_not_running() {
+        let dir = testkit::TempDir::new("told-denied");
+        let sock = dir.path().join("c.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+        std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o000)).unwrap();
+        let (line, _) = told_within(Ok(sock.display().to_string()), "SPIRA_MAX_DWARVES", Duration::from_millis(50));
+        assert!(!line.contains("is not running"), "{line}");
+    }
+
+    #[test]
+    fn no_listener_on_the_socket_is_a_scheduler_not_running_and_taken() {
+        let dir = testkit::TempDir::new("told-absent");
+        let sock = dir.path().join("nobody.sock");
+        let (line, taken) = told_within(Ok(sock.display().to_string()), "SPIRA_MAX_DWARVES", Duration::from_millis(50));
+        assert!(taken && line.contains("the scheduler is not running on") && line.contains("it reads SPIRA_MAX_DWARVES when it starts"), "{line}");
+    }
 
     fn status(key: &str, wanted: &str) -> serde_json::Value {
         json!({"repin": {"pending": {key: {"held": "7", "wanted": wanted}}, "waits": "the batcher to finish the round it is driving"}})

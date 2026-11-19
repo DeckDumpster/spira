@@ -102,8 +102,28 @@ fn a_set_with_no_scheduler_listening_still_writes_and_says_so() {
     let b = setup("set-sched-down-box", &d.path().join("nobody.sock"));
     let o = run(&b, &["set", "spira.max_dwarves", "4", b.toml.to_str().unwrap()]);
     assert!(o.status.success());
-    assert!(out(&o).contains("written; the scheduler is not answering"), "{}", out(&o));
+    assert!(out(&o).contains("written; the scheduler is not running on"), "{}", out(&o));
     assert!(std::fs::read_to_string(&b.toml).unwrap().contains("max_dwarves = 4") || std::fs::read_to_string(&b.toml).unwrap().contains("max_dwarves = \"4\""));
+}
+
+#[test]
+fn a_set_the_scheduler_accepts_and_never_answers_writes_and_exits_non_zero() {
+    let d = testkit::TempDir::new("set-sched-silent");
+    let sock = d.path().join("c.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let held = std::thread::spawn(move || {
+        let conn = listener.accept();
+        let _ = released.recv();
+        conn
+    });
+    let b = setup("set-sched-silent-box", &sock);
+    let o = run(&b, &["set", "spira.max_dwarves", "4", b.toml.to_str().unwrap()]);
+    release.send(()).unwrap();
+    held.join().unwrap().unwrap();
+    assert!(!o.status.success());
+    assert!(out(&o).contains("did not answer within 5s") && out(&o).contains("still holds its old SPIRA_MAX_DWARVES"), "{}", out(&o));
+    assert!(std::fs::read_to_string(&b.toml).unwrap().contains("max_dwarves"));
 }
 
 #[test]
