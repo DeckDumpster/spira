@@ -286,6 +286,10 @@ pub struct Switched {
     /// Running services on the previous release's code whose restart would cut in-flight work,
     /// each with why: they restart themselves at their next idle point. Reported, not STALE.
     pub when_idle: Vec<String>,
+    /// Units this activation started because it changed a path they list
+    /// (`X-Spira-StartWhenChanged`), each with why. A start that failed is reported to stderr
+    /// and never undoes the activation.
+    pub started: Vec<String>,
 }
 
 fn unit_files(dir: &Path) -> BTreeSet<String> {
@@ -502,7 +506,56 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
     for s in &out.when_idle {
         eprintln!("release: WHEN IDLE: {s}");
     }
+    if install_new {
+        start_changed_triggers(ctx, &rendered, &roots, &mut out);
+    }
     Ok(out)
+}
+
+/// Starts each installed unit whose `X-Spira-StartWhenChanged` paths differ between the old and
+/// new release. Runs after the restarts have settled and reads are served, so what it starts
+/// sees the new release; a failed start is named and never undoes the activation.
+fn start_changed_triggers(ctx: &Ctx, rendered: &[(String, String, String, bool)], roots: &Roots, out: &mut Switched) {
+    for (unit, _, new, _) in rendered {
+        let paths = units::start_when_changed(new);
+        if paths.is_empty() {
+            continue;
+        }
+        let Some(why) = listed_paths_changed(&paths, roots) else { continue };
+        eprintln!("release: starting {unit}: {why}");
+        match ctx.sc.start_no_block(unit) {
+            Ok(()) => out.started.push(format!("{unit} ({why})")),
+            Err(e) => eprintln!("release: WARN: could not start {unit} ({why}): {e}"),
+        }
+    }
+}
+
+/// The first of `paths` (files, or directories taken whole) whose bytes differ between the old
+/// and new release root, as a reason; `None` when none does. No old root counts as changed.
+fn listed_paths_changed(paths: &[String], roots: &Roots) -> Option<String> {
+    let Some(old) = roots.old else { return Some("no previous release to compare against".into()) };
+    for p in paths {
+        let rel = Path::new(p);
+        match (tree_of(old, rel), tree_of(roots.new, rel)) {
+            (Some(o), Some(n)) if o == n => {}
+            (Some(_), Some(_)) => return Some(format!("{p} changed")),
+            _ => return Some(format!("cannot compare {p} between releases")),
+        }
+    }
+    None
+}
+
+/// Every file at `rel` under `root` by path (the file itself, or all under a directory); empty
+/// when it does not exist; `None` when it cannot be read.
+fn tree_of(root: &Path, rel: &Path) -> Option<std::collections::BTreeMap<PathBuf, Vec<u8>>> {
+    let mut files = std::collections::BTreeMap::new();
+    let full = root.join(rel);
+    if full.is_dir() {
+        collect_files(root, rel, &mut files)?;
+    } else if full.exists() {
+        files.insert(rel.to_path_buf(), std::fs::read(&full).ok()?);
+    }
+    Some(files)
 }
 
 /// The path of a program in a release other than `new`, as `/proc/<pid>/exe` shows it: the

@@ -169,6 +169,9 @@ struct FakeSystemctl {
     unit_dir: PathBuf,
     states: RefCell<BTreeMap<String, UnitState>>,
     restarts: RefCell<Vec<String>>,
+    /// `start_no_block` calls, in order; it fails for a unit named in `start_fails`.
+    starts: RefCell<Vec<String>>,
+    start_fails: BTreeSet<String>,
     kills: RefCell<Vec<String>>,
     resets: RefCell<Vec<String>>,
     reloads: RefCell<usize>,
@@ -209,6 +212,8 @@ impl FakeSystemctl {
             unit_dir,
             states: RefCell::new(s),
             restarts: RefCell::new(vec![]),
+            starts: RefCell::new(vec![]),
+            start_fails: BTreeSet::new(),
             kills: RefCell::new(vec![]),
             resets: RefCell::new(vec![]),
             reloads: RefCell::new(0),
@@ -274,6 +279,13 @@ impl Systemctl for FakeSystemctl {
     }
     fn kill(&self, unit: &str) -> Result<(), String> {
         self.kills.borrow_mut().push(unit.into());
+        Ok(())
+    }
+    fn start_no_block(&self, unit: &str) -> Result<(), String> {
+        self.starts.borrow_mut().push(unit.into());
+        if self.start_fails.contains(unit) {
+            return Err(format!("{unit}: simulated start failure"));
+        }
         Ok(())
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
@@ -1508,4 +1520,97 @@ fn an_activation_that_leaves_spira_lc_identical_records_no_lc_serve_restart() {
     activate_with(&w, &sc).unwrap();
     assert!(sc.restarts.borrow().is_empty());
     assert!(!recorded_restarts(&w).contains(&"lc-serve.service".to_string()));
+}
+
+const DRILL_UNIT: &str = "[Unit]\nX-Spira-StartWhenChanged=spira/lc-backup.sh state-store-sqlite/src/durability/\n[Service]\nType=oneshot\nExecStart=@SPIRA_PROD@/lc-backup.sh drill\n";
+
+/// Release `A` over a previous release `P` (current) when `with_previous`, each carrying the
+/// listed paths at the content `(script, durability)` gives it, and an unlisted file.
+fn world_activating_a_drill_unit(with_previous: bool, previous: (&str, &str), incoming: (&str, &str), unlisted_changes: bool) -> World {
+    let w = World::with_git_and_reg(FakeGit::default(), Registered::default());
+    let prev = "p".repeat(40);
+    for (name, (script, dur), other) in [(prev.as_str(), previous, "v1"), (A, incoming, if unlisted_changes { "v2" } else { "v1" })] {
+        let rel = w.cfg.releases.join(name);
+        file(&rel.join("systemd/lc-backup-drill.service"), DRILL_UNIT);
+        file(&rel.join("spira/lc-backup.sh"), script);
+        file(&rel.join("state-store-sqlite/src/durability/ship.rs"), dur);
+        file(&rel.join("state-store-sqlite/src/lib.rs"), other);
+    }
+    let rel = w.cfg.releases.join(A);
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    let old_root = w.cfg.releases.join(&prev);
+    if with_previous {
+        std::os::unix::fs::symlink(&prev, w.cfg.releases.join("current")).unwrap();
+    }
+    let installed = DRILL_UNIT.replace("@SPIRA_PROD@", &format!("{}/spira", old_root.display()));
+    file(&w.cfg.unit_dir.join("lc-backup-drill.service"), &installed);
+    w
+}
+
+const SAME: (&str, &str) = ("#!/bin/sh\nrun v1\n", "ship v1\n");
+
+#[test]
+fn an_activation_that_changes_the_backup_script_starts_the_drill_once_after_restarts_settle() {
+    let w = world_activating_a_drill_unit(true, SAME, ("#!/bin/sh\nrun v2\n", SAME.1), false);
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    let out = activate_with(&w, &sc).unwrap();
+    assert_eq!(*sc.starts.borrow(), vec!["lc-backup-drill.service".to_string()]);
+    assert_eq!(out.started.len(), 1, "{:?}", out.started);
+    assert!(out.started[0].contains("spira/lc-backup.sh changed"), "{:?}", out.started);
+}
+
+#[test]
+fn a_change_only_under_a_listed_directory_starts_the_drill() {
+    let w = world_activating_a_drill_unit(true, SAME, (SAME.0, "ship v2\n"), false);
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    activate_with(&w, &sc).unwrap();
+    assert_eq!(*sc.starts.borrow(), vec!["lc-backup-drill.service".to_string()]);
+}
+
+#[test]
+fn a_change_only_in_an_unlisted_file_starts_nothing() {
+    let w = world_activating_a_drill_unit(true, SAME, SAME, true);
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    let out = activate_with(&w, &sc).unwrap();
+    assert!(sc.starts.borrow().is_empty() && out.started.is_empty(), "{:?}", sc.starts.borrow());
+}
+
+#[test]
+fn an_activation_with_no_previous_release_starts_the_drill() {
+    let w = world_activating_a_drill_unit(false, SAME, SAME, false);
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    activate_with(&w, &sc).unwrap();
+    assert_eq!(*sc.starts.borrow(), vec!["lc-backup-drill.service".to_string()]);
+}
+
+#[test]
+fn a_drill_that_cannot_be_started_is_reported_and_the_activation_stands() {
+    let w = world_activating_a_drill_unit(true, SAME, ("#!/bin/sh\nrun v2\n", SAME.1), false);
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.start_fails.insert("lc-backup-drill.service".into());
+    let out = activate_with(&w, &sc).unwrap();
+    assert!(out.started.is_empty());
+    assert_eq!(sc.starts.borrow().len(), 1);
+    assert_eq!(activate::current(&w.cfg).as_deref(), Some(A), "the release stays active");
+}
+
+#[test]
+fn start_when_changed_lists_the_paths_of_the_key_and_nothing_else() {
+    assert_eq!(units::start_when_changed(DRILL_UNIT), ["spira/lc-backup.sh", "state-store-sqlite/src/durability/"]);
+    assert!(units::start_when_changed("[Unit]\nX-Spira-NoDrain=true\n").is_empty());
+}
+
+#[test]
+fn the_drill_unit_runs_after_a_fresh_backup_and_names_live_trigger_paths() {
+    let root = spira_config::resolve::checkout_root_for_process().unwrap();
+    let text = fs::read_to_string(root.join("systemd/lc-backup-drill.service")).unwrap();
+    let key = |k: &str| text.lines().find_map(|l| l.strip_prefix(k)).unwrap_or_default().to_string();
+    assert!(key("Wants=").split_whitespace().any(|u| u == "lc-backup.service"), "{text}");
+    assert!(key("After=").split_whitespace().any(|u| u == "lc-backup.service"), "{text}");
+    let paths = units::start_when_changed(&text);
+    assert!(!paths.is_empty(), "the key is absent");
+    for p in paths {
+        assert!(root.join(&p).exists(), "{p} does not exist in the tree");
+    }
 }

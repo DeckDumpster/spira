@@ -307,6 +307,16 @@ pub fn never_restart(text: &str) -> Option<String> {
     reason_of(text, "X-Spira-NoRestart")
 }
 
+/// The release-relative files and directories whose change in an activation starts this unit
+/// once (`X-Spira-StartWhenChanged=<path> <path> ...`).
+pub fn start_when_changed(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| l.trim().split_once('='))
+        .filter(|(k, _)| k.trim().eq_ignore_ascii_case("X-Spira-StartWhenChanged"))
+        .flat_map(|(_, v)| v.split_whitespace().map(str::to_string))
+        .collect()
+}
+
 /// How a service restarts itself at its next idle point (`X-Spira-RestartWhenIdle=<how>`): a
 /// restart now would cut in-flight work, and the process exits when it holds none and its
 /// release is no longer current, so `Restart=` brings it up on the new one. Activation

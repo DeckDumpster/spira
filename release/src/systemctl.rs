@@ -63,6 +63,9 @@ pub trait Systemctl {
         None
     }
     fn restart(&self, unit: &str) -> Result<(), String>;
+    /// `systemctl --user start --no-block`: queues the start job and returns without waiting
+    /// for the unit to finish.
+    fn start_no_block(&self, unit: &str) -> Result<(), String>;
     /// A path whose bytes are the executable the unit's main process runs now
     /// (`/proc/<MainPID>/exe`, readable even when the release it came from was pruned), or
     /// `None` when the unit has no main process or the fake does not model one (sp-m9rruh).
@@ -246,6 +249,9 @@ impl Systemctl for RealSystemctl {
             return None;
         }
         release_of_environ(&std::fs::read(format!("{}/{pid}/environ", system_paths::PROC)).ok()?)
+    }
+    fn start_no_block(&self, unit: &str) -> Result<(), String> {
+        self.run(&["start", "--no-block", unit]).map(|_| ())
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
         let budget = self
