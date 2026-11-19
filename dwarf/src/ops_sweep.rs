@@ -100,9 +100,9 @@ pub fn claude_args(home: &Path, run: &Path, prod: &str, rune: &Rune, sys_file: &
 /// session's environment is exactly the model's, never the manager's.
 #[allow(clippy::too_many_arguments)]
 pub fn brief(home: &Path, run: &Path, rune: &Rune, prompt: &str, id: &str, cfg: &BriefCfg, now: i64, base: &BTreeMap<String, String>, is_exe: &dyn Fn(&Path) -> bool, memories: &dyn Fn() -> Result<String, String>) -> Result<SweepBrief, String> {
+    let statutes = statutes(rune, cfg, now, memories)?;
     let path = base.get("PATH").cloned().unwrap_or_default();
     let model_bin = crate::restrict::model_bin_dir(base, &path, is_exe).map_err(|e| format!("work-env: {e}"))?;
-    let statutes = statutes(rune, cfg, now, memories)?;
     let f = &rune.name;
     let name = crate::naming::dwarf_name_take(run, f);
     let actor = format!("dwarf-{name}");

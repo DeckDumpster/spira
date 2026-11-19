@@ -321,10 +321,10 @@ mod tests {
     fn the_task_files_through_work_with_search_first_and_a_cap() {
         let out = render(&SweepData::fixture_nominal(1_700_000_000));
         let task = &out[out.find("## Your task").expect("task")..];
-        for want in ["work search", "work note-on", "work file", "--for builder --repo", "at most three beads"] {
+        for want in ["work search", "work note-on", "work file", "--for builder --repo", "--body-file -", "at most three beads", "held back:"] {
             assert!(task.contains(want), "{want}");
         }
-        assert!(!task.contains("bd create"));
+        assert!(!task.contains("bd create") && !task.contains("bdq create"));
     }
 
     #[test]
