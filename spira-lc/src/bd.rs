@@ -134,15 +134,23 @@ pub fn write(args: &[&str]) -> Result<String, String> {
 /// A write with `stdin` as bd's stdin (`note --stdin`, `create --body-file -`), under the
 /// write bound and stamped like every planning write.
 pub fn write_stdin(args: &[String], stdin: Option<&str>) -> Result<String, String> {
+    write_stdin_in(args, stdin, None)
+}
+
+/// [`write_stdin`] run in `cwd`: the one verb (`gate discover`) that reads the repo it is run in.
+pub fn write_stdin_in(args: &[String], stdin: Option<&str>, cwd: Option<&std::path::Path>) -> Result<String, String> {
     let started = std::time::Instant::now();
-    let res = write_stdin_unrecorded(args, stdin);
+    let res = write_stdin_unrecorded(args, stdin, cwd);
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     record_call(&words, started, res.is_ok());
     stamped(args, res)
 }
 
-fn write_stdin_unrecorded(args: &[String], stdin: Option<&str>) -> Result<String, String> {
+fn write_stdin_unrecorded(args: &[String], stdin: Option<&str>, cwd: Option<&std::path::Path>) -> Result<String, String> {
     let mut cmd = Command::new("timeout");
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
     cmd.arg(WRITE_SECS.to_string()).arg(bd_bin()?);
     let db = spira_config::process::cfg("SPIRA_DB")?;
     if !db.is_empty() {

@@ -164,6 +164,7 @@ pub enum Read {
     Memories,
     State { id: String, dimension: String },
     ConfigGet(String),
+    Kv { key: String, json: bool },
     Search { query: String, all: bool, limit: Option<u64> },
     DepList { id: String, up: bool, kind: Option<String> },
     Labels(String),
@@ -179,7 +180,7 @@ impl Read {
             Read::Comments(_) => &["comments"],
             Read::Gates { .. } | Read::Memories => &["issues", "labels", "dependencies"],
             Read::State { .. } | Read::Labels(_) => &["labels"],
-            Read::ConfigGet(_) => &["config"],
+            Read::ConfigGet(_) | Read::Kv { .. } => &["config"],
             Read::DepList { .. } => &["dependencies"],
             Read::Events(_) => &["events"],
         }
@@ -365,6 +366,8 @@ pub fn parse(args: &[String]) -> Result<Read, String> {
             _ => Err("state takes a bead id and a dimension".into()),
         },
         ["config", "get", key] if !key.starts_with('-') => Ok(Read::ConfigGet(key.to_string())),
+        ["kv", "get", key] if !key.starts_with('-') => Ok(Read::Kv { key: key.to_string(), json: false }),
+        ["kv", "get", key, "--json"] if !key.starts_with('-') => Ok(Read::Kv { key: key.to_string(), json: true }),
         ["search", ..] => parse_search(&args[1..]),
         ["dep", "list", ..] => parse_dep_list(&args[2..]),
         ["label", "list", ..] => match words(&args[2..]).as_slice() {
@@ -621,13 +624,22 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
             for chunk in ids.chunks(ID_CHUNK) {
                 let kinds: Vec<String> = EVENT_KINDS.iter().map(|k| k.to_string()).collect();
                 let q = format!(
-                    "SELECT issue_id, event_type, SUBSTRING(COALESCE(new_value,''),1,120) AS new_value, DATE_FORMAT(created_at, '{RFC3339}') AS created_at FROM {db}.events WHERE issue_id IN ({}) AND event_type IN ({}) ORDER BY issue_id, created_at",
+                    "SELECT issue_id, event_type, SUBSTRING(COALESCE(new_value,''),1,120) AS new_value, actor, DATE_FORMAT(created_at, '{RFC3339}') AS created_at FROM {db}.events WHERE issue_id IN ({}) AND event_type IN ({}) ORDER BY issue_id, created_at",
                     quoted(chunk),
                     quoted(&kinds)
                 );
                 out.extend(sql.rows(&q)?);
             }
             Ok(Value::Array(out).to_string())
+        }
+        Read::Kv { key, json } => {
+            let value = kv(sql, db, &key)?;
+            Ok(match (value, json) {
+                (Some(v), true) => json!({ "key": key, "value": v, "found": true }).to_string(),
+                (None, true) => json!({ "key": key, "found": false }).to_string(),
+                (Some(v), false) => format!("{v}\n"),
+                (None, false) => format!("{key} (not set)\n"),
+            })
         }
         Read::ConfigGet(key) => {
             let rows = sql.rows(&format!("SELECT value FROM {db}.config WHERE `key` = '{}'", escape(&key)))?;

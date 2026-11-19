@@ -51,6 +51,13 @@ pub trait Content {
     fn write(&self, args: &[&str]) -> Result<String, String>;
     /// A `content` write: bd's own argv, and the request body as its stdin when there is one.
     fn write_stdin(&self, args: &[String], stdin: Option<&str>) -> Result<String, String>;
+    /// [`Content::write_stdin`] run in `cwd`; a double that cannot run elsewhere refuses.
+    fn write_stdin_in(&self, args: &[String], stdin: Option<&str>, cwd: Option<&std::path::Path>) -> Result<String, String> {
+        match cwd {
+            None => self.write_stdin(args, stdin),
+            Some(dir) => Err(format!("cannot run bd in {}", dir.display())),
+        }
+    }
     fn delete(&self, ids: &[String]) -> Result<(), String>;
     /// The ask label (`SPIRA_ASK_LABEL`) a content write is judged against.
     fn ask_label(&self) -> Result<String, String>;
@@ -99,6 +106,9 @@ impl Content for LiveContent {
     }
     fn write_stdin(&self, args: &[String], stdin: Option<&str>) -> Result<String, String> {
         crate::bd::write_stdin(args, stdin)
+    }
+    fn write_stdin_in(&self, args: &[String], stdin: Option<&str>, cwd: Option<&std::path::Path>) -> Result<String, String> {
+        crate::bd::write_stdin_in(args, stdin, cwd)
     }
     fn delete(&self, ids: &[String]) -> Result<(), String> {
         match crate::bd::tool("bdq", &[&["delete".to_string()][..], ids, &["--force".to_string()]].concat(), None, "purge-alerts", 120) {
@@ -217,7 +227,7 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
             };
             let target_of = |id: &str| bead::parse_show_row(&content.read(&["show".to_string(), id.to_string(), "--json".to_string()]).ok()?);
             let incident_label = || content.incident_label();
-            let guards = crate::content::Guards { caller, ask_label: &ask_label, registry: &registry, policy: &policy, repo_of: &repo_of, target_of: &target_of, incident_label: &incident_label, now, forced: Default::default() };
+            let guards = crate::content::Guards { caller, ask_label: &ask_label, registry: &registry, policy: &policy, repo_of: &repo_of, target_of: &target_of, incident_label: &incident_label, now, forced: Default::default(), cwd: Default::default() };
             let (m, bd) = (std::cell::RefCell::new(m), std::cell::RefCell::new(bd));
             let mut guard = |a: &mut Vec<String>, body: &mut Option<String>| crate::content::guard(a, body, &guards, &mut **m.borrow_mut());
             let mut after = |a: &[String], out: &str| {
@@ -229,7 +239,7 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
                 }
                 report
             };
-            crate::content::run(rest, stdin, &mut guard, &mut after, &|a| content.read(a), &|a, body| content.write_stdin(a, body))
+            crate::content::run(rest, stdin, &mut guard, &mut after, &|a| content.read(a), &|a, body| content.write_stdin_in(a, body, guards.cwd.take().as_deref()))
         }
         "close-epic" => callers::close_epic(rest, m, bd),
         "drop" => callers::drop_cmd(rest, m, bd),
