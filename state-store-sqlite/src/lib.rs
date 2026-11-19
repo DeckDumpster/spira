@@ -2453,7 +2453,7 @@ mod tests {
         phases::untrack();
         let s = rec.snapshot();
         let names: Vec<_> = s.phases.iter().map(|p| p.0).collect();
-        assert_eq!(names, ["writer_wait", "commit", "drain", "reader_wait", "read"]);
+        assert_eq!(names, ["writer_wait", "commit", "reader_wait", "read", "drain"]);
         assert_eq!(s.reads, 1);
     }
 
