@@ -393,6 +393,73 @@ fn a_repo_whose_landing_ref_cannot_be_resolved_is_unreadable() {
 }
 
 #[test]
+fn a_missing_landing_ref_names_the_repo_the_ref_tried_and_gits_status() {
+    use spira_runtime::world::World;
+    let dir = testkit::TempDir::new("throughput-noref");
+    let repo = dir.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    testkit::git(&repo, &["init", "-q", "-b", "other"]);
+    commit_at(&repo, "one", 1_700_000_000);
+    let map = dir.join("repos");
+    std::fs::write(&map, format!("spira|{}|queue.local|local/main||\n", repo.display())).unwrap();
+    let w = World { repo_map: map, home_repo: "spira".into(), ..World::default() };
+    let e = w.landed_on_refs(1_700_000_100, "sp").unwrap_err();
+    assert!(e.starts_with("spira: no landing ref resolves: ") && e.contains("local/main") && e.contains("exit 1"), "{e}");
+}
+
+/// A `git` that behaves as git does, except that the one call of a repo whose `.git/flaky`
+/// holds a pattern and matches it fails once, after running `.git/flaky-fix`.
+fn flaky_git_bin(dir: &std::path::Path) -> std::path::PathBuf {
+    let real = std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join("git")).find(|g| g.is_file()).expect("a git on PATH");
+    let bin = dir.join("flaky-git-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = format!(
+        "#!/bin/sh\nif [ \"$1\" = -C ] && [ -f \"$2/.git/flaky\" ] && [ ! -e \"$2/.git/flaky-fired\" ]; then\nread pat < \"$2/.git/flaky\"\ncase \" $* \" in *\"$pat\"*) : > \"$2/.git/flaky-fired\"; [ -f \"$2/.git/flaky-fix\" ] && {real} -C \"$2\" branch local/main; exit 1;; esac\nfi\nexec {real} \"$@\"\n",
+        real = real.display()
+    );
+    testkit::write_exe(bin.join("git"), &script);
+    bin
+}
+
+/// A repo with one landed bead whose next git call matching `pat` fails once; `fix` makes the
+/// failed call's ref appear behind it.
+fn flaky_git_repo(name: &str, pat: &str, fix: bool, now: u64) -> (testkit::TempDir, spira_runtime::world::World) {
+    let dir = testkit::TempDir::new(name);
+    let bin = flaky_git_bin(&dir);
+    let repo = dir.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    testkit::git(&repo, &["init", "-q", "-b", "other"]);
+    commit_at(&repo, "sp-aaaaaa landed", now - 60);
+    std::fs::write(repo.join(".git/flaky"), format!("{pat}\n")).unwrap();
+    if fix {
+        std::fs::write(repo.join(".git/flaky-fix"), "").unwrap();
+    }
+    let map = dir.join("repos");
+    std::fs::write(&map, format!("spira|{}|queue.local|local/main||\n", repo.display())).unwrap();
+    let w = spira_runtime::world::World { repo_map: map, home_repo: "spira".into(), git_bin: Some(bin.join("git")), ..Default::default() };
+    (dir, w)
+}
+
+#[test]
+fn a_landing_ref_that_fails_once_and_resolves_on_the_second_read_is_read() {
+    let now = 1_700_000_000u64;
+    let (dir, w) = flaky_git_repo("throughput-reread", "rev-parse --verify -q local/main", true, now);
+    let landings = w.landed_on_refs(now, "sp").expect("the second read resolves the ref");
+    assert!(dir.join("repo/.git/flaky-fired").exists(), "the first read did fail");
+    assert_eq!(landings[0].hourly.iter().sum::<u64>(), 1);
+}
+
+#[test]
+fn a_git_log_that_fails_once_is_read_again() {
+    let now = 1_700_000_000u64;
+    let (dir, w) = flaky_git_repo("throughput-logreread", " log local/main", false, now);
+    testkit::git(&dir.join("repo"), &["branch", "local/main"]);
+    let landings = w.landed_on_refs(now, "sp").expect("the second log read answers");
+    assert!(dir.join("repo/.git/flaky-fired").exists(), "the first log read did fail");
+    assert_eq!(landings[0].hourly.iter().sum::<u64>(), 1);
+}
+
+#[test]
 fn an_unreadable_landing_ref_names_gits_own_exit_and_stderr() {
     use spira_runtime::world::World;
     let dir = testkit::TempDir::new("throughput-gitwords");
@@ -725,4 +792,17 @@ fn one_bead_held_by_a_live_blocker_and_one_by_an_idle_one_files() {
     let mut snap = Snapshot { states: [("sp-live".to_string(), "WORKING".to_string())].into(), blocked: [("sp-a".to_string(), "sp-live".to_string()), ("sp-b".to_string(), "sp-idle".to_string())].into(), ..stalled_snapshot(now / 1000) };
     snap.landings[0].beads = vec!["sp-a".into(), "sp-b".into()];
     assert_eq!(decide(&Carry::default(), &snap, now, &config()).acts.iter().filter(|a| a.name == FILE).count(), 1);
+}
+
+#[test]
+fn a_spent_observe_bound_skips_the_ref_reread_and_a_fresh_one_allows_it() {
+    let now = 1_700_000_000u64;
+    let (dir, w) = flaky_git_repo("throughput-bound", "rev-parse --verify -q local/main", true, now);
+    let spent = std::time::Instant::now() - std::time::Duration::from_secs(60);
+    let w_spent = spira_runtime::world::World { observe_bound: Some((spent, std::time::Duration::from_secs(10))), ..w.clone() };
+    let err = w_spent.landed_on_refs(now, "sp").expect_err("no time left, so no re-read");
+    assert!(err.contains("no landing ref resolves"), "{err}");
+    let _ = std::fs::remove_file(dir.join("repo/.git/flaky-fired"));
+    let fresh = spira_runtime::world::World { observe_bound: Some((std::time::Instant::now(), std::time::Duration::from_secs(60))), ..w };
+    fresh.landed_on_refs(now, "sp").expect("a fresh bound allows the re-read");
 }

@@ -21,7 +21,12 @@ pub fn git(dir: &Path, args: &[&str]) -> Result<(Option<i32>, Vec<u8>), String> 
 /// Runs git in `dir` and returns stdout on exit 0; otherwise the cause in git's own words: the
 /// exit code with its stderr, death by signal with its stderr, or the spawn or timeout error.
 pub fn git_ok(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let mut cmd = Command::new("git");
+    git_ok_with(Path::new("git"), dir, args)
+}
+
+/// [`git_ok`] through the git program `program`.
+pub fn git_ok_with(program: &Path, dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let mut cmd = Command::new(program);
     cmd.arg("-C").arg(dir).args(args);
     ok_or_cause(cmd, GIT_DEADLINE)
 }

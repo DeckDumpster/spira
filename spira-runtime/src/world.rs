@@ -17,7 +17,7 @@ use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
 use crate::hunk;
 use crate::watchers::view;
-use crate::wiki_git::{git, git_ok, exporter_run, overrides_apply, tmux};
+use crate::wiki_git::{git, git_ok_with, exporter_run, overrides_apply, tmux};
 use crate::watchers::brain_dirty;
 use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
 use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
@@ -66,6 +66,8 @@ pub struct World {
     pub batches_on_store: bool,
     /// When set, every store call of an observe shares this bound: (started, total).
     pub observe_bound: Option<(std::time::Instant, std::time::Duration)>,
+    /// Git program for the landing-ref and log reads; `None` is `git` on `PATH`.
+    pub git_bin: Option<PathBuf>,
 }
 
 pub struct PrTarget {
@@ -1000,6 +1002,12 @@ impl World {
         reg.names().into_iter().map(|name| Repo { path: reg.root(&name).unwrap_or_default(), name, error: String::new() }).collect()
     }
 
+    /// A git re-read is spent only while less than half the observe bound is gone, so the store
+    /// reads after it keep the time they need to answer inside the deadline.
+    fn has_time_to_reread(&self) -> bool {
+        self.observe_bound.is_none_or(|(began, total)| began.elapsed() < total / 2)
+    }
+
     /// The beads landed over the 24 h ending `now`, per registered repo, read from its landing ref
     /// as `spira_landref` resolves it (the map row's `base`, else the remote's default; never the
     /// lane name): by hour of the last commit naming each bead, the oldest hour first, and the
@@ -1008,12 +1016,21 @@ impl World {
         let day = 24 * 3600;
         let map = fs::read_to_string(&self.repo_map).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
         let env = BTreeMap::from([("SPIRA_HOME_REPO".to_string(), self.home_repo.clone())]);
-        let reg = spira_config::repos::Registry::new(Some(&map), &env, Path::new(""));
+        let mut reg = spira_config::repos::Registry::new(Some(&map), &env, Path::new(""));
+        if let Some(git) = &self.git_bin {
+            reg = reg.with_git(git.clone());
+        }
         let since = format!("--since=@{}", now.saturating_sub(day));
         let mut out = vec![];
         for row in map_rows(&map) {
-            let land = spira_config::repos::landref(&reg, &row.name).ok_or_else(|| format!("{}: no landing ref resolves", row.name))?;
-            let log = git_ok(Path::new(&row.path), &["log", &land, &since, "--format=%ct %s"]).map_err(|e| format!("{}: git log {land} in {}: {e}", row.name, row.path))?;
+            let land = spira_config::repos::landref_explained(&reg, &row.name)
+                .or_else(|e| if self.has_time_to_reread() { spira_config::repos::landref_explained(&reg, &row.name) } else { Err(e) })
+                .map_err(|why| format!("{}: no landing ref resolves: {why}", row.name))?;
+            let log_args = ["log", land.as_str(), &since, "--format=%ct %s"];
+            let git = self.git_bin.as_deref().unwrap_or(Path::new("git"));
+            let log = git_ok_with(git, Path::new(&row.path), &log_args)
+                .or_else(|e| if self.has_time_to_reread() { git_ok_with(git, Path::new(&row.path), &log_args) } else { Err(e) })
+                .map_err(|e| format!("{}: git log {land} in {}: {e}", row.name, row.path))?;
             let mut landed: BTreeMap<String, u64> = BTreeMap::new();
             for line in String::from_utf8_lossy(&log).lines() {
                 let Some((at, subject)) = line.split_once(' ') else { continue };
