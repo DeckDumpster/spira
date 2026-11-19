@@ -975,10 +975,7 @@ impl<'a> Pass<'a> {
                         break;
                     }
                 };
-                let (wait, note) = gate_lock_wait(self.s.gate_timeout, self.s.land_maxsec, self.start, self.s.gate_lock_wait.as_deref(), self.clock.now());
-                if let Some(n) = note {
-                    self.log(&n);
-                }
+                let wait = gate_lock_wait(self.s.gate_timeout, self.s.gate_lock_wait.as_deref());
                 let ticket = self.tools.gate_start(&br, &name, &wait, &id);
                 let fix = is_base_fix(bead.external_ref.as_deref(), &name);
                 inflight.push(Job { ticket, br, bead, tip, fix });
@@ -1095,10 +1092,7 @@ impl<'a> Pass<'a> {
 
     pub(crate) fn run_gate(&self, name: &str, br: &str, id: &str) -> GateRun {
         self.set_run(name, br, "gate");
-        let (wait, note) = gate_lock_wait(self.s.gate_timeout, self.s.land_maxsec, self.start, self.s.gate_lock_wait.as_deref(), self.clock.now());
-        if let Some(n) = note {
-            self.log(&n);
-        }
+        let wait = gate_lock_wait(self.s.gate_timeout, self.s.gate_lock_wait.as_deref());
         let (rc, out) = self.tools.gate(br, name, &wait, id);
         self.set_run(name, br, "");
         GateRun::parse(rc, out)

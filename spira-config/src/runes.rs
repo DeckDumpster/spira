@@ -903,8 +903,12 @@ mod tests {
         assert_eq!(p, Predicate::default());
     }
 
+    fn shipped_home() -> std::path::PathBuf {
+        testkit::manifest_dir().join("../spira")
+    }
+
     fn shipped_rune_texts() -> Vec<(String, String)> {
-        let dir = crate::resolve::locate_home_for_process().unwrap().join("runes");
+        let dir = shipped_home().join("runes");
         let mut v: Vec<(String, String)> = std::fs::read_dir(dir)
             .unwrap()
             .filter_map(|e| e.ok().map(|e| e.path()))
@@ -928,7 +932,7 @@ mod tests {
         write_rune(&ws, "newcomer", "RUNE_LABELS=a,d\n");
         assert!(spira_runes(&ws, None).contains("newcomer"), "installing a rune file is the whole registration");
 
-        let shipped = crate::resolve::locate_home_for_process().unwrap();
+        let shipped = shipped_home();
         let _env = testkit::env(&[("SPIRA_RUNES_DIR", Some(shipped.join("runes").to_str().unwrap()))]);
         let split = |s: String| s.split_whitespace().map(str::to_string).collect::<std::collections::BTreeSet<_>>();
         let all = split(spira_runes(&shipped, None));
@@ -991,7 +995,7 @@ mod tests {
     #[test]
     fn the_shipped_runes_declare_build_disk_for_exactly_the_builder_mender_and_pilgrim() {
         let ws = testkit::TempDir::new("spira-config-runes-shipped");
-        let src = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
+        let src = shipped_home().join("runes");
         for dir in [src.clone()] {
             for e in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
                 write_rune(&ws, &e.path().file_stem().unwrap().to_string_lossy(), &std::fs::read_to_string(e.path()).unwrap());
@@ -1009,7 +1013,7 @@ mod tests {
 
     #[test]
     fn the_reactive_set_is_exactly_the_shipped_personas_that_were_lanes_and_no_rune_sets_rune_lane() {
-        let src = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
+        let src = shipped_home().join("runes");
         let ws = testkit::TempDir::new("spira-config-runes-reactive-set");
         let mut any_lane = vec![];
         for dir in [src.clone()] {
@@ -1030,7 +1034,7 @@ mod tests {
 
     #[test]
     fn the_shipped_runes_declare_single_flight_for_exactly_the_sweeps_over_shared_state() {
-        let dir = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
+        let dir = shipped_home().join("runes");
         let mut single = vec![];
         let mut seen = 0;
         for d in [dir.clone()] {
