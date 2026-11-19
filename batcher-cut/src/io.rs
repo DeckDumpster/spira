@@ -3636,6 +3636,8 @@ pub struct OpenRound {
     pub red: bool,
     /// The suites the queue recorded red for the round's pass, from the round record's `red` key.
     pub red_suites: Vec<String>,
+    /// The beads `queue round eject` has taken out of the round, from the record's `ejected` key.
+    pub ejected: Vec<String>,
     pub age_secs: u64,
 }
 
@@ -3679,6 +3681,7 @@ fn open_round_of(r: &store_view::Round, now: u64) -> OpenRound {
         phase: r.phase.clone(),
         red: !get("red").is_empty(),
         red_suites: red_suites_of(get("red")),
+        ejected: get("ejected").split_whitespace().map(String::from).collect(),
         age_secs: get("opened").parse().map_or(0, |t: u64| now.saturating_sub(t)),
     }
 }
@@ -3703,6 +3706,7 @@ fn open_rounds_of(out: &str) -> Vec<OpenRound> {
                 },
                 red: !get("red").is_empty(),
                 red_suites: red_suites_of(&get("red")),
+                ejected: get("ejected").split_whitespace().map(String::from).collect(),
                 age_secs: get("wall_secs").parse().unwrap_or(0),
             })
         })
@@ -5614,7 +5618,7 @@ mod land_exit_tests {
         let round = store_view::Round { phase: "certifying".into(), record };
         assert_eq!(
             open_round_of(&round, 1090),
-            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], tips: vec!["tc".into(), "td".into()], head: "bbb".into(), worktree: "w2".into(), phase: "certifying".into(), red: true, red_suites: vec!["test-x.sh".into()], age_secs: 90 }
+            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], tips: vec!["tc".into(), "td".into()], head: "bbb".into(), worktree: "w2".into(), phase: "certifying".into(), red: true, red_suites: vec!["test-x.sh".into()], ejected: vec![], age_secs: 90 }
         );
     }
 
