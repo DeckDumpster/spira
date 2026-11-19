@@ -68,6 +68,7 @@ fn a_bound_over_a_few_still_takes_the_oldest_one() {
 
 #[test]
 fn the_fraction_argument_is_refused_outside_zero_to_one_and_scratch_needs_it() {
+    let _env = testkit::env_read();
     for bad in [&["--fraction", "0"][..], &["--fraction", "1.5"], &["--fraction"], &["--fraction", "x"], &["--scratch"]] {
         assert!(parse(&bad.iter().map(|s| s.to_string()).collect::<Vec<_>>()).is_err(), "{bad:?}");
     }
@@ -107,6 +108,7 @@ fn a_box_with_no_gate_scratch_reaps_none_and_says_so() {
 
 #[test]
 fn every_flag_parses_and_an_unknown_one_is_usage() {
+    let _env = testkit::env_read();
     let args = |a: &[&str]| parse(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
     let a = args(&["--dry-run", "--if-below-floor", "--worktrees", "w", "--fraction", "0.5", "--scratch"]).unwrap();
     assert_eq!((a.dry, a.if_below_floor, a.scratch, a.fraction), (true, true, true, Some(0.5)));
@@ -118,5 +120,6 @@ fn every_flag_parses_and_an_unknown_one_is_usage() {
 
 #[test]
 fn the_default_worktrees_directory_is_the_configured_subdir_of_the_run_directory() {
+    let _env = testkit::env_read();
     assert_eq!(testenv::target_reap::worktrees_under("r", "trees"), Path::new("r/trees"));
 }

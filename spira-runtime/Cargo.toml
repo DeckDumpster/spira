@@ -23,6 +23,11 @@ path = "tests/it/main.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "persona_ops_brief"
+path = "tests/persona_ops_brief.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "fixture_door_after_early_reader"
 path = "tests/fixture_door_after_early_reader.rs"
 required-features = ["integration"]
