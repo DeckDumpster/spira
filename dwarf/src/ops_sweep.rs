@@ -224,6 +224,20 @@ mod tests {
     }
 
     #[test]
+    fn a_bd_directory_and_a_credential_on_the_managers_environment_stay_out_of_the_session() {
+        let (_root, home, run, rel) = setup("cred", true);
+        std::fs::create_dir_all(home.join("bdstub")).unwrap();
+        std::fs::write(home.join("bdstub/bd"), "").unwrap();
+        let mut env = base(&home, &rel);
+        env.insert("PATH".into(), format!("{}/bdstub:{}/bin", home.display(), rel.display()));
+        env.insert("GH_TOKEN".into(), "secret-value".into());
+        let b = brief(&home, &run, &rune_for_test(), "task", "r1", &cfg(&home), 0, &env, &exe(&rel), &|| Ok("[]".into())).unwrap();
+        let joined = b.argv.join("\n");
+        assert!(!joined.contains("bdstub") && !joined.contains("GH_TOKEN") && !joined.contains("secret-value"), "{joined}");
+        assert!(joined.contains("SPIRA_RUNE=ops") && !joined.contains("SPIRA_WORK_BEAD_ID"));
+    }
+
+    #[test]
     fn a_release_without_model_bin_work_refuses_the_sweep() {
         let (_root, home, run, rel) = setup("nowork", false);
         let e = brief(&home, &run, &rune_for_test(), "task", "r1", &cfg(&home), 0, &base(&home, &rel), &crate::escape::is_executable, &|| Ok("[]".into())).unwrap_err();
