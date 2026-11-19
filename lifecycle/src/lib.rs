@@ -49,6 +49,9 @@ pub enum Refusal {
     /// reply's message id (`law-a-gate-closes-on-the-reply`), never on marker text alone.
     /// `exit` names the event that does lift it.
     AwaitingReply { event: String, exit: String },
+    /// A member's removal while a queue round's pass is running: the pass will report and
+    /// attribution ejects its red members. `exit` names the moves that do the job now.
+    PassRunning { state: String, exit: String },
     /// A holder-only event (`renew`) sent by an actor that does not hold the row: a reaped
     /// dwarf's late renewal must never extend the lease its successor now holds.
     NotHolder { actor: String, holder: Option<String> },

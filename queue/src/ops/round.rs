@@ -4584,17 +4584,19 @@ fn eject(
     if let Err(rc) = lease.guard(w, label, &c, batch) {
         return rc;
     }
-    if matches!(lease, LeaseCheck::Check(_)) {
-        match w.scripts.live_pass_scopes(&c.r.name, batch) {
-            Ok(live) if live.is_empty() => {}
-            Ok(live) => {
-                w.err(format!("queue.sh {label}: a pass of round {batch} is running ({}); rebuilding the round would pull its worktree from under it — nothing changed", live.join(" ")));
-                return PASS_RUNNING;
-            }
-            Err(e) => {
-                w.err(format!("queue.sh {label}: cannot tell whether a pass of round {batch} is running ({e}) — nothing changed"));
-                return FAIL;
-            }
+    match w.lc.batch_state(batch) {
+        Some((state, _)) if state == "CI_RUNNING" => {
+            let (n, phase) = w.lc.batch_pass(batch).unwrap_or((0, String::new()));
+            w.err(format!(
+                "queue.sh {label}: pass {n} (phase {phase}) of round {batch} is running; {} — nothing changed",
+                lifecycle::batch::PASS_RUNNING_EXIT
+            ));
+            return PASS_RUNNING;
+        }
+        Some(_) => {}
+        None => {
+            w.err(format!("queue.sh {label}: cannot tell whether a pass of round {batch} is running — nothing changed"));
+            return FAIL;
         }
     }
     let _g = match lock(w, label, &c) {

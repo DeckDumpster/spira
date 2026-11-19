@@ -180,8 +180,9 @@ pub enum BatchEventKind {
     Attributed { bead_id: String, outcome: String },
     Settle,
     Abandon { reason: String },
-    /// A manual, operator/czar-initiated single-member eject, valid while OPEN, CI_RUNNING or
-    /// GREEN (which returns to OPEN: the head changed) — before any Red event exists. Distinct from the CI-driven
+    /// A manual, operator/czar-initiated single-member eject, valid while OPEN, ATTRIBUTING,
+    /// GREEN (which returns to OPEN: the head changed), or CI_RUNNING for a forge batch (one
+    /// with a `run`); a queue round's running pass refuses it — before any Red event exists. Distinct from the CI-driven
     /// Red->Attributing->Settle path: that path's per-member exit is logged only once CI
     /// has actually run, so a live-batch eject cannot reuse it without fabricating a Red
     /// that never happened (design: the event log is the record of what happened).
@@ -201,6 +202,8 @@ pub struct BatchEvent {
     pub kind: BatchEventKind,
     pub actor: String,
 }
+
+pub const PASS_RUNNING_EXIT: &str = "the pass will report and attribution ejects its red members; to keep the member out of the next cut now, `spira-lc hold <id> manual --reason '<why>; lifted by <who>'`; to take it out at once, `queue round abandon <batch> <repo>`; eject is legal again once the round is OPEN, ATTRIBUTING or GREEN";
 
 fn where_is(row: &BatchRow) -> String {
     match row.phase {
@@ -327,7 +330,11 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
             SuitesStarted { n } | Failed { n, .. } if *n < row.pass => late(row, kind, *n),
             Green => Outcome::applied(moved(BatchState::Green, None)),
             Red => Outcome::applied(moved(BatchState::Attributing, None)),
-            Eject { .. } => Outcome::applied(stays()),
+            Eject { .. } if row.run.is_some() => Outcome::applied(stays()),
+            Eject { .. } => Outcome::refuse(
+                row.clone(),
+                Refusal::PassRunning { state: where_is(row), exit: PASS_RUNNING_EXIT.to_string() },
+            ),
             Failed { n, .. } if *n == row.pass && row.phase == Some(BatchPhase::Suites) => Outcome::applied(stays()),
             SuitesStarted { n } if *n == row.pass && row.phase == Some(BatchPhase::Build) => {
                 Outcome::applied(moved(BatchState::CiRunning, Some(BatchPhase::Suites)))
@@ -736,13 +743,36 @@ mod tests {
     }
 
     #[test]
-    fn eject_legal_only_from_open_and_ci_running() {
-        for &state in &[BatchState::Open, BatchState::CiRunning] {
+    fn eject_legal_from_open_and_attributing_and_from_a_forge_ci_run() {
+        for &state in &[BatchState::Open, BatchState::Attributing] {
             let r = row(state);
             let out = apply(&r, &ev(state, 0, BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "manual".into() }));
             assert!(out.applied, "{state:?} should accept eject");
             assert_eq!(out.row.state, state, "eject must not move the batch");
             assert_eq!(out.row.version, r.version + 1);
+        }
+        let mut forge = row(BatchState::CiRunning);
+        forge.run = Some("run-1".into());
+        let out = apply(&forge, &ev(BatchState::CiRunning, 0, BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "manual".into() }));
+        assert!(out.applied, "a forge batch's CI run accepts eject");
+    }
+
+    #[test]
+    fn a_running_queue_round_pass_refuses_eject_in_both_phases_and_changes_nothing() {
+        for phase in [BatchPhase::Build, BatchPhase::Suites] {
+            let mut r = row(BatchState::CiRunning);
+            r.pass = 3;
+            r.phase = Some(phase);
+            let out = apply(&r, &ev(BatchState::CiRunning, 0, BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "manual".into() }));
+            assert!(!out.applied);
+            assert_eq!(out.row, r);
+            match out.refusal {
+                Some(Refusal::PassRunning { state, exit }) => {
+                    assert!(state.contains("pass 3") && state.contains(phase.as_str()), "{state}");
+                    assert!(exit.contains("hold") && exit.contains("round abandon"), "{exit}");
+                }
+                other => panic!("{other:?}"),
+            }
         }
     }
 

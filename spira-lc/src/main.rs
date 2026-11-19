@@ -331,6 +331,7 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::NotInStack { .. } => "NotInStack".to_string(),
         lifecycle::Refusal::StackStale { .. } => "StackStale".to_string(),
         lifecycle::Refusal::AwaitingReply { .. } => "AwaitingReply".to_string(),
+        lifecycle::Refusal::PassRunning { .. } => "PassRunning".to_string(),
         lifecycle::Refusal::NotHolder { .. } => "NotHolder".to_string(),
         lifecycle::Refusal::ManualHoldReason { .. } => "ManualHoldReason".to_string(),
         lifecycle::Refusal::EjectedRedTip { .. } => "EjectedRedTip".to_string(),
@@ -375,6 +376,7 @@ mod tests {
             lifecycle::Refusal::MendRefused { reasons: vec![] },
             lifecycle::Refusal::DeadlinePassed { deadline: 0, at: 0 },
             lifecycle::Refusal::AwaitingReply { event: s(), exit: s() },
+            lifecycle::Refusal::PassRunning { state: s(), exit: s() },
             lifecycle::Refusal::NotHolder { actor: s(), holder: None },
             lifecycle::Refusal::LateBoundary { state: s(), event: s(), pass: 0 },
         ];
