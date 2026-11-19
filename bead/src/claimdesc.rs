@@ -209,6 +209,13 @@ impl Notified {
     }
 }
 
+/// What `bead.sh amend` prints: one line per change applied, then the holder line.
+pub fn amend_report(id: &str, applied: &[String], notified: &Notified) -> Vec<String> {
+    let mut lines: Vec<String> = applied.iter().map(|c| format!("{id}: {c}")).collect();
+    lines.extend(notified.report(id));
+    lines
+}
+
 fn mailbox_files(dir: &str) -> Vec<String> {
     std::fs::read_dir(dir).into_iter().flatten().filter_map(|e| e.ok()).filter_map(|e| e.file_name().into_string().ok()).collect()
 }
@@ -346,6 +353,22 @@ mod tests {
         let n = notify_live_dwarf("sp-amend2", "Description appended.", &run, &mail);
         assert_eq!(n, Notified::NoLiveHolder);
         assert!(n.report("sp-amend2").unwrap().contains("no live holder on sp-amend2"));
+    }
+
+    #[test]
+    fn amend_report_names_each_change_and_the_holder_line() {
+        let applied = vec!["priority P1 → P0".to_string(), "marked express".to_string()];
+        let lines = amend_report("sp-x", &applied, &Notified::NoLiveHolder);
+        assert_eq!(lines[0], "sp-x: priority P1 → P0");
+        assert_eq!(lines[1], "sp-x: marked express");
+        assert!(lines[2].contains("no live holder on sp-x"), "{lines:?}");
+        let mailed = Notified::Mailed { mailbox: "dwarf-sp-x".into(), msg_id: "<1@spira>".into() };
+        let undelivered = Notified::Undelivered { mailbox: "dwarf-sp-x".into() };
+        for n in [&mailed, &undelivered, &Notified::NothingToSay] {
+            let l = amend_report("sp-x", &applied, n);
+            assert_eq!(l[1], "sp-x: marked express");
+            assert_eq!(l.len(), if *n == Notified::NothingToSay { 2 } else { 3 });
+        }
     }
 
     #[test]

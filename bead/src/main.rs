@@ -64,7 +64,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--contract-fix] [--depends-on <id>]... [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--part N (proposal)] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh ideas [--json]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--contract-fix] [--depends-on <id>]... [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--part N (proposal)] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--priority N] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh ideas [--json]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -1252,6 +1252,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     }
 
     let mut changed = String::new();
+    let mut applied: Vec<String> = Vec::new();
     let mut rc = 0;
     if let Some(line) = &override_note {
         rc |= put_note(&id, line);
@@ -1277,14 +1278,21 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         rc |= upd;
         if upd == 0 {
             let text = bead::priority_note(&actor, Some(old), new, note.as_deref());
-            rc |= put_note(&id, &text);
-            changed.push_str(&text);
+            let wrote = put_note(&id, &text);
+            rc |= wrote;
+            if wrote == 0 {
+                bead::claimdesc::append_change(&mut changed, &text);
+                applied.push(format!("priority P{old} → P{new}"));
+            }
             note = None;
         }
     }
     if express {
         match spira_store::lifecycle_row::set_express(&id, true) {
-            Ok(()) => changed.push_str("Marked express."),
+            Ok(()) => {
+                bead::claimdesc::append_change(&mut changed, "Marked express.");
+                applied.push("marked express".into());
+            }
             Err(e) => {
                 eprintln!("bead: amend: {id} not marked express: {e}");
                 rc |= 1;
@@ -1292,8 +1300,12 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         }
     }
     if let Some(n) = &note {
-        rc |= put_note(&id, n);
-        bead::claimdesc::append_change(&mut changed, n);
+        let wrote = put_note(&id, n);
+        rc |= wrote;
+        if wrote == 0 {
+            bead::claimdesc::append_change(&mut changed, n);
+            applied.push("note added".into());
+        }
     }
     if body_file.is_some() || append_file.is_some() {
         let (_, out) = door(&s(&["show", &id, "--json"]));
@@ -1321,7 +1333,9 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
             }
         };
         rc |= put(&["update", &id, "--body-file", "-", bead::claimdesc::FORCE_FLAG, "bead.sh amend"], Some(&new_body));
-        bead::claimdesc::append_change(&mut changed, if append_file.is_some() { "Description appended." } else { "Description updated." });
+        let (text, plain) = if append_file.is_some() { ("Description appended.", "description appended") } else { ("Description updated.", "description updated") };
+        bead::claimdesc::append_change(&mut changed, text);
+        applied.push(plain.into());
     }
 
     // Best-effort notification, same as bdq's own `acknowledge_forced_edit`: the real
@@ -1330,7 +1344,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     // "nothing to notify".
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
     let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
-    if let Some(line) = notify_live_dwarf(&id, &changed, &run, &mail).report(&id) {
+    for line in bead::claimdesc::amend_report(&id, &applied, &notify_live_dwarf(&id, &changed, &run, &mail)) {
         println!("bead: amend: {line}");
     }
     rc
