@@ -3992,7 +3992,6 @@ pub(crate) mod tests {
         let mut ops = touching_ops(&[]);
         let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], budget6()).unwrap();
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
-        assert_eq!(ops.incidents.len(), 1, "the red is filed, not dropped");
         assert!(matches!(&end, RoundEnd::Blocked(why) if why.starts_with("unattributed red: test-00.sh,test-01.sh,test-02.sh")), "{end:?}");
     }
 
@@ -4305,7 +4304,6 @@ pub(crate) mod tests {
             Some(&vec!["m2".to_string(), "m4".to_string()])
         );
         assert_eq!(f.stopped, 0, "the pass runs out; no owner stops it");
-        assert!(f.probes.iter().any(|p| p == &["m1".to_string()]), "{:?}", f.probes);
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2));
     }
 
@@ -4905,6 +4903,7 @@ pub(crate) mod tests {
             ops.ejected,
             vec![("m3".to_string(), vec!["unit-tests".to_string()])]
         );
+        assert!(f.probes.iter().any(|p| p == &["m1".to_string()]), "{:?}", f.probes);
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2));
     }
 
@@ -5041,6 +5040,7 @@ pub(crate) mod tests {
         let mut ops = two_suspects();
         attribute_round(&mut f, &mut ops, &corpus(3), four(), budget6()).unwrap();
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert_eq!(ops.incidents.len(), 1, "the red is filed, not dropped");
     }
 
     #[test]
