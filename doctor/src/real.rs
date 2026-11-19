@@ -16,7 +16,8 @@ use std::time::Duration;
 pub struct Real {
     pub home: PathBuf, // the spira/ directory conf.sh and lib.sh live in
     pub env: BTreeMap<String, String>,
-    pub bdq: String,
+    /// `spira-lc`: `SPIRA_LC_BIN`, else the declared release's.
+    pub lc: String,
     /// `PATH`/`SPIRA_RELEASE` every conf.sh/lib.sh child runs under, from the declared release.
     pub child_env: Vec<(String, String)>,
 }
@@ -34,7 +35,11 @@ impl Real {
         let child_env = spira_config::release_env::child_path_env_for_process().map_err(|e| format!("doctor: {e}"))?;
         let mut env = Self::capture_env(&home, &child_env);
         env.entry("SPIRA_HOME".to_string()).or_insert_with(|| home.display().to_string());
-        Ok(Real { home, env, bdq: spira_config::release_env::tool("bdq")?, child_env })
+        let lc = match std::env::var("SPIRA_LC_BIN").ok().filter(|v| !v.is_empty()) {
+            Some(v) => v,
+            None => spira_config::release_env::tool("spira-lc")?,
+        };
+        Ok(Real { home, env, lc, child_env })
     }
 
     pub fn new() -> Real {
@@ -237,8 +242,9 @@ impl World for Real {
     fn bd_list(&self, timeout_secs: u64) -> Result<String, String> {
         let out = Command::new("timeout")
             .arg(timeout_secs.to_string())
-            .arg(&self.bdq)
-            .args(["list", "--limit", "1", "--json"])
+            .arg(&self.lc)
+            .args(["content", "list", "--limit", "1", "--json"])
+            .envs(self.child_env.iter().cloned())
             .stdin(Stdio::null())
             .output();
         match out {
@@ -246,18 +252,6 @@ impl World for Real {
             Ok(o) => Err(format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
             Err(e) => Err(e.to_string()),
         }
-    }
-    fn bd_role_warnings(&self, cwd: &Path) -> Option<usize> {
-        let o = Command::new("timeout")
-            .arg("5")
-            .arg(&self.bdq)
-            .args(["list", "--limit", "1", "--json"])
-            .current_dir(cwd)
-            .stdin(Stdio::null())
-            .output()
-            .ok()?;
-        let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
-        Some(text.lines().filter(|l| l.contains("beads.role")).count())
     }
     fn read_store_meta(&self, metadata_json: &Path) -> Option<StoreMeta> {
         let text = std::fs::read_to_string(metadata_json).ok()?;
@@ -316,8 +310,9 @@ impl World for Real {
     }
 
     fn bd_first_id(&self) -> Option<String> {
-        let out = spira_config::bounded::bounded(&self.bdq)
-            .args(["list", "--limit", "1", "--json"])
+        let out = spira_config::bounded::bounded(&self.lc)
+            .args(["content", "list", "--limit", "1", "--json"])
+            .envs(self.child_env.iter().cloned())
             .stdin(Stdio::null())
             .output()
             .ok()?;
@@ -416,11 +411,7 @@ impl World for Real {
     }
 
     fn bd_version(&self) -> Option<String> {
-        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string())) // STORE_DOOR_CONSIDERED="the bd binary's own build version for the toolchain check; needs no database, and bdq refuses before SPIRA_DB is configured"
-            .arg("version")
-            .stdin(Stdio::null())
-            .output()
-            .ok()?;
+        let out = spira_config::bounded::bounded(&self.lc).args(["admin-store", "version"]).envs(self.child_env.iter().cloned()).stdin(Stdio::null()).output().ok()?;
         let text = String::from_utf8_lossy(&out.stdout);
         extract_semver(&text)
     }
@@ -826,8 +817,31 @@ mod failed_listing_tests {
         testkit::write_exe(&fake, "#!/bin/sh\nprintf '%s\\n' 'spira-vm-pool-section-prod.service not-found failed failed gone' 'spira-sentinel-prod.service loaded failed failed Sentinel'\n");
         let mut env = std::collections::BTreeMap::new();
         env.insert("SPIRA_SYSTEMCTL".to_string(), fake.display().to_string());
-        let w = Real { home: dir.clone(), env, bdq: String::new(), child_env: vec![] };
+        let w = Real { home: dir.clone(), env, lc: String::new(), child_env: vec![] };
         let got = w.systemd_failed_units("spira-*").unwrap();
         assert_eq!(got, vec!["spira-sentinel-prod.service".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod door_tests {
+    use super::*;
+    use crate::ports::World;
+
+    #[test]
+    fn the_store_reads_and_the_version_go_through_spira_lc_and_nothing_else() {
+        let tmp = testkit::TempDir::new("doctor-door");
+        let log = tmp.path().join("calls");
+        let lc = tmp.path().join("lc");
+        testkit::write_exe(
+            &lc,
+            &format!("#!/bin/sh\necho \"$*\" >> '{}'\ncase \"$1\" in admin-store) echo 'bd version 1.2.3';; *) echo '[{{\"id\":\"sp-9\"}}]';; esac\n", log.display()),
+        );
+        let real = Real { home: tmp.path().to_path_buf(), env: BTreeMap::new(), lc: lc.to_string_lossy().into_owned(), child_env: Vec::new() };
+        assert!(real.bd_list(5).is_ok());
+        assert_eq!(real.bd_first_id().as_deref(), Some("sp-9"));
+        assert_eq!(real.bd_version().as_deref(), Some("1.2.3"));
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(calls.lines().collect::<Vec<_>>(), ["content list --limit 1 --json", "content list --limit 1 --json", "admin-store version"]);
     }
 }
