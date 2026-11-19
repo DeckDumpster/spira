@@ -151,18 +151,26 @@ pub fn ci_failed(e: &crate::Effects, input: &str) -> Result<String, String> {
     Ok(format!("ci.failed {}", ev.blocked))
 }
 
-/// `discover`: `bdq gate discover --branch B` in the repository, as a unit leg.
+fn discover_argv(repo: &str, branch: &str) -> Vec<String> {
+    ["spira-lc", "content", "gate", "discover", "--branch", branch, "--repo", repo].map(String::from).to_vec()
+}
+
+fn resolve_argv(gate: &str) -> Vec<String> {
+    ["spira-lc", "content", "gate", "resolve", gate].map(String::from).to_vec()
+}
+
+/// `discover`: `spira-lc content gate discover` for the repository, as a unit leg.
 pub fn discover(e: &crate::Effects, key: &str, input: &str) -> Result<String, String> {
     let v: serde_json::Value = serde_json::from_str(input).map_err(|e| format!("{DISCOVER}: bad input: {e}"))?;
     let (repo, branch) = (v["repo"].as_str().unwrap_or(""), v["branch"].as_str().unwrap_or(""));
     let home = spira_config::resolve::locate_home_for_process()?;
-    let root = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home).root(repo).ok_or_else(|| format!("{DISCOVER}: {repo} has no checkout — refused"))?;
-    unit_leg(e, NAME, key, ["bdq", "gate", "discover", "--branch", branch].map(String::from).to_vec(), Some(root.into()))
+    spira_config::repos::Registry::from_env(std::env::vars().collect(), &home).root(repo).ok_or_else(|| format!("{DISCOVER}: {repo} has no checkout — refused"))?;
+    unit_leg(e, NAME, key, discover_argv(repo, branch), None)
 }
 
-/// `resolve`: `bdq gate resolve <gate>`, as a unit leg.
+/// `resolve`: `spira-lc content gate resolve <gate>`, as a unit leg.
 pub fn resolve(e: &crate::Effects, key: &str, input: &str) -> Result<String, String> {
-    unit_leg(e, NAME, key, ["bdq", "gate", "resolve", input].map(String::from).to_vec(), None)
+    unit_leg(e, NAME, key, resolve_argv(input), None)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -234,5 +242,14 @@ mod no_gh_tests {
         for gone in ["gate.check.file_bead", "gate.check.raise_priority", "gate.check.note", "gate.check.tsd_ingest"] {
             assert!(!EFFECTS.contains(&gone), "{gone} survives");
         }
+    }
+}
+
+#[cfg(test)]
+mod leg_argv_tests {
+    #[test]
+    fn the_gate_legs_go_to_the_content_door_not_bdq() {
+        assert_eq!(super::discover_argv("spira", "b").join(" "), "spira-lc content gate discover --branch b --repo spira");
+        assert_eq!(super::resolve_argv("sp-g").join(" "), "spira-lc content gate resolve sp-g");
     }
 }
