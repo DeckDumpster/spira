@@ -3,11 +3,13 @@
 //! stdout/stderr/exit code. Replaces spira/mail.sh (sp-ooh1k).
 //!
 //!   mail send <mailbox> --from "<s>" --subject "<s>" [--kind K] [--urgent]
-//!                       [--default D] [--class permissions|policy|destructive|design] [--bead ID] [--requested-by "<his words>"] [--digest] [--dry-run] < body
+//!                       [--default D] [--class permissions|policy|destructive|design] [--bead ID] [--requested-by "<his words>"] [--digest] [--condition KEY] [--dry-run] < body
 //!   mail template <kind>
 //!   mail list <mailbox> [--unread]
 //!   mail read <mailbox> [<message>]
 //!   mail count <mailbox>
+//!   mail done <mailbox> <message> [<note>]
+//!   mail archive <mailbox> <message> --why <text>
 //!   mail unread-age <mailbox>
 //!   mail sendmail [--to <mailbox>]    RFC 5322 on stdin
 //!   mail reconcile                    apply delivered replies to the beads they answer
@@ -30,7 +32,7 @@ fn main() -> ExitCode {
     let cmd = it.next().map(String::as_str).unwrap_or("");
     let rest: Vec<String> = it.cloned().collect();
 
-    const OPS: [&str; 12] = ["send", "template", "list", "read", "count", "unread-age", "done", "sendmail", "reconcile", "tidy", "ensure", "sweep-dismissed"];
+    const OPS: [&str; 13] = ["send", "template", "list", "read", "count", "unread-age", "done", "archive", "sendmail", "reconcile", "tidy", "ensure", "sweep-dismissed"];
     let op = if OPS.contains(&cmd) { cmd } else { "unknown" };
     let run = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "mail", op);
     let code = dispatch(cmd, &rest);
@@ -48,6 +50,7 @@ fn dispatch(cmd: &str, rest: &[String]) -> ExitCode {
         "count" => run_count(&rest),
         "unread-age" => run_unread_age(&rest),
         "done" => run_done(&rest),
+        "archive" => run_archive(&rest),
         "sendmail" => run_sendmail(&rest),
         "reconcile" => run_reconcile(&rest),
         "tidy" => run_tidy(&rest),
@@ -81,6 +84,7 @@ fn run_send(args: &[String]) -> ExitCode {
     let mut digest = false;
     let mut dry_run = false;
     let mut requested_by = String::new();
+    let mut condition = String::new();
 
     let mut i = 1;
     while i < args.len() {
@@ -113,6 +117,10 @@ fn run_send(args: &[String]) -> ExitCode {
                 bead = args.get(i + 1).cloned().unwrap_or_default();
                 i += 2;
             }
+            "--condition" => {
+                condition = args.get(i + 1).cloned().unwrap_or_default();
+                i += 2;
+            }
             "--urgent" => {
                 urgent = true;
                 i += 1;
@@ -132,10 +140,11 @@ fn run_send(args: &[String]) -> ExitCode {
         }
     }
 
-    let env = match Env::load() {
+    let mut env = match Env::load() {
         Ok(e) => e,
         Err(e) => return fail(e),
     };
+    env.condition = Some(condition).filter(|c| !c.is_empty());
     if let Err(e) = mail::maildir::mailbox_valid(&mailbox) {
         return fail(format!("send: {e}"));
     }
@@ -257,6 +266,30 @@ fn run_done(args: &[String]) -> ExitCode {
     match cmds::done(&env, &mailbox, &msgid, note.as_deref()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => fail(format!("done: {e}")),
+    }
+}
+
+fn run_archive(args: &[String]) -> ExitCode {
+    let mailbox = args.first().cloned().unwrap_or_default();
+    let msgid = args.get(1).cloned().unwrap_or_default();
+    let mut why = String::new();
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--why" => {
+                why = args.get(i + 1).cloned().unwrap_or_default();
+                i += 2;
+            }
+            other => return fail(format!("archive: unknown option: {other}")),
+        }
+    }
+    let env = match Env::load() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
+    match cmds::archive(&env, &mailbox, &msgid, &why, &cmds::actor(&env)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => fail(format!("archive: {e}")),
     }
 }
 

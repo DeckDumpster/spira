@@ -103,6 +103,15 @@ fn cfg_or_die() -> config::Config {
     }
 }
 
+/// `condition <part:kind:id>`: whether the episode an alarm reported still stands — exit 0 while
+/// it does, `check::CONDITION_ENDED` once it is gone, 1 when that cannot be told.
+fn cmd_condition(args: Vec<String>) -> i32 {
+    if args.len() != 1 {
+        return die("condition <part:kind:id>");
+    }
+    check::condition_exit(&cfg_or_die(), &args[0])
+}
+
 /// `dwarf_alive <pidfile>` (lib.sh, wave 4.23 sp-0ffox): the one canonical implementation —
 /// `bead` and `cockpit-collect` call this crate in-process instead of keeping their own
 /// copy; lib.sh's bash callers (`hold.sh`) get a one-line shim onto this verb.
@@ -240,6 +249,7 @@ fn main() {
             "detect-invalid-closed" => Some(cmd_detect_invalid_closed(rest())),
             "close-reason" => Some(cmd_close_reason(rest())),
             "all-partition-members" => Some(cmd_all_partition_members(rest())),
+            "condition" => Some(cmd_condition(rest())),
             _ => None,
         };
         if let Some(rc) = rc {

@@ -113,7 +113,11 @@ pub struct Msg {
     pub bead: Option<String>,
     pub unread: bool,
     pub urgent: bool,
+    pub digest: bool,
+    pub condition: Option<String>,
     pub bead_closed: Option<bool>,
+    /// For a read alarm: whether its sender still raises the condition. Unknown reads as raised.
+    pub condition_raised: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,9 +185,10 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
                 return Ok((Carry { phase: Phase::Refused }, vec![]));
             }
             let fresh_s: u64 = cfg.get(FRESH_KEY).and_then(|v| v.trim().parse().ok()).ok_or_else(|| format!("{FRESH_KEY} must be a number of seconds"))?;
-            let seen: Vec<mail::tidy::Seen> = s.messages.iter().map(|m| mail::tidy::Seen { path: m.path.clone().into(), mtime: m.mtime, subject: m.subject.clone(), bead: m.bead.clone().unwrap_or_default(), unread: m.unread, urgent: m.urgent }).collect();
+            let seen: Vec<mail::tidy::Seen> = s.messages.iter().map(|m| mail::tidy::Seen { path: m.path.clone().into(), mtime: m.mtime, subject: m.subject.clone(), bead: m.bead.clone().unwrap_or_default(), unread: m.unread, urgent: m.urgent, digest: m.digest, condition: m.condition.clone().unwrap_or_default() }).collect();
             let closed: BTreeSet<&str> = s.messages.iter().filter(|m| m.bead_closed == Some(true)).filter_map(|m| m.bead.as_deref()).collect();
-            let keeps = mail::tidy::keeps(&seen, &|id| s.open_asks.contains(id), s.now, fresh_s, &mut |id| closed.contains(id));
+            let ended: BTreeSet<&str> = s.messages.iter().filter(|m| m.condition_raised == Some(false)).filter_map(|m| m.condition.as_deref()).collect();
+            let keeps = mail::tidy::keeps(&seen, &|id| s.open_asks.contains(id), s.now, fresh_s, &mut |id| closed.contains(id), &mut |c| !ended.contains(c));
             let paths: Vec<String> = s.messages.iter().zip(keeps).filter(|(_, k)| !k).map(|(m, _)| m.path.clone()).collect();
             if paths.is_empty() {
                 // Everything kept: the pass changes nothing, so the carry does not move either.
@@ -219,7 +224,8 @@ pub fn observe(lc: &spira_store::lc_call::LcClient, mailbox: &str, now: u64) -> 
             .into_iter()
             .map(|m| {
                 let bead_closed = (!m.bead.is_empty() && m.fresh(now, fresh_s) && !open_asks.contains(&m.bead)).then(|| mail::bead::bead_is_closed(&bd, &m.bead));
-                Msg { path: m.path.display().to_string(), mtime: m.mtime, subject: m.subject, bead: Some(m.bead).filter(|b| !b.is_empty()), unread: m.unread, urgent: m.urgent, bead_closed }
+                let condition_raised = (!m.unread && !m.condition.is_empty()).then(|| mail::tidy::condition_raised(&m.condition));
+                Msg { path: m.path.display().to_string(), mtime: m.mtime, subject: m.subject, bead: Some(m.bead).filter(|b| !b.is_empty()), unread: m.unread, urgent: m.urgent, digest: m.digest, condition: Some(m.condition).filter(|c| !c.is_empty()), bead_closed, condition_raised }
             })
             .collect();
         Ok(Snapshot { store_ok: true, open_asks: open_asks.into_iter().collect(), messages, now, error: None })

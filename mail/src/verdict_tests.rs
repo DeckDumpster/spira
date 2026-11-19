@@ -36,6 +36,7 @@ fn env(root: &std::path::Path, allow_blocking: bool) -> Env {
         allow_blocking,
         bead_id: None,
         lock_timeout_ms: 1000,
+        condition: None,
     }
 }
 

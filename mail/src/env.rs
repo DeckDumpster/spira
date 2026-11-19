@@ -33,6 +33,8 @@ pub struct Env {
     pub allow_blocking: bool,
     pub bead_id: Option<String>,
     pub lock_timeout_ms: u64,
+    /// `X-Spira-Condition` for an alarm: the key its sender can later be asked about.
+    pub condition: Option<String>,
 }
 
 fn var(k: &str) -> Option<String> {
@@ -86,6 +88,7 @@ impl Env {
             allow_blocking: var("SPIRA_MAIL_ALLOW_BLOCKING").is_some(),
             bead_id: var("BEAD_ID"),
             lock_timeout_ms: var_u64("SPIRA_MAIL_LOCK_TIMEOUT_MS", 30_000),
+            condition: None,
         })
     }
 

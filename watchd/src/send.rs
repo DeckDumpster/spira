@@ -47,7 +47,7 @@ pub fn send(bd: &dyn Bd, env: &Env, letter: &Letter) -> Result<(), String> {
 /// A note to the operator about a reader that is not reading. Unclassed operator mail is
 /// rerouted to the concierge, which is the mailbox such an alert is usually about.
 pub fn alert_operator(bd: &dyn Bd, env: &Env, subject: &str, body: &str) -> Result<(), String> {
-    let env = Env { operator_considered: Some("watchd alerts the operator about readers that are not reading".into()), ..env.clone() };
+    let env = Env { operator_considered: Some("watchd alerts the operator about readers that are not reading".into()), condition: crate::notify::condition_of(subject), ..env.clone() };
     send(bd, &env, &Letter { mailbox: "operator", subject, kind: "note", default: "", body })
 }
 
@@ -114,6 +114,7 @@ mod tests {
             allow_blocking: false,
             bead_id: None,
             lock_timeout_ms: 1000,
+            condition: None,
         }
     }
 

@@ -14,6 +14,7 @@ use crate::env::Env;
 use crate::kinds;
 use crate::lc::{self, Lc, Lift};
 use crate::lint::{self, LintInput};
+use crate::tidy;
 use crate::maildir;
 use crate::message;
 use crate::repeat;
@@ -391,6 +392,9 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
     if args.digest {
         msg.push_str("X-Spira-Digest: yes\n");
     }
+    if let Some(c) = &env.condition {
+        msg.push_str(&message::header("X-Spira-Condition", c)?);
+    }
     if !x_bead.is_empty() {
         msg.push_str(&message::header("X-Spira-Bead", &x_bead)?);
     }
@@ -523,7 +527,7 @@ pub fn read_cmd(env: &Env, mailbox: &str, msg: Option<&str>) -> Result<String, S
 
     let path = if let Some(msg) = msg {
         let candidates = [dir.join("new").join(msg), dir.join("cur").join(msg)];
-        candidates.into_iter().find(|c| c.is_file()).ok_or_else(|| format!("{msg}: not found"))?
+        candidates.into_iter().find(|c| c.is_file()).or_else(|| find_in_cur(&dir, msg)).ok_or_else(|| format!("{msg}: not found"))?
     } else {
         let mut oldest: Option<(u64, PathBuf)> = None;
         for c in maildir::sorted_entries(&dir.join("new")) {
@@ -536,12 +540,26 @@ pub fn read_cmd(env: &Env, mailbox: &str, msg: Option<&str>) -> Result<String, S
     };
 
     let content = fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    if path.starts_with(dir.join("new")) {
-        if let Some(name) = path.file_name() {
-            let _ = fs::rename(&path, dir.join("cur").join(name));
-        }
-    }
+    mark_seen(&dir, &path).map_err(|e| format!("cannot mark {} read: {e}", path.display()))?;
     Ok(content)
+}
+
+/// Moves `path` into `cur/` carrying the maildir `S` flag, so `is_unread`, `count` and
+/// `unread-age` agree it was read. Returns the new path.
+fn mark_seen(dir: &Path, path: &Path) -> Result<PathBuf, String> {
+    let Some(name) = path.file_name().and_then(|f| f.to_str()) else { return Ok(path.to_path_buf()) };
+    let new_name = maildir::add_flag(name, 'S').unwrap_or_else(|| name.to_string());
+    let dest = dir.join("cur").join(new_name);
+    if dest == path {
+        return Ok(dest);
+    }
+    fs::rename(path, &dest).map_err(|e| e.to_string())?;
+    Ok(dest)
+}
+
+fn find_in_cur(dir: &Path, msgid: &str) -> Option<PathBuf> {
+    let prefix = format!("{msgid}:");
+    maildir::sorted_entries(&dir.join("cur")).into_iter().find(|p| p.file_name().is_some_and(|f| f.to_string_lossy().starts_with(&prefix)))
 }
 
 pub fn count(env: &Env, mailbox: &str) -> Result<usize, String> {
@@ -568,22 +586,10 @@ pub fn done(env: &Env, mailbox: &str, msgid: &str, note: Option<&str>) -> Result
     }
     let dir = require_mailbox(env, mailbox)?;
 
-    let mut found = [dir.join("new").join(msgid), dir.join("cur").join(msgid)].into_iter().find(|c| c.is_file());
-    if found.is_none() {
-        let prefix = format!("{msgid}:");
-        found = maildir::sorted_entries(&dir.join("cur"))
-            .into_iter()
-            .find(|p| p.file_name().map(|f| f.to_string_lossy().starts_with(&prefix)).unwrap_or(false));
-    }
+    let found = [dir.join("new").join(msgid), dir.join("cur").join(msgid)].into_iter().find(|c| c.is_file()).or_else(|| find_in_cur(&dir, msgid));
     let mut path = found.ok_or_else(|| format!("{msgid}: not found in {mailbox}"))?;
 
-    if path.starts_with(dir.join("new")) {
-        if let Some(name) = path.file_name() {
-            let dest = dir.join("cur").join(name);
-            fs::rename(&path, &dest).map_err(|e| format!("cannot move to cur: {e}"))?;
-            path = dest;
-        }
-    }
+    path = mark_seen(&dir, &path).map_err(|e| format!("cannot move to cur: {e}"))?;
 
     if let Some(base) = path.file_name().and_then(|f| f.to_str()) {
         if let Some(new_name) = maildir::add_flag(base, 'R') {
@@ -601,6 +607,31 @@ pub fn done(env: &Env, mailbox: &str, msgid: &str, note: Option<&str>) -> Result
         }
     }
     Ok(())
+}
+
+/// Archives one named message by hand: moved through `tidy::archive`, with who and why
+/// appended to it. Refuses without a reason (law-off-path-transitions-carry-provenance).
+pub fn archive(env: &Env, mailbox: &str, msgid: &str, why: &str, actor: &str) -> Result<(), String> {
+    if msgid.is_empty() {
+        return Err("message id required".to_string());
+    }
+    if why.trim().is_empty() {
+        return Err("--why <text> is required: an archive by hand records who and why".to_string());
+    }
+    let dir = require_mailbox(env, mailbox)?;
+    let path = [dir.join("new").join(msgid), dir.join("cur").join(msgid)].into_iter().find(|c| c.is_file()).or_else(|| find_in_cur(&dir, msgid)).ok_or_else(|| format!("{msgid}: not found in {mailbox}"))?;
+    let name = path.file_name().map(|f| f.to_owned()).ok_or_else(|| format!("{msgid}: not a message"))?;
+    tidy::archive(&env.mail_root, std::slice::from_ref(&path))?;
+    let dest = env.mail_root.join("archive").join("cur").join(name);
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+    let mut f = OpenOptions::new().append(true).open(&dest).map_err(|e| format!("archived, but cannot record why: {e}"))?;
+    writeln!(f, "\n-- archived: {} by {actor}: {}", rfc822::format_done(now), why.trim()).map_err(|e| format!("archived, but cannot record why: {e}"))
+}
+
+/// The actor a hand action is recorded under: the session's `SPIRA_MAIL_FROM` identity, else
+/// the operator's.
+pub fn actor(env: &Env) -> String {
+    lc::actor_of(env.mail_from.as_deref().unwrap_or(""), &env.operator_actor)
 }
 
 pub fn ensure(env: &Env, mailbox: &str) -> Result<(), String> {
@@ -860,6 +891,7 @@ mod probe_tests {
             allow_blocking: false,
             bead_id: None,
             lock_timeout_ms: 1000,
+            condition: None,
         }
     }
 

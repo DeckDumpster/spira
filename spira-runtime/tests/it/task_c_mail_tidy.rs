@@ -11,7 +11,7 @@ const TICK: u64 = 900_000;
 const NOW: u64 = 1_793_664_000;
 
 fn msg(path: &str, subject: &str, bead: Option<&str>, unread: bool, age: u64) -> Msg {
-    Msg { path: path.into(), mtime: NOW - age, subject: subject.into(), bead: bead.map(str::to_string), unread, urgent: false, bead_closed: None }
+    Msg { path: path.into(), mtime: NOW - age, subject: subject.into(), bead: bead.map(str::to_string), unread, urgent: false, digest: false, condition: None, bead_closed: None, condition_raised: None }
 }
 
 /// One unread fresh message and one naming an open ask.
@@ -69,6 +69,22 @@ fn t5_the_keep_rule_archives_duplicates_and_stale_mail_and_a_failed_control_arch
     assert!(!acts[0].input.contains("new/1"), "the first copy of a fresh subject stays");
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { store_ok: false, open_asks: BTreeSet::new(), ..snap }), TICK).unwrap();
     assert!(acts.is_empty(), "empty asks and a failing positive control archive nothing: {acts:?}");
+}
+
+#[test]
+fn t5b_a_read_digest_note_and_a_read_alarm_whose_condition_ended_are_archived_a_raised_one_stays() {
+    let h = t::handler::<H>(SET);
+    let digest = Msg { digest: true, ..msg("cur/1", "MERGED #1 [r]", None, false, 60) };
+    let alarm = |path: &str, subject: &str, cond: &str, raised: bool| Msg { condition: Some(cond.into()), condition_raised: Some(raised), ..msg(path, subject, None, false, 60) };
+    let snap = Snapshot { messages: vec![digest, alarm("cur/2", "ended", "mail-health:concierge", false), alarm("cur/3", "raised", "strand:p:starved:-", true), msg("new/4", "fresh", None, true, 60)], ..idle() };
+    let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap), TICK).unwrap();
+    assert_eq!(names(&acts), [task::ARCHIVE]);
+    for p in ["cur/1", "cur/2"] {
+        assert!(acts[0].input.contains(p), "{p} is archived: {}", acts[0].input);
+    }
+    for p in ["cur/3", "new/4"] {
+        assert!(!acts[0].input.contains(p), "{p} stays: {}", acts[0].input);
+    }
 }
 
 use runtime::taskrig::TaskRig;
