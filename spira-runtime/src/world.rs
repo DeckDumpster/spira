@@ -1040,7 +1040,7 @@ impl World {
             return self.transitions_phases(input, &progress, &*enter);
         };
         let (world, text, track) = (self.clone(), input.to_string(), Arc::clone(&progress));
-        let answered = run_within(total.saturating_sub(began.elapsed()), move || world.transitions_phases(&text, &track, &*enter));
+        let answered = run_within(total.saturating_sub(began.elapsed()) + PHASE_GRACE, move || world.transitions_phases(&text, &track, &*enter));
         let phases = progress.lock().unwrap_or_else(|e| e.into_inner()).clone();
         self.push_phase_durations(&phases);
         answered.unwrap_or_else(|| {
@@ -1195,6 +1195,9 @@ impl Phases {
         self.since = std::time::Instant::now();
     }
 }
+
+/// How long the observe's worker is awaited past the bound, so a store read that gives up on the bound names itself before the worker is abandoned.
+const PHASE_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// `f` on a worker, abandoned when it has not answered within `left`: `None`.
 fn run_within<T: Send + 'static>(left: std::time::Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
