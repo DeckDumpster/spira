@@ -435,6 +435,10 @@ pub(crate) fn retire_dropped_units(ctx: &Ctx, rendered: &[(String, String, Strin
     retire_named_units(ctx, &now, r);
     if !r.retired.is_empty() {
         let _ = ctx.systemctl.daemon_reload();
+        for u in &r.retired {
+            // best-effort: a unit systemd never held fails reset-failed as "not loaded"
+            let _ = ctx.systemctl.reset_failed(u);
+        }
     }
     let body: String = keep.iter().map(|u| format!("{u}\n")).collect();
     if fs::read_to_string(&ledger).ok().as_deref() != Some(body.as_str()) {
@@ -838,6 +842,7 @@ mod tests {
             assert!(r.retired.contains(&u.to_string()), "{u}: {:?}", r.retired);
             assert!(!unit_dir.join(u).exists() && !unit_dir.join(format!("{u}.d")).exists());
             assert!(sc.disabled_now.borrow().contains(&u.to_string()));
+            assert!(sc.reset_failed.borrow().contains(&u.to_string()), "{u} keeps its failed state after its file is gone");
         }
         assert_eq!(r.drift, vec!["spira-other-test.timer".to_string()]);
         assert!(unit_dir.join("spira-other-test.timer").exists() && unit_dir.join("mine.service").exists());
