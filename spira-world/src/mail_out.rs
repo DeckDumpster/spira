@@ -43,8 +43,7 @@ pub fn send(bd: &dyn Bd, env: &Env, letter: &Letter) -> bool {
 /// [`send`] with the configured store and environment, as the `mail` binary builds them.
 pub fn send_configured(letter: &Letter) -> bool {
     let Ok(env) = Env::load() else { return false };
-    let Ok(bdq) = spira_config::release_env::tool("bdq") else { return false };
-    let bd = mail::bead::BdCli { bdq, conn_retries: env.bd_conn_retries };
+    let Ok(bd) = mail::bead::BdCli::configured(env.bd_conn_retries) else { return false };
     send(&bd, &env, letter)
 }
 

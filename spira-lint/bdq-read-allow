@@ -28,15 +28,12 @@
 1 groomer/src/section.rs
 6 incident/src/stub_bd.rs
 2 kit-bump/src/real.rs
-1 landing-pass/src/lifecycle.rs
-1 landing-pass/src/pr.rs
-1 landing-pass/src/real.rs
 1 lifecycle-guard/src/bd_read.rs
 1 lifecycle-guard/src/bd_status.rs
 1 lifecycle-guard/src/rules.rs
 3 loom/src/factory.rs
 2 loom/src/lib.rs
-14 mail/src/bead.rs
+12 mail/src/bead.rs
 1 mail/src/lc.rs
 3 perf-watch/src/lib.rs
 5 reconciler/src/hold_sweep.rs

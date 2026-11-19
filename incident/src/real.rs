@@ -1,49 +1,25 @@
-//! The ports against the host: content through `bdq`, the lifecycle machine over `LcClient`,
-//! mail in-process, and the wall clock. Each content call is `timeout $BD_TIMEOUT bdq "$@"`,
-//! retried on a dead pooled connection ("invalid connection").
-
-use std::io::Write;
-use std::process::{Command, Stdio};
+//! The ports against the host: content and the lifecycle machine over `LcClient`, mail
+//! in-process, and the wall clock.
 
 use crate::decide::{status_of_lc, BeadRow, BeadStatus, Scope};
 use crate::ports::{Bd, Clock, Mailer};
 
 pub struct RealBd {
-    pub bdq: String,
-    pub timeout_secs: u64,
-    pub retries: u32,
     /// The store client; `None` builds the configured one at each call.
     pub lc: Option<spira_store::lc_call::LcClient>,
 }
 
 impl RealBd {
-    /// `BD_TIMEOUT` carries no `spira/conf.d/<KEY>` entry, so it stays an ad hoc environment
-    /// read; `SPIRA_BDQ_CONN_RETRIES` is registered config.
     pub fn from_env() -> Result<RealBd, String> {
         Ok(RealBd {
-            bdq: spira_config::release_env::tool("bdq")?,
-            timeout_secs: std::env::var("BD_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(180),
-            retries: spira_config::process::cfg("SPIRA_BDQ_CONN_RETRIES").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             lc: None,
         })
     }
 
-    /// `bdq` addresses the configured database itself, so `_db` is not passed on.
+    /// A content write through the door; the database is the service's own, so `_db` is not passed on.
     pub(crate) fn run(&self, _db: &str, args: &[&str]) -> Result<(i32, String, String), String> {
-        let mut attempt = 0u32;
-        loop {
-            attempt += 1;
-            // FORK-EDGE: content store write (label/set-state/dep/duplicate)
-            let mut cmd = Command::new("timeout");
-            cmd.arg(self.timeout_secs.to_string()).arg(&self.bdq).args(args);
-            let out = cmd.output().map_err(|e| format!("{}: {e}", self.bdq))?;
-            let rc = out.status.code().unwrap_or(-1);
-            let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-            if rc == 0 || attempt >= self.retries.max(1) || !stderr.contains("invalid connection") {
-                return Ok((rc, stdout, stderr));
-            }
-        }
+        let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
+        self.run_lc(&argv)
     }
 
     fn with_client<T>(&self, f: impl FnOnce(&spira_store::lc_call::LcClient) -> Result<T, String>) -> Result<T, String> {
@@ -104,21 +80,11 @@ impl RealBd {
     }
 
     fn run_stdin(&self, args: &[&str], stdin_body: &str) -> Result<(i32, String, String), String> {
-        // FORK-EDGE: content store write (bd note)
-        let mut cmd = Command::new("timeout");
-        cmd.arg(self.timeout_secs.to_string())
-            .arg(&self.bdq)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", self.bdq))?;
-        if let Some(mut si) = child.stdin.take() {
-            let _ = si.write_all(stdin_body.as_bytes());
-        }
-        let out = child.wait_with_output().map_err(|e| format!("{}: {e}", self.bdq))?;
-        let rc = out.status.code().unwrap_or(-1);
-        Ok((rc, String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned()))
+        let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
+        self.with_client(|c| {
+            let r = c.call_stdin(&argv, stdin_body).map_err(String::from)?;
+            Ok((r.code, r.out, r.err))
+        })
     }
 }
 
@@ -227,34 +193,19 @@ impl Bd for RealBd {
         labels: &str,
         external_ref: &str,
         body: &str,
-        actor: Option<&str>,
+        _actor: Option<&str>,
     ) -> Result<String, String> {
         let args = [
             "create", title, "--type", kind, "--priority", priority, "--labels", labels, "--external-ref", external_ref, "--body-file", "-",
             "--silent",
         ];
-        // FORK-EDGE: content store write (bd create)
-        let mut cmd = Command::new("timeout");
-        cmd.arg(self.timeout_secs.to_string())
-            .arg(&self.bdq)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if let Some(a) = actor {
-            cmd.env("BEADS_ACTOR", a);
+        let (rc, out, err) = self.run_stdin(&args, body)?;
+        if rc != 0 {
+            return Err(err.trim().to_string());
         }
-        let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", self.bdq))?;
-        if let Some(mut si) = child.stdin.take() {
-            let _ = si.write_all(body.as_bytes());
-        }
-        let out = child.wait_with_output().map_err(|e| format!("{}: {e}", self.bdq))?;
-        if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-        }
-        let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let id = out.trim().to_string();
         if id.is_empty() {
-            return Err("bdq create printed no id".into());
+            return Err("content create printed no id".into());
         }
         Ok(id)
     }
@@ -346,7 +297,7 @@ impl Mailer for RealMailer {
         // A refusal is said on stderr, as the `mail send` this replaces said it: an escalation
         // that silently did not happen reads as one that did.
         let sent = mail::env::Env::load().and_then(|env| {
-            let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+            let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
             mail::cmds::send_recorded(&bd, &env, &args, full_body).map(drop)
         });
         if let Err(e) = &sent {
@@ -399,11 +350,31 @@ mod tests {
     #[test]
     fn facts_go_through_the_store_client() {
         let t = std::sync::Arc::new(Scripted(Default::default(), "[{\"kind\":\"k\"},{\"kind\":\"k\"}]".into()));
-        let bd = RealBd { bdq: "nonexistent/bdq".into(), timeout_secs: 1, retries: 1, lc: Some(spira_store::lc_call::LcClient::over(t.clone(), true)) };
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(t.clone(), true)) };
         assert!(bd.fact("sp-1", "k", "why"));
         assert_eq!(bd.fact_count("sp-1", "k"), Some(2));
         let verbs: Vec<String> = t.0.lock().unwrap().iter().map(|a| a[..2].join(" ")).collect();
         assert_eq!(verbs, vec!["fact add", "fact list"]);
+    }
+
+    #[test]
+    fn incident_writes_go_through_the_door() {
+        let t = std::sync::Arc::new(Scripted(Default::default(), "sp-new\n".into()));
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(t.clone(), true)) };
+        assert!(bd.duplicate("db", "sp-a", "sp-b"));
+        assert!(bd.relate("db", "sp-a", "sp-b"));
+        assert!(bd.label_add("db", "sp-a", "x"));
+        assert!(bd.note("db", "sp-a", "text"));
+        assert_eq!(bd.create("db", "T", "bug", "2", "l", "ref", "body", None).unwrap(), "sp-new");
+        let seen = t.0.lock().unwrap();
+        assert_eq!(seen.len(), 5);
+        assert!(seen.iter().all(|a| a[0] == "content"), "{seen:?}");
+        assert_eq!(seen[0][1..], ["duplicate", "sp-a", "--of", "sp-b"]);
+        assert_eq!(seen[1][1..], ["dep", "relate", "sp-a", "sp-b"]);
+        assert_eq!(seen[2][1..], ["label", "add", "sp-a", "x"]);
+        assert_eq!(seen[3][1..], ["note", "sp-a", "--stdin"]);
+        assert_eq!(seen[4][1], "create");
+        assert!(seen[4].windows(2).any(|w| w == ["--body-file", "-"]), "{:?}", seen[4]);
     }
 
     /// The question carries what the `mail send` argv did: operator, the incident sender, a
@@ -423,7 +394,7 @@ mod tests {
     fn label_list_reads_payload_hash_labels_through_the_door() {
         let rows = vec![serde_json::json!({"id": "sp-1", "labels": ["payload-hash:abc", "incident"]})];
         let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows));
-        let bd = RealBd { bdq: "nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_store::lc_call::LcClient::over(fake, true)) };
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake, true)) };
         assert_eq!(bd.label_list("", "sp-1"), vec!["payload-hash:abc", "incident"]);
         assert_eq!(bd.show_closed_at("", "sp-1"), None);
         assert!(bd.reachable(""));
@@ -435,7 +406,7 @@ mod tests {
         let live: Vec<_> = (0..250).map(|i| serde_json::json!({"bead_id": format!("sp-{i:03}"), "state": "READY"})).collect();
         let rows: Vec<_> = (0..250).map(|i| serde_json::json!({"id": format!("sp-{i:03}"), "status": "open", "labels": ["incident"]})).collect();
         let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows).with_live(live));
-        let bd = RealBd { bdq: "nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
         assert_eq!(bd.list("", Scope::Unfinished, Some("incident"), None).unwrap().len(), 250);
         let seen = fake.requests();
         assert_eq!(seen.len(), 1 + 3, "{seen:?}");
@@ -448,7 +419,7 @@ mod tests {
         let rows = vec![serde_json::json!({"id": "sp-1", "labels": ["incident"]})];
         let live = vec![serde_json::json!({"bead_id": "sp-1", "state": "LANDED"})];
         let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows).with_live(live));
-        let bd = RealBd { bdq: "nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
         bd.list("", Scope::HandedOn, Some("incident"), Some("2026-01-01")).unwrap();
         let seen = fake.requests();
         let lists: Vec<_> = seen.iter().filter(|r| r.iter().any(|a| a == "--closed-after")).collect();
@@ -458,7 +429,7 @@ mod tests {
     #[test]
     fn a_reply_that_is_not_json_is_an_error_never_no_incident() {
         let t = std::sync::Arc::new(Scripted(Default::default(), "garbled".into()));
-        let bd = RealBd { bdq: "nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_store::lc_call::LcClient::over(t, true)) };
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(t, true)) };
         assert!(bd.list_json(&["--id", "sp-1"]).is_err());
     }
 
@@ -474,7 +445,7 @@ mod tests {
             serde_json::json!({"bead_id": "sp-done", "state": "LANDED"}),
         ];
         let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows).with_live(live));
-        let bd = RealBd { bdq: "nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_store::lc_call::LcClient::over(fake, true)) };
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake, true)) };
         assert_eq!(bd.live_successor("", "sp-a"), Some("sp-live".to_string()));
         assert_eq!(bd.live_successor("", "sp-b"), None);
     }

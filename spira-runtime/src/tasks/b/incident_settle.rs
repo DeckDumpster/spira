@@ -422,7 +422,7 @@ impl runtime::units::Units for Shared {
 }
 
 fn bd(e: &crate::Effects) -> Result<incident::real::RealBd, String> {
-    Ok(incident::real::RealBd { bdq: spira_config::release_env::tool("bdq")?, timeout_secs: 10, retries: 2, lc: Some(super::lc(e)) })
+    Ok(incident::real::RealBd { lc: Some(super::lc(e)) })
 }
 
 /// The observe: `RealSettler`'s reads (the content list, the blocks edges, each fix's state

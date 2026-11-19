@@ -40,7 +40,6 @@ pub struct Context {
     pub health_timeout: String,
     pub notify_age: String,
     pub id_prefix: String,
-    pub bdq: String,
     /// The ten `WATCHD_KEYS` placeholder values, keyed by name — everything an `@KEY@` in a
     /// manifest row may reference.
     pub placeholders: HashMap<String, String>,
@@ -91,7 +90,6 @@ pub fn load(home: &Path) -> Result<Context, String> {
         health_timeout: take("SPIRA_HEALTH_TIMEOUT"),
         notify_age: take("SPIRA_NOTIFY_AGE"),
         id_prefix: take("SPIRA_ID_PREFIX"),
-        bdq: spira_config::release_env::tool("bdq")?,
         placeholders,
         systemctl: std::env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
         systemctl_override: std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()),

@@ -211,7 +211,6 @@ mod tests {
             health_timeout: "1".into(),
             notify_age: "1800".into(),
             id_prefix: "sp".into(),
-            bdq: String::new(),
             placeholders: Default::default(),
             systemctl: "systemctl".into(),
             systemctl_override: None,

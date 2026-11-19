@@ -218,8 +218,10 @@ pub fn parse_show(code: Option<i32>, stdout: &[u8]) -> Result<Option<LcBead>, St
     Ok(Some(LcBead { state: text(bead.get("state")), sha, reason: text(bead.get("reason")) }))
 }
 
+#[derive(Default)]
 pub struct RealBd {
-    pub bdq: String,
+    /// The door's client; `None` is the configured one.
+    pub lc: Option<spira_store::lc_call::LcClient>,
 }
 
 /// The beads carrying exactly `external_ref`, through the store's `content ref` verb. Err
@@ -245,22 +247,20 @@ pub fn github_refs_on(lc: &spira_store::lc_call::LcClient, needle: &str) -> Resu
 }
 
 impl RealBd {
-    fn cmd(&self) -> Command {
-        // FORK-EDGE: dep remove / dep relate — the content door serves no dep verb
-        Command::new(&self.bdq)
+    /// One call through the store's content door, which writes a create's lifecycle row
+    /// itself: its stdout when it applied, `None` otherwise.
+    fn content<S: AsRef<str>>(&self, argv: &[S], body: Option<&str>) -> Option<String> {
+        let lc = match &self.lc {
+            Some(lc) => lc.clone(),
+            None => spira_store::lc_call::LcClient::configured().ok()?,
+        };
+        let r = match body {
+            Some(b) => lc.call_stdin(argv, b),
+            None => lc.call(argv),
+        }
+        .ok()?;
+        (r.code == 0).then_some(r.out)
     }
-}
-
-/// One call through the store's content door, which applies every protection bdq applies and
-/// writes a create's lifecycle row itself: its stdout when it applied, `None` otherwise.
-fn content<S: AsRef<str>>(argv: &[S], body: Option<&str>) -> Option<String> {
-    let lc = spira_store::lc_call::LcClient::configured().ok()?;
-    let r = match body {
-        Some(b) => lc.call_stdin(argv, b),
-        None => lc.call(argv),
-    }
-    .ok()?;
-    (r.code == 0).then_some(r.out)
 }
 
 impl Bd for RealBd {
@@ -270,12 +270,12 @@ impl Bd for RealBd {
 
     fn create(&self, title: &str, external_ref: &str, labels: &str, priority: &str, body: &[u8]) -> Option<String> {
         let argv = ["content", "create", title, "--external-ref", external_ref, "--labels", labels, "-t", "bug", "-p", priority, "--body-file", "-", "--silent"];
-        let id = content(&argv, Some(&String::from_utf8_lossy(body)))?.trim().to_string();
+        let id = self.content(&argv, Some(&String::from_utf8_lossy(body)))?.trim().to_string();
         (!id.is_empty()).then_some(id)
     }
 
     fn note(&self, id: &str, text: &str) -> bool {
-        content(&["content", "note", id, "--stdin"], Some(text)).is_some()
+        self.content(&["content", "note", id, "--stdin"], Some(text)).is_some()
     }
 
     // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
@@ -284,17 +284,15 @@ impl Bd for RealBd {
     }
 
     fn show_json(&self, id: &str) -> Option<serde_json::Value> {
-        serde_json::from_str(&content(&["content", "show", id, "--json"], None)?).ok()
+        serde_json::from_str(&self.content(&["content", "show", id, "--json"], None)?).ok()
     }
 
     fn dep_remove(&self, id: &str, other: &str) -> bool {
-        let status = self.cmd().args(["dep", "remove", id, other]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
-        matches!(status, Ok(s) if s.success())
+        self.content(&["content", "dep", "remove", id, other], None).is_some()
     }
 
     fn dep_relate(&self, from: &str, to: &str) -> bool {
-        let status = self.cmd().args(["dep", "relate", from, to]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
-        matches!(status, Ok(s) if s.success())
+        self.content(&["content", "dep", "relate", from, to], None).is_some()
     }
 }
 
@@ -366,8 +364,7 @@ impl RealMail {
 fn send_in_process(args: &mail::cmds::SendArgs, body: String) -> Result<String, String> {
     let env = mail::env::Env::load().map_err(|e| format!("mail: {e}"))?;
     mail::maildir::mailbox_valid(args.mailbox).map_err(|e| format!("mail: send: {e}"))?;
-    let bdq = spira_config::release_env::tool("bdq").map_err(|e| format!("mail: {e}"))?;
-    let bd = mail::bead::BdCli { bdq, conn_retries: env.bd_conn_retries };
+    let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
     let sent = mail::cmds::send_recorded(&bd, &env, args, body).map_err(|e| format!("mail: send: {e}"))?;
     Ok(sent.x_bead.unwrap_or_default())
 }
@@ -436,20 +433,17 @@ impl Mail for RealMail {
     }
 }
 
-/// `ghq` is NOT its own binary — lib.sh's shim is `ghq() { command bdq __ghq "$@"; }`,
-/// and that shim was never ported to a standalone executable (bead/src/bin/bdq.rs's
-/// `cmd_ghq` is reached only through `bdq __ghq ...`). This execs `bdq` with that
-/// internal subcommand prepended, by bare name on the launcher PATH, the same door every
-/// bash family already shells through for `gh` access (sp-j3fim).
-pub struct RealGh {
-    pub bdq_bin: String,
-}
+/// gh itself, as `forge::real` runs it: `timeout $GH_TIMEOUT $SPIRA_GH <args>`; an empty
+/// `SPIRA_GH` is the system gh.
+pub struct RealGh;
 
 impl RealGh {
     fn cmd(&self) -> Command {
-        // FORK-EDGE: needs bdq's __ghq (gh with the App token) as a library call; gh itself stays the child
-        let mut c = Command::new(&self.bdq_bin);
-        c.arg("__ghq");
+        let gh = spira_config::process::cfg("SPIRA_GH").ok().filter(|g| !g.is_empty()).unwrap_or_else(|| "gh".into());
+        let secs = std::env::var("GH_TIMEOUT").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "120".into());
+        // FORK-EDGE: gh stays the child, under timeout
+        let mut c = Command::new("timeout");
+        c.arg(secs).arg(gh);
         c
     }
 }
@@ -603,6 +597,17 @@ mod transport_tests {
         assert_eq!(got[0].id, "sp-1");
         assert_eq!(t.0.lock().unwrap()[0], ["content", "ref", "github:o/r#1", "--json"]);
         assert!(by_ref_on(&LcClient::over(Arc::new(Content(Mutex::default(), 1)), true), "github:o/r#1").is_err(), "a failed read is not none");
+    }
+
+    #[test]
+    fn closeout_dep_writes_go_through_the_door() {
+        let t = Arc::new(Content(Mutex::default(), 0));
+        let bd = RealBd { lc: Some(LcClient::over(t.clone(), true)) };
+        assert!(bd.dep_remove("sp-a", "sp-b"));
+        assert!(bd.dep_relate("sp-a", "sp-c"));
+        assert_eq!(*t.0.lock().unwrap(), [["content", "dep", "remove", "sp-a", "sp-b"], ["content", "dep", "relate", "sp-a", "sp-c"]]);
+        let refused = RealBd { lc: Some(LcClient::over(Arc::new(Content(Mutex::default(), 3)), true)) };
+        assert!(!refused.dep_remove("sp-a", "sp-b"), "a refused write is not done");
     }
 
     struct Bounded(Mutex<Vec<Vec<String>>>, i32);

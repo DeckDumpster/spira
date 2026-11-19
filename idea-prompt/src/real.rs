@@ -32,8 +32,7 @@ impl Real {
 fn send_in_process(args: &mail::cmds::SendArgs, body: String) -> Result<(), String> {
     let env = mail::env::Env::load().map_err(|e| format!("mail: {e}"))?;
     mail::maildir::mailbox_valid(args.mailbox).map_err(|e| format!("mail: send: {e}"))?;
-    let bdq = spira_config::release_env::tool("bdq").map_err(|e| format!("mail: {e}"))?;
-    let bd = mail::bead::BdCli { bdq, conn_retries: env.bd_conn_retries };
+    let bd = mail::bead::BdCli::configured(env.bd_conn_retries).map_err(|e| format!("mail: {e}"))?;
     mail::cmds::send_recorded(&bd, &env, args, body).map(|_| ()).map_err(|e| format!("mail: send: {e}"))
 }
 

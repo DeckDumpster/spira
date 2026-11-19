@@ -92,7 +92,7 @@ fn body_of<'a>(text: &'a str, name: &str) -> &'a str {
 #[test]
 fn the_verbs_the_content_door_serves_never_fork_bdq() {
     let real = std::fs::read_to_string(testkit::manifest_dir().join("src/real.rs")).unwrap();
-    for f in ["create", "note", "show_json"] {
+    for f in ["create", "note", "show_json", "dep_remove", "dep_relate"] {
         let body = body_of(&real, f);
         assert!(!body.contains("self.cmd()") && body.contains("\"content\""), "RealBd::{f} forks bdq:\n{body}");
     }

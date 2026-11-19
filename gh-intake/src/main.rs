@@ -124,8 +124,7 @@ fn mail_stand_in() -> Option<String> {
 fn ports(home: String) -> Result<(RealBd, RealGh, RealGit, RealRepo, RealMail), String> {
     // SPIRA_MAIL_BIN is registered config, read where the intake pass reads it: one source.
     let mail = RealMail::new(mail_stand_in());
-    let bdq = spira_config::release_env::tool("bdq")?;
-    Ok((RealBd { bdq: bdq.clone() }, RealGh { bdq_bin: bdq }, RealGit, RealRepo { spira_home: home }, mail))
+    Ok((RealBd::default(), RealGh, RealGit, RealRepo { spira_home: home }, mail))
 }
 
 fn main() -> ExitCode {
@@ -207,13 +206,7 @@ fn dispatch() -> ExitCode {
     };
 
     let http = RealHttp::from_broker();
-    let bd = match spira_config::release_env::tool("bdq") {
-        Ok(bdq) => RealBd { bdq },
-        Err(e) => {
-            eprintln!("gh-intake: {e}");
-            return ExitCode::from(1);
-        }
-    };
+    let bd = RealBd::default();
     let repo_port = RealRepo { spira_home };
     let mail = RealMail::new(stand_in);
 

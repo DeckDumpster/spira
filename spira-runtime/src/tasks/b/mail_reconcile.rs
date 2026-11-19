@@ -79,7 +79,7 @@
 //!
 //! - `spira-mail-reconcile-prod.{service,timer}` (`CPUQuota=25%`, `Nice=10`,
 //!   `TimeoutStartSec=300`, `Environment=SPIRA_DB=…`). No watchd row.
-//! - Children: `timeout 5 bdq` (note, show, dep list) via `BdCli` (`mail/src/bead.rs:62-80`);
+//! - Children: none; `BdCli` (note, show, dep list) calls the content door;
 //!   `timeout spira-lc close` via `spira_store::lifecycle_row::close`
 //!   (`spira-store/src/lifecycle_row.rs:332-341`); `spira-lc state|reply|close-ask` via
 //!   `LcCli` (`mail/src/lc.rs:23-31`).
@@ -332,7 +332,7 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
     }
     let j: Job = serde_json::from_str(&spec.input).map_err(|e| e.to_string())?;
     let tag = format!("{}/{}", j.key, j.step);
-    let bd = || -> Result<mail::bead::BdCli, String> { Ok(mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: j.conn_retries.max(1) }) };
+    let bd = || -> Result<mail::bead::BdCli, String> { mail::bead::BdCli::configured(j.conn_retries.max(1)) };
     let client = super::lc(e);
     let lc = mail::lc::Routed { client: Ok(&client), unserved: &mail::lc::LcProgram };
     let mut refused = false;
