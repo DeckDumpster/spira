@@ -87,7 +87,9 @@ loom_view | jq -e "[.view.next[].id] | index(\"$A\") == null" >/dev/null
 is "Loom does not offer A as claimable while B is open" 0 "$?"
 
 closed="$(pilgrim_work "$T/pilgrim" close-other "$B" --evidence walk-closes-the-blocker 2>&1)"
-is "close-other exits 0: $closed" 0 "$?"
+close_rc=$?
+[ "$close_rc" -eq 0 ] || echo "# lc-serve.log: $(tail -c 1500 "$T/pilgrim/lc-serve.log")"
+is "close-other exits 0: $closed" 0 "$close_rc"
 once="$(in_world "$T/pilgrim" "lc-view once" | plain)"
 nowant "lc-view no longer shows A blocked" "$A <- $B" "$once"
 want "lc-view offers A as claimable" "P2 $A" "$(echo "$once" | sed -n '/^NEXT/,/^[A-Z]/p')"
