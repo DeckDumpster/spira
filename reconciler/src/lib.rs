@@ -3809,6 +3809,41 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_redrive_with_no_effect_is_paged_once_by_the_escalation_and_not_by_a_second_note() {
+        let mut d = Default::default();
+        let mut all = Vec::new();
+        for now in [1000, 1200, 1300, 1400, 1500, 1600, 1700] {
+            all.extend(redrive_pass(&mut d, now, true));
+        }
+        assert_eq!(mails(&all).len(), 1);
+        assert!(!mails(&all)[0].subject.contains("had no effect"));
+        assert!(all.iter().any(|a| matches!(a, Act::Event(e) if e.event == "no-effect")));
+    }
+
+    #[test]
+    fn another_remedys_no_effect_still_sends_its_note() {
+        let rules = Rules { now_secs: 0, grace_secs: 0, effect_passes: 1, shadow_kinds: vec![] };
+        let mut d: (StateMap, PendingMap, AlertedSinceMap) = Default::default();
+        let gap = || RawStatus::Gap { desired: "up".into(), observed: "down".into(), since_hint: None };
+        let remedy = || Remedy::Command { program: "fix".into(), args: vec![] };
+        let mut all = Vec::new();
+        for now in [10, 20, 30, 40] {
+            let rules = Rules { now_secs: now, ..rules.clone() };
+            all.extend(decide(&rules, &mut d.0, &mut d.1, &mut d.2, Check { key: "disk:/".into(), raw: gap(), remedy: remedy() }));
+        }
+        assert!(mails(&all).iter().any(|m| m.subject.contains("had no effect")), "{all:?}");
+    }
+
+    #[test]
+    fn the_shell_pass_logs_the_redrive_it_cannot_send() {
+        let d = testkit::TempDir::new("redrive-log");
+        let mut cfg = test_config();
+        cfg.log = d.join("log");
+        perform(&cfg, &mut AlertedSinceMap::new(), vec![Act::CallWanted { key: "fleet:a".into() }]);
+        assert!(fs::read_to_string(&cfg.log).unwrap().contains("reconciler: fleet:a → call.wanted needs the scheduler; not sent"));
+    }
+
     pub(super) fn test_config() -> Config {
         Config {
             seams: Seams::bare(),

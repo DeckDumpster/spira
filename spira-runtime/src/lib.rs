@@ -193,13 +193,14 @@ impl Effects {
         let min_age = pinned("SPIRA_STRANDED_RUNNER_MIN_AGE")?.trim().parse().unwrap_or(0);
         let mut host = reconcile_host::RuntimeHost::new(self.world.clone(), self.forge.clone(), self.mail.clone(), r.home.clone().into(), pinned("SPIRA_RUNES")?, min_age, at, enabled, self.landrefs.clone());
         host.bus = self.bus.clone();
+        let starting = host.starts_not_yet_live(&input.starting);
         let mut cfg = reconciler::Config::from_lookup(&pinned, match self.seams.clone() {
             Some(s) => s,
             None => reconciler::Seams::production()?,
         }, run, r.home.clone(), at, reconciler_engine::clock::iso_of(at))?.with_desired_state().with_host(Arc::new(host));
         cfg = cfg.with_memo(self.memo.clone());
         cfg.skip_units = own_skip_units(&instance);
-        cfg.starting = input.starting;
+        cfg.starting = starting;
         let observation = reconciler::observe(&cfg, &input.reminded);
         serde_json::to_string(&observation).map_err(|e| e.to_string())
     }

@@ -46,9 +46,9 @@ pub struct ObserveIn {
     /// The keys the observers read, as the scheduler holds them for this tick.
     #[serde(default)]
     pub values: BTreeMap<String, String>,
-    /// Builder starts in flight per rune, from the sentinel's call carry.
+    /// The sentinel's call carry's starts with no `unit.ran` yet, as `{unit → rune}`; the ones already live are counted as dwarves, not as starts.
     #[serde(default)]
-    pub starting: BTreeMap<String, u64>,
+    pub starting: BTreeMap<String, String>,
 }
 
 /// Telemetry for the metrics store: a status row per check every pass, and the remedy events.
@@ -176,10 +176,7 @@ impl Handler for Reconciler {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            let mut starting = BTreeMap::new();
-            for rune in kit::carry::<sentinel_call::Carry>(&sentinel_call::SHAPE, view).in_flight.into_values() {
-                *starting.entry(rune).or_insert(0) += 1;
-            }
+            let starting = kit::carry::<sentinel_call::Carry>(&sentinel_call::SHAPE, view).in_flight;
             let input = ObserveIn { at: ev.at, reminded: Self::book(view, &ev.stream).reminded, values: self.values.clone(), starting };
             return vec![
                 Command::Probe(spec(OBSERVE, OBSERVE.into(), &input, OBSERVE_DEADLINE_MS)),
