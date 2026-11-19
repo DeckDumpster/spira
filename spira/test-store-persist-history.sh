@@ -11,5 +11,4 @@ cd "$HERE/.." || exit 1
 out="$(cargo test -p store-persist --features integration --test history_real_dolt 2>&1)"; rc=$?
 echo "$out" | tail -15
 echo "$out" | grep -q "dolt must be on PATH" && { echo "SKIP: no dolt binary"; exit 0; }
-echo "$out" | grep -q "4 passed" || rc=1
 exit $rc

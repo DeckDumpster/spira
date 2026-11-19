@@ -76,7 +76,7 @@ pub fn squash(sql: &dyn Sql, keep: u64) -> Result<String, String> {
         "CALL DOLT_BRANCH('{SIDE}', '{main}');\n\
          SELECT HASHOF('{SIDE}') AS tip;\n\
          CALL DOLT_CHECKOUT('{SIDE}');\n\
-         CALL DOLT_REBASE('-i', (SELECT commit_hash FROM dolt_log ORDER BY date ASC, commit_order ASC LIMIT 1));\n\
+         CALL DOLT_REBASE('-i', (SELECT commit_hash FROM dolt_log ORDER BY commit_order ASC LIMIT 1));\n\
          UPDATE dolt_rebase SET action = 'squash' WHERE rebase_order > 1 AND rebase_order <= (SELECT MAX(rebase_order) FROM dolt_rebase) - {};\n\
          CALL DOLT_REBASE('--continue');\n",
         keep.saturating_sub(1)
