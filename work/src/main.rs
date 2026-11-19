@@ -28,7 +28,7 @@ const READ_SLICE: Duration = Duration::from_secs(2);
 const TOOL_TIMEOUT: Duration = Duration::from_secs(310);
 
 fn main() {
-    spira_otel::run::begin("work", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
+    spira_otel::run::begin_with("work", || spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok());
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(verb) = args.first().cloned() else {
         eprintln!("usage: work <verb> [args...] (verbs: {}, {})", work::VERBS.join(", "), work::LOCAL_VERBS.join(", "));

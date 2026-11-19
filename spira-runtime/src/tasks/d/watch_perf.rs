@@ -13,7 +13,7 @@
 //! `watch.perf.observe` returns `Snapshot { timings: [{name, micros, millis, phases?, error?}], callers: {caller → count} }`.
 //!
 //! - Probe list: `spira/perf-probes` (seven named read paths: `lc-list`, `lc-show`, `lc-ops-view`, `work-list`, `claim-check`, `lc-ready`, `content-read`), parsed by `parse_probes` (`perf-watch/src/lib.rs:32`), loaded once at boot (`perf-watch/src/main.rs:126-129`).
-//! - Each probe today is a **forked CLI** timed inside `systemd-run --user --scope bash -c` (`perf-watch/src/main.rs:27,55-56`), 5 s deadline (`main.rs:10,74-77`). `time_one` stamps `PERFWATCH_T0_US` before the fork so the probe's phases open with `start` (fork, exec, load until `begin`), and appends `exit` (the probe's `PERFWATCH_END_US` stamp to the reap), so the phases add up to the wall time.
+//! - Each probe today is a **forked CLI** timed inside `systemd-run --user --scope bash -c` (`perf-watch/src/main.rs:27,55-56`), 5 s deadline (`main.rs:10,74-77`). `time_one` stamps `PERFWATCH_T0_US` before the fork so the probe's phases open with `spawn`, `load` and `config` (fork, exec and dynamic link, config until `begin`), and appends `exit` (the probe's `PERFWATCH_END_US` stamp to the reap), so the phases add up to the wall time.
 //! - Caller counts come from `spira-lc stats` (`main.rs:112`, parsed by `caller_counts`, `lib.rs:55`).
 //! - **Open point.** The thing measured is the fork-and-socket path that S7 removes. After S7 the probe should time the in-process `LcClient` / projection read for the same six names, and `stats` becomes the store's `stats` socket method. The probe file's names are kept, so the metric series and alarm keys do not change. Until then the observe needs the `host` class to fork the probe argv, the one place a P1 task keeps a Spira child (unverified that W1 can allow-list it).
 //!
@@ -34,7 +34,7 @@
 //! | `watch.perf.slow_sample` | host | 5 s | `watch.perf:slow:<probe>:<epoch>` | a path outside `SPIRA_RUN` |
 //! | `watch.perf.metrics` | host | 5 s | `watch.perf:metrics:<epoch>` | nothing; a lost push is a gap in the series, not a failure |
 //!
-//! - **`inbox.append`** carries `<UTC ISO> [watch:perf-watch] <alarm>` (`inbox_line`, `lib.rs:226-239`, test `lib.rs:350-352`). The alarm is one of `PERF SLOW <name> <ms>ms (limit <L>ms) phases <p|unreported> [rest=<ms>ms]; top callers: <c1, c2, c3|unknown>`, `PERF UNRUNNABLE <name>: <err> (after <ms>ms; phases …)` (`lib.rs:116-117`), or `PERF TIMEOUT <name> timed out at <d>ms twice in a row (limit <L>ms); top callers: <c…>` when a probe was cut at its deadline on two passes running. The shared runner adds the newline, so the task drops the trailing `\n` that `inbox_line` appends.
+//! - **`inbox.append`** carries `<UTC ISO> [watch:perf-watch] <alarm>` (`inbox_line`, `lib.rs:226-239`, test `lib.rs:350-352`). The alarm is one of `PERF SLOW <name> <ms>ms (limit <L>ms) phases <p|unreported> [rest=<ms>ms; slowest: <phase> <ms>ms (<words>)]; top callers: <c1, c2, c3|unknown>`, `PERF UNRUNNABLE <name>: <err> (after <ms>ms; phases …)` (`lib.rs:116-117`), or `PERF TIMEOUT <name> timed out at <d>ms twice in a row (limit <L>ms); top callers: <c…>` when a probe was cut at its deadline on two passes running. The shared runner adds the newline, so the task drops the trailing `\n` that `inbox_line` appends.
 //! - **`watch.perf.log`** appends the bare alarm line to `run/perf-watch.log`, the log row `spira/watchers:122` that the unit's stdout fills today (`main.rs:144`).
 //! - **`watch.perf.slow_sample`** appends `<epoch>\t<probe>\t<ms>\t<phases>\trest=<ms>\t<top callers>` to `run/perf-slow.log` (`lib.rs:128-141`, `main.rs:147-151`).
 //! - **`watch.perf.metrics`** pushes `spira_perf_watch_probe_seconds{probe}` for every answered probe (`lib.rs:101-109`, `main.rs:152`).
@@ -353,9 +353,9 @@ mod tests {
 
     #[test]
     fn exit_is_the_time_from_the_probes_end_stamp_to_the_reap() {
-        let phases = Some("start=600,reply=30,client=18,push=2".to_string());
+        let phases = Some("spawn=100,load=400,config=100,reply=30,client=18,push=2".to_string());
         let got = account(phases.clone(), "PERFWATCH_PHASES=x\nPERFWATCH_END_US=1650000\n", 1_700_000).unwrap();
-        assert_eq!(got, "start=600,reply=30,client=18,push=2,exit=50");
+        assert_eq!(got, "spawn=100,load=400,config=100,reply=30,client=18,push=2,exit=50");
         let t = perf_watch::Timing { name: "work-list".into(), millis: 700, micros: 700_000, phases: Some(got), error: None, timed_out_ms: None };
         assert!(perf_watch::alarms(&[t], 500, &[])[0].contains("rest=0ms"));
         assert_eq!(account(phases.clone(), "no stamp\n", 1_700_000), phases);
