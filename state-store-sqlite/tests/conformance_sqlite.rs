@@ -1614,7 +1614,10 @@ fn put_next_retrying_busy(b: &SqliteBackend) {
     for _ in 0..BUSY_RETRIES {
         match b.commit(head, &[put_write("k", &[7; 4096], head + 1, prev)]) {
             Err(e) if e.to_string().contains("database is locked") => std::thread::yield_now(),
-            r => return drop(r.unwrap()),
+            r => {
+                r.unwrap();
+                return;
+            }
         }
     }
     panic!("commit still busy after {BUSY_RETRIES} attempts");
