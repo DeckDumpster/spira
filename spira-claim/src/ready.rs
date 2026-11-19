@@ -6,10 +6,8 @@
 //! the runes reads (`rune_get`, `spira_runes`) are `spira-config`'s own `runes`
 //! module; the CLI wiring (env, flags, `SPIRA_HOME`) is `main.rs`.
 //!
-//! `claim_retry` and `epic_parent_lookup`/`epic_rank_rows` are not here: `claim_retry` is a
-//! thin bd-retry loop with no predicate of its own (`main.rs::cmd_claim_retry`, next to
-//! `Store::bd`); the epic functions already exist as `select`/`epics` (DESIGN.md §2) — this
-//! bead only adds their lib.sh shims.
+//! `epic_parent_lookup`/`epic_rank_rows` are not here: the epic functions already exist as
+//! `select`/`epics` (DESIGN.md §2) — this bead only adds their lib.sh shims.
 
 use std::collections::HashMap;
 

@@ -16,7 +16,7 @@ use super::*;
 
 // ---- ready / claim CLI (wave 4.25, sp-obhv6) -------------------------------------------
 //
-// `rune-ready`/`rune-exclude`/`bulk-ready-by-rune`/`claim-retry` read real process
+// `rune-ready`/`rune-exclude`/`bulk-ready-by-rune` read real process
 // environment (`SPIRA_HOME`, `SPIRA_TOML`, ...) — unlike the rest of this
 // file's tests, which thread every input through a file or a hand-built `Store`. These
 // edit the environment only through `testkit::env`, which serializes them against every
@@ -157,7 +157,7 @@ mod published {
 
     fn judged(control_store: bool, publish: bool) -> (Vec<Vec<String>>, Vec<verdicts::Entry>) {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
-        let st = Store { bdq: "nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let st = Store { lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
         let config = Config { control_store, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
@@ -224,7 +224,7 @@ mod published {
     }
 
     fn store_over(t: Arc<dyn Transport>) -> Store {
-        Store { bdq: "nonexistent/bdq".into(), lc: LcClient::over(t, true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None }
+        Store { lc: LcClient::over(t, true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None }
     }
 
     fn judge_over(t: Arc<dyn Transport>) {
@@ -259,7 +259,7 @@ mod published {
     #[test]
     fn republish_dependents_judges_and_publishes_only_the_records_that_wait_on_or_descend_from_the_changed() {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
-        let st = Store { bdq: "nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let st = Store { lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
         let config = Config { control_store: true, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
@@ -275,7 +275,7 @@ mod published {
     #[test]
     fn republish_dependents_judges_the_changed_record_itself_when_nothing_waits_on_it() {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
-        let st = Store { bdq: "nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let st = Store { lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
         let config = Config { control_store: true, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
@@ -353,7 +353,7 @@ mod claim_view_read {
 
     fn setup(view_code: i32) -> (Arc<Double>, Store) {
         let svc = Arc::new(Double { seen: Mutex::new(Vec::new()), view_code });
-        let st = Store { bdq: "nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let st = Store { lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
         (svc, st)
     }
 
@@ -543,4 +543,14 @@ fn the_contract_fix_label_passes_no_claims_stop() {
     let (run, mut rows) = stopped_repo_rows(&t, "repo-contract");
     assert_eq!(retain_unstopped(&mut rows, &run).len(), 2);
     assert!(rows.is_empty());
+}
+
+#[test]
+fn claim_retry_is_no_longer_a_verb() {
+    let toml = format!("{}/../spira/testlib/complete.toml", std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let _env = testkit::env(&[("SPIRA_TOML", Some(&toml))]);
+    let raw = ["claim-retry".to_string(), "list".to_string()];
+    let out = crate::cli::dispatch_in(&raw, &mut std::io::empty(), &|_| None);
+    assert_eq!(out.code, crate::cli::USAGE);
+    assert!(out.err.contains("unknown verb claim-retry"), "{}", out.err);
 }

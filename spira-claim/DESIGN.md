@@ -82,8 +82,7 @@ Diagnostics go to stderr, one line, prefixed `spira-claim:`.
 - **Blocker records** (machine mode only) — bd rows for every `blocks` target, from
   `--blocker-records FILE` or fetched with chunked `spira-lc plan items --ids ...`.
 
-bd is reached only through `bdq`, which reads `spira.db` itself; `--db` is accepted and
-ignored. Bead content (rows, children) is `spira-lc plan`.
+spira-claim forks no `bd` or `bdq`; `--db` is accepted and ignored. Bead content (rows, children) is `spira-lc plan`.
 `stack_max_depth` and `submitted_label` come from spira-config (`spira.stack_max_depth`,
 default 4, clamped to the schema's ceiling of 4; `spira.submitted_label`, default
 `spira-submitted`); flags override for tests. Thresholds are flags (`--poison-at`,
@@ -350,9 +349,9 @@ sp-j1q6o commit).
     check, `lc_claim_bead`, `lifecycle_enforce` and brief rendering are outside this
     component.)
 11. **Machine selection (sp-f0qhr), when the operator enables it**: dwarf.sh:337's
-    `claim_retry "${READY_ARGS[@]}" …` becomes, behind the existing
+    the ready query becomes, behind the existing
     `lifecycle_selection_available` gate from sp-f0qhr's branch (not added here),
-    `claim_retry list --status open --no-assignee --exclude-type epic,event --limit 0 --label "$RUNE_LABELS" --exclude-label "$CLAIM_EXCLUDE"`
+    `spira-lc list --status open --no-assignee --exclude-type epic,event --limit 0 --label "$RUNE_LABELS" --exclude-label "$CLAIM_EXCLUDE"`
     and the rank/tier calls gain `--blockers machine`. `ready_count` (lib.sh:1167)
     becomes the same list query piped to `select --rune "$f" --blockers machine --count`.
     `rune_ready`/`bulk_ready_by_rune` (lib.sh:1513/1575) and the retired ready-bucket script count through
@@ -544,7 +543,7 @@ reads the `OK` line, §8.6).
 hold still present; the lifecycle row unreadable; attempts ≥ P; the events unreadable; a
 `poison` token; the ask-history file still present.
 
-**Where things are.** bd: `bdq`, which reads spira-config `spira.db` (§2). spira-lc: by name, on the launcher's PATH (sp-gypjk). `SPIRA_RUN`: `$SPIRA_RUN`, else
+**Where things are.** spira-lc: by name, on the launcher's PATH (sp-gypjk). `SPIRA_RUN`: `$SPIRA_RUN`, else
 spira-config `spira.run`; neither → exit 2. Ask history: `$SPIRA_POISON_ASKED` else
 `$SPIRA_RUN/poison-asked` (lib.sh's resolution). Ask label: `$SPIRA_ASK_LABEL`, else
 spira-config `spira.ask_label`, else `needs-operator` (conf.sh:1027)..
@@ -553,9 +552,8 @@ spira-config `spira.ask_label`, else `needs-operator` (conf.sh:1027)..
 same data: `attempts_of`/`requeues_of`/`reclaims_of` → the fold; `check4_decide` → `decide`;
 `bump_poison_cleared` → the same INSERT; `poison_asked_clear` → the same `rm`;
 `lc_held`/`lc_holds`/`lc_unhold` → `spira-lc show`/`event` directly (lc.sh is a thin shell
-over exactly these two calls); `bdq`/`bdjson` → `bd -C <db>`. bdq's create-time fences do
-not apply (no `create`), and its connection retry is not reproduced (a failed write is
-reported, and verify catches what matters).
+over exactly these two calls); the note and metadata writes → `spira-lc content`. A failed write is
+reported, and verify catches what matters.
 
 ### 8.3 Schema
 

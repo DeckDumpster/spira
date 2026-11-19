@@ -49,11 +49,6 @@
 4 sentinel/src/lifecycle.rs
 1 sentinel/src/pass.rs
 1 skew/src/real.rs
-1 spira-claim/src/lib.rs
-3 spira-claim/src/ready.rs
-3 spira-claim/src/store.rs
-1 spira-claim/src/tests.rs
-1 spira-claim/src/unpoison.rs
 1 spira-runtime/src/reconcile_host.rs
 3 spira-runtime/src/tasks/a/sentinel_pass.rs
 1 spira-runtime/src/tasks/c/asks_moot.rs

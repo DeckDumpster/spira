@@ -87,3 +87,23 @@ fn counter_label_does_not_match_a_longer_number() {
     let labels = vec!["sp-attempt-30".to_string()];
     assert_eq!(counter_label(&labels, "sp-attempt", "3"), None);
 }
+
+#[test]
+fn the_streak_metadata_is_written_through_the_content_door() {
+    use spira_store::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+    struct Fake(Mutex<Vec<Vec<String>>>);
+    impl Transport for Fake {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push(argv.to_vec());
+            Ok(Reply { code: 0, out: String::new(), err: String::new() })
+        }
+    }
+    let fake = Arc::new(Fake(Mutex::new(Vec::new())));
+    let store = Store { lc: LcClient::over(fake.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: std::time::Duration::from_secs(1), views: None };
+    thrash_streak_bump(&store, "sp-a", "?", "stalled");
+    let seen = fake.0.lock().unwrap().clone();
+    let writes: Vec<_> = seen.iter().filter(|a| a[..2] == ["content", "update"]).collect();
+    assert_eq!(writes.len(), 1, "{seen:?}");
+    assert_eq!(writes[0], &["content", "update", "sp-a", "--set-metadata", "thrash_tip=?", "--set-metadata", "thrash_streak=1", "--set-metadata", "thrash_last=stalled"]);
+}

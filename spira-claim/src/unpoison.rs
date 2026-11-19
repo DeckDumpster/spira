@@ -426,16 +426,12 @@ pub struct Live {
 }
 
 impl Live {
-    fn bd(&self, args: &[&str], input: Option<&[u8]>) -> Result<store::Ran, String> {
-        store::run_full(self.store.bdq_cmd(args), self.store.timeout, input)
-    }
-
-    fn bd_ok(&self, args: &[&str], input: Option<&[u8]>) -> Result<String, String> {
-        let r = self.bd(args, input)?;
+    fn door_note(&self, id: &str, text: &str) -> Result<(), String> {
+        let r = self.store.lc_stdin(&["content", "note", id, "--stdin"], text)?;
         if r.code != 0 {
-            return Err(format!("bd {} exit {}: {}", args[0], r.code, r.stderr.lines().next().unwrap_or("no stderr")));
+            return Err(format!("content note exit {}: {}", r.code, r.stderr.lines().next().unwrap_or("no stderr")));
         }
-        Ok(r.stdout)
+        Ok(())
     }
 
     fn lc(&self, args: &[&str]) -> Result<store::Ran, String> {
@@ -529,7 +525,7 @@ impl World for Live {
     }
 
     fn note(&mut self, id: &str, text: &str) -> Result<(), String> {
-        self.bd_ok(&["note", id, "--stdin"], Some(text.as_bytes())).map(|_| ())
+        self.door_note(id, text)
     }
 
     fn open_asks(&mut self) -> Result<Vec<AskRow>, String> {
@@ -592,7 +588,7 @@ impl crate::reopen::World for Live {
     }
 
     fn note(&mut self, id: &str, text: &str) -> Result<(), String> {
-        self.bd_ok(&["note", id, "--stdin"], Some(text.as_bytes())).map(|_| ())
+        self.door_note(id, text)
     }
 }
 

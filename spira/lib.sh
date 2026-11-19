@@ -380,17 +380,13 @@ epic_rank_rows() {
     return $_rc
 }
 
-# claim_retry, rune_exclude, rune_ready, bulk_ready_by_rune, ready_shared_exclude ->
+# rune_exclude, rune_ready, bulk_ready_by_rune, ready_shared_exclude ->
 # moved to spira-claim (wave 4.25, sp-obhv6). `ready_shared_exclude`'s only caller besides
 # `rune_exclude` is test-dispatch-open-children.sh, which calls it directly — kept as its
 # own shim (onto `shared-exclude`, spira-claim/src/ready.rs `shared_exclude4`) rather than
 # deleted. `express_ready_in_task_pool` has had no live caller since sentinel.sh (the only
 # thing that ever called it) was retired for the Rust sentinel crate — deleted outright
 # rather than ported (see `test-express-lane.sh`, trimmed to match).
-claim_retry() {
-    _spira_claim claim-retry "$@"
-}
-
 rune_exclude() {        # rune_exclude <rune> -> comma-separated exclusions
     _spira_claim rune-exclude "$1" "${2:-}"
 }

@@ -4,7 +4,7 @@
 //! its line or the line above.
 
 /// Programs that are Spira (or a unit manager) and must not be a child of this crate.
-const BANNED: &[&str] = &["\"spira-lc\"", "\"systemctl\"", "\"systemd-run\"", "\"slay\"", "\"tsd-write\"", "\"mail\"", "\"bash\""];
+const BANNED: &[&str] = &["\"spira-lc\"", "\"systemctl\"", "\"systemd-run\"", "\"slay\"", "\"tsd-write\"", "\"mail\"", "\"bash\"", "\"bd\"", "\"bdq\""];
 /// The same programs held in a field or a variable: `Command::new(&self.lc)`, `&systemctl`.
 const BANNED_HOLDERS: &[&str] = &[".lc)", ".lc_bin)", "lc)", "lc_bin)", "systemctl)", "slay)", "systemd_run)"];
 
