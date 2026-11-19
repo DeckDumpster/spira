@@ -291,7 +291,6 @@ SPIRA_HOME archivist/src/main.rs
 SPIRA_HOME batcher-cut/src/io.rs
 SPIRA_HOME batcher-cut/src/main.rs
 SPIRA_HOME batcher-cut/src/vm.rs
-SPIRA_HOME bead/src/bdq.rs
 SPIRA_HOME bead/src/bin/bdq.rs
 SPIRA_HOME bead/src/main.rs
 SPIRA_HOME broker/src/main.rs
@@ -575,7 +574,6 @@ SPIRA_RELEASE_SKEW_DWARF_MAX_SECS sentinel/src/tower.rs
 SPIRA_RELEASE_SKEW_DWARF_MAX_SECS watchtower/src/main.rs
 SPIRA_RELEASE_SKEW_MAX_SECS sentinel/src/tower.rs
 SPIRA_RELEASE_SKEW_MAX_SECS watchtower/src/main.rs
-SPIRA_REPO bead/src/bdq.rs
 SPIRA_REPO broker/src/main.rs
 SPIRA_REPO cockpit-collect/src/io.rs
 SPIRA_REPO cockpit-collect/src/probes/mod.rs
@@ -624,7 +622,6 @@ SPIRA_REPO testenv/src/run.rs
 SPIRA_REPO watchd/src/context.rs
 SPIRA_REPO watchd/src/manifest.rs
 SPIRA_REPO watchtower/src/main.rs
-SPIRA_REPO_DERIVED bead/src/bdq.rs
 SPIRA_REPO_DERIVED broker/src/main.rs
 SPIRA_REPO_DERIVED cockpit-collect/src/io.rs
 SPIRA_REPO_DERIVED cockpit/ops/src/conf.rs

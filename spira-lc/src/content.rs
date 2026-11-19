@@ -113,12 +113,12 @@ fn create_flags(args: &[&str]) -> Result<Kind, String> {
     while let Some((i, f)) = it.next() {
         match *f {
             t if i == 0 && word(t) => titled = true,
-            "--silent" | "--json" => {}
+            "--silent" | "--json" | "--no-inherit-labels" => {}
             "--body-file" => match it.next() {
                 Some((_, &"-")) => body = true,
                 _ => return Err("create takes its body only as --body-file - (the request body)".into()),
             },
-            "--title" | "--type" | "-t" | "--priority" | "-p" | "--labels" | "--label" | "-l" | "--external-ref" | "--parent" | "--deps" | "--description" | "-d" | "--assignee" | "--id" => match it.next() {
+            "--title" | "--type" | "-t" | "--status" | "--priority" | "-p" | "--labels" | "--label" | "-l" | "--external-ref" | "--parent" | "--deps" | "--description" | "-d" | "--assignee" | "--id" => match it.next() {
                 Some((_, v)) if !v.is_empty() => titled |= *f == "--title",
                 _ => return Err(format!("create: `{f}` needs a value")),
             },
@@ -202,7 +202,14 @@ pub fn guard(args: &mut Vec<String>, body: &mut Option<String>, g: &Guards, m: &
     blocks_edge(args, g)?;
     repo_cwd(args, g)?;
     let mut log = match bead::guard::write(args, body.as_deref(), &ctx) {
-        Ok(bead::guard::Admit { claim: bead::guard::Claim::Free, log }) => log,
+        Ok(bead::guard::Admit { claim: bead::guard::Claim::Free, log }) => {
+            if args.first().map(String::as_str) == Some("update") {
+                let rest = bead::claimdesc::parse_update_args(&args[1..]).passthrough;
+                args.truncate(1);
+                args.extend(rest);
+            }
+            log
+        }
         Ok(bead::guard::Admit { claim: bead::guard::Claim::Forced { id, claim, reason }, log }) => {
             let rest = bead::claimdesc::parse_update_args(&args[1..]).passthrough;
             args.truncate(1);
@@ -499,6 +506,14 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn a_filing_under_a_parent_or_of_a_closed_insight_is_served() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(check(&a(&["create", "T", "-l", "x", "--parent", "sp-p", "--no-inherit-labels", "--silent"])), Ok(Kind::Write { body: false }));
+        assert_eq!(check(&a(&["create", "T", "--type", "insight", "--status", "closed", "--body-file", "-"])), Ok(Kind::Write { body: true }));
+        assert!(check(&a(&["create", "T", "--status"])).is_err(), "a status flag needs its value");
+    }
 
     /// A bd holding items by label; `delete` removes them.
     struct Bd(RefCell<BTreeMap<String, (String, serde_json::Value)>>);
@@ -1129,6 +1144,18 @@ mod tests {
         assert_eq!(wrote[1], format!("update sp-a --set-metadata {}={hash} <<", bead::claimdesc::HASH_KEY));
         assert!(wrote[2].starts_with("note sp-a ") && wrote[2].contains("why"), "{}", wrote[2]);
         assert_eq!(wrote.len(), 3);
+    }
+
+    #[test]
+    fn a_force_flag_on_an_unheld_bead_never_reaches_bd() {
+        let env = caller(&[]);
+        let ask = || Ok::<_, String>(ASK.to_string());
+        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default(), cwd: Default::default() };
+        let mut args = v(&["update", "sp-a", "--body-file", "-", "--force-claimed", "why"]);
+        let mut body = Some("new".to_string());
+        guard(&mut args, &mut body, &g, &mut Rows(None)).expect("an unheld bead admits the edit");
+        assert_eq!(args, v(&["update", "sp-a", "--body-file", "-"]));
+        assert!(g.forced.take().is_none());
     }
 
     #[test]

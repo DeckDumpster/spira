@@ -37,7 +37,7 @@ fn main() {
         "pilgrimage" => cmd_pilgrimage(&home, &rest),
         "amend" => cmd_amend(&home, &rest),
         "label" => cmd_label(&home, &rest),
-        "drop" => cmd_drop(&home, &rest),
+        "drop" => cmd_drop(&rest),
         "contract" => cmd_contract(&home),
         "ideas" => cmd_ideas(&home, &rest),
         "lint" => cmd_lint(&home, &rest),
@@ -53,10 +53,10 @@ fn main() {
             }
         },
         "dep" => match rest.first().map(String::as_str) {
-            Some("add") => cmd_dep_add(&home, &rest[1..]),
-            Some("remove") => cmd_dep_remove(&home, &rest[1..]),
+            Some("add") => cmd_dep_add(&rest[1..]),
+            Some("remove") => cmd_dep_remove(&rest[1..]),
             Some("epic-edges") => cmd_dep_epic_edges(),
-            Some("convert") => cmd_dep_convert(&home, &rest[1..]),
+            Some("convert") => cmd_dep_convert(&rest[1..]),
             _ => {
                 eprintln!("usage: bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>");
                 2
@@ -73,75 +73,36 @@ fn main() {
 }
 
 // =========================================================================================
-// Subprocess bridges — everything that is lib.sh's/schema.sh's/mail's own logic, not
-// bead.sh's. See DESIGN.md "What ported vs what stayed bash".
+// The content door — every read and write of a bead goes to `spira-lc content`.
 // =========================================================================================
 
-/// `bdq` — the ONE boundary this crate crosses into the content store (the create-time safety
-/// fences, the connection retry loop). It was `bash -c '. "$home/lib.sh"; bdq "$@"'`, sourced
-/// only so `conf.sh` re-derived the five vars the repo-label fence reads before `lib.sh`'s
-/// `bdq()` shim threaded them across the exec; [`bead::bdq::fence_env`] derives them here, so
-/// the release's `bdq` binary is run directly.
-fn bdq_command(home: &str) -> Result<Command, String> {
-    let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-    let resolved = |h: &Path, r: &Path| {
-        spira_config::resolve::resolve_for_process(h, r, &env_map).map(|v| (v.get("SPIRA_HOME_REPO").to_string(), v.get("SPIRA_REPO_MAP").to_string()))
-    };
-    let fence = bead::bdq::fence_env(Path::new(home), &env_map, &resolved)?;
-    // FORK-EDGE: content store — bdq is the store's one chokepoint; the content store is out of scope.
-    let mut cmd = Command::new(spira_config::release_env::tool("bdq")?);
-    // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-    // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-    cmd.envs(spira_config::release_env::child_path_env_for_process()?).envs(fence);
-    Ok(cmd)
-}
-
-/// What `lib.sh` failing to load exited with: the bridge could not reach `bdq` at all.
-const BRIDGE_FAILED: i32 = 90;
-
-/// Runs `bdq` with inherited stdio (the shape every state-changing call needs: `bd`'s own
-/// stdout/stderr must reach the original caller exactly as it would running the bash).
 /// The bead type `--kind` names when it is not given: a work bead.
 const DEFAULT_KIND: &str = "work";
 
-fn bdq_status(home: &str, args: &[String]) -> i32 {
-    let mut cmd = match bdq_command(home) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("bead: {e}");
-            return BRIDGE_FAILED;
-        }
-    };
-    // batch-job: runs a gate, build or forge script that takes as long as its work
-    cmd.args(args).status().map(|s| s.code().unwrap_or(1)).unwrap_or(127)
+/// What a call exits when the door's client cannot be built.
+const DOOR_UNREACHABLE: i32 = 90;
+
+#[cfg(test)]
+thread_local! {
+    static TEST_DOOR: std::cell::RefCell<Option<spira_store::lc_call::LcClient>> = const { std::cell::RefCell::new(None) };
 }
 
-fn bdq_capture_with(home: &str, args: &[String], stderr: Stdio) -> (i32, String) {
-    let mut cmd = match bdq_command(home) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("bead: {e}");
-            return (BRIDGE_FAILED, String::new());
-        }
-    };
-    // batch-job: runs a gate, build or forge script that takes as long as its work
-    let out = cmd.args(args).stdin(Stdio::inherit()).stdout(Stdio::piped()).stderr(stderr).output();
-    match out {
-        Ok(o) => (
-            o.status.code().unwrap_or(1),
-            String::from_utf8_lossy(&o.stdout).into_owned(),
-        ),
-        Err(_) => (127, String::new()),
+/// The store's client: its socket in production, the declared stand-in in a fixture.
+fn lc() -> Result<spira_store::lc_call::LcClient, String> {
+    #[cfg(test)]
+    if let Some(c) = TEST_DOOR.with(|d| d.borrow().clone()) {
+        return Ok(c);
     }
+    spira_store::lc_call::LcClient::configured()
 }
 
-/// A read through the content door; never forks `bdq`.
+/// A read through the content door.
 fn door(args: &[String]) -> (i32, String) {
-    match spira_store::lc_call::LcClient::configured() {
+    match lc() {
         Ok(c) => bead::door::read(&c, args),
         Err(e) => {
             eprintln!("bead: {e}");
-            (BRIDGE_FAILED, String::new())
+            (DOOR_UNREACHABLE, String::new())
         }
     }
 }
@@ -152,6 +113,45 @@ fn shown_row(id: &str) -> Option<bead::ShowRow> {
     parse_show_row(&out)
 }
 
+/// A write through the content door, its refusal text on stderr as the caller saw it from bd:
+/// the exit code and the stdout, left for the caller to print. A door that cannot say whether
+/// the write committed exits [`CANNOT_TELL`].
+fn put_capture(args: &[&str], body: Option<&str>) -> (i32, String) {
+    let client = match lc() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("bead: {e}");
+            return (DOOR_UNREACHABLE, String::new());
+        }
+    };
+    let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
+    let sent = match body {
+        Some(b) => client.call_stdin(&argv, b),
+        None => client.call(&argv),
+    };
+    match sent {
+        Ok(r) => {
+            eprint!("{}", r.err);
+            (r.code, r.out)
+        }
+        Err(e) => {
+            eprintln!("bead: {e}");
+            (CANNOT_TELL, String::new())
+        }
+    }
+}
+
+/// [`put_capture`] with the door's stdout passed through.
+fn put(args: &[&str], body: Option<&str>) -> i32 {
+    let (code, out) = put_capture(args, body);
+    print!("{out}");
+    code
+}
+
+fn put_note(id: &str, text: &str) -> i32 {
+    put(&["note", id, "--stdin"], Some(text))
+}
+
 /// The labels of `id`; empty when it cannot be read. A bd parent cannot be blocked on its own
 /// child, so a remedy filed under an incident is wired as a plain blocks edge instead.
 fn parent_labels(id: &str) -> Vec<String> {
@@ -159,16 +159,17 @@ fn parent_labels(id: &str) -> Vec<String> {
     parse_show_row(&out).map(|r| r.labels).unwrap_or_default()
 }
 
-/// `bdq_status` for a create: stdout is passed through unchanged, and when `incident` is
+/// A create through the door: stdout is passed through unchanged, and when `incident` is
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
 #[allow(clippy::too_many_arguments)]
-fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
+fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
+    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
     if incident.is_none() && blockers.is_empty() && lookup_title.is_none() && !express {
-        return bdq_status(home, args);
+        return put(&argv, body);
     }
     let since = bead::bdq::utc_stamp_nanos(std::time::SystemTime::now() - std::time::Duration::from_secs(60));
-    let (mut code, mut stdout) = bdq_capture_with(home, args, Stdio::inherit());
+    let (mut code, mut stdout) = put_capture(&argv, body);
     if parse_created_id(&stdout).is_none() {
         if let Some(title) = lookup_title {
             if code == 0 || code == CANNOT_TELL {
@@ -239,7 +240,7 @@ fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, 
     }
     if let Some((incident, labels)) = incident {
         if let Some((from, to)) = bead::remedy_edge(labels, &cfg_label("SPIRA_INCIDENT_LABEL"), &new_id, incident) {
-            let r = bdq_status(home, &s(&["dep", "add", &from, &to, "--type", "blocks"]));
+            let r = put(&["dep", "add", &from, &to, "--type", "blocks"], None);
             if r != 0 {
                 eprintln!("bead: file: {new_id} filed but the blocks edge {from} -> {to} failed; add it: bd dep add {from} {to}");
             }
@@ -255,15 +256,10 @@ fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, 
     rc |= bead::filing::edges_then_promote(
         &new_id,
         blockers,
-        &mut |from, to| bdq_status(home, &s(&["dep", "add", from, to, "--type", "blocks"])),
+        &mut |from, to| put(&["dep", "add", from, to, "--type", "blocks"], None),
         promote_row.then_some(&mut promote as &mut dyn FnMut()),
     );
     rc
-}
-
-/// The lifecycle store's client: its socket in production, the declared stand-in in a fixture.
-fn lc() -> Result<spira_store::lc_call::LcClient, String> {
-    spira_store::lc_call::LcClient::configured()
 }
 
 /// The exit a store answers when it cannot tell whether a write committed.
@@ -863,9 +859,16 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push("-p".into());
             bd_args.push(p.clone());
         }
-        if let Some(bf) = &body_file {
+        let create_body = match body_file.as_deref().map(std::fs::read_to_string).transpose() {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("bead: file: cannot read the body file: {e}");
+                return 1;
+            }
+        };
+        if create_body.is_some() {
             bd_args.push("--body-file".into());
-            bd_args.push(bf.clone());
+            bd_args.push("-".into());
         }
         if json {
             bd_args.push("--json".into());
@@ -877,7 +880,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = bdq_create(home, &bd_args, incident_parent, &bead::filing::blockers(stack_after.as_deref(), &depends_on), Some(&title_for_row), Some(&title_for_row), express, tip.as_deref(), Some(repo.as_str()));
+        let rc = door_create(&bd_args, create_body.as_deref(), incident_parent, &bead::filing::blockers(stack_after.as_deref(), &depends_on), Some(&title_for_row), Some(&title_for_row), express, tip.as_deref(), Some(repo.as_str()));
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", &for_rune), ("repo", &repo), ("kind", "work")]);
         }
@@ -917,9 +920,16 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push("-p".into());
             bd_args.push(p.clone());
         }
-        if let Some(bf) = &body_file {
+        let create_body = match body_file.as_deref().map(std::fs::read_to_string).transpose() {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("bead: file: cannot read the body file: {e}");
+                return 1;
+            }
+        };
+        if create_body.is_some() {
             bd_args.push("--body-file".into());
-            bd_args.push(bf.clone());
+            bd_args.push("-".into());
         }
         if json {
             bd_args.push("--json".into());
@@ -931,7 +941,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = bdq_create(home, &bd_args, incident_parent, &[], None, Some(&title_for_lookup), express, None, None);
+        let rc = door_create(&bd_args, create_body.as_deref(), incident_parent, &[], None, Some(&title_for_lookup), express, None, None);
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", ""), ("repo", repo.as_deref().unwrap_or("")), ("kind", &kind)]);
         }
@@ -1041,7 +1051,7 @@ fn cmd_pilgrimage(home: &str, args: &[String]) -> i32 {
         return 1;
     }
     for dep in &after {
-        let rc = cmd_dep_add(home, &[id.clone(), dep.clone()]);
+        let rc = cmd_dep_add(&[id.clone(), dep.clone()]);
         if rc != 0 {
             eprintln!("bead: pilgrimage: {id} is filed but not blocked by {dep}; wire it with `bead.sh dep add {id} {dep}`");
             return rc;
@@ -1062,7 +1072,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     }
     if args[0] == "--enforce" {
         return match args.get(1) {
-            Some(aid) if args.len() == 2 => amend_enforce(home, aid),
+            Some(aid) if args.len() == 2 => amend_enforce(aid),
             _ => {
                 eprintln!("bead: amend: usage: bead.sh amend --enforce <amend-id>");
                 2
@@ -1071,7 +1081,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     }
     if args[0] == "--settle" {
         return match args.get(1) {
-            Some(id) if args.len() == 2 => amend_settle(home, id),
+            Some(id) if args.len() == 2 => amend_settle(id),
             _ => {
                 eprintln!("bead: amend: usage: bead.sh amend --settle <bead-id>");
                 2
@@ -1151,7 +1161,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
                 return 2;
             }
         };
-        return amend_ack(home, &id, aid, answer);
+        return amend_ack(&id, aid, answer);
     }
     if accept || decline.is_some() {
         eprintln!("bead: amend: --accept and --decline qualify --ack <amend-id>");
@@ -1236,7 +1246,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
         let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
         if bead::claimdesc::live_dwarf(&id, &run, &mail) {
-            return amend_live(home, &id, &mail, note.as_deref(), append_file.as_deref(), ack_within.as_deref());
+            return amend_live(&id, &mail, note.as_deref(), append_file.as_deref(), ack_within.as_deref());
         }
         eprintln!("bead: amend: no live dwarf on {id}; recording the amendment without an acknowledgement");
     }
@@ -1244,13 +1254,13 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     let mut changed = String::new();
     let mut rc = 0;
     if let Some(line) = &override_note {
-        rc |= bdq_status(home, &s(&["note", &id, line]));
+        rc |= put_note(&id, line);
     }
     if let Some(line) = &statute_note {
-        rc |= bdq_status(home, &s(&["note", &id, line]));
+        rc |= put_note(&id, line);
     }
     if let Some(line) = &statute_note {
-        rc |= bdq_status(home, &s(&["note", &id, line]));
+        rc |= put_note(&id, line);
     }
     if let Some(new) = priority {
         let (_, out) = door(&s(&["show", &id, "--json"]));
@@ -1263,11 +1273,11 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
             .filter(|a| !a.is_empty())
             .or_else(|| std::env::var("USER").ok().filter(|a| !a.is_empty()))
             .unwrap_or_else(|| "unknown".to_string());
-        let upd = bdq_status(home, &s(&["update", &id, "-p", &new.to_string()]));
+        let upd = put(&["update", &id, "--priority", &new.to_string()], None);
         rc |= upd;
         if upd == 0 {
             let text = bead::priority_note(&actor, Some(old), new, note.as_deref());
-            rc |= bdq_status(home, &s(&["note", &id, &text]));
+            rc |= put_note(&id, &text);
             changed.push_str(&text);
             note = None;
         }
@@ -1282,13 +1292,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         }
     }
     if let Some(n) = &note {
-        rc |= bdq_status(
-            home,
-            &s(&["note"])
-                .into_iter()
-                .chain([id.clone(), n.clone()])
-                .collect::<Vec<_>>(),
-        );
+        rc |= put_note(&id, n);
         bead::claimdesc::append_change(&mut changed, n);
     }
     if body_file.is_some() || append_file.is_some() {
@@ -1297,8 +1301,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
             eprintln!("bead: amend: cannot read the current description of {id}; refusing");
             return 1;
         };
-        let mut staged: Option<PathBuf> = None;
-        let file = if let Some(af) = &append_file {
+        let new_body = if let Some(af) = &append_file {
             let addition = match std::fs::read_to_string(af) {
                 Ok(t) => t,
                 Err(e) => {
@@ -1306,29 +1309,18 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
                     return 1;
                 }
             };
-            let date = spira_otel::utc_date(std::time::SystemTime::now());
-            let tmp = env::temp_dir().join(format!("bead-amend-{}-{}", std::process::id(), id));
-            if let Err(e) = std::fs::write(&tmp, bead::appended_body(&old, &addition, &date)) {
-                eprintln!("bead: amend: cannot stage the appended body: {e}");
-                return 1;
-            }
-            staged = Some(tmp.clone());
-            tmp.to_string_lossy().into_owned()
+            bead::appended_body(&old, &addition, &spira_otel::utc_date(std::time::SystemTime::now()))
         } else {
-            let bf = body_file.clone().unwrap_or_default();
             eprintln!("bead: amend: {id}: {}", bead::replaced_body_summary(&old));
-            bf
+            match body_file.as_deref().map(std::fs::read_to_string).transpose() {
+                Ok(b) => b.unwrap_or_default(),
+                Err(e) => {
+                    eprintln!("bead: amend: cannot read the body file: {e}");
+                    return 1;
+                }
+            }
         };
-        let mut argv = s(&["update"]);
-        argv.push(id.clone());
-        argv.push("--body-file".into());
-        argv.push(file);
-        argv.push(bead::claimdesc::FORCE_FLAG.into());
-        argv.push("bead.sh amend".into());
-        rc |= bdq_status(home, &argv);
-        if let Some(t) = staged {
-            let _ = std::fs::remove_file(t);
-        }
+        rc |= put(&["update", &id, "--body-file", "-", bead::claimdesc::FORCE_FLAG, "bead.sh amend"], Some(&new_body));
         bead::claimdesc::append_change(&mut changed, if append_file.is_some() { "Description appended." } else { "Description updated." });
     }
 
@@ -1358,27 +1350,18 @@ fn amend_mail_cfg() -> Option<String> {
     spira_config::process::cfg("SPIRA_MAIL").ok().filter(|m| !m.is_empty())
 }
 
-fn merge_into_body(home: &str, id: &str, addition: &str) -> i32 {
+fn merge_into_body(id: &str, addition: &str) -> i32 {
     let (_, out) = door(&s(&["show", id, "--json"]));
     let Some(old) = bead::parse_description(&out) else {
         eprintln!("bead: amend: cannot read the current description of {id}; refusing");
         return 1;
     };
     let date = spira_otel::utc_date(std::time::SystemTime::now());
-    let tmp = env::temp_dir().join(format!("bead-amend-{}-{}", std::process::id(), id));
-    if let Err(e) = std::fs::write(&tmp, bead::appended_body(&old, addition, &date)) {
-        eprintln!("bead: amend: cannot stage the merged body: {e}");
-        return 1;
-    }
-    let rc = bdq_status(
-        home,
-        &s(&["update", id, "--body-file", &tmp.to_string_lossy(), bead::claimdesc::FORCE_FLAG, "bead.sh amend"]),
-    );
-    let _ = std::fs::remove_file(tmp);
-    rc
+    let body = bead::appended_body(&old, addition, &date);
+    put(&["update", id, "--body-file", "-", bead::claimdesc::FORCE_FLAG, "bead.sh amend"], Some(&body))
 }
 
-fn amend_live(home: &str, id: &str, mail: &str, note: Option<&str>, append_file: Option<&str>, ack_within: Option<&str>) -> i32 {
+fn amend_live(id: &str, mail: &str, note: Option<&str>, append_file: Option<&str>, ack_within: Option<&str>) -> i32 {
     let secs = match ack_within {
         None => amendment::DEFAULT_ACK_SECS,
         Some(d) => match amendment::parse_duration(d) {
@@ -1411,7 +1394,7 @@ fn amend_live(home: &str, id: &str, mail: &str, note: Option<&str>, append_file:
             return 1;
         }
     };
-    let rc = bdq_status(home, &s(&["note", id, &format!("Live amendment {} by {} awaiting acknowledgement (within {secs}s):\n\n{}", rec.id, rec.amender, rec.text.trim())]));
+    let rc = put_note(id, &format!("Live amendment {} by {} awaiting acknowledgement (within {secs}s):\n\n{}", rec.id, rec.amender, rec.text.trim()));
     bead::claimdesc::mail_to(
         &format!("dwarf-{id}"),
         "amend <amend@spira>",
@@ -1423,7 +1406,7 @@ fn amend_live(home: &str, id: &str, mail: &str, note: Option<&str>, append_file:
     rc
 }
 
-fn amend_ack(home: &str, id: &str, aid: &str, answer: amendment::State) -> i32 {
+fn amend_ack(id: &str, aid: &str, answer: amendment::State) -> i32 {
     let Some(mail) = amend_mail_cfg() else {
         eprintln!("bead: amend: SPIRA_MAIL is not configured");
         return 1;
@@ -1438,7 +1421,7 @@ fn amend_ack(home: &str, id: &str, aid: &str, answer: amendment::State) -> i32 {
     let mut rc = 0;
     let (verdict, tell) = match &answer {
         amendment::State::Accepted => {
-            rc |= merge_into_body(home, id, &rec.text);
+            rc |= merge_into_body(id, &rec.text);
             ("accepted".to_string(), format!("Amendment {aid} on {id} was accepted by the dwarf and is merged into the description."))
         }
         amendment::State::Declined(why) => (
@@ -1447,20 +1430,20 @@ fn amend_ack(home: &str, id: &str, aid: &str, answer: amendment::State) -> i32 {
         ),
         _ => unreachable!(),
     };
-    rc |= bdq_status(home, &s(&["note", id, &format!("Amendment {aid} {verdict}")]));
+    rc |= put_note(id, &format!("Amendment {aid} {verdict}"));
     bead::claimdesc::mail_to(&rec.amender, "amend <amend@spira>", &format!("Amendment {aid} answered"), &tell);
     rc
 }
 
 /// A released bead's unanswered amendments are merged into its body, so the next claim sees them.
-fn amend_settle(home: &str, id: &str) -> i32 {
+fn amend_settle(id: &str) -> i32 {
     let Some(mail) = amend_mail_cfg() else {
         eprintln!("bead: amend: SPIRA_MAIL is not configured");
         return 1;
     };
     let mut rc = 0;
     for rec in amendment::unanswered(&mail, id) {
-        if merge_into_body(home, id, &rec.text) != 0 {
+        if merge_into_body(id, &rec.text) != 0 {
             eprintln!("bead: amend: could not merge {} into {id}; left pending", rec.id);
             rc = 1;
             continue;
@@ -1470,12 +1453,12 @@ fn amend_settle(home: &str, id: &str) -> i32 {
             rc = 1;
             continue;
         }
-        rc |= bdq_status(home, &s(&["note", id, &format!("Amendment {} merged into the body: its session ended before it was answered", rec.id)]));
+        rc |= put_note(id, &format!("Amendment {} merged into the body: its session ended before it was answered", rec.id));
     }
     rc
 }
 
-fn amend_enforce(home: &str, aid: &str) -> i32 {
+fn amend_enforce(aid: &str) -> i32 {
     let Some(mail) = amend_mail_cfg() else {
         eprintln!("bead: amend: SPIRA_MAIL is not configured");
         return 1;
@@ -1492,7 +1475,7 @@ fn amend_enforce(home: &str, aid: &str) -> i32 {
         }
     };
     let id = rec.bead.clone();
-    let mut rc = merge_into_body(home, &id, &rec.text);
+    let mut rc = merge_into_body(&id, &rec.text);
     if rc != 0 {
         eprintln!("bead: amend: could not merge {aid} into {id}; not slaying");
         return rc;
@@ -1502,7 +1485,7 @@ fn amend_enforce(home: &str, aid: &str) -> i32 {
         return 1;
     }
     let reason = format!("amendment {aid} {why}; slain and requeued with the amendment merged into the body");
-    rc |= bdq_status(home, &s(&["note", &id, &format!("Enforced {aid}: {reason}")]));
+    rc |= put_note(&id, &format!("Enforced {aid}: {reason}"));
     // batch-job: slay waits out the holder's shutdown and salvages its work
     // FORK-EDGE: needs a hel/Units library for slay (stop the holder, salvage, reopen); slay is another crate's binary
     let slay = Command::new(match spira_config::release_env::tool("slay") { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } })
@@ -1539,7 +1522,7 @@ fn cmd_ideas(home: &str, args: &[String]) -> i32 {
         Ok(c) => c,
         Err(e) => {
             eprintln!("bead: {e}");
-            return BRIDGE_FAILED;
+            return DOOR_UNREACHABLE;
         }
     };
     let rows = match bead::door::ideas(&client, &label) {
@@ -1700,14 +1683,14 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
         Ok(c) => c,
         Err(e) => {
             eprintln!("bead: {e}");
-            return BRIDGE_FAILED;
+            return DOOR_UNREACHABLE;
         }
     };
     let src = match bead::door::DoorSource::load(&client, set, lifecycle_rows) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("bead: lint: {e}");
-            return BRIDGE_FAILED;
+            return DOOR_UNREACHABLE;
         }
     };
     let n = bead::LintSource::ids(&src).len();
@@ -1725,7 +1708,7 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
 // dep add
 // =========================================================================================
 
-fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
+fn cmd_dep_add(args: &[String]) -> i32 {
     let mut id: Option<String> = None;
     let mut depid: Option<String> = None;
     let mut dep_type: Option<String> = None;
@@ -1748,7 +1731,7 @@ fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
                 depid = args.get(i).cloned();
             }
             "--file" => {
-                eprintln!("bead: dep add: --file bulk wiring is not wrapped; use bd dep add --file directly");
+                eprintln!("bead: dep add: --file bulk wiring is not wrapped; add each edge with `bead.sh dep add`; the content door takes no bulk file");
                 return 2;
             }
             a if a.starts_with('-') => rest.push(a.to_string()),
@@ -1792,20 +1775,15 @@ fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
         }
     }
 
-    let (id_for_mirror, depid_for_mirror) = (id.clone(), depid.clone());
     let mut call = s(&["dep", "add"]);
     call.push(id);
     call.push(depid);
     if let Some(t) = &dep_type {
         call.push("--type".into());
-        call.push(t.clone());
+        call.push(dep_type_name(t).into());
     }
     call.extend(rest);
-    let rc = bdq_status(home, &call);
-    if rc == 0 {
-        mirror_dep("dep-add", &id_for_mirror, &depid_for_mirror, dep_type.as_deref().map(dep_type_name));
-    }
-    rc
+    put(&call.iter().map(String::as_str).collect::<Vec<_>>(), None)
 }
 
 /// bd's spellings of a `blocks` edge, normalised to the name the lifecycle store records.
@@ -1814,22 +1792,6 @@ fn dep_type_name(t: &str) -> &str {
         "blocks"
     } else {
         t
-    }
-}
-
-/// Mirror one dependency edge into the lifecycle store, which the readiness verbs read for the claim.
-/// bd already holds the edge, so a failed mirror is reported and repaired by
-/// repeating the `dep`, never turned into a failed `dep`.
-fn mirror_dep(verb: &str, id: &str, depid: &str, dep_type: Option<&str>) {
-    let client = match lc() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("bead: {e}");
-            return;
-        }
-    };
-    if !bead::lc::mirror_dep(&client, verb, id, depid, dep_type) {
-        eprintln!("bead: {verb}: {id} -> {depid} is in bd but was not mirrored to the lifecycle store; re-run the `dep` verb to mirror it");
     }
 }
 
@@ -1861,7 +1823,11 @@ fn cmd_dep_epic_edges() -> i32 {
     0
 }
 
-fn cmd_dep_convert(home: &str, args: &[String]) -> i32 {
+fn convert_left_edge(id: &str, epic: &str, rc: i32) -> String {
+    format!("bead: dep convert: {id} -> {epic} blocks edge was removed but the parent-child edge was not added (exit {rc}); the edge is now absent: bead.sh dep add {id} {epic} --type parent-child")
+}
+
+fn cmd_dep_convert(args: &[String]) -> i32 {
     let (id, epic) = match args {
         [i, e] if !i.starts_with('-') && !e.starts_with('-') => (i.clone(), e.clone()),
         _ => {
@@ -1874,35 +1840,18 @@ fn cmd_dep_convert(home: &str, args: &[String]) -> i32 {
         eprintln!("bead: dep convert: refusing — {epic} is not an epic");
         return 1;
     }
-    let rc = bdq_status_stdin(home, &s(&["batch"]), &bead::dep_convert_batch(&id, &epic));
+    let rc = put(&["dep", "remove", &id, &epic], None);
     if rc != 0 {
-        eprintln!("bead: dep convert: the batch was refused (exit {rc}); the edge is unchanged");
+        eprintln!("bead: dep convert: the edge removal was refused (exit {rc}); the edge is unchanged");
+        return rc;
+    }
+    let rc = put(&["dep", "add", &id, &epic, "--type", "parent-child"], None);
+    if rc != 0 {
+        eprintln!("{}", convert_left_edge(&id, &epic, rc));
         return rc;
     }
     println!("converted edge: {id} -> {epic} blocks => parent-child");
     0
-}
-
-/// [`bdq_status`] with `input` on bd's stdin.
-fn bdq_status_stdin(home: &str, args: &[String], input: &str) -> i32 {
-    use std::io::Write;
-    // batch-job: one bd batch, bounded by bdq's own deadline
-    let mut cmd = match bdq_command(home) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("bead: {e}");
-            return BRIDGE_FAILED;
-        }
-    };
-    let child = cmd.args(args).stdin(Stdio::piped()).spawn();
-    let Ok(mut child) = child else { return 127 };
-    if let Some(mut w) = child.stdin.take() {
-        if w.write_all(input.as_bytes()).is_err() {
-            let _ = child.kill();
-            return 1;
-        }
-    }
-    child.wait().map(|s| s.code().unwrap_or(1)).unwrap_or(127)
 }
 
 // =========================================================================================
@@ -1948,7 +1897,7 @@ fn cmd_label(home: &str, args: &[String]) -> i32 {
         }
     }
 
-    let rc = bdq_status(home, &s(&["label", verb, &id, &label]));
+    let rc = put(&["label", verb, &id, &label], None);
     if rc == 0 {
         println!("{verb}ed label: {id} {label}");
     }
@@ -1982,7 +1931,7 @@ const DROPPED_LABEL: &str = "spira-dropped";
 
 /// End a work bead as won't-do: the lifecycle machine does the work (refuse on open dependents,
 /// leave every batch, DROPPED with the reason, close the store); this labels it afterwards.
-fn cmd_drop(home: &str, args: &[String]) -> i32 {
+fn cmd_drop(args: &[String]) -> i32 {
     let usage = "usage: bead.sh drop <id> --reason <text>";
     let (mut id, mut reason) = (None, None);
     let mut it = args.iter();
@@ -2018,7 +1967,7 @@ fn cmd_drop(home: &str, args: &[String]) -> i32 {
     if status != 0 {
         return status;
     }
-    let rc = bdq_status(home, &s(&["label", "add", &id, DROPPED_LABEL]));
+    let rc = label_dropped(&id);
     if rc != 0 {
         eprintln!("bead: drop: {id} is DROPPED but could not be labelled; add it: bead.sh label add {id} {DROPPED_LABEL}");
         return rc;
@@ -2027,7 +1976,11 @@ fn cmd_drop(home: &str, args: &[String]) -> i32 {
     0
 }
 
-fn cmd_dep_remove(home: &str, args: &[String]) -> i32 {
+fn label_dropped(id: &str) -> i32 {
+    put(&["label", "add", id, DROPPED_LABEL], None)
+}
+
+fn cmd_dep_remove(args: &[String]) -> i32 {
     let (id, depid) = match args {
         [i, d] if !i.starts_with('-') && !d.starts_with('-') => (i.clone(), d.clone()),
         _ => {
@@ -2050,10 +2003,130 @@ fn cmd_dep_remove(home: &str, args: &[String]) -> i32 {
         return 1;
     }
 
-    let rc = bdq_status(home, &s(&["dep", "remove", &id, &depid]));
+    let rc = put(&["dep", "remove", &id, &depid], None);
     if rc == 0 {
-        mirror_dep("dep-remove", &id, &depid, None);
         println!("removed edge: {id} -> {depid}");
     }
     rc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spira_store::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+
+    type Sent = Vec<(Vec<String>, Option<String>)>;
+
+    struct Door {
+        sent: Mutex<Sent>,
+        answers: Vec<(&'static str, i32, &'static str)>,
+    }
+
+    impl Transport for Door {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
+            self.sent.lock().unwrap().push((argv.to_vec(), stdin.map(str::to_string)));
+            let line = argv.join(" ");
+            let (_, code, text) = self.answers.iter().find(|(p, _, _)| line.starts_with(p)).copied().unwrap_or(("", 0, ""));
+            Ok(Reply { code, out: if code == 0 { text.into() } else { String::new() }, err: if code == 0 { String::new() } else { text.into() } })
+        }
+    }
+
+    const BEAD: &str = r#"[{"id":"sp-a","issue_type":"task","priority":2,"description":"old","labels":["repo:r"]}]"#;
+
+    fn install(answers: Vec<(&'static str, i32, &'static str)>) -> Arc<Door> {
+        let d = Arc::new(Door { sent: Mutex::new(vec![]), answers });
+        TEST_DOOR.with(|t| *t.borrow_mut() = Some(LcClient::over(d.clone(), true)));
+        d
+    }
+
+    fn argv(a: &[&str]) -> Vec<String> {
+        a.iter().map(|x| x.to_string()).collect()
+    }
+
+    fn writes(d: &Door) -> Sent {
+        const READS: [&str; 3] = ["show", "list", "ref"];
+        d.sent.lock().unwrap().iter().filter(|(a, _)| !READS.contains(&a[1].as_str()) && !(a[1] == "dep" && a[2] == "list")).cloned().collect()
+    }
+
+    fn sent(d: &Door) -> Vec<Vec<String>> {
+        writes(d).into_iter().map(|(a, _)| a).collect()
+    }
+
+    fn configured(dir: &std::path::Path) -> testkit::EnvGuard {
+        let toml = spira_config::process::fixture_toml(dir, &[]);
+        testkit::env(&[("SPIRA_TOML", Some(&toml.to_string_lossy())), ("SPIRA_HOME", Some(&testkit::manifest_dir().join("../spira").to_string_lossy()))])
+    }
+
+    #[test]
+    fn every_bead_write_goes_to_the_content_door() {
+        let dir = testkit::TempDir::new("bead-door-writes");
+        let _env = configured(dir.path());
+        let body = dir.path().join("body.md");
+        std::fs::write(&body, "the new text").unwrap();
+        let body = body.to_string_lossy().into_owned();
+        let show = ("content show", 0, BEAD);
+
+        let d = install(vec![show]);
+        assert_eq!(cmd_amend(".", &argv(&["sp-a", "--note", "n"])), 0);
+        assert_eq!(writes(&d), vec![(argv(&["content", "note", "sp-a", "--stdin"]), Some("n".into()))]);
+
+        let d = install(vec![show]);
+        assert_eq!(cmd_amend(".", &argv(&["sp-a", "-p", "1"])), 0);
+        let w = writes(&d);
+        assert_eq!(w[0].0, argv(&["content", "update", "sp-a", "--priority", "1"]));
+        assert_eq!(w[1].0, argv(&["content", "note", "sp-a", "--stdin"]));
+        assert!(w[1].1.as_deref().unwrap().contains("P2"), "{w:?}");
+
+        let d = install(vec![show]);
+        assert_eq!(cmd_amend(".", &argv(&["sp-a", "--body-file", &body, "--replace"])), 0);
+        assert_eq!(writes(&d), vec![(argv(&["content", "update", "sp-a", "--body-file", "-", "--force-claimed", "bead.sh amend"]), Some("the new text".into()))]);
+
+        let d = install(vec![show]);
+        assert_eq!(cmd_dep_add(&argv(&["sp-a", "sp-b"])), 0);
+        assert_eq!(sent(&d), vec![argv(&["content", "dep", "add", "sp-a", "sp-b"])]);
+
+        let d = install(vec![show, ("content dep list", 0, r#"[{"depends_on_id":"sp-a"}]"#)]);
+        assert_eq!(cmd_dep_remove(&argv(&["sp-a", "sp-a"])), 0);
+        assert_eq!(sent(&d), vec![argv(&["content", "dep", "remove", "sp-a", "sp-a"])]);
+
+        let d = install(vec![show]);
+        assert_eq!(cmd_label(".", &argv(&["add", "sp-a", "tag"])), 0);
+        assert_eq!(sent(&d), vec![argv(&["content", "label", "add", "sp-a", "tag"])]);
+
+        let d = install(vec![]);
+        assert_eq!(label_dropped("sp-a"), 0);
+        assert_eq!(sent(&d), vec![argv(&["content", "label", "add", "sp-a", DROPPED_LABEL])]);
+
+        let d = install(vec![("content create", 0, "sp-new\n")]);
+        let args = argv(&["create", "T", "-l", "repo:r", "--silent", "--body-file", "-"]);
+        assert_eq!(door_create(&args, Some("the body"), None, &[], Some("T"), Some("T"), false, None, Some("r")), 0);
+        let w = writes(&d);
+        assert_eq!(w[0], (argv(&["content", "create", "T", "-l", "repo:r", "--silent", "--body-file", "-"]), Some("the body".into())));
+        assert_eq!(w[1].0[..2], argv(&["create-bead", "sp-new"])[..], "the lifecycle row is the store's own verb on the same client");
+    }
+
+    #[test]
+    fn a_refusal_the_door_gives_is_the_exit_code_and_stderr_the_caller_sees() {
+        install(vec![("content label add", 1, "bead: refusing\n")]);
+        assert_eq!(put(&["label", "add", "sp-a", "x"], None), 1);
+    }
+
+    #[test]
+    fn dep_convert_removes_the_blocks_edge_then_adds_the_parent_edge_and_leaves_the_edge_it_did_not_add() {
+        let epic = ("content show sp-e", 0, r#"[{"id":"sp-e","issue_type":"epic","labels":[]}]"#);
+        let d = install(vec![epic]);
+        assert_eq!(cmd_dep_convert(&argv(&["sp-c", "sp-e"])), 0);
+        assert_eq!(sent(&d), vec![argv(&["content", "dep", "remove", "sp-c", "sp-e"]), argv(&["content", "dep", "add", "sp-c", "sp-e", "--type", "parent-child"])]);
+
+        let d = install(vec![epic, ("content dep add", 3, "refused\n")]);
+        assert_eq!(cmd_dep_convert(&argv(&["sp-c", "sp-e"])), 3);
+        assert_eq!(sent(&d).len(), 2, "the removal stood and the add was tried once");
+        let left = convert_left_edge("sp-c", "sp-e", 3);
+        assert!(left.contains("edge is now absent") && left.contains("bead.sh dep add sp-c sp-e --type parent-child"), "{left}");
+
+        let d = install(vec![epic, ("content dep remove", 3, "refused\n")]);
+        assert_eq!(cmd_dep_convert(&argv(&["sp-c", "sp-e"])), 3);
+        assert_eq!(sent(&d), vec![argv(&["content", "dep", "remove", "sp-c", "sp-e"])], "a refused removal tries no add");
+    }
 }

@@ -36,11 +36,6 @@ pub fn dep_argv(verb: &str, id: &str, depid: &str, dep_type: Option<&str>) -> Ve
     argv
 }
 
-/// Whether the store applied the edge.
-pub fn mirror_dep(lc: &LcClient, verb: &str, id: &str, depid: &str, dep_type: Option<&str>) -> bool {
-    lc.call(&dep_argv(verb, id, depid, dep_type)).is_ok_and(|r| r.code == 0)
-}
-
 /// What `set-repo` answered.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SetRepo {
@@ -114,15 +109,6 @@ mod tests {
         assert_eq!(argv, ["create-bead", "sp-1", "--submitted-tip", "abc", "--repo", "spira"]);
         assert!(!argv.iter().any(|a| a == "--title" || a == "--priority"), "{argv:?}");
         assert_eq!(create_bead_argv("sp-1", None, None), ["create-bead", "sp-1"], "the control: the bare row still builds");
-    }
-
-    #[test]
-    fn mirror_dep_is_applied_only_on_exit_zero() {
-        let (lc, t) = client(0, "");
-        assert!(mirror_dep(&lc, "dep-add", "a", "b", Some("blocks")));
-        assert_eq!(t.seen.lock().unwrap()[0], ["dep-add", "a", "b", "--type", "blocks"]);
-        let (lc, _) = client(2, "cannot tell");
-        assert!(!mirror_dep(&lc, "dep-remove", "a", "b", None));
     }
 
     #[test]
