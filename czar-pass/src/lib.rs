@@ -189,7 +189,7 @@ pub fn file(f: &Filing) -> Result<String, String> {
 /// `forge batch-ci-status <repo> <branch>`'s `key: value` lines, through the forge library.
 pub fn batch_ci_status(forge: &str, repo_path: &str, branch: &str) -> Result<String, String> {
     let r = forge::client::run(&forge::client::route_of(std::path::Path::new(forge)), "batch-ci-status", std::path::Path::new(repo_path), &[branch], None);
-    if r.ok() { Ok(r.out) } else { Err(format!("forge exited {}", r.code)) }
+    if r.ok() { Ok(r.out) } else { Err(format!("forge batch-ci-status exited {}: {}", r.code, r.err.trim())) }
 }
 
 /// Re-dispatches a workflow run through the forge library (`gh` is its only child).

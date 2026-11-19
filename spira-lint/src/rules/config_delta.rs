@@ -19,6 +19,30 @@ fn is_key_name(n: &str) -> bool {
     !n.is_empty() && n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
+const TASK_MODES: &str = "spira/conf.d/SPIRA_TASK_MODES";
+
+fn task_names(key_text: &str) -> Option<BTreeSet<String>> {
+    let key = spira_config::registry::parse_key_text("SPIRA_TASK_MODES", key_text).ok()?;
+    let list = key.default_expr()?;
+    Some(
+        list.split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|e| !e.is_empty())
+            .map(|e| e.split_once('=').map_or(e, |x| x.0).to_string())
+            .collect(),
+    )
+}
+
+fn undeclared_removed_tasks(tree: &Tree, base: &str, delta: &str) -> Vec<String> {
+    let Some(prior) = tree.git(&["show", &format!("{base}:{TASK_MODES}")]).ok().and_then(|o| task_names(&String::from_utf8_lossy(&o))) else { return Vec::new() };
+    let Some(head) = std::fs::read_to_string(tree.root.join(TASK_MODES)).ok().and_then(|t| task_names(&t)) else { return Vec::new() };
+    let declared: BTreeSet<String> = delta
+        .parse::<toml::Table>()
+        .ok()
+        .and_then(|t| t.get("removed_tasks").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()))
+        .unwrap_or_default();
+    prior.into_iter().filter(|t| !head.contains(t) && !declared.contains(t)).collect()
+}
+
 pub fn config_path(file: &str) -> String {
     format!("spira.{}", file.strip_prefix("SPIRA_").unwrap_or(file).to_ascii_lowercase())
 }
@@ -141,6 +165,16 @@ impl Rule for ConfigDelta {
                 path: DELTA.into(),
                 line: None,
                 message: format!("registry key {k} is removed but {DELTA} does not list it under removed"),
+            });
+        }
+        for task in undeclared_removed_tasks(tree, &base, &text) {
+            out.push(Finding {
+                rule: NAME,
+                path: TASK_MODES.into(),
+                line: None,
+                message: format!(
+                    "task {task} is dropped from the SPIRA_TASK_MODES default but no config delta lists it under removed_tasks: the host's spira.task_modes still names it and the release build will refuse the landing; run spira-config retire --task {task} --bead <id>"
+                ),
             });
         }
         for (from, to) in unrenamed(&text).map_err(|e| LintError::Refused(format!("{DELTA} does not parse: {e}")))? {
@@ -272,6 +306,42 @@ mod tests {
         spira_config::retire::retire_key(t.path(), "spira.old_knob", "sp-x").unwrap();
         let found = rule.check(&tree()).unwrap();
         assert!(found.is_empty(), "{:?}", found.iter().map(|f| &f.message).collect::<Vec<_>>());
+    }
+
+    fn task_tree(base_modes: &str, head_modes: &str) -> (TempDir, String) {
+        let t = TempDir::new("config-delta-tasks");
+        let key = |m: &str| format!("TYPE=string\nDOC=d\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${{SPIRA_TASK_MODES:={m}}}\"\nSPIRA_CONF_DEFAULT_EOF\n");
+        t.write("spira/conf.toml.d/SPIRA_TOML_ONLY", "TYPE=string\nDOC=d\n");
+        t.write("spira/conf.d/SPIRA_TASK_MODES", &key(base_modes));
+        t.write(DELTA, "removed = []\n");
+        t.write("spira/testlib/complete.toml", "[spira]\n");
+        for args in [&["init", "-q", "-b", "main"][..], &["add", "-A"], &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]] {
+            assert!(std::process::Command::new("git").arg("-C").arg(t.path()).args(args).status().unwrap().success());
+        }
+        t.write("spira/conf.d/SPIRA_TASK_MODES", &key(head_modes));
+        (t, String::new())
+    }
+
+    #[test]
+    fn a_task_dropped_from_the_default_without_removed_tasks_is_found_and_declaring_it_clears_it() {
+        let (t, _) = task_tree("a=act b=act", "a=act");
+        let rule = ConfigDelta::default();
+        let tree = || Tree::from_git(t.path()).unwrap().with_base(Some("main".into()));
+        let found = rule.check(&tree()).unwrap();
+        assert_eq!(found.len(), 1, "{:?}", found.iter().map(|f| &f.message).collect::<Vec<_>>());
+        assert!(found[0].message.contains("task b is dropped") && found[0].message.contains("spira-config retire --task b"), "{}", found[0].message);
+        t.write("spira/config-delta.d/x.toml", "removed_tasks = [\"b\"]\n");
+        let found = rule.check(&tree()).unwrap();
+        assert!(found.is_empty(), "{:?}", found.iter().map(|f| &f.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_side_without_a_task_modes_file_skips_the_task_check() {
+        let (t, _) = task_tree("a=act b=act", "a=act");
+        t.remove("spira/conf.d/SPIRA_TASK_MODES");
+        let tree = Tree::from_git(t.path()).unwrap().with_base(Some("main".into()));
+        let found = ConfigDelta::default().check(&tree).unwrap();
+        assert!(found.iter().all(|f| f.path != TASK_MODES), "{:?}", found.iter().map(|f| &f.message).collect::<Vec<_>>());
     }
 
     fn folded_tree(t: &TempDir, status: &'static str, base_file: &'static str, frag: &'static str) -> Tree {

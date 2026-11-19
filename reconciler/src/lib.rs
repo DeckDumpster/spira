@@ -695,6 +695,38 @@ pub fn run_cmd_ok(program: &str, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+fn run_cmd_err(program: &str, args: &[&str], deadline_secs: u64) -> Result<(), String> {
+    let said = |why: String| format!("{} {}: {}", program, args.join(" "), why);
+    let out = spira_config::bounded::bounded_for(program, &deadline_secs.to_string())
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| said(e.to_string()))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let code = match out.status.code() {
+        Some(124) => format!("exit 124 (hit the {deadline_secs}s deadline)"),
+        Some(c) => format!("exit {c}"),
+        None => "killed by a signal".to_string(),
+    };
+    Err(said(format!("{code}: {}", String::from_utf8_lossy(&out.stderr).trim())))
+}
+
+fn clear_main_health_tree(git: &str, repo: &str, tree: &Path, deadline_secs: u64) -> Result<(), String> {
+    let t = tree.to_string_lossy();
+    let _ = run_cmd_err(git, &["-C", repo, "worktree", "unlock", &t], deadline_secs);
+    let _ = run_cmd_err(git, &["-C", repo, "worktree", "remove", "--force", "--force", &t], deadline_secs);
+    let _ = fs::remove_dir_all(tree);
+    run_cmd_err(git, &["-C", repo, "worktree", "prune"], deadline_secs)
+}
+
+fn fresh_main_health_tree(git: &str, repo: &str, tree: &Path, sha: &str, deadline_secs: u64) -> Result<(), String> {
+    clear_main_health_tree(git, repo, tree, deadline_secs)?;
+    // batch-job: a full checkout of the spira tree, bounded by SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS
+    run_cmd_err(git, &["-C", repo, "worktree", "add", "--detach", &tree.to_string_lossy(), sha], deadline_secs)
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Repo map — copied from czar-pass's own reader; the two binaries share the
 // file's format but not a crate, so this stays a small, literal copy rather than a new
@@ -2055,10 +2087,8 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
     }
     let tree = paths::main_health_tree(&cfg.spira_run);
     let tree_str = tree.to_string_lossy().to_string();
-    let _ = run_cmd_ok(git, &["-C", &repo_str, "worktree", "remove", "--force", &tree_str]);
-    let _ = fs::remove_dir_all(&tree);
-    if !run_cmd_ok(git, &["-C", &repo_str, "worktree", "add", "--detach", &tree_str, &sha]) {
-        return unobservable(format!("cannot check out {} into {}", sha, tree_str));
+    if let Err(e) = fresh_main_health_tree(git, &repo_str, &tree, &sha, cfg.fence_deadline_secs) {
+        return unobservable(format!("cannot check out {} into {}: {}", sha, tree_str, e));
     }
     let mut checks: Vec<Check> = pending_check.into_iter().collect();
     for fence in base_fences(cfg, &tree_str, &sha).into_iter().filter(judged) {
@@ -2128,8 +2158,7 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
         checks.push(Check { key: format!("main-health:{}", fence.class), raw, remedy: Remedy::Escalate });
     }
     let _ = fs::write(&cache_path, serde_json::Value::Object(cache).to_string());
-    let _ = run_cmd_ok(git, &["-C", &repo_str, "worktree", "remove", "--force", &tree_str]);
-    let _ = fs::remove_dir_all(&tree);
+    let _ = clear_main_health_tree(git, &repo_str, &tree, cfg.fence_deadline_secs);
     checks
 }
 
@@ -2670,6 +2699,50 @@ mod tests {
         assert!(e.contains("forge is not in SPIRA_RELEASE"), "{e}");
     }
     use std::time::SystemTime;
+
+    // Real git in a TempDir: a locked registration is git's own state, which no model reproduces
+    // (the exception law-a-unit-test-calls-no-binary allows, as queue/src/tests/round.rs uses).
+    fn main_health_repo() -> (testkit::TempDir, String, String) {
+        let d = testkit::TempDir::new("main-health-tree");
+        let repo = d.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        testkit::git(&repo, &["init", "-q", "-b", "main"]);
+        fs::write(repo.join("f"), "x").unwrap();
+        testkit::git(&repo, &["add", "."]);
+        testkit::git(&repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]);
+        let sha = testkit::git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+        (d, repo.to_string_lossy().to_string(), sha)
+    }
+
+    #[test]
+    fn a_locked_half_initialised_registration_is_cleared_and_the_tree_added() {
+        let (d, repo, sha) = main_health_repo();
+        let tree = d.path().join("tree");
+        let t = tree.to_string_lossy().to_string();
+        testkit::git(Path::new(&repo), &["worktree", "add", "--detach", &t, &sha]);
+        testkit::git(Path::new(&repo), &["worktree", "lock", "--reason", "initializing", &t]);
+        fs::remove_dir_all(&tree).unwrap();
+        fresh_main_health_tree("git", &repo, &tree, &sha, 60).unwrap();
+        assert_eq!(testkit::git(&tree, &["rev-parse", "HEAD"]).trim(), sha);
+    }
+
+    #[test]
+    fn a_clean_path_is_added_and_a_second_pass_replaces_it() {
+        let (d, repo, sha) = main_health_repo();
+        let tree = d.path().join("tree");
+        fresh_main_health_tree("git", &repo, &tree, &sha, 60).unwrap();
+        fresh_main_health_tree("git", &repo, &tree, &sha, 60).unwrap();
+        clear_main_health_tree("git", &repo, &tree, 60).unwrap();
+        assert!(!tree.exists());
+    }
+
+    #[test]
+    fn a_failed_checkout_carries_gits_own_stderr() {
+        let (d, repo, _) = main_health_repo();
+        let tree = d.path().join("tree");
+        let e = fresh_main_health_tree("git", &repo, &tree, "0123456789abcdef0123456789abcdef01234567", 60).unwrap_err();
+        assert!(e.contains("fatal:") || e.contains("invalid reference"), "{e}");
+    }
 
     fn two_builds() -> testkit::TempDir {
         let d = testkit::TempDir::new("judge-builds");

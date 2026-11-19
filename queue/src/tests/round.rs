@@ -431,6 +431,21 @@ fn an_eject_for_the_config_delta_check_is_taken_as_a_round_step() {
 }
 
 #[test]
+fn an_eject_red_on_the_release_verify_step_is_accepted_as_a_round_step() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--reason", "the release build refused its task list", "--red", "--suites", "release-verify"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
+    assert!(crate::ops::round::ROUND_ONLY_STEPS.contains(&"release-verify"));
+}
+
+#[test]
 fn an_eject_forcing_a_suite_testenv_does_not_know_is_refused_naming_the_known_ones_and_changes_nothing(
 ) {
     let t = round_world();
