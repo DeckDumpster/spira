@@ -15,7 +15,8 @@ tl_config SPIRA_TEST_CASE_DEADLINE=400
 [ -n "${SPIRA_RELEASE:-}" ] || bail "SPIRA_RELEASE is not set: run via testenv --with-bins"
 SIM="$SPIRA_RELEASE/bin/sim"
 [ -x "$SIM" ] || bail "no sim in the staged release: $SIM"
-T="$(mktemp -d)"
+T="$(mktemp -d /tmp/pw.XXXXXX)" # short root: <world>/pilgrim/lc.sock must stay under the 107-byte sun_path limit
+[ "${#T}" -le 60 ] || bail "scratch root $T is too long for <world>/pilgrim/lc.sock"
 NOLOC=(-u SPIRA_TOML -u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
 cleanup() {
     local f
