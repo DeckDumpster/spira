@@ -2050,6 +2050,7 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
     let rerun_at: Option<u64> = b.kv.get("setup_rerun").and_then(|t| t.trim().parse().ok());
+    let mut refused: Option<String> = None;
     if let Some(t) = rerun_at {
         if b.kv.get("setup_incident").is_none()
             && now.saturating_sub(t) < c.s.verdict.ci_idle_sec
@@ -2061,23 +2062,40 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
             return OK;
         }
     } else if let Some(run) = w.forge.run_id(&c.s.forge, b.path, &b.branch) {
-        w.forge.workflow_rerun(&c.s.forge, b.path, &run);
-        w.out(format!("verdict {name}: PR {pr} red — {bo}no suite annotations (step: {}); re-running run {run} once", if step.is_empty() { "unknown" } else { &step }));
-        return match rewrite(
-            w,
-            c,
-            b,
-            &["setup_rerun", "setup_step"],
-            &[("setup_rerun", &now.to_string()), ("setup_step", &step)],
-        ) {
-            Ok(()) => OK,
-            Err(e) => {
-                w.err(format!(
-                    "verdict {name}: PR {pr} re-run started but not recorded: {e}"
-                ));
-                FAIL
+        match w.forge.workflow_rerun(&c.s.forge, b.path, &run) {
+            Rerun::Started => {
+                w.out(format!("verdict {name}: PR {pr} red — {bo}no suite annotations (step: {}); re-running run {run} once", if step.is_empty() { "unknown" } else { &step }));
+                return match rewrite(
+                    w,
+                    c,
+                    b,
+                    &["setup_rerun", "setup_step"],
+                    &[("setup_rerun", &now.to_string()), ("setup_step", &step)],
+                ) {
+                    Ok(()) => OK,
+                    Err(e) => {
+                        w.err(format!(
+                            "verdict {name}: PR {pr} re-run started but not recorded: {e}"
+                        ));
+                        FAIL
+                    }
+                };
             }
-        };
+            Rerun::Decided(why) => refused = Some(why),
+            Rerun::Failed => {
+                rerun_could_not_start(
+                    w,
+                    c,
+                    "setup-rerun-refused",
+                    &b.head,
+                    &format!("PR {pr}"),
+                    &NoRerun::Other(format!(
+                        "the forge refused to re-run run {run} (its reason is in the forge line logged above)"
+                    )),
+                );
+                return OK;
+            }
+        }
     }
     let first = b.kv.get("setup_step").unwrap_or("").to_string();
     let log = tagged(out, "step-log: ").join("\n");
@@ -2086,14 +2104,17 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
     } else {
         step.as_str()
     };
-    let same = if rerun_at.is_none() {
-        "no run id to re-run"
+    let same = if let Some(why) = &refused {
+        format!("re-run refused: {why}")
+    } else if rerun_at.is_none() {
+        "no run id to re-run".to_string()
     } else if first == step {
-        "same failing step on the re-run"
+        "same failing step on the re-run".to_string()
     } else {
-        "a different failing step on the re-run"
+        "a different failing step on the re-run".to_string()
     };
-    if rerun_at.is_some() && first == step && b.members.len() == 1 && !infra_red(out) {
+    let spent_same = rerun_at.is_some() && first == step;
+    if (refused.is_some() || spent_same) && b.members.len() == 1 && !infra_red(out) {
         let mut lines: Vec<String> = log.lines().rev().take(5).map(str::to_string).collect();
         lines.reverse();
         if lines.is_empty() {
