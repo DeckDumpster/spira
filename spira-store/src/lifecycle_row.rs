@@ -3,7 +3,7 @@
 
 use lifecycle::bead::BeadEventKind;
 
-use crate::lc_call::{LcClient, LcError, LC_TIMEOUT, REFUSED};
+use crate::lc_call::{LcClient, LcError, CANNOT_TELL, LC_TIMEOUT, REFUSED};
 
 pub const LC_BIN_ENV: &str = "SPIRA_LC_BIN";
 
@@ -221,35 +221,86 @@ pub fn promote(id: &str) -> Result<(), String> {
     promote_with(&lc_bin()?, id)
 }
 
-fn row_on(c: &LcClient, id: &str, repo: Option<&str>, backoff_ms: u64) -> Result<(), String> {
-    let mut last = status_on(c, &create_row_args(id, repo));
-    for n in 1..ROW_ATTEMPTS {
-        if last.is_ok() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(backoff_ms * u64::from(n)));
-        last = status_on(c, &create_row_args(id, repo));
-    }
-    last
+fn row_on(c: &LcClient, id: &str, repo: Option<&str>, retry: &Retry) -> Result<(), String> {
+    write_idempotent(c, &create_row_args(id, repo), retry)
 }
 
 pub fn ensure_row(id: &str, repo: Option<&str>) -> Result<(), String> {
-    ensure_row_retrying(&lc_bin()?, id, repo, ROW_ATTEMPTS, 250)
+    row_on(&client(&lc_bin()?)?, id, repo, &Retry::configured()?)
 }
 
-const ROW_ATTEMPTS: u32 = 3;
+/// Config key: seconds an idempotent row write is retried through a store that cannot tell.
+pub const IDEMPOTENT_RETRY_KEY: &str = "SPIRA_LC_IDEMPOTENT_RETRY_SECS";
 
-/// `create-bead` is idempotent, so a transient failure is retried before it is reported.
-pub fn ensure_row_retrying(bin: &str, id: &str, repo: Option<&str>, attempts: u32, backoff_ms: u64) -> Result<(), String> {
-    let mut last = ensure_row_with(bin, id, repo);
-    for n in 1..attempts {
-        if last.is_ok() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(backoff_ms * u64::from(n)));
-        last = ensure_row_with(bin, id, repo);
+const BACKOFF_START: std::time::Duration = std::time::Duration::from_millis(250);
+const BACKOFF_CAP: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The clock a retry reads and sleeps on; a test swaps in a virtual one.
+pub trait Pace: Send + Sync {
+    fn now(&self) -> std::time::Duration;
+    fn sleep(&self, d: std::time::Duration);
+}
+
+struct RealPace(std::time::Instant);
+
+impl Pace for RealPace {
+    fn now(&self) -> std::time::Duration {
+        self.0.elapsed()
     }
-    last
+    fn sleep(&self, d: std::time::Duration) {
+        std::thread::sleep(d);
+    }
+}
+
+/// How long an idempotent write is retried: until `bound` has passed, whatever the attempts.
+pub struct Retry {
+    bound: std::time::Duration,
+    pace: std::sync::Arc<dyn Pace>,
+}
+
+impl Retry {
+    pub fn within(bound: std::time::Duration) -> Self {
+        Retry { bound, pace: std::sync::Arc::new(RealPace(std::time::Instant::now())) }
+    }
+
+    /// One attempt, no retry.
+    pub fn once() -> Self {
+        Self::within(std::time::Duration::ZERO)
+    }
+
+    /// The bound the configuration declares.
+    pub fn configured() -> Result<Self, String> {
+        let secs: u32 = spira_config::process::cfg_parse(IDEMPOTENT_RETRY_KEY)?;
+        Ok(Self::within(std::time::Duration::from_secs(u64::from(secs))))
+    }
+
+    pub fn with_pace(mut self, pace: std::sync::Arc<dyn Pace>) -> Self {
+        self.pace = pace;
+        self
+    }
+}
+
+/// Sends an idempotent write until the store applies it or `retry`'s bound runs out. Only
+/// "cannot tell" (exit 2) and no answer are retried: a refusal is final, since asking again
+/// cannot change it.
+pub fn write_idempotent<S: AsRef<str>>(c: &LcClient, argv: &[S], retry: &Retry) -> Result<(), String> {
+    let said = argv.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(" ");
+    let start = retry.pace.now();
+    let mut backoff = BACKOFF_START;
+    loop {
+        let unanswered = match c.call(argv) {
+            Ok(r) if r.code == 0 => return Ok(()),
+            Ok(r) if r.code == CANNOT_TELL => format!("{said} exited {}: {}", r.code, r.text()),
+            Ok(r) => return Err(format!("{said} exited {}: {}", r.code, r.text())),
+            Err(LcError::Refused(m)) => return Err(m),
+            Err(e) => e.to_string(),
+        };
+        if retry.pace.now().saturating_sub(start) + backoff > retry.bound {
+            return Err(unanswered);
+        }
+        retry.pace.sleep(backoff);
+        backoff = (backoff * 2).min(BACKOFF_CAP);
+    }
 }
 
 /// Call after a successful `bd create` whose stdout is `created_stdout`. A failure is
@@ -366,18 +417,18 @@ pub fn reopen(id: &str, cause: &str, actor: &str) -> Result<(), String> {
 /// which must have been run with `--json`. `repo` is the create's `repo:` label, if any.
 pub fn after_create_ids(who: &str, created_stdout: &str, repo: Option<&str>) -> Result<(), String> {
     let c = client(&lc_bin()?)?;
-    after_create_ids_on(&c, who, created_stdout, repo, 250)
+    after_create_ids_on(&c, who, created_stdout, repo, &Retry::configured()?)
 }
 
 /// [`after_create_ids`] through `c`, so a test can run it against an in-process service.
-pub fn after_create_ids_on(c: &LcClient, who: &str, created_stdout: &str, repo: Option<&str>, backoff_ms: u64) -> Result<(), String> {
+pub fn after_create_ids_on(c: &LcClient, who: &str, created_stdout: &str, repo: Option<&str>, retry: &Retry) -> Result<(), String> {
     let ids = created_ids(created_stdout);
     if ids.is_empty() {
         let e = format!("cannot read any created bead id from {created_stdout:?}");
         eprintln!("{who}: LIFECYCLE: {e}; the new beads have no lifecycle row and cannot be claimed");
         return Err(e);
     }
-    let errs: Vec<String> = ids.iter().filter_map(|id| row_on(c, id, repo, backoff_ms).err()).collect();
+    let errs: Vec<String> = ids.iter().filter_map(|id| row_on(c, id, repo, retry).err()).collect();
     if errs.is_empty() {
         return Ok(());
     }
@@ -389,19 +440,15 @@ pub fn after_create_ids_on(c: &LcClient, who: &str, created_stdout: &str, repo: 
 /// Writes the claim inputs of each of `ids` onto its lifecycle record (`spira-lc
 /// sync-claim-inputs`). A failure is reported with its repair and returned; the bd write it
 /// follows stands.
-pub fn sync_claim_inputs_on(c: &LcClient, who: &str, ids: &[String]) -> Result<(), String> {
+pub fn sync_claim_inputs_on(c: &LcClient, who: &str, ids: &[String], retry: &Retry) -> Result<(), String> {
     if ids.is_empty() {
         return Ok(());
     }
     let mut argv = vec!["sync-claim-inputs"];
     argv.extend(ids.iter().map(String::as_str));
-    let failed = match c.call(&argv) {
-        Ok(r) if r.code == 0 => return Ok(()),
-        Ok(r) => format!("exited {}: {}", r.code, r.text().trim()),
-        Err(e) => e.to_string(),
-    };
-    eprintln!("{who}: LIFECYCLE: {failed}; claim inputs not written; repair: spira-lc sync-claim-inputs {}", ids.join(" "));
-    Err(failed)
+    write_idempotent(c, &argv, retry).inspect_err(|failed| {
+        eprintln!("{who}: LIFECYCLE: {failed}; claim inputs not written; repair: spira-lc sync-claim-inputs {}", ids.join(" "));
+    })
 }
 
 /// [`sync_claim_inputs_on`] through the configured `spira-lc`.
@@ -410,12 +457,103 @@ pub fn sync_claim_inputs(who: &str, ids: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let c = client(&lc_bin()?)?;
-    sync_claim_inputs_on(&c, who, ids)
+    sync_claim_inputs_on(&c, who, ids, &Retry::configured()?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lc_call::{Reply, Transport};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    struct Virtual(Mutex<Duration>);
+
+    impl Pace for Virtual {
+        fn now(&self) -> Duration {
+            *self.0.lock().unwrap()
+        }
+        fn sleep(&self, d: Duration) {
+            *self.0.lock().unwrap() += d;
+        }
+    }
+
+    /// Answers each call from `script`, repeating its last entry; every attempt costs the
+    /// 5 s deadline a real one would, on the virtual clock.
+    struct Scripted {
+        script: Vec<i32>,
+        seen: Mutex<Vec<Vec<String>>>,
+        pace: Arc<Virtual>,
+    }
+
+    impl Transport for Scripted {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+            let mut seen = self.seen.lock().unwrap();
+            seen.push(argv.to_vec());
+            *self.pace.0.lock().unwrap() += Duration::from_secs(5);
+            let code = *self.script.get(seen.len() - 1).or(self.script.last()).unwrap();
+            let out = if code == 2 { "cannot tell: deadline" } else { "" };
+            Ok(Reply { code, out: out.into(), err: String::new() })
+        }
+    }
+
+    fn scripted(script: &[i32], bound_secs: u64) -> (LcClient, Arc<Scripted>, Retry) {
+        let pace = Arc::new(Virtual(Mutex::new(Duration::ZERO)));
+        let t = Arc::new(Scripted { script: script.to_vec(), seen: Mutex::new(Vec::new()), pace: pace.clone() });
+        (LcClient::over(t.clone(), true), t, Retry::within(Duration::from_secs(bound_secs)).with_pace(pace))
+    }
+
+    fn sent(t: &Scripted) -> usize {
+        t.seen.lock().unwrap().len()
+    }
+
+    #[test]
+    fn a_create_the_store_cannot_tell_twice_is_sent_a_third_time_and_succeeds() {
+        let (c, t, retry) = scripted(&[2, 2, 0], 60);
+        assert_eq!(row_on(&c, "sp-1", None, &retry), Ok(()));
+        assert_eq!(sent(&t), 3);
+        assert_eq!(t.seen.lock().unwrap()[2], ["create-bead", "sp-1", "--ready"]);
+    }
+
+    #[test]
+    fn a_store_down_for_longer_than_three_attempts_is_waited_out_within_the_bound() {
+        let (c, t, retry) = scripted(&[2, 2, 2, 2, 2, 0], 60);
+        assert_eq!(row_on(&c, "sp-1", None, &retry), Ok(()));
+        assert_eq!(sent(&t), 6);
+    }
+
+    #[test]
+    fn a_store_that_never_answers_reports_after_the_bound_and_not_before() {
+        let (c, t, retry) = scripted(&[2], 60);
+        let e = row_on(&c, "sp-1", None, &retry).unwrap_err();
+        assert!(e.contains("cannot tell"), "{e}");
+        assert!(sent(&t) > 3, "{} attempts", sent(&t));
+        assert!(t.pace.now() <= Duration::from_secs(60 + 5), "never runs far past the bound");
+    }
+
+    #[test]
+    fn a_bound_of_zero_makes_one_attempt() {
+        let (c, t, retry) = scripted(&[2, 0], 0);
+        assert!(row_on(&c, "sp-1", None, &retry).is_err());
+        assert_eq!(sent(&t), 1);
+    }
+
+    #[test]
+    fn a_refusal_is_final_and_sent_once() {
+        for code in [1, 3] {
+            let (c, t, retry) = scripted(&[code, 0], 60);
+            assert!(row_on(&c, "sp-1", None, &retry).is_err());
+            assert_eq!(sent(&t), 1, "exit {code}");
+        }
+    }
+
+    #[test]
+    fn claim_inputs_are_retried_the_same_way() {
+        let (c, t, retry) = scripted(&[2, 2, 0], 60);
+        assert_eq!(sync_claim_inputs_on(&c, "t", &["sp-1".to_string()], &retry), Ok(()));
+        assert_eq!(sent(&t), 3);
+    }
+
 
     #[test]
     fn created_id_reads_silent_and_json() {

@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lc
+DOC=Seconds a filing keeps retrying an idempotent lifecycle row write (create-bead, sync-claim-inputs) that the store answered "cannot tell" or did not answer at all, before it reports the bead rowless; 0 makes one attempt. A refusal is never retried.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_IDEMPOTENT_RETRY_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF

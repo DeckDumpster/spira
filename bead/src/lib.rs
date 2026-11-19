@@ -131,6 +131,34 @@ pub fn with_contract_fix(labels: String, contract_fix: bool) -> String {
     }
 }
 
+/// The `Depends: <id>[, <id>…]` line of a body; `none` names no one, and `draft N` is a draft
+/// the filer has since given an id.
+fn depends_line(body: &str) -> Option<Vec<String>> {
+    let line = body.lines().find_map(|l| l.strip_prefix("Depends:"))?;
+    Some(line.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty() && !t.eq_ignore_ascii_case("none")).collect())
+}
+
+/// Why a Skuld-drafted body's dependencies and the `--depends-on` set disagree, or `None`.
+/// Prose alone files no edge, so "depends on" needs the line; the line needs the flag.
+pub fn depends_refusal(body: &str, depends_on: &[String]) -> Option<String> {
+    let Some(named) = depends_line(body) else {
+        return body.to_ascii_lowercase().contains("depends on").then(|| {
+            "the body says it \"depends on\" something but carries no `Depends: <id>[, <id>…]` line, and prose files no edge. Add the line to the draft, and pass each id as --depends-on <id>".to_string()
+        });
+    };
+    let (drafts, ids): (Vec<&String>, Vec<&String>) = named.iter().partition(|t| t.to_ascii_lowercase().starts_with("draft"));
+    let missing: Vec<&String> = ids.iter().filter(|i| !depends_on.contains(i)).copied().collect();
+    let extra: Vec<&String> = depends_on.iter().filter(|d| !ids.contains(d)).collect();
+    if !missing.is_empty() || extra.len() != drafts.len() {
+        return Some(format!(
+            "the body's `Depends:` line names [{}] but --depends-on is [{}]. Make them match: pass --depends-on <id> for each id the line names (a `draft N` is passed as the id it was filed under), or correct the line",
+            named.join(", "),
+            depends_on.join(", ")
+        ));
+    }
+    None
+}
+
 /// Why `base` cannot be stacked under a new bead of `repo`, or `None` when it can: only a
 /// live work bead of the same repo carries commits the new branch can be cut from.
 pub fn stack_after_refusal(base: &str, row: Option<&ShowRow>, terminal: bool, repo: &str) -> Option<String> {
@@ -789,6 +817,39 @@ pub fn lint(src: &dyn LintSource, cfg: &LintCfg) -> (i32, Vec<String>) {
 
 #[cfg(test)]
 mod tests {
+    use super::depends_refusal;
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn prose_depends_on_with_no_depends_line_is_refused() {
+        let why = depends_refusal("This item depends on draft 1.\n", &[]).expect("refused");
+        assert!(why.contains("Depends:") && why.contains("--depends-on"), "{why}");
+        assert_eq!(depends_refusal("Nothing to wait for.\n", &[]), None, "the control: no prose, no line");
+    }
+
+    #[test]
+    fn a_depends_line_matching_the_flags_is_accepted() {
+        assert_eq!(depends_refusal("depends on sp-a\n\nDepends: sp-a\n", &ids(&["sp-a"])), None);
+        assert_eq!(depends_refusal("Depends: sp-a, sp-b\n", &ids(&["sp-b", "sp-a"])), None);
+        assert_eq!(depends_refusal("Depends: none\n", &[]), None);
+    }
+
+    #[test]
+    fn a_depends_line_the_flags_do_not_match_is_refused_both_ways() {
+        assert!(depends_refusal("Depends: sp-b\n", &[]).is_some());
+        assert!(depends_refusal("Depends: sp-b\n", &ids(&["sp-a"])).is_some());
+        assert!(depends_refusal("Depends: sp-a\n", &ids(&["sp-a", "sp-c"])).is_some(), "a flag the line omits");
+    }
+
+    #[test]
+    fn a_draft_n_on_the_line_is_matched_by_one_extra_flag() {
+        assert_eq!(depends_refusal("Depends: draft 1, sp-c\n", &ids(&["sp-c", "sp-x"])), None);
+        assert!(depends_refusal("Depends: draft 1, sp-c\n", &ids(&["sp-c"])).is_some());
+    }
+
 
     #[test]
     fn skuld_drafted_passes_an_exact_match_and_an_open_line_after_it() {

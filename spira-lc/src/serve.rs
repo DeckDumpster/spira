@@ -1977,7 +1977,7 @@ mod tests {
         let client = spira_store::lc_call::LcClient::over(world.clone(), true);
         let args: Vec<String> = ["create", "T", "--silent", "--labels", "repo:spira"].iter().map(|a| a.to_string()).collect();
         let repo = bead::bdq::created_repo(&args);
-        spira_store::lifecycle_row::after_create_ids_on(&client, "bdq", "sp-new\n", repo.as_deref(), 0).unwrap();
+        spira_store::lifecycle_row::after_create_ids_on(&client, "bdq", "sp-new\n", repo.as_deref(), &spira_store::lifecycle_row::Retry::once()).unwrap();
         let live = world.0.lock().unwrap().ok(&["list", "--live"]);
         let rows: Vec<serde_json::Value> = serde_json::from_str(&live).unwrap();
         let row = rows.iter().find(|r| r["bead_id"] == "sp-new").expect("the row exists");
@@ -1993,14 +1993,14 @@ mod tests {
     /// bdq's hooks after a write, as `bdq` runs them: the ids the write changed, then the sync.
     fn bdq_hooks(client: &spira_store::lc_call::LcClient, args: &[&str], stdout: &str) -> Result<(), String> {
         let ids = spira_store::planning::claim_inputs_changed(args, stdout);
-        spira_store::lifecycle_row::sync_claim_inputs_on(client, "bdq", &ids)
+        spira_store::lifecycle_row::sync_claim_inputs_on(client, "bdq", &ids, &spira_store::lifecycle_row::Retry::once())
     }
 
     fn filed_world(labels: &[&str], parent: Option<&str>) -> (std::sync::Arc<InProcess>, spira_store::lc_call::LcClient) {
         let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
         world.0.lock().unwrap().file("sp-new", "task", parent, labels);
         let client = spira_store::lc_call::LcClient::over(world.clone(), true);
-        spira_store::lifecycle_row::after_create_ids_on(&client, "bdq", "sp-new\n", None, 0).unwrap();
+        spira_store::lifecycle_row::after_create_ids_on(&client, "bdq", "sp-new\n", None, &spira_store::lifecycle_row::Retry::once()).unwrap();
         (world, client)
     }
 
@@ -2209,7 +2209,7 @@ mod tests {
         let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
         world.0.lock().unwrap().file("sp-ghost", "task", None, &[]);
         let client = spira_store::lc_call::LcClient::over(world.clone(), true);
-        let err = spira_store::lifecycle_row::sync_claim_inputs_on(&client, "bdq", &["sp-ghost".to_string()]).unwrap_err();
+        let err = spira_store::lifecycle_row::sync_claim_inputs_on(&client, "bdq", &["sp-ghost".to_string()], &spira_store::lifecycle_row::Retry::once()).unwrap_err();
         assert!(err.contains("sp-ghost"), "{err}");
         assert_eq!(world.0.lock().unwrap().ok(&["list", "--live"]).trim(), "[]");
     }
