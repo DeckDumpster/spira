@@ -21,7 +21,6 @@
 2 unit-name install/src/manifest.rs
 1 unit-name install/src/values.rs
 2 unit-name loom/src/units.rs
-1 output release/src/canary.rs
 1 unit-name release/src/intake.rs
 2 unit-name release/src/units.rs
 1 unit-name sim/src/units.rs
