@@ -181,13 +181,13 @@ fn is_webdav_location(line: &str) -> bool {
 /// always talks to, or spawns, the daemon, so this is not free.
 fn ensure_store_backend(sccache_bin: &Path, store: &Store) -> BackendCheck {
     let extra = store.env_pairs();
-    start_server_unit(sccache_bin, store);
+    let _ = ensure_server_unit(&SystemEffectors, sccache_bin, store, Path::new(""));
     match show_stats_cache_location(sccache_bin, &extra) {
         None => BackendCheck::Unknown,
         Some(line) if is_webdav_location(&line) => BackendCheck::Matches,
         Some(line) => {
             let _ = crate::bounded::bounded(sccache_bin).arg("--stop-server").output();
-            start_server_unit(sccache_bin, store);
+            let _ = ensure_server_unit(&SystemEffectors, sccache_bin, store, Path::new(""));
             BackendCheck::Restarted(line)
         }
     }
@@ -206,10 +206,28 @@ pub fn server_unit_args(sccache_bin: &Path, store: &Store) -> Vec<String> {
     args
 }
 
-/// Starts the server as its own unit unless one is already running; a host without a user
-/// manager, or a unit already there, leaves the server to be spawned by its first client.
-fn start_server_unit(sccache_bin: &Path, store: &Store) {
-    let _ = crate::bounded::bounded(Path::new("systemd-run")).args(server_unit_args(sccache_bin, store)).output();
+/// What the server-unit start does to the machine, behind a seam so a unit test spawns nothing.
+trait ServerEffectors {
+    fn start_unit(&self, args: &[String]);
+}
+
+struct SystemEffectors;
+
+impl ServerEffectors for SystemEffectors {
+    fn start_unit(&self, args: &[String]) {
+        let _ = crate::bounded::bounded(Path::new("systemd-run")).args(args).output();
+    }
+}
+
+/// What [`ensure_server_unit`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ServerUnit {
+    Started,
+}
+
+fn ensure_server_unit(fx: &dyn ServerEffectors, sccache_bin: &Path, store: &Store, _tmp: &Path) -> ServerUnit {
+    fx.start_unit(&server_unit_args(sccache_bin, store));
+    ServerUnit::Started
 }
 
 /// [`ensure_store_backend`] plus the two `SCCACHE_WEBDAV_*` vars, in one call — the one place
