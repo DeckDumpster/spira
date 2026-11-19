@@ -423,7 +423,7 @@ fn flaky_git_bin(dir: &std::path::Path) -> std::path::PathBuf {
 
 /// A repo with one landed bead whose next git call matching `pat` fails once; `fix` makes the
 /// failed call's ref appear behind it.
-fn flaky_git_repo(name: &str, pat: &str, fix: bool, now: u64) -> (testkit::TempDir, spira_runtime::world::World, std::path::PathBuf) {
+fn flaky_git_repo(name: &str, pat: &str, fix: bool, now: u64) -> (testkit::TempDir, spira_runtime::world::World) {
     let dir = testkit::TempDir::new(name);
     let bin = flaky_git_bin(&dir);
     let repo = dir.join("repo");
@@ -437,13 +437,13 @@ fn flaky_git_repo(name: &str, pat: &str, fix: bool, now: u64) -> (testkit::TempD
     let map = dir.join("repos");
     std::fs::write(&map, format!("spira|{}|queue.local|local/main||\n", repo.display())).unwrap();
     let w = spira_runtime::world::World { repo_map: map, home_repo: "spira".into(), git_bin: Some(bin.join("git")), ..Default::default() };
-    (dir, w, bin)
+    (dir, w)
 }
 
 #[test]
 fn a_landing_ref_that_fails_once_and_resolves_on_the_second_read_is_read() {
     let now = 1_700_000_000u64;
-    let (dir, w, bin) = flaky_git_repo("throughput-reread", "rev-parse --verify -q local/main", true, now);
+    let (dir, w) = flaky_git_repo("throughput-reread", "rev-parse --verify -q local/main", true, now);
     let landings = w.landed_on_refs(now, "sp").expect("the second read resolves the ref");
     assert!(dir.join("repo/.git/flaky-fired").exists(), "the first read did fail");
     assert_eq!(landings[0].hourly.iter().sum::<u64>(), 1);
@@ -452,7 +452,7 @@ fn a_landing_ref_that_fails_once_and_resolves_on_the_second_read_is_read() {
 #[test]
 fn a_git_log_that_fails_once_is_read_again() {
     let now = 1_700_000_000u64;
-    let (dir, w, bin) = flaky_git_repo("throughput-logreread", " log local/main", false, now);
+    let (dir, w) = flaky_git_repo("throughput-logreread", " log local/main", false, now);
     testkit::git(&dir.join("repo"), &["branch", "local/main"]);
     let landings = w.landed_on_refs(now, "sp").expect("the second log read answers");
     assert!(dir.join("repo/.git/flaky-fired").exists(), "the first log read did fail");
@@ -797,7 +797,7 @@ fn one_bead_held_by_a_live_blocker_and_one_by_an_idle_one_files() {
 #[test]
 fn a_spent_observe_bound_skips_the_ref_reread_and_a_fresh_one_allows_it() {
     let now = 1_700_000_000u64;
-    let (dir, w, bin) = flaky_git_repo("throughput-bound", "rev-parse --verify -q local/main", true, now);
+    let (dir, w) = flaky_git_repo("throughput-bound", "rev-parse --verify -q local/main", true, now);
     let spent = std::time::Instant::now() - std::time::Duration::from_secs(60);
     let w_spent = spira_runtime::world::World { observe_bound: Some((spent, std::time::Duration::from_secs(10))), ..w.clone() };
     let err = w_spent.landed_on_refs(now, "sp").expect_err("no time left, so no re-read");
