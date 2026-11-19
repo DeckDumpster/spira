@@ -187,6 +187,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_noms_size_counts_every_file_under_nested_directories() {
+        let d = testkit::TempDir::new("store-gc-noms");
+        let noms = d.path().join("beads/.dolt/noms");
+        std::fs::create_dir_all(noms.join("oldgen")).unwrap();
+        std::fs::write(noms.join("a"), [0u8; 10]).unwrap();
+        std::fs::write(noms.join("oldgen/b"), [0u8; 5]).unwrap();
+        let live = Live { admin: Conn::unreachable(), data: d.path().to_path_buf() };
+        assert_eq!(live.noms_bytes("beads"), 15);
+        assert_eq!(live.noms_bytes("absent"), 0);
+        assert!(live.free_bytes().unwrap() > 0);
+        let gone = Live { admin: Conn::unreachable(), data: d.path().join("nowhere") };
+        assert!(gone.free_bytes().unwrap_err().contains("cannot stat"));
+    }
+
+    #[test]
+    fn the_live_port_refuses_a_name_that_is_not_plain_before_it_connects() {
+        let live = Live { admin: Conn::unreachable(), data: PathBuf::new() };
+        assert!(live.gc("a`; DROP DATABASE b; --").unwrap_err().contains("not a plain database name"));
+    }
+
     fn args(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
     }

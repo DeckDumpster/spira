@@ -462,7 +462,7 @@ fi
 #    uninstaller misses; this sweep is the alarm that catches it.
 # ---------------------------------------------------------------------------
 printf '\nSweeping for unlisted Spira units...\n'
-_SHARED_UNITS="cockpit-ensure concierge beads-push lc-backup dolt-beads dolt-tmp-prune"
+_SHARED_UNITS="cockpit-ensure concierge beads-push lc-backup dolt-beads dolt-tmp-prune dolt-store-gc"
 
 # Build a set of names the manifest predicted (already removed or never there).
 _un_known=" "
@@ -488,7 +488,8 @@ for _un_uf in "$UNITDIR"/spira-*.service "$UNITDIR"/spira-*.timer \
               "$UNITDIR"/lc-backup.service "$UNITDIR"/lc-backup.timer \
               "$UNITDIR"/lc-backup-drill.service "$UNITDIR"/lc-backup-drill.timer \
               "$UNITDIR"/dolt-beads.service "$UNITDIR"/dolt-beads.timer \
-              "$UNITDIR"/dolt-tmp-prune.service "$UNITDIR"/dolt-tmp-prune.timer; do
+              "$UNITDIR"/dolt-tmp-prune.service "$UNITDIR"/dolt-tmp-prune.timer \
+              "$UNITDIR"/dolt-store-gc.service; do
     [ -e "$_un_uf" ] || continue
     _un_bn="$(basename "$_un_uf")"
     case "$_un_known" in *" $_un_bn "*) ;; *)
@@ -499,7 +500,7 @@ unset _un_uf _un_bn
 
 # Units loaded in systemd but not backed by a file we just removed.
 _un_loaded="$("${SPIRA_SYSTEMCTL:-systemctl}" --user list-units --all --no-legend \
-    --plain 'spira-*' 'cockpit-ensure.*' 'concierge.*' 'beads-push.*' 'lc-backup.*' 'dolt-beads.*' 'dolt-tmp-prune.*' 2>/dev/null \
+    --plain 'spira-*' 'cockpit-ensure.*' 'concierge.*' 'beads-push.*' 'lc-backup.*' 'dolt-beads.*' 'dolt-tmp-prune.*' 'dolt-store-gc.*' 2>/dev/null \
     | awk '{print $1}' | sort -u || true)"
 while IFS= read -r _un_ln; do
     [ -n "$_un_ln" ] || continue

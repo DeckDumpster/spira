@@ -14,6 +14,7 @@ pub const SHARED_UNITS: &[&str] = &[
     "cockpit-ensure.service",
     "concierge.service",
     "dolt-beads.service",
+    "dolt-store-gc.service",
     "dolt-tmp-prune.service",
     "lc-serve.service",
     "sccache-dav.service",
