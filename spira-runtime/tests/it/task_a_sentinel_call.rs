@@ -254,7 +254,7 @@ fn shipped_runes(names: &[&str]) -> BTreeMap<String, RuneCfg> {
     let dir = spira_config::runes::runes_dir(&home);
     std::fs::create_dir_all(&dir).unwrap();
     for n in names {
-        std::fs::copy(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes").join(format!("{n}.rune")), dir.join(format!("{n}.rune"))).unwrap();
+        std::fs::copy(testkit::manifest_dir().join("../spira/runes").join(format!("{n}.rune")), dir.join(format!("{n}.rune"))).unwrap();
     }
     let get = |n: &str, k: &str, d: &str| spira_config::runes::rune_get(&home, n, k, d);
     names
