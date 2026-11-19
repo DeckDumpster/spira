@@ -106,7 +106,7 @@ pub fn repo_map_line(repo: &Path) -> String {
 
 const FAKE_CALL: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for sentinel's dwarf-call check. Runs the canary worker synchronously.\nexec release canary-worker\n";
 
-const FAKE_LAUNCH: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for sentinel's landing-dispatch check. Records dispatch, exits 0.\n# release canary drives `landing-pass land` directly.\n[ -n \"${SPIRA_RUN:-}\" ] && date +%s > \"$SPIRA_RUN/landing.dispatched\"\nexit 0\n";
+const FAKE_LAUNCH: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for sentinel's landing-dispatch check. Records dispatch, exits 0.\n# a stage's caller runs `landing-pass land` directly.\n[ -n \"${SPIRA_RUN:-}\" ] && date +%s > \"$SPIRA_RUN/landing.dispatched\"\nexit 0\n";
 
 /// A fresh, empty directory under the system temp dir, for a `release stage up` with no
 /// explicit root — the same job `mktemp -d` did in `stage.sh`, done natively so this crate
