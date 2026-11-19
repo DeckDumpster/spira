@@ -62,7 +62,7 @@ mod tests {
         testkit::write_exe(&script, &format!("#!/bin/sh\necho $$ > {}\nexec sleep 30\n", pid_file.display()));
         let r = concierge_wake(&script, "line", Duration::from_millis(500));
         assert!(r.is_err());
-        let pid = std::fs::read_to_string(&pid_file).expect("the script started").trim().to_string();
-        assert!(!Path::new("/proc").join(pid).exists(), "the wake outlived its deadline");
+        let pid: i32 = std::fs::read_to_string(&pid_file).expect("the script started").trim().parse().unwrap();
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "the wake outlived its deadline");
     }
 }
