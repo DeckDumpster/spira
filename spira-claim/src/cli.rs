@@ -1131,12 +1131,8 @@ fn kind_word(k: verdicts::Kind) -> String {
     serde_json::to_value(k).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default()
 }
 
-/// The claimable rows the claim view says `rune` would take, bd's deferral aside.
-fn taken_by<'a>(view: &'a Viewed, rune: &str) -> Vec<&'a rank::ReadyRow> {
-    taken_split(view, rune).0
-}
-
-/// [`taken_by`] and, for each REWORK row of the view it leaves out, the rule that did.
+/// The claimable rows the claim view says `rune` would take, bd's deferral aside, and for each
+/// REWORK row the claim path leaves out, the rule that did.
 fn taken_split<'a>(view: &'a Viewed, rune: &str) -> (Vec<&'a rank::ReadyRow>, Vec<Dropped>) {
     let now = ready::now_epoch();
     let mut dropped = view.dropped.clone();

@@ -541,7 +541,7 @@ impl<'a> Run<'a> {
         for i in 1..=tries {
             last = self.d.seam.call("_dwarf_ready_set", &[]);
             if last.success() {
-                return Ok(claim::split_ready(&util::json_only(&last.stdout), &self.f()));
+                return Ok(claim::split_ready(&util::json_only(&last.stdout), self.f()));
             }
             if i < tries {
                 (self.d.sleep)(delay);

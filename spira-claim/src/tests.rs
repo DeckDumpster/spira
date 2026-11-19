@@ -411,8 +411,8 @@ mod claim_view_read {
     fn rune_ready_lists_the_beads_the_view_says_the_rune_would_take() {
         let (_, st) = setup(0);
         let view = env_over(|env| claimable_over(&Args::parse(&[]).unwrap(), env, &st).unwrap());
-        assert_eq!(ids(&taken_by(&view, "builder").into_iter().cloned().collect::<Vec<_>>()), ["sp-a"]);
-        assert!(taken_by(&view, "ops").is_empty(), "a rune the view does not name takes nothing");
+        assert_eq!(ids(&taken_split(&view, "builder").0.into_iter().cloned().collect::<Vec<_>>()), ["sp-a"]);
+        assert!(taken_split(&view, "ops").0.is_empty(), "a rune the view does not name takes nothing");
     }
 
     struct ReworkAndFresh;
