@@ -165,5 +165,9 @@ mod tests {
     #[test]
     fn the_twelve_are_check_6s() {
         assert_eq!(super::CHECKS.len(), 12);
+        let src = include_str!("../../watchtower/src/main.rs");
+        for c in super::CHECKS.iter().filter(|c| **c != "conditions-check" && **c != "drift-check") {
+            assert!(src.contains(&format!("\"--{c}\"")), "{c} is a watchtower flag");
+        }
     }
 }

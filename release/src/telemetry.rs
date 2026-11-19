@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 
 pub const COMPONENT: &str = "release";
-pub const OPERATIONS: &[&str] = &["build", "verify", "activate", "rollback", "prune", "status", "install-tarball", "acceptance", "stage", "canary", "canary-worker", "session-hook","intake","config-stage"];
+pub const OPERATIONS: &[&str] = &["build", "verify", "activate", "rollback", "prune", "status", "install-tarball", "acceptance", "stage", "session-hook","intake","config-stage"];
 
 pub fn endpoint() -> Option<String> {
     spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok()

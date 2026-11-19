@@ -14,10 +14,9 @@
 //!
 //! THE TWO HARNESS SEAMS:
 //!
-//! - `SPIRA_CALL` replaces `systemd-run` for sentinel's dwarf-call check. The stage
-//!   writes `fake-call.sh` here; it ignores every systemd flag and execs `release
-//!   canary-worker` synchronously in the inherited stage env — the model is the one part
-//!   a stage's caller cannot test, and this is the boundary.
+//! - `SPIRA_CALL` replaces `systemd-run` for a dwarf call. The stage writes
+//!   `fake-call.sh` here; it refuses, because a stage runs no model. A stage's caller
+//!   replaces it to supply a worker.
 //! - `SPIRA_LAUNCH` replaces `systemd-run` for sentinel's landing-dispatch check. The stage
 //!   writes `fake-launch.sh` here; it records the dispatch timestamp (keeping sentinel's
 //!   staleness accounting correct) and exits 0. A stage's caller runs `landing-pass land`
@@ -104,7 +103,7 @@ pub fn repo_map_line(repo: &Path) -> String {
     format!("{name} | {} | push | origin/main | |\n", repo.display())
 }
 
-const FAKE_CALL: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for sentinel's dwarf-call check. Runs the canary worker synchronously.\nexec release canary-worker\n";
+const FAKE_CALL: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for a dwarf call. A stage runs no model: a caller that wants a worker replaces this script.\necho 'fake-call.sh: a stage runs no dwarf; replace SPIRA_CALL to supply one' >&2\nexit 1\n";
 
 const FAKE_LAUNCH: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for sentinel's landing-dispatch check. Records dispatch, exits 0.\n# a stage's caller runs `landing-pass land` directly.\n[ -n \"${SPIRA_RUN:-}\" ] && date +%s > \"$SPIRA_RUN/landing.dispatched\"\nexit 0\n";
 
