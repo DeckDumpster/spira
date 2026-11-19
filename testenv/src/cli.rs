@@ -3,7 +3,7 @@
 
 use crate::record::Mode;
 
-pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--direct] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--tests <name>[,<name>...]] [--runner container|sandbox] [--record <path>] [--share-keep <key> | --share <key> | --share-publish <key>] [--report [N]] <branch> [<repo-name>]";
+pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--direct] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--tests <name>[,<name>...]] [--crates <crate>[,<crate>...]] [--runner container|sandbox] [--record <path>] [--share-keep <key> | --share <key> | --share-publish <key>] [--report [N]] <branch> [<repo-name>]";
 
 /// Where the explicit suite list comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +30,9 @@ pub struct RunArgs {
     /// `--tests a,b`: the unit-tests tier runs only the Rust tests whose names contain one of
     /// these, cargo test's own filter; None runs every test of the selected crates.
     pub tests: Option<Vec<String>>,
+    /// `--crates a,b`: the unit-tests tier runs exactly these workspace crates, whatever the
+    /// diff touches; None derives them from the diff.
+    pub crates: Option<Vec<String>>,
     /// `--runner container|sandbox`: this run's unit runner, outranking
     /// `SPIRA_TESTENV_UNIT_RUNNER` (sp-yx0yu9).
     pub runner: Option<crate::sandbox::Runner>,
@@ -84,6 +87,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut artifacts: Option<String> = None;
     let mut repeat_reason: Option<String> = None;
     let mut tests: Option<Vec<String>> = None;
+    let mut crates: Option<Vec<String>> = None;
     let mut runner: Option<crate::sandbox::Runner> = None;
     let mut record: Option<String> = None;
     let mut share_keep: Option<String> = None;
@@ -110,6 +114,14 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             )]))
         }
     };
+    let parse_crates = |v: &str| -> Result<Vec<String>, UsageError> {
+        let names: Vec<String> = v.split(',').map(str::to_string).collect();
+        if names.iter().all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')) {
+            Ok(names)
+        } else {
+            Err(UsageError(vec![format!("batch: --crates needs comma-separated crate names, got: {v}")]))
+        }
+    };
     let set_suites = |suites: &mut Option<String>, v: String| -> Result<(), UsageError> {
         if suites.is_some() {
             return Err(err(&["batch: --suites may only be given once"]));
@@ -121,7 +133,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         let a = args[i].as_str();
         match a {
             "--mode" | "--suites" | "--profile" | "--deadline" | "--artifacts"
-            | "--repeat-reason" | "--tests" | "--runner" | "--record" | "--share-keep" | "--share" | "--share-publish" => {
+            | "--repeat-reason" | "--tests" | "--crates" | "--runner" | "--record" | "--share-keep" | "--share" | "--share-publish" => {
                 let v = args
                     .get(i + 1)
                     .cloned()
@@ -137,6 +149,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     "--share-publish" => share_publish = Some(v),
                     "--repeat-reason" => repeat_reason = Some(v),
                     "--tests" => tests = Some(parse_tests(&v)?),
+                    "--crates" => crates = Some(parse_crates(&v)?),
                     "--runner" => {
                         runner = Some(crate::sandbox::Runner::parse(&v).map_err(|e| UsageError(vec![format!("batch: --runner: {e}")]))?)
                     }
@@ -196,6 +209,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                 tests = Some(parse_tests(&a["--tests=".len()..])?);
                 i += 1;
             }
+            _ if a.starts_with("--crates=") => {
+                crates = Some(parse_crates(&a["--crates=".len()..])?);
+                i += 1;
+            }
             _ if a.starts_with("--deadline=") => {
                 deadline = Some(parse_deadline(&a["--deadline=".len()..])?);
                 i += 1;
@@ -239,6 +256,9 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                 "batch: --artifacts tests prebuilt executables and builds nothing; it cannot be combined with --profile or --with-bins",
             ]));
         }
+    }
+    if crates.is_some() && direct {
+        return Err(err(&["batch: --crates names the crates to run and --direct narrows the diff's; they cannot be combined"]));
     }
     if share_publish.is_some() && (share_keep.is_some() || share_end.is_some()) {
         return Err(err(&["batch: --share-publish is exclusive with --share and --share-keep: it finishes a kept share and runs no tier"]));
@@ -285,6 +305,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         artifacts,
         repeat_reason,
         tests,
+        crates,
         runner,
         record,
         share,
@@ -292,6 +313,14 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         branch,
         repo,
     })))
+}
+
+/// Refuses the first of `named` that is not one of the workspace `members`, naming it.
+pub fn check_crates(named: &[String], members: &[&str]) -> Result<(), String> {
+    match named.iter().find(|n| !members.contains(&n.as_str())) {
+        Some(n) => Err(format!("--crates: {n} is not a workspace member")),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -491,5 +520,23 @@ mod tests {
     #[test]
     fn profile_names_are_checked() {
         assert!(p(&["--profile", "../x", "b"]).is_err());
+    }
+
+    #[test]
+    fn crates_takes_comma_separated_names_and_is_refused_with_direct() {
+        assert_eq!(run(&["--crates", "mail,queue", "br"]).crates, Some(vec!["mail".to_string(), "queue".to_string()]));
+        assert_eq!(run(&["--crates=mail", "br"]).crates, Some(vec!["mail".to_string()]));
+        assert_eq!(run(&["br"]).crates, None);
+        assert!(p(&["--crates", "a,,b", "br"]).is_err());
+        let e = p(&["--crates", "mail", "--direct", "br"]).unwrap_err();
+        assert!(e.0[0].contains("--crates") && e.0[0].contains("--direct"), "{e:?}");
+    }
+
+    #[test]
+    fn an_unknown_crate_is_refused_naming_it() {
+        let named = ["mail".to_string(), "nosuch".to_string()];
+        let e = check_crates(&named, &["mail", "queue"]).unwrap_err();
+        assert!(e.contains("nosuch"), "{e}");
+        assert!(check_crates(&named[..1], &["mail", "queue"]).is_ok());
     }
 }

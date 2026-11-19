@@ -254,3 +254,30 @@ fn around_without_the_command_on_path_is_no_verdict_and_names_the_path() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("cargo is not on PATH") && err.contains(&release.display().to_string()), "{err}");
 }
+
+#[test]
+fn a_held_run_keeps_the_identity_an_enclosing_sandbox_handed_in_when_run_is_unwritable() {
+    let tmp = testkit::TempDir::new("held-identity");
+    let base = fs::canonicalize(tmp.path()).unwrap();
+    let home = base.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let identity = base.join("handed.gitconfig");
+    fs::write(&identity, "[user]\n\tname = handed\n\temail = handed@localhost\n").unwrap();
+    let mut cmd = std::process::Command::new("bwrap");
+    cmd.args(["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs"])
+        .arg(&home)
+        .args(["--tmpfs", "/run", "--remount-ro", "/run", "--unshare-net"])
+        .arg(workspace().join("tools/test-sandbox/runner"))
+        .arg("/usr/bin/printenv")
+        .arg("GIT_CONFIG_SYSTEM")
+        .env("HOME", &home)
+        .env("GIT_CONFIG_SYSTEM", &identity);
+    let out = cmd.output().expect("bwrap spawns");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stderr.contains("bwrap:") {
+        eprintln!("skipped: no nested sandbox to hold the runner in: {stderr}");
+        return;
+    }
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), identity.display().to_string());
+}

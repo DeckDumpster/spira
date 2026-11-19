@@ -201,13 +201,26 @@ pub fn write_crates(repo: &Path, base: &str, rev: &str, tree: &Path, tests: Opti
         .map_err(|e| format!("cargo metadata: {e}"))?;
     let meta = String::from_utf8_lossy(&meta);
     let picked = pick(&diff, &meta, tree, tests, transitive)?;
+    write_picked(tree, &meta, picked)
+}
+
+/// Like [`write_crates`] for a list the caller named: the diff selects nothing.
+pub fn write_named(tree: &Path, named: &[String], tests: Option<&[String]>) -> Result<Picked, String> {
+    let meta = output(Command::new("cargo").current_dir(tree).args(["metadata", "--format-version", "1", "--no-deps", "--offline"]))
+        .map_err(|e| format!("cargo metadata: {e}"))?;
+    let meta = String::from_utf8_lossy(&meta);
+    let picked = pick_named(&meta, tree, named, tests)?;
+    write_picked(tree, &meta, picked)
+}
+
+fn write_picked(tree: &Path, meta: &str, picked: Picked) -> Result<Picked, String> {
     let crates = &picked.crates;
     let path = crates_path(tree);
     let body: String = crates.iter().map(|c| format!("{c}\n")).collect();
     std::fs::create_dir_all(path.parent().unwrap_or(tree))
         .and_then(|_| std::fs::write(&path, body))
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    let bins: String = test_bins(&meta, crates)?.iter().map(|c| format!("{c}\n")).collect();
+    let bins: String = test_bins(meta, crates)?.iter().map(|c| format!("{c}\n")).collect();
     let path = bins_path(tree);
     std::fs::write(&path, bins).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     let words: String = gate::compose::unit_build_words(crates).iter().map(|w| format!("{w}\n")).collect();
@@ -225,6 +238,18 @@ pub fn pick(diff: &[u8], meta: &str, tree: &Path, tests: Option<&[String]>, tran
         None => affected.clone(),
     };
     Ok(Picked { affected, crates })
+}
+
+/// The crates a caller named, each checked to be a workspace member, narrowed under `--tests`
+/// like a diff's.
+pub fn pick_named(meta: &str, tree: &Path, named: &[String], tests: Option<&[String]>) -> Result<Picked, String> {
+    let members = gate::compose::parse_metadata(meta)?;
+    crate::cli::check_crates(named, &members.iter().map(|m| m.name.as_str()).collect::<Vec<_>>())?;
+    let crates = match tests {
+        Some(names) => holding(tree, &members, named, names),
+        None => named.to_vec(),
+    };
+    Ok(Picked { affected: named.to_vec(), crates })
 }
 
 /// The crates of `crates` whose own Rust sources name one of `tests`, in their order. A name
@@ -387,6 +412,26 @@ mod tests {
         let names = |transitive| pick(diff, &meta, tree, None, transitive).unwrap().crates;
         assert_eq!(names(false), vec!["leaf", "mid"]);
         assert_eq!(names(true), vec!["leaf", "mid", "top"]);
+    }
+
+    #[test]
+    fn named_crates_are_written_whatever_the_diff_touches_and_a_stranger_is_refused() {
+        let t = testkit::TempDir::new("testenv-unit-named");
+        let tree = t.path();
+        let members = ["mail", "queue", "round-vm"];
+        let list: String = members.iter().map(|m| format!("\"{m}\"")).collect::<Vec<_>>().join(", ");
+        std::fs::write(tree.join("Cargo.toml"), format!("[workspace]\nresolver = \"2\"\nmembers = [{list}]\n")).unwrap();
+        for m in members {
+            std::fs::create_dir_all(tree.join(m).join("src")).unwrap();
+            std::fs::write(tree.join(m).join("Cargo.toml"), format!("[package]\nname = \"{m}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")).unwrap();
+            std::fs::write(tree.join(m).join("src/lib.rs"), "").unwrap();
+        }
+        let named = ["mail".to_string(), "queue".to_string()];
+        let picked = write_named(tree, &named, None).unwrap();
+        assert_eq!(picked.crates, ["mail", "queue"]);
+        assert_eq!(std::fs::read_to_string(crates_path(tree)).unwrap(), "mail\nqueue\n");
+        let e = write_named(tree, &["nosuch".to_string()], None).unwrap_err();
+        assert!(e.contains("nosuch"), "{e}");
     }
 
     #[test]

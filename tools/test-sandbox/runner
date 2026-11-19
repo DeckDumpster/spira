@@ -97,6 +97,12 @@ fi
 
 # testenv's system git identity (GIT_IDENTITY), lowest priority, on the sandbox's /run.
 gitconfig=/run/test-sandbox/gitconfig
+handed=""
+if [ -n "$is_held" ] && [ -n "${GIT_CONFIG_SYSTEM:-}" ] && [ -r "$GIT_CONFIG_SYSTEM" ] && [ -f "$GIT_CONFIG_SYSTEM" ] &&
+    grep -Eq '^[[:space:]]*name[[:space:]]*=' "$GIT_CONFIG_SYSTEM" && grep -Eq '^[[:space:]]*email[[:space:]]*=' "$GIT_CONFIG_SYSTEM"; then
+    gitconfig="$GIT_CONFIG_SYSTEM"
+    handed=1
+fi
 env=()
 setenv() { env+=("$1=$2"); }
 setenv PATH "$path"
@@ -126,9 +132,9 @@ printf -v identity_text "$identity"
 if [ -n "$is_held" ]; then
     # An enclosing runner's sandbox may have handed it in already, read-only.
     IFS= read -r -d '' current < "$gitconfig" 2>/dev/null
-    if [ "$current" != "$identity_text" ]; then
+    if [ -z "$handed" ] && [ "$current" != "$identity_text" ]; then
         mkdir -p "${gitconfig%/*}" && printf "$identity" > "$gitconfig.$$" && mv -f "$gitconfig.$$" "$gitconfig" ||
-            die "cannot write $gitconfig"
+            die "cannot write $gitconfig in ${gitconfig%/*} as $(id -un)"
     fi
     exec /usr/bin/env -i "${env[@]}" "$@"
 fi
