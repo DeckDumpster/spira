@@ -2329,10 +2329,11 @@ mod nix_gc_tests {
         let td = testkit::TempDir::new("nix-gc-plan");
         let root = td.path().join("spira-rel9");
         std::fs::create_dir_all(&root).unwrap();
-        let g = gc_plan(Ok("/p/bin".into()), Ok("/r".into()), &root).unwrap();
-        assert_eq!((g.profile_bin, g.log, g.key), (PathBuf::from("/p/bin"), PathBuf::from("/r/nix-gc.log"), "spira-rel9".to_string()));
-        assert_eq!(gc_plan(Err("no profile".into()), Ok("/r".into()), &root).err().as_deref(), Some("no profile"));
-        assert_eq!(gc_plan(Ok("/p".into()), Err("no run".into()), &root).err().as_deref(), Some("no run"));
+        let (bin, run) = (td.path().join("p/bin"), td.path().join("r"));
+        let g = gc_plan(Ok(bin.display().to_string()), Ok(run.display().to_string()), &root).unwrap();
+        assert_eq!((g.profile_bin, g.log, g.key), (bin, run.join("nix-gc.log"), "spira-rel9".to_string()));
+        assert_eq!(gc_plan(Err("no profile".into()), Ok(run.display().to_string()), &root).err().as_deref(), Some("no profile"));
+        assert_eq!(gc_plan(Ok(bin.display().to_string()), Err("no run".into()), &root).err().as_deref(), Some("no run"));
     }
 
     #[test]
