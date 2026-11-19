@@ -74,7 +74,7 @@ while :; do
         next land ;;
     land) book hand-land BATCH=rc-cm BEAD="$landed" || exit $?; next hold-1 ;;
     hold-*)
-        # Each hold is one move apart, so the sentinel's calls meet a claimable bead in the window.
+        # Each hold is one move apart, so a claimable bead stays in the window.
         [ "$(state_of "$unclaimed")" = READY ] || fail "$unclaimed was claimed under cutover mode: $(state_of "$unclaimed")"
         n=${phase#hold-}
         if [ "$n" -lt 4 ]; then next "hold-$((n + 1))"; else next leave; fi
