@@ -206,7 +206,7 @@ fn brief_with_spec(toml: Option<&std::path::Path>) -> Result<String, String> {
     let toml = toml.map(|p| p.display().to_string());
     let release = ws.join("release");
     std::fs::create_dir_all(release.join("model-bin")).unwrap();
-    testkit::write_exe(&release.join("model-bin/work"), "");
+    testkit::write_exe(release.join("model-bin/work"), "");
     let _env = testkit::env(&[
         ("SPIRA_RELEASE", Some(&release.display().to_string())),
         ("SPIRA_HOME", Some(&home.display().to_string())),
