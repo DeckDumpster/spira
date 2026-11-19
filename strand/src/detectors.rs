@@ -466,12 +466,12 @@ mod tests {
         assert_eq!(ids, vec!["a", "c"]);
     }
 
-    struct Closes(std::sync::Mutex<Vec<Vec<String>>>, &'static str);
+    struct Closes(std::sync::Mutex<Vec<Vec<String>>>, &'static str, i32);
 
     impl spira_store::lc_call::Transport for Closes {
         fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            Ok(spira_store::lc_call::Reply { code: 0, out: self.1.into(), err: String::new() })
+            Ok(spira_store::lc_call::Reply { code: self.2, out: self.1.into(), err: String::new() })
         }
     }
 
@@ -480,18 +480,37 @@ mod tests {
         let run = testkit::TempDir::new("strand-ic-watermark");
         let cfg = Config { run: Some(run.to_path_buf()), ..Config::test_fixture() };
         let rows = r#"[{"id":"sp-a","closed_at":"2026-11-01T00:00:00Z","close_reason":"done"},{"id":"sp-b","closed_at":"2026-11-03T00:00:00Z","close_reason":"done"}]"#;
-        let first = std::sync::Arc::new(Closes(Default::default(), rows));
+        let first = std::sync::Arc::new(Closes(Default::default(), rows, 0));
         detect_invalid_closed(&cfg, &LcClient::over(first.clone(), true));
         let seen = first.0.lock().unwrap().clone();
         assert!(!seen[0].iter().any(|a| a == "--closed-after"), "an absent watermark reads from the start: {seen:?}");
         let file = run.join("strand").join("invalid-closed.watermark");
         assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "2026-11-03T00:00:00Z");
 
-        let second = std::sync::Arc::new(Closes(Default::default(), "[]"));
+        let second = std::sync::Arc::new(Closes(Default::default(), "[]", 0));
         detect_invalid_closed(&cfg, &LcClient::over(second.clone(), true));
         let seen = second.0.lock().unwrap().clone();
         assert_eq!(seen[0], ["content", "list", "--all", "--closed-after", "2026-11-03T00:00:00Z", "--limit", "0", "--json"]);
         assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "2026-11-03T00:00:00Z", "an empty read leaves the watermark");
+    }
+
+    #[test]
+    fn a_refused_read_leaves_the_watermark_where_it_was() {
+        let run = testkit::TempDir::new("strand-ic-refused");
+        let cfg = Config { run: Some(run.to_path_buf()), ..Config::test_fixture() };
+        let file = run.join("strand").join("invalid-closed.watermark");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "2026-11-03T00:00:00Z\n").unwrap();
+        let refused = std::sync::Arc::new(Closes(Default::default(), "", 3));
+        assert_eq!(detect_invalid_closed(&cfg, &LcClient::over(refused, true)), "");
+        assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "2026-11-03T00:00:00Z");
+    }
+
+    #[test]
+    fn the_listings_go_to_the_content_door_with_no_bound_but_their_label() {
+        let door = std::sync::Arc::new(Closes(Default::default(), "[]", 0));
+        list_beads(&LcClient::over(door.clone(), true), &["--all", "--label", "incident"]);
+        assert_eq!(door.0.lock().unwrap()[0], ["content", "list", "--all", "--label", "incident", "--limit", "0", "--json"]);
     }
 
     #[test]

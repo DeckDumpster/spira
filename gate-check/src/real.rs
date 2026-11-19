@@ -254,6 +254,20 @@ mod door_tests {
     use spira_store::lc_call::fake::Content;
     use std::sync::Arc;
 
+    struct Stderr;
+
+    impl spira_store::lc_call::Transport for Stderr {
+        fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
+            Ok(Reply { code: 0, out: "out\n".into(), err: "⚠ zq-9k2: ESCALATE red\n".into() })
+        }
+    }
+
+    #[test]
+    fn a_gate_check_answer_carries_both_streams() {
+        let world = Real::new(PathBuf::new(), Ok(LcClient::over(Arc::new(Stderr), true)), None);
+        assert_eq!(world.bd_gate_check(), "out\n⚠ zq-9k2: ESCALATE red\n");
+    }
+
     #[test]
     fn the_stores_verbs_are_content_requests() {
         let door = Arc::new(Content::new(vec![]));
