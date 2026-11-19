@@ -41,24 +41,14 @@ pub fn refusal_lines(err: &str) -> Vec<String> {
     vec![format!("{B}{BAD} \u{25a0} health: config unresolved {RST}{DIM}{err}{RST}")]
 }
 
-/// Resolves the sentinel timer the way `spira_unit` does: the instance-qualified unit (the
-/// instance is always part of the name, `prod` included), else the plain one. `probe` returns
-/// `(is-enabled succeeded, is-active text)`; a unit neither enabled nor active is unknown to
-/// systemd, and its "inactive" says nothing, so nothing resolving yields `None`.
-pub fn sentinel_timer_active(instance: &str, probe: impl Fn(&str) -> (bool, String)) -> Option<bool> {
-    let plain = "spira-sentinel.timer".to_string();
-    let mut candidates = Vec::new();
-    if !instance.is_empty() {
-        candidates.push(format!("spira-sentinel-{instance}.timer"));
+/// Whether the scheduler has the sentinel task armed, from the snapshot's `SP_SENTINEL_TIMER`:
+/// `1` armed, `0` not, anything else (`?`, absent) unknown.
+pub fn sentinel_armed(snap: &Snapshot) -> Option<bool> {
+    match snap.get("SP_SENTINEL_TIMER") {
+        Some("1") => Some(true),
+        Some("0") => Some(false),
+        _ => None,
     }
-    candidates.push(plain);
-    for unit in candidates {
-        let (enabled, text) = probe(&unit);
-        if enabled || text == "active" {
-            return Some(text == "active");
-        }
-    }
-    None
 }
 
 fn lifecycle_line(snap: &Snapshot) -> Option<String> {
@@ -86,12 +76,12 @@ fn halt_banner(h: &HaltState) -> Vec<String> {
     }
     if h.sentinel_active != Some(true) && h.since.is_empty() {
         let tstate = match h.sentinel_active {
-            Some(false) => "inactive",
+            Some(false) => "not armed",
             None => "unknown",
             Some(true) => unreachable!(),
         };
         out.push(format!(
-            "  {DIM}sentinel.timer is {tstate} and no world.sh halt was recorded{RST}"
+            "  {DIM}the sentinel task is {tstate} and no world.sh halt was recorded{RST}"
         ));
     }
     out
@@ -1307,19 +1297,14 @@ mod tests {
     }
 
     #[test]
-    fn production_instance_timer_is_resolved_not_reported_inactive() {
-        let probe = |u: &str| {
-            if u == "spira-sentinel-prod.timer" { (true, "active".to_string()) } else { (false, "inactive".to_string()) }
-        };
-        let active = sentinel_timer_active("prod", probe);
-        assert_eq!(active, Some(true));
-        let h = HaltState { stamp_exists: false, since: String::new(), why: String::new(), sentinel_active: active };
+    fn the_sentinel_is_armed_only_when_the_scheduler_says_so() {
+        let armed = |v: &str| sentinel_armed(&Snapshot::parse(&format!("SP_SENTINEL_TIMER={v}\n")));
+        assert_eq!((armed("1"), armed("0"), armed("?")), (Some(true), Some(false), None));
+        assert_eq!(sentinel_armed(&Snapshot::parse("")), None);
+        let h = HaltState { stamp_exists: false, since: String::new(), why: String::new(), sentinel_active: armed("1") };
         assert!(halt_banner(&h).is_empty());
-    }
-
-    #[test]
-    fn unresolvable_timer_is_unknown_never_inactive() {
-        assert_eq!(sentinel_timer_active("prod", |_| (false, "inactive".to_string())), None);
+        let h = HaltState { sentinel_active: armed("0"), ..h };
+        assert!(halt_banner(&h).iter().any(|l| l.contains("the sentinel task is not armed")));
     }
 
     #[test]
@@ -1490,7 +1475,7 @@ mod tests {
         let h = HaltState { stamp_exists: false, since: String::new(), why: String::new(), sentinel_active: Some(false) };
         let out = halt_banner(&h);
         assert!(out[0].contains("SPIRA STOPPED"));
-        assert!(out.iter().any(|l| l.contains("sentinel.timer is inactive")));
+        assert!(out.iter().any(|l| l.contains("the sentinel task is not armed")));
     }
 
     #[test]
