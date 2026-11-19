@@ -379,6 +379,11 @@ mod tests {
         assert_eq!(seen.len(), 5);
         assert!(seen.iter().all(|a| a[0] == "content"), "{seen:?}");
         assert_eq!(seen[0][1..], ["duplicate", "sp-a", "--of", "sp-b"]);
+        assert_eq!(seen[1][1..], ["dep", "relate", "sp-a", "sp-b"]);
+        assert_eq!(seen[2][1..], ["label", "add", "sp-a", "x"]);
+        assert_eq!(seen[3][1..], ["note", "sp-a", "--stdin"]);
+        assert_eq!(seen[4][1], "create");
+        assert!(seen[4].windows(2).any(|w| w == ["--body-file", "-"]), "{:?}", seen[4]);
     }
 
     /// The question carries what the `mail send` argv did: operator, the incident sender, a
