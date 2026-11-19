@@ -9,6 +9,19 @@ use testkit::TempDir;
 const KEEP: u64 = 6;
 const COMMITS: u64 = 120;
 
+fn dolt_on_path() -> bool {
+    Command::new("dolt").arg("version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok()
+}
+
+macro_rules! need_dolt {
+    () => {
+        if !dolt_on_path() {
+            eprintln!("SKIP: no dolt binary on PATH");
+            return;
+        }
+    };
+}
+
 struct Repo {
     dir: PathBuf,
     home: PathBuf,
@@ -85,6 +98,7 @@ fn squash_and_collect(r: &Repo, keep: u64) {
 
 #[test]
 fn a_squash_leaves_keep_plus_one_commits_the_same_data_and_the_uncommitted_write() {
+    need_dolt!();
     let tmp = TempDir::new("store-persist-history");
     let r = fixture(tmp.path(), "db");
     assert_eq!(history::len(&r).unwrap(), COMMITS + 2);
@@ -99,6 +113,7 @@ fn a_squash_leaves_keep_plus_one_commits_the_same_data_and_the_uncommitted_write
 
 #[test]
 fn a_squash_catches_up_commits_made_while_the_side_branch_was_built() {
+    need_dolt!();
     let tmp = TempDir::new("store-persist-history-late");
     let r = fixture(tmp.path(), "db");
     r.run("CALL DOLT_COMMIT('-Am', 'before');\n", false).unwrap();
@@ -112,6 +127,7 @@ fn a_squash_catches_up_commits_made_while_the_side_branch_was_built() {
 
 #[test]
 fn an_interrupted_rewrite_is_cleared_before_the_next_one_starts() {
+    need_dolt!();
     let tmp = TempDir::new("store-persist-history-stale");
     let r = fixture(tmp.path(), "db");
     let tip = history::squash(&r, KEEP).unwrap();
@@ -124,6 +140,7 @@ fn an_interrupted_rewrite_is_cleared_before_the_next_one_starts() {
 
 #[test]
 fn the_store_after_a_squash_fits_the_depth_curve_within_twice() {
+    need_dolt!();
     let tmp = TempDir::new("store-persist-history-size");
     let full = fixture(tmp.path(), "db");
     let floor = fixture(tmp.path(), "floor");
