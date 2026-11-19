@@ -168,7 +168,7 @@ impl Config {
 
 fn git(repo: &str, args: &[&str]) -> Result<String, String> {
     use runtime::ports::Proc;
-    let spec = runtime::ports::ProcSpec { prog: "git".into(), args: ["-C", repo].iter().chain(args).map(|s| s.to_string()).collect(), stdin: vec![], deadline: std::time::Duration::from_secs(60) };
+    let spec = runtime::ports::ProcSpec { prog: "git".into(), args: ["-C", repo].iter().chain(args).map(|s| s.to_string()).collect(), stdin: vec![], deadline: std::time::Duration::from_secs(5) };
     let out = runtime::ports::SysProc.run(&spec)?;
     if out.code != Some(0) {
         return Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()));

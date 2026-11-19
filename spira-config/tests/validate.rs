@@ -295,8 +295,9 @@ mod retired_keys {
 
     #[test]
     fn the_complete_fixture_carries_no_repo_contract_sweep_key() {
-        let text = include_str!("../../spira/testlib/complete.toml");
-        let (_, warnings) = validate_with_warnings(text).expect("the complete fixture validates");
+        let path = spira_config::resolve::checkout_root_for_process().unwrap().join("spira/testlib/complete.toml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let (_, warnings) = validate_with_warnings(&text).expect("the complete fixture validates");
         assert!(!warnings.iter().any(|w| w.contains("runtime_sweep_repo_contract_")), "got {warnings:?}");
     }
 

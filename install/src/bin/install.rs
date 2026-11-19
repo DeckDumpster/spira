@@ -283,7 +283,9 @@ fn root_key(root: &Path) -> String {
     std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-fn build_spira_env_with(dry: bool, home: &str, root: &Path, run: &dyn Fn(&str, &[&str]) -> Result<(), String>, units: Option<&dyn runtime::units::Units>, gc: Option<&GcPlan>) -> Result<(), String> {
+type Runner<'a> = &'a dyn Fn(&str, &[&str]) -> Result<(), String>;
+
+fn build_spira_env_with(dry: bool, home: &str, root: &Path, run: Runner, units: Option<&dyn runtime::units::Units>, gc: Option<&GcPlan>) -> Result<(), String> {
     let out = Path::new(home).join(spira_config::SPIRA_ENV_REL);
     let target = spira_env_target(root);
     if dry {
