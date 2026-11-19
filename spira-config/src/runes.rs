@@ -904,7 +904,7 @@ mod tests {
     }
 
     fn shipped_home() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")
+        testkit::manifest_dir().join("../spira")
     }
 
     fn shipped_rune_texts() -> Vec<(String, String)> {
