@@ -2100,7 +2100,7 @@ mod tests {
 
         let d = install(vec![("content create", 0, "sp-new\n")]);
         let args = argv(&["create", "T", "-l", "repo:r", "--silent", "--body-file", "-"]);
-        assert_eq!(door_create(&args, Some("the body"), None, None, Some("T"), Some("T"), false, None, Some("r")), 0);
+        assert_eq!(door_create(&args, Some("the body"), None, &[], Some("T"), Some("T"), false, None, Some("r")), 0);
         let w = writes(&d);
         assert_eq!(w[0], (argv(&["content", "create", "T", "-l", "repo:r", "--silent", "--body-file", "-"]), Some("the body".into())));
         assert_eq!(w[1].0[..2], argv(&["create-bead", "sp-new"])[..], "the lifecycle row is the store's own verb on the same client");
