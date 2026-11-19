@@ -5665,3 +5665,19 @@ fn a_unit_run_cut_at_its_deadline_without_a_summary_is_not_the_missing_report_fa
     f.run();
     assert!(!f.stderr().contains("printed no `Summary [` line"), "{}", f.stderr());
 }
+
+#[test]
+fn the_gate_phase_is_bounded_by_the_configured_budget_not_a_literal() {
+    let f = Fake::new();
+    f.repo_build_secs.set(Some(30));
+    f.phase_secs.set(200);
+    f.put_var("SPIRA_GATE_DEADLINE", "900");
+    f.put_var("SPIRA_GATE_BUDGET", "300");
+    assert_eq!(f.run(), PASS, "{}", f.verdict_line());
+    let t = f.timeouts.borrow().clone();
+    let (_, to) = t
+        .iter()
+        .find(|(c, _)| c.contains("testenv") && !c.contains("--suites build") && !c.contains("--share-publish"))
+        .expect("a gate phase ran");
+    assert_eq!(to, "300", "the gate phase's cutoff is the configured budget: {t:?}");
+}
