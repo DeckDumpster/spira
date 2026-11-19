@@ -32,8 +32,9 @@ stub dwarf 'case "$2" in reset-at) echo 1700000000 ;; log-fingerprint) echo fp-1
 
 printf '{"type":"rate_limit_event"}\n' > "$RUN/sp-cap1.log"
 
-out="$(env -i PATH="$BIN:$PATH" HOME="$TMP" SPIRA_CONF="$TMP/no-such-conf" SPIRA_RUN="$RUN" SPIRA_DB="$TMP/db" \
-    CALLS_FILE="$CALLS" bash "$HERE/capacity.sh" reclassify --apply 2>&1)"
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/db"
+export CALLS_FILE="$CALLS"
+out="$(PATH="$BIN:$PATH" SPIRA_RELEASE="$(PATH="$BIN:$PATH" tl_release)" bash "$HERE/capacity.sh" reclassify --apply 2>&1)"
 
 want "the withdrawal is reported restored" "RESTORED sp-cap1" "$out"
 want "the rung is removed through the content door" "spira-lc content label remove sp-cap1 sp-attempt-2-unlanded" "$(cat "$CALLS")"
