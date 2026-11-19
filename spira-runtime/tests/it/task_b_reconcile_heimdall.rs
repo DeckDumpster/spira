@@ -89,3 +89,10 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_neither_forgets_a_sighting_nor_raises_without_its_second() {
     t::assert_boot_matches_an_unstopped_run::<H>(MIRROR_SET, vec![mirror_stale()], |_| {});
 }
+
+#[test]
+fn the_sentinel_is_found_by_its_real_task_name_in_the_scheduler_status() {
+    let doc = serde_json::json!({"tasks": [{"name": "sentinel-pass", "next_due_at": null, "last_fired_at": 1_000_000u64, "last_outcome": "succeeded"}]});
+    assert_eq!(task::sentinel_status(Some(&doc)), TaskStatus { armed: false, last_fired_ms: Some(1_000_000), effect_failures: 0 });
+    assert_eq!(task::sentinel_status(None), TaskStatus { armed: true, last_fired_ms: None, effect_failures: 0 });
+}

@@ -226,7 +226,7 @@ pub struct ReconcileHeimdall {
 }
 
 /// The sentinel task, as `scheduler status` names it.
-pub const SENTINEL_TASK: &str = "sentinel.pass";
+pub const SENTINEL_TASK: &str = super::super::a::sentinel_pass::NAME;
 /// The export task whose last success is the mirror's age.
 pub const EXPORT_TASK: &str = "sweep.export_beads";
 
@@ -361,6 +361,16 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
     Ok((next, acts))
 }
 
+/// The sentinel task's row of a `scheduler status` document. No document or no row is "cannot
+/// tell", and nothing is judged stale on it.
+pub fn sentinel_status(status: Option<&serde_json::Value>) -> TaskStatus {
+    let row = status.and_then(|s| s["tasks"].as_array()?.iter().find(|t| t["name"] == SENTINEL_TASK));
+    match row {
+        Some(t) => TaskStatus { armed: !t["next_due_at"].is_null(), last_fired_ms: t["last_fired_at"].as_u64(), effect_failures: u64::from(t["last_outcome"] == "failed") },
+        None => TaskStatus { armed: true, last_fired_ms: None, effect_failures: 0 },
+    }
+}
+
 /// The observe probe: the sentinel and export tasks from `scheduler status` on `control`, the
 /// store's heimdall conditions (and the write probe, which stays part of observe), the run
 /// dir's halt and drain stamps and its strands file. A store that answers removes a fallback
@@ -369,11 +379,7 @@ pub fn observe(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path, c
     use heimdall::conditions::{Conditions, Failure, LcConditions};
     let status: Option<serde_json::Value> = runtime::socket::lc_call(std::path::Path::new(control), &["scheduler", "status"]).ok().and_then(|t| serde_json::from_str(&t).ok());
     let task = |name: &str| status.as_ref().and_then(|s| s["tasks"].as_array()?.iter().find(|t| t["name"] == name).cloned());
-    let sentinel = match task(SENTINEL_TASK) {
-        Some(t) => TaskStatus { armed: !t["next_due_at"].is_null(), last_fired_ms: t["last_fired_at"].as_u64(), effect_failures: u64::from(t["last_outcome"] == "failed") },
-        // Not hosted, or no status to read: cannot tell, so nothing is judged stale.
-        None => TaskStatus { armed: true, last_fired_ms: None, effect_failures: 0 },
-    };
+    let sentinel = sentinel_status(status.as_ref());
     let mirror_age_secs = task(EXPORT_TASK).filter(|t| t["last_outcome"] == "succeeded").and_then(|t| t["last_fired_at"].as_u64()).map(|at| now_ms.saturating_sub(at) / 1000);
     let ops = LcConditions { client: lc.clone() };
     let (db_reachable, alert_rows) = match ops.list() {
