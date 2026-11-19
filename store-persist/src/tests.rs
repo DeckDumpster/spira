@@ -370,6 +370,19 @@ fn a_failed_daily_collection_writes_one_line_naming_the_database_and_dolts_error
     assert_eq!(text.lines().count(), 1, "{text}");
     assert!(text.contains("spira: collection failed: disk quota exceeded"), "{text}");
     assert!(text.starts_with("1970-01-11T00:00:"), "an iso8601 stamp of the fake clock: {text}");
+    run(&w.cfg, &w.dolt, &w.clock, Some(40), &mut |_| {});
+    assert_eq!(fs::read_to_string(w.cfg.run.join(COLLECT_LOG)).unwrap(), text, "a later hourly failure on the same day adds nothing");
+}
+
+#[test]
+fn a_rebuild_that_fails_is_a_failure_line_naming_the_database() {
+    let w = serving();
+    keep_upkeep(&w, 7200, 2 * COMPACT_EVERY_SECS);
+    put(&layout(&w).db("spira").join("shed-chunks"), &"x".repeat(4096));
+    w.dolt.fail_sync.set(100);
+    run(&w.cfg, &w.dolt, &w.clock, Some(2), &mut |_| {});
+    let text = fs::read_to_string(w.cfg.run.join(COLLECT_LOG)).unwrap();
+    assert!(text.contains("store-persist: spira: rebuild failed: planted sync failure"), "{text}");
 }
 
 #[test]
@@ -420,13 +433,13 @@ fn compaction_rebuilds_only_a_copy_past_its_ratio_and_swaps_it_whole() {
     restore(&w.cfg, &w.dolt).unwrap();
     live_server(&w, 4242);
     let l = layout(&w);
-    let out = compact(&w.cfg, &w.dolt).unwrap();
+    let out = compact(&w.cfg, &w.dolt).unwrap().lines;
     assert!(out.iter().filter(|o| o.contains("copy")).all(|o| o.contains("within")), "{out:?}");
     w.dolt.bloat.set(4096);
     pass(&w.cfg, Mode::Online, &w.dolt, &w.clock).unwrap();
     let bloated = tree_bytes(&l.db("spira"));
     w.dolt.bloat.set(0);
-    let out = compact(&w.cfg, &w.dolt).unwrap();
+    let out = compact(&w.cfg, &w.dolt).unwrap().lines;
     assert!(out.iter().filter(|o| o.contains("copy")).all(|o| o.contains("rebuilt")), "{out:?}");
     assert!(tree_bytes(&l.db("spira")) < bloated);
     assert_eq!(fs::read_to_string(l.db("spira").join("payload")).unwrap(), "beads-v1");
@@ -438,7 +451,7 @@ fn compaction_collects_the_live_store_whatever_the_free_space() {
     let w = seeded();
     restore(&w.cfg, &w.dolt).unwrap();
     live_server(&w, 4242);
-    let out = compact(&w.cfg, &w.dolt).unwrap();
+    let out = compact(&w.cfg, &w.dolt).unwrap().lines;
     assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_aux"]);
     assert!(out.iter().any(|o| o.contains("collected, live")), "{out:?}");
     assert!(!out.iter().any(|o| o.contains("not collected")), "{out:?}");

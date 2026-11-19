@@ -479,11 +479,13 @@ mod tests {
         let body: String = (0..30u64).map(|i| format!("{} 95 1\n", now - 10 * i)).collect();
         std::fs::write(tmp.path().join("psi-samples"), body).unwrap();
         let plan = HostPlan::from_config(tmp.path(), &|_| None).unwrap().unwrap();
-        let line = match crate::spill::decide_host(&plan.rule, true, (plan.load)()) {
+        let permissive = HostRule { io_full_5m_tm90: f64::MAX, cpu_some_5m_tm90: f64::MAX };
+        let line = match crate::spill::decide_host(&permissive, true, (plan.load)()) {
             crate::spill::HostPlace::Host(l) | crate::spill::HostPlace::Ec2(l) => l,
         };
-        assert!(!line.contains("tm90"), "{line}");
-        assert!(!line.contains("pressure") || line.contains("avg300") || line.contains("unreadable"), "{line}");
+        assert!(!line.contains("tm90") && !line.contains("95.0"), "{line}");
+        let readable = crate::spill::read_psi(crate::spill::PSI_IO, "full", "avg300").is_some();
+        assert_eq!(line.contains("avg300"), readable, "{line}");
         assert_eq!(plan.rule.io_full_5m_tm90, 50.0);
     }
 }

@@ -1614,3 +1614,12 @@ fn the_drill_unit_runs_after_a_fresh_backup_and_names_live_trigger_paths() {
         assert!(root.join(&p).exists(), "{p} does not exist in the tree");
     }
 }
+
+#[test]
+fn the_trees_delta_loads_and_replaces_the_backup_age_and_database_defaults() {
+    let spira = spira_config::resolve::checkout_root_for_process().unwrap().join("spira");
+    let text = spira_config::delta::delta_text(&spira).unwrap().expect("the tree ships a delta");
+    let delta = crate::config_delta::Delta::parse(&text).unwrap();
+    assert_eq!(delta.replaced.get("spira.lc_backup_max_age").and_then(|v| v.as_integer()), Some(50_400));
+    assert_eq!(delta.replaced.get("spira.lc_backup_db").and_then(|v| v.as_str()), Some("spira"));
+}

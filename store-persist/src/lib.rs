@@ -70,9 +70,6 @@ impl Config {
             gc_interval_secs: num(KEY_GC_INTERVAL)?,
             run: PathBuf::from(need(KEY_RUN)?),
         };
-        if cfg.run.as_os_str().is_empty() {
-            return Err(format!("{KEY_RUN} is empty — nowhere to record a failed collection"));
-        }
         if cfg.max_lag_secs <= cfg.interval_secs {
             return Err(format!("{KEY_MAX_LAG} ({}) must exceed {KEY_INTERVAL} ({})", cfg.max_lag_secs, cfg.interval_secs));
         }
@@ -565,6 +562,22 @@ pub fn gc(cfg: &Config, dolt: &dyn Dolt) -> Result<Vec<String>, String> {
     if all { Ok(out) } else { Err(out.join("; ")) }
 }
 
+/// What a daily upkeep pass did: a report line per step, and the lines of the steps that failed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Compacted {
+    pub lines: Vec<String>,
+    pub failures: Vec<String>,
+}
+
+impl Compacted {
+    fn report(&mut self, line: String, failed: bool) {
+        if failed {
+            self.failures.push(line.clone());
+        }
+        self.lines.push(line);
+    }
+}
+
 fn rebuild(l: &Layout, cfg: &Config, dolt: &dyn Dolt, conn: &Conn, db: &str, fresh: &Path) -> Result<(), String> {
     dolt.sync(conn, &cfg.data, db, fresh)?;
     {
@@ -582,26 +595,27 @@ fn rebuild(l: &Layout, cfg: &Config, dolt: &dyn Dolt, conn: &Conn, db: &str, fre
 /// A backup never sheds a chunk the live store has collected, so each copy grows until it is
 /// rebuilt. One past `compact_pct` of its live size is rebuilt beside itself without the lock,
 /// caught up under the lock, and exchanged in one rename.
-pub fn compact(cfg: &Config, dolt: &dyn Dolt) -> Result<Vec<String>, String> {
+pub fn compact(cfg: &Config, dolt: &dyn Dolt) -> Result<Compacted, String> {
     let l = cfg.layout()?;
     let conn = conn_for(&cfg.data, Mode::Online, dolt)?;
-    let mut out = Vec::new();
+    let mut out = Compacted::default();
     for db in durable_dbs(&l)? {
         let noms = cfg.data.join(&db).join(".dolt/noms");
         if tree_bytes(&noms) > 0 {
-            out.push(collect(cfg, dolt, &conn, &db)?.0);
+            let (line, done) = collect(cfg, dolt, &conn, &db)?;
+            out.report(line, !done);
         }
         let (copy, live) = (tree_bytes(&l.db(&db)), tree_bytes(&noms));
         if live == 0 || copy.saturating_mul(100) <= live.saturating_mul(cfg.compact_pct) {
-            out.push(format!("{db}: copy {copy} B, live {live} B — within {}%", cfg.compact_pct));
+            out.report(format!("{db}: copy {copy} B, live {live} B — within {}%", cfg.compact_pct), false);
             continue;
         }
         let fresh = l.compact_dir().join(&db);
         let _ = fs::remove_dir_all(&fresh);
         fs::create_dir_all(l.compact_dir()).map_err(|e| format!("cannot create {}: {e}", l.compact_dir().display()))?;
         match rebuild(&l, cfg, dolt, &conn, &db, &fresh) {
-            Ok(()) => out.push(format!("{db}: rebuilt, copy {copy} B -> {} B (live {live} B)", tree_bytes(&l.db(&db)))),
-            Err(e) => out.push(format!("{db}: rebuild failed: {e}")),
+            Ok(()) => out.report(format!("{db}: rebuilt, copy {copy} B -> {} B (live {live} B)", tree_bytes(&l.db(&db))), false),
+            Err(e) => out.report(format!("{db}: rebuild failed: {e}"), true),
         }
     }
     Ok(out)
@@ -648,6 +662,10 @@ fn record_failures(cfg: &Config, now_ms: u64, lines: &[String]) {
     if lines.is_empty() {
         return;
     }
+    if cfg.run.as_os_str().is_empty() {
+        eprintln!("store-persist: {KEY_RUN} is empty — nowhere to record a failed collection");
+        return;
+    }
     let body: String = lines.iter().map(|l| format!("{} store-persist: {l}\n", iso8601(now_ms))).collect();
     let appended = fs::create_dir_all(&cfg.run)
         .and_then(|_| fs::OpenOptions::new().create(true).append(true).open(cfg.run.join(COLLECT_LOG)))
@@ -685,9 +703,9 @@ pub fn run(cfg: &Config, dolt: &dyn Dolt, clock: &dyn Clock, passes: Option<u64>
         let due = |last: u64, every_secs: u64| every_secs > 0 && clock.now_ms().saturating_sub(last) >= every_secs * 1000;
         if due(upkeep.last_compact_ms, COMPACT_EVERY_SECS) {
             let failed = match compact(cfg, dolt) {
-                Ok(lines) => {
-                    lines.iter().for_each(|l| log(&format!("store-persist: {l}")));
-                    lines.into_iter().filter(|l| l.contains("collection failed") || l.contains("rebuild failed")).collect()
+                Ok(done) => {
+                    done.lines.iter().for_each(|l| log(&format!("store-persist: {l}")));
+                    done.failures
                 }
                 Err(e) => vec![format!("compact failed: {e}")],
             };
