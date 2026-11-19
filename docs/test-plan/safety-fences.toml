@@ -14,7 +14,7 @@ statement = "in a dwarf session, writes under `SPIRA_PROD` or `SPIRA_RUN/queue` 
 [[use_case]]
 id = "UC-safety-fences-03"
 tier = "T1"
-statement = "dwarf-fence carries no `bd create` rule: in a dwarf session, of any persona, a `bd create` passes the fence — no dwarf persona has bd (model PATH holds only `work`, sp-zf4q3; bead operations are `work` verbs, sp-st0mm; sp-j7l3q)"
+statement = "dwarf-fence refuses a dwarf's direct `bd`, `bd-embedded` or `bdq` call under any path (bare, absolute, `$VAR/…`, after env/sudo/timeout/`bash -c`/`cd … &&`) and any `BEADS_DIR` assignment, naming `work file` / `work note-on` / `work search`; prose, heredoc bodies and `work` calls pass; SPIRA_DWARF_OVERRIDE=1 bypasses. Reverses the 2026-10-05 no-bd-rule ruling (sp-j7l3q) on 2026-11-18, after ops sweeps wrote to the store by absolute path (sp-dxbocs)"
 
 [[use_case]]
 id = "UC-safety-fences-04"

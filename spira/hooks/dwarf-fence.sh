@@ -398,9 +398,72 @@ if hit(sys.stdin.read()): print("1")
         reason="dwarves may not kill by pattern (pkill, killall, pgrep|xargs kill match other sessions' processes, the Concierge's included; law-guard-binds-the-caller): kill by PID after reading /proc/<pid>/cmdline, or stop a systemd unit by name with systemctl --user stop <unit>; SPIRA_DWARF_OVERRIDE=1 for Ops incidents"
 fi
 
-# No bd rule (sp-j7l3q; Ryan 2026-10-05, superseding sp-nkr42 here): no dwarf persona has bd.
-# The model's PATH holds only `work` (sp-zf4q3) and every persona's bead operations are
-# `work` broker verbs (sp-st0mm), so the old `bd create` heuristic guarded nothing.
+if [ -z "$reason" ]; then
+    _direct_bd="$(printf '%s' "$cmd" | python3 -c '
+import re, shlex, sys
+BD = {"bd", "bd-embedded", "bdq"}
+PREFIX = {"sudo", "env", "timeout", "nohup", "nice", "command", "exec", "time"}
+ARGFLAGS = {"-u", "-g", "-U", "-C", "-n", "-s", "-k"}
+ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+def strip_heredocs(text):
+    out, end = [], None
+    for line in text.split("\n"):
+        if end is not None:
+            if line.strip() == end:
+                end = None
+            continue
+        out.append(line)
+        m = re.search(r"<<-?\s*[\"\x27]?([A-Za-z0-9_]+)[\"\x27]?", line)
+        if m:
+            end = m.group(1)
+    return " ; ".join(out)
+def segments(text):
+    try:
+        lex = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        toks = text.split()
+    segs, cur = [], []
+    for t in toks:
+        if t and set(t) <= set("&|;()"):
+            segs.append(cur); cur = []
+        else:
+            cur.append(t)
+    segs.append(cur)
+    return segs
+def hit(text, depth=0):
+    for toks in segments(text):
+        i = 0
+        while i < len(toks):
+            t = toks[i]
+            if t.startswith("BEADS_DIR=") or (t in ("export", "declare", "typeset", "local", "readonly") and any(w.startswith("BEADS_DIR") for w in toks[i + 1:])):
+                return True
+            if ASSIGN.match(t) or t in ("do", "then", "{", "!"):
+                i += 1; continue
+            if t.split("/")[-1] in PREFIX:
+                i += 1
+                while i < len(toks) and (toks[i].startswith("-") or toks[i][:1].isdigit() or ASSIGN.match(toks[i])):
+                    if toks[i] in ARGFLAGS: i += 1
+                    i += 1
+                continue
+            break
+        if i >= len(toks):
+            continue
+        name, rest = toks[i].split("/")[-1], toks[i + 1:]
+        if name in BD:
+            return True
+        flag = [k for k, w in enumerate(rest) if re.match(r"^-[a-z]*c$", w)]
+        if name in ("bash", "sh", "zsh", "dash", "ksh") and flag and depth < 3:
+            j = flag[0]
+            if j + 1 < len(rest) and hit(strip_heredocs(rest[j + 1]), depth + 1):
+                return True
+    return False
+if hit(strip_heredocs(sys.stdin.read())): print("1")
+' 2>/dev/null)"
+    [ "$_direct_bd" = "1" ] && \
+        reason="dwarves may not run bd/bdq directly (law-only-spira-lc-talks-to-the-stores; reverses the 2026-10-05 no-bd-rule ruling of sp-j7l3q on 2026-11-18, sp-dxbocs): file with work file \"<title>\" --for builder --repo <name> --body-file -, note with work note-on <id> -, find with work search \"<q>\"; SPIRA_DWARF_OVERRIDE=1 for Ops incidents"
+fi
 
 [ -n "$reason" ] || exit 0
 
