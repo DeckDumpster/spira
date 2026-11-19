@@ -281,13 +281,13 @@ mod tests {
     fn observe_at_reports_the_control_drill_when_the_store_is_configured() {
         let found = |v: &[(String, Db)]| v.iter().find(|(n, _)| n == "drill:control").map(|(_, d)| d.clone());
         let fresh = 10_000_000 - 3600;
-        let present = stamped(&[("lc-backup/control/drill.ok", fresh)], "/store");
+        let present = stamped(&[("lc-backup/control/drill.ok", fresh)], "store");
         assert_eq!(found(&present), Some(Db::Ok { age: 3600 }));
-        assert_eq!(found(&stamped(&[], "/store")), Some(Db::Never));
+        assert_eq!(found(&stamped(&[], "store")), Some(Db::Never));
         assert_eq!(found(&stamped(&[("lc-backup/control/drill.ok", fresh)], "")), None);
-        let stale = stamped(&[("lc-backup/control/drill.ok", 10_000_000 - 9 * 24 * H)], "/store");
+        let stale = stamped(&[("lc-backup/control/drill.ok", 10_000_000 - 9 * 24 * H)], "store");
         assert!(matches!(found(&stale), Some(Db::Stale { .. })));
-        let cfg = Config { url: "u".into(), db: "spira".into(), max_age_s: 1, lc_store_path: "/store".into(), run: "r".into() };
+        let cfg = Config { url: "u".into(), db: "spira".into(), max_age_s: 1, lc_store_path: "store".into(), run: "r".into() };
         let (carry, _) = decide(&Carry::Ok, &Snapshot::Dbs(stale), 0, &cfg);
         assert_eq!(carry, Carry::Red);
     }

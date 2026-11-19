@@ -393,8 +393,8 @@ fn the_watchers_file_reads_the_log_run_writes() {
     let mut f = row.split('|');
     f.next();
     assert_eq!(f.next(), Some("log"));
-    let target = f.next().unwrap().replace("@SPIRA_RUN@", "/run");
-    assert_eq!(target, format!("/run/{COLLECT_LOG}"));
+    let target = f.next().unwrap().replace("@SPIRA_RUN@", "run");
+    assert_eq!(target, format!("run/{COLLECT_LOG}"));
 }
 
 #[test]
