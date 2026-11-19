@@ -27,6 +27,7 @@ pub mod amendment;
 pub mod scheduler_link;
 pub mod admission;
 pub mod bounded;
+pub mod branch_key;
 pub mod cite;
 pub mod build;
 pub mod build_dir;

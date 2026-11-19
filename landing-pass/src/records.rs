@@ -1,7 +1,8 @@
 //! The pass's own files under $SPIRA_RUN (DESIGN.md §2.4).
 
 use crate::model::{RunRecord, StatusFile};
-use crate::util::{atomic_write, branch_key};
+use crate::util::atomic_write;
+use spira_config::branch_key::branch_key;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -82,14 +83,7 @@ impl Files {
         let _ = fs::remove_file(self.backoff_file(branch));
         let _ = fs::remove_file(self.dead_file(branch));
         let _ = fs::remove_file(self.exhaust_file(branch));
-        let key = branch_key(branch);
-        if let Ok(rd) = fs::read_dir(self.run.join("noverdict")) {
-            for e in rd.flatten() {
-                if e.file_name().to_string_lossy().starts_with(&key) {
-                    let _ = fs::remove_file(e.path());
-                }
-            }
-        }
+        spira_config::branch_key::clear_noverdict(&self.run, branch);
     }
 
     fn exhaust_file(&self, branch: &str) -> PathBuf {
@@ -395,6 +389,19 @@ mod tests {
         assert!(!f.backing_off("spira/sp-a", "t2", 150));
         f.clear_noverdict("spira/sp-a");
         assert!(!f.backing_off("spira/sp-a", "t1", 150));
+    }
+
+    #[test]
+    fn clearing_a_branch_keeps_the_counters_of_a_branch_that_extends_its_name() {
+        let d = crate::testutil::tmpdir("clear-prefix");
+        let f = Files::new(&d);
+        fs::create_dir_all(d.join("noverdict")).unwrap();
+        for n in ["spira-sp-a-conflict", "spira-sp-ab-conflict"] {
+            fs::write(d.join("noverdict").join(n), "2").unwrap();
+        }
+        f.clear_noverdict("spira/sp-a");
+        assert!(!d.join("noverdict/spira-sp-a-conflict").exists());
+        assert!(d.join("noverdict/spira-sp-ab-conflict").exists());
     }
 
     #[test]
