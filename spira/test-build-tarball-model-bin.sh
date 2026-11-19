@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-build-tarball-model-bin.sh — the tarball's model-bin/ holds exactly
-# spira_config::release_env::MODEL_BINS (built from the real spira-config, no second list).
+# spira_config::release_env::MODEL_BINS (read from the tree's own spira-config, no second list).
 #
 # CASES
 #   1. Every MODEL_BINS name shipped in bin/ is linked in the tarball's model-bin/, and
@@ -21,13 +21,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
-SC="$(cd "$REPO_ROOT" && cargo build -q -p spira-config --bin spira-config --message-format=json 2>"$TMP/cargo.err" \
-    | python3 -I -c 'import sys,json
-for l in sys.stdin:
-    try: m=json.loads(l)
-    except ValueError: continue
-    if m.get("reason")=="compiler-artifact" and m.get("executable") and m["target"]["name"]=="spira-config": print(m["executable"])' | tail -1)"
-[ -x "$SC" ] || { bad "built spira-config" "no executable: $(tail -3 "$TMP/cargo.err")"; tl_summary; exit 1; }
+SC="$(command -v spira-config)" || { bad "spira-config is on PATH" "the tree build is not on PATH"; tl_summary; exit 1; }
 
 want="$("$SC" model-bins | LC_ALL=C sort)"
 [ -n "$want" ] || { bad "MODEL_BINS read from source" "empty"; tl_summary; exit 1; }
