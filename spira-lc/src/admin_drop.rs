@@ -222,10 +222,13 @@ fn drop_on<B: state_store::Backend>(admin: &dyn Dolt, db: &str, store: &crate::c
         Ok(gaps) => return (REFUSED, format!("admin-drop-lifecycle: {db} is kept: the control store lacks {}", gaps.join("; "))),
         Err(e) => return cannot(e),
     }
-    match admin.execute(&format!("DROP DATABASE `{db}`")) {
-        Ok(()) => (0, format!("admin-drop-lifecycle: carried {facts} facts and {rows} journal rows ({summary} held); dropped {db}\nadmin-drop-lifecycle: spira.lc_backup_db must no longer name {db}: set it to the databases still kept")),
-        Err(e) => cannot(format!("dropping {db}: {e}")),
+    if let Err(e) = admin.execute(&format!("DROP DATABASE `{db}`")) {
+        return cannot(format!("dropping {db}: {e}"));
     }
+    if let Err(e) = admin.execute("CALL dolt_purge_dropped_databases()") {
+        return cannot(format!("{db} is dropped but its files are not purged: {e}"));
+    }
+    (0, format!("admin-drop-lifecycle: carried {facts} facts and {rows} journal rows ({summary} held); dropped {db} and purged the dropped databases\nadmin-drop-lifecycle: spira.lc_backup_db must no longer name {db}: set it to the databases still kept"))
 }
 
 #[cfg(test)]
@@ -322,7 +325,11 @@ mod tests {
         let (rc, out) = drop_on(&server, "lifedb", &s, false);
         assert_eq!(rc, 0, "{out}");
         assert!(out.contains("2 facts") && out.contains("1 task state") && out.contains("dropped lifedb") && out.contains("spira.lc_backup_db"), "{out}");
-        assert_eq!(server.seen.borrow().last().map(String::as_str), Some("DROP DATABASE `lifedb`"));
+        let seen = server.seen.borrow();
+        let drop_at = seen.iter().position(|q| q == "DROP DATABASE `lifedb`").expect("the drop ran");
+        assert_eq!(seen.get(drop_at + 1).map(String::as_str), Some("CALL dolt_purge_dropped_databases()"), "the purge follows the drop");
+        assert!(out.contains("purged"), "{out}");
+        drop(seen);
         assert_eq!(server.seen.borrow().iter().filter(|q| q.starts_with("DROP")).count(), 1);
         assert_eq!(s.facts(&[]).unwrap().len(), 2);
         assert_eq!(s.journal_open_effects().unwrap().len(), 1);

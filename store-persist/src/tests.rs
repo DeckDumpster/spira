@@ -27,7 +27,7 @@ struct FakeDolt {
     bloat: Cell<usize>,
     gcs: RefCell<Vec<String>>,
     fail_gc: RefCell<Option<String>>,
-    free: Cell<Option<u64>>,
+    gc_message: RefCell<String>,
 }
 
 impl Dolt for FakeDolt {
@@ -46,12 +46,9 @@ impl Dolt for FakeDolt {
     fn gc(&self, _conn: &Conn, _data: &Path, db: &str) -> Result<(), String> {
         self.gcs.borrow_mut().push(db.to_string());
         match &*self.fail_gc.borrow() {
-            Some(bad) if bad == db => Err("planted gc failure".into()),
+            Some(bad) if bad == db => Err(self.gc_message.borrow().clone()),
             _ => Ok(()),
         }
-    }
-    fn free_bytes(&self, _path: &Path) -> Result<u64, String> {
-        Ok(self.free.get().unwrap_or(u64::MAX))
     }
     fn verify(&self, db_dir: &Path) -> Result<String, String> {
         if self.fail_verify.get() {
@@ -97,7 +94,7 @@ fn world() -> World {
     put(&old.join(".doltcfg/privileges.db"), "grants");
     put(&old.join("dolt-server.yaml"), &yaml(&old));
     put(&data.join("dolt-server.yaml"), &yaml(&data));
-    let cfg = Config { data, durable: Some(durable), interval_secs: 7, max_lag_secs: 40, compact_pct: 150, gc_interval_secs: 100 };
+    let cfg = Config { data, durable: Some(durable), interval_secs: 7, max_lag_secs: 40, compact_pct: 150, gc_interval_secs: 100, run: tmp.join("run") };
     World { _tmp: tmp, cfg, old, dolt: FakeDolt::default(), clock: FakeClock(Cell::new(1_000)) }
 }
 
@@ -124,6 +121,7 @@ fn values(root: &Path, drop: Option<&str>) -> BTreeMap<String, String> {
         (KEY_MAX_LAG, "40".to_string()),
         (KEY_COMPACT_PCT, "150".to_string()),
         (KEY_GC_INTERVAL, "100".to_string()),
+        (KEY_RUN, root.join("run").display().to_string()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -286,11 +284,24 @@ fn the_daemon_reports_a_recovery_once() {
     assert_eq!(w.clock.now_ms(), 1_000 + 4 * 7 * 1000, "one interval between passes");
 }
 
-#[test]
-fn the_daemon_collects_the_live_store_once_per_gc_interval_between_passes() {
+fn keep_upkeep(w: &World, gc_ago_s: u64, compact_ago_s: u64) {
+    let now = w.clock.now_ms();
+    let u = Upkeep { last_gc_ms: now - gc_ago_s * 1000, last_compact_ms: now - compact_ago_s * 1000 };
+    put_durable(&layout(w).upkeep(), u.render().as_bytes()).unwrap();
+}
+
+fn serving() -> World {
     let w = seeded();
     restore(&w.cfg, &w.dolt).unwrap();
     live_server(&w, 4242);
+    w.clock.0.set(10 * COMPACT_EVERY_SECS * 1000);
+    w
+}
+
+#[test]
+fn the_daemon_collects_the_live_store_once_per_gc_interval_between_passes() {
+    let w = serving();
+    keep_upkeep(&w, 0, 0);
     let mut log = Vec::new();
     run(&w.cfg, &w.dolt, &w.clock, Some(32), &mut |l| log.push(l.to_string()));
     assert_eq!(w.dolt.gcs.borrow().len(), 2 * 2, "interval 7s, gc every 100s: two collections of both databases in 32 passes");
@@ -298,25 +309,105 @@ fn the_daemon_collects_the_live_store_once_per_gc_interval_between_passes() {
 }
 
 #[test]
-fn a_gc_interval_of_zero_leaves_collection_to_the_daily_compact() {
-    let mut w = seeded();
+fn a_gc_interval_of_zero_leaves_collection_to_the_daily_rebuild() {
+    let mut w = serving();
     w.cfg.gc_interval_secs = 0;
-    restore(&w.cfg, &w.dolt).unwrap();
-    live_server(&w, 4242);
+    keep_upkeep(&w, 0, 0);
     run(&w.cfg, &w.dolt, &w.clock, Some(30), &mut |_| {});
     assert!(w.dolt.gcs.borrow().is_empty());
 }
 
 #[test]
-fn the_daemon_does_not_collect_when_the_filesystem_lacks_room_for_a_second_generation() {
-    let w = seeded();
-    restore(&w.cfg, &w.dolt).unwrap();
-    live_server(&w, 4242);
-    w.dolt.free.set(Some(1));
+fn the_daemon_collects_whatever_the_free_space_and_never_says_not_collected() {
+    let w = serving();
+    keep_upkeep(&w, 0, 0);
     let mut log = Vec::new();
     run(&w.cfg, &w.dolt, &w.clock, Some(30), &mut |l| log.push(l.to_string()));
+    assert!(!w.dolt.gcs.borrow().is_empty());
+    assert!(!log.iter().any(|l| l.contains("not collected")), "{log:?}");
+}
+
+#[test]
+fn a_restarted_daemon_with_overdue_times_collects_and_rebuilds_on_its_first_loop() {
+    let w = serving();
+    keep_upkeep(&w, 7200, 2 * COMPACT_EVERY_SECS);
+    run(&w.cfg, &w.dolt, &w.clock, Some(2), &mut |_| {});
+    assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_aux"], "the daily check collects each database once");
+    let kept = read_upkeep(&layout(&w));
+    assert_eq!(kept.last_compact_ms, 10 * COMPACT_EVERY_SECS * 1000);
+    assert_eq!(kept.last_gc_ms, kept.last_compact_ms);
+}
+
+#[test]
+fn a_restarted_daemon_within_its_intervals_neither_collects_nor_checks() {
+    let w = serving();
+    keep_upkeep(&w, 60, 3600);
+    run(&w.cfg, &w.dolt, &w.clock, Some(2), &mut |_| {});
     assert!(w.dolt.gcs.borrow().is_empty());
-    assert!(log.iter().any(|l| l.contains("not collected")), "{log:?}");
+    assert_eq!(read_upkeep(&layout(&w)).last_compact_ms, w.clock.now_ms() - 3600 * 1000 - 7000, "untouched");
+}
+
+#[test]
+fn the_daemon_rebuilds_a_copy_past_its_ratio_once_a_day_without_a_compact_verb() {
+    let w = serving();
+    keep_upkeep(&w, 0, 2 * COMPACT_EVERY_SECS);
+    put(&layout(&w).db("spira").join("shed-chunks"), &"x".repeat(4096));
+    let bloated = tree_bytes(&layout(&w).db("spira"));
+    let mut log = Vec::new();
+    run(&w.cfg, &w.dolt, &w.clock, Some(3), &mut |l| log.push(l.to_string()));
+    assert!(tree_bytes(&layout(&w).db("spira")) < bloated);
+    assert_eq!(log.iter().filter(|l| l.contains("rebuilt, copy")).count(), 1, "only the bloated copy, once: {log:?}");
+}
+
+#[test]
+fn a_failed_daily_collection_writes_one_line_naming_the_database_and_dolts_error() {
+    let w = serving();
+    keep_upkeep(&w, 7200, 2 * COMPACT_EVERY_SECS);
+    *w.dolt.fail_gc.borrow_mut() = Some("spira".into());
+    *w.dolt.gc_message.borrow_mut() = "disk quota exceeded".into();
+    run(&w.cfg, &w.dolt, &w.clock, Some(40), &mut |_| {});
+    let text = fs::read_to_string(w.cfg.run.join(COLLECT_LOG)).unwrap();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.contains("spira: collection failed: disk quota exceeded"), "{text}");
+    assert!(text.starts_with("1970-01-11T00:00:"), "an iso8601 stamp of the fake clock: {text}");
+    run(&w.cfg, &w.dolt, &w.clock, Some(40), &mut |_| {});
+    assert_eq!(fs::read_to_string(w.cfg.run.join(COLLECT_LOG)).unwrap(), text, "a later hourly failure on the same day adds nothing");
+}
+
+#[test]
+fn a_rebuild_that_fails_is_a_failure_line_naming_the_database() {
+    let w = serving();
+    keep_upkeep(&w, 7200, 2 * COMPACT_EVERY_SECS);
+    put(&layout(&w).db("spira").join("shed-chunks"), &"x".repeat(4096));
+    w.dolt.fail_sync.set(100);
+    run(&w.cfg, &w.dolt, &w.clock, Some(2), &mut |_| {});
+    let text = fs::read_to_string(w.cfg.run.join(COLLECT_LOG)).unwrap();
+    assert!(text.contains("store-persist: spira: rebuild failed: planted sync failure"), "{text}");
+}
+
+#[test]
+fn a_quiet_daily_check_writes_no_failure_log() {
+    let w = serving();
+    keep_upkeep(&w, 7200, 2 * COMPACT_EVERY_SECS);
+    run(&w.cfg, &w.dolt, &w.clock, Some(3), &mut |_| {});
+    assert!(!w.cfg.run.join(COLLECT_LOG).exists());
+}
+
+#[test]
+fn iso8601_renders_a_known_instant() {
+    assert_eq!(iso8601(1_795_000_000_000), "2026-11-18T11:06:40Z");
+    assert_eq!(iso8601(0), "1970-01-01T00:00:00Z");
+}
+
+#[test]
+fn the_watchers_file_reads_the_log_run_writes() {
+    let rows = include_str!("../../spira/watchers");
+    let row = rows.lines().find(|l| l.starts_with("dolt-collect|")).expect("a dolt-collect row");
+    let mut f = row.split('|');
+    f.next();
+    assert_eq!(f.next(), Some("log"));
+    let target = f.next().unwrap().replace("@SPIRA_RUN@", "run");
+    assert_eq!(target, format!("run/{COLLECT_LOG}"));
 }
 
 #[test]
@@ -342,13 +433,13 @@ fn compaction_rebuilds_only_a_copy_past_its_ratio_and_swaps_it_whole() {
     restore(&w.cfg, &w.dolt).unwrap();
     live_server(&w, 4242);
     let l = layout(&w);
-    let out = compact(&w.cfg, &w.dolt).unwrap();
+    let out = compact(&w.cfg, &w.dolt).unwrap().lines;
     assert!(out.iter().filter(|o| o.contains("copy")).all(|o| o.contains("within")), "{out:?}");
     w.dolt.bloat.set(4096);
     pass(&w.cfg, Mode::Online, &w.dolt, &w.clock).unwrap();
     let bloated = tree_bytes(&l.db("spira"));
     w.dolt.bloat.set(0);
-    let out = compact(&w.cfg, &w.dolt).unwrap();
+    let out = compact(&w.cfg, &w.dolt).unwrap().lines;
     assert!(out.iter().filter(|o| o.contains("copy")).all(|o| o.contains("rebuilt")), "{out:?}");
     assert!(tree_bytes(&l.db("spira")) < bloated);
     assert_eq!(fs::read_to_string(l.db("spira").join("payload")).unwrap(), "beads-v1");
@@ -356,33 +447,24 @@ fn compaction_rebuilds_only_a_copy_past_its_ratio_and_swaps_it_whole() {
 }
 
 #[test]
-fn compaction_collects_the_live_store_only_when_the_filesystem_has_room_for_a_second_generation() {
+fn compaction_collects_the_live_store_whatever_the_free_space() {
     let w = seeded();
     restore(&w.cfg, &w.dolt).unwrap();
     live_server(&w, 4242);
-    w.dolt.free.set(Some(1));
-    let out = compact(&w.cfg, &w.dolt).unwrap();
-    assert!(w.dolt.gcs.borrow().is_empty(), "no room: collecting would fill the tmpfs itself");
-    assert!(out.iter().any(|o| o.contains("not collected")), "{out:?}");
-    w.dolt.free.set(Some(u64::MAX));
-    let out = compact(&w.cfg, &w.dolt).unwrap();
+    let out = compact(&w.cfg, &w.dolt).unwrap().lines;
     assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_aux"]);
     assert!(out.iter().any(|o| o.contains("collected, live")), "{out:?}");
+    assert!(!out.iter().any(|o| o.contains("not collected")), "{out:?}");
 }
 
 #[test]
-fn gc_collects_each_live_database_without_touching_the_durable_copy_and_fails_when_it_cannot() {
+fn gc_collects_each_live_database_without_touching_the_durable_copy() {
     let w = seeded();
     restore(&w.cfg, &w.dolt).unwrap();
     live_server(&w, 4242);
     let l = layout(&w);
     let copy = tree_bytes(&l.db("spira"));
     w.dolt.syncs.borrow_mut().clear();
-    w.dolt.free.set(Some(1));
-    let err = gc(&w.cfg, &w.dolt).unwrap_err();
-    assert!(err.contains("not collected"), "{err}");
-    assert!(w.dolt.gcs.borrow().is_empty());
-    w.dolt.free.set(Some(u64::MAX));
     let out = gc(&w.cfg, &w.dolt).unwrap();
     assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_aux"]);
     assert!(w.dolt.syncs.borrow().is_empty(), "{out:?}");
@@ -395,8 +477,9 @@ fn gc_still_collects_the_other_database_when_one_fails_and_reports_the_failure()
     restore(&w.cfg, &w.dolt).unwrap();
     live_server(&w, 4242);
     *w.dolt.fail_gc.borrow_mut() = Some("spira".into());
+    *w.dolt.gc_message.borrow_mut() = "planted gc failure".into();
     let err = gc(&w.cfg, &w.dolt).unwrap_err();
-    assert!(err.contains("spira: collection failed"), "{err}");
+    assert!(err.contains("spira: collection failed: planted"), "{err}");
     assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_aux"]);
 }
 

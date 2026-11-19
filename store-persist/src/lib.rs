@@ -23,7 +23,13 @@ pub const KEY_INTERVAL: &str = "SPIRA_DOLT_PERSIST_INTERVAL_SECS";
 pub const KEY_MAX_LAG: &str = "SPIRA_DOLT_PERSIST_MAX_LAG_SECS";
 pub const KEY_COMPACT_PCT: &str = "SPIRA_DOLT_PERSIST_COMPACT_PCT";
 pub const KEY_GC_INTERVAL: &str = "SPIRA_DOLT_PERSIST_GC_INTERVAL_SECS";
-pub const KEYS: [&str; 6] = [KEY_DATA, KEY_DURABLE, KEY_INTERVAL, KEY_MAX_LAG, KEY_COMPACT_PCT, KEY_GC_INTERVAL];
+pub const KEY_RUN: &str = "SPIRA_RUN";
+pub const KEYS: [&str; 7] = [KEY_DATA, KEY_DURABLE, KEY_INTERVAL, KEY_MAX_LAG, KEY_COMPACT_PCT, KEY_GC_INTERVAL, KEY_RUN];
+
+/// Seconds between the rebuilds `run` considers for a durable copy grown past its ratio.
+pub const COMPACT_EVERY_SECS: u64 = 86_400;
+/// Where `run` records a failed daily collection or rebuild; `spira/watchers` reads it.
+pub const COLLECT_LOG: &str = "dolt-collect.log";
 
 const SERVER_YAML: &str = "dolt-server.yaml";
 const DB_META: [&str; 2] = ["repo_state.json", "config.json"];
@@ -37,8 +43,9 @@ pub struct Config {
     pub interval_secs: u64,
     pub max_lag_secs: u64,
     pub compact_pct: u64,
-    /// Seconds between online collections of the live store by `run`; 0 leaves it to `compact`.
+    /// Seconds between online collections of the live store by `run`; 0 leaves it to the daily rebuild.
     pub gc_interval_secs: u64,
+    pub run: PathBuf,
 }
 
 impl Config {
@@ -61,6 +68,7 @@ impl Config {
             max_lag_secs: num(KEY_MAX_LAG)?,
             compact_pct: num(KEY_COMPACT_PCT)?,
             gc_interval_secs: num(KEY_GC_INTERVAL)?,
+            run: PathBuf::from(need(KEY_RUN)?),
         };
         if cfg.max_lag_secs <= cfg.interval_secs {
             return Err(format!("{KEY_MAX_LAG} ({}) must exceed {KEY_INTERVAL} ({})", cfg.max_lag_secs, cfg.interval_secs));
@@ -113,6 +121,9 @@ impl Layout {
     }
     pub fn state(&self) -> PathBuf {
         self.root.join("persist.state")
+    }
+    pub fn upkeep(&self) -> PathBuf {
+        self.root.join("upkeep.state")
     }
     pub fn marker(&self) -> PathBuf {
         self.root.join("store-persist.id")
@@ -526,15 +537,10 @@ fn exchange(a: &Path, b: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Online `dolt_gc` of one live database, skipped when the filesystem lacks room for the second
-/// generation a collection writes. Returns the report line and whether it was collected.
+/// Online `dolt_gc` of one live database. Returns the report line and whether it was collected.
 fn collect(cfg: &Config, dolt: &dyn Dolt, conn: &Conn, db: &str) -> Result<(String, bool), String> {
     let noms = cfg.data.join(db).join(".dolt/noms");
     let before = tree_bytes(&noms);
-    let free = dolt.free_bytes(&cfg.data)?;
-    if free < before {
-        return Ok((format!("{db}: not collected — {free} B free, a collection needs {before} B"), false));
-    }
     match dolt.gc(conn, &cfg.data, db) {
         Ok(()) => Ok((format!("{db}: collected, live {before} B -> {} B", tree_bytes(&noms)), true)),
         Err(e) => Ok((format!("{db}: collection failed: {e}"), false)),
@@ -556,50 +562,128 @@ pub fn gc(cfg: &Config, dolt: &dyn Dolt) -> Result<Vec<String>, String> {
     if all { Ok(out) } else { Err(out.join("; ")) }
 }
 
-/// Collects each live database first, when the filesystem has room for the second generation a
-/// collection writes beside the first; automatic GC alone left multi-GB table files standing.
+/// What a daily upkeep pass did: a report line per step, and the lines of the steps that failed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Compacted {
+    pub lines: Vec<String>,
+    pub failures: Vec<String>,
+}
+
+impl Compacted {
+    fn report(&mut self, line: String, failed: bool) {
+        if failed {
+            self.failures.push(line.clone());
+        }
+        self.lines.push(line);
+    }
+}
+
+fn rebuild(l: &Layout, cfg: &Config, dolt: &dyn Dolt, conn: &Conn, db: &str, fresh: &Path) -> Result<(), String> {
+    dolt.sync(conn, &cfg.data, db, fresh)?;
+    {
+        let _lock = lock(l)?;
+        dolt.sync(conn, &cfg.data, db, fresh)?;
+        exchange(fresh, &l.db(db))?;
+        fsync_dir(&l.dbs_dir())?;
+        fsync_dir(&l.compact_dir())?;
+    }
+    fs::remove_dir_all(fresh).map_err(|e| format!("cannot remove the superseded copy {}: {e}", fresh.display()))
+}
+
+/// Collects each live database first; automatic GC alone left multi-GB table files standing.
 ///
 /// A backup never sheds a chunk the live store has collected, so each copy grows until it is
 /// rebuilt. One past `compact_pct` of its live size is rebuilt beside itself without the lock,
 /// caught up under the lock, and exchanged in one rename.
-pub fn compact(cfg: &Config, dolt: &dyn Dolt) -> Result<Vec<String>, String> {
+pub fn compact(cfg: &Config, dolt: &dyn Dolt) -> Result<Compacted, String> {
     let l = cfg.layout()?;
     let conn = conn_for(&cfg.data, Mode::Online, dolt)?;
-    let mut out = Vec::new();
+    let mut out = Compacted::default();
     for db in durable_dbs(&l)? {
         let noms = cfg.data.join(&db).join(".dolt/noms");
         if tree_bytes(&noms) > 0 {
-            out.push(collect(cfg, dolt, &conn, &db)?.0);
+            let (line, done) = collect(cfg, dolt, &conn, &db)?;
+            out.report(line, !done);
         }
         let (copy, live) = (tree_bytes(&l.db(&db)), tree_bytes(&noms));
         if live == 0 || copy.saturating_mul(100) <= live.saturating_mul(cfg.compact_pct) {
-            out.push(format!("{db}: copy {copy} B, live {live} B — within {}%", cfg.compact_pct));
+            out.report(format!("{db}: copy {copy} B, live {live} B — within {}%", cfg.compact_pct), false);
             continue;
         }
         let fresh = l.compact_dir().join(&db);
         let _ = fs::remove_dir_all(&fresh);
         fs::create_dir_all(l.compact_dir()).map_err(|e| format!("cannot create {}: {e}", l.compact_dir().display()))?;
-        dolt.sync(&conn, &cfg.data, &db, &fresh)?;
-        {
-            let _lock = lock(&l)?;
-            dolt.sync(&conn, &cfg.data, &db, &fresh)?;
-            exchange(&fresh, &l.db(&db))?;
-            fsync_dir(&l.dbs_dir())?;
-            fsync_dir(&l.compact_dir())?;
+        match rebuild(&l, cfg, dolt, &conn, &db, &fresh) {
+            Ok(()) => out.report(format!("{db}: rebuilt, copy {copy} B -> {} B (live {live} B)", tree_bytes(&l.db(&db))), false),
+            Err(e) => out.report(format!("{db}: rebuild failed: {e}"), true),
         }
-        let after = tree_bytes(&l.db(&db));
-        fs::remove_dir_all(&fresh).map_err(|e| format!("cannot remove the superseded copy {}: {e}", fresh.display()))?;
-        out.push(format!("{db}: rebuilt, copy {copy} B -> {after} B (live {live} B)"));
     }
     Ok(out)
 }
 
-/// The daemon: a pass every `interval_secs`, an online collection every `gc_interval_secs`. A failed pass is reported, never retried early,
-/// and the state keeps the last good start, so `age` turns red on its own.
+/// When `run` last collected and last rebuilt, kept in the durable directory so a restart
+/// does not reset either schedule. A missing file is a schedule that has never run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Upkeep {
+    pub last_gc_ms: u64,
+    pub last_compact_ms: u64,
+}
+
+impl Upkeep {
+    fn render(&self) -> String {
+        format!("last_gc_ms={}\nlast_compact_ms={}\n", self.last_gc_ms, self.last_compact_ms)
+    }
+
+    fn parse(text: &str) -> Upkeep {
+        let field = |k: &str| text.lines().find_map(|l| l.strip_prefix(k)?.strip_prefix('=')?.trim().parse().ok()).unwrap_or(0);
+        Upkeep { last_gc_ms: field("last_gc_ms"), last_compact_ms: field("last_compact_ms") }
+    }
+}
+
+pub fn read_upkeep(l: &Layout) -> Upkeep {
+    fs::read_to_string(l.upkeep()).map(|t| Upkeep::parse(&t)).unwrap_or_default()
+}
+
+fn iso8601(ms: u64) -> String {
+    let (days, rem) = ((ms / 86_400_000) as i64, ms / 1000 % 86_400);
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem / 60 % 60, rem % 60)
+}
+
+fn record_failures(cfg: &Config, now_ms: u64, lines: &[String]) {
+    if lines.is_empty() {
+        return;
+    }
+    if cfg.run.as_os_str().is_empty() {
+        eprintln!("store-persist: {KEY_RUN} is empty — nowhere to record a failed collection");
+        return;
+    }
+    let body: String = lines.iter().map(|l| format!("{} store-persist: {l}\n", iso8601(now_ms))).collect();
+    let appended = fs::create_dir_all(&cfg.run)
+        .and_then(|_| fs::OpenOptions::new().create(true).append(true).open(cfg.run.join(COLLECT_LOG)))
+        .and_then(|mut f| f.write_all(body.as_bytes()));
+    if let Err(e) = appended {
+        eprintln!("store-persist: cannot record to {}: {e}", cfg.run.join(COLLECT_LOG).display());
+    }
+}
+
+/// The daemon: a pass every `interval_secs`, an online collection every `gc_interval_secs`, and
+/// a daily rebuild of any copy past its ratio. A failed pass is reported, never retried early,
+/// and the state keeps the last good start, so `age` turns red on its own. Each schedule is
+/// recorded after its attempt, failed or not, so a failing collection is tried once per interval.
 pub fn run(cfg: &Config, dolt: &dyn Dolt, clock: &dyn Clock, passes: Option<u64>, log: &mut dyn FnMut(&str)) {
     let mut failing = false;
     let mut n = 0u64;
-    let mut last_gc_ms = clock.now_ms();
+    let layout = cfg.layout().ok();
+    let mut upkeep = layout.as_ref().map(read_upkeep).unwrap_or_default();
     loop {
         match pass(cfg, Mode::Online, dolt, clock) {
             Ok(st) if failing => {
@@ -616,13 +700,36 @@ pub fn run(cfg: &Config, dolt: &dyn Dolt, clock: &dyn Clock, passes: Option<u64>
         if passes.is_some_and(|p| n >= p) {
             return;
         }
-        if cfg.gc_interval_secs > 0 && clock.now_ms().saturating_sub(last_gc_ms) >= cfg.gc_interval_secs * 1000 {
+        let due = |last: u64, every_secs: u64| every_secs > 0 && clock.now_ms().saturating_sub(last) >= every_secs * 1000;
+        if due(upkeep.last_compact_ms, COMPACT_EVERY_SECS) {
+            let failed = match compact(cfg, dolt) {
+                Ok(done) => {
+                    done.lines.iter().for_each(|l| log(&format!("store-persist: {l}")));
+                    done.failures
+                }
+                Err(e) => vec![format!("compact failed: {e}")],
+            };
+            failed.iter().for_each(|l| log(&format!("store-persist: {l}")));
+            record_failures(cfg, clock.now_ms(), &failed);
+            upkeep.last_compact_ms = clock.now_ms();
+            upkeep.last_gc_ms = upkeep.last_compact_ms;
+            save_upkeep(layout.as_ref(), &upkeep);
+        } else if due(upkeep.last_gc_ms, cfg.gc_interval_secs) {
             match gc(cfg, dolt) {
                 Ok(lines) => lines.iter().for_each(|l| log(&format!("store-persist: {l}"))),
                 Err(e) => log(&format!("store-persist: collection: {e}")),
             }
-            last_gc_ms = clock.now_ms();
+            upkeep.last_gc_ms = clock.now_ms();
+            save_upkeep(layout.as_ref(), &upkeep);
         }
         clock.sleep(cfg.interval_secs);
+    }
+}
+
+fn save_upkeep(layout: Option<&Layout>, upkeep: &Upkeep) {
+    if let Some(l) = layout {
+        if let Err(e) = put_durable(&l.upkeep(), upkeep.render().as_bytes()) {
+            eprintln!("store-persist: cannot keep the upkeep schedule: {e}");
+        }
     }
 }

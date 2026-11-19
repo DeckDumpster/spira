@@ -175,14 +175,14 @@ mod tests {
         let unit_dir = base.join("units");
         std::fs::create_dir_all(&unit_dir).unwrap();
         let tmpl_dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
-        let dropped = ["spira-sentinel-prod.service", "spira-sentinel-prod.timer", "spira-refresh-prod.timer", "spira-watch-queue-watch-prod.service", "spira-mail-deliver-prod.service", "spira-cockpit-prod.service"];
+        let dropped = ["spira-sentinel-prod.service", "spira-sentinel-prod.timer", "spira-refresh-prod.timer", "spira-watch-queue-watch-prod.service", "spira-mail-deliver-prod.service", "spira-cockpit-prod.service", "spira-psi-sample-prod.service", "spira-psi-sample-prod.timer"];
         for u in dropped {
             std::fs::write(unit_dir.join(u), "[Service]\nExecStart=/bin/true\n").unwrap();
         }
         let dropin = unit_dir.join("spira-cockpit-prod.service.d");
         std::fs::create_dir_all(&dropin).unwrap();
         std::fs::write(dropin.join("tick-30.conf"), "[Service]\nEnvironment=X=1\n").unwrap();
-        std::fs::write(unit_dir.join(".spira-installed-units"), "spira-sentinel-prod.service\nspira-sentinel-prod.timer\nspira-watch-queue-watch-prod.service\nspira-mail-deliver-prod.service\n").unwrap();
+        std::fs::write(unit_dir.join(".spira-installed-units"), "spira-sentinel-prod.service\nspira-sentinel-prod.timer\nspira-watch-queue-watch-prod.service\nspira-mail-deliver-prod.service\nspira-psi-sample-prod.service\nspira-psi-sample-prod.timer\n").unwrap();
         let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         let h = host();
         let sc = FakeSystemctl::default();

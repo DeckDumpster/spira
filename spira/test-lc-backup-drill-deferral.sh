@@ -52,6 +52,25 @@ exec 8>&-
 timeout_h="$(sed -n 's/^TimeoutStartSec=\([0-9]*\)h$/\1/p' "$HERE/../systemd/lc-backup-drill.service")"
 [ $(( ${timeout_h:-0} * 3600 )) -gt "$(sed -n "s/.*WAIT_SECS:=\([0-9]*\)}.*/\1/p" "$HERE/conf.d/SPIRA_LC_BACKUP_DRILL_WAIT_SECS")" ] && ok "the service outlives the wait cap" || bad "the service outlives the wait cap" "timeout ${timeout_h}h"
 
+grep -q '^OnCalendar=Sun ' "$HERE/../systemd/lc-backup-drill.timer" && ok "the timer fires weekly" || bad "the timer fires weekly" "not Sun"
 ! grep -q '16:50' "$HERE/../systemd/lc-backup-drill.timer" && ok "the timer has one slot" || bad "the timer has one slot" "16:50 present"
 [ "$(grep -c '^OnCalendar=' "$HERE/../systemd/lc-backup-drill.timer")" -eq 1 ] && ok "exactly one OnCalendar" || bad "exactly one OnCalendar" "count"
+
+mkdir -p "$T/bin"
+cat > "$T/bin/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+echo "drill: stub says $STUB_SAY"
+exit "$STUB_RC"
+STUB
+chmod +x "$T/bin/spira-lc"
+stamp="$SPIRA_RUN/lc-backup/control/drill.ok"
+rm -f "$stamp"
+PATH="$T/bin:$PATH" STUB_RC=0 STUB_SAY=fine _lcb_drill_control >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "a passing control drill exits green" || bad "a passing control drill exits green" "rc=$rc"
+[ -s "$stamp" ] && [ "$(cat "$stamp")" -gt 1700000000 ] && ok "a passing control drill writes the epoch stamp the watcher reads" || bad "a passing control drill writes the epoch stamp" "$(cat "$stamp" 2>/dev/null)"
+echo 1700000000 > "$stamp"
+PATH="$T/bin:$PATH" STUB_RC=1 STUB_SAY=broken _lcb_drill_control >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "a failing control drill exits red" || bad "a failing control drill exits red" "rc=$rc"
+[ "$(cat "$stamp")" = "1700000000" ] && ok "a failing control drill leaves the prior stamp" || bad "a failing control drill leaves the prior stamp" "$(cat "$stamp")"
+
 tl_summary

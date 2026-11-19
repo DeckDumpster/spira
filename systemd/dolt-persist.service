@@ -1,7 +1,8 @@
 [Unit]
 # Syncs the RAM-backed store (SPIRA_DOLT_DATA) into its durable copy (SPIRA_DOLT_DURABLE) every
 # SPIRA_DOLT_PERSIST_INTERVAL_SECS, through the running server: a host crash loses at most the
-# writes since the newest finished pass began. Installed only when SPIRA_DOLT_DURABLE is set.
+# writes since the newest finished pass began. It also collects the live store hourly and rebuilds
+# a bloated durable copy daily. Installed only when SPIRA_DOLT_DURABLE is set.
 Description=Sync the RAM-backed Dolt store to its durable copy on disk
 Documentation=file://@SPIRA_HOME@/README.md
 After=dolt-beads.service

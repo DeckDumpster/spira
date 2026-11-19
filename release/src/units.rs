@@ -102,9 +102,7 @@ pub fn release_values(rel: &Path) -> BTreeMap<String, String> {
 }
 
 /// `@SPIRA_REPO@` for a unit: the repo map's home-repo root when that is a git checkout,
-/// else the release directory. The release directory has no `.git`, so a unit that runs
-/// git against `--repo` (both cert-sweep units) exited 2 on every run and deploy's
-/// pre-health refused on it (sp-b2jsl; install's renderer took the same rule in sp-7i16g).
+/// else the release directory, which has no `.git`.
 pub fn units_repo(mapped: Option<String>, rel: &Path, is_git: impl Fn(&Path) -> bool) -> String {
     match mapped.filter(|m| !m.is_empty() && is_git(Path::new(m))) {
         Some(m) => m,
@@ -307,6 +305,16 @@ pub fn undrained(text: &str) -> bool {
 /// boolean, is no exemption: the unit is restarted like any other.
 pub fn never_restart(text: &str) -> Option<String> {
     reason_of(text, "X-Spira-NoRestart")
+}
+
+/// The release-relative files and directories whose change in an activation starts this unit
+/// once (`X-Spira-StartWhenChanged=<path> <path> ...`).
+pub fn start_when_changed(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| l.trim().split_once('='))
+        .filter(|(k, _)| k.trim().eq_ignore_ascii_case("X-Spira-StartWhenChanged"))
+        .flat_map(|(_, v)| v.split_whitespace().map(str::to_string))
+        .collect()
 }
 
 /// How a service restarts itself at its next idle point (`X-Spira-RestartWhenIdle=<how>`): a
