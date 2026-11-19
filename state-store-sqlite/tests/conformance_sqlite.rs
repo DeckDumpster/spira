@@ -9,7 +9,7 @@ use runtime::ports::VirtualClock;
 use serde_json::json;
 use state_store::conformance::{self as suite, Rig, SCENARIOS};
 use state_store::{Backend, Contract, Error, Object, Request, Rev, Txn, Write};
-use state_store_sqlite::{Options, SqliteBackend};
+use state_store_sqlite::{Options, SqliteBackend, DRAIN_PER_COMMIT};
 use testkit::TempDir;
 
 struct Sqlite {
@@ -825,7 +825,8 @@ fn a_retired_events_file_waits_for_the_range_in_flight_and_then_leaves_nothing_b
 }
 
 fn seed_events(path: &Path, rows: &[(u64, Option<u64>)]) {
-    let conn = rusqlite::Connection::open(path).unwrap();
+    let mut conn = rusqlite::Connection::open(path).unwrap();
+    let conn = conn.transaction().unwrap();
     for (i, at) in rows {
         let value = match at {
             Some(at) => format!("{{\"data\":{{\"at\":{at}}}}}"),
@@ -841,6 +842,13 @@ fn seed_events(path: &Path, rows: &[(u64, Option<u64>)]) {
             .unwrap();
         }
     }
+    conn.commit().unwrap();
+}
+
+fn many_unstamped_then_one_stamped() -> Vec<(u64, Option<u64>)> {
+    let mut rows: Vec<(u64, Option<u64>)> = (1..=20_000).map(|i| (i, None)).collect();
+    rows.push((20_001, Some(D0 + 29 * DAY_MS)));
+    rows
 }
 
 fn events_left(path: &Path) -> i64 {
@@ -891,6 +899,102 @@ fn unstamped_main_file_events_are_as_old_as_the_first_stamped_one_after_them() {
     let (path, b) = seeded_store(&dir, &wall, &rows);
     live_commit(&b, 1);
     assert_eq!(events_left(&path), 2, "nothing older than the window is stamped");
+}
+
+#[test]
+fn a_reopen_over_many_unstamped_main_file_events_drains_a_bounded_page_a_commit() {
+    let dir = TempDir::new("sqlite-event-unstamped-bounded");
+    let wall = VirtualClock::new(D0 + 30 * DAY_MS);
+    let (path, b) = seeded_store(&dir, &wall, &many_unstamped_then_one_stamped());
+    b.take_drain_rows();
+    live_commit(&b, 0);
+    let rows = b.take_drain_rows();
+    assert!(rows > 0, "the commit drained nothing");
+    assert!(rows <= (2 * DRAIN_PER_COMMIT) as u64, "the first commit examined {rows} rows");
+    assert_eq!(events_left(&path), 20_001, "nothing in the window is older");
+}
+
+#[test]
+fn a_reopen_whose_event_drain_is_waiting_examines_no_event_rows_on_its_first_commit() {
+    let dir = TempDir::new("sqlite-event-waiting-reopen");
+    let wall = VirtualClock::new(D0 + 30 * DAY_MS);
+    let rows = [(1, None), (2, Some(D0 + 29 * DAY_MS))];
+    let (path, b) = seeded_store(&dir, &wall, &rows);
+    live_commit(&b, 1);
+    assert!(b.take_drain_rows() > 0, "the first commit reached the wait");
+    drop(b);
+    let b = open_day(&path, &wall);
+    live_commit(&b, 2);
+    assert_eq!(b.take_drain_rows(), 0, "a waiting drain survives a restart");
+}
+
+#[test]
+fn a_scan_resumes_from_its_persisted_cursor_and_drains_once_the_stamped_event_ages_out() {
+    let dir = TempDir::new("sqlite-event-scan-resume");
+    let wall = VirtualClock::new(D0 + 30 * DAY_MS);
+    let (path, b) = seeded_store(&dir, &wall, &many_unstamped_then_one_stamped());
+    let steps = |b: &SqliteBackend, first: u64| {
+        let mut n = 0;
+        loop {
+            live_commit(b, first + n);
+            n += 1;
+            if b.take_drain_rows() == 0 || n > 100 {
+                return n;
+            }
+        }
+    };
+    for i in 0..10 {
+        live_commit(&b, i);
+    }
+    drop(b);
+    let b = open_day(&path, &wall);
+    let resumed = steps(&b, 100);
+    let cold = {
+        let dir = TempDir::new("sqlite-event-scan-cold");
+        let (_, c) = seeded_store(&dir, &wall, &many_unstamped_then_one_stamped());
+        steps(&c, 0)
+    };
+    assert!(resumed + 8 <= cold, "resumed after {resumed} commits, a cold scan takes {cold}");
+    assert_eq!(events_left(&path), 20_001, "nothing in the window is older");
+    wall.advance(30 * DAY_MS);
+    for i in 0..45 {
+        live_commit(&b, 300 + i);
+    }
+    assert_eq!(events_left(&path), 0, "the unstamped events drain once the stamped one is out of the window");
+}
+
+#[test]
+fn a_reopen_mid_deletion_does_not_rescan_the_unstamped_events_it_already_passed() {
+    let dir = TempDir::new("sqlite-event-reopen-mid-deletion");
+    let wall = VirtualClock::new(D0 + 60 * DAY_MS);
+    let (path, b) = seeded_store(&dir, &wall, &many_unstamped_then_one_stamped());
+    let mut i = 0;
+    while events_left(&path) == 20_001 {
+        live_commit(&b, i);
+        i += 1;
+        assert!(i < 100, "the scan never reached the deletion");
+    }
+    let before = events_left(&path);
+    b.take_drain_rows();
+    drop(b);
+    let b = open_day(&path, &wall);
+    live_commit(&b, 1_000);
+    let rows = b.take_drain_rows();
+    assert!(rows <= DRAIN_PER_COMMIT as u64, "the first commit after the reopen examined {rows} rows");
+    assert_eq!(events_left(&path), before - DRAIN_PER_COMMIT as i64, "the reopen did not go on deleting");
+}
+
+#[test]
+fn a_commit_that_drains_records_a_drain_phase() {
+    let dir = TempDir::new("sqlite-drain-phase");
+    let wall = VirtualClock::new(D0 + 30 * DAY_MS);
+    let (_path, b) = seeded_store(&dir, &wall, &many_unstamped_then_one_stamped());
+    let rec = Arc::new(state_store::phases::Recorder::default());
+    state_store::phases::track(rec.clone());
+    live_commit(&b, 0);
+    let names: Vec<_> = rec.snapshot().phases.iter().map(|p| p.0).collect();
+    assert!(names.contains(&"drain"), "phases {names:?}");
+    state_store::phases::untrack();
 }
 
 #[test]
