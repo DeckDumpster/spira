@@ -26,6 +26,13 @@ struct FakeDolt {
     fail_verify: Cell<bool>,
     bloat: Cell<usize>,
     gcs: RefCell<Vec<String>>,
+    full_gcs: RefCell<Vec<String>>,
+    /// Commits in every database's log; a squash rewrites it to `keep + 1`.
+    log: Cell<u64>,
+    fail_graft: Cell<bool>,
+    keep_after: Cell<u64>,
+    abandoned: Cell<usize>,
+    events: RefCell<Vec<String>>,
     fail_gc: RefCell<Option<String>>,
     gc_message: RefCell<String>,
 }
@@ -43,7 +50,34 @@ impl Dolt for FakeDolt {
         fs::write(dest.join("garbage"), vec![b'g'; self.bloat.get()]).unwrap();
         Ok(())
     }
-    fn gc(&self, _conn: &Conn, _data: &Path, db: &str) -> Result<(), String> {
+    fn history_len(&self, _conn: &Conn, _data: &Path, _db: &str) -> Result<u64, String> {
+        Ok(self.log.get())
+    }
+    fn squash_history(&self, _conn: &Conn, _data: &Path, db: &str, keep: u64) -> Result<String, String> {
+        self.events.borrow_mut().push(format!("squash {db} {keep}"));
+        Ok("tip".into())
+    }
+    fn graft_history(&self, _conn: &Conn, data: &Path, db: &str, tip: &str) -> Result<(), String> {
+        let held = fs::OpenOptions::new()
+            .write(true)
+            .open(data.parent().unwrap().join("durable/LOCK"))
+            .map(|f| unsafe { libc::flock(std::os::unix::io::AsRawFd::as_raw_fd(&f), libc::LOCK_EX | libc::LOCK_NB) } != 0);
+        self.events.borrow_mut().push(format!("graft {db} {tip} lock_held={}", held.unwrap_or(false)));
+        if self.fail_graft.get() {
+            return Err("planted graft failure".into());
+        }
+        self.log.set(self.keep_after.get());
+        Ok(())
+    }
+    fn abandon_history(&self, _conn: &Conn, _data: &Path, _db: &str) -> Result<(), String> {
+        self.abandoned.set(self.abandoned.get() + 1);
+        Ok(())
+    }
+    fn gc(&self, _conn: &Conn, _data: &Path, db: &str, full: bool) -> Result<(), String> {
+        self.events.borrow_mut().push(format!("gc {db} full={full}"));
+        if full {
+            self.full_gcs.borrow_mut().push(db.to_string());
+        }
         self.gcs.borrow_mut().push(db.to_string());
         match &*self.fail_gc.borrow() {
             Some(bad) if bad == db => Err(self.gc_message.borrow().clone()),
@@ -94,7 +128,7 @@ fn world() -> World {
     put(&old.join(".doltcfg/privileges.db"), "grants");
     put(&old.join("dolt-server.yaml"), &yaml(&old));
     put(&data.join("dolt-server.yaml"), &yaml(&data));
-    let cfg = Config { data, durable: Some(durable), interval_secs: 7, max_lag_secs: 40, compact_pct: 150, gc_interval_secs: 100, run: tmp.join("run") };
+    let cfg = Config { data, durable: Some(durable), interval_secs: 7, max_lag_secs: 40, compact_pct: 150, gc_interval_secs: 100, run: tmp.join("run"), history_keep: 3 };
     World { _tmp: tmp, cfg, old, dolt: FakeDolt::default(), clock: FakeClock(Cell::new(1_000)) }
 }
 
@@ -122,6 +156,7 @@ fn values(root: &Path, drop: Option<&str>) -> BTreeMap<String, String> {
         (KEY_COMPACT_PCT, "150".to_string()),
         (KEY_GC_INTERVAL, "100".to_string()),
         (KEY_RUN, root.join("run").display().to_string()),
+        (KEY_HISTORY_KEEP, "3".to_string()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -137,7 +172,7 @@ fn config_reads_every_key_and_refuses_a_missing_one_by_name() {
     let root = TempDir::new("store-persist-config");
     let c = Config::from_values(|k| values(&root, None).get(k).cloned()).unwrap();
     assert_eq!(c.durable, Some(root.join("disk/dolt-durable")));
-    assert_eq!((c.interval_secs, c.max_lag_secs, c.compact_pct, c.gc_interval_secs), (7, 40, 150, 100));
+    assert_eq!((c.interval_secs, c.max_lag_secs, c.compact_pct, c.gc_interval_secs, c.history_keep), (7, 40, 150, 100, 3));
     for k in KEYS {
         let e = Config::from_values(|q| values(&root, Some(k)).get(q).cloned()).unwrap_err();
         assert!(e.contains(k), "{k}: {e}");
@@ -151,7 +186,9 @@ fn config_declared_empty_durable_means_no_copy_and_bad_values_are_refused() {
     v.insert(KEY_DURABLE.into(), String::new());
     assert_eq!(Config::from_values(|k| v.get(k).cloned()).unwrap().durable, None);
     let nested = root.join("ram/dolt/copy").display().to_string();
-    for (k, bad) in [(KEY_MAX_LAG, "7"), (KEY_COMPACT_PCT, "90"), (KEY_DURABLE, nested.as_str()), (KEY_DURABLE, "rel"), (KEY_INTERVAL, "x")] {
+    for (k, bad) in
+        [(KEY_MAX_LAG, "7"), (KEY_COMPACT_PCT, "90"), (KEY_DURABLE, nested.as_str()), (KEY_DURABLE, "rel"), (KEY_INTERVAL, "x"), (KEY_HISTORY_KEEP, "1")]
+    {
         let mut v = values(&root, None);
         v.insert(k.into(), bad.into());
         assert!(Config::from_values(|q| v.get(q).cloned()).is_err(), "{k}={bad} accepted");
@@ -507,3 +544,61 @@ fn a_stop_time_pass_syncs_only_a_database_written_since_the_last_pass() {
     assert_eq!(synced, ["spira"], "only the database written since the last pass is copied");
     assert_eq!(fs::read_to_string(layout(&w).db("spira").join("payload")).unwrap(), "beads-v9");
 }
+
+fn compactable() -> World {
+    let w = seeded();
+    restore(&w.cfg, &w.dolt).unwrap();
+    live_server(&w, 4242);
+    w.dolt.keep_after.set(w.cfg.history_keep + 1);
+    w
+}
+
+#[test]
+fn compaction_squashes_a_log_past_the_keep_depth_under_the_lock_then_collects_in_full() {
+    let w = compactable();
+    w.dolt.log.set(500);
+    let out = compact(&w.cfg, &w.dolt).unwrap();
+    assert_eq!(w.dolt.log.get(), w.cfg.history_keep + 1);
+    assert!(out.lines.iter().any(|o| o.contains("history squashed, 500 commits -> 4")), "{out:?}");
+    let ev = w.dolt.events.borrow().clone();
+    assert_eq!(ev[..3], ["squash spira 3", "graft spira tip lock_held=true", "gc spira full=true"], "{ev:?}");
+    assert_eq!(*w.dolt.full_gcs.borrow(), ["spira"], "only the rewritten database is collected in full");
+}
+
+#[test]
+fn compaction_rebuilds_the_copy_after_a_squash_though_it_is_within_its_ratio() {
+    let w = compactable();
+    w.dolt.log.set(500);
+    let out = compact(&w.cfg, &w.dolt).unwrap();
+    assert!(out.lines.iter().any(|o| o.starts_with("spira: rebuilt")), "{out:?}");
+    w.dolt.log.set(4);
+    let out = compact(&w.cfg, &w.dolt).unwrap();
+    assert!(out.lines.iter().any(|o| o.starts_with("spira: copy") && o.contains("within")), "{out:?}");
+}
+
+#[test]
+fn compaction_leaves_a_log_at_the_bound_alone_and_a_zero_keep_disables_the_bound() {
+    let w = compactable();
+    w.dolt.log.set(w.cfg.history_keep + 1);
+    compact(&w.cfg, &w.dolt).unwrap();
+    assert!(w.dolt.events.borrow().iter().all(|e| !e.starts_with("squash")));
+    let mut w = compactable();
+    w.cfg.history_keep = 0;
+    w.dolt.log.set(1_000_000);
+    compact(&w.cfg, &w.dolt).unwrap();
+    assert!(w.dolt.events.borrow().iter().all(|e| !e.starts_with("squash")));
+    assert!(w.dolt.full_gcs.borrow().is_empty(), "a full collection is the squash's, not every compact's");
+}
+
+#[test]
+fn a_failed_graft_abandons_the_side_branch_keeps_the_log_and_does_not_rebuild_the_copy() {
+    let w = compactable();
+    w.dolt.log.set(500);
+    w.dolt.fail_graft.set(true);
+    let out = compact(&w.cfg, &w.dolt).unwrap();
+    assert_eq!(w.dolt.log.get(), 500);
+    assert_eq!(w.dolt.abandoned.get(), 2, "one per database");
+    assert!(out.lines.iter().any(|o| o.contains("history not squashed: planted graft failure")), "{out:?}");
+    assert!(out.lines.iter().all(|o| !o.contains("rebuilt")), "{out:?}");
+}
+
