@@ -9171,6 +9171,15 @@ fn a_concierge_hand_mends_a_waiting_failure_with_provenance_and_the_mender_bead_
 }
 
 #[test]
+fn a_flaky_verdict_records_flaky_and_runs_no_testenv() {
+    let t = round_world();
+    let batch = failed_round_with_mender(&t, "test-z.sh", "sp-m1");
+    assert_eq!(t.run(&["round", "flaky", &batch, "test-z.sh", "--reason=x"]), 0, "{}", t.err());
+    assert!(t.lc.calls.borrow().iter().any(|c| c.contains("Flaky")), "{:?}", t.lc.calls.borrow());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("observe-flake")), "{:?}", t.scripts.calls.borrow());
+}
+
+#[test]
 fn a_by_that_is_not_the_concierge_or_operator_is_refused_before_anything_is_recorded() {
     let t = round_world();
     let batch = failed_round_with_mender(&t, "test-z.sh", "sp-m1");

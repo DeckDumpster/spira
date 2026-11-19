@@ -144,49 +144,6 @@ impl LastResult {
     }
 }
 
-/// One `STATE/<suite>.flakeobs` line: `<epoch> <run_id>`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FlakeObs {
-    pub at: Option<u64>,
-    pub run_id: String,
-}
-
-pub fn parse_flakeobs(text: &str) -> Vec<FlakeObs> {
-    text.lines()
-        .map(|l| {
-            let mut f = l.splitn(2, ' ');
-            let at = f.next().unwrap_or("");
-            let rid = f.next().unwrap_or("").trim_end().to_string();
-            FlakeObs {
-                at: (!at.is_empty() && at.bytes().all(|b| b.is_ascii_digit()))
-                    .then(|| at.parse().ok())
-                    .flatten(),
-                run_id: rid,
-            }
-        })
-        .collect()
-}
-
-/// Already recorded for this run (dedupe on (suite, run_id), over the whole file).
-pub fn flakeobs_has(obs: &[FlakeObs], run_id: &str) -> bool {
-    obs.iter().any(|o| o.run_id == run_id)
-}
-
-/// Distinct run ids observed at or after `now - window`.
-pub fn flakeobs_in_window(obs: &[FlakeObs], now: u64, window: u64) -> u64 {
-    let cutoff = now.saturating_sub(window);
-    let mut seen = BTreeSet::new();
-    for o in obs {
-        match o.at {
-            Some(at) if at >= cutoff && !o.run_id.is_empty() => {
-                seen.insert(o.run_id.as_str());
-            }
-            _ => {}
-        }
-    }
-    seen.len() as u64
-}
-
 /// A suite name is a basename: no `/`, no leading `.`, not empty.
 pub fn valid_suite_name(s: &str) -> bool {
     !s.is_empty() && !s.contains('/') && !s.starts_with('.') && !s.contains('\0')
@@ -296,17 +253,6 @@ mod tests {
         assert!(LastResult::parse("fixture-fault 1 0 -").unwrap().is_fault());
         assert!(LastResult::parse("red-unconfirmed 1 0 -").unwrap().is_red());
         assert!(LastResult::parse("skip 1 0 -").unwrap().is_skip());
-    }
-
-    #[test]
-    fn flake_window_counts_distinct_runs_inside_it() {
-        let obs = parse_flakeobs("100 run-a\n200 run-b\n200 run-b\n50 run-old\nxx run-bad\n300\n");
-        assert!(flakeobs_has(&obs, "run-old"));
-        assert!(!flakeobs_has(&obs, "run-z"));
-        assert_eq!(flakeobs_in_window(&obs, 300, 240), 2);
-        assert_eq!(flakeobs_in_window(&obs, 300, 250), 3, "the cutoff is inclusive");
-        assert_eq!(flakeobs_in_window(&obs, 300, 1000), 3);
-        assert_eq!(flakeobs_in_window(&[], 300, 1000), 0);
     }
 
     #[test]

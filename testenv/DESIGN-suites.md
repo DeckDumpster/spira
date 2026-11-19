@@ -1,7 +1,7 @@
 # `testenv suites` — design
 
 The suite population, the gate/timed partition, the per-suite state the harness keeps about
-suites (last result, flake observations) and the flake report. It is a **subcommand family of
+suites (last result). It is a **subcommand family of
 the `testenv` binary** (`testenv suites <cmd>`), not a crate of its own: the population, the
 suite headers and the result-record format are already testenv's, and a second crate would
 carry a second parser of each.
@@ -24,9 +24,6 @@ literally named `suites`, write `testenv -- suites`.
 2. **Render a cheap health block for the watchtower** (`status`): a glob, a read per suite,
    no database, nothing that can hang. Every field that could not be read renders `?`,
    never `0` (law-absence-needs-a-positive-control).
-3. **Report flakes, never hide them** (`observe-flake`): count distinct runs in which a
-   suite flaked within a window; at the threshold file one finding through incident.sh
-   (dedupe ref `flake:<suite>`). It never quarantines anything.
 
 ## 2. Contract
 
@@ -37,11 +34,10 @@ testenv suites [list]                    # default
 testenv suites names
 testenv suites corpus
 testenv suites status
-testenv suites observe-flake <suite> <run-id>
 ```
 
-Any other subcommand prints `usage: testenv suites [list|names|corpus|status|observe-flake]`
-to stderr and exits 2. `quarantine`, `unquarantine`, `disable`, `activate`, `lint`,
+Any other subcommand prints `usage: testenv suites [list|names|corpus|status]`
+to stderr and exits 2. `observe-flake`, `quarantine`, `unquarantine`, `disable`, `activate`, `lint`,
 `hygiene` and `run` are retired and stay unknown subcommands.
 
 ### 2.2 Exit codes
@@ -50,7 +46,6 @@ to stderr and exits 2. `quarantine`, `unquarantine`, `disable`, `activate`, `lin
 |---|---|---|---|
 | list, status, corpus | always (an unreadable input renders `?` or is named in the output) | — | — |
 | names | printed (empty = nothing to run) | gate list unreadable | — |
-| observe-flake | recorded (filed, below threshold, or filing failed — all say so on stdout) | — | suite or run id missing, no such suite |
 
 ### 2.3 Output (callers parse these)
 
@@ -90,10 +85,6 @@ executable, fails, prints nothing, or does not answer within 30 s (§6 D5). When
 list is unreadable the whole block is the one line
 `suites          ?   <gate-list> is unreadable — the gated set is unknown`.
 
-**`observe-flake`** — `observe-flake: <suite>: <n> observation(s) in window (threshold <t>)`;
-at or over the threshold, then `observe-flake: <suite> reported (bead: <id>)` or
-`observe-flake: <suite> crossed threshold but the finding could not be filed`.
-
 ### 2.4 Files
 
 `STATE = $SPIRA_SUITES_STATE` (default `$SPIRA_RUN/suites`).
@@ -103,7 +94,6 @@ at or over the threshold, then `observe-flake: <suite> reported (bead: <id>)` or
 | `<harness>/spira/test-*.sh` | all | — |
 | `$SPIRA_GATE_SUITES` (default `$SPIRA_HOME/gate-suites`, else `<harness>/spira/gate-suites`) | list, names, status | — |
 | `STATE/<suite>.result` | list, status | nothing any more (§7 F1) |
-| `STATE/<suite>.flakeobs` | observe-flake | observe-flake (append) |
 
 ### 2.5 Environment and configuration
 
@@ -117,21 +107,15 @@ Precedence as testenv's own (§2.5 of DESIGN.md): environment, then spira.toml t
 | `SPIRA_SUITES_STALE` | `spira.suites_stale` | 21600 |
 | `SPIRA_SUITES_PRIORITY` | `spira.suites_priority` | 3 |
 | `SPIRA_GATE_SUITES` | `spira.gate_suites` | `$SPIRA_HOME/gate-suites`, else `<harness>/spira/gate-suites` |
-| `SPIRA_FLAKE_QUARANTINE_AT` | `spira.flake_quarantine_at` | 2 |
-| `SPIRA_FLAKE_WINDOW` | `spira.flake_window` | 604800 |
-| `SPIRA_INCIDENT` | — | `incident.sh` on PATH |
 | `SPIRA_TESTENV_HARNESS` | — | the harness root (testenv's `Harness::locate`) |
 
-`<harness>` is the checkout or release root the running binary belongs to. `SPIRA_HOME_REPO`,
-`SPIRA_SCOPE_LABEL` and `SPIRA_DB` come from the one lib.sh seam (§4), because conf.sh derives
-them in ways no library shares.
+`<harness>` is the checkout or release root the running binary belongs to.
 
 ### 2.6 Callers
 
 | caller | call | reads |
 |---|---|---|
 | the watchtower | `testenv suites status` | stdout verbatim |
-| gate-check, verdict | `testenv suites observe-flake <suite> <run-id>` | nothing |
 | operator / Ops by hand | `list`, `names`, `corpus` | — |
 
 ## 3. Schema
@@ -149,17 +133,6 @@ enum Runs { Gate, Timed, Unknown }
 /// STATE/<suite>.result — the leading fields of testenv's ResultRecord:
 /// `<status> <epoch> <secs> <fp>`; status non-empty and epoch all digits, else absent.
 struct LastResult { status: String, at: u64, secs: String, fingerprint: String }
-
-/// STATE/<suite>.flakeobs — one `<epoch> <run_id>` per line, append-only.
-struct FlakeObs { at: u64, run_id: String }
-/// The count that matters: distinct run ids with at >= now - window.
-
-/// What the lib.sh seam answers (§4).
-struct Conf { home_repo: String, scope_label: Option<String>, db: String }
-
-/// The finding observe-flake files: incident.sh's env interface plus a stdin payload.
-struct FlakeFiling { suite, count: u64, window: u64, priority: u8, labels: String,
-                     repo: String, db: String, path: PathBuf }
 ```
 
 ### 3.1 Gate list
@@ -178,45 +151,10 @@ the rest of the line; each following line matching `^#[ \t]{2,}[^ \t#]` and not
 `^# [A-Za-z][A-Za-z_-]*:` is a continuation, appended after one space with `^#[ \t]+`
 stripped; the first non-continuation ends the block. No covers line = empty.
 
-### 3.4 Flake payload (stdin of `incident.sh file "why does <s> fail intermittently" -`)
-
-```
-<s> has <n> flake observation(s) within the <w>s window. It is filed and nothing is
-quarantined: the suite keeps running in every batch, so a repeat failure still reaches the
-gate instead of being hidden.
-
-  suite            <s>
-  observations     <n> in <w>s
-  reproduce        bash spira/<s>
-
-The dedupe ref is flake:<s> — a later observation bumps recurrence on this bead rather than
-filing another.
-```
-
-with `SPIRA_INCIDENT_TYPE=bug SPIRA_INCIDENT_PRIORITY=<§3.2> SPIRA_INCIDENT_ACTOR=suites
-SPIRA_INCIDENT_LABELS=[<scope>,]plan SPIRA_INCIDENT_REPO=<home_repo>
-SPIRA_INCIDENT_REF=flake:<s> SPIRA_FENRIR_EXEMPT=1 SPIRA_INCIDENT_PATH=<harness>/spira/<s>
-SPIRA_INCIDENT_CAUSE=suite-flaky SPIRA_DB=<db>`. The id is the last stdout line with
-whitespace removed; it must be `[A-Za-z0-9-]+` not starting or ending with `-`.
-
-## 4. The lib.sh seam (one)
-
-| seam | what | why not Rust |
-|---|---|---|
-| S1 `conf` | after sourcing `lib.sh` (and so conf.sh): `SPIRA_HOME_REPO`, whether `SPIRA_SCOPE_LABEL` is set and its value, `SPIRA_DB` | conf.sh derives the home repo from the git common dir, a MANIFEST or the repo map, and `SPIRA_SCOPE_LABEL`/`SPIRA_DB` with set-but-empty semantics. A second derivation is the drift law-config-through-the-cli-only names. |
-
-Mechanism (the queue crate's): `bash` with **no arguments**; stdin is a fixed script
-(compiled in) followed by one NUL-terminated value, the directory holding `lib.sh`. The
-script reads its value, detaches stdin, sources lib.sh, and prints `\x1e` then
-`key=value\0` records; anything lib.sh logs before the mark is passed to stderr. Nothing is
-in argv or the environment. Called only by a flake **filing**, never by `list`, `names`,
-`corpus` or `status`.
-
 ## 5. Collaborators (subprocesses; all behind traits and faked in the tests)
 
 | collaborator | used by | interface |
 |---|---|---|
-| `incident.sh file <title> -` | observe-flake | env (§3.4), payload on stdin, id on the last stdout line |
 | `host-check.sh --count-undeclared` / `--count-copying` | status | one number on stdout; 30 s wall |
 
 ## 6. Decisions
@@ -226,11 +164,6 @@ in argv or the environment. Called only by a flake **filing**, never by `list`, 
   go to stderr. (`status` still prints its one-line `?` form on stdout: that *is* its output.)
 * **D5 — host-check has a 30 s wall** in `status`, which the watchtower embeds and which
   must not be another thing that hangs during an outage. A timeout renders `?`.
-* **D7 — a suite name is a basename.** `observe-flake` refuses a name with `/` or a leading
-  `.`, since it is joined into STATE paths. A run id's internal whitespace is folded to `_`
-  so one observation stays one line.
-* **D9 — filing diagnostics are visible.** They go to stderr, not into the `$(...)` that
-  captures the bead id.
 * **D10 — the population is sorted bytewise,** so `list`/`names`/`corpus` order does not
   change with the caller's locale.
 

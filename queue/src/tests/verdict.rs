@@ -1983,7 +1983,7 @@ fn green_on_an_unmoved_base_fast_forwards_lands_every_member_and_cleans_up() {
         assert!(t.lib.has(&format!("bead_close {id} h1")));
     }
     assert!(!t.lib.has("notify spira PR 12 merged (fast-forward)"));
-    assert!(has_call(&t.scripts.calls, "observe-flake test-f.sh h1"));
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("observe-flake")));
     assert!(!t.qfile("open").exists());
     assert!(t.lib.has("push origin :refs/heads/spira/queue/x"));
     assert!(t

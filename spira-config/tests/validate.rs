@@ -294,6 +294,32 @@ mod retired_keys {
     }
 
     #[test]
+    fn the_complete_fixture_carries_no_repo_contract_sweep_key() {
+        let path = spira_config::resolve::checkout_root_for_process().unwrap().join("spira/testlib/complete.toml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let (_, warnings) = validate_with_warnings(&text).expect("the complete fixture validates");
+        assert!(!warnings.iter().any(|w| w.contains("runtime_sweep_repo_contract_")), "got {warnings:?}");
+    }
+
+    #[test]
+    fn a_config_written_while_the_warm_pool_shipped_still_validates() {
+        let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\ndwarf_warm_base = \"/x\"\ndwarf_warm_cap_mib = 6144\n")
+            .expect("a retired key must validate, not error");
+        for key in ["dwarf_warm_base", "dwarf_warm_cap_mib"] {
+            assert!(warnings.iter().any(|w| w.contains(&format!("{key} is retired (sp-2x0czr)"))), "{key}: {warnings:?}");
+        }
+    }
+
+    #[test]
+    fn a_config_written_while_the_nix_gc_task_shipped_still_validates() {
+        let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nruntime_sweep_nix_gc_calendar = \"Sun 03:00\"\nruntime_sweep_nix_gc_jitter_secs = 600\nnix_env_link = \"/x\"\n")
+            .expect("a retired key must validate, not error");
+        for key in ["runtime_sweep_nix_gc_calendar", "runtime_sweep_nix_gc_jitter_secs", "nix_env_link"] {
+            assert!(warnings.iter().any(|w| w.contains(&format!("{key} is retired (sp-2x0czr)"))), "{key}: {warnings:?}");
+        }
+    }
+
+    #[test]
     fn a_misspelt_key_warns_and_is_ignored() {
         let (_, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_batch_idle_cutt = 1\n").unwrap();
         assert!(w.iter().any(|m| m.starts_with("spira.queue_batch_idle_cutt")), "{w:?}");

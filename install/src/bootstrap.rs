@@ -64,9 +64,8 @@ pub fn which(prog: &str) -> Option<String> {
 /// `ExecStart=`, and an empty value bakes `--repo ` into the installed unit.
 /// The repository units bake into `--repo` when `SPIRA_REPO` is unset: the repo map's
 /// home-repo root when that is a git checkout, else the filesystem derivation. On a release
-/// the derivation is the release directory, which has no `.git`, so both cert-sweep units
-/// exited 2 on every run ("not a git repository") and deploy's pre-health refused on them
-/// (sp-7i16g); the map already names the real checkout.
+/// the derivation is the release directory, which has no `.git`, so a unit baked with it
+/// exits 2 ("not a git repository"); the map already names the real checkout.
 pub fn units_repo(mapped: Option<String>, derived: String, is_git: impl Fn(&Path) -> bool) -> String {
     match mapped.filter(|m| !m.is_empty() && is_git(Path::new(m))) {
         Some(m) => m,

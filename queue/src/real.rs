@@ -24,7 +24,7 @@ use spira_store::lc_call::LcClient;
 /// close-on-exec (Rust's std opens them that way), but a caller's lock fd this process
 /// never opened itself — inherited from whatever bash wrapper invoked `queue` (an
 /// `exec 9>…` lock with no O_CLOEXEC) — carries none of that protection. `gate.sh` and
-/// `testenv` are reached from here (observe-flake, the verdict pass's gate call), and
+/// `testenv` are reached from here (the verdict pass's gate call), and
 /// testenv starts podman, whose conmon daemonizes and would hold such a leaked fd forever
 /// (sp-ohwg7). close_range is the fast path; a kernel too old for it (< 5.9) falls back to
 /// fcntl(F_SETFD) per fd.
@@ -1069,16 +1069,6 @@ impl Scripts for RealScripts {
             out,
             err: String::new(),
         }
-    }
-    fn observe_flake(&self, suite: &str, sha: &str) {
-        let Ok(testenv) = spira_config::release_env::tool("testenv") else {
-            return;
-        };
-        // FORK-EDGE: machine leg testenv (suites observe-flake)
-        let _ = ok(Command::new(testenv)
-            .args(["suites", "observe-flake", suite, sha])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null()));
     }
     fn mail_operator(&self, subject: &str, body: &str) {
         // FORK-EDGE: needs a mail library entry that is `mail send` (kind routing, the attempt record); the suites stub `mail` on PATH

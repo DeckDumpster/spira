@@ -8,7 +8,7 @@
 > with no replacement — marked `[use_case.uncovered]` in the toml — because the behavior they
 > describe no longer exists, not because it went untested. UC-33 (the systemd unit itself) was
 > already ungapped coverage from an earlier deletion; the unit it describes is now gone too.
-> `suites.sh` keeps `list`/`status`/`hygiene`/`observe-flake`/`quarantine`/`disable`/`activate`
+> `suites.sh` keeps `list`/`status`/`hygiene`/`quarantine`/`disable`/`activate`
 > (UC-31, -32), which watchtower and the quarantine fence still read.
 
 > **2026-09-25: suite timing converged onto `run/tsd/`.** The `refs/notes/suite-times` ledger

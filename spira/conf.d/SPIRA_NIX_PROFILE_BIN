@@ -1,7 +1,7 @@
 TYPE=string
 GROUP=runtime
-DOC=The directory sweep.nix_gc finds nix-collect-garbage in first, and `work checks` finds nix in to enter a repository's flake dev shell.
-SCHEMA=REQUIRED: The directory sweep.nix_gc finds nix-collect-garbage in first, and `work checks` finds nix in to enter a repository's flake dev shell. Declared by a spira-runtime task row written from its contract (wiki/projects/spira/designs/tasks/); nothing defaults it.
+DOC=The directory install finds nix-collect-garbage in first, and `work checks` finds nix in to enter a repository's flake dev shell.
+SCHEMA=REQUIRED: The directory install finds nix-collect-garbage in first, and `work checks` finds nix in to enter a repository's flake dev shell. Declared by a spira-runtime task row written from its contract (wiki/projects/spira/designs/tasks/); nothing defaults it.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
 SPIRA_CONF_DEFAULT_EOF

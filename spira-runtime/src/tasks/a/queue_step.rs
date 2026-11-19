@@ -8,7 +8,7 @@
 //!
 //! **Code vs catalogue.** `gate.sh` and `release` are not reached from `step --all`: `gate.sh` is
 //! `queue submit` only (`ops/simple.rs:63`), `release` is `land-local` (`ops/land.rs:187`). testenv
-//! appears only as `testenv suites observe-flake` (`real.rs:907`, called `ops/verdict.rs:1550`). The
+//! is not reached. The
 //! real long legs are `batcher cut` and `batcher judgement-ci` (`real.rs:873`, called `ops/verdict.rs:2159`).
 //!
 //! ## Tick
@@ -82,7 +82,6 @@
 //! | `queue.step.cancel_runs` | forge | 30 s | `repo/branch` (`real.rs:782`) | — |
 //! | `queue.step.rerun` | forge | 30 s | `repo/run` (`ops/verdict.rs:373`, `:1956`) | run already rerun once (`classify_fault_rerun`) |
 //! | `queue.step.judgement` | unit | `unit.start`; ends on `unit.ran`, 600 s (unverified cap) | `repo/pr/head` | batcher off (`SPIRA_BATCHER_ENABLE=0`, `:2143`) |
-//! | `queue.step.observe_flake` | container | 120 s (unverified) | `suite/sha` (`real.rs:907`) | — |
 //! | `queue.step.eject` | store | 5 s | `batch/member/tip` (`ops/verdict.rs:849`) | concierge-owned batch (`:1052`) |
 //! | `queue.step.reconcile` | store+forge | 60 s | `batch_id` | record opening (`ops/verdict.rs:84`) |
 //! | `queue.step.sweep` | store+forge | 60 s | `repo/tick` (`ops/verdict.rs:906`) | file-era record |
@@ -108,7 +107,7 @@
 //! `spira-verdict-prod.service` + `.timer`; the step lock (`lock.rs:210`); children: `bash lib.sh`
 //! (`real.rs:427`), `timeout spira-lc` (`real.rs:1465-1520`), `timeout bdq` (`real.rs:361`), `forge`
 //! (`real.rs:1318-1460`), `batcher cut` / `judgement-ci` (`real.rs:938`, `:873`), `mail send`
-//! (`real.rs:914`), `gh-intake closeout` (`real.rs:690`), `testenv suites observe-flake` (`real.rs:907`),
+//! (`real.rs:914`), `gh-intake closeout` (`real.rs:690`),
 //! `timeout hel reap-landed-branch` (`real.rs:667`, via `ops/helpers.rs:499`), `systemctl show`
 //! (`real.rs:989`). Pins: `SPIRA_QUEUE_CI_MAXSEC[_<REPO>]`, `SPIRA_QUEUE_CI_IDLE_SEC[_<REPO>]`,
 //! `SPIRA_QUEUE_INFRA_RETRIES`, `SPIRA_QUEUE_LOCK_WAIT`, `SPIRA_QUEUE_LOCK_STARVE_MAX`,
@@ -148,7 +147,6 @@ pub const PR_CLOSE: &str = "queue.step.pr_close";
 pub const CANCEL_RUNS: &str = "queue.step.cancel_runs";
 pub const RERUN: &str = "queue.step.rerun";
 pub const JUDGEMENT: &str = "queue.step.judgement";
-pub const OBSERVE_FLAKE: &str = "queue.step.observe_flake";
 pub const EJECT: &str = "queue.step.eject";
 pub const RECONCILE: &str = "queue.step.reconcile";
 pub const SWEEP: &str = "queue.step.sweep";
@@ -169,7 +167,6 @@ pub const ACTS: &[(&str, u64)] = &[
     (CANCEL_RUNS, 30_000),
     (RERUN, 30_000),
     (JUDGEMENT, 10_000),
-    (OBSERVE_FLAKE, 10_000),
     (EJECT, 10_000),
     (RECONCILE, 10_000),
     (SWEEP, 10_000),
@@ -180,7 +177,7 @@ pub const ACTS: &[(&str, u64)] = &[
 pub const EMITS: &[EventKindTag] = &[CUT_WANTED, PUBLISH_WANTED];
 /// Hand-offs that wake it at once, besides its tick: batcher.forge left a batch to settle.
 pub const WAKES: &[EventKindTag] = &[super::batcher_forge::SETTLE_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, PUSH, LAND, CLOSE_BEAD, PR_CLOSE, CANCEL_RUNS, RERUN, JUDGEMENT, OBSERVE_FLAKE, EJECT, RECONCILE, SWEEP, FILE_BUG, NOTIFY, RECORD];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, PUSH, LAND, CLOSE_BEAD, PR_CLOSE, CANCEL_RUNS, RERUN, JUDGEMENT, EJECT, RECONCILE, SWEEP, FILE_BUG, NOTIFY, RECORD];
 pub const KEYS: &[&str] = &[
     "SPIRA_QUEUE_CI_MAXSEC",
     "SPIRA_QUEUE_CI_IDLE_SEC",
@@ -918,13 +915,6 @@ pub mod edge {
         let bin = spira_config::release_env::tool("batcher")?;
         let argv = vec![bin, "judgement-ci".into(), s.repo.clone(), "--suites".into(), suites, "--members".into(), s.members.join(","), "--evidence".into(), format!("CI red on PR {pr} at {}", s.head)];
         start_unit(e, super::NAME, &s.unit, argv, vec![], None)
-    }
-
-    /// `testenv suites observe-flake <suite> <sha>`, as a unit.
-    pub fn observe_flake(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
-        let s = step(spec)?;
-        let bin = spira_config::release_env::tool("testenv")?;
-        start_unit(e, super::NAME, &format!("flake.{}.{}", s.subject, s.head), vec![bin, "suites".into(), "observe-flake".into(), s.subject.clone(), s.head.clone()], vec![], None)
     }
 
     /// `queue <args>`, as a unit: the queue's own verbs this task has no library entry for.

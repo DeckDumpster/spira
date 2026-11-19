@@ -2,10 +2,9 @@
 //! through the `World` ports and its own state directory.
 
 use std::collections::BTreeSet;
-use std::fs;
 
 use super::model::{self, LastResult, Runs, Unreadable};
-use super::ports::{FlakeFiling, World};
+use super::ports::World;
 
 pub const OK: i32 = 0;
 pub const FAIL: i32 = 1;
@@ -155,127 +154,4 @@ pub fn status(w: &World) -> i32 {
         None => row(w, "oldest timed result", "?   (nothing has run)"),
     }
     OK
-}
-
-// --------------------------------------------------------------------- observe-flake
-
-fn usable_suite(w: &World, label: &str, suite: &str) -> Result<(), i32> {
-    if !model::valid_suite_name(suite) || !w.s.suite_path(suite).is_file() {
-        w.err(format!("suites {label}: no such suite: {suite}"));
-        return Err(USAGE);
-    }
-    Ok(())
-}
-
-pub fn observe_flake(w: &World, suite: &str, run_id: &str) -> i32 {
-    if suite.is_empty() {
-        w.err("suites observe-flake: suite name required");
-        return USAGE;
-    }
-    if run_id.is_empty() {
-        w.err("suites observe-flake: run id required");
-        return USAGE;
-    }
-    if usable_suite(w, "observe-flake", suite).is_err() {
-        return USAGE;
-    }
-    // A run id is one token on one line of the observation file.
-    let run_id: String = run_id.split_whitespace().collect::<Vec<_>>().join("_");
-    let _ = fs::create_dir_all(&w.s.state);
-    let f = w.s.state_file(suite, "flakeobs");
-    let obs = model::parse_flakeobs(&model::read_text(&f).unwrap_or_default());
-    let now = w.clock.now();
-    let mut all = obs.clone();
-    if !model::flakeobs_has(&obs, &run_id) {
-        use std::io::Write;
-        match fs::OpenOptions::new().create(true).append(true).open(&f) {
-            Ok(mut h) => {
-                let _ = writeln!(h, "{now} {run_id}");
-            }
-            Err(e) => w.log(&format!("suites: cannot record a flake observation in {}: {e}", f.display())),
-        }
-        all.push(model::FlakeObs { at: Some(now), run_id: run_id.clone() });
-    }
-    let count = model::flakeobs_in_window(&all, now, w.s.flake_window);
-    let threshold = w.s.flake_at;
-    w.out(format!(
-        "observe-flake: {suite}: {count} observation(s) in window (threshold {threshold})"
-    ));
-    if count < threshold {
-        return OK;
-    }
-    match file_flake(w, suite, count) {
-        Some(id) => w.out(format!("observe-flake: {suite} reported (bead: {id})")),
-        None => w.out(format!(
-            "observe-flake: {suite} crossed threshold but the finding could not be filed"
-        )),
-    }
-    OK
-}
-
-/// The payload suites.sh wrote on incident.sh's stdin (DESIGN-suites.md §3.5).
-pub fn flake_payload(suite: &str, count: u64, window: u64) -> String {
-    [
-        format!("{suite} has {count} flake observation(s) within the {window}s window. It is filed and nothing is"),
-        "quarantined: the suite keeps running in every batch, so a repeat failure still reaches the".into(),
-        "gate instead of being hidden.".into(),
-        String::new(),
-        format!("  suite            {suite}"),
-        format!("  observations     {count} in {window}s"),
-        format!("  reproduce        bash spira/{suite}"),
-        String::new(),
-        format!("The dedupe ref is flake:{suite} — a later observation bumps recurrence on this bead rather than"),
-        "filing another.".into(),
-        String::new(),
-    ]
-    .join("\n")
-}
-
-/// The id incident.sh printed: its last line, whitespace removed, `[A-Za-z0-9-]+` without
-/// a leading or trailing `-`.
-pub fn intake_id(stdout: &str) -> Option<String> {
-    let last = stdout.trim_end_matches('\n').rsplit('\n').next().unwrap_or("");
-    let id: String = last.chars().filter(|c| !c.is_whitespace()).collect();
-    let ok = !id.is_empty()
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-        && !id.starts_with('-')
-        && !id.ends_with('-');
-    ok.then_some(id)
-}
-
-fn file_flake(w: &World, suite: &str, count: u64) -> Option<String> {
-    let conf = match w.lib.conf() {
-        Ok(c) => c,
-        Err(e) => {
-            w.log(&format!("suites: cannot resolve the home repository for {suite}'s flake finding: {e}"));
-            return None;
-        }
-    };
-    let labels = match conf.scope_label.as_deref() {
-        Some(l) if !l.is_empty() => format!("{l},plan"),
-        _ => "plan".to_string(),
-    };
-    let filing = FlakeFiling {
-        suite: suite.to_string(),
-        title: format!("why does {suite} fail intermittently"),
-        priority: model::priority_of(&suite_text(w, suite), w.s.priority),
-        labels,
-        repo: conf.home_repo,
-        reference: format!("flake:{suite}"),
-        path: w.s.suite_path(suite),
-        db: conf.db,
-        payload: flake_payload(suite, count, w.s.flake_window),
-    };
-    let out = match w.intake.file(&filing) {
-        Ok(o) => o,
-        Err(e) => {
-            w.log(&format!("suites: {e}"));
-            return None;
-        }
-    };
-    let id = intake_id(&out);
-    if id.is_none() {
-        w.log(&format!("suites: the intake returned no id for {suite} flake finding"));
-    }
-    id
 }

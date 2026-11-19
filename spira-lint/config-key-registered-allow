@@ -226,7 +226,6 @@ SPIRA_FENCE_TARGET_DIR spira/build-fence.sh
 SPIRA_FENRIR_AT incident/src/intake.rs
 SPIRA_FENRIR_EXEMPT czar-pass/src/main.rs
 SPIRA_FENRIR_EXEMPT incident/src/intake.rs
-SPIRA_FENRIR_EXEMPT testenv/src/suites/real.rs
 SPIRA_FENRIR_EXEMPT watchtower/src/incident.rs
 SPIRA_FIRSTRUN_BEAD_SH spira/first-run.sh
 SPIRA_FIRSTRUN_TEMPLATES spira/first-run.sh
@@ -297,7 +296,6 @@ SPIRA_HOME bead/src/bin/bdq.rs
 SPIRA_HOME bead/src/main.rs
 SPIRA_HOME broker/src/main.rs
 SPIRA_HOME broker/src/repo_map.rs
-SPIRA_HOME cert-sweep/src/main.rs
 SPIRA_HOME cockpit-collect/src/io.rs
 SPIRA_HOME cockpit/ops/src/conf.rs
 SPIRA_HOME cockpit/ops/src/rebuild.rs
@@ -368,12 +366,10 @@ SPIRA_HOME_LIB spira-world/src/seam.rs
 SPIRA_HOME_REPO_RESOLVED sentinel/src/cfg.rs
 SPIRA_HOTFIX_ALERT_HOURS release/src/config.rs
 SPIRA_IDLE_WHILE_READY_N watchtower/src/process.rs
-SPIRA_INCIDENT testenv/src/suites/real.rs
 SPIRA_INCIDENT_ACTOR batcher-cut/src/io.rs
 SPIRA_INCIDENT_ACTOR czar-pass/src/main.rs
 SPIRA_INCIDENT_ACTOR incident/src/intake.rs
 SPIRA_INCIDENT_ACTOR sentinel/src/detect.rs
-SPIRA_INCIDENT_ACTOR testenv/src/suites/real.rs
 SPIRA_INCIDENT_ACTOR watchtower/src/incident.rs
 SPIRA_INCIDENT_CAUSE batcher-cut/src/io.rs
 SPIRA_INCIDENT_CAUSE czar-pass/src/main.rs
@@ -382,7 +378,6 @@ SPIRA_INCIDENT_CAUSE release/src/canary.rs
 SPIRA_INCIDENT_CAUSE sentinel/src/detect.rs
 SPIRA_INCIDENT_CAUSE spira-lint/src/rules/incident_cause_lint.rs
 SPIRA_INCIDENT_CAUSE testenv/src/run.rs
-SPIRA_INCIDENT_CAUSE testenv/src/suites/real.rs
 SPIRA_INCIDENT_CAUSE watchtower/src/incident.rs
 SPIRA_INCIDENT_DEDUP_LOOKBACK incident/src/intake.rs
 SPIRA_INCIDENT_DELIVERS incident/src/intake.rs
@@ -395,18 +390,15 @@ SPIRA_INCIDENT_LABELS incident/src/intake.rs
 SPIRA_INCIDENT_LABELS release/src/canary.rs
 SPIRA_INCIDENT_LABELS sentinel/src/detect.rs
 SPIRA_INCIDENT_LABELS spira/escape-classify.sh
-SPIRA_INCIDENT_LABELS testenv/src/suites/real.rs
 SPIRA_INCIDENT_LOCK incident/src/intake.rs
 SPIRA_INCIDENT_LOCK_WAIT incident/src/intake.rs
 SPIRA_INCIDENT_PATH incident/src/intake.rs
-SPIRA_INCIDENT_PATH testenv/src/suites/real.rs
 SPIRA_INCIDENT_REF batcher-cut/src/io.rs
 SPIRA_INCIDENT_REF czar-pass/src/main.rs
 SPIRA_INCIDENT_REF incident/src/intake.rs
 SPIRA_INCIDENT_REF release/src/canary.rs
 SPIRA_INCIDENT_REF sentinel/src/detect.rs
 SPIRA_INCIDENT_REF testenv/src/run.rs
-SPIRA_INCIDENT_REF testenv/src/suites/real.rs
 SPIRA_INCIDENT_REF watchtower/src/incident.rs
 SPIRA_INCIDENT_REPO batcher-cut/src/io.rs
 SPIRA_INCIDENT_REPO czar-pass/src/main.rs
@@ -416,7 +408,6 @@ SPIRA_INCIDENT_REPO release/src/canary.rs
 SPIRA_INCIDENT_REPO sentinel/src/detect.rs
 SPIRA_INCIDENT_REPO spira/escape-classify.sh
 SPIRA_INCIDENT_REPO testenv/src/run.rs
-SPIRA_INCIDENT_REPO testenv/src/suites/real.rs
 SPIRA_INCIDENT_REPO watchtower/src/incident.rs
 SPIRA_INCIDENT_SH sentinel/src/cfg.rs
 SPIRA_INCIDENT_SH watchtower/src/process.rs
@@ -426,7 +417,6 @@ SPIRA_INCIDENT_TYPE incident/src/intake.rs
 SPIRA_INCIDENT_TYPE release/src/canary.rs
 SPIRA_INCIDENT_TYPE sentinel/src/detect.rs
 SPIRA_INCIDENT_TYPE testenv/src/run.rs
-SPIRA_INCIDENT_TYPE testenv/src/suites/real.rs
 SPIRA_INCIDENT_TYPE watchtower/src/incident.rs
 SPIRA_INCIDENT_UNIT incident/src/intake.rs
 SPIRA_INFERENCE_EVERY sentinel/src/cfg.rs
@@ -587,7 +577,6 @@ SPIRA_RELEASE_SKEW_MAX_SECS sentinel/src/tower.rs
 SPIRA_RELEASE_SKEW_MAX_SECS watchtower/src/main.rs
 SPIRA_REPO bead/src/bdq.rs
 SPIRA_REPO broker/src/main.rs
-SPIRA_REPO cert-sweep/src/main.rs
 SPIRA_REPO cockpit-collect/src/io.rs
 SPIRA_REPO cockpit-collect/src/probes/mod.rs
 SPIRA_REPO cockpit/ops/src/conf.rs
@@ -649,9 +638,7 @@ SPIRA_RESOLVE_SH watchtower/src/process.rs
 SPIRA_ROSTER_WARN_STAMP sentinel/src/cfg.rs
 SPIRA_ROUND_BATCH_ID testenv/src/settings.rs
 SPIRA_ROUND_MEMBERS testenv/src/settings.rs
-SPIRA_ROUND_VM_ACQUIRE_DEADLINE cert-sweep/src/main.rs
 SPIRA_ROUND_VM_ACQUIRE_DEADLINE round-vm/src/config.rs
-SPIRA_ROUND_VM_ACQUIRE_DEADLINE spira-runtime/src/tasks/d/cert_full.rs
 SPIRA_ROUND_VM_ATTR_LINGER round-vm/src/config.rs
 SPIRA_ROUND_VM_BOOT_POLL round-vm/src/config.rs
 SPIRA_ROUND_VM_BOOT_TRIES round-vm/src/config.rs

@@ -123,7 +123,7 @@ pub fn contract_page(name: &str) -> String {
 /// (`task-contracts`) and `retired`. Copied here because tests run in the test sandbox, which
 /// hides the home the brain lives in. A contract added there is added here in the commit that
 /// stubs its task. The three `source-*` pages are the sources in `tasks::g`, not rows.
-pub const CONTRACT_PAGES: &[&str] = &["asks-ideas", "asks-moot", "asks-verify", "batcher-forge", "batcher-local", "cert-full", "cert-sample", "cockpit-tier-5s", "cockpit-tier-600s", "cockpit-tier-60s", "czar", "gate-check", "gate-worker", "hel-reap-stale", "hel-reap-terminal", "hel-sweep", "inbox-notify", "incident-alarms", "incident-probe", "incident-settle", "intake-filings", "intake-gh", "intake-kit-bump", "landing", "mail-reconcile", "mail-tidy", "persona-archivist", "persona-ops", "publish", "queue-step", "reconcile-content", "reconcile-goodput", "reconcile-heimdall", "reconcile-section", "roundvm-ami-prune", "roundvm-drain", "sentinel-call", "sentinel-pass", "sift", "source-mail-arrived", "source-submission", "source-unit-ran", "submission-provision", "sweep-archive", "sweep-escape-census", "sweep-export-beads", "sweep-nix-gc", "sweep-reclaim", "sweep-target", "sweep-tsd", "trigger-groom", "trigger-mimir", "trigger-warden", "watch-ami-stale", "watch-backup-age", "watch-ci-spill", "watch-mend", "watch-pass-rate", "watch-perf", "watch-refusals", "watch-runtime", "watch-skew", "watch-sop-lint", "watch-testenv-cap", "watch-tower", "watch-warm-full"];
+pub const CONTRACT_PAGES: &[&str] = &["asks-ideas", "asks-moot", "asks-verify", "batcher-forge", "batcher-local", "cockpit-tier-5s", "cockpit-tier-600s", "cockpit-tier-60s", "czar", "gate-check", "gate-worker", "hel-reap-stale", "hel-reap-terminal", "hel-sweep", "inbox-notify", "incident-alarms", "incident-probe", "incident-settle", "intake-filings", "intake-gh", "intake-kit-bump", "landing", "mail-reconcile", "mail-tidy", "persona-archivist", "persona-ops", "publish", "queue-step", "reconcile-content", "reconcile-goodput", "reconcile-heimdall", "reconcile-section", "roundvm-ami-prune", "roundvm-drain", "sentinel-call", "sentinel-pass", "sift", "source-mail-arrived", "source-submission", "source-unit-ran", "submission-provision", "sweep-archive", "sweep-escape-census", "sweep-export-beads", "sweep-reclaim", "sweep-target", "sweep-tsd", "trigger-groom", "trigger-mimir", "trigger-warden", "watch-ami-stale", "watch-backup-age", "watch-ci-spill", "watch-mend", "watch-pass-rate", "watch-perf", "watch-refusals", "watch-runtime", "watch-skew", "watch-sop-lint", "watch-testenv-cap", "watch-tower"];
 
 /// Each task name and each stream claimed by more than one row across `families`.
 pub fn clashes(families: &[&[Task]]) -> Vec<String> {
@@ -238,6 +238,16 @@ mod tests {
         }
         out.sort();
         out
+    }
+
+    #[test]
+    fn the_cert_sweeps_are_retired() {
+        for gone in ["cert.full", "cert.sample"] {
+            assert!(!all().chain(pending()).any(|t| t.name == gone), "{gone} is still a task");
+            let table = crate::modes::parse(&format!("{gone}=observe")).unwrap();
+            let err = crate::modes::apply(vec![], &table).err().unwrap();
+            assert!(err.contains(gone), "{err}");
+        }
     }
 
     #[test]
@@ -431,13 +441,13 @@ mod tests {
             assert!(pending().all(|t| t.runners.iter().all(|(n, _)| *n != e)), "{e} has a runner on a row as well");
         }
         let start = |input: &str| runtime::EffectSpec::keyed(units::UNIT_START, units::UNIT_START, input, 1);
-        let spec = serde_json::to_string(&units::UnitSpec { task: "cert.full".into(), key: "k1".into(), argv: vec!["true".into()], env: vec![], cwd: None }).unwrap();
+        let spec = serde_json::to_string(&units::UnitSpec { task: "watch.skew".into(), key: "k1".into(), argv: vec!["true".into()], env: vec![], cwd: None }).unwrap();
         assert_eq!(crate::Effects::default().run("k", &start(&spec)), Err("no unit manager configured".into()), "no backend is refused, not guessed");
         let scripted = Arc::new(units::ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0))));
-        scripted.script("cert.full", 1_000, units::Exit::Code(0));
+        scripted.script("watch.skew", 1_000, units::Exit::Code(0));
         let fx = crate::Effects { units: Some(scripted.clone()), ..crate::Effects::default() };
         let handle: units::UnitHandle = serde_json::from_str(&fx.run("k", &start(&spec)).unwrap()).unwrap();
-        assert_eq!(handle, units::UnitHandle::of("cert.full", "k1").unwrap());
+        assert_eq!(handle, units::UnitHandle::of("watch.skew", "k1").unwrap());
         let facts = runtime::EffectSpec::keyed(units::UNIT_FACTS, units::UNIT_FACTS, serde_json::to_string(&handle).unwrap(), 1);
         let facts: units::UnitFacts = serde_json::from_str(&fx.run("k", &facts).unwrap()).unwrap();
         assert_eq!(facts.state, units::UnitState::Active);
@@ -506,7 +516,7 @@ mod tests {
                 assert!(t.effects.contains(&q.name.as_str()), "{} asked for {} which its row does not declare", t.name, q.name);
             }
         }
-        for name in ["hel.sweep", "hel.reap_terminal", "roundvm.ami_prune", "sweep.nix_gc"] {
+        for name in ["hel.sweep", "hel.reap_terminal", "roundvm.ami_prune"] {
             assert!(jittered.contains(&name), "{name}: a task declaring a jitter key must fire off its slot at a non-zero jitter; jittered: {jittered:?}");
         }
     }

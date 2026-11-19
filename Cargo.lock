@@ -219,19 +219,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cert-sweep"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "spira-config",
- "spira-otel",
- "spira-store",
- "system-paths",
- "tsd",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1519,8 +1506,6 @@ dependencies = [
 name = "reclaim"
 version = "0.1.0"
 dependencies = [
- "spira-config",
- "spira-otel",
  "system-paths",
  "testkit",
 ]
@@ -2242,7 +2227,6 @@ dependencies = [
  "batcher",
  "batcher-cut",
  "bead",
- "cert-sweep",
  "cockpit-collect",
  "cockpit-ops",
  "czar-pass",

@@ -165,9 +165,6 @@ pub fn run(
                 _ => ("Unsure", "recorded as unsure"),
             };
             let r = send(serde_json::json!({ name: {"at": now()} }));
-            if outcome == "flaky" && r.is_ok() {
-                w.scripts.observe_flake(suite, kv.get("head").unwrap_or(""));
-            }
             report(r, did)
         }
         _ => {

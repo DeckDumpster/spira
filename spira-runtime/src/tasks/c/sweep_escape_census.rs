@@ -126,6 +126,17 @@ pub struct SweepEscapeCensus {
 /// The window the census counts, in hours (the script's default).
 pub const HOURS: u64 = 168;
 
+/// The ISO-8601 week (`YYYY-Www`) holding `ms` since the epoch.
+pub fn iso_week(ms: u64) -> String {
+    let days = (ms / 86_400_000) as i64;
+    let weekday = (days + 3).rem_euclid(7); // Monday is 0; 1970-01-01 was a Thursday
+    let thursday = days - weekday + 3;
+    let year_of = |d: i64| crate::tasks::c::sweep_archive::archive::fmt_ts(d * 86_400)[..4].parse::<i64>().unwrap_or(1970);
+    let year = year_of(thursday);
+    let jan1 = crate::tasks::c::sweep_archive::archive::parse_ts(&format!("{year:04}-01-01")).unwrap_or(0) / 86_400;
+    format!("{year:04}-W{:02}", (thursday - jan1) / 7 + 1)
+}
+
 /// The census line: each class in [`CLASSES`] order, an absent class counted 0.
 pub fn line(snap: &Snapshot) -> String {
     CLASSES.iter().map(|c| format!("{} {c}", snap.counts.get(*c).copied().unwrap_or(0))).collect::<Vec<_>>().join(", ")
@@ -137,7 +148,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(snap) => {
-            let week = crate::tasks::c::sweep_nix_gc::iso_week(now_ms);
+            let week = iso_week(now_ms);
             if carry.phase == Phase::Reported && carry.week.as_deref() == Some(week.as_str()) {
                 return Err(format!("{NAME}: {week} is already reported; a second census that week is refused"));
             }

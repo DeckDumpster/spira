@@ -326,7 +326,7 @@ fn tail_segment_refusal(seg: &str) -> Option<String> {
 
 /// Where install builds the pinned tool environment (`nix build .#spira-env`), under `$HOME`.
 pub const SPIRA_ENV_REL: &str = ".local/lib/spira-env";
-/// The spira-env the last rebuild replaced, rooted so `spira-nix-gc` keeps it for rollback.
+/// The spira-env the last rebuild replaced, rooted so the garbage collection install starts keeps it for rollback.
 pub const SPIRA_ENV_PREV_REL: &str = ".local/lib/spira-env.prev";
 
 /// The `bin/` of the pinned tool environment for `home` — what unit PATHs put ahead of the
@@ -907,6 +907,22 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "round_vm_ec2_key_warn_days", bead: "sp-1ka34x.2" },
     RetiredKey { key: "round_vm_ec2_launch_window", bead: "sp-1ka34x.2" },
     RetiredKey { key: "round_vm_ec2_probe_deadline", bead: "sp-1ka34x.2" },
+    RetiredKey { key: "dwarf_warm_base", bead: "sp-2x0czr" },
+    RetiredKey { key: "dwarf_warm_cap_mib", bead: "sp-2x0czr" },
+    RetiredKey { key: "runtime_sweep_nix_gc_calendar", bead: "sp-2x0czr" },
+    RetiredKey { key: "runtime_sweep_nix_gc_jitter_secs", bead: "sp-2x0czr" },
+    RetiredKey { key: "nix_env_link", bead: "sp-2x0czr" },
+    RetiredKey { key: "flake_quarantine_at", bead: "sp-2x0czr" },
+    RetiredKey { key: "flake_window", bead: "sp-2x0czr" },
+    RetiredKey { key: "reclaim_globs", bead: "sp-2x0czr" },
+    RetiredKey { key: "reclaim_require", bead: "sp-2x0czr" },
+    RetiredKey { key: "reclaim_lease_dir", bead: "sp-2x0czr" },
+    RetiredKey { key: "reclaim_idle_days", bead: "sp-2x0czr" },
+    RetiredKey { key: "reclaim_min_free_gib", bead: "sp-2x0czr" },
+    RetiredKey { key: "reclaim_target_free_gib", bead: "sp-2x0czr" },
+    RetiredKey { key: "reclaim_podman", bead: "sp-2x0czr" },
+    RetiredKey { key: "reclaim_podman_dir", bead: "sp-2x0czr" },
+    RetiredKey { key: "reclaim_podman_cap_gib", bead: "sp-2x0czr" },
 ];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old

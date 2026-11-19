@@ -166,6 +166,26 @@ impl Config {
     }
 }
 
+fn git(repo: &str, args: &[&str]) -> Result<String, String> {
+    use runtime::ports::Proc;
+    let spec = runtime::ports::ProcSpec { prog: "git".into(), args: ["-C", repo].iter().chain(args).map(|s| s.to_string()).collect(), stdin: vec![], deadline: std::time::Duration::from_secs(5) };
+    let out = runtime::ports::SysProc.run(&spec)?;
+    if out.code != Some(0) {
+        return Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The ref a landed tip is looked for on: `local/main` when the repo has it, else the repo map's land ref.
+pub fn landing_ref(repo: &str) -> String {
+    if git(repo, &["rev-parse", "--verify", "-q", "local/main^{commit}"]).is_ok() {
+        return "local/main".into();
+    }
+    let home = spira_config::resolve::locate_home_for_process().unwrap_or_default();
+    let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
+    spira_config::repos::landref(&reg, repo).unwrap_or_else(|| "local/main".into())
+}
+
 /// The row's cadence: the configured period, or the default while the key does not resolve.
 pub fn cadence_ms() -> u64 {
     Config::pinned().map_or(DEFAULT_PERIOD_MS, |c| c.period_ms())
