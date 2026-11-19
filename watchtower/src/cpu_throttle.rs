@@ -17,8 +17,8 @@ pub struct Cfg {
     pub systemctl: String,
 }
 
-pub fn default_units(instance: &str) -> Vec<String> {
-    vec!["dolt-beads.service".to_string(), spira_config::unit::unit_name("runtime", "service", instance)]
+pub fn units_of(configured: &str) -> Vec<String> {
+    configured.split_whitespace().map(String::from).collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,10 +154,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_default_units_are_the_ones_that_exist_for_the_instance() {
-        assert_eq!(default_units("prod"), vec!["dolt-beads.service", "spira-runtime-prod.service"]);
+    fn the_unit_list_is_the_registered_keys_and_names_no_retired_unit() {
+        let registered = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d/SPIRA_CPU_THROTTLE_UNITS")).unwrap();
+        let default = registered.lines().find_map(|l| l.trim().strip_prefix(": \"${SPIRA_CPU_THROTTLE_UNITS:=")).and_then(|l| l.strip_suffix("}\"")).unwrap();
+        assert_eq!(units_of(default), vec!["dolt-beads.service", "spira-runtime.service"]);
+        assert_eq!(units_of("a.service  b.service"), vec!["a.service", "b.service"]);
         for retired in ["spira-sentinel", "spira-landing-pass", "spira-call", "spira-verdict"] {
-            assert!(!default_units("prod").iter().any(|u| u.contains(retired)));
+            assert!(!units_of(default).iter().any(|u| u.contains(retired)));
         }
     }
 

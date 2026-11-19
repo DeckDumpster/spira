@@ -155,7 +155,6 @@ SPIRA_CONTENT_DRIFT_SLACK watchtower/src/main.rs
 SPIRA_CONTENT_DRIFT_SUSTAIN_SECS sentinel/src/tower.rs
 SPIRA_CONTENT_DRIFT_SUSTAIN_SECS watchtower/src/main.rs
 SPIRA_CPU_THROTTLE_MIN_PERIODS watchtower/src/process.rs
-SPIRA_CPU_THROTTLE_UNITS watchtower/src/process.rs
 SPIRA_CPU_THROTTLE_WARN_PCT watchtower/src/process.rs
 SPIRA_CTRL_SH spira/deploy.sh
 SPIRA_CZAR_CLASS bead/src/guard.rs
