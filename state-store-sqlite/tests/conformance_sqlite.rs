@@ -1502,9 +1502,11 @@ const BOUND_EVERY: u64 = 8;
 /// A hang guard on waiting for a checkpoint, sized for a loaded round; never the verdict.
 const CHECKPOINT_CAP: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// 400 commits of 4 KiB values under a reader that never stops; returns the open handle.
-fn bounded_wal_workload(path: &Path) -> SqliteBackend {
-    let opts = Options { checkpoint_every: BOUND_EVERY, readers: 4, ..Options::default() };
+/// 400 commits of 4 KiB values under a reader that never stops; returns the open handle. The
+/// background thread never takes a pass: the workload runs each interval's checkpoint itself
+/// when `checkpoint`, so host load cannot decide when it happens.
+fn bounded_wal_workload(path: &Path, checkpoint: bool) -> SqliteBackend {
+    let opts = Options { checkpoint_every: u64::MAX, readers: 4, ..Options::default() };
     let b = SqliteBackend::open(path, opts).unwrap();
     let stop = Arc::new(AtomicBool::new(false));
     let reader = {
@@ -1517,13 +1519,11 @@ fn bounded_wal_workload(path: &Path) -> SqliteBackend {
         })
     };
     for interval in 0..400 / BOUND_EVERY {
-        let before = b.checkpoints_completed();
         for _ in 0..BOUND_EVERY {
             put_next(&b);
         }
-        if interval + 1 < 400 / BOUND_EVERY {
-            let done = state_store_sqlite::bench::await_checkpoint(&b, before, CHECKPOINT_CAP);
-            assert!(done.is_some(), "no checkpoint completed after interval {interval} with a reader running");
+        if checkpoint && interval + 1 < 400 / BOUND_EVERY {
+            while !state_store_sqlite::bench::checkpoint_pass(&b).unwrap() {}
         }
     }
     stop.store(true, Ordering::SeqCst);
@@ -1546,7 +1546,31 @@ fn frames_per_commit() -> u32 {
 fn the_wal_stays_within_three_checkpoint_intervals_while_reads_never_stop() {
     let dir = TempDir::new("sqlite-bounded-wal");
     let path = dir.path().join("s.db");
-    let b = bounded_wal_workload(&path);
+    let b = bounded_wal_workload(&path, true);
+    let bound = frames_per_commit() * 3 * BOUND_EVERY as u32;
+    let mx = mx_frame(&path);
+    assert!(mx <= bound, "mxFrame {mx} exceeds {bound}");
+    drop(b);
+}
+
+#[test]
+fn a_checkpoint_pass_on_an_idle_store_restarts_the_wal() {
+    let dir = TempDir::new("sqlite-checkpoint-pass-idle");
+    let path = dir.path().join("s.db");
+    let b = SqliteBackend::open(&path, Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
+    for _ in 0..4 {
+        put_next(&b);
+    }
+    assert!(state_store_sqlite::bench::checkpoint_pass(&b).unwrap());
+    assert_eq!(std::fs::metadata(format!("{}-wal", path.display())).unwrap().len(), 0);
+}
+
+#[test]
+#[should_panic(expected = "exceeds")]
+fn the_wal_bound_fails_when_no_checkpoint_pass_runs() {
+    let dir = TempDir::new("sqlite-bounded-wal-unchecked");
+    let path = dir.path().join("s.db");
+    let b = bounded_wal_workload(&path, false);
     let bound = frames_per_commit() * 3 * BOUND_EVERY as u32;
     let mx = mx_frame(&path);
     assert!(mx <= bound, "mxFrame {mx} exceeds {bound}");
@@ -1613,7 +1637,7 @@ fn child_work_when_asked() {
     let path = Path::new(path);
     match mode {
         "leave" => {
-            let b = bounded_wal_workload(path);
+            let b = bounded_wal_workload(path, true);
             std::mem::forget(b);
             std::process::exit(0);
         }

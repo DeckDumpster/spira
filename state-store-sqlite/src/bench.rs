@@ -88,6 +88,16 @@ pub fn await_checkpoint(b: &SqliteBackend, after: u64, cap: Duration) -> Option<
     (s.completed > after).then_some(s.completed)
 }
 
+/// One checkpoint pass, the same step the checkpointer thread takes: PASSIVE, then the WAL
+/// restart. `true` when the restart was not busy. Each call waits at most `max_read_ms`.
+pub fn checkpoint_pass(b: &SqliteBackend) -> Result<bool, String> {
+    let conn = crate::connect(&b.0.path).map_err(|e| e.to_string())?;
+    conn.busy_timeout(Duration::ZERO).map_err(|e| e.to_string())?;
+    let max_read_ms = b.0.max_read_ms.load(Ordering::SeqCst);
+    let pass = crate::checkpoint_step(&conn, &b.0.writer, max_read_ms, true, |_| {})?;
+    Ok(!pass.busy)
+}
+
 /// `nBackfill` of the open store at `db`: the WAL frames a checkpoint has copied home.
 pub fn wal_backfill(db: &std::path::Path) -> std::result::Result<u32, String> {
     let shm_path = format!("{}-shm", db.display());
