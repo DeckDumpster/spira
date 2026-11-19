@@ -164,6 +164,17 @@ pub struct FilterRed {
     pub harness: Vec<String>,
 }
 
+/// A filter red that named no member, kept so the next round can tell it recurs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnnamedRed {
+    pub filter: String,
+    /// The failing test lines, sorted.
+    pub failed: Vec<String>,
+    pub batch: String,
+    /// Each member of that round with its tip.
+    pub members: Vec<(Id, String)>,
+}
+
 /// Everything the round does besides running suites.
 pub trait RoundOps {
     /// S's suspect order among `members` (covers-touching first).
@@ -229,6 +240,18 @@ pub trait RoundOps {
     fn base_sha(&self) -> String {
         String::new()
     }
+    /// This round's name, as a later round's evidence cites it.
+    fn round_name(&self) -> String {
+        String::new()
+    }
+    /// Keeps this repo's latest red that named no member, in place of any earlier one.
+    fn record_unnamed_red(&mut self, _name: &str, _failed: &[String], _members: &[Member]) {}
+    /// The repo's latest red that named no member, when one is kept.
+    fn prior_unnamed_red(&self) -> Option<UnnamedRed> {
+        None
+    }
+    /// Drops the kept red that named no member.
+    fn clear_unnamed_red(&mut self) {}
     /// The last commit on the base (`<sha> <subject>`) that touched any of `paths`.
     fn last_touching(&self, _paths: &[String]) -> Option<String> {
         None
@@ -827,6 +850,89 @@ fn with_probe_output(actions: Vec<Action>, said: &[(Vec<Id>, String)]) -> Vec<Ac
         .collect()
 }
 
+fn sorted(lines: &[String]) -> Vec<String> {
+    let mut v = lines.to_vec();
+    v.sort();
+    v
+}
+
+/// The members present at the same tip in this red and the previous red that named no member on
+/// the same tests, when the round without them is green: a green run without them is the evidence.
+fn convict_recurring<R: RoundRunner, O: RoundOps>(
+    runner: &mut R,
+    ops: &O,
+    f: &FilterRed,
+    tests: &str,
+    scope: &[String],
+    members: &[Member],
+) -> Vec<Action> {
+    let Some(prior) = ops.prior_unnamed_red() else {
+        return vec![];
+    };
+    if prior.filter != f.name || prior.failed != sorted(&f.failed) {
+        return vec![];
+    }
+    let recurring: Vec<Member> = members
+        .iter()
+        .filter(|m| {
+            prior
+                .members
+                .iter()
+                .any(|(id, tip)| *id == m.id && *tip == m.tip)
+        })
+        .cloned()
+        .collect();
+    if recurring.is_empty() {
+        return vec![];
+    }
+    let without = |gone: &[Member]| -> Vec<Member> {
+        members
+            .iter()
+            .filter(|m| !gone.iter().any(|g| g.id == m.id))
+            .cloned()
+            .collect()
+    };
+    if runner.filter_green_in(&f.name, scope, &without(&recurring)) != Some(true) {
+        return vec![];
+    }
+    let mut convicted = recurring.clone();
+    let mut said: Vec<(Vec<Id>, String)> = vec![];
+    if recurring.len() > 1 {
+        let alone: Vec<Member> = recurring
+            .iter()
+            .filter(|m| {
+                let green =
+                    runner.filter_green_in(&f.name, scope, &without(std::slice::from_ref(m)));
+                if green == Some(false) {
+                    said.push((vec![], runner.probe_output()));
+                }
+                green == Some(true)
+            })
+            .cloned()
+            .collect();
+        if !alone.is_empty() {
+            convicted = alone;
+        }
+    }
+    let this = ops.round_name();
+    let actions = convicted
+        .iter()
+        .map(|m| Action::Eject {
+            id: m.id.clone(),
+            line: format!(
+                "{} red{tests} in rounds {} and {this} on the same tests, each with {} at {}; green without it (run: {} over {})",
+                f.name,
+                prior.batch,
+                m.id,
+                m.tip,
+                f.name,
+                scope.join(" ")
+            ),
+        })
+        .collect();
+    with_probe_output(actions, &said)
+}
+
 /// A filter's red names its owners: they leave with the red as their evidence and the survivors
 /// run the corpus again. A red naming no member cannot be attributed: it is filed (which holds
 /// this membership) instead of re-cut — unless the runner can run the filter on member subsets,
@@ -889,6 +995,9 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
             }
         }
         if actions.is_empty() {
+            actions = convict_recurring(runner, ops, f, &tests, &scope, members);
+        }
+        if actions.is_empty() {
             let narrow = probe_filter_owners(runner, f, &tests, &scope, members);
             (actions, kind, cleared) = narrow;
             if actions.is_empty() && matches!(kind, "unattributed" | "flipped") && scope != packages
@@ -915,6 +1024,9 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
                 page.push(format!("run alone: {cleared}"));
             }
             ops.incident(kind, &page);
+            if kind != "base" {
+                ops.record_unnamed_red(&f.name, &sorted(&f.failed), members);
+            }
             if kind == "base" {
                 let mut paths: Vec<String> = packages
                     .iter()
@@ -1554,13 +1666,17 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     starting: Vec<Member>,
     budget: Budget,
 ) -> Result<RoundEnd, String> {
-    match attribute_members(runner, ops, corpus, starting, budget) {
+    let end = match attribute_members(runner, ops, corpus, starting, budget) {
         Err(e) => match e.strip_prefix(EJECT_REFUSED) {
             Some(reason) => Ok(RoundEnd::Blocked(reason.to_string())),
             None => Err(e),
         },
         ok => ok,
+    };
+    if matches!(end, Ok(RoundEnd::Land { .. })) {
+        ops.clear_unnamed_red();
     }
+    end
 }
 
 fn attribute_members<R: RoundRunner, O: RoundOps>(
@@ -2604,6 +2720,8 @@ pub(crate) mod tests {
         pub returns: Vec<(u64, crate::mender::Failure)>,
         pub clock: Option<std::rc::Rc<std::cell::Cell<u64>>>,
         pub returned_at: Vec<u64>,
+        /// The kept red that named no member.
+        pub unnamed: Option<UnnamedRed>,
     }
 
     impl RoundOps for Ops {
@@ -2691,6 +2809,26 @@ pub(crate) mod tests {
         }
         fn base_sha(&self) -> String {
             "b4se".into()
+        }
+        fn round_name(&self) -> String {
+            "b-now".into()
+        }
+        fn record_unnamed_red(&mut self, name: &str, failed: &[String], members: &[Member]) {
+            self.unnamed = Some(UnnamedRed {
+                filter: name.into(),
+                failed: failed.to_vec(),
+                batch: self.round_name(),
+                members: members
+                    .iter()
+                    .map(|m| (m.id.clone(), m.tip.clone()))
+                    .collect(),
+            });
+        }
+        fn prior_unnamed_red(&self) -> Option<UnnamedRed> {
+            self.unnamed.clone()
+        }
+        fn clear_unnamed_red(&mut self) {
+            self.unnamed = None;
         }
         fn last_touching(&self, paths: &[String]) -> Option<String> {
             Some(format!("c0de fixes {}", paths.join(",")))
@@ -6166,6 +6304,101 @@ pub(crate) mod tests {
     fn red_once_on_the_whole_tree(red: FilterRed) -> FilterFn {
         let fired = std::cell::Cell::new(false);
         Box::new(move |tree| (tree.len() == 3 && !fired.replace(true)).then(|| red.clone()))
+    }
+
+    const RECUR: &str = "FAIL spira-config runes::tests::a";
+
+    fn pair_red() -> FilterFn {
+        Box::new(|tree| (tree.contains("m3") && tree.len() >= 3).then(|| flip_red(&[RECUR])))
+    }
+
+    fn prior_red_of(failed: &[&str], tips: &[(&str, &str)]) -> UnnamedRed {
+        UnnamedRed {
+            filter: "unit-tests".into(),
+            failed: failed.iter().map(|l| l.to_string()).collect(),
+            batch: "b-prior".into(),
+            members: tips
+                .iter()
+                .map(|(i, t)| (i.to_string(), t.to_string()))
+                .collect(),
+        }
+    }
+
+    fn recur_round(prior: UnnamedRed, red: FilterFn) -> (RoundEnd, Ops) {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(red);
+        f.bisects = true;
+        let mut ops = Ops {
+            unnamed: Some(prior),
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            four(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        (end, ops)
+    }
+
+    fn tip(id: &str) -> String {
+        member(id).tip
+    }
+
+    #[test]
+    fn a_red_recurring_on_the_same_tests_ejects_the_member_whose_removal_turns_the_round_green() {
+        let prior = prior_red_of(&[RECUR], &[("m2", &tip("m2")), ("m3", &tip("m3"))]);
+        let (end, ops) = recur_round(prior, pair_red());
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m4"]);
+        assert_eq!(ops.ejected.len(), 1, "{:?}", ops.ejected);
+        let (id, note) = &ops.eject_evidence[0];
+        assert_eq!(id, "m3");
+        assert!(
+            note.contains("b-prior") && note.contains("b-now") && note.contains("green without it"),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn a_red_whose_failing_tests_differ_from_the_kept_red_blocks_and_replaces_the_record() {
+        let prior = prior_red_of(&["FAIL other x"], &[("m2", &tip("m2")), ("m3", &tip("m3"))]);
+        let (end, ops) = recur_round(prior, pair_red());
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        let kept = ops.unnamed.unwrap();
+        assert_eq!(kept.failed, vec![RECUR.to_string()]);
+        assert_eq!(kept.batch, "b-now");
+    }
+
+    #[test]
+    fn a_member_whose_tip_changed_since_the_kept_red_is_not_a_recurring_member() {
+        let prior = prior_red_of(&[RECUR], &[("m2", &tip("m2")), ("m3", "other-tip")]);
+        let (end, _) = recur_round(prior, pair_red());
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+    }
+
+    #[test]
+    fn a_round_still_red_without_the_recurring_members_ejects_none_of_them() {
+        let prior = prior_red_of(&[RECUR], &[("m2", &tip("m2")), ("m3", &tip("m3"))]);
+        let red: FilterFn = Box::new(|tree| {
+            (tree.len() >= 3 || (tree.contains("m1") && tree.contains("m4")))
+                .then(|| flip_red(&[RECUR]))
+        });
+        let (end, ops) = recur_round(prior, red);
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+    }
+
+    #[test]
+    fn a_round_that_lands_clears_the_kept_unnamed_red() {
+        let prior = prior_red_of(&[RECUR], &[("m2", &tip("m2"))]);
+        let (end, ops) = recur_round(prior, Box::new(|_| None));
+        assert!(matches!(end, RoundEnd::Land { .. }), "{end:?}");
+        assert!(ops.unnamed.is_none());
     }
 
     fn flip_round(f: &mut Fake, ops: &mut Ops) -> RoundEnd {

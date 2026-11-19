@@ -142,3 +142,76 @@ mod tests {
         assert!(out.is_empty());
     }
 }
+
+fn unnamed_file(run: &Path, repo: &str) -> PathBuf {
+    run.join("rounds").join(format!("{repo}.unnamed-red"))
+}
+
+/// Keeps `red` as the repo's one record of a red that named no member, replacing any earlier one.
+pub fn keep_unnamed(run: &Path, repo: &str, red: &batcher::drive::UnnamedRed) {
+    let body = serde_json::json!({
+        "filter": red.filter,
+        "failed": red.failed,
+        "batch": red.batch,
+        "members": red.members.iter().map(|(id, tip)| serde_json::json!({"id": id, "tip": tip})).collect::<Vec<_>>(),
+    });
+    let path = unnamed_file(run, repo);
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    if let Err(e) = fs::write(&path, body.to_string()) {
+        eprintln!(
+            "batcher {repo}: the unnamed red is not recorded ({e}); a recurrence will not be seen"
+        );
+    }
+}
+
+/// The kept record of a red that named no member; `None` when absent or unreadable.
+pub fn kept_unnamed(run: &Path, repo: &str) -> Option<batcher::drive::UnnamedRed> {
+    let v: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(unnamed_file(run, repo)).ok()?).ok()?;
+    let text = |v: &serde_json::Value| v.as_str().map(str::to_string);
+    Some(batcher::drive::UnnamedRed {
+        filter: text(v.get("filter")?)?,
+        failed: v
+            .get("failed")?
+            .as_array()?
+            .iter()
+            .map(text)
+            .collect::<Option<_>>()?,
+        batch: text(v.get("batch")?)?,
+        members: v
+            .get("members")?
+            .as_array()?
+            .iter()
+            .map(|m| Some((text(m.get("id")?)?, text(m.get("tip")?)?)))
+            .collect::<Option<_>>()?,
+    })
+}
+
+/// Drops the record once a round lands.
+pub fn clear_unnamed(run: &Path, repo: &str) {
+    let _ = fs::remove_file(unnamed_file(run, repo));
+}
+
+#[cfg(test)]
+mod unnamed_tests {
+    use super::*;
+
+    #[test]
+    fn a_kept_unnamed_red_reads_back_and_clears() {
+        let tmp = testkit::TempDir::new("redtip-unnamed");
+        let dir = tmp.path().to_path_buf();
+        let red = batcher::drive::UnnamedRed {
+            filter: "unit-tests".into(),
+            failed: vec!["FAIL a b".into()],
+            batch: "r-1".into(),
+            members: vec![("m1".into(), "t1".into())],
+        };
+        assert_eq!(kept_unnamed(&dir, "r"), None);
+        keep_unnamed(&dir, "r", &red);
+        assert_eq!(kept_unnamed(&dir, "r"), Some(red));
+        clear_unnamed(&dir, "r");
+        assert_eq!(kept_unnamed(&dir, "r"), None);
+    }
+}
