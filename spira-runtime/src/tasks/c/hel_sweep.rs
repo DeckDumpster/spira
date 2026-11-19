@@ -408,6 +408,7 @@ fn plan_labelled(label: &str, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) ->
         }
         let target = Target { repo: s.repo.clone(), id: b.id.clone(), br: b.br.clone(), tip: b.tip.clone(), path: b.worktree.clone().unwrap_or_default() };
         let terminal = s.rows.get(&b.id).is_some_and(|r| spira_store::lc_state::is_terminal(r));
+        let landed = s.rows.get(&b.id).is_some_and(|r| r == "LANDED");
         match hel::sweep::judge(&Snap { s, b, submitted_label: label }) {
             Disp::KeepUnlanded => {}
             Disp::KeepSupersededUnsafe => {
@@ -418,7 +419,7 @@ fn plan_labelled(label: &str, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) ->
             Disp::OrphanNoBead | Disp::ArchiveTerminal => acts.push(job(jobs, ARCHIVE, &target)?),
             Disp::SendContentLanded => {
                 let ahead = u64::from(b.ahead);
-                if !terminal && hel::sweep::needs_evidence(ahead, || b.has_own_commit, || b.only_stacked_base, || !b.base_names.is_empty()) {
+                if !landed && hel::sweep::needs_evidence(ahead, || b.has_own_commit, || b.only_stacked_base, || !b.base_names.is_empty()) {
                     continue;
                 }
                 acts.push(send_leg(jobs, s, b, "hel", ahead > 0 && !terminal, true)?);
@@ -874,6 +875,20 @@ mod tests {
         real.set_resume_after("spira", Some("spira/sp-c"));
         clear_cursor_when_walked(&real, "spira", &root);
         assert_eq!(real.resume_after("spira"), None);
+    }
+
+    #[test]
+    fn a_landed_rows_branch_with_its_diff_on_the_base_and_no_naming_commit_is_planned_for_sending_and_a_live_rows_is_kept() {
+        let branch = |id: &str| Branch { id: id.into(), br: format!("spira/{id}"), tip: "t".into(), ahead: 2, content_on_base: true, merges_clean: true, ..Default::default() };
+        let s = Snapshot {
+            repo: "spira".into(),
+            branches: vec![branch("sp-landed"), branch("sp-live")],
+            rows: [("sp-landed".to_string(), "LANDED".to_string()), ("sp-live".to_string(), "CERTIFIED".to_string())].into(),
+            ..Default::default()
+        };
+        let acts = plan_labelled("submitted", &s, &mut BTreeMap::new()).unwrap();
+        assert_eq!(acts.len(), 1, "{acts:?}");
+        assert!(format!("{acts:?}").contains("sp-landed"), "{acts:?}");
     }
 
     struct Store(std::sync::Mutex<Vec<String>>);

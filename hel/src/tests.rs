@@ -665,7 +665,7 @@ mod scan {
     }
 
     #[test]
-    fn a_terminal_beads_branch_whose_diff_is_on_the_base_is_sent_though_no_commit_names_it() {
+    fn a_landed_beads_branch_whose_diff_is_on_the_base_is_sent_though_no_commit_names_it() {
         let t = testkit::TempDir::new("hel-terminal-evidence");
         let root = repo_with_main(&t);
         for id in ["sp-term", "sp-live"] {
@@ -673,7 +673,7 @@ mod scan {
             commit_file(&root, &format!("{id}.txt"), "x\n", "landed by another route");
         }
         let beads = ["sp-term", "sp-live"].iter().map(|id| (id.to_string(), serde_json::json!({"id": id, "labels": []}))).collect();
-        let f = Fake { base: Some(base()), beads, wts: t.path().join("wt"), lc_terminal: ["sp-term".to_string()].into(), ..Default::default() };
+        let f = Fake { base: Some(base()), beads, wts: t.path().join("wt"), lc_terminal: ["sp-term".to_string()].into(), lc_landed: ["sp-term".to_string()].into(), ..Default::default() };
         let opts = crate::sweep::Opts { dry: true, fetch: false, only: None, scope: Scope::All, budget: None, pace: Default::default() };
         let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
         s.run(&[crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false }]);
