@@ -81,10 +81,6 @@ mkdir -p "$SPIRA_RUN" "$SPIRA_HOME/runes"
 # SPIRA_RUNES_DIR no longer derives from SPIRA_HOME (the fixture declares its own path) —
 # point it at this suite's own fixture runes explicitly.
 tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
-# `call_rune` is a `sentinel --call` shim now (wave 4.27, family G, sp-gzmd2): a real
-# subprocess with SPIRA_HOME=$SPIRA_HOME, which needs a working lib.sh at its own context
-# probe — a one-line symlink.
-printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"
 ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 ln -s "$HERE/conf.toml.d" "$SPIRA_HOME/conf.toml.d"
 # $SPIRA_HOME/dwarf is the LAUNCH TARGET `which("dwarf", PATH)` resolves to below — a bare
@@ -95,14 +91,10 @@ ln -s "$HERE/conf.toml.d" "$SPIRA_HOME/conf.toml.d"
 # kept only because answering "open" here is also harmless.
 printf '#!/bin/sh\ncase "$1 $2" in\n"capacity paused") exit 1 ;;\nesac\nexit 0\n' > "$SPIRA_HOME/dwarf"
 chmod +x "$SPIRA_HOME/dwarf"
-export PATH="$SPIRA_HOME:$PATH"; tl_declare_release   # call_rune launches the dwarf on PATH; a stub here
+export PATH="$SPIRA_HOME:$PATH"; tl_declare_release
 # Readiness is the lifecycle's (sp-860zj): the bd fixture is told to rune_ready in lifecycle
 # terms — open is READY, the spira-poison label and the ask label are holds.
 lc_dwarf_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH" SPIRA_RELEASE="$(PATH="$TMP/lcm:$PATH" tl_release)"
-CALLED="$TMP/called.txt"
-export SPIRA_CALL="$TMP/call.sh"
-printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s\n' "$CALLED" > "$SPIRA_CALL"
-chmod +x "$SPIRA_CALL"
 
 # THE REAL RUNE FILES, copied rather than reconstructed. A fixture that writes its own
 # predicate is asserting about the fixture; what has to be true is that the persona SHIPPED
@@ -117,20 +109,15 @@ bead() {  # bead <id> <labels-csv> [type] [status]
 beads
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
-call() { : > "$CALLED"; call_rune "$1" >"$TMP/log" 2>&1; printf '%s' "$?"; }
 
 want "the shipped rune is discovered without being listed" "spike" "$(spira_runes)"
 
 beads "$(bead sp-spike-1 "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL")"
 is "a spike bead is in the spike's partition" 1 "$(rune_ready spike)"
 is "and not in the builder's"                 0 "$(rune_ready builder)"
-is "so the spike is called"                 0 "$(call spike)"
-is "and the builder is not"                   1 "$(call builder)"
 
 beads "$(bead sp-plan-1 "${SPIRA_SCOPE_LABEL},plan")"
 is "a plan bead is not in the spike's partition" 0 "$(rune_ready spike)"
-is "and the spike is not called for it"        1 "$(call spike)"
-is "while the builder is"                        0 "$(call builder)"
 
 # AND over the labels, never OR. A bead carrying the spike label without `spira` belongs to
 # something else — an installation that imported a predecessor's beads holds thousands of

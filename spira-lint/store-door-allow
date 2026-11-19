@@ -16,7 +16,6 @@
 1 mail/src/bead.rs
 1 mail/tests/no_fork_edges.rs
 1 reconciler-flow/src/io.rs
-2 release/src/canary.rs
 1 release/src/stage.rs
 2 rule/src/main.rs
 1 spira-claim/src/store.rs

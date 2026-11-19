@@ -3,7 +3,7 @@
 //! `SPIRA_RUN`, a minimal runes, and the synthetic dispatch scripts that replace
 //! `systemd-run` at the two harness seams `sentinel` needs (`SPIRA_CALL`, `SPIRA_LAUNCH`).
 //! Nothing inside a stage touches the caller's `SPIRA_DB`, `SPIRA_RUN`, or any real git
-//! repository. Replaces `spira/stage.sh`; `crate::canary` is the caller that most needs it.
+//! repository. Replaces `spira/stage.sh`.
 //!
 //! ISOLATION IS ASSERTED AT BUILD TIME: [`up`] refuses to return an env block where any of
 //! `SPIRA_DB`, `SPIRA_RUN` or `SPIRA_HOME` — or the control store's path — resolves outside the stage root, so a misconfiguration fails closed rather than silently
@@ -14,13 +14,12 @@
 //!
 //! THE TWO HARNESS SEAMS:
 //!
-//! - `SPIRA_CALL` replaces `systemd-run` for sentinel's dwarf-call check. The stage
-//!   writes `fake-call.sh` here; it ignores every systemd flag and execs `release
-//!   canary-worker` synchronously in the inherited stage env — the model is the one part
-//!   canary cannot test, and this is the boundary.
+//! - `SPIRA_CALL` replaces `systemd-run` for a dwarf call. The stage writes
+//!   `fake-call.sh` here; it refuses, because a stage runs no model. A stage's caller
+//!   replaces it to supply a worker.
 //! - `SPIRA_LAUNCH` replaces `systemd-run` for sentinel's landing-dispatch check. The stage
 //!   writes `fake-launch.sh` here; it records the dispatch timestamp (keeping sentinel's
-//!   staleness accounting correct) and exits 0. `release canary` runs `landing-pass land`
+//!   staleness accounting correct) and exits 0. A stage's caller runs `landing-pass land`
 //!   directly when it wants a landing pass.
 
 use crate::fsutil;
@@ -56,7 +55,7 @@ pub struct StageOpts {
     pub scope_label: String,
 }
 
-/// A stood-up stage: its root, and the environment `release canary` (or a caller) must
+/// A stood-up stage: its root, and the environment a stage's caller must
 /// export into every process it launches against it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stage {
@@ -104,9 +103,9 @@ pub fn repo_map_line(repo: &Path) -> String {
     format!("{name} | {} | push | origin/main | |\n", repo.display())
 }
 
-const FAKE_CALL: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for sentinel's dwarf-call check. Runs the canary worker synchronously.\nexec release canary-worker\n";
+const FAKE_CALL: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for a dwarf call. A stage runs no model: a caller that wants a worker replaces this script.\necho 'fake-call.sh: a stage runs no dwarf; replace SPIRA_CALL to supply one' >&2\nexit 1\n";
 
-const FAKE_LAUNCH: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for sentinel's landing-dispatch check. Records dispatch, exits 0.\n# release canary drives `landing-pass land` directly.\n[ -n \"${SPIRA_RUN:-}\" ] && date +%s > \"$SPIRA_RUN/landing.dispatched\"\nexit 0\n";
+const FAKE_LAUNCH: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for sentinel's landing-dispatch check. Records dispatch, exits 0.\n# a stage's caller runs `landing-pass land` directly.\n[ -n \"${SPIRA_RUN:-}\" ] && date +%s > \"$SPIRA_RUN/landing.dispatched\"\nexit 0\n";
 
 /// A fresh, empty directory under the system temp dir, for a `release stage up` with no
 /// explicit root — the same job `mktemp -d` did in `stage.sh`, done natively so this crate

@@ -2,7 +2,6 @@
 
 use release::activate::{self, Ctx};
 use release::build::{self, BuildOpts, RealCargo};
-use release::canary::{self, CanaryOpts};
 use release::config::{self, Config, Flags};
 use release::git::RealGit;
 use release::install::{self, InstallOpts, RealUnpack};
@@ -28,8 +27,6 @@ const USAGE: &str = "usage:
   release install-tarball <tarball> [--answers FILE] [--dry-run] [--settle SECS] [--skip-restart]
   release stage up [ROOT]
   release stage down <ROOT>
-  release canary [--stage ROOT] [--deadline SECS]
-  release canary-worker
   release acceptance <tag> --scratch-repo <path> [...]   (release acceptance --help)
   release session-hook install|status|uninstall|prune <substring>
   release intake install|status|uninstall
@@ -391,11 +388,8 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
     let env = config::process_env();
     let fail = |e: String| (1u8, e);
 
-    // stage/canary/canary-worker operate entirely under their own STAGE_ROOT (or, for
-    // canary-worker, a stage's inherited env) and never touch spira-releases/ or the host
-    // config document — resolving Config here would make canary-worker (run inside an
-    // isolated stage that deliberately sets no SPIRA_RELEASES, DESIGN.md "stage": isolation)
-    // fail before it ever got to its own work, or worse, read the real host's own config.
+    // stage operates entirely under its own STAGE_ROOT and never touches spira-releases/ or the host
+    // config document; resolving Config here would read the real host's own config.
     match cmd.as_str() {
         "stage" => {
             let (sub, srest) = rest.split_first().ok_or_else(|| usage("stage needs a subcommand: up or down".into()))?;
@@ -418,29 +412,8 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
             }
             return Ok(());
         }
-        "canary" => {
-            want(0)?;
-            let external_stage = a.stage.as_ref().map(PathBuf::from);
-            // Only needed to stand up canary's OWN stage; with --stage it is never read.
-            let stage_opts = match &external_stage {
-                Some(_) => StageOpts { root: None, harness_spira: PathBuf::new(), bd_embedded: PathBuf::new(), testdb_baseline: None, scope_label: String::new() },
-                None => resolve_stage_opts(&env, None).map_err(fail)?,
-            };
-            // SPIRA_VERDICT_WINDOW is a registered key (spira/conf.d); its own registered
-            // default (400) replaces the literal that used to live here.
-            let verdict_window = spira_config::process::cfg_parse::<usize>("SPIRA_VERDICT_WINDOW").map_err(fail)?;
-            let o = CanaryOpts { external_stage, stage_opts, deadline: a.deadline, verdict_window };
-            let r = canary::canary(&o).map_err(fail)?;
-            println!("release: canary PASS — commit '{}' on origin/main in {}s (stage {})", r.commit, r.elapsed.as_secs(), r.stage_root.display());
-            return Ok(());
-        }
-        "canary-worker" => {
-            want(0)?;
-            canary::canary_worker().map_err(fail)?;
-            return Ok(());
-        }
         // session-hook/intake are handled here, before Config::resolve, for the same reason
-        // stage/canary are: `uninstall`/`prune` (session-hook) touch only the client's own
+        // stage is: `uninstall`/`prune` (session-hook) touch only the client's own
         // settings file and need no release at all, and `intake` needs only the unit
         // directory — resolving the full Config would refuse every one of them on a box
         // whose releases directory cannot be found, which is exactly the state an uninstall
@@ -476,6 +449,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         if let (Some(sha), Some(releases), Ok(me)) = (rest.first(), releases, std::env::current_exe()) {
             if let Some(target) = activate::delegate_target_in(&releases, sha, &me).map_err(fail)? {
                 use std::os::unix::process::CommandExt;
+                // batch-job: exec replaces this process with the delegate release's own binary
                 let e = std::process::Command::new(&target).args(argv).exec();
                 return Err(fail(format!("cannot exec {}: {e}", target.display())));
             }

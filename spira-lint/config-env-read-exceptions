@@ -4,7 +4,6 @@
 # the environment is refused. Fix the read to remove a line, never add one for new code.
 spira-config/src/main.rs the resolver's own CLI: it computes and exports config, so it reads the inputs resolution starts from
 tsd/src/main.rs tsd sits below spira-config in the dependency graph (cfg() would cycle); callers pass --root resolved
-release/src/canary.rs the canary stage is hermetic: it runs against a scratch store and must not see the operator's config
 install/src/bin/install.rs the installer is the bootstrap: its environment is the input it renders spira.toml and units from
 install/src/bin/units_install.rs bootstrap: runs during install, before the config it would read is rendered
 install/src/bootstrap.rs bootstrap: runs during install, before the config it would read is rendered

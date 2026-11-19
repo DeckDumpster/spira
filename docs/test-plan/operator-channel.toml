@@ -146,6 +146,11 @@ id = "UC-operator-channel-24"
 tier = "T3"
 statement = "land_escalate reaches the operator unless an OPEN ask with the same subject exists. A closed ask does not suppress it (sp-yki4)."
 
+[use_case.uncovered]
+reason = "retired: the sentinel binary that sent land_escalate was deleted with its suite; the escalation is the serve task's now and has no test under this use case"
+date = "2026-11-19"
+bead = "sp-3i87xd"
+
 [[use_case]]
 id = "UC-operator-channel-25"
 tier = "T2"

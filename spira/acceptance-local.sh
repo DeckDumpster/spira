@@ -73,7 +73,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 if [ "${1:-}" = stop ]; then
     ROUND="${2:?usage: acceptance-local.sh stop <round>}"
-    named_unit_stop "spira-acc-$ROUND-*"
+    systemctl --user stop "spira-acc-$ROUND-*"
     exit $?
 fi
 if [ "${1:-}" = start ]; then
