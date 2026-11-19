@@ -613,7 +613,9 @@ pub fn run_brief(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Stri
     let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
     let memories = || lc.answer(&["content", "memories", "--json"]).map_err(String::from);
     let prompt = if p.act.prompt.is_empty() { std::fs::read_to_string(run.join("ops-sweep-prompt.txt")).unwrap_or_default() } else { p.act.prompt.clone() };
-    let b = dwarf::ops_sweep::brief(&home, &run, &rune, prompt.trim_end_matches('\n'), &p.act.run_id, &bc, now_secs(), &memories)?;
+    let mut base: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    base.insert("SPIRA_LC_SOCKET".to_string(), e.world.lc_socket.display().to_string());
+    let b = dwarf::ops_sweep::brief(&home, &run, &rune, prompt.trim_end_matches('\n'), &p.act.run_id, &bc, now_secs(), &base, &dwarf::escape::is_executable, &memories)?;
     serde_json::to_string(&b).map_err(|e| e.to_string())
 }
 

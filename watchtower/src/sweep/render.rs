@@ -196,9 +196,17 @@ If the pipeline is nominal: print one line saying so and exit. No bead is needed
 not acceptable — a session that found nothing must still say so, because silence and a greeting
 are indistinguishable in the log.
 
-If something needs attention: file one bead per finding with its evidence. Name what is wrong,
-the number that was anomalous, and what it means. A '?' field means this sweep could not read
-it — investigate why before filing a bead on the absence alone.
+If something needs attention, name what is wrong, the number that was anomalous, and what it
+means. A '?' field means this sweep could not read it — investigate why before filing on the
+absence alone. File through `work`, in this order, for each finding:
+
+1. `work search "<the finding's key phrase>"`. If an open bead already carries the finding, run
+   `work note-on <id> -` with this sweep's numbers on stdin, and file nothing.
+2. Otherwise `work file "<title>" --for builder --repo <name> --body-file -`, with the evidence
+   on stdin.
+3. File at most three beads per sweep. Name any further findings in your final line as
+   "held back: ...".
+4. Never use `bd`, `bdq` or `BEADS_DIR`. If `work` refuses, put the refusal in your final line.
 
 Run the scans named in the menu above if you have wall time remaining.
 "#,
@@ -307,6 +315,16 @@ mod tests {
         assert!(!out.contains("sentinel timer"));
         let line = out.lines().find(|l| l.contains("scheduler (spira-runtime)")).expect("scheduler line");
         assert!(line.contains("sentinel pass") && !line.contains('{'), "{line}");
+    }
+
+    #[test]
+    fn the_task_files_through_work_with_search_first_and_a_cap() {
+        let out = render(&SweepData::fixture_nominal(1_700_000_000));
+        let task = &out[out.find("## Your task").expect("task")..];
+        for want in ["work search", "work note-on", "work file", "--for builder --repo", "--body-file -", "at most three beads", "held back:"] {
+            assert!(task.contains(want), "{want}");
+        }
+        assert!(!task.contains("bd create") && !task.contains("bdq create"));
     }
 
     #[test]

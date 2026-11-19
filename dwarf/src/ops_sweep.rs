@@ -96,10 +96,13 @@ pub fn claude_args(home: &Path, run: &Path, prod: &str, rune: &Rune, sys_file: &
 /// The sweep's brief, written under `run`: the name taken, the statutes and prompt split into
 /// `sweep-<rune>-<id>.system.md` and `.task.md`, and the argv the unit runs. The session reads
 /// its task on stdin and writes its trace to `sweep-<rune>-<id>.log`, as `Run::sweep`'s child
-/// did, so the argv is `/bin/sh -c 'exec "$0" "$@" <task >>log 2>&1' <agent> <args…>`.
+/// did, so the argv is `env -i <restricted pairs> /bin/sh -c '…' sh <task> <log> <agent> <args…>`: the
+/// session's environment is exactly the model's, never the manager's.
 #[allow(clippy::too_many_arguments)]
-pub fn brief(home: &Path, run: &Path, rune: &Rune, prompt: &str, id: &str, cfg: &BriefCfg, now: i64, memories: &dyn Fn() -> Result<String, String>) -> Result<SweepBrief, String> {
+pub fn brief(home: &Path, run: &Path, rune: &Rune, prompt: &str, id: &str, cfg: &BriefCfg, now: i64, base: &BTreeMap<String, String>, is_exe: &dyn Fn(&Path) -> bool, memories: &dyn Fn() -> Result<String, String>) -> Result<SweepBrief, String> {
     let statutes = statutes(rune, cfg, now, memories)?;
+    let path = base.get("PATH").cloned().unwrap_or_default();
+    let model_bin = crate::restrict::model_bin_dir(base, &path, is_exe).map_err(|e| format!("work-env: {e}"))?;
     let f = &rune.name;
     let name = crate::naming::dwarf_name_take(run, f);
     let actor = format!("dwarf-{name}");
@@ -114,19 +117,18 @@ pub fn brief(home: &Path, run: &Path, rune: &Rune, prompt: &str, id: &str, cfg: 
     if cfg.agent.is_empty() {
         return Err("SPIRA_AGENT is empty — no agent to run".into());
     }
-    let mut argv = vec![system_paths::BIN_SH.to_string(), "-c".to_string(), "exec \"$0\" \"$@\" <\"$SPIRA_SWEEP_TASK\" >>\"$SPIRA_SWEEP_LOG\" 2>&1".to_string(), cfg.agent.clone()];
+    let mut session = base.clone();
+    session.insert("SPIRA_RUNE".to_string(), f.clone());
+    for (k, v) in [("SPIRA_DWARF", name.as_str()), ("BEADS_ACTOR", actor.as_str()), ("GIT_AUTHOR_NAME", actor.as_str()), ("GIT_COMMITTER_NAME", actor.as_str())] {
+        session.insert(k.to_string(), v.to_string());
+    }
+    session.insert("GIT_AUTHOR_EMAIL".to_string(), format!("{actor}@spira.local"));
+    session.insert("GIT_COMMITTER_EMAIL".to_string(), format!("{actor}@spira.local"));
+    let mut argv = vec![system_paths::USR_BIN_ENV.to_string(), "-i".to_string()];
+    argv.extend(crate::restrict::unbound_env(&session, &model_bin).into_iter().map(|(k, v)| format!("{k}={v}")));
+    argv.extend([system_paths::BIN_SH.to_string(), "-c".to_string(), "t=$1; l=$2; shift 2; exec \"$@\" <\"$t\" >>\"$l\" 2>&1".to_string(), "sh".to_string(), task_file.display().to_string(), log.display().to_string(), cfg.agent.clone()]);
     argv.extend(claude_args(home, run, &cfg.prod, rune, &sys_file, &cfg.toml)?);
-    let env = vec![
-        ("SPIRA_DWARF".to_string(), name.clone()),
-        ("BEADS_ACTOR".to_string(), actor.clone()),
-        ("GIT_AUTHOR_NAME".to_string(), actor.clone()),
-        ("GIT_AUTHOR_EMAIL".to_string(), format!("{actor}@spira.local")),
-        ("GIT_COMMITTER_NAME".to_string(), actor.clone()),
-        ("GIT_COMMITTER_EMAIL".to_string(), format!("{actor}@spira.local")),
-        ("SPIRA_SWEEP_TASK".to_string(), task_file.display().to_string()),
-        ("SPIRA_SWEEP_LOG".to_string(), log.display().to_string()),
-    ];
-    Ok(SweepBrief { name, sys_file, task_file, log, argv, env })
+    Ok(SweepBrief { name, sys_file, task_file, log, argv, env: Vec::new() })
 }
 
 /// One ledger line of a sweep: `awake <rune> <what>`, or `done <rune> sweep rc=<rc> status=<s>`
@@ -154,5 +156,77 @@ pub fn outcome(log: &Path, trace_mark: &str) -> &'static str {
 pub fn cleanup(run: &Path, rune: &str, id: &str) {
     for ext in ["system.md", "task.md", "name"] {
         let _ = std::fs::remove_file(run.join(format!("sweep-{rune}-{id}.{ext}")));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rune_for_test() -> Rune {
+        Rune::from_vars("ops", &BTreeMap::new())
+    }
+
+    fn setup(tag: &str, with_work: bool) -> (testkit::TempDir, PathBuf, PathBuf, PathBuf) {
+        let root = testkit::TempDir::new(tag);
+        let (home, run, rel) = (root.join("home"), root.join("run"), root.join("rel"));
+        std::fs::create_dir_all(home.join("runes")).unwrap();
+        std::fs::create_dir_all(&run).unwrap();
+        std::fs::create_dir_all(rel.join("model-bin")).unwrap();
+        if with_work {
+            std::fs::write(rel.join("model-bin/work"), "").unwrap();
+        }
+        (root, home, run, rel)
+    }
+
+    fn base(home: &Path, rel: &Path) -> BTreeMap<String, String> {
+        let h = home.display().to_string();
+        [
+            ("HOME", h.clone()),
+            ("PATH", format!("{h}/.local/bin:{}/bin:usr/bin", rel.display())),
+            ("BEADS_DIR", "db/.beads".into()),
+            ("SPIRA_DB", "db".into()),
+            ("SPIRA_RELEASE", rel.display().to_string()),
+            ("SPIRA_LC_SOCKET", "run/lc.sock".into()),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect()
+    }
+
+    fn cfg(home: &Path) -> BriefCfg {
+        let spec = home.join("spec.toml");
+        std::fs::write(&spec, "[persona.ops]\nmodel = \"claude-x\"\n").unwrap();
+        BriefCfg { agent: "opt/agent".into(), toml: spec.display().to_string(), ..BriefCfg::default() }
+    }
+
+    fn exe(rel: &Path) -> impl Fn(&Path) -> bool + '_ {
+        move |p| p == rel.join("model-bin/work")
+    }
+
+    #[test]
+    fn the_sweep_session_runs_under_the_models_restricted_environment() {
+        let (_root, home, run, rel) = setup("env", true);
+        let rune = rune_for_test();
+        let b = brief(&home, &run, &rune, "task", "r1", &cfg(&home), 0, &base(&home, &rel), &exe(&rel), &|| Ok("[]".into()));
+        let b = b.unwrap();
+        let i = b.argv.iter().position(|a| a == "-i").unwrap();
+        assert_eq!(b.argv[i - 1], system_paths::USR_BIN_ENV);
+        let pairs: BTreeMap<String, String> = b.argv[i + 1..].iter().take_while(|a| a.contains('=')).filter_map(|a| a.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        assert_eq!(pairs["PATH"], format!("{}:{}/model-bin:{}/.cargo/bin", system_paths::SYSTEM_PATH_MIN, rel.display(), home.display()));
+        assert_eq!(pairs["SPIRA_RUNE"], "ops");
+        assert_eq!(pairs["SPIRA_LC_SOCKET"], "run/lc.sock");
+        for k in ["BEADS_DIR", "SPIRA_DB", "SPIRA_WORK_BEAD_ID"] {
+            assert!(!pairs.contains_key(k), "{k}");
+        }
+        assert!(!pairs["PATH"].split(':').any(|d| d.ends_with(".local/bin") || d.ends_with("rel/bin")));
+        assert!(b.env.is_empty());
+    }
+
+    #[test]
+    fn a_release_without_model_bin_work_refuses_the_sweep() {
+        let (_root, home, run, rel) = setup("nowork", false);
+        let e = brief(&home, &run, &rune_for_test(), "task", "r1", &cfg(&home), 0, &base(&home, &rel), &crate::escape::is_executable, &|| Ok("[]".into())).unwrap_err();
+        assert!(e.contains("model-bin"), "{e}");
     }
 }
