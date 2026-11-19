@@ -120,3 +120,55 @@ fn certify_argv_carries_rehead_only_for_a_leg_that_names_a_head() {
         ["q", "round", "certify", "r9", "spira", "--by", "batcher"]
     );
 }
+
+fn running(state: State, leg: &str) -> Carry {
+    let mut carry = attributing();
+    let rc = carry.repos.get_mut("spira").unwrap();
+    rc.state = state;
+    rc.leg = Some(leg.into());
+    rc.attributed = false;
+    carry
+}
+
+fn ejected_snapshot(head: &str, now_ms: u64) -> Snapshot {
+    let mut snap = snapshot(head);
+    let repo = snap.repos.get_mut("spira").unwrap();
+    repo.open_round.as_mut().unwrap().ejected = vec!["sp-z".into()];
+    repo.open_round.as_mut().unwrap().driven = false;
+    snap.now_ms = now_ms;
+    snap
+}
+
+fn assert_stops_old_and_certifies_new(state: State, leg: &str) {
+    let (next, acts) = decide(&running(state, leg), &ejected_snapshot(REBUILT, NOW));
+    let stop = acts.iter().find(|a| a.effect == runtime::units::UNIT_STOP).unwrap_or_else(|| panic!("no stop: {acts:?}"));
+    assert!(stop.input.contains(leg), "{}", stop.input);
+    let new = certify_leg(&acts);
+    assert_ne!(new.unit, leg);
+    assert_eq!(next.repos["spira"].leg.as_deref(), Some(new.unit.as_str()));
+    assert_eq!(next.repos["spira"].state, State::Certifying);
+    let (_, again) = decide(&next, &ejected_snapshot(REBUILT, NOW));
+    assert!(again.is_empty(), "a head move is handled once: {again:?}");
+}
+
+#[test]
+fn a_hand_eject_that_moves_a_certifying_rounds_head_stops_the_old_pass_and_certifies_the_new_head() {
+    assert_stops_old_and_certifies_new(State::Certifying, "spira.r9.certify1");
+}
+
+#[test]
+fn a_hand_eject_that_moves_a_corpus_rounds_head_stops_the_old_pass_and_certifies_the_new_head() {
+    assert_stops_old_and_certifies_new(State::Corpus, "spira.r9.corpus1");
+}
+
+#[test]
+fn an_abandon_after_a_head_move_names_the_move_and_the_ejected_bead() {
+    let (moved, _) = decide(&running(State::Certifying, "spira.r9.certify1"), &ejected_snapshot(REBUILT, NOW));
+    let mut lost = moved.clone();
+    let rc = lost.repos.get_mut("spira").unwrap();
+    rc.leg = None;
+    rc.leg_at_ms = NOW - LEG_START_GRACE_MS - 1;
+    let (_, acts) = decide(&lost, &ejected_snapshot(REBUILT, NOW));
+    let abandon: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ABANDON).unwrap_or_else(|| panic!("no abandon: {acts:?}")).input).unwrap();
+    assert!(abandon.why.contains(OPENED) && abandon.why.contains(REBUILT) && abandon.why.contains("sp-z") && abandon.why.contains("discarded"), "{}", abandon.why);
+}

@@ -262,6 +262,9 @@ pub struct Round {
     /// The suites the queue recorded red for the round's pass.
     #[serde(default)]
     pub red_suites: Vec<String>,
+    /// The beads `queue round eject` took out of the round.
+    #[serde(default)]
+    pub ejected: Vec<String>,
     /// Seconds since the round opened; the least is the newest, the one the next round stacks on.
     #[serde(default)]
     pub age_secs: u64,
@@ -634,6 +637,11 @@ pub struct RepoCarry {
     /// The head whose move already discarded the leg: a move is handled once.
     #[serde(default)]
     pub discarded_head: String,
+    /// The head the discarded pass was for and the beads ejected when the head moved: a later abandon names them.
+    #[serde(default)]
+    pub moved_from: String,
+    #[serde(default)]
+    pub moved_ejected: Vec<String>,
     /// The head the attribution rebuilt the round tree at, which the certify that follows is for.
     #[serde(default)]
     pub certify_head: String,
@@ -732,6 +740,8 @@ impl RepoCarry {
             head: self.head.clone(),
             leg_head: self.leg_head.clone(),
             discarded_head: self.discarded_head.clone(),
+            moved_from: self.moved_from.clone(),
+            moved_ejected: self.moved_ejected.clone(),
             certify_head: self.certify_head.clone(),
             run: self.run,
             leg_restarts: self.leg_restarts,
@@ -772,6 +782,8 @@ impl RepoCarry {
             head: round.head.clone(),
             leg_head: round.leg_head.clone(),
             discarded_head: round.discarded_head.clone(),
+            moved_from: round.moved_from.clone(),
+            moved_ejected: round.moved_ejected.clone(),
             certify_head: round.certify_head.clone(),
             run: round.run,
             leg_restarts: round.leg_restarts,
@@ -1542,7 +1554,11 @@ impl Machine<'_> {
             self.recorded_red(open);
             return true;
         }
-        let why = format!("round head {}: no pass is running and none will report (the pass the queue started ended without a verdict)", open.head);
+        let why = if self.rc.moved_from.is_empty() || self.rc.discarded_head != open.head {
+            format!("round head {}: no pass is running and none will report (the pass the queue started ended without a verdict)", open.head)
+        } else {
+            format!("round head {}: the pass for {} was discarded when the head moved (eject of {}) and no pass for {} reported", open.head, self.rc.moved_from, self.rc.moved_ejected.join(" "), open.head)
+        };
         self.go(Trigger::LegLost);
         self.abandon_naming(&why, Vec::new());
         if let Some(a) = self.acts.last_mut() {
@@ -1599,12 +1615,27 @@ impl Machine<'_> {
         if self.rc.leg_head == open.head || self.certifying_rebuilt_head(&seen, &open.head) {
             return false;
         }
+        let mut recertify = false;
         if self.rc.discarded_head != open.head {
+            recertify = open.phase != "green" && self.rc.certify_head.is_empty() && matches!(self.rc.state, State::Corpus | State::Certifying);
             self.rc.certify_head.clear();
             eprintln!("{NAME} {}: round head moved {} -> {}: the step started for the old head is discarded", self.repo, self.rc.leg_head, open.head);
+            self.rc.moved_from.clear();
+            self.rc.moved_ejected.clear();
+            if recertify {
+                self.stop_carried_leg();
+                self.rc.moved_from = self.rc.leg_head.clone();
+                self.rc.moved_ejected = open.ejected.clone();
+            }
             self.rc.leg = None;
             self.rc.discarded_head = open.head.clone();
             self.rc.leg_at_ms = self.now_ms;
+        }
+        if recertify {
+            self.rc.state = State::Certifying;
+            self.rc.run += 1;
+            self.certify();
+            return false;
         }
         if open.phase != "green" {
             return false;
@@ -2918,7 +2949,7 @@ pub mod edge {
             let unfit = io::round_certifiable(env, repo, &r.id).err();
             let queue = landing_pass::gateq::GateQueue::new(&env.run);
             let gate_red = with_failing(io::gate_red_rows(env, &r.members), |id, tip| queue.failing_at(&repo.name, &format!("spira/{id}"), tip));
-            Round { id: r.id, members: r.members, tips: r.tips, head: r.head, worktree: r.worktree, driven, red: r.red, red_suites: r.red_suites, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
+            Round { id: r.id, members: r.members, tips: r.tips, head: r.head, worktree: r.worktree, driven, red: r.red, red_suites: r.red_suites, ejected: r.ejected, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
         });
         let open_round = open.next();
         let open_above: Vec<Round> = open.collect();
