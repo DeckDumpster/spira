@@ -145,11 +145,12 @@ impl RoundOps for ProofOps {
             &self.wt,
             &self.start,
             survivors.to_vec(),
+            &Default::default(),
         )
     }
     fn fix_integration(&mut self, members: &[Member], _: &[String]) -> bool {
         crate::io::integration_fix(&self.env, &self.wt, &self.start, members)
-            .map(|f| !f.is_empty())
+            .map(|(f, _)| !f.is_empty())
             .unwrap_or(false)
     }
     fn base_moved(&mut self, _: &[Member]) -> Result<Option<(String, Vec<Member>)>, String> {
@@ -273,7 +274,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
     let wt = run.join("worktree/.batcher-fx");
 
     let t0 = Instant::now();
-    let merged = crate::merge_round(&env, &repo, &wt, &base, members.clone()).unwrap();
+    let merged = crate::merge_round(&env, &repo, &wt, &base, members.clone(), &Default::default()).unwrap();
     assert_eq!(merged.len(), 3);
     let branch = "spira/batcher-attr/fx-proof";
     crate::io::set_branch(&repo, branch, &crate::io::head_of(&wt).unwrap());

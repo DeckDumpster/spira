@@ -372,6 +372,7 @@ struct LiveOps<'a> {
     pass: Option<PathBuf>,
     round: String,
     changed: BTreeMap<String, Vec<String>>,
+    own_commits: vm::RoundCommits,
     tips: BTreeMap<String, String>,
     first_red: Option<u64>,
     key: String,
@@ -622,12 +623,14 @@ impl drive::RoundOps for LiveOps<'_> {
             self.wt,
             &self.start_sha,
             survivors.to_vec(),
+            &self.own_commits,
         )
     }
 
     fn fix_integration(&mut self, members: &[Member], suites: &[String]) -> bool {
         match io::integration_fix(self.env, self.wt, &self.start_sha, members) {
-            Ok(fixes) if !fixes.is_empty() => {
+            Ok((fixes, sha)) if !fixes.is_empty() => {
+                self.own_commits.borrow_mut().extend(sha);
                 println!(
                     "batcher {}: integration red ({}) — round commit: {}",
                     self.repo.name,
@@ -654,7 +657,7 @@ impl drive::RoundOps for LiveOps<'_> {
             .iter()
             .map(|m| (m.id.clone(), io::changed_paths(self.repo, &sha, &m.tip)))
             .collect();
-        let rebuilt = merge_round(self.env, self.repo, self.wt, &sha, members.to_vec())?;
+        let rebuilt = merge_round(self.env, self.repo, self.wt, &sha, members.to_vec(), &self.own_commits)?;
         Ok(Some((sha, rebuilt)))
     }
 
@@ -864,6 +867,7 @@ fn merge_round(
     wt: &Path,
     start_sha: &str,
     mut members: Vec<Member>,
+    own: &vm::RoundCommits,
 ) -> Result<Vec<Member>, String> {
     io::worktree_reset(repo, wt, start_sha)?;
     let merges: BTreeMap<String, MergeResult> = members
@@ -876,8 +880,9 @@ fn merge_round(
         Some(MergeResult::Empty) => stacked_into(&before, &m.id),
         _ => false,
     });
-    if let Err(e) = io::fold_config_delta(env_, wt, &members) {
-        eprintln!("batcher {}: config delta not folded: {e}", repo.name);
+    match io::fold_config_delta(env_, wt, &members) {
+        Ok(sha) => own.borrow_mut().extend(sha),
+        Err(e) => eprintln!("batcher {}: config delta not folded: {e}", repo.name),
     }
     Ok(members)
 }
@@ -949,7 +954,8 @@ fn stabilize_round(
     stage: &[Member],
     deny: &vm::DenySnapshot,
 ) -> Result<Stabilized, pace::CutError> {
-    let mut members = merge_round(env_, repo, wt, start_sha, starting)?;
+    let own_commits = vm::RoundCommits::default();
+    let mut members = merge_round(env_, repo, wt, start_sha, starting, &own_commits)?;
     if let Some(batch) = batch {
         let held: Vec<(String, String)> = members
             .iter()
@@ -964,7 +970,7 @@ fn stabilize_round(
                 }
             }
             members.retain(|m| !marked.iter().any(|(id, _)| *id == m.id));
-            members = merge_round(env_, repo, wt, start_sha, members)?;
+            members = merge_round(env_, repo, wt, start_sha, members, &own_commits)?;
         }
     }
     if members.is_empty() {
@@ -1023,7 +1029,7 @@ fn stabilize_round(
         .collect();
 
     let mut runner =
-        vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?.in_batch(batch).with_deny_list(deny)?;
+        vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?.with_round_commits(own_commits.clone()).in_batch(batch).with_deny_list(deny)?;
     let stage_bg = match batch {
         Some(_) if !stage.is_empty() && !env_.hypervisor.fits_a_staged_round() => {
             println!("batcher {}: no round staged — the hypervisor cannot hold the staged round beside this one and a CI runner", repo.name);
@@ -1050,6 +1056,7 @@ fn stabilize_round(
         pass: None,
         round,
         changed,
+        own_commits,
         tips: members
             .iter()
             .map(|m| (m.id.clone(), m.tip.clone()))
@@ -2368,6 +2375,7 @@ fn attribute_in(
         pass: o.after_pass.clone(),
         round,
         changed,
+        own_commits: vm::RoundCommits::default(),
         tips: members
             .iter()
             .map(|m| (m.id.clone(), m.tip.clone()))
@@ -2814,7 +2822,7 @@ mod tests {
         let env = io::lifecycle_tests_env(root.path());
         let repo = Repo { name: "alpha".into(), path: d.clone(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
         let wt = root.path().join("wt");
-        let merged = merge_round(&env, &repo, &wt, &base, members).unwrap();
+        let merged = merge_round(&env, &repo, &wt, &base, members, &Default::default()).unwrap();
         assert_eq!(merged.len(), 2);
         let delta = std::fs::read_to_string(wt.join("spira/config-delta.toml")).unwrap();
         assert!(delta.contains("# base") && delta.contains("spira.x") && delta.contains("spira.y"), "{delta}");
@@ -2822,10 +2830,10 @@ mod tests {
         let status = testkit::git(&wt, &["status", "--porcelain"]);
         assert!(status.trim().is_empty(), "the fold is committed, not left dirty: {status}");
         assert!(testkit::git(&wt, &["log", "-1", "--format=%B"]).contains("Members: sp-a sp-b"));
-        merge_round(&env, &repo, &wt, &base, merged.clone()).unwrap();
+        merge_round(&env, &repo, &wt, &base, merged.clone(), &Default::default()).unwrap();
         assert_eq!(testkit::git(&wt, &["rev-list", "--count", &format!("{base}..HEAD")]).trim(), "5", "a rebuild folds once from a reset tree: two members, two merges, one fold");
         g(&["-C", wt.to_str().unwrap(), "checkout", "-q", "--detach", &base]);
-        assert_eq!(io::fold_config_delta(&env, &wt, &merged).unwrap(), 0, "a tree with no fragments gets no commit");
+        assert_eq!(io::fold_config_delta(&env, &wt, &merged).unwrap(), None, "a tree with no fragments gets no commit");
     }
 
     #[test]
