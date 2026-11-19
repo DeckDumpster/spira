@@ -735,7 +735,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         // sp-zf4q3: the model's PATH names model-bin/ only; a tarball without it would
         // leave every dwarf refusing its session.
         let mb = spira_config::release_env::model_bin_problems(&releases.join("current"));
-        r.check("phase A: model-bin/ holds work and nothing else", mb.is_empty(), || mb.join("; "));
+        r.check("phase A: model-bin/ holds only MODEL_BINS", mb.is_empty(), || mb.join("; "));
     }
     let install_rc = if releases.join("current").is_dir() { r.install_sh() } else { 1 };
     r.is0("phase A: install.sh exits 0", install_rc);

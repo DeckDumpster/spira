@@ -78,7 +78,7 @@ timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 # BINARY STUBS
 # ---------------------------------------------------------------------------
 mkdir -p "$TMP/bins"
-for _b in loom panel broker spira-supervise landing-pass reconciler-flow; do
+for _b in spira-config loom panel broker spira-supervise landing-pass reconciler-flow; do
     printf '#!/usr/bin/env bash\necho %s\n' "$_b" > "$TMP/bins/$_b"
     chmod +x "$TMP/bins/$_b"
 done
@@ -157,7 +157,7 @@ echo "3. Each bin/<name> a non-optional ExecStart runs is in the tarball"
 # This case builds its own tarball from a --bin-dir holding one stub per ExecStart token,
 # and checks every token against THAT tree.
 mkdir -p "$TMP/bindir" "$TMP/out-bindir"
-for _b in "${!FOUND_TOKENS[@]}"; do
+for _b in spira-config "${!FOUND_TOKENS[@]}"; do
     printf '#!/usr/bin/env bash\necho %s\n' "$_b" > "$TMP/bindir/$_b"
     chmod +x "$TMP/bindir/$_b"
 done

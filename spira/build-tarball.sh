@@ -282,12 +282,11 @@ _COMPAT_PY
     # MODEL-BIN (sp-zf4q3): the one release directory the model's restricted PATH names
     # (dwarf/src/restrict.rs) — only the binaries a model may run, each linked to ../bin/,
     # so no tool in bin/ that calls bd is reachable by name from inside a dwarf's session.
-    # The list is spira_config::release_env::MODEL_BINS; keep the two identical.
-    for _model_bin in work testenv repo-contract; do
-        [ -f "$stage/bin/$_model_bin" ] || continue
-        mkdir -p "$stage/model-bin"
-        ln -s "../bin/$_model_bin" "$stage/model-bin/$_model_bin"
-    done
+    # The list is spira_config::release_env::MODEL_BINS, linked by the staged spira-config.
+    [ -x "$stage/bin/spira-config" ] || {
+        printf 'build-tarball.sh: bin/spira-config is not staged; it links model-bin/\n' >&2; exit 1; }
+    "$stage/bin/spira-config" link-model-bin "$stage" >/dev/null || {
+        printf 'build-tarball.sh: spira-config link-model-bin failed\n' >&2; exit 1; }
 
     # Write MANIFEST — commit, timestamp, repo identity, and sha256 per binary (and per
     # compat symlink under bin/, which sha256sum dereferences, so its hash is simply the
