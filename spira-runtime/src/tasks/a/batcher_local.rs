@@ -1113,11 +1113,11 @@ pub fn select_why(repo: &Repo, max_members: usize) -> Result<(Vec<core::Member>,
     let screened = batcher_cut::screen::cut_pool(pool.clone(), &sifted);
     why.extend(pool.iter().filter(|m| !screened.iter().any(|s| s.id == m.id)).map(|m| format!("{}: no sift pass at its tip {}", m.id, m.tip)));
     let (pool, blocked) = core::refuse_blocked(screened);
-    why.extend(blocked);
+    why.extend(blocked.iter().map(|r| r.to_string()));
     let (pool, _) = core::select_round(core::base_fix_lane(pool));
     let (pool, _) = core::cap_round(core::topo_order(&pool), max_members);
     let (pool, blocked) = core::refuse_blocked(pool);
-    why.extend(blocked);
+    why.extend(blocked.iter().map(|r| r.to_string()));
     if core::should_cut(&core::TriggerInputs { pool: &pool, main_red: false, batch_open: false }).is_none() {
         return Err(why);
     }

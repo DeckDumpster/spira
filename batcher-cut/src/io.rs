@@ -405,6 +405,9 @@ pub enum Cause {
     Held(Vec<String>),
     EjectedRed,
     TipMoved { branch_tip: String },
+    Blocked { dep: String },
+    StackedOn { prereq: String },
+    NoContentRow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -420,6 +423,9 @@ impl LeftOut {
             Cause::Held(kinds) => format!("held-{}", kinds.join(",")),
             Cause::EjectedRed => "ejected-red".into(),
             Cause::TipMoved { .. } => "tip-moved".into(),
+            Cause::Blocked { .. } => "blocked".into(),
+            Cause::StackedOn { .. } => "stacked-on-barred".into(),
+            Cause::NoContentRow => "no-content-row".into(),
         }
     }
 
@@ -437,6 +443,18 @@ impl LeftOut {
             Cause::TipMoved { branch_tip } => (
                 format!("its certified tip {tip} is no longer the tip of spira/{id}"),
                 format!("its gate certifies spira/{id} at {branch_tip}"),
+            ),
+            Cause::Blocked { dep } => (
+                format!("it depends on {dep}, which has not landed"),
+                format!("{dep} landing, or the edge removed, readmits it"),
+            ),
+            Cause::StackedOn { prereq } => (
+                format!("it stacks on {prereq}, which is held, ejected at its tip, or itself left out"),
+                format!("{prereq} unheld or given a new tip, or the stack edge removed, readmits it"),
+            ),
+            Cause::NoContentRow => (
+                "the content store returned no row for it".into(),
+                "a readable content row for the bead readmits it".into(),
             ),
         };
         format!("batcher {repo}: {id} left out of the cut: {why} — {exit}")
@@ -485,7 +503,24 @@ fn announce_with(
     lines
 }
 
-fn announce_left_out(env: &Env, repo: &Repo, left: &[LeftOut]) {
+/// Every bead one cut leaves out: the pool's own causes, then each prerequisite refusal, an id
+/// once. `tips` holds the tip of each member that reached the refusals.
+pub fn cut_left_out(
+    mut left: Vec<LeftOut>,
+    tips: &BTreeMap<String, String>,
+    refusals: &[batcher::core::BlockedRefusal],
+) -> Vec<LeftOut> {
+    for r in refusals {
+        if left.iter().any(|l| l.id == r.id) {
+            continue;
+        }
+        let tip = tips.get(&r.id).cloned().unwrap_or_else(|| "none".into());
+        left.push(LeftOut { id: r.id.clone(), tip, cause: Cause::Blocked { dep: r.blocker.clone() } });
+    }
+    left
+}
+
+pub fn announce_left_out(env: &Env, repo: &Repo, left: &[LeftOut]) {
     let lines = announce_with(&env.run, &repo.name, left, &mut |id, text| {
         bead_note(env, id, text)
     });
@@ -607,18 +642,19 @@ fn barred_ids(
 }
 
 /// Drops every member whose recorded stack names a barred bead, or a member dropped for that
-/// reason, and says why on stderr.
+/// reason, and returns each drop with the prerequisite it stacks on.
 fn drop_stacked_on_barred(
     members: Vec<Member>,
     mut barred: std::collections::BTreeSet<String>,
-) -> Vec<Member> {
+) -> (Vec<Member>, Vec<LeftOut>) {
     let mut kept = members;
+    let mut dropped = Vec::new();
     loop {
         let Some(i) = kept
             .iter()
             .position(|m| m.stack.keys().any(|p| barred.contains(p)))
         else {
-            return kept;
+            return (kept, dropped);
         };
         let m = kept.remove(i);
         let p = m
@@ -628,6 +664,7 @@ fn drop_stacked_on_barred(
             .cloned()
             .unwrap_or_default();
         eprintln!("batcher: skipped {}: stacked on held {p}", m.id);
+        dropped.push(LeftOut { id: m.id.clone(), tip: m.tip.clone(), cause: Cause::StackedOn { prereq: p } });
         barred.insert(m.id);
     }
 }
@@ -713,10 +750,14 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
 /// record of an incident, an ask, a test bead or work already landed — is a row the machine
 /// must not hold CERTIFIED (drop it there), not one this reader second-guesses from bd.
 pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
+    certified_pool_left_out(env, repo).map(|(pool, _)| pool)
+}
+
+/// [`certified_pool`] and every bead it left out, for the cut to announce once with the rest.
+pub fn certified_pool_left_out(env: &Env, repo: &Repo) -> Result<(Vec<Member>, Vec<LeftOut>), String> {
     let (certified, mut left) = read_pool(env, &repo.name)?;
     let branches = repo_branch_tips(repo)?;
     left.extend(moved_tips(&certified, &branches));
-    announce_left_out(env, repo, &left);
     let mut barred = std::collections::BTreeSet::new();
     barred.extend(
         certified
@@ -772,6 +813,7 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     let mut out = Vec::new();
     for (id, tip, epoch, express, mut blocked_by, provisional) in certified {
         let Some((priority, title)) = by_id.get(&id) else {
+            left.push(LeftOut { id, tip, cause: Cause::NoContentRow });
             continue;
         };
         for dep in content_blockers.get(&id).into_iter().flatten() {
@@ -802,7 +844,9 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
         .into_iter()
         .collect();
     barred.extend(barred_ids(env, &stacked_on)?);
-    Ok(drop_stacked_on_barred(out, barred))
+    let (kept, stacked) = drop_stacked_on_barred(out, barred);
+    left.extend(stacked);
+    Ok((kept, left))
 }
 
 /// The ids a content row's `dependencies` block it on. The lifecycle mirror of an edge is
@@ -4790,6 +4834,38 @@ mod pool_parity_tests {
     }
 
     #[test]
+    fn a_blocked_bead_is_named_with_its_dependency_once_per_tip() {
+        let run = testkit::TempDir::new("batcher-cut-blocked");
+        let left = [LeftOut { id: "sp-c".into(), tip: "tc".into(), cause: Cause::Blocked { dep: "sp-p".into() } }];
+        let announce = |left: &[LeftOut]| announce_with(run.path(), "r", left, &mut |_, _| Ok(()));
+        let first = announce(&left);
+        assert_eq!(first.len(), 1);
+        assert!(first[0].contains("sp-c") && first[0].contains("sp-p"), "{first:?}");
+        assert_eq!(fs::read_to_string(left_out_dir(run.path(), "r").join("sp-c")).unwrap(), "blocked tc\n");
+        assert!(announce(&left).is_empty());
+    }
+
+    #[test]
+    fn the_cut_names_every_bead_it_refuses_with_its_own_cause() {
+        let pool_left = vec![
+            LeftOut { id: "sp-s".into(), tip: "ts".into(), cause: Cause::StackedOn { prereq: "sp-h".into() } },
+            LeftOut { id: "sp-n".into(), tip: "tn".into(), cause: Cause::NoContentRow },
+        ];
+        let tips: BTreeMap<String, String> = [("sp-c".to_string(), "tc".to_string())].into();
+        let refusals = [batcher::core::BlockedRefusal { id: "sp-c".into(), blocker: "sp-p".into() }];
+        let left = cut_left_out(pool_left, &tips, &refusals);
+        let causes: Vec<_> = left.iter().map(|l| (l.id.as_str(), l.tip.as_str(), l.cause.clone())).collect();
+        assert_eq!(
+            causes,
+            [
+                ("sp-s", "ts", Cause::StackedOn { prereq: "sp-h".into() }),
+                ("sp-n", "tn", Cause::NoContentRow),
+                ("sp-c", "tc", Cause::Blocked { dep: "sp-p".into() }),
+            ]
+        );
+    }
+
+    #[test]
     fn the_pool_takes_a_certified_unheld_bead() {
         let rows = vec![
             serde_json::json!({"bead_id": "sp-c", "state": "CERTIFIED", "tip": "tc", "holds": []}),
@@ -4900,13 +4976,20 @@ mod pool_parity_tests {
             ]
         };
         let held: std::collections::BTreeSet<String> = ["sp-p".to_string()].into();
-        let kept: Vec<String> = drop_stacked_on_barred(pool(), held)
-            .into_iter()
-            .map(|m| m.id)
-            .collect();
+        let (kept, dropped) = drop_stacked_on_barred(pool(), held);
+        let kept: Vec<String> = kept.into_iter().map(|m| m.id).collect();
         assert_eq!(kept, ["sp-s"]);
-        let lifted = drop_stacked_on_barred(pool(), Default::default());
+        let causes: Vec<(String, Cause)> = dropped.into_iter().map(|l| (l.id, l.cause)).collect();
+        assert_eq!(
+            causes,
+            [
+                ("sp-q".to_string(), Cause::StackedOn { prereq: "sp-p".into() }),
+                ("sp-r".to_string(), Cause::StackedOn { prereq: "sp-q".into() }),
+            ]
+        );
+        let (lifted, none) = drop_stacked_on_barred(pool(), Default::default());
         assert_eq!(lifted.len(), 3);
+        assert!(none.is_empty());
     }
 }
 

@@ -414,9 +414,16 @@ fn a_member_whose_blocker_has_not_landed_is_not_cut_and_the_refusal_names_it() {
     );
     assert_eq!(refused.len(), 1);
     assert!(
-        refused[0].contains("sp-b") && refused[0].contains("sp-eeg"),
+        refused[0].to_string().contains("sp-b") && refused[0].to_string().contains("sp-eeg"),
         "{refused:?}"
     );
+}
+
+#[test]
+fn a_refusal_carries_the_member_and_blocker_ids_and_prints_the_stdout_line() {
+    let (_, refused) = refuse_blocked(vec![blocked("sp-c", &["sp-p"])]);
+    assert_eq!(refused, [BlockedRefusal { id: "sp-c".into(), blocker: "sp-p".into() }]);
+    assert_eq!(refused[0].to_string(), "sp-c: depends on sp-p (unlanded) — not cut");
 }
 
 #[test]
@@ -436,7 +443,7 @@ fn a_cap_that_drops_the_blocker_refuses_its_dependant() {
     let (capped, _) = cap_round(vec![blocked("sp-b", &["sp-a"]), m("sp-a", 3, false, 0)], 1);
     let (kept, refused) = refuse_blocked(capped);
     assert!(kept.is_empty(), "the blocker the cap cut takes its dependant: {kept:?}");
-    assert!(refused[0].contains("sp-b: depends on sp-a"), "{refused:?}");
+    assert!(refused[0].to_string().contains("sp-b: depends on sp-a"), "{refused:?}");
 }
 
 #[test]

@@ -187,13 +187,18 @@ for it; a new commit changes the tip and readmits it. Tests: `redtip::tests`.
 
 ## Left-out beads
 
-`io::certified_pool` considers only this repository's rows (the row's `repo`): the pool and its
-left-out list never hold another repository's bead. It names each SUBMITTED or CERTIFIED bead the pool leaves out: held (`Held`), tip recorded
-ejected-red (`EjectedRed`), or certified tip no longer the branch tip (`TipMoved`). The first time an
-(id, cause, tip) is seen, one stderr line `batcher <repo>: <id> left out of the cut: <why> — <exit>`
-and one bead note say why and the way back in; the record `<run>/batcher-left-out/<repo>/<id>` holds
-`<cause-tag> <tip>` and is written only once the note is left, so a failed note is retried. A record whose
-bead is no longer left out is removed. Tests: `io::pool_parity_tests`.
+A cut names each own-repository (the row's `repo`; the pool never holds another repository's bead) SUBMITTED or CERTIFIED bead it refuses: held (`Held`), tip recorded
+ejected-red (`EjectedRed`), certified tip no longer the branch tip (`TipMoved`), stacked on a barred or
+left-out bead (`StackedOn`), no content row (`NoContentRow`), or a prerequisite that has not landed
+(`Blocked`, from `core::refuse_blocked`'s `BlockedRefusal`). `io::certified_pool_left_out` returns the
+pool's causes without announcing; `run_cut` assembles them with the refusals (`io::cut_left_out`) and calls
+`io::announce_left_out` once per cut, because `announce_with` removes the record of any id not in the list
+it is given. The first time an (id, cause, tip) is seen, one stderr line
+`batcher <repo>: <id> left out of the cut: <why> — <exit>` and one bead note say why and the way back in;
+the record `<run>/batcher-left-out/<repo>/<id>` holds `<cause-tag> <tip>` and is written only once the
+note is left, so a failed note is retried. A record whose bead is no longer left out is removed.
+A full round (`cap_round`) and the feature-first deferral (`select_round`) are not noted: both clear on
+their own. Tests: `io::pool_parity_tests`.
 
 ## Staged rounds
 
