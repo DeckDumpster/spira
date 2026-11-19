@@ -36,7 +36,7 @@
 //!
 //! `decide(carry, data) -> (Carry, Acts)` is made of:
 //!
-//! - **`render::is_nominal`** (`sweep/render.rs:62-74`): lapsed = 0, snapshot fresh, no no-verdict, not draining, not throttled, no disk/mem/CPU breach, no slow probe, failed units known and empty.
+//! - **`render::is_nominal`** (`sweep/render.rs:62-74`): lapsed = 0, snapshot fresh, no no-verdict streak at the escalation bar, not draining, not throttled, no disk/mem/CPU breach, no slow probe, failed units known and empty.
 //! - **`render::render`** (`render.rs:76…`), which produces the prompt.
 //! - **The 13 escalation predicates** in `escalate::run` (`sweep/escalate.rs:21-36`).
 //! - **The halt guard**: halted means no acts at all (`sweep/mod.rs:32-39`).
@@ -126,6 +126,7 @@ pub struct Config {
     pub home_repo: String,
     pub ask_label: String,
     pub snap_stale_s: u64,
+    pub noverdict_max: u64,
     pub queue_throttle_override: String,
 }
 
@@ -138,6 +139,7 @@ impl Config {
             home_repo: cfg("SPIRA_HOME_REPO")?,
             ask_label: cfg("SPIRA_ASK_LABEL")?,
             snap_stale_s: cfg_parse("SPIRA_SNAP_STALE_S")?,
+            noverdict_max: cfg_parse("SPIRA_NOVERDICT_MAX")?,
             queue_throttle_override: cfg("SPIRA_QUEUE_THROTTLE_OVERRIDE")?,
         })
     }
@@ -234,13 +236,13 @@ pub struct Prompt {
 }
 
 /// `render::is_nominal` over the snapshot: nothing lapsed, a fresh snapshot, no no-verdict
-/// streak, not draining, not throttled, no disk/mem/CPU breach, no slow probe, and the failed
+/// streak at the escalation bar, not draining, not throttled, no disk/mem/CPU breach, no slow probe, and the failed
 /// units known and empty.
-pub fn is_nominal(s: &Snapshot, snap_stale_s: u64) -> bool {
+pub fn is_nominal(s: &Snapshot, snap_stale_s: u64, noverdict_max: u64) -> bool {
     !s.lapsed_unknown
         && s.lapsed.is_empty()
         && s.snap_age_s.is_some_and(|a| a < snap_stale_s)
-        && s.noverdict.values().all(|n| *n == 0)
+        && s.noverdict.values().all(|n| *n < noverdict_max)
         && !s.draining
         && !s.throttled
         && !s.disk_breach
@@ -263,7 +265,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     let now = now_ms / 1000;
     let mut next = carry.clone();
     let mut acts = vec![];
-    if is_nominal(snap, cfg.snap_stale_s) {
+    if is_nominal(snap, cfg.snap_stale_s, cfg.noverdict_max) {
         let nv_worst = snap.noverdict.values().max().copied().unwrap_or(0);
         let line = format!("SWEEP:NOMINAL lapsed={} snap_age={}s nv_worst={nv_worst}\n", snap.lapsed.len(), snap.snap_age_s.unwrap_or(0));
         if carry.prompt.as_deref() != Some(line.as_str()) {
@@ -444,5 +446,21 @@ impl Handler for WatchTower {
             return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
         }
         pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, decide)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nominal_with(streak: u64) -> Snapshot {
+        Snapshot { snap_age_s: Some(1), failed_units: Some(vec![]), noverdict: [("spira-sp-x".to_string(), streak)].into(), ..Snapshot::default() }
+    }
+
+    #[test]
+    fn a_no_verdict_streak_below_the_escalation_bar_is_nominal_and_at_the_bar_is_not() {
+        assert!(is_nominal(&nominal_with(2), 60, 3));
+        assert!(!is_nominal(&nominal_with(3), 60, 3));
+        assert!(is_nominal(&nominal_with(4), 60, 5), "the bar is the configured one, not a literal 3");
     }
 }

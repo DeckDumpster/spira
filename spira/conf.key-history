@@ -779,3 +779,5 @@ lc_request_ledger_secs
 metrics_page_url
 lc_idempotent_retry_secs
 cpu_throttle_units
+noverdict_window
+noverdict_max

@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=watchtower
+DOC=Seconds back the ops sweep reads run/noverdict/ counters for the worst no-verdict streak; 0 reads all time
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Two days: a held branch is stamped at the hold and held for a day, so a one-day window would age it out as the hold lifts.
+    : "${SPIRA_NOVERDICT_WINDOW:=172800}"
+SPIRA_CONF_DEFAULT_EOF

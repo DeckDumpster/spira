@@ -114,6 +114,8 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
         gate_silence_window_s: getenv_i64("SPIRA_WATCH_GATE_SILENCE_WINDOW", 3600),
         gate_deadline_s: reg_i64("SPIRA_GATE_DEADLINE")?,
         gate_log: getenv("SPIRA_GATE_LOG").map(PathBuf::from),
+        noverdict_window_s: reg_i64("SPIRA_NOVERDICT_WINDOW")?,
+        noverdict_max: reg_i64("SPIRA_NOVERDICT_MAX")?,
         yield_window_s: getenv_i64("SPIRA_YIELD_WINDOW", 86400),
         yield_sh: getenv("SPIRA_YIELD_SH"),
         disk_warn_pct: getenv_i64("SPIRA_DISK_WARN_PCT", 90),

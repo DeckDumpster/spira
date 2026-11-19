@@ -59,11 +59,11 @@ fn throttle_section(d: &SweepData) -> String {
     }
 }
 
-pub fn is_nominal(d: &SweepData, snap_stale_s: i64) -> bool {
+pub fn is_nominal(d: &SweepData, snap_stale_s: i64, noverdict_max: i64) -> bool {
     let lapsed_zero = matches!(d.lapsed.count, crate::lapsed::Count::Known(0));
     lapsed_zero
         && d.snap_age.map(|a| a < snap_stale_s).unwrap_or(false)
-        && d.nv_worst == 0
+        && d.nv_worst < noverdict_max
         && matches!(d.drain, Drain::NotDraining)
         && d.throttle.since.is_none()
         && !d.disk.disk_breach
@@ -96,7 +96,7 @@ reading `?` is one this pass COULD NOT READ — never treat it as a zero.
   branches done and waiting           {sp_branch_done}
   {gate_wait_label:<36}{gate_wait_disp}   {oldest_br}
   gate build time, p90 last 24h       {gate_build_disp}
-  worst no-verdict streak             {nv_worst}       {nv_worst_key}
+  {nv_label:<36}{nv_worst}       {nv_worst_key}
 
 ### The Hel — are finished branches leaving?
 
@@ -224,6 +224,7 @@ Run the scans named in the menu above if you have wall time remaining.
         gate_wait_disp = gate_wait_disp(d),
         oldest_br = d.gate_wait.oldest_branch,
         gate_build_disp = crate::gate_wait::disp(d.gate_build_p90),
+        nv_label = format!("worst no-verdict streak, {}", d.nv_win_label),
         nv_worst = d.nv_worst,
         nv_worst_key = nv_worst_key,
         sp_unsent = d.env.g("SP_UNSENT"),
@@ -330,44 +331,52 @@ mod tests {
     #[test]
     fn the_green_fixture_is_nominal() {
         let d = SweepData::fixture_nominal(1_700_000_000);
-        assert!(is_nominal(&d, 60));
+        assert!(is_nominal(&d, 60, 3));
     }
 
     #[test]
     fn a_lapse_since_the_last_sweep_makes_it_not_nominal() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
         d.lapsed.count = crate::lapsed::Count::Known(1);
-        assert!(!is_nominal(&d, 60));
+        assert!(!is_nominal(&d, 60, 3));
     }
 
     #[test]
     fn a_stale_snapshot_makes_it_not_nominal() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
         d.snap_age = Some(120);
-        assert!(!is_nominal(&d, 60));
+        assert!(!is_nominal(&d, 60, 3));
     }
 
     #[test]
     fn snapshot_age_is_judged_against_the_given_threshold() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
         d.snap_age = Some(20);
-        assert!(!is_nominal(&d, 7));
+        assert!(!is_nominal(&d, 7, 3));
         d.snap_age = Some(0);
-        assert!(is_nominal(&d, 7));
+        assert!(is_nominal(&d, 7, 3));
     }
 
     #[test]
     fn an_unreadable_snapshot_age_makes_it_not_nominal() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
         d.snap_age = None;
-        assert!(!is_nominal(&d, 60));
+        assert!(!is_nominal(&d, 60, 3));
     }
 
     #[test]
-    fn a_nonzero_no_verdict_streak_makes_it_not_nominal() {
+    fn a_no_verdict_streak_below_the_escalation_bar_is_nominal_and_at_the_bar_is_not() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
+        d.nv_worst = 2;
+        assert!(is_nominal(&d, 60, 3));
         d.nv_worst = 3;
-        assert!(!is_nominal(&d, 60));
+        assert!(!is_nominal(&d, 60, 3));
+    }
+
+    #[test]
+    fn the_no_verdict_line_names_the_window_it_reads() {
+        let out = render(&SweepData::fixture_nominal(1_700_000_000));
+        assert!(out.contains("worst no-verdict streak, last 2d"), "{out}");
     }
 
     #[test]
@@ -376,31 +385,31 @@ mod tests {
 
         let mut d = SweepData::fixture_nominal(base.now);
         d.drain = Drain::Draining { since: "x".into(), mins: Some(1) };
-        assert!(!is_nominal(&d, 60));
+        assert!(!is_nominal(&d, 60, 3));
 
         let mut d = SweepData::fixture_nominal(base.now);
         d.throttle.since = Some("x".into());
-        assert!(!is_nominal(&d, 60));
+        assert!(!is_nominal(&d, 60, 3));
 
         let mut d = SweepData::fixture_nominal(base.now);
         d.disk.disk_breach = true;
-        assert!(!is_nominal(&d, 60));
+        assert!(!is_nominal(&d, 60, 3));
 
         let mut d = SweepData::fixture_nominal(base.now);
         d.disk.mem_breach = true;
-        assert!(!is_nominal(&d, 60));
+        assert!(!is_nominal(&d, 60, 3));
 
         let mut d = SweepData::fixture_nominal(base.now);
         d.cpu_throttle_breach = true;
-        assert!(!is_nominal(&d, 60));
+        assert!(!is_nominal(&d, 60, 3));
 
         let mut d = SweepData::fixture_nominal(base.now);
         d.failed_units = Some(vec!["spira-x.service".into()]);
-        assert!(!is_nominal(&d, 60));
+        assert!(!is_nominal(&d, 60, 3));
 
         let mut d = SweepData::fixture_nominal(base.now);
         d.failed_units = None;
-        assert!(!is_nominal(&d, 60));
+        assert!(!is_nominal(&d, 60, 3));
     }
 
     // covers: UC-ops-detection-remediation-26
@@ -439,9 +448,9 @@ mod tests {
     #[test]
     fn a_slow_probe_is_named_and_breaks_nominal() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
-        assert!(is_nominal(&d, 60) && !render(&d).contains("SLOW PROBES"));
+        assert!(is_nominal(&d, 60, 3) && !render(&d).contains("SLOW PROBES"));
         d.slow_probes = vec!["dwarves alive / ready (bd) (>30s)".to_string()];
-        assert!(!is_nominal(&d, 60));
+        assert!(!is_nominal(&d, 60, 3));
         assert!(render(&d).contains("SLOW PROBES (rendered `?`, deadline hit): dwarves alive / ready (bd) (>30s)"));
     }
 
