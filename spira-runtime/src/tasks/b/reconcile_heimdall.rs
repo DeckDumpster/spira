@@ -48,7 +48,6 @@
 //! | `reconcile.heimdall.clear` → `condition clear <key>` (`alerts.rs:48-51`) | store | 10 s | `heimdall/<key>/clear/<flaps>` | a key that is not firing (a no-op success, `alerts.rs:49`) |
 //! | `reconcile.heimdall.refresh` → `condition set` on a firing key after 3600 s | store | 10 s | `heimdall/<key>/refresh/<refreshed>` | a key closed by hand (`main.rs:318-320`) |
 //! | `reconcile.heimdall.fallback` → write or remove `$SPIRA_RUN/heimdall.alerts.json` (`fallback.rs`, `main.rs:342-354`) | host | 2 s | the content hash of the doc | nothing |
-//! | `reconcile.heimdall.heartbeat` → `$SPIRA_RUN/heimdall.status` (`heartbeat.rs`, `main.rs:363-364`) | host | 2 s | `at` | nothing |
 //!
 //! Today a timeout (exit 124) is classed as *saturated*, not unreachable (`conditions.rs:61-67`). An effect `timed_out` keeps that meaning.
 //!
@@ -56,12 +55,7 @@
 //!
 //! A tick where nothing is firing and every counter is unchanged emits no store write.
 //!
-//! That fails two ways today:
-//!
-//! 1. The write probe writes on every pass, by design.
-//! 2. `heimdall.status` is rewritten every pass and is read by `cockpit-collect/src/probes/mod.rs` (`unverified` line).
-//!
-//! The ruling: the probe stays an unjournaled Probe. The heartbeat moves into `scheduler status` (S13), and the file is dropped once the pane reads S13. Until then the heartbeat is the one allowed per-tick host write, and it is not journaled.
+//! The write probe writes on every pass, by design, so the probe stays an unjournaled Probe. The pass's liveness is `scheduler status` (S13); no per-pass file is written.
 //!
 //! ## Replaces
 //!
@@ -82,7 +76,7 @@
 //!
 //! ## Reverse
 //!
-//! Release rollback restores the unit. With the task in `Observe` mode, raise and clear are shadowed. The probe and heartbeat keep running because they are observe. Conditions that are already raised stay raised until the task acts again.
+//! Release rollback restores the unit. With the task in `Observe` mode, raise and clear are shadowed. The probe keeps running because it is observe. Conditions that are already raised stay raised until the task acts again.
 //!
 
 use std::collections::BTreeMap;
@@ -102,8 +96,7 @@ pub const RAISE: &str = "reconcile.heimdall.raise";
 pub const CLEAR: &str = "reconcile.heimdall.clear";
 pub const REFRESH: &str = "reconcile.heimdall.refresh";
 pub const FALLBACK: &str = "reconcile.heimdall.fallback";
-pub const HEARTBEAT: &str = "reconcile.heimdall.heartbeat";
-pub const EFFECTS: &[&str] = &[OBSERVE, RAISE, CLEAR, REFRESH, FALLBACK, HEARTBEAT];
+pub const EFFECTS: &[&str] = &[OBSERVE, RAISE, CLEAR, REFRESH, FALLBACK];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_RECONCILE_HEIMDALL_SECS";
 /// The in-scheduler checks' keys only. `SPIRA_SYSTEMCTL`, `SPIRA_HEIMDALL_SENTINEL_LOG` and
@@ -290,9 +283,7 @@ fn act(name: &str, key: String, input: &impl Serialize, deadline_ms: u64, probe:
 /// A raise is a journaled effect; a refresh rewrites an alert already raised and goes as a
 /// memory-only probe, its time carried. With the store unreachable nothing is written to it:
 /// a pass that would raise is refused naming `unreachable`, and any other writes the fallback
-/// channel. A raise that fails is retried by the next refresh. The per-pass heartbeat file is
-/// not written by the pass: its reading is `scheduler status` (S13); [`HEARTBEAT`] stays
-/// runnable for the pane until it reads S13.
+/// channel. A raise that fails is retried by the next refresh.
 pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     let snap = match input {
         Input::Observed(s) => s,
@@ -419,11 +410,6 @@ pub fn clear(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String,
 pub fn fallback(run_dir: &std::path::Path, input: &str) -> Result<String, String> {
     let doc: serde_json::Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
     heimdall::fallback::write(&run_dir.join("heimdall.alerts.json"), &doc).map(|()| "written".into()).map_err(|e| e.to_string())
-}
-
-/// The runner of [`HEARTBEAT`]: `heimdall.status`, until the pane reads `scheduler status`.
-pub fn heartbeat(run_dir: &std::path::Path, input: &str) -> Result<String, String> {
-    heimdall::heartbeat::write(&run_dir.join("heimdall.status"), input).map(|()| "written".into()).map_err(|e| e.to_string())
 }
 
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "keys", drop: &[] }, runtime::rows::Part::Map { name: "restart_baselines", drop: &[] }];
