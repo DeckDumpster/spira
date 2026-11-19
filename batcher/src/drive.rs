@@ -6394,6 +6394,31 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn when_only_one_of_several_recurring_members_turns_the_round_green_alone_only_it_is_ejected() {
+        let prior = prior_red_of(
+            &[RECUR],
+            &[("m1", &tip("m1")), ("m2", &tip("m2")), ("m3", &tip("m3"))],
+        );
+        let (end, ops) = recur_round(prior, pair_red());
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m4"]);
+        assert_eq!(ops.ejected.len(), 1, "{:?}", ops.ejected);
+        assert_eq!(ops.eject_evidence[0].0, "m3");
+    }
+
+    #[test]
+    fn when_no_single_recurring_member_turns_the_round_green_alone_they_are_ejected_together() {
+        let prior = prior_red_of(&[RECUR], &[("m2", &tip("m2")), ("m3", &tip("m3"))]);
+        let red: FilterFn = Box::new(|tree| {
+            (tree.contains("m2") || tree.contains("m3")) .then(|| flip_red(&[RECUR]))
+                .filter(|_| tree.len() >= 3)
+        });
+        let (end, ops) = recur_round(prior, red);
+        assert_eq!(land_ids(end), vec!["m1", "m4"]);
+        let gone: Vec<&str> = ops.eject_evidence.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(gone, vec!["m2", "m3"]);
+    }
+
+    #[test]
     fn a_round_that_lands_clears_the_kept_unnamed_red() {
         let prior = prior_red_of(&[RECUR], &[("m2", &tip("m2"))]);
         let (end, ops) = recur_round(prior, Box::new(|_| None));
