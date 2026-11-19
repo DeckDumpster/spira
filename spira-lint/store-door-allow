@@ -8,7 +8,6 @@
 1 cert-sweep/src/main.rs
 1 concierge.sh
 3 doctor/src/real.rs
-1 dwarf/src/bd.rs
 1 dwarf/src/session.rs
 1 dwarf/src/util.rs
 2 gh-intake/src/real.rs

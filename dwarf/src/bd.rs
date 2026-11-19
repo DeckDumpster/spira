@@ -1,9 +1,7 @@
-//! The bead store: every read goes through the content door (`spira-lc content`); every write
-//! goes through `bdq`, under a timeout
-//! (BD_TIMEOUT, 180 s), one retry on a pooled connection the server already dropped
-//! ("invalid connection"), and SPIRA_BDJSON_FIXTURE → bdsim.
-
-use std::time::Duration;
+//! The bead store: every read and every write goes through the content door (`spira-lc
+//! content`) over the dwarf's `LcClient`, which owns the deadline and the connection retry.
+//! `SPIRA_BDJSON_FIXTURE` → bdsim is the test seam. A verb the door does not serve for the
+//! dwarf is refused here, never spawned.
 
 use serde::Deserialize;
 
@@ -11,19 +9,18 @@ use crate::ports::{Bd, Env};
 use crate::util::{self, Out, Spec};
 
 pub struct BdCli<'a> {
-    pub bdq: String,
-    pub timeout_s: u64,
-    pub conn_retries: u32,
     pub fixture: Option<String>,
     pub env: &'a Env,
     pub lc: spira_store::lc_call::LcClient,
 }
 
-/// A read the content door serves: `show`, `list`, `state`, `memories`, `comments` not `add`.
-fn is_door_read(args: &[String]) -> bool {
+/// A verb the content door serves for the dwarf: its reads, `note`, `comments add`,
+/// `update … --set-metadata`, `label add|remove` and `set-state`.
+fn is_door_verb(args: &[String]) -> bool {
     match args.first().map(String::as_str) {
-        Some("show" | "list" | "state" | "memories") => true,
-        Some("comments") => args.get(1).map(String::as_str) != Some("add"),
+        Some("show" | "list" | "state" | "memories" | "comments" | "note" | "set-state") => true,
+        Some("label") => matches!(args.get(1).map(String::as_str), Some("add" | "remove")),
+        Some("update") => args.iter().any(|a| a == "--set-metadata"),
         _ => false,
     }
 }
@@ -36,30 +33,25 @@ impl Bd for BdCli<'_> {
             a.extend(args.iter().cloned());
             return util::run(Spec { prog: "bdsim", args: a, env: Some(&env), cwd: None, stdin: None, timeout: None });
         }
-        if is_door_read(args) {
-            let mut argv = vec!["content".to_string()];
-            argv.extend(args.iter().cloned());
-            return match self.lc.call(&argv) {
-                Ok(r) => Out { code: r.code, stdout: r.out, stderr: r.err },
-                Err(e) => Out { code: 1, stdout: String::new(), stderr: e.to_string() },
-            };
+        if !is_door_verb(args) {
+            let verb = args.iter().take(2).cloned().collect::<Vec<_>>().join(" ");
+            return Out { code: 1, stdout: String::new(), stderr: format!("dwarf: `{verb}` is not a verb the content door serves\n") };
         }
-        let tries = self.conn_retries.max(1);
-        let mut last = Out::default();
-        for t in 1..=tries {
-            last = util::run(Spec {
-                prog: &self.bdq,
-                args: args.to_vec(),
-                env: Some(&env),
-                cwd: None,
-                stdin: None,
-                timeout: Some(Duration::from_secs(self.timeout_s.max(1))),
-            });
-            if !bead::bdq::should_retry(last.code, t, tries, last.stderr.contains("invalid connection")) {
-                break;
+        let mut argv = vec!["content".to_string()];
+        let reply = match args.first().map(String::as_str) {
+            Some("note") if args.len() == 3 => {
+                argv.extend(["note".into(), args[1].clone(), "--stdin".into()]);
+                self.lc.call_stdin(&argv, &args[2])
             }
+            _ => {
+                argv.extend(args.iter().cloned());
+                self.lc.call(&argv)
+            }
+        };
+        match reply {
+            Ok(r) => Out { code: r.code, stdout: r.out, stderr: r.err },
+            Err(e) => Out { code: 1, stdout: String::new(), stderr: e.to_string() },
         }
-        last
     }
 
     fn text(&self, id: &str) -> Out {
@@ -189,7 +181,7 @@ pub fn child_work_count(json: &str) -> i64 {
         .count() as i64
 }
 
-/// `bdq note <id> <text> >/dev/null 2>&1`.
+/// `note <id> <text>`, the answer dropped.
 pub fn note(bd: &dyn Bd, id: &str, text: &str) {
     let _ = bd.bd(&args(&["note", id, text]));
 }
@@ -202,7 +194,7 @@ mod tests {
         let env: &'static Env = Box::leak(Box::new(Env::new(Default::default(), Default::default())));
         let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows));
         let lc = spira_store::lc_call::LcClient::over(fake.clone(), true);
-        (BdCli { bdq: "nonexistent/bdq".into(), timeout_s: 5, conn_retries: 1, fixture: None, env, lc }, fake)
+        (BdCli { fixture: None, env, lc }, fake)
     }
 
     #[test]
@@ -225,10 +217,36 @@ mod tests {
     }
 
     #[test]
-    fn a_write_never_reaches_the_door() {
+    fn writes_go_through_the_door_and_spawn_no_bdq() {
         let (bd, fake) = door(vec![]);
-        assert_ne!(bd.bd(&args(&["note", "sp-a", "x"])).code, 0, "the missing bdq is what answers a write");
+        for a in [
+            &["note", "sp-a", "- leading dash"][..],
+            &["update", "sp-a", "--set-metadata", "k=v"],
+            &["set-state", "sp-a", "branch=spira/sp-a"],
+            &["label", "add", "sp-a", "overseer"],
+        ] {
+            assert_eq!(bd.bd(&args(a)).code, 0, "{a:?}");
+        }
+        let seen = fake.requests();
+        assert_eq!(seen[0], args(&["content", "note", "sp-a", "--stdin"]));
+        assert_eq!(seen[1], args(&["content", "update", "sp-a", "--set-metadata", "k=v"]));
+        assert_eq!(seen[2], args(&["content", "set-state", "sp-a", "branch=spira/sp-a"]));
+        assert_eq!(seen[3], args(&["content", "label", "add", "sp-a", "overseer"]));
+    }
+
+    #[test]
+    fn a_verb_the_door_does_not_serve_is_refused_and_named() {
+        let (bd, fake) = door(vec![]);
+        let o = bd.bd(&args(&["dep", "add", "sp-a", "sp-b"]));
+        assert_ne!(o.code, 0);
+        assert!(o.stderr.contains("dep add"), "{}", o.stderr);
         assert!(fake.requests().is_empty());
+    }
+
+    #[test]
+    fn dwarf_main_resolves_no_bdq() {
+        let main = include_str!("main.rs");
+        assert!(!main.contains(concat!("tool(\"", "bdq", "\")")));
     }
 
     #[test]
