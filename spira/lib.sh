@@ -403,35 +403,6 @@ ready_shared_exclude() {
     _spira_claim shared-exclude
 }
 
-# check7_pool_decision/ck7_pool/ck7_throttled/ck7_fill_cap RETIRED OUTRIGHT
-# (wave 4.27, family G, sp-gzmd2): each was pure arithmetic with no caller left but
-# `_ck7_call_body`, itself retired the same bead onto `sentinel`'s own in-process
-# `ck7_call_pass` (sentinel/src/call.rs). Ported, not just deleted — see
-# `call::tests::check7_pool_decision_matches_the_throttle_leak_fix`,
-# # `ck7_pool_subtracts_task_live_and_floors_at_zero`,
-# `ck7_throttled_is_the_stamp_unless_the_override_pins_it_clear` and
-# `ck7_fill_cap_stops_on_either_the_pool_or_the_per_persona_cap` for the same cases
-# shell suites used to assert directly against the bash originals.
-
-# mark_queue_waiters / close_landed_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on
-# beads whose closed blocker is in the queue pipeline (CERTIFIED/BATCHED, not yet LANDED),
-# and close out a labeled bead whose lifecycle row already reads LANDED (it never got a branch
-# to land, so the normal close-on-land path never visited it). PERMANENT (wave4-decomposition
-# row H): the lifecycle-flip plan keeps this family even once lc.sh's own calls are gone —
-# stacked dependents still read the label. Ported to Rust (sp-fbqsv, "wave 4.28"); see
-# `sentinel::waiters` for the one-pass decision (no release-then-apply flip-flop) and the
-# lifecycle read (in-process, `spira-lc`).
-mark_queue_waiters() {
-    sentinel --mark-queue-waiters
-}
-close_landed_queue_waiters() {
-    sentinel --close-landed-queue-waiters
-}
-
-# mark_open_children is CHECK 3c in the sentinel binary (sentinel/src/open_children.rs,
-# sp-du8bv): it decides from the pass's one store snapshot instead of one `bd children` per
-# candidate, which cost 302 s a pass. `sentinel --open-children` runs it alone.
-
 # bead_reopen <id> <cause> [note] [suites] — hand a bead back to its builder through the
 # lifecycle machine (`spira-lc reopen`: the row records the event its state implies; a cause
 # that is admission-exempt leaves the row alone), write the <suites> sidecar
@@ -745,35 +716,14 @@ runes_for_labels() {    # runes_for_labels <labels> -> personas whose partition 
 # LIFTING IT HERE IS LOUD, NEVER SILENT — a quiet lift would hide the forgotten resume,
 # which is the defect worth seeing. A STAMP WITH NO `expires` LINE expires at stamp-mtime +
 # TTL, so a drain written by the older world.sh cannot wedge the loop forever either.
-# world_gate/call_refill_argv/call_argv/call_rune/_ck7_call_body/ck7_call_pass/
-# named_unit_stop RETIRED INTO sentinel (wave 4.27, family G, sp-gzmd2): the whole call
-# loop — world (halt/drain) gate, the account's capacity, the fleet ceiling, the elastic
-# and inverted last-slot reservations, the lane-then-pool fill loop, and the flock that
-# serializes it against every other caller — now runs in-process in
-# sentinel/src/call.rs (`Sentinel::world_gate`/`call_rune`/`ck7_call_body`/
-# `ck7_call_pass`), under a real OS flock on the SAME `$SPIRA_RUN/call.lock` rather
-# than a bash seam under one. These shims exist only for `dwarf --escape`'s own seam
-# (world_gate, call_argv — still bash, out of this bead's scope) and
-# `acceptance-local.sh` (named_unit_stop); `call_rune` itself has no bash caller left
-# but czar-pass, which now calls `sentinel --call` directly, with no lib.sh sourcing at
-# all. `_ck7_call_body`'s own unlocked-race test row is retired with it (wave4-
-# decomposition.md (c)8): a compiled binary offers no shell-function-by-name override to
-# stub around the lock, so the race it proved is now structurally impossible rather than
-# merely refused — see test-call-fast-path.sh's own note where that row used to be.
-world_gate() {         # world_gate <rune> <log-prefix> -> 0 if calls are permitted, 1 if halted or draining
-    sentinel --world-gate "$1" "$2"
+# The call path's gate and argv lived in the retired sentinel binary; `dwarf --escape` and
+# `--direct` reach them through their seam, so both refuse until they move onto the library.
+world_gate() {         # world_gate <rune> <log-prefix> -> always 1: no gate to consult, so no call
+    log "$2 $1: the call gate is not available — not calling"
+    return 1
 }
-call_argv() {         # call_argv <rune> -> systemd-run property/setenv flags, one per line
-    sentinel --call-argv "$1"
-}
-call_rune() {         # call_rune <rune> [pool-remaining] [require-express] -> 0 if a dwarf was started, 1 otherwise
-    sentinel --call "$1" "${2:-}" "${3:-}"
-}
-ck7_call_pass() {
-    sentinel --call-pass
-}
-named_unit_stop() {      # named_unit_stop <systemd --user unit glob> -> stop every live unit matching it, by NAME
-    sentinel --named-unit-stop "$1"
+call_argv() {         # call_argv <rune> -> nothing, rc 1: a call with no unit properties is not made
+    return 1
 }
 
 # ======================================================================================

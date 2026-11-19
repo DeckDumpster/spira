@@ -155,7 +155,6 @@ fn an_unreadable_input_is_unobservable_and_never_clear() {
 
 fn recording_seams(dir: &Path, cfg: &mut Config) {
     cfg.seams.incident = script(dir, "incident", "printf 'cause=%s ref=%s priority=%s express=%s repo=%s body=%s\\n' \"$SPIRA_INCIDENT_CAUSE\" \"$SPIRA_INCIDENT_REF\" \"$SPIRA_INCIDENT_PRIORITY\" \"$SPIRA_INCIDENT_EXPRESS\" \"$SPIRA_INCIDENT_REPO\" \"$(cat | tr '\\n' ' ')\" >> \"$0.calls\"");
-    cfg.seams.sentinel = script(dir, "sentinel", "echo \"$*\" >> \"$0.calls\"");
 }
 
 fn calls(dir: &Path, seam: &str) -> String {
@@ -174,12 +173,11 @@ fn a_shadow_class_logs_would_and_files_nothing_while_act_files_and_calls_the_cza
     assert!(v.is_gap);
     assert_eq!(remedy, "inference");
     assert!(czar_log(&cfg).contains("CZAR-WOULD: deadlock inference"));
-    assert_eq!((calls(&dir, "incident"), calls(&dir, "sentinel")), (String::new(), String::new()), "shadow filed or called");
+    assert_eq!(calls(&dir, "incident"), "", "shadow filed");
 
     cfg.stages.insert("DEADLOCK".into(), Stage::Act);
     detect_deadlock(&cfg, &mut StateMap::new(), lines);
     assert!(calls(&dir, "incident").contains("cause=deadlock"), "{}", calls(&dir, "incident"));
-    assert_eq!(calls(&dir, "sentinel").trim(), "--call czar");
     assert_eq!(czar_log(&cfg).matches("CZAR-WOULD").count(), 1, "act logged a would-line too");
 }
 

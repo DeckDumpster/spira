@@ -70,7 +70,6 @@ struct Seams {
     forge: String,
     systemctl: String,
     spira_lc: String,
-    sentinel: String,
     /// The unit manager's facts, through the `Units` port.
     units: std::sync::Arc<dyn runtime::units::Units>,
 }
@@ -82,7 +81,6 @@ impl Seams {
             forge: must_cfg("SPIRA_FORGE"),
             systemctl: "systemctl".to_string(),
             spira_lc: "spira-lc".to_string(),
-            sentinel: "sentinel".to_string(),
             units: std::sync::Arc::new(HostUnits(std::sync::OnceLock::new())),
         }
     }
@@ -378,10 +376,9 @@ fn infer(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str) {
                 let _ = child.wait();
             }
             log_print(&format!(
-                "czar pass: {} → inference (filed, calling czar)",
+                "czar pass: {} → inference (filed)",
                 class
             ));
-            call_rune_czar(cfg);
         }
     }
 }
@@ -426,10 +423,9 @@ fn infer_urgent(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str, r
                 let _ = child.wait();
             }
             log_print(&format!(
-                "czar pass: {} → inference (filed, calling czar)",
+                "czar pass: {} → inference (filed)",
                 class
             ));
-            call_rune_czar(cfg);
         }
     }
 }
@@ -442,21 +438,6 @@ fn det_action(cfg: &Config, class: &str, desc: &str, action: impl FnOnce()) {
             action();
         }
     }
-}
-
-/// `sentinel --call czar` directly — no lib.sh sourcing at all (wave 4.27, family G,
-/// sp-gzmd2: `call_rune` moved in-process into the sentinel crate). The own
-/// `world.halted` pre-check this used to need is gone too: `sentinel --call` runs the
-/// SAME `world_gate` sentinel's own pass does, which also catches a live DRAIN this
-/// hand-rolled check never did.
-fn call_rune_czar(cfg: &Config) {
-    // batch-job: this runs whatever its caller names, as long as that takes
-    // FORK-EDGE: machine leg sentinel (--call czar)
-    let _ = Command::new(&cfg.seams.sentinel)
-        .arg("--call")
-        .arg("czar")
-        .stderr(Stdio::null())
-        .status();
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1526,7 +1507,6 @@ mod tests {
                 // (is_failed = false) instead of depending on the test host's real systemd.
                 systemctl: dir.join("no-such-systemctl").to_string_lossy().to_string(),
                 spira_lc: dir.join("spira-lc").to_string_lossy().to_string(),
-                sentinel: dir.join("sentinel").to_string_lossy().to_string(),
                 units: std::sync::Arc::new(runtime::units::ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)))),
             },
             batch_show: std::sync::Arc::new(|_| Ok(String::new())),

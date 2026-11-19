@@ -65,6 +65,9 @@ fn every_shipped_scenario_names_only_sim_only_actors_or_is_listed_as_blocked() {
     assert_eq!(unloadable, blocked, "every blocked scenario still shipped still fails at load, and only those: one that loads now comes off the list");
 }
 
+/// What the cutover-mode world puts before the call: no claim until its walk begins.
+const CUTOVER_WAIT_GUARD: &str = r#"[ "$(cat "$SIM_WORLD/cutover.phase" 2>/dev/null || echo wait)" != wait ] || "#;
+
 /// The call the ported scenarios run in place of the sentinel-call actor: the world's
 /// `SPIRA_CALL` seam given the argv sentinel-call's `unit_start` effect starts, `dwarf --home
 /// <home> builder` under `call_argv`'s properties and environment. Every scenario's call is the
@@ -73,9 +76,10 @@ fn every_shipped_scenario_names_only_sim_only_actors_or_is_listed_as_blocked() {
 fn the_ported_scenarios_call_through_the_seam_with_the_call_effects_argv() {
     let calls: Vec<(String, String)> = shipped().into_iter().flat_map(|(n, sc)| sc.actors.into_iter().filter(|a| a.name == "call").map(move |a| (n.clone(), a.command))).collect();
     let names: Vec<&str> = calls.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(names, ["builder-excludes-qa-proposed", "claim-rank", "dwarf-brief", "dwarf-slain", "rebase-loop-note", "resubmit-moved-tip", "submit-from-other-cwd"]);
+    assert_eq!(names, ["builder-excludes-qa-proposed", "claim-rank", "dwarf-brief", "dwarf-slain", "rc-cutover-mode", "rebase-loop-note", "resubmit-moved-tip", "submit-from-other-cwd"]);
     let one = &calls[0].1;
-    assert!(calls.iter().all(|(_, c)| c == one), "one call command: {calls:?}");
+    let same = |c: &str| c == one || c.strip_prefix(CUTOVER_WAIT_GUARD) == Some(one.as_str());
+    assert!(calls.iter().all(|(_, c)| same(c)), "one call command: {calls:?}");
     let shell = one.strip_prefix("\"$SPIRA_CALL\"").expect("the call runs the world's SPIRA_CALL seam");
     let out = std::process::Command::new("sh")
         .arg("-c")
