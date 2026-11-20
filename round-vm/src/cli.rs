@@ -412,11 +412,11 @@ fn preflight_plan_verb(args: &[String]) -> i32 {
         eprintln!("round-vm preflight-plan: usage: preflight-plan (--force | --tree DIR --base REF --head REF)");
         return 2;
     };
-    let git = |extra: &[&str]| -> Option<String> {
-        let out = std::process::Command::new("git").args(["-C", tree, "diff"]).args(extra).arg(format!("{base}...{head}")).output().ok()?;
+    let git = |extra: &[&str], paths: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git").args(["-C", tree, "diff"]).args(extra).arg(format!("{base}...{head}")).args(paths).output().ok()?;
         out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
     };
-    let (Some(names), Some(diff)) = (git(&["--name-only"]), git(&["-U0", "--", "round-vm/ami-setup.sh"])) else {
+    let (Some(names), Some(diff)) = (git(&["--name-only"], &[]), git(&["-U0"], &["--", "round-vm/ami-setup.sh"])) else {
         eprintln!("round-image-preflight: cannot diff {base}...{head}");
         return 2;
     };
