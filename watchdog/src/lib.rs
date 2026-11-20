@@ -125,7 +125,17 @@ fn secs(ms: u64) -> u64 {
     ms / 1000
 }
 
-pub fn decide(now_ms: u64, bound_ms: u64, unit: &str, facts: &UnitFacts, reading: &Reading, marker: Option<u64>) -> Verdict {
+/// What the pass knows of the unit's automatic restarts and of its own open incident.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct History {
+    pub incident_open: bool,
+    /// `NRestarts` now.
+    pub n_restarts: Option<u32>,
+    /// `NRestarts` at the last reading this watchdog took.
+    pub last_seen: Option<u32>,
+}
+
+pub fn decide(now_ms: u64, bound_ms: u64, unit: &str, facts: &UnitFacts, reading: &Reading, marker: Option<u64>, hist: History) -> Verdict {
     let stale = |t: u64| now_ms.saturating_sub(t) > bound_ms;
     let age = |t: u64| secs(now_ms.saturating_sub(t));
     let bound = secs(bound_ms);
@@ -133,13 +143,18 @@ pub fn decide(now_ms: u64, bound_ms: u64, unit: &str, facts: &UnitFacts, reading
         UnitState::Absent | UnitState::Inactive | UnitState::Failed => Verdict::Absent(format!("{unit} is {:?}", facts.state).to_lowercase()),
         UnitState::Activating | UnitState::Deactivating => match facts.since_ms {
             Some(t) if stale(t) => Verdict::Wedged(format!("{unit} has been {:?} for {}s, bound {bound}s", facts.state, age(t)).to_lowercase()),
-            _ => Verdict::Healthy,
+            _ => match (hist.last_seen, hist.n_restarts) {
+                (Some(a), Some(b)) if b > a => Verdict::Absent(format!("{unit} is crash-looping: NRestarts {a}→{b}")),
+                _ if hist.incident_open && facts.state == UnitState::Activating => Verdict::Absent(format!("{unit} is activating but has not reported a turn since the incident opened")),
+                _ => Verdict::Healthy,
+            },
         },
         UnitState::Active => match reading {
             Reading::Turn { at_ms } if stale(*at_ms) => Verdict::Wedged(format!("last turn {}s ago, bound {bound}s", age(*at_ms))),
             Reading::Turn { .. } => Verdict::Healthy,
             Reading::NoTurnYet => match facts.since_ms {
                 Some(t) if stale(t) => Verdict::Wedged(format!("no turn in the {}s since {unit} started, bound {bound}s", age(t))),
+                _ if hist.incident_open => Verdict::Unknown(format!("{unit} is active but has reported no turn yet")),
                 _ => Verdict::Healthy,
             },
             Reading::Unreachable(why) => match marker {
@@ -183,6 +198,23 @@ pub struct Incident {
     /// Why the last page attempt failed, until one succeeds.
     #[serde(default)]
     pub page_error: Option<String>,
+    /// `NRestarts` at the last pass.
+    #[serde(default)]
+    pub n_restarts: Option<u32>,
+}
+
+fn restarts_file(cfg: &Config) -> PathBuf {
+    cfg.incident.with_file_name("watchdog-restarts.json")
+}
+
+fn load_restarts(p: &Path) -> Option<u32> {
+    serde_json::from_slice(&std::fs::read(p).ok()?).ok()
+}
+
+fn save_restarts(p: &Path, n: Option<u32>) -> Result<(), String> {
+    let tmp = p.with_extension("tmp");
+    std::fs::write(&tmp, serde_json::to_vec(&n).map_err(|e| e.to_string())?).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, p).map_err(|e| format!("{}: {e}", p.display()))
 }
 
 fn load(p: &Path) -> Result<Option<Incident>, String> {
@@ -302,7 +334,11 @@ pub fn pass(cfg: &Config, d: &Deps) -> Result<Outcome, String> {
     let detail = d.units.detail(&h).map_err(|e| format!("{}: facts: {e}", cfg.unit))?;
     let facts = detail.facts();
     let open = load(&cfg.incident)?;
-    let verdict = decide(now, cfg.bound_ms, &cfg.unit, &facts, &d.status.read(), d.marker.in_flight_since());
+    let seen_file = restarts_file(cfg);
+    let hist = History { incident_open: open.is_some(), n_restarts: detail.n_restarts, last_seen: open.as_ref().and_then(|i| i.n_restarts).or_else(|| load_restarts(&seen_file)) };
+    let verdict = decide(now, cfg.bound_ms, &cfg.unit, &facts, &d.status.read(), d.marker.in_flight_since(), hist);
+    save_restarts(&seen_file, detail.n_restarts)?;
+    let activating = facts.state == UnitState::Activating;
     let reason = match verdict {
         Verdict::Healthy => {
             return Ok(match open {
@@ -314,9 +350,12 @@ pub fn pass(cfg: &Config, d: &Deps) -> Result<Outcome, String> {
             });
         }
         Verdict::Unknown(why) => return Ok(Outcome::Unknown(why)),
-        Verdict::Absent(r) | Verdict::Wedged(r) => r,
+        Verdict::Absent(r) => (r, !activating),
+        Verdict::Wedged(r) => (r, true),
     };
-    let mut i = open.unwrap_or(Incident { since_ms: now, reason: reason.clone(), starts: 0, last_start_ms: None, last_error: None, paged: false, page_error: None });
+    let (reason, may_kick) = reason;
+    let mut i = open.unwrap_or(Incident { since_ms: now, reason: reason.clone(), starts: 0, last_start_ms: None, last_error: None, paged: false, page_error: None, n_restarts: None });
+    i.n_restarts = detail.n_restarts;
     let page = (!i.paged && i.starts >= PAGE_AFTER_STARTS).then(|| {
         let r = d.pager.page(&subject(cfg), &body(cfg, &reason, &i, &detail));
         i.paged = r.is_ok();
@@ -327,7 +366,7 @@ pub fn pass(cfg: &Config, d: &Deps) -> Result<Outcome, String> {
         None => true,
         Some(t) => now.saturating_sub(t) + BACKOFF_SLACK_MS >= backoff_ms(i.starts),
     };
-    let started = due.then(|| {
+    let started = (due && may_kick).then(|| {
         let r = kick(d.units, &h, facts.state);
         i.starts += 1;
         i.last_start_ms = Some(now);
@@ -548,14 +587,14 @@ mod tests {
     fn the_verdict_reads_the_turn_the_start_and_the_marker() {
         let b = 90_000;
         let now = 1_000_000;
-        assert_eq!(decide(now, b, UNIT, &active(0), &Reading::NoTurnYet, None), Verdict::Wedged(format!("no turn in the 1000s since {UNIT} started, bound 90s")));
-        assert_eq!(decide(now, b, UNIT, &active(now - 10_000), &Reading::NoTurnYet, None), Verdict::Healthy);
-        assert_eq!(decide(now, b, UNIT, &active(0), &Reading::Unreachable("x".into()), None), Verdict::Unknown("x".into()));
-        assert_eq!(decide(now, b, UNIT, &active(0), &Reading::Unreachable("x".into()), Some(now - 30_000)), Verdict::Unknown("x".into()));
-        assert!(matches!(decide(now, b, UNIT, &active(0), &Reading::Unreachable("x".into()), Some(now - 91_000)), Verdict::Wedged(_)));
+        assert_eq!(decide(now, b, UNIT, &active(0), &Reading::NoTurnYet, None, History::default()), Verdict::Wedged(format!("no turn in the 1000s since {UNIT} started, bound 90s")));
+        assert_eq!(decide(now, b, UNIT, &active(now - 10_000), &Reading::NoTurnYet, None, History::default()), Verdict::Healthy);
+        assert_eq!(decide(now, b, UNIT, &active(0), &Reading::Unreachable("x".into()), None, History::default()), Verdict::Unknown("x".into()));
+        assert_eq!(decide(now, b, UNIT, &active(0), &Reading::Unreachable("x".into()), Some(now - 30_000), History::default()), Verdict::Unknown("x".into()));
+        assert!(matches!(decide(now, b, UNIT, &active(0), &Reading::Unreachable("x".into()), Some(now - 91_000), History::default()), Verdict::Wedged(_)));
         let starting = UnitFacts { state: UnitState::Activating, main_pid: None, exit: None, since_ms: Some(now - 91_000) };
-        assert!(matches!(decide(now, b, UNIT, &starting, &Reading::NoTurnYet, None), Verdict::Wedged(_)));
-        assert_eq!(decide(now, b, UNIT, &UnitFacts::absent(), &Reading::Turn { at_ms: now }, None), Verdict::Absent(format!("{UNIT} is absent")));
+        assert!(matches!(decide(now, b, UNIT, &starting, &Reading::NoTurnYet, None, History::default()), Verdict::Wedged(_)));
+        assert_eq!(decide(now, b, UNIT, &UnitFacts::absent(), &Reading::Turn { at_ms: now }, None, History::default()), Verdict::Absent(format!("{UNIT} is absent")));
     }
 
     /// The service manager as it behaved on 2026-11-07: a unit that hit its start limit stays
@@ -688,6 +727,102 @@ mod tests {
         for want in ["SPIRA_TASK_MODES gives no mode for task watch.throughput", "start-limit-hit", UNIT] {
             assert!(pages[0].contains(want), "the page carries {want:?}: {}", pages[0]);
         }
+    }
+
+    /// A unit that cycles `failed` -> `activating` with a fresh `since_ms` and a higher NRestarts.
+    struct CrashLoop {
+        inner: ScriptedUnits,
+        clock: VirtualClock,
+        n: std::sync::atomic::AtomicU32,
+    }
+    impl CrashLoop {
+        fn detail(&self) -> runtime::units::UnitDetail {
+            let n = self.n.load(std::sync::atomic::Ordering::SeqCst);
+            let state = if n.is_multiple_of(2) { UnitState::Failed } else { UnitState::Activating };
+            runtime::units::UnitDetail { n_restarts: Some(n + 1), ..runtime::units::UnitDetail::from_facts(UNIT, &UnitFacts { state, main_pid: None, exit: Some(Exit::Code(1)), since_ms: Some(self.clock.now_ms()) }) }
+        }
+    }
+    struct LoopUnits(CrashLoop, std::sync::Mutex<Vec<String>>);
+    impl Units for LoopUnits {
+        fn start(&self, spec: &runtime::units::UnitSpec) -> runtime::Result<UnitHandle> {
+            self.0.inner.start(spec)
+        }
+        fn stop(&self, h: &UnitHandle) -> runtime::Result<()> {
+            self.0.inner.stop(h)
+        }
+        fn restart(&self, h: &UnitHandle) -> runtime::Result<()> {
+            self.1.lock().unwrap().push(format!("restart {}", h.name));
+            Ok(())
+        }
+        fn facts(&self, _: &UnitHandle) -> runtime::Result<UnitFacts> {
+            Ok(self.0.detail().facts())
+        }
+        fn detail(&self, _: &UnitHandle) -> runtime::Result<runtime::units::UnitDetail> {
+            let d = self.0.detail();
+            self.0.n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(d)
+        }
+        fn start_installed(&self, h: &UnitHandle) -> runtime::Result<()> {
+            self.1.lock().unwrap().push(format!("start {}", h.name));
+            Ok(())
+        }
+        fn reset_failed(&self, h: &UnitHandle) -> runtime::Result<()> {
+            self.1.lock().unwrap().push(format!("reset-failed {}", h.name));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_unit_cycling_through_activating_and_failing_is_one_incident_and_pages_once() {
+        let tmp = testkit::TempDir::new("watchdog");
+        let c = cfg(tmp.path());
+        let clock = VirtualClock::new(1_000_000);
+        let units = LoopUnits(CrashLoop { inner: ScriptedUnits::new(Arc::new(clock.clone())), clock: clock.clone(), n: 0.into() }, Default::default());
+        let status = Fixed(RefCell::new(Reading::Unreachable("connection refused".into())));
+        let pages = Bodies::default();
+        let mut opened = Vec::new();
+        for _ in 0..10 {
+            let o = run_pass(&c, &clock, &units, &status, &pages);
+            assert!(o.scheduler_down(), "{o}");
+            if let Outcome::Down { since_ms, .. } = o {
+                opened.push(since_ms);
+            }
+            clock.advance(60_000);
+        }
+        assert!(opened.iter().all(|s| *s == 1_000_000), "one incident throughout: {opened:?}");
+        assert_eq!(pages.0.borrow().len(), 1, "exactly one page: {:?}", pages.0.borrow());
+    }
+
+    #[test]
+    fn an_activating_unit_whose_restart_count_rose_is_down_and_a_first_start_is_healthy() {
+        let b = 300_000;
+        let now = 1_000_000;
+        let starting = UnitFacts { state: UnitState::Activating, main_pid: None, exit: None, since_ms: Some(now - 5_000) };
+        let hist = |last, n| History { incident_open: false, n_restarts: n, last_seen: last };
+        let v = decide(now, b, UNIT, &starting, &Reading::Unreachable("x".into()), None, hist(Some(3), Some(4)));
+        assert_eq!(v, Verdict::Absent(format!("{UNIT} is crash-looping: NRestarts 3→4")));
+        for h in [hist(Some(4), Some(4)), hist(None, Some(4)), hist(None, None)] {
+            assert_eq!(decide(now, b, UNIT, &starting, &Reading::Unreachable("x".into()), None, h), Verdict::Healthy);
+        }
+    }
+
+    #[test]
+    fn an_open_incident_closes_only_on_an_active_unit_with_a_fresh_turn_and_the_next_starts_fresh() {
+        let tmp = testkit::TempDir::new("watchdog");
+        let c = cfg(tmp.path());
+        let w = World::new(1_000_000, UnitFacts { state: UnitState::Failed, main_pid: None, exit: Some(Exit::Code(1)), since_ms: Some(1_000_000) }, Reading::Unreachable("refused".into()));
+        assert!(w.pass(&c).scheduler_down());
+        w.clock.advance(60_000);
+        w.units.install(UNIT, UnitFacts { state: UnitState::Activating, main_pid: None, exit: None, since_ms: Some(w.clock.now_ms() - 1_000) });
+        assert!(w.pass(&c).scheduler_down(), "activating with an incident open is still down");
+        w.units.install(UNIT, active(w.clock.now_ms() - 1_000));
+        *w.status.0.borrow_mut() = Reading::NoTurnYet;
+        assert!(!matches!(w.pass(&c), Outcome::Recovered { .. }), "no turn yet does not close it");
+        *w.status.0.borrow_mut() = Reading::Turn { at_ms: w.clock.now_ms() };
+        assert_eq!(w.pass(&c), Outcome::Recovered { since_ms: 1_000_000 });
+        w.clock.advance(60_000);
+        w.units.install(UNIT, UnitFacts { state: UnitState::Failed, main_pid: None, exit: Some(Exit::Code(1)), since_ms: Some(w.clock.now_ms()) });
+        assert!(matches!(w.pass(&c), Outcome::Down { since_ms, starts: 1, .. } if since_ms == w.clock.now_ms()));
     }
 
     #[test]
