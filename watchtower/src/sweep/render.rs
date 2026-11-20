@@ -200,8 +200,11 @@ If something needs attention, name what is wrong, the number that was anomalous,
 means. A '?' field means this sweep could not read it — investigate why before filing on the
 absence alone. File through `work`, in this order, for each finding:
 
-1. `work search "<the finding's key phrase>"`. If an open bead already carries the finding, run
-   `work note-on <id> -` with this sweep's numbers on stdin, and file nothing.
+1. `work search "<two or three words naming the component and the symptom>"`, for example
+   `work search "hel stranded"`. Every word must appear; order does not matter. If an open bead
+   already carries the finding, run `work note-on <id> -` with this sweep's numbers on stdin, and
+   file nothing. If the hit is a bead whose fix is in flight under another title, note on that
+   bead (`work note-on <id> -`) and file nothing.
 2. Otherwise `work file "<title>" --for builder --repo <name> --body-file -`, with the evidence
    on stdin.
 3. File at most three beads per sweep. Name any further findings in your final line as
@@ -322,9 +325,10 @@ mod tests {
     fn the_task_files_through_work_with_search_first_and_a_cap() {
         let out = render(&SweepData::fixture_nominal(1_700_000_000));
         let task = &out[out.find("## Your task").expect("task")..];
-        for want in ["work search", "work note-on", "work file", "--for builder --repo", "--body-file -", "at most three beads", "held back:"] {
+        for want in ["work search", "work note-on", "work file", "--for builder --repo", "--body-file -", "at most three beads", "held back:", "whose fix is in flight under another title"] {
             assert!(task.contains(want), "{want}");
         }
+        assert!(!task.contains("<the finding's key phrase>"));
         assert!(!task.contains("bd create") && !task.contains("bdq create"));
     }
 
