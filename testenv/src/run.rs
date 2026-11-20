@@ -1552,6 +1552,27 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         crate::sandbox::Route::Sandbox { skip } => (true, String::new(), skip),
         crate::sandbox::Route::Container { because } => (false, because, Vec::new()),
     };
+    // The deny list is the only source of lifecycle state.
+    let deny = match (deps.env)(spira_config::unit_tier::DENY_LIST_ENV).filter(|v| !v.is_empty()) {
+        None => spira_config::unit_tier::DenyList::default(),
+        Some(path) => match fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| spira_config::unit_tier::DenyList::parse(&t)) {
+            Ok(d) => d,
+            Err(e) => {
+                stderr(&format!("batch: {} {path}: {e}", spira_config::unit_tier::DENY_LIST_ENV));
+                return Finish::fault(2, "deny-list", 0);
+            }
+        },
+    };
+    let mut denied_tests: Vec<String> = Vec::new();
+    if unit_only {
+        match crate::unit::write_deny(&wt.path, &deny) {
+            Ok(names) => denied_tests = names,
+            Err(e) => {
+                stderr(&format!("batch: unit-tests: {e}"));
+                return Finish::fault(2, "unit-deny", 0);
+            }
+        }
+    }
     if unit_only {
         if let Err(e) = crate::unit::write_skip(&wt.path, &skip) {
             stderr(&format!("batch: unit-tests: {e}"));
@@ -1571,6 +1592,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         tests: args.tests.as_ref().map(|t| t.join(",")),
         unit: unit_selection.clone(),
         runner: runs_sandboxed.then(|| crate::sandbox::Runner::Sandbox.as_str().to_string()),
+        deny: (!denied_tests.is_empty()).then(|| denied_tests.join(",")),
     };
     let key = key_inputs.key();
     // law-absence-needs-a-positive-control: a unit tier over no crate tested nothing, and a
@@ -1590,17 +1612,6 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     ph.attach(&results);
     *started.borrow_mut() = Some(results.clone());
 
-    // ---- lifecycle state: the deny list is the only source ---------------------------
-    let deny = match (deps.env)(spira_config::unit_tier::DENY_LIST_ENV).filter(|v| !v.is_empty()) {
-        None => spira_config::unit_tier::DenyList::default(),
-        Some(path) => match fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| spira_config::unit_tier::DenyList::parse(&t)) {
-            Ok(d) => d,
-            Err(e) => {
-                stderr(&format!("batch: {} {path}: {e}", spira_config::unit_tier::DENY_LIST_ENV));
-                return Finish::fault(2, "deny-list", 0);
-            }
-        },
-    };
     let denied = |n: &str| {
         let rows = deny.suites();
         let mut hit = rows.iter().filter(|(f, _)| *f == n).map(|(_, st)| *st).peekable();

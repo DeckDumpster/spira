@@ -13,6 +13,7 @@ pub const BINS_REL: &str = "target/unit-tests.bins";
 pub const BUILD_REL: &str = "target/unit-tests.build";
 pub const FILTER_REL: &str = "target/unit-tests.filter";
 pub const SKIP_REL: &str = "target/unit-tests.skip";
+pub const DENY_REL: &str = "target/unit-tests.deny";
 const MAX_FAILING: usize = 5;
 const MAX_DETAIL: usize = 3;
 const MAX_LINE: usize = 160;
@@ -51,15 +52,32 @@ pub fn write_filter(tree: &Path, tests: Option<&[String]>) -> Result<(), String>
 /// Leaves the names the script must skip, one per line, or removes the file when there are
 /// none, so a later run of this tree skips nothing it was not told to.
 pub fn write_skip(tree: &Path, names: &[String]) -> Result<(), String> {
-    let path = tree.join(SKIP_REL);
+    write_names(&tree.join(SKIP_REL), tree, names)
+}
+
+/// The test paths of the deny list's `unit:` and `integration:` rows, each the part after the
+/// binary; the file is removed when there are none. Returns the names written.
+pub fn write_deny(tree: &Path, deny: &spira_config::unit_tier::DenyList) -> Result<Vec<String>, String> {
+    let mut names: Vec<String> = Vec::new();
+    for t in deny.tests("unit").into_iter().chain(deny.tests("integration")) {
+        let name = t.split_once(' ').map_or(t, |(_, p)| p).to_string();
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    write_names(&tree.join(DENY_REL), tree, &names)?;
+    Ok(names)
+}
+
+fn write_names(path: &Path, tree: &Path, names: &[String]) -> Result<(), String> {
     if names.is_empty() {
-        return match std::fs::remove_file(&path) {
+        return match std::fs::remove_file(path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("cannot remove {}: {e}", path.display())),
             _ => Ok(()),
         };
     }
     std::fs::create_dir_all(path.parent().unwrap_or(tree))
-        .and_then(|_| std::fs::write(&path, names.iter().map(|n| format!("{n}\n")).collect::<String>()))
+        .and_then(|_| std::fs::write(path, names.iter().map(|n| format!("{n}\n")).collect::<String>()))
         .map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
@@ -505,6 +523,17 @@ mod tests {
         write_skip(dir.path(), &[]).unwrap();
         assert!(!path.exists());
         write_skip(dir.path(), &[]).unwrap();
+    }
+
+    #[test]
+    fn write_deny_turns_unit_and_integration_rows_into_test_paths_and_removes_the_file_when_none() {
+        let dir = testkit::TempDir::new("deny");
+        let path = dir.path().join(DENY_REL);
+        let d = spira_config::unit_tier::DenyList::parse("disabled\tunit:bin a::t\tsp-x\t9999999999\ndisabled\tintegration:crate b::u\tsp-x\t9999999999\ndisabled\tsuite:test-x.sh\tsp-x\t9999999999\n").unwrap();
+        assert_eq!(write_deny(dir.path(), &d).unwrap(), ["a::t", "b::u"]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "a::t\nb::u\n");
+        write_deny(dir.path(), &spira_config::unit_tier::DenyList::default()).unwrap();
+        assert!(!path.exists());
     }
 
     #[test]

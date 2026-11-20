@@ -289,42 +289,50 @@ fn checks_proven(
         let first_check = !proof::recorded(run, id, tip, &check);
         let mut names = Vec::new();
         let ids = proof::failing_tests(run, id, &check);
-        if !ids.is_empty() {
-            let deny = w.scripts.deny_list(w.clock.now());
-            if let Err(e) = &deny {
-                w.out(format!("queue.sh {verb}: deny list unreadable ({e}); running {check} whole"));
+        let deny = match w.scripts.deny_list(w.clock.now()) {
+            Ok(d) => d,
+            Err(e) => {
+                w.err(format!("queue.sh {verb}: the deny list could not be resolved: {e} — refused"));
+                return None;
             }
-            if let Ok(deny) = deny {
-                let disabled = disabled_rows(&deny);
-                let (off, active): (Vec<&String>, Vec<&String>) = ids.iter().partition(|i| disabled.iter().any(|(d, _)| d == *i));
-                if active.is_empty() {
-                    let named: Vec<String> = off
-                        .iter()
-                        .map(|i| format!("{i} (disabled on {})", disabled.iter().find(|(d, _)| d == *i).map_or("?", |(_, b)| b)))
-                        .collect();
-                    let cause = format!("{check} at {tip} not run: every test the ejection named is disabled in the test registry now: {}", named.join("; "));
-                    w.out(format!("queue.sh {verb}: {cause}"));
-                    if let Err((rc, e)) = w.lc.fact(id, "check-waived-disabled", by, &cause) {
-                        w.err(format!("queue.sh {verb}: cannot record the waiver of {check}: rc={rc}: {e} — refused"));
-                        return None;
-                    }
-                    if let Err(e) = proof::drop_disabled_checks(run, id, std::slice::from_ref(&check)) {
-                        w.err(format!("queue.sh {verb}: cannot drop {check}: {e} — refused"));
-                        return None;
-                    }
-                    continue;
+        };
+        if !ids.is_empty() {
+            let disabled = disabled_rows(&deny);
+            let (off, active): (Vec<&String>, Vec<&String>) = ids.iter().partition(|i| disabled.iter().any(|(d, _)| d == *i));
+            if active.is_empty() {
+                let named: Vec<String> = off
+                    .iter()
+                    .map(|i| format!("{i} (disabled on {})", disabled.iter().find(|(d, _)| d == *i).map_or("?", |(_, b)| b)))
+                    .collect();
+                let cause = format!("{check} at {tip} not run: every test the ejection named is disabled in the test registry now: {}", named.join("; "));
+                w.out(format!("queue.sh {verb}: {cause}"));
+                if let Err((rc, e)) = w.lc.fact(id, "check-waived-disabled", by, &cause) {
+                    w.err(format!("queue.sh {verb}: cannot record the waiver of {check}: rc={rc}: {e} — refused"));
+                    return None;
                 }
-                for i in active {
-                    let name = i.split_once(' ').map_or(i.as_str(), |(_, t)| t).to_string();
-                    if !names.contains(&name) {
-                        names.push(name);
-                    }
+                if let Err(e) = proof::drop_disabled_checks(run, id, std::slice::from_ref(&check)) {
+                    w.err(format!("queue.sh {verb}: cannot drop {check}: {e} — refused"));
+                    return None;
+                }
+                continue;
+            }
+            for i in active {
+                let name = i.split_once(' ').map_or(i.as_str(), |(_, t)| t).to_string();
+                if !names.contains(&name) {
+                    names.push(name);
                 }
             }
         }
+        let deny_path = match proof::record_deny_list(run, id, tip, &check, &deny) {
+            Ok(p) => p,
+            Err(e) => {
+                w.err(format!("queue.sh {verb}: cannot record the deny list for {check}: {e} — refused"));
+                return None;
+            }
+        };
         let via = if names.is_empty() { String::new() } else { format!(" --tests {}", names.join(",")) };
         w.out(format!("queue.sh {verb}: running {check} at {tip} via testenv{via}"));
-        let (rc, out) = w.scripts.suite_run(&check, tip, repo, first_check, &names);
+        let (rc, out) = w.scripts.suite_run(&check, tip, repo, first_check, &names, &deny_path);
         if let Err(e) = proof::record_run(run, id, tip, &check, rc, &out) {
             w.err(format!(
                 "queue.sh {verb}: cannot record the run of {check}: {e} — refused"
@@ -342,10 +350,19 @@ fn checks_proven(
                 Some(cause) => format!("{cause}\n  {verdict}"),
                 None => verdict.to_string(),
             };
+            let mut detail = String::new();
+            if let Ok(path) = proof::run_output_path(run, id, tip, &check) {
+                detail.push_str(&format!("\n  output: {}", path.display()));
+            }
+            if let Some(at) = out.lines().position(|l| l.trim_start().starts_with("unit-tests:") && l.contains("failing test(s):")) {
+                for l in out.lines().skip(at).enumerate().take_while(|(i, l)| *i == 0 || l.starts_with(' ')).map(|(_, l)| l) {
+                    detail.push_str(&format!("\n  {}", l.trim_end()));
+                }
+            }
             if out.lines().any(|l| l.starts_with("VERDICT RED ")) {
-                failed.push(format!("{check} failed at {tip} (rc={rc}): {last}"));
+                failed.push(format!("{check} failed at {tip} (rc={rc}): {last}{detail}"));
             } else {
-                unverified.push(format!("{check} not verified at {tip} (rc={rc}): {last}"));
+                unverified.push(format!("{check} not verified at {tip} (rc={rc}): {last}{detail}"));
             }
         }
     }

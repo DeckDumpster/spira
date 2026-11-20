@@ -553,10 +553,11 @@ impl Scripts for FScripts {
             None => (0, String::new()),
         }
     }
-    fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool, tests: &[String]) -> (i32, String) {
+    fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool, tests: &[String], deny_list: &Path) -> (i32, String) {
         let only = if tests.is_empty() { String::new() } else { format!(" tests={}", tests.join(",")) };
         self.calls.borrow_mut().push(format!(
-            "suite_run {check} {tip} {repo} first={first_check}{only}"
+            "suite_run {check} {tip} {repo} first={first_check}{only} deny={}",
+            deny_list.display()
         ));
         if let Some(out) = self.suite_out.borrow().get(check) {
             return out.clone();

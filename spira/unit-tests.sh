@@ -42,6 +42,13 @@ if [ -f "$ROOT/target/unit-tests.skip" ]; then
   while IFS= read -r t; do [ -n "$t" ] && skips+=(--skip "$t") && names+=("$t"); done < "$ROOT/target/unit-tests.skip"
   [ "${#names[@]}" -eq 0 ] || echo "unit-tests: skipped (needs a running system): ${names[*]}"
 fi
+# libtest's --skip matches the path as a substring in every binary; the gate's nextest
+# filter also pins the binary, so a same-named test in another binary is left out here too.
+if [ -f "$ROOT/target/unit-tests.deny" ]; then
+  denied=()
+  while IFS= read -r t; do [ -n "$t" ] && skips+=(--skip "$t") && denied+=("$t"); done < "$ROOT/target/unit-tests.deny"
+  [ "${#denied[@]}" -eq 0 ] || echo "unit-tests: left out (test registry deny list): ${denied[*]}"
+fi
 # The round runs this tier with no declared release, config or harness home and no release
 # on PATH (round-vm's unit_cargo: env -i); a test that passes only because the fixture's
 # launcher declared them must fail here too.
