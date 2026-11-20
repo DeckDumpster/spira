@@ -1009,6 +1009,16 @@ _rc=$?
 not0 "dry-run/bad-exec: exits non-zero"    "$_rc"
 want "dry-run/bad-exec: mentions ExecStart" "ExecStart" "$_out"
 
+# A release holding only the retired bin/sentinel is refused: the units start spira-runtime.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$NEW_RELEASE/bin"
+printf '#!/bin/sh\n' > "$RELEASES/$NEW_RELEASE/bin/sentinel"
+chmod +x "$RELEASES/$NEW_RELEASE/bin/sentinel"
+ln -s "$NEW_RELEASE" "$RELEASES/current"
+_out="$(run_deploy -- --dry-run "$NEW_TAG" 2>&1)"
+_rc=$?
+not0 "dry-run/sentinel-only: exits non-zero" "$_rc"
+want "dry-run/sentinel-only: names spira-runtime" "bin/spira-runtime" "$_out"
+
 # Happy path: with an executable bin/spira-runtime in place, dry-run exits 0 and says dry-run.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 mkdir -p "$RELEASES/$NEW_RELEASE/spira" "$RELEASES/$NEW_RELEASE/bin"
