@@ -207,6 +207,23 @@ mod tests {
     }
 
     #[test]
+    fn more_recent_mends_than_the_first_page_are_all_counted() {
+        let clock = runtime::ports::VirtualClock::new(0);
+        let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let s = Store::new(c, 1_000);
+        let now = 400_000;
+        for n in 0..300usize {
+            let mut row = MendingRecord::failed("b", n as u32, "s", now - 100 - n as i64);
+            row.row.state = lifecycle::mending::MendingState::Mending;
+            let key = keys::mending(&row.row.key());
+            s.contract().txn(&Txn::new().put(&key, Object::new(encode(&row).unwrap())), &Request::new(&format!("row-{n}"), "t", "t")).unwrap();
+            s.record_mend(&row.row, &[("sp-many".into(), "f".into(), "t".into())], None, &[], None, "a", now - 100 - n as i64, &Request::new(&format!("mend-{n}"), "t", "t")).unwrap();
+        }
+        let counts = mend_counts(&s, now).unwrap();
+        assert_eq!(counts.iter().find(|r| r["bead"] == "sp-many").map(|r| r["n"].as_str().unwrap().to_string()), Some("300".to_string()));
+    }
+
+    #[test]
     fn a_read_that_fails_then_succeeds_is_retried_and_one_that_never_does_is_not_hidden() {
         let mut n = 0;
         let r = with_retries(4, std::time::Duration::ZERO, || { n += 1; if n < 3 { Err("deadline") } else { Ok(n) } });
