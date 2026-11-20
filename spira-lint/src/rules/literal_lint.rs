@@ -168,6 +168,8 @@ fn exempt(path: &str) -> bool {
         || b == "conf.d.keys.generated.sh"
         || b == "conf.d.defaults.generated.sh"
         || path.ends_with(".md")
+        // Statute seeds are the store's prose, the source of the exempt law/**/*.md pages.
+        || (path.starts_with("spira/statutes/") && path.ends_with(".txt"))
         || (b.starts_with("test-") && b.ends_with(".sh"))
         || path.ends_with(".json")
 }
@@ -260,6 +262,21 @@ mod tests {
         let names = vec!["needs-operator".to_string()];
         assert!(scan(b"# default label is needs-operator\n", &names).is_empty());
         assert!(scan(b"// default label is needs-operator\n", &names).is_empty());
+    }
+
+    #[test]
+    fn statute_seed_prose_is_not_judged_but_other_text_files_are() {
+        let t = crate::testutil::TempDir::new("ll-seed");
+        t.write("spira/statutes/law-x.txt", "label it needs-ryan\n");
+        t.write("spira/other.txt", "label it needs-ryan\n");
+        let tree = Tree::from_paths(
+            t.path(),
+            ["spira/statutes/law-x.txt", "spira/other.txt"],
+            std::iter::empty::<&str>(),
+        );
+        let got = LiteralLint.check(&tree).unwrap();
+        let paths: Vec<&str> = got.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["spira/other.txt"], "{got:?}");
     }
 
     #[test]

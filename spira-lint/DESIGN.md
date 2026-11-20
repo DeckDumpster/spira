@@ -1195,8 +1195,9 @@ ls-files`, the index, because what the next commit ships is what matters).
 
 **Exempt.** `schema.sh` and `conf.sh` by basename (the declaration and the operator-facing
 default assignments); this rule's own source
-(`spira-lint/src/rules/literal_lint.rs`); every `*.md` (prose cannot drift from a declaration
-the way a literal comparison can); every `test-*.sh` by basename (fixture data legitimately
+(`spira-lint/src/rules/literal_lint.rs`); every `*.md` and every `spira/statutes/*.txt` statute seed (prose cannot
+drift from a declaration the way a literal comparison can; the seed is the store's text, the
+source of the `law/` page); every `test-*.sh` by basename (fixture data legitimately
 carries specific label values); every `*.json` (no comment syntax to carry a `literal-ok`
 annotation); a binary file (a NUL byte, or nothing but newlines — PR 331 failed on
 `bin/queue-watch` carrying a default label as a string constant, which has no line to
