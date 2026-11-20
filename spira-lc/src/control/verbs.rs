@@ -170,16 +170,29 @@ const NEWEST_WINDOW_SECS: i64 = 86_400;
 
 /// `audits [--after N] [--limit M]`: the applied and refused bead audits past revision N, oldest
 /// first, each shaped as a `history` row (the revision as `seq`), at most M of them.
-/// `audits --newest`: the `at` of the newest audit in the last day, or null when there is none.
+/// `audits --newest [--window S] [--to-state STATE]`: the `at` of the newest audit within the
+/// window (default a day), or null when there is none. `--to-state` narrows it to applied bead
+/// audits moving into STATE and adds that bead's `lc_key`.
 fn audits<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
-    if args.iter().any(|a| a == "--newest") {
-        let floor = crate::db::now_epoch() - NEWEST_WINDOW_SECS;
-        let mut newest: Option<i64> = None;
-        let complete = store.fold_audits_since(floor, |m| newest = newest.max(Some(m.at))).map_err(|e| format!("audits: {e}"))?;
-        if !complete {
-            return Err("audits: the scan for the newest audit was cut short".into());
+    let newest = args.iter().any(|a| a == "--newest");
+    if !newest && (flag(args, "--to-state").is_some() || flag(args, "--window").is_some()) {
+        return Err("audits: --to-state and --window are valid only with --newest".into());
+    }
+    if newest {
+        let window = number(args, "--window", NEWEST_WINDOW_SECS as u64).map_err(|e| format!("audits: {e}"))?;
+        let floor = crate::db::now_epoch().saturating_sub(window as i64);
+        let to_state = flag(args, "--to-state");
+        let found = match to_state {
+            Some(ref state) => store.newest_audit(floor, |m| m.machine == "bead" && m.applied && m.to_state == state),
+            None => store.newest_audit(floor, |_| true),
         }
-        return Ok(json!({ "newest_at": newest }).to_string());
+        .map_err(|e| format!("audits: {e}"))?;
+        return Ok(match (to_state, found) {
+            (_, None) => json!({ "newest_at": null }),
+            (Some(_), Some((at, key))) => json!({ "newest_at": at, "lc_key": key }),
+            (None, Some((at, _))) => json!({ "newest_at": at }),
+        }
+        .to_string());
     }
     let after = number(args, "--after", 0).map_err(|e| format!("audits: {e}"))?;
     let limit = number(args, "--limit", AUDITS_PAGE).map_err(|e| format!("audits: {e}"))?;

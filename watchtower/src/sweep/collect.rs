@@ -774,25 +774,21 @@ mod tests {
 
     // covers: UC-ops-detection-remediation-26
     #[test]
-    fn the_landing_field_is_the_newest_landed_record_never_a_bead_that_has_not_landed() {
-        let (t, lc) = scripted_by(&[(
-            "list --state LANDED",
-            0,
-            r#"[{"bead_id":"sp-old","since":1000},{"bead_id":"sp-land","since":9400},{"bead_id":"sp-undated"},{"bead_id":"sp-badtime","since":"soon"}]"#,
-        )]);
+    fn the_landing_field_is_the_newest_landed_audit_never_a_bead_that_has_not_landed() {
+        let (t, lc) = scripted_by(&[("audits --newest --to-state LANDED", 0, r#"{"newest_at":9400,"lc_key":"sp-land"}"#)]);
         assert_eq!(landing_field(&lc, 10_000), ("10".to_string(), Some("sp-land".to_string())));
-        assert_eq!(t.seen.lock().unwrap()[0], ["list", "--state", "LANDED", "--limit", "1000"], "only LANDED rows are asked for, a page at a time");
+        assert_eq!(t.seen.lock().unwrap().len(), 1, "one question, not a listing of every landing");
     }
 
     // covers: UC-ops-detection-remediation-26
     #[test]
     fn a_landing_that_cannot_be_read_is_a_question_mark_not_zero() {
         let none = |lc| landing_field(&lc, 10_000);
-        assert_eq!(none(scripted_by(&[("list", 0, "[]")]).1), ("?".to_string(), None), "no landing recorded");
-        assert_eq!(none(scripted_by(&[("list", 0, r#"[{"bead_id":"sp-a"}]"#)]).1), ("?".to_string(), None), "a record with no time is not credited");
-        assert_eq!(none(scripted_by(&[("list", 0, "not json")]).1), ("?".to_string(), None), "a malformed answer");
-        assert_eq!(none(scripted_by(&[("list", 2, "cannot tell")]).1), ("?".to_string(), None), "an unreachable store");
-        assert_eq!(landing_field(&scripted_by(&[("list", 0, r#"[{"bead_id":"sp-now","since":10000}]"#)]).1, 10_000).0, "0", "0 only for a true zero");
+        assert_eq!(none(scripted_by(&[("audits", 0, r#"{"newest_at":null}"#)]).1), ("?".to_string(), None), "no landing recorded");
+        assert_eq!(none(scripted_by(&[("audits", 0, r#"{"newest_at":"soon","lc_key":"sp-a"}"#)]).1), ("?".to_string(), None), "a record with no time is not credited");
+        assert_eq!(none(scripted_by(&[("audits", 0, "not json")]).1), ("?".to_string(), None), "a malformed answer");
+        assert_eq!(none(scripted_by(&[("audits", 2, "cannot tell")]).1), ("?".to_string(), None), "an unreachable store");
+        assert_eq!(landing_field(&scripted_by(&[("audits", 0, r#"{"newest_at":10000,"lc_key":"sp-now"}"#)]).1, 10_000).0, "0", "0 only for a true zero");
     }
 
     // covers: UC-ops-detection-remediation-27

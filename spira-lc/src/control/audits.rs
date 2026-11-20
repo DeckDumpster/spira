@@ -3,7 +3,7 @@
 //! an unfinished scan is never read as "no events".
 
 use serde_json::Value;
-use state_store::{events_key, Backend, Item, Result, EVENTS_PREFIX};
+use state_store::{events_key, Backend, Error, Item, Result, EVENTS_PREFIX};
 
 use super::dwell::branch;
 use super::feed::branch_audits;
@@ -11,7 +11,7 @@ use super::records::Audit;
 use super::store::Store;
 
 /// Revisions read per chunk of the newest-first scan.
-const CHUNK_REVS: u64 = 100;
+pub(super) const CHUNK_REVS: u64 = 100;
 const PAGE: usize = 1_000;
 /// The most `events/` keys one answer reads.
 pub const MAX_SCANNED: usize = 200_000;
@@ -60,8 +60,9 @@ fn move_of(rev: u64, a: &Value) -> Option<Move<'_>> {
 
 impl<B: Backend> Store<B> {
     /// Walks the log newest chunk first, `visit` given each chunk's `events/` items oldest first
-    /// (at most one chunk is held). True when the walk reached `floor` or the start of the log.
-    fn walk_chunks(&self, floor: i64, mut visit: impl FnMut(&[Item])) -> Result<bool> {
+    /// (at most one chunk is held). True when the walk reached `floor` or the start of the log,
+    /// or `visit` answered true to stop.
+    fn walk_chunks(&self, floor: i64, mut visit: impl FnMut(&[Item]) -> bool) -> Result<bool> {
         let head = self.contract().head()?;
         let (mut hi, mut scanned, mut span) = (head, 0usize, CHUNK_REVS);
         while scanned < MAX_SCANNED {
@@ -94,8 +95,7 @@ impl<B: Backend> Store<B> {
                 }
             }
             let oldest = chunk.iter().flat_map(branch).filter_map(|a| a["at"].as_i64()).min();
-            visit(&chunk);
-            if lo == 0 || oldest.is_some_and(|o| o < floor) {
+            if visit(&chunk) || lo == 0 || oldest.is_some_and(|o| o < floor) {
                 return Ok(true);
             }
             span = if oldest.is_some() { CHUNK_REVS } else { (span * 2).min(CHUNK_REVS * 64) };
@@ -115,7 +115,30 @@ impl<B: Backend> Store<B> {
                     }
                 }
             }
+            false
         })
+    }
+
+    /// The largest `(at, lc_key)` among audits with `at >= floor` that `want` accepts, read from
+    /// the newest chunk holding one. `Err` when the walk is cut short; `Ok(None)` when none exists.
+    pub fn newest_audit(&self, floor: i64, want: impl Fn(&Move<'_>) -> bool) -> Result<Option<(i64, String)>> {
+        let mut best: Option<(i64, String)> = None;
+        let done = self.walk_chunks(floor, |chunk| {
+            for item in chunk {
+                for a in branch(item) {
+                    if let Some(m) = move_of(item.mod_rev.main, a).filter(|m| m.at >= floor && want(m)) {
+                        if best.as_ref().is_none_or(|(at, _)| m.at > *at) {
+                            best = Some((m.at, m.lc_key.to_string()));
+                        }
+                    }
+                }
+            }
+            best.is_some()
+        })?;
+        if !done && best.is_none() {
+            return Err(Error::Backend("the scan for the newest audit was cut short".into()));
+        }
+        Ok(best)
     }
 
     /// Every audit the store holds, oldest first: the imported history by its old seq, then each
