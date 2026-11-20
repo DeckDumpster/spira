@@ -55,6 +55,7 @@ impl Committer for GitCommitter {
     fn commit(&self, dir: &Path, paths: &[&str], message: &str) -> Result<(), String> {
         use std::io::Write;
         let git = |args: &[&str]| {
+            // batch-job: local git add/diff/commit in the findings repository, no network
             let mut c = Command::new("git");
             c.arg("-C").arg(dir).args(args).arg("--").args(paths);
             c
