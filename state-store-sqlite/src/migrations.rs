@@ -270,6 +270,22 @@ pub const MIGRATIONS: &[&[&str]] = &[
         "DROP TABLE m7_holds",
         "DROP TABLE m7_newest",
     ],
+    // 8 (sp-hoypai): a fact's `data.kind` and `data.at` as indexed columns, so the facts of a
+    // kind newer than a time are a range of the index and never a read of every fact.
+    &[
+        "ALTER TABLE latest ADD COLUMN fact_kind TEXT GENERATED ALWAYS AS (CASE
+            WHEN key >= CAST('facts/' AS BLOB) AND key < CAST('facts0' AS BLOB)
+             AND json_valid(CAST(value AS TEXT))
+             AND json_type(CAST(value AS TEXT), '$.data.kind') = 'text'
+             AND json_type(CAST(value AS TEXT), '$.data.at') = 'integer'
+            THEN json_extract(CAST(value AS TEXT), '$.data.kind') END) VIRTUAL",
+        "ALTER TABLE latest ADD COLUMN fact_at INTEGER GENERATED ALWAYS AS (CASE
+            WHEN key >= CAST('facts/' AS BLOB) AND key < CAST('facts0' AS BLOB)
+             AND json_valid(CAST(value AS TEXT))
+             AND json_type(CAST(value AS TEXT), '$.data.at') = 'integer'
+            THEN json_extract(CAST(value AS TEXT), '$.data.at') END) VIRTUAL",
+        "CREATE INDEX latest_by_fact ON latest (fact_kind, fact_at, key) WHERE fact_kind IS NOT NULL",
+    ],
 ];
 
 #[cfg(test)]

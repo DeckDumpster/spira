@@ -108,7 +108,7 @@ pub fn read(ids: &[String], kinds: &[String], since: Option<i64>) -> Result<Vec<
 }
 
 pub(crate) fn read_on<B: state_store::Backend>(store: &crate::control::store::Store<B>, ids: &[String], kinds: &[String], since: Option<i64>) -> Result<Vec<Value>, String> {
-    let facts = store.facts(ids).map_err(|e| e.to_string())?;
+    let facts = if ids.is_empty() && !kinds.is_empty() { store.facts_of_kinds(kinds, since) } else { store.facts(ids) }.map_err(|e| e.to_string())?;
     Ok(facts
         .into_iter()
         .filter(|f| kinds.is_empty() || kinds.contains(&f.kind))
@@ -231,6 +231,98 @@ mod tests {
         let rows = read_on(&s, &["sp-a".into()], &[], None).unwrap();
         assert_eq!(rows[0]["new_value"].as_str().unwrap().len(), LONG_MAX);
         assert_eq!(rows[1]["new_value"].as_str().unwrap().len(), READ_MAX);
+    }
+
+    fn counting_store() -> crate::control::store::Store<crate::control::store::counting::Counting> {
+        let c = Contract::open(
+            crate::control::store::counting::Counting::default(),
+            Ports::virtual_clock(&VirtualClock::new(1_000)),
+            Config {
+                min_lock_ttl_ms: 1_000,
+            },
+        )
+        .unwrap();
+        crate::control::store::Store::new(c, 1_000)
+    }
+
+    #[test]
+    fn listing_a_kind_since_a_floor_reads_the_index_and_never_pages_the_facts_prefix() {
+        let s = counting_store();
+        let floor = 5_000;
+        let mut batch = Vec::new();
+        for n in 0..2_000i64 {
+            let (kind, at) = match n {
+                n if n % 100 == 0 && n < 1_500 => ("eject-failure", floor + n + 1),
+                n if n % 100 == 50 && n < 1_000 => ("eject-failure", floor - 1 - n),
+                n => ("claimed", floor + n),
+            };
+            batch.push(fact_of(&format!("sp-{:03}", n % 200), kind, "c", "harness", at));
+        }
+        for chunk in batch.chunks(100) {
+            append_on(&s, chunk).unwrap();
+        }
+        let expect = batch
+            .iter()
+            .filter(|f| f.kind == "eject-failure" && f.at > floor)
+            .count();
+        assert_eq!(expect, 15);
+        s.contract().backend().take();
+        let rows = read_on(&s, &[], &["eject-failure".into()], Some(floor)).unwrap();
+        assert_eq!(rows.len(), expect);
+        let reads = s.contract().backend().take();
+        assert!(
+            !reads.is_empty()
+                && reads.iter().all(|(k, p, limit)| *k == "range_kind_since"
+                    && p.starts_with("facts/")
+                    && *limit <= crate::control::facts::KIND_CHUNK),
+            "{reads:?}"
+        );
+    }
+
+    #[test]
+    fn listing_kinds_answers_what_filtering_every_fact_answers_carried_facts_included() {
+        let s = store();
+        let carried: Vec<Fact> = (0..3)
+            .map(|n| {
+                fact_of(
+                    "sp-b",
+                    if n == 1 { "reclaimed" } else { "requeued" },
+                    "old",
+                    "harness",
+                    5 + n,
+                )
+            })
+            .collect();
+        s.carry_facts("carried-from-lifecycle", &carried, "harness")
+            .unwrap();
+        put(&s, "sp-c", "requeued", "x", 90);
+        put(&s, "sp-b", "reclaimed", "y", 60);
+        put(&s, "sp-a", "eject-failure", "z", 70);
+        put(&s, "sp-b", "requeued", "w", 50);
+        put(&s, "sp-a", "requeued", "v", 20);
+        put(&s, "sp-a", "claimed", "u", 80);
+        put(&s, "sp-a", "eject-failure", "t", 10);
+        for (kinds, since) in [
+            (vec!["requeued", "reclaimed"], Some(5)),
+            (vec!["requeued", "reclaimed"], None),
+            (vec!["eject-failure"], None),
+            (vec!["eject-failure"], Some(10)),
+            (vec!["requeued", "requeued"], Some(i64::MAX)),
+        ] {
+            let kinds: Vec<String> = kinds.into_iter().map(String::from).collect();
+            let old: Vec<Fact> = s
+                .facts(&[])
+                .unwrap()
+                .into_iter()
+                .filter(|f| kinds.contains(&f.kind) && since.is_none_or(|t| f.at > t))
+                .collect();
+            let want: Vec<Value> = old.iter().map(|f| serde_json::json!({ "issue_id": f.bead, "event_type": f.kind, "new_value": f.cause, "actor": f.actor, "at": f.at.to_string() })).collect();
+            assert_eq!(
+                read_on(&s, &[], &kinds, since).unwrap(),
+                want,
+                "{kinds:?} {since:?}"
+            );
+        }
     }
 
     // covers: UC-ops-detection-remediation-12

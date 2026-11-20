@@ -753,6 +753,25 @@ impl<B: Backend> Contract<B> {
             .collect()
     }
 
+    /// The items under `prefix` of `data.kind` `kind` with `data.at` above `since`, ascending by
+    /// `(at, key)` strictly after `after`, at most `limit`, read through the backend's
+    /// `(kind, at)` index.
+    pub fn range_kind_since(
+        &self,
+        prefix: &str,
+        kind: &str,
+        since: i64,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<Item>> {
+        self.backend
+            .range_kind_since(prefix, kind, since, after, limit, at)?
+            .into_iter()
+            .map(|(k, v)| item(k, v).map(|i| self.with_expiry(i)))
+            .collect()
+    }
+
     /// `Conflict` if the key holds a different value; an equal value is success, writing nothing.
     pub fn create(&self, key: &str, value: Object, req: &Request) -> Result<Created> {
         let t = Txn::new()
