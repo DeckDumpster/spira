@@ -69,6 +69,9 @@ fn concierge_prompt_names_only_paths_the_release_ships() {
 fn the_check_resolves_a_shipped_bin_and_refuses_a_missing_cockpit_script() {
     let root = repo_root();
     assert!(unresolved("{{SPIRA_HOME}}/../bin/reply x", &root).is_empty());
+    assert!(unresolved("{{COCKPIT}}/panel-run.sh", &root).is_empty());
+    assert!(unresolved("{{SPIRA_HOME}}/capacity.sh", &root).is_empty());
+    assert!(unresolved("{{SPIRA_HOME}}/../bin/world.sh status", &root).is_empty());
     assert_eq!(
         unresolved("ok\n{{COCKPIT}}/no-such.sh", &root),
         vec!["concierge.md:2: {{COCKPIT}}/no-such.sh names nothing the release ships".to_string()]
