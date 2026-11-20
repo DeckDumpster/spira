@@ -122,18 +122,28 @@ pub fn rerun_scope(failed: &[String], graph: Option<&PackageGraph>) -> Vec<Strin
 
 /// The failing-test lines of a unit phase's output: `<STATUS> <binary> <test>`, once each, in order.
 pub fn failing_lines(out: &str) -> Vec<String> {
-    const STATUS: [&str; 5] = ["FAIL", "TIMEOUT", "LEAK-FAIL", "EXEC-FAIL", "SIGSEGV"];
     let mut lines: Vec<String> = vec![];
     for l in out.lines() {
-        let w: Vec<&str> = l.split_whitespace().collect();
-        let ok = w.len() == 3
-            && (STATUS.contains(&w[0]) || w[0].starts_with("SIG"))
-            && w[0].chars().all(|c| c.is_ascii_uppercase() || c == '-');
-        if ok && !lines.iter().any(|x| x == &w.join(" ")) {
-            lines.push(w.join(" "));
+        if let Some(w) = failing_words(l) {
+            let line = w.join(" ");
+            if !lines.contains(&line) {
+                lines.push(line);
+            }
         }
     }
     lines
+}
+
+/// The `[status, binary, test]` words of a failing-test line, `None` for any other line.
+pub fn failing_words(line: &str) -> Option<[&str; 3]> {
+    const STATUS: [&str; 5] = ["FAIL", "TIMEOUT", "LEAK-FAIL", "EXEC-FAIL", "SIGSEGV"];
+    let mut w = line.split_whitespace();
+    let (Some(s), Some(b), Some(t), None) = (w.next(), w.next(), w.next(), w.next()) else {
+        return None;
+    };
+    let ok = (STATUS.contains(&s) || s.starts_with("SIG"))
+        && s.chars().all(|c| c.is_ascii_uppercase() || c == '-');
+    ok.then_some([s, b, t])
 }
 
 /// Each member whose diff touches one of `packages`, a package one of them depends on, or a file
