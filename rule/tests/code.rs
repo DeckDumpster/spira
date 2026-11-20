@@ -368,17 +368,21 @@ fn law_branches_names_the_tip_and_what_it_carries() {
 #[test]
 fn a_branch_adding_a_slug_neither_the_base_nor_the_tip_holds_is_unreconciled() {
     use rule::code::LawBranch;
-    let _env = author_env();
     let repo = law_repo();
     let p = repo.path();
+    let env = author_env();
     let wt_root = testkit::TempDir::new("rule-unrec-wt");
     let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
     let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
-    testkit::git(p, &["checkout", "-q", "-b", "law/stray", "main"]);
-    let stray = append(&parse_toc(TOC).unwrap(), 1, "law-nine").unwrap();
-    std::fs::write(p.join("law/toc.toml"), rule::code::render_toc(&stray)).unwrap();
-    testkit::git(p, &["commit", "-q", "-am", "stray"]);
-    testkit::git(p, &["checkout", "-q", "main"]);
+    drop(env);
+    {
+        let _old = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t")), ("GIT_COMMITTER_DATE", Some("2001-01-01T00:00:00Z"))]);
+        testkit::git(p, &["checkout", "-q", "-b", "law/stray", "main"]);
+        let stray = append(&parse_toc(TOC).unwrap(), 1, "law-nine").unwrap();
+        std::fs::write(p.join("law/toc.toml"), rule::code::render_toc(&stray)).unwrap();
+        testkit::git(p, &["commit", "-q", "-am", "stray"]);
+        testkit::git(p, &["checkout", "-q", "main"]);
+    }
     let got: std::collections::BTreeMap<_, _> = rule::code::law_branches(p, "main").into_iter().collect();
     assert_eq!(got[&branch], LawBranch::Tip);
     assert_eq!(got["law/stray"], LawBranch::Unreconciled);

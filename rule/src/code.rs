@@ -633,7 +633,8 @@ fn in_book(repo_path: &Path, r: &str, held: Option<&(Vec<Part>, Pointers)>) -> b
             Ok(p) => p,
             Err(_) => return false,
         },
-        Err(_) => Pointers::default(),
+        Err(_) if git_in(repo_path, &["cat-file", "-e", &format!("{r}:law/{POINTERS_FILE}")]).is_err() => Pointers::default(),
+        Err(_) => return false,
     };
     theirs.iter().all(|p| p.slugs.iter().all(|s| toc.iter().any(|b| b.slugs.contains(s))))
         && their_pointers.moved.iter().all(|m| pointers.moved.contains(m))
