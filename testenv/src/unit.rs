@@ -215,6 +215,16 @@ pub fn write_named(tree: &Path, named: &[String], tests: Option<&[String]>) -> R
     write_picked(tree, &meta, picked)
 }
 
+/// For a diff that touches no crate: every workspace member whose own sources name one of
+/// `tests`.
+pub fn write_holding(tree: &Path, tests: &[String]) -> Result<Picked, String> {
+    let meta = workspace_metadata(tree)?;
+    let members = gate::compose::parse_metadata(&meta)?;
+    let all: Vec<String> = members.iter().map(|m| m.name.clone()).collect();
+    let crates = holding(tree, &members, &all, tests);
+    write_picked(tree, &meta, Picked { affected: all, crates })
+}
+
 fn write_picked(tree: &Path, meta: &str, picked: Picked) -> Result<Picked, String> {
     let crates = &picked.crates;
     let path = crates_path(tree);
@@ -434,6 +444,24 @@ mod tests {
         assert_eq!(std::fs::read_to_string(crates_path(tree)).unwrap(), "mail\nqueue\n");
         let e = write_named(tree, &["nosuch".to_string()], None).unwrap_err();
         assert!(e.contains("nosuch"), "{e}");
+    }
+
+    #[test]
+    fn write_holding_writes_the_members_whose_sources_name_the_test() {
+        let t = testkit::TempDir::new("testenv-unit-holding");
+        let tree = t.path();
+        std::fs::write(tree.join("Cargo.toml"), "[workspace]\nresolver = \"2\"\nmembers = [\"a\", \"b\"]\n").unwrap();
+        for m in ["a", "b"] {
+            std::fs::create_dir_all(tree.join(m).join("src")).unwrap();
+            std::fs::write(tree.join(m).join("Cargo.toml"), format!("[package]\nname = \"{m}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")).unwrap();
+            std::fs::write(tree.join(m).join("src/lib.rs"), if m == "b" { "#[test] fn only_in_b() {}" } else { "" }).unwrap();
+        }
+        let p = write_holding(tree, &["only_in_b".to_string()]).unwrap();
+        assert_eq!(p.crates, ["b"]);
+        assert_eq!(std::fs::read_to_string(crates_path(tree)).unwrap(), "b\n");
+        let p = write_holding(tree, &["nowhere".to_string()]).unwrap();
+        assert!(p.crates.is_empty());
+        assert_eq!(std::fs::read_to_string(crates_path(tree)).unwrap(), "");
     }
 
     #[test]
