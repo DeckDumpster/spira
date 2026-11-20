@@ -411,6 +411,10 @@ lc_slow_verb_deadlines = "ops-view=3000@sp-7k53jt,list=3000@sp-49d6su,content=30
 runtime_cr_comments_hot_secs = 30
 runtime_cr_comments_cold_secs = 300
 runtime_cr_comments_window_secs = 900
+cr_tz = ""
+cr_open_hour = ""
+cr_stale_days = 7
+runtime_cr_cadence_secs = 300
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

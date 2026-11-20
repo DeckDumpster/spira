@@ -1,5 +1,0 @@
-[spira]
-cr_tz = ""
-cr_open_hour = ""
-cr_stale_days = 7
-runtime_cr_cadence_secs = 300
