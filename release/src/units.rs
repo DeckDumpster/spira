@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// One installed unit and the template it is rendered from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -346,6 +346,27 @@ fn reason_of(text: &str, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The file a service's own output is appended to: `StandardError=append:` else
+/// `StandardOutput=append:`, in `[Service]`.
+pub fn own_log(unit_text: &str) -> Option<PathBuf> {
+    let mut in_service = false;
+    let (mut err, mut out) = (None, None);
+    for l in unit_text.lines().map(str::trim) {
+        if l.starts_with('[') {
+            in_service = l.eq_ignore_ascii_case("[Service]");
+            continue;
+        }
+        let Some((k, v)) = l.split_once('=').filter(|_| in_service) else { continue };
+        let path = v.trim().strip_prefix("append:").map(str::trim).filter(|p| !p.is_empty());
+        match (k.trim(), path) {
+            ("StandardError", Some(p)) => err = Some(PathBuf::from(p)),
+            ("StandardOutput", Some(p)) => out = Some(PathBuf::from(p)),
+            _ => {}
+        }
+    }
+    err.or(out)
+}
+
 /// A service whose `Exec*=` lines differ between two renderings.
 pub fn exec_changed(old: &str, new: &str) -> bool {
     exec_lines(old) != exec_lines(new)
@@ -462,4 +483,21 @@ pub fn path_shadows(unit_dir: &Path, rel: &Path, releases: &Path) -> Vec<String>
         }
     }
     out
+}
+
+#[cfg(test)]
+mod own_log_tests {
+    use super::own_log;
+    use std::path::PathBuf;
+
+    #[test]
+    fn own_log_reads_the_append_path_from_either_directive_and_none_from_the_journal() {
+        let p = |s: &str| Some(PathBuf::from(s));
+        assert_eq!(own_log("[Service]\nStandardError=append:r/a.log\n"), p("r/a.log"));
+        assert_eq!(own_log("[Service]\nStandardOutput=append:r/o.log\n"), p("r/o.log"));
+        assert_eq!(own_log("[Service]\nStandardOutput=append:r/o.log\nStandardError=append:r/e.log\n"), p("r/e.log"));
+        assert_eq!(own_log("[Service]\nStandardError=journal\nStandardOutput=journal\n"), None);
+        assert_eq!(own_log("[Unit]\nStandardError=append:r/a.log\n"), None);
+        assert_eq!(own_log("[Service]\nExecStart=/bin/true\n"), None);
+    }
 }
