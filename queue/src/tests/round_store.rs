@@ -827,3 +827,24 @@ fn status_of_a_certifying_round_shows_no_attribution_lines() {
         "{s}"
     );
 }
+
+#[test]
+fn status_prefixes_a_later_attributing_round_and_shows_why_and_open_ceiling() {
+    let t = store_world();
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    d.put_round("spira", "spira-second", "ATTRIBUTING", &[("sp-b", "tb")], 50);
+    t.lc.batch_progress.borrow_mut().insert(
+        "spira-second".into(),
+        serde_json::json!({"attribution":{"target":"t.sh","probes":2,"suspects":["x"],
+            "last":{"job":"b2","build":"suites","members":["x"],"verdict":"error","why":"vm lost"}}}),
+    );
+    let s = status(&t);
+    for l in [
+        "round2_attribution_target=t.sh",
+        "round2_attribution_probes=2",
+        "round2_attribution_suspects=x",
+        "round2_attribution_last=b2 suites on x → error: vm lost",
+    ] {
+        assert!(s.lines().any(|x| x == l), "missing {l}: {s}");
+    }
+}
