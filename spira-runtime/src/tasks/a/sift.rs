@@ -46,7 +46,7 @@
 //! `Probe` and a recording `Acts`. It is already pure behind its three traits; the port is two
 //! adapters, not a rewrite.
 //!
-//! - **Pool** (`rs:292-305`, `353-390`): unheld pool rows at their live branch tip, with a content
+//! - **Pool** (`rs:292-305`, `353-390`): pool rows not held other than manual, at their live branch tip, with a content
 //!   row, not ejected at the tip, not stacked (transitively) on a barred bead (`rs:462-478`).
 //! - **Verdict per candidate**: duplicate patch-id → supersede (keeper prefers an open-round member,
 //!   `sl:158-170`); conflict, a stacked-on bead in REWORK, a target gap, an identity gap → findings

@@ -1,4 +1,4 @@
-//! The Sift's reads over every queue repository. Each unheld SUBMITTED or
+//! The Sift's reads over every queue repository. Each SUBMITTED or
 //! CERTIFIED bead whose recorded tip is still its branch's live tip is screened by the `sift`
 //! crate: its pass is recorded on the lifecycle store, or it is sent back, superseded or held
 //! out. On one pool its verdicts are `batcher sifts`'s, line for line.
@@ -110,14 +110,16 @@ fn in_pool_states(r: &Value) -> bool {
     matches!(str_of(r, "state"), Some("CERTIFIED" | "SUBMITTED"))
 }
 
-fn holds_empty(r: &Value) -> bool {
+/// Any hold but manual keeps a bead out of the screen; an unreadable `holds` fails closed.
+fn holds_block_screen(r: &Value) -> bool {
+    let blocks = |a: &[Value]| {
+        a.iter().any(|h| h.as_str().and_then(|h| spira_store::lc_state::hold_kind(h)).map(|k| k.as_str()) != Some("manual"))
+    };
     match r.get("holds") {
-        None | Some(Value::Null) => true,
-        Some(Value::Array(a)) => a.is_empty(),
-        Some(Value::String(t)) => serde_json::from_str::<Vec<Value>>(t)
-            .map(|a| a.is_empty())
-            .unwrap_or(false),
-        Some(_) => false,
+        None | Some(Value::Null) => false,
+        Some(Value::Array(a)) => blocks(a),
+        Some(Value::String(t)) => serde_json::from_str::<Vec<Value>>(t).map(|a| blocks(&a)).unwrap_or(true),
+        Some(_) => true,
     }
 }
 
@@ -125,11 +127,11 @@ fn ejected_at_tip(r: &Value) -> bool {
     str_of(r, "ejected_red_tip").is_some() && r.get("ejected_red_tip") == r.get("tip")
 }
 
-/// `(id, tip)` of every unheld pool row not ejected at its tip, by id.
+/// `(id, tip)` of every pool row not held other than manual, not ejected at its tip, by id.
 fn read_pool(rows: &[Value]) -> Vec<(String, String)> {
     let mut pool: Vec<(String, String)> = rows
         .iter()
-        .filter(|r| in_pool_states(r) && holds_empty(r))
+        .filter(|r| in_pool_states(r) && !holds_block_screen(r))
         .filter_map(|r| {
             let id = str_of(r, "bead_id")?.to_string();
             let tip = str_of(r, "tip").unwrap_or("none").to_string();
@@ -173,12 +175,12 @@ struct Member {
     stacked_on: Vec<String>,
 }
 
-/// The ids of the unheld pool rows whose recorded tip is their branch's live tip.
+/// The ids of the pool rows not held other than manual, whose recorded tip is their branch's live tip.
 fn at_live_tips(rows: &[Value], branches: &BTreeMap<String, String>) -> Vec<String> {
     read_pool(rows).into_iter().filter(|(id, tip)| branches.get(id) == Some(tip)).map(|(id, _)| id).collect()
 }
 
-/// The pool, pure: of the unheld `rows` not ejected at their tip, those at their branch's live
+/// The pool, pure: of the `rows` not held other than manual, not ejected at their tip, those at their branch's live
 /// tip with a content row (`shown`), less every member stacked (by `stacks`, its unfinished
 /// prerequisites) on a bead held or ejected at its tip in `rows` or `outside`, on one whose tip
 /// moved, or on a member dropped for that reason.
@@ -186,7 +188,7 @@ pub fn select_pool(rows: &[Value], outside: &[Value], branches: &BTreeMap<String
     let (current, moved): (Vec<_>, Vec<_>) = read_pool(rows).into_iter().partition(|(id, tip)| branches.get(id) == Some(tip));
     let mut barred: BTreeSet<String> = moved.into_iter().map(|(id, _)| id).collect();
     let members: Vec<Member> = current.into_iter().filter(|(id, _)| shown.contains(id)).map(|(id, tip)| Member { stacked_on: stacks.get(&id).cloned().unwrap_or_default(), id, tip }).collect();
-    barred.extend(rows.iter().chain(outside).filter(|r| !holds_empty(r) || ejected_at_tip(r)).filter_map(|r| str_of(r, "bead_id").map(str::to_string)));
+    barred.extend(rows.iter().chain(outside).filter(|r| holds_block_screen(r) || ejected_at_tip(r)).filter_map(|r| str_of(r, "bead_id").map(str::to_string)));
     drop_stacked_on_barred(members, barred).into_iter().map(|m| Candidate { id: m.id, tip: m.tip }).collect()
 }
 
@@ -633,6 +635,18 @@ pub fn lc_note(lc: &LcClient, id: &str, text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_row_held_only_manual_is_screened_and_any_other_hold_keeps_it_out() {
+        let row = |holds: serde_json::Value| serde_json::json!({"bead_id": "sp-a", "state": "SUBMITTED", "tip": "t1", "holds": holds});
+        let branches = BTreeMap::from([("sp-a".to_string(), "t1".to_string())]);
+        let shown = BTreeSet::from(["sp-a".to_string()]);
+        let pool = |holds| select_pool(&[row(holds)], &[], &branches, &shown, &BTreeMap::new()).len();
+        assert_eq!(pool(serde_json::json!([])), 1);
+        assert_eq!(pool(serde_json::json!(["manual"])), 1);
+        assert_eq!(pool(serde_json::json!(["wait"])), 0);
+        assert_eq!(pool(serde_json::json!(["manual", "wait"])), 0);
+    }
 
     struct NeverCalled;
 
