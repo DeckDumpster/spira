@@ -94,6 +94,9 @@ fn text_arg<'a>(arg: Option<&'a String>, what: &str) -> Result<&'a str, String> 
 fn schedule_row(row: &Value) -> Result<ScheduleRow, String> {
     let kind = row.get("kind").ok_or("journal: row has no kind")?;
     check_widths("schedule", "row_id", row)?;
+    if field(row, "id")?.is_empty() {
+        return Err(format!("journal: schedule refused: row_id is empty; {}", describe(row)));
+    }
     Ok(ScheduleRow {
         id: field(row, "id")?.to_string(),
         at: number(row, "at")?,
@@ -199,6 +202,15 @@ fn run<B: state_store::Backend>(args: &[String], store: &crate::control::store::
             let rows = store.journal_due(now).map_err(cannot)?;
             Ok(Value::Array(rows.iter().map(row_of).collect()).to_string())
         }
+        "sweep" => {
+            let dry_run = match a(1).map(String::as_str) {
+                None => false,
+                Some("--dry-run") if args.len() == 2 => true,
+                _ => return Err("journal: sweep takes only --dry-run".into()),
+            };
+            let s = store.journal_sweep(dry_run, "journal-sweep").map_err(cannot)?;
+            Ok(json!({ "dry_run": dry_run, "idless_schedules": s.idless_schedules, "orphan_resolved": s.orphan_resolved, "indexed_schedules": s.indexed_schedules, "indexed_effects": s.indexed_effects }).to_string())
+        }
         "poison" => {
             let p = parse(a(1), "poison")?;
             let (stream, event, handler) = (field(&p, "stream")?, field(&p, "event")?, field(&p, "handler")?);
@@ -214,7 +226,7 @@ fn run<B: state_store::Backend>(args: &[String], store: &crate::control::store::
             let row = store.journal_poisoned(stream).map_err(cannot)?;
             Ok(row.map_or("null".into(), |r| json!({ "stream": r.stream, "event": r.event, "handler": r.handler, "message": r.message }).to_string()))
         }
-        _ => Err(format!("journal: unknown op {op:?} (turn|state|open-effects|due|poison|poisoned)")),
+        _ => Err(format!("journal: unknown op {op:?} (turn|state|open-effects|due|poison|poisoned|sweep)")),
     }
 }
 
@@ -245,7 +257,7 @@ mod tests {
         crate::control::store::Store::new(c, 1_000)
     }
 
-    fn call(s: &crate::control::store::Store<MemBackend>, argv: &[&str]) -> (i32, String) {
+    fn call<B: state_store::Backend>(s: &crate::control::store::Store<B>, argv: &[&str]) -> (i32, String) {
         answer(run(&argv.iter().map(|a| a.to_string()).collect::<Vec<_>>(), s))
     }
 
@@ -332,6 +344,151 @@ mod tests {
         call(&s, &["turn", &json!({"fired": ["r9"]}).to_string()]);
         call(&s, &["turn", &json!({"schedules": [sched("r9", 1)]}).to_string()]);
         assert_eq!(serde_json::from_str::<Value>(&call(&s, &["due"]).1).unwrap().as_array().unwrap().len(), 1);
+    }
+
+    fn shared_store() -> (crate::control::store::Store<MemBackend>, Contract<MemBackend>) {
+        let backend = MemBackend::new();
+        let ports = || Ports::virtual_clock(&VirtualClock::new(1_000));
+        let raw = Contract::open(backend.clone(), ports(), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let c = Contract::open(backend, ports(), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        (crate::control::store::Store::new(c, 1_000), raw)
+    }
+
+    fn put_raw(raw: &Contract<MemBackend>, key: &str, v: Value) {
+        let t = state_store::Txn::new().put(key, state_store::Object::new(v));
+        assert!(raw.txn(&t, &state_store::Request::new(&format!("raw-{key}"), "test", "raw")).unwrap().succeeded);
+    }
+
+    fn parsed<B: state_store::Backend>(s: &crate::control::store::Store<B>, argv: &[&str]) -> Value {
+        let (code, out) = call(s, argv);
+        assert_eq!(code, 0, "{out}");
+        serde_json::from_str(&out).unwrap()
+    }
+
+    #[test]
+    fn a_schedule_row_stored_without_an_id_is_not_due() {
+        let (s, raw) = shared_store();
+        put_raw(&raw, &crate::control::keys::runtime("schedule", &["carried"]), json!({"at": 0, "stream": "s", "tag": "", "body": "", "correlation": ""}));
+        call(&s, &["turn", &json!({"schedules": [sched("r1", 4)]}).to_string()]);
+        let due = parsed(&s, &["due"]);
+        assert_eq!(due.as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap()).collect::<Vec<_>>(), ["r1"]);
+        parsed(&s, &["sweep"]);
+        assert_eq!(parsed(&s, &["due"]).as_array().unwrap().len(), 1, "still so once the store is indexed");
+    }
+
+    #[test]
+    fn a_schedule_row_with_an_empty_id_is_refused_by_a_turn_and_by_a_carry_naming_the_row() {
+        let (code, msg) = call(&store(), &["turn", &json!({"schedules": [sched("", 4)]}).to_string()]);
+        assert!(code == REFUSED && msg.contains("row_id is empty") && msg.contains("kind=tick") && msg.contains("stream=s"), "{msg}");
+        let row = crate::control::journal::ScheduleRow { id: String::new(), at: 9, stream: "s".into(), tag: "tick".into(), body: String::new(), cause: None, correlation: String::new() };
+        let carried = crate::control::journal::Carried { schedules: vec![(row, false)], ..Default::default() };
+        let err = store().journal_carry(&carried, "test").unwrap_err().to_string();
+        assert!(err.contains("empty id") && err.contains("stream=s") && err.contains("kind=tick"), "{err}");
+    }
+
+    #[derive(Clone)]
+    struct Counting(MemBackend, std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Counting {
+        fn spent(&self, n: usize) {
+            self.1.fetch_add(n, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl state_store::Backend for Counting {
+        fn head(&self) -> state_store::Result<u64> {
+            self.0.head()
+        }
+        fn get(&self, key: &str, at: u64) -> state_store::Result<Option<state_store::Version>> {
+            self.spent(1);
+            self.0.get(key, at)
+        }
+        fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
+            let rows = self.0.range(prefix, after, limit, at)?;
+            self.spent(rows.len());
+            Ok(rows)
+        }
+        fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
+            self.0.owned_by(owner, after, limit, at)
+        }
+        fn due(&self, now: u64, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
+            self.0.due(now, limit, at)
+        }
+        fn commit(&self, expect: u64, batch: &[state_store::Write]) -> state_store::Result<u64> {
+            self.0.commit(expect, batch)
+        }
+        fn log(&self, from: u64, max_mains: usize) -> state_store::Result<Vec<state_store::LogEntry>> {
+            self.0.log(from, max_mains)
+        }
+        fn compact(&self, rev: u64) -> state_store::Result<()> {
+            self.0.compact(rev)
+        }
+    }
+
+    #[test]
+    fn the_boot_reads_ask_the_backend_for_the_rows_they_return_not_for_every_row_ever_written() {
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let backend = Counting(MemBackend::new(), counter.clone());
+        let c = Contract::open(backend.clone(), Ports::virtual_clock(&VirtualClock::new(1_000)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let s = crate::control::store::Store::new(c, 1_000);
+        let n = 1_000;
+        for chunk in 0..n / 100 {
+            let effects: Vec<Value> = (0..100).map(|i| {
+                let mut e = effect();
+                e["ekey"] = json!(format!("k{chunk}-{i}"));
+                e["request_id"] = json!(format!("done{chunk}-{i}"));
+                e
+            }).collect();
+            let scheds: Vec<Value> = (0..100).map(|i| sched(&format!("old{chunk}-{i}"), 1)).collect();
+            let ids: Vec<String> = (0..100).map(|i| format!("{chunk}-{i}")).collect();
+            let resolved: Vec<String> = ids.iter().map(|i| format!("done{i}")).collect();
+            let fired: Vec<String> = ids.iter().map(|i| format!("old{i}")).collect();
+            call(&s, &["turn", &json!({"effects": effects, "schedules": scheds}).to_string()]);
+            call(&s, &["turn", &json!({"resolved": resolved, "fired": fired}).to_string()]);
+        }
+        call(&s, &["turn", &json!({"effects": [effect()], "schedules": [sched("live", 4)]}).to_string()]);
+        parsed(&s, &["sweep"]);
+        for argv in [&["open-effects"][..], &["due"][..]] {
+            counter.store(0, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(parsed(&s, argv).as_array().unwrap().len(), 1);
+            let asked = counter.load(std::sync::atomic::Ordering::SeqCst);
+            assert!(asked <= 8, "{argv:?} asked the backend for {asked} keys");
+        }
+    }
+
+    #[test]
+    fn an_index_key_left_for_a_row_that_closed_meanwhile_does_not_reopen_it() {
+        let (s, raw) = shared_store();
+        call(&s, &["turn", &json!({"effects": [effect()], "schedules": [sched("r1", 4)]}).to_string()]);
+        parsed(&s, &["sweep"]);
+        call(&s, &["turn", &json!({"resolved": ["r1"], "fired": ["r1"]}).to_string()]);
+        put_raw(&raw, &crate::control::keys::runtime("pending", &["r1"]), json!({"id": "r1"}));
+        put_raw(&raw, &crate::control::keys::runtime("open-effect", &["r1"]), json!({"task": "t", "ekey": "k'1/x"}));
+        assert_eq!((call(&s, &["due"]).1, call(&s, &["open-effects"]).1), ("[]".to_string(), "[]".to_string()));
+    }
+
+    #[test]
+    fn the_sweep_dry_run_counts_what_it_would_remove_and_the_sweep_removes_exactly_that() {
+        let (s, raw) = shared_store();
+        let mut resolved_effect = effect();
+        resolved_effect["request_id"] = json!("gone");
+        resolved_effect["ekey"] = json!("other");
+        call(&s, &["turn", &json!({"effects": [effect(), resolved_effect], "schedules": [sched("r1", 4), sched("r2", 5)]}).to_string()]);
+        call(&s, &["turn", &json!({"resolved": ["gone", "ghost"], "fired": ["r2"]}).to_string()]);
+        for n in 0..3 {
+            put_raw(&raw, &crate::control::keys::runtime("schedule", &[&format!("carried{n}")]), json!({"at": 0, "stream": "s"}));
+        }
+        let (open_before, due_before) = (parsed(&s, &["open-effects"]), parsed(&s, &["due"]));
+        let key_count = |table: &str| raw.list(&[crate::control::keys::runtime_table(table).as_str()], &state_store::Selector::Everything).unwrap().0.len();
+        let before = (key_count("schedule"), key_count("resolved"));
+        let dry = parsed(&s, &["sweep", "--dry-run"]);
+        assert_eq!((dry["idless_schedules"].clone(), dry["orphan_resolved"].clone()), (json!(3), json!(1)), "{dry}");
+        assert_eq!((key_count("schedule"), key_count("resolved")), before, "a dry run removes nothing");
+        assert_eq!(key_count("pending"), 1, "a dry run writes no index");
+        let done = parsed(&s, &["sweep"]);
+        assert_eq!((done["idless_schedules"].clone(), done["orphan_resolved"].clone(), done["indexed_schedules"].clone(), done["indexed_effects"].clone()), (json!(3), json!(1), json!(1), json!(1)), "{done}");
+        assert_eq!((key_count("schedule"), key_count("resolved")), (before.0 - 3, before.1 - 1));
+        assert_eq!((parsed(&s, &["open-effects"]), parsed(&s, &["due"])), (open_before, due_before), "every legitimate row reads as it did");
     }
 
     #[test]
