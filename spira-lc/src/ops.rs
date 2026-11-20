@@ -1004,6 +1004,30 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_list_page_reads_only_lifecycle_rows() {
+        use crate::control::{claimable, keys, state};
+        use crate::counting::Counting;
+        let (store, now, _dir) = with_records_on(Counting::new, 4_000);
+        store.contract().backend().take();
+        let page = |argv: &[&str]| -> (i32, String, Vec<(&'static str, String, usize)>) {
+            store.contract().backend().take();
+            let argv: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
+            let (rc, out) = state::run(&store, &argv, &state::Call { now, request: "r", inputs: &claimable::FIXED });
+            let reads = store.contract().backend().take();
+            (rc, out, reads)
+        };
+        let (rc, out, reads) = page(&["list", "--bare", "--limit", "1000"]);
+        assert_eq!(rc, 0, "{out}");
+        assert_eq!(serde_json::from_str::<Value>(&out).unwrap().as_array().map(|a| a.len()), Some(1_000), "{out:.200}");
+        let off: Vec<_> = reads.iter().filter(|(_, key, _)| !key.trim_start_matches("locks/").starts_with(keys::LIFECYCLE)).collect();
+        assert!(off.is_empty(), "a bare page read beyond the lifecycle rows: {off:?}");
+
+        let (rc, out, reads) = page(&["list", "--limit", "1000"]);
+        assert_eq!(rc, 0, "{out:.200}");
+        assert!(reads.iter().any(|(_, key, _)| key.starts_with(keys::READINESS)), "the full page did not read readiness, so the bare page proves nothing");
+    }
+
+    #[test]
     fn the_edges_view_reads_neither_the_audit_log_nor_the_history() {
         use crate::counting::Counting;
         let (store, now, _dir) = with_records_on(Counting::new, 8_000);
