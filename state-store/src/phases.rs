@@ -46,6 +46,9 @@ struct Inner {
     count: [u64; PHASES],
     commits: Vec<Duration>,
     open: Vec<Phase>,
+    read_max: Duration,
+    reads_ended: u64,
+    reads_overran: u64,
 }
 
 /// What a request recorded; shared between the worker thread and the one that answers.
@@ -61,6 +64,12 @@ pub struct Snapshot {
     pub commits_us: Vec<u64>,
     /// SQLite read transactions.
     pub reads: u64,
+    /// The longest single read transaction, in microseconds.
+    pub read_max_us: u64,
+    /// Reads stopped while running for outliving `max_read_ms`.
+    pub reads_ended: u64,
+    /// Reads that returned past `max_read_ms` without being stopped in time; expected 0.
+    pub reads_overran: u64,
     /// The innermost phase still running.
     pub open: Option<&'static str>,
 }
@@ -89,6 +98,9 @@ impl Recorder {
                 .collect(),
             commits_us: g.commits.iter().map(|d| d.as_micros() as u64).collect(),
             reads: g.count[Phase::Read as usize],
+            read_max_us: g.read_max.as_micros() as u64,
+            reads_ended: g.reads_ended,
+            reads_overran: g.reads_overran,
             open: g.open.last().map(|p| p.name()),
         }
     }
@@ -222,6 +234,29 @@ pub fn time<T>(phase: Phase, f: impl FnOnce() -> T) -> T {
     f()
 }
 
+/// How a read transaction finished against `max_read_ms`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadEnd {
+    Finished,
+    /// Stopped while running.
+    Ended,
+    /// Returned past the limit and was ended by the final check.
+    Overran,
+}
+
+/// Records one read transaction's own duration and how it ended; nothing when no recorder is installed.
+pub fn record_read(took: Duration, end: ReadEnd) {
+    if let Some(rec) = current() {
+        let mut g = rec.inner();
+        g.read_max = g.read_max.max(took);
+        match end {
+            ReadEnd::Finished => {}
+            ReadEnd::Ended => g.reads_ended += 1,
+            ReadEnd::Overran => g.reads_overran += 1,
+        }
+    }
+}
+
 /// How many commits the installed recorder holds; 0 when none is installed.
 fn commits() -> usize {
     current().map_or(0, |r| r.inner().commits.len())
@@ -314,5 +349,27 @@ mod tests {
         untrack();
         assert!(out.is_err());
         assert_eq!(rec.snapshot().commits_us.len(), 0);
+    }
+
+    #[test]
+    fn the_longest_single_read_is_kept_beside_the_sum() {
+        let rec = Arc::new(Recorder::default());
+        let _t = track_scoped(rec.clone());
+        for us in [30, 70] {
+            let d = Duration::from_micros(us);
+            rec.add(Phase::Read, d);
+            record_read(d, ReadEnd::Finished);
+        }
+        record_read(Duration::from_micros(5), ReadEnd::Ended);
+        record_read(Duration::from_micros(5), ReadEnd::Overran);
+        let s = rec.snapshot();
+        assert_eq!(s.read_max_us, 70);
+        assert_eq!(s.phases, vec![("read", 100)]);
+        assert_eq!((s.reads_ended, s.reads_overran), (1, 1));
+    }
+
+    #[test]
+    fn recording_a_read_with_no_recorder_installed_does_nothing() {
+        record_read(Duration::from_micros(1), ReadEnd::Overran);
     }
 }
