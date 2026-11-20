@@ -1401,6 +1401,7 @@ fn sweep_row(r: &Value) -> Option<Row> {
         claim: r["claim_view"]["verdict"].as_str().map(str::to_string),
         claim_unset: r["claim"].is_null(),
         claim_why: claim_why(&r["claim_view"]),
+        express: matches!(&r["express"], Value::Bool(true)) || as_num(&r["express"]) != 0.0 || r["express"] == "true",
     })
 }
 
