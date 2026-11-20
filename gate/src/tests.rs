@@ -5780,7 +5780,7 @@ fn lint_fixture(mode: &str, files: &[(&str, &str)]) -> (testkit::TempDir, std::p
     testkit::write_exe(bin.join("release"), "#!/bin/bash\n[ \"$1\" = config-stage ] && echo \"$SPIRA_TOML\"\n");
     testkit::write_exe(
         bin.join("lint"),
-        "#!/bin/bash\nif grep -q 'ffx_vocabulary_mode = \"enforce\"' \"$SPIRA_TOML\" && grep -rq aeon rule; then echo 'ffx-vocabulary: rule/tests/vocab.rs:16: the term \"aeon\"'; exit 1; fi\n",
+        "#!/bin/bash\nif grep -q 'ffx_vocabulary_mode = \"enforce\"' \"$SPIRA_TOML\" && grep -rq aeon rule; then echo 'ffx-vocabulary: rule/tests/vocab.rs:16: the term \"aeon\"'; exit 1; fi\n", // ffx-ok
     );
     (t, bin)
 }
@@ -5791,11 +5791,11 @@ fn run_lint_step(t: &testkit::TempDir, bin: &std::path::Path, caller_mode: &str)
     let step = def.steps.iter().find(|s| s.contains("SPIRA_LINT_BIN")).expect("a spira-lint step");
     let caller = t.path().join("caller.toml");
     std::fs::write(&caller, format!("[spira]\nffx_vocabulary_mode = \"{caller_mode}\"\n")).unwrap();
-    let out = std::process::Command::new("/bin/bash")
+    let out = std::process::Command::new(system_paths::BIN_BASH)
         .args(["-c", step])
         .current_dir(t.path())
         .env_clear()
-        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .env("PATH", format!("{}:{}", bin.display(), system_paths::SYSTEM_PATH_MIN))
         .env("SPIRA_LINT_BIN", bin.join("lint"))
         .env("SPIRA_TOML", &caller)
         .output()

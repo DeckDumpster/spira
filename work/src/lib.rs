@@ -905,7 +905,7 @@ mod tests {
             .args(&argv[1..])
             .current_dir(t.path())
             .env_clear()
-            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("PATH", format!("{}:{}", bin.display(), system_paths::SYSTEM_PATH_MIN))
             .env("SPIRA_TOML", &caller)
             .env("CARGO_TARGET_DIR", &target)
             .output()
