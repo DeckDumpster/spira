@@ -19,9 +19,11 @@ integration = ["spira-config/integration", "runtime/integration", "spira-otel/in
 
 [dependencies]
 regex = "1"
+forge = { path = "../forge" }
 runtime = { path = "../runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 toml = "0.8"
@@ -32,4 +34,9 @@ testkit = { path = "../testkit" }
 [[test]]
 name = "git_tree"
 path = "tests/git_tree.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "review_flow"
+path = "tests/review_flow.rs"
 required-features = ["integration"]

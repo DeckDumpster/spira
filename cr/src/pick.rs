@@ -39,9 +39,9 @@ pub struct Scored {
     pub weight: Weight,
 }
 
-pub fn dependents(ix: &Index, unit: &Unit) -> u32 {
+pub fn dependent_files(ix: &Index, unit: &Unit) -> Vec<String> {
     let inside: Vec<&str> = unit.files.iter().map(|f| f.path.as_str()).collect();
-    let outside = |files: &[String]| files.iter().filter(|f| !inside.contains(&f.as_str())).count() as u32;
+    let outside = |files: &[String]| files.iter().filter(|f| !inside.contains(&f.as_str())).cloned().collect::<Vec<String>>();
     match unit.kind {
         Kind::Trait => {
             let name = unit.id.rsplit("::").next().unwrap_or("");
@@ -49,12 +49,12 @@ pub fn dependents(ix: &Index, unit: &Unit) -> u32 {
         }
         Kind::Module | Kind::Boundary => {
             let target = if unit.kind == Kind::Module { &unit.files[0].path } else { &unit.files[1].path };
-            let Some(c) = ix.crate_of(target) else { return 0 };
+            let Some(c) = ix.crate_of(target) else { return Vec::new() };
             let stem = target.rsplit('/').next().unwrap_or("").trim_end_matches(".rs");
             let stem = if stem == "mod" { target.rsplit('/').nth(1).unwrap_or("") } else { stem };
-            let mut n = outside(ix.files_naming_pair(&c.lib, stem));
+            let mut n: Vec<String> = outside(ix.files_naming_pair(&c.lib, stem));
             let own: Vec<String> = ix.files_naming_pair("crate", stem).iter().filter(|f| f.starts_with(&format!("{}/", c.dir))).cloned().collect();
-            n += outside(&own);
+            n.extend(outside(&own));
             n
         }
         Kind::Script => {
@@ -62,10 +62,15 @@ pub fn dependents(ix: &Index, unit: &Unit) -> u32 {
             ix.text
                 .iter()
                 .filter(|(p, t)| ext(p) == "sh" && !inside.contains(&p.as_str()) && t.lines().flat_map(crate::units::command_words).any(|w| w == bin))
-                .count() as u32
+                .map(|(p, _)| p.clone())
+                .collect()
         }
-        Kind::Persona => 0,
+        Kind::Persona => Vec::new(),
     }
+}
+
+pub fn dependents(ix: &Index, unit: &Unit) -> u32 {
+    dependent_files(ix, unit).len() as u32
 }
 
 /// Scores every unit; a unit already sent at its primary file's current blob is dropped.
