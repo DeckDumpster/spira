@@ -1097,7 +1097,7 @@ pub fn a_retained_prefix_put_may_carry_a_ttl_and_expires_only_with_one<R: Rig>(r
     let clock = VirtualClock::new(T0);
     let c = open(rig.fresh(), &clock);
     let gc = Controller::new(&c);
-    put(&c, "runtime/effect/t/open", obj(json!(1)), "1");
+    put(&c, "runtime/effect/t/pending", obj(json!(1)), "1");
     put(&c, "runtime/effect/t/closed", obj(json!(1)).with_ttl(3_600), "2");
     put(&c, "runtime/resolved/r1", obj(json!({})).with_ttl(3_600), "3");
     clock.advance(HOUR_MS - 1);
@@ -1113,7 +1113,7 @@ pub fn a_retained_prefix_put_may_carry_a_ttl_and_expires_only_with_one<R: Rig>(r
     }
     clock.advance(1_000 * HOUR_MS);
     gc.tick(c.now_ms()).unwrap();
-    assert!(c.get("runtime/effect/t/open").unwrap().is_some());
+    assert!(c.get("runtime/effect/t/pending").unwrap().is_some());
     assert_eq!(
         c.txn(&Txn::new().put("runtime/state/t/k", obj(json!(1)).with_ttl(60)), &req("s")),
         Err(Error::TtlNotAllowed { key: "runtime/state/t/k".into() })
