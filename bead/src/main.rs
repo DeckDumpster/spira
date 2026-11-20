@@ -618,7 +618,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         body_file = Some(path.to_string_lossy().into_owned());
     }
 
-    let parent_cmdline = std::fs::read(format!("/proc/{}/cmdline", std::os::unix::process::parent_id())).unwrap_or_default();
+    let parent_cmdline = std::fs::read(format!("{}/{}/cmdline", system_paths::PROC, std::os::unix::process::parent_id())).unwrap_or_default();
     if bead::skuld_fence_binds(is_concierge(), for_rune.as_deref().is_some_and(|r| requires_skuld(home, r)), &parent_cmdline) {
         let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
         let id = match skuld_gate("file", &title, &body, drafted_by.as_deref()) {
