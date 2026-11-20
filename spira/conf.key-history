@@ -808,3 +808,4 @@ cr_tz
 cr_open_hour
 cr_stale_days
 runtime_cr_cadence_secs
+beads_sql_writer_password_file

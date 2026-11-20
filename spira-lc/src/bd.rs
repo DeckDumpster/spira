@@ -23,7 +23,7 @@ fn verb_of<'a>(args: &[&'a str]) -> &'a str {
     args.iter().find(|a| !a.starts_with('-')).copied().unwrap_or("unknown")
 }
 
-fn record_call(args: &[&str], started: std::time::Instant, ok: bool) {
+pub(crate) fn record_call(args: &[&str], started: std::time::Instant, ok: bool) {
     use spira_otel::metrics::{MetricsSink, Point};
     let Ok(endpoint) = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT") else { return };
     let verb = verb_of(args);
@@ -34,7 +34,7 @@ fn record_call(args: &[&str], started: std::time::Instant, ok: bool) {
 }
 
 /// Every planning write this process makes moves the planning watermark once it has landed.
-fn stamped<S: AsRef<str>>(args: &[S], res: Result<String, String>) -> Result<String, String> {
+pub(crate) fn stamped<S: AsRef<str>>(args: &[S], res: Result<String, String>) -> Result<String, String> {
     if let (Ok(stdout), true) = (&res, spira_store::planning::is_planning_write(args)) {
         if let Some((bead, blocked_by)) = spira_store::planning::claim_input_change(args) {
             mark_rejudge(&bead, &blocked_by);

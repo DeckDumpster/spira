@@ -58,6 +58,11 @@ pub trait Content {
             Some(dir) => Err(format!("cannot run bd in {}", dir.display())),
         }
     }
+    /// A door write lc-serve applies itself in one SQL transaction. The default refuses, so a
+    /// double that cannot apply it says so rather than forking bd.
+    fn mutate(&self, _: &crate::content_write::Mutation) -> Result<String, String> {
+        Err("this content store cannot apply a mutation".into())
+    }
     fn delete(&self, ids: &[String]) -> Result<(), String>;
     /// The ask label (`SPIRA_ASK_LABEL`) a content write is judged against.
     fn ask_label(&self) -> Result<String, String>;
@@ -109,6 +114,17 @@ impl Content for LiveContent {
     }
     fn write_stdin_in(&self, args: &[String], stdin: Option<&str>, cwd: Option<&std::path::Path>) -> Result<String, String> {
         crate::bd::write_stdin_in(args, stdin, cwd)
+    }
+    fn mutate(&self, m: &crate::content_write::Mutation) -> Result<String, String> {
+        let started = std::time::Instant::now();
+        match crate::content_write::run(m) {
+            Some(res) => {
+                let words: Vec<&str> = m.argv.iter().map(String::as_str).collect();
+                crate::bd::record_call(&words, started, res.is_ok());
+                crate::bd::stamped(&m.argv, res)
+            }
+            None => crate::bd::write_stdin(&m.argv, m.body.as_deref()),
+        }
     }
     fn delete(&self, ids: &[String]) -> Result<(), String> {
         match crate::bd::tool("bdq", &[&["delete".to_string()][..], ids, &["--force".to_string()]].concat(), None, "purge-alerts", 120) {
@@ -239,7 +255,13 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
                 }
                 report
             };
-            crate::content::run(rest, stdin, &mut guard, &mut after, &|a| content.read(a), &|a, body| content.write_stdin_in(a, body, guards.cwd.take().as_deref()))
+            crate::content::run(rest, stdin, &mut guard, &mut after, &|a| content.read(a), &|a, body| {
+                let cwd = guards.cwd.take();
+                match (crate::content_write::Mutation::of(a, body), &cwd) {
+                    (Some(m), None) => content.mutate(&m),
+                    _ => content.write_stdin_in(a, body, cwd.as_deref()),
+                }
+            })
         }
         "close-epic" => callers::close_epic(rest, m, bd),
         "drop" => callers::drop_cmd(rest, m, bd),

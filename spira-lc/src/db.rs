@@ -94,6 +94,30 @@ impl Conn {
         })
     }
 
+    /// A read-write connection to the beads database, logging in as the writer. One session, so
+    /// the transactions it runs queue rather than race each other.
+    pub fn writer(host: &str, port: u16, user: &str, password_file: &str, database: &str) -> Result<Conn, String> {
+        Ok(Conn { sessions: Sessions::new(1), ..Conn::reader(host, port, user, password_file, database)? })
+    }
+
+    /// Runs `f` on one session, so a transaction's statements cannot interleave with another
+    /// caller's. A session that failed on anything but a lost race is dropped.
+    pub fn transaction<T>(&self, f: impl FnOnce(&mut dyn crate::content_write::Tx) -> T) -> Result<T, String> {
+        self.sessions
+            .with_session(
+                || self.connect(),
+                |wire| {
+                    let mut tx = WireTx { wire, healthy: true };
+                    let out = f(&mut tx);
+                    (out, tx.healthy)
+                },
+            )
+            .map_err(|e| match e {
+                ScriptFailure::CannotTell(m) => m,
+                ScriptFailure::LostRace => "a connect lost a race".into(),
+            })
+    }
+
     /// The administrator, with no default database: what a statement that names its own database runs as.
     pub fn administrator(host: &str, port: u16, user: &str, password: String) -> Conn {
         Conn {
@@ -221,8 +245,19 @@ impl<S: Session> Sessions<S> {
     }
 
     /// Runs `script` on an idle session, a fresh one while under the cap, or the next one released.
-    /// The pool lock is never held across a query or a connect.
     pub(crate) fn run(&self, open: impl Fn() -> Result<S, ScriptFailure>, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
+        self.with_session(open, |session| {
+            let started = std::time::Instant::now();
+            let out = session.exec(script);
+            crate::slow::record(started.elapsed(), script);
+            let healthy = out.is_ok();
+            (out, healthy)
+        })?
+    }
+
+    /// Hands `f` an idle session, a fresh one while under the cap, or the next one released; `f`
+    /// says whether the session may be reused. The pool lock is never held across `f` or a connect.
+    pub(crate) fn with_session<T>(&self, open: impl Fn() -> Result<S, ScriptFailure>, f: impl FnOnce(&mut S) -> (T, bool)) -> Result<T, ScriptFailure> {
         let mut pool = self.pool.lock().unwrap_or_else(|e| e.into_inner());
         let idle = loop {
             if let Some(s) = pool.idle.pop() {
@@ -246,13 +281,11 @@ impl<S: Session> Sessions<S> {
                 opened?
             }
         };
-        let started = std::time::Instant::now();
-        let out = session.exec(script);
-        crate::slow::record(started.elapsed(), script);
-        if out.is_ok() {
+        let (out, healthy) = f(&mut session);
+        if healthy {
             slot.session = Some(session);
         }
-        out
+        Ok(out)
     }
 }
 
@@ -272,6 +305,26 @@ impl<S: Session> Drop for Slot<'_, S> {
         }
         drop(pool);
         self.pool.released.notify_one();
+    }
+}
+
+struct WireTx<'a> {
+    wire: &'a mut Wire,
+    healthy: bool,
+}
+
+impl crate::content_write::Tx for WireTx<'_> {
+    fn send(&mut self, sql: &str) -> Result<(), crate::content_write::Fail> {
+        let started = std::time::Instant::now();
+        let out = self.wire.exec(sql);
+        crate::slow::record(started.elapsed(), sql);
+        out.map(|_| ()).map_err(|e| match e {
+            ScriptFailure::LostRace => crate::content_write::Fail::Conflict,
+            ScriptFailure::CannotTell(m) => {
+                self.healthy = false;
+                crate::content_write::Fail::Other(m)
+            }
+        })
     }
 }
 

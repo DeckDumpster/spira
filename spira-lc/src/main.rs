@@ -21,6 +21,7 @@ mod claim_sync;
 mod composed;
 mod content;
 mod content_sql;
+mod content_write;
 // Reached only with SPIRA_LC_STORE_PATH set; parts of it are used only by later verbs yet.
 #[cfg_attr(not(test), allow(dead_code))]
 mod control;

@@ -914,7 +914,7 @@ impl<'a> Run<'a> {
         let mut br = c.row.label_value("branch:").unwrap_or_default();
         if br.is_empty() {
             br = format!("spira/{}", c.id);
-            let _ = self.d.bd.bd(&s(&["set-state", &c.id, &format!("branch={br}")]));
+            let _ = self.d.bd.bd(&crate::bd::record_branch(&c.id, "", &br));
             self.log(&format!("{who}: {} takes branch {br}", c.id));
         } else {
             self.log(&format!("{who}: {} resumes recorded branch {br}", c.id));
@@ -1028,12 +1028,14 @@ impl<'a> Run<'a> {
             worktree::ensure(&e, &mut branch, &prune)
         };
         let acts = acts.map_err(Abort::Die)?;
+        let mut recorded = self.s.branch.clone();
         for a in acts {
             match a {
                 worktree::Act::Log(l) => self.log(&l),
                 worktree::Act::Note(n) => self.note(&n),
                 worktree::Act::SetBranch(b) => {
-                    let _ = self.d.bd.bd(&s(&["set-state", &bead, &format!("branch={b}")]));
+                    let _ = self.d.bd.bd(&crate::bd::record_branch(&bead, &recorded, &b));
+                    recorded = b;
                 }
             }
         }
