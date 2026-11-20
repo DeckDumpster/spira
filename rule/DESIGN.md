@@ -134,8 +134,8 @@ lint fires. `retire` writes no text and is not checked.
 slug holds a term is enacted under the renamed slug and the old key forgotten. Every rename leaves a
 `[[retired]]` pointer to the new slug: an old slug not yet numbered is numbered first
 (`vocab::record_renames`), so `check_pointers` keeps holding. The rewrite is grammatical: a
-singular determiner before "summons" or "chamber" gives "call" or "rune", and the article fix
-reaches slugs. A bare "summons" (no determiner, no count before it) is unreadable as singular or
+singular determiner before "summons" or "chamber" gives "call" or "rune", and the article fix <!-- ffx-ok -->
+reaches slugs. A bare "summons" (no determiner, no count before it) is unreadable as singular or <!-- ffx-ok -->
 plural and is listed as unresolved. A rename onto a key in force, and a term with no replacement,
 are listed and left, exit 1; the rest is applied and `law/` landed once. `--dry-run` prints each
 statute and, under it, each changed sentence as a `-` old and `+` new line (a rename prints

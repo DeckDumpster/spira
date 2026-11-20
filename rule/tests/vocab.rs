@@ -55,7 +55,7 @@ fn an_em_dash_before_an_article_does_not_stop_the_plan() {
 }
 
 #[test]
-fn a_slug_article_and_a_bare_summons_are_planned_by_grammar() {
+fn a_slug_article_and_a_bare_summons_are_planned_by_grammar() { // ffx-ok
     let book = store(&[("law-an-aeon-x", "A summons."), ("law-w", "summons reopened")]); // ffx-ok
     let got = plan(&book, &[], &Pointers::default());
     assert_eq!(
