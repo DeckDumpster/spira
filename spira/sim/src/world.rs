@@ -1421,9 +1421,11 @@ mod list_pages_tests {
 mod seed_cache_tests {
     #[test]
     fn a_seed_cache_that_cannot_be_made_is_refused_naming_its_path() {
-        let cache = std::path::Path::new("/dev/null/seed-cache");
-        let repo = testkit::manifest_dir();
-        let err = super::ensure_seed_in(cache, &repo, "HEAD").err().expect("refused");
-        assert!(err.starts_with("/dev/null/seed-cache: "), "{err}");
+        let t = testkit::TempDir::new("seed-cache-refused");
+        let file = t.path().join("a-file");
+        std::fs::write(&file, "").unwrap();
+        let cache = file.join("seed-cache");
+        let err = super::ensure_seed_in(&cache, &testkit::manifest_dir(), "HEAD").err().expect("refused");
+        assert!(err.starts_with(&format!("{}: ", cache.display())), "{err}");
     }
 }
