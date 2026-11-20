@@ -1912,14 +1912,17 @@ fn probe_returned<R: RoundRunner, O: RoundOps>(
     ops: &mut O,
     members: &[Member],
     red_suites: &[String],
+    red_filter: Option<&FilterRed>,
 ) -> Result<Option<RoundEnd>, String> {
     let in_round = |id: &Id| members.iter().any(|m| &m.id == id);
     for f in ops.returned_for_attribution() {
         let filter = is_filter_suite(&f.suite);
-        if f.members.is_empty()
-            || !f.members.iter().all(in_round)
-            || !(filter || red_suites.contains(&f.suite))
-        {
+        let red = if filter {
+            red_filter.is_some_and(|r| r.name == f.suite)
+        } else {
+            red_suites.contains(&f.suite)
+        };
+        if f.members.is_empty() || !f.members.iter().all(in_round) || !red {
             continue;
         }
         let mut out: BTreeMap<Id, Vec<String>> = f
@@ -1935,7 +1938,10 @@ fn probe_returned<R: RoundRunner, O: RoundOps>(
             .collect();
         let named = f.members.join(",");
         let verdict = if filter {
-            runner.filter_green_in(&f.suite, &[], &survivors)
+            let scope = red_filter
+                .map(|r| unitattr::rerun_scope(&r.failed, ops.package_graph().as_ref()))
+                .unwrap_or_default();
+            runner.filter_green_in(&f.suite, &scope, &survivors)
         } else {
             runner.suite_green(&f.suite, &survivors)
         };
@@ -2024,10 +2030,11 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
         }
     }
     let prior_suites = runner.prior_red_suites();
-    if let Some(end) = probe_returned(runner, ops, &members, &prior_suites)? {
+    let prior = runner.prior_red();
+    if let Some(end) = probe_returned(runner, ops, &members, &prior_suites, prior.as_ref())? {
         return Ok(end);
     }
-    if let Some(f) = runner.prior_red() {
+    if let Some(f) = prior {
         let (reds, rest) = split_lifted_filter(&*ops, &f, &members);
         let f = if reds.is_empty() {
             f
@@ -2911,6 +2918,9 @@ pub(crate) mod tests {
         }
         fn prior_red_suites(&mut self) -> Vec<String> {
             std::mem::take(&mut self.prior_suites)
+        }
+        fn probe_label(&self) -> String {
+            "b9".into()
         }
         fn deadline_red(&mut self, suite: &str) -> Option<DeadlineRed> {
             self.deadlines.get(suite).cloned()
@@ -4764,6 +4774,12 @@ pub(crate) mod tests {
     fn a_returned_member_of_a_filter_is_probed_through_the_filter() {
         let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
         ops.attributed_returns = vec![returned_failure("spira-lint", "m3")];
+        f.prior = Some(FilterRed {
+            name: "spira-lint".into(),
+            named: vec![],
+            failed: vec![],
+            harness: vec![],
+        });
         f.filter = Some(Box::new(|tree| {
             tree.contains("m3").then(|| FilterRed {
                 name: "spira-lint".into(),
@@ -4775,7 +4791,17 @@ pub(crate) mod tests {
         let end = attribute_round(&mut f, &mut ops, &["test-spike.sh".to_string()], round, budget6()).unwrap();
         assert_eq!(f.probes[0], ["m1", "m2", "m4", "m5", "m6"]);
         assert_eq!(ops.returned[0].0, "m3");
+        assert!(ops.returned[0].1.contains("(probe b9)"), "{:?}", ops.returned);
         assert!(matches!(end, RoundEnd::Land { members, .. } if members.len() == 5));
+    }
+
+    #[test]
+    fn a_returned_filter_that_was_not_red_is_not_probed() {
+        let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
+        ops.attributed_returns = vec![returned_failure("spira-lint", "m3")];
+        let _ = attribute_round(&mut f, &mut ops, &["test-spike.sh".to_string()], round, budget6());
+        assert!(ops.returned.is_empty(), "{:?}", ops.returned);
+        assert!(f.probes.iter().all(|t| t.len() != 5 || t.contains(&"m3".to_string())));
     }
 
     fn slow_a_and_a_return_at_30(
