@@ -93,6 +93,20 @@ pub fn release_root_for_process() -> Result<PathBuf, String> {
     release_root(std::env::var(crate::RELEASE_ENV).ok().as_deref())
 }
 
+/// The environment a dwarf's transient unit is started with, whose user manager carries no
+/// `SPIRA_*`: this process's release, the `PATH` built from it, `HOME` and `SPIRA_TOML`. One
+/// source for the library's dwarf call and `dwarf direct`; any unset input is a refusal.
+pub fn dwarf_unit_env() -> Result<Vec<(String, String)>, String> {
+    let release = release_root_for_process()?.display().to_string();
+    let home = std::env::var("HOME").ok().filter(|h| !h.is_empty()).ok_or("HOME is not set — a dwarf unit's environment names it; there is no fallback")?;
+    Ok(vec![
+        (crate::RELEASE_ENV.to_string(), release.clone()),
+        ("PATH".to_string(), format!("{release}/bin:{release}/spira:/usr/local/bin:/usr/bin:/bin")),
+        ("HOME".to_string(), home),
+        ("SPIRA_TOML".to_string(), crate::process::spec()?),
+    ])
+}
+
 /// The `PATH` a launched process runs under, the same one every unit template renders:
 /// `<release>/bin:<release>/spira:<spira-env bin>:<system dirs>[:<tail>]`. Built outright
 /// from the declared release, `HOME` (whose pinned tool environment it names) and the
