@@ -202,11 +202,8 @@ impl<B: Backend> Store<B> {
             }
             let schedule_keys: Vec<String> = turn.schedules.iter().map(|s| keys::runtime(SCHEDULE, &[&s.id])).collect();
             let schedule_refs: Vec<&str> = schedule_keys.iter().map(String::as_str).collect();
-            let existing = match schedule_refs.is_empty() {
-                true => Vec::new(),
-                false => self.contract().get_many_at(&schedule_refs, self.contract().head()?)?,
-            };
-            for ((s, key), found) in turn.schedules.iter().zip(schedule_keys).zip(existing.iter().map(Option::is_some).chain(std::iter::repeat(false))) {
+            let existing = self.contract().get_many_at(&schedule_refs, self.contract().head()?)?;
+            for ((s, key), found) in turn.schedules.iter().zip(schedule_keys).zip(existing.iter().map(Option::is_some)) {
                 if found {
                     continue;
                 }
