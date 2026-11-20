@@ -1801,8 +1801,7 @@ fn cmd_dep_add(args: &[String]) -> i32 {
     if code != 0 || !is_blocks_type(dep_type.as_deref()) {
         return code;
     }
-    let (read_code, out) = door(&s(&["show", &id, "--json"]));
-    let Some(row) = parse_show_row(&out).filter(|_| read_code == 0) else {
+    let Some(row) = shown_row(&id) else {
         eprintln!("bead: dep add: the edge {id} -> {depid} is in, but {id} could not be read, so the registry rows naming it did not move to {depid}");
         return 1;
     };
