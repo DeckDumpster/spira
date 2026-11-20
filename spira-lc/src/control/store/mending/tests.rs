@@ -289,7 +289,7 @@ fn a_sweep_reads_the_live_rows_through_the_state_index_not_every_row_ever() {
     assert_eq!(under("range"), 0, "no scan of mendings/: {reads:?}");
     assert!(under("range_in_state") >= 2, "{reads:?}");
     let gets = reads.iter().filter(|(k, _, _)| *k == "get").count();
-    assert!(gets <= 3 * 8, "{gets} point reads for 3 live rows: {reads:?}");
+    assert!(gets <= 6, "{gets} point reads for 3 live rows: {reads:?}");
 }
 
 fn hand_facts(evidence_tip: &str) -> String {
