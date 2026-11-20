@@ -284,12 +284,8 @@ fn not_yet_live(in_flight: &BTreeMap<String, String>, active: &BTreeMap<String, 
 
 impl Host for RuntimeHost {
     fn uncalled(&self) -> Option<Result<BTreeMap<String, String>, String>> {
-        const NO_PASS: &str = "no sentinel pass yet";
         let board = self.board.as_ref()?;
-        if board.get().is_none() {
-            return Some(Err(NO_PASS.into()));
-        }
-        Some(crate::status::sentinel_carry(board).map_err(|e| e.to_string()).and_then(|c| c.uncalled.ok_or_else(|| NO_PASS.to_string())))
+        Some(crate::status::sentinel_carry(board).map_err(|e| e.to_string()).and_then(|c| c.uncalled.ok_or_else(|| crate::status::NO_PASS.to_string())))
     }
 
     fn unit_listing(&self) -> Result<(), String> {

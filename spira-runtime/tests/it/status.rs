@@ -170,7 +170,7 @@ fn the_reconciler_host_reads_uncalled_from_the_carry_scheduler_uncalled_serves()
     let mut host = spira_runtime::reconcile_host::RuntimeHost::new(Default::default(), Default::default(), None, std::path::PathBuf::new(), String::new(), 0, 0, String::new(), Default::default());
     assert!(host.uncalled().is_none(), "a host with no board cannot tell");
     host.board = Some(board);
-    assert_eq!(host.uncalled(), Some(Err("no sentinel pass yet".into())));
+    assert_eq!(host.uncalled(), Some(Err("cannot tell: no call pass has run yet".into())));
     e.submit("t1", "t", EventKind::new("tick", "")).unwrap();
     clock.advance_to(10);
     e.run_until_idle().unwrap();

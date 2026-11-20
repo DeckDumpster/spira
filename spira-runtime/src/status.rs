@@ -11,7 +11,7 @@ use runtime::{EventKind, RuntimeError, HALT_STREAM, SCHEDULER_HALTED, SCHEDULER_
 /// Bumped when a field changes meaning or goes away.
 pub const SCHEMA: u64 = 1;
 
-const NO_PASS: &str = "cannot tell: no call pass has run yet";
+pub(crate) const NO_PASS: &str = "cannot tell: no call pass has run yet";
 
 pub type SubmitFn = Arc<dyn Fn(&str, &str, EventKind) -> Result<(), String> + Send + Sync>;
 
