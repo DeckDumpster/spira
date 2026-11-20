@@ -21,7 +21,7 @@ use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
 use crate::spool::{linger, stream_into, Server, Spool};
 
 pub const RUN_USAGE: &str =
-    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>] [--ci-entry <command>] [--deny-list <file>] [--candidate-recipe <sha>]\n  --candidate-recipe <sha>: the recipe of a round image still baking; an EC2 placement with no image carrying it exits 78 before any launch, a host or local placement ignores it\n  exit 78: placed on EC2 and the candidate image is pending; run again once it exists";
+    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir> [--no-corpus]] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>] [--ci-entry <command>] [--deny-list <file>] [--candidate-recipe <sha>]\n  --candidate-recipe <sha>: the recipe of a round image still baking; an EC2 placement with no image carrying it exits 78 before any launch, a host or local placement ignores it\n  exit 78: placed on EC2 and the candidate image is pending; run again once it exists";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -32,6 +32,8 @@ pub struct RunArgs {
     pub results_dir: Option<PathBuf>,
     /// DESIGN.md §2.2a: stream results while the corpus runs, and serve attribution reruns.
     pub attr_spool: Option<PathBuf>,
+    /// With `--attr-spool`: lease, place and push the tree, skip the corpus, and only serve the spool.
+    pub no_corpus: bool,
     /// The landing ref the round is judged against: the VM runs `spira-lint --base` on it and
     /// attributes a hit to the member whose diff touches the file. Absent: no lint step.
     pub base: Option<String>,
@@ -72,6 +74,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             "--toolchain" => r.toolchain = Some(val()?).filter(|v| !v.is_empty()),
             "--results-dir" => r.results_dir = Some(PathBuf::from(val()?)),
             "--attr-spool" => r.attr_spool = Some(PathBuf::from(val()?)),
+            "--no-corpus" => r.no_corpus = true,
             "--base" => r.base = Some(val()?).filter(|v| !v.is_empty()),
             "--round-batch" => r.round_batch = Some(val()?).filter(|v| !v.is_empty()),
             "--round-repo" => r.round_repo = Some(val()?).filter(|v| !v.is_empty()),
@@ -92,6 +95,9 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             }
             other => return Err(format!("round-vm run: unknown option: {other}")),
         }
+    }
+    if r.no_corpus && r.attr_spool.is_none() {
+        return Err("round-vm run: --no-corpus is valid only with --attr-spool".into());
     }
     Ok(r)
 }
@@ -2854,6 +2860,13 @@ fn on_vm_run(
             tree_queue: &tree_queue,
             attr_time: &attr_time,
         };
+        if args.no_corpus {
+            if let Err(e) = server.spool.corpus_done(0) {
+                eprintln!("round-vm run: {e}");
+            }
+            linger(&mut server, sc, cfg.attr_linger, Duration::from_millis(200));
+            return 0;
+        }
         let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
         let mut watch = NoOutputWatch::new(cfg.no_output);
         let mut last: Option<Instant> = None;
@@ -5529,6 +5542,26 @@ mod tests {
         fs::create_dir_all(out.join("test-b.sh.out.streaming")).unwrap();
         assert_eq!(stream_into(&d.path().join("pulled"), &out).unwrap(), 2, "a and c land; b's blocked write is skipped");
         assert!(out.join("test-c.sh.result").is_file());
+    }
+
+    #[test]
+    fn no_corpus_without_an_attr_spool_is_a_usage_error_naming_both_flags() {
+        let e = parse_run_args(&["t".into(), "--no-corpus".into()]).unwrap_err();
+        assert!(e.contains("--no-corpus") && e.contains("--attr-spool"), "{e}");
+        assert!(parse_run_args(&["t".into(), "--no-corpus".into(), "--attr-spool".into(), "s".into()]).unwrap().no_corpus);
+    }
+
+    #[test]
+    fn a_no_corpus_run_skips_the_batch_and_writes_corpus_done_rc_0() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        let spool = fx.d.path().join("spool");
+        fs::create_dir_all(spool.join("req")).unwrap();
+        fs::write(spool.join("close"), "").unwrap();
+        let a = RunArgs { tree_dir: fx.d.path().join("tree"), attr_spool: Some(spool.clone()), no_corpus: true, ..Default::default() };
+        assert_eq!(go(&fx, &remote, &a), 0);
+        assert_eq!(*remote.jobs.lock().unwrap(), vec!["clear-results".to_string()], "no corpus batch ran");
+        assert_eq!(fs::read_to_string(spool.join("corpus.done")).unwrap(), "rc=0\n");
     }
 
     fn serve_all(jobs: &[(&str, &str)]) -> FakeRemote {

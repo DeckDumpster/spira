@@ -466,6 +466,9 @@ pub struct VmRunner<'a> {
     pub spool: PathBuf,
     pub results: PathBuf,
     child: Option<Child>,
+    /// `child` was started by a probe, with no corpus.
+    serving: bool,
+    probe_faults: Vec<String>,
     child_rc: Option<i32>,
     install_failed: bool,
     host_disk: bool,
@@ -773,6 +776,11 @@ impl<'a> VmRunner<'a> {
             Ok(b) => b,
             Err(e) => return (job, Err(format!("probe tree not built: {e}"))),
         };
+        if self.child.is_none() {
+            if let Err(e) = self.start_serving() {
+                return (job, Err(format!("round-vm --no-corpus not started: {e}")));
+            }
+        }
         if let Err(e) = self.request(&job, &branch, &[scope.to_string()], build) {
             return (job, Err(e));
         }
@@ -804,6 +812,10 @@ impl<'a> VmRunner<'a> {
             why,
         };
         println!("{}", facts.line());
+        if found.is_none() {
+            let on = if facts.members.is_empty() { "base".to_string() } else { facts.members.join(",") };
+            self.probe_faults.push(format!("{} {} [{on}]: {}", facts.job, facts.build, facts.why));
+        }
         self.trace.record(facts);
         self.publish_attribution();
     }
@@ -943,6 +955,8 @@ impl<'a> VmRunner<'a> {
             spool,
             results,
             child: None,
+            serving: false,
+            probe_faults: Vec::new(),
             child_rc: None,
             install_failed: false,
             host_disk: false,
@@ -1210,6 +1224,50 @@ fn epoch() -> u64 {
     spira_config::vtime::now_epoch()
 }
 
+impl VmRunner<'_> {
+    /// The `round-vm run` words: with a corpus, its suites; without, `--no-corpus`.
+    fn round_vm_run_args(&self, corpus: Option<&[String]>) -> Vec<std::ffi::OsString> {
+        let mut a: Vec<std::ffi::OsString> = vec!["run".into(), self.wt.clone().into()];
+        match corpus {
+            Some(suites) => a.extend(["--suites".into(), suites.join(",").into()]),
+            None => a.push("--no-corpus".into()),
+        }
+        a.extend(["--maxpar".into(), self.env.maxpar.to_string().into()]);
+        a.extend(["--results-dir".into(), self.results.clone().into()]);
+        a.extend(["--attr-spool".into(), self.spool.clone().into()]);
+        a.extend(["--base".into(), self.repo.base.clone().into()]);
+        a.extend(self.deny_args());
+        a
+    }
+
+    fn spawn_round_vm(&mut self, corpus: Option<&[String]>) -> Result<(), String> {
+        let err = fs::File::create(&self.stderr_path)
+            .map_err(|e| format!("{}: {e}", self.stderr_path.display()))?;
+        // batch-job: this runs whatever its caller names, as long as that takes
+        // FORK-EDGE: needs a Units scope start (a CPU-quota scope whose process stays this one's child, stderr to a file); round-vm inside it is the machine leg
+        let mut cmd = Command::new("systemd-run");
+        cmd.args(scope_args(
+            std::env::var("ROUND_CPU_QUOTA").ok().as_deref(),
+            self.scope_unit().as_deref(),
+        ));
+        cmd.arg("timeout");
+        cmd.arg("-k").arg("10").arg(self.env.wall_secs.to_string());
+        cmd.arg(&self.env.round_vm);
+        cmd.args(self.round_vm_run_args(corpus));
+        cmd.env("SPIRA_HOME", &self.env.home)
+            .env("SPIRA_RUN", &self.env.run);
+        cmd.stdin(Stdio::null()).stderr(Stdio::from(err));
+        self.child = Some(cmd.spawn().map_err(|e| format!("round-vm: {e}"))?);
+        Ok(())
+    }
+
+    fn start_serving(&mut self) -> Result<(), String> {
+        self.spawn_round_vm(None)?;
+        self.serving = true;
+        Ok(())
+    }
+}
+
 impl RoundRunner for VmRunner<'_> {
     fn set_base(&mut self, sha: &str) {
         self.base_sha = sha.to_string();
@@ -1229,6 +1287,9 @@ impl RoundRunner for VmRunner<'_> {
     fn start_main(&mut self, kind: MainKind, suites: &[String]) -> Result<(), String> {
         match kind {
             MainKind::Corpus => {
+                if self.serving {
+                    self.stop_main()?;
+                }
                 if self.child.is_some() {
                     return Err("the corpus already ran for this round".into());
                 }
@@ -1244,28 +1305,7 @@ impl RoundRunner for VmRunner<'_> {
                     io::round_pass_start(self.env, self.repo, batch);
                     self.pass_open = self.subset;
                 }
-                let err = fs::File::create(&self.stderr_path)
-                    .map_err(|e| format!("{}: {e}", self.stderr_path.display()))?;
-                // batch-job: this runs whatever its caller names, as long as that takes
-                // FORK-EDGE: needs a Units scope start (a CPU-quota scope whose process stays this one's child, stderr to a file); round-vm inside it is the machine leg
-                let mut cmd = Command::new("systemd-run");
-                cmd.args(scope_args(
-                    std::env::var("ROUND_CPU_QUOTA").ok().as_deref(),
-                    self.scope_unit().as_deref(),
-                ));
-                cmd.arg("timeout");
-                cmd.arg("-k").arg("10").arg(self.env.wall_secs.to_string());
-                cmd.arg(&self.env.round_vm).arg("run").arg(&self.wt);
-                cmd.arg("--suites").arg(suites.join(","));
-                cmd.arg("--maxpar").arg(self.env.maxpar.to_string());
-                cmd.arg("--results-dir").arg(&self.results);
-                cmd.arg("--attr-spool").arg(&self.spool);
-                cmd.arg("--base").arg(&self.repo.base);
-                cmd.args(self.deny_args());
-                cmd.env("SPIRA_HOME", &self.env.home)
-                    .env("SPIRA_RUN", &self.env.run);
-                cmd.stdin(Stdio::null()).stderr(Stdio::from(err));
-                self.child = Some(cmd.spawn().map_err(|e| format!("round-vm: {e}"))?);
+                self.spawn_round_vm(Some(suites))?;
                 self.main = Main::Corpus {
                     suites: suites.to_vec(),
                     seen: BTreeSet::new(),
@@ -1391,6 +1431,10 @@ impl RoundRunner for VmRunner<'_> {
         self.probe_subset(subset, "unit", &[], survival_probe_result)
     }
 
+    fn probe_faults(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.probe_faults)
+    }
+
     fn stop_main(&mut self) -> Result<(), String> {
         let Some(mut child) = self.child.take() else {
             return Ok(());
@@ -1418,6 +1462,7 @@ impl RoundRunner for VmRunner<'_> {
             }
         }
         self.child_rc = None;
+        self.serving = false;
         self.install_failed = false;
         self.host_disk = false;
         self.main = Main::None;
@@ -2454,6 +2499,34 @@ mod abandon_tests {
             .is_ok());
         let err = mk().corpus_list_ok(&tree, &two).unwrap_err();
         assert!(err.contains("suite list omits 41 of 43"), "{err}");
+    }
+
+    #[test]
+    fn the_round_vm_run_words_name_the_corpus_or_no_corpus_never_both() {
+        let d = testkit::TempDir::new("vm-run-args");
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        let words = |a: Vec<std::ffi::OsString>| a.iter().map(|w| w.to_string_lossy().into_owned()).collect::<Vec<_>>();
+        let none = words(r.round_vm_run_args(None));
+        let spool = r.spool.to_string_lossy().into_owned();
+        assert!(none.contains(&"--no-corpus".to_string()) && !none.contains(&"--suites".to_string()), "{none:?}");
+        assert!(none.windows(2).any(|w| w[0] == "--attr-spool" && w[1] == spool), "{none:?}");
+        let some = words(r.round_vm_run_args(Some(&["a.sh".to_string()])));
+        assert!(some.windows(2).any(|w| w[0] == "--suites" && w[1] == "a.sh") && !some.contains(&"--no-corpus".to_string()), "{some:?}");
+    }
+
+    #[test]
+    fn a_probe_with_no_verdict_leaves_its_reason_in_probe_faults_once() {
+        let d = testkit::TempDir::new("vm-probe-faults");
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        r.report_probe("b1", "unit", "a", &[], None, "round-vm --no-corpus not started: x".into());
+        r.report_probe("b2", "unit", "a", &[], Some(true), String::new());
+        let got = RoundRunner::probe_faults(&mut r);
+        assert_eq!(got, vec!["b1 unit [base]: round-vm --no-corpus not started: x".to_string()]);
+        assert!(RoundRunner::probe_faults(&mut r).is_empty());
     }
 
     #[test]
