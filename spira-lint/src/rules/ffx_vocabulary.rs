@@ -424,6 +424,8 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert_eq!(rewrite("law-drain-gates-summons-not-delivery"), "law-drain-gates-summons-not-delivery"); // ffx-ok
         assert_eq!(rewrite("from a chamber persona"), "from a rune persona"); // ffx-ok
         assert_eq!(rewrite("572 idle summons"), "572 idle calls"); // ffx-ok
+        assert_eq!(rewrite("572 summons and 3-summons"), "572 calls and 3-calls"); // ffx-ok
+        assert_eq!(rewrite("the summons; Every summons; no-summons"), "the call; Every call; no-call"); // ffx-ok
         assert_eq!(rewrite("spira/chamber/ SPIRA_CHAMBERS"), "spira/runes/ SPIRA_RUNES"); // ffx-ok
     }
 

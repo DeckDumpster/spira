@@ -93,4 +93,7 @@ fn every_rename_leaves_a_pointer_and_an_unnumbered_old_slug_is_numbered_first() 
     let (toc2, p2) = record_renames(&parse_toc(TOC).unwrap(), &Pointers::default(), &numbered, "d").unwrap();
     assert_eq!(toc2.iter().flat_map(|p| &p.slugs).filter(|s| *s == "law-y").count(), 1);
     assert_eq!(p2.retired.len(), 1);
+    let toc2 = catch_up(&toc2, &p2, &store(&[("law-z", "Z.")]), None).unwrap();
+    assert!(check_pointers(&toc2, &p2).is_empty());
+    assert_eq!(resolve(&toc2, &p2, "law-y").unwrap().hops.len(), 1);
 }
