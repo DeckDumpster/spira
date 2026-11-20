@@ -534,6 +534,44 @@ fn a_rollback_whose_slow_unit_comes_up_on_the_second_restart_succeeds() {
 
 // ---------------------------------------------------------------- hotfix
 
+const STANDING_HOTFIX: &str = "sha cccccccccccccccccccccccccccccccccccccccc\nreason r\nat t\n";
+
+fn world_activating_over_a_landed_hotfix() -> World {
+    let w = world_activating_a_changed_unit();
+    let h = "c".repeat(40);
+    w._git.ancestors.borrow_mut().extend([(h.clone(), A.to_string()), (h, "main".to_string())]);
+    let state = w.cfg.state_dir().unwrap();
+    fs::create_dir_all(&state).unwrap();
+    fs::write(state.join("hotfix"), STANDING_HOTFIX).unwrap();
+    w
+}
+
+fn activate_as_the_batcher(w: &World, sc: &FakeSystemctl) -> Result<activate::Switched, String> {
+    let reads = FakeReads::serving();
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, git: &w._git, repo: Some(w.cfg.releases.clone()), landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(5), report: &|_| {} };
+    activate::activate(&ctx, A, None)
+}
+
+#[test]
+fn a_superseded_hotfix_is_cleared_before_the_first_restart() {
+    let w = world_activating_over_a_landed_hotfix();
+    let path = w.cfg.state_dir().unwrap().join("hotfix");
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.on_restart = Some(Box::new(move || path.exists().to_string()));
+    activate_as_the_batcher(&w, &sc).unwrap();
+    assert_eq!(*sc.at_restart.borrow(), vec!["false".to_string()]);
+    assert!(!w.cfg.state_dir().unwrap().join("hotfix").exists());
+}
+
+#[test]
+fn a_failed_restart_puts_the_superseded_hotfix_record_back() {
+    let w = world_activating_over_a_landed_hotfix();
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.restart_fails.insert("spira-tool-prod.service".into());
+    activate_as_the_batcher(&w, &sc).unwrap_err();
+    assert_eq!(fs::read_to_string(w.cfg.state_dir().unwrap().join("hotfix")).unwrap(), STANDING_HOTFIX);
+}
+
 // ---------------------------------------------------------------- prune
 
 // ---------------------------------------------------------------- config
