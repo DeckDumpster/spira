@@ -293,35 +293,43 @@ fn sole_member(mut c: Carry) -> Carry {
 #[test]
 fn sp_z43b7y_a_red_certify_of_a_one_member_round_ejects_the_member_and_writes_no_pause() {
     for out in ["verdict=red\nred-output=run/rounds/r9.results/testenv.out\n", "queue.sh round certify: round r9 is RED at abc: test-a.sh\nred=test-a.sh\n", ""] {
-        let mut r = carried(&{
+        let c = {
             let mut c = sole_member(driving(State::Certifying, "spira.c3"));
             c.repos.get_mut("spira").unwrap().attributed = true;
             c
-        });
-        let n = r.requested().len();
-        r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), out)).unwrap();
-        kit::assert_unpoisoned(&r, STREAM);
-        let after = asked_after(&r, n);
-        let names: Vec<&str> = after.iter().map(|(e, _)| e.as_str()).collect();
-        assert!(!names.contains(&PAUSE), "{out:?}: {names:?}");
-        let eject = after.iter().find(|(e, _)| e == EJECT).unwrap_or_else(|| panic!("{out:?}: no eject: {names:?}")).1.clone();
+        };
+        let red = runtime::units::RanOutput::captured(out.as_bytes(), b"");
+        let (waiting, acts) = on_ran_with(&c, &red_ran("spira.c3"), &red, NOW).expect("its own leg");
+        let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+        assert!(!names.contains(&PAUSE) && !names.contains(&ABANDON), "{out:?}: the abandon waits on the eject: {names:?}");
+        let eject: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == EJECT).unwrap_or_else(|| panic!("{out:?}: no eject: {names:?}")).input).unwrap();
         assert_eq!((eject.bead.as_str(), eject.head.as_str()), ("sp-a", "t1"), "{out:?}");
         if out.contains("red-output=") {
             assert!(eject.why.contains("run/rounds/r9.results/testenv.out"), "{}", eject.why);
         }
-        assert!(names.contains(&ABANDON), "{names:?}");
+        let (next, acts) = on_outcome(&waiting, EJECT, true, "{}", &eject, NOW);
+        assert!(acts.iter().all(|a| a.effect != ABANDON && a.effect != PAUSE), "{out:?}: {acts:?}");
+        let rc = next.repos.get("spira").cloned().unwrap_or_default();
+        assert!(rc.members.is_empty() && rc.batch.is_none(), "{out:?}: the emptied round is forgotten: {rc:?}");
     }
 }
 
-/// The sole-member abandon follows its eject, so it may say one was made; a multi-member abandon
-/// that ejected nothing at decision time claims no count.
+/// A refused eject of the sole member abandons the round, names the refusal and keeps the red evidence.
+#[test]
+fn sp_z1vzxd_a_refused_eject_of_the_sole_member_abandons_the_round_naming_the_refusal() {
+    let c = attributed(sole_member(driving(State::Certifying, "spira.c3")));
+    let red = runtime::units::RanOutput::captured(b"red=test-a.sh\nred-output=run/rounds/r9.results/a.out\n", b"");
+    let (waiting, acts) = on_ran_with(&c, &red_ran("spira.c3"), &red, NOW).expect("its own leg");
+    let eject: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == EJECT).unwrap().input).unwrap();
+    let (_, acts) = on_outcome(&waiting, EJECT, false, "no open round", &eject, NOW);
+    let abandon: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ABANDON).unwrap_or_else(|| panic!("{acts:?}")).input).unwrap();
+    assert!(abandon.why.contains("no open round") && abandon.why.contains("run/rounds/r9.results/a.out"), "{}", abandon.why);
+    assert_eq!(abandon.reds, vec!["test-a.sh".to_string()]);
+}
+
+/// A multi-member abandon that ejected nothing at decision time claims no count.
 #[test]
 fn sp_b0lhx6_an_abandon_carries_the_ejects_the_decision_made() {
-    let mut r = carried(&attributed(sole_member(driving(State::Certifying, "spira.c3"))));
-    let n = r.requested().len();
-    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
-    let after = asked_after(&r, n);
-    assert_eq!(after.iter().find(|(e, _)| e == ABANDON).unwrap().1.ejected, Some(1));
     let mut r = carried(&confirmed(driving(State::Certifying, "spira.c3")));
     let n = r.requested().len();
     r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
@@ -851,6 +859,10 @@ fn sp_qmd5g4_an_operators_hold_is_never_lifted_by_the_bound() {
     let (carry, acts) = decide_with(&pinned_lift(400), &carry, &snap);
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Held);
+}
+
+fn red_ran(leg: &str) -> runtime::units::UnitRan {
+    runtime::units::UnitRan { exit: runtime::units::Exit::Code(1), ..ran_of(leg) }
 }
 
 fn ran_of(leg: &str) -> runtime::units::UnitRan {
