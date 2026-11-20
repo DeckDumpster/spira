@@ -177,14 +177,18 @@ fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[St
         }
     };
     let since = bead::bdq::utc_stamp_nanos(std::time::SystemTime::now() - std::time::Duration::from_secs(window));
-    let began = std::time::Instant::now();
-    let mut create = || put_capture(&argv, body);
+    let created_at = std::cell::Cell::new(std::time::Instant::now());
+    let mut create = || {
+        let sent = put_capture(&argv, body);
+        created_at.set(std::time::Instant::now());
+        sent
+    };
     let mut read = || {
         let (list_code, listing) = door(&s(&["list", "--limit", "0", "--json"]));
         bead::readback(list_code, &listing, lookup_title.unwrap_or_default(), &since[..19])
     };
     let mut wait = || {
-        if began.elapsed() >= spira_store::lc_call::DEADLINE {
+        if created_at.get().elapsed() >= spira_store::lc_call::DEADLINE {
             return false;
         }
         std::thread::sleep(std::time::Duration::from_millis(500)); // waits-on: the store's listing; cap lc_call::DEADLINE
@@ -2169,6 +2173,38 @@ mod tests {
         let args = argv(&["create", "T", "--silent"]);
         assert_eq!(door_create(&args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r")), 0);
         assert_eq!(writes(&d)[0].0, argv(&["content", "create", "T", "--silent", "--deps", "blocks:sp-a"]));
+    }
+
+    const LISTED_NOW: &str = r#"[{"id":"sp-held","title":"T","issue_type":"task","created_at":"2999-01-01T00:00:00Z"}]"#;
+
+    #[test]
+    fn a_retry_of_a_title_the_store_holds_sends_no_create_and_still_completes_the_bead() {
+        let dir = testkit::TempDir::new("bead-door-retry");
+        let _env = configured(dir.path());
+        let d = install(vec![("content list", 0, LISTED_NOW), ("content create", 0, "sp-dup\n")]);
+        let args = argv(&["create", "T", "--silent"]);
+        assert_eq!(door_create(&args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r")), 0);
+        let w = sent(&d);
+        assert!(w.iter().all(|a| a[1] != "create"), "{w:?}");
+        assert_eq!(w, [argv(&["create-bead", "sp-held", "--repo", "r"]), argv(&["content", "dep", "add", "sp-held", "sp-a", "--type", "blocks"])]);
+    }
+
+    #[test]
+    fn an_edge_already_in_the_content_store_is_mirrored_to_the_lifecycle_store_not_failed() {
+        let dir = testkit::TempDir::new("bead-door-present");
+        let _env = configured(dir.path());
+        let d = install(vec![("content dep add", 1, "already exists\n"), ("content dep list", 0, r#"[{"depends_on_id":"sp-a"}]"#)]);
+        assert_eq!(blocks_edge_present_ok("sp-new", "sp-a"), 0);
+        assert!(d.sent.lock().unwrap().iter().any(|(a, _)| a[0] == "dep-add" && a[1..] == argv(&["sp-new", "sp-a", "--type", "blocks"])[..]));
+        install(vec![("content dep add", 1, "refused\n"), ("content dep list", 0, "[]")]);
+        assert_eq!(blocks_edge_present_ok("sp-new", "sp-a"), 1, "an edge the store does not hold stays a failure");
+    }
+
+    #[test]
+    fn an_unfinished_filing_names_the_express_mark_and_the_incident_edge_with_their_repairs() {
+        let text = unrecovered(None, true, Some("sp-inc"));
+        assert!(text.contains("bead.sh amend <id> --express") && text.contains("bd dep add sp-inc <id>"), "{text}");
+        assert_eq!(unrecovered(Some("sp-x"), false, None), "");
     }
 
     #[test]
