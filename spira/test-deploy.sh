@@ -1002,18 +1002,18 @@ echo "PROPERTY 15: --dry-run ExecStart check"
 # ==========================================================================
 # FAIL-FIRST: dry-run with a non-executable ExecStart target exits non-zero and names ExecStart.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
-mkdir -p "$RELEASES/$NEW_RELEASE"        # release dir exists but no bin/sentinel
+mkdir -p "$RELEASES/$NEW_RELEASE"        # release dir exists but no bin/spira-runtime
 ln -s "$NEW_RELEASE" "$RELEASES/current"
 _out="$(run_deploy -- --dry-run "$NEW_TAG" 2>&1)"
 _rc=$?
 not0 "dry-run/bad-exec: exits non-zero"    "$_rc"
 want "dry-run/bad-exec: mentions ExecStart" "ExecStart" "$_out"
 
-# Happy path: with an executable bin/sentinel in place, dry-run exits 0 and says dry-run.
+# Happy path: with an executable bin/spira-runtime in place, dry-run exits 0 and says dry-run.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 mkdir -p "$RELEASES/$NEW_RELEASE/spira" "$RELEASES/$NEW_RELEASE/bin"
-printf '#!/bin/sh\n' > "$RELEASES/$NEW_RELEASE/bin/sentinel"
-chmod +x "$RELEASES/$NEW_RELEASE/bin/sentinel"
+printf '#!/bin/sh\n' > "$RELEASES/$NEW_RELEASE/bin/spira-runtime"
+chmod +x "$RELEASES/$NEW_RELEASE/bin/spira-runtime"
 ln -s "$NEW_RELEASE" "$RELEASES/current"
 > "$CALL_LOG"
 _out="$(run_deploy -- --dry-run "$NEW_TAG" 2>&1)"

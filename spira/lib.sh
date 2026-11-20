@@ -127,12 +127,9 @@ json_only() { sed -n '/^[[{]/,$p'; }
 # spira_is_generated_file, spira_ask_rebase_loop, spira_ask_red_recurring,
 # spira_ask_rebase_refused, spira_ask_budget_deferred, spira_ask_refresh_loop and
 # land_escalate retired (sp-31hjr, wave 4.30, family C): ported natively into
-# landing-pass/src/real.rs + ask.rs (land_escalate into sentinel/src/dispatch.rs).
-# No caller remained in bash — landing-pass's own lib.sh seam was the only one, and
-# it calls the Rust versions in-process now. `landing-pass noverdict ...` and
-# `sentinel --land-escalate` drive the native versions standalone for the
-# real-sender suites. ask_already_open itself retired with the GitHub-closeout family
-# (sp-j3fim, wave 4.31).
+# landing-pass/src/real.rs + ask.rs. No caller remained in bash. `landing-pass noverdict ...`
+# drives the native versions standalone. land_escalate itself was retired with the sentinel
+# binary (sp-3i87xd). ask_already_open retired with the GitHub-closeout family (sp-j3fim).
 
 # --------------------------------------------------------------------------------------
 # Liveness is the lease and nothing else: a dwarf is alive while the deadline in its
@@ -1327,39 +1324,6 @@ system_prompt_split() {
 # Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::all_partition_members`.
 all_partition_members() {
     strand all-partition-members
-}
-
-# detect_unclaimable_ready -> one UNCLAIMABLE line per ready bead no persona can claim.
-# file_unclaimable_incidents <detect_unclaimable_ready output> -> one P1 incident per line,
-# filed into the Groomer partition (idempotent: incident.sh dedupes on unclaimable:<id>).
-# detect_branch_collisions -> one COLLISION line per open bead whose recorded branch is
-# checked out in a DIFFERENT bead's canonical worktree. park_branch_collisions <that output>
-# frees a closed-clean-unheld squatter, cuts an inherited branch: label, or parks the rest
-# with SPIRA_ASK_LABEL/overseer.
-#
-# Ported to Rust (sp-fbqsv, "wave 4.28"); see `sentinel::detect` for the full rationale
-# each of these carried (the fifteen-hour rune:-preference strand, the unclaimable-
-# reporting-its-own-report cycle guard, the sp-lyglx/sp-vcxmz branch-collision incidents).
-# `detect_unclaimable_ready` classifies in-process (sentinel/src/unclaimable.rs); the pure classifier
-# is also `sentinel --classify-unclaimable`, so a fixture-JSON table (test-unclaimable.sh) and
-# cockpit-collect's cross-check (UC-dispatch-17) can drive it
-# directly. The bash-only re-exec
-# that used to re-source lib.sh from the production checkout when called from a worktree
-# (sp-b0j0s) is retired, not ported: it was a workaround for a bash function having no
-# persistent, correctly-resolved context across calls, and this binary resolves its config
-# once at startup the same way for every check in the pass (law-a-binary-resolves-the-
-# config-it-reads).
-detect_unclaimable_ready() {
-    sentinel --detect-unclaimable
-}
-file_unclaimable_incidents() {   # file_unclaimable_incidents <detect_unclaimable_ready output>
-    sentinel --file-unclaimable <<< "$1"
-}
-detect_branch_collisions() {
-    sentinel --detect-collisions
-}
-park_branch_collisions() {   # park_branch_collisions <detect_branch_collisions output>
-    sentinel --park-collisions <<< "$1"
 }
 
 # detect_livelocked -> one LIVELOCK line per open bead that cannot make progress.

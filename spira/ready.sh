@@ -18,7 +18,7 @@
 #   timers      — every active spira-*-<instance>.timer (the watchdog's) still has a next trigger
 #   world       — not halted; stamp file named with its mtime when present
 #   database    — readable (bead count); statutes in force
-#   ready work  — sentinel.sh --report sees open work
+#   ready work  — spira-lc lists open plan beads
 #   loom        — answers 200 at SPIRA_LOOM_ADDR inside SPIRA_LOOM_BUDGET_MS
 #   agent       — configured agent binary is present  [WARNING BY DESIGN]
 #   cockpit     — panel and health panes present
@@ -181,28 +181,13 @@ fi
 echo ""
 echo "ready work"
 # =============================================================================
-# sentinel --report lists the open plan beads. Each line of open work is
-# indented with two spaces. A timeout guards against a slow or stuck database.
-# batch-job: sentinel report over every rig
-if ! _rep="$(timeout 20 sentinel --report 2>&1)"; then
-    UNKN "ready work — sentinel --report failed or timed out" \
-         "$(printf '%s' "$_rep" | head -2)"
-else
-    _n_open="$(printf '%s\n' "$_rep" | grep -c '^  ' || true)"
-    if [ "${_n_open:-0}" -gt 0 ]; then
-        PASS "sentinel sees $_n_open open plan bead(s)"
-        printf '%s\n' "$_rep" | head -7 | sed 's/^/        /'
-    else
-        WARN "sentinel sees no open plan work" \
-             "No plan beads are currently open — nothing to call."
-    fi
-fi
+ready_work "${SPIRA_PLAN_LABEL:-plan}"
 
 _cdb="$(sed -n 's/.*"dolt_database"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$SPIRA_DB/.beads/metadata.json" 2>/dev/null | head -1)"
 if _cr="$(timeout 5 spira-lc plan items --ids sp-ready-probe 2>&1)"; then
     PASS "spira_lc can read bead content (plan items, database ${_cdb:-unnamed})"
 elif printf '%s' "$_cr" | grep -qi 'denied'; then
-    FAIL "spira_lc cannot read bead content — the sentinel can never see ready work" \
+    FAIL "spira_lc cannot read bead content — the loop can never see ready work" \
          "grant SELECT on the content database (${_cdb:-unnamed})'s issues, labels, dependencies to the spira-lc user as the Dolt admin ($(printf '%s' "$_cr" | head -1))"
 else
     UNKN "bead content read — spira-lc plan items failed" "$(printf '%s' "$_cr" | head -2)"

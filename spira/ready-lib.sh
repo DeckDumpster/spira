@@ -50,6 +50,25 @@ ready_verdict() {
     return 0
 }
 
+# ready_work <plan label> — the open plan beads, read through spira-lc; ? when the read fails.
+ready_work() {
+    local json n
+    if ! json="$(timeout 20 spira-lc plan items --label "$1" --status open 2>&1)"; then
+        UNKN "ready work — spira-lc plan items failed or timed out" "$(printf '%s' "$json" | head -2)"
+        return 0
+    fi
+    if ! n="$(printf '%s' "$json" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["items"]))' 2>/dev/null)"; then
+        UNKN "ready work — spira-lc plan items answered something that is not a list of items" \
+             "$(printf '%s' "$json" | head -2)"
+        return 0
+    fi
+    if [ "$n" -gt 0 ]; then
+        PASS "$n open plan bead(s)"
+    else
+        WARN "no open plan work" "No plan beads are currently open — nothing to call."
+    fi
+}
+
 ready_scheduler_answers() { timeout 5 world scheduler-status >/dev/null 2>&1; }
 
 # ready_wait_scheduler <unit> <seconds> — wait, by the wall clock, until the scheduler answers
