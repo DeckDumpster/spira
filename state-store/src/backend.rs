@@ -179,7 +179,8 @@ pub trait Backend: Send + Sync {
     }
     /// Keys starting with `prefix` whose value's `data.kind` is `kind` and `data.at` an integer
     /// above `since`, ascending by `(at, key)` and strictly after `after`, at most `limit`. The
-    /// default pages [`Backend::range`]; a backend that indexes `(kind, at)` overrides it.
+    /// default pages [`Backend::range`]; a backend that indexes `(kind, at)` overrides it, and
+    /// the SQLite one indexes only keys under `facts/`.
     fn range_kind_since(
         &self,
         prefix: &str,
