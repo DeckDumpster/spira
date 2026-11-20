@@ -110,7 +110,8 @@ pub const NO_FAILURE_FOUND: &str =
 
 /// The failure itself, not the output's tail: cargo's `---- test stdout ----` blocks, failures
 /// list, `test result: FAILED` and `error: N target(s) failed`; or a shell suite's FAIL / not ok
-/// lines with their context; nextest's `FAIL` line with its indented panic block, once per test. The tail, announced as such, only when nothing matches.
+/// lines with their context. Always a `FAIL ` line with its indented panic block, once per test.
+/// The tail, announced as such, only when nothing matches.
 pub fn failure_excerpt(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let mut keep = vec![false; lines.len()];
@@ -146,32 +147,6 @@ pub fn failure_excerpt(text: &str) -> String {
             keep[i] = true;
         }
     }
-    let mut seen: Vec<&str> = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        let t = lines[i].trim_start();
-        if !t.starts_with("FAIL ") {
-            i += 1;
-            continue;
-        }
-        let indent = lines[i].len() - t.len();
-        let name = t.split_whitespace().last().unwrap_or(t);
-        let first = !seen.contains(&name);
-        seen.push(name);
-        i += 1;
-        let mut end = i;
-        while end < lines.len()
-            && end - i < TEST_BLOCK_CAP
-            && !lines[end].trim().is_empty()
-            && lines[end].len() - lines[end].trim_start().len() > indent
-        {
-            end += 1;
-        }
-        if first {
-            keep[i - 1..end].iter_mut().for_each(|k| *k = true);
-        }
-        i = end;
-    }
     let cargo = keep.iter().any(|k| *k);
     if !cargo {
         for (i, l) in lines.iter().enumerate() {
@@ -185,6 +160,31 @@ pub fn failure_excerpt(text: &str) -> String {
                 }
             }
         }
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim_start();
+        if !t.starts_with("FAIL ") {
+            i += 1;
+            continue;
+        }
+        let indent = lines[i].len() - t.len();
+        let first = !seen.contains(&t);
+        seen.push(t);
+        i += 1;
+        let mut end = i;
+        while end < lines.len()
+            && end - i < TEST_BLOCK_CAP
+            && !lines[end].trim().is_empty()
+            && lines[end].len() - lines[end].trim_start().len() > indent
+        {
+            end += 1;
+        }
+        if first {
+            keep[i - 1..end].iter_mut().for_each(|k| *k = true);
+        }
+        i = end;
     }
     let picked: Vec<&str> = lines
         .iter()

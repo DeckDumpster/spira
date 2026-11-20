@@ -7865,6 +7865,22 @@ fn a_failure_excerpt_of_nextest_output_keeps_each_failing_tests_panic_block_once
 }
 
 #[test]
+fn a_failure_excerpt_keeps_the_same_test_name_failing_in_two_crates() {
+    use spira_config::sendback::failure_excerpt;
+    let x = failure_excerpt(
+        "        FAIL [   0.1s] (1/2) a t::x\n            panicked at a.rs:1:1:\n        FAIL [   0.1s] (2/2) b t::x\n            panicked at b.rs:2:2:\nerror: test run failed\n",
+    );
+    assert!(x.contains("panicked at a.rs:1:1") && x.contains("panicked at b.rs:2:2"), "{x}");
+}
+
+#[test]
+fn a_failure_excerpt_keeps_not_ok_lines_beside_fail_blocks() {
+    use spira_config::sendback::failure_excerpt;
+    let x = failure_excerpt("FAIL x\n  why x\nnot ok 3 - y\n");
+    assert!(x.contains("why x") && x.contains("not ok 3 - y"), "{x}");
+}
+
+#[test]
 fn a_recorded_mend_moves_the_next_pass_head_to_the_mended_tip() {
     let t = round_world();
     assert_eq!(

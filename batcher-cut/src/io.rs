@@ -2587,7 +2587,7 @@ fn test_phase_evidence(results: &Path) -> Vec<String> {
             lines.push(format!("{stage} failed: {}", names.join(", ")));
         }
         if let Some((_, text)) = red_suite_steps(results, None, &[stage.to_string()]).pop() {
-            lines.push(spira_config::sendback::failure_excerpt(&text));
+            lines.push(format!("{stage}:\n{}", spira_config::sendback::failure_excerpt(&text)));
         }
     }
     lines
