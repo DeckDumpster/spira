@@ -290,6 +290,12 @@ fn a_sweep_reads_the_live_rows_through_the_state_index_not_every_row_ever() {
     assert!(under("range_in_state") >= 2, "{reads:?}");
     let gets = reads.iter().filter(|(k, _, _)| *k == "get").count();
     assert!(gets <= 6, "{gets} point reads for 3 live rows: {reads:?}");
+    r.s.contract().backend().take();
+    r.ok(&["mending", "sweep", "--actor", "sweeper", "--deadline-secs", "60"]);
+    r.ok(&["mending", "close-ended", "--actor", "concierge"]);
+    let reads = r.s.contract().backend().take();
+    let ranged = reads.iter().filter(|(k, p, _)| *k == "range" && p.starts_with(keys::MENDINGS)).count();
+    assert_eq!(ranged, 0, "no scan of mendings/ on the ask and close-ended paths: {reads:?}");
 }
 
 fn hand_facts(evidence_tip: &str) -> String {
