@@ -1585,14 +1585,18 @@ pub fn close(
             }
         }
     }
+    let mut owed_ask = None;
     if rowless {
         let a = close_ask_row(&id, &reason, &actor, m);
         if a.code != APPLIED {
             return a;
         }
-        let settled = match crate::reconcile_content::settle_ask(m, bd, &id) {
-            Ok(true) => Ok(()),
-            Ok(false) => crate::reconcile_content::close_unowned(bd, &id, &reason),
+        let settled = match crate::reconcile_content::owed_ask_close(m, &id) {
+            Ok(Some(owed)) => {
+                owed_ask = Some(owed);
+                Ok(())
+            }
+            Ok(None) => crate::reconcile_content::close_unowned(bd, &id, &reason),
             Err(e) => Err(e),
         };
         if let Err(e) = settled {
@@ -1606,6 +1610,8 @@ pub fn close(
     let mut ans = withdraw_named_asks(&id, &asked_about, &actor, m);
     if !rowless && row_terminal && ans.code == APPLIED {
         ans.owed = vec![(id, reason)].into();
+    } else if let Some(owed) = owed_ask.filter(|_| ans.code == APPLIED) {
+        ans.owed = vec![owed].into();
     }
     ans
 }

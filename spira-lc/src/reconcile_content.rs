@@ -14,7 +14,7 @@ use crate::callers::{bead_field, s, show, usage, Answer, Bd, Machine, APPLIED, C
 const CHUNK: usize = 100;
 const USE: &str = "reconcile-content [--apply | --dry-run] [--since-seq N] [<bead-id>...]";
 
-fn terminal(state: &str) -> bool {
+pub(crate) fn terminal(state: &str) -> bool {
     BeadState::from_str(state).is_some_and(BeadState::is_terminal)
 }
 
@@ -343,7 +343,7 @@ pub fn settle_reopen(m: &mut dyn Machine, bd: &mut dyn Bd, id: &str) -> Result<b
     }
 }
 
-fn record_state(m: &mut dyn Machine, id: &str) -> Result<Option<String>, String> {
+pub(crate) fn record_state(m: &mut dyn Machine, id: &str) -> Result<Option<String>, String> {
     match show(m, id) {
         Ok(v) => Ok(Some(bead_field(&v, "state"))),
         Err(NO_ROW) => Ok(None),
@@ -366,6 +366,22 @@ pub fn settle_ask(m: &mut dyn Machine, bd: &mut dyn Bd, id: &str) -> Result<bool
     }
     bd.close(id, &ask_reason(&state, &s(&ask, "quote")))?;
     Ok(true)
+}
+
+/// The store close owed for ask `id` once its ask row is closed: `None` when there is no ask.
+pub fn owed_ask_close(m: &mut dyn Machine, id: &str) -> Result<Option<(String, String)>, String> {
+    let (rc, out) = m.call(&["show-ask".into(), id.into()]);
+    match rc {
+        0 => {}
+        1 => return Ok(None),
+        _ => return Err(format!("show-ask failed: {}", out.trim())),
+    }
+    let ask: Value = serde_json::from_str(out.trim()).map_err(|e| format!("show-ask: not JSON: {e}"))?;
+    let state = s(&ask, "state");
+    if state == "OPEN" {
+        return Err("the ask is still open".into());
+    }
+    Ok(Some((id.to_string(), ask_reason(&state, &s(&ask, "quote")))))
 }
 
 /// Close epic `id` in bd with `reason` when every child is terminal; refused otherwise.
