@@ -251,25 +251,12 @@ mod tests {
         let floor = 5_000;
         let mut batch = Vec::new();
         for n in 0..2_000i64 {
-            let kind = if n % 133 == 0 {
-                "eject-failure"
-            } else {
-                "claimed"
+            let (kind, at) = match n {
+                n if n % 100 == 0 && n < 1_500 => ("eject-failure", floor + n + 1),
+                n if n % 100 == 50 && n < 1_000 => ("eject-failure", floor - 1 - n),
+                n => ("claimed", floor + n),
             };
-            let at = if kind == "eject-failure" && n % 266 != 0 {
-                floor + n + 1
-            } else if kind == "eject-failure" {
-                floor - 1 - n
-            } else {
-                floor + n
-            };
-            batch.push(fact_of(
-                &format!("sp-{:03}", n % 200),
-                kind,
-                "c",
-                "harness",
-                at,
-            ));
+            batch.push(fact_of(&format!("sp-{:03}", n % 200), kind, "c", "harness", at));
         }
         for chunk in batch.chunks(100) {
             append_on(&s, chunk).unwrap();
@@ -278,7 +265,7 @@ mod tests {
             .iter()
             .filter(|f| f.kind == "eject-failure" && f.at > floor)
             .count();
-        assert!(expect > 0 && expect < 16, "{expect}");
+        assert_eq!(expect, 15);
         s.contract().backend().take();
         let rows = read_on(&s, &[], &["eject-failure".into()], Some(floor)).unwrap();
         assert_eq!(rows.len(), expect);

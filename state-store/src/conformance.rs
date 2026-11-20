@@ -1664,6 +1664,49 @@ pub fn a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below
     assert_eq!(read[0].mod_rev.main, head - 1, "p/b as rewritten");
 }
 
+/// A kind-and-time range answers exactly the keys under the prefix of that `data.kind` with an
+/// integer `data.at` above `since`, ascending by `(at, key)`, paged by `after` and `limit`, at
+/// the head and at an older revision, as the scan default does.
+pub fn a_kind_since_range_reads_the_keys_of_that_kind_after_that_time_at_the_head_and_below_it<
+    R: Rig,
+>(
+    rig: &R,
+) {
+    let clock = VirtualClock::new(T0);
+    let c = open(rig.fresh(), &clock);
+    let fact = |kind: &str, at: serde_json::Value| obj(json!({ "kind": kind, "at": at }));
+    put(&c, "f/a", fact("k", json!(30)), "1");
+    put(&c, "f/b", fact("k", json!(10)), "2");
+    put(&c, "f/c", fact("k", json!(30)), "3");
+    put(&c, "f/d", fact("other", json!(20)), "4");
+    put(&c, "f/e", fact("k", json!("20")), "5");
+    put(&c, "g/x", fact("k", json!(40)), "6");
+    let then = put(&c, "f/f", fact("k", json!(25)), "7");
+    put(&c, "f/b", fact("k", json!(50)), "8");
+    c.delete("f/a", None, &req("9")).expect("delete");
+    let head = c.head().expect("head");
+    let keys = |since: i64, after: Option<(i64, &str)>, limit: usize, at: u64| -> Vec<String> {
+        c.range_kind_since("f/", "k", since, after, limit, at)
+            .expect("range_kind_since")
+            .into_iter()
+            .map(|i| i.key)
+            .collect()
+    };
+    assert_eq!(keys(i64::MIN, None, 10, head), ["f/f", "f/c", "f/b"]);
+    assert_eq!(keys(25, None, 10, head), ["f/c", "f/b"]);
+    assert_eq!(keys(i64::MIN, Some((25, "f/f")), 10, head), ["f/c", "f/b"]);
+    assert_eq!(keys(i64::MIN, None, 1, head), ["f/f"]);
+    assert!(keys(i64::MAX, None, 10, head).is_empty());
+    assert_eq!(keys(i64::MIN, None, 10, then), ["f/b", "f/f", "f/a", "f/c"]);
+    assert_eq!(keys(10, Some((30, "f/a")), 10, then), ["f/c"]);
+    for (since, after, limit, at) in [(i64::MIN, None, 2, head), (20, Some((25, "f/f")), 5, then), (i64::MIN, None, 3, then)] {
+        let by_scan = crate::backend::range_kind_since_by_scan(c.backend(), "f/", "k", since, after, limit, at)
+            .expect("scan");
+        let read = c.range_kind_since("f/", "k", since, after, limit, at).expect("range_kind_since");
+        assert_eq!(read.iter().map(|i| i.key.clone()).collect::<Vec<_>>(), by_scan.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>());
+    }
+}
+
 /// `gc_range` and `Contract::open` never visit `history/`, however many keys it holds: open
 /// reads exactly the rows it reads from a store without them.
 pub fn gc_range_skips_the_history_prefix<R: Rig>(rig: &R) {
@@ -1822,6 +1865,7 @@ scenarios!(
     a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
     a_lock_renew_op_keeps_the_token_restarts_the_ttl_and_runs_only_while_held,
     a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
+    a_kind_since_range_reads_the_keys_of_that_kind_after_that_time_at_the_head_and_below_it,
     gc_range_skips_the_history_prefix,
     committed_at_is_the_wall_time_of_the_first_audited_commit_at_or_after_a_main,
 );
