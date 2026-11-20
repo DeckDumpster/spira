@@ -1026,43 +1026,12 @@ fn law_contents(home: &str) -> String {
 
 /// Files the design's pilgrimage bead for the pilgrim, blocked by every build bead named with `--after`.
 fn cmd_pilgrimage(home: &str, args: &[String]) -> i32 {
-    let usage = "usage: bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]";
-    let mut design: Option<String> = None;
-    let mut repo: Option<String> = None;
-    let mut priority: Option<String> = None;
-    let mut after: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--repo" => {
-                i += 1;
-                repo = args.get(i).cloned();
-            }
-            "--priority" | "-p" => {
-                i += 1;
-                priority = args.get(i).cloned();
-            }
-            "--after" => {
-                i += 1;
-                match args.get(i) {
-                    Some(id) => after.push(id.clone()),
-                    None => {
-                        eprintln!("{usage}");
-                        return 2;
-                    }
-                }
-            }
-            a if a.starts_with('-') => {
-                eprintln!("bead: unknown option: {a}\n{usage}");
-                return 2;
-            }
-            a => design = Some(a.to_string()),
+    let bead::PilgrimageArgs { design, repo, priority, after } = match bead::pilgrimage_args(args) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{e}");
+            return 2;
         }
-        i += 1;
-    }
-    let (Some(design), Some(repo)) = (design, repo) else {
-        eprintln!("{usage}");
-        return 2;
     };
     if after.is_empty() {
         eprintln!("bead: pilgrimage: --after <build-id> required: a pilgrimage with no build bead to wait for is claimable before the feature exists");

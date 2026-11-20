@@ -370,6 +370,55 @@ pub fn section(text: &str, heading: &str) -> Option<String> {
     (!body.is_empty()).then_some(body)
 }
 
+#[derive(Debug, Default, PartialEq)]
+pub struct PilgrimageArgs {
+    pub design: String,
+    pub repo: String,
+    pub priority: Option<String>,
+    pub after: Vec<String>,
+}
+
+pub fn pilgrimage_args(args: &[String]) -> Result<PilgrimageArgs, String> {
+    let usage = "usage: bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]";
+    let mut design: Option<String> = None;
+    let mut repo: Option<String> = None;
+    let mut priority: Option<String> = None;
+    let mut after: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--repo" => {
+                i += 1;
+                repo = args.get(i).cloned();
+            }
+            "--priority" | "-p" => {
+                i += 1;
+                priority = args.get(i).cloned();
+            }
+            "--after" => {
+                let taken = args[i + 1..].iter().take_while(|a| !a.starts_with('-')).count();
+                if taken == 0 {
+                    return Err(usage.to_string());
+                }
+                after.extend(args[i + 1..=i + taken].iter().cloned());
+                i += taken;
+            }
+            a if a.starts_with('-') => return Err(format!("bead: unknown option: {a}\n{usage}")),
+            a => {
+                if let Some(first) = &design {
+                    return Err(format!("bead: pilgrimage: two design files: {first} and {a}"));
+                }
+                design = Some(a.to_string());
+            }
+        }
+        i += 1;
+    }
+    let (Some(design), Some(repo)) = (design, repo) else {
+        return Err(usage.to_string());
+    };
+    Ok(PilgrimageArgs { design, repo, priority, after })
+}
+
 /// The title and body of a design's pilgrimage bead: its Intent and its User path, and the
 /// acceptance of a clean walk. A design without a User path is refused, since the walk is built from it.
 pub fn pilgrimage_spec(design: &str) -> Result<(String, String), String> {
@@ -967,6 +1016,35 @@ mod tests {
     }
 
     const DESIGN: &str = "# Agent tools\n\n## Intent\n\nLet an agent save a card.\n\n## User path\n\n1. Sign in.\n2. Save a card.\n\n## Test strategy\n\nfoo\n";
+
+    fn sv(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn pilgrimage_after_takes_every_id_up_to_the_next_flag() {
+        let p = pilgrimage_args(&sv(&["d.md", "--repo", "spira", "--after", "sp-a", "sp-b", "sp-c"])).unwrap();
+        assert_eq!(p.after, sv(&["sp-a", "sp-b", "sp-c"]));
+        assert_eq!(p.design, "d.md");
+    }
+
+    #[test]
+    fn pilgrimage_after_repeated_accumulates() {
+        let p = pilgrimage_args(&sv(&["d.md", "--repo", "r", "--after", "sp-a", "--after", "sp-b"])).unwrap();
+        assert_eq!(p.after, sv(&["sp-a", "sp-b"]));
+    }
+
+    #[test]
+    fn pilgrimage_after_with_no_id_is_usage() {
+        assert!(pilgrimage_args(&sv(&["d.md", "--after", "--repo", "r"])).unwrap_err().contains("usage"));
+        assert!(pilgrimage_args(&sv(&["d.md", "--repo", "r", "--after"])).unwrap_err().contains("usage"));
+    }
+
+    #[test]
+    fn pilgrimage_two_design_files_are_refused_naming_both() {
+        let e = pilgrimage_args(&sv(&["a.md", "b.md", "--repo", "r", "--after", "sp-a"])).unwrap_err();
+        assert!(e.contains("two design files: a.md and b.md"), "{e}");
+    }
 
     #[test]
     fn pilgrimage_spec_carries_intent_and_user_path() {
