@@ -102,9 +102,8 @@ fn day_key_parts(key: &str) -> Option<(&str, i64)> {
     Some((state, day.parse().ok()?))
 }
 
-fn first_at(item: &Item, min: bool) -> Option<i64> {
-    let ats = branch(item).iter().filter_map(|a| a["at"].as_i64());
-    if min { ats.min() } else { ats.max() }
+fn newest_at(item: &Item) -> Option<i64> {
+    branch(item).iter().filter_map(|a| a["at"].as_i64()).max()
 }
 
 impl<B: Backend> Store<B> {
@@ -124,7 +123,7 @@ impl<B: Backend> Store<B> {
             if page.is_empty() {
                 return Ok(false);
             }
-            Ok(page.iter().find_map(|i| first_at(i, false)).is_none_or(|at| at >= floor))
+            Ok(page.iter().find_map(newest_at).is_none_or(|at| at >= floor))
         };
         let (mut lo, mut hi) = (0u64, head + 1);
         while lo < hi {
@@ -146,11 +145,7 @@ impl<B: Backend> Store<B> {
             None => {
                 let start = self.first_rev_within(floor, head)?;
                 let oldest = self.events_from(0, 1, head)?.first().map(|i| i.mod_rev.main);
-                let filled_from = if oldest.is_none_or(|o| o >= start) {
-                    0
-                } else {
-                    self.events_from(start, PROBE, head)?.iter().find_map(|i| first_at(i, true)).unwrap_or(floor)
-                };
+                let filled_from = if oldest.is_none_or(|o| o >= start) { 0 } else { floor };
                 (Cursor { rev: start.saturating_sub(1), filled_from, fill_to: head }, None)
             }
         };

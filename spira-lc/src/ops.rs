@@ -20,7 +20,7 @@ pub const VIEWS: [&str; 6] = ["ops_live", "ops_round", "ops_recent", "ops_edges"
 pub const TRANSITION_MACHINES: [&str; 2] = ["bead", "batch"];
 pub const GRAPH_MACHINES: [&str; 4] = ["bead", "batch", "ask", "mending"];
 
-const DAY_S: i64 = 86_400;
+use crate::control::stays::DAY_S;
 const HOUR_S: i64 = 3_600;
 const LIVE: [BeadState; 7] = [BeadState::Open, BeadState::Ready, BeadState::Working, BeadState::Submitted, BeadState::Certified, BeadState::InDelivery, BeadState::Rework];
 const ROUND_STATES: [&str; 5] = ["OPEN", "CI_RUNNING", "GREEN", "ATTRIBUTING", "REBUILDING"];
@@ -700,18 +700,31 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_cursor_makes_a_step_change_nothing() {
-        let now = 1_000_000_000;
-        let (s, _) = worked(10, now);
-        s.fold_stays(now, 4).unwrap();
-        let before = day_keys(&s);
-        let held = s.contract().get(crate::control::keys::STAYS_CURSOR).unwrap().unwrap();
-        s.fold_stays(now, 4).unwrap();
-        let moved = day_keys(&s);
-        let t = state_store::Txn::new().when(state_store::Compare::ModRev(crate::control::keys::STAYS_CURSOR.into(), Some(held.mod_rev))).put("stays/WORKING/0000000001", state_store::Object::new(json!({"n": 99, "b": {}})));
-        let r = s.contract().txn(&t, &Request::new("late", "t", "t")).unwrap();
-        assert!(!r.succeeded, "the cursor moved under the late writer");
-        assert!(moved != before && day_keys(&s) == moved);
+    fn a_first_fill_starts_inside_the_window_and_counts_a_stay_that_began_before_it() {
+        let now = 2_000_000_000;
+        let build = || {
+            let s = store();
+            let stay = |id: &str, from: i64, to: i64| {
+                s.create(id, Some("harness"), None, from - 1, &Request::new(&format!("c-{id}"), "t", "t")).unwrap();
+                let claim = BeadEvent { expect: BeadState::Ready, version: 0, kind: BeadEventKind::Claim { holder: "d".into(), lease_until: from + 3_600, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None }, actor: "d".into(), at: Some(from) };
+                s.claim(id, &claim, &Request::new(&format!("k-{id}"), "t", "t")).unwrap();
+                let version = s.record(id).unwrap().unwrap().value.row.version;
+                let release = BeadEvent { expect: BeadState::Working, version, kind: BeadEventKind::Release, actor: "d".into(), at: Some(to) };
+                s.apply(id, &release, &Request::new(&format!("r-{id}"), "t", "t")).unwrap();
+            };
+            stay("sp-before", now - 30 * DAY_S, now - 29 * DAY_S);
+            stay("sp-across", now - 20 * DAY_S, now - 10 * DAY_S);
+            s
+        };
+        let (whole, stepped) = (build(), build());
+        whole.fold_stays(now, 10_000).unwrap();
+        while stepped.fold_stays(now, 2).unwrap().revs == 2 {}
+        assert_eq!(day_keys(&stepped), day_keys(&whole));
+        let cursor = whole.contract().get(crate::control::keys::STAYS_CURSOR).unwrap().unwrap().value.data;
+        assert_eq!(cursor["filled_from"], now - 14 * DAY_S, "the fill started from the window's start");
+        let StayTally::Ready(p) = whole.stay_tally(now).unwrap() else { panic!("filling: {cursor}") };
+        assert_eq!(p["WORKING"].1, 1, "only the stay that ended inside the window, which began before it");
+        assert!(p["WORKING"].0 >= 10 * DAY_S);
     }
 
     #[test]
