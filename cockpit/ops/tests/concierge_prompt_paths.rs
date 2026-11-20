@@ -9,7 +9,7 @@ const SPIRA_HOME: &str = "{{SPIRA_HOME}}/";
 const BIN_PREFIX: &str = "../bin/";
 
 fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    testkit::manifest_dir().join("../..")
 }
 
 /// What `release build` puts in `bin/`: every declared `[[bin]]` plus the compat aliases.
@@ -26,7 +26,7 @@ fn tokens(line: &str) -> Vec<&str> {
         while let Some(at) = rest.find(prefix) {
             let tail = &rest[at..];
             let end = tail.find(|c: char| c.is_whitespace() || matches!(c, '`' | '"' | '|' | ')')).unwrap_or(tail.len());
-            out.push(tail[..end].trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':')));
+            out.push(tail[..end].trim_end_matches(['.', ',', ';', ':']));
             rest = &tail[end.max(prefix.len())..];
         }
     }
