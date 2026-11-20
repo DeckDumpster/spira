@@ -76,13 +76,6 @@ impl<B: Backend> Store<B> {
         items.iter().map(|i| decode(&i.key, &i.value)).collect()
     }
 
-    /// The failures still being worked, WAITING then MENDING, from the state index.
-    pub fn live_mendings(&self) -> Result<Vec<MendingRecord>> {
-        let mut rows = self.records_in_state(keys::MENDINGS, &MendingState::Waiting)?;
-        rows.extend(self.records_in_state(keys::MENDINGS, &MendingState::Mending)?);
-        Ok(rows)
-    }
-
     /// Every mend of `bead`'s branch, in the order they landed.
     pub fn mends_of(&self, bead: &str) -> Result<Vec<MendRecord>> {
         let (items, _) = self
