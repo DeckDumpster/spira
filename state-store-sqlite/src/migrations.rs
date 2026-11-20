@@ -213,4 +213,61 @@ pub const MIGRATIONS: &[&[&str]] = &[
         "DROP TABLE m6_revs",
         "DROP TABLE m6_rounds",
     ],
+    // 7 (sp-5s1fvq): each lifecycle record under a manual hold keeps `manual_hold`, the newest
+    // applied bead `Hold` of kind Manual (or its legacy name Operator) in its history, as
+    // `{at, cause, detail}`, so the watchers that read when and why a hold was raised read it
+    // from the record and never from history. History is read as migration 2 reads it. The
+    // value is rewritten in place at its own revision, in `latest` and in the `versions` row it
+    // mirrors. A record under no manual hold is untouched.
+    &[
+        "CREATE TEMP TABLE m7_holds (id TEXT NOT NULL, main INTEGER NOT NULL, hkey TEXT NOT NULL, at INTEGER, cause TEXT, detail TEXT)",
+        "INSERT INTO m7_holds
+         SELECT id, main, hkey, json_extract(a, '$.at'), json_extract(a, '$.evidence.Hold.cause'), json_extract(a, '$.evidence.Hold.detail')
+         FROM (SELECT substr(CAST(key AS TEXT), 9, instr(substr(CAST(key AS TEXT), 9), '/') - 1) AS id,
+                      main, CAST(key AS TEXT) AS hkey, json_extract(CAST(value AS TEXT), '$.data.audit') AS a
+               FROM latest WHERE key >= CAST('history/' AS BLOB) AND key < CAST('history0' AS BLOB)
+                 AND json_valid(CAST(value AS TEXT))
+                 AND json_extract(CAST(value AS TEXT), '$.data.seq') IS NOT NULL)
+         WHERE json_valid(a)
+           AND json_extract(a, '$.machine') = 'bead' AND json_extract(a, '$.event') = 'Hold'
+           AND json_extract(a, '$.applied') = 1 AND json_extract(a, '$.lc_key') = id
+           AND json_extract(a, '$.evidence.Hold.kind') IN ('Manual', 'Operator')",
+        "INSERT INTO m7_holds
+         SELECT h.id, h.main, h.hkey, json_extract(a.value, '$.at'), json_extract(a.value, '$.evidence.Hold.cause'), json_extract(a.value, '$.evidence.Hold.detail')
+         FROM (SELECT substr(CAST(key AS TEXT), 9, instr(substr(CAST(key AS TEXT), 9), '/') - 1) AS id, main, CAST(key AS TEXT) AS hkey
+               FROM latest WHERE key >= CAST('history/' AS BLOB) AND key < CAST('history0' AS BLOB)
+                 AND json_valid(CAST(value AS TEXT))
+                 AND json_extract(CAST(value AS TEXT), '$.data.seq') IS NULL) AS h
+         JOIN latest AS e ON e.key = CAST('events/' || printf('%020d', h.main) AS BLOB)
+         JOIN json_each(CAST(e.value AS TEXT),
+              CASE WHEN json_extract(CAST(e.value AS TEXT), '$.data.refused')
+                   THEN '$.data.evidence.else' ELSE '$.data.evidence.then' END) AS a
+         WHERE json_extract(a.value, '$.machine') = 'bead'
+           AND json_extract(a.value, '$.event') = 'Hold'
+           AND json_extract(a.value, '$.lc_key') = h.id
+           AND json_extract(a.value, '$.applied') = 1
+           AND json_extract(a.value, '$.evidence.Hold.kind') IN ('Manual', 'Operator')",
+        "CREATE TEMP TABLE m7_newest (id TEXT PRIMARY KEY, obj TEXT NOT NULL)",
+        "INSERT INTO m7_newest
+         SELECT id, json_object('at', at, 'cause', cause, 'detail', detail)
+         FROM (SELECT *, row_number() OVER (PARTITION BY id ORDER BY at DESC, main DESC, hkey DESC) AS n FROM m7_holds)
+         WHERE n = 1 AND cause IS NOT NULL",
+        "UPDATE latest
+         SET value = CAST(json_set(CAST(value AS TEXT), '$.data.manual_hold',
+             json((SELECT obj FROM m7_newest WHERE id = substr(CAST(latest.key AS TEXT), 11)))) AS BLOB)
+         WHERE key >= CAST('lifecycle/' AS BLOB) AND key < CAST('lifecycle0' AS BLOB)
+           AND instr(substr(CAST(key AS TEXT), 11), '/') = 0
+           AND json_valid(CAST(value AS TEXT))
+           AND json_type(CAST(value AS TEXT), '$.data.holds') = 'array'
+           AND json_type(CAST(value AS TEXT), '$.data.manual_hold') IS NULL
+           AND (EXISTS (SELECT 1 FROM json_each(CAST(latest.value AS TEXT), '$.data.holds') AS j WHERE j.value IN ('Manual', 'Operator')))
+           AND EXISTS (SELECT 1 FROM m7_newest WHERE id = substr(CAST(latest.key AS TEXT), 11))",
+        "UPDATE versions SET value = l.value
+         FROM latest AS l
+         WHERE l.key = versions.key AND l.main = versions.main
+           AND l.key >= CAST('lifecycle/' AS BLOB) AND l.key < CAST('lifecycle0' AS BLOB)
+           AND versions.value IS NOT l.value",
+        "DROP TABLE m7_holds",
+        "DROP TABLE m7_newest",
+    ],
 ];

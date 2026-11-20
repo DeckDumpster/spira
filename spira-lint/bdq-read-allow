@@ -45,7 +45,7 @@
 1 spira-runtime/src/tasks/c/asks_moot.rs
 1 spira-runtime/src/tasks/d/watch_runtime.rs
 1 spira-runtime/src/tasks/e/watch_ci_spill.rs
-14 spira-runtime/src/world.rs
+12 spira-runtime/src/world.rs
 1 spira-world/src/bin/slay.rs
 2 spira-world/src/bin/world.rs
 1 spira-world/src/checkpoint.rs

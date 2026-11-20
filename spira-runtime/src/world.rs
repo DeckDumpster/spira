@@ -700,34 +700,45 @@ impl World {
         self.lc(&["state", id]).map(|s| s.trim().to_string()).unwrap_or_default()
     }
 
-    fn reading(&self, id: &str) -> Reading {
-        let Some(history) = self.lc(&["history", id, "--machine", "bead"]) else { return Reading::Unreadable };
-        match supersede_duty::request_in(&history) {
-            Err(_) => Reading::Unreadable,
-            Ok(None) => Reading::NotARequest,
-            Ok(Some(succ)) => {
-                let own = self.state_of(id);
-                let succ_state = if own.is_empty() || supersede_duty::terminal(&own) { String::new() } else { self.state_of(&succ) };
-                Reading::Request { succ, own, succ_state }
-            }
-        }
-    }
-
     /// Every bead under a manual hold, read unless `input` says its version was already read as no request.
     pub fn supersede_snapshot(&self, input: &str) -> Result<String, String> {
         let known: BTreeMap<String, String> = serde_json::from_str(input).unwrap_or_default();
         let listed = crate::reconcile_host::lc_read(&self.lc_socket, &["list", "--live", "--hold", "manual"])?;
         let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("held list unparsed: {e}"))?;
         let text = |v: &Value| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
-        let held = rows
+        let mut held = Vec::new();
+        for r in rows.iter().filter(|r| !r["bead_id"].is_null()) {
+            let (id, version) = (text(&r["bead_id"]), text(&r["version"]));
+            let reading = if known.get(&id) == Some(&version) {
+                Reading::Skipped
+            } else {
+                let raise = manual_hold_of(r).ok_or_else(|| format!("{id}: held manual but its record has no manual_hold; the store has not applied the manual_hold migration"))?;
+                match supersede_duty::request_of(raise) {
+                    None => Reading::NotARequest,
+                    Some(succ) => Reading::Request { succ, own: r["state"].as_str().unwrap_or("").to_string(), succ_state: String::new() },
+                }
+            };
+            held.push(Held { id, version, reading });
+        }
+        let successors: BTreeSet<String> = held
             .iter()
-            .filter(|r| !r["bead_id"].is_null())
-            .map(|r| {
-                let (id, version) = (text(&r["bead_id"]), text(&r["version"]));
-                let reading = if known.get(&id) == Some(&version) { Reading::Skipped } else { self.reading(&id) };
-                Held { id, version, reading }
+            .filter_map(|h| match &h.reading {
+                Reading::Request { succ, own, .. } if !own.is_empty() && !supersede_duty::terminal(own) => Some(succ.clone()),
+                _ => None,
             })
             .collect();
+        if !successors.is_empty() {
+            let ids: Vec<String> = successors.into_iter().collect();
+            let client = spira_store::lc_call::LcClient::socket(&self.lc_socket);
+            let states: BTreeMap<String, String> = store_view::rows_by_ids(&client, &ids)?.into_iter().map(|r| (r.bead_id, r.state)).collect();
+            for h in &mut held {
+                if let Reading::Request { succ, own, succ_state } = &mut h.reading {
+                    if !own.is_empty() && !supersede_duty::terminal(own) {
+                        *succ_state = states.get(succ.as_str()).cloned().unwrap_or_default();
+                    }
+                }
+            }
+        }
         serde_json::to_string(&supersede_duty::Snapshot { held }).map_err(|e| e.to_string())
     }
 
@@ -851,17 +862,21 @@ impl World {
         let [flag, filter] = status_args(Kind::Ask, Which::Live);
         let content = self.lc_json(&["content", "list", &flag, &filter, "--json", "--limit", "0"])?;
         let beads: Vec<Bead> = content.as_array().ok_or("content list is not an array")?.iter().filter_map(sweep_bead).collect();
-        let labels_of = |id: &str| beads.iter().find(|b| b.id == id).map(|b| b.labels.clone()).unwrap_or_default();
-        let rows: Vec<Row> = rows.as_array().ok_or("list is not an array")?.iter().filter_map(sweep_row).map(|mut r| {
-            let ours = r.holds.iter().any(|h| h == "manual") && !r.holds.iter().any(|h| h == "poison" || h == "ask") && !labels_of(&r.id).contains(&self.ask_label);
+        let labels_of: BTreeMap<&str, &Vec<String>> = beads.iter().map(|b| (b.id.as_str(), &b.labels)).collect();
+        let mut rows_out: Vec<Row> = Vec::new();
+        for raw in rows.as_array().ok_or("list is not an array")? {
+            let Some(mut r) = sweep_row(raw) else { continue };
+            let ours = r.holds.iter().any(|h| h == "manual") && !r.holds.iter().any(|h| h == "poison" || h == "ask") && !labels_of.get(r.id.as_str()).is_some_and(|l| l.contains(&self.ask_label));
             if ours && bead_sweep::review(&r.reason).is_none() {
-                if let Some((at, review)) = self.lc_json(&["history", &r.id, "--machine", "bead"]).ok().and_then(|h| bead_sweep::hold_in_history(&h)) {
+                let raise = manual_hold_of(raw).ok_or_else(|| format!("{}: held manual but its record has no manual_hold; the store has not applied the manual_hold migration", r.id))?;
+                if let Some(at) = raise["at"].as_f64() {
                     r.held_at = Some(at);
-                    r.hold_review = review;
+                    r.hold_review = raise["detail"].as_str().filter(|d| bead_sweep::review(d).is_some()).map(str::to_string);
                 }
             }
-            r
-        }).collect();
+            rows_out.push(r);
+        }
+        let rows = rows_out;
         let terminal = self.terminal_among(beads.iter().map(|b| b.id.as_str()).chain(rows.iter().flat_map(|r| r.blocked_by.iter().map(String::as_str))), &rows)?;
         let (stops, reserved) = self.scoped_stops();
         let pr_repos = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).unwrap_or_default().into_iter().filter(|r| r.land == "pr").map(|r| r.name).collect();
@@ -1478,6 +1493,11 @@ fn as_num(v: &Value) -> f64 {
 fn strings(v: &Value) -> Vec<String> {
     let parsed = v.as_str().and_then(|s| serde_json::from_str::<Value>(s).ok());
     parsed.as_ref().unwrap_or(v).as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
+}
+
+/// The raise of the manual hold a listed row stands under; `None` when its record has none.
+fn manual_hold_of(r: &Value) -> Option<&Value> {
+    Some(&r["manual_hold"]).filter(|m| m.is_object())
 }
 
 fn sweep_row(r: &Value) -> Option<Row> {

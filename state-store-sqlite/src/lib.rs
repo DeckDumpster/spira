@@ -3088,6 +3088,71 @@ mod tests {
         assert_eq!(mirrored, 0, "every version row mirrors its latest");
     }
 
+    /// Migration 7 gives each record under a manual hold the newest applied manual `Hold`'s
+    /// raise, from imported and from txn history, in `latest` and in the version row it mirrors.
+    #[test]
+    fn migration_7_fills_a_manual_held_records_manual_hold_from_its_history() {
+        let dir = testkit::TempDir::new("sqlite-m7");
+        let path = dir.path().join("m7.db");
+        let obj = |data: serde_json::Value| serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": data })).unwrap();
+        let hold = |id: &str, kind: &str, cause: &str, detail: &str, at: i64, applied: bool| {
+            serde_json::json!({ "machine": "bead", "lc_key": id, "event": "Hold", "at": at, "applied": applied,
+                "evidence": { "Hold": { "kind": kind, "cause": cause, "detail": detail } } })
+        };
+        let rows: Vec<(&str, i64, Vec<u8>)> = vec![
+            ("lifecycle/sp-a", 9, obj(serde_json::json!({ "bead_id": "sp-a", "holds": ["Manual", "Wait"] }))),
+            ("lifecycle/sp-b", 9, obj(serde_json::json!({ "bead_id": "sp-b", "holds": [] }))),
+            ("lifecycle/sp-c", 9, obj(serde_json::json!({ "bead_id": "sp-c", "holds": ["Wait"] }))),
+            ("history/sp-a/0/import/1", 1, obj(serde_json::json!({ "seq": 1, "audit": hold("sp-a", "Manual", "manual-hold", "first", 10, true) }))),
+            ("history/sp-a/0/import/2", 1, obj(serde_json::json!({ "seq": 2, "audit": hold("sp-a", "Wait", "unlanded-blocker", "wait", 99, true) }))),
+            ("history/sp-a/0/import/3", 1, obj(serde_json::json!({ "seq": 3, "audit": hold("sp-a", "Manual", "manual-hold", "refused", 98, false) }))),
+            ("history/sp-a/5/r1", 7, obj(serde_json::json!({}))),
+            (
+                "events/00000000000000000007",
+                7,
+                obj(serde_json::json!({ "refused": false, "evidence": {
+                    "then": [hold("sp-a", "Operator", "supersede-request", "sp-z", 30, true)],
+                    "else": [hold("sp-a", "Manual", "manual-hold", "not taken", 97, true)],
+                } })),
+            ),
+            ("history/sp-b/0/import/1", 1, obj(serde_json::json!({ "seq": 1, "audit": hold("sp-b", "Manual", "manual-hold", "lifted", 5, true) }))),
+        ];
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in SCHEMA.iter().chain(MIGRATIONS[..6].iter().flat_map(|m| m.iter())) {
+                exec(&conn, sql, []).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 6).unwrap();
+            for table in ["versions", "latest"] {
+                let sql = format!(
+                    "INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
+                     VALUES (?1, ?2, 0, ?3, ?2, 0, 1)"
+                );
+                for (k, main, v) in &rows {
+                    exec(&conn, &sql, params![k.as_bytes(), main, v]).unwrap();
+                }
+            }
+            exec(&conn, "UPDATE meta SET value = 9 WHERE name = 'head'", []).unwrap();
+        }
+        let opts = Options { jump_on_open: false, ..Options::default() };
+        let b = SqliteBackend::open(&path, opts).unwrap();
+        assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
+        let manual_hold = |key: &str| {
+            let v = b.get(key, 9).unwrap().unwrap().value;
+            serde_json::from_slice::<serde_json::Value>(&v).unwrap()["data"]["manual_hold"].clone()
+        };
+        assert_eq!(manual_hold("lifecycle/sp-a"), serde_json::json!({ "at": 30, "cause": "supersede-request", "detail": "sp-z" }));
+        assert_eq!(manual_hold("lifecycle/sp-b"), serde_json::Value::Null, "unheld");
+        assert_eq!(manual_hold("lifecycle/sp-c"), serde_json::Value::Null, "no manual hold");
+        let w = lock(&b.0.writer);
+        let mirrored: i64 = w
+            .conn
+            .prepare("SELECT count(*) FROM versions v JOIN latest l ON l.key = v.key AND l.main = v.main WHERE v.value IS NOT l.value")
+            .and_then(|mut s| s.query_row([], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(mirrored, 0, "every version row mirrors its latest");
+    }
+
     /// A store written before `owner_refs` existed answers `owned_by` once opened: the
     /// migration fills the index from `latest`, skipping what is not JSON and what is not owned.
     #[test]
