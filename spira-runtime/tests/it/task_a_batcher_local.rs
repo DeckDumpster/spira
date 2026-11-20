@@ -1986,3 +1986,22 @@ fn a_green_foreign_round_whose_bare_round_recert_unit_is_active_is_not_landed_by
     let snap = Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW };
     assert!(!decide(&Carry::default(), &snap).1.iter().any(|a| a.effect == LAND));
 }
+
+#[test]
+fn an_attribution_whose_record_lost_a_carried_member_is_stopped_and_certifies_the_survivors_once() {
+    let mut carry = driving(State::Attributing, "spira.a2");
+    let rc = carry.repos.get_mut("spira").unwrap();
+    rc.leg_head = "h0".into();
+    rc.head = "h0".into();
+    rc.leg_at_ms = NOW;
+    let round = Round { id: "r9".into(), members: vec!["sp-a".into()], tips: vec!["t1".into()], head: "h1".into(), worktree: "w".into(), phase: "attributing".into(), driven: true, ..Round::default() };
+    let snap = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec!["spira.a2".into()]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
+    let (next, acts) = decide(&carry, &snap);
+    let stops = |acts: &[Act]| acts.iter().filter(|a| a.effect == runtime::units::UNIT_STOP).count();
+    assert_eq!(stops(&acts), 1, "{acts:?}");
+    let rc = &next.repos["spira"];
+    assert_eq!((rc.state, rc.head.as_str()), (State::Certifying, "h1"));
+    assert_eq!(rc.members, [("sp-a".to_string(), "t1".to_string())]);
+    let (_, again) = decide(&next, &snap);
+    assert_eq!(stops(&again), 0, "one stop per eject: {again:?}");
+}

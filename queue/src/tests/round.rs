@@ -3884,6 +3884,39 @@ fn eject_refuses_when_the_lifecycle_row_cannot_be_read() {
     assert!(!t.lc.has("eject-member"));
 }
 
+#[test]
+fn an_attributing_red_round_admits_an_eject_of_a_member() {
+    let (t, batch) = pass_world();
+    *t.lc.batch_view.borrow_mut() = Some(("ATTRIBUTING".into(), 4, 1, String::new()));
+    let argv = ["round", "eject", batch.as_str(), "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"];
+    assert_eq!(t.run(&argv), 0, "{}", t.err());
+    assert!(t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn a_running_pass_refuses_eject_naming_the_env_exit_and_that_exit_abandons() {
+    let (t, batch) = pass_world();
+    let argv = ["round", "eject", batch.as_str(), "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"];
+    assert_eq!(t.run(&argv), crate::ops::round::PASS_RUNNING, "{}", t.err());
+    let e = t.err();
+    assert!(e.contains("QUEUE_ABANDON_CONSIDERED"), "{e}");
+    assert!(!e.contains("`queue round abandon <batch> <repo>`"), "no bare abandon is offered: {e}");
+    t.env.vars.borrow_mut().insert("QUEUE_ABANDON_CONSIDERED".into(), "attribution is not converging".into());
+    assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "stall"]), 0, "{}", t.err());
+    assert!(t.lc.has(&format!("abandon-batch {batch}")), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn abandoning_a_red_round_whose_pass_runs_does_not_offer_eject() {
+    let t = round_world();
+    let batch = red_round(&t, "sp-a:ta,sp-b:tb,sp-c:tc");
+    *t.lc.batch_view.borrow_mut() = Some(("CI_RUNNING".into(), 2, 1, "suites".into()));
+    assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "red"]), 1);
+    let e = t.err();
+    assert!(e.contains("QUEUE_ABANDON_CONSIDERED") && !e.contains("queue round eject"), "{e}");
+    assert!(!t.lc.has("abandon-batch"), "a refused abandon changes nothing");
+}
+
 const T_STAGED: &str = "4444444444444444444444444444444444444444";
 const T_MOVED: &str = "5555555555555555555555555555555555555555";
 

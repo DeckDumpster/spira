@@ -5600,6 +5600,14 @@ fn considered_abandon(w: &World, label: &str, kv: &Kv, reason: String) -> Result
     }
     let batch = kv.get("batch_id").unwrap_or("");
     let ids: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();
+    if w.lc.batch_state(batch).is_some_and(|(s, _)| s == "CI_RUNNING") {
+        w.err(format!(
+            "queue.sh {label}: refused — round {batch} is red ({red}) with {} members ({}) and a pass is running, so eject is refused until the pass reports its verdict and the round is OPEN, ATTRIBUTING or GREEN; wait for that, or set {ABANDON_CONSIDERED_ENV}=\"<why>\" to abandon it whole, recorded on the round's events. Nothing changed",
+            ids.len(),
+            ids.join(" ")
+        ));
+        return Err(FAIL);
+    }
     w.err(format!(
         "queue.sh {label}: refused — round {batch} is red ({red}) with {} members ({}) and nothing ejected since; an abandon discards the members the red does not implicate. Eject the culprit and let the rest certify: `queue round eject {batch} <id> --reason <why> --suites <csv> --red`; or set {ABANDON_CONSIDERED_ENV}=\"<why>\" to abandon it whole, recorded on the round's events. Nothing changed",
         ids.len(),
