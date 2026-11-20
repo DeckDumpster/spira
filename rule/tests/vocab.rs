@@ -46,3 +46,10 @@ fn a_term_without_replacement_is_unresolved_and_a_taken_target_is_a_collision() 
         ]
     );
 }
+
+#[test]
+fn an_em_dash_before_an_article_does_not_stop_the_plan() {
+    let book = store(&[("law-e", "One rule—an aeon per worktree.")]); // ffx-ok
+    let got = plan(&book, &[], &Pointers::default());
+    assert_eq!(got, vec![Entry::Amend { key: "law-e".into(), text: "One rule—a dwarf per worktree.".into() }]); // ffx-ok
+}

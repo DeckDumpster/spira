@@ -158,7 +158,7 @@ fn article_before(out: &mut String, next: &str) {
     let Some(first) = next.chars().next() else { return };
     let vowel = matches!(first.to_ascii_lowercase(), 'a' | 'e' | 'i' | 'o' | 'u');
     let Some(stem) = out.strip_suffix(' ') else { return };
-    let cut = stem.rfind(|c: char| !c.is_ascii_alphabetic()).map_or(0, |i| i + 1);
+    let cut = stem.char_indices().rev().find(|(_, c)| !c.is_ascii_alphabetic()).map_or(0, |(i, c)| i + c.len_utf8());
     let fixed = match (&stem[cut..], vowel) {
         ("a", true) => "an",
         ("A", true) => "An",
@@ -376,6 +376,12 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert!(text.contains("ffx-vocabulary: src/all.txt:1:aeons\n") && text.contains("count aeon 1\n"), "{text}");
         assert!(text.contains("ffx-vocabulary: src/all.txt:1:Sin\n") && text.contains("the Sending"), "{text}");
         assert!(!text.contains("spikes") && !text.contains("tsv"), "{text}");
+    }
+
+    #[test]
+    fn an_article_after_a_multibyte_char_is_fixed_without_panicking() {
+        assert_eq!(rewrite("Each rule—an aeon owns it.\n"), "Each rule—a dwarf owns it.\n"); // ffx-ok
+        assert_eq!(rewrite("x—summon"), "x—call"); // ffx-ok
     }
 
     #[test]
