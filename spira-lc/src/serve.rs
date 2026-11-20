@@ -1006,6 +1006,8 @@ pub const TOOL_DEADLINE: Duration = Duration::from_secs(305);
 /// The request's deadline: the configured default, or the verb's declared slow entry, for every store call. `work`'s lane verbs are
 /// batch jobs this service brokers, not calls: they run a harness tool (groomer sweep, bead
 /// filing, mail) for the dwarf, and keep the bound they had.
+const WATCH_MARGIN: Duration = Duration::from_millis(500);
+
 pub(crate) fn request_deadline(argv: &[String], deadlines: &Deadlines) -> Duration {
     match argv.first().map(String::as_str) {
         // batch-job: a work verb that runs a brokered tool waits the client's tool bound less a margin.
@@ -1013,6 +1015,11 @@ pub(crate) fn request_deadline(argv: &[String], deadlines: &Deadlines) -> Durati
         Some("work") => crate::db::QUERY_DEADLINE,
         // batch-job: bounded under the client's 5 s wait; the verb owns its own shorter budget.
         Some("unpublished") => crate::unpublished::DEADLINE,
+        // batch-job: a watch holds as long as its caller asked, so the cutoff is that hold plus a margin, not the request default.
+        Some("watch") => {
+            let hold = crate::flag(argv, "--wait-ms").and_then(|v| v.parse::<u64>().ok()).map_or(state_store::MAX_WATCH_WAIT_MS, |ms| ms.min(state_store::MAX_WATCH_WAIT_MS));
+            Duration::from_millis(hold) + WATCH_MARGIN
+        }
         // batch-job: a repair sweep over every row, bounded at the query deadline like census's.
         Some(v) if crate::composed::SWEEPS.contains(&v) => crate::db::QUERY_DEADLINE,
         verb => verb.and_then(|v| deadlines.slow.get(v)).map_or(deadlines.default, |(d, _)| *d),
@@ -1373,6 +1380,11 @@ mod tests {
             assert_eq!(d(verb), std::time::Duration::from_millis(1000), "{verb}");
         }
         assert_eq!(d("ops-view"), std::time::Duration::from_secs(3));
+        let watch = |wait: &[&str]| dl(&["watch", "p/", "--from-rev", "0"].iter().chain(wait).map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(watch(&["--wait-ms", "2000"]), std::time::Duration::from_millis(2500));
+        assert_eq!(watch(&[]), std::time::Duration::from_secs(3));
+        assert_eq!(watch(&["--wait-ms", "9999"]), std::time::Duration::from_secs(3));
+        assert_eq!(watch(&["--wait-ms", "x"]), std::time::Duration::from_secs(3));
         assert_eq!(d("work"), crate::db::QUERY_DEADLINE);
         let w = |v: &str| dl(&["work".to_string(), "sp-x".to_string(), v.to_string()]);
         for verb in ["show", "note", "done", "blocked", "superseded-by"] {
@@ -1381,6 +1393,29 @@ mod tests {
         for verb in ["submit", "file-followup", "split"] {
             assert_eq!(w(verb), super::TOOL_DEADLINE, "{verb}");
         }
+    }
+
+    fn watch_door(held: Duration) -> Arc<super::Door> {
+        let work: super::Work = Arc::new(move |_| {
+            std::thread::sleep(held);
+            crate::callers::Answer { code: 0, stdout: "idle".into(), stderr: String::new(), cert_log: None, owed: Default::default() }
+        });
+        let deadlines = super::Deadlines { default: Duration::from_millis(1000), slow: Default::default() };
+        Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadlines })
+    }
+
+    #[test]
+    fn a_watch_holding_two_seconds_is_not_cut_by_a_one_second_request_cutoff() {
+        let door = watch_door(Duration::from_secs(2));
+        let (code, out) = send(&door, &["watch", "p/", "--from-rev", "0", "--wait-ms", "2000"], None);
+        assert_eq!((code, out.as_str()), (0, "idle"));
+    }
+
+    #[test]
+    fn a_zero_wait_watch_is_cut_at_the_margin() {
+        let door = watch_door(Duration::from_millis(1500));
+        let got = send(&door, &["watch", "p/", "--from-rev", "0", "--wait-ms", "0"], None);
+        assert_eq!(got, (2, "cannot tell: deadline".to_string()));
     }
 
     #[test]

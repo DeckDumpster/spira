@@ -133,7 +133,7 @@ fn parse(args: &[String]) -> Result<Parsed, String> {
 }
 
 fn default_scope(slow: &str) -> Result<Scope, String> {
-    let mut excluded: BTreeSet<String> = ["work", "unpublished"].iter().map(|v| v.to_string()).collect();
+    let mut excluded: BTreeSet<String> = ["work", "unpublished", "watch"].iter().map(|v| v.to_string()).collect();
     excluded.extend(crate::composed::SWEEPS.iter().map(|v| v.to_string()));
     excluded.extend(crate::serve::parse_slow_entries(slow)?.into_iter().map(|(v, _, _)| v));
     Ok(Scope::Default { excluded })
@@ -253,6 +253,13 @@ mod tests {
     }
 
     #[test]
+    fn two_second_watch_spans_pass_the_default_scope_check_at_one_second() {
+        let t = text(&[("watch", Some(2000)), ("watch", Some(2001)), ("show", Some(5))]);
+        let Scope::Default { excluded } = default_scope("").unwrap() else { panic!() };
+        assert!(check(&t, 1000, &Scope::Default { excluded }).is_ok());
+    }
+
+    #[test]
     fn spans_before_the_window_are_not_counted() {
         let t = lists();
         assert!(judge(&[("f".into(), t)], 1000, &default_scope_with(&[]), 1_700_000_000_000_000_001, 24).is_ok());
@@ -312,7 +319,7 @@ mod tests {
     #[test]
     fn the_default_scope_leaves_out_work_sweeps_and_declared_verbs() {
         let Scope::Default { excluded } = default_scope("rc=3000@sp-b").unwrap() else { panic!() };
-        for v in ["work", "unpublished", "reconcile-content", "rc"] {
+        for v in ["work", "unpublished", "watch", "reconcile-content", "rc"] {
             assert!(excluded.contains(v), "{v}");
         }
         assert!(!excluded.contains("show"));
