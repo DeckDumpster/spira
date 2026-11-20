@@ -2181,8 +2181,7 @@ mod tests {
         let span = text
             .lines()
             .map(|l| serde_json::from_str::<opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone())
-            .filter(|s| s.name == verb)
-            .next_back()
+            .rfind(|s| s.name == verb)
             .expect("a span for the verb");
         span.attributes.iter().find(|a| a.key == key).map(|a| match a.value.as_ref()?.value.as_ref()? {
             Value::IntValue(n) => Some(*n),
