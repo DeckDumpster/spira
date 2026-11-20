@@ -9,6 +9,7 @@ use state_store::{Backend, Config, Contract, MemBackend, Ports, Request};
 use super::{round_events, run, LoopEvent, Outside, RunDir, StopKind};
 
 use crate::control::sections::Call;
+use crate::counting::Counting;
 use crate::control::store::Store;
 
 const FLOOR_MS: u64 = 1_000;
@@ -423,68 +424,9 @@ fn the_typed_stop_rows_replace_the_halt_stamp_and_a_pause_names_its_repo_and_bea
     assert!(matches!(&stops[2], LoopEvent::Stop { repo: Some(r), bead: Some(b), .. } if r == "harness" && b == "b-9"));
 }
 
-/// Each read a backend served, by kind, prefix and limit.
-#[derive(Default)]
-struct Counting {
-    inner: MemBackend,
-    reads: std::sync::Mutex<Vec<(&'static str, String, usize)>>,
-}
-
-impl Counting {
-    fn note(&self, kind: &'static str, key: &str, limit: usize) {
-        self.reads.lock().unwrap().push((kind, key.to_string(), limit));
-    }
-    fn take(&self) -> Vec<(&'static str, String, usize)> {
-        std::mem::take(&mut *self.reads.lock().unwrap())
-    }
-}
-
-impl Backend for Counting {
-    fn head(&self) -> state_store::Result<u64> {
-        self.inner.head()
-    }
-    fn due(&self, now: u64, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
-        self.inner.due(now, limit, at)
-    }
-
-    fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
-        self.inner.owned_by(owner, after, limit, at)
-    }
-    fn get(&self, key: &str, at: u64) -> state_store::Result<Option<state_store::Version>> {
-        self.note("get", key, 1);
-        self.inner.get(key, at)
-    }
-    fn get_many(&self, keys: &[&str], at: u64) -> state_store::Result<Vec<Option<state_store::Version>>> {
-        for k in keys {
-            self.note("get_many", k, 1);
-        }
-        self.inner.get_many(keys, at)
-    }
-    fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
-        self.note("range", prefix, limit);
-        self.inner.range(prefix, after, limit, at)
-    }
-    fn range_in_state(&self, prefix: &str, state: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
-        self.note("range_in_state", &format!("{prefix}{state}"), limit);
-        self.inner.range_in_state(prefix, state, after, limit, at)
-    }
-    fn commit(&self, expect: u64, batch: &[state_store::Write]) -> state_store::Result<u64> {
-        self.inner.commit(expect, batch)
-    }
-    fn log(&self, from: u64, max_mains: usize) -> state_store::Result<Vec<state_store::LogEntry>> {
-        self.inner.log(from, max_mains)
-    }
-    fn compact(&self, rev: u64) -> state_store::Result<()> {
-        self.inner.compact(rev)
-    }
-    fn compacted(&self) -> state_store::Result<u64> {
-        self.inner.compacted()
-    }
-}
-
 #[test]
 fn publish_reads_no_record_outside_its_window() {
-    let r = rig_on(Counting::default());
+    let r = rig_on(Counting::<MemBackend>::default());
     let now = r.now();
     r.land("b-1", "harness", now - 2 * H - 20 * MIN, now - 2 * H);
     r.land("b-2", "harness", now - 40 * MIN, now - 30 * MIN);
@@ -535,7 +477,7 @@ fn an_index_short_of_the_window_is_unobservable_not_zero() {
 
 #[test]
 fn a_bead_named_only_by_a_red_takes_its_repo_from_a_read_by_id() {
-    let r = rig_on(Counting::default());
+    let r = rig_on(Counting::<MemBackend>::default());
     let now = r.now();
     r.land("old", "site", now - 3 * DAY, now - 3 * DAY + MIN);
     r.land("b-1", "harness", now - 2 * H - 20 * MIN, now - 2 * H);

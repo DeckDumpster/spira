@@ -43,7 +43,7 @@ pub struct Move<'a> {
     pub at: i64,
 }
 
-fn move_of(rev: u64, a: &Value) -> Option<Move<'_>> {
+pub(super) fn move_of(rev: u64, a: &Value) -> Option<Move<'_>> {
     Some(Move {
         rev,
         machine: a["machine"].as_str()?,

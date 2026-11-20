@@ -180,7 +180,7 @@ pub struct LifecycleRow {
     /// `1 + max(depth of each prerequisite)`, recorded alongside `stack` at `claim`.
     #[serde(default)]
     pub stack_depth: u32,
-    /// When the row last entered LANDED or CERTIFIED (the event's `at`); unset otherwise.
+    /// When the row last entered its current state (the event's `at`); unset when that event carried none.
     #[serde(default)]
     pub since: Option<i64>,
     /// The one sanctioned way to put a bead ahead of the line; orthogonal to state.

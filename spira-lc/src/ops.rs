@@ -3,13 +3,14 @@
 //! control store (the records, the rounds, the audit log) and printed as the strings the panes
 //! have always read; a bead's title and priority come from the planning plane, where they live.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use lifecycle::bead::BeadState;
 use serde_json::{json, Map, Value};
 use state_store::Backend;
 
 use crate::control::audits::Move;
+use crate::control::stays::Tally as StayTally;
 use crate::control::store::Store;
 
 /// The only views `ops-view` will name; the argument is matched, never interpolated.
@@ -19,9 +20,8 @@ pub const VIEWS: [&str; 6] = ["ops_live", "ops_round", "ops_recent", "ops_edges"
 pub const TRANSITION_MACHINES: [&str; 2] = ["bead", "batch"];
 pub const GRAPH_MACHINES: [&str; 4] = ["bead", "batch", "ask", "mending"];
 
-const DAY_S: i64 = 86_400;
+use crate::control::stays::DAY_S;
 const HOUR_S: i64 = 3_600;
-const DWELL_WINDOW_S: i64 = 14 * DAY_S;
 const LIVE: [BeadState; 7] = [BeadState::Open, BeadState::Ready, BeadState::Working, BeadState::Submitted, BeadState::Certified, BeadState::InDelivery, BeadState::Rework];
 const ROUND_STATES: [&str; 5] = ["OPEN", "CI_RUNNING", "GREEN", "ATTRIBUTING", "REBUILDING"];
 
@@ -230,78 +230,33 @@ impl Edges {
     }
 }
 
-/// Per from-state, the stays that ended in it over the window, folded newest audit first: a
-/// bead holds one pending move, never its history.
-struct Stays {
-    now: i64,
-    later: BTreeMap<String, (i64, String)>,
-    secs: BTreeMap<String, Vec<i64>>,
+/// The p95 and sample count per state from the stay tally, or why there are none yet.
+fn stay_tally<B: Backend>(store: &Store<B>, now: i64) -> Result<StayTally, String> {
+    store.stay_tally(now).map_err(|e| e.to_string())
 }
 
-impl Stays {
-    fn new(now: i64) -> Self {
-        Stays { now, later: BTreeMap::new(), secs: BTreeMap::new() }
-    }
-
-    fn take(&mut self, m: &Move) {
-        if m.machine != "bead" || !m.applied || m.from_state == m.to_state || m.at < self.now - DWELL_WINDOW_S {
-            return;
-        }
-        if let Some((at, from)) = self.later.get_mut(m.lc_key) {
-            self.secs.entry(from.clone()).or_default().push(*at - m.at);
-            (*at, *from) = (m.at, m.from_state.to_string());
-        } else {
-            self.later.insert(m.lc_key.to_string(), (m.at, m.from_state.to_string()));
-        }
-    }
-
-    /// The 95th-percentile stay and how many stays it rests on, per state.
-    fn p95(self) -> BTreeMap<String, (i64, usize)> {
-        self.secs
-            .into_iter()
-            .map(|(state, mut secs)| {
-                secs.sort_unstable();
-                let n = secs.len();
-                let rank = (n * 95).div_ceil(100).max(1);
-                (state, (secs[rank - 1], n))
-            })
-            .collect()
-    }
+fn filling(covered_from: Option<i64>) -> String {
+    format!("the stay tally is filling: covered from {}", covered_from.map_or("none".to_string(), |at| at.to_string()))
 }
 
-fn ops_dwell_p95_rows(p95: BTreeMap<String, (i64, usize)>) -> Vec<Value> {
-    p95.into_iter().map(|(state, (p95, n))| object(vec![("state", text(state)), ("p95_s", text(p95)), ("samples", text(n))])).collect()
+fn ops_dwell_p95<B: Backend>(store: &Store<B>, now: i64) -> Result<Vec<Value>, String> {
+    match stay_tally(store, now)? {
+        StayTally::Filling { covered_from } => Err(filling(covered_from)),
+        StayTally::Ready(p95) => Ok(p95.into_iter().map(|(state, (p95, n))| object(vec![("state", text(state)), ("p95_s", text(p95)), ("samples", text(n))])).collect()),
+    }
 }
 
 /// `ops_dwell`: each live bead with when it entered its state and what is usual for that state.
 fn ops_dwell<B: Backend>(store: &Store<B>, now: i64) -> Result<Vec<Value>, String> {
     let live = live(store)?;
-    let ids: BTreeSet<&str> = live.rows.iter().map(|r| r.row.bead_id.as_str()).collect();
-    let mut stays = Stays::new(now);
-    let mut newest: BTreeMap<(String, String), i64> = BTreeMap::new();
-    folded(store, now, DWELL_WINDOW_S, |m| {
-        stays.take(&m);
-        if m.machine == "bead" && m.applied && m.from_state != m.to_state && ids.contains(m.lc_key) {
-            let e = newest.entry((m.lc_key.to_string(), m.to_state.to_string())).or_insert(i64::MIN);
-            *e = (*e).max(m.at);
-        }
-    })?;
-    let p95 = stays.p95();
+    let p95 = match stay_tally(store, now)? {
+        StayTally::Ready(p95) => p95,
+        StayTally::Filling { .. } => BTreeMap::new(),
+    };
     let plan = planned(&live.rows.iter().map(|r| r.row.bead_id.clone()).collect::<Vec<_>>());
     let mut out = Vec::new();
     for r in &live.rows {
         let row = &r.row;
-        let entered = match newest.get(&(row.bead_id.clone(), row.state.as_str().to_string())) {
-            Some(at) => *at,
-            None => store
-                .history(&row.bead_id, Some("bead"))
-                .map_err(|e| e.to_string())?
-                .iter()
-                .filter(|c| c.audit.applied && c.audit.from_state != c.audit.to_state && c.audit.to_state == row.state.as_str())
-                .map(|c| c.audit.at)
-                .max()
-                .unwrap_or(r.updated_at),
-        };
         let (title, priority) = title_cols(&plan, &row.bead_id);
         let usual = p95.get(row.state.as_str());
         let holds: Vec<&str> = row.holds.iter().map(|h| h.as_str()).collect();
@@ -311,7 +266,7 @@ fn ops_dwell<B: Backend>(store: &Store<B>, now: i64) -> Result<Vec<Value>, Strin
             ("holds", text(json!(holds))),
             ("priority", priority),
             ("title", title),
-            ("entered_at", text(entered)),
+            ("entered_at", text(row.since.unwrap_or(r.updated_at))),
             ("p95_s", opt(usual.map(|u| u.0))),
             ("samples", opt(usual.map(|u| u.1))),
             ("repo", opt(r.repo.as_ref())),
@@ -427,10 +382,7 @@ fn view_rows<B: Backend>(store: &Store<B>, view: &str, now: i64) -> (i32, String
             let mut edges = Edges::new(now);
             folded(store, now, DAY_S, |m| edges.take(&m)).map(|()| edges.rows())
         }
-        "ops_dwell_p95" => {
-            let mut stays = Stays::new(now);
-            folded(store, now, DWELL_WINDOW_S, |m| stays.take(&m)).map(|()| ops_dwell_p95_rows(stays.p95()))
-        }
+        "ops_dwell_p95" => ops_dwell_p95(store, now),
         _ => ops_dwell(store, now),
     };
     match rows {
@@ -682,19 +634,175 @@ mod tests {
         assert_eq!((refused["to_state"].clone(), refused["refusal"].as_str()), (Value::Null, Some("IllegalTransition")));
     }
 
+    /// `n` beads each worked for a known time, committed through the store: the WORKING stays.
+    fn worked(n: i64, now: i64) -> (Store<MemBackend>, Vec<i64>) {
+        let s = store();
+        let mut stays = Vec::new();
+        for i in 0..n {
+            let (id, at) = (format!("sp-{i}"), now - 5 * DAY_S + i * 60);
+            let stay = 10 + i * i * 37;
+            s.create(&id, Some("harness"), None, at - 1, &Request::new(&format!("c{i}"), "t", "t")).unwrap();
+            let claim = BeadEvent { expect: BeadState::Ready, version: 0, kind: BeadEventKind::Claim { holder: "d".into(), lease_until: at + 3_600, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None }, actor: "d".into(), at: Some(at) };
+            s.claim(&id, &claim, &Request::new(&format!("k{i}"), "t", "t")).unwrap();
+            let version = s.record(&id).unwrap().unwrap().value.row.version;
+            let release = BeadEvent { expect: BeadState::Working, version, kind: BeadEventKind::Release, actor: "d".into(), at: Some(at + stay) };
+            s.apply(&id, &release, &Request::new(&format!("r{i}"), "t", "t")).unwrap();
+            stays.push(stay);
+        }
+        (s, stays)
+    }
+
+    fn exact_p95(mut stays: Vec<i64>) -> i64 {
+        stays.sort_unstable();
+        stays[(stays.len() * 95).div_ceil(100).max(1) - 1]
+    }
+
+    fn day_keys<B: Backend>(s: &Store<B>) -> Vec<(String, Value)> {
+        let (items, _) = s.contract().list(&[crate::control::keys::STAYS], &state_store::Selector::Everything).unwrap();
+        items.into_iter().filter(|i| i.key != crate::control::keys::STAYS_CURSOR).map(|i| (i.key, i.value.data)).collect()
+    }
+
     #[test]
     fn the_p95_of_a_state_is_the_stay_at_the_95th_percentile_rank_of_the_stays_that_ended_in_it() {
-        let now = 1_000_000;
-        let mut log = Vec::new();
-        for n in 0..20i64 {
-            let bead = format!("sp-{n}");
-            log.push(audit(&bead, "Claim", "READY", "WORKING", true, "d", now - 5_000 + n));
-            log.push(audit(&bead, "Submit", "WORKING", "SUBMITTED", true, "d", now - 5_000 + n + 10 * (n + 1)));
+        let now = 1_000_000_000;
+        for n in [20, 41, 3] {
+            let (s, stays) = worked(n, now);
+            s.fold_stays(now, 1_000).unwrap();
+            let StayTally::Ready(p) = s.stay_tally(now).unwrap() else { panic!("filling") };
+            let (p95, samples) = p["WORKING"];
+            let exact = exact_p95(stays);
+            assert_eq!(samples, n as usize);
+            assert!(p95 >= exact && p95 as f64 <= exact as f64 * 1.091, "tally {p95} vs exact {exact}");
         }
-        let mut stays = Stays::new(now);
-        log.iter().rev().for_each(|l| stays.take(&move_of(l)));
-        let p = stays.p95();
-        assert_eq!(p["WORKING"], (190, 20), "stays are 10, 20 .. 200 s; rank ceil(0.95 * 20) = 19");
+    }
+
+    #[test]
+    fn folding_twice_or_in_small_steps_gives_the_tally_of_one_uninterrupted_fold() {
+        let now = 1_000_000_000;
+        let (whole, _) = worked(25, now);
+        let (stepped, _) = worked(25, now);
+        whole.fold_stays(now, 10_000).unwrap();
+        let again = whole.fold_stays(now, 10_000).unwrap();
+        assert!(!again.committed, "a fold with nothing new writes nothing: {again:?}");
+        let mut steps = 0;
+        loop {
+            steps += 1;
+            let done = stepped.fold_stays(now, 3).unwrap();
+            if done.revs < 3 {
+                break;
+            }
+        }
+        assert!(steps > 5, "{steps}");
+        assert_eq!(day_keys(&stepped), day_keys(&whole));
+        assert!(!day_keys(&whole).is_empty());
+        stepped.fold_stays(now, 3).unwrap();
+        assert_eq!(day_keys(&stepped), day_keys(&whole), "a repeated step changes nothing");
+    }
+
+    #[test]
+    fn a_first_fill_starts_inside_the_window_and_counts_a_stay_that_began_before_it() {
+        let now = 2_000_000_000;
+        let build = || {
+            let s = store();
+            let stay = |id: &str, from: i64, to: i64| {
+                s.create(id, Some("harness"), None, from - 1, &Request::new(&format!("c-{id}"), "t", "t")).unwrap();
+                let claim = BeadEvent { expect: BeadState::Ready, version: 0, kind: BeadEventKind::Claim { holder: "d".into(), lease_until: from + 3_600, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None }, actor: "d".into(), at: Some(from) };
+                s.claim(id, &claim, &Request::new(&format!("k-{id}"), "t", "t")).unwrap();
+                let version = s.record(id).unwrap().unwrap().value.row.version;
+                let release = BeadEvent { expect: BeadState::Working, version, kind: BeadEventKind::Release, actor: "d".into(), at: Some(to) };
+                s.apply(id, &release, &Request::new(&format!("r-{id}"), "t", "t")).unwrap();
+            };
+            stay("sp-before", now - 30 * DAY_S, now - 29 * DAY_S);
+            stay("sp-across", now - 20 * DAY_S, now - 10 * DAY_S);
+            s
+        };
+        let (whole, stepped) = (build(), build());
+        whole.fold_stays(now, 10_000).unwrap();
+        while stepped.fold_stays(now, 2).unwrap().revs == 2 {}
+        assert_eq!(day_keys(&stepped), day_keys(&whole));
+        let cursor = whole.contract().get(crate::control::keys::STAYS_CURSOR).unwrap().unwrap().value.data;
+        assert_eq!(cursor["filled_from"], now - 14 * DAY_S, "the fill started from the window's start");
+        let StayTally::Ready(p) = whole.stay_tally(now).unwrap() else { panic!("filling: {cursor}") };
+        assert_eq!(p["WORKING"].1, 1, "only the stay that ended inside the window, which began before it");
+        assert!(p["WORKING"].0 >= 10 * DAY_S);
+    }
+
+    #[test]
+    fn a_day_before_the_window_is_not_counted_and_the_next_fold_deletes_it() {
+        use state_store::{Object, Txn};
+        let now = 2_000_000_000;
+        let s = store();
+        let at = now - DAY_S;
+        s.create("sp-a", Some("harness"), None, at - 1, &Request::new("c-a", "t", "t")).unwrap();
+        let claim = BeadEvent { expect: BeadState::Ready, version: 0, kind: BeadEventKind::Claim { holder: "d".into(), lease_until: at + 3_600, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None }, actor: "d".into(), at: Some(at) };
+        s.claim("sp-a", &claim, &Request::new("k-a", "t", "t")).unwrap();
+        s.fold_stays(now, 10_000).unwrap();
+        let stale = crate::control::keys::stay_day("WORKING", (now - 14 * DAY_S).div_euclid(DAY_S) - 1);
+        s.contract().txn(&Txn::new().put(&stale, Object::new(json!({"n": 5, "b": {"200": 5}}))), &Request::new("plant", "t", "t")).unwrap();
+        let samples = |s: &Store<MemBackend>| match s.stay_tally(now).unwrap() {
+            StayTally::Ready(p) => p.get("WORKING").map_or(0, |w| w.1),
+            _ => panic!("filling"),
+        };
+        assert_eq!(samples(&s), 0, "a day outside the window is not counted");
+        let version = s.record("sp-a").unwrap().unwrap().value.row.version;
+        let release = BeadEvent { expect: BeadState::Working, version, kind: BeadEventKind::Release, actor: "d".into(), at: Some(at + 60) };
+        s.apply("sp-a", &release, &Request::new("r-a", "t", "t")).unwrap();
+        s.fold_stays(now, 10_000).unwrap();
+        assert_eq!(samples(&s), 1);
+        assert!(day_keys(&s).iter().all(|(k, _)| *k != stale), "the stale day key is deleted by the next fold");
+    }
+
+    #[test]
+    fn the_dwell_views_read_neither_the_audit_log_nor_the_history() {
+        use crate::counting::Counting;
+        let (store, now, _dir) = with_records_on(Counting::new, 8_000);
+        store.fold_stays(now, 100_000).unwrap();
+        store.contract().backend().take();
+        for view in ["ops_dwell", "ops_dwell_p95"] {
+            let (rc, out) = view_rows(&store, view, now);
+            assert_eq!(rc, 0, "{view}: {out}");
+            let reads = store.contract().backend().take();
+            let log: Vec<_> = reads.iter().filter(|(k, key, _)| (*k == "get" || *k == "range") && (key.starts_with("events/") || key.starts_with("history/"))).collect();
+            assert!(log.is_empty(), "{view} read the log: {log:?}");
+        }
+    }
+
+    #[test]
+    fn a_live_beads_entry_older_than_the_window_is_its_row_since_and_reads_no_history() {
+        use crate::counting::Counting;
+        let now = 2_000_000_000;
+        let s = open_on(Counting::<MemBackend>::default());
+        let entered = now - 20 * DAY_S;
+        s.create("sp-old", Some("harness"), None, entered - 5, &Request::new("c", "t", "t")).unwrap();
+        let claim = BeadEvent { expect: BeadState::Ready, version: 0, kind: BeadEventKind::Claim { holder: "d".into(), lease_until: entered + 3_600, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None }, actor: "d".into(), at: Some(entered) };
+        s.claim("sp-old", &claim, &Request::new("k", "t", "t")).unwrap();
+        s.contract().backend().take();
+        let (rc, out) = view_rows(&s, "ops_dwell", now);
+        assert_eq!(rc, 0, "{out}");
+        let rows: Vec<Value> = serde_json::from_str(&out).unwrap();
+        assert_eq!(rows[0]["entered_at"], entered.to_string());
+        assert!(s.contract().backend().take().iter().all(|(_, key, _)| !key.starts_with("history/") && !key.starts_with("events/")));
+    }
+
+    #[test]
+    fn while_the_fill_is_short_of_the_window_p95_cannot_tell_and_dwell_has_null_p95() {
+        let now = 2_000_000_000;
+        let (s, _) = worked(3, now);
+        let (rc, out) = view_rows(&s, "ops_dwell_p95", now);
+        assert_eq!(rc, 2, "{out}");
+        assert!(out.contains("filling") && out.contains("covered from"), "{out}");
+        let (rc, out) = view_rows(&s, "ops_dwell", now);
+        assert_eq!(rc, 0, "{out}");
+        let head = s.contract().head().unwrap();
+        let from = now - 3 * DAY_S;
+        s.contract().create(crate::control::keys::STAYS_CURSOR, state_store::Object::new(json!({ "rev": head, "filled_from": from, "fill_to": head })), &Request::new("cur", "t", "t")).unwrap();
+        let (rc, out) = view_rows(&s, "ops_dwell_p95", now);
+        assert_eq!(rc, 2, "{out}");
+        assert!(out.contains(&from.to_string()), "{out}");
+        let (rc, out) = view_rows(&s, "ops_dwell", now);
+        assert_eq!(rc, 0, "{out}");
+        let rows: Vec<Value> = serde_json::from_str(&out).unwrap();
+        assert!(rows.iter().all(|r| r["p95_s"].is_null() && r["samples"].is_null()), "{out}");
     }
 
     #[test]
@@ -728,9 +836,9 @@ mod tests {
         assert_eq!(rows[0]["holds"], "[]");
     }
 
-    /// A store shaped like production: many terminal beads with bulky audits across a fortnight,
-    /// a few live ones.
-    fn fortnight(audits: u64) -> (Store<state_store_sqlite::SqliteBackend>, i64, testkit::TempDir) {
+    /// The backend of a store shaped like production: many terminal beads with bulky audits
+    /// across a fortnight, a few live ones.
+    fn fortnight_backend(audits: u64) -> (state_store_sqlite::SqliteBackend, i64, testkit::TempDir) {
         use state_store::{events_key, Backend, Object, Rev, Write};
         use state_store_sqlite::{Options, SqliteBackend};
         let dir = testkit::TempDir::new("spira-lc-ops-memory");
@@ -756,17 +864,26 @@ mod tests {
             let write = Write::Put { key: events_key(head + 1), value: Object::new(events).encode(), create_rev: Rev::new(head + 1, 0), prev: None };
             head = b.commit(head, &[write]).unwrap();
         }
-        let c = Contract::open(b, Ports::virtual_clock(&VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
-        (Store::new(c, 1_000), now, dir)
+        (b, now, dir)
+    }
+
+    fn open_on<B: Backend>(b: B) -> Store<B> {
+        Store::new(Contract::open(b, Ports::virtual_clock(&VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap(), 1_000)
+    }
+
+    fn fortnight(audits: u64) -> (Store<state_store_sqlite::SqliteBackend>, i64, testkit::TempDir) {
+        let (b, now, dir) = fortnight_backend(audits);
+        let store = open_on(b);
+        store.fold_stays(now, 100_000).unwrap();
+        (store, now, dir)
     }
 
     /// `fortnight`, plus a quarter as many LANDED records (ten landed in the last day) and a few
     /// live ones: the records grow with the history, the answers to the day's questions do not.
-    fn with_records(audits: u64) -> (Store<state_store_sqlite::SqliteBackend>, i64, testkit::TempDir) {
+    fn with_records_on<B: Backend>(wrap: impl FnOnce(state_store_sqlite::SqliteBackend) -> B, audits: u64) -> (Store<B>, i64, testkit::TempDir) {
         use crate::control::{keys, records::{encode, LifecycleRecord}};
         use state_store::{Backend, Object, Rev, Write};
-        let (store, now, dir) = fortnight(audits);
-        let b = store.contract().backend();
+        let (b, now, dir) = fortnight_backend(audits);
         let mut head = b.head().unwrap();
         for n in (20..audits / 4 + 20).rev() {
             let at = if n < 30 { now - 100 } else { now - 5 * DAY_S };
@@ -790,6 +907,7 @@ mod tests {
             writes.push(Write::Put { key: keys::lifecycle(&rec.row.bead_id), value: Object::new(encode(&rec).unwrap()).encode(), create_rev: Rev::new(head, 0), prev: None });
         }
         b.commit(b.head().unwrap(), &writes).unwrap();
+        let store = open_on(wrap(b));
         for n in 0..audits / 8 {
             let (request, row) = (format!("r{n}"), format!("s{n}"));
             let effect = json!({ "task": "t", "ekey": format!("k{n}/x"), "request_id": request, "stream": "s", "spec": { "name": "n", "input": "i", "deadline_ms": 5, "key": format!("k{n}") }, "requested_at": n, "deadline_at": n + 5 });
@@ -800,7 +918,12 @@ mod tests {
         }
         let (rc, out) = crate::journal::sweep_until_done(&mut |argv| crate::journal::answer(crate::journal::run(&argv[1..], &store)), false);
         assert_eq!(rc, 0, "{out}");
+        store.fold_stays(now, 100_000).unwrap();
         (store, now, dir)
+    }
+
+    fn with_records(audits: u64) -> (Store<state_store_sqlite::SqliteBackend>, i64, testkit::TempDir) {
+        with_records_on(|b| b, audits)
     }
 
     type Sqlite = Store<state_store_sqlite::SqliteBackend>;
