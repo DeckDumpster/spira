@@ -27,7 +27,21 @@ impl Transport for Double {
         s.seen.push(argv.to_vec());
         let ok = |out: String| Ok(Reply { code: 0, out, err: String::new() });
         match argv[0].as_str() {
-            "rc" => ok(json!({ "ok": { "items": s.batches, "list_rev": s.list_rev } }).to_string()),
+            "rc" => {
+                let body: Value = serde_json::from_str(argv.last().unwrap()).unwrap();
+                let states: Vec<&str> = body["states"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+                let prefix = body["prefixes"][0].as_str().unwrap_or_default();
+                let items: Vec<&Value> = s
+                    .batches
+                    .iter()
+                    .filter(|b| b["key"].as_str().is_some_and(|k| k.starts_with(prefix)))
+                    .filter(|b| states.is_empty() || states.contains(&b["value"]["data"]["state"].as_str().unwrap_or_default()))
+                    .collect();
+                if let Some(limit) = body["limit"].as_u64() {
+                    assert!(items.len() as u64 <= limit, "the store refuses more than {limit}");
+                }
+                ok(json!({ "ok": { "items": items, "list_rev": s.list_rev } }).to_string())
+            }
             "list" if argv.iter().any(|a| a == "--batches") => {
                 let window = argv.iter().position(|a| a == "--window").map(|i| argv[i + 1].clone()).unwrap_or_default();
                 let rounds: Vec<Value> = s.batches.iter().map(|b| b["value"]["data"].clone()).collect();
@@ -302,6 +316,29 @@ fn a_batches_refresh_rereads_only_the_batch_records_and_the_ready_counts_refuse_
 }
 
 #[test]
+fn load_and_refresh_ask_the_store_for_the_open_states_only_and_hold_only_the_open_rounds() {
+    within(|| {
+        let mut batches: Vec<Value> = (0..300).map(|n| round("spira", &format!("r-{n}"), if n % 2 == 0 { "Landed" } else { "ABANDONED" }, n, n as u64 + 1, &[])).collect();
+        batches.push(forge("deck-1", "armed", 900, "12", 400));
+        batches.push(round("spira", "spira-open", "CiRunning", 901, 401, &[]));
+        let w = world(Script { batches, list_rev: 9, rows: vec![bead("sp-a", "READY", "[]", Some("claimable"), false)], ..Default::default() }, Duration::from_secs(10));
+        for refresh in [false, true] {
+            w.script.lock().unwrap().seen.clear();
+            if refresh { w.p.refresh_batches().unwrap() } else { w.p.load().unwrap() }
+            let body: Value = {
+                let s = w.script.lock().unwrap();
+                serde_json::from_str(s.seen.iter().find(|a| a[0] == "rc").unwrap().last().unwrap()).unwrap()
+            };
+            let states: Vec<&str> = body["states"].as_array().expect("a state filter").iter().map(|v| v.as_str().unwrap()).collect();
+            assert!(!states.is_empty() && !states.iter().any(|s| ["Landed", "LANDED", "Abandoned", "ABANDONED", "Settled", "Discarded"].contains(s)), "{body}");
+            assert!(body["limit"].is_u64(), "{body}");
+            let open: Vec<String> = w.p.round_view("spira").unwrap().value.rounds.into_iter().map(|r| r.record.id).collect();
+            assert_eq!(open, ["deck-1", "spira-open"], "only the open rounds are held");
+        }
+    });
+}
+
+#[test]
 fn the_ended_view_is_each_forge_batch_the_machine_or_the_queue_ended_newest_first() {
     within(|| {
         let w = world(
@@ -320,7 +357,11 @@ fn the_ended_view_is_each_forge_batch_the_machine_or_the_queue_ended_newest_firs
         );
         assert!(matches!(w.p.batch_view_ended("spira"), Err(LcError::Refused(m)) if m.contains("not loaded")));
         w.p.refresh_batches().unwrap();
+        w.script.lock().unwrap().seen.clear();
         let ended = w.p.batch_view_ended("spira").unwrap();
+        let body: Value = serde_json::from_str(w.script.lock().unwrap().seen.last().unwrap().last().unwrap()).unwrap();
+        assert_eq!(body["prefixes"], json!(["batches/spira/"]));
+        assert!(body["states"].as_array().unwrap().iter().all(|s| ["Landed", "Settled", "Abandoned", "Discarded", "LANDED", "SETTLED", "ABANDONED", "DISCARDED"].contains(&s.as_str().unwrap())), "{body}");
         assert_eq!(ended.rev, 9);
         assert_eq!(ended.value.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["deck-2", "deck-0"], "the open batch, a local round and another repo's are left out");
         assert_eq!(ended.value[1].render(), "batch_id=deck-0\nrepo=spira\nmembers=sp-a:ta\nopened=800\nforge.phase=armed\npr=11\nreason=red\n", "a batch_id the queue kept in its own fields is not shown twice");

@@ -27,6 +27,17 @@ const RETRY: Duration = Duration::from_secs(1);
 const IDS_PER_READ: usize = 200;
 
 const BATCHES: &str = "batches/";
+/// Every spelling of a state the batch machine has not ended, as a record can hold it (serde's
+/// variant name, or the machine's word), so no spelling hides an open round.
+const OPEN_STATES: [&str; 16] = [
+    "Staged", "Open", "CiRunning", "Green", "Landing", "Deploying", "Attributing", "Rebuilding",
+    "STAGED", "OPEN", "CI_RUNNING", "GREEN", "LANDING", "DEPLOYING", "ATTRIBUTING", "REBUILDING",
+];
+const ENDED_STATES: [&str; 8] = ["Landed", "Settled", "Abandoned", "Discarded", "LANDED", "SETTLED", "ABANDONED", "DISCARDED"];
+/// The most open rounds the store is asked for across every repo; more is refused, never cut short.
+const OPEN_MAX: usize = 512;
+/// The most ended rounds of one repo `batch_view_ended` is answered from.
+const ENDED_MAX: usize = 20_000;
 const LIFECYCLE: &str = "lifecycle/";
 const READINESS: &str = "readiness/";
 const PLANNING: &str = "planning/";
@@ -475,8 +486,8 @@ impl Projection {
         self.memo.lock().unwrap_or_else(|e| e.into_inner()).end(classes);
     }
 
-    fn rc_list(&self, prefix: &str) -> Result<(Vec<Value>, u64), LcError> {
-        let body = json!({ "prefixes": [prefix], "selector": "everything" }).to_string();
+    fn rc_list(&self, prefix: &str, states: &[&str], limit: usize) -> Result<(Vec<Value>, u64), LcError> {
+        let body = json!({ "prefixes": [prefix], "selector": "everything", "states": states, "limit": limit }).to_string();
         let v = json_of(&self.client.answer(&["rc", "list", "--json", &body])?, "rc list")?;
         let ok = &v["ok"];
         let rev = ok["list_rev"].as_u64().ok_or_else(|| fault(format!("rc list: no list_rev in {v}")))?;
@@ -494,7 +505,7 @@ impl Projection {
     /// Reads every view afresh: the batch records and the revision they were listed at, then
     /// the live lifecycle rows. A change after that revision is redelivered by the next watch.
     pub fn load(&self) -> Result<(), LcError> {
-        let (items, rev) = self.rc_list(BATCHES)?;
+        let (items, rev) = self.rc_list(BATCHES, &OPEN_STATES, OPEN_MAX)?;
         let beads = beads_of(&self.client.answer(&["list", "--live"])?)?;
         let batches = batches_of(items);
         let mut s = self.lock();
@@ -508,7 +519,7 @@ impl Projection {
     /// revision they were listed at, and the ready counts refuse until a full [`load`](Self::load),
     /// since rows read earlier are not of that revision. A poll on such a picture loads every view.
     pub fn refresh_batches(&self) -> Result<(), LcError> {
-        let (items, rev) = self.rc_list(BATCHES)?;
+        let (items, rev) = self.rc_list(BATCHES, &OPEN_STATES, OPEN_MAX)?;
         let batches = batches_of(items);
         let mut s = self.lock();
         self.end_held(ALL);
@@ -657,19 +668,21 @@ impl Projection {
     /// `queue batch show --ended` reads from the store (the queue's closed-PR archives on disk are
     /// not the store's, and are not here).
     pub fn batch_view_ended(&self, repo: &str) -> Result<Read<Vec<Record>>, LcError> {
-        self.read(|s| {
-            let mut ended: Vec<(i64, u64, Record)> = Vec::new();
-            for (key, b) in s.batches.iter().filter(|(k, _)| round_id(repo, k).is_some()) {
-                let r = decode(key, &b.data)?;
-                if r.get(FORGE_PHASE).is_none() || !(r.terminal() || r.ended().is_some()) {
-                    continue;
-                }
-                let opened = r.get("opened").and_then(|o| o.parse().ok()).unwrap_or(0);
-                ended.push((opened, b.create_rev, r));
+        let held = self.read(|s| Ok(s.batches.clone()))?;
+        let (items, _) = self.rc_list(&format!("{BATCHES}{repo}/"), &ENDED_STATES, ENDED_MAX)?;
+        let mut batches = batches_of(items);
+        batches.extend(held.value);
+        let mut ended: Vec<(i64, u64, Record)> = Vec::new();
+        for (key, b) in batches.iter().filter(|(k, _)| round_id(repo, k).is_some()) {
+            let r = decode(key, &b.data)?;
+            if r.get(FORGE_PHASE).is_none() || !(r.terminal() || r.ended().is_some()) {
+                continue;
             }
-            ended.sort_by(|a, b| (b.0, b.1, &b.2.id).cmp(&(a.0, a.1, &a.2.id)));
-            Ok(ended.into_iter().map(|(_, _, r)| r).collect())
-        })
+            let opened = r.get("opened").and_then(|o| o.parse().ok()).unwrap_or(0);
+            ended.push((opened, b.create_rev, r));
+        }
+        ended.sort_by(|a, b| (b.0, b.1, &b.2.id).cmp(&(a.0, a.1, &a.2.id)));
+        Ok(Read { rev: held.rev, value: ended.into_iter().map(|(_, _, r)| r).collect() })
     }
 
     pub fn round_view(&self, repo: &str) -> Result<Read<RoundView>, LcError> {
@@ -855,5 +868,26 @@ impl Projection {
                 .map(|b| b.row.bead_id.clone())
                 .collect())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_state_lists_name_every_spelling_of_each_batch_state_the_store_writes() {
+        let words = ["STAGED", "OPEN", "CI_RUNNING", "GREEN", "LANDING", "DEPLOYING", "ATTRIBUTING", "REBUILDING", "LANDED", "SETTLED", "ABANDONED", "DISCARDED"];
+        for word in words {
+            let state = BatchState::from_str(word).unwrap();
+            let serde_name = serde_json::to_value(state).unwrap();
+            let list: &[&str] = if state.is_terminal() { &ENDED_STATES } else { &OPEN_STATES };
+            let other: &[&str] = if state.is_terminal() { &OPEN_STATES } else { &ENDED_STATES };
+            for spelling in [word, serde_name.as_str().unwrap()] {
+                assert!(list.contains(&spelling), "{spelling} missing from its list");
+                assert!(!other.contains(&spelling), "{spelling} in the wrong list");
+            }
+        }
+        assert_eq!(OPEN_STATES.len() + ENDED_STATES.len(), words.len() * 2);
     }
 }

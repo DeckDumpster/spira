@@ -376,6 +376,24 @@ fn with_the_store_a_round_the_lifecycle_ended_is_swept_once_under_the_lock() {
 }
 
 #[test]
+fn with_the_store_the_lock_sweep_reads_the_open_rounds_and_marked_ones_never_every_round() {
+    let t = store_world();
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    for n in 0..200 {
+        d.put_round("spira", &format!("r-auto-{n}"), "LANDED", &[("sp-old", "to")], 10 + n);
+    }
+    let running = marker(&t, "spira-orphaned", "running");
+    fs::create_dir_all(running.parent().unwrap()).unwrap();
+    fs::write(&running, "").unwrap();
+    d.items_read.set(0);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b:tb"]), 1);
+    let read = d.items_read.get();
+    assert!(read <= 12, "the sweep read {read} round records among 200 ended ones");
+    assert!(!running.exists(), "the marked ended round is still swept");
+    assert!(marker(&t, "spira-orphaned", "result").exists());
+}
+
+#[test]
 fn a_swept_round_sharing_a_live_rounds_worktree_is_closed_out_once() {
     let t = store_world();
     let shared = t.qfile("shared-tree");
@@ -728,6 +746,9 @@ fn the_sweep_stops_the_legs_of_a_round_the_lifecycle_ended_before_it_frees_the_t
     fs::create_dir_all(&wt).unwrap();
     kv.push("worktree", &wt.display().to_string());
     batches::save(d, "spira", &kv).unwrap();
+    let running = marker(&t, "spira-orphaned", "running");
+    fs::create_dir_all(running.parent().unwrap()).unwrap();
+    fs::write(&running, "").unwrap();
     t.scripts.round_legs.borrow_mut().push(("spira".into(), "spira-orphaned".into(), "leg.service".into()));
     t.run(&["round", "open", "--members", "sp-b:tb"]);
     assert!(
@@ -746,6 +767,9 @@ fn the_sweep_keeps_the_tree_and_the_record_of_an_ended_round_whose_leg_will_not_
     fs::create_dir_all(&wt).unwrap();
     kv.push("worktree", &wt.display().to_string());
     batches::save(d, "spira", &kv).unwrap();
+    let running = marker(&t, "spira-orphaned", "running");
+    fs::create_dir_all(running.parent().unwrap()).unwrap();
+    fs::write(&running, "").unwrap();
     t.scripts.round_legs_stubborn.set(true);
     t.run(&["round", "open", "--members", "sp-b:tb"]);
     let removed = t.git.calls.borrow().iter().any(|c| c == &format!("worktree-remove {}", wt.display()));
