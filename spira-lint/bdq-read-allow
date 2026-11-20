@@ -50,5 +50,5 @@
 2 spira-world/src/bin/world.rs
 1 spira-world/src/checkpoint.rs
 1 spira-world/src/freeze.rs
-7 watchtower/src/lc.rs
+6 watchtower/src/lc.rs
 1 watchtower/src/probes.rs
