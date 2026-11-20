@@ -1003,11 +1003,11 @@ fn record_span(spans: Option<&spira_otel::Sink>, call: &spira_otel::Call) {
 // batch-job: just under the 310 s the `work` client waits for a tool-running verb.
 pub const TOOL_DEADLINE: Duration = Duration::from_secs(305);
 
-/// The request's deadline: the configured default, or the verb's declared slow entry, for every store call. `work`'s lane verbs are
-/// batch jobs this service brokers, not calls: they run a harness tool (groomer sweep, bead
-/// filing, mail) for the dwarf, and keep the bound they had.
 const WATCH_MARGIN: Duration = Duration::from_millis(500);
 
+/// The request's deadline: the configured default, or the verb's declared slow entry, for every store call but a `watch`, which keeps its own hold. `work`'s lane verbs are
+/// batch jobs this service brokers, not calls: they run a harness tool (groomer sweep, bead
+/// filing, mail) for the dwarf, and keep the bound they had.
 pub(crate) fn request_deadline(argv: &[String], deadlines: &Deadlines) -> Duration {
     match argv.first().map(String::as_str) {
         // batch-job: a work verb that runs a brokered tool waits the client's tool bound less a margin.
@@ -1397,7 +1397,7 @@ mod tests {
 
     fn watch_door(held: Duration) -> Arc<super::Door> {
         let work: super::Work = Arc::new(move |_| {
-            std::thread::sleep(held);
+            std::thread::sleep(held); // clock-safe: the deadline under test is a real recv_timeout; the sleep only outlasts it
             crate::callers::Answer { code: 0, stdout: "idle".into(), stderr: String::new(), cert_log: None, owed: Default::default() }
         });
         let deadlines = super::Deadlines { default: Duration::from_millis(1000), slow: Default::default() };
