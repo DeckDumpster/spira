@@ -508,11 +508,13 @@ mod tests {
     struct Scripted {
         script: Vec<i32>,
         seen: Mutex<Vec<Vec<String>>>,
+        bodies: Mutex<Vec<Option<String>>>,
         pace: Arc<Virtual>,
     }
 
     impl Transport for Scripted {
-        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+            self.bodies.lock().unwrap().push(stdin.map(str::to_string));
             let mut seen = self.seen.lock().unwrap();
             seen.push(argv.to_vec());
             *self.pace.0.lock().unwrap() += Duration::from_secs(5);
@@ -524,7 +526,7 @@ mod tests {
 
     fn scripted(script: &[i32], bound_secs: u64) -> (LcClient, Arc<Scripted>, Retry) {
         let pace = Arc::new(Virtual(Mutex::new(Duration::ZERO)));
-        let t = Arc::new(Scripted { script: script.to_vec(), seen: Mutex::new(Vec::new()), pace: pace.clone() });
+        let t = Arc::new(Scripted { script: script.to_vec(), seen: Mutex::new(Vec::new()), bodies: Mutex::new(Vec::new()), pace: pace.clone() });
         (LcClient::over(t.clone(), true), t, Retry::within(Duration::from_secs(bound_secs)).with_pace(pace))
     }
 
@@ -538,6 +540,7 @@ mod tests {
         let mut resends = 0;
         let r = call_idempotent_noting(&c, &["content", "create"], Some("body"), &retry, &mut || resends += 1).unwrap();
         assert_eq!((r.code, sent(&t), resends), (0, 3, 2));
+        assert_eq!(*t.bodies.lock().unwrap(), vec![Some("body".to_string()); 3]);
     }
 
     #[test]
@@ -552,7 +555,7 @@ mod tests {
         let (c, t, retry) = scripted(&[2], 12);
         let e = call_idempotent(&c, &["content", "create"], None, &retry).unwrap_err();
         assert!(e.contains("cannot tell"), "{e}");
-        assert!(sent(&t) < 5, "{}", sent(&t));
+        assert_eq!(sent(&t), 3, "sends at 0 s, 5.25 s and 10.75 s; the next backoff passes 12 s");
     }
 
     #[test]

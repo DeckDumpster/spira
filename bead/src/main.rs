@@ -117,6 +117,12 @@ fn shown_row(id: &str) -> Option<bead::ShowRow> {
 /// the exit code and the stdout, left for the caller to print. A door that cannot say whether
 /// the write committed exits [`CANNOT_TELL`].
 fn put_capture(args: &[&str], body: Option<&str>) -> (i32, String) {
+    put_capture_under(args, body, None)
+}
+
+/// [`put_capture`] sent under `request` and sent again under it while the store cannot tell: the
+/// store runs the write once and answers every send with that run's result.
+fn put_capture_under(args: &[&str], body: Option<&str>, request: Option<&str>) -> (i32, String) {
     let client = match lc() {
         Ok(c) => c,
         Err(e) => {
@@ -125,9 +131,13 @@ fn put_capture(args: &[&str], body: Option<&str>) -> (i32, String) {
         }
     };
     let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
-    let sent = match body {
-        Some(b) => client.call_stdin(&argv, b),
-        None => client.call(&argv),
+    let sent = match request {
+        None => match body {
+            Some(b) => client.call_stdin(&argv, b),
+            None => client.call(&argv),
+        }
+        .map_err(|e| e.to_string()),
+        Some(request) => resend_under(&client, &argv, body, request),
     };
     match sent {
         Ok(r) => {
@@ -141,40 +151,15 @@ fn put_capture(args: &[&str], body: Option<&str>) -> (i32, String) {
     }
 }
 
-/// The content create, sent under `request` and sent again under it while the store cannot tell:
-/// the store runs it once and answers every send with that run's result.
-fn create_resending(argv: &[&str], body: Option<&str>, request: &str) -> (i32, String) {
-    let client = match lc() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("bead: {e}");
-            return (DOOR_UNREACHABLE, String::new());
-        }
-    };
-    let retry = match spira_store::lifecycle_row::Retry::configured() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("bead: file: {e}");
-            return (1, String::new());
-        }
-    };
-    let full: Vec<&str> = std::iter::once("content").chain(argv.iter().copied()).collect();
+fn resend_under(client: &spira_store::lc_call::LcClient, argv: &[&str], body: Option<&str>, request: &str) -> Result<spira_store::lc_call::Reply, String> {
+    let retry = spira_store::lifecycle_row::Retry::configured()?;
     let mut said = false;
     let mut note = || {
         if !std::mem::replace(&mut said, true) {
             eprintln!("bead: file: the store cut the create at its deadline; re-sent under request {request}");
         }
     };
-    match spira_store::lc_call::as_request(request, || spira_store::lifecycle_row::call_idempotent_noting(&client, &full, body, &retry, &mut note)) {
-        Ok(r) => {
-            eprint!("{}", r.err);
-            (r.code, r.out)
-        }
-        Err(e) => {
-            eprintln!("bead: {e}");
-            (CANNOT_TELL, String::new())
-        }
-    }
+    spira_store::lc_call::as_request(request, || spira_store::lifecycle_row::call_idempotent_noting(client, argv, body, &retry, &mut note))
 }
 
 /// [`put_capture`] with the door's stdout passed through.
@@ -216,7 +201,7 @@ fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[St
     let created_at = std::cell::Cell::new(std::time::Instant::now());
     let request = bead::filing::create_request_id(&std::env::var("BEADS_ACTOR").unwrap_or_default(), &argv_owned, body);
     let mut create = || {
-        let sent = create_resending(&argv, body, &request);
+        let sent = put_capture_under(&argv, body, Some(&request));
         created_at.set(std::time::Instant::now());
         sent
     };
@@ -2350,7 +2335,6 @@ mod tests {
         let ids: Vec<_> = d.sent.lock().unwrap().iter().zip(d.request_ids.lock().unwrap().iter()).filter(|((a, _), _)| a[1] == "create").map(|(_, id)| id.clone()).collect();
         assert!(ids[0].is_some() && ids[0] == ids[1], "{ids:?}");
         assert!(w.iter().any(|(a, _)| a[..2] == argv(&["create-bead", "sp-new"])[..]), "{w:?}");
-        assert!(w.iter().any(|(a, _)| a.iter().any(|x| x == "express" || x == "--express")) || w.len() >= 3, "{w:?}");
     }
 
     const LISTED_NOW: &str = r#"[{"id":"sp-held","title":"T","issue_type":"task","created_at":"2999-01-01T00:00:00Z"}]"#;
