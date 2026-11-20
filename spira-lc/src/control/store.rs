@@ -77,9 +77,8 @@ pub type ExternalRefs = std::sync::Arc<dyn Fn(&str) -> std::result::Result<Optio
 const PASS_CHUNK: usize = state_store::limits::MAX_TXN_OPS - 2;
 /// How often a read-merge-write is re-planned after losing its compare before it gives up.
 const MERGE_ATTEMPTS: usize = 5;
-/// Records a page read holds at once, and the smaller chunk a fold holds.
+/// Records a page read holds at once.
 const RECORD_CHUNK: usize = 1_000;
-const FOLD_CHUNK: usize = 100;
 
 fn sub_request(req: &Request, part: &str, evidence: Value) -> Request {
     Request {
@@ -330,16 +329,6 @@ impl<B: Backend> Store<B> {
             out.len() >= want
         })?;
         Ok(out)
-    }
-
-    /// Hands `visit` each record of `states` at `rev` in id order, reading `chunk` at a time and
-    /// holding none past its visit: the call's memory is a chunk, not the states. `visit`
-    /// returns true to stop.
-    pub fn fold_records(&self, rev: u64, states: &[BeadState], mut visit: impl FnMut(LifecycleRecord)) -> Result<()> {
-        self.walk_records(rev, Some(states), None, None, FOLD_CHUNK, |r| {
-            visit(r.value);
-            false
-        })
     }
 
     fn walk_records(

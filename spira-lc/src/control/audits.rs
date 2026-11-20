@@ -70,7 +70,15 @@ impl<B: Backend> Store<B> {
             let mut after = (lo > 0).then(|| events_key(lo));
             let end = events_key(hi);
             let limit = PAGE.min((hi - lo) as usize).max(1);
+            let empty = self.contract().range_at(EVENTS_PREFIX, after.as_deref(), 1, head)?.first().is_none_or(|i| i.key > end);
+            if !empty && span > CHUNK_REVS {
+                span = CHUNK_REVS;
+                continue;
+            }
             'chunk: loop {
+                if empty {
+                    break;
+                }
                 let page = self.contract().range_at(EVENTS_PREFIX, after.as_deref(), limit, head)?;
                 let full = page.len() == limit;
                 after = page.last().map(|i| i.key.clone());
@@ -120,14 +128,23 @@ impl<B: Backend> Store<B> {
     pub fn audits_after_upto(&self, after: u64, limit: usize) -> Result<Scanned> {
         let head = self.contract().head()?;
         let mut audits: Vec<Logged> = Vec::new();
-        let imported = if after == 0 { self.contract().list(&[super::keys::HISTORY], &state_store::Selector::Everything)?.0 } else { Vec::new() };
-        for i in &imported {
-            let d = &i.value.data;
-            if let (Some(seq), Ok(audit)) = (d["seq"].as_u64(), serde_json::from_value::<Audit>(d["audit"].clone())) {
-                if seq > after {
-                    audits.push(Logged { rev: seq, audit });
+        let (mut cursor, mut history_done): (Option<String>, bool) = (None, false);
+        while after == 0 && !history_done {
+            let page = self.contract().range_at(super::keys::HISTORY, cursor.as_deref(), PAGE, head)?;
+            for i in &page {
+                let d = &i.value.data;
+                if let (Some(seq), Ok(audit)) = (d["seq"].as_u64(), serde_json::from_value::<Audit>(d["audit"].clone())) {
+                    if seq > after {
+                        audits.push(Logged { rev: seq, audit });
+                    }
                 }
             }
+            if audits.len() > limit {
+                audits.sort_by_key(|l| l.rev);
+                audits.truncate(limit);
+            }
+            history_done = page.len() < PAGE;
+            cursor = page.last().map(|i| i.key.clone());
         }
         let mut cursor = (after > 0).then(|| events_key(after));
         loop {

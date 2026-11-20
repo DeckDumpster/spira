@@ -147,17 +147,22 @@ fn ops_round<B: Backend>(store: &Store<B>) -> Result<Vec<Value>, String> {
     Ok(out)
 }
 
-/// `ops_recent`: the beads that landed in the last day, folded from the LANDED records a chunk at a time.
+/// `ops_recent`: the beads that landed in the last day, found from the day's audits and read by
+/// key, so the call's work follows the day's events and not the LANDED records the store holds.
 fn ops_recent<B: Backend>(store: &Store<B>, now: i64) -> Result<Vec<Value>, String> {
-    let rev = store.contract().head().map_err(|e| e.to_string())?;
+    let mut ids = std::collections::BTreeSet::new();
+    folded(store, now, DAY_S, |m| {
+        if m.machine == "bead" && m.applied && m.to_state == BeadState::Landed.as_str() && m.from_state != m.to_state {
+            ids.insert(m.lc_key.to_string());
+        }
+    })?;
     let mut landed = Vec::new();
-    store
-        .fold_records(rev, &[BeadState::Landed], |r| {
-            if r.row.since.is_some_and(|s| s >= now - DAY_S) {
-                landed.push(r);
-            }
-        })
-        .map_err(|e| e.to_string())?;
+    for id in &ids {
+        let rec = store.record(id).map_err(|e| e.to_string())?;
+        if let Some(r) = rec.map(|r| r.value).filter(|r| r.row.state == BeadState::Landed && r.row.since.is_some_and(|s| s >= now - DAY_S)) {
+            landed.push(r);
+        }
+    }
     let plan = planned(&landed.iter().map(|r| r.row.bead_id.clone()).collect::<Vec<_>>());
     let mut out: Vec<Value> = landed
         .iter()
@@ -734,6 +739,15 @@ mod tests {
         let bulk = "x".repeat(2_000);
         let states = ["READY", "WORKING", "SUBMITTED", "CERTIFIED"];
         let mut head = b.head().unwrap();
+        let imported: Vec<Write> = (0..audits / 2)
+            .map(|n| {
+                let audit = json!({ "machine": "bead", "lc_key": format!("sp-{:04}", n % 300), "event": "Claim", "expect": "READY", "from_state": "READY", "to_state": "WORKING", "applied": true, "refusal": null, "evidence": { "bulk": bulk }, "actor": "a", "at": now - 20 * DAY_S });
+                Write::Put { key: crate::control::keys::history_entry(&format!("sp-{:04}", n % 300), 0, &format!("import-{n}")), value: Object::new(json!({ "seq": n + 1, "audit": audit })).encode(), create_rev: Rev::new(head + 1 + n, 0), prev: None }
+            })
+            .collect();
+        for chunk in imported.chunks(1) {
+            head = b.commit(head, chunk).unwrap();
+        }
         for n in 0..audits {
             let (from, to) = (states[(n % 4) as usize], states[((n + 1) % 4) as usize]);
             let at = now - 13 * DAY_S + (n as i64) * (13 * DAY_S) / audits as i64;
@@ -754,6 +768,13 @@ mod tests {
         let (store, now, dir) = fortnight(audits);
         let b = store.contract().backend();
         let mut head = b.head().unwrap();
+        for n in (20..audits / 4 + 20).rev() {
+            let at = if n < 30 { now - 100 } else { now - 5 * DAY_S };
+            let a = json!({ "machine": "bead", "lc_key": format!("sp-{n:05}"), "event": "FastForward", "expect": "GREEN", "from_state": "CERTIFIED", "to_state": "LANDED", "applied": true, "refusal": null, "evidence": {}, "actor": "a", "at": at });
+            let events = json!({ "refused": false, "evidence": { "then": [a] } });
+            head += 1;
+            b.commit(head - 1, &[Write::Put { key: state_store::events_key(head), value: Object::new(events).encode(), create_rev: Rev::new(head, 0), prev: None }]).unwrap();
+        }
         let live = [BeadState::Ready, BeadState::Working, BeadState::Submitted, BeadState::Certified];
         let mut writes = Vec::new();
         for n in 0..audits / 4 + 20 {
@@ -769,6 +790,16 @@ mod tests {
             writes.push(Write::Put { key: keys::lifecycle(&rec.row.bead_id), value: Object::new(encode(&rec).unwrap()).encode(), create_rev: Rev::new(head, 0), prev: None });
         }
         b.commit(b.head().unwrap(), &writes).unwrap();
+        for n in 0..audits / 8 {
+            let (request, row) = (format!("r{n}"), format!("s{n}"));
+            let effect = json!({ "task": "t", "ekey": format!("k{n}/x"), "request_id": request, "stream": "s", "spec": { "name": "n", "input": "i", "deadline_ms": 5, "key": format!("k{n}") }, "requested_at": n, "deadline_at": n + 5 });
+            let schedule = json!({ "id": row, "at": n, "stream": "s", "kind": { "tag": "tick", "body": "b" }, "cause": null, "correlation": "c" });
+            let (resolved, fired) = if n < 5 { (json!([]), json!([])) } else { (json!([request]), json!([row])) };
+            let turn = crate::journal::turn_of(&json!({ "effects": [effect], "schedules": [schedule], "resolved": resolved, "fired": fired })).unwrap();
+            store.journal_turn(&turn, "runtime").unwrap();
+        }
+        let (rc, out) = crate::journal::sweep_until_done(&mut |argv| crate::journal::answer(crate::journal::run(&argv[1..], &store)), false);
+        assert_eq!(rc, 0, "{out}");
         (store, now, dir)
     }
 
@@ -817,7 +848,19 @@ mod tests {
                 control_verbs::run(s, &argv)
             })));
         }
+        for op in ["state", "open-effects", "due"] {
+            let argv = args(&[op]);
+            out.push((Box::leak(format!("journal {op}").into_boxed_str()), Box::new(move |s, _| crate::journal::answer(crate::journal::run(&argv, s)))));
+        }
         out
+    }
+
+    #[test]
+    fn ops_recent_lists_the_beads_landed_in_the_last_day_and_no_others() {
+        let (store, now, _dir) = with_records(400);
+        let rows = ops_recent(&store, now).unwrap();
+        let ids: Vec<&str> = rows.iter().map(|r| r["bead_id"].as_str().unwrap()).collect();
+        assert_eq!(ids, (20..30).map(|n| format!("sp-{n:05}")).collect::<Vec<_>>());
     }
 
     #[test]
