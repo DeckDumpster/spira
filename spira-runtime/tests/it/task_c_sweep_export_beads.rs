@@ -124,6 +124,7 @@ fn the_lifecycle_store_is_read_as_cursor_pages_never_as_list_all() {
     let lists: Vec<&Vec<String>> = calls.iter().filter(|a| a[0] == "list").collect();
     assert_eq!(lists.len(), 3, "{lists:?}");
     assert!(lists.iter().all(|a| a.ends_with(&["--limit".into(), "1000".into()])), "{lists:?}");
+    assert_eq!(lists[0], &["list", "--bare", "--limit", "1000"]);
     assert_eq!(lists[1][2..4], ["--after".to_string(), "sp-00999".to_string()]);
     assert_eq!(lists[2][2..4], ["--after".to_string(), "sp-01999".to_string()]);
 }

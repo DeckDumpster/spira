@@ -24,8 +24,8 @@
 //!            watermarks: String, mirrored_count: usize, mirror_bytes_sha: String }
 //! ```
 //!
-//! - `content` = store verb `content list --id <chunk> --all --limit 0 --json`, one query per `CONTENT_CHUNK` lifecycle ids (300 s in all); `lifecycle` = `list-all`
-//!   (`:29`, 120 s); `memories` = `content memories --json` (`:30`, 60 s, absent → `{}`);
+//! - `content` = store verb `content list --id <chunk> --all --limit 0 --json`, one query per `CONTENT_CHUNK` lifecycle ids (300 s in all); `lifecycle` = `list --bare --after <id> --limit <n>`
+//!   pages, one request each (`:29`, 120 s); `memories` = `content memories --json` (`:30`, 60 s, absent → `{}`);
 //!   `watermarks` = `plane-watermarks --manifest` (`:32`, 5 s). All four through the in-process
 //!   `LcClient` (S7a), not the `spira-lc` CLI.
 //! - `mirrored_count` / sha: the current `$SPIRA_WIKI/raw/spira-beads/spira.jsonl` (`:35`).
