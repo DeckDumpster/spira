@@ -84,23 +84,28 @@ pub fn start_tasks(engine: &mut Engine) {
 
 pub const BOOT_RETRY_FIRST_MS: u64 = 250;
 pub const BOOT_RETRY_CEILING_MS: u64 = 1_000;
-pub const BOOT_RETRY_BOUND_MS: u64 = 60_000;
 
-fn boot_retry(s: &Settings) -> runtime::engine::BootRetry {
+/// `line` under the UTC stamp every line in the service's log carries.
+pub fn stamped(line: &str) -> String {
+    format!("{} {line}", watchers::iso8601(runtime::ports::Clock::now_ms(&runtime::ports::WallClock) / 1000))
+}
+
+fn boot_retry(s: &Settings, bound: Duration) -> runtime::engine::BootRetry {
     runtime::engine::BootRetry {
         first_ms: BOOT_RETRY_FIRST_MS,
         ceiling_ms: BOOT_RETRY_CEILING_MS,
-        bound_ms: BOOT_RETRY_BOUND_MS,
+        bound_ms: bound.as_millis() as u64,
         store: format!("the journal store at {}", s.lc_socket.display()),
-        // waits-on: the journal store's next answer; cap BOOT_RETRY_BOUND_MS
+        // waits-on: the journal store's next answer; cap `bound`
         sleep: Arc::new(|ms| std::thread::sleep(std::time::Duration::from_millis(ms))),
     }
 }
 
-pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>) -> runtime::Result<Engine> {
+/// `bound` is how long the journal may stay unanswered before the open gives up.
+pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>, bound: Duration) -> runtime::Result<Engine> {
     let mut regs = registrations(s);
     regs.extend(extra);
-    let mut engine = Engine::open_with(journal, clock, regs, 0, boot_retry(s))?;
+    let mut engine = Engine::open_with(journal, clock, regs, 0, boot_retry(s, bound))?;
     if s.run_dir.join("world.halted").exists() {
         engine.halt_at_boot("the world's halt stamp is present at boot")?;
     }
@@ -109,6 +114,75 @@ pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runti
         .with_baseline(vec![("runtime.version".into(), Value::from(env!("CARGO_PKG_VERSION"))), ("config.hash".into(), Value::from(s.hash()))])
         .with_stall_limit(s.stall_limit)
         .with_marker(marker)
+}
+
+/// Where startup is and what the journal last said, for the line written if it never finishes.
+pub struct Startup {
+    deadline: Duration,
+    step: std::sync::Mutex<&'static str>,
+    last_answer: std::sync::Mutex<String>,
+}
+
+impl Startup {
+    pub fn new(deadline: Duration) -> Self {
+        Startup { deadline, step: Default::default(), last_answer: Default::default() }
+    }
+
+    fn enter(&self, step: &'static str) {
+        *self.step.lock().unwrap_or_else(|p| p.into_inner()) = step;
+    }
+
+    fn heard(&self, answer: &str) {
+        *self.last_answer.lock().unwrap_or_else(|p| p.into_inner()) = answer.to_string();
+    }
+
+    pub fn unfinished(&self) -> String {
+        let deadline = self.deadline;
+        let step = *self.step.lock().unwrap_or_else(|p| p.into_inner());
+        let answer = self.last_answer.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let heard = if answer.is_empty() { "no journal answer yet".to_string() } else { format!("last journal answer: {answer}") };
+        stamped(&format!("spira-runtime: startup did not finish within {deadline:?}: still in {step}; {heard}"))
+    }
+}
+
+struct Overheard {
+    inner: Arc<dyn Journal>,
+    startup: Arc<Startup>,
+}
+
+impl Journal for Overheard {
+    fn record(&self, ev: &runtime::Event) {
+        self.inner.record(ev)
+    }
+    fn boot(&self) -> runtime::Result<runtime::journal::Boot> {
+        self.inner.boot().inspect_err(|e| self.startup.heard(&e.0))
+    }
+    fn commit(&self, turn: &runtime::journal::Turn) -> runtime::Result<()> {
+        self.inner.commit(turn)
+    }
+    fn poison(&self, p: &runtime::journal::Poison) -> runtime::Result<()> {
+        self.inner.poison(p)
+    }
+    fn poisoned(&self, stream: &runtime::StreamKey) -> runtime::Result<Option<runtime::journal::Poison>> {
+        self.inner.poisoned(stream)
+    }
+    fn shipped(&self) -> Option<spira_otel::vlogs::ShipCounts> {
+        self.inner.shipped()
+    }
+}
+
+/// Everything that must finish before the dispatch loop can start. The journal is asked for at
+/// most half of `deadline`, so a store that cannot tell is reported here with time left to print it.
+pub fn start_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, board: Arc<runtime::engine::StatusBoard>, startup: &Arc<Startup>) -> Result<(Engine, Option<store::Store>), String> {
+    startup.enter("journal boot");
+    let journal = Arc::new(Overheard { inner: journal, startup: startup.clone() });
+    let engine = open_engine(s, journal, clock, marker, sink, vec![], startup.deadline / 2).map_err(|e| stamped(&format!("spira-runtime: startup, journal boot: {e}")))?;
+    let mut engine = engine.with_status_board(board);
+    startup.enter("start_tasks");
+    start_tasks(&mut engine);
+    startup.enter("store::start");
+    let store = store::start(&s.lc_socket).inspect_err(|e| eprintln!("{}", stamped(&format!("spira-runtime: no store views, tasks read the store per tick: {e}")))).ok(); // loop-safe: runs on the startup offload thread
+    Ok((engine, store))
 }
 
 /// Runs the effects the service's workflows ask for. HTTP goes to the heartbeat URL and the forge; the watchers read files, the lifecycle socket and (brain-dirty) a bounded git on the wiki checkout, and the operator's mail is delivered in-process.
@@ -353,6 +427,7 @@ fn own_skip_units(instance: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod own_unit_tests {
+    use std::time::Duration;
     use runtime::journal::MemJournal;
     use runtime::ports::VirtualClock;
     use runtime::{Command, Ctx, EffectSpec, Event, EventKindTag, Handler, Projection, Registration};
@@ -360,9 +435,37 @@ mod own_unit_tests {
 
     #[test]
     fn the_boot_retry_caps_its_backoff_below_the_bound_so_a_late_store_is_found_soon() {
-        let r = super::boot_retry(&crate::settings::fixture());
+        let r = super::boot_retry(&crate::settings::fixture(), Duration::from_secs(10));
         assert_eq!((r.first_ms, r.ceiling_ms), (super::BOOT_RETRY_FIRST_MS, super::BOOT_RETRY_CEILING_MS));
         assert!(r.ceiling_ms < r.bound_ms);
+    }
+
+    struct Silent;
+    impl runtime::Journal for Silent {
+        fn record(&self, _: &Event) {}
+        fn boot(&self) -> runtime::Result<runtime::journal::Boot> {
+            Err(runtime::RuntimeError::cannot_tell("cannot tell: spira-lc took the journal request but its reply was lost"))
+        }
+        fn commit(&self, _: &runtime::journal::Turn) -> runtime::Result<()> {
+            Ok(())
+        }
+        fn poison(&self, _: &runtime::journal::Poison) -> runtime::Result<()> {
+            Ok(())
+        }
+        fn poisoned(&self, _: &runtime::StreamKey) -> runtime::Result<Option<runtime::journal::Poison>> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn a_startup_over_a_journal_that_cannot_tell_fails_inside_the_deadline_with_a_stamped_line_naming_the_step() {
+        let deadline = Duration::from_millis(800);
+        let startup = Arc::new(super::Startup::new(deadline));
+        let err = super::start_engine(&crate::settings::fixture(), Arc::new(Silent), Arc::new(VirtualClock::new(1_000)), Arc::new(runtime::marker::NullMarker), Arc::new(runtime::NullSink), Arc::new(runtime::engine::StatusBoard::default()), &startup).err().expect("must fail");
+        let stamp = err.split(' ').next().unwrap();
+        assert!(stamp.len() == 20 && stamp.ends_with('Z') && stamp.as_bytes()[10] == b'T', "{err}");
+        assert!(err.contains("journal boot") && err.contains("reply was lost"), "{err}");
+        assert!(startup.unfinished().contains("reply was lost"), "the timeout line carries the journal's last words too");
     }
 
     struct Writer;
@@ -383,7 +486,7 @@ mod own_unit_tests {
             std::fs::write(dir.path().join("world.halted"), "2000-01-01T00:00:00Z\nwhy: planted\n").unwrap();
         }
         let j = MemJournal::new();
-        let mut e = super::open_engine(&s, j.clone(), Arc::new(VirtualClock::new(1_000)), Arc::new(runtime::marker::NullMarker), Arc::new(runtime::NullSink), vec![Registration::new("probe", Writer)]).unwrap();
+        let mut e = super::open_engine(&s, j.clone(), Arc::new(VirtualClock::new(1_000)), Arc::new(runtime::marker::NullMarker), Arc::new(runtime::NullSink), vec![Registration::new("probe", Writer)], Duration::from_secs(10)).unwrap();
         e.start("probe", runtime::EventKind::new("start", ""));
         runtime::Executor::run_until_idle(&mut e).unwrap();
         let tags = runtime::conformance::trace(&*j).into_iter().map(|t| t.2.to_string()).filter(|t| t.starts_with("effect.")).collect();

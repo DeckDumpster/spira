@@ -294,8 +294,8 @@ fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
 }
 
 /// How `Engine::open` treats a journal that cannot tell: ask again after `first_ms`, doubling,
-/// until the waits sum to exactly `bound_ms` (the last wait is cut short to fit), then fail naming `store`.
-/// The bound counts waits only; each ask is separately bounded by the socket's own deadline.
+/// until the time spent, waits and asks together, reaches `bound_ms` (the last wait is cut short to fit),
+/// then fail naming `store`, the attempts, the time spent and the journal's last words.
 #[derive(Clone)]
 pub struct BootRetry {
     pub first_ms: u64,
@@ -311,17 +311,21 @@ impl BootRetry {
         BootRetry { first_ms: 0, ceiling_ms: 0, bound_ms: 0, store: String::new(), sleep: Arc::new(|_| {}) }
     }
 
-    fn read<T>(&self, mut ask: impl FnMut() -> Result<T>) -> Result<T> {
-        let (mut wait, mut waited) = (self.first_ms, 0);
+    fn read<T>(&self, clock: &dyn Clock, mut ask: impl FnMut() -> Result<T>) -> Result<T> {
+        let (mut wait, mut spent, mut attempts) = (self.first_ms, 0u64, 0u32);
         loop {
-            match ask() {
+            let began = clock.now_ms();
+            let answer = ask();
+            attempts += 1;
+            spent = spent.saturating_add(clock.now_ms().saturating_sub(began));
+            match answer {
                 Err(e) if e.is_cannot_tell() => {
-                    if wait == 0 || waited >= self.bound_ms {
-                        return Err(RuntimeError::new(format!("{}: still cannot tell after {waited} ms of retries: {}", self.store, e.0)));
+                    if wait == 0 || spent >= self.bound_ms {
+                        return Err(RuntimeError::new(format!("{}: still cannot tell after {attempts} attempt(s) over {spent} ms: {}", self.store, e.0)));
                     }
-                    let wait_now = wait.min(self.bound_ms - waited);
+                    let wait_now = wait.min(self.bound_ms - spent);
                     (self.sleep)(wait_now);
-                    waited += wait_now;
+                    spent += wait_now;
                     wait = wait.saturating_mul(2).min(self.ceiling_ms);
                 }
                 other => return other,
@@ -393,7 +397,7 @@ impl Engine {
             tick_of: BTreeMap::new(),
             resolves: BTreeMap::new(),
         };
-        let boot = retry.read(|| e.journal.boot())?;
+        let boot = retry.read(e.clock.as_ref(), || e.journal.boot())?;
         let mut legacy: BTreeMap<String, StateRow> = BTreeMap::new();
         let mut keyed: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
         for row in boot.state {
@@ -1370,5 +1374,48 @@ impl Executor for Engine {
         w.set("duration_ms", ev.at.saturating_sub(p.requested_at));
         self.finish(&w);
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::journal::{Boot, MemJournal, Poison, Turn};
+    use crate::ports::VirtualClock;
+
+    struct SlowToAnswer {
+        clock: VirtualClock,
+        ask_ms: u64,
+        asked: std::sync::atomic::AtomicU32,
+    }
+
+    impl Journal for SlowToAnswer {
+        fn record(&self, _: &Event) {}
+        fn boot(&self) -> Result<Boot> {
+            self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.clock.advance(self.ask_ms);
+            Err(RuntimeError::cannot_tell("journal open-effects: no reply from the store"))
+        }
+        fn commit(&self, t: &Turn) -> Result<()> {
+            MemJournal::new().commit(t)
+        }
+        fn poison(&self, _: &Poison) -> Result<()> {
+            Ok(())
+        }
+        fn poisoned(&self, _: &StreamKey) -> Result<Option<Poison>> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn the_time_each_ask_takes_counts_toward_the_boot_bound() {
+        let clock = VirtualClock::new(0);
+        let j = Arc::new(SlowToAnswer { clock: clock.clone(), ask_ms: 5_000, asked: Default::default() });
+        let sleeper = clock.clone();
+        let retry = BootRetry { first_ms: 250, ceiling_ms: 1_000, bound_ms: 10_000, store: "the store".into(), sleep: Arc::new(move |ms| sleeper.advance(ms)) };
+        let err = Engine::open_with(j.clone(), Arc::new(clock.clone()), vec![], 0, retry).err().expect("must fail");
+        assert!(err.0.contains("journal open-effects: no reply from the store"), "{err}");
+        assert!(err.0.contains("2 attempt(s)"), "{err}");
+        assert_eq!(j.asked.load(std::sync::atomic::Ordering::SeqCst), 2, "no ask begins once 10 s are spent");
     }
 }

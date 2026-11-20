@@ -52,7 +52,7 @@ impl EffectRunner for Runner {
 fn a_green_standing_publish_pr_is_settled_within_one_queue_step_tick() {
     let clock = VirtualClock::new(NOW);
     let runner = Arc::new(Runner { asked: Mutex::new(vec![]) });
-    let mut engine = open_engine(&fixture(), MemJournal::new(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![]).unwrap();
+    let mut engine = open_engine(&fixture(), MemJournal::new(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![], std::time::Duration::from_secs(10)).unwrap();
     start_tasks(&mut engine);
     let mut d = VirtualDriver::new(engine, clock.clone(), runner.clone());
     d.run_until(NOW + queue_step::CADENCE_MS + 30_000).unwrap();

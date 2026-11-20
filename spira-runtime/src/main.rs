@@ -7,7 +7,7 @@ use runtime::ports::WallClock;
 use runtime::socket::SocketJournal;
 use runtime::FileMarker;
 use spira_runtime::notify::Notifier;
-use spira_runtime::{open_engine, sink::OtlpSink, Effects, Settings};
+use spira_runtime::{sink::OtlpSink, Effects, Settings};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -16,8 +16,16 @@ const USAGE: &str = "usage: spira-runtime serve|check-config|land-escalate <age-
 /// The OTLP log queue: a full queue drops and counts rather than blocking the loop.
 const LOG_QUEUE: usize = 1024;
 const SUBMIT_QUEUE: usize = 16;
-const OPEN_BACKOFF_FIRST: Duration = Duration::from_millis(250);
 const NO_WATCHDOG_BOOT: Duration = Duration::from_secs(20);
+
+/// A line for the log that already carries its UTC stamp; any other `String` error is stamped on the way out.
+struct Stamped(String);
+
+impl From<String> for Stamped {
+    fn from(line: String) -> Self {
+        Stamped(spira_runtime::stamped(&format!("spira-runtime: {line}")))
+    }
+}
 
 fn check() -> Result<(), String> {
     spira_config::process::check_config(&Settings::keys())?;
@@ -46,36 +54,29 @@ fn main() {
         eprintln!("{USAGE}");
         std::process::exit(2);
     }
-    let settings = match check().and_then(|()| Settings::load()) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("spira-runtime: {e}");
-            std::process::exit(1);
-        }
-    };
-    if verb.as_deref() == Some("check-config") {
+    if let Err(e) = run(verb.as_deref() == Some("check-config")) {
+        eprintln!("{}", e.0);
+        std::process::exit(1);
+    }
+}
+
+fn run(check_only: bool) -> Result<(), Stamped> {
+    check()?;
+    let settings = Settings::load()?;
+    if check_only {
         println!("ok {}", settings.hash());
-        return;
+        return Ok(());
     }
     if let Some(credential) = settings.reconciler.values.get("SPIRA_LC_PASSWORD_FILE") {
         // Before any thread exists: the programs the reconciler launches read the store's credential from their environment.
         std::env::set_var("SPIRA_LC_PASSWORD_FILE", credential);
     }
-    let notifier = match spira_runtime::notify::Notifier::from_env() {
-        Ok(n) => Arc::new(n),
-        Err(e) => {
-            eprintln!("spira-runtime: notify socket: {e}");
-            std::process::exit(1);
-        }
-    };
-    let result = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| format!("tokio runtime: {e}")).and_then(|rt| rt.block_on(serve(settings, notifier)));
-    if let Err(e) = result {
-        eprintln!("spira-runtime: {e}");
-        std::process::exit(1);
-    }
+    let notifier = Arc::new(spira_runtime::notify::Notifier::from_env().map_err(|e| format!("notify socket: {e}"))?);
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| format!("tokio runtime: {e}"))?;
+    rt.block_on(serve(settings, notifier))
 }
 
-async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String> {
+async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), Stamped> {
     let base_mail = mail::env::Env::load().map_err(|e| format!("mail environment: {e}"))?;
     let mail_env = spira_runtime::operator_mail(base_mail.clone());
     let concierge_mail = spira_runtime::concierge_mail(base_mail);
@@ -94,28 +95,14 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     let clock = Arc::new(WallClock);
     let board = Arc::new(runtime::engine::StatusBoard::default());
     let deadline = max_sleep.map_or(NO_WATCHDOG_BOOT, |m| m * 2);
+    let startup = Arc::new(spira_runtime::Startup::new(deadline));
     let boot = {
-        let (settings, clock, sink, board) = (settings.clone(), clock.clone(), sink.clone(), board.clone());
-        move || -> Result<(runtime::Engine, Option<spira_runtime::store::Store>), String> {
-            // A journal that cannot tell is asked again until most of the startup deadline is spent.
-            let (began, mut wait) = (std::time::Instant::now(), OPEN_BACKOFF_FIRST);
-            let opened = loop {
-                match open_engine(&settings, journal.clone(), clock.clone(), Arc::new(FileMarker(settings.marker_path())), sink.clone(), vec![]) {
-                    Err(e) if e.is_cannot_tell() && began.elapsed() + wait < deadline / 2 => {
-                        std::thread::sleep(wait); // loop-safe: runs on the startup offload thread
-                        wait *= 2;
-                    }
-                    r => break r,
-                }
-            };
-            let mut engine = opened.map_err(|e| e.to_string())?.with_status_board(board);
-            spira_runtime::start_tasks(&mut engine);
-            let store = spira_runtime::store::start(&settings.lc_socket).inspect_err(|e| eprintln!("spira-runtime: no store views, tasks read the store per tick: {e}")).ok(); // loop-safe: runs on the startup offload thread
-            Ok((engine, store))
-        }
+        let (settings, clock, sink, board, startup) = (settings.clone(), clock.clone(), sink.clone(), board.clone(), startup.clone());
+        move || spira_runtime::start_engine(&settings, journal, clock, Arc::new(FileMarker(settings.marker_path())), sink, board, &startup)
     };
     let mut starting = runtime::offload::offload("startup", None, boot).map_err(|e| e.to_string())?;
-    let (engine, _store) = tokio::time::timeout(deadline, &mut starting).await.map_err(|_| format!("startup did not finish within {deadline:?}"))?.map_err(|e| e.to_string())??;
+    let started = tokio::time::timeout(deadline, &mut starting).await.map_err(|_| Stamped(startup.unfinished()))?.map_err(|e| e.to_string())?;
+    let (engine, _store) = started.map_err(Stamped)?;
     let (tx, rx) = mpsc::channel(SUBMIT_QUEUE);
     // One unit manager: the `unit.*` effects and the `unit.ran` source share it, so one reader drains its signals.
     let backend = runtime::units::from_env(clock.clone()).map_err(|e| format!("unit manager: {e}"))?;
@@ -126,5 +113,5 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     notifier.ready();
     let opts = ServeOpts { kick: Some(kick), max_sleep_ms: max_sleep.map(|d| d.as_millis() as u64), sink: Some(sink), pool: None, before_turn: Some(Arc::new(move |engine| repin.apply(engine))) };
     let units = backend.units();
-    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)), reconciler: Some(settings.reconciler.clone()), concierge_mail: Some(Arc::new(concierge_mail)), units: Some(units), board: Some(board), ..Effects::default() }), settings.pool_caps, rx, opts).await.map_err(|e| e.to_string())
+    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)), reconciler: Some(settings.reconciler.clone()), concierge_mail: Some(Arc::new(concierge_mail)), units: Some(units), board: Some(board), ..Effects::default() }), settings.pool_caps, rx, opts).await.map_err(|e| Stamped::from(e.to_string()))
 }

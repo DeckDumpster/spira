@@ -57,7 +57,7 @@ fn tick_on_stored_row(poisoned: bool) {
     }
     let clock = VirtualClock::new(NOW);
     let runner = Arc::new(Runner { clock: clock.clone(), ran: Mutex::new(vec![]) });
-    let mut engine = open_engine(&fixture(), journal.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![]).unwrap();
+    let mut engine = open_engine(&fixture(), journal.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![], std::time::Duration::from_secs(10)).unwrap();
     start_tasks(&mut engine);
     let mut d = VirtualDriver::new(engine, clock.clone(), runner.clone());
     d.run_until(NOW + 60_000).unwrap();

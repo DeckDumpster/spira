@@ -50,7 +50,7 @@ fn tick_on_row(row: &str, settled: &str) -> Vec<String> {
     journal.commit(&Turn { state: vec![StateRow { task: "batcher.local".into(), skey: "repos/spira".into(), value: format!(r#"{{"key":"spira","value":{row}}}"#), at: NOW }], ..Turn::default() }).unwrap();
     let clock = VirtualClock::new(NOW);
     let runner = Arc::new(Runner { clock: clock.clone(), settled: settled.into(), ran: Mutex::new(vec![]) });
-    let mut engine = open_engine(&fixture(), journal.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![]).unwrap();
+    let mut engine = open_engine(&fixture(), journal.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![], std::time::Duration::from_secs(10)).unwrap();
     start_tasks(&mut engine);
     let mut d = VirtualDriver::new(engine, clock, runner.clone());
     d.run_until(NOW + 180_000).unwrap();

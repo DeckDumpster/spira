@@ -97,6 +97,10 @@ impl SocketJournal {
     fn json<T: DeserializeOwned>(&self, args: &[&str]) -> Result<T> {
         serde_json::from_str(&self.send(args)?).map_err(|e| RuntimeError::new(format!("journal reply: {e}")))
     }
+
+    fn json_of<T: DeserializeOwned>(&self, verb: &str) -> Result<T> {
+        self.json(&[verb]).map_err(|e| RuntimeError(format!("journal {verb}: {}", e.0), e.1))
+    }
 }
 
 fn connect(path: &std::path::Path) -> std::io::Result<UnixStream> {
@@ -185,9 +189,9 @@ impl Journal for SocketJournal {
     }
 
     fn boot(&self) -> Result<Boot> {
-        let state: Vec<StateRow> = self.json(&["state"])?;
-        let effects: Vec<EffectRow> = self.json(&["open-effects"])?;
-        let schedules: Vec<ScheduleRow> = self.json(&["due"])?;
+        let state: Vec<StateRow> = self.json_of("state")?;
+        let effects: Vec<EffectRow> = self.json_of("open-effects")?;
+        let schedules: Vec<ScheduleRow> = self.json_of("due")?;
         Ok(Boot { state, effects, schedules })
     }
 
@@ -222,6 +226,22 @@ mod tests {
         let err = lc_call(&path, &["cursor"]).unwrap_err();
         t.join().unwrap();
         assert!(err.is_cannot_tell(), "{err}");
+    }
+
+    #[test]
+    fn a_boot_that_the_store_stops_answering_names_the_verb_it_was_waiting_on() {
+        let dir = testkit::TempDir::new("socket-boot-verb");
+        let path = dir.path().join("s.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let t = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            answer_one(stream, &|_| Ok("[]".into())).unwrap();
+            drop(listener.accept().unwrap());
+        });
+        let j = SocketJournal::new(&path, Shipper::start("http://127.0.0.1:9"));
+        let Err(err) = j.boot() else { panic!("the second ask gets no reply") };
+        t.join().unwrap();
+        assert!(err.is_cannot_tell() && err.0.starts_with("journal open-effects:"), "{err}");
     }
 
     #[test]
