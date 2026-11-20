@@ -8,7 +8,7 @@ use std::fs;
 #[test]
 fn the_watchers_manifest_no_longer_carries_the_row() {
     let manifest =
-        fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("watchers"))
+        fs::read_to_string(testkit::manifest_dir().join("../spira/watchers"))
             .unwrap();
     assert!(
         manifest.lines().any(|l| l.starts_with("concierge-inbox|")),
