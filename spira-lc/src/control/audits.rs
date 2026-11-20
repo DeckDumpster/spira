@@ -193,6 +193,23 @@ mod tests {
     }
 
     #[test]
+    fn a_limited_read_from_zero_keeps_the_lowest_imported_seqs_across_history_pages() {
+        use serde_json::json;
+        use state_store::{Object, Txn};
+        let s = store();
+        let audit = |n: u64| json!({ "machine": "bead", "lc_key": format!("sp-{n}"), "event": "Claim", "expect": "READY", "from_state": "READY", "to_state": "WORKING", "applied": true, "refusal": null, "evidence": {}, "actor": "a", "at": 1 });
+        let total = PAGE as u64 + 5;
+        for chunk in (1..=total).rev().collect::<Vec<_>>().chunks(100) {
+            let txn = chunk.iter().fold(Txn::new(), |t, n| t.put(&super::super::keys::history_entry(&format!("sp-{:04}", total - n), 0, "import"), Object::new(json!({ "seq": n, "audit": audit(*n) }))));
+            s.contract().txn(&txn, &Request::new(&format!("import-{}", chunk[0]), "t", "t")).unwrap();
+        }
+        let first = s.audits_after_upto(0, 3).unwrap().audits;
+        assert_eq!(first.iter().map(|l| l.rev).collect::<Vec<_>>(), [1, 2, 3]);
+        let all = s.audits_after(0).unwrap().audits;
+        assert_eq!(all.iter().map(|l| l.rev).collect::<Vec<_>>(), (1..=total).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn audits_after_a_revision_skip_it_and_everything_before() {
         let s = store();
         s.create("sp-a", None, Some("0123456789abcdef0123456789abcdef01234567"), 100, &Request::new("c1", "t", "t")).unwrap();
