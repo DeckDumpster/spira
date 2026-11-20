@@ -263,12 +263,14 @@ _lcb_restored_sql() {
     return "$rc"
 }
 
+# A file's text on one line, or the fallback when it holds none.
+_lcb_text() { local t; t="$(tr '\n' ' ' < "$1" 2>/dev/null)"; t="${t% }"; printf '%s' "${t:-$2}"; }
+
 # What each named restored-copy query answered: its exit code and its stderr, never nothing.
 _lcb_query_report() {
-    local scratch="$1" tag err sep=""; shift
+    local scratch="$1" tag sep=""; shift
     for tag in "$@"; do
-        err="$(tr '\n' ' ' < "$scratch/$tag.err" 2>/dev/null)"; err="${err% }"
-        printf '%s%s: exit %s, %s' "$sep" "$tag" "$(cat "$scratch/$tag.rc" 2>/dev/null || echo '?')" "${err:+stderr $err}${err:-(no stderr)}"
+        printf '%s%s: exit %s, stderr %s' "$sep" "$tag" "$(cat "$scratch/$tag.rc" 2>/dev/null || echo '?')" "$(_lcb_text "$scratch/$tag.err" "(no stderr)")"
         sep="; "
     done
 }
@@ -303,20 +305,20 @@ _lcb_drill_db_locked() {
         || { _lcb_drill_fail "$db" "$SPIRA_LC_BACKUP_DRILL_DIR has ${have:-0}KiB free, the restore needs ~${need}KiB"; rm -rf "$scratch"; return 1; }
     # batch-job: restoring the manifest's file set into the scratch dir
     ( cd "$scratch" && dolt backup restore "file://$scratch/snap" "$db" ) >"$scratch/restore.log" 2>&1 \
-        || { _lcb_drill_fail "$db" "restore of $manifest failed: $(cat "$scratch/restore.log")"; rm -rf "$scratch"; return 1; }
+        || { _lcb_drill_fail "$db" "restore of $manifest failed: $(_lcb_text "$scratch/restore.log" "(no output)")"; rm -rf "$scratch"; return 1; }
     live_head="$(_lcb_restored_sql "$scratch" "$db" head "SELECT commit_hash FROM dolt_log LIMIT 1")"
     held="$(_lcb_restored_sql "$scratch" "$db" contains "SELECT COUNT(*) FROM dolt_log WHERE commit_hash = '$head'")"
-    if [ "$(cat "$scratch/contains.rc")" != 0 ] || [ "$held" != 1 ]; then
-        _lcb_drill_fail "$db" "stamped head $head is not in the history restored from $manifest (restored head ${live_head:-?}; contains count ${held:-?}): $(_lcb_query_report "$scratch" head contains)"
+    if [ "$(cat "$scratch/head.rc")" != 0 ] || [ -z "$live_head" ] || [ "$(cat "$scratch/contains.rc")" != 0 ] || [ "$held" != 1 ]; then
+        _lcb_drill_fail "$db" "stamped head $head not shown to be in the history restored from $manifest (restored head ${live_head:-?}; contains count ${held:-?}): $(_lcb_query_report "$scratch" head contains)"
         rm -rf "$scratch"; return 1
     fi
     tables="$(_lcb_sql "$db" -r csv -q "SHOW FULL TABLES AS OF '$head' WHERE Table_type='BASE TABLE'" 2>"$scratch/tables.err" | awk -F, 'NR>1{print $1}')"
-    [ -n "$tables" ] || { _lcb_drill_fail "$db" "list tables as of $head: none listed: $(tr '\n' ' ' < "$scratch/tables.err" | sed 's/^ *$/(no stderr)/')"; rm -rf "$scratch"; return 1; }
+    [ -n "$tables" ] || { _lcb_drill_fail "$db" "list tables as of $head: none listed: $(_lcb_text "$scratch/tables.err" "(no stderr)")"; rm -rf "$scratch"; return 1; }
     for tbl in $tables; do
         live="$(_lcb_sql "$db" -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" 2>"$scratch/live.err" | tail -n +2)"
         restored="$(_lcb_restored_sql "$scratch" "$db" restored "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'")"
         if [ -z "$live" ] || [ "$live" != "$restored" ]; then
-            _lcb_drill_fail "$db" "count $tbl: live ${live:-?} != restored ${restored:-?}: live stderr: $(tr '\n' ' ' < "$scratch/live.err" | sed 's/^ *$/(no stderr)/'); $(_lcb_query_report "$scratch" restored)"; rc=1
+            _lcb_drill_fail "$db" "count $tbl: live ${live:-?} != restored ${restored:-?}: live stderr: $(_lcb_text "$scratch/live.err" "(no stderr)"); $(_lcb_query_report "$scratch" restored)"; rc=1
         fi
     done
     rm -rf "$scratch"

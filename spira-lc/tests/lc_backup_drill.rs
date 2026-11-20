@@ -6,17 +6,17 @@ use std::process::Command;
 const SCRIPT: &str = include_str!("../../spira/lc-backup.sh");
 const FUNCTIONS: &[&str] = &[
     "_lcb_dbs", "_lcb_db_dir", "_lcb_stamp", "_lcb_require_db", "_lcb_sql", "_lcb_lock", "_lcb_work", "_lcb_sync_dir",
-    "_lcb_verdict", "_lcb_drill_fail", "_lcb_restored_sql", "_lcb_query_report", "_lcb_drill_db_locked", "_lcb_drill_db", "cmd_drill",
+    "_lcb_verdict", "_lcb_drill_fail", "_lcb_restored_sql", "_lcb_text", "_lcb_query_report", "_lcb_drill_db_locked", "_lcb_drill_db", "cmd_drill",
 ];
 const STUBS: &str = r#"#!/bin/bash
 case "$(basename "$0")" in
 dolt)
     case "$1 $2" in
-    "backup restore") mkdir -p "$4"; exit 0 ;;
+    "backup restore") [ -z "${STUB_RESTORE_FAIL:-}" ] || exit 5; mkdir -p "$4"; exit 0 ;;
     esac
     q="$5"
     case "$q" in
-    *"SELECT commit_hash"*) printf 'commit_hash\n%s\n' "$STUB_RESTORED_HEAD" ;;
+    *"SELECT commit_hash"*) [ -z "${STUB_HEAD_ERR:-}" ] || { echo "$STUB_HEAD_ERR" >&2; exit 4; }; printf 'commit_hash\n%s\n' "$STUB_RESTORED_HEAD" ;;
     *"FROM dolt_log WHERE"*) [ -z "${STUB_CONTAINS_ERR:-}" ] || { echo "$STUB_CONTAINS_ERR" >&2; exit 3; }; printf 'c\n%s\n' "$STUB_CONTAINS" ;;
     *"SHOW FULL TABLES"*) printf 'Tables\nt1\n' ;;
     *"COUNT(*) FROM \`t1\`"*) printf 'c\n5\n' ;;
@@ -43,9 +43,10 @@ struct Run {
     out: String,
     verdict: String,
     assembled: String,
+    drill_ok: bool,
 }
 
-fn drill(args: &str, restored: &str, contains: &str, contains_err: &str) -> Run {
+fn drill(args: &str, restored: &str, contains: &str, contains_err: &str, head_err: &str, restore_fail: &str) -> Run {
     let tmp = testkit::TempDir::new("lc-backup-drill");
     let d = tmp.path();
     for sub in ["bin", "run", "data/alpha/.dolt", "sync", "scratch"] {
@@ -81,6 +82,8 @@ fn drill(args: &str, restored: &str, contains: &str, contains_err: &str) -> Run 
         .env("STUB_RESTORED_HEAD", restored)
         .env("STUB_CONTAINS", contains)
         .env("STUB_CONTAINS_ERR", contains_err)
+        .env("STUB_HEAD_ERR", head_err)
+        .env("STUB_RESTORE_FAIL", restore_fail)
         .env("MANIFEST", &manifest)
         .output()
         .unwrap();
@@ -88,20 +91,21 @@ fn drill(args: &str, restored: &str, contains: &str, contains_err: &str) -> Run 
         code: out.status.code(),
         out: String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr),
         verdict: std::fs::read_to_string(d.join("run/lc-backup/alpha/drill.verdict")).unwrap_or_default(),
+        drill_ok: d.join("run/lc-backup/alpha/drill.ok").exists(),
         assembled: std::fs::read_to_string(d.join("assemble.log")).unwrap_or_default(),
     }
 }
 
 #[test]
 fn a_restored_head_newer_than_the_stamped_head_that_contains_it_passes_naming_both() {
-    let r = drill("--db alpha", "rrrr", "1", "");
+    let r = drill("--db alpha", "rrrr", "1", "", "", "");
     assert_eq!(r.code, Some(0), "{}", r.out);
     assert!(r.verdict.contains("restored head rrrr is newer than the stamped head hhhh"), "{}", r.verdict);
 }
 
 #[test]
 fn a_stamped_head_absent_from_the_restored_history_fails_naming_both_heads_and_the_manifest() {
-    let r = drill("--db alpha", "rrrr", "0", "");
+    let r = drill("--db alpha", "rrrr", "0", "", "", "");
     assert_eq!(r.code, Some(1), "{}", r.out);
     for want in ["hhhh", "rrrr", "20261120T164737186Z-hhhh", "(no stderr)", "exit 0"] {
         assert!(r.verdict.contains(want), "{want} missing: {}", r.verdict);
@@ -111,20 +115,40 @@ fn a_stamped_head_absent_from_the_restored_history_fails_naming_both_heads_and_t
 
 #[test]
 fn a_failing_restored_query_carries_its_stderr_and_exit_code() {
-    let r = drill("--db alpha", "rrrr", "", "boom");
+    let r = drill("--db alpha", "rrrr", "", "boom", "", "");
     assert_eq!(r.code, Some(1), "{}", r.out);
     assert!(r.verdict.contains("boom") && r.verdict.contains("exit 3"), "{}", r.verdict);
 }
 
 #[test]
 fn a_named_manifest_is_assembled_by_name_and_its_head_comes_from_the_file_name() {
-    let r = drill("--db alpha --manifest \"$MANIFEST\"", "hhhh", "1", "");
+    let r = drill("--db alpha --manifest \"$MANIFEST\"", "hhhh", "1", "", "", "");
     assert_eq!(r.code, Some(0), "{}", r.out);
     assert!(r.assembled.contains("--manifest ") && r.assembled.contains("20261120T164737186Z-hhhh") && !r.assembled.contains("--state"), "{}", r.assembled);
 }
 
 #[test]
 fn a_manifest_without_a_database_is_refused() {
-    let r = drill("--manifest \"$MANIFEST\"", "hhhh", "1", "");
+    let r = drill("--manifest \"$MANIFEST\"", "hhhh", "1", "", "", "");
     assert_eq!(r.code, Some(2), "{}", r.out);
+}
+
+#[test]
+fn a_failing_head_query_is_a_failure_carrying_its_stderr_even_when_containment_answers_one() {
+    let r = drill("--db alpha", "", "1", "", "headboom", "");
+    assert_eq!(r.code, Some(1), "{}", r.out);
+    assert!(r.verdict.contains("headboom") && r.verdict.contains("exit 4"), "{}", r.verdict);
+}
+
+#[test]
+fn a_silent_restore_failure_still_explains_itself() {
+    let r = drill("--db alpha", "rrrr", "1", "", "", "fail");
+    assert_eq!(r.code, Some(1), "{}", r.out);
+    assert!(r.verdict.contains("restore of 20261120T164737186Z-hhhh failed: (no output)"), "{}", r.verdict);
+}
+
+#[test]
+fn only_a_drill_of_the_newest_backup_records_drill_ok() {
+    assert!(drill("--db alpha", "hhhh", "1", "", "", "").drill_ok);
+    assert!(!drill("--db alpha --manifest \"$MANIFEST\"", "hhhh", "1", "", "", "").drill_ok);
 }
