@@ -1028,12 +1028,14 @@ impl<'a> Run<'a> {
             worktree::ensure(&e, &mut branch, &prune)
         };
         let acts = acts.map_err(Abort::Die)?;
+        let mut recorded = self.s.branch.clone();
         for a in acts {
             match a {
                 worktree::Act::Log(l) => self.log(&l),
                 worktree::Act::Note(n) => self.note(&n),
                 worktree::Act::SetBranch(b) => {
-                    let _ = self.d.bd.bd(&crate::bd::record_branch(&bead, &self.s.branch, &b));
+                    let _ = self.d.bd.bd(&crate::bd::record_branch(&bead, &recorded, &b));
+                    recorded = b;
                 }
             }
         }

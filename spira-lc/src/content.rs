@@ -1,8 +1,7 @@
 //! `content <bd-subcommand> …` — the one door for bead content: its reads, and the narrow
 //! writes a task makes (labels, comments, notes, metadata, a close, a filing), so nothing
 //! outside the store forks `bd`. Reads are SQL against the beads database (`content_sql`); the
-//! writes fork bd with bd's own argv, which owns id allocation, except the label, note, comment,
-//! metadata and priority writes, which lc-serve applies itself (`content_write`). State is never
+//! writes fork bd with bd's own argv, which owns id allocation, except those `content_write` applies. State is never
 //! served here: the machine's own verbs answer that. Anything outside the allowlist is refused.
 
 use crate::callers::Answer;

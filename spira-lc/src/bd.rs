@@ -23,7 +23,7 @@ fn verb_of<'a>(args: &[&'a str]) -> &'a str {
     args.iter().find(|a| !a.starts_with('-')).copied().unwrap_or("unknown")
 }
 
-fn record_call(args: &[&str], started: std::time::Instant, ok: bool) {
+pub(crate) fn record_call(args: &[&str], started: std::time::Instant, ok: bool) {
     use spira_otel::metrics::{MetricsSink, Point};
     let Ok(endpoint) = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT") else { return };
     let verb = verb_of(args);
