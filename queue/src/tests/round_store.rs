@@ -776,3 +776,75 @@ fn the_sweep_keeps_the_tree_and_the_record_of_an_ended_round_whose_leg_will_not_
     assert!(!removed, "a tree under a running leg was removed");
     assert!(t.err().contains("its tree is kept"), "{}", t.err());
 }
+
+fn attributing_status(progress: Option<serde_json::Value>, state: &str) -> String {
+    let t = store_world();
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    d.set_state("spira", "spira-open", state);
+    if let Some(p) = progress {
+        t.lc.batch_progress
+            .borrow_mut()
+            .insert("spira-open".into(), p);
+    }
+    status(&t)
+}
+
+#[test]
+fn status_of_an_attributing_round_shows_target_probes_suspects_and_last_probe() {
+    let s = attributing_status(
+        Some(
+            serde_json::json!({"attribution":{"target":"test-spike.sh","probes":3,"ceiling":8,
+            "suspects":["a","b"],
+            "last":{"job":"b3","build":"artifacts","members":["a","c"],"verdict":"red","why":""}}}),
+        ),
+        "ATTRIBUTING",
+    );
+    for l in [
+        "phase=attributing",
+        "attribution_target=test-spike.sh",
+        "attribution_probes=3/8",
+        "attribution_suspects=a b",
+        "attribution_last=b3 artifacts on a c → red",
+    ] {
+        assert!(s.lines().any(|x| x == l), "missing {l}: {s}");
+    }
+}
+
+#[test]
+fn status_of_an_attributing_round_without_progress_shows_zero_probes() {
+    let s = attributing_status(None, "ATTRIBUTING");
+    assert!(s.lines().any(|x| x == "attribution_probes=0"), "{s}");
+}
+
+#[test]
+fn status_of_a_certifying_round_shows_no_attribution_lines() {
+    let s = attributing_status(
+        Some(serde_json::json!({"attribution":{"probes":1}})),
+        "CI_RUNNING",
+    );
+    assert!(
+        s.contains("phase=certifying") && !s.contains("attribution_"),
+        "{s}"
+    );
+}
+
+#[test]
+fn status_prefixes_a_later_attributing_round_and_shows_why_and_open_ceiling() {
+    let t = store_world();
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    d.put_round("spira", "spira-second", "ATTRIBUTING", &[("sp-b", "tb")], 50);
+    t.lc.batch_progress.borrow_mut().insert(
+        "spira-second".into(),
+        serde_json::json!({"attribution":{"target":"t.sh","probes":2,"suspects":["x"],
+            "last":{"job":"b2","build":"suites","members":["x"],"verdict":"error","why":"vm lost"}}}),
+    );
+    let s = status(&t);
+    for l in [
+        "round2_attribution_target=t.sh",
+        "round2_attribution_probes=2",
+        "round2_attribution_suspects=x",
+        "round2_attribution_last=b2 suites on x → error: vm lost",
+    ] {
+        assert!(s.lines().any(|x| x == l), "missing {l}: {s}");
+    }
+}

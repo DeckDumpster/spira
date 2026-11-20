@@ -1112,6 +1112,8 @@ struct FLc {
     late_cut: RefCell<Option<LateCut>>,
     /// Per-batch answers to `show-batch`, ahead of `batch_view`.
     batch_states: RefCell<BTreeMap<String, (String, String)>>,
+    /// Per-batch `progress` record of `show-batch`.
+    batch_progress: RefCell<BTreeMap<String, serde_json::Value>>,
     /// Reads of `show-batch` that fail once the release is activated (the store restarting).
     /// Once the release is activated, every record step fails: the new release retired a key
     /// the running (old) release's tools still require.
@@ -1189,6 +1191,7 @@ impl Default for FLc {
             stale_batch_events: Cell::new(0),
             row_fails: Cell::new(false),
             batch_view: Default::default(),
+            batch_progress: Default::default(),
             late_boundaries: Cell::new(false),
             mend_tips: RefCell::default(),
             store: Default::default(),
@@ -1310,6 +1313,10 @@ impl Lc for FLc {
             Some((_, _, n, p)) => Some((*n, p.clone())),
             None => Some((1, "suites".into())),
         }
+    }
+    fn batch_progress(&self, id: &str) -> Option<serde_json::Value> {
+        self.calls.borrow_mut().push(format!("show-batch {id}"));
+        self.batch_progress.borrow().get(id).cloned()
     }
     fn create_bead(&self, id: &str) {
         self.calls.borrow_mut().push(format!("create-bead {id}"));

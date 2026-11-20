@@ -2417,6 +2417,51 @@ pub(super) fn blocker_first(admitted: Vec<Member>, blockers: &BTreeMap<String, V
     out
 }
 
+fn attribution_lines(w: &World, batch: &str, phase: &str, prefix: &str) {
+    if phase != "attributing" {
+        return;
+    }
+    let Some(a) = w
+        .lc
+        .batch_progress(batch)
+        .and_then(|p| p.get("attribution").cloned())
+    else {
+        w.out(format!("{prefix}attribution_probes=0"));
+        return;
+    };
+    let text = |v: &serde_json::Value, k: &str| {
+        v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
+    };
+    let ids = |v: &serde_json::Value, k: &str| {
+        v.get(k)
+            .and_then(|x| x.as_array())
+            .map(|a| a.iter().filter_map(|i| i.as_str()).collect::<Vec<_>>().join(" "))
+            .unwrap_or_default()
+    };
+    let probes = a.get("probes").and_then(|x| x.as_u64()).unwrap_or(0);
+    w.out(format!("{prefix}attribution_target={}", text(&a, "target")));
+    match a.get("ceiling").and_then(|x| x.as_u64()) {
+        Some(c) => w.out(format!("{prefix}attribution_probes={probes}/{c}")),
+        None => w.out(format!("{prefix}attribution_probes={probes}")),
+    }
+    w.out(format!("{prefix}attribution_suspects={}", ids(&a, "suspects")));
+    if let Some(l) = a.get("last").filter(|l| l.is_object()) {
+        let why = text(l, "why");
+        let why = if why.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", one_line(&why))
+        };
+        w.out(format!(
+            "{prefix}attribution_last={} {} on {} → {}{why}",
+            text(l, "job"),
+            text(l, "build"),
+            ids(l, "members"),
+            text(l, "verdict")
+        ));
+    }
+}
+
 fn status(w: &World, repo: Option<&str>) -> i32 {
     let label = "round status";
     let Ok(c) = resolve(w, label, repo) else {
@@ -2460,10 +2505,9 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
         batches.join(" ")
     ));
     w.out("round=open");
-    w.out(format!(
-        "phase={}",
-        phase_of(w, kv.get("batch_id").unwrap_or(""))
-    ));
+    let phase = phase_of(w, kv.get("batch_id").unwrap_or(""));
+    w.out(format!("phase={phase}"));
+    attribution_lines(w, kv.get("batch_id").unwrap_or(""), &phase, "");
     for k in ["batch_id", "repo", "head", "base", "members", "worktree"] {
         w.out(format!("{k}={}", kv.get(k).unwrap_or("")));
     }
@@ -2476,10 +2520,14 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
     w.out(format!("wall_secs={}", since(kv, "opened")));
     for (i, kv) in open.iter().enumerate().skip(1) {
         let n = i + 1;
-        w.out(format!(
-            "round{n}=open\nround{n}_phase={}",
-            phase_of(w, kv.get("batch_id").unwrap_or(""))
-        ));
+        let phase = phase_of(w, kv.get("batch_id").unwrap_or(""));
+        w.out(format!("round{n}=open\nround{n}_phase={phase}"));
+        attribution_lines(
+            w,
+            kv.get("batch_id").unwrap_or(""),
+            &phase,
+            &format!("round{n}_"),
+        );
         for k in ["batch_id", "repo", "head", "base", "members", "worktree"] {
             w.out(format!("round{n}_{k}={}", kv.get(k).unwrap_or("")));
         }
