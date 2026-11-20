@@ -145,6 +145,15 @@ pub fn claim_lock(id: &str) -> String {
     format!("{}{id}", claim_locks())
 }
 
+/// The tally of ended stays: `stays/<STATE>/<utc-day>` holds one state's histogram for one day, and
+/// `stays/cursor` where `fold_stays` has read to. Written by `fold_stays` alone.
+pub const STAYS: &str = "stays/";
+pub const STAYS_CURSOR: &str = "stays/cursor";
+
+pub fn stay_day(state: &str, day: i64) -> String {
+    format!("{STAYS}{state}/{day:010}")
+}
+
 /// Every history entry of `id`: one per txn whose audit names it.
 pub fn history(id: &str) -> String {
     format!("{HISTORY}{id}/")

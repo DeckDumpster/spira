@@ -140,10 +140,11 @@ pub struct Latency {
 static LATENCY: Mutex<Latency> = Mutex::new(Latency { samples: BTreeMap::new(), alarmed: BTreeMap::new() });
 
 /// The method a request is measured under: the verb, and for `work` the lane verb after the
-/// bead id, so a slow brokered tool does not hide behind `work show`.
+/// bead id, so a slow brokered tool does not hide behind `work show`; for `ops-view` the view.
 pub fn method_of(argv: &[String]) -> String {
     match argv.first().map(String::as_str) {
         Some("work") => format!("work:{}", argv.get(2).map(String::as_str).unwrap_or("-")),
+        Some("ops-view") => format!("ops-view:{}", argv.get(1).map(String::as_str).unwrap_or("-")),
         Some(v) => v.to_string(),
         None => "-".to_string(),
     }
@@ -445,7 +446,8 @@ mod tests {
         let a = |v: &[&str]| method_of(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
         assert_eq!(a(&["work", "sp-x", "note", "hi"]), "work:note");
         assert_eq!(a(&["work", "sp-x", "groom", "sweep"]), "work:groom");
-        assert_eq!(a(&["ops-view", "ops_live"]), "ops-view");
+        assert_eq!(a(&["ops-view", "ops_live"]), "ops-view:ops_live");
+        assert_eq!(a(&["ops-view", "ops_dwell"]), "ops-view:ops_dwell");
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub mod records;
 pub mod sections;
 pub mod served;
 pub mod state;
+pub mod stays;
 pub mod store;
 pub mod verbs;
 

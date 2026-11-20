@@ -22,6 +22,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::callers::Answer;
 
+/// Revisions of `events/` one sweep tick folds into the stay tally, so a tick stays well under a second.
+const STAYS_REVS_PER_TICK: usize = 1_000;
 const SWEEP_EVERY: Duration = Duration::from_secs(5);
 
 static SPANS: std::sync::OnceLock<spira_otel::Sink> = std::sync::OnceLock::new();
@@ -334,9 +336,15 @@ pub fn run(args: &[String]) -> i32 {
                             Err(e) => eprintln!("spira-lc serve: mending sweep: {e}"),
                         }
                     }
-                    let _holder = state_store::phases::holder_scoped("dwell-warm", "");
-                    if let Err(e) = warm_tick(&store, crate::db::now_epoch()) {
-                        eprintln!("spira-lc serve: dwell warm: {e}");
+                    {
+                        let _holder = state_store::phases::holder_scoped("dwell-warm", "");
+                        if let Err(e) = warm_tick(&store, crate::db::now_epoch()) {
+                            eprintln!("spira-lc serve: dwell warm: {e}");
+                        }
+                    }
+                    let _holder = state_store::phases::holder_scoped("stay-tally", "");
+                    if let Err(e) = store.fold_stays(crate::db::now_epoch(), STAYS_REVS_PER_TICK) {
+                        eprintln!("spira-lc serve: stay tally: {e}");
                     }
                 }
                 Some(Err(e)) => eprintln!("spira-lc serve: mending sweep: the control store: {e}"),
@@ -758,14 +766,15 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     if crate::slow::first_of_verb(&verb) {
         log_rss(&format!("after-first-{verb}"));
     }
-    crate::slow::request_done(&verb, &method, &caller, task.as_deref(), received.elapsed());
+    let measured = if verb == "ops-view" { method.as_str() } else { verb.as_str() };
+    crate::slow::request_done(measured, &method, &caller, task.as_deref(), received.elapsed());
     crate::slow::sample(&method, received.elapsed());
     reply_then_settle(&stream, &ans, &mut |id, reason| crate::reconcile_content::settle_owed(&mut crate::bd::LiveBd, id, reason));
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
     let store = recorder.snapshot();
     let call = spira_otel::Call {
-        method: &verb,
+        method: measured,
         caller: &caller,
         request_size: size as u64,
         response_size: (ans.stdout.len() + ans.stderr.len()) as u64,
