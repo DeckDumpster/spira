@@ -452,6 +452,40 @@ fn seed_texts_carry_no_dated_provenance_whatever_punctuation_follows_it() {
 }
 
 #[test]
+fn write_seeds_removes_every_text_that_is_not_a_numbered_statute() {
+    let _env = testkit::env_read();
+    let toc = parse_toc(TOC).unwrap();
+    let wt = testkit::TempDir::new("rule-seeds-stale");
+    let dir = wt.path().join(rule::code::SEEDS_DIR);
+    std::fs::create_dir_all(&dir).unwrap();
+    for f in ["sop-x.txt", "law-gone.txt", "README.md"] {
+        std::fs::write(dir.join(f), "x").unwrap();
+    }
+    let book: BTreeMap<String, String> = ["law-one", "law-two", "law-three"].iter().map(|k| (k.to_string(), format!("Do {k}."))).collect();
+    rule::code::write_seeds(wt.path(), &toc, &book).unwrap();
+    let mut names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    names.sort();
+    assert_eq!(names, ["README.md", "law-one.txt", "law-three.txt", "law-two.txt"]);
+}
+
+#[test]
+fn a_law_commit_does_not_inherit_a_stale_seed_from_the_landing_ref() {
+    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
+    let repo = law_repo();
+    let p = repo.path();
+    std::fs::create_dir_all(p.join("spira/statutes")).unwrap();
+    std::fs::write(p.join("spira/statutes/sop-x.txt"), "stale").unwrap();
+    testkit::git(p, &["add", "-A"]);
+    testkit::git(p, &["commit", "-q", "-m", "stale seed"]);
+    let wt_root = testkit::TempDir::new("rule-stale-wt");
+    let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
+    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
+    let tree = testkit::git(p, &["ls-tree", "-r", "--name-only", &branch]);
+    assert!(!tree.contains("sop-x.txt"), "{tree}");
+    assert!(tree.contains("spira/statutes/law-four.txt"), "{tree}");
+}
+
+#[test]
 fn code_check_reads_law_at_the_landing_ref_from_a_directory_that_is_not_a_checkout() {
     let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
     let world = testkit::TempDir::new("rule-check-ref");
