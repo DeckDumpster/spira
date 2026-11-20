@@ -52,6 +52,7 @@ struct Mem {
     verdicts: RefCell<BTreeMap<(String, String), Verdict>>,
     counts: RefCell<BTreeMap<String, u32>>,
     reported: RefCell<Vec<(String, String)>>,
+    rebased: RefCell<Vec<(String, String, String)>>,
 }
 
 impl Store for Mem {
@@ -74,6 +75,12 @@ impl Store for Mem {
         *n += 1;
         Ok(*n)
     }
+    fn first_rebase_attempt(&self, id: &str, tip: &str, base: &str) -> bool {
+        let k = (id.to_string(), tip.to_string(), base.to_string());
+        let seen = self.rebased.borrow().contains(&k);
+        self.rebased.borrow_mut().push(k);
+        !seen
+    }
     fn first_cap_report(&self, id: &str, tip: &str) -> bool {
         let k = (id.to_string(), tip.to_string());
         let seen = self.reported.borrow().contains(&k);
@@ -86,6 +93,7 @@ impl Store for Mem {
 struct Rec {
     log: Vec<String>,
     fail_note: bool,
+    rebase_code: Option<i32>,
 }
 
 impl Acts for Rec {
@@ -115,6 +123,10 @@ impl Acts for Rec {
     fn tell(&mut self, msg: &str) {
         self.log.push(format!("tell {msg}"));
     }
+    fn rebase(&mut self, id: &str, tip: &str) -> i32 {
+        self.log.push(format!("rebase {id} {tip}"));
+        self.rebase_code.unwrap_or(3)
+    }
 }
 
 fn c(id: &str) -> Candidate {
@@ -137,6 +149,48 @@ fn a_conflict_is_sent_back_as_no_rebase_and_a_clean_candidate_passes() {
     let o = screen(&f, &Mem::default(), &mut r, &[c("a"), c("b")], &[]);
     assert_eq!((o.pass.as_slice(), o.sent_back.as_slice()), (&["b".to_string()][..], &["a".to_string()][..]));
     assert_eq!(reds(&r), ["red a t-a no-rebase"]);
+}
+
+fn conflicted() -> Fake {
+    let mut f = fake();
+    f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);
+    f
+}
+
+#[test]
+fn a_conflict_rebased_mechanically_is_held_with_no_note_and_no_gate_red() {
+    let mut r = Rec { rebase_code: Some(0), ..Default::default() };
+    let o = screen(&conflicted(), &Mem::default(), &mut r, &[c("a")], &[]);
+    assert_eq!((o.held.as_slice(), o.sent_back.len(), o.pass.len()), (&["a".to_string()][..], 0, 0));
+    assert!(reds(&r).is_empty() && !r.log.iter().any(|l| l.starts_with("note ")));
+    assert!(r.log.contains(&"tell SIFT rebased a mechanically onto b1".to_string()));
+}
+
+#[test]
+fn a_conflict_rebase_stale_sent_back_gets_no_second_note() {
+    for code in [1, 2] {
+        let mut r = Rec { rebase_code: Some(code), ..Default::default() };
+        let o = screen(&conflicted(), &Mem::default(), &mut r, &[c("a")], &[]);
+        assert_eq!(o.sent_back, ["a"]);
+        assert!(reds(&r).is_empty() && !r.log.iter().any(|l| l.starts_with("note ")), "{:?}", r.log);
+    }
+}
+
+#[test]
+fn a_conflict_rebase_stale_did_not_attempt_goes_to_rework_as_before() {
+    let mut r = Rec { rebase_code: Some(3), ..Default::default() };
+    let o = screen(&conflicted(), &Mem::default(), &mut r, &[c("a")], &[]);
+    assert_eq!(o.sent_back, ["a"]);
+    assert_eq!(reds(&r), ["red a t-a no-rebase"]);
+}
+
+#[test]
+fn rebase_is_attempted_once_per_id_tip_and_base() {
+    let m = Mem::default();
+    let mut r = Rec::default();
+    screen(&conflicted(), &m, &mut r, &[c("a")], &[]);
+    screen(&conflicted(), &m, &mut r, &[c("a")], &[]);
+    assert_eq!(r.log.iter().filter(|l| l.starts_with("rebase ")).count(), 1);
 }
 
 #[test]
@@ -550,5 +604,5 @@ fn a_conflict_goes_straight_to_rework_and_files_no_bead() {
     let o = screen(&f, &Mem::default(), &mut r, &[c("a"), c("b")], &[]);
     assert_eq!((o.pass.as_slice(), o.sent_back.as_slice()), (&["b".to_string()][..], &["a".to_string()][..]));
     assert_eq!(reds(&r), ["red a t-a no-rebase"]);
-    assert!(r.log.iter().all(|l| l.starts_with("note ") || l.starts_with("red ") || l.starts_with("send-back ") || l.starts_with("pass ") || l.starts_with("tell ")), "{:?}", r.log);
+    assert!(r.log.iter().all(|l| l.starts_with("rebase ") || l.starts_with("note ") || l.starts_with("red ") || l.starts_with("send-back ") || l.starts_with("pass ") || l.starts_with("tell ")), "{:?}", r.log);
 }

@@ -56,6 +56,10 @@ pub trait Store {
     fn record_send_back(&self, id: &str, tip: &str, reason: &str) -> Result<u32, String>;
     /// True the first time `(id, tip)` is reported as capped; records the `capped` event.
     fn first_cap_report(&self, id: &str, tip: &str) -> bool;
+    /// True the first time `(id, tip, base)` asks for a mechanical rebase; records the attempt.
+    fn first_rebase_attempt(&self, _id: &str, _tip: &str, _base: &str) -> bool {
+        true
+    }
 }
 
 pub trait Acts {
@@ -67,6 +71,11 @@ pub trait Acts {
     /// Records that `tip` passed, on the lifecycle store.
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String>;
     fn tell(&mut self, msg: &str);
+    /// Runs rebase-stale on `id`'s branch and returns its exit code: 0 rebased and re-certified,
+    /// 1 or 2 sent back by rebase-stale itself with the hunks or gate output quoted, 3 not attempted.
+    fn rebase(&mut self, _id: &str, _tip: &str) -> i32 {
+        3
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -230,6 +239,20 @@ pub fn screen(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, pool: &
             continue;
         }
         let conflict = v.conflict.is_some();
+        if conflict && findings.len() == 1 && store.first_rebase_attempt(&c.id, &c.tip, &base) {
+            match acts.rebase(&c.id, &c.tip) {
+                0 => {
+                    out.held.push(c.id.clone());
+                    acts.tell(&format!("SIFT rebased {} mechanically onto {base}", c.id));
+                    continue;
+                }
+                1 | 2 => {
+                    out.sent_back.push(c.id.clone());
+                    continue;
+                }
+                _ => {}
+            }
+        }
         let prior = store.send_backs(&c.id);
         if !conflict && prior >= SEND_BACK_CAP {
             if store.first_cap_report(&c.id, &c.tip) {

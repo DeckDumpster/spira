@@ -13,7 +13,6 @@ use crate::io::{self, Env, OpenBatch, Repo};
 
 struct Live<'a> {
     env: &'a Env,
-    #[allow(dead_code)]
     repo: &'a Repo,
     sifted: BTreeMap<String, String>,
 }
@@ -41,6 +40,9 @@ impl Acts for Live<'_> {
             return Ok(());
         }
         io::lc_sifted(self.env, id, tip)
+    }
+    fn rebase(&mut self, id: &str, _tip: &str) -> i32 {
+        io::rebase_stale(self.env, &self.repo.name, id)
     }
     fn tell(&mut self, msg: &str) {
         println!("batcher: {msg}");

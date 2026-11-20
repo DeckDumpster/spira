@@ -1518,6 +1518,7 @@ dependencies = [
  "spira-otel",
  "spira-store",
  "system-paths",
+ "testkit",
 ]
 
 [[package]]
