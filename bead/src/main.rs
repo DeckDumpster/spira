@@ -188,7 +188,7 @@ fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[St
     if incident.is_none() && blockers.is_empty() && lookup_title.is_none() && !express {
         return put(&args.iter().map(String::as_str).collect::<Vec<_>>(), body);
     }
-    let argv_owned = bead::filing::create_args_with_deps(args, blockers);
+    let argv_owned = args.to_vec();
     let argv: Vec<&str> = argv_owned.iter().map(String::as_str).collect();
     let window = match spira_config::process::cfg_parse::<u64>(FILE_WINDOW_KEY) {
         Ok(w) => w,
@@ -2311,13 +2311,15 @@ mod tests {
     }
 
     #[test]
-    fn a_filing_with_a_blocker_sends_it_as_deps_on_the_content_create() {
+    fn a_filing_with_a_blocker_creates_without_deps_and_wires_the_new_bead_as_the_blocked_one() {
         let dir = testkit::TempDir::new("bead-door-deps");
         let _env = configured(dir.path());
         let d = install(vec![("content create", 0, "sp-new\n")]);
         let args = argv(&["create", "T", "--silent"]);
         assert_eq!(door_create(&args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r")), 0);
-        assert_eq!(writes(&d)[0].0, argv(&["content", "create", "T", "--silent", "--deps", "blocks:sp-a"]));
+        let sent = writes(&d);
+        assert_eq!(sent[0].0, argv(&["content", "create", "T", "--silent"]));
+        assert!(sent.iter().any(|(a, _)| *a == argv(&["content", "dep", "add", "sp-new", "sp-a", "--type", "blocks"])), "{sent:?}");
     }
 
     #[test]
