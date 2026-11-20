@@ -589,6 +589,22 @@ mod tests {
     }
 
     #[test]
+    fn a_plain_rework_bead_behind_a_full_pool_is_announced() {
+        let row = Row { state: "REWORK".into(), ..ready("sp-r") };
+        assert_eq!(said(&pool(row, 1), FULL), [format!("SUSPECT sp-r REWORK P1 WAITING over 20m for a builder slot: pool full, {HOLDERS}")]);
+    }
+
+    #[test]
+    fn a_change_of_holders_does_not_announce_the_wait_again() {
+        let p = sweep();
+        let mut snap = pool(ready("sp-p"), 0);
+        let (c, _) = decide(&p, &Carry::default(), &snap, FULL.as_ref(), &Repaired::default(), NOW);
+        snap.rows[1].id = "sp-new".into();
+        snap.content[1].id = "sp-new".into();
+        assert!(decide(&p, &c, &snap, FULL.as_ref(), &Repaired::default(), NOW).1.is_empty());
+    }
+
+    #[test]
     fn a_p1_ready_bead_behind_a_full_pool_raises_nothing() {
         assert!(said(&pool(ready("sp-p"), 1), FULL).is_empty());
     }
