@@ -234,7 +234,7 @@ impl<'a> Run<'a> {
     /// Every bead the lifecycle record's `claim.blocks` names, read now: the ids the readiness rule judges.
     fn dependencies(&self) -> Vec<brief::Dep> {
         let show = |id: &str| -> Result<serde_json::Value, String> {
-            let o = self.d.exec.exec("spira-lc", &s(&["show", id]), None, None);
+            let o = self.d.exec.exec("spira-lc", &s(&["show", id]), None, None); // BDQ_READ_CONSIDERED="the spira-lc lifecycle door, not a bd read"
             if !o.success() {
                 let said = o.stderr.lines().chain(o.stdout.lines()).map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string();
                 return Err(format!("rc={}: {said}", o.code));

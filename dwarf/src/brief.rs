@@ -513,13 +513,9 @@ pub fn dependencies_brief(deps: &[Dep]) -> String {
     }
     let mut out = String::from("## Beads this one was blocked on, as of this claim:\n\n");
     for d in deps {
-        if d.state.starts_with("cannot tell") {
-            out.push_str(&format!("- {} state {}\n", d.id, d.state));
-            continue;
-        }
-        out.push_str(&format!("- {} {}", d.id, d.state));
-        if let Some(at) = d.since {
-            out.push_str(&format!(" since {}", crate::util::iso_utc(at)));
+        match d.since {
+            Some(at) => out.push_str(&format!("- {} {} since {}", d.id, d.state, crate::util::iso_utc(at))),
+            None => out.push_str(&format!("- {} state {}", d.id, d.state)),
         }
         if let Some(c) = d.commit.as_deref().filter(|c| !c.is_empty()) {
             out.push_str(&format!(", {} on the landing ref", &c[..c.len().min(12)]));
