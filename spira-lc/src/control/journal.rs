@@ -279,7 +279,7 @@ impl<B: Backend> Store<B> {
             let id = text(&v, "id");
             if id.is_empty() {
                 out.idless_schedules += 1;
-                ops.push(state_store::Op::Delete(key));
+                ops.push(state_store::Op::Delete(format!("{}{key}", keys::runtime_table(SCHEDULE))));
             } else if !fired.contains(&keys::component(&id)) {
                 out.indexed_schedules += 1;
                 ops.push(state_store::Op::Put(keys::runtime(PENDING, &[&id]), pending(&id)));

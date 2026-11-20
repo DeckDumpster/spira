@@ -257,7 +257,7 @@ mod tests {
         crate::control::store::Store::new(c, 1_000)
     }
 
-    fn call(s: &crate::control::store::Store<MemBackend>, argv: &[&str]) -> (i32, String) {
+    fn call<B: state_store::Backend>(s: &crate::control::store::Store<B>, argv: &[&str]) -> (i32, String) {
         answer(run(&argv.iter().map(|a| a.to_string()).collect::<Vec<_>>(), s))
     }
 
@@ -359,7 +359,7 @@ mod tests {
         assert!(raw.txn(&t, &state_store::Request::new(&format!("raw-{key}"), "test", "raw")).unwrap().succeeded);
     }
 
-    fn parsed(s: &crate::control::store::Store<MemBackend>, argv: &[&str]) -> Value {
+    fn parsed<B: state_store::Backend>(s: &crate::control::store::Store<B>, argv: &[&str]) -> Value {
         let (code, out) = call(s, argv);
         assert_eq!(code, 0, "{out}");
         serde_json::from_str(&out).unwrap()
@@ -368,7 +368,7 @@ mod tests {
     #[test]
     fn a_schedule_row_stored_without_an_id_is_not_due() {
         let (s, raw) = shared_store();
-        put_raw(&raw, &crate::keys::runtime("schedule", &["carried"]), json!({"at": 0, "stream": "s", "tag": "", "body": "", "correlation": ""}));
+        put_raw(&raw, &crate::control::keys::runtime("schedule", &["carried"]), json!({"at": 0, "stream": "s", "tag": "", "body": "", "correlation": ""}));
         call(&s, &["turn", &json!({"schedules": [sched("r1", 4)]}).to_string()]);
         let due = parsed(&s, &["due"]);
         assert_eq!(due.as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap()).collect::<Vec<_>>(), ["r1"]);
@@ -465,10 +465,10 @@ mod tests {
         call(&s, &["turn", &json!({"effects": [effect(), resolved_effect], "schedules": [sched("r1", 4), sched("r2", 5)]}).to_string()]);
         call(&s, &["turn", &json!({"resolved": ["gone", "ghost"], "fired": ["r2"]}).to_string()]);
         for n in 0..3 {
-            put_raw(&raw, &crate::keys::runtime("schedule", &[&format!("carried{n}")]), json!({"at": 0, "stream": "s"}));
+            put_raw(&raw, &crate::control::keys::runtime("schedule", &[&format!("carried{n}")]), json!({"at": 0, "stream": "s"}));
         }
         let (open_before, due_before) = (parsed(&s, &["open-effects"]), parsed(&s, &["due"]));
-        let key_count = |table: &str| raw.list(&[crate::keys::runtime_table(table).as_str()], &state_store::Selector::Everything).unwrap().0.len();
+        let key_count = |table: &str| raw.list(&[crate::control::keys::runtime_table(table).as_str()], &state_store::Selector::Everything).unwrap().0.len();
         let before = (key_count("schedule"), key_count("resolved"));
         let dry = parsed(&s, &["sweep", "--dry-run"]);
         assert_eq!((dry["idless_schedules"].clone(), dry["orphan_resolved"].clone()), (json!(3), json!(1)), "{dry}");
