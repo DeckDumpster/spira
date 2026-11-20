@@ -528,7 +528,7 @@ fn land_and_verify(
     let landed = w.git.is_ancestor(path, a.tip, &w.git.rev_parse(path, base).unwrap_or_default());
     if rc != OK && !landed {
         if let Some(p) = pending {
-            p.discard();
+            p.discard(w);
         }
         if voided != "-" {
             let now = w.lc.bead_row(a.bead).map(|b| b.state).unwrap_or_default();

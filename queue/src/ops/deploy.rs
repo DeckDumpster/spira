@@ -111,7 +111,7 @@ fn step(
     what: &str,
     a: Vec<String>,
 ) -> Result<String, String> {
-    step_in(w, plan, bin, what, a, None)
+    step_in(w, plan, bin, what, a, None).map(|(out, _)| out)
 }
 
 /// [`step`], run in a transient unit of its own named for `detached` when that is given.
@@ -122,7 +122,7 @@ fn step_in(
     what: &str,
     mut a: Vec<String>,
     detached: Option<(&str, &Path)>,
-) -> Result<String, String> {
+) -> Result<(String, String), String> {
     a.extend(plan.common());
     let r = match detached {
         Some((key, log)) => w.scripts.release_detached(key, bin, &a, &plan.db, log),
@@ -145,7 +145,7 @@ fn step_in(
         };
         return Err(format!("release {what} exited {}: {why}", r.rc));
     }
-    Ok(r.out)
+    Ok((r.out, err.to_string()))
 }
 
 /// Build (from the tested binaries) and verify `head`'s release; the sha on success.
@@ -266,7 +266,7 @@ fn activate_once(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
     let key: String = sha.chars().take(12).collect();
     let log = plan.run.join(format!("release-activate-{key}.log"));
     let detached = w.scripts.own_unit_restarted_by(&plan.releases.join(sha)).map(|_| (key.as_str(), log.as_path()));
-    let out = step_in(
+    let (out, failure) = step_in(
         w,
         plan,
         &bin,
@@ -287,7 +287,24 @@ fn activate_once(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
     if !out.is_empty() {
         w.out(out);
     }
+    let cur = current_name(&plan.releases);
+    if cur != sha {
+        let lines: Vec<&str> = failure.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        let unit_lines: Vec<&str> = lines.iter().copied().filter(|l| names_unit(l)).collect();
+        let shown = if unit_lines.is_empty() { lines } else { unit_lines };
+        return Err(format!(
+            "release activate {sha} exited 0 but current is {cur}: {}",
+            shown.join(" | ")
+        ));
+    }
     Ok(())
+}
+
+/// A stderr line that opens with a unit name and `: `.
+fn names_unit(line: &str) -> bool {
+    line.split_once(": ").is_some_and(|(t, _)| {
+        !t.contains(char::is_whitespace) && (t.ends_with(".service") || t.ends_with(".timer"))
+    })
 }
 
 /// D13 after the CAS: build → verify → activate.

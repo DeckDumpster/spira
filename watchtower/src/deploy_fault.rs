@@ -128,6 +128,22 @@ fn retry_activate(cfg: &Cfg, releases: &Path, repo_dir: &Path, head: &str) -> Re
     }
 }
 
+/// The first failed-unit segment of a fault's `why` (`<unit>.service: ...`), else `why` cut short.
+fn first_failure(why: &str) -> String {
+    why.split(" | ")
+        .map(str::trim)
+        .find(|seg| {
+            seg.split_once(": ")
+                .is_some_and(|(t, _)| !t.contains(char::is_whitespace) && (t.ends_with(".service") || t.ends_with(".timer")))
+        })
+        .map_or_else(|| why.chars().take(200).collect(), str::to_string)
+}
+
+fn fault_title(repo: &str, head: &str, why: &str) -> String {
+    let short: String = head.chars().take(12).collect();
+    format!("LAND DEPLOY FAULT: {repo} release {short} not activated — {}", first_failure(why))
+}
+
 pub fn run(now: i64, queue_dir: &Path, run_dir: &Path, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
     let Ok(entries) = std::fs::read_dir(queue_dir) else { return };
     for e in entries.flatten() {
@@ -164,7 +180,7 @@ pub fn run(now: i64, queue_dir: &Path, run_dir: &Path, db: &str, home_repo: &str
             marker.display(),
             cfg.repo
         );
-        let f = Finding::new(db, home_repo, &format!("LAND DEPLOY FAULT: {head} landed but was not released"), &body)
+        let f = Finding::new(db, home_repo, &fault_title(&name, head, why), &body)
             .priority(1)
             .reference(format!("incident:deploy-fault:{name}:{head}"))
             .cause("deploy-fault");
@@ -226,6 +242,21 @@ mod tests {
         let got = std::fs::read_to_string(&calls).unwrap_or_default();
         assert!(got.starts_with(&format!("activate {head} --repo {}", repo.display())), "the check activates the release: {got:?}");
         assert!(!queue.join("spira/deploy-fault").exists(), "a successful activation clears the marker");
+    }
+
+    #[test]
+    fn the_alarm_title_names_the_repo_the_release_and_the_first_failed_unit() {
+        let head = "0123456789abcdef0123456789abcdef01234567";
+        let why = "release activate exited 1: activating x failed, rolled back to y | spira-runtime-prod.service: restart failed: Job for spira-runtime-prod.service failed | other.service: did not come up";
+        assert_eq!(
+            fault_title("spira", head, why),
+            "LAND DEPLOY FAULT: spira release 0123456789ab not activated — spira-runtime-prod.service: restart failed: Job for spira-runtime-prod.service failed"
+        );
+    }
+
+    #[test]
+    fn a_why_naming_no_unit_is_cut_to_200_chars() {
+        assert_eq!(first_failure(&"x".repeat(300)).len(), 200);
     }
 
     #[test]

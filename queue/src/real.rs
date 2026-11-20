@@ -1195,6 +1195,8 @@ impl Scripts for RealScripts {
             None => Some(unit),
         }
     }
+    /// A unit that is `Absent` was collected on exit: its exit is unknown, so rc is 0 and the log
+    /// is `err`; `deploy::activate_once` decides from `<releases>/current`.
     fn release_detached(&self, key: &str, bin: &Path, args: &[String], db: &str, log: &Path) -> RunOut {
         use runtime::units::{Exit, UnitHandle, UnitProps, UnitSpec, UnitState, Units};
         let fail = |why: String| RunOut { rc: 127, out: String::new(), err: why };

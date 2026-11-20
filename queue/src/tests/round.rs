@@ -9933,3 +9933,41 @@ fn an_ejects_red_evidence_is_kept_where_the_next_pass_start_does_not_wipe_it() {
     fs::remove_dir_all(&results).ok();
     assert!(fs::read_to_string(&kept).is_ok_and(|e| e.contains("FAIL: b_broke_the_wal")), "{kept}");
 }
+
+fn deploy_faulting_round(detached: bool) -> (T, String) {
+    let (t, batch) = certified_round();
+    if detached {
+        *t.scripts.caller_unit.borrow_mut() = Some("spira-runtime-prod.service".into());
+    }
+    t.scripts.leave_current.set(true);
+    (t, batch)
+}
+
+#[test]
+fn a_detached_activation_that_exits_0_leaving_current_behind_is_a_deploy_fault() {
+    let (t, batch) = deploy_faulting_round(true);
+    assert_eq!(t.run(&["round", "land", &batch]), crate::ops::DEPLOY_FAULT, "{}", t.err());
+    assert_eq!(t.scripts.detached_keys.borrow().len(), 1);
+    let m = fs::read_to_string(t.qfile("deploy-fault")).unwrap();
+    assert!(m.contains("exited 0 but current is"), "{m}");
+}
+
+#[test]
+fn a_deferred_landing_whose_activation_faults_mails_once_after_it_with_the_fault() {
+    let (t, batch) = deploy_faulting_round(false);
+    assert_eq!(t.run(&["round", "land", &batch]), crate::ops::DEPLOY_FAULT, "{}", t.err());
+    let mails = t.lib.mails.borrow();
+    let landing: Vec<_> = mails.iter().filter(|(s, _)| s.starts_with("local landing")).collect();
+    assert_eq!(landing.len(), 1, "{mails:?}");
+    assert!(landing[0].1.contains("DEPLOY FAULT:"), "{}", landing[0].1);
+}
+
+#[test]
+fn a_deferred_landing_that_activates_mails_once_naming_the_release() {
+    let (t, batch) = certified_round();
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    let mails = t.lib.mails.borrow();
+    let landing: Vec<_> = mails.iter().filter(|(s, _)| s.starts_with("local landing")).collect();
+    assert_eq!(landing.len(), 1, "{mails:?}");
+    assert!(landing[0].1.contains("Release ") && landing[0].1.contains(" activated."), "{}", landing[0].1);
+}
