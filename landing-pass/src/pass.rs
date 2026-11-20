@@ -673,7 +673,7 @@ impl<'a> Pass<'a> {
             return;
         }
         let fix = is_base_fix(bead.external_ref.as_deref(), name);
-        match q.enqueue(&GateJob::new(name, br, id, &tip, fix).with_priority(bead.priority)) {
+        match q.enqueue(&GateJob::new(name, br, id, &tip, fix).with_priority(bead.priority).with_express(bead.express)) {
             Ok(_) => self.log(&format!("CHECK6 {id}: {br} is a provisional member of a round — gate queued at {tip}")),
             Err(e) => self.log(&format!("CHECK6 {id}: could not queue the gate for provisional {br} ({e})")),
         }
@@ -701,7 +701,7 @@ impl<'a> Pass<'a> {
             return Flow::Next;
         }
         let fix = is_base_fix(bead.external_ref.as_deref(), name);
-        match q.enqueue(&GateJob::new(name, br, id, tip, fix).with_priority(bead.priority)) {
+        match q.enqueue(&GateJob::new(name, br, id, tip, fix).with_priority(bead.priority).with_express(bead.express)) {
             Ok(true) => {
                 self.log(&format!("CHECK6 {id}: {br} queued for gate-worker at {tip}"));
             }
