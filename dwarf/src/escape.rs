@@ -364,7 +364,7 @@ mod tests {
         let dir = testkit::TempDir::new("escape-argv");
         let rel = dir.join("rel");
         std::fs::create_dir_all(&rel).unwrap();
-        let _g = testkit::env(&[(spira_config::RELEASE_ENV, Some(rel.to_str().unwrap())), ("HOME", Some("/h")), (spira_config::process::TOML_ENV, Some("x"))]);
+        let _g = testkit::env(&[(spira_config::RELEASE_ENV, Some(rel.to_str().unwrap())), ("HOME", Some("h")), (spira_config::process::TOML_ENV, Some("x"))]);
         let a = call_argv(&dir, "stretchy");
         let a = a.expect("argv");
         assert!(a.iter().any(|f| f == "--property=IOWeight=10"), "{a:?}");
