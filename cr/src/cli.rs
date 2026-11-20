@@ -7,6 +7,7 @@ use crate::pick::{self, Scored, Shaped, Stratum};
 use crate::ports::{Ports, SeededRng};
 use crate::record;
 use crate::review;
+use crate::thread;
 use crate::units;
 use serde_json::{json, Value};
 
@@ -27,6 +28,8 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   cr finding --review <NNN> < finding.json
   cr findings --review <NNN> [--post]
   cr unseal --review <NNN> [--said <comment-id>]
+  cr thread --review <NNN> --comment <id>
+  cr reply --review <NNN> --comment <id> < reply.txt
   cr status [--json]
 
   finding records one verdict of a review (JSON: {id?, words, comment_id?, exemplar: {path, line},
@@ -44,6 +47,7 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   --count <N> how many units open stages
   --scheduled mark the reviews as scheduled rather than on demand
   --review <NNN>  the review to seal or unseal
+  --comment <id>  (thread, reply) a review comment of the pull request
   --said <id> the operator's conversation comment on the pull request, standing for publishing
   --json      print one JSON object on every path, errors included
   --regex <re>   (count) the pattern; matched per line against code in .rs .sh .toml .py files
@@ -54,6 +58,10 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
 count reads the home repository at its landing ref and prints the total of matching code lines,
 the files matched and the files searched. Comment lines (// in .rs, # in .sh .toml .py) and
 SPIRA_CR_EXCLUDE paths are not counted. Sites are path:line: text, sorted, then `… <k> more`.
+
+thread prints the comment's file and line, the source around it, and the whole thread from the
+comments the Concierge's watcher kept. reply posts stdin as a reply in that comment's thread and
+prints the new comment's URL; an empty reply is refused.
 
 Arguments are named; a bare positional is refused.
 
@@ -83,10 +91,12 @@ enum Cmd {
     Unseal { number: u32, said: Option<String> },
     Finding(u32),
     Findings { number: u32, post: bool },
+    Thread { number: u32, comment: u64 },
+    Reply { number: u32, comment: u64 },
     Status { json: bool },
 }
 
-const VERBS: [(&str, &[&str], &[&str]); 8] = [
+const VERBS: [(&str, &[&str], &[&str]); 10] = [
     ("pick", &["--aim", "--seed"], &["--json"]),
     ("count", &["--regex", "--path", "--limit"], &["--json"]),
     ("open", &["--count", "--aim", "--seed"], &["--scheduled"]),
@@ -94,6 +104,8 @@ const VERBS: [(&str, &[&str], &[&str]); 8] = [
     ("unseal", &["--review", "--said"], &[]),
     ("finding", &["--review"], &[]),
     ("findings", &["--review"], &["--post"]),
+    ("thread", &["--review", "--comment"], &[]),
+    ("reply", &["--review", "--comment"], &[]),
     ("status", &[], &["--json"]),
 ];
 
@@ -151,7 +163,6 @@ fn parse_verb(argv: &[String], first: Option<&str>) -> Result<Cmd, String> {
             let hint = match verb {
                 "open" => "--count",
                 "count" => "--regex",
-                "seal" | "unseal" | "finding" | "findings" => "--review",
                 _ => "--aim",
             };
             return Err(format!("positional argument `{arg}` is not accepted; name it: `{hint} {arg}`"));
@@ -166,7 +177,13 @@ fn parse_verb(argv: &[String], first: Option<&str>) -> Result<Cmd, String> {
         Some(v) => Some(v.parse().map_err(|_| format!("--limit {v:?} is not a non-negative integer"))?),
         None => None,
     };
+    let comment = || -> Result<u64, String> {
+        let v = values.get("--comment").ok_or("--comment <id> is required")?;
+        v.parse().map_err(|_| format!("--comment {v:?} is not a comment id"))
+    };
     Ok(match verb {
+        "thread" => Cmd::Thread { number: review()?, comment: comment()? },
+        "reply" => Cmd::Reply { number: review()?, comment: comment()? },
         "count" => Cmd::Count(CountArgs { regex: values.get("--regex").cloned(), paths, limit }),
         "pick" => Cmd::Pick(Args { aim: values.get("--aim").cloned(), seed }),
         "open" => {
@@ -220,6 +237,8 @@ pub fn run(argv: &[String], ports: &Ports) -> Outcome {
         Ok(Cmd::Unseal { number, said }) => return review::unseal(number, said.as_deref(), ports),
         Ok(Cmd::Finding(n)) => return findings::record_finding(n, ports),
         Ok(Cmd::Findings { number, post }) => return findings::findings(number, post, ports),
+        Ok(Cmd::Thread { number, comment }) => return thread::thread(number, comment, ports),
+        Ok(Cmd::Reply { number, comment }) => return thread::reply(number, comment, ports),
         Ok(Cmd::Status { json }) => return review::status(json, ports),
         Err(e) => return fail(2, json, &e, &[], None, None),
     };

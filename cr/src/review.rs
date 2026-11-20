@@ -349,7 +349,7 @@ fn field<'a>(v: &'a Value, path: &[&str], call: &str) -> Result<&'a Value, Strin
     Ok(cur)
 }
 
-fn text_field(v: &Value, path: &[&str], call: &str) -> Result<String, String> {
+pub(crate) fn text_field(v: &Value, path: &[&str], call: &str) -> Result<String, String> {
     field(v, path, call)?.as_str().map(str::to_string).ok_or_else(|| format!("forge call {call}: `{}` is not a string", path.join(".")))
 }
 
