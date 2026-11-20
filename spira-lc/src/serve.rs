@@ -1313,6 +1313,29 @@ mod tests {
     }
 
     #[test]
+    fn the_answer_time_is_taken_before_the_owed_close_settles() {
+        let (server, _client) = std::os::unix::net::UnixStream::pair().unwrap();
+        let ans = super::Answer { owed: vec![("sp-d".into(), "why".into())].into(), ..Default::default() };
+        let (read_at, order) = (std::time::Instant::now(), std::cell::RefCell::new(Vec::new()));
+        let mut answered = std::time::Duration::ZERO;
+        super::reply_then_settle(
+            &server,
+            &ans,
+            || {
+                answered = read_at.elapsed();
+                order.borrow_mut().push("answered");
+            },
+            &mut |_, _| {
+                std::thread::sleep(std::time::Duration::from_millis(60));
+                order.borrow_mut().push("settled");
+                Ok(())
+            },
+        );
+        assert_eq!(*order.borrow(), ["answered", "settled"]);
+        assert!(answered < std::time::Duration::from_millis(50), "the owed close is not part of the answer time: {answered:?}");
+    }
+
+    #[test]
     fn the_reply_is_on_the_stream_before_an_owed_store_close_finishes() {
         use std::io::Read;
         let (server, mut client) = std::os::unix::net::UnixStream::pair().unwrap();

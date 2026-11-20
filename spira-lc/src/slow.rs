@@ -525,14 +525,14 @@ mod tests {
 
     #[test]
     fn calls_over_the_limit_are_counted_by_verb_and_caller() {
-        request_done("list", "list", "lc-view", None, Duration::from_millis(150));
-        request_done("list", "list", "lc-view", None, Duration::from_millis(20));
-        request_done("watch", "watch", "lc-view", None, Duration::from_millis(5000));
+        request_done("over-probe", "over-probe", "over-probe-caller", None, Duration::from_millis(150));
+        request_done("over-probe", "over-probe", "over-probe-caller", None, Duration::from_millis(20));
+        request_done("over-probe-wait", "watch", "over-probe-caller", None, Duration::from_millis(5000));
         let c = COUNTERS.lock().unwrap();
         let got = series_since(&c, &BTreeMap::new(), std::time::SystemTime::now());
-        let over = |verb: &str| got.iter().find(|s| s.name == "spira_lc_requests_over" && s.labels.contains(&("verb".into(), verb.into())) && s.labels.contains(&("caller".into(), "lc-view".into()))).map(|s| s.value);
-        assert_eq!(over("list"), Some(1.0));
-        assert_eq!(over("watch"), None, "a waiting verb is never over");
+        let over = |verb: &str| got.iter().find(|s| s.name == "spira_lc_requests_over" && s.labels.contains(&("verb".into(), verb.into())) && s.labels.contains(&("caller".into(), "over-probe-caller".into()))).map(|s| s.value);
+        assert_eq!(over("over-probe"), Some(1.0));
+        assert_eq!(over("over-probe-wait"), None, "a waiting verb is never over");
     }
 
     #[test]
