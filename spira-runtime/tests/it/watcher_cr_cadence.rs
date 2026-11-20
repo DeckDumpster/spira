@@ -62,7 +62,7 @@ impl Rig {
     }
 
     fn now_secs(&self) -> u64 {
-        self.rig.clock.now_ms() / 1000
+        self.rig.now() / 1000
     }
 
     fn opened_at(&self) -> Vec<u64> {
