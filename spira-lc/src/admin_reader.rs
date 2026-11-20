@@ -12,12 +12,12 @@ use crate::db::Conn;
 use crate::plan::{CORE_TABLES, READER_COLUMNS};
 use crate::{CANNOT_TELL, REFUSED};
 
-fn plain(name: &str) -> bool {
+pub(crate) fn plain(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// A secret that cannot leave its SQL string literal.
-fn literal_safe(secret: &str) -> bool {
+pub(crate) fn literal_safe(secret: &str) -> bool {
     !secret.is_empty() && secret.chars().all(|c| c.is_ascii_graphic() && c != '\'' && c != '"' && c != '\\')
 }
 
@@ -36,7 +36,7 @@ fn statements(db: &str, user: &str, password: &str, tables: &[&str]) -> Vec<Stri
     sql
 }
 
-fn ensure_secret(path: &str) -> Result<bool, String> {
+pub(crate) fn ensure_secret(path: &str) -> Result<bool, String> {
     match std::fs::read_to_string(path) {
         Ok(t) if !t.trim().is_empty() => return Ok(false),
         Ok(_) => return Err(format!("{path} exists and is empty: remove it so a secret can be generated")),
