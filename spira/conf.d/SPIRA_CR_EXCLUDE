@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=cr
+DOC=Comma-separated path globs cr never draws: generated code, fixtures, vendored code and lock files weigh zero. A pattern without a slash matches the file name.
+SCHEMA=Comma-separated path globs (** across directories) whose files weigh zero in cr pick.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_CR_EXCLUDE:=**/fixtures/**,**/*.generated.*,**/vendor/**,Cargo.lock}"
+SPIRA_CONF_DEFAULT_EOF
