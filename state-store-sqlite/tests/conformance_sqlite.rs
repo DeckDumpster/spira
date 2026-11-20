@@ -1630,7 +1630,7 @@ fn none_mode_store_with_free_pages(path: &Path) {
     none_mode_store(path);
     seed_versions(path, 1200, &["readiness/"]);
     let conn = rusqlite::Connection::open(path).unwrap();
-    conn.execute_batch("DELETE FROM versions").unwrap();
+    conn.prepare("DELETE FROM versions").unwrap().execute([]).unwrap();
     assert!(count(path, "PRAGMA freelist_count") > 0);
 }
 

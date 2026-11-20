@@ -54,7 +54,7 @@ pub fn compact(path: &Path) -> Result<Report> {
     let conn = Connection::open(path).map_err(db)?;
     let (bytes_before, free_bytes_before) = usage(&conn, path)?;
     conn.pragma_update(None, "auto_vacuum", 2).map_err(db)?;
-    conn.execute_batch("VACUUM").map_err(db)?;
+    conn.prepare("VACUUM").and_then(|mut s| s.execute([])).map_err(db)?;
     let auto_vacuum: i64 = conn.pragma_query_value(None, "auto_vacuum", |r| r.get(0)).map_err(db)?;
     let (bytes_after, free_bytes_after) = usage(&conn, path)?;
     Ok(Report {
