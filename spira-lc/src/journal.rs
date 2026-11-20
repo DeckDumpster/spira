@@ -286,9 +286,18 @@ pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_ru
 pub(crate) mod counting {
     use state_store::MemBackend;
     #[derive(Clone)]
-    pub(crate) struct Counting(pub MemBackend, pub std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    pub(crate) struct Counting(pub MemBackend, pub std::sync::Arc<std::sync::atomic::AtomicUsize>, pub std::sync::Arc<std::sync::Mutex<Vec<(&'static str, String)>>>);
 
     impl Counting {
+        pub(crate) fn new(inner: MemBackend, keys: std::sync::Arc<std::sync::atomic::AtomicUsize>) -> Self {
+            Counting(inner, keys, Default::default())
+        }
+        pub(crate) fn calls(&self, kind: &str) -> usize {
+            self.2.lock().unwrap().iter().filter(|k| k.0 == kind).count()
+        }
+        pub(crate) fn calls_on(&self, kind: &str, key_part: &str) -> usize {
+            self.2.lock().unwrap().iter().filter(|k| k.0 == kind && k.1.contains(key_part)).count()
+        }
         pub(crate) fn spent(&self, n: usize) {
             self.1.fetch_add(n, std::sync::atomic::Ordering::SeqCst);
         }
@@ -300,10 +309,12 @@ pub(crate) mod counting {
         }
         fn get(&self, key: &str, at: u64) -> state_store::Result<Option<state_store::Version>> {
             self.spent(1);
+            self.2.lock().unwrap().push(("get", key.to_string()));
             self.0.get(key, at)
         }
         fn get_many(&self, keys: &[&str], at: u64) -> state_store::Result<Vec<Option<state_store::Version>>> {
             self.spent(keys.len());
+            self.2.lock().unwrap().push(("get_many", keys.join(" ")));
             self.0.get_many(keys, at)
         }
         fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
@@ -561,7 +572,7 @@ mod tests {
     #[test]
     fn the_boot_reads_ask_the_backend_for_the_rows_they_return_not_for_every_row_ever_written() {
         let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let backend = Counting(MemBackend::new(), counter.clone());
+        let backend = Counting::new(MemBackend::new(), counter.clone());
         let c = Contract::open(backend.clone(), Ports::virtual_clock(&VirtualClock::new(1_000)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
         let s = crate::control::store::Store::new(c, 1_000);
         let n = 1_000;
@@ -587,6 +598,23 @@ mod tests {
             let asked = counter.load(std::sync::atomic::Ordering::SeqCst);
             assert!(asked <= 8, "{argv:?} asked the backend for {asked} keys");
         }
+    }
+
+    #[test]
+    fn a_turn_looks_up_its_schedules_in_one_read_and_writes_only_the_new_ones() {
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let backend = Counting::new(MemBackend::new(), counter.clone());
+        let c = Contract::open(backend.clone(), Ports::virtual_clock(&VirtualClock::new(1_000)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let s = crate::control::store::Store::new(c, 1_000);
+        call(&s, &["turn", &json!({"schedules": [sched("old0", 4), sched("old1", 4)]}).to_string()]);
+        let (gets, many) = (backend.calls_on("get", "schedule/old"), backend.calls("get_many"));
+        let all: Vec<Value> = ["old0", "old1", "n0", "n1", "n2", "n3", "n4"].iter().map(|i| sched(i, 9)).collect();
+        let (code, msg) = call(&s, &["turn", &json!({"schedules": all}).to_string()]);
+        assert_eq!(code, 0, "{msg}");
+        assert_eq!((backend.calls_on("get", "schedule/old") - gets, backend.calls("get_many") - many), (0, 1));
+        let due = parsed(&s, &["due"]);
+        let at = |id: &str| due.as_array().unwrap().iter().find(|r| r["id"] == id).map(|r| r["at"].clone());
+        assert_eq!((at("old0"), at("n4")), (Some(json!(4)), Some(json!(9))));
     }
 
     #[test]

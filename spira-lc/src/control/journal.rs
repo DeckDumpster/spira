@@ -200,9 +200,11 @@ impl<B: Backend> Store<B> {
                 let row = json!({ "task": e.task, "ekey": e.ekey, "request_id": e.request_id, "stream": e.stream, "spec": e.spec, "requested_at": e.requested_at, "deadline_at": e.deadline_at });
                 one(vec![], vec![(keys::runtime(EFFECT, &[&e.task, &e.ekey]), Some(Object::new(row))), (keys::runtime(OPEN_EFFECT, &[&e.request_id]), Some(open_effect(&e.task, &e.ekey))), (keys::runtime(RESOLVED, &[&e.request_id]), None)]);
             }
-            for s in &turn.schedules {
-                let key = keys::runtime(SCHEDULE, &[&s.id]);
-                if self.contract().get(&key)?.is_some() {
+            let schedule_keys: Vec<String> = turn.schedules.iter().map(|s| keys::runtime(SCHEDULE, &[&s.id])).collect();
+            let schedule_refs: Vec<&str> = schedule_keys.iter().map(String::as_str).collect();
+            let existing = self.contract().get_many_at(&schedule_refs, self.contract().head()?)?;
+            for ((s, key), found) in turn.schedules.iter().zip(schedule_keys).zip(existing.iter().map(Option::is_some)) {
+                if found {
                     continue;
                 }
                 let row = json!({ "id": s.id, "at": s.at, "stream": s.stream, "tag": s.tag, "body": s.body, "cause": s.cause, "correlation": s.correlation });

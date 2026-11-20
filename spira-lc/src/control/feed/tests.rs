@@ -391,7 +391,7 @@ fn audits_newest_reads_only_the_newest_chunk_of_a_long_log() {
     use crate::journal::counting::Counting;
     const TIP: &str = "0123456789abcdef0123456789abcdef01234567";
     let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let s = store(Counting(MemBackend::new(), counter.clone()), &VirtualClock::new(0));
+    let s = store(Counting::new(MemBackend::new(), counter.clone()), &VirtualClock::new(0));
     let now = crate::db::now_epoch();
     let ev = |expect, version, kind, at| BeadEvent { expect, version, kind, actor: "ops".into(), at: Some(at) };
     s.create("sp-l", Some("harness"), Some(TIP), now - 5_000, &req("c-l")).unwrap();
