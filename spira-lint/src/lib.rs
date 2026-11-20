@@ -558,6 +558,59 @@ pub fn run(tree: &Tree, rules: &[Box<dyn Rule>]) -> Vec<RuleResult> {
     slots.into_iter().map(|r| r.expect("every rule index is claimed by exactly one worker")).collect()
 }
 
+fn counted(list: &[(&str, usize)]) -> String {
+    list.iter().map(|(n, c)| format!("{n} ({c})")).collect::<Vec<_>>().join(", ")
+}
+
+/// The one stderr line that ends a red run: which rules refused, which errored, and which
+/// only printed report-mode lines, so a report's hits are never read as the cause.
+pub fn red_summary(refused: &[(&str, usize)], errored: &[&str], reported: &[(&str, usize)]) -> String {
+    let mut s = String::from("spira-lint: RED —");
+    let mut clauses = Vec::new();
+    if !refused.is_empty() {
+        clauses.push(format!("refused by {}", counted(refused)));
+    }
+    clauses.push(format!("errored: {}", if errored.is_empty() { "none".into() } else { errored.join(", ") }));
+    if !reported.is_empty() {
+        clauses.push(format!("reported only, not refusing: {}", counted(reported)));
+    }
+    s.push(' ');
+    s.push_str(&clauses.join("; "));
+    s
+}
+
+/// Whether `--diff` scope `scope` keeps `f` of `rule`; no scope keeps all.
+pub fn kept_by(scope: Option<&DiffScope>, rule: &str, f: &Finding) -> bool {
+    scope.is_none_or(|s| BASE_RELATIVE.contains(&rule) || s.keeps(f))
+}
+
+/// [`red_summary`] over `results`, counting findings kept by `scope` (as the printed ones are).
+/// `None` when no rule refused or errored.
+pub fn red_summary_of(results: &[RuleResult], scope: Option<&DiffScope>) -> Option<String> {
+    let (mut refused, mut errored, mut reported) = (Vec::new(), Vec::new(), Vec::new());
+    for r in results {
+        if let Some(text) = &r.report {
+            let n = text.lines().filter(|l| !l.trim().is_empty()).count();
+            if n > 0 {
+                reported.push((r.rule, n));
+            }
+        }
+        match &r.outcome {
+            Ok(v) => {
+                let n = v
+                    .iter()
+                    .filter(|f| kept_by(scope, r.rule, f))
+                    .count();
+                if n > 0 {
+                    refused.push((r.rule, n));
+                }
+            }
+            Err(_) => errored.push(r.rule),
+        }
+    }
+    (!refused.is_empty() || !errored.is_empty()).then(|| red_summary(&refused, &errored, &reported))
+}
+
 /// The most threads [`run`] checks rules on.
 pub const MAX_WORKERS: usize = 8;
 
@@ -666,5 +719,57 @@ mod tests {
             assert!(names.contains(n), "{n} is not a rule");
         }
         assert!(BASE_RELATIVE.contains(&"no-new-shell-suite"));
+    }
+
+    #[test]
+    fn red_summary_names_refused_and_reported_separately() {
+        let l = red_summary(&[("inventory", 53), ("literal-lint", 8)], &[], &[("ffx-vocabulary", 479)]);
+        assert_eq!(
+            l,
+            "spira-lint: RED — refused by inventory (53), literal-lint (8); errored: none; reported only, not refusing: ffx-vocabulary (479)"
+        );
+    }
+
+    #[test]
+    fn red_summary_refused_only_has_no_reported_clause() {
+        let l = red_summary(&[("inventory", 1)], &[], &[]);
+        assert_eq!(l, "spira-lint: RED — refused by inventory (1); errored: none");
+    }
+
+    #[test]
+    fn red_summary_errored_only_names_the_rule() {
+        let l = red_summary(&[], &["deps-lint"], &[]);
+        assert_eq!(l, "spira-lint: RED — errored: deps-lint");
+    }
+
+    struct Stub(&'static str, bool, Option<&'static str>);
+    impl Rule for Stub {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+        fn applies_to(&self, _: &Entry) -> bool {
+            true
+        }
+        fn check(&self, _: &Tree) -> Result<Vec<Finding>, LintError> {
+            Ok(if self.1 {
+                vec![Finding { rule: self.0, path: "a".into(), line: Some(1), message: "m".into() }]
+            } else {
+                Vec::new()
+            })
+        }
+        fn report(&self) -> Option<String> {
+            self.2.map(str::to_string)
+        }
+    }
+
+    #[test]
+    fn a_run_over_an_enforcing_and_a_report_rule_names_each_in_its_own_clause() {
+        let t = Tree::from_paths(Path::new("nowhere"), ["a"], Vec::<String>::new());
+        let rules: Vec<Box<dyn Rule>> =
+            vec![Box::new(Stub("enforcer", true, None)), Box::new(Stub("reporter", false, Some("reporter: a:1\nreporter: a:2\n")))];
+        let l = red_summary_of(&run(&t, &rules), None).unwrap();
+        assert_eq!(l, "spira-lint: RED — refused by enforcer (1); errored: none; reported only, not refusing: reporter (2)");
+        let rules: Vec<Box<dyn Rule>> = vec![Box::new(Stub("reporter", false, Some("reporter: a:1\n")))];
+        assert_eq!(red_summary_of(&run(&t, &rules), None), None);
     }
 }

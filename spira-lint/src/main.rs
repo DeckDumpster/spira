@@ -160,18 +160,18 @@ fn real_main() -> ExitCode {
     };
     let (mut findings, mut refused) = (0usize, false);
     let mut controls = Vec::new();
-    for r in run(&tree, &rules) {
+    let results = run(&tree, &rules);
+    for r in &results {
         if let Some((n, unit)) = &r.checked {
             controls.push(format!("fence: {} checked {n} {unit}", r.rule));
         }
         if let Some(text) = &r.report {
             print!("{text}");
         }
-        match r.outcome {
-            Ok(mut v) => {
-                if let Some(s) = scope.as_ref().filter(|_| !spira_lint::BASE_RELATIVE.contains(&r.rule)) {
-                    v.retain(|f| s.keeps(f));
-                }
+        match &r.outcome {
+            Ok(v) => {
+                let mut v = v.clone();
+                v.retain(|f| spira_lint::kept_by(scope.as_ref(), r.rule, f));
                 if v.is_empty() {
                     continue;
                 }
@@ -187,6 +187,11 @@ fn real_main() -> ExitCode {
                 refused = true;
                 eprintln!("{}: error: {e}", r.rule);
             }
+        }
+    }
+    if refused || findings > 0 {
+        if let Some(line) = spira_lint::red_summary_of(&results, scope.as_ref()) {
+            eprintln!("{line}");
         }
     }
     if refused {
