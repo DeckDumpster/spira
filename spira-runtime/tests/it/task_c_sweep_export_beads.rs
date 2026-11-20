@@ -80,7 +80,15 @@ impl spira_store::lc_call::Transport for Store {
     fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
         self.0.lock().unwrap().push(argv.to_vec());
         let out = match argv.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-            ["list-all"] => (0..self.1).map(|n| format!("sp-{n:05}\tOPEN\n")).collect(),
+            ["list", "--bare", rest @ ..] => {
+                let (after, limit) = match rest {
+                    ["--after", a, "--limit", l] => (Some(*a), l.parse::<usize>().unwrap()),
+                    ["--limit", l] => (None, l.parse::<usize>().unwrap()),
+                    other => panic!("unexpected list args {other:?}"),
+                };
+                let rows: Vec<String> = (0..self.1).map(|n| format!("sp-{n:05}")).filter(|id| after.is_none_or(|a| id.as_str() > a)).take(limit).map(|id| format!("{{\"bead_id\":\"{id}\",\"state\":\"OPEN\"}}")).collect();
+                format!("[{}]", rows.join(","))
+            }
             ["content", "list", "--id", ids, ..] => format!("[{}]", ids.split(',').map(|i| format!("{{\"id\":\"{i}\"}}")).collect::<Vec<_>>().join(",")),
             ["content", "memories", ..] => "{}".into(),
             _ => String::new(),
@@ -102,6 +110,23 @@ fn the_probe_reads_content_in_bounded_id_chunks_never_one_whole_store_dump() {
         assert_eq!(call[2], "--id", "{call:?}");
         assert!(call[3].split(',').count() <= task::CONTENT_CHUNK, "a chunk is bounded");
     }
+}
+
+#[test]
+fn the_lifecycle_store_is_read_as_cursor_pages_never_as_list_all() {
+    let wiki = testkit::TempDir::new("export-beads-pages");
+    let store = std::sync::Arc::new(Store(Default::default(), 2 * 1000 + 1));
+    let lc = spira_store::lc_call::LcClient::over(store.clone(), true);
+    let snap: Snapshot = serde_json::from_str(&task::observe(&lc, wiki.path().to_str().unwrap()).unwrap()).unwrap();
+    assert_eq!(snap.lifecycle.len(), 2001);
+    let calls = store.0.lock().unwrap().clone();
+    assert!(calls.iter().all(|a| a[0] != "list-all"), "{calls:?}");
+    let lists: Vec<&Vec<String>> = calls.iter().filter(|a| a[0] == "list").collect();
+    assert_eq!(lists.len(), 3, "{lists:?}");
+    assert!(lists.iter().all(|a| a.ends_with(&["--limit".into(), "1000".into()])), "{lists:?}");
+    assert_eq!(lists[0], &["list", "--bare", "--limit", "1000"]);
+    assert_eq!(lists[1][2..4], ["--after".to_string(), "sp-00999".to_string()]);
+    assert_eq!(lists[2][2..4], ["--after".to_string(), "sp-01999".to_string()]);
 }
 
 use runtime::taskrig::TaskRig;

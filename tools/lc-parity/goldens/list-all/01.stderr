@@ -1,0 +1,1 @@
+refused: list-all reads every row ever filed and cannot answer inside the request deadline; read by state (list-state <S> | list --state S), by key (list --ids a,b), or by page (list --bare --after <id> --limit <n>)

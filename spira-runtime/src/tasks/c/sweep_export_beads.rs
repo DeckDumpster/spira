@@ -24,8 +24,8 @@
 //!            watermarks: String, mirrored_count: usize, mirror_bytes_sha: String }
 //! ```
 //!
-//! - `content` = store verb `content list --id <chunk> --all --limit 0 --json`, one query per `CONTENT_CHUNK` lifecycle ids (300 s in all); `lifecycle` = `list-all`
-//!   (`:29`, 120 s); `memories` = `content memories --json` (`:30`, 60 s, absent → `{}`);
+//! - `content` = store verb `content list --id <chunk> --all --limit 0 --json`, one query per `CONTENT_CHUNK` lifecycle ids (300 s in all); `lifecycle` = `list --bare --after <id> --limit <n>`
+//!   pages, one request each (`:29`, 120 s); `memories` = `content memories --json` (`:30`, 60 s, absent → `{}`);
 //!   `watermarks` = `plane-watermarks --manifest` (`:32`, 5 s). All four through the in-process
 //!   `LcClient` (S7a), not the `spira-lc` CLI.
 //! - `mirrored_count` / sha: the current `$SPIRA_WIKI/raw/spira-beads/spira.jsonl` (`:35`).
@@ -255,22 +255,36 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
 /// spills to its temp spool.
 pub const CONTENT_CHUNK: usize = 200;
 
+/// Lifecycle rows per `list --bare` request; each page is its own call under the request deadline.
+pub const LIFECYCLE_PAGE: usize = 1_000;
+
 /// The runner of [`OBSERVE`]: the content, lifecycle and memory dumps and the planes'
 /// watermarks over the socket, and what is mirrored now.
 pub fn observe(lc: &LcClient, wiki: &str) -> Result<String, String> {
     if wiki.trim().is_empty() {
         return serde_json::to_string(&Snapshot { disabled: true, ..Snapshot::default() }).map_err(|e| e.to_string());
     }
-    let lifecycle: BTreeMap<String, String> = lc
-        .answer(&["list-all"])
-        .map_err(|e| format!("lifecycle list failed: {e}"))?
-        .lines()
-        .filter_map(|l| {
-            let mut parts = l.split('\t');
-            let (id, state) = (parts.next()?, parts.next()?);
-            id.starts_with("sp-").then(|| (id.to_string(), state.to_string()))
-        })
-        .collect();
+    let mut lifecycle: BTreeMap<String, String> = BTreeMap::new();
+    let mut after: Option<String> = None;
+    loop {
+        let mut argv: Vec<String> = ["list", "--bare"].map(String::from).to_vec();
+        argv.extend(after.iter().flat_map(|a| ["--after".to_string(), a.clone()]));
+        argv.extend(["--limit".to_string(), LIFECYCLE_PAGE.to_string()]);
+        let page = lc.answer(&argv).map_err(|e| format!("lifecycle list failed: {e}"))?;
+        let rows: Vec<serde_json::Value> = serde_json::from_str(page.trim()).map_err(|e| format!("lifecycle list did not answer JSON rows: {e}"))?;
+        let last = rows.last().and_then(|r| r.get("bead_id")).and_then(|i| i.as_str()).map(str::to_string);
+        for r in &rows {
+            if let (Some(id), Some(state)) = (r.get("bead_id").and_then(|i| i.as_str()), r.get("state").and_then(|i| i.as_str())) {
+                if id.starts_with("sp-") {
+                    lifecycle.insert(id.to_string(), state.to_string());
+                }
+            }
+        }
+        match last {
+            Some(l) if rows.len() >= LIFECYCLE_PAGE => after = Some(l),
+            _ => break,
+        }
+    }
     let ids: Vec<&str> = lifecycle.keys().map(String::as_str).collect();
     let mut content: Vec<serde_json::Value> = Vec::with_capacity(ids.len());
     for chunk in ids.chunks(CONTENT_CHUNK) {

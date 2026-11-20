@@ -261,9 +261,10 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
                 format!("{}\t{}\t{}", s(r, "bead_id"), s(r, "lease_until"), holds_of(r.get("holds")).join(","))
             })
         }
-        "list-all" => match spira_lc::list_pages(&["--bare"], |a| m.call(a)) {
-            Ok(rows) => Answer::out(0, rows.iter().map(|r| format!("{}\t{}\t{}", s(r, "bead_id"), s(r, "state"), s(r, "holder"))).collect::<Vec<_>>().join("\n")),
-            Err(e) => Answer { code: CANNOT_TELL, stderr: format!("cannot tell: lc: list-all: {e} — nothing listed\n"), ..Default::default() },
+        "list-all" => Answer {
+            code: REFUSED,
+            stderr: "refused: list-all reads every row ever filed and cannot answer inside the request deadline; read by state (list-state <S> | list --state S), by key (list --ids a,b), or by page (list --bare --after <id> --limit <n>)\n".into(),
+            ..Default::default()
         },
         "deliver" => deliver(args, m),
         "certify" => {

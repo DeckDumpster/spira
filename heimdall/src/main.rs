@@ -142,7 +142,7 @@ fn pass() -> i32 {
     let repo = repo_path.to_string_lossy().into_owned();
     let wiki = cfg_or_die!("SPIRA_WIKI");
     let exporter = match cfg_or_die!("SPIRA_EXPORTER") {
-        e if e.is_empty() && !wiki.is_empty() => home.join("export-beads.sh").display().to_string(),
+        e if e.is_empty() && !wiki.is_empty() => "spira-runtime task sweep.export_beads".to_string(),
         e => e,
     };
     let systemctl_bin = env_or(&original, "SPIRA_SYSTEMCTL", "systemctl");
