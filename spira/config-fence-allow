@@ -79,8 +79,6 @@ dwarf/src/conf.rs
 dwarf/src/run.rs
 round-vm/src/cli.rs
 round-vm/src/config.rs
-sentinel/src/cfg.rs
-sentinel/src/tests.rs
 spira-claim/src/main.rs
 spira-claim/src/store.rs
 spira-claim/src/unpoison_tests.rs

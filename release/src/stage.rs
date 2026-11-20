@@ -48,7 +48,7 @@ pub struct StageOpts {
     /// `TESTDB_SHARED=1` + `TESTDB_BASELINE`: copy that pre-built empty-database snapshot
     /// instead of running `bd-embedded init` (which costs ~10s of schema DDL per stage).
     pub testdb_baseline: Option<PathBuf>,
-    /// The label sentinel and canary-worker scope beads to; empty means unrestricted
+    /// The label a stage's caller scopes beads to; empty means unrestricted
     /// (mirrors `SPIRA_SCOPE_LABEL`, which stage.sh deliberately leaves empty — the
     /// `spira.conf` default of `spira` would make sentinel query for `spira,plan` while the
     /// bead is created with `plan` only, and `plan_ready` stays 0).
