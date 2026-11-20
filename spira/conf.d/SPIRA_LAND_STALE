@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=land
+DOC=Seconds without a completed landing pass, with none running, after which the serve task asks the Concierge why Spira is landing nothing
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LAND_STALE:=1800}"
+SPIRA_CONF_DEFAULT_EOF

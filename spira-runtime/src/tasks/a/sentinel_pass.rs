@@ -219,12 +219,14 @@ pub const KEYS: &[&str] = &[
     "SPIRA_WORK_CLOSE_TYPES",
     "SPIRA_RECLAIM_GRACE_SECS",
     "SPIRA_LAND_MAXSEC",
+    "SPIRA_LAND_STALE",
+    "SPIRA_LAND_ESCALATE_EVERY",
     "SPIRA_REPO_MAP",
     "SPIRA_GH",
     "SPIRA_BATCH_MAXPAR",
     "SPIRA_OPERATOR_ACTOR",
 ];
-pub const UNREGISTERED: &[&str] = &["SPIRA_LAND_UNIT", "SPIRA_LAND_STALE", "SPIRA_LAND_ESCALATE_EVERY", "SPIRA_INFERENCE_EVERY", "SPIRA_SENTINEL_PASS_TARGET_SECS", "SPIRA_SKIP_RECLAIM", "SPIRA_EPIC_LABELS", "SPIRA_DEFAULT_WATCHERS"];
+pub const UNREGISTERED: &[&str] = &["SPIRA_LAND_UNIT", "SPIRA_INFERENCE_EVERY", "SPIRA_SENTINEL_PASS_TARGET_SECS", "SPIRA_SKIP_RECLAIM", "SPIRA_EPIC_LABELS", "SPIRA_DEFAULT_WATCHERS"];
 
 pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
 
@@ -311,6 +313,14 @@ pub struct Snapshot {
     pub skip_reclaim: bool,
     /// `SPIRA_LAND_MAXSEC`, as pinned: the landing leg's `RuntimeMaxSec`.
     pub land_maxsec: u64,
+    /// Seconds since the landing unit's last run ended; `None` when none is known to have.
+    pub land_age_secs: Option<u64>,
+    /// `SPIRA_LAND_STALE`, as pinned: the age past which a leg that is not running is an escalation.
+    pub land_stale_secs: u64,
+    /// `SPIRA_LAND_ESCALATE_EVERY`, as pinned: the floor between two land escalations.
+    pub land_escalate_every_secs: u64,
+    /// The last lines of `$SPIRA_RUN/landing.log`, quoted in the escalation.
+    pub land_log_tail: String,
     pub labels: Labels,
     /// CHECK 1: each epic's children whose push-mode branch is live and not LANDED in the
     /// lifecycle record (`spira/<child>` in `<repo>`), for the complete epics only.
@@ -576,6 +586,35 @@ fn check3c(v: &sentinel::pass_checks::View, snap: &Snapshot, acts: &mut Vec<Act>
     }
 }
 
+/// The subject every land escalation carries; the open-ask dedup matches on it.
+pub const LAND_ESCALATE_SUBJECT: &str = "Spira is landing nothing";
+const LAND_ESCALATE_DEFAULT: &str = "run `landing-pass land` by hand to see the failure, then file the fix as a bead";
+
+/// The ask a stale landing leg sends: what `decide` emits and `spira-runtime land-escalate` sends by hand.
+pub fn land_escalation(age_secs: u64, log_tail: &str) -> Write {
+    let subject = format!("{LAND_ESCALATE_SUBJECT} — nothing has completed a landing pass in {age_secs}s");
+    let text = format!(
+        "## Question\n{subject}\n\n## Default\n{LAND_ESCALATE_DEFAULT}\n\nevery finished branch in every repository is standing unlanded until this is fixed; dwarves go on working and closing beads, so the board will read as healthy while nothing reaches a base branch\n\n--- landing.log (tail) ---\n{}\n",
+        log_tail.trim_end_matches('\n')
+    );
+    Write { subject, text, cause: LAND_ESCALATE_DEFAULT.into(), ..Write::default() }
+}
+
+/// CHECK 6's second trigger: no leg running and none completed within `SPIRA_LAND_STALE`.
+fn land_escalate(carry: &Carry, next: &mut Carry, snap: &Snapshot, acts: &mut Vec<Act>) {
+    let Some(age) = snap.land_age_secs else { return };
+    if snap.landing_active || age <= snap.land_stale_secs {
+        return;
+    }
+    let since = carry.land_escalated_at_ms.map_or(u64::MAX, |at| snap.now_ms.saturating_sub(at) / 1000);
+    if since < snap.land_escalate_every_secs {
+        return;
+    }
+    let w = land_escalation(age, &snap.land_log_tail);
+    acts.push(act(ASK, format!("land-escalate:{}", snap.now_ms / 1000), w));
+    next.land_escalated_at_ms = Some(snap.now_ms);
+}
+
 /// The checks in today's order (1, 2, 2b, 2c, 2d, 3, 6, 3b, 3c, 7, 8), from the snapshot alone.
 /// CHECK 6's twelve watchtower detectors ran in the probe (they read and file in one call),
 /// so their answer is in `snap.tower` and nothing here re-asks for them.
@@ -620,6 +659,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
         acts.push(act(LANDING_START, LANDING_UNIT, Write { max_secs: snap.land_maxsec, ..Write::default() }));
         landing = true;
     }
+    land_escalate(carry, &mut next, snap, &mut acts);
     // CHECK 3b and 3c.
     if let (Some(rows), Some(content)) = (&snap.rows, &snap.beads) {
         check3b(content, rows, &lc, snap, &mut acts);
@@ -775,6 +815,16 @@ fn landing_handle() -> Result<units::UnitHandle, String> {
     units::UnitHandle::of(NAME, LANDING_KEY).map_err(|e| e.to_string())
 }
 
+pub fn land_log_tail(run: &std::path::Path) -> String {
+    match std::fs::read_to_string(run.join("landing.log")) {
+        Ok(t) => {
+            let lines: Vec<&str> = t.lines().collect();
+            lines[lines.len().saturating_sub(30)..].join("\n")
+        }
+        Err(_) => "(no landing log — the worker has never written one)".into(),
+    }
+}
+
 /// `sentinel-pass.observe`: the content and lifecycle rows over `LcClient`, the plan pool's
 /// ready count from spira-claim in-process, the holders from hel, the landing leg from the
 /// unit manager, and the world and release gates.
@@ -791,6 +841,9 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         reclaim_grace_secs: pin("SPIRA_RECLAIM_GRACE_SECS").trim().parse().unwrap_or(10_800),
         skip_reclaim: env("SPIRA_SKIP_RECLAIM").as_deref() == Some("1"),
         land_maxsec: pin("SPIRA_LAND_MAXSEC").trim().parse().unwrap_or(0),
+        land_stale_secs: pin("SPIRA_LAND_STALE").trim().parse().unwrap_or(1_800),
+        land_escalate_every_secs: pin("SPIRA_LAND_ESCALATE_EVERY").trim().parse().unwrap_or(3_600),
+        land_log_tail: land_log_tail(&run),
         labels: Labels {
             queue_wait: pin("SPIRA_QUEUE_WAIT_LABEL"),
             ask: pin("SPIRA_ASK_LABEL"),
@@ -885,7 +938,9 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         Err(e) => format!("watchtower: {c} refused — {e}"),
     }).collect();
     let unitp = e.units.as_deref().ok_or("no unit manager configured")?;
-    snap.landing_active = matches!(unitp.facts(&landing_handle()?).map(|f| f.state), Ok(units::UnitState::Active | units::UnitState::Activating));
+    let facts = unitp.facts(&landing_handle()?);
+    snap.landing_active = matches!(facts.as_ref().map(|f| f.state), Ok(units::UnitState::Active | units::UnitState::Activating));
+    snap.land_age_secs = facts.ok().filter(|f| matches!(f.state, units::UnitState::Inactive | units::UnitState::Failed) && f.exit.is_some()).and_then(|f| f.since_ms).map(|at| snap.now_ms.saturating_sub(at) / 1000);
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 

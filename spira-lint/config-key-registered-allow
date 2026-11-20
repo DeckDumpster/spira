@@ -421,8 +421,6 @@ SPIRA_LANDING_CONTAINERS landing-pass/src/real.rs
 SPIRA_LANDING_CONTAINERS testenv/src/settings.rs
 SPIRA_LANDING_PASS_BIN spira-config/src/convert.rs
 SPIRA_LAND_CPU_QUOTA spira-config/src/convert.rs
-SPIRA_LAND_ESCALATE_EVERY spira-runtime/src/tasks/a/sentinel_pass.rs
-SPIRA_LAND_STALE spira-runtime/src/tasks/a/sentinel_pass.rs
 SPIRA_LAND_UNGATED queue/src/ops/land.rs
 SPIRA_LAND_UNGATED_BY queue/src/ops/land.rs
 SPIRA_LAND_UNGATED_EVIDENCE queue/src/ops/land.rs
