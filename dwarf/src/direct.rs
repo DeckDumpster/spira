@@ -459,6 +459,27 @@ mod tests {
     }
 
     #[test]
+    fn the_last_thing_a_silent_dwarf_said_is_its_last_fatal_else_its_last_line_else_nothing() {
+        assert_eq!(last_said("a\nFATAL one\nlater\n\n"), "FATAL one");
+        assert_eq!(last_said("a\nFATAL one\nFATAL two\nlater\n"), "FATAL two");
+        assert_eq!(last_said("first\nlast\n\n"), "last");
+        assert_eq!(last_said("\n \n"), "the dwarf printed nothing");
+        assert_eq!(last_said(""), "the dwarf printed nothing");
+    }
+
+    #[test]
+    fn a_stale_output_log_is_not_quoted_for_a_dwarf_that_printed_nothing() {
+        let dir = testkit::TempDir::new("dwarf-direct-stale");
+        std::fs::create_dir_all(output_path(&dir, "sp-x").parent().unwrap()).unwrap();
+        std::fs::write(output_path(&dir, "sp-x"), "FATAL an earlier dwarf\n").unwrap();
+        let f = { let mut f = fake(row("READY", None), 0); f.run_dir = dir.to_path_buf(); f };
+        let (rc, sink) = go(&f);
+        assert_eq!(rc, 1);
+        let all = sink.all();
+        assert!(all.contains("the dwarf printed nothing") && !all.contains("an earlier dwarf"), "{all}");
+    }
+
+    #[test]
     fn a_refusal_is_left_where_the_launcher_looks_for_that_bead() {
         let dir = testkit::TempDir::new("dwarf-direct-refusal-path");
         write_refusal(&dir, "sp-x", "because");
