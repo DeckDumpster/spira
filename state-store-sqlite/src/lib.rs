@@ -757,6 +757,12 @@ const NEWEST_OPENED: &str = "SELECT key, main, sub, value, create_main, create_s
      WHERE opened_at >= ?1 AND key >= ?2 AND (?3 IS NULL OR key < ?3)
      ORDER BY opened_at DESC, key DESC LIMIT ?4";
 
+/// The head's live keys in `[?4, ?5)` of fact kind `?1`, strictly after `(?2, ?3)` by
+/// `(fact_at, key)`, oldest first: one range of `latest_by_fact`.
+const KIND_SINCE: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
+     WHERE fact_kind = ?1 AND (fact_at, key) > (?2, ?3) AND key >= ?4 AND (?5 IS NULL OR key < ?5)
+     ORDER BY fact_at, key LIMIT ?6";
+
 /// The head's live keys naming owner `?1`, after `?2`: one range of `owner_refs`.
 const OWNED_BY: &str = "SELECT key FROM owner_refs WHERE owner = ?1 AND key > ?2 ORDER BY key LIMIT ?3";
 
@@ -1048,6 +1054,38 @@ fn newest_opened_at_head(
     {
         let mut rows = stmt
             .query(params![since, prefix, hi, i64::try_from(limit).unwrap_or(i64::MAX)])
+            .map_err(db)?;
+        while let Some(r) = rows.next().map_err(db)? {
+            deadline()?;
+            let key: Vec<u8> = r.get(0).map_err(db)?;
+            if let Some(v) = version_row(r, 1).map_err(db)? {
+                out.push((key_of(key)?, v));
+            }
+        }
+    }
+    let n = stmt.reset_status(rusqlite::StatementStatus::VmStep);
+    snap.steps.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
+    Ok(out)
+}
+
+/// The head's first `limit` live keys in `[prefix, hi)` of fact kind `kind` after `cursor`.
+fn kind_since_at_head(
+    conn: &Connection,
+    snap: &Snapshot,
+    prefix: &[u8],
+    hi: Option<&[u8]>,
+    kind: &str,
+    cursor: (i64, &[u8]),
+    limit: usize,
+    deadline: &dyn Fn() -> Result<()>,
+) -> Result<Vec<(String, Version)>> {
+    deadline()?;
+    let mut stmt = conn.prepare_cached(KIND_SINCE).map_err(db)?;
+    stmt.reset_status(rusqlite::StatementStatus::VmStep);
+    let mut out = Vec::new();
+    {
+        let mut rows = stmt
+            .query(params![kind, cursor.0, cursor.1, prefix, hi, i64::try_from(limit).unwrap_or(i64::MAX)])
             .map_err(db)?;
         while let Some(r) = rows.next().map_err(db)? {
             deadline()?;
@@ -1914,6 +1952,53 @@ impl Backend for SqliteBackend {
                 Some((opened, k, v))
             }));
             merged.sort_by(|a, b| (b.0, &b.1).cmp(&(a.0, &a.1)));
+            merged.truncate(limit);
+            Ok(merged.into_iter().map(|(_, k, v)| (k, v)).collect())
+        })
+    }
+
+    /// The facts of a kind after a time: a forward range of `latest_by_fact`, below the head
+    /// corrected by the history ring as `range_newest_opened` is.
+    fn range_kind_since(
+        &self,
+        prefix: &str,
+        kind: &str,
+        since: i64,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        self.read(|conn, snap, deadline| {
+            snap.readable(at)?;
+            let Some(first) = since.checked_add(1) else { return Ok(Vec::new()) };
+            let (cur_at, cur_key) = after.map_or((first, ""), |(a, k)| if a > since { (a, k) } else { (first, "") });
+            let hi = successor(prefix.as_bytes());
+            let cursor = (cur_at, cur_key.as_bytes());
+            if at == snap.head {
+                return kind_since_at_head(conn, snap, prefix.as_bytes(), hi.as_deref(), kind, cursor, limit, deadline);
+            }
+            let touched = lock(&self.0.history).touched_after(prefix.as_bytes(), hi.as_deref(), at)?;
+            let rows = kind_since_at_head(
+                conn,
+                snap,
+                prefix.as_bytes(),
+                hi.as_deref(),
+                kind,
+                cursor,
+                limit.saturating_add(touched.len()),
+                deadline,
+            )?;
+            let mut merged: Vec<(i64, String, Version)> = rows
+                .into_iter()
+                .filter(|(k, _)| touched.binary_search_by(|(t, _)| t.as_str().cmp(k)).is_err())
+                .filter_map(|(k, v)| Some((state_store::backend::kind_at_of(&v.value)?.1, k, v)))
+                .collect();
+            merged.extend(touched.into_iter().filter_map(|(k, v)| {
+                let v = v?;
+                let (k_kind, k_at) = state_store::backend::kind_at_of(&v.value)?;
+                (k_kind == kind && (k_at, k.as_str()) > (cur_at, cur_key)).then_some((k_at, k, v))
+            }));
+            merged.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
             merged.truncate(limit);
             Ok(merged.into_iter().map(|(_, k, v)| (k, v)).collect())
         })
@@ -3421,6 +3506,147 @@ mod tests {
             let by_scan = state_store::backend::range_newest_opened_by_scan(&b, "r/", since, limit, at).unwrap();
             assert_eq!(b.range_newest_opened("r/", since, limit, at).unwrap(), by_scan, "{since} {limit}");
         }
+    }
+
+    /// Migration 8 indexes a fact's `(kind, at)` for the keys a store already holds: the facts of a
+    /// kind after a time are a range of that index, and match the scan the default makes, at the
+    /// head and below it.
+    #[test]
+    fn migration_8_indexes_fact_kind_and_time_for_the_keys_a_store_already_holds() {
+        let dir = testkit::TempDir::new("sqlite-m8");
+        let path = dir.path().join("m8.db");
+        let doc = |kind: &str, at: i64| {
+            serde_json::to_vec(&serde_json::json!({ "data": { "kind": kind, "cause": "c", "actor": "a", "at": at } })).unwrap()
+        };
+        let mut rows: Vec<(String, Vec<u8>)> = (0..2_000)
+            .map(|i| {
+                (
+                    format!("facts/sp-{:03}/r{i:05}/0000", i % 200),
+                    doc(
+                        if i % 100 == 0 {
+                            "eject-failure"
+                        } else {
+                            "claimed"
+                        },
+                        1_000 + (i * 7) % 500,
+                    ),
+                )
+            })
+            .collect();
+        rows.push((
+            "facts/sp-000/odd".into(),
+            br#"{"data":{"kind":"eject-failure","at":"soon"}}"#.to_vec(),
+        ));
+        rows.push(("other/x".into(), doc("eject-failure", 9_999)));
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in SCHEMA
+                .iter()
+                .chain(MIGRATIONS[..7].iter().flat_map(|m| m.iter()))
+            {
+                exec(&conn, sql, []).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 7).unwrap();
+            for table in ["versions", "latest"] {
+                let sql = format!(
+                    "INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
+                     VALUES (?1, 1, 0, ?2, 1, 0, 1)"
+                );
+                for (k, v) in &rows {
+                    exec(&conn, &sql, params![k.as_bytes(), v]).unwrap();
+                }
+            }
+            exec(&conn, "UPDATE meta SET value = 1 WHERE name = 'head'", []).unwrap();
+        }
+        let b = SqliteBackend::open(
+            &path,
+            Options {
+                jump_on_open: false,
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
+        b.take_read_steps();
+        let first = b
+            .range_kind_since("facts/", "eject-failure", 1_100, None, 5, 1)
+            .unwrap();
+        let steps = b.take_read_steps();
+        assert!(
+            steps <= 200,
+            "{steps} VM steps for 5 of 20 facts among 2000"
+        );
+        assert!(
+            !first.is_empty()
+                && first
+                    .iter()
+                    .all(|(k, _)| k.starts_with("facts/") && k != "facts/sp-000/odd")
+        );
+        for step in plan(&b, KIND_SINCE) {
+            assert!(
+                !step.starts_with("SCAN") && !step.contains("TEMP B-TREE"),
+                "{step}"
+            );
+        }
+        assert!(plan(&b, KIND_SINCE)
+            .iter()
+            .any(|s| s.contains("latest_by_fact")));
+        let check = |b: &SqliteBackend, at: u64| {
+            for (since, limit) in [(i64::MIN, 100), (1_100, 3), (1_499, 100), (i64::MAX, 4)] {
+                let mut after: Option<(i64, String)> = None;
+                loop {
+                    let a = after.as_ref().map(|(t, k)| (*t, k.as_str()));
+                    let got = b
+                        .range_kind_since("facts/", "eject-failure", since, a, limit, at)
+                        .unwrap();
+                    let want = state_store::backend::range_kind_since_by_scan(
+                        b,
+                        "facts/",
+                        "eject-failure",
+                        since,
+                        a,
+                        limit,
+                        at,
+                    )
+                    .unwrap();
+                    assert_eq!(got, want, "{since} {limit} {after:?} at {at}");
+                    let Some((k, v)) = got.last() else { break };
+                    after = Some((
+                        state_store::backend::kind_at_of(&v.value).unwrap().1,
+                        k.clone(),
+                    ));
+                }
+            }
+        };
+        check(&b, 1);
+        let at = b.head().unwrap();
+        let moved = b.get("facts/sp-000/r00000/0000", at).unwrap().unwrap();
+        let gone = b.get("facts/sp-100/r00100/0000", at).unwrap().unwrap();
+        let put = |key: &str, kind: &str, t: i64, prev: Option<Rev>| Write::Put {
+            key: key.into(),
+            value: doc(kind, t),
+            create_rev: Rev::new(1, 0),
+            prev,
+        };
+        b.commit(
+            at,
+            &[
+                put(
+                    "facts/sp-000/r00000/0000",
+                    "claimed",
+                    1_200,
+                    Some(moved.create_rev),
+                ),
+                put("facts/sp-zzz/new", "eject-failure", 1_300, None),
+                Write::Delete {
+                    key: "facts/sp-100/r00100/0000".into(),
+                    prev: gone.mod_rev,
+                },
+            ],
+        )
+        .unwrap();
+        check(&b, at);
+        check(&b, b.head().unwrap());
     }
 
     /// The migration counts in `user_version`, and a store from a binary that knows more

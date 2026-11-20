@@ -177,6 +177,20 @@ pub trait Backend: Send + Sync {
     ) -> Result<Vec<(String, Version)>> {
         range_newest_opened_by_scan(self, prefix, since, limit, at)
     }
+    /// Keys starting with `prefix` whose value's `data.kind` is `kind` and `data.at` an integer
+    /// above `since`, ascending by `(at, key)` and strictly after `after`, at most `limit`. The
+    /// default pages [`Backend::range`]; a backend that indexes `(kind, at)` overrides it.
+    fn range_kind_since(
+        &self,
+        prefix: &str,
+        kind: &str,
+        since: i64,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        range_kind_since_by_scan(self, prefix, kind, since, after, limit, at)
+    }
     /// Applies `batch` as main `expect + 1`, or `Stale` if the head is no longer `expect`. The
     /// contract never puts a key in a batch twice.
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64>;
@@ -320,6 +334,52 @@ pub fn range_newest_opened_by_scan<B: Backend + ?Sized>(
         }
     }
     rows.sort_by(|a, b| (b.0, &b.1).cmp(&(a.0, &a.1)));
+    rows.truncate(limit);
+    Ok(rows.into_iter().map(|(_, k, v)| (k, v)).collect())
+}
+
+/// The value's `data.kind` and integer `data.at`, when it carries both.
+pub fn kind_at_of(value: &[u8]) -> Option<(String, i64)> {
+    #[derive(serde::Deserialize)]
+    struct Data {
+        kind: Option<serde_json::Value>,
+        at: Option<serde_json::Value>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Obj {
+        data: Option<Data>,
+    }
+    let d = serde_json::from_slice::<Obj>(value).ok()?.data?;
+    Some((d.kind?.as_str()?.to_string(), d.at?.as_i64()?))
+}
+
+/// [`Backend::range_kind_since`] by paging through `range` and sorting.
+pub fn range_kind_since_by_scan<B: Backend + ?Sized>(
+    b: &B,
+    prefix: &str,
+    kind: &str,
+    since: i64,
+    after: Option<(i64, &str)>,
+    limit: usize,
+    at: u64,
+) -> Result<Vec<(String, Version)>> {
+    const SCAN: usize = 1_000;
+    let mut rows = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = b.range(prefix, cursor.as_deref(), SCAN, at)?;
+        let full = page.len() == SCAN;
+        cursor = page.last().map(|(k, _)| k.clone());
+        rows.extend(page.into_iter().filter_map(|(k, v)| {
+            let (k_kind, k_at) = kind_at_of(&v.value)?;
+            let past = after.is_none_or(|(a, ak)| (k_at, k.as_str()) > (a, ak));
+            (k_kind == kind && k_at > since && past).then_some((k_at, k, v))
+        }));
+        if !full {
+            break;
+        }
+    }
+    rows.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
     rows.truncate(limit);
     Ok(rows.into_iter().map(|(_, k, v)| (k, v)).collect())
 }

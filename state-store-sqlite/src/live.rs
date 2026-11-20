@@ -96,6 +96,11 @@ impl<B: Backend + Clone> Backend for Scoped<B> {
         Ok(self.strip(self.inner.range_newest_opened(&self.outer(prefix), since, limit, at)?))
     }
 
+    fn range_kind_since(&self, prefix: &str, kind: &str, since: i64, after: Option<(i64, &str)>, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
+        let after = after.map(|(a, k)| (a, self.outer(k)));
+        Ok(self.strip(self.inner.range_kind_since(&self.outer(prefix), kind, since, after.as_ref().map(|(a, k)| (*a, k.as_str())), limit, at)?))
+    }
+
     fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
         Ok(self
             .inner

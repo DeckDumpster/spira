@@ -8,6 +8,7 @@ use state_store::{Backend, Object, Request, Result, Selector, Txn};
 use super::keys;
 
 const CARRY_CHUNK: usize = 100;
+pub(crate) const KIND_CHUNK: usize = 256;
 
 /// The key component of facts carried over from the dolt database.
 pub const CARRIED: &str = "carried-from-lifecycle";
@@ -66,10 +67,38 @@ impl<B: Backend> Store<B> {
     pub fn facts(&self, ids: &[String]) -> Result<Vec<Fact>> {
         let prefixes: Vec<String> = if ids.is_empty() { vec![keys::FACTS.to_string()] } else { ids.iter().map(|i| keys::facts_of(i)).collect() };
         let (mut items, _) = self.contract().list(&prefixes.iter().map(String::as_str).collect::<Vec<_>>(), &Selector::Everything)?;
-        let carried = |k: &str| k.contains(&format!("/{CARRIED}/"));
-        items.sort_by_key(|i| (bead_of(&i.key).to_string(), !carried(&i.key), if carried(&i.key) { Default::default() } else { i.mod_rev }, i.key.clone()));
+        items.sort_by_key(|i| (bead_of(&i.key).to_string(), !is_carried(&i.key), if is_carried(&i.key) { Default::default() } else { i.mod_rev }, i.key.clone()));
         Ok(items.iter().map(|i| Fact::read(bead_of(&i.key), &i.value.data)).collect())
     }
+
+    /// The facts of `kinds` after `since` (every one when `None`), read per kind through the
+    /// `(kind, at)` index in pages: the cost follows the facts answered, not every fact written.
+    /// Ordered as [`Store::facts`] orders them.
+    pub fn facts_of_kinds(&self, kinds: &[String], since: Option<i64>) -> Result<Vec<Fact>> {
+        let contract = self.contract();
+        let rev = contract.head()?;
+        let mut items = Vec::new();
+        for kind in kinds {
+            let mut cursor: Option<(i64, String)> = None;
+            loop {
+                let after = cursor.as_ref().map(|(a, k)| (*a, k.as_str()));
+                let page = contract.range_kind_since(keys::FACTS, kind, since.unwrap_or(i64::MIN), after, KIND_CHUNK, rev)?;
+                cursor = page.last().map(|i| (i.value.data["at"].as_i64().unwrap_or(0), i.key.clone()));
+                let full = page.len() == KIND_CHUNK;
+                items.extend(page);
+                if !full {
+                    break;
+                }
+            }
+        }
+        items.sort_by_key(|i| (bead_of(&i.key).to_string(), !is_carried(&i.key), if is_carried(&i.key) { Default::default() } else { i.mod_rev }, i.key.clone()));
+        items.dedup_by(|a, b| a.key == b.key);
+        Ok(items.iter().map(|i| Fact::read(bead_of(&i.key), &i.value.data)).collect())
+    }
+}
+
+fn is_carried(key: &str) -> bool {
+    key.contains(&format!("/{CARRIED}/"))
 }
 
 fn bead_of(key: &str) -> &str {
