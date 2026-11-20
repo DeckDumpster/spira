@@ -251,6 +251,9 @@ struct LandingMail {
     repo: String,
     subject: String,
     body: String,
+    ungated: bool,
+    run: PathBuf,
+    record: String,
 }
 
 /// The sentence a landing mail closes with about its release; empty when no activation was tried.
@@ -265,7 +268,21 @@ fn deploy_note(head: &str, outcome: Option<&super::deploy::Outcome>) -> String {
     }
 }
 
+fn release_note(outcome: Option<&super::deploy::Outcome>) -> String {
+    match outcome {
+        Some(super::deploy::Outcome::Activated(sha)) => sha.clone(),
+        Some(super::deploy::Outcome::Superseded(why)) => format!("not activated: {why}"),
+        _ => "none".into(),
+    }
+}
+
+/// A gated landing whose release did not fault is a record; only an ungated or faulted one is an alert.
 fn send_landing_mail(w: &World, m: LandingMail, head: &str, outcome: Option<&super::deploy::Outcome>) {
+    let faulted = matches!(outcome, Some(super::deploy::Outcome::Fault(_)));
+    if !m.ungated && !faulted {
+        super::landing_log(&m.run, &format!("{} release={}", m.record, release_note(outcome)));
+        return;
+    }
     w.lib.notify(&m.mailbox, &m.repo, &m.subject, &format!("{}{}", m.body, deploy_note(head, outcome)));
 }
 
@@ -630,6 +647,9 @@ pub fn land_local_deferring(
             "{base} fast-forwarded to {head} (round {n}, archived at {archive}). Members: {listed}{}",
             ungated.as_ref().map(|r| format!(". UNGATED — no gate PASS or round GREEN for this tree; SPIRA_LAND_UNGATED={} by={} evidence={}", r.reason, r.by, r.evidence)).unwrap_or_default()
         ),
+        ungated: ungated.is_some(),
+        run: c.s.run.clone(),
+        record: format!("QUEUE LANDED {} repo={name} round={n} base={base} head={head} members={listed}", w.clock.now()),
     };
     match pending.as_mut() {
         Some(p) => p.mail = Some(mail),
