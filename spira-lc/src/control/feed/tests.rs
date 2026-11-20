@@ -384,6 +384,27 @@ fn history_reads_a_beads_keys_in_pages_and_their_events_in_chunks_at_one_revisio
     assert_eq!(call(&s, &["history", "sp-a", "--machine", "bead"]), h);
 }
 
+#[test]
+fn history_naming_a_rev_with_no_events_key_is_refused_naming_the_rev() {
+    use state_store::{Object, Rev, Write};
+    let s = store(MemBackend::new(), &VirtualClock::new(0));
+    create(&s, "sp-a");
+    toggle(&s, "sp-a", 1);
+    let head = s.contract().head().unwrap();
+    s.contract()
+        .backend()
+        .commit(head, &[Write::Put {
+            key: keys::history_entry("sp-a", 1, "orphan"),
+            value: Object::new(serde_json::json!({})).encode(),
+            create_rev: Rev::new(head + 1, 0),
+            prev: None,
+        }])
+        .unwrap();
+    let (code, out) = verbs::run(&s, &["history", "sp-a"].map(String::from));
+    assert_ne!(code, 0, "{out}");
+    assert!(out.contains(&format!("names rev {}, which has no events key", head + 1)), "{out}");
+}
+
 fn store_usage_answers_one_bounded_page_with_a_cursor_and_refuses_a_page_above_the_cap<B: Backend>(
     s: &Store<B>,
 ) {
