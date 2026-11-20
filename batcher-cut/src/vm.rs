@@ -636,7 +636,12 @@ fn filter_red_in(
         .filter(|(_, stage)| phases.contains(stage))
         .flat_map(|(_, stage)| batcher::unitattr::failing_lines(&fs::read_to_string(results.join(format!("{stage}.out"))).unwrap_or_default()))
         .collect();
-    Some(FilterRed { name, named, failed, harness })
+    let assertion_lines: Vec<String> = TEST_PHASES
+        .iter()
+        .filter(|(_, stage)| phases.contains(stage))
+        .flat_map(|(_, stage)| batcher::unitattr::assertion_delta(&fs::read_to_string(results.join(format!("{stage}.out"))).unwrap_or_default()))
+        .collect();
+    Some(FilterRed { name, named, failed, harness, assertion_lines })
 }
 
 const UNIT_TESTS: &str = "unit-tests";

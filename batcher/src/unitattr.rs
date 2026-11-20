@@ -180,8 +180,114 @@ pub fn reaching(
         .collect()
 }
 
+fn debug_string(s: &str) -> String {
+    let s = s.trim();
+    let Some(inner) = s.strip_prefix('"').and_then(|r| r.strip_suffix('"')) else {
+        return s.to_string();
+    };
+    let mut out = String::new();
+    let mut it = inner.chars();
+    while let Some(c) = it.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match it.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some(o) => out.push(o),
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// The trimmed, non-empty lines that one side of each `assertion `left == right` failed` block
+/// holds and the other lacks, once each.
+pub fn assertion_delta(out: &str) -> Vec<String> {
+    let mut delta: Vec<String> = vec![];
+    let mut lines = out.lines();
+    while let Some(l) = lines.next() {
+        if !l.contains("assertion `left == right` failed") {
+            continue;
+        }
+        let (mut left, mut right) = (None, None);
+        for l in lines.by_ref().take(8) {
+            let l = l.trim();
+            if let Some(v) = l.strip_prefix("left:") {
+                left = Some(debug_string(v));
+            } else if let Some(v) = l.strip_prefix("right:") {
+                right = Some(debug_string(v));
+            }
+            if left.is_some() && right.is_some() {
+                break;
+            }
+        }
+        let (Some(left), Some(right)) = (left, right) else { continue };
+        let side = |t: &str| -> BTreeSet<String> {
+            t.lines().map(str::trim).filter(|x| !x.is_empty()).map(String::from).collect()
+        };
+        let (a, b) = (side(&left), side(&right));
+        for line in left.lines().chain(right.lines()).map(str::trim) {
+            if !line.is_empty() && a.contains(line) != b.contains(line) && !delta.iter().any(|d| d == line) {
+                delta.push(line.to_string());
+            }
+        }
+    }
+    delta
+}
+
+/// The one member of `reach` whose diff adds a line whole-line equal to a `delta` line, with
+/// that line; `None` when no member or several do.
+pub fn assertion_owner(
+    delta: &[String],
+    diffs: &[MemberDiff],
+    reach: &BTreeMap<Id, String>,
+) -> Option<(Id, String)> {
+    let mut hits: Vec<(Id, String)> = vec![];
+    for d in diffs.iter().filter(|d| reach.contains_key(&d.id)) {
+        let found = d.added.lines().filter_map(|l| l.strip_prefix('+')).map(str::trim).find(|a| delta.iter().any(|x| x == a));
+        if let Some(line) = found {
+            hits.push((d.id.clone(), line.to_string()));
+        }
+    }
+    match hits.as_slice() {
+        [only] => Some(only.clone()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn assertion_delta_is_the_line_one_side_of_the_failed_assertion_holds_alone() {
+        let out = "thread 'x' panicked at gate/src/tests.rs:2701:5:\nassertion `left == right` failed\n  left: \"[profile.default]\\nslow-timeout = { period = \\\"60s\\\", terminate-after = 2 }\\nstatus-level = \\\"skip\\\"\\n\"\n right: \"[profile.default]\\nslow-timeout = { period = \\\"60s\\\", terminate-after = 2 }\\n\"\n";
+        assert_eq!(assertion_delta(out), ["status-level = \"skip\""]);
+    }
+
+    #[test]
+    fn assertion_delta_is_empty_without_an_assertion_block_or_a_difference_in_lines() {
+        assert!(assertion_delta("FAIL x y\nplain output\n").is_empty());
+        let same = "assertion `left == right` failed\n  left: \"a\\nb\"\n right: \"b\\na\"\n";
+        assert!(assertion_delta(same).is_empty());
+    }
+
+    #[test]
+    fn assertion_owner_wants_exactly_one_reaching_member_with_the_whole_line() {
+        let add = |id: &str, a: &str| MemberDiff { id: id.into(), paths: vec![], added: a.into() };
+        let reach: BTreeMap<Id, String> = [("a".into(), "x".to_string()), ("b".into(), "x".to_string())].into();
+        let delta = vec!["k = 1".to_string()];
+        let one = [add("a", "+other\n"), add("b", "+  k = 1\n")];
+        assert_eq!(assertion_owner(&delta, &one, &reach), Some(("b".into(), "k = 1".into())));
+        let sub = [add("a", "+k = 11\n"), add("b", "+k = 1\n")];
+        assert_eq!(assertion_owner(&delta, &sub, &reach).map(|o| o.0), Some("b".into()));
+        let two = [add("a", "+k = 1\n"), add("b", "+k = 1\n")];
+        assert_eq!(assertion_owner(&delta, &two, &reach), None);
+        let unreached = [add("c", "+k = 1\n")];
+        assert_eq!(assertion_owner(&delta, &unreached, &reach), None);
+    }
+
     use super::*;
 
     fn graph() -> PackageGraph {

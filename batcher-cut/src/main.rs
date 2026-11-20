@@ -698,6 +698,10 @@ impl drive::RoundOps for LiveOps<'_> {
         self.start_sha.clone()
     }
 
+    fn repo_name(&self) -> String {
+        self.repo.name.clone()
+    }
+
     fn round_name(&self) -> String {
         self.batch
             .map_or_else(|| self.round.clone(), str::to_string)
