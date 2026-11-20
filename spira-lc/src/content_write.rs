@@ -1,6 +1,7 @@
 //! The content door's label, note, comment, metadata and priority writes as one SQL transaction
 //! on the beads database, so lc-serve applies them without forking `bd`. Each verb makes the
-//! row changes bd makes for it: the row itself, `updated_at`, and one `events` row.
+//! row changes bd makes for it: the row itself, `updated_at`, and the `events` row bd files
+//! (none for a comment).
 
 use crate::rows::escape;
 
@@ -55,38 +56,38 @@ impl Mutation {
     /// The transaction: `BEGIN`, the row changes, `COMMIT`.
     pub fn script(&self, db: &str) -> Vec<String> {
         let id = escape(&self.id);
-        let event = |kind: &str, old: &str, new: &str, guard: &str| {
-            format!("INSERT INTO {db}.events (issue_id, event_type, actor, old_value, new_value, created_at) SELECT '{id}', '{kind}', '{ACTOR}', {old}, {new}, UTC_TIMESTAMP() FROM DUAL{guard}")
+        let event = |kind: &str, comment: &str, new: &str, guard: &str| {
+            format!("INSERT INTO {db}.events (id, issue_id, event_type, actor, old_value, new_value, comment, created_at) SELECT UUID(), '{id}', '{kind}', '{ACTOR}', NULL, {new}, {comment}, UTC_TIMESTAMP() FROM DUAL{guard}")
         };
         let lit = |s: &str| format!("'{}'", escape(s));
+        let changed = |column: &str| format!("(SELECT JSON_OBJECT('{column}', {column}) FROM {db}.issues WHERE id = '{id}')");
         let mut s = vec!["BEGIN".to_string()];
         for op in &self.ops {
             match op {
                 Op::LabelAdd(l) => {
-                    let l = escape(l);
-                    s.push(event("label_added", "NULL", &format!("'{l}'"), &format!(" WHERE NOT EXISTS (SELECT 1 FROM {db}.labels WHERE issue_id = '{id}' AND label = '{l}')")));
-                    s.push(format!("INSERT IGNORE INTO {db}.labels (issue_id, label) VALUES ('{id}', '{l}')"));
+                    let e = escape(l);
+                    s.push(event("label_added", &lit(&format!("Added label: {l}")), "NULL", &format!(" WHERE NOT EXISTS (SELECT 1 FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}')")));
+                    s.push(format!("INSERT IGNORE INTO {db}.labels (issue_id, label) VALUES ('{id}', '{e}')"));
                 }
                 Op::LabelRemove(l) => {
-                    let l = escape(l);
-                    s.push(event("label_removed", "NULL", &format!("'{l}'"), &format!(" WHERE EXISTS (SELECT 1 FROM {db}.labels WHERE issue_id = '{id}' AND label = '{l}')")));
-                    s.push(format!("DELETE FROM {db}.labels WHERE issue_id = '{id}' AND label = '{l}'"));
+                    let e = escape(l);
+                    s.push(event("label_removed", &lit(&format!("Removed label: {l}")), "NULL", &format!(" WHERE EXISTS (SELECT 1 FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}')")));
+                    s.push(format!("DELETE FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}'"));
                 }
                 Op::Note(t) => {
                     s.push(format!("UPDATE {db}.issues SET notes = CASE WHEN notes IS NULL OR notes = '' THEN {t} ELSE CONCAT(notes, CHAR(10), {t}) END WHERE id = '{id}'", t = lit(t)));
-                    s.push(event("updated", "NULL", &lit(t), ""));
+                    s.push(event("updated", "NULL", &changed("notes"), ""));
                 }
                 Op::Comment(t) => {
-                    s.push(format!("INSERT INTO {db}.comments (issue_id, author, text, created_at) VALUES ('{id}', '{ACTOR}', {}, UTC_TIMESTAMP())", lit(t)));
-                    s.push(event("commented", "NULL", &lit(t), ""));
+                    s.push(format!("INSERT INTO {db}.comments (id, issue_id, author, text, created_at) VALUES (UUID(), '{id}', '{ACTOR}', {}, UTC_TIMESTAMP())", lit(t)));
                 }
                 Op::Metadata(k, v) => {
                     s.push(format!("UPDATE {db}.issues SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.\"{}\"', {}) WHERE id = '{id}'", escape(k), lit(v)));
-                    s.push(event("updated", "NULL", &lit(&format!("{k}={v}")), ""));
+                    s.push(event("updated", "NULL", &changed("metadata"), ""));
                 }
                 Op::Priority(p) => {
                     s.push(format!("UPDATE {db}.issues SET priority = {p} WHERE id = '{id}'"));
-                    s.push(event("updated", "NULL", &format!("'{p}'"), ""));
+                    s.push(event("updated", "NULL", &format!("JSON_OBJECT('priority', {p})"), ""));
                 }
             }
         }
@@ -234,7 +235,11 @@ pub fn run_committer() {
         match w.conn.execute("CALL DOLT_COMMIT('-Am', 'spira-lc: content writes')") {
             Ok(()) => {}
             Err(e) if format!("{e:?}").contains("nothing to commit") => {}
-            Err(e) => eprintln!("spira-lc serve: dolt commit of content writes failed: {e:?}"),
+            Err(e) => {
+                eprintln!("spira-lc serve: dolt commit of content writes failed: {e:?}");
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                COMMITTER.owe();
+            }
         }
     }
 }
@@ -298,7 +303,7 @@ mod tests {
             s,
             vec![
                 "BEGIN",
-                "INSERT INTO `beads`.events (issue_id, event_type, actor, old_value, new_value, created_at) SELECT 'sp-a', 'label_added', 'spira-lc', NULL, 'overseer', UTC_TIMESTAMP() FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `beads`.labels WHERE issue_id = 'sp-a' AND label = 'overseer')",
+                "INSERT INTO `beads`.events (id, issue_id, event_type, actor, old_value, new_value, comment, created_at) SELECT UUID(), 'sp-a', 'label_added', 'spira-lc', NULL, NULL, 'Added label: overseer', UTC_TIMESTAMP() FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `beads`.labels WHERE issue_id = 'sp-a' AND label = 'overseer')",
                 "INSERT IGNORE INTO `beads`.labels (issue_id, label) VALUES ('sp-a', 'overseer')",
                 "UPDATE `beads`.issues SET updated_at = UTC_TIMESTAMP() WHERE id = 'sp-a'",
                 "COMMIT",
@@ -319,9 +324,11 @@ mod tests {
         let n = script(&["note", "sp-a", "--stdin"], Some("body\n"));
         assert!(n[1].contains("CONCAT(notes, CHAR(10), 'body')"), "{}", n[1]);
         let c = script(&["comments", "add", "sp-a", "hi"], None);
-        assert!(c[1].starts_with("INSERT INTO `beads`.comments (issue_id, author, text, created_at) VALUES ('sp-a', 'spira-lc', 'hi',"));
+        assert!(c[1].starts_with("INSERT INTO `beads`.comments (id, issue_id, author, text, created_at) VALUES (UUID(), 'sp-a', 'spira-lc', 'hi',"));
         let m = script(&["update", "sp-a", "--set-metadata", "k=v"], None);
         assert!(m[1].contains("JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.\"k\"', 'v')"), "{}", m[1]);
+        assert!(n[2].starts_with("INSERT INTO `beads`.events (id, issue_id,") && n[2].contains("UUID()") && n[2].contains("JSON_OBJECT('notes', notes)"), "{}", n[2]);
+        assert_eq!(c.len(), 4, "a comment files no event, as bd files none: {c:?}");
         let p = script(&["update", "sp-a", "-p", "2"], None);
         assert_eq!(p[1], "UPDATE `beads`.issues SET priority = 2 WHERE id = 'sp-a'");
     }

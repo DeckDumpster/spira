@@ -255,9 +255,12 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
                 }
                 report
             };
-            crate::content::run(rest, stdin, &mut guard, &mut after, &|a| content.read(a), &|a, body| match crate::content_write::Mutation::of(a, body) {
-                Some(m) => content.mutate(&m),
-                None => content.write_stdin_in(a, body, guards.cwd.take().as_deref()),
+            crate::content::run(rest, stdin, &mut guard, &mut after, &|a| content.read(a), &|a, body| {
+                let cwd = guards.cwd.take();
+                match (crate::content_write::Mutation::of(a, body), &cwd) {
+                    (Some(m), None) => content.mutate(&m),
+                    _ => content.write_stdin_in(a, body, cwd.as_deref()),
+                }
             })
         }
         "close-epic" => callers::close_epic(rest, m, bd),
