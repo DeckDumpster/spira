@@ -78,6 +78,8 @@ pub enum Composition {
         touched: Vec<String>,
         crates: Vec<String>,
         targets: Targets,
+        /// Dependents the selection computed and the cap dropped; sorted. The round tests them.
+        dropped: Vec<String>,
     },
     /// The gate string with suites off: nothing buildable changed. Under `gate_mode = fences`
     /// every unforced trial composes this, and the string has lost its suites step
@@ -318,6 +320,7 @@ pub fn compose(
             touched: vec!["*".into()],
             targets: targets_of(&all, members),
             crates: all,
+            dropped: Vec::new(),
         };
     }
     unit_of(touched, readers, members, forces.unit_cap)
@@ -333,7 +336,8 @@ fn unit_of(mut touched: BTreeSet<String>, readers: BTreeSet<String>, members: &[
         crates.dedup();
         crates
     };
-    let mut crates = within(with_transitive_dependents(&touched, members));
+    let full = within(with_transitive_dependents(&touched, members));
+    let mut crates = full.clone();
     if cap.is_some_and(|c| crates.len() > c) {
         crates = within(with_dependents(&touched, members));
         if cap.is_some_and(|c| crates.len() > c) {
@@ -341,7 +345,8 @@ fn unit_of(mut touched: BTreeSet<String>, readers: BTreeSet<String>, members: &[
         }
     }
     touched.extend(readers.iter().cloned());
-    Composition::Unit { touched: touched.into_iter().collect(), targets: targets_of(&crates, members), crates }
+    let dropped = full.into_iter().filter(|c| !crates.contains(c)).collect();
+    Composition::Unit { touched: touched.into_iter().collect(), targets: targets_of(&crates, members), crates, dropped }
 }
 
 fn targets_of(crates: &[String], members: &[Member]) -> Targets {
@@ -973,6 +978,17 @@ mod tests {
     }
 
     #[test]
+    fn a_selection_the_cap_narrows_names_the_dependents_it_dropped() {
+        let w = ws();
+        let at = |cap| compose(GateMode::Fences, &Forces { unit_cap: cap, ..Forces::default() }, &ch(&["spira-config/src/lib.rs"]), Ok(&w));
+        let Composition::Unit { crates, dropped, .. } = at(Some(1)) else { panic!("not unit") };
+        assert_eq!(crates, v(&["spira-config"]));
+        assert_eq!(dropped, v(&["dwarf", "landing-pass", "queue"]));
+        let Composition::Unit { dropped, .. } = at(None) else { panic!("not unit") };
+        assert!(dropped.is_empty());
+    }
+
+    #[test]
     fn a_reader_of_a_touched_file_survives_the_cap() {
         let w = ws();
         let f = Forces { unit_cap: Some(1), ..Forces::default() };
@@ -991,6 +1007,7 @@ mod tests {
                     touched: vec!["gate".into()],
                     crates: vec!["gate".into()],
                     targets: Targets::default(),
+                    dropped: vec![],
                 },
             ),
             (
@@ -999,6 +1016,7 @@ mod tests {
                     touched: vec!["gate".into()],
                     crates: vec!["gate".into()],
                     targets: Targets::default(),
+                    dropped: vec![],
                 },
             ),
             (
@@ -1007,6 +1025,7 @@ mod tests {
                     touched: vec!["gate".into()],
                     crates: vec!["gate".into()],
                     targets: Targets::default(),
+                    dropped: vec![],
                 },
             ),
             (
@@ -1015,6 +1034,7 @@ mod tests {
                     touched: vec!["panel".into()],
                     crates: vec!["panel".into()],
                     targets: Targets::default(),
+                    dropped: vec![],
                 },
             ),
             (
@@ -1023,6 +1043,7 @@ mod tests {
                     touched: vec!["panel".into()],
                     crates: vec!["panel".into()],
                     targets: Targets::default(),
+                    dropped: vec![],
                 },
             ),
             (&["gate/src/engine.rs", "spira/lib.sh"], s("script")),
@@ -1044,6 +1065,7 @@ mod tests {
                     touched: vec!["release".into()],
                     crates: vec!["release".into()],
                     targets: Targets::default(),
+                    dropped: vec![],
                 },
             ),
             (
@@ -1052,6 +1074,7 @@ mod tests {
                     touched: vec!["release".into()],
                     crates: vec!["release".into()],
                     targets: Targets::default(),
+                    dropped: vec![],
                 },
             ),
             (
@@ -1060,6 +1083,7 @@ mod tests {
                     touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     targets: Targets::default(),
+                    dropped: vec![],
                 },
             ),
             (
@@ -1068,6 +1092,7 @@ mod tests {
                     touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     targets: Targets::default(),
+                    dropped: vec![],
                 },
             ),
             (
@@ -1076,6 +1101,7 @@ mod tests {
                     touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     targets: Targets::default(),
+                    dropped: vec![],
                 },
             ),
             (&[], Fences),
@@ -1286,6 +1312,7 @@ mod tests {
             touched: vec![],
             crates: vec![],
             targets: Targets::default(),
+            dropped: vec![],
         };
         assert_eq!(u.label(), "unit");
         assert!(u.suites_off());
@@ -1669,6 +1696,7 @@ cargo: test tests::x ... ok";
             touched: vec!["tsd".into()],
             crates: vec!["tsd".into()],
             targets: Targets::default(),
+            dropped: vec![],
         }
     }
 

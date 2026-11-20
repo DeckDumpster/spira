@@ -2,7 +2,7 @@ TYPE=u32
 GROUP=gate
 DOC=MOST CRATES THE GATE'S UNIT TIER SELECTS before it narrows to the touched crates' direct dependents, then to the touched crates alone; the round tests every dependent
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # Measured over 89 crates: 12m10s (--lib --bins) + 5m27s (--test) + 1m12s (--doc), about 13 s
-    # per crate; 20 crates keeps the three passes inside SPIRA_GATE_DEADLINE.
-    : "${SPIRA_GATE_UNIT_MAX_CRATES:=20}"
+    # Near-whole-workspace selections (4,000-4,900 tests) measured 48-320 s of tests, with no doc
+    # pass; the cap fires only once the workspace outgrows SPIRA_GATE_DEADLINE.
+    : "${SPIRA_GATE_UNIT_MAX_CRATES:=120}"
 SPIRA_CONF_DEFAULT_EOF
