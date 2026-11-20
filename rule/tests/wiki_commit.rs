@@ -3,12 +3,21 @@
 
 use std::fs;
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use testkit::TempDir;
 
-const SCRIPT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/wiki-commit.sh");
+fn script() -> PathBuf {
+    testkit::manifest_dir().join("../spira/wiki-commit.sh")
+}
+
+fn make_executable(p: &Path) {
+    let mut perm = fs::metadata(p).unwrap().permissions();
+    perm.set_mode(0o755);
+    fs::set_permissions(p, perm).unwrap();
+}
 
 fn real_git() -> String {
     let out = Command::new("bash").args(["-c", "command -v git"]).output().unwrap();
@@ -39,7 +48,7 @@ fn head(w: &Path) -> String {
 
 fn run(w: &Path, paths: &str, msg: &str, wait: &str, path_env: Option<&str>) -> Output {
     let mut c = Command::new("bash");
-    c.arg(SCRIPT).arg(w).arg(msg).env("WIKI_COMMIT_LOCK_WAIT", wait);
+    c.arg(script()).arg(w).arg(msg).env("WIKI_COMMIT_LOCK_WAIT", wait);
     if let Some(p) = path_env {
         c.env("PATH", p);
     }
@@ -78,7 +87,7 @@ exit $rc
     );
     let g = bin.join("git");
     fs::write(&g, script).unwrap();
-    Command::new("chmod").arg("+x").arg(&g).status().unwrap();
+    make_executable(&g);
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     (path, counter)
 }
@@ -161,7 +170,7 @@ fn a_failing_pre_commit_hook_fails_the_script_and_its_text_reaches_stderr() {
     let hook = w.join(".git/hooks/pre-commit");
     fs::create_dir_all(hook.parent().unwrap()).unwrap();
     fs::write(&hook, "#!/bin/sh\necho \"hook-says-no-commit\" >&2\nexit 1\n").unwrap();
-    Command::new("chmod").arg("+x").arg(&hook).status().unwrap();
+    make_executable(&hook);
     let o = run(&w, "hook.md\n", "hooked", "1", None);
     assert_ne!(o.status.code(), Some(0));
     assert!(stderr(&o).contains("hook-says-no-commit"), "{}", stderr(&o));
