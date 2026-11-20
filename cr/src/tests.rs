@@ -138,21 +138,28 @@ fn a_trait_unit_holds_the_trait_its_impls_and_the_dyn_caller() {
 
 #[test]
 fn a_boundary_unit_holds_the_caller_and_the_module_it_uses() {
-    let (_, v) = json(&ports(), &["pick", "--aim", "demo/src/net.rs"]);
-    let kinds: Vec<&str> = [&v["unit"]["kind"]].iter().map(|k| k.as_str().unwrap()).collect();
-    assert!(kinds == ["boundary"] || kinds == ["module"]);
-    let (_, v) = json(&ports(), &["pick", "--aim", "other/src/util.rs", "--seed", "1"]);
-    assert!(v["ok"].as_bool().unwrap());
-    let ids: Vec<String> = {
-        let p = ports_with(fixture(), vec![row("module", "x", NOW, &[])], cfg());
-        let mut out = Vec::new();
-        for seed in 0..40 {
-            let (_, v) = json(&p, &["pick", "--aim", "other", "--seed", &seed.to_string()]);
-            out.push(v["unit"]["id"].as_str().unwrap().to_string());
-        }
-        out
-    };
-    assert!(ids.iter().any(|i| i == "boundary:demo/src/net.rs->other/src/util.rs"), "{ids:?}");
+    let p = ports_with(fixture(), vec![row("module", "module:elsewhere", NOW, &[("elsewhere.rs", "x")])], cfg());
+    let (_, v) = json(&p, &["pick", "--aim", "other"]);
+    assert_eq!(v["unit"]["id"], "boundary:demo/src/net.rs->other/src/util.rs");
+    assert_eq!(unit_files(&v), ["demo/src/net.rs", "other/src/util.rs"]);
+}
+
+#[test]
+fn aim_followed_by_json_takes_json_as_the_aim_and_help_as_a_value_is_no_help() {
+    let o = go(&ports(), &["pick", "--aim", "--json"]);
+    assert_eq!(o.code, 2);
+    assert!(o.stderr.contains("matched nothing"), "{}", o.stderr);
+    assert!(go(&ports(), &["pick", "--aim", "-h"]).stdout.is_empty());
+}
+
+#[test]
+fn every_default_exclude_form_weighs_zero() {
+    for path in ["a/fixtures/x.rs", "fixtures/x.rs", "a/b.generated.rs", "x/vendor/y/z.rs", "Cargo.lock", "sub/Cargo.lock"] {
+        assert!(crate::glob::any(&cfg().exclude, path), "{path}");
+    }
+    for path in ["a/fixture/x.rs", "a/b.rs", "Cargo.toml"] {
+        assert!(!crate::glob::any(&cfg().exclude, path), "{path}");
+    }
 }
 
 #[test]

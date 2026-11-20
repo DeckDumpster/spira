@@ -174,7 +174,7 @@ pub fn boundary_units(ix: &Index) -> Vec<Unit> {
     out
 }
 
-fn command_words(line: &str) -> Vec<String> {
+pub fn command_words(line: &str) -> Vec<String> {
     let t = line.trim_start();
     if t.starts_with('#') {
         return Vec::new();

@@ -59,7 +59,10 @@ pub fn dependents(ix: &Index, unit: &Unit) -> u32 {
         }
         Kind::Script => {
             let bin = unit.id.rsplit(':').next().unwrap_or("");
-            ix.text.iter().filter(|(p, t)| ext(p) == "sh" && !inside.contains(&p.as_str()) && t.contains(bin)).count() as u32
+            ix.text
+                .iter()
+                .filter(|(p, t)| ext(p) == "sh" && !inside.contains(&p.as_str()) && t.lines().flat_map(crate::units::command_words).any(|w| w == bin))
+                .count() as u32
         }
         Kind::Persona => 0,
     }

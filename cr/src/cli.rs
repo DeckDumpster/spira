@@ -32,41 +32,65 @@ Exit codes:
   2  usage: unknown or malformed argument, or --aim matched nothing
 ";
 
-pub fn wants_help(argv: &[String]) -> bool {
-    argv.iter().any(|a| a == "-h" || a == "--help")
-}
-
-pub fn wants_json(argv: &[String]) -> bool {
-    argv.iter().any(|a| a == "--json")
-}
-
 struct Args {
     aim: Option<String>,
     seed: Option<u64>,
-    json: bool,
 }
 
-fn parse(argv: &[String]) -> Result<Args, String> {
-    let mut it = argv.iter();
-    match it.next().map(String::as_str) {
-        Some("pick") => {}
-        Some(other) => return Err(format!("unknown command `{other}`; the only command is `cr pick` (see -h)")),
-        None => return Err("no command; use `cr pick` (see -h)".to_string()),
-    }
-    let mut a = Args { aim: None, seed: None, json: false };
-    while let Some(arg) = it.next() {
-        match arg.as_str() {
-            "--aim" => a.aim = Some(it.next().ok_or("--aim needs a value")?.clone()),
-            "--seed" => {
-                let v = it.next().ok_or("--seed needs a value")?;
-                a.seed = Some(v.parse().map_err(|_| format!("--seed {v:?} is not a non-negative integer"))?);
+enum Cmd {
+    Help,
+    Pick(Args),
+}
+
+/// The one reader of argv: the command, and whether `--json` stood in a flag position.
+fn parse(argv: &[String]) -> (Result<Cmd, String>, bool) {
+    let mut json = false;
+    let mut flags = argv.iter();
+    while let Some(a) = flags.next() {
+        match a.as_str() {
+            "--aim" | "--seed" => {
+                flags.next();
             }
-            "--json" => a.json = true,
-            f if f.starts_with('-') => return Err(format!("unknown flag `{f}` (see -h)")),
-            positional => return Err(format!("positional argument `{positional}` is not accepted; name it: `--aim {positional}`")),
+            "--json" => json = true,
+            _ => {}
         }
     }
-    Ok(a)
+    let mut it = argv.iter();
+    let first = it.next().map(String::as_str);
+    if matches!(first, Some("-h" | "--help")) {
+        return (Ok(Cmd::Help), false);
+    }
+    let r = (|| {
+        match first {
+            Some("pick") => {}
+            Some(other) => return Err(format!("unknown command `{other}`; the only command is `cr pick` (see -h)")),
+            None => return Err("no command; use `cr pick` (see -h)".to_string()),
+        }
+        let mut a = Args { aim: None, seed: None };
+        while let Some(arg) = it.next() {
+            match arg.as_str() {
+                "-h" | "--help" => return Ok(Cmd::Help),
+                "--aim" => a.aim = Some(it.next().ok_or("--aim needs a value")?.clone()),
+                "--seed" => {
+                    let v = it.next().ok_or("--seed needs a value")?;
+                    a.seed = Some(v.parse().map_err(|_| format!("--seed {v:?} is not a non-negative integer"))?);
+                }
+                "--json" => {}
+                f if f.starts_with('-') => return Err(format!("unknown flag `{f}` (see -h)")),
+                positional => return Err(format!("positional argument `{positional}` is not accepted; name it: `--aim {positional}`")),
+            }
+        }
+        Ok(Cmd::Pick(a))
+    })();
+    (r, json)
+}
+
+pub fn wants_help(argv: &[String]) -> bool {
+    matches!(parse(argv).0, Ok(Cmd::Help))
+}
+
+pub fn wants_json(argv: &[String]) -> bool {
+    parse(argv).1
 }
 
 fn fail(code: i32, json: bool, msg: &str, tried: &[String], seed: Option<u64>, commit: Option<&str>) -> Outcome {
@@ -87,12 +111,10 @@ pub fn error_outcome(code: i32, json: bool, msg: &str) -> Outcome {
 }
 
 pub fn run(argv: &[String], ports: &Ports) -> Outcome {
-    if wants_help(argv) {
-        return Outcome { code: 0, stdout: HELP.to_string(), stderr: String::new() };
-    }
-    let json = wants_json(argv);
-    let args = match parse(argv) {
-        Ok(a) => a,
+    let (parsed, json) = parse(argv);
+    let args = match parsed {
+        Ok(Cmd::Help) => return Outcome { code: 0, stdout: HELP.to_string(), stderr: String::new() },
+        Ok(Cmd::Pick(a)) => a,
         Err(e) => return fail(2, json, &e, &[], None, None),
     };
     let now = ports.clock.now_ms();
