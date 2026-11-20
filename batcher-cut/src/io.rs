@@ -3885,6 +3885,11 @@ pub fn round_corpus_ended_red(env: &Env, repo: &Repo, batch: &str) {
     round_pass_incomplete(env, repo, batch, "the corpus pass ended red; its members are attributed");
 }
 
+/// The corpus re-run the attribution opened ended: its pass is incomplete, and certify owns any green.
+pub fn round_attribution_rerun_ended(env: &Env, repo: &Repo, batch: &str) {
+    round_pass_incomplete(env, repo, batch, "the attribution's corpus re-run ended; its members are probed");
+}
+
 fn round_pass_incomplete(env: &Env, repo: &Repo, batch: &str, reason: &str) {
     match round_verb(env, &["pass-verdict", "--verdict", "incomplete", "--reason", reason, batch, &repo.name], "") {
         Ok(r) if r.code == Some(0) => {}
