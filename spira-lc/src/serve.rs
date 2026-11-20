@@ -516,6 +516,10 @@ impl Startup {
             start: self.began,
             end: SystemTime::now(),
             queue_wait: Duration::ZERO,
+            before_work: Duration::ZERO,
+            answer_wait: Duration::ZERO,
+            after_answer: Duration::ZERO,
+            cut: false,
             answered: None,
             cut_at: None,
             phases: &us,
@@ -775,9 +779,9 @@ fn handle(stream: UnixStream, accepted: Instant) {
 }
 
 fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Instant, door: &Door) {
+    let started = SystemTime::now();
     let received = Instant::now();
     let started_work = Arc::new(std::sync::Mutex::new(None::<Instant>));
-    let started = SystemTime::now();
     let mut reader = BufReader::new(stream.try_clone().expect("clone unix stream"));
     let read_at;
     let (req, size) = match read_request(&mut reader) {
@@ -798,6 +802,10 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
                 start: started,
                 end: SystemTime::now(),
                 queue_wait: Instant::now().saturating_duration_since(accepted),
+                before_work: Duration::ZERO,
+                answer_wait: Duration::ZERO,
+                after_answer: Duration::ZERO,
+                cut: false,
                 answered: None,
                 cut_at: None,
                 phases: &none.phases,
@@ -816,6 +824,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     let task = req.task.clone();
     let recorder = Arc::new(state_store::phases::Recorder::default());
     let mut cut_at = None;
+    let worked;
     let ans = match crate::work::bind_peer(&req.argv, peer_uid(&stream), &map) {
         Ok(argv) => {
             let who = caller.clone();
@@ -837,16 +846,22 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
                 work(req)
             };
             let wait = limit.saturating_sub(received.elapsed());
+            let handed = Instant::now();
             let in_time = match ledgered {
                 Some(id) => door.ledger.answer_in_time(&id, wait, run),
                 None => within(wait, run),
             };
+            worked = (handed, Instant::now());
             in_time.unwrap_or_else(|| {
                 cut_at = Some(limit);
                 deadline_answer()
             })
         }
-        Err((code, out)) => Answer::out(code, out),
+        Err((code, out)) => {
+            let now = Instant::now();
+            worked = (now, now);
+            Answer::out(code, out)
+        }
     };
     let method = crate::slow::method_of(&argv_seen);
     if crate::slow::first_of_verb(&verb) {
@@ -867,6 +882,8 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
     let store = recorder.snapshot();
+    let (handed, returned) = worked;
+    let before_span = Instant::now();
     let call = spira_otel::Call {
         method: measured,
         caller: &caller,
@@ -876,6 +893,10 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
         start: started,
         end: SystemTime::now(),
         queue_wait: waited,
+        before_work: handed.saturating_duration_since(received),
+        answer_wait: returned.saturating_duration_since(handed),
+        after_answer: before_span.saturating_duration_since(returned),
+        cut: cut_at.is_some(),
         answered: Some(answered),
         cut_at,
         phases: &store.phases,
@@ -1260,6 +1281,10 @@ mod tests {
             start: now,
             end: now,
             queue_wait: std::time::Duration::ZERO,
+            before_work: std::time::Duration::ZERO,
+            answer_wait: std::time::Duration::ZERO,
+            after_answer: std::time::Duration::ZERO,
+            cut: false,
             answered: None,
             cut_at: None,
             phases: &snapshot.phases,
@@ -2216,6 +2241,64 @@ mod tests {
         assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
         assert_eq!(span_attr(&dir, "content", "spira.deadline_cut_ms"), Some(Some(50)), "a write under a request id is cut the same way");
         ledgered.notes.release();
+    }
+
+    fn spans_of(dir: &testkit::TempDir) -> Vec<opentelemetry_proto::tonic::trace::v1::Span> {
+        let file = std::fs::read_dir(dir).unwrap().flatten().next().expect("a span file");
+        let text = std::fs::read_to_string(file.path()).unwrap();
+        text.lines().map(|l| serde_json::from_str::<opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone()).collect()
+    }
+
+    fn only_span(dir: &testkit::TempDir) -> opentelemetry_proto::tonic::trace::v1::Span {
+        let mut spans = spans_of(dir);
+        assert_eq!(spans.len(), 1, "one span");
+        spans.remove(0)
+    }
+
+    fn serve_value(span: &opentelemetry_proto::tonic::trace::v1::Span, key: &str) -> opentelemetry_proto::tonic::common::v1::any_value::Value {
+        span.attributes.iter().find(|a| a.key == key).unwrap_or_else(|| panic!("{key} is on the span")).value.clone().unwrap().value.unwrap()
+    }
+
+    #[test]
+    fn a_span_cut_at_its_deadline_says_where_its_time_went() {
+        let dir = testkit::TempDir::new("lc-serve-stages");
+        let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
+        let parked = rig(true, fifty_ms());
+        let cut = send_spanned(&parked.door, Some(&sink), &["content", "note", "sp-a", "x"], None);
+        assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
+        parked.notes.release();
+        let ledgered = rig(true, fifty_ms());
+        let cut = send_spanned(&ledgered.door, Some(&sink), &["content", "note", "sp-b", "y"], Some("req-stages"));
+        assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
+        ledgered.notes.release();
+        let spans = spans_of(&dir);
+        assert_eq!(spans.len(), 2);
+        for span in &spans {
+            check_stages(span);
+        }
+    }
+
+    fn check_stages(span: &opentelemetry_proto::tonic::trace::v1::Span) {
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+        let us = |k: &str| match serve_value(span, k) {
+            Value::IntValue(n) => n as u64,
+            other => panic!("{k}: {other:?}"),
+        };
+        assert_eq!(serve_value(span, "spira.serve.cut"), Value::BoolValue(true));
+        assert!(us("spira.serve.before_work_us") + us("spira.serve.answer_wait_us") >= 50_000, "the cutoff was waited out, counted from receipt");
+        let stages = us("spira.serve.before_work_us") + us("spira.serve.answer_wait_us") + us("spira.serve.after_answer_us");
+        assert!(stages <= (span.end_time_unix_nano - span.start_time_unix_nano) / 1000, "the stages sit inside the span");
+    }
+
+    #[test]
+    fn a_call_answered_in_time_writes_cut_false() {
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+        let dir = testkit::TempDir::new("lc-serve-stages-ok");
+        let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
+        let r = rig(false, three_seconds());
+        let _ = send_spanned(&r.door, Some(&sink), &["show", "sp-none"], None);
+        let span = only_span(&dir);
+        assert_eq!(serve_value(&span, "spira.serve.cut"), Value::BoolValue(false));
     }
 
     #[test]
