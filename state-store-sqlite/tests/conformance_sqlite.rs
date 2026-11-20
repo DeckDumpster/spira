@@ -1696,44 +1696,6 @@ fn the_wal_bound_fails_when_no_checkpoint_pass_runs() {
     drop(b);
 }
 
-#[test]
-fn the_wal_restarts_and_stays_bounded_while_a_reader_never_pauses() {
-    let dir = TempDir::new("sqlite-wal-restarts-under-readers");
-    let path = dir.path().join("s.db");
-    let probe: Arc<dyn Fn() + Send + Sync> =
-        Arc::new(|| std::thread::sleep(std::time::Duration::from_millis(1))); // clock-safe: the probe holds a read open a moment; no verdict depends on its length
-    let opts = Options { checkpoint_every: 20, readers: 2, read_probe: Some(probe), ..Options::default() };
-    let b = SqliteBackend::open(&path, opts).unwrap();
-    let stop = Arc::new(AtomicBool::new(false));
-    let readers: Vec<_> = (0..2)
-        .map(|_| {
-            let (b, stop) = (b.clone(), stop.clone());
-            std::thread::spawn(move || {
-                while !stop.load(Ordering::SeqCst) {
-                    let _ = b.range("", None, 10, b.head().unwrap());
-                }
-            })
-        })
-        .collect();
-    let wal = format!("{}-wal", path.display());
-    let mut largest = 0;
-    for _ in 0..2000 {
-        put_next(&b);
-        largest = largest.max(std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0));
-    }
-    stop.store(true, Ordering::SeqCst);
-    for r in readers {
-        r.join().unwrap();
-    }
-    let bound = 16 * 1024 * 1024;
-    assert!(
-        largest < bound,
-        "the WAL grew to {largest} B, past {bound} B"
-    );
-    let done = b.checkpoints_completed();
-    assert!(done >= 20, "only {done} checkpoints completed in 2000 commits under continuous reads");
-}
-
 const CHILD_ENV: &str = "SQLITE_TEST_CHILD";
 
 /// Distinct 4 KiB keys, `n` of them in batches, so the main file grows to about `n` * 4 KiB.
@@ -1890,4 +1852,120 @@ fn a_commit_is_not_held_by_a_wal_restart_that_is_waiting_on_a_reader() {
     pass.join().unwrap().unwrap();
     committer.join().unwrap();
     assert!(returned, "commits were held until the reader was released: the restart holds the writer while it waits");
+}
+
+/// A one-reader store whose first read, once armed, holds its transaction open until released.
+/// Every later read reports the `-wal` size it sees on `probed`.
+struct HeldRead {
+    b: SqliteBackend,
+    wal: String,
+    path: PathBuf,
+    release: std::sync::mpsc::Sender<()>,
+    probed: std::sync::mpsc::Receiver<u64>,
+    reader: Option<std::thread::JoinHandle<()>>,
+}
+
+impl HeldRead {
+    fn open(dir: &TempDir, cap: i64) -> HeldRead {
+        use std::sync::mpsc::channel;
+        let path = dir.path().join("s.db");
+        let wal = format!("{}-wal", path.display());
+        let (held_tx, held_rx) = channel::<()>();
+        let (release, release_rx) = channel::<()>();
+        let (probed_tx, probed) = channel::<u64>();
+        let armed = Arc::new(AtomicBool::new(false));
+        let probe = {
+            let (armed, wal) = (armed.clone(), wal.clone());
+            let (held_tx, release_rx, probed_tx) = (Mutex::new(held_tx), Mutex::new(release_rx), Mutex::new(probed_tx));
+            Arc::new(move || {
+                if armed.swap(false, Ordering::SeqCst) {
+                    held_tx.lock().unwrap().send(()).unwrap();
+                    let _ = release_rx.lock().unwrap().recv();
+                } else {
+                    let len = std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
+                    let _ = probed_tx.lock().unwrap().send(len);
+                }
+            }) as Arc<dyn Fn() + Send + Sync>
+        };
+        let opts = Options {
+            max_read_ms: 120_000,
+            readers: 1,
+            checkpoint_every: u64::MAX,
+            wal_restart_cap_frames: cap,
+            read_probe: Some(probe),
+            ..Options::default()
+        };
+        let b = SqliteBackend::open(&path, opts).unwrap();
+        put_next(&b);
+        armed.store(true, Ordering::SeqCst);
+        let reader = {
+            let b = b.clone();
+            std::thread::spawn(move || {
+                let head = b.head().unwrap();
+                let _ = b.range("", None, 10, head);
+            })
+        };
+        held_rx.recv_timeout(std::time::Duration::from_secs(60)).expect("the reader never opened");
+        HeldRead { b, wal, path, release, probed, reader: Some(reader) }
+    }
+
+    fn grow_wal_past(&self, frames: u32) {
+        while mx_frame(&self.path) <= frames {
+            put_next(&self.b);
+        }
+    }
+
+    fn start_pass(&self) -> std::thread::JoinHandle<Result<bool, String>> {
+        let b = self.b.clone();
+        std::thread::spawn(move || state_store_sqlite::bench::checkpoint_pass(&b))
+    }
+
+    fn release_reader(&mut self) {
+        self.release.send(()).unwrap();
+        self.reader.take().unwrap().join().unwrap();
+    }
+}
+
+#[test]
+fn a_restart_past_the_wal_cap_waits_out_a_read_in_flight() {
+    let dir = TempDir::new("sqlite-restart-past-cap");
+    let mut h = HeldRead::open(&dir, 64);
+    h.grow_wal_past(64);
+    let pass = h.start_pass();
+    std::thread::sleep(std::time::Duration::from_millis(200)); // clock-safe: only orders the release after GATE_HOLD; the verdict holds however late it comes
+    h.release_reader();
+    assert!(pass.join().unwrap().unwrap(), "the restart gave up on a read in flight past the cap");
+    assert_eq!(std::fs::metadata(&h.wal).unwrap().len(), 0);
+}
+
+#[test]
+fn a_read_queued_on_a_reader_does_not_start_while_a_restart_holds_the_gate() {
+    let dir = TempDir::new("sqlite-restart-queued-read");
+    let mut h = HeldRead::open(&dir, 64);
+    h.grow_wal_past(64);
+    let queued = {
+        let b = h.b.clone();
+        std::thread::spawn(move || {
+            let head = b.head().unwrap();
+            let _ = b.range("", None, 10, head);
+        })
+    };
+    std::thread::sleep(std::time::Duration::from_millis(100)); // clock-safe: only orders the queued caller before the restart
+    let pass = h.start_pass();
+    std::thread::sleep(std::time::Duration::from_millis(100)); // clock-safe: only orders the restart's gate before the release
+    h.release_reader();
+    assert!(pass.join().unwrap().unwrap());
+    queued.join().unwrap();
+    let seen = h.probed.recv().unwrap();
+    assert_eq!(seen, 0, "the queued read opened its transaction before the restart finished: the WAL held {seen} B");
+}
+
+#[test]
+fn a_restart_below_the_wal_cap_still_gives_up_while_a_read_is_held() {
+    let dir = TempDir::new("sqlite-restart-below-cap");
+    let mut h = HeldRead::open(&dir, 64);
+    assert!(mx_frame(&h.path) <= 64);
+    let pass = h.start_pass();
+    assert!(!pass.join().unwrap().unwrap(), "the restart finished while a read was still held");
+    h.release_reader();
 }
