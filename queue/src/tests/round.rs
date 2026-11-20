@@ -9028,6 +9028,21 @@ fn open_skips_a_text_only_member_and_says_it_lands_by_lint() {
 }
 
 #[test]
+fn open_admits_a_text_only_harness_member_the_release_in_force_cannot_lend_to() {
+    let mut t = round_world();
+    t.lib.s.home_repo = "spira".into();
+    t.lib.s.text_only.push("README.md".into());
+    t.git.stat("local/main", "ta", &[("README.md", 1, 0)]);
+    t.git.ancestor("b0", "ta");
+    let rel = t.s().releases.clone().unwrap();
+    std::fs::create_dir_all(rel.join("r1/bin")).unwrap();
+    testkit::write_exe(rel.join("r1/bin/release"), "#!/bin/sh\n");
+    std::os::unix::fs::symlink(rel.join("r1"), rel.join("current")).unwrap();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert!(!t.err().contains("text-only"), "{}", t.err());
+}
+
+#[test]
 fn open_admits_a_member_that_touches_a_source_file() {
     let t = round_world();
     t.git.stat(

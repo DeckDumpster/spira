@@ -5488,6 +5488,45 @@ fn submit_of_a_text_only_bead_lands_on_the_ref_by_lint_without_a_gate_or_round()
     assert_eq!(cert.source, gate::cert::Source::LintOnly);
 }
 
+fn release_in_force_at(t: &T, name: &str) {
+    let rel = t.s().releases.clone().unwrap();
+    fs::create_dir_all(rel.join(name).join("bin")).unwrap();
+    testkit::write_exe(rel.join(name).join("bin/release"), "#!/bin/sh\n");
+    std::os::unix::fs::symlink(rel.join(name), rel.join("current")).unwrap();
+}
+
+#[test]
+fn submit_of_a_text_only_harness_bead_lands_with_the_release_in_forces_binaries() {
+    let mut t = T::new(LandMode::QueueLocal);
+    t.lib.s.home_repo = "spira".into();
+    t.lib.s.text_only.push("README.md".into());
+    text_branch(&t, &[("README.md", 1, 0)]);
+    t.git.stat("b0", "t1", &[("README.md", 1, 0)]);
+    release_in_force_at(&t, "b0");
+    assert_eq!(t.run(&["submit", "spira/sp-a"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("t1"));
+    let bins = t.s().releases.clone().unwrap().join("b0/bin");
+    let calls = t.scripts.calls.borrow().join("\n");
+    let rel = release_argv(&t).join("\n");
+    assert!(rel.contains("build t1") && rel.contains(&format!("--bin-dir {}", bins.display())), "{rel}");
+    assert!(rel.contains("activate t1"), "{rel}");
+    assert!(!calls.contains("gate "), "{calls}");
+}
+
+#[test]
+fn a_text_only_harness_tip_whose_release_in_force_is_not_its_text_ancestor_rides_the_next_round() {
+    let mut t = T::new(LandMode::QueueLocal);
+    t.lib.s.home_repo = "spira".into();
+    t.lib.s.text_only.push("README.md".into());
+    text_branch(&t, &[("README.md", 1, 0)]);
+    release_in_force_at(&t, "r1");
+    assert_eq!(t.run(&["submit", "spira/sp-a"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
+    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("gate ")));
+    let all = format!("{}{}", t.out(), t.err());
+    assert!(all.contains("cannot land by lint") && all.contains("lands in the next round"), "{all}");
+}
+
 #[test]
 fn submit_of_a_text_only_bead_whose_lint_is_red_lands_nothing() {
     let t = T::new(LandMode::QueueLocal);

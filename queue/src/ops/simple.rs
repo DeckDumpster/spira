@@ -191,6 +191,18 @@ pub fn diff_is_text_only(
 pub fn lands_by_lint(
     w: &World,
     s: &crate::ports::Settings,
+    repo: &str,
+    path: &std::path::Path,
+    base: &str,
+    tip: &str,
+) -> bool {
+    text_only_fast_forward(w, s, path, base, tip)
+        && super::land::lent_bins(w, s, repo, path, tip).is_ok()
+}
+
+fn text_only_fast_forward(
+    w: &World,
+    s: &crate::ports::Settings,
     path: &std::path::Path,
     base: &str,
     tip: &str,
@@ -206,7 +218,14 @@ pub fn lands_by_lint(
 /// through to the gate and the round, which rebase it.
 fn land_by_lint(w: &World, c: &Ctx, path: &std::path::Path, id: &str, tip: &str) -> Option<i32> {
     let base = c.r.landref.clone()?;
-    if !lands_by_lint(w, &c.s, path, &base, tip) {
+    if !lands_by_lint(w, &c.s, &c.r.name, path, &base, tip) {
+        if text_only_fast_forward(w, &c.s, path, &base, tip) {
+            if let Err(why) = super::land::lent_bins(w, &c.s, &c.r.name, path, tip) {
+                w.err(format!(
+                    "queue.sh submit: {id} is text-only but cannot land by lint: {why}; it lands in the next round"
+                ));
+            }
+        }
         return None;
     }
     let tree = w.git.rev_parse(path, &format!("{tip}^{{tree}}"))?;
