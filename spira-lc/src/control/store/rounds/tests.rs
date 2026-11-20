@@ -1247,6 +1247,18 @@ fn a_round_without_batch_events_makes_list_batches_name_the_migration() {
     assert_eq!(r.lc(&["list", "--batches", "--batch", "b-001"]).0, 0, "a round that has the field still lists");
 }
 
+/// Migration 6 fills `batch_events` with the events `fold_batch_events` keeps: the two lists
+/// name the same events.
+#[test]
+fn migration_6_selects_the_events_the_fold_keeps() {
+    let sql = state_store_sqlite::MIGRATIONS[5].join("\n");
+    let listed: Vec<&str> = crate::passes::FETCHED.split(',').collect();
+    assert_eq!(listed.len(), 8);
+    for quoted in listed {
+        assert!(sql.contains(quoted), "{quoted} is fetched but migration 6 does not select it");
+    }
+}
+
 /// Every state the round machine can be in is either listed as open or is terminal: a round in
 /// a state `list --batches --window` forgot would vanish from it.
 #[test]
