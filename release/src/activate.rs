@@ -290,6 +290,17 @@ pub struct Switched {
     /// (`X-Spira-StartWhenChanged`), each with why. A start that failed is reported to stderr
     /// and never undoes the activation.
     pub started: Vec<String>,
+    /// A rollback only: units still not up after their second restart under the target. The
+    /// target stays current; the caller names each one rather than undoing onto the release
+    /// being left.
+    pub down: Vec<Down>,
+}
+
+/// A unit a rollback could not bring up, and how it stood.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Down {
+    pub unit: String,
+    pub state: String,
 }
 
 fn unit_files(dir: &Path) -> BTreeSet<String> {
@@ -475,6 +486,13 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
             }
         }
     }
+    if !failed.is_empty() && !install_new {
+        for f in &failed {
+            eprintln!("release: {f}");
+        }
+        out.down = restart_again_under_target(ctx, &out.restarted, &attempted, &failed);
+        failed.clear();
+    }
     if !failed.is_empty() {
         let undo = undo(ctx, &changes, prev.as_deref(), &attempted);
         return Err(format!(
@@ -623,6 +641,44 @@ fn heal_stale_executables(ctx: &Ctx, rendered: &[(String, String, String, bool)]
     }
     failed.extend(stale_executables(ctx, rendered, new).into_iter().filter(|(u, _)| healed.contains(u)).map(|(u, e)| format!("{u}: a process still runs {} after its restart", e.display())));
     failed
+}
+
+/// A rollback's second chance: the target release is the one that served before, so a unit
+/// that is slow to start is restarted once more under it and reported if still down, never
+/// undone onto the release being left. Units the first pass never reached are restarted too.
+fn restart_again_under_target(ctx: &Ctx, restarted: &[String], attempted: &[String], failed: &[String]) -> Vec<Down> {
+    let mut down = Vec::new();
+    let mut waiting = Vec::new();
+    let mut seen = BTreeSet::new();
+    for u in restarted.iter().chain(attempted) {
+        if !seen.insert(u.clone()) {
+            continue;
+        }
+        let named = failed.iter().any(|f| f.starts_with(&format!("{u}: ")));
+        let up = attempted.contains(u) && !named && matches!(ctx.sc.state(u), Ok(st) if st.active == "active");
+        if up {
+            continue;
+        }
+        eprintln!("release: restarting {u} once more under the rollback target");
+        match ctx.sc.reset_failed(u).and_then(|()| restart_unit(ctx.sc, u)) {
+            Ok(()) => waiting.push(u.clone()),
+            Err(e) => down.push(Down { unit: u.clone(), state: format!("restart failed: {e}") }),
+        }
+    }
+    for (u, st) in crate::systemctl::await_settled(ctx.sc, &waiting, ctx.settle) {
+        match st {
+            Ok(st) if st.active == "active" => {}
+            Ok(st) => down.push(Down { unit: u, state: format!("ActiveState={}, Result={}", st.active, st.result) }),
+            Err(e) => down.push(Down { unit: u, state: format!("cannot read its state: {e}") }),
+        }
+    }
+    let settled: Vec<String> = waiting.into_iter().filter(|u| !down.iter().any(|d| &d.unit == u)).collect();
+    for f in stayed_up(ctx, &settled) {
+        if let Some((unit, state)) = f.split_once(": ") {
+            down.push(Down { unit: unit.into(), state: state.into() });
+        }
+    }
+    down
 }
 
 /// A restarted unit that reached `active` and then left it did not come up: a service that
@@ -1157,13 +1213,18 @@ pub fn rollback(ctx: &Ctx) -> Result<String, String> {
         }
         None => None,
     };
-    let (_, late) = switch_with_config(ctx, &prev.sha, txn.as_ref(), false, &|_| Ok(()))?;
+    let (switched, late) = switch_with_config(ctx, &prev.sha, txn.as_ref(), false, &|_| Ok(()))?;
     config_delta::clear_undo(&state, &top.sha);
     config_delta::save_retired(&state, &[])?;
     history.pop();
     write_history(&state, &history)?;
     let rec = prev.hotfix.as_ref().map(|r| Hotfix { sha: prev.sha.clone(), reason: r.clone(), at: fsutil::now_rfc3339() });
     write_hotfix(&state, rec.as_ref())?;
+    if !switched.down.is_empty() {
+        let units: Vec<String> = switched.down.iter().map(|d| format!("{} ({}): systemctl --user start {}", d.unit, d.state, d.unit)).collect();
+        let config = late.map(|e| format!("\n  {e}")).unwrap_or_default();
+        return Err(format!("rolled back to {}; {} unit(s) not up:\n  {}{config}", prev.sha, units.len(), units.join("\n  ")));
+    }
     match late {
         Some(e) => Err(e),
         None => Ok(prev.sha),
