@@ -19,6 +19,11 @@ name = "code"
 path = "tests/code.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "vocab"
+path = "tests/vocab.rs"
+required-features = ["integration"]
+
 [features]
 integration = ["bead/integration", "spira-config/integration", "spira-store/integration", "spira-lint/integration", "spira-otel/integration", "testkit/integration"]
 

@@ -1640,7 +1640,7 @@ the migration's progress meter and, once switched to `enforce`, the fence that s
 words returning. The table holds each term's replacement; `rule enact` refuses statute text against it (rule/DESIGN.md).
 
 **Scope.** Every walked path and every text file's contents, minus `docs/spikes/`, `raw/spira-beads/`
-(the bead mirror), the config key history, `*.tsv` corpora, this rule's own source and any line carrying `ffx-ok` (a retired name kept on purpose, such as a retired config key). A file holding a NUL byte is
+(the bead mirror), the config key history and `law/pointers.toml` (the book's rename history, the same class), `*.tsv` corpora, this rule's own source and any line carrying `ffx-ok` (a retired name kept on purpose, such as a retired config key). A file holding a NUL byte is
 matched by path only. Commit history is not walked.
 
 **Matching.** A name or line is split into words at every non-alphanumeric and at camelCase

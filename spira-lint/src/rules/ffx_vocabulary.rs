@@ -17,6 +17,7 @@ const NAME: &str = "ffx-vocabulary";
 const MODE_KEY: &str = "SPIRA_FFX_VOCABULARY_MODE";
 const SELF_PATH: &str = "spira-lint/src/rules/ffx_vocabulary.rs";
 const KEY_HISTORY_PATH: &str = "spira/conf.key-history";
+const POINTERS_PATH: &str = "law/pointers.toml";
 const LINE_MARKER: &str = "ffx-ok";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +100,7 @@ pub fn renamed(s: &str) -> String {
 fn exempt(path: &str) -> bool {
     path == SELF_PATH
         || path == KEY_HISTORY_PATH
+        || path == POINTERS_PATH
         || path.starts_with("docs/spikes/")
         || path.starts_with("raw/spira-beads/")
         || path.ends_with(".tsv")
@@ -135,6 +137,75 @@ fn words(s: &str) -> Vec<(usize, &str)> {
     out
 }
 
+fn phrase_re() -> &'static Regex {
+    static PHRASE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    PHRASE.get_or_init(|| Regex::new(r"(?i:\bthe)\s+Sending\b|(?i:\bsending[_-]keys\b)").expect("static regex"))
+}
+
+fn recase(word: &str, to: &str) -> String {
+    let upper = word.len() > 1 && word.bytes().all(|c| !c.is_ascii_lowercase());
+    if upper {
+        to.to_ascii_uppercase()
+    } else if word.starts_with(|c: char| c.is_ascii_uppercase()) {
+        let mut cs = to.chars();
+        cs.next().map(|f| f.to_ascii_uppercase().to_string() + cs.as_str()).unwrap_or_default()
+    } else {
+        to.to_ascii_lowercase()
+    }
+}
+
+fn article_before(out: &mut String, next: &str) {
+    let Some(first) = next.chars().next() else { return };
+    let vowel = matches!(first.to_ascii_lowercase(), 'a' | 'e' | 'i' | 'o' | 'u');
+    let Some(stem) = out.strip_suffix(' ') else { return };
+    let cut = stem.rfind(|c: char| !c.is_ascii_alphabetic()).map_or(0, |i| i + 1);
+    let fixed = match (&stem[cut..], vowel) {
+        ("a", true) => "an",
+        ("A", true) => "An",
+        ("an", false) => "a",
+        ("An", false) => "A",
+        _ => return,
+    };
+    out.truncate(cut);
+    out.push_str(fixed);
+    out.push(' ');
+}
+
+/// `text` with every term `terms_in` finds replaced by `replacement`, keeping case and the
+/// article before it; a line holding the marker is left as written, and a term with no
+/// replacement stays for the caller to report.
+pub fn rewrite(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        if line.contains(LINE_MARKER) {
+            out.push_str(line);
+        } else {
+            out.push_str(&rewrite_line(line));
+        }
+    }
+    out
+}
+
+fn rewrite_line(line: &str) -> String {
+    let phrased = phrase_re().replace_all(line, |c: &regex::Captures| {
+        if c[0].to_ascii_lowercase().contains("keys") { replacement("sending_keys") } else { replacement("the Sending") }
+    });
+    let mut out = String::with_capacity(phrased.len());
+    let mut at = 0;
+    for (start, w) in words(&phrased) {
+        let lower = w.to_ascii_lowercase();
+        let to = TERMS.iter().find(|(t, _)| *t == lower).map(|(_, r)| *r).or_else(|| CASED.iter().find(|(t, _)| *t == w).map(|(_, r)| *r));
+        let Some(to) = to.filter(|r| *r != NO_REPLACEMENT) else { continue };
+        out.push_str(&phrased[at..start]);
+        let new = if CASED.iter().any(|(t, _)| *t == w) { to.to_string() } else { recase(w, to) };
+        article_before(&mut out, &new);
+        out.push_str(&new);
+        at = start + w.len();
+    }
+    out.push_str(&phrased[at..]);
+    out
+}
+
 /// Every FFX term in `text`, as the term lowercased (`Sin` as written).
 pub fn terms_in(text: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -146,9 +217,7 @@ pub fn terms_in(text: &str) -> Vec<String> {
             out.push(w.to_string());
         }
     }
-    static PHRASE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    let phrase = PHRASE.get_or_init(|| Regex::new(r"(?i:\bthe)\s+Sending\b|(?i:\bsending[_-]keys\b)").expect("static regex"));
-    for m in phrase.find_iter(text) {
+    for m in phrase_re().find_iter(text) {
         out.push(if m.as_str().to_ascii_lowercase().contains("keys") { "sending_keys".into() } else { "the Sending".into() });
     }
     out
@@ -307,6 +376,24 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert!(text.contains("ffx-vocabulary: src/all.txt:1:aeons\n") && text.contains("count aeon 1\n"), "{text}");
         assert!(text.contains("ffx-vocabulary: src/all.txt:1:Sin\n") && text.contains("the Sending"), "{text}");
         assert!(!text.contains("spikes") && !text.contains("tsv"), "{text}");
+    }
+
+    #[test]
+    fn rewrite_replaces_terms_keeping_case_and_article_and_skips_marked_lines() {
+        let input = "An aeon's aeon-fence.sh; Aeons summoned the Sending.\nffx-ok aeon\n";
+        let out = rewrite(input);
+        assert_eq!(out, "A dwarf's dwarf-fence.sh; Dwarves called Hel.\nffx-ok aeon\n");
+        assert!(terms_in(out.lines().next().unwrap()).is_empty());
+        assert_eq!(rewrite("AeonState SPIRA_MAX_AEONS a ifrit, Sin, sending_keys, magus"), "DwarfState SPIRA_MAX_DWARVES an eitri, Fenrir, hel_keys, magus");
+    }
+
+    #[test]
+    fn the_book_pointer_file_is_exempt_as_rename_history() {
+        let t = TempDir::new("ffx-ptr");
+        t.write("law/pointers.toml", "[[retired]]\nslug = \"law-aeons-x\"\n");
+        t.write("law/other.toml", "slug = \"law-aeons-x\"\n");
+        let found = FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&tree(&t, &["law/pointers.toml", "law/other.toml"])).unwrap();
+        assert_eq!(found.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["law/other.toml"]);
     }
 
     #[test]

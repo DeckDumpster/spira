@@ -51,7 +51,7 @@ fn main() {
     // registered config key (spira/conf.d) — resolved only for the commands that need it, via
     // the one source of config, never a process-environment read.
     spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-rule", &cmd);
-    let needs_db = matches!(cmd.as_str(), "enact" | "retire" | "audit");
+    let needs_db = matches!(cmd.as_str(), "enact" | "retire" | "audit" | "rename-vocabulary");
     let reads_book = matches!(cmd.as_str(), "list" | "show") || (cmd == "code" && !rest.iter().any(|a| a == "--texts"));
     let db = if needs_db {
         match spira_config::process::cfg("SPIRA_DB") {
@@ -74,6 +74,7 @@ fn main() {
     let rc = match cmd.as_str() {
         "enact" => cmd_enact(&db, &home, &rest),
         "retire" => cmd_retire(&db, &home, &rest),
+        "rename-vocabulary" => cmd_rename_vocabulary(&db, &home, &rest),
         "list" => cmd_list(&db),
         "show" => cmd_show(&db, &home, &rest),
         "audit" => cmd_audit(&db, &home, &rest),
@@ -963,6 +964,125 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
             1
         }
     }
+}
+
+fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
+    use rule::vocab::{plan, Entry};
+    let dry_run = match rest {
+        [] => false,
+        [f] if f == "--dry-run" => true,
+        _ => {
+            println!("{USAGE}");
+            return 1;
+        }
+    };
+    let before = match memories_json(db) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let repo = match locate_repo(home) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let (toc, mut pointers) = match read_toc_at(&repo).and_then(|t| read_pointers_for_write(&repo).map(|p| (t, p))) {
+        Ok(tp) => tp,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let entries = plan(&strings(&before), &toc, &pointers);
+    let mut failed = false;
+    for e in &entries {
+        match e {
+            Entry::Unresolved { key, terms } => {
+                eprintln!("rule: {key} holds {terms:?} with no replacement; rephrase it by hand with enact");
+                failed = true;
+            }
+            Entry::Collision { from, to } => {
+                eprintln!("rule: refusing to rename {from}: {to} is already a statute in force (or another rename's target)");
+                failed = true;
+            }
+            Entry::Amend { key, text } if dry_run => println!("{key}\n{text}\n"),
+            Entry::Rename { from, to, text, .. } if dry_run => println!("{from} → {to}\n{text}\n"),
+            _ => {}
+        }
+    }
+    if dry_run {
+        println!("DRY RUN: {} statute(s) would be rewritten. Nothing written.", entries.iter().filter(|e| matches!(e, Entry::Amend { .. } | Entry::Rename { .. })).count());
+        return i32::from(failed);
+    }
+
+    let mut after = before.clone();
+    let mut written = 0usize;
+    for e in &entries {
+        let (key, text, from) = match e {
+            Entry::Amend { key, text } => (key, text, None),
+            Entry::Rename { from, to, text, .. } => (to, text, Some(from)),
+            _ => continue,
+        };
+        let (code, _, stderr) = run_bd(db, &["remember", "--key", key, text]);
+        let landed = memories_json(db).is_ok_and(|m| is_in_force(&m, key, text));
+        if !landed {
+            eprintln!("rule: failed to write {key}: {stderr}");
+            failed = true;
+            continue;
+        }
+        if code != 0 {
+            eprintln!("rule: bd reported an error but {key} IS in force (verified against the book): {stderr}");
+        }
+        after.insert(key.clone(), serde_json::Value::String(text.clone()));
+        if let (Some(from), Entry::Rename { numbered, .. }) = (from, e) {
+            let (code, _, stderr) = run_bd(db, &["forget", from]);
+            if code != 0 {
+                eprintln!("rule: failed to forget {from}: {stderr}");
+                failed = true;
+                continue;
+            }
+            after.remove(from);
+            if *numbered {
+                pointers.retired.push(code::Retired { slug: from.clone(), reason: "renamed out of retired vocabulary".into(), replaced_by: Some(key.clone()), on: today() });
+            }
+            println!("renamed {from} → {key}");
+        } else {
+            println!("amended {key}");
+        }
+        written += 1;
+    }
+    rm_memories_cache();
+    if written == 0 {
+        eprintln!("rule: nothing rewritten, nothing landed.");
+        return i32::from(failed);
+    }
+    if let Err(e) = mirror_book(&after) {
+        eprintln!("{e}");
+        return 1;
+    }
+    match resolve_hook(home) {
+        Ok(hook) if synth(&hook) => {
+            let _ = commit_common_law(home, "rename-vocabulary", "book");
+        }
+        Ok(hook) => eprintln!("rule: hook '{hook}' failed — wiki page NOT regenerated."),
+        Err(e) => eprintln!("rule: {e} — wiki page NOT regenerated."),
+    }
+    let book = strings(&after);
+    let landed = code::catch_up(&toc, &pointers, &book, None).map_err(|e| format!("rule: {e}")).and_then(|caught| land_law(home, &repo, "rename-vocabulary", "book", &caught, &pointers, &book));
+    match landed {
+        Ok((branch, bead)) => println!("law/: {written} statute(s) rewritten; committed on {branch}, submitted under {bead}."),
+        Err(e) => {
+            eprintln!("{e}");
+            log_law_book_failure("rename-vocabulary", "book", &e);
+            eprintln!("rule: the store is rewritten but law/ was not submitted — run `rule.sh code --land`.");
+            return 1;
+        }
+    }
+    i32::from(failed)
 }
 
 fn cmd_list(db: &str) -> i32 {
