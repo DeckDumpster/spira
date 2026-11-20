@@ -53,6 +53,7 @@ ready_verdict() {
 # ready_work <plan label> — the open plan beads, read through spira-lc; ? when the read fails.
 ready_work() {
     local json n
+    # batch-job: the plan read over a large store outlasts the 5 s cap
     if ! json="$(timeout 20 spira-lc plan items --label "$1" --status open 2>&1)"; then
         UNKN "ready work — spira-lc plan items failed or timed out" "$(printf '%s' "$json" | head -2)"
         return 0
