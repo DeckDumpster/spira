@@ -300,6 +300,10 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         git(&repo, "git init -q -b main && git add . && git commit -qm base && git checkout -qb topic && echo '// x' > c/src/lib.rs && git add . && git commit -qm topic && git checkout -q main");
         if !shell_only.is_empty() {
             fs::write(repo.join("c/src/lib.rs"), format!("#[test]\nfn {shell_only}() {{}}\n")).unwrap();
+            fs::create_dir_all(repo.join("d/src")).unwrap();
+            fs::write(repo.join("Cargo.toml"), "[workspace]\nmembers = [\"c\", \"d\"]\nresolver = \"2\"\n").unwrap();
+            fs::write(repo.join("d/Cargo.toml"), "[package]\nname = \"d\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+            fs::write(repo.join("d/src/lib.rs"), "").unwrap();
             git(&repo, "git add . && git commit -qm held && git checkout -qb shell && git commit -q --allow-empty -m s && echo '#!/bin/sh' > spira/x.sh && git add . && git commit -qm sh && git checkout -q main");
         }
         let deny_file = root.join("deny-list");
