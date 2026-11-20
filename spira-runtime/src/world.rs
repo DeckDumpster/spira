@@ -1819,3 +1819,63 @@ mod cr_snapshot_tests {
         assert!(seen.join().unwrap().is_empty());
     }
 }
+
+#[cfg(test)]
+mod ask_mail_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn mail(bead: &str, subject: &str, default: &str, id: &str) -> String {
+        format!("Subject: {subject}\nX-Spira-Default: {default}\nMessage-ID: {id}\nX-Spira-Work-Bead: {bead}\n\nbody\n")
+    }
+
+    fn seed(root: &Path) {
+        for b in ["a", "b", "c"] {
+            for sub in ["new", "cur"] {
+                fs::create_dir_all(root.join(b).join(sub)).unwrap();
+            }
+        }
+        let filler = |b: &str, sub: &str, n: usize| for i in 0..n {
+            fs::write(root.join(b).join(sub).join(format!("{i:03}")), "Subject: noise\n\nbody\n").unwrap();
+        };
+        filler("a", "new", 48);
+        filler("a", "cur", 50);
+        filler("b", "new", 50);
+        filler("b", "cur", 50);
+        filler("c", "new", 51);
+        filler("c", "cur", 47);
+        fs::write(root.join("a/cur/zz1"), mail("sp-one", "first", "d1", "<m1>")).unwrap();
+        fs::write(root.join("b/new/zz2"), mail("sp-one", "second", "d2", "<m2>")).unwrap();
+        fs::write(root.join("c/new/zz3"), mail("sp-two", "other", "d3", "<m3>")).unwrap();
+        fs::write(root.join("c/cur/zz4"), mail("sp-three", "third", "d4", "<m4>")).unwrap();
+    }
+
+    fn world(root: &Path) -> World {
+        World { mail: root.into(), lc_socket: root.join("absent.sock"), ..World::default() }
+    }
+
+    const PINNED: [&str; 4] = [
+        "NEW ASK HOLD sp-one: first | default: d1 | message-id: <m1>",
+        "NEW ASK HOLD sp-two: other | default: d3 | message-id: <m3>",
+        "NEW ASK HOLD sp-nomail: <no text recorded> | NO MAIL for the question; answer with spira-lc reply sp-nomail seq:?",
+        "NEW ASK HOLD sp-three: third | default: d4 | message-id: <m4>",
+    ];
+
+    #[test]
+    fn hold_lines_name_the_last_mail_and_a_held_ask_without_mail_gets_the_no_mail_line() {
+        let t = testkit::TempDir::new("ask-mail-lines");
+        seed(t.path());
+        let w = world(t.path());
+        let got: Vec<String> = ["sp-one", "sp-two", "sp-nomail", "sp-three"].iter().map(|id| w.hold_line(id)).collect();
+        assert_eq!(got, PINNED);
+    }
+
+    #[test]
+    fn the_asks_text_joins_each_held_asks_mails_in_held_order_then_mailbox_order() {
+        let t = testkit::TempDir::new("ask-mail-text");
+        seed(t.path());
+        let w = world(t.path());
+        let got: Vec<String> = ["sp-three", "sp-one"].iter().flat_map(|id| w.mails_for(id)).collect();
+        assert_eq!(got, [mail("sp-three", "third", "d4", "<m4>"), mail("sp-one", "second", "d2", "<m2>"), mail("sp-one", "first", "d1", "<m1>")]);
+    }
+}
