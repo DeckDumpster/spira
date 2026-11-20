@@ -29,6 +29,7 @@ rule [--home <spira-dir>] enact <slug> "<text>" (--tool <cmd> | --mechanism <bea
 rule code [--check] [--texts <dir>]   # regenerate or check the law/ tree (law/toc.toml + statute texts); enact appends to a Part and stages it
 rule [--home <spira-dir>] audit [--file --for <persona> [--repo <name>] --max N]
 rule [--home <spira-dir>] retire <slug> --reason <why> [--replaced-by <slug> | --merged-into <slug>]
+rule [--home <spira-dir>] rename-vocabulary [--dry-run]
 rule [--home <spira-dir>] list
 rule [--home <spira-dir>] show <slug> | <N.M> | <§N.M>
 rule [--home <spira-dir>] render-memories [prefix-csv] [char-budget] [core-csv]
@@ -127,6 +128,13 @@ uses that rule's own table (`spira_lint::rules::ffx_vocabulary`), so an accepted
 `law/` and `spira/statutes/` files that pass the lint. A statute that must quote a retired term
 carries `ffx-ok` in its first sentence: only that sentence reaches each Part's `index.md`, where the
 lint fires. `retire` writes no text and is not checked.
+
+`rename-vocabulary` migrates the statutes that predate that refusal, using the same table
+(`ffx_vocabulary::rewrite`). A statute whose text alone holds a term is amended in place; one whose
+slug holds a term is enacted under the renamed slug and the old key forgotten, with a `[[retired]]`
+pointer to the new slug only when the old one was already numbered in the toc or a pointer. A
+rename onto a key in force, and a term with no replacement, are listed and left, exit 1; the rest
+is applied and `law/` landed once. `--dry-run` prints each `old → new` and the text and writes nothing.
 
 ## Pointers: a change to the book leaves one, never a gap
 
