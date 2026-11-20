@@ -231,11 +231,41 @@ impl<'a> Run<'a> {
         sends
     }
 
+    /// Every bead the lifecycle record's `claim.blocks` names, read now: the ids the readiness rule judges.
+    fn dependencies(&self) -> Vec<brief::Dep> {
+        let show = |id: &str| -> Result<serde_json::Value, String> {
+            let o = self.d.exec.exec("spira-lc", &s(&["show", id]), None, None); // BDQ_READ_CONSIDERED="the spira-lc lifecycle door, not a bd read"
+            if !o.success() {
+                let said = o.stderr.lines().chain(o.stdout.lines()).map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string();
+                return Err(format!("rc={}: {said}", o.code));
+            }
+            let v: serde_json::Value = serde_json::from_str(o.stdout.trim()).map_err(|e| format!("not JSON: {e}"))?;
+            v.get("bead").filter(|b| b.is_object()).cloned().ok_or_else(|| "no bead in the answer".to_string())
+        };
+        let own = match show(&self.s.bead) {
+            Ok(own) => own,
+            Err(e) => return vec![brief::Dep { id: self.s.bead.clone(), state: format!("cannot tell (this bead's own blockers could not be read: {e})"), since: None, commit: None }],
+        };
+        let ids: Vec<String> = own["claim"]["blocks"].as_array().map(|a| a.iter().filter_map(|i| i.as_str().map(String::from)).collect()).unwrap_or_default();
+        ids.into_iter()
+            .map(|id| match show(&id) {
+                Err(e) => brief::Dep { id, state: format!("cannot tell ({e})"), since: None, commit: None },
+                Ok(b) => {
+                    let state = b["state"].as_str().unwrap_or("").to_string();
+                    let commit = matches!(state.as_str(), "LANDED" | "DONE")
+                        .then(|| self.d.git.git(&self.s.repo, &["log", "--format=%h", "--grep", &id, "-n1", &self.s.base_fq]).stdout.trim().to_string())
+                        .filter(|c| !c.is_empty());
+                    brief::Dep { since: b["updated_at"].as_i64(), state, commit, id }
+                }
+            })
+            .collect()
+    }
+
     /// The brief's leading sections: why the bead was sent back, then its last closeout failure.
     fn lead_briefs(&self, work: &Path, head: &str, amendments: &[spira_config::amendment::Record]) -> String {
         let heads = [self.s.claim_head.as_str(), head];
         let red = self.last_fast_tier_red();
-        format!("{}{}", brief::send_back_brief(&self.send_backs(), amendments, &heads), brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)))
+        format!("{}{}{}", brief::dependencies_brief(&self.dependencies()), brief::send_back_brief(&self.send_backs(), amendments, &heads), brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)))
     }
 
     pub fn record_fact(&self, kind: &str, cause: &str) {
@@ -1158,7 +1188,7 @@ impl<'a> Run<'a> {
         self.s.claimed_raw.clone()
     }
 
-    fn write_static_prompt(&mut self, work: &Path, n_prior: &str, prior_log: &str, rebase: &str) -> Result<(), Abort> {
+    pub(crate) fn write_static_prompt(&mut self, work: &Path, n_prior: &str, prior_log: &str, rebase: &str) -> Result<(), Abort> {
         let bead = self.s.bead.clone();
         let wdisp = work.display().to_string();
         let runes_file = self.home().join("runes").join(format!("{}.md", self.f()));

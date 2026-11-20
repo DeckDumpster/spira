@@ -618,4 +618,75 @@ pub(crate) mod verdict_run {
         assert!(reopens.is_empty(), "sp-nqtrg: {reopens:?}");
         assert_eq!(cause, None);
     }
+
+    struct BlockedLc(&'static str);
+    impl Exec for BlockedLc {
+        fn exec(&self, prog: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            if prog != "spira-lc" || args.first().map(String::as_str) != Some("show") {
+                return Out::ok("");
+            }
+            match args[1].as_str() {
+                "sp-x" => Out::ok(format!(r#"{{"bead":{{"bead_id":"sp-x","state":"WORKING","claim":{{"blocks":["{}"]}}}}}}"#, self.0)),
+                "sp-dep" => Out::ok(r#"{"bead":{"bead_id":"sp-dep","state":"LANDED","updated_at":1795123820}}"#),
+                _ => Out { code: 2, stdout: String::new(), stderr: "down".into() },
+            }
+        }
+    }
+    struct OnBase;
+    impl Git for OnBase {
+        fn git(&self, _: &Path, args: &[&str]) -> Out {
+            match args[0] {
+                "log" if args.contains(&"sp-dep") => Out::ok("8ce75d2da5\n"),
+                "rev-parse" => Out::ok("head\n"),
+                _ => Out { code: 1, stdout: String::new(), stderr: String::new() },
+            }
+        }
+    }
+
+    fn task_brief_over(exec: &dyn Exec) -> String {
+        let dir = testkit::TempDir::new("dwarf-deps-brief");
+        std::fs::create_dir_all(dir.path().join("runes")).unwrap();
+        std::fs::write(dir.path().join("runes/builder.md"), "You are a builder.").unwrap();
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_RUN".into(), dir.path().display().to_string());
+        let raw = r#"{"id":"sp-x","title":"t","description":"d","notes":"waits on sp-dep"}"#;
+        let (seam, sink) = (Seams(Default::default()), Mute::default());
+        let original = vars.clone();
+        let conf = Conf::new(&Snapshot { vars, ..Default::default() }, dir.path());
+        let rune = Rune::from_vars("builder", &Default::default());
+        let env = Env::new(original, Default::default());
+        let git = OnBase;
+        let mut r = Run {
+            d: Deps { bd: &NoBd, seam: &seam, git: &git, exec, launcher: &NoLaunch, sink: &sink, env: &env, clock: &|| 0, sleep: &|_| {} },
+            ledger: Ledger { path: PathBuf::from("nonexistent/ledger"), dry: true },
+            conf,
+            rune,
+            snap: Snapshot::default(),
+            mode: Mode::DryRun,
+            pid: 1,
+            own_unit: String::new(),
+            t0: 0,
+            claim_bin: String::new(),
+            stop: Arc::new(Stop::default()),
+            hb_shutdown: Arc::new(AtomicBool::new(false)),
+            hb_done: Arc::new(AtomicBool::new(false)),
+            rune_file: PathBuf::new(),
+            s: State { bead: "sp-x".into(), branch: "b".into(), repo: PathBuf::from("repo"), claimed_raw: raw.into(), base_fq: "local/main".into(), ..Default::default() },
+        };
+        assert!(r.write_static_prompt(Path::new("w"), "", "", "").is_ok(), "the prompt is written");
+        std::fs::read_to_string(dir.path().join("sp-x.task.md")).unwrap()
+    }
+
+    #[test]
+    fn a_claimed_beads_task_brief_opens_with_the_state_of_its_landed_blocker_before_the_notes() {
+        let task = task_brief_over(&BlockedLc("sp-dep"));
+        let line = task.find("sp-dep LANDED since 2026-11-19T21:30:20Z, 8ce75d2da5 on the landing ref").unwrap_or_else(|| panic!("{task}"));
+        assert!(line < task.find("waits on sp-dep").expect("the notes are in the brief"), "{task}");
+    }
+
+    #[test]
+    fn a_blocker_the_store_cannot_read_is_named_in_the_task_brief_not_dropped() {
+        let task = task_brief_over(&BlockedLc("sp-gone"));
+        assert!(task.contains("- sp-gone state cannot tell (rc=2: down)"), "{task}");
+    }
 }
