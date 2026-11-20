@@ -54,6 +54,7 @@
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
 //! | Attributing | observe: the round's open round is green on the carried head | Landing (`land`), or Certified when stacked; the attribution leg is stopped in the same tick |
+//! | Attributing | observe: the round's record no longer holds a member the leg carries (ejected by another actor) | Certifying for the record's survivors at its head, certify held until no pass runs; the attribution leg is stopped |
 //! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
@@ -1485,7 +1486,7 @@ impl Machine<'_> {
             return;
         }
         self.note_waiting();
-        if self.superseded_by_green_head(repo) {
+        if self.attribution_lost_member(repo) || self.superseded_by_green_head(repo) {
             return;
         }
         if self.rc.eject_held.is_some() {
@@ -1643,6 +1644,31 @@ impl Machine<'_> {
             return false;
         }
         self.land_green()
+    }
+
+    /// Another actor ejected a member the attribution leg carries: the leg is stopped and the
+    /// record's survivors are certified at the record's head. Once per eject: the state leaves
+    /// Attributing.
+    fn attribution_lost_member(&mut self, repo: &Repo) -> bool {
+        if self.rc.state != State::Attributing || self.rc.certify_held {
+            return false;
+        }
+        let Some(open) = self.rc.batch.as_deref().and_then(|b| repo.open_rounds().find(|r| r.id == b)) else { return false };
+        if open.head.is_empty() || open.phase == "green" || open.tips.len() != open.members.len() {
+            return false;
+        }
+        let survivors: Vec<(String, String)> = open.members.iter().enumerate().filter(|(_, id)| self.rc.members.iter().any(|(m, _)| m == *id)).map(|(i, id)| (id.clone(), open.tips[i].clone())).collect();
+        if survivors.is_empty() || survivors.len() == self.rc.members.len() {
+            return false;
+        }
+        self.stop_carried_leg();
+        self.rc.members = survivors;
+        self.rc.round_key = Some(core::round_key(&self.rc.members));
+        self.rc.head = open.head.clone();
+        self.rc.certify_head.clear();
+        self.go(Trigger::RerunCertifying);
+        self.hold_certify();
+        true
     }
 
     fn land_green(&mut self) -> bool {

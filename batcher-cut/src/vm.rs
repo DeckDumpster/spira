@@ -408,6 +408,7 @@ pub struct VmRunner<'a> {
     build_n: u32,
     probe_said: String,
     corpus_runs: u32,
+    pass_open: bool,
     batch: Option<String>,
     /// The results of the corpus pass this attribution follows.
     prior: Option<PathBuf>,
@@ -841,6 +842,7 @@ impl<'a> VmRunner<'a> {
             build_n: 0,
             probe_said: String::new(),
             corpus_runs: 0,
+            pass_open: false,
             batch: None,
             prior: None,
             confirmed: false,
@@ -881,6 +883,16 @@ impl<'a> VmRunner<'a> {
         let tmp = self.spool.join(format!(".{job}.req.tmp"));
         fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
         fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// The re-run an attribution opened is not a certification: its row returns to ATTRIBUTING
+    /// before any probe, so an eject is admitted while the probes search.
+    fn close_attribution_pass(&mut self) {
+        if std::mem::take(&mut self.pass_open) {
+            if let Some(batch) = self.batch.as_deref() {
+                io::round_attribution_rerun_ended(self.env, self.repo, batch);
+            }
+        }
     }
 
     /// Has round-vm exited? Records its code once.
@@ -1114,6 +1126,7 @@ impl RoundRunner for VmRunner<'_> {
                 self.corpus_runs += 1;
                 if let Some(batch) = self.batch.as_deref() {
                     io::round_pass_start(self.env, self.repo, batch);
+                    self.pass_open = self.subset;
                 }
                 let err = fs::File::create(&self.stderr_path)
                     .map_err(|e| format!("{}: {e}", self.stderr_path.display()))?;
@@ -1325,6 +1338,7 @@ impl RoundRunner for VmRunner<'_> {
             let stderr = self.stderr_text();
             self.host_disk = self.install_failed && spira_config::host_disk::fault_of(&stderr).is_some();
             let ended = corpus_end(rc, &stderr, self.env.wall_secs, reported, total);
+            self.close_attribution_pass();
             p.done = Some(match ended {
                 Ok(end) => end,
                 Err(e) => match base_moved_error(&stderr, io::base_move(self.repo, &self.wt)) {
@@ -2326,6 +2340,41 @@ mod abandon_tests {
             ["round pass-start --resume b1 fx", "round suites-started b1 fx"],
             "{seen}"
         );
+    }
+
+    #[test]
+    fn an_attribution_corpus_rerun_that_ends_records_an_incomplete_verdict_before_any_probe() {
+        let d = testkit::TempDir::new("vm-rerun-verdict");
+        let mut env = lifecycle_tests_env(d.path());
+        let calls = d.path().join("queue-calls");
+        env.queue_bin = d.path().join("queue-stub");
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new())
+            .unwrap()
+            .in_batch(Some("b1"))
+            .attribution();
+        fs::create_dir_all(&r.spool).unwrap();
+        testkit::write_exe(
+            &env.queue_bin,
+            &format!("#!/bin/sh\necho \"$@ reqs=$(ls {} | grep -c '[.]req$')\" >> {}\n", r.spool.display(), calls.display()),
+        );
+        let _ = r.start_main(MainKind::Corpus, &["a.sh".to_string()]);
+        r.main = Main::Corpus { suites: vec!["a.sh".into()], seen: BTreeSet::new() };
+        fs::write(r.spool.join("corpus.done"), "rc=1\n").unwrap();
+        let _ = r.poll_main();
+        let after_run = fs::read_to_string(&calls).unwrap_or_default();
+        let last = after_run.lines().last().unwrap_or("");
+        assert!(
+            last.starts_with("round pass-verdict --verdict incomplete") && last.ends_with("b1 fx reqs=0"),
+            "the verdict lands before any probe request is written: {after_run}"
+        );
+        r.child = Some(Command::new("sleep").arg("5").spawn().unwrap());
+        r.request("p1", "br", &["a.sh".to_string()], "artifacts").unwrap();
+        let _ = r.poll_main();
+        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), after_run.lines().count(), "one verdict per run");
+        if let Some(c) = r.child.as_mut() {
+            let _ = c.kill();
+        }
     }
 
     #[test]
