@@ -5757,3 +5757,62 @@ fn a_unit_run_cut_at_its_deadline_without_a_summary_is_not_the_missing_report_fa
     f.run();
     assert!(!f.stderr().contains("printed no `Summary [` line"), "{}", f.stderr());
 }
+
+// ------------------------------------------------- the lint step reads the tree's config
+
+/// A tree whose fixture config says `mode`, holding `files`, with the tree's own
+/// `spira/lint-staged.sh`; fake `release` and `lint` stand in for the built tools.
+fn lint_fixture(mode: &str, files: &[(&str, &str)]) -> (testkit::TempDir, std::path::PathBuf) {
+    let t = testkit::TempDir::new("gate-lint-cfg");
+    let w = |rel: &str, body: &str| {
+        let p = t.path().join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
+    };
+    w("spira/testlib/complete.toml", &format!("[spira]\nffx_vocabulary_mode = \"{mode}\"\n"));
+    let root = spira_config::resolve::checkout_root_for_process().unwrap();
+    w("spira/lint-staged.sh", &std::fs::read_to_string(root.join("spira/lint-staged.sh")).unwrap());
+    for (p, b) in files {
+        w(p, b);
+    }
+    let bin = t.path().join("fakebin");
+    std::fs::create_dir_all(&bin).unwrap();
+    testkit::write_exe(bin.join("release"), "#!/bin/bash\n[ \"$1\" = config-stage ] && echo \"$SPIRA_TOML\"\n");
+    testkit::write_exe(
+        bin.join("lint"),
+        "#!/bin/bash\nif grep -q 'ffx_vocabulary_mode = \"enforce\"' \"$SPIRA_TOML\" && grep -rq aeon rule; then echo 'ffx-vocabulary: rule/tests/vocab.rs:16: the term \"aeon\"'; exit 1; fi\n", // ffx-ok
+    );
+    (t, bin)
+}
+
+fn run_lint_step(t: &testkit::TempDir, bin: &std::path::Path, caller_mode: &str) -> (bool, String) {
+    let steps = checked_in_steps();
+    let def = crate::def::parse(&steps).unwrap();
+    let step = def.steps.iter().find(|s| s.contains("SPIRA_LINT_BIN")).expect("a spira-lint step");
+    let caller = t.path().join("caller.toml");
+    std::fs::write(&caller, format!("[spira]\nffx_vocabulary_mode = \"{caller_mode}\"\n")).unwrap();
+    let out = std::process::Command::new(system_paths::BIN_BASH)
+        .args(["-c", step])
+        .current_dir(t.path())
+        .env_clear()
+        .env("PATH", format!("{}:{}", bin.display(), system_paths::SYSTEM_PATH_MIN))
+        .env("SPIRA_LINT_BIN", bin.join("lint"))
+        .env("SPIRA_TOML", &caller)
+        .output()
+        .unwrap();
+    (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+}
+
+#[test]
+fn the_lint_step_enforces_the_trees_ffx_mode_whatever_the_callers_config_says() {
+    let (t, bin) = lint_fixture("enforce", &[("rule/tests/vocab.rs", "// the aeon // ffx-ok\n")]);
+    let (ok, out) = run_lint_step(&t, &bin, "report");
+    assert!(!ok && out.contains("ffx-vocabulary"), "{out}");
+}
+
+#[test]
+fn the_lint_step_passes_a_tree_with_no_ffx_term() {
+    let (t, bin) = lint_fixture("enforce", &[("rule/tests/vocab.rs", "// nothing here\n")]);
+    let (ok, out) = run_lint_step(&t, &bin, "report");
+    assert!(ok, "{out}");
+}
