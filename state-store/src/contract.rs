@@ -1740,19 +1740,11 @@ mod phase_tests {
         }
     }
 
-    /// `f`'s result, or `None` if it has not finished in 50 ms; the thread is left to finish.
-    fn within_50ms<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(f());
-        });
-        rx.recv_timeout(Duration::from_millis(50)).ok()
-    }
-
     fn put(c: &Contract<Parked>, id: &str, key: &str) -> Result<crate::TxnResult> {
         c.txn(&Txn::new().put(key, Object::new(serde_json::json!(1))), &Request::new(id, "t", "w"))
     }
 
+    // A probe that waits on the parked write deadlocks this test; the unit tier's nextest slow-timeout reports it.
     #[test]
     fn a_write_inside_the_backend_commit_blocks_no_other_deadline_bookkeeping() {
         let clock = VirtualClock::new(1_000_000);
@@ -1767,16 +1759,15 @@ mod phase_tests {
             std::thread::spawn(move || put(&c, "a", "a"))
         };
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        let (c1, c2, c3) = (c.clone(), c.clone(), c.clone());
         let now = clock.now_ms();
-        let second = within_50ms(move || put(&c1, "b", "b").is_ok());
-        let due = within_50ms(move || c2.due(now));
-        let acquire = within_50ms(move || c3.lock("r", 1_000, &Request::new("l1", "t", "lock")).is_ok());
+        let second = put(&c, "b", "b").is_ok();
+        let due = c.due(now);
+        let acquire = c.lock("r", 1_000, &Request::new("l1", "t", "lock")).is_ok();
         release_tx.send(()).unwrap();
         let _ = a.join().unwrap();
-        assert_eq!(second, Some(true), "a second write waited on the write inside the backend");
-        assert_eq!(due, Some(vec![format!("{LOCKS_PREFIX}r")]), "due waited on the write inside the backend");
-        assert_eq!(acquire, Some(true), "a lock acquire waited on the write inside the backend");
+        assert!(second, "a second write waited on the write inside the backend");
+        assert_eq!(due, vec![format!("{LOCKS_PREFIX}r")], "due missed the expired lock while a write was inside the backend");
+        assert!(acquire, "a lock acquire failed while a write was inside the backend");
     }
 
     #[test]
@@ -1794,19 +1785,11 @@ mod phase_tests {
         };
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         clock.advance(500);
-        let (tx, rx) = mpsc::channel();
-        let b = {
-            let (c, f) = (c.clone(), fence.clone());
-            std::thread::spawn(move || {
-                let t = Txn::new().when(Compare::CreateRev(f.key(), Some(f.token))).put("x", Object::new(serde_json::json!(1)));
-                tx.send(c.txn(&t, &Request::new("b", "t", "w"))).unwrap();
-            })
-        };
-        let got = rx.recv_timeout(Duration::from_millis(500));
+        let t = Txn::new().when(Compare::CreateRev(fence.key(), Some(fence.token))).put("x", Object::new(serde_json::json!(1)));
+        let got = c.txn(&t, &Request::new("b", "t", "w"));
         release_tx.send(()).unwrap();
         a.join().unwrap().unwrap();
-        b.join().unwrap();
-        assert!(got.expect("B was blocked behind the commit").unwrap().succeeded, "the renewed lock read as absent");
+        assert!(got.unwrap().succeeded, "the renewed lock read as absent");
     }
 
     #[test]
@@ -1822,13 +1805,10 @@ mod phase_tests {
             std::thread::spawn(move || c.release(&f, &Request::new("rel", "t", "release")))
         };
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        let retaken = within_50ms({
-            let c = c.clone();
-            move || c.lock("r", 10_000, &Request::new("l1", "t", "lock")).is_ok()
-        });
+        let retaken = c.lock("r", 10_000, &Request::new("l1", "t", "lock")).is_ok();
         release_tx.send(()).unwrap();
         a.join().unwrap().unwrap();
-        assert_eq!(retaken, Some(true));
+        assert!(retaken);
         assert!(c.live(&fence.key()), "the release erased the deadline of the lock taken after it");
     }
 
@@ -1844,13 +1824,10 @@ mod phase_tests {
             std::thread::spawn(move || c.lock("r", 10_000, &Request::new("la", "t", "lock")))
         };
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        let taken = within_50ms({
-            let c = c.clone();
-            move || c.lock("r", 10_000, &Request::new("lb", "t", "lock")).is_ok()
-        });
+        let taken = c.lock("r", 10_000, &Request::new("lb", "t", "lock")).is_ok();
         release_tx.send(()).unwrap();
         assert!(matches!(a.join().unwrap(), Err(Error::Locked { .. })));
-        assert_eq!(taken, Some(true));
+        assert!(taken);
         assert!(c.live(&format!("{LOCKS_PREFIX}r")), "the stale commit's restore removed the winner's deadline");
     }
 
