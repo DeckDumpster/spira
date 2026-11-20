@@ -210,6 +210,8 @@ impl Settings {
             idle_cut_secs: secs("SPIRA_ROUND_IDLE_CUT")?,
             lease_ttl_secs: secs("SPIRA_ROUND_LEASE_TTL_SECS")?,
             halt_page_secs: secs("SPIRA_HALT_PAGE_AFTER")?,
+            activation_bound_s: secs("SPIRA_ACTIVATION_STORE_BOUND")?,
+            run_dir: run_dir.clone(),
         };
         let home_repo = get("SPIRA_HOME_REPO")?;
         if home_repo.is_empty() {

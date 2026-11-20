@@ -55,8 +55,30 @@ fn an_unreadable_round_source_is_unknown_never_none() {
     assert_eq!(snap.state, RoundState::Unknown);
 }
 
+#[test]
+fn a_store_that_refuses_the_lifecycle_read_is_named_in_the_error_with_its_reason() {
+    let _env = testkit::env_read();
+    let dir = testkit::TempDir::new("world-round-refused");
+    let sock = dir.path().join("lc.sock");
+    let listener = UnixListener::bind(&sock).unwrap();
+    std::thread::spawn(move || runtime::socket::answer(&listener, &|_| Err(RuntimeError::new("stale past 1500ms: the watch is lost: cannot tell: deadline"))));
+    let map = dir.path().join("repos");
+    std::fs::write(&map, "alpha|/x|queue.local|main\n").unwrap();
+    let w = World { lc_socket: sock, queue_dir: dir.path().join("queue"), repo_map: map, run_dir: dir.path().join("run"), home_repo: "alpha".into(), ..World::default() };
+    let why = w.round_snapshot("{}").unwrap_err();
+    assert!(why.starts_with("lifecycle did not answer for alpha: ") && why.contains("the watch is lost: cannot tell: deadline"), "{why}");
+}
+
+#[test]
+fn a_refused_round_view_is_unknown_with_the_refusal_in_why() {
+    let _env = testkit::env_read();
+    let (_dir, w) = world(false);
+    let snap: Snapshot = serde_json::from_str(&w.round_snapshot("{}").unwrap()).unwrap();
+    assert!(snap.why.contains("store unreadable"), "{}", snap.why);
+}
+
 fn cfg() -> RoundDuty {
-    RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300, halt_page_secs: 3_600 }
+    RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300, halt_page_secs: 3_600, activation_bound_s: 90, run_dir: Default::default() }
 }
 
 #[test]

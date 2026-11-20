@@ -1,7 +1,7 @@
 TYPE=u32
 GROUP=round
-DOC=CERTIFIED BRANCHES that make a round due at once (round-duty.sh).
+DOC=CERTIFIED BRANCHES that make a round due at once (the round-duty task).
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # CERTIFIED BRANCHES that make a round due at once (round-duty.sh).
+    # CERTIFIED BRANCHES that make a round due at once (the round-duty task).
     : "${SPIRA_ROUND_MIN:=8}"
 SPIRA_CONF_DEFAULT_EOF

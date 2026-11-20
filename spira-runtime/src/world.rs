@@ -277,29 +277,31 @@ impl World {
         map_rows(&text).into_iter().find(|r| r.name == self.home_repo).map(|r| PathBuf::from(r.path)).ok_or_else(|| format!("repo map has no row for {}", self.home_repo))
     }
 
-    /// Unheld beads of one repo in `state`; `None` when the lifecycle did not answer.
-    fn unheld(&self, repo: &str, state: &str) -> Option<u64> {
+    /// Unheld beads of one repo in `state`; `Err` is the store's own refusal when it did not answer.
+    fn unheld(&self, repo: &str, state: &str) -> Result<u64, String> {
         if let Some(views) = store_view::shared() {
-            return views.unheld(state, repo).ok().map(|r| r.value.len() as u64);
+            return views.unheld(state, repo).map(|r| r.value.len() as u64).map_err(|e| e.to_string());
         }
-        let rows: Value = serde_json::from_str(&self.lc(&["list", "--state", state, "--repo", repo])?).ok()?;
+        let text = lc_call(&self.lc_socket, &["list", "--state", state, "--repo", repo]).map_err(|e| e.to_string())?;
+        let rows: Value = serde_json::from_str(&text).map_err(|e| format!("cannot tell: list --state {state} --repo {repo}: not JSON: {e}"))?;
         let held = |r: &Value| r["holds"].as_array().is_some_and(|h| !h.is_empty());
-        Some(rows.as_array()?.iter().filter(|r| r.get("bead_id").is_some() && !held(r)).count() as u64)
+        let rows = rows.as_array().ok_or_else(|| format!("cannot tell: list --state {state} --repo {repo}: not a list"))?;
+        Ok(rows.iter().filter(|r| r.get("bead_id").is_some() && !held(r)).count() as u64)
     }
 
     /// The home repo's rounds the lifecycle has not ended, the source `queue round status` reads,
-    /// and of those the ones still at phase `opened` with the epoch second they opened. `None`
-    /// when the lifecycle did not answer: no answer is not "no round open".
-    fn open_round_facts(&self) -> Option<(u64, Vec<(String, u64)>)> {
+    /// and of those the ones still at phase `opened` with the epoch second they opened. `Err` is the
+    /// store's refusal: no answer is not "no round open".
+    fn open_round_facts(&self) -> Result<(u64, Vec<(String, u64)>), String> {
         if let Some(views) = store_view::shared() {
-            let rounds: Vec<_> = views.round_view(&self.home_repo).ok()?.value.rounds.into_iter().filter(|r| round_unended(&r.record.state)).collect();
+            let rounds: Vec<_> = views.round_view(&self.home_repo).map_err(|e| e.to_string())?.value.rounds.into_iter().filter(|r| round_unended(&r.record.state)).collect();
             let unadvanced = rounds.iter().filter(|r| r.record.state == "OPEN").filter_map(|r| Some((r.record.id.clone(), r.record.get("opened")?.parse().ok()?))).collect();
-            return Some((rounds.len() as u64, unadvanced));
+            return Ok((rounds.len() as u64, unadvanced));
         }
-        let batches = self.lc_json(&["list", "--batches", "--window", "1"]).ok()?;
+        let batches = self.lc_json(&["list", "--batches", "--window", "1"])?;
         let mut live = 0;
         let mut unadvanced = vec![];
-        for b in batches.as_array()? {
+        for b in batches.as_array().ok_or("cannot tell: list --batches: not a list")? {
             let (Some(repo), Some(state)) = (b["repo"].as_str(), b["state"].as_str()) else { continue };
             if repo != self.home_repo || !round_unended(state) {
                 continue;
@@ -310,7 +312,7 @@ impl World {
                 unadvanced.push((id.to_string(), at));
             }
         }
-        Some((live, unadvanced))
+        Ok((live, unadvanced))
     }
 
     fn open_rounds(&self) -> Option<BTreeMap<String, u64>> {
@@ -343,7 +345,7 @@ impl World {
                 stopped.push(r.name.clone());
                 continue;
             }
-            let answer = |state| self.unheld(&r.name, state).ok_or_else(|| format!("lifecycle did not answer for {}", r.name));
+            let answer = |state| self.unheld(&r.name, state).map_err(|why| format!("lifecycle did not answer for {}: {why}", r.name));
             let (n, m) = (answer("CERTIFIED")?, answer("SUBMITTED")?);
             if n > 0 {
                 certified += n;
@@ -363,10 +365,12 @@ impl World {
             submitted,
             submitted_by_repo: submitted_by_repo.join(" "),
             state: match &open {
-                None => RoundState::Unknown,
-                Some((0, _)) => RoundState::None,
-                Some(_) => RoundState::Open,
+                Err(_) => RoundState::Unknown,
+                Ok((0, _)) => RoundState::None,
+                Ok(_) => RoundState::Open,
             },
+            why: open.as_ref().err().cloned().unwrap_or_default(),
+            activation: crate::watchers::current_activation(&self.run_dir),
             open: open.as_ref().map_or(0, |o| o.0),
             unadvanced: open.map(|o| o.1).unwrap_or_default(),
             lines,
