@@ -1242,6 +1242,10 @@ fn stabilize_round(
             println!("batcher {}: round emptied — {why}", repo.name);
             Ok(Stabilized::Emptied)
         }
+        drive::RoundEnd::Unconverged { red, probes, suspects } => {
+            println!("batcher {}: attribution of {red} did not converge — {probes} probes, suspects {}", repo.name, suspects.join(","));
+            Ok(Stabilized::Blocked)
+        }
         drive::RoundEnd::Abandoned => {
             println!("batcher {}: the round was abandoned while it ran — stopped, no verdict written", repo.name);
             Ok(Stabilized::Abandoned)
@@ -2537,6 +2541,10 @@ fn attribute_in(
         Ok(drive::RoundEnd::Emptied(why)) => Attribution::Emptied(why),
         Ok(drive::RoundEnd::Faulted(why) | drive::RoundEnd::Stalled(why)) => Attribution::Faulted(why),
         Ok(drive::RoundEnd::Abandoned) => Attribution::Blocked("the round was abandoned".into()),
+        Ok(drive::RoundEnd::Unconverged { red, probes, suspects }) => Attribution::Unconverged(format!(
+            "{red} red reproduces but {probes} probes named no member; suspects: {}",
+            if suspects.is_empty() { "none".to_string() } else { suspects.join(",") }
+        )),
         Err(e) if batcher_cut::attribute::is_round_vm_fault(&e) => {
             Attribution::Fault(format!("the attribution did not finish: {e}"))
         }

@@ -28,6 +28,9 @@ pub enum Attribution {
     Fault(String),
     /// The attribution's own reruns faulted: the round is not judged and is left open.
     Faulted(String),
+    /// The probe ceiling was reached without naming a member: the red is kept for the next
+    /// round to convict, and the round is abandoned.
+    Unconverged(String),
 }
 
 impl Attribution {
@@ -46,6 +49,7 @@ impl Attribution {
             Attribution::Emptied(why) => json!({ "end": "emptied", "why": why }),
             Attribution::Fault(why) => json!({ "end": "fault", "why": why }),
             Attribution::Faulted(why) => json!({ "end": "faulted", "why": why }),
+            Attribution::Unconverged(why) => json!({ "end": "unconverged", "why": why }),
         };
         format!("{PREFIX}{body}")
     }
@@ -80,6 +84,7 @@ impl Attribution {
             "emptied" => Some(Attribution::Emptied(body.get("why")?.as_str()?.to_string())),
             "fault" => Some(Attribution::Fault(body.get("why")?.as_str()?.to_string())),
             "faulted" => Some(Attribution::Faulted(body.get("why")?.as_str()?.to_string())),
+            "unconverged" => Some(Attribution::Unconverged(body.get("why")?.as_str()?.to_string())),
             _ => None,
         }
     }
@@ -171,6 +176,13 @@ mod tests {
             Some(blocked),
             "the last line wins"
         );
+    }
+
+    #[test]
+    fn an_unconverged_outcome_round_trips_and_its_line_says_unconverged() {
+        let u = Attribution::Unconverged("unit-tests red reproduces but 8 probes named no member".into());
+        assert!(u.line().contains(r#""end":"unconverged""#), "{}", u.line());
+        assert_eq!(Attribution::parse(&u.line()), Some(u));
     }
 
     #[test]
