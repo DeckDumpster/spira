@@ -199,6 +199,8 @@ struct FakeSystemctl {
     exes: RefCell<BTreeMap<String, PathBuf>>,
     restart_lands: Option<PathBuf>,
     pinned: BTreeSet<String>,
+    /// Restarts of a unit that leave it `activating`, as a slow boot does, before one that comes up.
+    slow_starts: RefCell<BTreeMap<String, usize>>,
 }
 
 impl FakeSystemctl {
@@ -233,6 +235,7 @@ impl FakeSystemctl {
             exes: RefCell::new(BTreeMap::new()),
             restart_lands: None,
             pinned: BTreeSet::new(),
+            slow_starts: RefCell::new(BTreeMap::new()),
         }
     }
 }
@@ -315,9 +318,13 @@ impl Systemctl for FakeSystemctl {
             }
         }
         let bad = self.poison.as_ref().map(|p| units::exec_lines(&text).iter().any(|l| l.contains(p.as_str()))).unwrap_or(false);
+        let slow = self.slow_starts.borrow_mut().get_mut(unit).is_some_and(|n| std::mem::replace(n, n.saturating_sub(1)) > 0);
         let mut s = self.states.borrow_mut();
         let e = s.entry(unit.into()).or_default();
-        if bad {
+        if slow {
+            e.active = "activating".into();
+            e.result = "success".into();
+        } else if bad {
             e.active = "failed".into();
             e.result = "exit-code".into();
         } else {
@@ -468,6 +475,51 @@ fn gate_open_is_true_without_a_gate_and_checks_the_host_key_when_there_is_one() 
 // ---------------------------------------------------------------- activate
 
 // ---------------------------------------------------------------- rollback
+
+/// History `[A, B]`, current `B`, the installed unit B's text: rolling back to `A` rewrites and
+/// restarts `spira-tool-prod.service`.
+fn world_rolling_back_to_a() -> World {
+    let w = world_activating_a_changed_unit();
+    fs::create_dir_all(w.cfg.releases.join(B)).unwrap();
+    std::os::unix::fs::symlink(B, w.cfg.releases.join("current")).unwrap();
+    let state = w.cfg.state_dir().unwrap();
+    fs::create_dir_all(&state).unwrap();
+    fs::write(state.join("history"), format!("{A} landed\n{B} landed\n")).unwrap();
+    w
+}
+
+fn rollback_with(w: &World, sc: &FakeSystemctl) -> Result<String, String> {
+    let reads = FakeReads::serving();
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1) };
+    activate::rollback(&ctx)
+}
+
+fn current_of(w: &World) -> String {
+    fs::read_link(w.cfg.releases.join("current")).unwrap().to_string_lossy().to_string()
+}
+
+#[test]
+fn a_rollback_whose_unit_is_slow_to_start_stays_on_the_target_and_names_what_is_down() {
+    let w = world_rolling_back_to_a();
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.slow_starts.borrow_mut().insert("spira-tool-prod.service".into(), 2);
+    let e = rollback_with(&w, &sc).unwrap_err();
+    assert_eq!(current_of(&w), A, "{e}");
+    assert!(e.starts_with(&format!("rolled back to {A}; 1 unit(s) not up")), "{e}");
+    assert!(e.contains("spira-tool-prod.service") && e.contains("activating") && e.contains("systemctl --user start spira-tool-prod.service"), "{e}");
+    assert!(!e.contains("UNDO INCOMPLETE"), "{e}");
+    assert_eq!(activate::read_history(&w.cfg.state_dir().unwrap()).unwrap().iter().map(|h| h.sha.as_str()).collect::<Vec<_>>(), vec![A]);
+    assert_eq!(sc.restarts.borrow().len(), 2, "restarted once more under the target, and no more");
+}
+
+#[test]
+fn a_rollback_whose_slow_unit_comes_up_on_the_second_restart_succeeds() {
+    let w = world_rolling_back_to_a();
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.slow_starts.borrow_mut().insert("spira-tool-prod.service".into(), 1);
+    assert_eq!(rollback_with(&w, &sc), Ok(A.to_string()));
+    assert_eq!(current_of(&w), A);
+}
 
 // ---------------------------------------------------------------- hotfix
 
