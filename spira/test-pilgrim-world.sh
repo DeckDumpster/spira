@@ -62,7 +62,7 @@ want "the pilgrim files A in its own world" "sp-" "$A"
 pilgrim_work "$T/pilgrim" dep-add "$A" "$B" >/dev/null 2>&1
 is "dep-add exits 0" 0 "$?"
 
-# A claim-input write that misses its deadline is owed to lc-serve's settler and the verb still exits 0, so the view settles rather than flips.
+# A refused claim sync stays owed to the settler (settle.rs sync_claims) while the verb exits 0: the view settles, it does not flip.
 view_once_until() { # view_once_until <grep -F needle present|absent>; leaves the last render in $once
     local i
     for i in $(seq 1 40); do
