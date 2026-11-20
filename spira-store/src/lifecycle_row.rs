@@ -3,7 +3,7 @@
 
 use lifecycle::bead::BeadEventKind;
 
-use crate::lc_call::{LcClient, LcError, CANNOT_TELL, LC_TIMEOUT, REFUSED};
+use crate::lc_call::{LcClient, LcError, Reply, CANNOT_TELL, LC_TIMEOUT, REFUSED};
 
 pub const LC_BIN_ENV: &str = "SPIRA_LC_BIN";
 
@@ -280,18 +280,32 @@ impl Retry {
     }
 }
 
-/// Sends an idempotent write until the store applies it or `retry`'s bound runs out. Only
-/// "cannot tell" (exit 2) and no answer are retried: a refusal is final, since asking again
-/// cannot change it.
-pub fn write_idempotent<S: AsRef<str>>(c: &LcClient, argv: &[S], retry: &Retry) -> Result<(), String> {
+/// Sends a request until the store answers with anything but "cannot tell", and returns that
+/// reply. "Cannot tell" and no answer are sent again until `retry`'s bound runs out; a refusal
+/// is final, since asking again cannot change it. The resend is safe only when the write is
+/// idempotent or carries a request id the store dedupes on.
+pub fn call_idempotent<S: AsRef<str>>(c: &LcClient, argv: &[S], stdin: Option<&str>, retry: &Retry) -> Result<Reply, String> {
+    call_idempotent_noting(c, argv, stdin, retry, &mut || {})
+}
+
+/// [`call_idempotent`], calling `resent` before each send after the first.
+pub fn call_idempotent_noting<S: AsRef<str>>(c: &LcClient, argv: &[S], stdin: Option<&str>, retry: &Retry, resent: &mut dyn FnMut()) -> Result<Reply, String> {
     let said = argv.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(" ");
     let start = retry.pace.now();
     let mut backoff = BACKOFF_START;
+    let mut first = true;
     loop {
-        let unanswered = match c.call(argv) {
-            Ok(r) if r.code == 0 => return Ok(()),
+        if !first {
+            resent();
+        }
+        first = false;
+        let sent = match stdin {
+            Some(b) => c.call_stdin(argv, b),
+            None => c.call(argv),
+        };
+        let unanswered = match sent {
             Ok(r) if r.code == CANNOT_TELL => format!("{said} exited {}: {}", r.code, r.text()),
-            Ok(r) => return Err(format!("{said} exited {}: {}", r.code, r.text())),
+            Ok(r) => return Ok(r),
             Err(LcError::Refused(m)) => return Err(m),
             Err(e) => e.to_string(),
         };
@@ -301,6 +315,17 @@ pub fn write_idempotent<S: AsRef<str>>(c: &LcClient, argv: &[S], retry: &Retry) 
         retry.pace.sleep(backoff);
         backoff = (backoff * 2).min(BACKOFF_CAP);
     }
+}
+
+/// Sends an idempotent write until the store applies it or `retry`'s bound runs out; any
+/// answer but "cannot tell" ends it, and only exit 0 is success.
+pub fn write_idempotent<S: AsRef<str>>(c: &LcClient, argv: &[S], retry: &Retry) -> Result<(), String> {
+    let r = call_idempotent(c, argv, None, retry)?;
+    if r.code == 0 {
+        return Ok(());
+    }
+    let said = argv.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(" ");
+    Err(format!("{said} exited {}: {}", r.code, r.text()))
 }
 
 /// Call after a successful `bd create` whose stdout is `created_stdout`. A failure is
@@ -505,6 +530,29 @@ mod tests {
 
     fn sent(t: &Scripted) -> usize {
         t.seen.lock().unwrap().len()
+    }
+
+    #[test]
+    fn call_idempotent_resends_a_cannot_tell_and_returns_the_first_applied_reply() {
+        let (c, t, retry) = scripted(&[2, 2, 0], 60);
+        let mut resends = 0;
+        let r = call_idempotent_noting(&c, &["content", "create"], Some("body"), &retry, &mut || resends += 1).unwrap();
+        assert_eq!((r.code, sent(&t), resends), (0, 3, 2));
+    }
+
+    #[test]
+    fn call_idempotent_returns_a_refusal_reply_without_resending() {
+        let (c, t, retry) = scripted(&[3], 60);
+        assert_eq!(call_idempotent(&c, &["content", "create"], None, &retry).unwrap().code, 3);
+        assert_eq!(sent(&t), 1);
+    }
+
+    #[test]
+    fn call_idempotent_stops_at_the_bound() {
+        let (c, t, retry) = scripted(&[2], 12);
+        let e = call_idempotent(&c, &["content", "create"], None, &retry).unwrap_err();
+        assert!(e.contains("cannot tell"), "{e}");
+        assert!(sent(&t) < 5, "{}", sent(&t));
     }
 
     #[test]

@@ -67,6 +67,19 @@ pub fn create_args_with_deps(args: &[String], blockers: &[String]) -> Vec<String
     out
 }
 
+/// The request id a content create is sent under: the same actor, argv and body give the same id,
+/// so a resend or a second filing of the same bead is answered with the first one's result.
+pub fn create_request_id(actor: &str, argv: &[String], body: Option<&str>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(actor.as_bytes());
+    h.update([0]);
+    h.update(argv.join("\0").as_bytes());
+    h.update([0]);
+    h.update(body.unwrap_or_default().as_bytes());
+    format!("file:{}", h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>())
+}
+
 /// The exit a store answers when it cannot tell whether a write committed.
 pub const CANNOT_TELL: i32 = 2;
 
@@ -687,6 +700,17 @@ mod tests {
         let (code, out, said, sent) = run(vec![(0, "sp-new\n")], vec![Readback::Absent], 0);
         assert_eq!((code, out.as_str(), sent), (0, "sp-new\n", 1));
         assert!(said.is_empty());
+    }
+
+    #[test]
+    fn the_request_id_follows_the_actor_argv_and_body() {
+        let a = |t: &str| vec!["create".to_string(), t.to_string()];
+        let id = create_request_id("skuld", &a("T"), Some("b"));
+        assert!(id.starts_with("file:"));
+        assert_eq!(id, create_request_id("skuld", &a("T"), Some("b")));
+        assert_ne!(id, create_request_id("skuld", &a("T"), Some("c")));
+        assert_ne!(id, create_request_id("skuld", &a("U"), Some("b")));
+        assert_ne!(id, create_request_id("other", &a("T"), Some("b")));
     }
 
     #[test]

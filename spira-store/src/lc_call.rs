@@ -254,6 +254,28 @@ pub fn as_task<T>(task: &str, f: impl FnOnce() -> T) -> T {
     f()
 }
 
+thread_local! {
+    static REQUEST: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// Runs `f` with this thread's store calls sent under request `id`, so the store answers a
+/// resend with the first send's result; the outer id returns afterwards, on unwind too.
+pub fn as_request<T>(id: &str, f: impl FnOnce() -> T) -> T {
+    struct Restore(String);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            REQUEST.with(|t| *t.borrow_mut() = std::mem::take(&mut self.0));
+        }
+    }
+    let _restore = Restore(REQUEST.with(|t| std::mem::replace(&mut *t.borrow_mut(), id.to_string())));
+    f()
+}
+
+/// The request id this thread's calls are sent under; an empty id is none.
+pub fn current_request_id() -> Option<String> {
+    REQUEST.with(|t| Some(t.borrow().clone()).filter(|t| !t.is_empty()))
+}
+
 /// `f` under `task` when one is given, else as it stands: how a thread spawned inside a task carries its name.
 pub fn as_task_of<T>(task: Option<&str>, f: impl FnOnce() -> T) -> T {
     match task {
@@ -299,7 +321,7 @@ pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<
 pub fn exchange_once(stream: UnixStream, argv: &[String], stdin: Option<&str>) -> Result<Reply, Fail> {
     let dropped = |why: &str| Fail::Dropped(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"));
     let lost = |why: &str| Fail::Final(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"));
-    let request = request_head(argv, stdin.map(str::len), &caller_of(argv), current_task().as_deref(), None).map_err(|_| lost("unserialisable request"))?;
+    let request = request_head(argv, stdin.map(str::len), &caller_of(argv), current_task().as_deref(), current_request_id().as_deref()).map_err(|_| lost("unserialisable request"))?;
     let mut bytes = format!("{request}\n").into_bytes();
     bytes.extend_from_slice(stdin.unwrap_or_default().as_bytes());
     (&stream).write_all(&bytes).map_err(|_| dropped("write"))?;
@@ -826,6 +848,26 @@ mod tests {
         assert_eq!((r.code, r.out.as_str()), (0, "batch-progress stdin=[{\"bead_id\":\"sp-a\"}]\nsecond line"));
         assert_eq!(launched(), before, "no program ran");
         assert_eq!(seen.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn exchange_once_sends_the_scoped_request_id_and_none_outside_it() {
+        let head_sent = |scoped: bool| {
+            let (client, server) = UnixStream::pair().unwrap();
+            let serve = std::thread::spawn(move || {
+                let mut r = BufReader::new(&server);
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                (&server).write_all(b"{\"exit_code\":0,\"len\":0}\n").unwrap();
+                serde_json::from_str::<serde_json::Value>(line.trim()).unwrap()
+            });
+            let argv = vec!["content".to_string(), "create".to_string()];
+            let _ = if scoped { as_request("r-1", || exchange_once(client, &argv, None)) } else { exchange_once(client, &argv, None) };
+            serve.join().unwrap()
+        };
+        assert_eq!(head_sent(true)["request_id"], "r-1");
+        assert!(head_sent(false).get("request_id").is_none());
+        assert_eq!(current_request_id(), None);
     }
 
     #[test]
