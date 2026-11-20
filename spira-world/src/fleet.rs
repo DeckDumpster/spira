@@ -14,8 +14,8 @@ pub fn live_total_systemd(unit_count: impl Fn(&str) -> usize) -> u32 {
     unit_count("spira-dwarf-*") as u32
 }
 
-/// The live dwarves split by what governs them: counted dwarves count against the fleet
-/// ceiling, directed ones (`dwarf direct`) run outside every cap.
+/// The live dwarves, split by how each was started: every one counts against the fleet
+/// ceiling, `directed` (`dwarf direct`) being the part started past it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Roster {
     pub counted: u32,
@@ -32,7 +32,7 @@ impl Roster {
         self.counted + self.directed
     }
 
-    /// The "live now" line. Only counted dwarves are measured against the ceiling.
+    /// The "live now" line: the total, with its breakdown.
     pub fn live_lines(&self) -> Vec<String> {
         vec![format!("  live now          {}   ({} counted + {} directed)", self.total(), self.counted, self.directed)]
     }
@@ -52,7 +52,7 @@ mod tests {
     }
 
     #[test]
-    fn a_directed_dwarf_is_named_directed_and_outside_the_ceiling() {
+    fn a_directed_dwarf_is_named_directed_and_counted_in_the_total() {
         let r = Roster::of(&units(&[
             "spira-dwarf-builder-1.service",
             "spira-dwarf-builder-2.service",
