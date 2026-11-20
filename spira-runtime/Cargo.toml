@@ -175,3 +175,8 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+
+[[test]]
+name = "sift_reads"
+path = "tests/sift_reads.rs"
+required-features = ["integration"]
