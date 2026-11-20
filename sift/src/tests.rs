@@ -606,3 +606,13 @@ fn a_conflict_goes_straight_to_rework_and_files_no_bead() {
     assert_eq!(reds(&r), ["red a t-a no-rebase"]);
     assert!(r.log.iter().all(|l| l.starts_with("rebase ") || l.starts_with("note ") || l.starts_with("red ") || l.starts_with("send-back ") || l.starts_with("pass ") || l.starts_with("tell ")), "{:?}", r.log);
 }
+
+#[test]
+fn the_file_store_grants_a_rebase_attempt_once_per_id_tip_and_base() {
+    let dir = testkit::TempDir::new("sift-rebase-attempt");
+    let st = FileStore::new(dir.path().to_path_buf());
+    assert!(st.first_rebase_attempt("a", "t1", "b1"));
+    assert!(!st.first_rebase_attempt("a", "t1", "b1"));
+    assert!(st.first_rebase_attempt("a", "t1", "b2"));
+    assert!(st.first_rebase_attempt("a", "t2", "b1"));
+}

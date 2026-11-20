@@ -265,10 +265,12 @@ pub fn comment_union(text: &str, prefixes: &[&str]) -> Result<String, String> {
 
 /// Both sides only inserted lines (no base line changed or deleted): ours first, then theirs, at
 /// each base position both filled. A `.rs` file's inserted blocks must each be brace-balanced.
+/// Equal lines make an insertion's position ambiguous; the union is refused unless it reads the
+/// same with every insertion placed as early as it can sit and as late.
 pub fn insertion_union(base: &str, ours: &str, theirs: &str, rust: bool) -> Result<String, String> {
     let base: Vec<&str> = base.lines().collect();
-    let o = insertions(&base, ours, "ours")?;
-    let t = insertions(&base, theirs, "theirs")?;
+    let (o, o_late) = insertions(&base, ours, "ours")?;
+    let (t, t_late) = insertions(&base, theirs, "theirs")?;
     if rust {
         for (side, blocks) in [("ours", &o), ("theirs", &t)] {
             for (at, block) in blocks.iter().enumerate().filter(|(_, b)| !b.is_empty()) {
@@ -282,22 +284,42 @@ pub fn insertion_union(base: &str, ours: &str, theirs: &str, rust: bool) -> Resu
             }
         }
     }
-    let mut out = String::new();
-    for i in 0..=base.len() {
-        for l in o[i].iter().chain(&t[i]).chain(base.get(i)) {
-            out.push_str(l);
-            out.push('\n');
-        }
+    let out = interleave(&base, &o, &t);
+    if out != interleave(&base, &o_late, &t_late) {
+        return Err("an inserted line equals a base line, so where it sits is ambiguous".into());
     }
     Ok(out)
 }
 
-/// The lines `side` inserted before each base line (index `base.len()` = at the end), or Err when
-/// the base is not a subsequence of `side`.
-fn insertions<'a>(base: &[&str], side: &'a str, who: &str) -> Result<Vec<Vec<&'a str>>, String> {
+type Blocks<'a> = Vec<Vec<&'a str>>;
+
+fn interleave(base: &[&str], o: &Blocks, t: &Blocks) -> String {
+    let mut out = String::new();
+    for i in 0..=base.len() {
+        let theirs = if o[i] == t[i] { &[][..] } else { &t[i][..] };
+        for l in o[i].iter().chain(theirs).chain(base.get(i)) {
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The lines `side` inserted before each base line (index `base.len()` = at the end), placed as
+/// early as they can sit and as late, or Err when the base is not a subsequence of `side`.
+fn insertions<'a>(base: &[&str], side: &'a str, who: &str) -> Result<(Blocks<'a>, Blocks<'a>), String> {
+    let early = align(base, side.lines(), who)?;
+    let rb: Vec<&str> = base.iter().rev().copied().collect();
+    let mut late = align(&rb, side.lines().rev(), who)?;
+    late.reverse();
+    let late = late.into_iter().map(|b| b.into_iter().rev().collect()).collect();
+    Ok((early, late))
+}
+
+fn align<'a>(base: &[&str], side: impl Iterator<Item = &'a str>, who: &str) -> Result<Blocks<'a>, String> {
     let mut at = vec![Vec::new(); base.len() + 1];
     let mut p = 0;
-    for l in side.lines() {
+    for l in side {
         if p < base.len() && l == base[p] {
             p += 1;
         } else {
@@ -722,5 +744,20 @@ mod tests {
         let text = "<<<<<<< HEAD\n    fn ours() {\n    }\n=======\n    fn theirs() {\n    }\n>>>>>>> x\n";
         let pf = comment_prefixes("a.rs", None).unwrap();
         assert!(comment_union(text, pf).unwrap_err().contains("not a comment-only hunk"));
+    }
+
+    #[test]
+    fn insertion_union_writes_a_block_both_sides_inserted_once() {
+        let both = with("    use_it();\n");
+        assert_eq!(insertion_union(BASE, &both, &both, true).unwrap(), both);
+    }
+
+    #[test]
+    fn insertion_union_refuses_an_insertion_beside_an_identical_base_line() {
+        let base = "a\n\nb\n";
+        let o = "a\n\nx\n\nb\n";
+        let t = "a\ny\n\nb\n";
+        let e = insertion_union(base, o, t, false).unwrap_err();
+        assert!(e.contains("ambiguous"), "{e}");
     }
 }
