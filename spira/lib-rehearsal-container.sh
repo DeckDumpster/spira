@@ -33,7 +33,7 @@ ok "user systemd running (probe exits 0)"
 # THIS SUITE IS THE LAUNCHER of the container's processes, so it sets their PATH
 # (sp-gypjk): the stubs first, then the fake prod root's release layout (bin/, spira/) —
 # every tool is invoked by name. Every script that sources conf.sh (install.sh,
-# uninstall.sh, ready.sh, sentinel.sh, seed.sh) then finds stub bd and loom on PATH. conf.sh also exports SPIRA_BD
+# uninstall.sh, ready.sh, seed.sh) then finds stub bd and loom on PATH. conf.sh also exports SPIRA_BD
 # if it is not already set, but we set it explicitly here so the schema check
 # (conf.sh calls "$SPIRA_BD" -C "$SPIRA_DB" migrate schema) uses the stub
 # before the PATH rebuild has happened.
