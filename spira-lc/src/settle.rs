@@ -14,6 +14,7 @@ const RETRY_AFTER: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 struct Owed {
+    rows: BTreeSet<(String, Option<String>)>,
     claims: BTreeSet<String>,
     only_if_unset: BTreeSet<String>,
     stamp: bool,
@@ -21,7 +22,7 @@ struct Owed {
 
 impl Owed {
     fn is_empty(&self) -> bool {
-        self.claims.is_empty() && self.only_if_unset.is_empty() && !self.stamp
+        self.rows.is_empty() && self.claims.is_empty() && self.only_if_unset.is_empty() && !self.stamp
     }
 }
 
@@ -95,6 +96,21 @@ pub fn owe_stamp() -> bool {
     true
 }
 
+/// The `create-bead` a created bead's lifecycle row is written with, inline and by the settler.
+pub(crate) fn row_argv(id: &str, repo: Option<&str>) -> Vec<String> {
+    let mut argv = bead::lc::create_bead_argv(id, None, repo);
+    argv.insert(2, "--ready".to_string());
+    argv
+}
+
+/// Queues one created bead's row, and its claim inputs once written; `false` when no settler is installed.
+pub fn owe_row(id: &str, repo: Option<&str>) -> bool {
+    let Some(s) = current() else { return false };
+    s.owed.lock().unwrap_or_else(|e| e.into_inner()).rows.insert((id.to_string(), repo.map(String::from)));
+    s.wake.notify_one();
+    true
+}
+
 /// Owed writes after the reply are not request work; they keep the receiver's 3 s bound.
 const SETTLE_DEADLINE: Duration = Duration::from_secs(3);
 
@@ -114,6 +130,18 @@ impl Settler {
     pub fn pass(&self, m: &mut dyn Machine, bd: &mut dyn Bd, stamp: &mut dyn FnMut() -> Result<u64, String>) {
         let taken = std::mem::take(&mut *self.owed.lock().unwrap_or_else(|e| e.into_inner()));
         let mut back = Owed::default();
+        let mut taken = taken;
+        for (id, repo) in taken.rows {
+            let _deadline = fresh_deadline();
+            let (code, _) = m.call(&row_argv(&id, repo.as_deref()));
+            if code == 0 {
+                taken.claims.insert(id);
+            } else {
+                count_refused("row");
+                back.rows.insert((id, repo));
+            }
+        }
+        taken.rows = BTreeSet::new();
         for (ids, only_if_unset) in [(taken.claims, false), (taken.only_if_unset, true)] {
             for id in ids {
                 let mut args = vec![id.clone()];
@@ -136,6 +164,7 @@ impl Settler {
             }
         }
         let mut g = self.owed.lock().unwrap_or_else(|e| e.into_inner());
+        g.rows.extend(back.rows);
         g.claims.extend(back.claims);
         g.only_if_unset.extend(back.only_if_unset);
         g.stamp |= back.stamp;
@@ -213,6 +242,11 @@ mod tests {
     fn claim_of(w: &World, id: &str) -> serde_json::Value {
         let rows: Vec<serde_json::Value> = serde_json::from_str(&w.ok(&["list", "--live"])).unwrap();
         rows.into_iter().find(|r| r["bead_id"] == id).unwrap()["claim"].clone()
+    }
+
+    fn claim_of_opt(w: &World, id: &str) -> Option<serde_json::Value> {
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&w.ok(&["list", "--live"])).unwrap();
+        rows.into_iter().find(|r| r["bead_id"] == id)
     }
 
     #[test]
@@ -296,6 +330,46 @@ mod tests {
         settler.pass(&mut m, &mut &w, &mut || Ok(1));
         assert!(!settler.owes());
         assert_eq!(claim_of(&w, "sp-a")["parent"], "sp-e");
+    }
+
+    #[test]
+    fn a_create_rows_owed_past_the_requests_deadline_is_written_by_the_settler() {
+        let w = World::new();
+        w.file("sp-new", "task", Some("sp-e"), &["repo:deck"]);
+        let settler = installed();
+        let _expired = state_store::phases::deadline_scoped(Instant::now());
+        let args = ["create", "T", "--silent", "--labels", "repo:deck"].map(String::from).to_vec();
+        let report = crate::content::after(&args, "sp-new\n", &mut &w, &mut &w, 0);
+        assert_eq!(report, "");
+        assert!(settler.owes());
+        assert!(claim_of_opt(&w, "sp-new").is_none(), "no row yet");
+        settler.pass(&mut &w, &mut &w, &mut || Ok(1));
+        assert_eq!(claim_of(&w, "sp-new")["parent"], "sp-e");
+        assert!(!settler.owes());
+    }
+
+    #[test]
+    fn a_refused_create_row_stays_owed_and_the_next_pass_writes_it() {
+        let w = World::new();
+        w.file("sp-new", "task", Some("sp-e"), &[]);
+        let settler = installed();
+        assert!(owe_row("sp-new", Some("deck")));
+        struct Refuses<'w>(&'w World, bool);
+        impl Machine for Refuses<'_> {
+            fn call(&mut self, args: &[String]) -> (i32, String) {
+                if std::mem::take(&mut self.1) {
+                    return (crate::callers::CANNOT_TELL, "cannot tell: Deadline".into());
+                }
+                let mut w = self.0;
+                w.call(args)
+            }
+        }
+        let mut m = Refuses(&w, true);
+        settler.pass(&mut m, &mut &w, &mut || Ok(1));
+        assert!(settler.owes() && claim_of_opt(&w, "sp-new").is_none());
+        settler.pass(&mut m, &mut &w, &mut || Ok(1));
+        assert!(!settler.owes());
+        assert_eq!(claim_of(&w, "sp-new")["parent"], "sp-e");
     }
 
     #[test]
