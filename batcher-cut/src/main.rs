@@ -35,7 +35,7 @@ use batcher_cut::{endpass, io, order, pace, redtip, screen, vm};
 mod telemetry;
 
 use spira_otel::exit::ExitCode;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -380,9 +380,7 @@ struct LiveOps<'a> {
     prior: batcher::mender::Prior,
     send_back: Option<String>,
     mend_pass: std::cell::Cell<u32>,
-    lifted: Vec<vm::LiftedRow>,
-    kept: BTreeMap<String, String>,
-    restored: BTreeSet<String>,
+    lifted: io::LiftedRows,
     returns_read: std::cell::RefCell<Option<(std::time::Instant, Vec<batcher::mender::Failure>)>>,
 }
 
@@ -499,17 +497,7 @@ impl LiveOps<'_> {
             })
             .text
         );
-        self.restore_rows_of(&member.id)
-    }
-
-    fn restore_rows_of(&mut self, owner: &str) -> Result<(), String> {
-        for row in self.lifted.iter().filter(|r| r.bead == owner) {
-            if self.kept.contains_key(&row.test) || !self.restored.insert(row.test.clone()) {
-                continue;
-            }
-            io::add_row_to_pass(Path::new(&self.evidence), row)?;
-        }
-        Ok(())
+        self.lifted.restore_rows_of(&member.id, Path::new(&self.evidence))
     }
 }
 
@@ -813,43 +801,33 @@ impl drive::RoundOps for LiveOps<'_> {
     }
 
     fn lifted(&self) -> Vec<(String, batcher::core::Id)> {
-        self.lifted
-            .iter()
-            .filter(|r| !self.kept.contains_key(&r.test) && !self.restored.contains(&r.test))
-            .map(|r| (r.test.clone(), r.bead.clone()))
-            .collect()
+        self.lifted.standing()
     }
 
     fn keep_lifted(&mut self, test: &str, owner: &batcher::core::Id, merged_lines: &[String], base_lines: &[String]) -> Result<String, String> {
-        if let Some(bead) = self.kept.get(test) {
-            return Ok(bead.clone());
-        }
-        let old_bead = self.lifted.iter().find(|r| r.test == test).map(|r| r.bead.clone()).ok_or_else(|| format!("{test} is not a row this round lifted"))?;
-        let merged = match (merged_lines, test.strip_prefix("suite:")) {
-            ([], Some(suite)) => io::suite_first_fail(Path::new(&self.evidence), self.pass.as_deref(), suite).into_iter().collect(),
-            _ => merged_lines.to_vec(),
-        };
-        let kept = io::KeptRow {
-            test: test.to_string(),
-            owner: owner.clone(),
-            old_bead,
-            round_branch: self.round_branch.clone(),
-            head: io::head_of(self.wt)?,
-            base: self.start_sha.clone(),
-            merged_lines: merged,
-            base_lines: base_lines.to_vec(),
-        };
-        let registry = spira_config::release_env::tool("test-registry")?;
-        let (env, repo) = (self.env, self.repo);
-        let row = io::keep_row_with(
-            &mut |k| io::file_kept_row_bead(env, repo, k),
-            &mut io::through_registry(&registry, env),
-            Path::new(&self.evidence),
-            &kept,
-        )?;
-        println!("batcher {}: {test} red on the merged tree and the base — row kept until {}, fix {}", repo.name, io::date_of(row.until), row.bead);
-        self.kept.insert(test.to_string(), row.bead.clone());
-        Ok(row.bead)
+        let (env, repo, wt, results) = (self.env, self.repo, self.wt, PathBuf::from(&self.evidence));
+        let (round_branch, base, pass) = (self.round_branch.clone(), self.start_sha.clone(), self.pass.clone());
+        let bead = self.lifted.keep(test, |old_bead| {
+            let merged = match (merged_lines, test.strip_prefix("suite:")) {
+                ([], Some(suite)) => io::suite_first_fail(&results, pass.as_deref(), suite).into_iter().collect(),
+                _ => merged_lines.to_vec(),
+            };
+            let kept = io::KeptRow {
+                test: test.to_string(),
+                owner: owner.clone(),
+                old_bead: old_bead.to_string(),
+                round_branch,
+                head: io::head_of(wt)?,
+                base,
+                merged_lines: merged,
+                base_lines: base_lines.to_vec(),
+            };
+            let registry = spira_config::release_env::tool("test-registry")?;
+            let row = io::keep_row_with(&mut |k| io::file_kept_row_bead(env, repo, k), &mut io::through_registry(&registry, env), &results, &kept)?;
+            println!("batcher {}: {test} red on the merged tree and the base — row kept until {}, fix {}", repo.name, io::date_of(row.until), row.bead);
+            Ok(row.bead)
+        })?;
+        Ok(bead)
     }
 
     fn record(&mut self, iteration: u32, d: &batcher::attrib::Decision) {
@@ -1154,9 +1132,7 @@ fn stabilize_round(
         prior: batcher::mender::Prior::default(),
         send_back: None,
         mend_pass: Default::default(),
-        lifted,
-        kept: BTreeMap::new(),
-        restored: BTreeSet::new(),
+        lifted: io::LiftedRows::new(lifted),
         returns_read: Default::default(),
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
@@ -2472,9 +2448,7 @@ fn attribute_in(
         prior: batcher::mender::Prior::default(),
         send_back: None,
         mend_pass: Default::default(),
-        lifted: vec![],
-        kept: BTreeMap::new(),
-        restored: BTreeSet::new(),
+        lifted: io::LiftedRows::default(),
         returns_read: Default::default(),
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
@@ -3372,6 +3346,60 @@ mod cut_tests {
             vm::DenySnapshot::from_pass(&results).unwrap().text,
             "# test-registry deny-list at=77 rows=2\ndisabled\tunit:tiny t::old\tsp-x\t900\ndisabled\tsuite:test-y.sh\tsp-own\t-\n"
         );
+    }
+
+    fn lifted_pair() -> io::LiftedRows {
+        let row = |t: &str, b: &str| vm::LiftedRow { state: "disabled".into(), test: t.into(), bead: b.into(), until: 900 };
+        io::LiftedRows::new(vec![row("suite:test-x.sh", "sp-own"), row("unit:tiny t::y", "sp-own"), row("suite:test-z.sh", "sp-other")])
+    }
+
+    #[test]
+    fn a_row_is_kept_once_per_round_and_the_second_call_files_nothing() {
+        let mut rows = lifted_pair();
+        let mut filed = vec![];
+        let first = rows.keep("suite:test-x.sh", |old| {
+            filed.push(old.to_string());
+            Ok("sp-fix".into())
+        });
+        let second = rows.keep("suite:test-x.sh", |old| {
+            filed.push(old.to_string());
+            Ok("sp-other-fix".into())
+        });
+        assert_eq!((first, second), (Ok("sp-fix".to_string()), Ok("sp-fix".to_string())));
+        assert_eq!(filed, ["sp-own"], "the old bead is the row's, and only one filing");
+        assert!(rows.keep("suite:nope.sh", |_| Ok("x".into())).is_err());
+        assert_eq!(rows.standing().iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["unit:tiny t::y", "suite:test-z.sh"]);
+        let mut failing = lifted_pair();
+        assert!(failing.keep("suite:test-x.sh", |_| Err("down".into())).is_err());
+        assert_eq!(failing.standing().len(), 3, "a failed keep leaves the row standing and retryable");
+    }
+
+    #[test]
+    fn an_ejected_owners_rows_go_back_into_the_deny_list_once_and_a_kept_row_is_left_alone() {
+        let d = testkit::TempDir::new("batcher-cut-restore-owner");
+        let (_, results, _, _) = flip_fixture(&d);
+        let mut rows = lifted_pair();
+        rows.keep("suite:test-x.sh", |_| Ok("sp-fix".into())).unwrap();
+        rows.restore_rows_of("sp-own", &results).unwrap();
+        rows.restore_rows_of("sp-own", &results).unwrap();
+        assert_eq!(
+            vm::DenySnapshot::from_pass(&results).unwrap().text,
+            "# test-registry deny-list at=77 rows=2\ndisabled\tunit:tiny t::old\tsp-x\t900\ndisabled\tunit:tiny t::y\tsp-own\t900\n"
+        );
+        assert_eq!(rows.standing().iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["suite:test-z.sh"]);
+    }
+
+    #[test]
+    fn the_round_record_names_the_rows_the_round_lifted() {
+        let d = testkit::TempDir::new("batcher-cut-lifted-record");
+        let mut env = io::lifecycle_tests_env(&d);
+        let log = d.join("tsd.log");
+        env.tsd_bin = Some(d.join("tsd-write"));
+        testkit::write_exe(env.tsd_bin.as_ref().unwrap(), &format!("#!/bin/sh\necho \"$@\" >> {}\n", log.display()));
+        let all = vm::DenySnapshot { text: "# test-registry deny-list at=5 rows=1\ndisabled\tsuite:a.sh\tsp-m\t9\n".into(), at: 5, lifted: vec![] };
+        let (deny, _) = all.lifting(&["sp-m".to_string()]);
+        append_round(&env, Some(&deny), &[("repo", "fx".to_string())]);
+        assert!(std::fs::read_to_string(&log).unwrap().contains("--field-str deny_lifted=suite:a.sh"));
     }
 
     fn lint_red_attribution(d: &Path, with_deny_list: bool) -> (Result<String, String>, PathBuf) {

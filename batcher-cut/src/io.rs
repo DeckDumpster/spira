@@ -4487,29 +4487,7 @@ pub fn file_flip_bead(
     let body = format!(
         "{test} was red on the round tree ({round_branch}) and green on a rerun of that unchanged tree, on the base, and on every member alone, so the batcher disabled it in the test registry for the registry's hold (spira.test_registry_hold_secs) and certified the round without it (law-a-test-that-flips-is-deleted). It runs again when the row expires.\n\nDeliverable: find the nondeterminism, then fix or delete the test; a deterministic test restores coverage parity.\n"
     );
-    let tmp_dir = env.run.join("tmp");
-    fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
-    let tmp = tmp_dir.join(format!("flip-{}-{}.txt", repo.name, now()));
-    fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    let out = run(
-        // FORK-EDGE: bead.sh is the operator tool for filing; it stays
-        Command::new("bead.sh")
-            .args([
-                "file",
-                &title,
-                "--for",
-                "batcher",
-                "--repo",
-                &repo.name,
-                "--harness-title",
-                "--body-file",
-            ])
-            .arg(&tmp)
-            .arg("--json"),
-        "bead.sh file",
-    );
-    let _ = fs::remove_file(&tmp);
-    bead_id(&out?)
+    file_batcher_bead(env, repo, "flip", &title, &body)
 }
 
 /// File the fix bead for a test that is red on the merged tree and on the base after its owner lifted its row.
@@ -4519,7 +4497,7 @@ pub fn file_kept_row_bead(
     kept: &KeptRow,
 ) -> Result<String, String> {
     let title = format!("{} red on the merged tree and the base after {} lifted its row — fix it", kept.test, kept.owner);
-    let lines = |ls: &[String]| if ls.is_empty() { "(none printed)".to_string() } else { ls.join("\n") };
+    let lines = |ls: &[String]| if ls.is_empty() { "(not captured)".to_string() } else { ls.join("\n") };
     let body = format!(
         "{test} was red on the round tree and on the base, so {owner}'s landing did not clear its registry row: the row stays, now pointed at this bead (it was {old}).\n\nRound branch: {branch}\nMerged head: {head}\nBase: {base}\n\nFailing on the merged tree:\n{merged}\n\nFailing on the base:\n{base_lines}\n\nDeliverable: make {test} green on the base; its row then expires or is cleared by this bead's landing.\n",
         test = kept.test,
@@ -4644,6 +4622,52 @@ pub fn add_row_to_pass(results: &Path, row: &crate::vm::LiftedRow) -> Result<(),
     let path = results.join(crate::vm::DenySnapshot::FILE);
     let next = list.with_row(&row.state, &row.test, &row.bead, row.until);
     fs::write(&path, &next.text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// The registry rows a round lifted, and what became of each: kept (re-pointed at a fix bead) or
+/// put back because their owner left.
+#[derive(Default)]
+pub struct LiftedRows {
+    pub rows: Vec<crate::vm::LiftedRow>,
+    kept: std::collections::BTreeMap<String, String>,
+    restored: std::collections::BTreeSet<String>,
+}
+
+impl LiftedRows {
+    pub fn new(rows: Vec<crate::vm::LiftedRow>) -> Self {
+        LiftedRows { rows, ..Default::default() }
+    }
+
+    /// (test, owner) of each row still lifted: not kept and not put back.
+    pub fn standing(&self) -> Vec<(String, String)> {
+        self.rows
+            .iter()
+            .filter(|r| !self.kept.contains_key(&r.test) && !self.restored.contains(&r.test))
+            .map(|r| (r.test.clone(), r.bead.clone()))
+            .collect()
+    }
+
+    /// Keeps `test` once per round: the second call answers the first one's bead and files nothing.
+    pub fn keep(&mut self, test: &str, keep: impl FnOnce(&str) -> Result<String, String>) -> Result<String, String> {
+        if let Some(bead) = self.kept.get(test) {
+            return Ok(bead.clone());
+        }
+        let old = self.rows.iter().find(|r| r.test == test).map(|r| r.bead.clone()).ok_or_else(|| format!("{test} is not a row this round lifted"))?;
+        let bead = keep(&old)?;
+        self.kept.insert(test.to_string(), bead.clone());
+        Ok(bead)
+    }
+
+    /// Puts `owner`'s lifted rows back in the pass's deny list, except those already kept.
+    pub fn restore_rows_of(&mut self, owner: &str, results: &Path) -> Result<(), String> {
+        for row in self.rows.iter().filter(|r| r.bead == owner) {
+            if self.kept.contains_key(&row.test) || !self.restored.insert(row.test.clone()) {
+                continue;
+            }
+            add_row_to_pass(results, row)?;
+        }
+        Ok(())
+    }
 }
 
 /// Keeps a lifted row that is red on the merged tree and the base: files its fix bead, re-points

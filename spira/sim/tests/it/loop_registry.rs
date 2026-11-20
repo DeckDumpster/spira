@@ -69,7 +69,7 @@ fn an_unattended_row_expires_and_its_test_blocks_the_next_round() {
     let r = shipped_run();
     let (_, after) = r.looks.iter().find(|(i, _)| *i == 2).expect("the look after the expiry");
     assert!(after.held.is_empty(), "{}", after.pane);
-    assert!(r.reds.iter().any(|(at, _, t)| t == EXPIRING && *at >= 8_000_000), "{:?}", r.reds);
+    assert!(r.reds.iter().any(|(at, _, t)| t == EXPIRING && *at >= 8_500_000), "{:?}", r.reds);
     assert!(r.reds.iter().filter(|(_, _, t)| t == CLEARED).count() == 1, "the cleared test went red once, in the flip's own round: {:?}", r.reds);
 }
 

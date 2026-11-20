@@ -6909,6 +6909,33 @@ pub(crate) mod tests {
         assert!(matches!(&end, RoundEnd::Blocked(w) if w.contains("registry busy")), "{end:?}");
     }
 
+    #[test]
+    fn a_lifted_suite_red_in_the_corpus_pass_and_green_on_the_base_ejects_the_owner() {
+        let mut f = Fake::new(|s, tree| s == LIFTED_SUITE && tree.len() == 3);
+        f.prior_suites = vec![LIFTED_SUITE.into()];
+        let mut ops = lifted_ops("suite:test-01.sh");
+        let end = lifted_suite_round(&mut f, &mut ops);
+        let gone: Vec<&str> = ops.eject_evidence.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(gone, ["m2"]);
+        assert!(ops.kept.is_empty() && ops.disabled.is_empty());
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+    }
+
+    #[test]
+    fn a_lifted_unit_red_in_the_round_pass_and_green_on_the_base_ejects_the_owner() {
+        let mut f = Fake::new(|_, _| false);
+        let fired = std::cell::Cell::new(false);
+        f.filter = Some(Box::new(move |tree| (tree.len() == 3 && !fired.replace(true)).then(|| flip_red(&[FLIP_UNIT]))));
+        f.bisects = true;
+        f.runs_alone = true;
+        let mut ops = lifted_ops(LIFTED_UNIT);
+        let end = flip_round(&mut f, &mut ops);
+        let gone: Vec<&str> = ops.eject_evidence.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(gone, ["m2"]);
+        assert!(ops.kept.is_empty() && ops.disabled.is_empty());
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+    }
+
     const LIFTED_UNIT: &str = "unit:loom factory::tests::a";
 
     fn lifted_unit_round(red: Option<FilterFn>, prior: bool) -> (RoundEnd, Ops) {
