@@ -214,7 +214,7 @@ pub(crate) fn run<B: state_store::Backend>(args: &[String], store: &crate::contr
                 }
             }
             let (s, next) = store.journal_sweep_step(from.as_ref(), dry_run, "journal-sweep").map_err(cannot)?;
-            Ok(json!({ "dry_run": dry_run, "idless_schedules": s.idless_schedules, "indexed_schedules": s.indexed_schedules, "indexed_effects": s.indexed_effects, "next": next.map(|c| c.to_string()) }).to_string())
+            Ok(json!({ "dry_run": dry_run, "idless_schedules": s.idless_schedules, "legacy_deleted": s.legacy_deleted, "indexed_schedules": s.indexed_schedules, "indexed_effects": s.indexed_effects, "next": next.map(|c| c.to_string()) }).to_string())
         }
         "poison" => {
             let p = parse(a(1), "poison")?;
@@ -253,7 +253,7 @@ pub(crate) fn answer(r: Result<String, String>) -> (i32, String) {
 
 /// Sends `journal sweep` steps through `step` until the cursor runs out and sums their counts.
 pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_run: bool) -> (i32, String) {
-    let mut totals = [0u64; 3];
+    let mut totals = [0u64; 4];
     let mut cursor: Option<String> = None;
     let mut steps = 0;
     loop {
@@ -271,7 +271,7 @@ pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_ru
         }
         let Ok(v) = serde_json::from_str::<Value>(&out) else { return (CANNOT_TELL, format!("cannot tell: sweep step answered {out:?}")) };
         steps += 1;
-        for (t, k) in totals.iter_mut().zip(["idless_schedules", "indexed_schedules", "indexed_effects"]) {
+        for (t, k) in totals.iter_mut().zip(["idless_schedules", "indexed_schedules", "indexed_effects", "legacy_deleted"]) {
             *t += v[k].as_u64().unwrap_or(0);
         }
         match v["next"].as_str() {
@@ -279,7 +279,7 @@ pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_ru
             None => break,
         }
     }
-    (0, json!({ "dry_run": dry_run, "idless_schedules": totals[0], "indexed_schedules": totals[1], "indexed_effects": totals[2], "steps": steps }).to_string())
+    (0, json!({ "dry_run": dry_run, "idless_schedules": totals[0], "indexed_schedules": totals[1], "indexed_effects": totals[2], "legacy_deleted": totals[3], "steps": steps }).to_string())
 }
 
 #[cfg(test)]
@@ -565,8 +565,8 @@ mod tests {
         let (code, out) = sweep_until_done(&mut in_process(&s), false);
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(code, 0, "{out}");
-        assert_eq!((v["idless_schedules"].clone(), v["indexed_schedules"].clone(), v["steps"].clone()), (json!(2_500), json!(1), json!(4)), "{v}");
-        assert_eq!(swept(&s, false)["steps"], json!(2), "a swept store ends in the schedule step and the effect step");
+        assert_eq!((v["idless_schedules"].clone(), v["indexed_schedules"].clone(), v["steps"].clone()), (json!(2_500), json!(1), json!(7)), "{v}");
+        assert_eq!(swept(&s, false)["steps"], json!(5), "a swept store ends in the schedule step, one step per legacy table and the effect step");
     }
 
     #[test]
@@ -590,12 +590,77 @@ mod tests {
         assert_eq!(after_rerun, (key_count("schedule"), key_count("pending"), key_count("open-effect"), key_count("journal-meta")));
     }
 
+    fn legacy_seeded() -> (crate::control::store::Store<MemBackend>, Contract<MemBackend>) {
+        let (s, raw) = seeded(0);
+        for (table, tail) in [("event", "a"), ("applied", "asks/boot"), ("cursor", "1")] {
+            put_raw(&raw, &crate::control::keys::runtime(table, &[tail]), json!({"main": 255023}));
+        }
+        put_raw(&raw, &crate::control::keys::runtime("schedule", &["carried"]), json!({"at": 0, "stream": "s"}));
+        put_raw(&raw, &crate::control::keys::runtime("state", &["keep"]), json!({"v": 1}));
+        (s, raw)
+    }
+
+    fn all_keys(raw: &Contract<MemBackend>) -> Vec<String> {
+        raw.list(&["runtime/"], &state_store::Selector::Everything).unwrap().0.into_iter().map(|i| i.key).collect()
+    }
+
+    #[test]
+    fn the_sweep_removes_the_legacy_import_rows_and_nothing_a_reader_uses() {
+        let (s, raw) = legacy_seeded();
+        let before = all_keys(&raw);
+        let dry = swept(&s, true);
+        assert_eq!((dry["legacy_deleted"].clone(), dry["idless_schedules"].clone()), (json!(3), json!(1)), "{dry}");
+        assert_eq!(all_keys(&raw), before, "a dry run writes nothing");
+        let done = swept(&s, false);
+        assert_eq!(done["legacy_deleted"], json!(3), "{done}");
+        let gone = |k: &String| ["runtime/event/", "runtime/applied/", "runtime/cursor/", "runtime/schedule/carried"].iter().any(|p| k.starts_with(p));
+        let removed: Vec<_> = before.iter().filter(|k| !all_keys(&raw).contains(k)).cloned().collect();
+        assert_eq!(removed.len(), 4, "{removed:?}");
+        assert!(removed.iter().all(gone), "{removed:?}");
+        let after = all_keys(&raw);
+        let kept: Vec<_> = before.iter().filter(|k| !gone(k)).cloned().collect();
+        assert!(kept.iter().all(|k| after.contains(k)), "a key a reader uses was removed");
+        assert!(kept.iter().any(|k| k.starts_with("runtime/effect/")) && kept.iter().any(|k| k.starts_with("runtime/open-effect/")) && kept.contains(&"runtime/state/keep".to_string()));
+        assert!(after.contains(&"runtime/journal-meta/indexed".to_string()));
+    }
+
+    #[test]
+    fn a_sweep_resumed_inside_the_legacy_phase_finishes_the_rest_and_deletes_nothing_twice() {
+        let (s, raw) = legacy_seeded();
+        let (out, next) = s.journal_sweep_step(Some(&"legacy:runtime/event/a".parse().unwrap()), false, "t").unwrap();
+        assert_eq!((out.legacy_deleted, next.as_ref().map(|c| c.to_string())), (0, Some("legacy:runtime/applied/".into())));
+        let mut cursor = next;
+        let mut total = 0;
+        while let Some(c) = cursor {
+            let (o, n) = s.journal_sweep_step(Some(&c), false, "t").unwrap();
+            total += o.legacy_deleted;
+            cursor = n;
+        }
+        assert_eq!(total, 2, "applied and cursor remain; event was left for the earlier run");
+        let after = all_keys(&raw);
+        assert!(after.iter().any(|k| k.starts_with("runtime/event/")), "the resume starts after the cursor");
+        assert!(!after.iter().any(|k| k.starts_with("runtime/applied/") || k.starts_with("runtime/cursor/")));
+    }
+
+    #[test]
+    fn a_legacy_step_reads_at_most_one_page() {
+        let (s, raw) = seeded(0);
+        for n in 0..(crate::control::journal::SWEEP_STEP + 5) {
+            put_raw(&raw, &crate::control::keys::runtime("event", &[&format!("e{n:05}")]), json!({}));
+        }
+        let (out, next) = s.journal_sweep_step(Some(&"legacy:".parse().unwrap()), false, "t").unwrap();
+        assert_eq!(out.legacy_deleted, crate::control::journal::SWEEP_STEP);
+        assert!(next.unwrap().to_string().starts_with("legacy:runtime/event/"), "the cursor stays inside event");
+        assert_eq!(all_keys(&raw).iter().filter(|k| k.starts_with("runtime/event/")).count(), 5);
+    }
+
     #[test]
     fn a_sweep_refuses_an_argument_it_does_not_know() {
         let s = store();
         for argv in [&["sweep", "--now"][..], &["sweep", "--from"][..], &["sweep", "--from", "nowhere"][..], &["sweep", "--dry-run", "--dry-run"][..]] {
             assert_eq!(call(&s, argv).0, REFUSED, "{argv:?}");
         }
+        assert_eq!(call(&s, &["sweep", "--from", "legacy:zzz"]).0, REFUSED);
         assert_eq!(call(&s, &["sweep", "--from", "effect:", "--dry-run"]).0, 0);
     }
 
