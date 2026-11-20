@@ -546,14 +546,21 @@ pub fn outbox_dir(path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.outbox", path.display()))
 }
 
+/// Page cache per connection, in KiB. SQLite's default is 2 MiB, which a main file of several
+/// GiB turns into one `pread` per page: lc-serve was measured at ten threads each 60% busy, two
+/// thirds of it kernel time, reading 58 MB/s that the OS already held.
+const CACHE_KIB: i64 = 64 * 1024;
+
 fn connect(path: &Path) -> Result<Connection> {
-    Connection::open_with_flags(
+    let conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .map_err(db)
+    .map_err(db)?;
+    conn.pragma_update(None, "cache_size", -CACHE_KIB).map_err(db)?;
+    Ok(conn)
 }
 
 fn exec(conn: &Connection, sql: &str, p: impl rusqlite::Params) -> Result<usize> {
@@ -2348,6 +2355,15 @@ mod tests {
         assert!(b.get("k", 0).is_ok(), "a read with no deadline bound is served");
         let _passed = phases::deadline_scoped(std::time::Instant::now());
         assert!(matches!(b.get("k", 0), Err(Error::Deadline)));
+    }
+
+    #[test]
+    fn every_connection_reads_through_a_page_cache_sized_for_a_large_file() {
+        let dir = testkit::TempDir::new("sqlite-cache");
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let size = |c: &Connection| c.pragma_query_value(None, "cache_size", |r| r.get::<_, i64>(0)).unwrap();
+        assert_eq!(size(&lock(&b.0.readers[0].conn)), -CACHE_KIB);
+        assert_eq!(size(&lock(&b.0.writer).conn), -CACHE_KIB);
     }
 
     #[test]

@@ -58,6 +58,12 @@ impl Clock for Wall {
 /// The store as this process opens it: SQLite alone, every read served from it.
 pub type Served = SqliteBackend;
 
+/// Reader connections on the main file. With the backend's default of four, requests were
+/// measured waiting 1.7 to 2.5 s of a 3 s deadline for a reader (`spira.phase.reader_wait_us`)
+/// while the server ran ten or more request threads; a WAL reader costs a file handle and its
+/// page cache, so there is one for each thread that can ask.
+const READERS: usize = 16;
+
 fn backend_at(path: &str, opts: Options) -> Result<Served, String> {
     // Opening creates a missing file, which would answer every read as an empty store.
     if !Path::new(path).is_file() {
@@ -73,7 +79,7 @@ fn open(path: &str) -> Result<Store<Served>, String> {
     let history_bytes = spira_config::process::cfg_parse::<usize>("SPIRA_LC_HISTORY_RING_BYTES")?;
     let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
     let metrics = Some(spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", std::time::Duration::from_millis(250)));
-    let backend = backend_at(path, Options { history_bytes, wall: Arc::new(Wall), metrics, ..Options::default() })?;
+    let backend = backend_at(path, Options { history_bytes, wall: Arc::new(Wall), metrics, readers: READERS, ..Options::default() })?;
     let floor = lock_floor_ms()?;
     let ports = Ports {
         mono: Arc::new(MonotonicClock::new()),
