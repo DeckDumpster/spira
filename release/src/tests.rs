@@ -1822,11 +1822,11 @@ fn verify_refuses_a_spira_lc_whose_function_names_are_stripped() {
     let p = verify_symbol_problems(&crate::symbols::tests::elf_image(&[], false));
     assert!(p.iter().any(|p| p.contains("bin/spira-lc")), "{p:?}");
     let p = verify_symbol_problems(&crate::symbols::tests::elf_image(&["sqlite3_step"], false));
-    assert!(p.iter().any(|p| p.contains("spira_lc::main")), "{p:?}");
+    assert!(p.iter().any(|p| p.contains("spira_lc::")), "{p:?}");
 }
 
 #[test]
 fn verify_accepts_a_spira_lc_that_keeps_its_function_names() {
-    let p = verify_symbol_problems(&crate::symbols::tests::elf_image(&["_ZN8spira_lc4main17h0123456789abcdefE", "sqlite3_step"], false));
+    let p = verify_symbol_problems(&crate::symbols::tests::elf_image(&["_RNCNvCsiVYX3EDehpB_8spira_lc4mains0_0B3_", "sqlite3_step"], false));
     assert_eq!(p, Vec::<String>::new());
 }

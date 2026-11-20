@@ -101,7 +101,7 @@ Passes only if all hold, and reports every failure, not just the first:
 * **every binary a unit template names exists:** in each `systemd/*` template, every path
   under the release that an `Exec*=` line names (after the release's own placeholders are
   filled) exists, and the program each one runs is executable;
-* `bin/spira-lc`'s symbol table (`.symtab`) carries `spira_lc::main` and `sqlite3_step`, so a
+* `bin/spira-lc`'s symbol table (`.symtab`) carries a symbol under `spira_lc::` (v0-demangled; `main` itself is inlined, its closures remain) and `sqlite3_step`, so a
   release built with function names stripped is refused;
 * the release's own `spira/pre-activate.sh <release>` passes (skip with
   `--no-pre-activate`; a release that has none is a failure).

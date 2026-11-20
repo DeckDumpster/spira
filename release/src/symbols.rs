@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-pub const REQUIRED: &[(&str, &[&str])] = &[("bin/spira-lc", &["spira_lc::main", "sqlite3_step"])];
+pub const REQUIRED: &[(&str, &[&str])] = &[("bin/spira-lc", &["spira_lc::", "sqlite3_step"])];
 
 const KEEP: &str = "[profile.release] must keep function names (strip = \"debuginfo\")";
 const SHT_SYMTAB: u32 = 2;
@@ -66,25 +66,21 @@ pub fn symtab_names(elf: &[u8]) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
-/// `_ZN8spira_lc4main17h<hash>E` as `spira_lc::main`; None for a name that is not legacy-mangled.
-fn demangled_path(name: &str) -> Option<String> {
-    let mut rest = name.strip_prefix("_ZN")?;
-    let mut segs: Vec<&str> = Vec::new();
-    while !rest.starts_with('E') {
-        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-        let len: usize = rest[..digits].parse().ok()?;
-        rest = &rest[digits..];
-        segs.push(rest.get(..len)?);
-        rest = &rest[len..];
-    }
-    if segs.last().is_some_and(|s| s.len() == 17 && s.starts_with('h') && s[1..].bytes().all(|b| b.is_ascii_hexdigit())) {
-        segs.pop();
-    }
-    Some(segs.join("::"))
-}
-
+/// A trailing `::` asks for any symbol whose demangled path lies under that crate (a release
+/// inlines `spira_lc::main` itself, leaving its closures); otherwise the exact raw or demangled name.
 fn has_symbol(names: &[String], want: &str) -> bool {
-    names.iter().any(|n| n == want || demangled_path(n).as_deref() == Some(want))
+    names.iter().any(|n| {
+        if n == want {
+            return true;
+        }
+        let Ok(d) = rustc_demangle::try_demangle(n) else { return false };
+        let path = format!("{d:#}");
+        if want.ends_with("::") {
+            path.starts_with(want) || path.starts_with(&format!("<{want}"))
+        } else {
+            path == want
+        }
+    })
 }
 
 pub fn problems(rel: &Path) -> Vec<String> {
@@ -164,7 +160,8 @@ pub(crate) mod tests {
         b
     }
 
-    const MAIN: &str = "_ZN8spira_lc4main17h0123456789abcdefE";
+    // Names as they occur in a release `spira-lc` (v0 mangling; `main` itself is inlined).
+    const MAIN: &str = "_RNCNvCsiVYX3EDehpB_8spira_lc4mains0_0B3_";
 
     fn run(img: &[u8]) -> Vec<String> {
         let mut out = Vec::new();
@@ -173,11 +170,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_symtab_with_both_names_reads_back_and_the_mangled_main_demangles() {
+    fn a_symtab_with_both_names_reads_back_and_a_main_closure_is_under_the_crate() {
         let names = symtab_names(&elf_image(&[MAIN, "sqlite3_step"], false)).unwrap();
         assert!(names.contains(&MAIN.to_string()) && names.contains(&"sqlite3_step".to_string()), "{names:?}");
-        assert_eq!(demangled_path(MAIN).as_deref(), Some("spira_lc::main"));
-        assert_eq!(demangled_path("sqlite3_step"), None);
+        assert!(has_symbol(&[MAIN.to_string()], "spira_lc::"));
+        assert!(!has_symbol(&["sqlite3_step".to_string()], "spira_lc::"));
+        assert!(!has_symbol(&["_RNvCs1_5other4main".to_string()], "spira_lc::"));
         assert_eq!(run(&elf_image(&[MAIN, "sqlite3_step"], false)), Vec::<String>::new());
     }
 
