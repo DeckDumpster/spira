@@ -117,6 +117,12 @@ fn shown_row(id: &str) -> Option<bead::ShowRow> {
 /// the exit code and the stdout, left for the caller to print. A door that cannot say whether
 /// the write committed exits [`CANNOT_TELL`].
 fn put_capture(args: &[&str], body: Option<&str>) -> (i32, String) {
+    put_capture_under(args, body, None)
+}
+
+/// [`put_capture`] sent under `request` and sent again under it while the store cannot tell: the
+/// store runs the write once and answers every send with that run's result.
+fn put_capture_under(args: &[&str], body: Option<&str>, request: Option<&str>) -> (i32, String) {
     let client = match lc() {
         Ok(c) => c,
         Err(e) => {
@@ -125,9 +131,13 @@ fn put_capture(args: &[&str], body: Option<&str>) -> (i32, String) {
         }
     };
     let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
-    let sent = match body {
-        Some(b) => client.call_stdin(&argv, b),
-        None => client.call(&argv),
+    let sent = match request {
+        None => match body {
+            Some(b) => client.call_stdin(&argv, b),
+            None => client.call(&argv),
+        }
+        .map_err(|e| e.to_string()),
+        Some(request) => resend_under(&client, &argv, body, request),
     };
     match sent {
         Ok(r) => {
@@ -139,6 +149,17 @@ fn put_capture(args: &[&str], body: Option<&str>) -> (i32, String) {
             (CANNOT_TELL, String::new())
         }
     }
+}
+
+fn resend_under(client: &spira_store::lc_call::LcClient, argv: &[&str], body: Option<&str>, request: &str) -> Result<spira_store::lc_call::Reply, String> {
+    let retry = spira_store::lifecycle_row::Retry::configured()?;
+    let mut said = false;
+    let mut note = || {
+        if !std::mem::replace(&mut said, true) {
+            eprintln!("bead: file: the store cut the create at its deadline; re-sent under request {request}");
+        }
+    };
+    spira_store::lc_call::as_request(request, || spira_store::lifecycle_row::call_idempotent_noting(client, argv, body, &retry, &mut note))
 }
 
 /// [`put_capture`] with the door's stdout passed through.
@@ -178,8 +199,9 @@ fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[St
     };
     let since = bead::bdq::utc_stamp_nanos(std::time::SystemTime::now() - std::time::Duration::from_secs(window));
     let created_at = std::cell::Cell::new(std::time::Instant::now());
+    let request = bead::filing::create_request_id(&std::env::var("BEADS_ACTOR").unwrap_or_default(), &argv_owned, body);
     let mut create = || {
-        let sent = put_capture(&argv, body);
+        let sent = put_capture_under(&argv, body, Some(&request));
         created_at.set(std::time::Instant::now());
         sent
     };
@@ -2149,13 +2171,20 @@ mod tests {
     struct Door {
         sent: Mutex<Sent>,
         answers: Vec<(&'static str, i32, &'static str)>,
+        first: Mutex<Vec<(&'static str, i32, &'static str)>>,
+        request_ids: Mutex<Vec<Option<String>>>,
     }
 
     impl Transport for Door {
         fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
             self.sent.lock().unwrap().push((argv.to_vec(), stdin.map(str::to_string)));
             let line = argv.join(" ");
-            let (_, code, text) = self.answers.iter().find(|(p, _, _)| line.starts_with(p)).copied().unwrap_or(("", 0, ""));
+            self.request_ids.lock().unwrap().push(spira_store::lc_call::current_request_id());
+            let once = {
+                let mut first = self.first.lock().unwrap();
+                first.iter().position(|(p, _, _)| line.starts_with(p)).map(|i| first.remove(i))
+            };
+            let (_, code, text) = once.or_else(|| self.answers.iter().find(|(p, _, _)| line.starts_with(p)).copied()).unwrap_or(("", 0, ""));
             Ok(Reply { code, out: if code == 0 { text.into() } else { String::new() }, err: if code == 0 { String::new() } else { text.into() } })
         }
     }
@@ -2163,7 +2192,7 @@ mod tests {
     const BEAD: &str = r#"[{"id":"sp-a","issue_type":"task","priority":2,"description":"old","labels":["repo:r"]}]"#;
 
     fn install(answers: Vec<(&'static str, i32, &'static str)>) -> Arc<Door> {
-        let d = Arc::new(Door { sent: Mutex::new(vec![]), answers });
+        let d = Arc::new(Door { sent: Mutex::new(vec![]), answers, first: Mutex::new(vec![]), request_ids: Mutex::new(vec![]) });
         TEST_DOOR.with(|t| *t.borrow_mut() = Some(LcClient::over(d.clone(), true)));
         d
     }
@@ -2289,6 +2318,23 @@ mod tests {
         let args = argv(&["create", "T", "--silent"]);
         assert_eq!(door_create(&args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r")), 0);
         assert_eq!(writes(&d)[0].0, argv(&["content", "create", "T", "--silent", "--deps", "blocks:sp-a"]));
+    }
+
+    #[test]
+    fn a_create_the_store_cuts_is_sent_again_under_the_same_request_and_the_filing_completes() {
+        let dir = testkit::TempDir::new("bead-door-resend");
+        let _env = configured(dir.path());
+        let d = install(vec![("content create", 0, "sp-new\n")]);
+        *d.first.lock().unwrap() = vec![("content create", 2, "cannot tell: deadline")];
+        let args = argv(&["create", "T", "--silent", "--body-file", "-"]);
+        assert_eq!(door_create(&args, Some("the body"), None, &[], Some("T"), Some("T"), false, None, Some("r")), 0);
+        let w = writes(&d);
+        let creates: Vec<_> = w.iter().filter(|(a, _)| a[1] == "create").collect();
+        assert_eq!(creates.len(), 2, "{w:?}");
+        assert_eq!(creates[0], creates[1], "same argv and body");
+        let ids: Vec<_> = d.sent.lock().unwrap().iter().zip(d.request_ids.lock().unwrap().iter()).filter(|((a, _), _)| a[1] == "create").map(|(_, id)| id.clone()).collect();
+        assert!(ids[0].is_some() && ids[0] == ids[1], "{ids:?}");
+        assert!(w.iter().any(|(a, _)| a[..2] == argv(&["create-bead", "sp-new"])[..]), "{w:?}");
     }
 
     const LISTED_NOW: &str = r#"[{"id":"sp-held","title":"T","issue_type":"task","created_at":"2999-01-01T00:00:00Z"}]"#;
