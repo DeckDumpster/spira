@@ -2200,6 +2200,16 @@ fn stage_merges_a_blocker_named_after_its_dependant_ahead_of_it() {
 }
 
 #[test]
+fn round_eject_says_the_row_decides_when_the_reopen_did_not_complete() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    t.lib.reopen_fails.borrow_mut().insert("sp-a".into());
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-a", "--reason", "red"]), 0, "{}", t.err());
+    assert!(t.err().contains("bead_reopen did not complete for sp-a"), "{}", t.err());
+}
+
+#[test]
 fn eject_of_a_blocker_takes_its_same_round_dependant_with_it_naming_the_blocker() {
     let t = round_world();
     block(&t, "sp-b", &["sp-a"]);
