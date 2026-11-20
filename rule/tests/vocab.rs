@@ -12,7 +12,7 @@ fn store(rows: &[(&str, &str)]) -> BTreeMap<String, String> {
 }
 
 #[test]
-fn an_unnumbered_slug_renames_a_text_term_amends_and_clean_or_other_family_keys_are_left() {
+fn an_unnumbered_slug_renames_a_text_term_amends_and_clean_keys_are_left() {
     let book = store(&[("law-one-aeon-one-worktree", "One worktree."), ("law-x", "summon it"), ("law-y", "Clean."), ("sop-z", "aeon")]); // ffx-ok
     let got = plan(&book, &parse_toc(TOC).unwrap(), &Pointers::default());
     assert_eq!(
@@ -20,8 +20,29 @@ fn an_unnumbered_slug_renames_a_text_term_amends_and_clean_or_other_family_keys_
         vec![
             Entry::Rename { from: "law-one-aeon-one-worktree".into(), to: "law-one-dwarf-one-worktree".into(), text: "One worktree.".into(), numbered: false }, // ffx-ok
             Entry::Amend { key: "law-x".into(), text: "call it".into() },
+            Entry::Amend { key: "sop-z".into(), text: "dwarf".into() },
         ]
     );
+}
+
+#[test]
+fn a_runbook_renames_unnumbered_and_a_target_with_a_retirement_record_is_a_collision() {
+    let book = store(&[("sop-aeon-x", "SYMPTOM: x"), ("sop-aeon-y", "SYMPTOM: y"), ("retired-sop-dwarf-y", "{}")]); // ffx-ok
+    let got = plan(&book, &parse_toc(TOC).unwrap(), &Pointers::default());
+    assert_eq!(
+        got,
+        vec![
+            Entry::Rename { from: "sop-aeon-x".into(), to: "sop-dwarf-x".into(), text: "SYMPTOM: x".into(), numbered: false }, // ffx-ok
+            Entry::Collision { from: "sop-aeon-y".into(), to: "sop-dwarf-y".into() }, // ffx-ok
+        ]
+    );
+}
+
+#[test]
+fn the_dry_run_lists_a_runbook_rename_and_its_changed_sentence() {
+    let before = store(&[("sop-aeon-x", "SYMPTOM: an aeon stalls")]); // ffx-ok
+    let report = rule::vocab::dry_run_report(&before, &plan(&before, &[], &Pointers::default()));
+    assert_eq!(report, "sop-aeon-x → sop-dwarf-x\n- SYMPTOM: an aeon stalls\n+ SYMPTOM: a dwarf stalls\n\n"); // ffx-ok
 }
 
 #[test]

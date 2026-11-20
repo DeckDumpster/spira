@@ -552,3 +552,51 @@ fn code_without_check_in_a_checkout_with_no_toc_says_to_use_a_worktree_of_the_ho
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("run this from a worktree of the home repository"), "{}", String::from_utf8_lossy(&out.stderr));
 }
+
+#[test]
+fn one_rename_vocabulary_leaves_the_generated_book_clean_of_retired_terms_runbooks_included() {
+    use rule::vocab::{plan, record_renames, Entry};
+    use spira_lint::rules::ffx_vocabulary::{FfxVocabulary, Mode};
+    use spira_lint::Rule;
+    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
+    let repo = law_repo();
+    let p = repo.path();
+    let toc_text = "[[part]]\nnumber = 1\nname = \"Alpha\"\nslug = \"alpha\"\nscope = \"First scope.\"\nslugs = [\n  \"law-one\",\n  \"law-aeon-old\",\n]\n";
+    std::fs::write(p.join("law/toc.toml"), toc_text).unwrap();
+    let pointers_text = "version = 1\n\n[[retired]]\nslug = \"law-aeon-old\"\nreason = \"gone\"\nreplaced_by = \"law-one\"\non = \"2026-01-01\"\n";
+    std::fs::write(p.join("law/pointers.toml"), pointers_text).unwrap();
+    std::fs::create_dir_all(p.join("spira/statutes")).unwrap();
+    std::fs::write(p.join("spira/statutes/sop-aeon-x.txt"), "SYMPTOM: an aeon stalls").unwrap();
+    testkit::git(p, &["add", "-A"]);
+    testkit::git(p, &["commit", "-q", "-m", "stale runbook seed"]);
+
+    let toc = parse_toc(toc_text).unwrap();
+    let pointers = parse_pointers(pointers_text).unwrap();
+    let mut book: BTreeMap<String, String> = [("law-one", "An aeon acts."), ("sop-aeon-x", "SYMPTOM: an aeon stalls")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let mut renamed = Vec::new();
+    for e in plan(&book.clone(), &toc, &pointers) {
+        match e {
+            Entry::Amend { key, text } => {
+                book.insert(key, text);
+            }
+            Entry::Rename { from, to, text, numbered } => {
+                book.remove(&from);
+                book.insert(to.clone(), text);
+                if from.starts_with("law-") {
+                    renamed.push((from, to, numbered));
+                }
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(book["sop-dwarf-x"], "SYMPTOM: a dwarf stalls");
+    let (toc, pointers) = record_renames(&toc, &pointers, &renamed, "2026-01-02").unwrap();
+    let toc = rule::code::catch_up(&toc, &pointers, &book, None).unwrap();
+    let wt_root = testkit::TempDir::new("rule-vocab-e2e-wt");
+    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "rename-vocabulary", "book", &toc, &pointers, &book).unwrap();
+    testkit::git(p, &["checkout", "-q", &branch]);
+
+    let tree = spira_lint::Tree::from_git(p).unwrap();
+    let found = FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&tree).unwrap();
+    assert!(found.is_empty(), "{found:?}");
+}

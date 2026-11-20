@@ -364,6 +364,29 @@ fn show_of_a_retired_slug_says_who_and_why() {
     assert!(show(&bd, "never").err[0].contains("no such SOP"));
 }
 
+fn rename_record(replaced_by: Option<&str>) -> String {
+    shelf::Retired { by: "t".into(), at: "a".into(), epoch: 1, reason: "renamed".into(), text: "old".into(), replaced_by: replaced_by.map(String::from) }.to_json()
+}
+
+#[test]
+fn show_of_a_renamed_runbook_prints_the_rename_line_and_the_new_text() {
+    let bd = FakeBd::default();
+    bd.seed("sop-dwarf-x", GOOD);
+    bd.seed("retired-sop-aeon-x", &rename_record(Some("sop-dwarf-x")));
+    let r = show(&bd, "sop-aeon-x");
+    assert_eq!(r.code, 0);
+    assert_eq!(r.out, vec!["sop-aeon-x was renamed to sop-dwarf-x".to_string(), GOOD.trim_end().to_string()]);
+}
+
+#[test]
+fn show_of_a_retired_runbook_with_no_successor_still_fails() {
+    let bd = FakeBd::default();
+    bd.seed("retired-sop-aeon-x", &rename_record(None));
+    let r = show(&bd, "sop-aeon-x");
+    assert_eq!(r.code, 1);
+    assert!(r.err.join("\n").contains("is retired"));
+}
+
 #[test]
 fn write_over_a_retired_slug_needs_revive() {
     let bd = FakeBd::default();

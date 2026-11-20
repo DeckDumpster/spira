@@ -129,7 +129,7 @@ uses that rule's own table (`spira_lint::rules::ffx_vocabulary`), so an accepted
 carries `ffx-ok` in its first sentence: only that sentence reaches each Part's `index.md`, where the
 lint fires. `retire` writes no text and is not checked.
 
-`rename-vocabulary` migrates the statutes that predate that refusal, using the same table
+`rename-vocabulary` migrates the statutes and `sop-*` runbooks that predate that refusal, using the same table
 (`ffx_vocabulary::rewrite`). A statute whose text alone holds a term is amended in place; one whose
 slug holds a term is enacted under the renamed slug and the old key forgotten. Every rename leaves a
 `[[retired]]` pointer to the new slug: an old slug not yet numbered is numbered first
@@ -139,7 +139,15 @@ reaches slugs. A bare "summons" (no determiner, no count before it) is unreadabl
 plural and is listed as unresolved. A rename onto a key in force, and a term with no replacement,
 are listed and left, exit 1; the rest is applied and `law/` landed once. `--dry-run` prints each
 statute and, under it, each changed sentence as a `-` old and `+` new line (a rename prints
-`old → new`), and writes nothing.
+`old → new`), and writes nothing; its tail line counts statutes and runbooks apart.
+
+A `sop-*` runbook is rewritten by the same plan and replacements. One whose text alone holds a term is
+amended; one whose name holds a term is written under the new name, then a `retired-<old>` record
+(`sop::shelf::Retired`, `replaced_by` = the new key, `text` = the old text) is remembered, then the old
+key forgotten, and the record forgotten again if that fails. `sop show <old>` follows `replaced_by`:
+it prints `<old> was renamed to <new>` and the new text. A runbook rename is neither numbered nor
+pointed at in `law/`, and a target that is a key or has a `retired-` record is a collision. `law/` is
+landed only when a statute was written; otherwise `law/: no statute rewritten; nothing to land.`
 
 ## Pointers: a change to the book leaves one, never a gap
 

@@ -1723,6 +1723,7 @@ version = "0.1.0"
 dependencies = [
  "bead",
  "serde_json",
+ "sop",
  "spira-config",
  "spira-lint",
  "spira-otel",

@@ -42,17 +42,22 @@ pub struct Retired {
     pub epoch: u64,
     pub reason: String,
     pub text: String,
+    pub replaced_by: Option<String>,
 }
 
 impl Retired {
     pub fn to_json(&self) -> String {
-        serde_json::json!({"by": self.by, "at": self.at, "epoch": self.epoch, "reason": self.reason, "text": self.text}).to_string()
+        let mut v = serde_json::json!({"by": self.by, "at": self.at, "epoch": self.epoch, "reason": self.reason, "text": self.text});
+        if let Some(to) = &self.replaced_by {
+            v["replaced_by"] = serde_json::Value::String(to.clone());
+        }
+        v.to_string()
     }
 
-    fn from_json(raw: &str) -> Option<Retired> {
+    pub fn from_json(raw: &str) -> Option<Retired> {
         let v: serde_json::Value = serde_json::from_str(raw).ok()?;
         let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(String::from);
-        Some(Retired { by: s("by")?, at: s("at")?, epoch: v.get("epoch")?.as_u64()?, reason: s("reason")?, text: s("text")? })
+        Some(Retired { by: s("by")?, at: s("at")?, epoch: v.get("epoch")?.as_u64()?, reason: s("reason")?, text: s("text")?, replaced_by: s("replaced_by") })
     }
 }
 
@@ -124,11 +129,21 @@ mod tests {
 
     #[test]
     fn a_retirement_record_is_never_a_live_sop() {
-        let r = Retired { by: "a".into(), at: "t".into(), epoch: 1, reason: "why".into(), text: "SYMPTOM: s".into() };
+        let r = Retired { by: "a".into(), at: "t".into(), epoch: 1, reason: "why".into(), text: "SYMPTOM: s".into(), replaced_by: None };
         let raw = serde_json::json!({ retired_key("x"): r.to_json(), "sop-y": "live" }).to_string();
         assert_eq!(retired_key("sop-x"), "retired-sop-x");
         assert_eq!(parse(&raw).unwrap().keys().collect::<Vec<_>>(), vec!["sop-y"]);
         assert_eq!(parse_retired(&raw).unwrap()["sop-x"], r);
+    }
+
+    #[test]
+    fn replaced_by_is_written_only_when_set_and_round_trips_both_ways() {
+        let mut r = Retired { by: "a".into(), at: "t".into(), epoch: 1, reason: "why".into(), text: "x".into(), replaced_by: None };
+        assert!(!r.to_json().contains("replaced_by"));
+        assert_eq!(Retired::from_json(&r.to_json()), Some(r.clone()));
+        r.replaced_by = Some("sop-new".into());
+        assert!(r.to_json().contains("\"replaced_by\":\"sop-new\""));
+        assert_eq!(Retired::from_json(&r.to_json()), Some(r));
     }
 
     #[test]
