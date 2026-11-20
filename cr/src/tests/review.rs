@@ -312,3 +312,44 @@ fn a_set_state_stamps_the_matching_time_and_keeps_the_rest() {
     assert_eq!((r.state, r.closed_at), (State::Closed, Some(99)));
     assert_eq!(record::load(w.run.path(), 1).unwrap(), r);
 }
+
+#[test]
+fn seal_rerun_with_different_comments_is_refused_not_silently_dropped() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
+    w.gh.fail("pulls");
+    let c = w.comments(1);
+    assert_eq!(w.seal_with("001", &c).code, 1);
+    w.gh.heal();
+    let other = c.replace("first look", "second thoughts");
+    let o = w.seal_with("001", &other);
+    assert_eq!(o.code, 2, "{}", o.stderr);
+    assert!(o.stderr.contains("different comments"), "{}", o.stderr);
+}
+
+#[test]
+fn seal_rerun_after_a_lost_progress_file_adopts_the_ref_already_on_the_forge() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
+    w.gh.fail("pulls");
+    let c = w.comments(1);
+    assert_eq!(w.seal_with("001", &c).code, 1);
+    std::fs::remove_file(record::dir(w.run.path(), 1).join("progress.json")).unwrap();
+    w.gh.heal();
+    w.gh.fail("git/refs");
+    w.gh.answer("git/ref/heads", r#"{"object":{"sha":"new-commit"}}"#);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    assert_eq!(w.gh.posted("pulls").len(), 2);
+}
+
+#[test]
+fn unseal_with_a_failing_review_post_leaves_it_retryable() {
+    let mut w = world();
+    assert_eq!(w.open_and_seal().code, 0);
+    record::set_state(w.run.path(), 1, State::Published, NOW).unwrap();
+    w.gh.fail("pulls/7/reviews");
+    assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 1);
+    w.gh.heal();
+    assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 0);
+}

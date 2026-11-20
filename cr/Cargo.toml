@@ -19,6 +19,7 @@ integration = ["forge/integration", "spira-config/integration", "runtime/integra
 
 [dependencies]
 regex = "1"
+base64 = "0.22"
 forge = { path = "../forge" }
 runtime = { path = "../runtime" }
 serde = { version = "1", features = ["derive"] }

@@ -9,6 +9,7 @@ use crate::record::{self, Kind, Review, State};
 use crate::units;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -46,22 +47,6 @@ fn refuse(code: i32, msg: &str) -> Outcome {
 
 fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
-}
-
-pub fn base64(bytes: &[u8]) -> String {
-    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for c in bytes.chunks(3) {
-        let n = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
-        for i in 0..4 {
-            if i <= c.len() {
-                out.push(T[((n >> (18 - 6 * i)) & 63) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
 }
 
 fn slug(title: &str) -> String {
@@ -407,6 +392,12 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
         Err(e) => return refuse(1, &e),
     };
     let sealed_path = dir.join("sealed.json");
+    if sealed_path.exists() && !ports.stdin.trim().is_empty() {
+        let stored: Option<Vec<Comment>> = std::fs::read(&sealed_path).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        if serde_json::from_str::<Vec<Comment>>(&ports.stdin).ok() != stored {
+            return refuse(2, &format!("review {number:03} is already sealed with different comments; a sealed review is not replaced"));
+        }
+    }
     if !sealed_path.exists() {
         let comments = match validate(&ports.stdin, &files) {
             Ok(c) => c,
@@ -464,7 +455,7 @@ fn push_branch(p: &mut Progress, dir: &Path, r: &Review, files: &[(String, Vec<u
             continue;
         }
         let ep = format!("{repo}/git/blobs");
-        let v = gh(ports, "POST", &ep, Some(&json!({"content": base64(bytes), "encoding": "base64"})))?;
+        let v = gh(ports, "POST", &ep, Some(&json!({"content": base64::engine::general_purpose::STANDARD.encode(bytes), "encoding": "base64"})))?;
         p.blobs.insert(path.clone(), text_field(&v, &["sha"], &ep)?);
         save_progress(dir, p)?;
     }
@@ -484,7 +475,12 @@ fn push_branch(p: &mut Progress, dir: &Path, r: &Review, files: &[(String, Vec<u
     }
     if !p.ref_made {
         let ep = format!("{repo}/git/refs");
-        gh(ports, "POST", &ep, Some(&json!({"ref": format!("refs/heads/{}", r.branch), "sha": p.commit})))?;
+        if let Err(e) = gh(ports, "POST", &ep, Some(&json!({"ref": format!("refs/heads/{}", r.branch), "sha": p.commit}))) {
+            let existing = gh(ports, "GET", &format!("{repo}/git/ref/heads/{}", r.branch), None).ok().and_then(|v| v.get("object")?.get("sha")?.as_str().map(str::to_string));
+            if existing != p.commit {
+                return Err(e);
+            }
+        }
         p.ref_made = true;
         save_progress(dir, p)?;
     }
