@@ -309,11 +309,13 @@ fn transitions<B: Backend>(store: &Store<B>, machine: &str, now: i64) -> Result<
 
 /// Refused bead events inside the window, one row per (actor, event, from_state, refusal) with
 /// the count, the span and the newest five `bead@epoch` examples.
+#[cfg(test)]
 struct Refusals {
     floor: i64,
     groups: BTreeMap<(String, String, String, String), Group>,
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct Group {
     n: usize,
@@ -322,6 +324,7 @@ struct Group {
     newest: Vec<(i64, String)>,
 }
 
+#[cfg(test)]
 impl Refusals {
     fn new(floor: i64) -> Self {
         Refusals { floor, groups: BTreeMap::new() }
