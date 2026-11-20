@@ -1518,7 +1518,7 @@ pub fn view(s: &Snapshot) -> View {
         world: s.world.clone(),
         world_running: s.world.contains("RUNNING"),
         working: match &s.live {
-            Some(live) => live.iter().filter(|d| !runtime::units::is_directed(&d.unit)).count(),
+            Some(live) => live.len(),
             None => count("WORKING"),
         },
         directed: s.live.iter().flatten().filter(|d| runtime::units::is_directed(&d.unit)).count(),
@@ -1846,7 +1846,7 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
         v.working,
         v.ceiling,
         if v.ceiling_pending.is_empty() { String::new() } else { format!(" {YEL}(config {} after {}){R}", v.ceiling_pending, cut(&v.ceiling_waits, 40)) },
-        if v.directed == 0 { String::new() } else { format!(" {D}+{} directed{R}", v.directed) },
+        if v.directed == 0 { String::new() } else { format!(" {D}({} directed){R}", v.directed) },
         v.gather_ms,
         v.failures
     ));
@@ -2419,7 +2419,7 @@ mod tests {
     }
 
     #[test]
-    fn the_header_counts_directed_dwarves_apart_and_shows_a_pending_ceiling() {
+    fn the_header_counts_directed_dwarves_in_the_total_and_shows_a_pending_ceiling() {
         let mut s = snap(vec![]);
         s.ceiling = 7;
         s.ceiling_pending = "9".into();
@@ -2430,7 +2430,7 @@ mod tests {
             LiveDwarf { unit: "spira-dwarf-builder-directed-1794009722.service".into(), pid: 3, started: 99_000, phase: "session".into() },
         ]);
         let head = plain(&render(&view(&s), 120)).lines().next().unwrap().to_string();
-        assert!(head.contains("dwarves 1/7 (config 9 after the batcher) +2 directed"), "{head}");
+        assert!(head.contains("dwarves 3/7 (config 9 after the batcher) (2 directed)"), "{head}");
         s.ceiling_pending.clear();
         s.live = Some(vec![]);
         let head = plain(&render(&view(&s), 120)).lines().next().unwrap().to_string();

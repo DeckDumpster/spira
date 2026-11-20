@@ -592,6 +592,16 @@ mod tests {
     }
 
     #[test]
+    fn a_directed_dwarf_is_a_live_unit_and_the_directed_count_is_part_of_the_total() {
+        let t = testkit::TempDir::new("strand-sp-ljgmia");
+        let d = "spira-dwarf-builder-directed-1794009721.service";
+        let p = "spira-dwarf-builder-1794009700.service";
+        let cfg = Config { systemctl: fake_systemctl(&t, &[(p, "active"), (d, "active")]), ..Config::test_fixture() };
+        assert_eq!(live_units(&cfg).unwrap(), vec![p.to_string(), d.to_string()]);
+        assert_eq!(dwarves_live_directed(&cfg).unwrap(), 1);
+    }
+
+    #[test]
     fn an_unanswering_systemctl_is_an_error_not_zero_live_dwarves() {
         let t = testkit::TempDir::new("strand-evtrs9-unreadable");
         let sc = t.join("systemctl");
@@ -611,12 +621,12 @@ mod tests {
     }
 
     #[test]
-    fn sp_8mbnup_a_directed_dwarf_is_in_no_count_a_cap_reads() {
+    fn a_directed_dwarf_counts_in_its_runes_count_and_the_total() {
         let t = testkit::TempDir::new("strand-directed");
         let units = [("spira-dwarf-builder-1794009721.service", "active"), ("spira-dwarf-builder-directed-1794009722.service", "active")];
         let cfg = Config { call: "systemd-run".into(), systemctl: fake_systemctl(&t, &units), ..Config::test_fixture() };
-        assert_eq!(dwarf_count(&cfg, "builder", None), 1, "the ordinary dwarf counts, the directed one beside it does not");
-        assert_eq!(dwarves_live_total(&cfg), 1);
+        assert_eq!(dwarf_count(&cfg, "builder", None), 2);
+        assert_eq!(dwarves_live_total(&cfg), 2);
     }
 
     #[test]

@@ -503,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn dwarves_of_a_rune_are_the_live_counted_units_of_that_name_only() {
+    fn dwarves_of_a_rune_are_the_live_units_of_that_name_a_directed_one_included() {
         let units = |l: &[(&str, &str)]| l.iter().map(|(n, s)| (n.to_string(), s.to_string())).collect::<BTreeMap<_, _>>();
         let active = units(&[
             ("spira-dwarf-builder-1.service", "active"),
@@ -515,7 +515,7 @@ mod tests {
             ("spira-dwarf-other-7.service", "active"),
             ("unrelated.service", "active"),
         ]);
-        assert_eq!(live_dwarves(&active, "builder"), 2);
+        assert_eq!(live_dwarves(&active, "builder"), 3, "two pooled and the directed one");
         assert_eq!(live_dwarves(&active, "other"), 1);
         assert_eq!(live_dwarves(&active, "nobody"), 0);
     }

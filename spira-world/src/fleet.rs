@@ -18,23 +18,23 @@ pub fn live_total_systemd(unit_count: impl Fn(&str) -> usize) -> u32 {
 /// ceiling, `directed` (`dwarf direct`) being the part started past it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Roster {
-    pub counted: u32,
+    pub pooled: u32,
     pub directed: u32,
 }
 
 impl Roster {
     pub fn of(units: &[String]) -> Roster {
         let directed = units.iter().filter(|u| runtime::units::is_directed(u)).count() as u32;
-        Roster { counted: units.len() as u32 - directed, directed }
+        Roster { pooled: units.len() as u32 - directed, directed }
     }
 
     pub fn total(&self) -> u32 {
-        self.counted + self.directed
+        self.pooled + self.directed
     }
 
     /// The "live now" line: the total, with its breakdown.
     pub fn live_lines(&self) -> Vec<String> {
-        vec![format!("  live now          {}   ({} counted + {} directed)", self.total(), self.counted, self.directed)]
+        vec![format!("  live now          {}   ({} pooled + {} directed)", self.total(), self.pooled, self.directed)]
     }
 }
 
@@ -52,7 +52,7 @@ mod tests {
     }
 
     #[test]
-    fn a_directed_dwarf_is_named_directed_and_counted_in_the_total() {
+    fn a_directed_dwarf_is_named_directed_within_the_total() {
         let r = Roster::of(&units(&[
             "spira-dwarf-builder-1.service",
             "spira-dwarf-builder-2.service",
@@ -60,18 +60,18 @@ mod tests {
             "spira-dwarf-builder-4.service",
             "spira-dwarf-builder-directed-1794009721.service",
         ]));
-        assert_eq!(r, Roster { counted: 4, directed: 1 });
+        assert_eq!(r, Roster { pooled: 4, directed: 1 });
         let lines = r.live_lines();
         assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(lines[0].contains("5") && lines[0].contains("4 counted + 1 directed"), "{lines:?}");
+        assert!(lines[0].contains("5") && lines[0].contains("4 pooled + 1 directed"), "{lines:?}");
     }
 
     #[test]
-    fn six_dwarves_against_a_cap_of_four_read_as_four_counted_and_two_directed() {
+    fn six_dwarves_against_a_cap_of_four_read_as_four_pooled_and_two_directed() {
         let mut all: Vec<&str> = vec!["spira-dwarf-builder-1.service", "spira-dwarf-builder-2.service", "spira-dwarf-builder-3.service", "spira-dwarf-builder-4.service"];
         all.extend(["spira-dwarf-builder-directed-1.service", "spira-dwarf-czar-directed-2.service"]);
         let r = Roster::of(&units(&all));
-        assert_eq!((r.counted, r.directed, r.total()), (4, 2, 6));
-        assert_eq!(r.live_lines(), vec!["  live now          6   (4 counted + 2 directed)".to_string()]);
+        assert_eq!((r.pooled, r.directed, r.total()), (4, 2, 6));
+        assert_eq!(r.live_lines(), vec!["  live now          6   (4 pooled + 2 directed)".to_string()]);
     }
 }

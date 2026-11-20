@@ -2398,6 +2398,8 @@ mod tests {
         let n = format!("{}.service", directed_unit_stem("builder", 1794009721));
         assert_eq!(n, "spira-dwarf-builder-directed-1794009721.service");
         assert!(is_dwarf_unit(&n) && is_directed(&n));
+        assert_eq!(dwarf_rune(&n), None, "a prefix-named unit's rune is read by is_dwarf_of");
+        assert!(is_dwarf_of(&n, "builder", "builder") && !is_dwarf_of(&n, "ops", "ops"), "a directed dwarf counts in its rune");
         assert!(is_live_dwarf(&n, UnitState::Active), "a live directed dwarf holds a slot, and drain, slay and the cockpit see it");
         assert!(dwarf_globs().iter().any(|g| glob_match(g, &n)));
         for other in ["spira-dwarf-builder-17.service", "spira-dwarf-builder-directed-x.service", "spira-dwarf--directed-1.service", "spira-dwarf-builder-directed-1.scope"] {
