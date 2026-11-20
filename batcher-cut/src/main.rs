@@ -387,6 +387,15 @@ struct LiveOps<'a> {
 
 const MEND_DEADLINE_SECS: i64 = 900;
 
+fn batch_pass(env: &io::Env, batch: &str) -> Result<u32, String> {
+    let shown = io::lcq_held(env, &["show-batch", batch])?;
+    serde_json::from_str::<serde_json::Value>(&shown)
+        .ok()
+        .and_then(|v| v.get("pass").and_then(serde_json::Value::as_u64))
+        .map(|p| p as u32)
+        .ok_or_else(|| format!("spira-lc show-batch {batch}: no pass in the reply"))
+}
+
 fn returns_of(
     pass: u32,
     rows: impl FnOnce(u32) -> Result<Vec<endpass::Row>, String>,
@@ -459,17 +468,8 @@ impl LiveOps<'_> {
 }
 
 impl LiveOps<'_> {
-    fn batch_pass(&self, batch: &str) -> Result<u32, String> {
-        let shown = io::lcq_held(self.env, &["show-batch", batch])?;
-        serde_json::from_str::<serde_json::Value>(&shown)
-            .ok()
-            .and_then(|v| v.get("pass").and_then(serde_json::Value::as_u64))
-            .map(|p| p as u32)
-            .ok_or_else(|| format!("spira-lc show-batch {batch}: no pass in the reply"))
-    }
-
     fn read_returns(&self, batch: &str) -> Result<Vec<batcher::mender::Failure>, String> {
-        let pass = self.batch_pass(batch)?;
+        let pass = batch_pass(self.env, batch)?;
         self.mend_pass.set(pass);
         returns_of(pass, |pass| endpass::Menders::rows(&mut endpass::LcMenders { env: self.env, batch, pass }))
     }
@@ -2472,8 +2472,7 @@ fn attribute_in(
         .with_deny_list(&deny)?
         .confirmed(o.confirmed);
     let attributed_pass = o.batch.as_deref().zip(o.after_pass.as_deref()).and_then(|(b, _)| {
-        let shown = io::lcq_held(&env_, &["show-batch", b]).ok()?;
-        serde_json::from_str::<serde_json::Value>(&shown).ok()?.get("pass")?.as_u64().map(|p| p as u32)
+        batch_pass(&env_, b).map_err(|e| eprintln!("batcher {}: the attributed pass is unknown, so a mender's return goes untried: {e}", repo.name)).ok()
     });
     if let (Some(b), Some(pass)) = (o.batch.as_deref(), o.after_pass.as_deref()) {
         io::round_corpus_ended_red(&env_, &repo, b);

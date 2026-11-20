@@ -4742,6 +4742,42 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Land { .. }), "{end:?}");
     }
 
+    #[test]
+    fn a_returned_member_whose_probe_cannot_tell_leaves_the_search_to_run() {
+        let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
+        f.runs_alone = false;
+        let _ = attribute_round(&mut f, &mut ops, &["test-spike.sh".to_string()], round, budget6());
+        assert_eq!(f.alone[0].1, ["m1", "m2", "m4", "m5", "m6"]);
+        assert!(ops.returned.is_empty(), "{:?}", ops.returned);
+    }
+
+    #[test]
+    fn a_return_naming_a_member_outside_the_round_is_not_probed() {
+        let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
+        ops.attributed_returns = vec![returned_failure("test-spike.sh", "gone")];
+        let _ = attribute_round(&mut f, &mut ops, &["test-spike.sh".to_string()], round, budget6());
+        assert!(ops.returned.is_empty());
+        assert!(f.alone.iter().all(|(_, t)| t.len() != 6 - 1 || t.contains(&"m3".to_string())), "{:?}", f.alone);
+    }
+
+    #[test]
+    fn a_returned_member_of_a_filter_is_probed_through_the_filter() {
+        let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
+        ops.attributed_returns = vec![returned_failure("spira-lint", "m3")];
+        f.filter = Some(Box::new(|tree| {
+            tree.contains("m3").then(|| FilterRed {
+                name: "spira-lint".into(),
+                named: vec![],
+                failed: vec![],
+                harness: vec![],
+            })
+        }));
+        let end = attribute_round(&mut f, &mut ops, &["test-spike.sh".to_string()], round, budget6()).unwrap();
+        assert_eq!(f.probes[0], ["m1", "m2", "m4", "m5", "m6"]);
+        assert_eq!(ops.returned[0].0, "m3");
+        assert!(matches!(end, RoundEnd::Land { members, .. } if members.len() == 5));
+    }
+
     fn slow_a_and_a_return_at_30(
         member_of: &str,
         round: Vec<Member>,
