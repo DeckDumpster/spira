@@ -2438,11 +2438,11 @@ mod tests {
         let dir = testkit::TempDir::new("lc-serve-stages");
         let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
         let parked = rig(true, fifty_ms());
-        let cut = send_spanned(&parked.door, Some(&sink), &["content", "note", "sp-a", "x"], None);
+        let cut = send_spanned(&parked.door, Some(&sink), &["content", "note", "sp-a", "x"], None, None);
         assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
         parked.notes.release();
         let ledgered = rig(true, fifty_ms());
-        let cut = send_spanned(&ledgered.door, Some(&sink), &["content", "note", "sp-b", "y"], Some("req-stages"));
+        let cut = send_spanned(&ledgered.door, Some(&sink), &["content", "note", "sp-b", "y"], None, Some("req-stages"));
         assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
         ledgered.notes.release();
         let spans = spans_of(&dir);
@@ -2470,7 +2470,7 @@ mod tests {
         let dir = testkit::TempDir::new("lc-serve-stages-ok");
         let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
         let r = rig(false, three_seconds());
-        let _ = send_spanned(&r.door, Some(&sink), &["show", "sp-none"], None);
+        let _ = send_spanned(&r.door, Some(&sink), &["show", "sp-none"], None, None);
         let span = only_span(&dir);
         assert_eq!(serve_value(&span, "spira.serve.cut"), Value::BoolValue(false));
     }
