@@ -801,3 +801,6 @@ lc_slow_verb_deadlines
 cr_findings_dir
 lc_answer_ms
 lc_waiting_verbs
+runtime_cr_comments_hot_secs
+runtime_cr_comments_cold_secs
+runtime_cr_comments_window_secs

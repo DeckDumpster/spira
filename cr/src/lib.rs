@@ -9,6 +9,7 @@ pub mod record;
 pub mod review;
 pub mod ports;
 pub mod rustsrc;
+pub mod thread;
 pub mod units;
 
 #[cfg(test)]

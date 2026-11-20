@@ -53,6 +53,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("round-duty", &["round-duty.observe", "inbox.append"]),
     ("inbox-keeper", &["inbox-keeper.observe", "concierge.wake"]),
     ("pr-notify", &["pr-notify.observe", "operator.note", "inbox.append"]),
+    ("cr-comments", &["cr-comments.observe", "cr-comments.record", "inbox.append"]),
     ("asks", &["asks.observe", "inbox.append"]),
     ("design-asks", &["design-asks.observe", "inbox.append"]),
     ("brain-dirty", &["brain-dirty.observe", "inbox.append"]),

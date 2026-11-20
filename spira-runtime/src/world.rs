@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use crate::watchers::inbox_keeper;
 use crate::forge::{slug, Forge};
+use crate::watchers::cr_comments::{self, ReviewObs};
 use crate::watchers::pr_notify::{self, RepoObs};
 use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
@@ -39,6 +40,8 @@ const STORE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250)
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct World {
     pub run_dir: PathBuf,
+    /// `owner/name` of the review repository; empty while `SPIRA_CR_REPO_OWNER` or `SPIRA_CR_REPO_NAME` is unset.
+    pub cr_repo: String,
     pub queue_dir: PathBuf,
     pub repo_map: PathBuf,
     pub home_repo: String,
@@ -82,6 +85,14 @@ pub type RecordedPrs = BTreeMap<String, Result<Vec<u64>, String>>;
 
 fn pr_number(v: &str) -> Option<u64> {
     v.trim().trim_start_matches('#').parse().ok()
+}
+
+/// Every open or published review, asked of the forge by pull request number. With none, no forge
+/// call is made. A review's answers are each `None` where the forge did not give one.
+pub fn cr_snapshot_from(reviews: &[cr::record::Review], ask: &dyn Fn(u64) -> ReviewObs) -> cr_comments::Snapshot {
+    use cr::record::State::{Open, Published};
+    let watched = reviews.iter().filter(|r| matches!(r.state, Open | Published));
+    cr_comments::Snapshot { reviews: watched.filter_map(|r| Some(ReviewObs { number: r.number, state: Some(r.state), ..ask(r.pr?) })).collect() }
 }
 
 /// The PR the repo's publish record names; an unreadable record is an `Err`, an absent one `None`.
@@ -383,6 +394,34 @@ impl World {
             Err(e) => return Err(format!("{}: {e}", cursor.display())),
         };
         inbox_keeper::observed(&carry, inbox_keeper::Snapshot { waiter_alive, unread: total - pos, cursor_mtime })
+    }
+
+    /// What the forge says of each open review's pull request: comments, conversation, reviews, state.
+    pub fn cr_snapshot(&self, forge: &Forge, _carry: &str) -> Result<String, String> {
+        let reviews = cr::record::all(&self.run_dir)?;
+        let watched = |r: &&cr::record::Review| r.pr.is_some() && matches!(r.state, cr::record::State::Open | cr::record::State::Published);
+        if self.cr_repo.is_empty() && reviews.iter().any(|r| watched(&r)) {
+            return Err("SPIRA_CR_REPO_OWNER and SPIRA_CR_REPO_NAME are not both set; the review repository has no name".into());
+        }
+        let snap = cr_snapshot_from(&reviews, &|pr| {
+            let slug = self.cr_repo.as_str();
+            ReviewObs { pr, comments: forge.review_comments(slug, pr), conversation: forge.issue_comments(slug, pr), reviews: forge.reviews(slug, pr), pull: forge.pull(slug, pr), ..ReviewObs::default() }
+        });
+        forge.report_spend();
+        serde_json::to_string(&snap).map_err(|e| e.to_string())
+    }
+
+    /// Applies the review state changes and keeps each review's comments where `cr thread` reads them.
+    pub fn cr_record(&self, input: &str) -> Result<String, String> {
+        let records: cr_comments::Records = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        for (number, comments) in &records.threads {
+            let text = serde_json::to_string_pretty(comments).map_err(|e| e.to_string())?;
+            cr::record::write_atomic(&cr::thread::comments_path(&self.run_dir, *number), text.as_bytes())?;
+        }
+        for c in &records.changes {
+            cr::record::set_state(&self.run_dir, c.number, c.state, c.at)?;
+        }
+        Ok(format!("{} states, {} threads", records.changes.len(), records.threads.len()))
     }
 
     /// The PRs the harness opened and recorded, asked of the forge by number, with the PRs already
@@ -1725,5 +1764,58 @@ mod bounded_store_tests {
         assert!(got.is_none(), "the worker is still blocked, so the call returned on its bound");
         *release.0.lock().unwrap() = true;
         release.1.notify_all();
+    }
+}
+
+#[cfg(test)]
+mod cr_snapshot_tests {
+    use super::*;
+    use crate::forge::tests::{answer, forge_at, stub};
+    use cr::record::{self, Kind, Review, State};
+
+    fn on_disk(run: &Path, number: u32, pr: Option<u64>, state: State) {
+        let unit = cr::units::Unit { id: "u".into(), kind: cr::units::Kind::Module, files: vec![], title: "t".into() };
+        record::allocate(run).unwrap();
+        let r = Review { number, kind: Kind::OnDemand, state, source_repo: "s".into(), source_sha: "c".into(), branch: "b".into(), pr, pr_url: None, unit, sealed_sha256: None, staged_at: 0, opened_at: None, published_at: None, closed_at: None };
+        record::save(run, &r).unwrap();
+    }
+
+    #[test]
+    fn with_no_review_open_the_world_makes_no_forge_request() {
+        let t = testkit::TempDir::new("cr-snapshot-none");
+        on_disk(t.path(), 1, Some(5), State::Closed);
+        on_disk(t.path(), 2, None, State::Staged);
+        let (api, seen) = stub(vec![]);
+        let world = World { run_dir: t.path().into(), cr_repo: "o/r".into(), ..World::default() };
+        let out = world.cr_snapshot(&forge_at(api), "").unwrap();
+        assert_eq!(serde_json::from_str::<cr_comments::Snapshot>(&out).unwrap().reviews, []);
+        assert!(seen.join().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_open_review_is_asked_four_questions_and_the_unanswered_ones_stay_none() {
+        let t = testkit::TempDir::new("cr-snapshot-open");
+        on_disk(t.path(), 1, Some(5), State::Open);
+        let comment = r#"[{"id":9,"user":{"login":"reviewer","type":"User"},"path":"a.rs","line":4,"body":"hm","created_at":"2026-10-28T05:45:43Z"}]"#;
+        let pull = r#"{"state":"open","closed_at":null}"#;
+        let (api, seen) = stub(vec![answer("200 OK", "", comment), answer("500 Internal Server Error", "", "{}"), answer("200 OK", "", "[]"), answer("200 OK", "", pull)]);
+        let world = World { run_dir: t.path().into(), cr_repo: "o/r".into(), ..World::default() };
+        let snap: cr_comments::Snapshot = serde_json::from_str(&world.cr_snapshot(&forge_at(api), "").unwrap()).unwrap();
+        let asked: Vec<String> = seen.join().unwrap().iter().map(|r| r.split(' ').nth(1).unwrap_or("").to_string()).collect();
+        assert_eq!(asked, ["/repos/o/r/pulls/5/comments?per_page=100&page=1", "/repos/o/r/issues/5/comments?per_page=100&page=1", "/repos/o/r/pulls/5/reviews?per_page=100&page=1", "/repos/o/r/pulls/5"]); // not a path: GitHub API routes
+        let r = &snap.reviews[0];
+        assert_eq!((r.number, r.pr, r.state), (1, 5, Some(State::Open)));
+        assert_eq!(r.comments.as_ref().map(|c| c[0].id), Some(9));
+        assert_eq!((r.conversation.clone(), r.reviews.clone(), r.pull.clone()), (None, Some(vec![]), Some(cr_comments::Pull { state: "open".into(), closed_at: None })));
+    }
+
+    #[test]
+    fn an_open_review_with_no_repository_named_refuses_before_any_request() {
+        let t = testkit::TempDir::new("cr-snapshot-unnamed");
+        on_disk(t.path(), 1, Some(5), State::Open);
+        let (api, seen) = stub(vec![]);
+        let world = World { run_dir: t.path().into(), ..World::default() };
+        assert!(world.cr_snapshot(&forge_at(api), "").unwrap_err().contains("SPIRA_CR_REPO_OWNER"));
+        assert!(seen.join().unwrap().is_empty());
     }
 }

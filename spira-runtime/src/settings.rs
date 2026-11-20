@@ -7,6 +7,7 @@ use spira_config::process::cfg;
 
 use crate::watchers::inbox_keeper::InboxKeeper;
 use crate::forge::Forge;
+use crate::watchers::cr_comments::CrComments;
 use crate::watchers::pr_notify::PrNotify;
 use crate::watchers::asks::Asks;
 use crate::watchers::design_asks::DesignAsks;
@@ -35,6 +36,7 @@ pub struct Settings {
     pub round_duty: RoundDuty,
     pub inbox_keeper: InboxKeeper,
     pub pr_notify: PrNotify,
+    pub cr_comments: CrComments,
     pub forge: Forge,
     pub asks: Asks,
     pub design_asks: DesignAsks,
@@ -81,6 +83,15 @@ const DEFAULT_FORGET_SECS: u64 = 86_400;
 
 fn num<T: std::str::FromStr + PartialOrd + Default>(key: &str, raw: &str) -> Result<T, String> {
     raw.trim().parse::<T>().ok().filter(|v| *v > T::default()).ok_or_else(|| format!("{key} must be a positive integer, got {raw:?}"))
+}
+
+/// `owner/name` of the review repository, or empty while either half is unset.
+fn cr_repo(owner: &str, name: &str) -> String {
+    if owner.trim().is_empty() || name.trim().is_empty() {
+        String::new()
+    } else {
+        format!("{}/{}", owner.trim(), name.trim())
+    }
 }
 
 impl Settings {
@@ -208,6 +219,7 @@ impl Settings {
             backoff_secs: secs("SPIRA_CONCIERGE_INBOX_BACKOFF")?,
         };
         let pr_notify = PrNotify { interval_ms: secs("SPIRA_RUNTIME_PR_NOTIFY_SECS")? * 1000, deploy_giveup_secs: secs("SPIRA_PR_DEPLOY_GIVEUP")? };
+        let cr_comments = CrComments { hot_ms: secs("SPIRA_RUNTIME_CR_COMMENTS_HOT_SECS")? * 1000, cold_ms: secs("SPIRA_RUNTIME_CR_COMMENTS_COLD_SECS")? * 1000, window_secs: secs("SPIRA_RUNTIME_CR_COMMENTS_WINDOW_SECS")? };
         let forge = Forge { api: get("SPIRA_GH_API")?, token: get("SPIRA_BROKER_GH_TOKEN")?, gh_config_dir: get("SPIRA_BROKER_GH_CONFIG_DIR")?, gh: get("SPIRA_GH")?, metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()) };
         let asks = Asks { interval_ms: secs("SPIRA_RUNTIME_ASKS_SECS")? * 1000 };
         let design_asks = DesignAsks { interval_ms: secs("SPIRA_RUNTIME_DESIGN_ASKS_SECS")? * 1000, repeat_secs: secs("SPIRA_DESIGN_ASKS_REPEAT")? };
@@ -266,6 +278,7 @@ impl Settings {
             ask_label: get("SPIRA_ASK_LABEL")?,
             wiki: PathBuf::from(get("SPIRA_WIKI")?),
             run_dir: run_dir.clone(),
+            cr_repo: cr_repo(&get("SPIRA_CR_REPO_OWNER")?, &get("SPIRA_CR_REPO_NAME")?),
             metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()),
             scope_label: get("SPIRA_SCOPE_LABEL")?,
             desired_dir: PathBuf::from(get("SPIRA_DESIRED_DIR")?),
@@ -290,6 +303,7 @@ impl Settings {
             round_duty,
             inbox_keeper,
             pr_notify,
+            cr_comments,
             forge,
             asks,
             design_asks,
@@ -330,7 +344,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.overrides, self.readiness_dependents, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display(), self.pool_caps);
+        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.overrides, self.readiness_dependents, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display(), self.pool_caps, self.cr_comments);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }

@@ -8,6 +8,7 @@ use serde_json::Value;
 mod gh;
 mod findings;
 mod review;
+mod thread;
 
 const DAY: u64 = 86_400_000;
 pub(crate) const NOW: u64 = 100 * DAY;

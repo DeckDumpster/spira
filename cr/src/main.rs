@@ -1,4 +1,4 @@
-//! `cr pick | count | open | seal | unseal | status` — see `cr -h`.
+//! `cr pick | count | open | seal | unseal | thread | reply | status` — see `cr -h`.
 
 use cr::cli::{self, Outcome};
 use cr::ledger::Ledger;
@@ -30,7 +30,7 @@ fn build_ports() -> Result<Ports, String> {
     };
     let run_dir = spira_config::resolve::run_dir_for_process()?;
     let key = |k: &str| spira_config::process::cfg(k).unwrap_or_default();
-    let stdin = if matches!(std::env::args().nth(1).as_deref(), Some("seal" | "finding")) {
+    let stdin = if matches!(std::env::args().nth(1).as_deref(), Some("seal" | "finding" | "reply")) {
         use std::io::Read;
         let mut s = String::new();
         std::io::stdin().read_to_string(&mut s).map_err(|e| format!("reading stdin: {e}"))?;
@@ -63,7 +63,7 @@ fn main() -> std::process::ExitCode {
     if cli::wants_help(&argv) {
         return emit(&Outcome { code: 0, stdout: cli::HELP.to_string(), stderr: String::new() });
     }
-    let metrics = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "cr", argv.first().map(String::as_str).filter(|v| matches!(*v, "pick" | "count" | "open" | "seal" | "unseal" | "status" | "finding" | "findings")).unwrap_or("none"));
+    let metrics = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "cr", argv.first().map(String::as_str).filter(|v| matches!(*v, "pick" | "count" | "open" | "seal" | "unseal" | "thread" | "reply" | "status" | "finding" | "findings")).unwrap_or("none"));
     let outcome = match build_ports() {
         Ok(ports) => cli::run(&argv, &ports),
         Err(e) => cli::error_outcome(1, cli::wants_json(&argv), &e),
