@@ -25,3 +25,24 @@ fn the_guest_copies_only_the_listed_source_not_the_whole_mounted_tree() {
     assert!(!GUEST.contains("cp -a /src/."), "the guest copies the tree's target/ with the source");
     assert!(GUEST.contains("tar --null -C /src -T /tree.list"), "the guest copies the host's list of source files");
 }
+
+#[test]
+fn the_package_list_payload_is_update_then_the_apt_line_on_stdin_never_argv() {
+    assert!(HOST.contains(r#"printf '%s\n' 'set -euo pipefail' 'export DEBIAN_FRONTEND=noninteractive' 'apt-get update -qq' "$apt_line""#));
+    let run = HOST.lines().find(|l| l.contains("run --rm -i --network host")).expect("the package-list run");
+    assert!(run.contains(r#"-v "$CACHE/apt:/var/cache/apt/archives""#) && !run.contains("apt_line"), "{run}");
+    assert!(HOST.contains(r#"PODMAN=(podman --root "$ROOT/storage""#));
+}
+
+#[test]
+fn a_failing_install_prints_the_red_block_with_the_log_tail_and_exits_1() {
+    assert!(HOST.contains(r#"RED rc=$rc after"#));
+    assert!(HOST.contains(r#"tail -n 40 "$log""#));
+    let red = &HOST[HOST.find(r#"if [ "$rc" -ne 0 ]"#).unwrap()..];
+    assert!(red.contains("exit 1"));
+}
+
+#[test]
+fn a_skipped_diff_keeps_its_fence_line() {
+    assert!(HOST.contains("(0 touched, setup not run)"));
+}
