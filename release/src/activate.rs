@@ -461,14 +461,18 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
     }
     let mut failed = Vec::new();
     let mut attempted = Vec::new();
+    let mut logs = OwnLogs::default();
     for u in &out.restarted {
         eprintln!("release: restarting {u}");
+        if let Some(text) = rendered.iter().find(|r| &r.0 == u).map(|r| &r.2) {
+            logs.mark(u, text);
+        }
         attempted.push(u.clone());
         if u == STORE_SERVER {
             out.store_restarted_at = Some(std::time::Instant::now());
         }
         if let Err(e) = ctx.sc.reset_failed(u).and_then(|()| restart_unit(ctx.sc, u)) {
-            failed.push(format!("{u}: restart failed: {e}"));
+            failed.push(format!("{u}: restart failed: {e}{}", logs.since_restart(u)));
             break;
         }
     }
@@ -476,13 +480,13 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         for (u, st) in crate::systemctl::await_settled(ctx.sc, &out.restarted, ctx.settle) {
             match st {
                 Ok(st) if st.active == "active" => {}
-                Ok(st) => failed.push(format!("{u}: did not come up (ActiveState={}, Result={})", st.active, st.result)),
+                Ok(st) => failed.push(format!("{u}: did not come up (ActiveState={}, Result={}){}", st.active, st.result, logs.since_restart(&u))),
                 Err(e) => failed.push(format!("{u}: cannot read its state: {e}")),
             }
         }
     }
     if failed.is_empty() {
-        failed.extend(stayed_up(ctx, &out.restarted));
+        failed.extend(stayed_up(ctx, &out.restarted, &logs));
     }
     if failed.is_empty() {
         failed.extend(heal_stale_executables(ctx, &rendered, &rel, &mut out, &mut attempted));
@@ -693,7 +697,7 @@ fn restart_again_under_target(ctx: &Ctx, restarted: &[String], attempted: &[Stri
         }
     }
     let settled: Vec<String> = waiting.into_iter().filter(|u| !down.iter().any(|d| &d.unit == u)).collect();
-    for f in stayed_up(ctx, &settled) {
+    for f in stayed_up(ctx, &settled, &OwnLogs::default()) {
         if let Some((unit, state)) = f.split_once(": ") {
             down.push(Down { unit: unit.into(), state: state.into() });
         }
@@ -701,10 +705,47 @@ fn restart_again_under_target(ctx: &Ctx, restarted: &[String], attempted: &[Stri
     down
 }
 
+const OWN_LINE_CHARS: usize = 300;
+const OWN_LOG_TAIL_BYTES: u64 = 64 * 1024;
+
+/// Each restarted unit's own append log and its length when the restart was issued, so a
+/// failure can quote only what the unit wrote afterwards.
+#[derive(Default)]
+struct OwnLogs(std::collections::BTreeMap<String, (PathBuf, u64)>);
+
+impl OwnLogs {
+    fn mark(&mut self, unit: &str, rendered: &str) {
+        if let Some(path) = units::own_log(rendered) {
+            let len = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            self.0.insert(unit.into(), (path, len));
+        }
+    }
+
+    /// The suffix for a failure line: the unit's last line since its restart, or that it wrote none.
+    fn since_restart(&self, unit: &str) -> String {
+        let Some((path, from)) = self.0.get(unit) else { return String::new() };
+        match last_line_since(path, *from) {
+            Some(line) => format!(" — its own last line: \"{}\"", line.chars().take(OWN_LINE_CHARS).collect::<String>()),
+            None => format!(" — its own log {} got no line after its restart", path.display()),
+        }
+    }
+}
+
+fn last_line_since(path: &Path, from: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    let start = if len < from { 0 } else { from }.max(len.saturating_sub(OWN_LOG_TAIL_BYTES));
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::new();
+    f.take(OWN_LOG_TAIL_BYTES).read_to_end(&mut buf).ok()?;
+    String::from_utf8_lossy(&buf).lines().rev().map(str::trim).find(|l| !l.is_empty()).map(str::to_string)
+}
+
 /// A restarted unit that reached `active` and then left it did not come up: a service that
 /// fails after its start job is reported ready is caught by watching it for the settle time,
 /// not by one read.
-fn stayed_up(ctx: &Ctx, units: &[String]) -> Vec<String> {
+fn stayed_up(ctx: &Ctx, units: &[String], logs: &OwnLogs) -> Vec<String> {
     const POLLS: u32 = 5;
     let mut gone: BTreeSet<String> = BTreeSet::new();
     let mut failed = Vec::new();
@@ -716,7 +757,7 @@ fn stayed_up(ctx: &Ctx, units: &[String]) -> Vec<String> {
             }
             let why = match ctx.sc.state(u) {
                 Ok(st) if st.active == "active" => continue,
-                Ok(st) => format!("did not stay up after its restart (ActiveState={}, Result={})", st.active, st.result),
+                Ok(st) => format!("did not stay up after its restart (ActiveState={}, Result={}){}", st.active, st.result, logs.since_restart(u)),
                 Err(e) => format!("cannot read its state: {e}"),
             };
             gone.insert(u.clone());
