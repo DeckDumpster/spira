@@ -141,6 +141,14 @@ fn report_due(last: &mut Option<(String, std::time::Instant)>, text: &str, now: 
     due
 }
 
+/// What a restart is judged by: the clock the hold is timed on, the reads' limit, and the WAL line.
+#[derive(Clone, Copy)]
+struct RestartTerms<'a> {
+    clock: &'a dyn Clock,
+    max_read_ms: u64,
+    line: u64,
+}
+
 /// A TRUNCATE checkpoint that never waits for a reader under the writer mutex. Each attempt
 /// holds that mutex only for its own I/O, with the writer connection's timeout at zero, so a read
 /// in flight makes it `busy` at once and commits run between attempts. It polls for the readers
@@ -148,13 +156,8 @@ fn report_due(last: &mut Option<(String, std::time::Instant)>, text: &str, now: 
 /// holds at most `line` bytes, and past `line` until every read in flight has ended, so the WAL
 /// is bounded by `line` plus the commits of one `max_read_ms`. Commits never wait either way.
 /// The hold is timed on `clock`, the one the readers' deadlines run on.
-fn restart_wal(
-    writer: &Mutex<Writer>,
-    gate: &Mutex<()>,
-    clock: &dyn Clock,
-    max_read_ms: u64,
-    line: u64,
-) -> std::result::Result<Checkpoint, String> {
+fn restart_wal(writer: &Mutex<Writer>, gate: &Mutex<()>, terms: &RestartTerms) -> std::result::Result<Checkpoint, String> {
+    let RestartTerms { clock, max_read_ms, line } = *terms;
     static OVERRUN: Mutex<Option<(String, std::time::Instant)>> = Mutex::new(None);
     let started = clock.now_ms();
     let _gate = lock(gate);
@@ -166,7 +169,7 @@ fn restart_wal(
                 .prepare_cached("PRAGMA wal_checkpoint(TRUNCATE)")
                 .and_then(|mut s| s.query_row([], checkpoint_row))
                 .map_err(|e| e.to_string())?;
-            let page_size = w.conn.query_row("PRAGMA page_size", [], |r| r.get::<_, i64>(0)).map_err(|e| e.to_string())?;
+            let page_size = w.conn.pragma_query_value(None, "page_size", |r| r.get::<_, i64>(0)).map_err(|e| e.to_string())?;
             (pass, page_size.max(0) as u64)
         };
         if !pass.busy {
@@ -198,16 +201,14 @@ fn checkpoint_step(
     conn: &Connection,
     writer: &Mutex<Writer>,
     gate: &Mutex<()>,
-    clock: &dyn Clock,
-    max_read_ms: u64,
-    line: u64,
+    terms: &RestartTerms,
     passive: bool,
     on_passive: impl FnOnce(bool),
 ) -> std::result::Result<Checkpoint, String> {
     if passive {
         on_passive(passive_complete(conn)?);
     }
-    restart_wal(writer, gate, clock, max_read_ms, line)
+    restart_wal(writer, gate, terms)
 }
 
 fn checkpoint_row(r: &rusqlite::Row) -> rusqlite::Result<Checkpoint> {
@@ -253,6 +254,7 @@ struct Checkpointer {
     done: Condvar,
     every: u64,
     line: u64,
+    clock: Arc<dyn Clock>,
 }
 
 impl Checkpointer {
@@ -273,7 +275,6 @@ impl Checkpointer {
         path: &Path,
         metrics: Option<spira_otel::metrics::MetricsSink>,
         max_read_ms: Arc<AtomicU64>,
-        clock: Arc<dyn Clock>,
     ) {
         let wal_path = format!("{}-wal", path.display());
         let wal_bytes = || std::fs::metadata(&wal_path).map(|m| m.len()).unwrap_or(0);
@@ -309,7 +310,7 @@ impl Checkpointer {
             wait = GAUGE_EVERY;
             if seen >= self.every || owed {
                 let mut passive_done = None;
-                let step = checkpoint_step(&conn, &writer, &gate, &*clock, max_read_ms.load(Ordering::SeqCst), self.line, seen >= self.every, |done| {
+                let step = checkpoint_step(&conn, &writer, &gate, &RestartTerms { clock: &*self.clock, max_read_ms: max_read_ms.load(Ordering::SeqCst), line: self.line }, seen >= self.every, |done| {
                     passive_done = Some(done);
                     if done {
                         counts.passive_complete += 1;
@@ -1248,6 +1249,7 @@ impl SqliteBackend {
             done: Condvar::new(),
             every: opts.checkpoint_every.max(1),
             line: opts.wal_line_bytes,
+            clock: opts.clock.clone(),
         });
         let checkpoint_conn = connect(path)?;
         checkpoint_conn.busy_timeout(Duration::ZERO).map_err(db)?;
@@ -1257,10 +1259,10 @@ impl SqliteBackend {
         let read_gate = Arc::new(Mutex::new(()));
         let thread = {
             let c = checkpointer.clone();
-            let (w, g, p, mr, ck) = (writer.clone(), read_gate.clone(), path.to_path_buf(), max_read_ms.clone(), opts.clock.clone());
+            let (w, g, p, mr) = (writer.clone(), read_gate.clone(), path.to_path_buf(), max_read_ms.clone());
             std::thread::Builder::new()
                 .name("sqlite-checkpoint".into())
-                .spawn(move || c.run(checkpoint_conn, w, g, &p, metrics, mr, ck))
+                .spawn(move || c.run(checkpoint_conn, w, g, &p, metrics, mr))
                 .map_err(|e| Error::Backend(format!("{}: the checkpointer: {e}", path.display())))?
         };
         Ok(SqliteBackend(Arc::new(Inner {
