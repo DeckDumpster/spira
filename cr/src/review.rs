@@ -525,7 +525,7 @@ pub fn unseal(number: u32, said: Option<&str>, ports: &Ports) -> Outcome {
                 Ok(c) => c,
                 Err(e) => return refuse(1, &e),
             };
-            let on_this_pr = c.get("issue_url").and_then(Value::as_str).is_some_and(|u| u.ends_with(&format!("/issues/{pr}")));
+            let on_this_pr = c.get("issue_url").and_then(Value::as_str).is_some_and(|u| u.rsplit('/').take(2).eq([pr.to_string().as_str(), "issues"]));
             if !on_this_pr {
                 return refuse(2, &format!("comment {id} is not a conversation comment on pull request {pr}"));
             }

@@ -70,7 +70,7 @@ fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
     let o = run(&args(&["seal", "--review", "001"]), &sealing);
     assert_eq!(o.code, 0, "{}", o.stderr);
 
-    let blobs = gh.posted("/git/blobs");
+    let blobs = gh.posted("git/blobs");
     assert_eq!(blobs.len(), r.unit.files.len() + 1);
     for (f, b) in r.unit.files.iter().zip(&blobs) {
         let want = git(p, &["show", &format!("{sha}:{}", f.path)]);

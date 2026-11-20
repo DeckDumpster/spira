@@ -1,6 +1,8 @@
 //! A scripted review repository behind `forge::ports::Gh`: records `(args, stdin)` and answers
 //! canned JSON per call. Also included by `tests/review_flow.rs`, so it uses only `forge` and `std`.
 
+#![allow(dead_code)]
+
 use forge::ports::{Gh, GhOut};
 use std::cell::{Cell, RefCell};
 use std::path::Path;
@@ -49,19 +51,19 @@ fn reply(ep: &str, n: u32) -> String {
     let base = format!("repos/{OWNER}/{NAME}");
     if ep == base {
         r#"{"default_branch":"main"}"#.into()
-    } else if ep.ends_with("/branches/main") {
+    } else if ep.ends_with("branches/main") {
         r#"{"commit":{"sha":"base-head","commit":{"tree":{"sha":"base-tree"}}}}"#.into()
-    } else if ep.ends_with("/git/blobs") {
+    } else if ep.ends_with("git/blobs") {
         format!(r#"{{"sha":"blob-{n}"}}"#)
-    } else if ep.ends_with("/git/trees") {
+    } else if ep.ends_with("git/trees") {
         r#"{"sha":"new-tree"}"#.into()
-    } else if ep.ends_with("/git/commits") {
+    } else if ep.ends_with("git/commits") {
         r#"{"sha":"new-commit"}"#.into()
-    } else if ep.ends_with("/git/refs") {
+    } else if ep.ends_with("git/refs") {
         r#"{"ref":"refs/heads/x"}"#.into()
-    } else if ep.ends_with("/pulls") {
+    } else if ep.ends_with("pulls") {
         format!(r#"{{"number":7,"html_url":"https://forge.invalid/{OWNER}/{NAME}/pull/7"}}"#)
-    } else if ep.ends_with("/reviews") {
+    } else if ep.ends_with("reviews") {
         r#"{"id":1}"#.into()
     } else {
         "{}".into()
@@ -82,7 +84,7 @@ impl Gh for FakeGh {
         if let Some((_, j)) = self.canned.borrow().iter().rev().find(|(s, _)| ep.ends_with(s.as_str())) {
             return GhOut { code: 0, stdout: j.clone().into_bytes() };
         }
-        if ep.ends_with("/git/blobs") {
+        if ep.ends_with("git/blobs") {
             self.blobs.set(self.blobs.get() + 1);
         }
         GhOut { code: 0, stdout: reply(&ep, self.blobs.get()).into_bytes() }
