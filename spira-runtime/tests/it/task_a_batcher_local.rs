@@ -87,6 +87,20 @@ fn t5_a_stopped_repo_holds_without_a_write() {
     assert_eq!(carry.repos["spira"].state, State::Held);
 }
 
+/// A hand-landing's cut hold stops a new cut and names its owner; once it lifts the repo cuts.
+#[test]
+fn t5_a_cut_held_repo_cuts_nothing_and_cuts_again_when_the_hold_lifts() {
+    let held = Snapshot { repos: [("spira".to_string(), Repo { cut_hold: Some("concierge (hand-landing) until 9".into()), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
+    let (carry, acts) = decide(&Carry::default(), &held);
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Held);
+    assert!(carry.repos["spira"].skip_why.as_deref().is_some_and(|w| w.contains("concierge")), "{:?}", carry.repos["spira"].skip_why);
+    let lifted = Snapshot { repos: [("spira".to_string(), Repo { cut_hold: None, ..held.repos["spira"].clone() })].into(), now_ms: NOW + 30_000 };
+    let (_, acts) = decide(&carry, &lifted);
+    let effects: Vec<_> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert_eq!(effects, [FETCH, ASSEMBLE], "{acts:?}");
+}
+
 /// `core.rs` `cut_pool`: a member not at its sifted tip stays out of the cut.
 #[test]
 fn t5_an_unsifted_tip_is_set_aside() {
