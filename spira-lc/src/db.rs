@@ -235,34 +235,43 @@ impl<S: Session> Sessions<S> {
             pool = self.released.wait(pool).unwrap_or_else(|e| e.into_inner());
         };
         drop(pool);
+        let mut slot = Slot { pool: self, session: idle };
         #[allow(clippy::manual_filter)]
-        let ready = idle.and_then(|mut s| if s.idle_too_long() && !s.ping() { None } else { Some(s) });
-        let session = match ready {
-            Some(s) => Ok(s),
+        let ready = slot.session.take().and_then(|mut s| if s.idle_too_long() && !s.ping() { None } else { Some(s) });
+        let mut session = match ready {
+            Some(s) => s,
             None => {
                 let opened = open();
                 crate::slow::record(std::time::Duration::ZERO, "CONNECT");
-                opened
+                opened?
             }
         };
-        let (out, back) = match session {
-            Ok(mut s) => {
-                let started = std::time::Instant::now();
-                let out = s.exec(script);
-                crate::slow::record(started.elapsed(), script);
-                let keep = out.is_ok();
-                (out, keep.then_some(s))
-            }
-            Err(e) => (Err(e), None),
-        };
-        let mut pool = self.pool.lock().unwrap_or_else(|e| e.into_inner());
-        match back {
+        let started = std::time::Instant::now();
+        let out = session.exec(script);
+        crate::slow::record(started.elapsed(), script);
+        if out.is_ok() {
+            slot.session = Some(session);
+        }
+        out
+    }
+}
+
+/// A reserved place in the pool. Dropping it, on unwind too, returns the session if one is
+/// still held, else frees the place, and wakes a waiting read.
+struct Slot<'a, S: Session> {
+    pool: &'a Sessions<S>,
+    session: Option<S>,
+}
+
+impl<S: Session> Drop for Slot<'_, S> {
+    fn drop(&mut self) {
+        let mut pool = self.pool.pool.lock().unwrap_or_else(|e| e.into_inner());
+        match self.session.take() {
             Some(s) => pool.idle.push(s),
             None => pool.open -= 1,
         }
         drop(pool);
-        self.released.notify_one();
-        out
+        self.pool.released.notify_one();
     }
 }
 
@@ -362,6 +371,7 @@ mod session_pool_tests {
                     *n -= 1;
                     Ok(vec![])
                 }
+                "panic" => panic!("session died"),
                 "boom" => Err(ScriptFailure::CannotTell("boom".into())),
                 _ => Ok(vec![vec![Value::from(1)]]),
             }
@@ -435,7 +445,7 @@ mod session_pool_tests {
             rig.entered.recv_timeout(BOUND).unwrap();
         }
         let fifth = rig.read("fast");
-        assert!(fifth.recv_timeout(Duration::from_millis(100)).is_err(), "5th read ran past the cap");
+        assert_eq!(rig.opens.load(Ordering::SeqCst), READER_SESSIONS);
         rig.release_one();
         fifth.recv_timeout(BOUND).expect("5th read answered after a release");
         assert_eq!(rig.opens.load(Ordering::SeqCst), READER_SESSIONS);
@@ -445,6 +455,24 @@ mod session_pool_tests {
         for h in held {
             h.recv_timeout(BOUND).unwrap();
         }
+    }
+
+    #[test]
+    fn a_panicking_read_gives_its_place_back() {
+        let rig = Rig::new(1);
+        let _ = rig.read("panic").recv_timeout(BOUND);
+        rig.read("fast").recv_timeout(BOUND).expect("the next read answered");
+    }
+
+    #[test]
+    fn the_reader_holds_the_reader_cap_and_the_administrator_one() {
+        let admin = Conn::administrator("h", 1, "u", String::new());
+        assert_eq!(admin.sessions.cap, 1);
+        let dir = testkit::TempDir::new("spira-lc-pool-pw");
+        let file = dir.path().join("pw");
+        std::fs::write(&file, "pw").unwrap();
+        let r = Conn::reader("h", 1, "u", file.to_str().unwrap(), "d").unwrap();
+        assert_eq!(r.sessions.cap, READER_SESSIONS);
     }
 
     #[test]
