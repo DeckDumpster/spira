@@ -799,3 +799,6 @@ cr_repo_name
 lc_request_deadline_ms
 lc_slow_verb_deadlines
 cr_findings_dir
+runtime_cr_comments_hot_secs
+runtime_cr_comments_cold_secs
+runtime_cr_comments_window_secs

@@ -107,7 +107,7 @@ fn reply_with_an_empty_stdin_exits_two_and_calls_nothing() {
 fn reply_posts_stdin_in_the_comments_thread_and_prints_the_new_url() {
     let mut w = world();
     w.opened();
-    w.gh.answer("/replies", r#"{"html_url":"https://forge.invalid/pull/7#r55"}"#);
+    w.gh.answer("replies", r#"{"html_url":"https://forge.invalid/pull/7#r55"}"#);
     w.ports.stdin = "it is the only opener".into();
     let o = w.cr(&["reply", "--review", "001", "--comment", "10"]);
     assert_eq!((o.code, o.stdout.as_str()), (0, "https://forge.invalid/pull/7#r55\n"), "{}", o.stderr);
