@@ -79,7 +79,9 @@ fn the_ported_verbs_answer_from_the_control_store() {
     assert_eq!(json(&["ops-view", "ops_live"])[0]["claimable"], "1");
     assert_eq!(json(&["ops-view", "ops_live"])[0]["repo"], "harness");
     assert!(json(&["ops-transitions"])["events"].is_array());
-    assert!(json(&["ops-refusals", "3600"])["classes"].is_array());
+    let (rc, out) = w.run(&["ops-refusals", "3600"]);
+    assert_eq!(rc, 2, "{out}");
+    assert!(out.contains("cannot tell: the refusal tally is filling"), "{out}");
     assert_eq!(json(&["ops-bead", "sp-a"])["bead"]["state"], "READY");
     assert_eq!(w.run(&["ops-bead", "sp-none"]).0, 1);
     assert!(!json(&["ops-graph"]).as_array().unwrap().is_empty());
