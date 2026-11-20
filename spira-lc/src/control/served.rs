@@ -102,6 +102,11 @@ fn open(path: &str) -> Result<Store<Served>, String> {
         .with_refs(Arc::new(crate::bd::external_ref_of)))
 }
 
+fn run_dir(run: std::path::PathBuf) -> &'static sections::lifecycle::RunDir {
+    static RUN_DIR: std::sync::OnceLock<sections::lifecycle::RunDir> = std::sync::OnceLock::new();
+    RUN_DIR.get_or_init(|| sections::lifecycle::RunDir::new(run))
+}
+
 fn opened(path: &str) -> Result<Arc<Store<Served>>, String> {
     let mut slot = OPENED.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = slot.as_ref() {
@@ -354,7 +359,7 @@ fn dispatch_sections(args: &[String]) -> (i32, String) {
                 return sections::run(store.contract(), args, &call);
             }
             match crate::lifecycle_run_dir() {
-                Ok(run) => sections::lifecycle::run(&store, args, &call, &sections::lifecycle::RunDir(run)),
+                Ok(run) => sections::lifecycle::run(&store, args, &call, run_dir(run)),
                 Err(e) => sections::cannot_tell(&format!("the run directory: {e}")),
             }
         }

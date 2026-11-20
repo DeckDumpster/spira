@@ -119,17 +119,28 @@ fn written(a: (Answer, String)) -> (Answer, Option<String>) {
     (a.0, Some(a.1))
 }
 
-pub fn record(sink: &MetricsSink, verb: &str, kind: &str, a: &Answer) {
-    let (name, reason) = match a {
+fn outcome(a: &Answer) -> (&'static str, &str) {
+    match a {
         Answer::Ok(_) => (WRITES, "ok"),
         Answer::Refused(r) => (REFUSALS, r.code),
         Answer::Missing(_) => (REFUSALS, "not-found"),
         Answer::CannotTell(_) => (REFUSALS, "cannot-tell"),
-    };
+    }
+}
+
+pub fn record(sink: &MetricsSink, verb: &str, kind: &str, a: &Answer) {
+    let (name, reason) = outcome(a);
     sink.push(
         &[Point::Count { name, value: 1 }],
         &[("verb", verb), ("kind", kind), ("reason", reason)],
     );
+}
+
+/// The count `record` pushes, as a value to hold for the metrics thread.
+pub fn record_series(verb: &str, kind: &str, a: &Answer) -> spira_otel::metrics::Series {
+    let (name, reason) = outcome(a);
+    let labels = [("verb", verb), ("kind", kind), ("reason", reason)].map(|(k, v)| (k.to_string(), v.to_string())).to_vec();
+    spira_otel::metrics::Series { name: name.into(), value: 1.0, labels, at: std::time::SystemTime::now() }
 }
 
 fn body(args: &[String]) -> Result<Value, Answer> {

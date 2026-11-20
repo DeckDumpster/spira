@@ -368,6 +368,7 @@ pub fn run(args: &[String]) -> i32 {
             loop {
                 std::thread::sleep(crate::slow::METRICS_EVERY);
                 crate::slow::push_counts(&metrics, &mut pushed);
+                crate::slow::push_held(&metrics);
                 crate::slow::push_rss(&metrics);
             }
         });

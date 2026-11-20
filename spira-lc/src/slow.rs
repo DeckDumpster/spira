@@ -307,6 +307,31 @@ pub fn push_counts(sink: &spira_otel::metrics::MetricsSink, pushed: &mut BTreeMa
     }
 }
 
+type HeldKey = (String, Vec<(String, String)>);
+
+static HELD: Mutex<BTreeMap<HeldKey, spira_otel::metrics::Series>> = Mutex::new(BTreeMap::new());
+
+/// Holds gauges for the metrics thread: a new value for a (name, labels) replaces the old.
+pub fn hold_gauges(series: Vec<spira_otel::metrics::Series>) {
+    let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+    for s in series {
+        held.insert((s.name.clone(), s.labels.clone()), s);
+    }
+}
+
+#[cfg(test)]
+pub fn held() -> Vec<spira_otel::metrics::Series> {
+    HELD.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect()
+}
+
+/// Pushes every held gauge in one request.
+pub fn push_held(sink: &spira_otel::metrics::MetricsSink) {
+    let series: Vec<_> = HELD.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
+    if !series.is_empty() {
+        let _ = sink.try_push_series(&series);
+    }
+}
+
 /// Resident bytes from a `/proc/<pid>/status` text: its `VmRSS` line, which the kernel reports
 /// in kB, so no page size is assumed.
 fn rss_bytes_of(status: &str) -> Option<u64> {

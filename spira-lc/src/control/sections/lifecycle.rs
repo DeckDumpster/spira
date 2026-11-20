@@ -3,7 +3,11 @@
 //! field changed, and otherwise every `target_latency` as a keepalive.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Read, Seek, SeekFrom};
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use lifecycle::bead::BeadState;
 use serde_json::{json, Value};
@@ -12,10 +16,10 @@ use spira_desired_state::section::{
     Unobservable, WarmingUp, Windowed, API_VERSION,
 };
 use spira_desired_state::sections::lifecycle::{Evidence, Goodput, Harm, Signal, Status, BELOW_FLOOR, NAME, OWNER, SECTION};
-use spira_otel::metrics::Point;
+use spira_otel::metrics::Series;
 use state_store::Backend;
 
-use super::{cannot, publish, read_section, record, render, rfc3339, Answer, Call};
+use super::{cannot, publish, read_section, record_series, render, rfc3339, Answer, Call};
 use crate::control::store::Store;
 use crate::goodput::{self, LoopEvent, Measure, Scope, StopKind, Window, DAY_SECS};
 
@@ -53,7 +57,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call, outside: 
         other => cannot(format!("{other:?} is not a section spira-lc publishes: publish-section lifecycle")),
     };
     if !matches!(&answer, Answer::Ok(v) if v["published"] == false) {
-        record(call.metrics, VERB, NAME, &answer);
+        crate::slow::hold_gauges(vec![record_series(VERB, NAME, &answer)]);
     }
     render(answer)
 }
@@ -201,19 +205,17 @@ fn distance(rate: &Measure, floor: Option<f64>, dwell: &Measure, dwell_target: O
     })
 }
 
-fn push_metrics(call: &Call, repo: &str, hour: &goodput::Goodput, day: &goodput::Goodput, cover: &Cover) {
+fn hold_metrics(held: &mut Vec<Series>, repo: &str, hour: &goodput::Goodput, day: &goodput::Goodput, cover: &Cover) {
+    let at = std::time::SystemTime::now();
     for (window, g, covered) in [("1h", hour, cover.hour), ("24h", day, cover.day)] {
         if !covered {
             continue;
         }
-        let mut points = Vec::new();
         for (name, m) in [("spira_goodput_ratio", &g.ratio), ("spira_goodput_rate", &g.rate), ("spira_goodput_landed", &g.landed)] {
             if let Measure::Value(value) = m {
-                points.push(Point::Gauge { name, value: *value });
+                let labels = vec![("repo".to_string(), repo.to_string()), ("window".to_string(), window.to_string())];
+                held.push(Series { name: name.into(), value: *value, labels, at });
             }
-        }
-        if !points.is_empty() {
-            call.metrics.push(&points, &[("repo", repo), ("window", window)]);
         }
     }
 }
@@ -294,14 +296,16 @@ fn publish_lifecycle<B: Backend>(store: &Store<B>, call: &Call, outside: &dyn Ou
         ..Status::default()
     };
     status.set_total(fields(&total.0, &total.1, &cover));
-    push_metrics(call, ALL, &total.0, &total.1, &cover);
+    let mut held = Vec::new();
+    hold_metrics(&mut held, ALL, &total.0, &total.1, &cover);
     for repo in repos_in(&events, &day, &repo_of) {
         let scope = Scope::Repo(&repo);
         let g = (goodput::goodput(&events, &hour, scope, &repo_of), goodput::goodput(&events, &day, scope, &repo_of));
-        push_metrics(call, &repo, &g.0, &g.1, &cover);
+        hold_metrics(&mut held, &repo, &g.0, &g.1, &cover);
         status.repos.insert(repo, fields(&g.0, &g.1, &cover));
     }
 
+    crate::slow::hold_gauges(held);
     let prev = existing.as_ref().map(|(s, _)| s);
     let floor = spec_value(prev, "goodput_rate_floor");
     let releases = outside.records_releases();
@@ -355,17 +359,71 @@ fn publish_lifecycle<B: Backend>(store: &Store<B>, call: &Call, outside: &dyn Ou
     publish(store.contract(), &args, call, section)
 }
 
-/// The production source: the run directory's own typed records.
-pub struct RunDir(pub PathBuf);
+/// What one family file held when it was last read: which file, how far, and its rows.
+struct Cached {
+    dev: u64,
+    ino: u64,
+    len: u64,
+    rows: Vec<Value>,
+}
+
+/// The production source: the run directory's own typed records. Each family file is parsed
+/// once; a later read parses only the complete lines appended since.
+pub struct RunDir {
+    root: PathBuf,
+    cache: Mutex<BTreeMap<String, Cached>>,
+    parsed: AtomicU64,
+}
 
 impl RunDir {
+    pub fn new(root: PathBuf) -> RunDir {
+        RunDir { root, cache: Mutex::new(BTreeMap::new()), parsed: AtomicU64::new(0) }
+    }
+
+    /// Rows parsed from the family files since this value was made.
+    pub fn parsed(&self) -> u64 {
+        self.parsed.load(Ordering::Relaxed)
+    }
+
     fn rows(&self, family: &str) -> Result<Vec<Value>, String> {
-        let src = tsd::query::Source { reader: None, root: &self.0 };
-        match src.rows(family, 0) {
-            Ok(rows) => Ok(rows),
-            Err(f) if f.code == tsd::query::ERR_NO_FAMILY => Ok(Vec::new()),
-            Err(f) => Err(f.message),
+        if tsd::store::moved(family) {
+            let src = tsd::query::Source { reader: None, root: &self.root };
+            return match src.rows(family, 0) {
+                Ok(rows) => Ok(rows),
+                Err(f) if f.code == tsd::query::ERR_NO_FAMILY => Ok(Vec::new()),
+                Err(f) => Err(f.message),
+            };
         }
+        let path = tsd::family_path(&self.root, family);
+        let mut file = match std::fs::File::open(&path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(format!("{}: {e}", path.display())),
+        };
+        let meta = file.metadata().map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let hit = cache.get(family).is_some_and(|c| (c.dev, c.ino) == (meta.dev(), meta.ino()) && c.len <= meta.len());
+        if !hit {
+            cache.insert(family.to_string(), Cached { dev: meta.dev(), ino: meta.ino(), len: 0, rows: Vec::new() });
+        }
+        let cached = cache.get_mut(family).expect("inserted above");
+        file.seek(SeekFrom::Start(cached.len)).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut appended = Vec::new();
+        file.read_to_end(&mut appended).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut consumed = 0;
+        for line in appended.split_inclusive(|b| *b == b'\n') {
+            let row = serde_json::from_slice::<Value>(line.strip_suffix(b"\n").unwrap_or(line));
+            if !line.ends_with(b"\n") && row.is_err() {
+                break;
+            }
+            consumed += line.len();
+            if let Some(row) = row.ok().filter(|r| r.is_object() && tsd::query::ts_of(r).is_some()) {
+                self.parsed.fetch_add(1, Ordering::Relaxed);
+                cached.rows.push(row);
+            }
+        }
+        cached.len += consumed as u64;
+        Ok(cached.rows.clone())
     }
 }
 
@@ -410,7 +468,7 @@ pub fn revert_map(rows: &[Value]) -> BTreeMap<String, String> {
 impl Outside for RunDir {
     fn stops(&self) -> Result<Vec<LoopEvent>, String> {
         let mut out = stop_events(&self.rows(tsd::stop::FAMILY)?);
-        let stamp = self.0.join("world.halted");
+        let stamp = self.root.join("world.halted");
         match std::fs::metadata(&stamp) {
             Ok(m) if !out.iter().any(|e| matches!(e, LoopEvent::Stop { kind: StopKind::Halt, .. })) => {
                 out.push(LoopEvent::Stop { kind: StopKind::Halt, repo: None, bead: None, at: mtime_secs(&m)?, reason: String::new() });
