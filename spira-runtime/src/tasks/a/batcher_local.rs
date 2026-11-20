@@ -394,6 +394,8 @@ pub enum Trigger {
     RerunMending,
     RerunCertifying,
     RerunBlocked,
+    /// The attribution reached its probe ceiling: the round is abandoned whole, its red kept for the next round.
+    RerunUnconverged,
     MendingSettled,
     MendTimeout,
     CertifyGreen,
@@ -464,6 +466,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Corpus, Trigger::RerunCertifying, State::Certifying),
     (State::Certifying, Trigger::RerunCertifying, State::Certifying),
     (State::Attributing, Trigger::RerunBlocked, State::Done),
+    (State::Attributing, Trigger::RerunUnconverged, State::Done),
     (State::Mending, Trigger::MendingSettled, State::Certifying),
     (State::Mending, Trigger::MendTimeout, State::Certifying),
     (State::Certifying, Trigger::CertifyGreen, State::Landing),
@@ -1015,6 +1018,8 @@ pub const LEG_START_GRACE_MS: u64 = 30_000;
 pub const LEG_MISSING_OBSERVES: u32 = 2;
 /// Cause word on the `.result` line of a round abandoned for want of a driver.
 pub const NO_DRIVER: &str = "no-driver";
+/// Cause word on the `.result` line of a round whose attribution reached its probe ceiling without naming a member.
+pub const ATTRIBUTION_NOT_CONVERGING: &str = "attribution-not-converging";
 /// How many times a round whose VM was lost under its certify is certified again before the
 /// loss is the host's to look at (pace Infra): a lost VM says nothing about the members.
 pub const LOST_VM_RECERTIFIES: u32 = 2;
@@ -2058,6 +2063,14 @@ impl Machine<'_> {
                     self.go(Trigger::RerunBlocked);
                     self.abandon_naming(&why, Vec::new());
                     self.finish(pace::Outcome::NoVm, &why);
+                }
+                Some(Attribution::Unconverged(why)) => {
+                    self.go(Trigger::RerunUnconverged);
+                    if self.rc.batch.is_some() {
+                        let leg = Leg { why: why.clone(), bead: ATTRIBUTION_NOT_CONVERGING.into(), key: format!("{}:{}", self.repo, self.rc.batch.clone().unwrap_or_default()), ..self.leg() };
+                        self.acts.push(leg.act(ABANDON));
+                    }
+                    self.finish(pace::Outcome::Quiet, "");
                 }
                 Some(Attribution::Faulted(why)) => {
                     self.go(Trigger::RerunBlocked);
@@ -3213,6 +3226,11 @@ pub mod edge {
         if leg.bead == super::NO_DRIVER {
             eprintln!("batcher.local {}: abandoning round {}: {}", leg.repo, leg.batch, leg.why);
             io::round_abandon(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.why, super::NO_DRIVER);
+            return Ok("{}".into());
+        }
+        if leg.bead == super::ATTRIBUTION_NOT_CONVERGING {
+            eprintln!("batcher.local {}: abandoning round {}: attribution did not converge: {}", leg.repo, leg.batch, leg.why);
+            io::round_abandon_considered(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.why, super::ATTRIBUTION_NOT_CONVERGING, &leg.why);
             return Ok("{}".into());
         }
         let why = io::keep_red_evidence(&env.run, &leg.batch, &leg.why, &leg.reds, spira_config::process::cfg_parse::<u32>("SPIRA_SENDBACK_KEEP_DAYS"));

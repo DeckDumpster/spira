@@ -243,6 +243,23 @@ fn sp_lgffas_a_fault_in_the_attribution_leg_re_cuts_on_the_next_tick_without_a_p
     assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE], "cut again on the next tick");
 }
 
+/// An attribution that hit its probe ceiling abandons the round whole under its own cause, and pauses nothing:
+/// the red is kept for the next round to convict.
+#[test]
+fn an_unconverged_attribution_abandons_the_round_with_cause_attribution_not_converging() {
+    use batcher_cut::attribute::Attribution;
+    let why = "unit-tests red reproduces but 8 probes named no member; suspects: m1,m2";
+    let line = Attribution::Unconverged(why.into()).line();
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, "spira.a2").unwrap(), exit: runtime::units::Exit::Code(0), duration_ms: 1 };
+    let out = runtime::units::RanOutput::captured(line.as_bytes(), b"");
+    let (_, acts) = on_ran_with(&driving(State::Attributing, "spira.a2"), &ran, &out, NOW).expect("its own leg");
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert!(!names.contains(&PAUSE) && !names.contains(&CERTIFY), "{names:?}");
+    let abandon: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ABANDON).unwrap_or_else(|| panic!("no abandon: {names:?}")).input).unwrap();
+    assert_eq!((abandon.bead.as_str(), abandon.why.as_str()), (ATTRIBUTION_NOT_CONVERGING, why));
+    assert_eq!(ATTRIBUTION_NOT_CONVERGING, "attribution-not-converging");
+}
+
 /// A leg whose reruns faulted is not a red: no abandon, no pause, and the page says so.
 #[test]
 fn sp_xslgtq_a_faulted_attribution_leaves_the_round_open_and_pages_attribution_faulted() {

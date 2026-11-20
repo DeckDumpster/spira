@@ -778,7 +778,88 @@ pub enum RoundEnd {
     Abandoned,
     /// The base alone reproduces the red: no member is at fault and none is ejected.
     BaseRed { base: String, why: String },
+    /// The probe ceiling was reached without naming a member: the red is kept for the next round.
+    Unconverged {
+        red: String,
+        probes: usize,
+        suspects: Vec<Id>,
+    },
 }
+
+/// The probes one attributed red may spend: one per member and two more, the positive control
+/// included. A count, like `attribute_members`' `bound`, not a config key.
+struct Probes {
+    used: usize,
+    ceiling: usize,
+    exhausted: bool,
+    smallest_red: Option<Vec<Id>>,
+}
+
+enum Control {
+    Red,
+    Green,
+    Fault,
+}
+
+impl Probes {
+    fn new(members: usize) -> Self {
+        Probes {
+            used: 0,
+            ceiling: members + 2,
+            exhausted: false,
+            smallest_red: None,
+        }
+    }
+
+    /// Runs `probe` on `members` unless the ceiling is reached, which answers `None` without running.
+    fn run(&mut self, members: &[Member], probe: impl FnOnce() -> Option<bool>) -> Option<bool> {
+        if self.used >= self.ceiling {
+            self.exhausted = true;
+            return None;
+        }
+        self.used += 1;
+        let v = probe();
+        if v == Some(false)
+            && self
+                .smallest_red
+                .as_ref()
+                .is_none_or(|r| members.len() < r.len())
+        {
+            self.smallest_red = Some(members.iter().map(|m| m.id.clone()).collect());
+        }
+        v
+    }
+
+    /// The full-membership probe that must reproduce the red before anything is searched; a
+    /// probe with no verdict is retried once.
+    fn control(
+        &mut self,
+        members: &[Member],
+        probe: &mut dyn FnMut(&[Member]) -> Option<bool>,
+    ) -> Control {
+        for _ in 0..2 {
+            match self.run(members, || probe(members)) {
+                Some(true) => return Control::Green,
+                Some(false) => return Control::Red,
+                None => {}
+            }
+        }
+        Control::Fault
+    }
+
+    fn end(&self, red: &str, members: &[Member]) -> RoundEnd {
+        RoundEnd::Unconverged {
+            red: red.to_string(),
+            probes: self.used,
+            suspects: self
+                .smallest_red
+                .clone()
+                .unwrap_or_else(|| members.iter().map(|m| m.id.clone()).collect()),
+        }
+    }
+}
+
+const NOT_IN_PROBE: &str = "red in the corpus, green in the probe on the full membership";
 
 /// A member stacked on one that leaves leaves with it.
 fn with_dependents(members: &[Member], out: &mut BTreeMap<Id, Vec<String>>) {
@@ -804,11 +885,12 @@ fn probe_filter_owners<R: RoundRunner>(
     tests: &str,
     scope: &[String],
     members: &[Member],
+    probes: &mut Probes,
 ) -> (Vec<Action>, &'static str, String) {
     let red = format!("{} red{tests}", f.name);
     let mut said: Vec<(Vec<Id>, String)> = vec![];
     let mut green_in = |runner: &mut R, m: &[Member]| {
-        let v = runner.filter_green_in(&f.name, scope, m);
+        let v = probes.run(m, || runner.filter_green_in(&f.name, scope, m));
         if v == Some(false) {
             said.push((
                 m.iter().map(|x| x.id.clone()).collect(),
@@ -832,15 +914,9 @@ fn probe_filter_owners<R: RoundRunner>(
                 )
             }
             Alone::Base(said) => return (actions, "base", said),
+            Alone::Unconverged => return (actions, "unattributed", String::new()),
             Alone::Cleared(said) => return (actions, "unattributed", said),
-            Alone::Flipped(said) => {
-                let kind = if runner.filter_green_in(&f.name, scope, members) == Some(true) {
-                    "flipped"
-                } else {
-                    "unattributed"
-                };
-                return (actions, kind, said);
-            }
+            Alone::Flipped(said) => return (actions, "unattributed", said),
         }
     }
     (
@@ -977,11 +1053,14 @@ fn probe_suspects<R: RoundRunner>(
     tests: &str,
     scope: &[String],
     suspects: &[Member],
+    probes: &mut Probes,
 ) -> Vec<Action> {
     match suspects {
         [] => vec![],
         [only] => {
-            if runner.filter_green_in(&f.name, scope, suspects) != Some(false) {
+            if probes.run(suspects, || runner.filter_green_in(&f.name, scope, suspects))
+                != Some(false)
+            {
                 return vec![];
             }
             let said = vec![(vec![only.id.clone()], runner.probe_output())];
@@ -991,7 +1070,7 @@ fn probe_suspects<R: RoundRunner>(
             );
             with_probe_output(vec![Action::Eject { id: only.id.clone(), line }], &said)
         }
-        _ => probe_filter_owners(runner, f, tests, scope, suspects).0,
+        _ => probe_filter_owners(runner, f, tests, scope, suspects, probes).0,
     }
 }
 
@@ -1041,15 +1120,41 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         let mut actions: Vec<Action> = vec![];
         let mut kind = "unattributed";
         let mut cleared = String::new();
-        if !vias.is_empty() {
+        let mut probes = Probes::new(members.len());
+        let reproduced = |scope: &[String], runner: &mut R, probes: &mut Probes| {
+            probes.control(members, &mut |m| {
+                runner.filter_green_in(&f.name, scope, m)
+            })
+        };
+        let control = if members.len() > 1 {
+            reproduced(&packages, runner, &mut probes)
+        } else {
+            Control::Red
+        };
+        match control {
+            Control::Fault => {
+                return Ok(FilterEject::Faulted(format!(
+                    "{} red{tests}: the control probe on the full membership gave no verdict twice",
+                    f.name
+                )))
+            }
+            Control::Green => kind = "flipped",
+            Control::Red => probes.smallest_red = None,
+        }
+        if kind == "flipped" {
+            cleared = NOT_IN_PROBE.to_string();
+            println!("batcher: {} red{tests}: {NOT_IN_PROBE}", f.name);
+        }
+        if !vias.is_empty() && kind != "flipped" {
             let suspects: Vec<Member> = members
                 .iter()
                 .filter(|m| vias.contains_key(&m.id))
                 .cloned()
                 .collect();
-            let mut found = probe_suspects(runner, f, &tests, &scope, &suspects);
+            let mut mapped = Probes::new(suspects.len());
+            let mut found = probe_suspects(runner, f, &tests, &scope, &suspects, &mut mapped);
             if found.is_empty() && scope != packages {
-                found = probe_suspects(runner, f, &tests, &packages, &suspects);
+                found = probe_suspects(runner, f, &tests, &packages, &suspects, &mut mapped);
             }
             actions = found
                 .into_iter()
@@ -1070,17 +1175,27 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
                 })
                 .collect();
         }
-        if actions.is_empty() {
+        if actions.is_empty() && kind != "flipped" {
             actions = convict_recurring(runner, ops, f, &tests, &scope, members);
         }
-        if actions.is_empty() {
-            let narrow = probe_filter_owners(runner, f, &tests, &scope, members);
+        if actions.is_empty() && kind != "flipped" {
+            let narrow = probe_filter_owners(runner, f, &tests, &scope, members, &mut probes);
             (actions, kind, cleared) = narrow;
-            if actions.is_empty() && matches!(kind, "unattributed" | "flipped") && scope != packages
+            let narrow_reproduced = probes.smallest_red.is_some();
+            if actions.is_empty()
+                && kind == "unattributed"
+                && scope != packages
+                && !(probes.exhausted && narrow_reproduced)
             {
+                probes = Probes::new(members.len());
                 (actions, kind, cleared) =
-                    probe_filter_owners(runner, f, &tests, &packages, members);
+                    probe_filter_owners(runner, f, &tests, &packages, members, &mut probes);
             }
+        }
+        if actions.is_empty() && probes.exhausted {
+            return Ok(FilterEject::Unconverged(unconverged(
+                ops, &f.name, &f.failed, members, &probes,
+            )));
         }
         if actions.is_empty() && kind == "flipped" {
             let ids = flip_ids(&f.failed, graph.as_ref());
@@ -1249,6 +1364,26 @@ fn harness_fault(faults: &[String]) -> RoundEnd {
     RoundEnd::Faulted(format!("harness fault: {why}; no member charged"))
 }
 
+/// Files a ceiling-reached attribution: the red is kept for the next round to convict, an
+/// `unattributed` incident is filed, and the round ends `Unconverged`.
+fn unconverged<O: RoundOps>(
+    ops: &mut O,
+    red: &str,
+    failed: &[String],
+    members: &[Member],
+    probes: &Probes,
+) -> RoundEnd {
+    println!(
+        "batcher: {red} red: probe ceiling {} reached after {} probes without naming a member",
+        probes.ceiling, probes.used
+    );
+    ops.record_unnamed_red(red, &sorted(failed), members);
+    let mut page = vec![red.to_string()];
+    page.extend(failed.iter().take(MAX_NOTED_TESTS).cloned());
+    ops.incident("unattributed", &page);
+    probes.end(red, members)
+}
+
 /// A round of one member has no one else to blame: a red nothing else names is that member's.
 fn sole_member_culprit(red: &str, members: &[Member]) -> Vec<Action> {
     match members {
@@ -1337,7 +1472,11 @@ fn confirmed_attribution<R: RoundRunner, O: RoundOps>(
     for pool in pools {
         said.clear();
         for suite in reds {
-            match red_alone(&format!("{suite} red"), &mut |m| runner.suite_green(suite, m), pool) {
+            let (alone, probes) = suite_alone(runner, suite, pool);
+            match alone {
+                Alone::Unconverged => {
+                    return Ok(unconverged(ops, suite, &[], members, &probes));
+                }
                 Alone::Owners(a) => {
                     for act in a {
                         if !found.iter().any(|f| action_id(f) == action_id(&act)) {
@@ -1392,6 +1531,10 @@ enum FilterEject {
     Survivors(Vec<Member>),
     /// The registry ids of tests proven to flip: they are disabled and the same members certify again.
     Flipped(Vec<String>),
+    /// The control probe on the full membership gave no verdict twice: the round is not judged.
+    Faulted(String),
+    /// The probe ceiling was reached: the end the round takes.
+    Unconverged(RoundEnd),
 }
 
 /// The smallest `k` for which the first `k` of `members` fail to build, given that all of them do.
@@ -1589,6 +1732,29 @@ enum Alone {
     Cleared(String),
     /// The base and every member alone are green: red only together, or a flip.
     Flipped(String),
+    /// The probe ceiling was reached before the search named anyone.
+    Unconverged,
+}
+
+/// `red_alone` for a suite, after a positive control on the full membership and under the probe ceiling.
+fn suite_alone<R: RoundRunner>(runner: &mut R, suite: &str, members: &[Member]) -> (Alone, Probes) {
+    let mut probes = Probes::new(members.len());
+    match probes.control(members, &mut |m| runner.suite_green(suite, m)) {
+        Control::Green => return (Alone::Flipped(NOT_IN_PROBE.into()), probes),
+        Control::Fault => return (Alone::Cleared("control probe gave no verdict".into()), probes),
+        Control::Red => {}
+    }
+    let found = red_alone(
+        &format!("{suite} red"),
+        &mut |m| probes.run(m, || runner.suite_green(suite, m)),
+        members,
+    );
+    let found = match found {
+        Alone::Owners(_) => found,
+        _ if probes.exhausted => Alone::Unconverged,
+        _ => found,
+    };
+    (found, probes)
 }
 
 fn verdict_word(v: Option<bool>) -> &'static str {
@@ -1994,6 +2160,8 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                     f.name
                 )))
             }
+            FilterEject::Faulted(why) => return Ok(RoundEnd::Faulted(why)),
+            FilterEject::Unconverged(end) => return Ok(end),
         }
     }
     let prior_reds: Vec<String> = runner
@@ -2203,6 +2371,8 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                         f.name
                     )))
                 }
+                FilterEject::Faulted(why) => return Ok(RoundEnd::Faulted(why)),
+                FilterEject::Unconverged(end) => return Ok(end),
             };
             runner.stop_main()?;
             members = next;
@@ -2378,11 +2548,11 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             let mut said: Vec<String> = vec![];
             if members.len() > 1 {
                 for suite in &d.unattributed {
-                    match red_alone(
-                        &format!("{suite} red"),
-                        &mut |m| runner.suite_green(suite, m),
-                        &members,
-                    ) {
+                    let (alone, probes) = suite_alone(runner, suite, &members);
+                    match alone {
+                        Alone::Unconverged => {
+                            return Ok(unconverged(ops, suite, &[], &members, &probes));
+                        }
                         Alone::Owners(a) => {
                             for act in a {
                                 if !found.iter().any(|f| action_id(f) == action_id(&act)) {
@@ -4243,7 +4413,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_confirmed_red_no_suspect_reproduces_alone_runs_every_member_alone() {
-        let mut f = Fake::new(|s, tree| s.starts_with("test-0") && tree.len() == 1 && tree.contains("m3"));
+        let mut f = Fake::new(|s, tree| s.starts_with("test-0") && tree.contains("m3"));
         f.confirmed = true;
         f.runs_alone = true;
         f.prior_suites = reds3();
@@ -4253,6 +4423,19 @@ pub(crate) mod tests {
         let gone: Vec<&str> = ops.ejected.iter().map(|(id, _)| id.as_str()).collect();
         assert_eq!(gone, ["m3"]);
         assert!(matches!(&end, RoundEnd::Land { members, .. } if members.len() == 2), "{end:?}");
+    }
+
+    #[test]
+    fn a_confirmed_suite_red_the_full_membership_probe_does_not_reproduce_runs_no_member_alone() {
+        let mut f = Fake::new(|_, _| false);
+        f.confirmed = true;
+        f.runs_alone = true;
+        f.prior_suites = reds3();
+        let mut ops = touching_ops(&[]);
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], budget6()).unwrap();
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert_eq!(f.alone.len(), 3, "one control probe per red suite: {:?}", f.alone);
+        assert!(matches!(&end, RoundEnd::Blocked(why) if why.contains(NOT_IN_PROBE)), "{end:?}");
     }
 
     #[test]
@@ -5269,11 +5452,12 @@ pub(crate) mod tests {
             vec![("m2".to_string(), vec!["unit-tests".to_string()])]
         );
         assert!(!f.probes.is_empty(), "the suspects are probed");
+        assert_eq!(f.probes[0].len(), 4, "the control probe runs the full membership first");
         assert!(
-            f.probes
+            f.probes[1..]
                 .iter()
                 .all(|p| p.iter().all(|id| id == "m2" || id == "m3")),
-            "only the suspects are probed: {:?}",
+            "only the suspects are probed after it: {:?}",
             f.probes
         );
     }
@@ -5284,9 +5468,9 @@ pub(crate) mod tests {
         f.bisects = false;
         f.filter = Some(release_red_when("m2"));
         let mut ops = two_suspects();
-        attribute_round(&mut f, &mut ops, &corpus(3), four(), budget6()).unwrap();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), four(), budget6()).unwrap();
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
-        assert_eq!(ops.incidents.len(), 1, "the red is filed, not dropped");
+        assert!(matches!(end, RoundEnd::Faulted(_)), "no verdict from the control probe: {end:?}");
     }
 
     #[test]
@@ -5322,7 +5506,7 @@ pub(crate) mod tests {
         );
         assert!(
             !f.probes.is_empty()
-                && f.scoped.iter().all(|p| p
+                && f.scoped[1..].iter().all(|p| p
                     == &[
                         "loom=factory::tests::a_refused_dwell_blinds",
                         "loom=factory::tests::a_round_open_elsewhere"
@@ -5411,7 +5595,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_filter_red_whose_probes_cannot_answer_still_blocks() {
+    fn a_filter_red_whose_control_probe_cannot_answer_faults_and_charges_no_one() {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(Box::new(|_| {
             Some(FilterRed {
@@ -5436,7 +5620,7 @@ pub(crate) mod tests {
             },
         )
         .unwrap();
-        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(matches!(end, RoundEnd::Faulted(_)), "{end:?}");
     }
 
     #[test]
@@ -6479,24 +6663,24 @@ pub(crate) mod tests {
     fn a_unit_test_red_only_a_pair_causes_holds_the_later_member_behind_the_earlier_and_lands_the_rest(
     ) {
         let mut f = Fake::new(|_, _| false);
-        f.filter = Some(unit_red_together(&["m1", "m3"]));
+        f.filter = Some(unit_red_together(&["m1", "m2"]));
         f.bisects = true;
         let mut ops = Ops::default();
         let end = attribute_round(
             &mut f,
             &mut ops,
             &corpus(3),
-            three(),
+            vec![member("m1"), member("m2")],
             Budget {
                 slots: 6,
                 maxpar: 2,
             },
         )
         .unwrap();
-        assert_eq!(land_ids(end), vec!["m1", "m2"]);
+        assert_eq!(land_ids(end), vec!["m1"]);
         assert_eq!(
             ops.sequenced,
-            vec![("m3".to_string(), vec!["m1".to_string()])]
+            vec![("m2".to_string(), vec!["m1".to_string()])]
         );
         assert!(
             ops.eject_evidence[0].1.contains("red only with m1"),
@@ -6774,7 +6958,7 @@ pub(crate) mod tests {
     fn a_red_whose_failing_tests_differ_from_the_kept_red_blocks_and_replaces_the_record() {
         let prior = prior_red_of(&["FAIL other x"], &[("m2", &tip("m2")), ("m3", &tip("m3"))]);
         let (end, ops) = recur_round(prior, pair_red());
-        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(matches!(end, RoundEnd::Unconverged { .. }), "{end:?}");
         let kept = ops.unnamed.unwrap();
         assert_eq!(kept.failed, vec![RECUR.to_string()]);
         assert_eq!(kept.batch, "b-now");
@@ -6784,7 +6968,7 @@ pub(crate) mod tests {
     fn a_member_whose_tip_changed_since_the_kept_red_is_not_a_recurring_member() {
         let prior = prior_red_of(&[RECUR], &[("m2", &tip("m2")), ("m3", "other-tip")]);
         let (end, _) = recur_round(prior, pair_red());
-        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(matches!(end, RoundEnd::Unconverged { .. }), "{end:?}");
     }
 
     #[test]
@@ -6795,7 +6979,7 @@ pub(crate) mod tests {
                 .then(|| flip_red(&[RECUR]))
         });
         let (end, ops) = recur_round(prior, red);
-        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(matches!(end, RoundEnd::Unconverged { .. }), "{end:?}");
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
     }
 
@@ -7045,8 +7229,8 @@ pub(crate) mod tests {
             f.main_kind
         );
         assert!(
-            f.scoped.iter().any(|s| s == &["loom=factory::tests::a"]),
-            "{:?}",
+            f.scoped == [["loom"]],
+            "the control probe on the whole package is the only probe: {:?}",
             f.scoped
         );
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
@@ -7081,11 +7265,11 @@ pub(crate) mod tests {
         let mut ops = Ops::default();
         let end = flip_round(&mut f, &mut ops);
         assert!(ops.disabled.is_empty());
-        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(matches!(end, RoundEnd::Unconverged { .. }), "{end:?}");
     }
 
     #[test]
-    fn a_unit_red_with_a_member_that_has_no_verdict_alone_is_not_a_flip_and_blocks() {
+    fn a_filter_red_whose_full_membership_probe_is_green_ends_after_one_probe_as_flipped() {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(red_once_on_the_whole_tree(flip_red(&[FLIP_UNIT])));
         f.bisects = true;
@@ -7093,13 +7277,12 @@ pub(crate) mod tests {
         f.unknown_alone = Some("m2".into());
         let mut ops = Ops::default();
         let end = flip_round(&mut f, &mut ops);
-        assert!(ops.disabled.is_empty());
-        match end {
-            RoundEnd::Blocked(why) => {
-                assert!(why.contains("names no member that can be ejected"), "{why}")
-            }
-            other => panic!("{other:?}"),
-        }
+        assert_eq!(
+            ops.disabled,
+            vec![vec!["unit:loom factory::tests::a".to_string()]]
+        );
+        assert_eq!(f.probes.len(), 1, "one probe, no search: {:?}", f.probes);
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 
     #[test]
@@ -7235,15 +7418,12 @@ pub(crate) mod tests {
             },
         )
         .unwrap();
-        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(matches!(end, RoundEnd::Unconverged { .. }), "{end:?}");
         assert_eq!(
             ops.incidents,
             vec![(
                 "unattributed".to_string(),
-                vec![
-                    "unit-tests".to_string(),
-                    "run alone: base green, m1 green, m2 green, m3 green".to_string()
-                ]
+                vec!["unit-tests".to_string()]
             )]
         );
     }
@@ -7343,7 +7523,7 @@ pub(crate) mod tests {
         );
         assert!(!f.scoped.is_empty());
         assert!(
-            f.scoped
+            f.scoped[1..]
                 .iter()
                 .all(|s| s == &["testenv=lint_does_not_refuse_a_key"]),
             "{:?}",
@@ -7407,7 +7587,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_named_test_red_no_probe_can_attribute_blocks_the_round_without_running_the_corpus() {
+    fn a_named_test_red_no_probe_can_reproduce_faults_the_round_without_running_the_corpus() {
         let red = FilterRed {
             harness: vec![],
             name: "integration-tests".into(),
@@ -7428,7 +7608,7 @@ pub(crate) mod tests {
             },
         )
         .unwrap();
-        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(matches!(end, RoundEnd::Faulted(_)), "{end:?}");
         assert!(f.main_kind.is_empty());
     }
 
@@ -7511,7 +7691,7 @@ pub(crate) mod tests {
             vec![("m2".to_string(), vec!["integration-tests".to_string()])]
         );
         assert!(
-            f.scoped
+            f.scoped[1..]
                 .iter()
                 .all(|p| p == &["runtime=leg_lost::pauses", "runtime=leg_lost::abandons"]),
             "{:?}",
@@ -7541,14 +7721,8 @@ pub(crate) mod tests {
             },
         )
         .unwrap();
-        let RoundEnd::Blocked(why) = end else {
-            panic!("{end:?}")
-        };
+        assert!(matches!(end, RoundEnd::Unconverged { .. }), "{end:?}");
         assert!(ops.ejected.is_empty());
-        assert!(
-            why.contains("leg_lost::pauses") && why.contains("leg_lost::abandons"),
-            "{why}"
-        );
         let (kind, named) = &ops.incidents[0];
         assert_eq!(kind, "unattributed");
         assert!(
@@ -7678,11 +7852,38 @@ pub(crate) mod tests {
         );
     }
 
+    fn six() -> Vec<Member> {
+        ["m1", "m2", "m3", "m4", "m5", "m6"].map(member).to_vec()
+    }
+
+    #[test]
+    fn a_reproducible_red_whose_probes_never_isolate_an_owner_ends_unconverged_at_the_probe_ceiling() {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.filter = Some(Box::new(|tree| {
+            (tree.len() >= 3).then(|| flip_red(&[RECUR]))
+        }));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), six(), budget6()).unwrap();
+        assert!(
+            matches!(&end, RoundEnd::Unconverged { red, probes: 8, .. } if red == "unit-tests"),
+            "{end:?}"
+        );
+        assert_eq!(f.probes.len(), 8, "{:?}", f.probes);
+        assert!(ops.ejected.is_empty());
+        let kept = ops.unnamed.expect("the red is kept for the next round to convict");
+        assert_eq!(kept.failed, vec![RECUR.to_string()]);
+        assert_eq!(ops.incidents.len(), 1);
+        assert_eq!(ops.incidents[0].0, "unattributed");
+    }
+
+
     #[test]
     fn a_lint_red_naming_no_member_is_filed_once_and_does_not_run_the_corpus_again() {
         let mut f = Fake::new(|_, _| false);
-        f.filter = Some(Box::new(|_| {
-            Some(FilterRed {
+        f.bisects = true;
+        f.filter = Some(Box::new(|tree| {
+            (tree.len() >= 3).then(|| FilterRed {
                 harness: vec![],
                 name: "spira-lint".into(),
                 named: vec![],
@@ -7701,7 +7902,7 @@ pub(crate) mod tests {
             },
         )
         .unwrap();
-        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(matches!(end, RoundEnd::Unconverged { .. }), "{end:?}");
         assert_eq!(
             ops.incidents,
             vec![("unattributed".to_string(), vec!["spira-lint".to_string()])]
