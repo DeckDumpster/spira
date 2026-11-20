@@ -584,7 +584,7 @@ impl Steps for ProcessSteps {
         let port = std::fs::read_to_string(Path::new(fixture).join("server.port")).map_err(|e| format!("fixture has no server.port: {e}"))?;
         let socket = lc_socket(world);
         let argv = serve_argv(world);
-        let log = std::fs::File::create(world.join(LC_LOG)).map_err(|e| e.to_string())?;
+        let log = std::fs::File::create(world.join(LC_LOG)).map_err(at(world))?;
         let mut child = Command::new(&argv[0])
             .args(&argv[1..])
             .env_clear()
@@ -600,7 +600,7 @@ impl Steps for ProcessSteps {
             .stderr(log)
             .spawn()
             .map_err(|e| format!("{}: {e}", argv[0]))?;
-        std::fs::write(lc_pid_file(world), child.id().to_string()).map_err(|e| e.to_string())?;
+        std::fs::write(lc_pid_file(world), child.id().to_string()).map_err(at(world))?;
         let start = Instant::now();
         loop {
             // `list` reads the bead table: an answer with exit 0 is a serve whose DB is reachable.
@@ -734,13 +734,13 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     let seed = held.path.clone();
     let write_files = |fixture: &str| -> Result<(), String> {
         let runner = config.join("suite-runner");
-        std::fs::write(&runner, SUITE_RUNNER).map_err(|e| e.to_string())?;
+        std::fs::write(&runner, SUITE_RUNNER).map_err(at(&runner))?;
         set_exec(&runner)?;
         let file = config.join("sim.toml");
         let gh_state = dir.join("gh");
         let bin = dir.join("bin");
-        std::fs::create_dir_all(&gh_state).map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&gh_state).map_err(at(&gh_state))?;
+        std::fs::create_dir_all(&bin).map_err(at(&bin))?;
         let gh_bin = bin.join("gh");
         let sim_exe = std::env::current_exe().map_err(|e| e.to_string())?;
         link(&sim_exe, &gh_bin)?;
@@ -756,7 +756,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         }
         crate::roundvm::write_verdict(dir, &crate::roundvm::Verdict::Green)?;
         let home = dir.join(HOME);
-        std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&home).map_err(at(&home))?;
         std::fs::write(home.join(REGISTRY_ROWS), registry_rows(dir, repos)).map_err(|e| e.to_string())?;
         std::fs::write(&file, base_config(repo, &home)?).map_err(|e| e.to_string())?;
         let t = Instant::now();
@@ -1028,25 +1028,25 @@ fn build_seed(repo: &Path, tree: &str, cache: &Path, seed: &Path) -> Result<(), 
     let _ = std::fs::remove_dir_all(&tmp);
     let (origin, work) = (tmp.join("origin.git"), tmp.join("work"));
     let p = |x: &Path| x.to_string_lossy().to_string();
-    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&tmp).map_err(at(&tmp))?;
     git(&tmp, &["init", "--bare", "--initial-branch=main", &p(&origin)])?;
     git(&tmp, &["init", "--initial-branch=main", &p(&work)])?;
     let tarball = tmp.join("seed.tar");
     run(Command::new("git").arg("-C").arg(repo).args(["archive", "--format=tar", "-o"]).arg(&tarball).arg(tree), BUILD_DEADLINE)?;
     run(Command::new("tar").arg("-xf").arg(&tarball).arg("-C").arg(&work), CALL_DEADLINE)?;
-    std::fs::remove_file(&tarball).map_err(|e| e.to_string())?;
+    std::fs::remove_file(&tarball).map_err(at(&tarball))?;
     git(&work, &["add", "-A"])?;
     git(&work, &["commit", "-q", "-m", "sim seed"])?;
     git(&work, &["remote", "add", "origin", &p(&origin)])?;
     git(&work, &["push", "-q", "origin", "main"])?;
     git(&work, &["branch", "--set-upstream-to=origin/main", "main"])?;
     git(&work, &["config", "core.sparseCheckout", "true"])?;
-    std::fs::write(work.join(".git/info/sparse-checkout"), SPARSE_PATTERNS).map_err(|e| e.to_string())?;
+    std::fs::write(work.join(".git/info/sparse-checkout"), SPARSE_PATTERNS).map_err(at(&work))?;
     git(&work, &["read-tree", "-mu", "HEAD"])?;
     // A pack is a file to copy where the loose objects were thousands.
     git(&work, &["repack", "-adq"])?;
     git(&origin, &["repack", "-adq"])?;
-    std::fs::write(tmp.join(".complete"), "").map_err(|e| e.to_string())?;
+    std::fs::write(tmp.join(".complete"), "").map_err(at(&tmp))?;
     // A world that finished first already put the seed there: keep that one.
     if std::fs::rename(&tmp, seed).is_err() {
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1264,13 +1264,17 @@ fn world_release(release: &Path, at: &Path, sim_exe: &Path) -> Result<(), String
     Ok(())
 }
 
+fn at(p: &Path) -> impl Fn(std::io::Error) -> String + '_ {
+    move |e| format!("{}: {e}", p.display())
+}
+
 fn link(target: &Path, at: &Path) -> Result<(), String> {
     std::os::unix::fs::symlink(target, at).map_err(|e| format!("{}: {e}", at.display()))
 }
 
 fn set_exec(p: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())
+    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).map_err(at(p))
 }
 
 pub fn down(dir: &Path, steps: &dyn Steps) -> Result<(), String> {
