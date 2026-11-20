@@ -2718,7 +2718,7 @@ mod tests {
     #[test]
     fn a_resubmit_suite_check_passes_testenv_a_repeat_reason_flag() {
         let args = |first| -> Vec<String> {
-            suite_run_command("testenv", "test-x.sh", "t", "r", first, &[], Path::new("/d"))
+            suite_run_command("testenv", "test-x.sh", "t", "r", first, &[], Path::new("d"))
                 .get_args()
                 .map(|a| a.to_string_lossy().into_owned())
                 .collect()
@@ -2731,9 +2731,9 @@ mod tests {
 
     #[test]
     fn a_resubmit_suite_check_hands_testenv_the_deny_list_snapshot() {
-        let c = suite_run_command("testenv", "unit-tests", "t", "r", true, &[], Path::new("/snap/deny"));
+        let c = suite_run_command("testenv", "unit-tests", "t", "r", true, &[], Path::new("snap/deny"));
         let env = c.get_envs().find(|(k, _)| *k == "SPIRA_TEST_DENY_LIST").and_then(|(_, v)| v);
-        assert_eq!(env, Some(std::ffi::OsStr::new("/snap/deny")));
+        assert_eq!(env, Some(std::ffi::OsStr::new("snap/deny")));
     }
 
     #[test]
