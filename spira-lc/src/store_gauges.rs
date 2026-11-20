@@ -145,4 +145,20 @@ mod tests {
             assert!(encoded.contains(want), "{want} missing from {encoded}");
         }
     }
+
+    #[test]
+    fn the_dashboard_has_the_four_panels_and_queries_the_gauges_by_their_consts() {
+        let board: serde_json::Value = serde_json::from_str(include_str!("../../spira/metrics/grafana/dashboards/bead-store.json")).unwrap();
+        let panels = board["panels"].as_array().unwrap();
+        let exprs = |title: &str| -> String {
+            let p = panels.iter().find(|p| p["title"] == title).unwrap_or_else(|| panic!("no panel {title}"));
+            p["targets"].as_array().unwrap().iter().map(|t| t["expr"].as_str().unwrap().to_string()).collect::<Vec<_>>().join(" ")
+        };
+        let file = exprs("control store file: bytes and free bytes");
+        assert!(file.contains(FILE_BYTES_GAUGE) && file.contains(FREE_BYTES_GAUGE));
+        let share = exprs("control store free-page share");
+        assert!(share.contains(FREE_BYTES_GAUGE) && share.contains(FILE_BYTES_GAUGE));
+        assert!(exprs("control store largest keyspaces").contains(KEYSPACE_BYTES_GAUGE));
+        assert!(exprs("control store day-file bytes by family").contains(FAMILY_BYTES_GAUGE));
+    }
 }
