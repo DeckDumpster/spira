@@ -818,7 +818,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     let task = req.task.clone();
     let recorder = Arc::new(state_store::phases::Recorder::default());
     let mut cut_at = None;
-    let mut worked = None;
+    let worked;
     let ans = match crate::work::bind_peer(&req.argv, peer_uid(&stream), &map) {
         Ok(argv) => {
             let who = caller.clone();
@@ -845,13 +845,17 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
                 Some(id) => door.ledger.answer_in_time(&id, wait, run),
                 None => within(wait, run),
             };
-            worked = Some((handed, Instant::now()));
+            worked = (handed, Instant::now());
             in_time.unwrap_or_else(|| {
                 cut_at = Some(limit);
                 deadline_answer()
             })
         }
-        Err((code, out)) => Answer::out(code, out),
+        Err((code, out)) => {
+            let now = Instant::now();
+            worked = (now, now);
+            Answer::out(code, out)
+        }
     };
     let method = crate::slow::method_of(&argv_seen);
     if crate::slow::first_of_verb(&verb) {
@@ -872,7 +876,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
     let store = recorder.snapshot();
-    let (handed, returned) = worked.unwrap_or((received, received));
+    let (handed, returned) = worked;
     let before_span = Instant::now();
     let call = spira_otel::Call {
         method: measured,
@@ -2233,11 +2237,16 @@ mod tests {
         ledgered.notes.release();
     }
 
-    fn only_span(dir: &testkit::TempDir) -> opentelemetry_proto::tonic::trace::v1::Span {
+    fn spans_of(dir: &testkit::TempDir) -> Vec<opentelemetry_proto::tonic::trace::v1::Span> {
         let file = std::fs::read_dir(dir).unwrap().flatten().next().expect("a span file");
         let text = std::fs::read_to_string(file.path()).unwrap();
-        assert_eq!(text.lines().count(), 1, "one span");
-        serde_json::from_str::<opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest>(text.trim()).unwrap().resource_spans[0].scope_spans[0].spans[0].clone()
+        text.lines().map(|l| serde_json::from_str::<opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone()).collect()
+    }
+
+    fn only_span(dir: &testkit::TempDir) -> opentelemetry_proto::tonic::trace::v1::Span {
+        let mut spans = spans_of(dir);
+        assert_eq!(spans.len(), 1, "one span");
+        spans.remove(0)
     }
 
     fn serve_value(span: &opentelemetry_proto::tonic::trace::v1::Span, key: &str) -> opentelemetry_proto::tonic::common::v1::any_value::Value {
@@ -2246,20 +2255,31 @@ mod tests {
 
     #[test]
     fn a_span_cut_at_its_deadline_says_where_its_time_went() {
-        use opentelemetry_proto::tonic::common::v1::any_value::Value;
         let dir = testkit::TempDir::new("lc-serve-stages");
         let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
         let parked = rig(true, fifty_ms());
         let cut = send_spanned(&parked.door, Some(&sink), &["content", "note", "sp-a", "x"], None);
         assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
         parked.notes.release();
-        let span = only_span(&dir);
-        let us = |k: &str| match serve_value(&span, k) {
+        let ledgered = rig(true, fifty_ms());
+        let cut = send_spanned(&ledgered.door, Some(&sink), &["content", "note", "sp-b", "y"], Some("req-stages"));
+        assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
+        ledgered.notes.release();
+        let spans = spans_of(&dir);
+        assert_eq!(spans.len(), 2);
+        for span in &spans {
+            check_stages(span);
+        }
+    }
+
+    fn check_stages(span: &opentelemetry_proto::tonic::trace::v1::Span) {
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+        let us = |k: &str| match serve_value(span, k) {
             Value::IntValue(n) => n as u64,
             other => panic!("{k}: {other:?}"),
         };
-        assert_eq!(serve_value(&span, "spira.serve.cut"), Value::BoolValue(true));
-        assert!(us("spira.serve.answer_wait_us") >= 50_000 - 5_000, "the wait for the answer ran to the cutoff (less what the request had already spent)");
+        assert_eq!(serve_value(span, "spira.serve.cut"), Value::BoolValue(true));
+        assert!(us("spira.serve.before_work_us") + us("spira.serve.answer_wait_us") >= 50_000, "the cutoff was waited out, counted from receipt");
         let stages = us("spira.serve.before_work_us") + us("spira.serve.answer_wait_us") + us("spira.serve.after_answer_us");
         assert!(stages <= (span.end_time_unix_nano - span.start_time_unix_nano) / 1000, "the stages sit inside the span");
     }

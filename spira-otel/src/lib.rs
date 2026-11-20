@@ -288,6 +288,21 @@ mod tests {
     }
 
     #[test]
+    fn the_serve_stages_and_the_cut_are_written_each_under_its_own_name() {
+        let dir = tmp("serve-stages");
+        let sink = Sink::new(dir.path(), "spira-lc", 14);
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let stages = Call { before_work: Duration::from_micros(11), answer_wait: Duration::from_micros(22), after_answer: Duration::from_micros(33), cut: true, ..call(0) };
+        sink.write(&stages, now).unwrap();
+        let text = fs::read_to_string(dir.join("spira-lc.2023-11-14.jsonl")).unwrap();
+        let span = serde_json::from_str::<ExportTraceServiceRequest>(text.trim()).unwrap().resource_spans[0].scope_spans[0].spans[0].clone();
+        assert_eq!(attr(&span, "spira.serve.before_work_us"), Some(&Value::IntValue(11)));
+        assert_eq!(attr(&span, "spira.serve.answer_wait_us"), Some(&Value::IntValue(22)));
+        assert_eq!(attr(&span, "spira.serve.after_answer_us"), Some(&Value::IntValue(33)));
+        assert_eq!(attr(&span, "spira.serve.cut"), Some(&Value::BoolValue(true)));
+    }
+
+    #[test]
     fn a_span_is_one_line_that_round_trips_through_the_protos_own_deserializer() {
         let dir = tmp("roundtrip");
         let sink = Sink::new(dir.path(), "spira-lc", 14);
