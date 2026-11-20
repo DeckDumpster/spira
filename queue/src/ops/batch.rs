@@ -151,6 +151,22 @@ pub fn eject(
     }
 
     let Some(hit) = hit else {
+        match super::round::live_records(w, &c) {
+            Ok(rounds) => {
+                if let Some(r) = rounds
+                    .iter()
+                    .find(|r| r.members().iter().any(|m| m.id == id))
+                {
+                    let held = r.get_first("batch_id").unwrap_or("");
+                    w.err(format!("queue.sh eject: {id} is a member of open round {held} for {}; a round member is ejected with: queue.sh round eject {held} {id} {} --by <actor> --reason <text> (add --red --suites <csv> for a judged red) — nothing changed", c.r.name, c.r.name));
+                    return FAIL;
+                }
+            }
+            Err(e) => {
+                w.err(format!("queue.sh eject: cannot tell whether a round holds {id}: {e} — refused, nothing changed"));
+                return FAIL;
+            }
+        }
         // Not batched: a CERTIFIED or SUBMITTED bead is withdrawn the way a reopen withdraws it.
         let st = w.lc.bead_row(id);
         if !matches!(

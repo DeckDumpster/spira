@@ -304,6 +304,34 @@ fn with_the_store_eject_acts_on_the_open_round_and_keeps_its_fields_in_the_recor
 }
 
 #[test]
+fn plain_eject_of_a_round_member_refuses_naming_the_round_eject_and_changes_nothing() {
+    let t = round_world();
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["eject", "sp-b", "spira"]), 1, "{}", t.err());
+    assert!(
+        t.err()
+            .contains(&format!("queue.sh round eject {batch} sp-b spira --by")),
+        "{}",
+        t.err()
+    );
+    let rec = batches::batch(d, "spira", &batch).unwrap().unwrap();
+    assert_eq!(
+        (rec.kv.get("members"), rec.kv.get("ejected")),
+        (Some("sp-a:ta sp-b:tb"), None),
+        "{:?}",
+        rec.kv
+    );
+    assert!(!t.lib.has("bead_reopen"));
+}
+
+#[test]
 fn with_the_store_abandon_closes_the_open_round_and_finishes_one_the_reconciler_abandoned() {
     let t = store_world();
     assert_eq!(
