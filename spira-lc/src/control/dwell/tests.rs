@@ -154,7 +154,7 @@ fn a_bad_flag_cannot_tell() {
 }
 
 /// Production's size: ~13k records (400 waiting) and ~300k audited txns, `recent` of them one a
-/// second inside the last day (more than [`1_000_000`]), over the 600 beads in flight.
+/// second inside the last day (more than a cold read's budget), over the 600 beads in flight.
 /// Written straight through the backend so the fixture builds in seconds. Returns the store, the
 /// clock it is read at, and the newest time per repo and kind (and every Delivered) at or after
 /// `now - 86_400`, as the audits say.

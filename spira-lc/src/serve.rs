@@ -326,11 +326,13 @@ pub fn run(args: &[String]) -> i32 {
             alarm_tick();
             match crate::control::served::configured() {
                 Some(Ok(store)) => {
-                    let _holder = state_store::phases::holder_scoped("mending-sweep", "");
-                    match store_sweep(&store, crate::db::now_epoch()) {
-                        Ok(n) if n > 0 => eprintln!("spira-lc serve: {n} overdue mending rows expired"),
-                        Ok(_) => {}
-                        Err(e) => eprintln!("spira-lc serve: mending sweep: {e}"),
+                    {
+                        let _holder = state_store::phases::holder_scoped("mending-sweep", "");
+                        match store_sweep(&store, crate::db::now_epoch()) {
+                            Ok(n) if n > 0 => eprintln!("spira-lc serve: {n} overdue mending rows expired"),
+                            Ok(_) => {}
+                            Err(e) => eprintln!("spira-lc serve: mending sweep: {e}"),
+                        }
                     }
                     let _holder = state_store::phases::holder_scoped("dwell-warm", "");
                     if let Err(e) = warm_tick(&store, crate::db::now_epoch()) {
