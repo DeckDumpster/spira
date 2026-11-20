@@ -327,3 +327,63 @@ fn a_law_commit_is_cut_from_the_landing_ref_when_the_unlanded_branch_touches_mor
     let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
     assert_eq!(testkit::git(p, &["rev-parse", &format!("{branch}^")]), testkit::git(p, &["rev-parse", "main"]));
 }
+
+fn author_env() -> testkit::EnvGuard {
+    testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))])
+}
+
+#[test]
+fn a_branch_whose_statutes_are_on_the_base_is_never_the_tip() {
+    use rule::code::LawBranch;
+    let _env = author_env();
+    let repo = law_repo();
+    let p = repo.path();
+    let wt_root = testkit::TempDir::new("rule-inbook-wt");
+    let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
+    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
+    testkit::git(p, &["checkout", "-q", "main"]);
+    testkit::git(p, &["checkout", "-q", &branch, "--", "law"]);
+    testkit::git(p, &["commit", "-q", "-m", "the same book, landed another way"]);
+    assert_eq!(rule::code::book_tip_ref(p, "main"), None);
+    assert_eq!(rule::code::law_branches(p, "main"), vec![(branch, LawBranch::InBook)]);
+}
+
+#[test]
+fn law_branches_names_the_tip_and_what_it_carries() {
+    use rule::code::LawBranch;
+    let _env = author_env();
+    let repo = law_repo();
+    let p = repo.path();
+    let wt_root = testkit::TempDir::new("rule-chain-wt");
+    let base_toc = parse_toc(TOC).unwrap();
+    let t1 = append(&base_toc, 1, "law-four").unwrap();
+    let first = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &t1, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
+    let t2 = append(&rule::code::with_in_flight(p, Some("main"), base_toc), 1, "law-five").unwrap();
+    let second = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-five", &t2, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four", "law-five"])).unwrap();
+    let got: std::collections::BTreeMap<_, _> = rule::code::law_branches(p, "main").into_iter().collect();
+    assert_eq!(got[&first], LawBranch::CarriedBy(second.clone()));
+    assert_eq!(got[&second], LawBranch::Tip);
+}
+
+#[test]
+fn a_branch_adding_a_slug_neither_the_base_nor_the_tip_holds_is_unreconciled() {
+    use rule::code::LawBranch;
+    let repo = law_repo();
+    let p = repo.path();
+    let env = author_env();
+    let wt_root = testkit::TempDir::new("rule-unrec-wt");
+    let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
+    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
+    drop(env);
+    {
+        let _old = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t")), ("GIT_COMMITTER_DATE", Some("2001-01-01T00:00:00Z"))]);
+        testkit::git(p, &["checkout", "-q", "-b", "law/stray", "main"]);
+        let stray = append(&parse_toc(TOC).unwrap(), 1, "law-nine").unwrap();
+        std::fs::write(p.join("law/toc.toml"), rule::code::render_toc(&stray)).unwrap();
+        testkit::git(p, &["commit", "-q", "-am", "stray"]);
+        testkit::git(p, &["checkout", "-q", "main"]);
+    }
+    let got: std::collections::BTreeMap<_, _> = rule::code::law_branches(p, "main").into_iter().collect();
+    assert_eq!(got[&branch], LawBranch::Tip);
+    assert_eq!(got["law/stray"], LawBranch::Unreconciled);
+}
