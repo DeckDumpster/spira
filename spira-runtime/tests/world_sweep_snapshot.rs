@@ -41,11 +41,11 @@ fn the_sweep_reads_each_manual_holds_raise_from_its_row_and_sends_no_history() {
     let listener = UnixListener::bind(&path).unwrap();
     let sent = Arc::new(Mutex::new(Vec::new()));
     let log = sent.clone();
-    let review = |i: usize| (i % 3 == 0).then(|| format!("review-by:2031-01-0{}T00:00:00Z later", i % 9 + 1));
+    let review = |i: usize| i.is_multiple_of(3).then(|| format!("review-by:2031-01-0{}T00:00:00Z later", i % 9 + 1));
     let rows: Vec<serde_json::Value> = (0..30)
         .map(|i| {
             let detail = review(i).unwrap_or_else(|| format!("parked {i}"));
-            serde_json::json!({ "bead_id": format!("sp-h{i:02}"), "state": "READY", "holds": ["manual"], "reason": if i % 6 == 0 { detail.clone() } else { "parked".to_string() },
+            serde_json::json!({ "bead_id": format!("sp-h{i:02}"), "state": "READY", "holds": ["manual"], "reason": if i.is_multiple_of(6) { detail.clone() } else { "parked".to_string() },
                 "manual_hold": { "at": 1000 + i, "cause": "manual-hold", "detail": detail } })
         })
         .collect();
@@ -65,11 +65,11 @@ fn the_sweep_reads_each_manual_holds_raise_from_its_row_and_sends_no_history() {
     let rows = snap["rows"].as_array().unwrap();
     assert_eq!(rows.len(), 30);
     for (i, r) in rows.iter().enumerate() {
-        if i % 6 == 0 {
+        if i.is_multiple_of(6) {
             assert!(r["held_at"].is_null() && r["hold_review"].is_null(), "a review-by reason is not read again: {r}");
         } else {
             assert_eq!(r["held_at"], serde_json::json!((1000 + i) as f64), "{r}");
-            assert_eq!(r["hold_review"], if i % 3 == 0 { serde_json::json!(review(i)) } else { serde_json::Value::Null }, "{r}");
+            assert_eq!(r["hold_review"], if i.is_multiple_of(3) { serde_json::json!(review(i)) } else { serde_json::Value::Null }, "{r}");
         }
     }
 }
