@@ -220,7 +220,12 @@ impl Settler {
         }
         for id in taken.reopens {
             let _deadline = fresh_deadline();
-            if let Err(e) = crate::reconcile_content::settle_reopen(m, bd, &id) {
+            let written = match crate::reconcile_content::record_state(m, &id) {
+                Ok(Some(state)) if state == "READY" || state == "REWORK" => bd.reopen(&id),
+                Ok(_) => Ok(()),
+                Err(e) => Err(e),
+            };
+            if let Err(e) = written {
                 count_refused("reopen");
                 eprintln!("spira-lc reopen: {id}: the store reopen is still owed ({})", e.trim());
                 back.reopens.insert(id);
@@ -543,6 +548,20 @@ mod tests {
         settler.pass(&mut &w, &mut bd, &mut || Ok(1));
         assert!(!settler.owes());
         assert_eq!(bd.reopened, ["sp-a"]);
+    }
+
+    #[test]
+    fn an_owed_reopen_whose_row_has_been_claimed_again_is_dropped_without_a_bd_write() {
+        let w = World::new();
+        w.file("sp-a", "task", Some("sp-e"), &[]);
+        w.ok(&["create-bead", "sp-a", "--ready"]);
+        let claim = serde_json::to_string(&lifecycle::bead::BeadEventKind::Claim { holder: "d".into(), lease_until: 1, stack: Default::default(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None }).unwrap();
+        w.ok(&["event", "bead", "sp-a", "--expect", "READY", "--version", "0", "--actor", "d", "--kind", &claim]);
+        let settler = installed();
+        assert!(owe_reopen("sp-a"));
+        let mut bd = ReopenBd { fail: false, reopened: Vec::new() };
+        settler.pass(&mut &w, &mut bd, &mut || Ok(1));
+        assert!(!settler.owes() && bd.reopened.is_empty());
     }
 
     #[test]

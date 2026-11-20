@@ -1666,9 +1666,24 @@ fn a_reopen_inside_lc_serve_reads_the_row_once_and_owes_the_bd_half_to_the_settl
     assert_eq!(reopen_cmd(&v(&["sp-q", "eject", "queue"]), &mut f, &mut bd).code, 0);
     assert_eq!(reopen_kinds(&f), [r#""Deliver""#, r#"{"Returned":{"reason":"batch-ejected"}}"#]);
     assert_eq!(f.state("sp-q"), "REWORK");
+    let versions: Vec<&str> = f.events.iter().map(|e| e.3.as_str()).collect();
+    assert_eq!(versions, ["0", "1"], "Returned follows Deliver at version + 1");
     assert_eq!(f.shows, 1, "one show");
     assert!(bd.reopened.is_empty(), "no inline bd write");
     assert_eq!(settler.owed_reopens(), ["sp-q"]);
+}
+
+#[test]
+fn a_reopen_of_a_row_already_open_inside_lc_serve_owes_the_bd_half_and_records_no_event() {
+    let settler = crate::settle::install_for_test();
+    for st in [BeadState::Ready, BeadState::Rework] {
+        let mut f = Fake::default();
+        f.bead("sp-q", st);
+        let mut bd = FakeBd::default();
+        assert_eq!(reopen_cmd(&v(&["sp-q", "eject", "queue"]), &mut f, &mut bd).code, 0, "{st:?}");
+        assert!(f.events.is_empty() && bd.reopened.is_empty(), "{st:?}");
+        assert_eq!(settler.owed_reopens(), ["sp-q"], "{st:?}");
+    }
 }
 
 #[test]
