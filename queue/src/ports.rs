@@ -560,6 +560,8 @@ pub trait Lc {
     fn batch_state(&self, batch_id: &str) -> Option<(String, String)>;
     /// `show-batch` → (pass, phase); phase is empty outside a CI_RUNNING pass.
     fn batch_pass(&self, batch_id: &str) -> Option<(u32, String)>;
+    /// `show-batch` → the round's `progress` record; None when absent or unreadable.
+    fn batch_progress(&self, batch_id: &str) -> Option<serde_json::Value>;
     fn create_bead(&self, id: &str);
     fn create_bead_in(&self, id: &str, repo: &str);
     /// Records on each member's lifecycle record the integration carrying it (`by`), or that none

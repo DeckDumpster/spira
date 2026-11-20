@@ -1996,6 +1996,11 @@ impl Lc for RealLc {
             json_str(&v, "phase").unwrap_or_default(),
         ))
     }
+    fn batch_progress(&self, batch_id: &str) -> Option<serde_json::Value> {
+        let out = self.stdout(&["show-batch", batch_id]).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&out).ok()?;
+        v.get("progress").filter(|p| !p.is_null()).cloned()
+    }
     fn create_bead(&self, id: &str) {
         let _ = self.run(&["create-bead", id, "--ready"]);
     }
