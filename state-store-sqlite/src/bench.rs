@@ -92,8 +92,7 @@ pub fn await_checkpoint(b: &SqliteBackend, after: u64, cap: Duration) -> Option<
 /// restart. `true` when the restart was not busy. Each call waits at most `max_read_ms`.
 pub fn checkpoint_pass(b: &SqliteBackend) -> Result<bool, String> {
     let conn = crate::connect(&b.0.path).map_err(|e| e.to_string())?;
-    conn.busy_timeout(Duration::ZERO)
-        .map_err(|e| e.to_string())?;
+    conn.busy_timeout(Duration::ZERO).map_err(|e| e.to_string())?;
     let max_read_ms = b.0.max_read_ms.load(Ordering::SeqCst);
     let pass = crate::checkpoint_step(&conn, &b.0.writer, max_read_ms, true, |_| {})?;
     Ok(!pass.busy)
@@ -102,8 +101,7 @@ pub fn checkpoint_pass(b: &SqliteBackend) -> Result<bool, String> {
 /// `nBackfill` of the open store at `db`: the WAL frames a checkpoint has copied home.
 pub fn wal_backfill(db: &std::path::Path) -> std::result::Result<u32, String> {
     let shm_path = format!("{}-shm", db.display());
-    let shm =
-        File::open(&shm_path).map_err(|e| format!("cannot open the WAL index {shm_path}: {e}"))?;
+    let shm = File::open(&shm_path).map_err(|e| format!("cannot open the WAL index {shm_path}: {e}"))?;
     read_backfill(&shm, &shm_path)
 }
 
@@ -284,12 +282,8 @@ pub fn parse(args: &[String]) -> std::result::Result<Command, String> {
     };
     let min_secs = match min_secs {
         None => 300,
-        Some(_) if limit_ms.is_none() => {
-            return Err(format!("--min-secs needs --limit-ms\n{USAGE}"))
-        }
-        Some(v) => v
-            .parse::<u64>()
-            .map_err(|_| format!("--min-secs must be a whole number of seconds, got {v}"))?,
+        Some(_) if limit_ms.is_none() => return Err(format!("--min-secs needs --limit-ms\n{USAGE}")),
+        Some(v) => v.parse::<u64>().map_err(|_| format!("--min-secs must be a whole number of seconds, got {v}"))?,
     };
     Ok(Command::Cas(CasArgs {
         path,
@@ -444,12 +438,10 @@ fn io_load(
         f.sync_data()?;
         let took = began.elapsed();
         if took.as_secs_f64() * 1_000.0 > STALL_MS {
-            slow.lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(SlowSync {
-                    ended_unix_us: unix_us(),
-                    took_us: took.as_micros() as u64,
-                });
+            slow.lock().unwrap_or_else(|e| e.into_inner()).push(SlowSync {
+                ended_unix_us: unix_us(),
+                took_us: took.as_micros() as u64,
+            });
         }
         written += LOAD_CHUNK as u64;
         next += every;
@@ -657,24 +649,13 @@ mod tests {
             total_ms: service_ms,
             checkpointed,
         };
-        let slow = [SlowSync {
-            ended_unix_us: 1_000_000,
-            took_us: 150_000,
-        }];
+        let slow = [SlowSync { ended_unix_us: 1_000_000, took_us: 150_000 }];
         assert_eq!(stall(300.0, true).cause(&slow), "checkpoint");
         assert_eq!(stall(300.0, false).cause(&slow), "device");
         assert_eq!(stall(300.0, false).cause(&[]), "unattributed");
-        let far = [SlowSync {
-            ended_unix_us: 9_000_000,
-            took_us: 150_000,
-        }];
+        let far = [SlowSync { ended_unix_us: 9_000_000, took_us: 150_000 }];
         assert_eq!(stall(300.0, false).cause(&far), "unattributed");
-        let queued = Stall {
-            ended_unix_us: 1_000_000,
-            service_ms: 0.5,
-            total_ms: 250.0,
-            checkpointed: false,
-        };
+        let queued = Stall { ended_unix_us: 1_000_000, service_ms: 0.5, total_ms: 250.0, checkpointed: false };
         assert_eq!(queued.cause(&[]), "queued");
     }
 
@@ -703,10 +684,7 @@ mod tests {
         q.service_p99_ms = 7.5;
         q.slow_commits = 3;
         let r = report(&q, &a);
-        assert_eq!(
-            (r["service_p99_ms"].as_f64(), r["slow_commits"].as_u64()),
-            (Some(7.5), Some(3))
-        );
+        assert_eq!((r["service_p99_ms"].as_f64(), r["slow_commits"].as_u64()), (Some(7.5), Some(3)));
     }
 
     fn cas_args(path: std::path::PathBuf) -> CasArgs {
@@ -732,15 +710,7 @@ mod tests {
 
     #[test]
     fn inline_checkpoint_is_an_unknown_argument() {
-        let got = parse(&args(&[
-            "--path",
-            "p",
-            "--rate",
-            "5",
-            "--duration-secs",
-            "1",
-            "--inline-checkpoint",
-        ]));
+        let got = parse(&args(&["--path", "p", "--rate", "5", "--duration-secs", "1", "--inline-checkpoint"]));
         assert!(got.is_err());
     }
 
@@ -762,33 +732,9 @@ mod tests {
 
     #[test]
     fn a_limit_is_parsed_with_its_minimum_window_and_a_window_alone_is_refused() {
-        let got = parse(&args(&[
-            "--path",
-            "p",
-            "--rate",
-            "50",
-            "--duration-secs",
-            "1800",
-            "--limit-ms",
-            "20",
-            "--min-secs",
-            "120",
-        ]))
-        .unwrap();
-        assert!(
-            matches!(got, Command::Cas(CasArgs { limit_ms: Some(l), min_secs: 120, .. }) if l == 20.0)
-        );
-        assert!(parse(&args(&[
-            "--path",
-            "p",
-            "--rate",
-            "50",
-            "--duration-secs",
-            "9",
-            "--min-secs",
-            "5"
-        ]))
-        .is_err());
+        let got = parse(&args(&["--path", "p", "--rate", "50", "--duration-secs", "1800", "--limit-ms", "20", "--min-secs", "120"])).unwrap();
+        assert!(matches!(got, Command::Cas(CasArgs { limit_ms: Some(l), min_secs: 120, .. }) if l == 20.0));
+        assert!(parse(&args(&["--path", "p", "--rate", "50", "--duration-secs", "9", "--min-secs", "5"])).is_err());
     }
 
     #[test]

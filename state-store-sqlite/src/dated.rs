@@ -30,18 +30,10 @@ pub struct Family {
 }
 
 /// A request receipt: today's file and yesterday's answer a retry.
-pub const RECEIPTS: Family = Family {
-    name: "receipts",
-    prefix: REQUESTS_PREFIX,
-    keep_days: 2,
-};
+pub const RECEIPTS: Family = Family { name: "receipts", prefix: REQUESTS_PREFIX, keep_days: 2 };
 
 /// An audit event: today's file and the fourteen days before it.
-pub const EVENTS: Family = Family {
-    name: "events",
-    prefix: EVENTS_PREFIX,
-    keep_days: 15,
-};
+pub const EVENTS: Family = Family { name: "events", prefix: EVENTS_PREFIX, keep_days: 15 };
 
 /// Every family, in the order the store keeps its `Files`.
 pub const FAMILIES: [Family; 2] = [RECEIPTS, EVENTS];
@@ -84,29 +76,19 @@ pub fn parse_date(s: &str) -> Option<i64> {
     let shaped = b.len() == 10
         && b[4] == b'-'
         && b[7] == b'-'
-        && b.iter()
-            .enumerate()
-            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit());
+        && b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit());
     if !shaped {
         return None;
     }
-    let (y, m, d) = (
-        s[..4].parse().ok()?,
-        s[5..7].parse().ok()?,
-        s[8..].parse().ok()?,
-    );
+    let (y, m, d) = (s[..4].parse().ok()?, s[5..7].parse().ok()?, s[8..].parse().ok()?);
     let day = days_from_civil(y, m, d);
     (civil_from_days(day) == (y, m, d)).then_some(day)
 }
 
 /// The stem of the main file `path`: its name without a trailing `.db`.
 pub fn stem_of(path: &Path) -> String {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    name.strip_suffix(".db")
-        .map_or(name.clone(), str::to_string)
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    name.strip_suffix(".db").map_or(name.clone(), str::to_string)
 }
 
 impl Family {
@@ -120,10 +102,7 @@ impl Family {
 
     /// The day a file name under `stem` is this family's file for.
     pub fn day_of_file(&self, stem: &str, name: &str) -> Option<i64> {
-        let date = name
-            .strip_prefix(stem)?
-            .strip_prefix('.')?
-            .strip_prefix(self.name)?;
+        let date = name.strip_prefix(stem)?.strip_prefix('.')?.strip_prefix(self.name)?;
         parse_date(date.strip_prefix('-')?.strip_suffix(".db")?)
     }
 
@@ -144,53 +123,30 @@ impl Family {
 /// family's mark on the UTC day of `now_ms`.
 pub fn family_files(path: &Path, now_ms: u64) -> Result<Vec<state_store::FamilyFiles>> {
     use state_store::{FamilyFile, FamilyFiles};
-    let dir = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let stem = stem_of(path);
-    let main_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let main_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let today = day_of(now_ms);
     let mut main = Vec::new();
     let mut dated: Vec<Vec<FamilyFile>> = FAMILIES.iter().map(|_| Vec::new()).collect();
-    let entries =
-        std::fs::read_dir(dir).map_err(|e| Error::Backend(format!("{}: {e}", dir.display())))?;
+    let entries = std::fs::read_dir(dir).map_err(|e| Error::Backend(format!("{}: {e}", dir.display())))?;
     for entry in entries {
         let entry = entry.map_err(|e| Error::Backend(format!("{}: {e}", dir.display())))?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        let base = name
-            .strip_suffix("-wal")
-            .or_else(|| name.strip_suffix("-shm"))
-            .unwrap_or(&name);
+        let base = name.strip_suffix("-wal").or_else(|| name.strip_suffix("-shm")).unwrap_or(&name);
         let bytes = entry.metadata().map_or(0, |m| m.len());
         if base == main_name {
-            main.push(FamilyFile {
-                file: name,
-                bytes,
-                behind_mark: false,
-            });
+            main.push(FamilyFile { file: name, bytes, behind_mark: false });
             continue;
         }
         for (family, files) in FAMILIES.iter().zip(dated.iter_mut()) {
             if let Some(day) = family.day_of_file(&stem, base) {
-                files.push(FamilyFile {
-                    file: name.clone(),
-                    bytes,
-                    behind_mark: day < family.mark(today),
-                });
+                files.push(FamilyFile { file: name.clone(), bytes, behind_mark: day < family.mark(today) });
             }
         }
     }
     main.sort_by(|a, b| a.file.cmp(&b.file));
-    let mut out = vec![FamilyFiles {
-        family: "main".into(),
-        keep_days: None,
-        mark: None,
-        files: main,
-    }];
+    let mut out = vec![FamilyFiles { family: "main".into(), keep_days: None, mark: None, files: main }];
     for (family, mut files) in FAMILIES.iter().zip(dated) {
         files.sort_by(|a, b| a.file.cmp(&b.file));
         out.push(FamilyFiles {
@@ -214,18 +170,8 @@ pub struct DatedFile {
 
 impl Drop for DatedFile {
     fn drop(&mut self) {
-        drop(
-            self.writer
-                .get_mut()
-                .unwrap_or_else(|p| p.into_inner())
-                .take(),
-        );
-        drop(
-            self.reader
-                .get_mut()
-                .unwrap_or_else(|p| p.into_inner())
-                .take(),
-        );
+        drop(self.writer.get_mut().unwrap_or_else(|p| p.into_inner()).take());
+        drop(self.reader.get_mut().unwrap_or_else(|p| p.into_inner()).take());
         if self.retired.load(Ordering::SeqCst) {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", self.path.display()));
@@ -237,23 +183,15 @@ impl Drop for DatedFile {
 fn open_conn(path: &Path, read_only: bool) -> Result<Connection> {
     let conn = Connection::open_with_flags(
         path,
-        OpenFlags::SQLITE_OPEN_READ_WRITE
-            | OpenFlags::SQLITE_OPEN_CREATE
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(db)?;
     if !read_only {
-        let mode: String = conn
-            .pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))
-            .map_err(db)?;
+        let mode: String = conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0)).map_err(db)?;
         if !mode.eq_ignore_ascii_case("wal") {
-            return Err(Error::Backend(format!(
-                "{}: journal_mode is {mode}, not wal",
-                path.display()
-            )));
+            return Err(Error::Backend(format!("{}: journal_mode is {mode}, not wal", path.display())));
         }
-        conn.pragma_update(None, "synchronous", "NORMAL")
-            .map_err(db)?;
+        conn.pragma_update(None, "synchronous", "NORMAL").map_err(db)?;
         conn.busy_timeout(std::time::Duration::ZERO).map_err(db)?;
     } else {
         conn.pragma_update(None, "query_only", true).map_err(db)?;
@@ -283,11 +221,7 @@ pub struct SideRow<'a> {
 fn version_of(r: &rusqlite::Row<'_>) -> rusqlite::Result<(Vec<u8>, Version)> {
     Ok((
         r.get(0)?,
-        Version {
-            value: r.get(3)?,
-            mod_rev: rev(r.get(1)?, r.get(2)?),
-            create_rev: rev(r.get(4)?, r.get(5)?),
-        },
+        Version { value: r.get(3)?, mod_rev: rev(r.get(1)?, r.get(2)?), create_rev: rev(r.get(4)?, r.get(5)?) },
     ))
 }
 
@@ -313,17 +247,13 @@ impl DatedFile {
 
     fn with_writer<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
         let mut g = lock(&self.writer);
-        let conn = g
-            .as_mut()
-            .ok_or_else(|| Error::Backend(format!("{} is closed", self.path.display())))?;
+        let conn = g.as_mut().ok_or_else(|| Error::Backend(format!("{} is closed", self.path.display())))?;
         f(conn)
     }
 
     fn with_reader<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         let g = lock(&self.reader);
-        let conn = g
-            .as_ref()
-            .ok_or_else(|| Error::Backend(format!("{} is closed", self.path.display())))?;
+        let conn = g.as_ref().ok_or_else(|| Error::Backend(format!("{} is closed", self.path.display())))?;
         f(conn)
     }
 
@@ -331,9 +261,7 @@ impl DatedFile {
     pub fn put(&self, main: u64, rows: &[SideRow<'_>]) -> Result<()> {
         let m = main_i64(main)?;
         self.with_writer(|conn| {
-            let tx = conn
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(db)?;
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
             {
                 let mut ins = tx
                     .prepare_cached(
@@ -342,15 +270,8 @@ impl DatedFile {
                     )
                     .map_err(db)?;
                 for r in rows {
-                    ins.execute(params![
-                        r.key.as_bytes(),
-                        m,
-                        r.sub,
-                        r.value,
-                        main_i64(r.create_rev.main)?,
-                        r.create_rev.sub
-                    ])
-                    .map_err(db)?;
+                    ins.execute(params![r.key.as_bytes(), m, r.sub, r.value, main_i64(r.create_rev.main)?, r.create_rev.sub])
+                        .map_err(db)?;
                 }
             }
             tx.commit().map_err(db)
@@ -360,9 +281,7 @@ impl DatedFile {
     /// Files `rows` as they were stored, each at its own revision, in one commit.
     pub fn import(&self, rows: &[super::StoredRow]) -> Result<()> {
         self.with_writer(|conn| {
-            let tx = conn
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(db)?;
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
             {
                 let mut ins = tx
                     .prepare_cached(
@@ -372,13 +291,9 @@ impl DatedFile {
                     .map_err(db)?;
                 for r in rows {
                     let (Some(cm), Some(cs)) = (r.create_main, r.create_sub) else {
-                        return Err(Error::Backend(format!(
-                            "{} has no create revision",
-                            String::from_utf8_lossy(&r.key)
-                        )));
+                        return Err(Error::Backend(format!("{} has no create revision", String::from_utf8_lossy(&r.key))));
                     };
-                    ins.execute(params![r.key, r.main, r.sub, r.value, cm, cs])
-                        .map_err(db)?;
+                    ins.execute(params![r.key, r.main, r.sub, r.value, cm, cs]).map_err(db)?;
                 }
             }
             tx.commit().map_err(db)
@@ -387,9 +302,7 @@ impl DatedFile {
 
     pub fn delete_keys(&self, keys: &[&str]) -> Result<()> {
         self.with_writer(|conn| {
-            let tx = conn
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(db)?;
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
             for k in keys {
                 exec(&tx, "DELETE FROM rows WHERE key = ?1", [k.as_bytes()])?;
             }
@@ -399,16 +312,12 @@ impl DatedFile {
 
     /// Removes every row filed as `main`.
     pub fn delete_main(&self, main: u64) -> Result<()> {
-        self.with_writer(|conn| {
-            exec(conn, "DELETE FROM rows WHERE main = ?1", [main_i64(main)?]).map(drop)
-        })
+        self.with_writer(|conn| exec(conn, "DELETE FROM rows WHERE main = ?1", [main_i64(main)?]).map(drop))
     }
 
     /// Removes every row above `head`: a commit whose main file never took it.
     pub fn trim_above(&self, head: u64) -> Result<()> {
-        self.with_writer(|conn| {
-            exec(conn, "DELETE FROM rows WHERE main > ?1", [main_i64(head)?]).map(drop)
-        })
+        self.with_writer(|conn| exec(conn, "DELETE FROM rows WHERE main > ?1", [main_i64(head)?]).map(drop))
     }
 
     pub fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
@@ -437,8 +346,7 @@ impl DatedFile {
         let at = main_i64(at)?;
         let mut out = Vec::new();
         let mut cursor = lo.to_vec();
-        let page =
-            i64::try_from(if state.is_some() { STATE_PAGE } else { limit }).unwrap_or(i64::MAX);
+        let page = i64::try_from(if state.is_some() { STATE_PAGE } else { limit }).unwrap_or(i64::MAX);
         while out.len() < limit {
             let rows = self.with_reader(|conn| {
                 let mut stmt = conn
@@ -456,9 +364,7 @@ impl DatedFile {
                 cursor.push(0);
             }
             for (k, v) in rows {
-                if state.is_none_or(|s| state_of(&v.value).as_deref() == Some(s))
-                    && out.len() < limit
-                {
+                if state.is_none_or(|s| state_of(&v.value).as_deref() == Some(s)) && out.len() < limit {
                     out.push((key_of(k)?, v));
                 }
             }
@@ -480,17 +386,8 @@ pub struct Files {
 
 impl Files {
     pub fn new(family: Family, main: &Path) -> Self {
-        let dir = main
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."))
-            .to_path_buf();
-        Files {
-            family,
-            dir,
-            stem: stem_of(main),
-            open: Mutex::new(BTreeMap::new()),
-        }
+        let dir = main.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
+        Files { family, dir, stem: stem_of(main), open: Mutex::new(BTreeMap::new()) }
     }
 
     /// Opens every file of this family found beside the main file.
@@ -498,13 +395,8 @@ impl Files {
         let entries = std::fs::read_dir(&self.dir)
             .map_err(|e| Error::Backend(format!("{}: {e}", self.dir.display())))?;
         for e in entries {
-            let name = e
-                .map_err(|e| Error::Backend(format!("{}: {e}", self.dir.display())))?
-                .file_name();
-            let Some(day) = name
-                .to_str()
-                .and_then(|n| self.family.day_of_file(&self.stem, n))
-            else {
+            let name = e.map_err(|e| Error::Backend(format!("{}: {e}", self.dir.display())))?.file_name();
+            let Some(day) = name.to_str().and_then(|n| self.family.day_of_file(&self.stem, n)) else {
                 continue;
             };
             let file = DatedFile::open(self.dir.join(&name), day)?;
@@ -567,16 +459,7 @@ mod tests {
 
     #[test]
     fn only_a_real_calendar_date_names_a_day() {
-        for bad in [
-            "",
-            "2024-1-04",
-            "2024-13-01",
-            "2023-02-29",
-            "2024-10-4x",
-            "x2024-10-04",
-            "2024/10/04",
-            "2024-10-044",
-        ] {
+        for bad in ["", "2024-1-04", "2024-13-01", "2023-02-29", "2024-10-4x", "x2024-10-04", "2024/10/04", "2024-10-044"] {
             assert_eq!(parse_date(bad), None, "{bad:?}");
         }
     }
@@ -587,19 +470,8 @@ mod tests {
         let name = RECEIPTS.file_name("control", day);
         assert_eq!(name, "control.receipts-2024-10-04.db");
         assert_eq!(RECEIPTS.day_of_file("control", &name), Some(day));
-        assert_eq!(
-            RECEIPTS.day_of_file("other", &name),
-            None,
-            "another store's file"
-        );
-        for not in [
-            "control.db",
-            "control.db-wal",
-            "control.receipts-2024-10-04.db-wal",
-            "control.events-2024-10-04.db",
-            "control.receipts-2024-10-04.db.bak",
-            "control.receipts-.db",
-        ] {
+        assert_eq!(RECEIPTS.day_of_file("other", &name), None, "another store's file");
+        for not in ["control.db", "control.db-wal", "control.receipts-2024-10-04.db-wal", "control.events-2024-10-04.db", "control.receipts-2024-10-04.db.bak", "control.receipts-.db"] {
             assert_eq!(RECEIPTS.day_of_file("control", not), None, "{not}");
         }
         assert_eq!(stem_of(Path::new("srv/control.db")), "control");
@@ -610,9 +482,7 @@ mod tests {
     fn the_mark_keeps_today_and_yesterday_for_receipts_and_retires_the_day_before() {
         let today = 20_000;
         assert_eq!(RECEIPTS.mark(today), today - 1);
-        let kept: Vec<i64> = (today - 3..=today)
-            .filter(|d| *d >= RECEIPTS.mark(today))
-            .collect();
+        let kept: Vec<i64> = (today - 3..=today).filter(|d| *d >= RECEIPTS.mark(today)).collect();
         assert_eq!(kept, [today - 1, today]);
     }
 

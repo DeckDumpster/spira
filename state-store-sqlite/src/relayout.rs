@@ -15,22 +15,11 @@ use sha2::{Digest, Sha256};
 use state_store::{events_key, Error, Result, EVENTS_PREFIX, REQUESTS_PREFIX, REQUEST_TTL_SECS};
 
 use crate::dated::{day_of, stem_of, Family, Files, EVENTS, FAMILIES, RECEIPTS};
-use crate::{
-    db, key_of, outbox_dir, recorded_at, successor, Options, SqliteBackend, StoredRow,
-    SCHEMA_MIGRATIONS,
-};
+use crate::{db, key_of, outbox_dir, recorded_at, successor, Options, SqliteBackend, StoredRow, SCHEMA_MIGRATIONS};
 
 const PAGE: usize = 1_000;
 const FLUSH_ROWS: usize = 10_000;
-const COLUMNS: [&str; 7] = [
-    "key",
-    "main",
-    "sub",
-    "value",
-    "create_main",
-    "create_sub",
-    "version",
-];
+const COLUMNS: [&str; 7] = ["key", "main", "sub", "value", "create_main", "create_sub", "version"];
 
 #[derive(Debug, Default, Clone)]
 pub struct FileBytes {
@@ -91,12 +80,7 @@ pub fn relayout(from: &Path, to: &Path, wall: &dyn Clock) -> Result<Report> {
 
 /// [`relayout`], running `before_certify` on `to` once it is built and closed: the seam a test
 /// alters a copied row through.
-pub fn relayout_probed(
-    from: &Path,
-    to: &Path,
-    wall: &dyn Clock,
-    before_certify: &dyn Fn(&Path),
-) -> Result<Report> {
+pub fn relayout_probed(from: &Path, to: &Path, wall: &dyn Clock, before_certify: &dyn Fn(&Path)) -> Result<Report> {
     let started = Instant::now();
     if !from.is_file() {
         return refuse(format!("{}: no such store", from.display()));
@@ -114,8 +98,7 @@ pub fn relayout_probed(
     }
     let old = open_old(from)?;
     if let Some(dir) = to.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| Error::Backend(format!("{}: {e}", dir.display())))?;
+        std::fs::create_dir_all(dir).map_err(|e| Error::Backend(format!("{}: {e}", dir.display())))?;
     }
     let now = wall.now_ms();
     let built = build(&old, to, &stem, now, before_certify);
@@ -144,10 +127,9 @@ fn take_opener(from: &Path) -> Result<File> {
         .open(&lock_path)
         .map_err(|e| Error::Backend(format!("{}: {e}", lock_path.display())))?;
     file.try_lock().map_err(|e| match e {
-        std::fs::TryLockError::WouldBlock => Error::Backend(format!(
-            "the store is open ({} is locked); stop lc-serve first",
-            lock_path.display()
-        )),
+        std::fs::TryLockError::WouldBlock => {
+            Error::Backend(format!("the store is open ({} is locked); stop lc-serve first", lock_path.display()))
+        }
         std::fs::TryLockError::Error(e) => Error::Backend(format!("{}: {e}", lock_path.display())),
     })?;
     Ok(file)
@@ -155,10 +137,7 @@ fn take_opener(from: &Path) -> Result<File> {
 
 /// The paths beside `to`, with their `-wal` and `-shm`, that are day files of its stem.
 fn day_files_of(to: &Path) -> Result<Vec<PathBuf>> {
-    let dir = to
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+    let dir = to.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let stem = stem_of(to);
     let mut found = Vec::new();
     let entries = match std::fs::read_dir(dir) {
@@ -167,18 +146,10 @@ fn day_files_of(to: &Path) -> Result<Vec<PathBuf>> {
         Err(e) => return Err(Error::Backend(format!("{}: {e}", dir.display()))),
     };
     for e in entries {
-        let name = e
-            .map_err(|e| Error::Backend(format!("{}: {e}", dir.display())))?
-            .file_name();
+        let name = e.map_err(|e| Error::Backend(format!("{}: {e}", dir.display())))?.file_name();
         let name = name.to_string_lossy();
-        let base = name
-            .strip_suffix("-wal")
-            .or_else(|| name.strip_suffix("-shm"))
-            .unwrap_or(&name);
-        if FAMILIES
-            .iter()
-            .any(|f| f.day_of_file(&stem, base).is_some())
-        {
+        let base = name.strip_suffix("-wal").or_else(|| name.strip_suffix("-shm")).unwrap_or(&name);
+        if FAMILIES.iter().any(|f| f.day_of_file(&stem, base).is_some()) {
             found.push(dir.join(&*name));
         }
     }
@@ -199,9 +170,7 @@ fn uri_of(path: &Path) -> String {
     let mut out = String::from("file:");
     for b in path.to_string_lossy().bytes() {
         match b {
-            b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'/' | b'.' | b'_' | b'-' | b'~' => {
-                out.push(b as char)
-            }
+            b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'/' | b'.' | b'_' | b'-' | b'~' => out.push(b as char),
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
@@ -211,39 +180,24 @@ fn uri_of(path: &Path) -> String {
 
 /// The old store, read-only and immutable, once it is known to be one this binary can read.
 fn open_old(from: &Path) -> Result<Connection> {
-    let conn = Connection::open_with_flags(
-        uri_of(from),
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-    )
-    .map_err(db)?;
-    let at: i64 = conn
-        .pragma_query_value(None, "user_version", |r| r.get(0))
+    let conn = Connection::open_with_flags(uri_of(from), OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI)
         .map_err(db)?;
+    let at: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).map_err(db)?;
     if usize::try_from(at).unwrap_or(usize::MAX) > SCHEMA_MIGRATIONS {
-        return refuse(format!(
-            "{} has applied {at} schema migrations; this binary knows {SCHEMA_MIGRATIONS}",
-            from.display()
-        ));
+        return refuse(format!("{} has applied {at} schema migrations; this binary knows {SCHEMA_MIGRATIONS}", from.display()));
     }
     if at < 1 {
-        return refuse(format!(
-            "{} predates the `latest` table; start and stop it once on the release that wrote it",
-            from.display()
-        ));
+        return refuse(format!("{} predates the `latest` table; start and stop it once on the release that wrote it", from.display()));
     }
     let mut stored: Vec<String> = Vec::new();
-    let mut s = conn
-        .prepare("SELECT name FROM pragma_table_xinfo('latest') WHERE hidden = 0")
-        .map_err(db)?;
+    let mut s = conn.prepare("SELECT name FROM pragma_table_xinfo('latest') WHERE hidden = 0").map_err(db)?;
     for name in s.query_map([], |r| r.get::<_, String>(0)).map_err(db)? {
         stored.push(name.map_err(db)?);
     }
     drop(s);
     for c in &stored {
         if !COLUMNS.contains(&c.as_str()) {
-            return refuse(format!(
-                "the old `latest` has a column `{c}` the new schema lacks"
-            ));
+            return refuse(format!("the old `latest` has a column `{c}` the new schema lacks"));
         }
     }
     for c in COLUMNS {
@@ -265,32 +219,15 @@ struct Pager<'a> {
 }
 
 impl<'a> Pager<'a> {
-    fn new(
-        conn: &'a Connection,
-        table: &'static str,
-        ranges: Vec<(Vec<u8>, Option<Vec<u8>>)>,
-    ) -> Self {
+    fn new(conn: &'a Connection, table: &'static str, ranges: Vec<(Vec<u8>, Option<Vec<u8>>)>) -> Self {
         let cursor = ranges.first().map(|r| r.0.clone()).unwrap_or_default();
-        Pager {
-            conn,
-            table,
-            ranges,
-            at: 0,
-            cursor,
-            buf: VecDeque::new(),
-        }
+        Pager { conn, table, ranges, at: 0, cursor, buf: VecDeque::new() }
     }
 
     fn next(&mut self) -> Result<Option<StoredRow>> {
         while self.buf.is_empty() {
-            let Some((_, hi)) = self.ranges.get(self.at) else {
-                return Ok(None);
-            };
-            let version = if self.table == "latest" {
-                "version"
-            } else {
-                "0"
-            };
+            let Some((_, hi)) = self.ranges.get(self.at) else { return Ok(None) };
+            let version = if self.table == "latest" { "version" } else { "0" };
             let sql = format!(
                 "SELECT key, main, sub, value, create_main, create_sub, {version} FROM {} \
                  WHERE key >= ?1 AND (?2 IS NULL OR key < ?2) ORDER BY key LIMIT {PAGE}",
@@ -339,11 +276,7 @@ fn family_range(f: Family) -> (Vec<u8>, Option<Vec<u8>>) {
 fn live_ranges() -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
     debug_assert!(EVENTS_PREFIX < REQUESTS_PREFIX);
     let (events, requests) = (family_range(EVENTS), family_range(RECEIPTS));
-    vec![
-        (Vec::new(), Some(events.0)),
-        (events.1.unwrap_or_default(), Some(requests.0)),
-        (requests.1.unwrap_or_default(), None),
-    ]
+    vec![(Vec::new(), Some(events.0)), (events.1.unwrap_or_default(), Some(requests.0)), (requests.1.unwrap_or_default(), None)]
 }
 
 /// The count and the SHA-256 over each row's key, revisions and value, in key order, of a class
@@ -378,11 +311,7 @@ struct Sink {
 
 impl Sink {
     fn new(family: Family, to: &Path) -> Self {
-        Sink {
-            files: Files::new(family, to),
-            held: BTreeMap::new(),
-            rows: 0,
-        }
+        Sink { files: Files::new(family, to), held: BTreeMap::new(), rows: 0 }
     }
 
     fn add(&mut self, day: i64, row: StoredRow) -> Result<()> {
@@ -403,46 +332,26 @@ impl Sink {
     }
 }
 
-fn build(
-    old: &Connection,
-    to: &Path,
-    stem: &str,
-    now: u64,
-    before_certify: &dyn Fn(&Path),
-) -> Result<Report> {
+fn build(old: &Connection, to: &Path, stem: &str, now: u64, before_certify: &dyn Fn(&Path)) -> Result<Report> {
     let mut report = Report::default();
     let mut stage = Instant::now();
     let backend = SqliteBackend::open(
         to,
-        Options {
-            jump_on_open: false,
-            outbox: false,
-            wall: Arc::new(VirtualClock::new(now)),
-            ..Options::default()
-        },
+        Options { jump_on_open: false, outbox: false, wall: Arc::new(VirtualClock::new(now)), ..Options::default() },
     )?;
     let mut columns = backend.latest_columns()?;
     columns.sort();
     let mut known: Vec<String> = COLUMNS.iter().map(ToString::to_string).collect();
     known.sort();
     if columns != known {
-        return refuse(format!(
-            "the new `latest` has columns {columns:?}; relayout copies {known:?}"
-        ));
+        return refuse(format!("the new `latest` has columns {columns:?}; relayout copies {known:?}"));
     }
 
     let head = old_meta(old, "head")?;
     let jumps = {
-        let mut s = old
-            .prepare("SELECT from_main, to_main FROM jumps ORDER BY from_main")
-            .map_err(db)?;
-        let rows = s
-            .query_map([], |r| {
-                Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))
-            })
-            .map_err(db)?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(db)?
+        let mut s = old.prepare("SELECT from_main, to_main FROM jumps ORDER BY from_main").map_err(db)?;
+        let rows = s.query_map([], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))).map_err(db)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db)?
     };
     let mut pager = Pager::new(old, "latest", live_ranges());
     let mut read = 0u64;
@@ -489,15 +398,10 @@ fn build(
     let mut pager = Pager::new(old, "latest", vec![family_range(RECEIPTS)]);
     while let Some(row) = pager.next()? {
         report.receipts.read += 1;
-        let main = serde_json::from_slice::<serde_json::Value>(&row.value)
-            .ok()
-            .and_then(|v| v["data"]["main"].as_u64());
+        let main = serde_json::from_slice::<serde_json::Value>(&row.value).ok().and_then(|v| v["data"]["main"].as_u64());
         let at = match main {
             Some(m) => newest_event
-                .query_row(
-                    rusqlite::params![EVENTS_PREFIX.as_bytes(), events_key(m).as_bytes()],
-                    |r| r.get::<_, Vec<u8>>(0),
-                )
+                .query_row(rusqlite::params![EVENTS_PREFIX.as_bytes(), events_key(m).as_bytes()], |r| r.get::<_, Vec<u8>>(0))
                 .optional()
                 .map_err(db)?
                 .and_then(|v| recorded_at(&v)),
@@ -524,10 +428,7 @@ fn build(
     stage = Instant::now();
     certify_live(old, to)?;
     report.live.elapsed_ms += elapsed_ms(stage);
-    for (family, class, tally) in [
-        (EVENTS, &mut report.events, events_old),
-        (RECEIPTS, &mut report.receipts, receipts_old),
-    ] {
+    for (family, class, tally) in [(EVENTS, &mut report.events, events_old), (RECEIPTS, &mut report.receipts, receipts_old)] {
         stage = Instant::now();
         let (count, sha) = tally.seal();
         let (found, found_sha) = family_tally(to, stem, family)?;
@@ -540,14 +441,8 @@ fn build(
         class.elapsed_ms += elapsed_ms(stage);
     }
     report.live.files = vec![file_bytes(to)];
-    for (family, class) in [
-        (EVENTS, &mut report.events),
-        (RECEIPTS, &mut report.receipts),
-    ] {
-        class.files = family_files(to, stem, family)?
-            .iter()
-            .map(|p| file_bytes(p))
-            .collect();
+    for (family, class) in [(EVENTS, &mut report.events), (RECEIPTS, &mut report.receipts)] {
+        class.files = family_files(to, stem, family)?.iter().map(|p| file_bytes(p)).collect();
     }
     Ok(report)
 }
@@ -561,10 +456,7 @@ fn old_meta(old: &Connection, name: &str) -> Result<u64> {
 
 fn file_bytes(path: &Path) -> FileBytes {
     FileBytes {
-        file: path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default(),
+        file: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
         bytes: std::fs::metadata(path).map_or(0, |m| m.len()),
     }
 }
@@ -572,11 +464,7 @@ fn file_bytes(path: &Path) -> FileBytes {
 fn family_files(to: &Path, stem: &str, family: Family) -> Result<Vec<PathBuf>> {
     let mut found: Vec<PathBuf> = day_files_of(to)?
         .into_iter()
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| family.day_of_file(stem, n).is_some())
-        })
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| family.day_of_file(stem, n).is_some()))
         .collect();
     found.sort();
     Ok(found)
@@ -590,10 +478,7 @@ fn read_only(path: &Path) -> Result<Connection> {
 /// count and checksum of the class.
 fn certify_live(old: &Connection, to: &Path) -> Result<()> {
     let new = read_only(to)?;
-    let (mut a, mut b) = (
-        Pager::new(old, "latest", live_ranges()),
-        Pager::new(&new, "latest", live_ranges()),
-    );
+    let (mut a, mut b) = (Pager::new(old, "latest", live_ranges()), Pager::new(&new, "latest", live_ranges()));
     let (mut ta, mut tb) = (Tally::default(), Tally::default());
     loop {
         let (x, y) = (a.next()?, b.next()?);
@@ -601,11 +486,7 @@ fn certify_live(old: &Connection, to: &Path) -> Result<()> {
             (None, None) => break,
             (Some(x), Some(y)) if x == y => {}
             _ => {
-                let key = x
-                    .as_ref()
-                    .or(y.as_ref())
-                    .map(|r| String::from_utf8_lossy(&r.key).into_owned())
-                    .unwrap_or_default();
+                let key = x.as_ref().or(y.as_ref()).map(|r| String::from_utf8_lossy(&r.key).into_owned()).unwrap_or_default();
                 return refuse(format!("certification failed: the live row {key} differs between the old file and the new one"));
             }
         }
@@ -623,27 +504,12 @@ fn certify_live(old: &Connection, to: &Path) -> Result<()> {
 
 /// The count and checksum of every row the family's day files hold, in key order across them.
 fn family_tally(to: &Path, stem: &str, family: Family) -> Result<(u64, Vec<u8>)> {
-    let conns = family_files(to, stem, family)?
-        .iter()
-        .map(|p| read_only(p))
-        .collect::<Result<Vec<_>>>()?;
-    let mut pagers: Vec<Pager<'_>> = conns
-        .iter()
-        .map(|c| Pager::new(c, "rows", vec![(Vec::new(), None)]))
-        .collect();
-    let mut heads: Vec<Option<StoredRow>> =
-        pagers.iter_mut().map(Pager::next).collect::<Result<_>>()?;
+    let conns = family_files(to, stem, family)?.iter().map(|p| read_only(p)).collect::<Result<Vec<_>>>()?;
+    let mut pagers: Vec<Pager<'_>> = conns.iter().map(|c| Pager::new(c, "rows", vec![(Vec::new(), None)])).collect();
+    let mut heads: Vec<Option<StoredRow>> = pagers.iter_mut().map(Pager::next).collect::<Result<_>>()?;
     let mut tally = Tally::default();
     loop {
-        let Some(i) = (0..heads.len())
-            .filter(|i| heads[*i].is_some())
-            .min_by(|a, b| {
-                heads[*a]
-                    .as_ref()
-                    .map(|r| &r.key)
-                    .cmp(&heads[*b].as_ref().map(|r| &r.key))
-            })
-        else {
+        let Some(i) = (0..heads.len()).filter(|i| heads[*i].is_some()).min_by(|a, b| heads[*a].as_ref().map(|r| &r.key).cmp(&heads[*b].as_ref().map(|r| &r.key))) else {
             return Ok(tally.seal());
         };
         if let Some(row) = heads[i].take() {

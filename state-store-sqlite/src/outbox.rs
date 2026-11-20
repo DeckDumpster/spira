@@ -79,8 +79,7 @@ fn scan(bytes: &[u8]) -> Vec<(u64, usize, usize)> {
     let mut at = 0;
     while at + HEADER <= bytes.len() {
         let main = u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap_or_default());
-        let len =
-            u32::from_le_bytes(bytes[at + 8..at + 12].try_into().unwrap_or_default()) as usize;
+        let len = u32::from_le_bytes(bytes[at + 8..at + 12].try_into().unwrap_or_default()) as usize;
         let end = at + HEADER + len;
         if end > bytes.len() || bytes[at + 12..at + HEADER] != sum(main, &bytes[at + HEADER..end]) {
             break;
@@ -123,19 +122,9 @@ impl Outbox {
                     .and_then(|f| f.set_len(len))
                     .map_err(|e| io(&path, e))?;
             }
-            segments.push(Segment {
-                path,
-                first: first.0,
-                last: last.0,
-                len,
-            });
+            segments.push(Segment { path, first: first.0, last: last.0, len });
         }
-        Ok(Outbox {
-            dir: dir.to_path_buf(),
-            segments,
-            active: None,
-            segment_bytes,
-        })
+        Ok(Outbox { dir: dir.to_path_buf(), segments, active: None, segment_bytes })
     }
 
     /// Appends commit `main`'s entries. Mains arrive in order.
@@ -146,10 +135,7 @@ impl Outbox {
             }
         }
         let rec = record(main, revlog::entries_body(entries).as_bytes());
-        let full = self
-            .segments
-            .last()
-            .is_none_or(|s| s.len >= self.segment_bytes);
+        let full = self.segments.last().is_none_or(|s| s.len >= self.segment_bytes);
         let created = self.active.is_none() || full;
         if created {
             let path = self.dir.join(name(main));
@@ -159,12 +145,7 @@ impl Outbox {
                 .open(&path)
                 .map_err(|e| io(&path, e))?;
             self.active = Some(f);
-            self.segments.push(Segment {
-                path,
-                first: main,
-                last: main,
-                len: 0,
-            });
+            self.segments.push(Segment { path, first: main, last: main, len: 0 });
         }
         let (Some(f), Some(seg)) = (self.active.as_mut(), self.segments.last_mut()) else {
             return Err("outbox: no active segment".into());
@@ -181,17 +162,12 @@ impl Outbox {
         }
         seg.len += rec.len() as u64;
         seg.last = main;
-        Ok(Mark {
-            len_before,
-            created,
-        })
+        Ok(Mark { len_before, created })
     }
 
     /// Takes back the append `mark` began, after its main commit failed.
     pub fn undo(&mut self, mark: Mark) -> Result<(), String> {
-        let Some(seg) = self.segments.pop() else {
-            return Ok(());
-        };
+        let Some(seg) = self.segments.pop() else { return Ok(()) };
         if mark.created {
             self.active = None;
             return fs::remove_file(&seg.path).map_err(|e| io(&seg.path, e));
@@ -203,11 +179,7 @@ impl Outbox {
             .map_err(|e| io(&seg.path, e));
         let bytes = fs::read(&seg.path).map_err(|e| io(&seg.path, e))?;
         let last = scan(&bytes).last().map_or(seg.first, |r| r.0);
-        self.segments.push(Segment {
-            len: mark.len_before,
-            last,
-            ..seg
-        });
+        self.segments.push(Segment { len: mark.len_before, last, ..seg });
         restored
     }
 
@@ -231,11 +203,7 @@ impl Outbox {
 
     /// The mains held, oldest first.
     pub fn mains(&self) -> Result<Vec<u64>, String> {
-        Ok(self
-            .read(0, u64::MAX, usize::MAX)?
-            .into_iter()
-            .map(|(m, _)| m)
-            .collect())
+        Ok(self.read(0, u64::MAX, usize::MAX)?.into_iter().map(|(m, _)| m).collect())
     }
 
     /// Whole commits with `from < main <= head`, at most `max_mains`, each with its entries.
@@ -335,12 +303,7 @@ mod tests {
         let seg = o.segments[0].path.clone();
         drop(o);
         let len = fs::metadata(&seg).unwrap().len();
-        OpenOptions::new()
-            .write(true)
-            .open(&seg)
-            .unwrap()
-            .set_len(len - 3)
-            .unwrap();
+        OpenOptions::new().write(true).open(&seg).unwrap().set_len(len - 3).unwrap();
         assert_eq!(open(dir.path(), 9).mains().unwrap(), [1]);
     }
 
@@ -378,10 +341,7 @@ mod tests {
         o.append(1, &[entry(1, "a")]).unwrap();
         let path = o.segments[0].path.clone();
         o.active = Some(OpenOptions::new().read(true).open(&path).unwrap());
-        assert!(
-            o.append(2, &[entry(2, "b")]).is_err(),
-            "a handle that cannot write"
-        );
+        assert!(o.append(2, &[entry(2, "b")]).is_err(), "a handle that cannot write");
         assert_eq!(fs::metadata(&path).unwrap().len(), o.segments[0].len);
         o.active = Some(OpenOptions::new().append(true).open(&path).unwrap());
         o.append(2, &[entry(2, "c")]).unwrap();

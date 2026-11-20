@@ -418,12 +418,7 @@ impl Shipper {
 
 /// The ship-age alarm's state change: a line on the crossing into red past `max_ms`, and one on
 /// the crossing back, never one per tick.
-pub fn alarm(
-    was_red: bool,
-    oldest_ms: Option<u64>,
-    max_ms: u64,
-    snapshot_ms: Result<Option<u64>, String>,
-) -> (bool, Option<String>) {
+pub fn alarm(was_red: bool, oldest_ms: Option<u64>, max_ms: u64, snapshot_ms: Result<Option<u64>, String>) -> (bool, Option<String>) {
     let age = oldest_ms.unwrap_or(0);
     let red = age > max_ms;
     let line = match (was_red, red) {
@@ -454,9 +449,7 @@ mod tests {
         assert!(
             red && line.clone().unwrap().starts_with(
                 "RED: the oldest unshipped control-store revision has waited 11s, past 10s"
-            ) && line
-                .unwrap()
-                .ends_with("the newest snapshot that shipped is 7200s old")
+            ) && line.unwrap().ends_with("the newest snapshot that shipped is 7200s old")
         );
         assert_eq!(alarm(true, Some(12_000), 10_000, Ok(None)), (true, None));
         let (red, line) = alarm(true, None, 10_000, Ok(None));
