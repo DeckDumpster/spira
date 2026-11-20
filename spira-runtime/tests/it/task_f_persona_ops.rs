@@ -330,3 +330,34 @@ fn three_failed_starts_through_the_handler_ask_once_with_a_stamped_raw_line_and_
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&r, NAME);
     assert!(rows.iter().any(|k| k == "red") && rows.iter().any(|k| k == "red_why"), "{rows:?}");
 }
+
+#[test]
+fn a_snapshot_already_swept_is_skipped_and_a_new_one_sweeps() {
+    let carry = Carry { state: State::Observing, swept_head: Some("## Spira pipeline, T1".into()), ..Default::default() };
+    let (next, acts) = decide(&carry, &Input::Observed(snap("## Spira pipeline, T1", 0, false, Pause::Open))).unwrap();
+    assert_eq!((next.state, names(&acts)), (State::Idle, vec![]));
+    assert_eq!(next.swept_head.as_deref(), Some("## Spira pipeline, T1"));
+    let (next, acts) = decide(&carry, &Input::Observed(snap("## Spira pipeline, T2", 0, false, Pause::Open))).unwrap();
+    assert_eq!((next.state, names(&acts)), (State::Preparing, vec![INTAKE_INSTALL, INCIDENT_DRAIN]));
+}
+
+#[test]
+fn the_swept_head_is_recorded_only_when_the_unit_starts() {
+    let observing = Carry { swept_head: Some("older".into()), ..in_state(State::Observing) };
+    let (running, _) = decide(&observing, &Input::Observed(snap("## Spira pipeline, T1", 0, false, Pause::Open))).unwrap();
+    assert_eq!(running.swept_head.as_deref(), Some("older"));
+    let starting = Carry { state: State::Starting, ..running };
+    let (ok, _) = decide(&starting, &Input::Succeeded { effect: UNIT_START.into(), body: String::new() }).unwrap();
+    assert_eq!(ok.swept_head.as_deref(), Some("## Spira pipeline, T1"));
+    let (bad, _) = decide(&starting, &Input::Failed { effect: UNIT_START.into(), error: "boom".into() }).unwrap();
+    assert_eq!(bad.swept_head.as_deref(), Some("older"));
+}
+
+#[test]
+fn the_swept_head_survives_the_stored_rows_once_the_unit_has_started() {
+    let r = mid_run();
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&r, NAME);
+    assert!(rows.iter().any(|k| k == "swept_head") && rows.iter().any(|k| k == "head"), "{rows:?}");
+    let carried = spira_runtime::watchers::carried::<Carry>(r.engine().projection(), &StreamKey(STREAM.into()), STATE);
+    assert_eq!(carried.swept_head.as_deref(), Some("a changed prompt head"));
+}
