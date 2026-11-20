@@ -108,6 +108,9 @@ impl<B: Backend> Backend for Interpose<B> {
     fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
         self.inner.get(key, at)
     }
+    fn get_many(&self, keys: &[&str], at: u64) -> Result<Vec<Option<Version>>> {
+        self.inner.get_many(keys, at)
+    }
     fn range(
         &self,
         prefix: &str,
@@ -1707,6 +1710,30 @@ pub fn committed_at_is_the_wall_time_of_the_first_audited_commit_at_or_after_a_m
     );
 }
 
+pub fn get_many_answers_what_get_answers_per_key_at_the_head_and_below_it<R: Rig>(rig: &R) {
+    let clock = VirtualClock::new(T0);
+    let c = open(rig.fresh(), &clock);
+    put(&c, "kept", obj(json!(1)), "1");
+    put(&c, "over", obj(json!(1)), "2");
+    put(&c, "gone", obj(json!(1)), "3");
+    let before = c.head().unwrap();
+    put(&c, "over", obj(json!(2)), "4");
+    c.delete("gone", None, &req("5")).unwrap();
+    put(&c, "late", obj(json!(1)), "6");
+    let keys = ["gone", "kept", "absent", "over", "late", "kept"];
+    for at in [c.head().unwrap(), before] {
+        let many = c.backend().get_many(&keys, at).unwrap();
+        let each: Vec<_> = keys.iter().map(|k| c.backend().get(k, at).unwrap()).collect();
+        assert_eq!(many, each, "backend at {at}");
+        let items = c.get_many_at(&keys, at).unwrap();
+        let each: Vec<_> = keys.iter().map(|k| c.get_at(k, at).unwrap()).collect();
+        assert_eq!(items, each, "contract at {at}");
+    }
+    let head = c.backend().get_many(&keys, c.head().unwrap()).unwrap();
+    assert!(head[0].is_none() && head[2].is_none() && head[1].is_some() && head[4].is_some());
+    assert!(c.backend().get_many(&[], before).unwrap().is_empty());
+}
+
 macro_rules! scenarios {
     ($($name:ident),* $(,)?) => {
         /// The names every backend's test file must cover, one test each.
@@ -1728,6 +1755,7 @@ scenarios!(
     a_watch_on_a_quiet_prefix_returns_progress_rev,
     watch_returns_too_old_after_compaction,
     a_value_overwritten_or_deleted_inside_the_ring_reads_as_of_a_revision_between_the_writes,
+    get_many_answers_what_get_answers_per_key_at_the_head_and_below_it,
     a_lock_expires_on_the_virtual_clock,
     a_paused_holders_fenced_write_is_refused_after_expiry_and_reacquisition,
     reopen_extends_every_lock,

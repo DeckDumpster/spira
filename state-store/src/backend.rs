@@ -129,6 +129,11 @@ pub trait Backend: Send + Sync {
     fn head(&self) -> Result<u64>;
     /// The key as of `at`; `TooOld` below the history floor, `FutureRev` above the head.
     fn get(&self, key: &str, at: u64) -> Result<Option<Version>>;
+    /// Each key as of `at`, in the order given: what [`Backend::get`] answers per key. A backend
+    /// that can answer them in one read overrides it.
+    fn get_many(&self, keys: &[&str], at: u64) -> Result<Vec<Option<Version>>> {
+        keys.iter().map(|k| self.get(k, at)).collect()
+    }
     /// Keys starting with `prefix`, strictly after `after`, in key order, at most `limit`.
     fn range(
         &self,

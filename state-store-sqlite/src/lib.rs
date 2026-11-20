@@ -1751,39 +1751,47 @@ impl SqliteBackend {
     }
 }
 
-impl Backend for SqliteBackend {
-    fn head(&self) -> Result<u64> {
-        Ok(self.0.head.load(Ordering::SeqCst))
-    }
-
-    fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
-        self.read(|conn, snap, _| {
-            snap.readable(at)?;
-            let was = if at == snap.head {
-                AsOf::Live
-            } else {
-                lock(&self.0.history).as_of(key, at)?
-            };
-            if let AsOf::Was(v) = was {
-                return Ok(v);
-            }
-            for (family, files) in &snap.dated {
-                if family.holds(key) {
-                    for f in files {
-                        if let Some(v) = f.get(key, at)? {
-                            return Ok(Some(v));
-                        }
+impl SqliteBackend {
+    fn get_in(&self, conn: &Connection, snap: &Snapshot, key: &str, at: u64) -> Result<Option<Version>> {
+        snap.readable(at)?;
+        let was = if at == snap.head {
+            AsOf::Live
+        } else {
+            lock(&self.0.history).as_of(key, at)?
+        };
+        if let AsOf::Was(v) = was {
+            return Ok(v);
+        }
+        for (family, files) in &snap.dated {
+            if family.holds(key) {
+                for f in files {
+                    if let Some(v) = f.get(key, at)? {
+                        return Ok(Some(v));
                     }
                 }
             }
-            conn.prepare_cached(GET_LATEST)
+        }
+        conn.prepare_cached(GET_LATEST)
             .and_then(|mut s| {
                 s.query_row(params![key.as_bytes()], |r| version_row(r, 0))
                     .optional()
             })
             .map(Option::flatten)
             .map_err(db)
-        })
+    }
+}
+
+impl Backend for SqliteBackend {
+    fn head(&self) -> Result<u64> {
+        Ok(self.0.head.load(Ordering::SeqCst))
+    }
+
+    fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
+        self.read(|conn, snap, _| self.get_in(conn, snap, key, at))
+    }
+
+    fn get_many(&self, keys: &[&str], at: u64) -> Result<Vec<Option<Version>>> {
+        self.read(|conn, snap, _| keys.iter().map(|k| self.get_in(conn, snap, k, at)).collect())
     }
 
     fn range(

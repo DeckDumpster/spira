@@ -443,6 +443,12 @@ impl Backend for Counting {
         self.note("get", key, 1);
         self.inner.get(key, at)
     }
+    fn get_many(&self, keys: &[&str], at: u64) -> state_store::Result<Vec<Option<state_store::Version>>> {
+        for k in keys {
+            self.note("get_many", k, 1);
+        }
+        self.inner.get_many(keys, at)
+    }
     fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
         self.note("range", prefix, limit);
         self.inner.range(prefix, after, limit, at)
