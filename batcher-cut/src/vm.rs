@@ -368,6 +368,22 @@ impl DenySnapshot {
 /// fix), shared between the cut that makes them and the runner that reads a red's culprit.
 pub type RoundCommits = std::rc::Rc<std::cell::RefCell<Vec<String>>>;
 
+/// The file in a pass dir that carries the round's own commit shas to the attribution cut,
+/// which is a separate process and starts with none.
+pub const ROUND_COMMITS_FILE: &str = "round-commits";
+
+pub fn keep_round_commits(dir: &Path, own: &RoundCommits) -> std::io::Result<()> {
+    let mut text = own.borrow().join("\n");
+    text.push('\n');
+    fs::write(dir.join(ROUND_COMMITS_FILE), text)
+}
+
+pub fn round_commits_of_pass(dir: &Path) -> RoundCommits {
+    let text = fs::read_to_string(dir.join(ROUND_COMMITS_FILE)).unwrap_or_default();
+    let shas = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
+    std::rc::Rc::new(std::cell::RefCell::new(shas))
+}
+
 pub struct VmRunner<'a> {
     env: &'a Env,
     repo: &'a Repo,
@@ -2123,6 +2139,26 @@ mod abandon_tests {
         testkit::git(r, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-edit", &b]);
         let merged = io::config_delta_at(&repo, "merged").unwrap().unwrap();
         assert!(merged.contains("spira.x") && merged.contains("spira.y"), "{merged}");
+    }
+
+    #[test]
+    fn an_attribution_runner_given_the_pass_s_round_commits_sets_a_lint_red_on_them_aside() {
+        let d = testkit::TempDir::new("vm-prior-red-round-commits");
+        let line = "member=commit 488e83c393bf round: fold 1 config delta fragment(s) into spira/config-delta.toml config-delta-folded: edited by this branch";
+        fs::write(d.path().join("spira-lint.result"), "red 1 2 - - - 1\n").unwrap();
+        fs::write(d.path().join("spira-lint.out"), format!("{line}\n")).unwrap();
+        let cut: RoundCommits = Default::default();
+        cut.borrow_mut().push("488e83c393bf1122334455667788990011223344".to_string());
+        keep_round_commits(d.path(), &cut).unwrap();
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let mut bare = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap().after_pass(Some(d.path().to_path_buf()));
+        assert!(bare.prior_red().unwrap().harness.is_empty(), "a fresh process knows no round commits");
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r2", BTreeMap::new()).unwrap()
+            .with_round_commits(round_commits_of_pass(d.path()))
+            .after_pass(Some(d.path().to_path_buf()));
+        assert_eq!(r.prior_red().unwrap().harness, vec![line.to_string()]);
+        assert!(round_commits_of_pass(&d.path().join("missing")).borrow().is_empty());
     }
 
     #[test]
