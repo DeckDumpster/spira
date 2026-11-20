@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::backend::{Backend, Version, Write};
 use crate::{
     events_key, limits, request_key, Error, Item, Object, Result, Rev, EVENTS_PREFIX, LOCKS_PREFIX,
-    MAX_WATCH_WAIT_MS, ORPHANS_PREFIX, REQUESTS_PREFIX, REQUEST_TTL_SECS, TELEMETRY_PREFIX, TTL_PREFIXES,
+    MAX_WATCH_WAIT_MS, ORPHANS_PREFIX, REQUESTS_PREFIX, REQUEST_TTL_SECS, RETAINED_PREFIXES, TELEMETRY_PREFIX, TTL_PREFIXES,
 };
 
 pub struct Ports {
@@ -419,10 +419,10 @@ fn audited<'a>(keys: impl IntoIterator<Item = &'a str>) -> bool {
 
 /// The prefixes whose keys may carry `ttl_secs`.
 fn ttl_allowed(key: &str) -> bool {
-    key.starts_with(REQUESTS_PREFIX) || TTL_PREFIXES.iter().any(|p| key.starts_with(p))
+    key.starts_with(REQUESTS_PREFIX) || stored_expiry(key)
 }
 
-/// The lifetime, in ms, a key under a [`TTL_PREFIXES`] prefix carries in its value.
+/// The lifetime, in ms, a key under a [`TTL_PREFIXES`] or [`RETAINED_PREFIXES`] prefix carries in its value.
 fn stored_lifetime(key: &str, v: &Object) -> Option<u64> {
     if stored_expiry(key) {
         ttl_ms(key, v)
@@ -442,7 +442,7 @@ fn held_lifetime(key: &str, v: &Object) -> Option<u64> {
 }
 
 fn stored_expiry(key: &str) -> bool {
-    TTL_PREFIXES.iter().any(|p| key.starts_with(p))
+    TTL_PREFIXES.iter().chain(RETAINED_PREFIXES).any(|p| key.starts_with(p))
 }
 
 fn ttl_ms(key: &str, v: &Object) -> Option<u64> {

@@ -1093,6 +1093,33 @@ pub fn a_gc_expiry_writes_no_events_key<R: Rig>(rig: &R) {
     }
 }
 
+pub fn a_retained_prefix_put_may_carry_a_ttl_and_expires_only_with_one<R: Rig>(rig: &R) {
+    let clock = VirtualClock::new(T0);
+    let c = open(rig.fresh(), &clock);
+    let gc = Controller::new(&c);
+    put(&c, "runtime/effect/t/open", obj(json!(1)), "1");
+    put(&c, "runtime/effect/t/closed", obj(json!(1)).with_ttl(3_600), "2");
+    put(&c, "runtime/resolved/r1", obj(json!({})).with_ttl(3_600), "3");
+    clock.advance(HOUR_MS - 1);
+    gc.tick(c.now_ms()).unwrap();
+    assert!(c.get("runtime/effect/t/closed").unwrap().is_some());
+    clock.advance(1);
+    let before = c.head().unwrap();
+    let mut expired = gc.tick(c.now_ms()).unwrap().expired;
+    expired.sort();
+    assert_eq!(expired, ["runtime/effect/t/closed", "runtime/resolved/r1"]);
+    for m in before + 1..=c.head().unwrap() {
+        assert!(c.get(&events_key(m)).unwrap().is_none(), "expiry at {m} was evented");
+    }
+    clock.advance(1_000 * HOUR_MS);
+    gc.tick(c.now_ms()).unwrap();
+    assert!(c.get("runtime/effect/t/open").unwrap().is_some());
+    assert_eq!(
+        c.txn(&Txn::new().put("runtime/state/t/k", obj(json!(1)).with_ttl(60)), &req("s")),
+        Err(Error::TtlNotAllowed { key: "runtime/state/t/k".into() })
+    );
+}
+
 pub fn a_multi_prefix_list_reads_one_snapshot_while_a_commit_lands_between_prefixes<R: Rig>(
     rig: &R,
 ) {
@@ -1777,6 +1804,7 @@ scenarios!(
     a_rewrite_restarts_a_keys_ttl,
     a_reopen_renews_no_lifetime,
     a_gc_expiry_writes_no_events_key,
+    a_retained_prefix_put_may_carry_a_ttl_and_expires_only_with_one,
     a_multi_prefix_list_reads_one_snapshot_while_a_commit_lands_between_prefixes,
     txn_ops_at_the_limit_pass_and_one_over_is_refused,
     txn_compares_at_the_limit_pass_and_one_over_is_refused,

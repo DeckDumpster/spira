@@ -1,9 +1,9 @@
 //! The runtime's journal on the control store: what it keeps across a restart (task state, open
-//! effects, the schedule) and the poison it recorded. A turn never deletes a row: an effect is
-//! resolved and a schedule row fired by a marker key of its own, so a re-upserted effect or a
-//! re-inserted schedule row reads exactly as its row did. Each row not yet closed also has an
-//! index key, deleted when the row closes, so a boot read costs the rows it returns and not every
-//! row ever written.
+//! effects, the schedule) and the poison it recorded. A row still closes by a marker key of its
+//! own, so a re-upserted effect or a re-inserted schedule row reads exactly as its row did; a
+//! closed effect and its marker are then kept [`JOURNAL_RETAIN_SECS`] and expire. Each row not
+//! yet closed also has an index key, deleted when the row closes, so a boot read costs the rows
+//! it returns and not every row ever written.
 
 use serde_json::{json, Value};
 use state_store::{Backend, Compare, Object, Request, Result, Selector, Txn};
@@ -20,6 +20,13 @@ const POISON: &str = "poison";
 const OPEN_EFFECT: &str = "open-effect";
 const PENDING: &str = "pending";
 const META: &str = "journal-meta";
+
+/// How long a resolved effect and its marker are kept before the store's gc deletes them.
+pub const JOURNAL_RETAIN_SECS: u64 = 7 * 24 * 60 * 60;
+
+fn retained(data: &Value) -> Object {
+    Object::new(data.clone()).with_ttl(JOURNAL_RETAIN_SECS)
+}
 
 /// Ops one txn may carry, with room for the request's own bookkeeping.
 const CHUNK: usize = 100;
@@ -146,14 +153,15 @@ fn pending(id: &str) -> Object {
     Object::new(json!({ "id": id }))
 }
 
-/// What a sweep step removed, or with `dry_run` would have: id-less schedule rows, and the index
-/// keys it wrote for rows stored before the index.
+/// What a sweep step removed, or with `dry_run` would have: id-less schedule rows, the index
+/// keys it wrote for rows stored before the index, and the resolved effects it gave a lifetime.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Swept {
     pub idless_schedules: usize,
     pub legacy_deleted: usize,
     pub indexed_schedules: usize,
     pub indexed_effects: usize,
+    pub retained: usize,
 }
 
 fn effect_of(v: &Value) -> EffectRow {
@@ -200,7 +208,14 @@ impl<B: Backend> Store<B> {
                 one(Some(key.clone()), vec![(key, Some(Object::new(row))), (keys::runtime(PENDING, &[&s.id]), Some(pending(&s.id))), (keys::runtime(FIRED, &[&s.id]), None)]);
             }
             for id in &turn.resolved {
-                one(None, vec![(keys::runtime(RESOLVED, &[id]), Some(Object::new(json!({})))), (keys::runtime(OPEN_EFFECT, &[id]), None)]);
+                let mut put = vec![(keys::runtime(RESOLVED, &[id]), Some(retained(&json!({})))), (keys::runtime(OPEN_EFFECT, &[id]), None)];
+                if let Some(open) = self.contract().get(&keys::runtime(OPEN_EFFECT, &[id]))? {
+                    let key = keys::runtime(EFFECT, &[&text(&open.value.data, "task"), &text(&open.value.data, "ekey")]);
+                    if let Some(row) = self.contract().get(&key)?.filter(|r| keys::component(&text(&r.value.data, "request_id")) == keys::component(id)) {
+                        put.push((key, Some(retained(&row.value.data))));
+                    }
+                }
+                one(None, put);
             }
             for id in &turn.fired {
                 one(None, vec![(keys::runtime(FIRED, &[id]), Some(Object::new(json!({})))), (keys::runtime(PENDING, &[id]), None)]);
@@ -224,8 +239,8 @@ impl<B: Backend> Store<B> {
             return Err(state_store::Error::Backend(format!("journal carry refused: a schedule row has an empty id: stream={} kind={} at={}", s.stream, s.tag, s.at)));
         }
         let mut written = 0;
-        let mut one = |key: String, row: Value, extra: Vec<(String, Object)>| -> Result<()> {
-            let mut t = Txn::new().when(Compare::ModRev(key.clone(), None)).put(&key, Object::new(row));
+        let mut one = |key: String, row: Object, extra: Vec<(String, Object)>| -> Result<()> {
+            let mut t = Txn::new().when(Compare::ModRev(key.clone(), None)).put(&key, row);
             for (k, o) in extra {
                 t = t.put(&k, o);
             }
@@ -234,13 +249,13 @@ impl<B: Backend> Store<B> {
             Ok(())
         };
         for r in &rows.state {
-            one(keys::runtime(STATE, &[&r.task, &r.skey]), json!({ "task": r.task, "skey": r.skey, "value": r.value, "at": r.at }), vec![])?;
+            one(keys::runtime(STATE, &[&r.task, &r.skey]), Object::new(json!({ "task": r.task, "skey": r.skey, "value": r.value, "at": r.at })), vec![])?;
         }
         for (e, resolved) in &rows.effects {
             let row = json!({ "task": e.task, "ekey": e.ekey, "request_id": e.request_id, "stream": e.stream, "spec": e.spec, "requested_at": e.requested_at, "deadline_at": e.deadline_at });
-            let extra = match resolved {
-                true => (keys::runtime(RESOLVED, &[&e.request_id]), Object::new(json!({}))),
-                false => (keys::runtime(OPEN_EFFECT, &[&e.request_id]), open_effect(&e.task, &e.ekey)),
+            let (row, extra) = match resolved {
+                true => (retained(&row), (keys::runtime(RESOLVED, &[&e.request_id]), retained(&json!({})))),
+                false => (Object::new(row), (keys::runtime(OPEN_EFFECT, &[&e.request_id]), open_effect(&e.task, &e.ekey))),
             };
             one(keys::runtime(EFFECT, &[&e.task, &e.ekey]), row, vec![extra])?;
         }
@@ -250,10 +265,10 @@ impl<B: Backend> Store<B> {
                 true => (keys::runtime(FIRED, &[&s.id]), Object::new(json!({}))),
                 false => (keys::runtime(PENDING, &[&s.id]), pending(&s.id)),
             };
-            one(keys::runtime(SCHEDULE, &[&s.id]), row, vec![extra])?;
+            one(keys::runtime(SCHEDULE, &[&s.id]), Object::new(row), vec![extra])?;
         }
         for p in &rows.poison {
-            one(keys::runtime(POISON, &[&p.stream]), json!({ "stream": p.stream, "event": p.event, "handler": p.handler, "message": p.message }), vec![])?;
+            one(keys::runtime(POISON, &[&p.stream]), Object::new(json!({ "stream": p.stream, "event": p.event, "handler": p.handler, "message": p.message })), vec![])?;
         }
         Ok(written)
     }
@@ -356,9 +371,18 @@ impl<B: Backend> Store<B> {
                 }
                 SweepPhase::Effect => {
                     let e = effect_of(v);
-                    if contract.get(&keys::runtime(RESOLVED, &[&e.request_id]))?.is_none() {
-                        out.indexed_effects += 1;
-                        ops.push(state_store::Op::Put(keys::runtime(OPEN_EFFECT, &[&e.request_id]), open_effect(&e.task, &e.ekey)));
+                    let marker_key = keys::runtime(RESOLVED, &[&e.request_id]);
+                    match contract.get(&marker_key)? {
+                        None => {
+                            out.indexed_effects += 1;
+                            ops.push(state_store::Op::Put(keys::runtime(OPEN_EFFECT, &[&e.request_id]), open_effect(&e.task, &e.ekey)));
+                        }
+                        Some(marker) if item.value.metadata.ttl_secs.is_none() => {
+                            out.retained += 1;
+                            ops.push(state_store::Op::Put(item.key.clone(), retained(v)));
+                            ops.push(state_store::Op::Put(marker_key, retained(&marker.value.data)));
+                        }
+                        Some(_) => {}
                     }
                 }
             }

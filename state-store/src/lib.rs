@@ -38,6 +38,9 @@ pub const TELEMETRY_PREFIX: &str = "telemetry/";
 pub const INTENTS_PREFIX: &str = "intents/";
 /// Prefixes whose every put must carry `ttl_secs > 0`.
 pub const TTL_PREFIXES: &[&str] = &[TELEMETRY_PREFIX, INTENTS_PREFIX];
+/// Prefixes whose puts *may* carry `ttl_secs`; one that does is stored and expired like a
+/// [`TTL_PREFIXES`] key's, and one that does not never expires.
+pub const RETAINED_PREFIXES: &[&str] = &["runtime/effect/", "runtime/resolved/"];
 pub const REQUEST_TTL_SECS: u64 = 24 * 60 * 60;
 /// The longest a watch may wait, inside the socket protocol's 3 s deadline.
 pub const MAX_WATCH_WAIT_MS: u64 = 2_500;
