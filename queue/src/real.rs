@@ -935,13 +935,18 @@ fn suite_run_command(
     tip: &str,
     repo: &str,
     first_check: bool,
+    tests: &[String],
 ) -> Command {
     // FORK-EDGE: machine leg testenv (suite run)
     let mut c = Command::new(testenv);
     if first_check {
         c.args(["--repeat-reason", RESUBMIT_CHECK_REASON]);
     }
-    c.args(["--suites", check, tip, repo]);
+    c.args(["--suites", check]);
+    if !tests.is_empty() {
+        c.args(["--tests", &tests.join(",")]);
+    }
+    c.args([tip, repo]);
     c
 }
 
@@ -1013,7 +1018,7 @@ impl Scripts for RealScripts {
         }
         run_combined(c.arg(tip).arg(repo))
     }
-    fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool) -> (i32, String) {
+    fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool, tests: &[String]) -> (i32, String) {
         match spira_config::release_env::tool("testenv") {
             Ok(testenv) => run_combined(&mut suite_run_command(
                 &testenv,
@@ -1021,6 +1026,7 @@ impl Scripts for RealScripts {
                 tip,
                 repo,
                 first_check,
+                tests,
             )),
             Err(e) => (2, e),
         }
@@ -2691,7 +2697,7 @@ mod tests {
     #[test]
     fn a_resubmit_suite_check_passes_testenv_a_repeat_reason_flag() {
         let args = |first| -> Vec<String> {
-            suite_run_command("testenv", "test-x.sh", "t", "r", first)
+            suite_run_command("testenv", "test-x.sh", "t", "r", first, &[])
                 .get_args()
                 .map(|a| a.to_string_lossy().into_owned())
                 .collect()

@@ -473,6 +473,9 @@ impl LiveOps<'_> {
     ) -> Result<(), String> {
         if owner {
             redtip::record(&self.env.run, &self.repo.name, &member.id, &member.tip);
+            for suite in suites {
+                let _ = spira_config::proof::record_failing_tests(&self.env.run, &member.id, suite, &[]);
+            }
             let files = self.changed.get(&member.id).cloned().unwrap_or_default();
             io::record_ejection(self.env, &member.id, &member.tip, &files, (Path::new(&self.evidence), self.pass.as_deref()), suites, fails);
             io::reference_round_logs(self.env, &mut self.send_back, Path::new(&self.evidence), self.pass.as_deref(), &member.id);
@@ -529,7 +532,16 @@ impl drive::RoundOps for LiveOps<'_> {
             &[(filter.to_string(), line.to_string())],
             owner,
             None,
-        )
+        )?;
+        if owner && filter == "unit-tests" {
+            let graph = self.package_graph();
+            if let Some(ids) = drive::flip_ids(&[line.to_string()], graph.as_ref()) {
+                if let Err(e) = spira_config::proof::record_failing_tests(&self.env.run, &member.id, filter, &ids) {
+                    eprintln!("batcher: failing tests of {} not recorded: {e}", member.id);
+                }
+            }
+        }
+        Ok(())
     }
 
     fn eject_returned(&mut self, member: &Member, suites: &[String], why: &str) -> Result<(), String> {
