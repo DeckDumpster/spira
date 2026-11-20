@@ -56,44 +56,71 @@ impl Mutation {
     /// The transaction: `BEGIN`, the row changes, `COMMIT`.
     pub fn script(&self, db: &str) -> Vec<String> {
         let id = escape(&self.id);
-        let event = |kind: &str, comment: &str, new: &str, guard: &str| {
-            format!("INSERT INTO {db}.events (id, issue_id, event_type, actor, old_value, new_value, comment, created_at) SELECT UUID(), '{id}', '{kind}', '{ACTOR}', NULL, {new}, {comment}, UTC_TIMESTAMP() FROM DUAL{guard}")
+        let event = |kind: &str, comment: &str, guard: &str| {
+            format!("INSERT INTO {db}.events (id, issue_id, event_type, actor, old_value, new_value, comment, created_at) SELECT UUID(), '{id}', '{kind}', '{ACTOR}', NULL, NULL, {comment}, UTC_TIMESTAMP() FROM DUAL{guard}")
         };
         let lit = |s: &str| format!("'{}'", escape(s));
-        let changed = |column: &str| format!("(SELECT JSON_OBJECT('{column}', {column}) FROM {db}.issues WHERE id = '{id}')");
+        let stamp = |column: &str| format!("DATE_FORMAT({column}, '%Y-%m-%dT%H:%i:%sZ')");
+        let before = format!(
+            "(SELECT JSON_MERGE_PATCH('{{}}', JSON_OBJECT('id', id, 'title', title, 'description', NULLIF(description, ''), 'design', NULLIF(design, ''), 'acceptance_criteria', NULLIF(acceptance_criteria, ''), 'notes', NULLIF(notes, ''), 'spec_id', NULLIF(spec_id, ''), 'status', status, 'priority', priority, 'issue_type', issue_type, 'assignee', NULLIF(assignee, ''), 'estimated_minutes', estimated_minutes, 'owner', NULLIF(owner, ''), 'created_at', {}, 'created_by', NULLIF(created_by, ''), 'updated_at', {}, 'closed_at', {}, 'close_reason', NULLIF(close_reason, ''), 'external_ref', NULLIF(external_ref, ''), 'metadata', NULLIF(metadata, JSON_OBJECT()), 'labels', NULLIF((SELECT JSON_ARRAYAGG(label) FROM (SELECT label FROM {db}.labels WHERE issue_id = '{id}' ORDER BY label) AS l), JSON_ARRAY()))) FROM {db}.issues WHERE id = '{id}')",
+            stamp("created_at"),
+            stamp("updated_at"),
+            stamp("closed_at")
+        );
         let mut s = vec!["BEGIN".to_string()];
-        for op in &self.ops {
+        for (n, op) in self.ops.iter().enumerate() {
+            let settled = |column: &str| {
+                format!("UPDATE {db}.events SET new_value = (SELECT JSON_OBJECT('{column}', {column}) FROM {db}.issues WHERE id = '{id}') WHERE id = @event{n}")
+            };
+            let filed = |old: &str| format!("INSERT INTO {db}.events (id, issue_id, event_type, actor, old_value, new_value, comment, created_at) VALUES (@event{n}, '{id}', 'updated', '{ACTOR}', {old}, NULL, NULL, UTC_TIMESTAMP())");
             match op {
                 Op::LabelAdd(l) => {
                     let e = escape(l);
-                    s.push(event("label_added", &lit(&format!("Added label: {l}")), "NULL", &format!(" WHERE NOT EXISTS (SELECT 1 FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}')")));
+                    s.push(event("label_added", &lit(&format!("Added label: {l}")), &format!(" WHERE NOT EXISTS (SELECT 1 FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}')")));
                     s.push(format!("INSERT IGNORE INTO {db}.labels (issue_id, label) VALUES ('{id}', '{e}')"));
                 }
                 Op::LabelRemove(l) => {
                     let e = escape(l);
-                    s.push(event("label_removed", &lit(&format!("Removed label: {l}")), "NULL", &format!(" WHERE EXISTS (SELECT 1 FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}')")));
+                    s.push(event("label_removed", &lit(&format!("Removed label: {l}")), &format!(" WHERE EXISTS (SELECT 1 FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}')")));
                     s.push(format!("DELETE FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}'"));
                 }
                 Op::Note(t) => {
+                    s.push(format!("SET @event{n} = UUID()"));
+                    s.push(filed(&before));
                     s.push(format!("UPDATE {db}.issues SET notes = CASE WHEN notes IS NULL OR notes = '' THEN {t} ELSE CONCAT(notes, CHAR(10), {t}) END WHERE id = '{id}'", t = lit(t)));
-                    s.push(event("updated", "NULL", &changed("notes"), ""));
+                    s.push(settled("notes"));
                 }
                 Op::Comment(t) => {
                     s.push(format!("INSERT INTO {db}.comments (id, issue_id, author, text, created_at) VALUES (UUID(), '{id}', '{ACTOR}', {}, UTC_TIMESTAMP())", lit(t)));
                 }
                 Op::Metadata(k, v) => {
-                    s.push(format!("UPDATE {db}.issues SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.\"{}\"', {}) WHERE id = '{id}'", escape(k), lit(v)));
-                    s.push(event("updated", "NULL", &changed("metadata"), ""));
+                    s.push(format!("SET @event{n} = UUID()"));
+                    s.push(filed(&before));
+                    s.push(format!("UPDATE {db}.issues SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.\"{}\"', {}) WHERE id = '{id}'", escape(k), metadata_value(v)));
+                    s.push(settled("metadata"));
                 }
                 Op::Priority(p) => {
+                    s.push(format!("SET @event{n} = UUID()"));
+                    s.push(filed(&before));
                     s.push(format!("UPDATE {db}.issues SET priority = {p} WHERE id = '{id}'"));
-                    s.push(event("updated", "NULL", &format!("JSON_OBJECT('priority', {p})"), ""));
+                    s.push(settled("priority"));
                 }
             }
         }
-        s.push(format!("UPDATE {db}.issues SET updated_at = UTC_TIMESTAMP() WHERE id = '{id}'"));
+        if self.ops.iter().any(|op| !matches!(op, Op::LabelAdd(_) | Op::LabelRemove(_) | Op::Comment(_))) {
+            s.push(format!("UPDATE {db}.issues SET updated_at = UTC_TIMESTAMP(), row_lock = CAST((RAND() - 0.5) * 1.8e19 AS SIGNED) WHERE id = '{id}'"));
+        }
         s.push("COMMIT".into());
         s
+    }
+}
+
+/// How bd stores a `--set-metadata` value: a number, `true`, `false` or `null` as that JSON value,
+/// anything else (a quoted string, an object, an array) as the text it was given.
+fn metadata_value(v: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(v) {
+        Ok(j) if v.trim() == v && (j.is_number() || j.is_boolean() || j.is_null()) => format!("CAST('{}' AS JSON)", escape(v)),
+        _ => format!("'{}'", escape(v)),
     }
 }
 
@@ -297,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn a_label_add_is_one_transaction_that_records_the_event_before_the_row() {
+    fn a_label_add_is_one_transaction_that_records_the_event_before_the_row_and_leaves_the_issue_row_alone() {
         let s = script(&["label", "add", "sp-a", "overseer"], None);
         assert_eq!(
             s,
@@ -305,7 +332,6 @@ mod tests {
                 "BEGIN",
                 "INSERT INTO `beads`.events (id, issue_id, event_type, actor, old_value, new_value, comment, created_at) SELECT UUID(), 'sp-a', 'label_added', 'spira-lc', NULL, NULL, 'Added label: overseer', UTC_TIMESTAMP() FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `beads`.labels WHERE issue_id = 'sp-a' AND label = 'overseer')",
                 "INSERT IGNORE INTO `beads`.labels (issue_id, label) VALUES ('sp-a', 'overseer')",
-                "UPDATE `beads`.issues SET updated_at = UTC_TIMESTAMP() WHERE id = 'sp-a'",
                 "COMMIT",
             ]
         );
@@ -322,22 +348,39 @@ mod tests {
     #[test]
     fn a_note_appends_a_comment_inserts_metadata_merges_and_priority_sets() {
         let n = script(&["note", "sp-a", "--stdin"], Some("body\n"));
-        assert!(n[1].contains("CONCAT(notes, CHAR(10), 'body')"), "{}", n[1]);
+        assert!(n[3].contains("CONCAT(notes, CHAR(10), 'body')"), "{}", n[3]);
         let c = script(&["comments", "add", "sp-a", "hi"], None);
         assert!(c[1].starts_with("INSERT INTO `beads`.comments (id, issue_id, author, text, created_at) VALUES (UUID(), 'sp-a', 'spira-lc', 'hi',"));
+        assert_eq!(c.len(), 3, "a comment files no event and leaves the issue row alone, as bd does: {c:?}");
         let m = script(&["update", "sp-a", "--set-metadata", "k=v"], None);
-        assert!(m[1].contains("JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.\"k\"', 'v')"), "{}", m[1]);
-        assert!(n[2].starts_with("INSERT INTO `beads`.events (id, issue_id,") && n[2].contains("UUID()") && n[2].contains("JSON_OBJECT('notes', notes)"), "{}", n[2]);
-        assert_eq!(c.len(), 4, "a comment files no event, as bd files none: {c:?}");
+        assert!(m[3].contains("JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.\"k\"', 'v')"), "{}", m[3]);
         let p = script(&["update", "sp-a", "-p", "2"], None);
-        assert_eq!(p[1], "UPDATE `beads`.issues SET priority = 2 WHERE id = 'sp-a'");
+        assert_eq!(p[3], "UPDATE `beads`.issues SET priority = 2 WHERE id = 'sp-a'");
+    }
+
+    #[test]
+    fn an_update_event_carries_the_issue_as_it_was_and_the_value_it_became() {
+        for s in [script(&["note", "sp-a", "t"], None), script(&["update", "sp-a", "--set-metadata", "k=v"], None), script(&["update", "sp-a", "-p", "1"], None)] {
+            assert_eq!(s[1], "SET @event0 = UUID()");
+            assert!(s[2].starts_with("INSERT INTO `beads`.events (id, issue_id, event_type, actor, old_value, new_value, comment, created_at) VALUES (@event0, 'sp-a', 'updated', 'spira-lc', (SELECT JSON_MERGE_PATCH("), "{}", s[2]);
+            assert!(s[2].contains("'labels', NULLIF((SELECT JSON_ARRAYAGG(label)"), "{}", s[2]);
+            assert!(s[4].starts_with("UPDATE `beads`.events SET new_value = (SELECT JSON_OBJECT(") && s[4].ends_with("WHERE id = @event0"), "{}", s[4]);
+            assert!(s[5].contains("row_lock = CAST(") && s[5].contains("updated_at = UTC_TIMESTAMP()"), "{}", s[5]);
+        }
+    }
+
+    #[test]
+    fn a_metadata_number_boolean_or_null_is_stored_as_that_json_value_and_anything_else_as_text() {
+        for (v, json) in [("5", true), ("-3", true), ("1.5", true), ("true", true), ("null", true), ("hi", false), ("\"q\"", false), ("[1,2]", false), ("{\"x\":1}", false), (" 5", false), ("", false)] {
+            assert_eq!(metadata_value(v).starts_with("CAST("), json, "{v:?}");
+        }
     }
 
     #[test]
     fn a_quote_in_a_note_cannot_end_the_string() {
         let s = script(&["note", "sp-a", "--stdin"], Some("x'; DROP TABLE issues; --"));
-        assert!(s[1].contains(r"'x\'; DROP TABLE issues; --'"), "{}", s[1]);
-        assert!(!s[1].contains("x'; DROP"));
+        assert!(s[3].contains(r"'x\'; DROP TABLE issues; --'"), "{}", s[3]);
+        assert!(!s[3].contains("x'; DROP"));
     }
 
     #[test]
