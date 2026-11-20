@@ -102,6 +102,113 @@ pub fn read(run: &Path, id: &str, file: &str) -> Result<Vec<u8>, String> {
     fs::read(d.join(file)).map_err(|e| format!("{id}/{file}: {e}"))
 }
 
+const EXCERPT_CAP: usize = 300;
+const SHELL_CONTEXT: usize = 2;
+const TEST_BLOCK_CAP: usize = 20;
+pub const NO_FAILURE_FOUND: &str =
+    "(no failure lines matched; the last 80 lines of the output follow)";
+
+/// The failure itself, not the output's tail: cargo's `---- test stdout ----` blocks, failures
+/// list, `test result: FAILED` and `error: N target(s) failed`; or a shell suite's FAIL / not ok
+/// lines with their context; nextest's `FAIL` line with its indented panic block, once per test. The tail, announced as such, only when nothing matches.
+pub fn failure_excerpt(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut keep = vec![false; lines.len()];
+    let mut inside = false;
+    let mut running: Option<usize> = None;
+    for (i, l) in lines.iter().enumerate() {
+        let t = l.trim_start();
+        if t.starts_with("Running ") || t.starts_with("Doc-tests ") {
+            running = Some(i);
+        }
+        let block = t.starts_with("---- ") && t.trim_end().ends_with(" ----");
+        if block || (t == "failures:" && !inside) {
+            if !inside {
+                if let Some(r) = running.take() {
+                    keep[r] = true;
+                }
+            }
+            inside = true;
+        }
+        if t.starts_with("test result:") {
+            if t.contains("FAILED") {
+                keep[i] = true;
+            }
+            inside = false;
+        } else if (t.starts_with("error: ")
+            && t.contains("failed")
+            && !t.starts_with("error: could not compile"))
+            || (t.starts_with("error: could not compile") && t.contains("test"))
+        {
+            keep[i] = true;
+        }
+        if inside {
+            keep[i] = true;
+        }
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim_start();
+        if !t.starts_with("FAIL ") {
+            i += 1;
+            continue;
+        }
+        let indent = lines[i].len() - t.len();
+        let name = t.split_whitespace().last().unwrap_or(t);
+        let first = !seen.contains(&name);
+        seen.push(name);
+        i += 1;
+        let mut end = i;
+        while end < lines.len()
+            && end - i < TEST_BLOCK_CAP
+            && !lines[end].trim().is_empty()
+            && lines[end].len() - lines[end].trim_start().len() > indent
+        {
+            end += 1;
+        }
+        if first {
+            keep[i - 1..end].iter_mut().for_each(|k| *k = true);
+        }
+        i = end;
+    }
+    let cargo = keep.iter().any(|k| *k);
+    if !cargo {
+        for (i, l) in lines.iter().enumerate() {
+            if l.contains("FAIL") || l.trim_start().starts_with("not ok") {
+                for k in keep
+                    .iter_mut()
+                    .take(lines.len().min(i + 1 + SHELL_CONTEXT))
+                    .skip(i)
+                {
+                    *k = true;
+                }
+            }
+        }
+    }
+    let picked: Vec<&str> = lines
+        .iter()
+        .zip(&keep)
+        .filter(|(_, k)| **k)
+        .map(|(l, _)| *l)
+        .collect();
+    if picked.is_empty() {
+        return format!("{NO_FAILURE_FOUND}\n{}", tail(text, 80));
+    }
+    if picked.len() > EXCERPT_CAP {
+        return format!(
+            "(failure excerpt cut to its last {EXCERPT_CAP} lines)\n{}",
+            picked[picked.len() - EXCERPT_CAP..].join("\n")
+        );
+    }
+    picked.join("\n")
+}
+
+pub fn tail(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

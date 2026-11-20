@@ -25,6 +25,7 @@ use crate::model::{parse_members, render_members, EjectCause, LandMode, Member};
 use crate::ports::{ref_branch, AmiBuild, AmiLookup, RunOut};
 use crate::records::{self, one_line, write_atomic, Kv};
 use spira_config::scoped_stop;
+use spira_config::sendback::failure_excerpt;
 
 const DENY_LIST: &str = "deny-list";
 
@@ -3270,81 +3271,6 @@ fn vm_fault_cause(err: &str) -> Option<String> {
     Some(line.trim().to_string())
 }
 
-const EXCERPT_CAP: usize = 300;
-const SHELL_CONTEXT: usize = 2;
-pub(crate) const NO_FAILURE_FOUND: &str =
-    "(no failure lines matched; the last 80 lines of the output follow)";
-
-/// The failure itself, not the output's tail: cargo's `---- test stdout ----` blocks, failures
-/// list, `test result: FAILED` and `error: N target(s) failed`; or a shell suite's FAIL / not ok
-/// lines with their context. The tail, announced as such, only when nothing matches.
-pub(crate) fn failure_excerpt(text: &str) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    let mut keep = vec![false; lines.len()];
-    let mut inside = false;
-    let mut running: Option<usize> = None;
-    for (i, l) in lines.iter().enumerate() {
-        let t = l.trim_start();
-        if t.starts_with("Running ") || t.starts_with("Doc-tests ") {
-            running = Some(i);
-        }
-        let block = t.starts_with("---- ") && t.trim_end().ends_with(" ----");
-        if block || (t == "failures:" && !inside) {
-            if !inside {
-                if let Some(r) = running.take() {
-                    keep[r] = true;
-                }
-            }
-            inside = true;
-        }
-        if t.starts_with("test result:") {
-            if t.contains("FAILED") {
-                keep[i] = true;
-            }
-            inside = false;
-        } else if (t.starts_with("error: ")
-            && t.contains("failed")
-            && !t.starts_with("error: could not compile"))
-            || (t.starts_with("error: could not compile") && t.contains("test"))
-        {
-            keep[i] = true;
-        }
-        if inside {
-            keep[i] = true;
-        }
-    }
-    let cargo = keep.iter().any(|k| *k);
-    if !cargo {
-        for (i, l) in lines.iter().enumerate() {
-            if l.contains("FAIL") || l.trim_start().starts_with("not ok") {
-                for k in keep
-                    .iter_mut()
-                    .take(lines.len().min(i + 1 + SHELL_CONTEXT))
-                    .skip(i)
-                {
-                    *k = true;
-                }
-            }
-        }
-    }
-    let picked: Vec<&str> = lines
-        .iter()
-        .zip(&keep)
-        .filter(|(_, k)| **k)
-        .map(|(l, _)| *l)
-        .collect();
-    if picked.is_empty() {
-        return format!("{NO_FAILURE_FOUND}\n{}", tail(text, 80));
-    }
-    if picked.len() > EXCERPT_CAP {
-        return format!(
-            "(failure excerpt cut to its last {EXCERPT_CAP} lines)\n{}",
-            picked[picked.len() - EXCERPT_CAP..].join("\n")
-        );
-    }
-    picked.join("\n")
-}
-
 /// Consecutive passes ending without a verdict, with a member in common, that make the member the
 /// cause.
 const FAULTED_PASSES_RED: usize = 2;
@@ -3651,10 +3577,7 @@ fn rebuild_on_moved_base(
     }
 }
 
-pub(super) fn tail(text: &str, n: usize) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    lines[lines.len().saturating_sub(n)..].join("\n")
-}
+pub(super) use spira_config::sendback::tail;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn certify(
