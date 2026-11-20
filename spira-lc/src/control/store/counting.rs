@@ -7,11 +7,15 @@ use state_store::{Backend, MemBackend};
 pub(crate) struct Counting {
     pub(crate) inner: MemBackend,
     pub(crate) reads: std::sync::Mutex<Vec<(&'static str, String, usize)>>,
+    pub(crate) many_calls: std::sync::Mutex<Vec<String>>,
 }
 
 impl Counting {
     pub(crate) fn note(&self, kind: &'static str, key: &str, limit: usize) {
         self.reads.lock().unwrap().push((kind, key.to_string(), limit));
+    }
+    pub(crate) fn take_many_calls(&self) -> Vec<String> {
+        std::mem::take(&mut *self.many_calls.lock().unwrap())
     }
     pub(crate) fn take(&self) -> Vec<(&'static str, String, usize)> {
         std::mem::take(&mut *self.reads.lock().unwrap())
@@ -38,6 +42,9 @@ impl Backend for Counting {
         self.inner.get(key, at)
     }
     fn get_many(&self, keys: &[&str], at: u64) -> state_store::Result<Vec<Option<state_store::Version>>> {
+        if let Some(first) = keys.first() {
+            self.many_calls.lock().unwrap().push(first.to_string());
+        }
         for k in keys {
             self.note("get_many", k, 1);
         }
