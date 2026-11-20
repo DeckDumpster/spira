@@ -275,7 +275,7 @@ pub const MIGRATIONS: &[&[&str]] = &[
 #[cfg(test)]
 mod cost {
     use super::MIGRATIONS;
-    use crate::SCHEMA;
+    use crate::{exec, SCHEMA};
     use rusqlite::{params, Connection};
     use serde_json::{json, Value};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -344,7 +344,7 @@ mod cost {
     fn store_at(version: usize, rows: &[(String, i64, Vec<u8>)]) -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         for sql in SCHEMA.iter().chain(MIGRATIONS[..version].iter().flat_map(|m| m.iter())) {
-            conn.execute(sql, []).unwrap();
+            exec(&conn, sql, []).unwrap();
         }
         let tables: &[&str] = if version >= 1 { &["versions", "latest"] } else { &["versions"] };
         for table in tables {
@@ -353,7 +353,7 @@ mod cost {
                  VALUES (?1, ?2, 0, ?3, ?2, 0, 1)"
             );
             for (k, main, v) in rows {
-                conn.execute(&sql, params![k.as_bytes(), main, v]).unwrap();
+                exec(&conn, &sql, params![k.as_bytes(), main, v]).unwrap();
             }
         }
         conn
@@ -369,7 +369,7 @@ mod cost {
         }));
         let start = Instant::now();
         for sql in MIGRATIONS[version - 1] {
-            conn.execute(sql, []).unwrap();
+            exec(&conn, sql, []).unwrap();
         }
         (steps.load(Ordering::Relaxed), start.elapsed().as_millis())
     }
