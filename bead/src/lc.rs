@@ -18,25 +18,13 @@ pub fn create_bead_argv(id: &str, tip: Option<&str>, repo: Option<&str>) -> Vec<
 }
 
 /// The bead's lifecycle row, one attempt; `Err` names why it was not written.
-pub fn create_row(
-    lc: &LcClient,
-    id: &str,
-    tip: Option<&str>,
-    repo: Option<&str>,
-) -> Result<(), String> {
+pub fn create_row(lc: &LcClient, id: &str, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
     create_row_retrying(lc, id, tip, repo, &Retry::once())
 }
 
 /// [`create_row`], asked again while the store cannot tell, until `retry`'s bound runs out.
-pub fn create_row_retrying(
-    lc: &LcClient,
-    id: &str,
-    tip: Option<&str>,
-    repo: Option<&str>,
-    retry: &Retry,
-) -> Result<(), String> {
-    write_idempotent(lc, &create_bead_argv(id, tip, repo), retry)
-        .map_err(|e| format!("spira-lc {e}"))
+pub fn create_row_retrying(lc: &LcClient, id: &str, tip: Option<&str>, repo: Option<&str>, retry: &Retry) -> Result<(), String> {
+    write_idempotent(lc, &create_bead_argv(id, tip, repo), retry).map_err(|e| format!("spira-lc {e}"))
 }
 
 /// `dep-add`/`dep-remove <id> <depid> [--type T]`.
@@ -72,9 +60,7 @@ pub fn set_repo(lc: &LcClient, verb: &str, id: &str, repo: &str) -> SetRepo {
     match lc.call(&set_repo_argv(verb, id, repo)) {
         Ok(r) if r.code == 0 => SetRepo::Applied,
         Ok(r) if r.code == 1 => SetRepo::Refused(r.out),
-        Ok(_) | Err(LcError::Refused(_) | LcError::Fault(_) | LcError::NotRunning(_)) => {
-            SetRepo::Failed
-        }
+        Ok(_) | Err(LcError::Refused(_) | LcError::Fault(_) | LcError::NotRunning(_)) => SetRepo::Failed,
     }
 }
 
@@ -92,30 +78,17 @@ mod tests {
     }
 
     impl Transport for Scripted {
-        fn exchange(
-            &self,
-            argv: &[String],
-            _stdin: Option<&str>,
-            _d: Duration,
-        ) -> Result<Reply, String> {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
             self.seen.lock().unwrap().push(argv.to_vec());
             if self.code < 0 {
                 return Err("cannot tell: down".into());
             }
-            Ok(Reply {
-                code: self.code,
-                out: self.out.clone(),
-                err: String::new(),
-            })
+            Ok(Reply { code: self.code, out: self.out.clone(), err: String::new() })
         }
     }
 
     fn client(code: i32, out: &str) -> (LcClient, Arc<Scripted>) {
-        let t = Arc::new(Scripted {
-            code,
-            out: out.into(),
-            seen: Mutex::new(Vec::new()),
-        });
+        let t = Arc::new(Scripted { code, out: out.into(), seen: Mutex::new(Vec::new()) });
         (LcClient::over(t.clone(), true), t)
     }
 
@@ -123,21 +96,9 @@ mod tests {
     fn create_row_sends_the_cli_argv_over_the_socket_and_reports_a_refusal() {
         let (lc, t) = client(0, "");
         assert_eq!(create_row(&lc, "sp-1", Some("abc"), Some("spira")), Ok(()));
-        assert_eq!(
-            t.seen.lock().unwrap()[0],
-            [
-                "create-bead",
-                "sp-1",
-                "--submitted-tip",
-                "abc",
-                "--repo",
-                "spira"
-            ]
-        );
+        assert_eq!(t.seen.lock().unwrap()[0], ["create-bead", "sp-1", "--submitted-tip", "abc", "--repo", "spira"]);
         let (lc, _) = client(3, "refused: exists");
-        assert!(create_row(&lc, "sp-1", None, None)
-            .unwrap_err()
-            .contains("refused: exists"));
+        assert!(create_row(&lc, "sp-1", None, None).unwrap_err().contains("refused: exists"));
         let (lc, _) = client(-1, "");
         assert!(create_row(&lc, "sp-1", None, None).is_err());
     }
@@ -145,26 +106,9 @@ mod tests {
     #[test]
     fn the_row_a_filed_bead_gets_carries_no_planning_field() {
         let argv = create_bead_argv("sp-1", Some("abc"), Some("spira"));
-        assert_eq!(
-            argv,
-            [
-                "create-bead",
-                "sp-1",
-                "--submitted-tip",
-                "abc",
-                "--repo",
-                "spira"
-            ]
-        );
-        assert!(
-            !argv.iter().any(|a| a == "--title" || a == "--priority"),
-            "{argv:?}"
-        );
-        assert_eq!(
-            create_bead_argv("sp-1", None, None),
-            ["create-bead", "sp-1"],
-            "the control: the bare row still builds"
-        );
+        assert_eq!(argv, ["create-bead", "sp-1", "--submitted-tip", "abc", "--repo", "spira"]);
+        assert!(!argv.iter().any(|a| a == "--title" || a == "--priority"), "{argv:?}");
+        assert_eq!(create_bead_argv("sp-1", None, None), ["create-bead", "sp-1"], "the control: the bare row still builds");
     }
 
     #[test]
@@ -173,14 +117,8 @@ mod tests {
         assert_eq!(set_repo(&lc, "add", "a", "spira"), SetRepo::Applied);
         assert_eq!(t.seen.lock().unwrap()[0], ["set-repo", "a", "spira"]);
         let (lc, t) = client(1, "WORKING\n");
-        assert_eq!(
-            set_repo(&lc, "remove", "a", "spira"),
-            SetRepo::Refused("WORKING\n".into())
-        );
-        assert_eq!(
-            t.seen.lock().unwrap()[0],
-            ["set-repo", "a", "--clear", "--only-if", "spira"]
-        );
+        assert_eq!(set_repo(&lc, "remove", "a", "spira"), SetRepo::Refused("WORKING\n".into()));
+        assert_eq!(t.seen.lock().unwrap()[0], ["set-repo", "a", "--clear", "--only-if", "spira"]);
         let (lc, _) = client(-1, "");
         assert_eq!(set_repo(&lc, "add", "a", "spira"), SetRepo::Failed);
     }

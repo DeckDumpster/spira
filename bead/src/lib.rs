@@ -9,15 +9,15 @@
 pub mod bdq;
 #[path = "../tests/fixtures/bdsim.rs"]
 pub mod bdsim;
-pub mod claimdesc;
 pub mod door;
-pub mod event;
 pub mod filing;
+pub mod claimdesc;
 pub mod guard;
-pub mod identity;
-pub mod latency;
 pub mod lc;
+pub mod event;
+pub mod identity;
 pub mod statute;
+pub mod latency;
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -137,22 +137,14 @@ fn depends_raw(body: &str) -> Option<&str> {
 
 fn is_depends_token(t: &str) -> bool {
     let lower = t.to_ascii_lowercase();
-    let draft = lower
-        .strip_prefix("draft ")
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
-    let id = t.strip_prefix("sp-").is_some_and(|r| {
-        !r.is_empty() && r.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')
-    });
+    let draft = lower.strip_prefix("draft ").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    let id = t.strip_prefix("sp-").is_some_and(|r| !r.is_empty() && r.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.'));
     lower == "none" || draft || id
 }
 
 /// The first token of a body's `Depends:` line that is not a bead id, `draft N` or `none`.
 pub fn depends_prose(body: &str) -> Option<String> {
-    depends_raw(body)?
-        .split(',')
-        .map(str::trim)
-        .find(|t| !t.is_empty() && !is_depends_token(t))
-        .map(str::to_string)
+    depends_raw(body)?.split(',').map(str::trim).find(|t| !t.is_empty() && !is_depends_token(t)).map(str::to_string)
 }
 
 /// One line per `### Draft:` note whose `Depends:` line carries a token `depends_prose` rejects.
@@ -163,8 +155,7 @@ pub fn draft_depends_refusals(notes: &str) -> Vec<String> {
         .skip(1)
         .filter_map(|d| {
             let (title, body) = d.split_once('\n').unwrap_or((d, ""));
-            depends_prose(body)
-                .map(|t| format!("draft \"{}\": `Depends:` carries `{t}`", title.trim()))
+            depends_prose(body).map(|t| format!("draft \"{}\": `Depends:` carries `{t}`", title.trim()))
         })
         .collect()
 }
@@ -173,12 +164,7 @@ pub fn draft_depends_refusals(notes: &str) -> Vec<String> {
 /// the filer has since given an id.
 fn depends_line(body: &str) -> Option<Vec<String>> {
     let line = depends_raw(body)?;
-    Some(
-        line.split(',')
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty() && !t.eq_ignore_ascii_case("none"))
-            .collect(),
-    )
+    Some(line.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty() && !t.eq_ignore_ascii_case("none")).collect())
 }
 
 /// Why a Skuld-drafted body's dependencies and the `--depends-on` set disagree, or `None`.
@@ -192,14 +178,8 @@ pub fn depends_refusal(body: &str, depends_on: &[String]) -> Option<String> {
             "the body says it \"depends on\" something but carries no `Depends: <id>[, <id>…]` line, and prose files no edge. Add the line to the draft, and pass each id as --depends-on <id>".to_string()
         });
     };
-    let (drafts, ids): (Vec<&String>, Vec<&String>) = named
-        .iter()
-        .partition(|t| t.to_ascii_lowercase().starts_with("draft"));
-    let missing: Vec<&String> = ids
-        .iter()
-        .filter(|i| !depends_on.contains(i))
-        .copied()
-        .collect();
+    let (drafts, ids): (Vec<&String>, Vec<&String>) = named.iter().partition(|t| t.to_ascii_lowercase().starts_with("draft"));
+    let missing: Vec<&String> = ids.iter().filter(|i| !depends_on.contains(i)).copied().collect();
     let extra: Vec<&String> = depends_on.iter().filter(|d| !ids.contains(d)).collect();
     if !missing.is_empty() || extra.len() != drafts.len() {
         return Some(format!(
@@ -213,44 +193,25 @@ pub fn depends_refusal(body: &str, depends_on: &[String]) -> Option<String> {
 
 /// Why `base` cannot be stacked under a new bead of `repo`, or `None` when it can: only a
 /// live work bead of the same repo carries commits the new branch can be cut from.
-pub fn stack_after_refusal(
-    base: &str,
-    row: Option<&ShowRow>,
-    terminal: bool,
-    repo: &str,
-) -> Option<String> {
+pub fn stack_after_refusal(base: &str, row: Option<&ShowRow>, terminal: bool, repo: &str) -> Option<String> {
     let Some(row) = row else {
         return Some(format!("--stack-after {base}: no such bead"));
     };
-    if matches!(
-        row.issue_type.as_str(),
-        "epic" | "decision" | "event" | "molecule" | "gate" | "proposal"
-    ) {
-        return Some(format!(
-            "--stack-after {base}: a {} carries no commits to stack on",
-            row.issue_type
-        ));
+    if matches!(row.issue_type.as_str(), "epic" | "decision" | "event" | "molecule" | "gate" | "proposal") {
+        return Some(format!("--stack-after {base}: a {} carries no commits to stack on", row.issue_type));
     }
     if terminal {
-        return Some(format!(
-            "--stack-after {base}: already closed; file without --stack-after"
-        ));
+        return Some(format!("--stack-after {base}: already closed; file without --stack-after"));
     }
     if !row.labels.iter().any(|l| l == &format!("repo:{repo}")) {
-        return Some(format!(
-            "--stack-after {base}: not a repo:{repo} bead; a stack stays within one repo"
-        ));
+        return Some(format!("--stack-after {base}: not a repo:{repo} bead; a stack stays within one repo"));
     }
     None
 }
 
 /// The `-l` label list for a non-`work` kind: the scope label, `insight` for the `insight`
 /// kind, and `repo:<repo>` when a repo was given.
-pub fn non_work_labels(
-    scope_label: &str,
-    insight_label: Option<&str>,
-    repo: Option<&str>,
-) -> String {
+pub fn non_work_labels(scope_label: &str, insight_label: Option<&str>, repo: Option<&str>) -> String {
     let mut out = scope_label.to_string();
     if let Some(ins) = insight_label {
         out.push(',');
@@ -367,23 +328,13 @@ pub fn skuld_fence_binds(concierge: bool, requires_skuld: bool, parent_cmdline: 
 /// `rule.sh`: the shim runs `exec -a "$0"`, so the process's argv[0] is the shim's path.
 pub fn parent_is_rule(cmdline: &[u8]) -> bool {
     let argv0 = cmdline.split(|b| *b == 0).next().unwrap_or(&[]);
-    matches!(
-        argv0.rsplit(|b| *b == b'/').next(),
-        Some(b"rule") | Some(b"rule.sh")
-    )
+    matches!(argv0.rsplit(|b| *b == b'/').next(), Some(b"rule") | Some(b"rule.sh"))
 }
 
 /// `Ok` when `notes` holds `### Draft: <title>`, a blank line, then `body` trimmed and verbatim
 /// (ending the note, or followed by an `Open:` line, another draft, or the harness submit note),
 /// on a request labelled `skuld_label`; else the refusal text.
-pub fn skuld_drafted(
-    title: &str,
-    body: &str,
-    skuld_label: &str,
-    request: &str,
-    labels: &[String],
-    notes: &str,
-) -> Result<(), String> {
+pub fn skuld_drafted(title: &str, body: &str, skuld_label: &str, request: &str, labels: &[String], notes: &str) -> Result<(), String> {
     let how = "get a draft or review first: bead.sh file \"<title>\" --for skuld --repo <r> --body-file <the intent, or your draft for review>; then file the text of the note Skuld leaves with --drafted-by <that id>";
     let body = body.replace("\r\n", "\n");
     let body = body.trim();
@@ -391,26 +342,18 @@ pub fn skuld_drafted(
         return Err(format!("the body is empty; {how}"));
     }
     if !labels.iter().any(|l| l == skuld_label) {
-        return Err(format!(
-            "{request} is not a Skuld request (no `{skuld_label}` label); {how}"
-        ));
+        return Err(format!("{request} is not a Skuld request (no `{skuld_label}` label); {how}"));
     }
     let wanted = format!("### Draft: {}\n\n{body}", title.trim());
     let notes = notes.replace("\r\n", "\n");
     let held = notes.match_indices(&wanted).any(|(at, m)| {
         let rest = notes[at + m.len()..].trim_start();
-        rest.is_empty()
-            || rest.starts_with("Open:")
-            || rest.starts_with("### Draft:")
-            || rest.starts_with(HARNESS_SUBMIT_NOTE)
+        rest.is_empty() || rest.starts_with("Open:") || rest.starts_with("### Draft:") || rest.starts_with(HARNESS_SUBMIT_NOTE)
     });
     if held {
         Ok(())
     } else {
-        Err(format!(
-            "no `### Draft: {}` note on {request} holds this body verbatim; {how}",
-            title.trim()
-        ))
+        Err(format!("no `### Draft: {}` note on {request} holds this body verbatim; {how}", title.trim()))
     }
 }
 
@@ -422,9 +365,7 @@ pub const USER_PATH_HEADING: &str = "## User path";
 pub fn section(text: &str, heading: &str) -> Option<String> {
     let mut lines = text.lines();
     lines.find(|l| l.trim_end().eq_ignore_ascii_case(heading))?;
-    let body: Vec<&str> = lines
-        .take_while(|l| !l.trim_start().starts_with('#'))
-        .collect();
+    let body: Vec<&str> = lines.take_while(|l| !l.trim_start().starts_with('#')).collect();
     let body = body.join("\n").trim().to_string();
     (!body.is_empty()).then_some(body)
 }
@@ -438,8 +379,7 @@ pub fn pilgrimage_spec(design: &str) -> Result<(String, String), String> {
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
         .ok_or("the design has no `# ` title")?;
-    let intent = section(design, INTENT_HEADING)
-        .ok_or_else(|| format!("the design has no `{INTENT_HEADING}` section"))?;
+    let intent = section(design, INTENT_HEADING).ok_or_else(|| format!("the design has no `{INTENT_HEADING}` section"))?;
     let path = section(design, USER_PATH_HEADING).ok_or_else(|| {
         format!("the design has no `{USER_PATH_HEADING}` section: the steps a customer takes, which the pilgrimage walks")
     })?;
@@ -518,27 +458,14 @@ pub fn idea_rows(json: &str) -> Vec<IdeaRow> {
     let Ok(serde_json::Value::Array(rows)) = serde_json::from_str::<serde_json::Value>(json) else {
         return Vec::new();
     };
-    let text = |r: &serde_json::Value, k: &str| {
-        r.get(k)
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string()
-    };
+    let text = |r: &serde_json::Value, k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let mut out: Vec<IdeaRow> = rows
         .iter()
         .filter(|r| is_open(Kind::Idea, spira_config::nonwork::status_of(Kind::Idea, r)))
-        .map(|r| IdeaRow {
-            id: text(r, "id"),
-            title: text(r, "title"),
-            created_at: text(r, "created_at"),
-        })
+        .map(|r| IdeaRow { id: text(r, "id"), title: text(r, "title"), created_at: text(r, "created_at") })
         .filter(|r| !r.id.is_empty())
         .collect();
-    out.sort_by(|a, b| {
-        b.created_at
-            .cmp(&a.created_at)
-            .then_with(|| b.id.cmp(&a.id))
-    });
+    out.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| b.id.cmp(&a.id)));
     out
 }
 
@@ -574,11 +501,7 @@ pub fn parse_show_row(json: &str) -> Option<ShowRow> {
         .and_then(|s| s.as_str())
         .unwrap_or("")
         .to_string();
-    let notes = obj
-        .get("notes")
-        .and_then(|s| s.as_str())
-        .unwrap_or("")
-        .to_string();
+    let notes = obj.get("notes").and_then(|s| s.as_str()).unwrap_or("").to_string();
     Some(ShowRow {
         labels,
         status,
@@ -595,9 +518,7 @@ pub fn parse_title(json: &str) -> Option<String> {
         serde_json::Value::Array(a) => a.first()?,
         other => other,
     };
-    obj.get("title")
-        .and_then(|s| s.as_str())
-        .map(str::to_string)
+    obj.get("title").and_then(|s| s.as_str()).map(str::to_string)
 }
 
 /// The `priority` field of one `bd show --json` payload (object or one-element array).
@@ -617,9 +538,7 @@ pub fn parse_issue_type(json: &str) -> Option<String> {
         serde_json::Value::Array(a) => a.first()?,
         other => other,
     };
-    obj.get("issue_type")
-        .and_then(|p| p.as_str())
-        .map(str::to_string)
+    obj.get("issue_type").and_then(|p| p.as_str()).map(str::to_string)
 }
 
 /// Whether a priority change on this bead is mirrored to a lifecycle row: only a work kind has one.
@@ -634,12 +553,7 @@ pub fn parse_description(json: &str) -> Option<String> {
         serde_json::Value::Array(a) => a.first()?,
         other => other,
     };
-    Some(
-        obj.get("description")
-            .and_then(|d| d.as_str())
-            .unwrap_or("")
-            .to_string(),
-    )
+    Some(obj.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string())
 }
 
 /// What a replace prints so the loss is visible: the old body's length and first lines.
@@ -655,11 +569,7 @@ pub fn replaced_body_summary(old: &str) -> String {
 
 /// The old body with `addition` kept beneath a dated separator.
 pub fn appended_body(old: &str, addition: &str, date: &str) -> String {
-    format!(
-        "{}\n\n--- appended {date} ---\n\n{}\n",
-        old.trim_end(),
-        addition.trim_end()
-    )
+    format!("{}\n\n--- appended {date} ---\n\n{}\n", old.trim_end(), addition.trim_end())
 }
 
 /// A priority argument: 0..=4, optionally written `P1`.
@@ -704,15 +614,11 @@ pub fn parse_blocks_targets(json: &str) -> Vec<String> {
 /// The `relates-to` link targets in `rel_json` that `blocks` does not already name. Err when
 /// the list is not a JSON array: an unreadable answer is never "no links".
 pub fn relates_only_targets(blocks: &[String], rel_json: &str) -> Result<Vec<String>, String> {
-    let v: serde_json::Value =
-        serde_json::from_str(rel_json).map_err(|e| format!("not JSON: {e}"))?;
+    let v: serde_json::Value = serde_json::from_str(rel_json).map_err(|e| format!("not JSON: {e}"))?;
     if !v.is_array() {
         return Err("not a JSON array".into());
     }
-    Ok(parse_blocks_targets(rel_json)
-        .into_iter()
-        .filter(|t| !blocks.iter().any(|b| b == t))
-        .collect())
+    Ok(parse_blocks_targets(rel_json).into_iter().filter(|t| !blocks.iter().any(|b| b == t)).collect())
 }
 
 /// The id `bd create` printed: bare under `--silent`, or the `id` of the object (or
@@ -745,12 +651,8 @@ pub enum Readback {
 /// failed or is not JSON is `Unreadable`, never `Absent`: only a readable listing without the
 /// bead proves nothing was written.
 pub fn readback(list_code: i32, listing: &str, title: &str, since: &str) -> Readback {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(listing) else {
-        return Readback::Unreadable;
-    };
-    let Some(rows) = v.as_array().filter(|_| list_code == 0) else {
-        return Readback::Unreadable;
-    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(listing) else { return Readback::Unreadable };
+    let Some(rows) = v.as_array().filter(|_| list_code == 0) else { return Readback::Unreadable };
     let mut hits = rows.iter().filter(|d| {
         let at = d.get("created_at").and_then(|t| t.as_str()).unwrap_or("");
         d.get("title").and_then(|t| t.as_str()) == Some(title)
@@ -758,9 +660,7 @@ pub fn readback(list_code: i32, listing: &str, title: &str, since: &str) -> Read
             && at.ends_with('Z')
             && at.get(..19).is_some_and(|p| p >= since)
     });
-    let Some(first) = hits.next() else {
-        return Readback::Absent;
-    };
+    let Some(first) = hits.next() else { return Readback::Absent };
     match (first.get("id").and_then(|i| i.as_str()), hits.next()) {
         (Some(id), None) => Readback::Found(id.to_string()),
         _ => Readback::Ambiguous,
@@ -874,12 +774,7 @@ pub fn is_incident(labels: &[String], incident_label: &str) -> bool {
 
 /// The edge filing a remedy under `parent` adds: the incident blocks on the new bead, since a
 /// bd parent cannot be blocked on its own child. `None` under an ordinary parent.
-pub fn remedy_edge(
-    parent_labels: &[String],
-    incident_label: &str,
-    new_id: &str,
-    parent_id: &str,
-) -> Option<(String, String)> {
+pub fn remedy_edge(parent_labels: &[String], incident_label: &str, new_id: &str, parent_id: &str) -> Option<(String, String)> {
     is_incident(parent_labels, incident_label).then(|| (parent_id.to_string(), new_id.to_string()))
 }
 
@@ -903,9 +798,7 @@ pub fn lint(src: &dyn LintSource, cfg: &LintCfg) -> (i32, Vec<String>) {
         if let Some(braw) = branch_label(&row.labels) {
             let cand = branch_candidate(braw);
             if !cand.is_empty() && cand != id && src.show(cand).is_some() {
-                out.push(format!(
-                    "bead: {id}: branch: label names {cand}, not itself"
-                ));
+                out.push(format!("bead: {id}: branch: label names {cand}, not itself"));
             }
         }
 
@@ -918,21 +811,14 @@ pub fn lint(src: &dyn LintSource, cfg: &LintCfg) -> (i32, Vec<String>) {
                 .entry(oid.clone())
                 .or_insert_with(|| src.show(oid).map(|r| r.labels).unwrap_or_default());
         }
-        let blocked_has = |oid: &String, label: &str| {
-            label_cache
-                .get(oid)
-                .is_some_and(|ls| ls.iter().any(|l| l == label))
-        };
+        let blocked_has = |oid: &String, label: &str| label_cache.get(oid).is_some_and(|ls| ls.iter().any(|l| l == label));
 
         if !cfg.ask_label.is_empty() && row.labels.contains(&cfg.ask_label) {
             for oid in blocks.iter().filter(|o| blocked_has(o, &cfg.ask_label)) {
                 out.push(format!("bead: {id}: blocks edge to ask-labelled {oid} (asks must not block each other; use bd dep relate)"));
             }
         }
-        for oid in blocks
-            .iter()
-            .filter(|o| blocked_has(o, &cfg.incident_label))
-        {
+        for oid in blocks.iter().filter(|o| blocked_has(o, &cfg.incident_label)) {
             out.push(format!("bead: {id}: blocks edge to incident-labelled {oid} (alarms must not block work; use bd dep relate)"));
         }
 
@@ -950,22 +836,14 @@ pub fn lint(src: &dyn LintSource, cfg: &LintCfg) -> (i32, Vec<String>) {
         } else {
             false
         };
-        if awaits
-            && cfg
-                .spec_partitions
-                .iter()
-                .any(|p| is_builder_bead(&row.labels, p))
-            && !has_build_spec(&row.description)
-        {
+        if awaits && cfg.spec_partitions.iter().any(|p| is_builder_bead(&row.labels, p)) && !has_build_spec(&row.description) {
             out.push(format!("bead: {id}: no build spec: a builder bead needs a `{BUILD_HEADING}` section naming what to build (or route it --for spike)"));
         }
         if row.labels.contains(&cfg.incident_label) && !lc_done(src, &mut lc, id) {
             let related = match src.relates_targets(id) {
                 Ok(t) => t,
                 Err(e) => {
-                    out.push(format!(
-                        "bead: {id}: unreadable (bd dep list --type relates-to{e})"
-                    ));
+                    out.push(format!("bead: {id}: unreadable (bd dep list --type relates-to{e})"));
                     continue;
                 }
             };
@@ -978,13 +856,7 @@ pub fn lint(src: &dyn LintSource, cfg: &LintCfg) -> (i32, Vec<String>) {
             }
         }
 
-        let (_, lines) = lint_judge(
-            &labels_joined,
-            awaits,
-            &row.issue_type,
-            &partitions_joined,
-            &cfg.no_loop_label,
-        );
+        let (_, lines) = lint_judge(&labels_joined, awaits, &row.issue_type, &partitions_joined, &cfg.no_loop_label);
         for line in lines {
             out.push(format!("bead: {id}: {line}"));
         }
@@ -1002,23 +874,15 @@ mod tests {
         let tok = depends_prose(body).expect("prose found");
         assert!(tok.starts_with("none."), "{tok}");
         let why = depends_refusal(body, &[]).expect("refused");
-        assert!(
-            why.contains(&tok) && why.contains("move the prose into Context"),
-            "{why}"
-        );
-        for ok in [
-            "Depends: none",
-            "Depends: sp-a, sp-b.1",
-            "Depends: draft 2, sp-c",
-        ] {
+        assert!(why.contains(&tok) && why.contains("move the prose into Context"), "{why}");
+        for ok in ["Depends: none", "Depends: sp-a, sp-b.1", "Depends: draft 2, sp-c"] {
             assert_eq!(depends_prose(ok), None, "{ok}");
         }
     }
 
     #[test]
     fn only_the_draft_with_prose_is_named() {
-        let notes =
-            "### Draft: First\n\nDepends: none\n\n### Draft: Second\n\nDepends: sp-a and more\n";
+        let notes = "### Draft: First\n\nDepends: none\n\n### Draft: Second\n\nDepends: sp-a and more\n";
         let found = draft_depends_refusals(notes);
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(found[0].contains("Second"), "{found:?}");
@@ -1031,27 +895,14 @@ mod tests {
     #[test]
     fn prose_depends_on_with_no_depends_line_is_refused() {
         let why = depends_refusal("This item depends on draft 1.\n", &[]).expect("refused");
-        assert!(
-            why.contains("Depends:") && why.contains("--depends-on"),
-            "{why}"
-        );
-        assert_eq!(
-            depends_refusal("Nothing to wait for.\n", &[]),
-            None,
-            "the control: no prose, no line"
-        );
+        assert!(why.contains("Depends:") && why.contains("--depends-on"), "{why}");
+        assert_eq!(depends_refusal("Nothing to wait for.\n", &[]), None, "the control: no prose, no line");
     }
 
     #[test]
     fn a_depends_line_matching_the_flags_is_accepted() {
-        assert_eq!(
-            depends_refusal("depends on sp-a\n\nDepends: sp-a\n", &ids(&["sp-a"])),
-            None
-        );
-        assert_eq!(
-            depends_refusal("Depends: sp-a, sp-b\n", &ids(&["sp-b", "sp-a"])),
-            None
-        );
+        assert_eq!(depends_refusal("depends on sp-a\n\nDepends: sp-a\n", &ids(&["sp-a"])), None);
+        assert_eq!(depends_refusal("Depends: sp-a, sp-b\n", &ids(&["sp-b", "sp-a"])), None);
         assert_eq!(depends_refusal("Depends: none\n", &[]), None);
     }
 
@@ -1059,20 +910,15 @@ mod tests {
     fn a_depends_line_the_flags_do_not_match_is_refused_both_ways() {
         assert!(depends_refusal("Depends: sp-b\n", &[]).is_some());
         assert!(depends_refusal("Depends: sp-b\n", &ids(&["sp-a"])).is_some());
-        assert!(
-            depends_refusal("Depends: sp-a\n", &ids(&["sp-a", "sp-c"])).is_some(),
-            "a flag the line omits"
-        );
+        assert!(depends_refusal("Depends: sp-a\n", &ids(&["sp-a", "sp-c"])).is_some(), "a flag the line omits");
     }
 
     #[test]
     fn a_draft_n_on_the_line_is_matched_by_one_extra_flag() {
-        assert_eq!(
-            depends_refusal("Depends: draft 1, sp-c\n", &ids(&["sp-c", "sp-x"])),
-            None
-        );
+        assert_eq!(depends_refusal("Depends: draft 1, sp-c\n", &ids(&["sp-c", "sp-x"])), None);
         assert!(depends_refusal("Depends: draft 1, sp-c\n", &ids(&["sp-c"])).is_some());
     }
+
 
     #[test]
     fn skuld_drafted_passes_an_exact_match_and_an_open_line_after_it() {
@@ -1094,8 +940,7 @@ mod tests {
         assert!(skuld_fence_binds(true, true, b"x/myrule.sh\0"));
         assert!(skuld_fence_binds(true, true, b""));
         assert!(!skuld_fence_binds(false, true, b"bash\0"));
-        assert!(SKULD_NEEDS_DRAFT
-            .starts_with("a builder bead the Concierge files needs --drafted-by <request-id>"));
+        assert!(SKULD_NEEDS_DRAFT.starts_with("a builder bead the Concierge files needs --drafted-by <request-id>"));
     }
 
     #[test]
@@ -1109,31 +954,16 @@ mod tests {
     fn skuld_drafted_refuses_an_edited_body_a_foreign_request_and_an_empty_body() {
         let l = vec!["draft".to_string()];
         let notes = "### Draft: T\n\nbody line\n";
-        let edited =
-            skuld_drafted("T", "body line EDITED", "draft", "sp-r", &l, notes).unwrap_err();
+        let edited = skuld_drafted("T", "body line EDITED", "draft", "sp-r", &l, notes).unwrap_err();
         assert!(edited.contains("--for skuld"));
-        assert!(
-            skuld_drafted("T", "body", "draft", "sp-r", &l, notes).is_err(),
-            "a prefix of a line is not a match"
-        );
+        assert!(skuld_drafted("T", "body", "draft", "sp-r", &l, notes).is_err(), "a prefix of a line is not a match");
         let longer = "### Draft: T\n\na\nb\nc\n";
-        assert!(
-            skuld_drafted("T", "a\nb", "draft", "sp-r", &l, longer).is_err(),
-            "a truncated body is not verbatim"
-        );
-        let submitted =
-            "### Draft: T\n\na\nb\n\nSubmitted: work committed on branch and marked submitted.\n";
-        assert!(
-            skuld_drafted("T", "a", "draft", "sp-r", &l, submitted).is_err(),
-            "the submit note does not loosen verbatim matching"
-        );
+        assert!(skuld_drafted("T", "a\nb", "draft", "sp-r", &l, longer).is_err(), "a truncated body is not verbatim");
+        let submitted = "### Draft: T\n\na\nb\n\nSubmitted: work committed on branch and marked submitted.\n";
+        assert!(skuld_drafted("T", "a", "draft", "sp-r", &l, submitted).is_err(), "the submit note does not loosen verbatim matching");
         assert!(skuld_drafted("U", "body line", "draft", "sp-r", &l, notes).is_err());
-        assert!(skuld_drafted("T", "body line", "draft", "sp-r", &[], notes)
-            .unwrap_err()
-            .contains("--for skuld"));
-        assert!(skuld_drafted("T", "  \n", "draft", "sp-r", &l, notes)
-            .unwrap_err()
-            .contains("--for skuld"));
+        assert!(skuld_drafted("T", "body line", "draft", "sp-r", &[], notes).unwrap_err().contains("--for skuld"));
+        assert!(skuld_drafted("T", "  \n", "draft", "sp-r", &l, notes).unwrap_err().contains("--for skuld"));
     }
 
     const DESIGN: &str = "# Agent tools\n\n## Intent\n\nLet an agent save a card.\n\n## User path\n\n1. Sign in.\n2. Save a card.\n\n## Test strategy\n\nfoo\n";
@@ -1180,10 +1010,7 @@ mod tests {
 
     #[test]
     fn parse_description_reads_array_and_object() {
-        assert_eq!(
-            parse_description(r#"[{"description":"x"}]"#).as_deref(),
-            Some("x")
-        );
+        assert_eq!(parse_description(r#"[{"description":"x"}]"#).as_deref(), Some("x"));
         assert_eq!(parse_description(r#"{"id":"a"}"#).as_deref(), Some(""));
         assert_eq!(parse_description("nope"), None);
     }
@@ -1296,20 +1123,14 @@ mod tests {
 
     #[test]
     fn work_labels_appends_repo_and_never_express() {
-        assert_eq!(
-            work_labels("testscope,plan", "testrepo"),
-            "testscope,plan,repo:testrepo"
-        );
+        assert_eq!(work_labels("testscope,plan", "testrepo"), "testscope,plan,repo:testrepo");
     }
 
     #[test]
     fn the_contract_fix_flag_adds_its_label_and_its_absence_changes_nothing() {
         let base = work_labels("testscope,plan", "testrepo");
         assert_eq!(with_contract_fix(base.clone(), false), base);
-        assert_eq!(
-            with_contract_fix(base, true),
-            "testscope,plan,repo:testrepo,repo-contract-fix"
-        );
+        assert_eq!(with_contract_fix(base, true), "testscope,plan,repo:testrepo,repo-contract-fix");
     }
 
     #[test]
@@ -1321,22 +1142,14 @@ mod tests {
 
     #[test]
     fn idea_rows_are_open_only_newest_first() {
-        let got = idea_rows(
-            r#"[{"id":"sp-a","title":"old","status":"open","created_at":"2026-10-01T00:00:00Z"},{"id":"sp-b","title":"new","status":"open","created_at":"2026-10-20T00:00:00Z"},{"id":"sp-c","title":"gone","status":"closed","created_at":"2026-10-25T00:00:00Z"}]"#,
-        );
-        assert_eq!(
-            got.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
-            ["sp-b", "sp-a"]
-        );
+        let got = idea_rows(r#"[{"id":"sp-a","title":"old","status":"open","created_at":"2026-10-01T00:00:00Z"},{"id":"sp-b","title":"new","status":"open","created_at":"2026-10-20T00:00:00Z"},{"id":"sp-c","title":"gone","status":"closed","created_at":"2026-10-25T00:00:00Z"}]"#);
+        assert_eq!(got.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-b", "sp-a"]);
         assert!(idea_rows("not json").is_empty());
     }
 
     #[test]
     fn idea_kind_carries_the_idea_label_and_no_partition() {
-        assert_eq!(
-            non_work_labels("testscope", Some("idea"), Some("spira")),
-            "testscope,idea,repo:spira"
-        );
+        assert_eq!(non_work_labels("testscope", Some("idea"), Some("spira")), "testscope,idea,repo:spira");
     }
 
     #[test]
@@ -1399,31 +1212,12 @@ mod tests {
     #[test]
     fn the_partition_check_follows_the_lifecycle_row_not_bd_status() {
         use spira_store::lc_state::Row;
-        let row = |st: &str| Row {
-            bead_id: "sp-a".into(),
-            state: st.into(),
-            ..Default::default()
-        };
-        for (st, want) in [
-            ("READY", 1),
-            ("REWORK", 1),
-            ("WORKING", 0),
-            ("SUBMITTED", 0),
-            ("LANDED", 0),
-        ] {
-            let (n, _) = lint_judge(
-                "repo:spira",
-                awaits_dispatch(Some(&row(st))),
-                "task",
-                PART,
-                NO_LOOP,
-            );
+        let row = |st: &str| Row { bead_id: "sp-a".into(), state: st.into(), ..Default::default() };
+        for (st, want) in [("READY", 1), ("REWORK", 1), ("WORKING", 0), ("SUBMITTED", 0), ("LANDED", 0)] {
+            let (n, _) = lint_judge("repo:spira", awaits_dispatch(Some(&row(st))), "task", PART, NO_LOOP);
             assert_eq!(n, want, "{st}");
         }
-        assert!(
-            !awaits_dispatch(None),
-            "a bead with no row can never be claimed"
-        );
+        assert!(!awaits_dispatch(None), "a bead with no row can never be claimed");
     }
 
     #[test]
@@ -1465,16 +1259,10 @@ mod tests {
         assert_eq!(parse_priority(r#"[{"priority":2}]"#), Some(2));
         assert_eq!(parse_priority(r#"{"priority":0}"#), Some(0));
         assert_eq!(parse_priority("{}"), None);
-        assert_eq!(
-            parse_issue_type(r#"[{"issue_type":"decision"}]"#).as_deref(),
-            Some("decision")
-        );
+        assert_eq!(parse_issue_type(r#"[{"issue_type":"decision"}]"#).as_deref(), Some("decision"));
         assert_eq!(parse_issue_type("{}"), None);
         for ty in ["decision", "event", "proposal"] {
-            assert!(
-                !carries_lifecycle_row(&format!(r#"[{{"issue_type":"{ty}"}}]"#)),
-                "{ty}"
-            );
+            assert!(!carries_lifecycle_row(&format!(r#"[{{"issue_type":"{ty}"}}]"#)), "{ty}");
         }
         assert!(carries_lifecycle_row(r#"[{"issue_type":"task"}]"#));
         assert_eq!(parse_priority_arg("P1"), Some(1));
@@ -1485,21 +1273,14 @@ mod tests {
             priority_note("ryan", Some(2), 1, Some("blocks the round")),
             "Priority changed P1 (was P2) by ryan. Reason: blocks the round"
         );
-        assert_eq!(
-            priority_note("ryan", None, 1, None),
-            "Priority changed P1 (was unknown) by ryan."
-        );
+        assert_eq!(priority_note("ryan", None, 1, None), "Priority changed P1 (was unknown) by ryan.");
     }
 
     #[test]
     fn a_build_spec_is_a_build_heading_with_content_under_it() {
-        assert!(has_build_spec(
-            "Why.\n\n## Build\n\nA proxy in spira/foo.\n"
-        ));
+        assert!(has_build_spec("Why.\n\n## Build\n\nA proxy in spira/foo.\n"));
         assert!(has_build_spec("## Build\nx\n## Acceptance\ny"));
-        assert!(!has_build_spec(
-            "Outcome: no failed requests, whatever the mechanism."
-        ));
+        assert!(!has_build_spec("Outcome: no failed requests, whatever the mechanism."));
         assert!(!has_build_spec("## Build\n\n## Acceptance\ny"));
         assert!(!has_build_spec("## Build\n   \n"));
         assert!(!has_build_spec("Rebuild the ## Build step"));
@@ -1523,28 +1304,16 @@ mod tests {
     fn relates_only_targets_drops_blockers_and_refuses_an_unreadable_list() {
         let blocks = vec!["sp-a".to_string()];
         let json = r#"[{"depends_on_id":"sp-a"},{"id":"sp-b"}]"#;
-        assert_eq!(
-            relates_only_targets(&blocks, json),
-            Ok(vec!["sp-b".to_string()])
-        );
-        assert!(
-            relates_only_targets(&blocks, "warning: slow").is_err(),
-            "text is never an empty link list"
-        );
+        assert_eq!(relates_only_targets(&blocks, json), Ok(vec!["sp-b".to_string()]));
+        assert!(relates_only_targets(&blocks, "warning: slow").is_err(), "text is never an empty link list");
         assert!(relates_only_targets(&blocks, r#"{"error":"x"}"#).is_err());
     }
 
     #[test]
     fn parse_created_id_reads_silent_and_json_shapes() {
         assert_eq!(parse_created_id("sp-abc1\n").as_deref(), Some("sp-abc1"));
-        assert_eq!(
-            parse_created_id("{\"id\":\"sp-x\"}").as_deref(),
-            Some("sp-x")
-        );
-        assert_eq!(
-            parse_created_id("[{\"id\":\"sp-y\"}]").as_deref(),
-            Some("sp-y")
-        );
+        assert_eq!(parse_created_id("{\"id\":\"sp-x\"}").as_deref(), Some("sp-x"));
+        assert_eq!(parse_created_id("[{\"id\":\"sp-y\"}]").as_deref(), Some("sp-y"));
         assert_eq!(parse_created_id("created a thing"), None);
         assert_eq!(parse_created_id(""), None);
     }
@@ -1552,52 +1321,15 @@ mod tests {
     #[test]
     fn readback_tells_a_missing_bead_from_an_unreadable_store() {
         let since = "2026-11-13T10:00:00";
-        let row = |id: &str, title: &str, at: &str| {
-            format!(r#"{{"id":"{id}","title":"{title}","created_at":"{at}"}}"#)
-        };
+        let row = |id: &str, title: &str, at: &str| format!(r#"{{"id":"{id}","title":"{title}","created_at":"{at}"}}"#);
         let new = row("sp-a", "t", "2026-11-13T10:00:05.1Z");
         let old = row("sp-old", "t", "2026-11-01T10:00:05Z");
-        assert_eq!(
-            readback(
-                0,
-                &format!("[{new},{}]", row("sp-b", "u", "2026-11-13T10:00:06Z")),
-                "t",
-                since
-            ),
-            Readback::Found("sp-a".into())
-        );
-        assert_eq!(
-            readback(0, &format!("[{old},{new}]"), "t", since),
-            Readback::Found("sp-a".into()),
-            "an older bead of the same title is not this create"
-        );
-        assert_eq!(
-            readback(0, &format!("[{old}]"), "t", since),
-            Readback::Absent
-        );
-        assert_eq!(
-            readback(0, &format!("[{new}]"), "gone", since),
-            Readback::Absent
-        );
-        assert_eq!(
-            readback(
-                0,
-                &format!("[{new},{}]", row("sp-c", "t", "2026-11-13T10:00:09Z")),
-                "t",
-                since
-            ),
-            Readback::Ambiguous
-        );
-        assert_eq!(
-            readback(
-                0,
-                &format!("[{}]", row("sp-z", "t", "2026-11-13T10:00:09+02:00")),
-                "t",
-                since
-            ),
-            Readback::Absent,
-            "a zone it cannot compare is not proof"
-        );
+        assert_eq!(readback(0, &format!("[{new},{}]", row("sp-b", "u", "2026-11-13T10:00:06Z")), "t", since), Readback::Found("sp-a".into()));
+        assert_eq!(readback(0, &format!("[{old},{new}]"), "t", since), Readback::Found("sp-a".into()), "an older bead of the same title is not this create");
+        assert_eq!(readback(0, &format!("[{old}]"), "t", since), Readback::Absent);
+        assert_eq!(readback(0, &format!("[{new}]"), "gone", since), Readback::Absent);
+        assert_eq!(readback(0, &format!("[{new},{}]", row("sp-c", "t", "2026-11-13T10:00:09Z")), "t", since), Readback::Ambiguous);
+        assert_eq!(readback(0, &format!("[{}]", row("sp-z", "t", "2026-11-13T10:00:09+02:00")), "t", since), Readback::Absent, "a zone it cannot compare is not proof");
         assert_eq!(readback(2, "", "t", since), Readback::Unreadable);
         assert_eq!(readback(2, "[]", "t", since), Readback::Unreadable);
         assert_eq!(readback(0, "{}", "t", since), Readback::Unreadable);
@@ -1674,28 +1406,12 @@ mod tests {
 
     #[test]
     fn a_stack_base_must_be_live_same_repo_work() {
-        let row = |ty: &str, st: &str, l: &str| ShowRow {
-            labels: vec![l.into()],
-            status: st.into(),
-            issue_type: ty.into(),
-            description: String::new(),
-            notes: String::new(),
-        };
-        assert_eq!(
-            stack_after_refusal("sp-a", Some(&row("task", "open", "repo:r")), false, "r"),
-            None
-        );
+        let row = |ty: &str, st: &str, l: &str| ShowRow { labels: vec![l.into()], status: st.into(), issue_type: ty.into(), description: String::new(), notes: String::new() };
+        assert_eq!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:r")), false, "r"), None);
         assert!(stack_after_refusal("sp-a", None, false, "r").is_some());
-        assert!(
-            stack_after_refusal("sp-a", Some(&row("epic", "open", "repo:r")), false, "r").is_some()
-        );
-        assert!(
-            stack_after_refusal("sp-a", Some(&row("task", "open", "repo:r")), true, "r").is_some()
-        );
-        assert!(
-            stack_after_refusal("sp-a", Some(&row("task", "open", "repo:other")), false, "r")
-                .is_some()
-        );
+        assert!(stack_after_refusal("sp-a", Some(&row("epic", "open", "repo:r")), false, "r").is_some());
+        assert!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:r")), true, "r").is_some());
+        assert!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:other")), false, "r").is_some());
     }
 
     // -- lint over a LintSource ----------------------------------------------------------
@@ -1744,25 +1460,15 @@ mod tests {
     }
 
     fn edges(v: &[(String, String)], id: &str) -> Vec<String> {
-        v.iter()
-            .filter(|(f, _)| f == id)
-            .map(|(_, t)| t.clone())
-            .collect()
+        v.iter().filter(|(f, _)| f == id).map(|(_, t)| t.clone()).collect()
     }
 
     impl LintSource for Rows {
         fn ids(&self) -> Vec<String> {
-            self.beads
-                .iter()
-                .filter(|(_, r)| r.issue_type != "event")
-                .map(|(i, _)| i.clone())
-                .collect()
+            self.beads.iter().filter(|(_, r)| r.issue_type != "event").map(|(i, _)| i.clone()).collect()
         }
         fn show(&self, id: &str) -> Option<ShowRow> {
-            self.beads
-                .iter()
-                .find(|(i, _)| i == id)
-                .map(|(_, r)| r.clone())
+            self.beads.iter().find(|(i, _)| i == id).map(|(_, r)| r.clone())
         }
         fn blocks_targets(&self, id: &str) -> Option<Vec<String>> {
             Some(edges(&self.blocks, id))
@@ -1812,29 +1518,16 @@ mod tests {
     fn run(src: &Rows, ids: &[&str]) -> (i32, String) {
         struct Only<'a>(&'a Rows, Vec<String>);
         impl LintSource for Only<'_> {
-            fn ids(&self) -> Vec<String> {
-                self.1.clone()
-            }
-            fn show(&self, id: &str) -> Option<ShowRow> {
-                self.0.show(id)
-            }
-            fn blocks_targets(&self, id: &str) -> Option<Vec<String>> {
-                self.0.blocks_targets(id)
-            }
-            fn relates_targets(&self, id: &str) -> Result<Vec<String>, String> {
-                self.0.relates_targets(id)
-            }
-            fn lifecycle(&self) -> Result<HashMap<String, LcRow>, String> {
-                self.0.lifecycle()
-            }
+            fn ids(&self) -> Vec<String> { self.1.clone() }
+            fn show(&self, id: &str) -> Option<ShowRow> { self.0.show(id) }
+            fn blocks_targets(&self, id: &str) -> Option<Vec<String>> { self.0.blocks_targets(id) }
+            fn relates_targets(&self, id: &str) -> Result<Vec<String>, String> { self.0.relates_targets(id) }
+            fn lifecycle(&self) -> Result<HashMap<String, LcRow>, String> { self.0.lifecycle() }
         }
         let (rc, lines) = if ids.is_empty() {
             lint(src, &cfg())
         } else {
-            lint(
-                &Only(src, ids.iter().map(|i| i.to_string()).collect()),
-                &cfg(),
-            )
+            lint(&Only(src, ids.iter().map(|i| i.to_string()).collect()), &cfg())
         };
         (rc, lines.join("\n"))
     }
@@ -1843,64 +1536,31 @@ mod tests {
     fn a_failed_dep_list_is_unreadable_not_no_blockers() {
         struct DepsDown(Rows);
         impl LintSource for DepsDown {
-            fn ids(&self) -> Vec<String> {
-                self.0.ids()
-            }
-            fn show(&self, id: &str) -> Option<ShowRow> {
-                self.0.show(id)
-            }
-            fn blocks_targets(&self, _: &str) -> Option<Vec<String>> {
-                None
-            }
-            fn relates_targets(&self, _: &str) -> Result<Vec<String>, String> {
-                Err(" failed".into())
-            }
-            fn lifecycle(&self) -> Result<HashMap<String, LcRow>, String> {
-                self.0.lifecycle()
-            }
+            fn ids(&self) -> Vec<String> { self.0.ids() }
+            fn show(&self, id: &str) -> Option<ShowRow> { self.0.show(id) }
+            fn blocks_targets(&self, _: &str) -> Option<Vec<String>> { None }
+            fn relates_targets(&self, _: &str) -> Result<Vec<String>, String> { Err(" failed".into()) }
+            fn lifecycle(&self) -> Result<HashMap<String, LcRow>, String> { self.0.lifecycle() }
         }
         let src = DepsDown(Rows::default().bead("dep-a", "task", &["repo:spira", "plan"], SPEC));
         let (rc, lines) = lint(&src, &cfg());
         assert_eq!(rc, 1);
-        assert_eq!(
-            lines,
-            vec!["bead: dep-a: unreadable (bd dep list failed)".to_string()]
-        );
+        assert_eq!(lines, vec!["bead: dep-a: unreadable (bd dep list failed)".to_string()]);
     }
 
     #[test]
     fn a_failed_relates_list_on_an_incident_is_unreadable_with_the_original_text() {
         struct RelatesDown(Rows);
         impl LintSource for RelatesDown {
-            fn ids(&self) -> Vec<String> {
-                self.0.ids()
-            }
-            fn show(&self, id: &str) -> Option<ShowRow> {
-                self.0.show(id)
-            }
-            fn blocks_targets(&self, id: &str) -> Option<Vec<String>> {
-                self.0.blocks_targets(id)
-            }
-            fn relates_targets(&self, _: &str) -> Result<Vec<String>, String> {
-                Err(" failed".into())
-            }
-            fn lifecycle(&self) -> Result<HashMap<String, LcRow>, String> {
-                self.0.lifecycle()
-            }
+            fn ids(&self) -> Vec<String> { self.0.ids() }
+            fn show(&self, id: &str) -> Option<ShowRow> { self.0.show(id) }
+            fn blocks_targets(&self, id: &str) -> Option<Vec<String>> { self.0.blocks_targets(id) }
+            fn relates_targets(&self, _: &str) -> Result<Vec<String>, String> { Err(" failed".into()) }
+            fn lifecycle(&self) -> Result<HashMap<String, LcRow>, String> { self.0.lifecycle() }
         }
-        let src = RelatesDown(Rows::default().bead(
-            "inc-a",
-            "task",
-            &["repo:spira", "plan", INCIDENT],
-            SPEC,
-        ));
+        let src = RelatesDown(Rows::default().bead("inc-a", "task", &["repo:spira", "plan", INCIDENT], SPEC));
         let (_, lines) = lint(&src, &cfg());
-        assert!(
-            lines.contains(
-                &"bead: inc-a: unreadable (bd dep list --type relates-to failed)".to_string()
-            ),
-            "{lines:?}"
-        );
+        assert!(lines.contains(&"bead: inc-a: unreadable (bd dep list --type relates-to failed)".to_string()), "{lines:?}");
     }
 
     fn mix() -> Rows {
@@ -1910,30 +1570,10 @@ mod tests {
             .bead("mix-nopart", "task", &["repo:spira"], "")
             .bead("mix-norepo", "task", &["plan"], SPEC)
             .bead("mix-ev.1", "event", &[], "")
-            .bead(
-                "mix-brgood",
-                "task",
-                &["repo:spira", "plan", "branch:spira/mix-brgood"],
-                SPEC,
-            )
-            .bead(
-                "mix-brbad",
-                "task",
-                &["repo:spira", "plan", "branch:spira/mix-brgood"],
-                SPEC,
-            )
-            .bead(
-                "spec-none",
-                "task",
-                &["repo:spira", "plan"],
-                "A routine deploy causes no failed requests.",
-            )
-            .bead(
-                "spec-empty",
-                "task",
-                &["repo:spira", "plan"],
-                "Why.\n\n## Build\n\n## Acceptance\nx\n",
-            )
+            .bead("mix-brgood", "task", &["repo:spira", "plan", "branch:spira/mix-brgood"], SPEC)
+            .bead("mix-brbad", "task", &["repo:spira", "plan", "branch:spira/mix-brgood"], SPEC)
+            .bead("spec-none", "task", &["repo:spira", "plan"], "A routine deploy causes no failed requests.")
+            .bead("spec-empty", "task", &["repo:spira", "plan"], "Why.\n\n## Build\n\n## Acceptance\nx\n")
             .bead("spec-done", "task", &["repo:spira", "plan"], "")
             .state("spec-done", "LANDED")
             .bead("spec-noloop", "task", &["repo:spira", NO_LOOP], "x")
@@ -1958,14 +1598,7 @@ mod tests {
         ] {
             assert!(out.contains(want), "missing {want:?} in {out}");
         }
-        for not in [
-            "mix-claim",
-            "mix-noloop",
-            "mix-ev",
-            "mix-brgood: branch:",
-            "spec-done",
-            "spec-noloop",
-        ] {
+        for not in ["mix-claim", "mix-noloop", "mix-ev", "mix-brgood: branch:", "spec-done", "spec-noloop"] {
             assert!(!out.contains(not), "{not:?} reported in {out}");
         }
     }
@@ -1997,10 +1630,7 @@ mod tests {
     fn a_branch_label_naming_another_bead_exits_1_and_is_reported() {
         let (rc, out) = run(&mix(), &["mix-brbad"]);
         assert_eq!(rc, 1);
-        assert!(
-            out.contains("mix-brbad: branch: label names mix-brgood, not itself"),
-            "{out}"
-        );
+        assert!(out.contains("mix-brbad: branch: label names mix-brgood, not itself"), "{out}");
     }
 
     fn asks() -> Rows {
@@ -2021,10 +1651,7 @@ mod tests {
     fn a_blocks_edge_between_two_asks_is_flagged() {
         let (rc, out) = run(&asks(), &[]);
         assert_eq!(rc, 1);
-        assert!(
-            out.contains("ask-b: blocks edge to ask-labelled ask-a"),
-            "{out}"
-        );
+        assert!(out.contains("ask-b: blocks edge to ask-labelled ask-a"), "{out}");
     }
 
     // covers: UC-dispatch-04
@@ -2058,10 +1685,7 @@ mod tests {
     fn a_blocks_edge_onto_an_incident_is_flagged_by_the_configured_label() {
         let (rc, out) = run(&incidents(), &[]);
         assert_eq!(rc, 1);
-        assert!(
-            out.contains("inc-work: blocks edge to incident-labelled inc-alarm"),
-            "{out}"
-        );
+        assert!(out.contains("inc-work: blocks edge to incident-labelled inc-alarm"), "{out}");
     }
 
     // covers: UC-dispatch-04
@@ -2099,10 +1723,7 @@ mod tests {
     fn an_open_remedy_linked_relates_to_only_is_flagged() {
         let (rc, out) = run(&remedies(), &["rem-bad"]);
         assert_eq!(rc, 1);
-        assert!(
-            out.contains("rem-bad: open remedy rem-fix1 is linked relates-to only"),
-            "{out}"
-        );
+        assert!(out.contains("rem-bad: open remedy rem-fix1 is linked relates-to only"), "{out}");
     }
 
     // covers: UC-dispatch-04
@@ -2121,10 +1742,7 @@ mod tests {
     #[test]
     fn filing_a_remedy_under_an_incident_adds_the_blocks_edge() {
         let labels = vec![INCIDENT.to_string(), "repo:spira".to_string()];
-        assert_eq!(
-            remedy_edge(&labels, INCIDENT, "sp-new", "sp-inc"),
-            Some(("sp-inc".to_string(), "sp-new".to_string()))
-        );
+        assert_eq!(remedy_edge(&labels, INCIDENT, "sp-new", "sp-inc"), Some(("sp-inc".to_string(), "sp-new".to_string())));
     }
 
     // covers: UC-dispatch-04
@@ -2141,10 +1759,6 @@ mod tests {
         rows.lc_err = Some("down".into());
         let (rc, out) = run(&rows, &[]);
         assert_eq!(rc, 1);
-        assert_eq!(
-            out.matches("lifecycle state unreadable").count(),
-            1,
-            "{out}"
-        );
+        assert_eq!(out.matches("lifecycle state unreadable").count(), 1, "{out}");
     }
 }

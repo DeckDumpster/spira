@@ -40,12 +40,7 @@ pub fn parse(text: &str) -> Result<Vec<(String, Mode, regex::Regex)>, String> {
             "refuse" => Mode::Refuse,
             "show" => Mode::Show,
             "plan" => Mode::Plan,
-            other => {
-                return Err(format!(
-                    "line {}: mode {other:?} is not refuse, show or plan",
-                    n + 1
-                ))
-            }
+            other => return Err(format!("line {}: mode {other:?} is not refuse, show or plan", n + 1)),
         };
         let re = RegexBuilder::new(pat)
             .case_insensitive(true)
@@ -67,11 +62,7 @@ pub fn check(registry: &str, text: &str) -> Result<Vec<Hit>, String> {
         let Some(m) = re.find(text) else { continue };
         match hits.iter_mut().find(|h| h.slug == slug) {
             Some(h) => h.refuses |= refuses,
-            None => hits.push(Hit {
-                slug,
-                refuses,
-                matched: m.as_str().to_string(),
-            }),
+            None => hits.push(Hit { slug, refuses, matched: m.as_str().to_string() }),
         }
     }
     hits.sort_by_key(|h| !h.refuses);
@@ -87,11 +78,7 @@ pub fn plan_check(registry: &str, plan: &str) -> Result<Vec<Hit>, String> {
             continue;
         }
         if let Some(m) = re.find(plan) {
-            hits.push(Hit {
-                slug,
-                refuses: false,
-                matched: m.as_str().to_string(),
-            });
+            hits.push(Hit { slug, refuses: false, matched: m.as_str().to_string() });
         }
     }
     Ok(hits)
@@ -115,17 +102,11 @@ pub fn refusal(hits: &[Hit]) -> String {
 }
 
 pub fn override_reason(value: Option<String>) -> Option<String> {
-    value
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
+    value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
 pub fn recorded_line(hits: &[Hit], overridden: Option<&str>) -> String {
-    let slugs = hits
-        .iter()
-        .map(|h| h.slug.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let slugs = hits.iter().map(|h| h.slug.as_str()).collect::<Vec<_>>().join(", ");
     match overridden {
         Some(why) => format!("Statute check: {slugs} (override: {why})"),
         None => format!("Statute check: {slugs}"),
@@ -142,11 +123,7 @@ pub struct Admitted {
 /// The whole check for tools that hold the registry text: `Ok(None)` when nothing matched,
 /// `Ok(Some)` when the text is admitted (touching only, or a contradiction with an override
 /// reason), `Err(message)` when it is refused or the registry is malformed.
-pub fn gate(
-    registry: &str,
-    text: &str,
-    override_value: Option<String>,
-) -> Result<Option<Admitted>, String> {
+pub fn gate(registry: &str, text: &str, override_value: Option<String>) -> Result<Option<Admitted>, String> {
     let hits = check(registry, text).map_err(|e| format!("statute registry: {e}"))?;
     if hits.is_empty() {
         return Ok(None);
@@ -159,10 +136,7 @@ pub fn gate(
     } else {
         None
     };
-    Ok(Some(Admitted {
-        shown: shown(&hits),
-        line: recorded_line(&hits, why.as_deref()),
-    }))
+    Ok(Some(Admitted { shown: shown(&hits), line: recorded_line(&hits, why.as_deref()) }))
 }
 
 #[cfg(test)]
@@ -174,12 +148,7 @@ mod tests {
     #[test]
     fn a_contradicting_text_is_a_refusing_hit_listed_first() {
         let h = check(REG, "Pick VMIDs from a configured range via the allocator").unwrap();
-        assert_eq!(
-            h.iter()
-                .map(|h| (h.slug.as_str(), h.refuses))
-                .collect::<Vec<_>>(),
-            vec![("law-alloc", true), ("law-touch", false)]
-        );
+        assert_eq!(h.iter().map(|h| (h.slug.as_str(), h.refuses)).collect::<Vec<_>>(), vec![("law-alloc", true), ("law-touch", false)]);
     }
 
     #[test]
@@ -187,13 +156,8 @@ mod tests {
         let reg = format!("{REG}law-lang | plan | new \\w+ program\n");
         assert!(check(&reg, "add a new python program").unwrap().is_empty());
         let h = plan_check(&reg, "Add a new python program").unwrap();
-        assert_eq!(
-            h.iter().map(|h| h.slug.as_str()).collect::<Vec<_>>(),
-            vec!["law-lang"]
-        );
-        assert!(plan_check(&reg, "edit inside an existing function")
-            .unwrap()
-            .is_empty());
+        assert_eq!(h.iter().map(|h| h.slug.as_str()).collect::<Vec<_>>(), vec!["law-lang"]);
+        assert!(plan_check(&reg, "edit inside an existing function").unwrap().is_empty());
         assert!(plan_check("law-x | plan | (", "x").is_err());
     }
 
