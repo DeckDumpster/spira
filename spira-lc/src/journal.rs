@@ -250,7 +250,7 @@ fn answer(r: Result<String, String>) -> (i32, String) {
 mod tests {
     use super::*;
     use runtime::ports::VirtualClock;
-    use state_store::{Backend, Config, Contract, MemBackend, Ports};
+    use state_store::{Config, Contract, MemBackend, Ports};
 
     fn store() -> crate::control::store::Store<MemBackend> {
         let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&VirtualClock::new(1_000)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
