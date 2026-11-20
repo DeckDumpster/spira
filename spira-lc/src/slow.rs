@@ -319,6 +319,13 @@ pub fn hold_gauges(series: Vec<spira_otel::metrics::Series>) {
     }
 }
 
+/// Replaces every held gauge named in `names` with `series`, so a label that has gone away stops
+/// being pushed.
+pub fn replace_gauges(names: &[&str], series: Vec<spira_otel::metrics::Series>) {
+    HELD.lock().unwrap_or_else(|e| e.into_inner()).retain(|(name, _), _| !names.contains(&name.as_str()));
+    hold_gauges(series);
+}
+
 #[cfg(test)]
 pub fn held() -> Vec<spira_otel::metrics::Series> {
     HELD.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect()

@@ -400,7 +400,7 @@ pub fn run(args: &[String]) -> i32 {
                 let _holder = state_store::phases::holder_scoped("keyspace-walk", "");
                 let limit = crate::control::verbs::USAGE_DEFAULT_LIMIT as usize;
                 match walk.step(store.contract().backend(), limit, Instant::now()) {
-                    Ok(Some(pass)) => crate::slow::hold_gauges(pass.series(SystemTime::now())),
+                    Ok(Some(pass)) => crate::slow::replace_gauges(crate::store_gauges::PASS_GAUGES, pass.series(SystemTime::now())),
                     Ok(None) => {}
                     Err(e) => eprintln!("spira-lc serve: keyspace walk: {e}"),
                 }

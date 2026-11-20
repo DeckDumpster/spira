@@ -15,6 +15,8 @@ pub const KEYSPACE_BYTES_GAUGE: &str = "spira_state_store_keyspace_bytes";
 pub const KEYSPACE_KEYS_GAUGE: &str = "spira_state_store_keyspace_keys";
 pub const KEYSPACE_PASS_GAUGE: &str = "spira_state_store_keyspace_pass_seconds";
 
+pub const PASS_GAUGES: &[&str] = &[KEYSPACE_BYTES_GAUGE, KEYSPACE_KEYS_GAUGE, KEYSPACE_PASS_GAUGE];
+
 /// The main file's size and free bytes, and the bytes of each family's files.
 pub fn file_series<B: Backend>(backend: &B, at: SystemTime) -> state_store::Result<Vec<Series>> {
     let (bytes, free) = backend.file_bytes()?;
@@ -134,9 +136,19 @@ mod tests {
     fn file_and_family_gauges_carry_their_names_and_the_family_label() {
         let dir = testkit::TempDir::new("store-gauges");
         let b = state_store_sqlite::SqliteBackend::open(&dir.path().join("control.db"), state_store_sqlite::Options::default()).unwrap();
+        let mut head = 0;
+        let bulk = vec![b'x'; 8_000];
+        for i in 0..200 {
+            let put = Write::Put { key: format!("k/{i}"), value: bulk.clone(), create_rev: Rev::new(head + 1, 0), prev: None };
+            head = b.commit(head, &[put]).unwrap();
+        }
+        let dels: Vec<_> = (0..200).map(|i| Write::Delete { key: format!("k/{i}"), prev: Rev::new(i + 1, 0) }).collect();
+        head = b.commit(head, &dels).unwrap();
+        b.compact(head).unwrap();
         let series = file_series(&b, SystemTime::now()).unwrap();
         let by = |name: &str| series.iter().filter(|s| s.name == name).collect::<Vec<_>>();
         assert!(by(FILE_BYTES_GAUGE)[0].value > 0.0);
+        assert!(by(FREE_BYTES_GAUGE)[0].value > 0.0, "deleted rows leave free pages");
         assert!(by(FREE_BYTES_GAUGE)[0].value <= by(FILE_BYTES_GAUGE)[0].value);
         assert!(by(FAMILY_BYTES_GAUGE).iter().any(|s| s.labels == [("family".to_string(), "main".to_string())]), "main is a family");
         let sink = spira_otel::metrics::MetricsSink::new(None, "spira-lc", Duration::from_millis(1));
@@ -144,6 +156,17 @@ mod tests {
         for want in [FILE_BYTES_GAUGE, FREE_BYTES_GAUGE, FAMILY_BYTES_GAUGE, "family"] {
             assert!(encoded.contains(want), "{want} missing from {encoded}");
         }
+    }
+
+    #[test]
+    fn a_new_pass_drops_a_prefix_that_has_gone() {
+        let at = SystemTime::now();
+        let pass = |p: &str| Pass { prefixes: BTreeMap::from([(p.to_string(), Usage { keys: 1, bytes: 1 })]), took: Duration::ZERO }.series(at);
+        crate::slow::replace_gauges(PASS_GAUGES, pass("gone/"));
+        crate::slow::replace_gauges(PASS_GAUGES, pass("kept/"));
+        let held = crate::slow::held();
+        let prefixes: Vec<_> = held.iter().filter(|s| s.name == KEYSPACE_BYTES_GAUGE).flat_map(|s| s.labels.iter().map(|l| l.1.clone())).collect();
+        assert_eq!(prefixes, ["kept/"]);
     }
 
     #[test]
