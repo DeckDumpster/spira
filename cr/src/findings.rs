@@ -274,7 +274,7 @@ struct Theirs {
 
 /// The review branch line of each comment, as a source line: a line the elision marker
 /// stands on has no source line and keeps its own number, negated, so it only meets itself.
-fn source_line(regions: &Option<Vec<(u32, u32)>>, total: u32, branch_line: u32) -> i64 {
+pub(crate) fn source_line(regions: &Option<Vec<(u32, u32)>>, total: u32, branch_line: u32) -> i64 {
     let Some(regions) = regions else { return branch_line as i64 };
     let mut at = 0u32;
     let mut next = 1u32;
@@ -367,12 +367,11 @@ fn closeout(r: &Review, rows: &[Finding], a: &Agreement) -> String {
     s
 }
 
-fn write_if_changed(path: &Path, text: &str) -> Result<bool, String> {
+fn write_if_changed(path: &Path, text: &str) -> Result<(), String> {
     if std::fs::read_to_string(path).is_ok_and(|old| old == text) {
-        return Ok(false);
+        return Ok(());
     }
-    record::write_atomic(path, text.as_bytes())?;
-    Ok(true)
+    std::fs::write(path, text).map_err(|e| format!("writing {}: {e}", path.display()))
 }
 
 pub fn findings(number: u32, post: bool, ports: &Ports) -> Outcome {
@@ -397,11 +396,10 @@ pub fn findings(number: u32, post: bool, ports: &Ports) -> Outcome {
         let dir = Path::new(&ports.findings_dir);
         let review_name = format!("cr-{number:03}.md");
         let a = agreement(run, &r, ports)?;
-        let wrote = [write_if_changed(&dir.join(&review_name), &page(&r, &rows))?, write_if_changed(&dir.join(CATALOGUE), &catalogue(run)?)?];
-        if wrote.contains(&true) {
-            let message = format!("cr findings: review {number:03}, {} finding(s)\n\nRegenerated {review_name} and {CATALOGUE} from the findings records.\n", rows.len());
-            ports.committer.commit(dir, &[review_name.as_str(), CATALOGUE], &message)?;
-        }
+        write_if_changed(&dir.join(&review_name), &page(&r, &rows))?;
+        write_if_changed(&dir.join(CATALOGUE), &catalogue(run)?)?;
+        let message = format!("cr findings: review {number:03}, {} finding(s)\n\nRegenerated {review_name} and {CATALOGUE} from the findings records.\n", rows.len());
+        ports.committer.commit(dir, &[review_name.as_str(), CATALOGUE], &message)?;
         Ok(closeout(&r, &rows, &a))
     })();
     let text = match result {
