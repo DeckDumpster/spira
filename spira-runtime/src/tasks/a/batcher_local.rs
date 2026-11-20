@@ -3337,7 +3337,7 @@ pub mod edge {
             let q = testkit::TempDir::new("cut-hold");
             assert_eq!(refuse_if_cut_held(q.path(), "spira"), Ok(()));
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-            let hold = spira_config::cut_hold::CutHold { owner: "concierge".into(), reason: "hand-landing".into(), pid: std::fs::read_link("/proc/self").unwrap().to_string_lossy().parse().unwrap(), since: now, until: now + 600 };
+            let hold = spira_config::cut_hold::CutHold { owner: "concierge".into(), reason: "hand-landing".into(), pid: std::fs::read_link(format!("{}/self", system_paths::PROC)).unwrap().to_string_lossy().parse().unwrap(), since: now, until: now + 600 };
             spira_config::cut_hold::place(q.path(), "spira", &hold).unwrap();
             let err = refuse_if_cut_held(q.path(), "spira").unwrap_err();
             assert!(err.contains("concierge") && err.contains("hand-landing"), "{err}");
