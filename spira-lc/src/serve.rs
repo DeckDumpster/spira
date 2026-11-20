@@ -24,6 +24,7 @@ use crate::callers::Answer;
 
 /// Revisions of `events/` one sweep tick folds into the stay tally, so a tick stays well under a second.
 const STAYS_REVS_PER_TICK: usize = 1_000;
+/// Revisions of `events/` one sweep tick folds into the edge tally.
 const EDGES_REVS_PER_TICK: usize = 1_000;
 const SWEEP_EVERY: Duration = Duration::from_secs(5);
 

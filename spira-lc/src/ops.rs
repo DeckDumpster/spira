@@ -872,7 +872,7 @@ mod tests {
     }
 
     #[test]
-    fn the_edges_view_reads_no_more_than_a_day_of_minutes_for_a_longer_history() {
+    fn the_edges_view_reads_as_many_keys_for_a_longer_history() {
         use crate::counting::Counting;
         let reads = |audits| {
             let (store, now, _dir) = with_records_on(Counting::new, audits);

@@ -105,24 +105,7 @@ impl<B: Backend> Store<B> {
         let (mut cursor, guard) = match &held {
             Some((c, rev)) => (c.clone(), Some(*rev)),
             None => {
-                let start = self.first_rev_within(floor, head)?;
-                let oldest = self
-                    .events_from(0, 1, head)?
-                    .first()
-                    .map(|i| i.mod_rev.main);
-                let filled_from = if oldest.is_none_or(|o| o >= start) {
-                    0
-                } else {
-                    floor
-                };
-                (
-                    Cursor {
-                        rev: start.saturating_sub(1),
-                        filled_from,
-                        fill_to: head,
-                    },
-                    None,
-                )
+                (self.first_fill(floor, head)?, None)
             }
         };
         let page = self.events_from(cursor.rev + 1, max_revs, head)?;

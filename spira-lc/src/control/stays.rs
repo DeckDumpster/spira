@@ -133,6 +133,14 @@ impl<B: Backend> Store<B> {
         Ok(lo)
     }
 
+    /// The cursor of a first fill: from the oldest revision holding an audit at or after `floor`.
+    pub(super) fn first_fill(&self, floor: i64, head: u64) -> Result<Cursor> {
+        let start = self.first_rev_within(floor, head)?;
+        let oldest = self.events_from(0, 1, head)?.first().map(|i| i.mod_rev.main);
+        let filled_from = if oldest.is_none_or(|o| o >= start) { 0 } else { floor };
+        Ok(Cursor { rev: start.saturating_sub(1), filled_from, fill_to: head })
+    }
+
     /// Folds the ended stays of at most `max_revs` revisions past the cursor into the tally, in
     /// one txn guarded by the cursor. The first call with no cursor starts from the oldest
     /// revision holding an audit within the window.
@@ -143,10 +151,7 @@ impl<B: Backend> Store<B> {
         let (mut cursor, guard) = match &held {
             Some((c, rev)) => (c.clone(), Some(*rev)),
             None => {
-                let start = self.first_rev_within(floor, head)?;
-                let oldest = self.events_from(0, 1, head)?.first().map(|i| i.mod_rev.main);
-                let filled_from = if oldest.is_none_or(|o| o >= start) { 0 } else { floor };
-                (Cursor { rev: start.saturating_sub(1), filled_from, fill_to: head }, None)
+                (self.first_fill(floor, head)?, None)
             }
         };
         let page = self.events_from(cursor.rev + 1, max_revs, head)?;
