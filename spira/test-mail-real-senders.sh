@@ -7,9 +7,8 @@
 # real code — not a re-typed body — with mail pointed at a scratch Maildir and with no lint override, so the running message actually clears
 # mail's send path.
 #
-# COVERAGE: land_escalate is native in sentinel now (sp-31hjr; was lib.sh, sourced
-# directly) — driven through `sentinel --land-escalate`, the same real-sender contract
-# every emitter below is held to. watchd and skew are both compiled binaries now
+# COVERAGE: land_escalate's real sender was retired with its binary (sp-3i87xd)
+# and has no case here until one exists again. watchd and skew are both compiled binaries now
 # (sp-07yxy's watchd, sp-yyk47's skew) — there is no source text left to sed or source a
 # function body from, so each is driven through its own real CLI instead: watchd's notify
 # path directly, skew's through a real `skew check --escalate` against a minimal
@@ -28,7 +27,7 @@
 # daily digest is the only path to the operator — so nothing here should ever reach the mailbox.
 #
 # tier: T2
-# covers: spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/runes/archivist.md incident/src/stub_bd.rs mail/src/* incident/* sentinel/src/* UC-operator-channel-05
+# covers: spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/runes/archivist.md incident/src/stub_bd.rs mail/src/* incident/* UC-operator-channel-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -57,7 +56,7 @@ tl_config SPIRA_MAIL_KINDS="$HERE/mail/kinds"
 # than new/, so none of its own-sender checks would ever see anything unread.
 tl_config SPIRA_MAIL_MUTE=0
 # round 5 fix (pattern 7/9): the repo registry (Registry::from_env) reads SPIRA_REPO_MAP/
-# SPIRA_HOME_REPO only from config now; undeclared, land_escalate/skew/incident's repo
+# SPIRA_HOME_REPO only from config now; undeclared, skew/incident's repo
 # lookup could not resolve at all, which may be why none of their messages ever sent.
 printf 'fixture | %s | push | main | |\n' "$HERE" > "$TMP/repomap"
 tl_config SPIRA_REPO_MAP="$TMP/repomap" SPIRA_HOME_REPO=fixture
@@ -75,21 +74,11 @@ export SPIRA_DB="$TMP/db"
 tl_config SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB"
 
 newest_ask() { ls -t "$SPIRA_MAIL"/operator/new/* "$SPIRA_MAIL"/concierge/new/* 2>/dev/null | head -1; }
-unread() { echo $(( $(mail count operator 2>/dev/null) + $(mail count concierge 2>/dev/null) )); }
-
-echo
-echo "sentinel: land_escalate (question)"
-
-command -v sentinel >/dev/null 2>&1 || bail "sentinel is not on PATH"
-export SPIRA_LAND_ESCALATE_EVERY=0
-before="$(unread)"
-printf 'gate keeps failing in the real emitter test\nevery finished branch has been rejected by the landing gate.\n' | \
-    sentinel --land-escalate >/dev/null 2>&1
-after="$(unread)"
-is "land_escalate delivers exactly one message" "$((before + 1))" "$after"
-body="$(cat "$(newest_ask)" 2>/dev/null)"
-want "land_escalate message names the reason"  "gate keeps failing"  "$body"
-want "land_escalate message carries a Default"  "## Default"          "$body"
+unread() {
+    local o c
+    o="$(mail count operator 2>/dev/null)"; c="$(mail count concierge 2>/dev/null)"
+    echo $(( ${o:-0} + ${c:-0} ))
+}
 
 echo
 echo "watchd: notify's escalate/ask (question)"
