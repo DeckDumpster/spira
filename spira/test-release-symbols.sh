@@ -4,7 +4,7 @@
 #
 # CASES
 #   1. nm on spira-lc lists spira_lc::main and sqlite3_step.
-#   2. readelf lists no .debug_info section.
+#   2. readelf lists no .debug_info section (a non-ELF input is refused, not passed).
 #   3. POSITIVE CONTROL: a --strip-all copy fails the case-1 check.
 #
 # tier: T1
@@ -33,12 +33,21 @@ symbols_present() {
 if symbols_present "$LC"; then ok "spira-lc keeps spira_lc::main and sqlite3_step"
 else bad "spira-lc keeps spira_lc::main and sqlite3_step" "$(nm "$LC" 2>&1 | head -1)"; fi
 
-if grep -q "\.debug_info" <<<"$(readelf -S -W "$LC" 2>&1)"; then
-    bad "spira-lc has no .debug_info section" "present"
-else ok "spira-lc has no .debug_info section"; fi
+has_debug_info() {
+    local out
+    out="$(readelf -S -W "$1" 2>&1)" || return 2
+    grep -q ' \.text ' <<<"$out" || return 2
+    grep -q ' \.debug_info ' <<<"$out"
+}
+
+has_debug_info "$LC"; rc=$?
+is "spira-lc has no .debug_info section" "1" "$rc"
 
 cp "$LC" "$TMP/stripped" && strip --strip-all "$TMP/stripped"
 if symbols_present "$TMP/stripped"; then bad "a fully stripped copy fails the symbol check" "check passed"
 else ok "a fully stripped copy fails the symbol check"; fi
+
+printf 'x' > "$TMP/notelf"; has_debug_info "$TMP/notelf"; rc=$?
+is "a non-ELF input is refused, not read as no debug info" "2" "$rc"
 
 tl_summary
