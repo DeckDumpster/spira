@@ -214,7 +214,7 @@ pub(crate) fn run<B: state_store::Backend>(args: &[String], store: &crate::contr
                 }
             }
             let (s, next) = store.journal_sweep_step(from.as_ref(), dry_run, "journal-sweep").map_err(cannot)?;
-            Ok(json!({ "dry_run": dry_run, "idless_schedules": s.idless_schedules, "legacy_deleted": s.legacy_deleted, "indexed_schedules": s.indexed_schedules, "indexed_effects": s.indexed_effects, "next": next.map(|c| c.to_string()) }).to_string())
+            Ok(json!({ "dry_run": dry_run, "idless_schedules": s.idless_schedules, "legacy_deleted": s.legacy_deleted, "retained": s.retained, "indexed_schedules": s.indexed_schedules, "indexed_effects": s.indexed_effects, "next": next.map(|c| c.to_string()) }).to_string())
         }
         "poison" => {
             let p = parse(a(1), "poison")?;
@@ -253,7 +253,7 @@ pub(crate) fn answer(r: Result<String, String>) -> (i32, String) {
 
 /// Sends `journal sweep` steps through `step` until the cursor runs out and sums their counts.
 pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_run: bool) -> (i32, String) {
-    let mut totals = [0u64; 4];
+    let mut totals = [0u64; 5];
     let mut cursor: Option<String> = None;
     let mut steps = 0;
     loop {
@@ -271,7 +271,7 @@ pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_ru
         }
         let Ok(v) = serde_json::from_str::<Value>(&out) else { return (CANNOT_TELL, format!("cannot tell: sweep step answered {out:?}")) };
         steps += 1;
-        for (t, k) in totals.iter_mut().zip(["idless_schedules", "indexed_schedules", "indexed_effects", "legacy_deleted"]) {
+        for (t, k) in totals.iter_mut().zip(["idless_schedules", "indexed_schedules", "indexed_effects", "legacy_deleted", "retained"]) {
             *t += v[k].as_u64().unwrap_or(0);
         }
         match v["next"].as_str() {
@@ -279,7 +279,7 @@ pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_ru
             None => break,
         }
     }
-    (0, json!({ "dry_run": dry_run, "idless_schedules": totals[0], "indexed_schedules": totals[1], "indexed_effects": totals[2], "legacy_deleted": totals[3], "steps": steps }).to_string())
+    (0, json!({ "dry_run": dry_run, "idless_schedules": totals[0], "indexed_schedules": totals[1], "indexed_effects": totals[2], "legacy_deleted": totals[3], "retained": totals[4], "steps": steps }).to_string())
 }
 
 #[cfg(test)]
@@ -334,7 +334,7 @@ pub(crate) mod counting {
 mod tests {
     use super::counting::Counting;
     use super::*;
-    use runtime::ports::VirtualClock;
+    use runtime::ports::{Clock, VirtualClock};
     use state_store::{Config, Contract, MemBackend, Ports};
 
     fn store() -> crate::control::store::Store<MemBackend> {
@@ -448,6 +448,93 @@ mod tests {
         let (code, out) = call(s, argv);
         assert_eq!(code, 0, "{out}");
         serde_json::from_str(&out).unwrap()
+    }
+
+    fn clocked_store() -> (crate::control::store::Store<MemBackend>, Contract<MemBackend>, VirtualClock) {
+        let (backend, clock) = (MemBackend::new(), VirtualClock::new(1_000));
+        let open = || Contract::open(backend.clone(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        (crate::control::store::Store::new(open(), 1_000), open(), clock)
+    }
+
+    fn present(raw: &Contract<MemBackend>, id: &str) -> (bool, bool) {
+        let k = |t: &str, parts: &[&str]| raw.get(&crate::control::keys::runtime(t, parts)).unwrap().is_some();
+        (k("effect", &["t", &format!("k{id}")]), k("resolved", &[id]))
+    }
+
+    fn effect_n(id: &str) -> Value {
+        let mut e = effect();
+        e["request_id"] = json!(id);
+        e["ekey"] = json!(format!("k{id}"));
+        e
+    }
+
+    fn retain_ms() -> u64 {
+        crate::control::journal::JOURNAL_RETAIN_SECS * 1_000
+    }
+
+    #[test]
+    fn a_resolved_effect_and_its_marker_expire_after_the_retention_and_an_open_one_never_does() {
+        use state_store::gc::Controller;
+        let (s, raw, clock) = clocked_store();
+        let gc = Controller::new(&raw);
+        call(&s, &["turn", &json!({"effects": [effect_n("a"), effect_n("b")]}).to_string()]);
+        call(&s, &["turn", &json!({"resolved": ["a"]}).to_string()]);
+        assert_eq!(present(&raw, "a"), (true, true));
+        clock.advance(retain_ms() - 1);
+        gc.tick(clock.now_ms()).unwrap();
+        assert_eq!(present(&raw, "a"), (true, true));
+        clock.advance(1);
+        gc.tick(clock.now_ms()).unwrap();
+        assert_eq!(present(&raw, "a"), (false, false));
+        clock.advance(100 * retain_ms());
+        gc.tick(clock.now_ms()).unwrap();
+        assert_eq!(present(&raw, "b"), (true, false));
+        assert_eq!(parsed(&s, &["open-effects"]).as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn resolving_a_superseded_request_leaves_the_re_requested_effect_open_for_good() {
+        use state_store::gc::Controller;
+        let (s, raw, clock) = clocked_store();
+        let mut again = effect_n("a");
+        again["request_id"] = json!("a2");
+        call(&s, &["turn", &json!({"effects": [effect_n("a")]}).to_string()]);
+        call(&s, &["turn", &json!({"effects": [again]}).to_string()]);
+        call(&s, &["turn", &json!({"resolved": ["a"]}).to_string()]);
+        clock.advance(100 * retain_ms());
+        Controller::new(&raw).tick(clock.now_ms()).unwrap();
+        assert!(present(&raw, "a").0);
+        assert_eq!(parsed(&s, &["open-effects"]).as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_carried_resolved_effect_and_its_marker_expire_and_a_carried_open_one_does_not() {
+        use crate::control::journal::{Carried, EffectRow};
+        use state_store::gc::Controller;
+        let (s, raw, clock) = clocked_store();
+        let row = |id: &str| EffectRow { task: "t".into(), ekey: format!("k{id}"), request_id: id.into(), stream: "s".into(), spec: json!({}), requested_at: 1, deadline_at: 6 };
+        let carried = Carried { effects: vec![(row("a"), true), (row("b"), false)], ..Default::default() };
+        assert_eq!(s.journal_carry(&carried, "test").unwrap(), 2);
+        clock.advance(retain_ms());
+        Controller::new(&raw).tick(clock.now_ms()).unwrap();
+        assert_eq!((present(&raw, "a"), present(&raw, "b")), ((false, false), (true, false)));
+    }
+
+    #[test]
+    fn a_sweep_gives_each_resolved_effect_without_a_lifetime_one_and_a_second_sweep_gives_none() {
+        use state_store::gc::Controller;
+        let (s, raw, clock) = clocked_store();
+        for id in ["a", "b"] {
+            for (k, v) in [(crate::control::keys::runtime("effect", &["t", &format!("k{id}")]), effect_n(id)), (crate::control::keys::runtime("resolved", &[id]), json!({}))] {
+                put_raw(&raw, &k, v);
+            }
+        }
+        call(&s, &["turn", &json!({"effects": [effect_n("c")]}).to_string()]);
+        assert_eq!(swept(&s, false)["retained"], json!(2));
+        assert_eq!(swept(&s, false)["retained"], json!(0));
+        clock.advance(retain_ms());
+        Controller::new(&raw).tick(clock.now_ms()).unwrap();
+        assert_eq!((present(&raw, "a"), present(&raw, "b"), present(&raw, "c")), ((false, false), (false, false), (true, false)));
     }
 
     #[test]

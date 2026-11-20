@@ -80,6 +80,7 @@ scenarios!(
     a_rewrite_restarts_a_keys_ttl,
     a_reopen_renews_no_lifetime,
     a_gc_expiry_writes_no_events_key,
+    a_retained_prefix_put_may_carry_a_ttl_and_expires_only_with_one,
     a_multi_prefix_list_reads_one_snapshot_while_a_commit_lands_between_prefixes,
     txn_ops_at_the_limit_pass_and_one_over_is_refused,
     txn_compares_at_the_limit_pass_and_one_over_is_refused,
