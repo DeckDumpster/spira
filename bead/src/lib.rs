@@ -1087,7 +1087,7 @@ mod tests {
     fn the_skuld_fence_spares_only_a_parent_named_rule() {
         assert!(!skuld_fence_binds(true, true, b"rule\0enact\0law-x\0"));
         assert!(!skuld_fence_binds(true, true, b"bin/rule\0code\0--land\0"));
-        assert!(!skuld_fence_binds(true, true, b"/home/ryan/spira/spira-releases/4bf2391c328e783a572d4a6b50a8caa62a79e9e5/rule.sh\0code\0--land\0"));
+        assert!(!skuld_fence_binds(true, true, b"spira-releases/4bf2391c328e783a572d4a6b50a8caa62a79e9e5/rule.sh\0code\0--land\0"));
         assert!(!skuld_fence_binds(true, true, b"rule.sh\0enact\0law-x\0"));
         assert!(skuld_fence_binds(true, true, b"bash\0-c\0rule\0"));
         assert!(skuld_fence_binds(true, true, b"x/rule-wrapper\0enact\0"));
