@@ -1522,6 +1522,11 @@ impl SqliteBackend {
         &self,
         f: impl FnOnce(&Connection, &Snapshot, &dyn Fn() -> Result<()>) -> Result<T>,
     ) -> Result<T> {
+        // A request cut at its deadline has already been answered "cannot tell"; its worker
+        // stops at its next read instead of finishing a scan nobody will receive.
+        if phases::deadline_passed() {
+            return Err(Error::Deadline);
+        }
         let inner = &self.0;
         let n = inner.readers.len();
         let start = inner.next_reader.fetch_add(1, Ordering::Relaxed);
@@ -2334,6 +2339,15 @@ mod tests {
         let s = rec.snapshot();
         assert_eq!(s.commits_us.len(), 0);
         assert_eq!(s.open, None);
+    }
+
+    #[test]
+    fn a_read_begun_past_the_request_deadline_is_refused() {
+        let dir = testkit::TempDir::new("sqlite-read-deadline");
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        assert!(b.get("k", 0).is_ok(), "a read with no deadline bound is served");
+        let _passed = phases::deadline_scoped(std::time::Instant::now());
+        assert!(matches!(b.get("k", 0), Err(Error::Deadline)));
     }
 
     #[test]
