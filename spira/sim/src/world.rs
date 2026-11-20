@@ -727,8 +727,8 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     let runner = dir.join("config/suite-runner");
     let run_dir = dir.join("run");
     let config = dir.join("config");
-    std::fs::create_dir_all(&run_dir).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&config).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&run_dir).map_err(|e| format!("{}: {e}", run_dir.display()))?;
+    std::fs::create_dir_all(&config).map_err(|e| format!("{}: {e}", config.display()))?;
     // Held until the copy below is done, so no other world's prune removes it mid-copy.
     let held = ensure_seed(repo, tree)?;
     let seed = held.path.clone();
@@ -880,7 +880,7 @@ pub struct HeldSeed {
 pub fn ensure_seed_in(cache: &Path, repo: &Path, tree: &str) -> Result<HeldSeed, String> {
     let repo = PathBuf::from(git(repo, &["rev-parse", "--show-toplevel"])?.trim());
     let hash = git(&repo, &["rev-parse", &format!("{tree}^{{tree}}")])?.trim().to_string();
-    std::fs::create_dir_all(cache).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(cache).map_err(|e| format!("{}: {e}", cache.display()))?;
     let seed = cache.join(format!("seed-{hash}"));
     // A prune can take the seed between the check and the hold; the hold sees that, and builds again.
     for _ in 0..3 {
@@ -1265,7 +1265,7 @@ fn world_release(release: &Path, at: &Path, sim_exe: &Path) -> Result<(), String
 }
 
 fn link(target: &Path, at: &Path) -> Result<(), String> {
-    std::os::unix::fs::symlink(target, at).map_err(|e| e.to_string())
+    std::os::unix::fs::symlink(target, at).map_err(|e| format!("{}: {e}", at.display()))
 }
 
 fn set_exec(p: &Path) -> Result<(), String> {
@@ -1414,5 +1414,16 @@ mod list_pages_tests {
         .unwrap();
         assert_eq!(serde_json::from_str::<Vec<serde_json::Value>>(&all).unwrap().len(), ids.len());
         assert_eq!(sent, [vec!["list", "--limit", "1000"], vec!["list", "--after", "sp-00999", "--limit", "1000"]]);
+    }
+}
+
+#[cfg(test)]
+mod seed_cache_tests {
+    #[test]
+    fn a_seed_cache_that_cannot_be_made_is_refused_naming_its_path() {
+        let cache = std::path::Path::new("/dev/null/seed-cache");
+        let repo = testkit::manifest_dir();
+        let err = super::ensure_seed_in(cache, &repo, "HEAD").err().expect("refused");
+        assert!(err.starts_with("/dev/null/seed-cache: "), "{err}");
     }
 }
