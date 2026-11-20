@@ -30,8 +30,12 @@ pub const SWEEP_STEP: usize = 1_000;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SweepPhase {
     Schedule,
+    Legacy,
     Effect,
 }
+
+/// Tables removed by sp-neicv8, written last by the 11-03 import; the sweep deletes their rows.
+const LEGACY: &[&str] = &["event", "applied", "cursor"];
 
 /// Where the next sweep step resumes: the table and the last key read, as one argv token.
 #[derive(Clone, Debug, PartialEq)]
@@ -44,6 +48,7 @@ impl std::fmt::Display for SweepCursor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let phase = match self.phase {
             SweepPhase::Schedule => "schedule",
+            SweepPhase::Legacy => "legacy",
             SweepPhase::Effect => "effect",
         };
         write!(f, "{phase}:{}", self.after)
@@ -55,8 +60,9 @@ impl std::str::FromStr for SweepCursor {
     fn from_str(s: &str) -> std::result::Result<Self, String> {
         let phase = match s.split_once(':') {
             Some(("schedule", _)) => SweepPhase::Schedule,
+            Some(("legacy", _)) => SweepPhase::Legacy,
             Some(("effect", _)) => SweepPhase::Effect,
-            _ => return Err(format!("journal: sweep cursor {s:?} is not schedule:<key> or effect:<key>")),
+            _ => return Err(format!("journal: sweep cursor {s:?} is not schedule:<key>, legacy:<key> or effect:<key>")),
         };
         Ok(SweepCursor { phase, after: s.split_once(':').map_or(String::new(), |(_, k)| k.to_string()) })
     }
@@ -141,6 +147,7 @@ fn pending(id: &str) -> Object {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Swept {
     pub idless_schedules: usize,
+    pub legacy_deleted: usize,
     pub indexed_schedules: usize,
     pub indexed_effects: usize,
 }
@@ -309,7 +316,7 @@ impl<B: Backend> Store<B> {
     }
 
     /// One bounded step of the sweep: reads at most [`SWEEP_STEP`] rows after `from`, deletes the
-    /// schedule rows stored without an id and indexes the open rows an older release stored
+    /// schedule rows stored without an id, the [`LEGACY`] rows, and indexes the open rows an older release stored
     /// without one. The step that exhausts the effects marks the store indexed and answers no
     /// cursor. Every write is idempotent, so a step that fails is run again from the same cursor.
     /// With `dry_run` it counts and writes nothing.
@@ -319,8 +326,10 @@ impl<B: Backend> Store<B> {
         let contract = self.contract();
         let head = contract.head()?;
         let (phase, after) = from.map_or((SweepPhase::Schedule, None), |c| (c.phase, Some(c.after.as_str()).filter(|a| !a.is_empty())));
+        let legacy_at = after.and_then(|a| LEGACY.iter().position(|t| a.starts_with(&keys::runtime_table(t)))).unwrap_or(0);
         let table = match phase {
             SweepPhase::Schedule => SCHEDULE,
+            SweepPhase::Legacy => LEGACY[legacy_at],
             SweepPhase::Effect => EFFECT,
         };
         let page = contract.range_at(&keys::runtime_table(table), after, SWEEP_STEP, head)?;
@@ -337,6 +346,10 @@ impl<B: Backend> Store<B> {
                         ops.push(state_store::Op::Put(keys::runtime(PENDING, &[&id]), pending(&id)));
                     }
                 }
+                SweepPhase::Legacy => {
+                    out.legacy_deleted += 1;
+                    ops.push(state_store::Op::Delete(item.key.clone()));
+                }
                 SweepPhase::Effect => {
                     let e = effect_of(v);
                     if contract.get(&keys::runtime(RESOLVED, &[&e.request_id]))?.is_none() {
@@ -349,7 +362,11 @@ impl<B: Backend> Store<B> {
         let last = page.last().map(|i| i.key.clone());
         let next = match (page.len() < SWEEP_STEP, phase) {
             (false, _) => last.map(|after| SweepCursor { phase, after }),
-            (true, SweepPhase::Schedule) => Some(SweepCursor { phase: SweepPhase::Effect, after: String::new() }),
+            (true, SweepPhase::Schedule) => Some(SweepCursor { phase: SweepPhase::Legacy, after: String::new() }),
+            (true, SweepPhase::Legacy) => Some(match LEGACY.get(legacy_at + 1) {
+                Some(t) => SweepCursor { phase, after: keys::runtime_table(t) },
+                None => SweepCursor { phase: SweepPhase::Effect, after: String::new() },
+            }),
             (true, SweepPhase::Effect) => None,
         };
         if next.is_none() {
