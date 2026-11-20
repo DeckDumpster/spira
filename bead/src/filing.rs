@@ -57,16 +57,6 @@ pub fn edges_then_promote(new_id: &str, blockers: &[String], dep_add: &mut dyn F
     rc
 }
 
-/// `args` (a `create`) with `blockers` as `--deps`, so the edges commit in the write that creates the bead.
-pub fn create_args_with_deps(args: &[String], blockers: &[String]) -> Vec<String> {
-    let mut out = args.to_vec();
-    if !blockers.is_empty() {
-        out.push("--deps".into());
-        out.push(blockers.iter().map(|b| format!("blocks:{b}")).collect::<Vec<_>>().join(","));
-    }
-    out
-}
-
 /// The request id a content create is sent under: the same actor, argv and body give the same id,
 /// so a resend or a second filing of the same bead is answered with the first one's result.
 pub fn create_request_id(actor: &str, argv: &[String], body: Option<&str>) -> String {
@@ -714,9 +704,14 @@ mod tests {
     }
 
     #[test]
-    fn blockers_ride_the_create_as_deps_so_the_new_bead_is_the_blocked_one() {
-        let args = create_args_with_deps(&["create".into(), "T".into()], &["sp-a".into(), "sp-b".into()]);
-        assert_eq!(args, ["create", "T", "--deps", "blocks:sp-a,blocks:sp-b"]);
-        assert_eq!(create_args_with_deps(&["create".into()], &[]), ["create"], "no blockers, no flag");
+    fn each_blocker_is_an_edge_from_the_new_bead_to_it_and_all_precede_the_promotion() {
+        let log = std::cell::RefCell::new(Vec::new());
+        let mut dep_add = |from: &str, to: &str| {
+            log.borrow_mut().push(format!("{from}->{to}"));
+            0
+        };
+        let mut promote = || log.borrow_mut().push("promote".to_string());
+        let rc = edges_then_promote("sp-new", &["sp-a".into(), "sp-b".into()], &mut dep_add, Some(&mut promote));
+        assert_eq!((rc, log.into_inner()), (0, ["sp-new->sp-a", "sp-new->sp-b", "promote"].map(String::from).to_vec()));
     }
 }
