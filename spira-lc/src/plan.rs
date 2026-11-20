@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -112,22 +113,78 @@ pub fn assemble(issues: &[Value], labels: &[Value], deps: &[Value]) -> Vec<Value
 
 /// `plan items|edges|children|inflow|repo-labels|watermark|stamp|schema …`: JSON with the watermark on every read.
 pub fn cmd_plan(args: &[String]) -> (i32, String) {
-    let rest = args.get(1..).unwrap_or_default();
+    static HELD: HeldAnswers = Mutex::new((None, BTreeMap::new()));
     let answer = match args.first().map(String::as_str) {
-        Some("items") => read_watermark().and_then(|w| items(rest, bd()?).map(|v| json!({ "watermark": w, "items": v }))),
-        Some("edges") => read_watermark().and_then(|w| edges(rest, bd()?).map(|v| json!({ "watermark": w, "edges": v }))),
-        Some("children") => read_watermark().and_then(|w| children(rest, bd()?).map(|v| json!({ "watermark": w, "items": v }))),
         Some("watermark") => read_watermark().map(|w| json!({ "watermark": w })),
         Some("stamp") => stamp().map(|w| json!({ "watermark": w })),
-        Some("inflow") => inflow_args(rest).and_then(|w| inflow(bd()?, w)),
-        Some("repo-labels") => bd().and_then(|c| repo_labels(c, flag(rest, "--valid").unwrap_or(""))),
         Some("schema") => return schema(),
+        Some("items" | "edges" | "children") => read_watermark().and_then(|w| answer_with(args, bd()?, content_db()?, Some(w), Instant::now(), &HELD)),
+        Some("inflow") if inflow_args(&args[1..]).is_err() => inflow_args(&args[1..]).map(|_| Value::Null),
+        Some("inflow" | "repo-labels") => bd().and_then(|c| answer_with(args, c, content_db()?, read_watermark().ok(), Instant::now(), &HELD)),
         _ => Err(USAGE.into()),
     };
     match answer {
         Ok(v) => (0, v.to_string()),
         Err(e) => (CANNOT_TELL, e),
     }
+}
+
+/// How long an `inflow` answer is held: its window moves with the clock, not only with a write.
+const INFLOW_HOLD: Duration = Duration::from_secs(60);
+
+/// Most answers held at one watermark; a full hold is emptied rather than grown.
+const HELD_ANSWERS: usize = 256;
+
+/// Whole answers by joined argv, held under the planning watermark they were read at.
+type HeldAnswers = Mutex<(Option<u64>, BTreeMap<String, (Value, Instant)>)>;
+
+/// The read forms of `plan`, answered from `held` while `watermark` is where it was when the
+/// same argv was last answered; only a good answer is held, and with no watermark nothing is.
+fn answer_with(args: &[String], conn: &dyn Sql, cdb: &str, watermark: Option<u64>, now: Instant, held: &HeldAnswers) -> Result<Value, String> {
+    let key = args.join("\u{1f}");
+    let ttl = (args.first().map(String::as_str) == Some("inflow")).then_some(INFLOW_HOLD);
+    let lock = || held.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(w) = watermark {
+        let mut g = lock();
+        if g.0 != Some(w) {
+            *g = (Some(w), BTreeMap::new());
+        }
+        if let Some((v, at)) = g.1.get(&key) {
+            if ttl.is_none_or(|t| now.saturating_duration_since(*at) < t) {
+                return Ok(v.clone());
+            }
+        }
+    }
+    let rest = args.get(1..).unwrap_or_default();
+    let w = json!(watermark);
+    let answer = match args.first().map(String::as_str) {
+        Some("items") => items_answer(rest, conn, cdb).map(|v| json!({ "watermark": w, "items": v })),
+        Some("edges") => edges(rest, conn, cdb).map(|v| json!({ "watermark": w, "edges": v })),
+        Some("children") => children(rest, conn, cdb).map(|v| json!({ "watermark": w, "items": v })),
+        Some("inflow") => inflow_args(rest).and_then(|win| inflow(conn, cdb, win)),
+        Some("repo-labels") => repo_labels(conn, cdb, flag(rest, "--valid").unwrap_or("")),
+        _ => Err(USAGE.into()),
+    }?;
+    if let Some(w) = watermark {
+        let mut g = lock();
+        if g.0 == Some(w) {
+            if g.1.len() >= HELD_ANSWERS {
+                g.1.clear();
+            }
+            g.1.insert(key, (answer.clone(), now));
+        }
+    }
+    Ok(answer)
+}
+
+fn items_answer(args: &[String], conn: &dyn Sql, cdb: &str) -> Result<Vec<Value>, String> {
+    let plain = !args.iter().any(|a| a == "--full" || a == "--open");
+    if plain && flag(args, "--ids").is_some() && flag(args, "--external-contains").is_none() && flag(args, "--label").is_none() && flag(args, "--type").is_none() {
+        let mut rows = items_held_in(conn, cdb, &ids_of(args)?)?;
+        rows.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+        return Ok(rows);
+    }
+    items(args, conn, cdb)
 }
 
 fn inflow_args(args: &[String]) -> Result<u32, String> {
@@ -145,34 +202,33 @@ fn ids_of(args: &[String]) -> Result<Vec<&str>, String> {
     Ok(ids.split(',').map(str::trim).filter(|x| !x.is_empty()).collect())
 }
 
-fn items(args: &[String], conn: &dyn Sql) -> Result<Vec<Value>, String> {
+fn items(args: &[String], conn: &dyn Sql, cdb: &str) -> Result<Vec<Value>, String> {
     let full = args.iter().any(|a| a == "--full");
     let open = args.iter().any(|a| a == "--open");
     match (flag(args, "--ids"), flag(args, "--external-contains"), flag(args, "--label"), flag(args, "--type")) {
-        (Some(_), None, None, None) => fetch_with(conn, &ids_of(args)?, full, open),
-        (None, Some(needle), None, None) => by_external_ref(conn, needle, full, open),
-        (None, None, Some(label), None) => by_label(conn, label, flag(args, "--status"), full),
-        (None, None, None, Some(kind)) => by_type(conn, kind, full, open),
+        (Some(_), None, None, None) => fetch_with(conn, cdb, &ids_of(args)?, full, open),
+        (None, Some(needle), None, None) => by_external_ref(conn, cdb, needle, full, open),
+        (None, None, Some(label), None) => by_label(conn, cdb, label, flag(args, "--status"), full),
+        (None, None, None, Some(kind)) => by_type(conn, cdb, kind, full, open),
         _ => Err("plan items: exactly one of --ids <a,b,…>, --external-contains <text>, --label <label> [--status a,b] or --type <type> is required".into()),
     }
 }
 
 /// Raw edges with their types, out of `ids` (or, with `--dependents`, into them). Whether an
 /// edge blocks is the readiness rule's to decide, not this reader's.
-fn edges(args: &[String], conn: &dyn Sql) -> Result<Vec<Value>, String> {
+fn edges(args: &[String], conn: &dyn Sql, cdb: &str) -> Result<Vec<Value>, String> {
     let ids = ids_of(args)?;
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    edges_where(conn, &ids, args.iter().any(|a| a == "--dependents"))
+    edges_where(conn, cdb, &ids, args.iter().any(|a| a == "--dependents"))
 }
 
 fn id_list(ids: &[&str]) -> String {
     ids.iter().map(|x| format!("'{}'", rows::escape(x))).collect::<Vec<_>>().join(",")
 }
 
-fn edges_where(conn: &dyn Sql, ids: &[&str], into: bool) -> Result<Vec<Value>, String> {
-    let cdb = content_db()?;
+fn edges_where(conn: &dyn Sql, cdb: &str, ids: &[&str], into: bool) -> Result<Vec<Value>, String> {
     let list = id_list(ids);
     let q = |sql: String| conn.rows(&sql).map_err(|f| format!("cannot tell: {}", f.text()));
     // bd's column is depends_on_issue_id (beside depends_on_wisp_id / depends_on_external);
@@ -188,18 +244,18 @@ fn edges_where(conn: &dyn Sql, ids: &[&str], into: bool) -> Result<Vec<Value>, S
 }
 
 /// The beads whose parent is one of `ids`, as item rows.
-fn children(args: &[String], conn: &dyn Sql) -> Result<Vec<Value>, String> {
+fn children(args: &[String], conn: &dyn Sql, cdb: &str) -> Result<Vec<Value>, String> {
     let ids = ids_of(args)?;
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let kids: BTreeSet<String> = edges_where(conn, &ids, true)?
+    let kids: BTreeSet<String> = edges_where(conn, cdb, &ids, true)?
         .iter()
         .filter(|e| e["type"] == "parent-child")
         .filter_map(|e| s(e, "issue_id").map(str::to_string))
         .collect();
     let kids: Vec<&str> = kids.iter().map(String::as_str).collect();
-    fetch_with(conn, &kids, args.iter().any(|a| a == "--full"), args.iter().any(|a| a == "--open"))
+    fetch_with(conn, cdb, &kids, args.iter().any(|a| a == "--full"), args.iter().any(|a| a == "--open"))
 }
 
 /// The beads database's reader: one held connection, read-only.
@@ -263,8 +319,12 @@ pub fn titled(ids: &[&str]) -> Result<BTreeMap<String, Titled>, String> {
 /// The plan rows of `ids` as `plan items --ids` prints them, held under the planning watermark
 /// they were read at: a row moves only by a planning write, and every one moves the watermark.
 pub fn items_held(sql: &dyn Sql, ids: &[&str]) -> Result<Vec<Value>, String> {
+    items_held_in(sql, content_db()?, ids)
+}
+
+fn items_held_in(sql: &dyn Sql, cdb: &str, ids: &[&str]) -> Result<Vec<Value>, String> {
     static ITEMS: HeldItems = Mutex::new((None, BTreeMap::new()));
-    items_under(&ITEMS, current_watermark(), ids, &|missing| fetch_with(sql, missing, false, false))
+    items_under(&ITEMS, current_watermark(), ids, &|missing| fetch_with(sql, cdb, missing, false, false))
 }
 
 type HeldItems = Mutex<(Option<u64>, BTreeMap<String, Option<Value>>)>;
@@ -618,7 +678,7 @@ pub fn fetch(ids: &[&str]) -> Result<Vec<Value>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    fetch_with(bd()?, ids, false, false)
+    fetch_with(bd()?, content_db()?, ids, false, false)
 }
 
 fn rows_of(conn: &dyn Sql, sql: &str) -> Result<Vec<Value>, String> {
@@ -627,20 +687,18 @@ fn rows_of(conn: &dyn Sql, sql: &str) -> Result<Vec<Value>, String> {
 
 const TEXT_COLUMNS: &str = ", description, notes, external_ref, close_reason, DATE_FORMAT(closed_at, '%Y-%m-%dT%H:%i:%sZ') AS closed_at";
 
-fn by_external_ref(conn: &dyn Sql, needle: &str, full: bool, open: bool) -> Result<Vec<Value>, String> {
-    let cdb = content_db()?;
+fn by_external_ref(conn: &dyn Sql, cdb: &str, needle: &str, full: bool, open: bool) -> Result<Vec<Value>, String> {
     if needle.is_empty() {
         return Err("plan items: --external-contains needs a non-empty text".into());
     }
     let sql = format!("SELECT id FROM {cdb}.issues WHERE LOCATE('{}', external_ref) > 0 ORDER BY id", rows::escape(needle));
     let found = rows_of(conn, &sql)?;
     let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
-    fetch_with(conn, &ids, full, open)
+    fetch_with(conn, cdb, &ids, full, open)
 }
 
 /// The beads carrying `label`, narrowed to the comma-separated `statuses` when given.
-fn by_label(conn: &dyn Sql, label: &str, statuses: Option<&str>, full: bool) -> Result<Vec<Value>, String> {
-    let cdb = content_db()?;
+fn by_label(conn: &dyn Sql, cdb: &str, label: &str, statuses: Option<&str>, full: bool) -> Result<Vec<Value>, String> {
     if label.is_empty() {
         return Err("plan items: --label needs a non-empty label".into());
     }
@@ -651,28 +709,26 @@ fn by_label(conn: &dyn Sql, label: &str, statuses: Option<&str>, full: bool) -> 
     let sql = format!("SELECT id FROM {cdb}.issues WHERE id IN (SELECT issue_id FROM {cdb}.labels WHERE label = '{}'){status} ORDER BY id", rows::escape(label));
     let found = rows_of(conn, &sql)?;
     let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
-    fetch_with(conn, &ids, full, false)
+    fetch_with(conn, cdb, &ids, full, false)
 }
 
 /// The beads of bd issue type `kind`.
-fn by_type(conn: &dyn Sql, kind: &str, full: bool, open: bool) -> Result<Vec<Value>, String> {
-    let cdb = content_db()?;
+fn by_type(conn: &dyn Sql, cdb: &str, kind: &str, full: bool, open: bool) -> Result<Vec<Value>, String> {
     if kind.is_empty() {
         return Err("plan items: --type needs a non-empty type".into());
     }
     let live = if open { " AND status <> 'closed'" } else { "" };
     let found = rows_of(conn, &format!("SELECT id FROM {cdb}.issues WHERE issue_type = '{}'{live} ORDER BY id", rows::escape(kind)))?;
     let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
-    fetch_with(conn, &ids, full, open)
+    fetch_with(conn, cdb, &ids, full, open)
 }
 
-fn fetch_with(conn: &dyn Sql, ids: &[&str], full: bool, open: bool) -> Result<Vec<Value>, String> {
+fn fetch_with(conn: &dyn Sql, cdb: &str, ids: &[&str], full: bool, open: bool) -> Result<Vec<Value>, String> {
     // An empty id list is an empty answer: it needs no store, so it is decided before the
     // content database is resolved (r-auto-148: an unconfigured test process was refused here).
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let cdb = content_db()?;
     let list = ids.iter().map(|x| format!("'{}'", rows::escape(x))).collect::<Vec<_>>().join(",");
     let q = |sql: String| conn.rows(&sql).map_err(|f| format!("cannot tell: {}", f.text()));
     let text = if full { TEXT_COLUMNS } else { "" };
@@ -682,7 +738,7 @@ fn fetch_with(conn: &dyn Sql, ids: &[&str], full: bool, open: bool) -> Result<Ve
          FROM {cdb}.issues WHERE id IN ({list}){live} ORDER BY id"
     ))?;
     let labels = q(format!("SELECT issue_id, label FROM {cdb}.labels WHERE issue_id IN ({list}) ORDER BY issue_id, label"))?;
-    let deps = edges_where(conn, ids, false)?;
+    let deps = edges_where(conn, cdb, ids, false)?;
     let mut out = assemble(&issues, &labels, &deps);
     if full {
         for (row, issue) in out.iter_mut().zip(issues.iter().filter(|i| s(i, "id").is_some())) {
@@ -703,8 +759,7 @@ fn count(conn: &dyn Sql, sql: String) -> Result<i64, String> {
     Ok(rows.first().and_then(|r| r.get("n")).and_then(|n| n.as_i64().or_else(|| n.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0))
 }
 
-fn inflow(conn: &dyn Sql, window_secs: u32) -> Result<Value, String> {
-    let cdb = content_db()?;
+fn inflow(conn: &dyn Sql, cdb: &str, window_secs: u32) -> Result<Value, String> {
     let q = |sql: String| rows_of(conn, &sql);
     let work = "COALESCE(issue_type, 'task') <> 'event'";
     let fresh = format!("{work} AND {PANE_SCOPE} AND created_at >= UTC_TIMESTAMP() - INTERVAL {window_secs} SECOND");
@@ -728,8 +783,7 @@ fn inflow(conn: &dyn Sql, window_secs: u32) -> Result<Value, String> {
     Ok(json!({ "n": n, "defect": defect, "kinds": kinds, "rows": assemble(&issues, &labels, &[]) }))
 }
 
-fn repo_labels(conn: &dyn Sql, valid: &str) -> Result<Value, String> {
-    let cdb = content_db()?;
+fn repo_labels(conn: &dyn Sql, cdb: &str, valid: &str) -> Result<Value, String> {
     let live = format!("{cdb}.issues WHERE status <> 'closed'");
     let with_repo = format!("{live} AND id IN (SELECT issue_id FROM {cdb}.labels WHERE label LIKE 'repo:%')");
     let valid: Vec<String> = valid.split(',').filter(|v| !v.is_empty()).map(|v| format!("'repo:{}'", rows::escape(v))).collect();
@@ -826,8 +880,121 @@ mod tests {
         assert_eq!((out[0]["labels"].clone(), out[0]["dependencies"].clone(), out[0]["parent"].clone()), (json!([]), json!([]), Value::Null));
     }
 
+    const DB: &str = "`beads`";
+
     fn a(x: &[&str]) -> Vec<String> {
         x.iter().map(|s| s.to_string()).collect()
+    }
+
+
+    /// A beads database that records each query and answers by shape.
+    struct Recording {
+        seen: Mutex<Vec<String>>,
+        fail: std::sync::atomic::AtomicBool,
+    }
+
+    impl Recording {
+        fn new() -> Self {
+            Recording { seen: Mutex::new(Vec::new()), fail: false.into() }
+        }
+        fn queries(&self) -> usize {
+            self.seen.lock().unwrap().len()
+        }
+    }
+
+    impl Sql for Recording {
+        fn rows(&self, sql: &str) -> Result<Vec<Value>, crate::content_sql::Failure> {
+            self.seen.lock().unwrap().push(sql.to_string());
+            if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(crate::content_sql::Failure::Store("down".into()));
+            }
+            if sql.contains("COUNT(*) AS n") {
+                return Ok(vec![json!({ "n": 3 })]);
+            }
+            if sql.contains(".labels WHERE issue_id IN") {
+                return Ok(vec![json!({ "issue_id": "a", "label": "l" })]);
+            }
+            if sql.contains(".dependencies") {
+                return Ok(vec![json!({ "issue_id": "e", "depends_on_id": "a", "type": "parent-child" })]);
+            }
+            Ok(vec![json!({ "id": "a", "title": "ta", "priority": 2, "issue_type": "task", "status": "open" }), json!({ "id": "b", "title": "tb", "priority": 1, "issue_type": "task", "status": "open" })])
+        }
+    }
+
+    fn fresh_hold() -> HeldAnswers {
+        Mutex::new((None, BTreeMap::new()))
+    }
+
+    const FORMS: &[&[&str]] = &[
+        &["items", "--label", "L", "--status", "open", "--full"],
+        &["items", "--type", "epic", "--open"],
+        &["items", "--ids", "a,b"],
+        &["edges", "--ids", "a,b", "--dependents"],
+        &["children", "--ids", "e"],
+        &["repo-labels", "--valid", "x,y"],
+    ];
+
+    #[test]
+    fn each_plan_form_is_queried_once_per_planning_watermark() {
+        for form in FORMS {
+            let (db, held, now) = (Recording::new(), fresh_hold(), Instant::now());
+            let args = a(form);
+            let first = answer_with(&args, &db, DB, Some(5), now, &held).unwrap();
+            let once = db.queries();
+            assert!(once > 0, "{form:?}");
+            assert_eq!(answer_with(&args, &db, DB, Some(5), now, &held).unwrap(), first, "{form:?}");
+            assert_eq!(db.queries(), once, "{form:?} was queried again at the same watermark");
+            answer_with(&args, &db, DB, Some(6), now, &held).unwrap();
+            assert_eq!(db.queries(), 2 * once, "{form:?} was held across a moved watermark");
+        }
+    }
+
+    #[test]
+    fn an_inflow_answer_is_held_for_the_hold_and_no_longer() {
+        let (db, held, t0) = (Recording::new(), fresh_hold(), Instant::now());
+        let args = a(&["inflow", "--window-secs", "3600"]);
+        answer_with(&args, &db, DB, Some(5), t0, &held).unwrap();
+        let once = db.queries();
+        answer_with(&args, &db, DB, Some(5), t0 + INFLOW_HOLD - Duration::from_secs(1), &held).unwrap();
+        assert_eq!(db.queries(), once);
+        answer_with(&args, &db, DB, Some(5), t0 + INFLOW_HOLD, &held).unwrap();
+        assert_eq!(db.queries(), 2 * once, "past the hold it queries again");
+    }
+
+    #[test]
+    fn a_failed_read_and_a_missing_watermark_are_never_held() {
+        let (db, held, now) = (Recording::new(), fresh_hold(), Instant::now());
+        let args = a(FORMS[3]);
+        db.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(answer_with(&args, &db, DB, Some(5), now, &held).is_err());
+        db.fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        let before = db.queries();
+        answer_with(&args, &db, DB, Some(5), now, &held).unwrap();
+        assert!(db.queries() > before, "the error was held");
+        let before = db.queries();
+        answer_with(&args, &db, DB, None, now, &held).unwrap();
+        answer_with(&args, &db, DB, None, now, &held).unwrap();
+        let spent = db.queries() - before;
+        assert!(spent > 0 && spent % 2 == 0, "with no watermark every call queries");
+    }
+
+    #[test]
+    fn a_held_answer_is_the_answer_the_readers_give() {
+        let db = Recording::new();
+        let direct = |f: &[&str]| -> Value {
+            let r = a(f);
+            let rest = &r[1..];
+            match f[0] {
+                "items" => json!({ "watermark": 5, "items": items(rest, &db, DB).unwrap() }),
+                "edges" => json!({ "watermark": 5, "edges": edges(rest, &db, DB).unwrap() }),
+                "children" => json!({ "watermark": 5, "items": children(rest, &db, DB).unwrap() }),
+                _ => repo_labels(&db, DB, flag(rest, "--valid").unwrap()).unwrap(),
+            }
+        };
+        for form in FORMS {
+            let got = answer_with(&a(form), &db, DB, Some(5), Instant::now(), &fresh_hold()).unwrap();
+            assert_eq!(got.to_string(), direct(form).to_string(), "{form:?}");
+        }
     }
 
     #[test]
@@ -846,11 +1013,11 @@ mod tests {
     #[test]
     fn no_ids_is_an_empty_answer_and_a_missing_selector_is_refused() {
         let c = crate::db::Conn::unreachable();
-        assert_eq!(items(&a(&["--ids", ""]), &c), Ok(vec![]));
-        assert_eq!(children(&a(&["--ids", ","]), &c), Ok(vec![]));
-        assert_eq!(edges(&a(&["--ids", ""]), &c), Ok(vec![]));
-        assert!(items(&[], &c).is_err());
-        assert!(edges(&[], &c).unwrap_err().contains("--ids"));
+        assert_eq!(items(&a(&["--ids", ""]), &c, DB), Ok(vec![]));
+        assert_eq!(children(&a(&["--ids", ","]), &c, DB), Ok(vec![]));
+        assert_eq!(edges(&a(&["--ids", ""]), &c, DB), Ok(vec![]));
+        assert!(items(&[], &c, DB).is_err());
+        assert!(edges(&[], &c, DB).unwrap_err().contains("--ids"));
         assert_eq!(cmd_plan(&a(&["nope"])).0, CANNOT_TELL);
     }
 
