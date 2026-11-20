@@ -198,11 +198,8 @@ pub trait Inputs {
     fn run_dir(&self) -> Result<PathBuf, String>;
     /// The rune partitions that decide which runes would take a claimable bead.
     fn partitions(&self, config: &Config) -> Result<Vec<Partition>, String>;
-    /// What `partitions` would read, by stat alone; equal stamps mean an equal answer. The
-    /// default never changes: an implementor whose partitions can change must override it.
-    fn partitions_stamp(&self) -> Result<PartitionsStamp, String> {
-        Ok(PartitionsStamp::default())
-    }
+    /// What `partitions` would read; equal stamps mean an equal answer.
+    fn partitions_stamp(&self) -> Result<PartitionsStamp, String>;
 }
 
 #[derive(Clone)]
@@ -474,6 +471,10 @@ impl Inputs for Fixed {
     fn partitions(&self, _: &Config) -> Result<Vec<Partition>, String> {
         Ok(Vec::new())
     }
+
+    fn partitions_stamp(&self) -> Result<PartitionsStamp, String> {
+        Ok(PartitionsStamp::default())
+    }
 }
 
 /// Inputs that cannot be read.
@@ -502,6 +503,10 @@ impl Inputs for Unreadable {
     }
 
     fn partitions(&self, _: &Config) -> Result<Vec<Partition>, String> {
+        Err("the runes are unreadable".into())
+    }
+
+    fn partitions_stamp(&self) -> Result<PartitionsStamp, String> {
         Err("the runes are unreadable".into())
     }
 }

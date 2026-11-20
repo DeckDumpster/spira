@@ -613,7 +613,8 @@ pub struct PartitionsStamp {
     files: Vec<(PathBuf, Option<std::time::SystemTime>, Option<u64>)>,
 }
 
-/// The stamp of what `partitions(home, env_override, ..)` would read now, without parsing the predicates.
+/// The stamp of the roster and rune files `partitions(home, env_override, ..)` would read now, without
+/// parsing the predicates. The label overlay `rune_predicate` also reads is pinned with the config.
 pub fn partitions_stamp(home: &Path, env_override: Option<&str>) -> PartitionsStamp {
     let roster = spira_runes(home, env_override);
     let dir = runes_dir(home);

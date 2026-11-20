@@ -268,6 +268,7 @@ mod pinned {
         parts: &'a AtomicUsize,
         fail_config: &'a Cell<bool>,
         home: Option<&'a Path>,
+        fail_parts: &'a Cell<bool>,
     }
 
     impl Inputs for Counting<'_> {
@@ -289,6 +290,9 @@ mod pinned {
         }
         fn partitions(&self, config: &Config) -> Result<Vec<Partition>, String> {
             self.parts.fetch_add(1, Ordering::SeqCst);
+            if self.fail_parts.get() {
+                return Err("runes unreadable".into());
+            }
             match self.home {
                 Some(h) => runes::partitions(h, Some("r"), &config.queue_wait, ""),
                 None => Ok(Vec::new()),
@@ -313,14 +317,15 @@ mod pinned {
 
     #[test]
     fn fifty_views_read_the_config_and_the_partitions_once() {
+        let nofail = Cell::new(false);
         let (configs, parts, fail) = (AtomicUsize::new(0), AtomicUsize::new(0), Cell::new(false));
-        let pinned = Pinned::new(Counting { configs: &configs, parts: &parts, fail_config: &fail, home: None });
+        let pinned = Pinned::new(Counting { configs: &configs, parts: &parts, fail_config: &fail, home: None, fail_parts: &nofail });
         let s = store();
         for _ in 0..50 {
             call(&s, &pinned).unwrap();
         }
         assert_eq!((configs.load(Ordering::SeqCst), parts.load(Ordering::SeqCst)), (1, 1));
-        let bare = Counting { configs: &configs, parts: &parts, fail_config: &fail, home: None };
+        let bare = Counting { configs: &configs, parts: &parts, fail_config: &fail, home: None, fail_parts: &nofail };
         for _ in 0..50 {
             call(&s, &bare).unwrap();
         }
@@ -333,8 +338,9 @@ mod pinned {
         let dir = spira_config::runes::runes_dir(&home);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("r.rune"), "RUNE_LABELS=spira\n").unwrap();
+        let nofail = Cell::new(false);
         let (configs, parts, fail) = (AtomicUsize::new(0), AtomicUsize::new(0), Cell::new(false));
-        let pinned = Pinned::new(Counting { configs: &configs, parts: &parts, fail_config: &fail, home: Some(&home) });
+        let pinned = Pinned::new(Counting { configs: &configs, parts: &parts, fail_config: &fail, home: Some(&home), fail_parts: &nofail });
         let s = store();
         let runes_of = |r: ViewRead| r.1["A"].runes.clone();
         assert_eq!(runes_of(call(&s, &pinned).unwrap()), vec!["r".to_string()]);
@@ -347,12 +353,25 @@ mod pinned {
 
     #[test]
     fn a_failed_config_read_is_not_kept() {
+        let nofail = Cell::new(false);
         let (configs, parts, fail) = (AtomicUsize::new(0), AtomicUsize::new(0), Cell::new(true));
-        let pinned = Pinned::new(Counting { configs: &configs, parts: &parts, fail_config: &fail, home: None });
+        let pinned = Pinned::new(Counting { configs: &configs, parts: &parts, fail_config: &fail, home: None, fail_parts: &nofail });
         let s = store();
         assert!(call(&s, &pinned).is_err());
         fail.set(false);
         call(&s, &pinned).unwrap();
         assert_eq!(configs.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_failed_partitions_read_is_not_kept() {
+        let (configs, parts, fail, fail_parts) = (AtomicUsize::new(0), AtomicUsize::new(0), Cell::new(false), Cell::new(true));
+        let pinned = Pinned::new(Counting { configs: &configs, parts: &parts, fail_config: &fail, home: None, fail_parts: &fail_parts });
+        let s = store();
+        let _ = call(&s, &pinned);
+        fail_parts.set(false);
+        call(&s, &pinned).unwrap();
+        call(&s, &pinned).unwrap();
+        assert_eq!(parts.load(Ordering::SeqCst), 2, "the failure was retried, then the success kept");
     }
 }
