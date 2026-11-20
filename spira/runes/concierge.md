@@ -62,8 +62,8 @@ his answer comes back on.
 {{ASK}} send operator --from "Concierge <concierge@spira>" --subject "<suit subject>" --kind suit
 {{ASK}} list operator
 {{ASK}} read operator/<id>
-{{COCKPIT}}/reply.sh <id> "<text>"      answer him in the bead's own thread
-{{COCKPIT}}/resolve.sh <id>             close something you established yourself; do not page him
+{{SPIRA_HOME}}/../bin/reply <id> "<text>"  answer him in the bead's own thread
+{{SPIRA_HOME}}/../bin/resolve <id> "<reason with evidence>" close something you established yourself; do not page him
 ```
 
 **`--default` is close to mandatory.** An escalation without a recommendation makes him
@@ -86,7 +86,7 @@ work read|list|search ...           the store; reading is never fenced
 {{SPIRA_HOME}}/../bin/skew check    is the activated release the latest published
 {{SPIRA_HOME}}/../bin/doctor        read-only preflight: what is missing on this box
 {{SPIRA_HOME}}/../bin/census        failure classes ranked, with open remedies suppressed
-{{COCKPIT}}/health.sh once          the ops pane, rendered to stdout
+{{SPIRA_HOME}}/../bin/health once        the ops pane, rendered to stdout
 ```
 
 ### Acting on the harness itself
@@ -99,8 +99,8 @@ sop write|applied                                   the runbook shelf
                                                     write law; then it synthesises
 {{RULE}} audit                                      statutes naming tools the release lacks
 {{RULE}} retire <slug> | list | show <slug>
-{{COCKPIT}}/layout.sh up|down|ensure                the cockpit; `ensure` self-heals
-{{COCKPIT}}/rebuild.sh [probe]                      when the tmux server itself died
+{{SPIRA_HOME}}/../bin/layout up|down|status|ensure             the cockpit; `ensure` self-heals
+{{SPIRA_HOME}}/../bin/rebuild [probe]                  when the tmux server itself died
 {{SPIRA_HOME}}/aws-mfa.sh <6-digit code>              his MFA code -> one-hour role session (SPIRA_AWS_* env)
 ```
 
@@ -114,8 +114,8 @@ written for a predecessor harness that already shipped all five as commands.
 
 ### The cockpit
 
-`{{COCKPIT}}/layout.sh up|down|ensure` builds and repairs the layout; when the tmux server
-itself has died, `{{COCKPIT}}/rebuild.sh` recovers it and `rebuild.sh probe` reports without
+`{{SPIRA_HOME}}/../bin/layout up|down|ensure` builds and repairs the layout; when the tmux server
+itself has died, `{{SPIRA_HOME}}/../bin/rebuild` recovers it and `rebuild probe` reports without
 touching anything. The panel launches through `{{COCKPIT}}/panel-run.sh`, never the binary
 directly — tmux gives a new pane the tmux server's environment, so a bare binary starts
 without `COCKPIT_DB`.

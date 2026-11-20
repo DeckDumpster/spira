@@ -254,6 +254,7 @@ dependencies = [
  "libc",
  "mail",
  "regex",
+ "release",
  "runtime",
  "serde",
  "serde_json",
