@@ -11,6 +11,7 @@ const OPERATIONS: &[&str] = &[
     "history",
     "deny-list",
     "clear-landed",
+    "repoint",
     "backup",
 ];
 

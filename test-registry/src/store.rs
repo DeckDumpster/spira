@@ -190,6 +190,40 @@ pub fn clear_landed(
     Ok(cleared)
 }
 
+/// Moves every row naming `from` to name `to`, one `repointed` history row each; returns the moved test ids.
+pub fn repoint(
+    conn: &Connection,
+    now: i64,
+    from: &str,
+    to: &str,
+    actor: &str,
+) -> Result<Vec<String>, String> {
+    if actor.trim().is_empty() {
+        return Err("actor must not be empty".into());
+    }
+    for b in [from, to] {
+        if !valid_bead_id(b) {
+            return Err(format!("bead {b:?} is not a bead id"));
+        }
+    }
+    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate).map_err(sql)?;
+    let mut moved = Vec::new();
+    for row in list(&tx)? {
+        if row.bead != from {
+            continue;
+        }
+        exec(
+            &tx,
+            "UPDATE test_state SET bead = ?2 WHERE test = ?1",
+            params![row.test, to],
+        )?;
+        exec(&tx, "INSERT INTO test_state_history(at, verb, test, state, since, until, bead, reason, actor) VALUES (?1,'repointed',?2,?3,?4,?5,?6,?7,?8)", params![now, row.test, row.state, row.since, row.until, to, format!("moved from {from} to its fix {to}"), actor])?;
+        moved.push(row.test);
+    }
+    tx.commit().map_err(sql)?;
+    Ok(moved)
+}
+
 fn row_of(r: &rusqlite::Row) -> rusqlite::Result<Row> {
     Ok(Row {
         test: r.get(0)?,
@@ -473,5 +507,53 @@ mod tests {
             .is_empty());
         assert_eq!(list(&c).unwrap().len(), 1);
         assert_eq!(history(&c, "suite:a.sh").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn repoint_moves_the_rows_naming_from_so_the_fixs_landing_clears_them() {
+        let c = db();
+        let named = |test, bead| Set {
+            bead,
+            ..s(test, Some(9000))
+        };
+        disable(&c, 100, 600, &named("suite:a.sh", "sp-i")).unwrap();
+        quarantine(&c, 100, 600, &named("suite:b.sh::t", "sp-i")).unwrap();
+        disable(&c, 100, 600, &named("suite:c.sh", "sp-other")).unwrap();
+        assert!(clear_landed(&c, 150, &["sp-f"], "batcher")
+            .unwrap()
+            .is_empty());
+        let moved = repoint(&c, 200, "sp-i", "sp-f", "bead").unwrap();
+        assert_eq!(moved, ["suite:a.sh", "suite:b.sh::t"]);
+        let beads: Vec<(String, String)> = list(&c)
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.test, r.bead))
+            .collect();
+        assert_eq!(beads[2], ("suite:c.sh".into(), "sp-other".into()));
+        assert_eq!(beads[0].1, "sp-f");
+        for t in &moved {
+            let h = history(&c, t).unwrap();
+            assert_eq!(h.len(), 2);
+            assert_eq!(h[1]["verb"], "repointed");
+            assert_eq!(h[1]["reason"], "moved from sp-i to its fix sp-f");
+        }
+        assert_eq!(history(&c, "suite:c.sh").unwrap().len(), 1);
+        assert_eq!(
+            clear_landed(&c, 300, &["sp-f"], "batcher").unwrap(),
+            ["suite:a.sh", "suite:b.sh::t"]
+        );
+    }
+
+    #[test]
+    fn repoint_from_a_bead_with_no_rows_changes_nothing_and_a_bad_id_is_refused() {
+        let c = db();
+        disable(&c, 100, 600, &s("suite:a.sh", Some(9000))).unwrap();
+        assert!(repoint(&c, 200, "sp-zzz", "sp-f", "bead")
+            .unwrap()
+            .is_empty());
+        assert_eq!(history(&c, "suite:a.sh").unwrap().len(), 1);
+        assert!(repoint(&c, 200, "bad id", "sp-f", "bead").is_err());
+        assert!(repoint(&c, 200, "sp-i", "", "bead").is_err());
+        assert!(repoint(&c, 200, "sp-i", "sp-f", " ").is_err());
     }
 }

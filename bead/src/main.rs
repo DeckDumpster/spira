@@ -1790,14 +1790,82 @@ fn cmd_dep_add(args: &[String]) -> i32 {
     }
 
     let mut call = s(&["dep", "add"]);
-    call.push(id);
-    call.push(depid);
+    call.push(id.clone());
+    call.push(depid.clone());
     if let Some(t) = &dep_type {
         call.push("--type".into());
         call.push(dep_type_name(t).into());
     }
     call.extend(rest);
-    put(&call.iter().map(String::as_str).collect::<Vec<_>>(), None)
+    let code = put(&call.iter().map(String::as_str).collect::<Vec<_>>(), None);
+    if code != 0 || !is_blocks_type(dep_type.as_deref()) {
+        return code;
+    }
+    let Some(row) = shown_row(&id) else {
+        eprintln!("bead: dep add: the edge {id} -> {depid} is in, but {id} could not be read, so the registry rows naming it did not move to {depid}");
+        return 1;
+    };
+    if !row.labels.iter().any(|l| l == &cfg_label("SPIRA_INCIDENT_LABEL")) {
+        return 0;
+    }
+    match repoint_registry(&id, &depid) {
+        Ok(moved) => {
+            if let Some(line) = repointed_line(&moved, &depid) {
+                eprintln!("{line}");
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("{}", repoint_failed_line(&id, &depid, &e));
+            1
+        }
+    }
+}
+
+fn repointed_line(moved: &[String], to: &str) -> Option<String> {
+    (!moved.is_empty()).then(|| format!("bead: dep add: registry row(s) {} now name {to}", moved.join(" ")))
+}
+
+fn repoint_failed_line(from: &str, to: &str, why: &str) -> String {
+    format!("bead: dep add: the edge {from} -> {to} is in, but the registry rows naming {from} did not move to {to}: {why}")
+}
+
+fn repoint_argv(from: &str, to: &str) -> Vec<String> {
+    s(&["repoint", "--from", from, "--to", to, "--actor", "bead"])
+}
+
+fn moved_ids(stdout: &str) -> Vec<String> {
+    stdout.lines().filter(|l| !l.is_empty()).map(str::to_string).collect()
+}
+
+#[cfg(test)]
+type RepointSeam = (Vec<(String, String)>, Result<Vec<String>, String>);
+
+#[cfg(test)]
+thread_local! {
+    static TEST_REPOINT: std::cell::RefCell<RepointSeam> = const { std::cell::RefCell::new((Vec::new(), Ok(Vec::new()))) };
+}
+
+/// The seam: moves the test-registry rows naming `from` to `to`; returns the moved test ids.
+fn repoint_registry(from: &str, to: &str) -> Result<Vec<String>, String> {
+    #[cfg(test)]
+    return TEST_REPOINT.with(|r| {
+        let mut r = r.borrow_mut();
+        r.0.push((from.to_string(), to.to_string()));
+        r.1.clone()
+    });
+    #[cfg(not(test))]
+    {
+        let bin = spira_config::release_env::tool("test-registry")?;
+        let out = spira_config::bounded::bounded(bin)
+            .args(repoint_argv(from, to))
+            .output()
+            .map_err(|e| format!("test-registry: {e}"))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(moved_ids(&String::from_utf8_lossy(&out.stdout)))
+    }
 }
 
 /// bd's spellings of a `blocks` edge, normalised to the name the lifecycle store records.
@@ -2118,6 +2186,53 @@ mod tests {
         let w = writes(&d);
         assert_eq!(w[0], (argv(&["content", "create", "T", "-l", "repo:r", "--silent", "--body-file", "-"]), Some("the body".into())));
         assert_eq!(w[1].0[..2], argv(&["create-bead", "sp-new"])[..], "the lifecycle row is the store's own verb on the same client");
+    }
+
+    fn repoint_calls() -> Vec<(String, String)> {
+        TEST_REPOINT.with(|r| std::mem::take(&mut r.borrow_mut().0))
+    }
+
+    #[test]
+    fn the_repoint_wiring_names_the_registry_verb_and_reads_its_stdout() {
+        assert_eq!(repoint_argv("sp-i", "sp-f"), argv(&["repoint", "--from", "sp-i", "--to", "sp-f", "--actor", "bead"]));
+        assert_eq!(moved_ids("suite:a.sh\nsuite:b.sh\n"), ["suite:a.sh", "suite:b.sh"]);
+        assert!(moved_ids("").is_empty());
+        assert_eq!(repointed_line(&["suite:a.sh".into(), "suite:b.sh".into()], "sp-f").unwrap(), "bead: dep add: registry row(s) suite:a.sh suite:b.sh now name sp-f");
+        assert!(repointed_line(&[], "sp-f").is_none());
+        let failed = repoint_failed_line("sp-i", "sp-f", "db locked");
+        assert!(failed.contains("edge sp-i -> sp-f is in") && failed.contains("did not move") && failed.contains("db locked"), "{failed}");
+    }
+
+    #[test]
+    fn a_blocks_edge_from_an_incident_moves_its_registry_rows_to_the_fix() {
+        let dir = testkit::TempDir::new("bead-dep-repoint");
+        let _env = configured(dir.path());
+        let label = cfg_label("SPIRA_INCIDENT_LABEL");
+        let inc: &'static str = Box::leak(format!(r#"[{{"id":"sp-i","issue_type":"task","labels":["{label}"]}}]"#).into_boxed_str());
+        repoint_calls();
+        TEST_REPOINT.with(|r| r.borrow_mut().1 = Ok(vec!["suite:a.sh".into()]));
+
+        let d = install(vec![("content show sp-i", 0, inc), ("content show sp-f", 0, BEAD)]);
+        assert_eq!(cmd_dep_add(&argv(&["sp-i", "sp-f"])), 0);
+        assert_eq!(sent(&d), vec![argv(&["content", "dep", "add", "sp-i", "sp-f"])]);
+        assert_eq!(repoint_calls(), vec![("sp-i".to_string(), "sp-f".to_string())]);
+
+        install(vec![("content show sp-i", 0, inc), ("content show sp-f", 0, BEAD)]);
+        assert_eq!(cmd_dep_add(&argv(&["sp-i", "sp-f", "--type", "related"])), 0);
+        assert!(repoint_calls().is_empty(), "a related edge moves nothing");
+
+        install(vec![("content show sp-a", 0, BEAD), ("content show sp-f", 0, BEAD)]);
+        assert_eq!(cmd_dep_add(&argv(&["sp-a", "sp-f"])), 0);
+        assert!(repoint_calls().is_empty(), "a non-incident dependent moves nothing");
+
+        let d = install(vec![("content show sp-i", 1, "gone"), ("content show sp-f", 0, BEAD)]);
+        assert_eq!(cmd_dep_add(&argv(&["sp-i", "sp-f"])), 1, "an unreadable dependent is not silently skipped");
+        assert_eq!(sent(&d), vec![argv(&["content", "dep", "add", "sp-i", "sp-f"])]);
+
+        TEST_REPOINT.with(|r| r.borrow_mut().1 = Err("db locked".into()));
+        let d = install(vec![("content show sp-i", 0, inc), ("content show sp-f", 0, BEAD)]);
+        assert_eq!(cmd_dep_add(&argv(&["sp-i", "sp-f"])), 1);
+        assert_eq!(sent(&d), vec![argv(&["content", "dep", "add", "sp-i", "sp-f"])], "the edge stays");
     }
 
     #[test]
