@@ -2143,7 +2143,7 @@ fn repoint_registry(from: &str, to: &str) -> Result<Vec<String>, String> {
     #[cfg(not(test))]
     {
         let bin = spira_config::release_env::tool("test-registry")?;
-        let out = std::process::Command::new(bin)
+        let out = spira_config::bounded::bounded(bin)
             .args(["repoint", "--from", from, "--to", to, "--actor", "bead"])
             .output()
             .map_err(|e| format!("test-registry: {e}"))?;
