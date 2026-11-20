@@ -493,11 +493,11 @@ mod own_log_tests {
     #[test]
     fn own_log_reads_the_append_path_from_either_directive_and_none_from_the_journal() {
         let p = |s: &str| Some(PathBuf::from(s));
-        assert_eq!(own_log("[Service]\nStandardError=append:/r/a.log\n"), p("/r/a.log"));
-        assert_eq!(own_log("[Service]\nStandardOutput=append:/r/o.log\n"), p("/r/o.log"));
-        assert_eq!(own_log("[Service]\nStandardOutput=append:/r/o.log\nStandardError=append:/r/e.log\n"), p("/r/e.log"));
+        assert_eq!(own_log("[Service]\nStandardError=append:r/a.log\n"), p("r/a.log"));
+        assert_eq!(own_log("[Service]\nStandardOutput=append:r/o.log\n"), p("r/o.log"));
+        assert_eq!(own_log("[Service]\nStandardOutput=append:r/o.log\nStandardError=append:r/e.log\n"), p("r/e.log"));
         assert_eq!(own_log("[Service]\nStandardError=journal\nStandardOutput=journal\n"), None);
-        assert_eq!(own_log("[Unit]\nStandardError=append:/r/a.log\n"), None);
+        assert_eq!(own_log("[Unit]\nStandardError=append:r/a.log\n"), None);
         assert_eq!(own_log("[Service]\nExecStart=/bin/true\n"), None);
     }
 }

@@ -1948,3 +1948,52 @@ fn a_failed_unit_with_no_append_log_reports_the_line_it_always_did() {
     let e = activate_with(&w, &sc).unwrap_err();
     assert!(e.contains("simulated restart failure") && !e.contains("its own"), "{e}");
 }
+
+#[test]
+fn an_over_long_last_line_is_cut_to_300_characters() {
+    let d = TempDir::new("own-log");
+    let log = d.path().join("u.log");
+    let w = world_activating_a_logging_unit(&log);
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.restart_fails.insert("spira-tool-prod.service".into());
+    let long = log.clone();
+    sc.on_restart = Some(Box::new(move || {
+        fs::write(&long, format!("{}\n", "x".repeat(900))).unwrap();
+        String::new()
+    }));
+    let e = activate_with(&w, &sc).unwrap_err();
+    assert!(e.contains(&format!("last line: \"{}\"", "x".repeat(300))) && !e.contains(&"x".repeat(301)), "{e}");
+}
+
+#[test]
+fn a_log_truncated_after_the_mark_is_read_from_its_start() {
+    let d = TempDir::new("own-log");
+    let log = d.path().join("u.log");
+    fs::write(&log, "old line that is longer than what the restart writes\n".repeat(4)).unwrap();
+    let w = world_activating_a_logging_unit(&log);
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.restart_fails.insert("spira-tool-prod.service".into());
+    let rotated = log.clone();
+    sc.on_restart = Some(Box::new(move || {
+        fs::write(&rotated, "fresh\n").unwrap();
+        String::new()
+    }));
+    let e = activate_with(&w, &sc).unwrap_err();
+    assert!(e.contains("its own last line: \"fresh\""), "{e}");
+}
+
+#[test]
+fn a_unit_with_only_a_standard_output_append_log_is_named_with_its_last_line() {
+    let d = TempDir::new("own-log");
+    let log = d.path().join("u.log");
+    let w = world_activating_a_logging_unit(&log);
+    let text = format!("{NEW_UNIT}StandardOutput=append:{}\n", log.display());
+    file(&w.cfg.releases.join(A).join("systemd/spira-tool.service"), &text);
+    let entries = Manifest::scan(&w.cfg.releases.join(A)).unwrap();
+    fs::write(w.cfg.releases.join(A).join("MANIFEST"), Manifest { commit: A.into(), built: None, repo: None, entries }.render()).unwrap();
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.restart_fails.insert("spira-tool-prod.service".into());
+    sc.on_restart = Some(append_to(log, "out: refused\n"));
+    let e = activate_with(&w, &sc).unwrap_err();
+    assert!(e.contains("its own last line: \"out: refused\""), "{e}");
+}
