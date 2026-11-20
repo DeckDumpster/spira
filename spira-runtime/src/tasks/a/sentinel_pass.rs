@@ -122,7 +122,7 @@
 //! and a pass must stay silent when nothing changed, so the probe's deadline is the pass budget,
 //! 60 s); 3b (queue waiters); 3c (`open_children` over the claimable rows in scope plus the
 //! claim's ready answer, `landed_red_trackers` closed); 7's hand-off; and 8
-//! (`should_judge` with the carry's cooldown, the leg `sentinel --reflect <ids>` — `reflect.sh`
+//! (`should_judge` with the carry's cooldown, the leg `spira-runtime reflect <ids>` — `reflect.sh`
 //! ported into `sentinel::reflect` — started as a unit appending to `reflect.log`).
 //!
 //! The label, note and close writes go through the store's content door; `recompute-blocked`
@@ -1060,15 +1060,29 @@ pub fn incident_event(spec: &EffectSpec) -> Result<String, String> {
     sentinel::edge::incident_event(&w.kind, &w.id, &w.subject, &w.text)
 }
 
-/// `sentinel-pass.reflect`: CHECK 8's inference leg as a unit (`sentinel --reflect <ids>`, the
+/// The binary that hosts CHECK 8's inference leg, and the verb that selects it.
+pub const REFLECT_BIN: &str = "spira-runtime";
+pub const REFLECT_VERB: &str = "reflect";
+
+pub fn reflect_argv(bin: &std::path::Path, ids: &[String]) -> Vec<String> {
+    let mut argv = vec![bin.to_string_lossy().into_owned(), REFLECT_VERB.into()];
+    argv.extend(ids.iter().cloned());
+    argv
+}
+
+/// The bead ids a reflect unit was started with: each argument may carry several, space-separated.
+pub fn reflect_ids(args: impl IntoIterator<Item = String>) -> Vec<String> {
+    args.into_iter().flat_map(|a| a.split_whitespace().map(str::to_string).collect::<Vec<_>>()).collect()
+}
+
+/// `sentinel-pass.reflect`: CHECK 8's inference leg as a unit (`spira-runtime reflect <ids>`, the
 /// ported `reflect.sh`), appending to `$SPIRA_RUN/reflect.log`; one model call runs for minutes.
 pub fn reflect(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let w = write_of(&spec.input, REFLECT)?;
-    let sentinel_bin = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).map(|d| d.join("sentinel")).find(|p| p.is_file()).ok_or("sentinel not found on PATH")?;
+    let reflect_bin = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).map(|d| d.join(REFLECT_BIN)).find(|p| p.is_file()).ok_or_else(|| format!("{REFLECT_BIN} not found on PATH"))?;
     let pass_env = ["PATH", "SPIRA_RELEASE", "SPIRA_TOML", "HOME", "SPIRA_HOME", "SPIRA_RUN"];
     let env = pass_env.iter().filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v))).collect();
-    let mut argv = vec![sentinel_bin.to_string_lossy().into_owned(), "--reflect".into()];
-    argv.extend(w.ids.iter().cloned());
+    let argv = reflect_argv(&reflect_bin, &w.ids);
     let unit = units::UnitSpec { task: NAME.into(), key: format!("reflect-{:016x}", runtime::event::fnv1a(&spec.input)), argv, env, cwd: None };
     let props = units::UnitProps { output_append: Some(e.world.run_dir.join("reflect.log")), runtime_max_ms: Some((sentinel::reflect::AGENT_TIMEOUT_SECS + 60) * 1000), ..units::UnitProps::default() };
     let input = serde_json::to_string(&units::StartSpec { unit, props }).map_err(|e| e.to_string())?;
@@ -1114,12 +1128,26 @@ pub fn phase_metric(e: &Effects, input: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod beads_on_tests {
-    use super::beads_on;
+    use super::{beads_on, reflect_argv, reflect_ids, REFLECT_BIN};
     use spira_store::lc_call::{fake, LcClient};
     use std::sync::Arc;
 
     fn bead(id: &str, status: &str, kind: &str, parent: Option<&str>) -> serde_json::Value {
         serde_json::json!({"id": id, "status": status, "issue_type": kind, "labels": ["spira"], "parent": parent})
+    }
+
+    #[test]
+    fn reflect_argv_names_the_shipped_entry_point_then_the_ids() {
+        let bin = std::path::Path::new("/rel/bin").join(REFLECT_BIN);
+        let argv = reflect_argv(&bin, &["sp-a".into(), "sp-b".into()]);
+        assert_eq!(std::path::Path::new(&argv[0]).file_name().unwrap(), "spira-runtime");
+        assert_eq!(&argv[1..], ["reflect", "sp-a", "sp-b"]);
+    }
+
+    #[test]
+    fn reflect_ids_split_every_argument_on_whitespace() {
+        let args = ["sp-a", "sp-b sp-c"].map(String::from);
+        assert_eq!(reflect_ids(args), ["sp-a", "sp-b", "sp-c"]);
     }
 
     fn store() -> Arc<fake::Content> {
