@@ -337,7 +337,8 @@ fn seal_rerun_after_a_lost_progress_file_adopts_the_ref_already_on_the_forge() {
     std::fs::remove_file(record::dir(w.run.path(), 1).join("progress.json")).unwrap();
     w.gh.heal();
     w.gh.fail("git/refs");
-    w.gh.answer("git/ref/heads", r#"{"object":{"sha":"new-commit"}}"#);
+    let branch = record::load(w.run.path(), 1).unwrap().branch;
+    w.gh.answer(&format!("git/ref/heads/{branch}"), r#"{"object":{"sha":"new-commit"}}"#);
     let o = w.seal_with("001", &c);
     assert_eq!(o.code, 0, "{}", o.stderr);
     assert_eq!(w.gh.posted("pulls").len(), 2);
