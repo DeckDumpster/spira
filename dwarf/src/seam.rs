@@ -79,7 +79,7 @@ _dwarf_rune_ready() {
     rune_ready "$RUNE"
 }
 _dwarf_ready_set() {
-    _spira_claim rune-ready "$RUNE" --json --dropped ${SPIRA_REQUIRE_EXPRESS:+--express}
+    _spira_claim "$@"
 }
 _dwarf_call_argv() {
     call_argv "$RUNE"
@@ -218,6 +218,15 @@ pub fn parse_snapshot(raw: &str) -> Result<Snapshot, String> {
     Ok(snap)
 }
 
+/// The argv of the dwarf's ready-set call to spira-claim.
+pub fn ready_set_argv(rune: &str, express: bool) -> Vec<String> {
+    let mut v: Vec<String> = ["rune-ready", rune, "--json", "--dropped"].iter().map(|x| x.to_string()).collect();
+    if express {
+        v.push("--express".into());
+    }
+    v
+}
+
 /// The real seam.
 pub struct BashSeam<'a> {
     pub lib: PathBuf,
@@ -265,6 +274,20 @@ mod tests {
         orig.insert("PATH".to_string(), "inherited".to_string());
         let e = Env::new(orig, BTreeMap::new()).seam().unwrap_err();
         assert!(e.contains("SPIRA_RELEASE"), "{e}");
+    }
+
+    #[test]
+    fn the_claim_seam_sends_only_flags_spira_claim_accepts() {
+        for express in [false, true] {
+            let argv = ready_set_argv("builder", express);
+            assert_eq!(spira_claim::cli::accepts(&argv), Ok(()), "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn ready_set_forwards_its_argv_unchanged() {
+        let body = FIXED.split("_dwarf_ready_set() {\n").nth(1).and_then(|s| s.split("\n}").next()).expect("FIXED defines _dwarf_ready_set");
+        assert_eq!(body.trim(), r#"_spira_claim "$@""#);
     }
 
     #[test]

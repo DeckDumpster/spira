@@ -96,6 +96,18 @@ struct Args {
     all: Vec<(String, String)>,
 }
 
+const RUNE_READY_FLAGS: &[&str] = &["--scope-label", "--noloop-label", "--json", "--express", "--freshness", "--dropped"];
+
+/// Whether `spira-claim <raw>` would get past argument parsing; only `rune-ready` is checked.
+pub fn accepts(raw: &[String]) -> Result<(), String> {
+    let verb = raw.first().map(String::as_str).unwrap_or("");
+    let a = Args::parse(raw.get(1..).unwrap_or(&[]))?;
+    match verb {
+        "rune-ready" => a.check_known(RUNE_READY_FLAGS),
+        _ => Err(format!("{verb}: verb not checked by accepts")),
+    }
+}
+
 const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--dry-run", "--apply", "--raw", "--express", "--dropped"];
 
 impl Args {
@@ -1183,7 +1195,7 @@ fn taken_split<'a>(view: &'a Viewed, rune: &str) -> (Vec<&'a rank::ReadyRow>, Ve
 /// `{freshness, rows}` instead, `freshness` naming the planning watermark and judgement time
 /// which is `null`: the claim view is answered when it is read and has no age.
 fn cmd_rune_ready(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json", "--express", "--freshness", "--dropped"]) {
+    if let Err(e) = a.check_known(RUNE_READY_FLAGS) {
         return Outcome::usage(e);
     }
     let me = match a.pos.first() {

@@ -125,9 +125,10 @@ pub(crate) mod verdict_run {
 
     #[allow(clippy::too_many_arguments)]
     fn with_run_launching<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: Dirty, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &dyn Seam, sink: &dyn Sink, launcher: &dyn Launcher, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
+        let original = vars.clone();
         let conf = Conf::new(&Snapshot { vars, ..Default::default() }, Path::new("h/spira"));
         let rune = Rune::from_vars("builder", &Default::default());
-        let env = Env::new(Default::default(), Default::default());
+        let env = Env::new(original, Default::default());
         let stop = Arc::new(Stop::default());
         let mut r = Run {
             d: Deps { bd, seam, git: &git, exec, launcher, sink, env: &env, clock, sleep: &|_| {} },
@@ -147,6 +148,28 @@ pub(crate) mod verdict_run {
             s: State { bead: "sp-x".into(), branch: "b".into(), repo: PathBuf::from("repo"), work: Some(PathBuf::from("w/own")), lc_model_restricted: true, claimed_raw: claimed_raw.into(), ..Default::default() },
         };
         f(&mut r)
+    }
+
+    fn ready_set_call(express: Option<&str>) -> Vec<String> {
+        let mut vars = super::complete_vars();
+        if let Some(v) = express {
+            vars.insert("SPIRA_REQUIRE_EXPRESS".into(), v.into());
+        }
+        let seam = Seams(Default::default());
+        with_run_over(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &seam, "", |r| {
+            let _ = r.ready_set(1, std::time::Duration::ZERO);
+        });
+        let calls = seam.0.lock().unwrap();
+        let (f, a) = calls.iter().find(|(f, _)| f == "_dwarf_ready_set").expect("ready_set called the seam").clone();
+        assert_eq!(f, "_dwarf_ready_set");
+        a
+    }
+
+    #[test]
+    fn ready_set_sends_express_only_when_the_requirement_is_set_and_non_empty() {
+        assert_eq!(ready_set_call(None), crate::seam::ready_set_argv("builder", false));
+        assert_eq!(ready_set_call(Some("")), crate::seam::ready_set_argv("builder", false));
+        assert_eq!(ready_set_call(Some("1")), crate::seam::ready_set_argv("builder", true));
     }
 
     struct Appends(Mutex<Vec<String>>);
