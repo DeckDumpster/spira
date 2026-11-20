@@ -674,7 +674,7 @@ pub(crate) mod verdict_run {
             rune_file: PathBuf::new(),
             s: State { bead: "sp-x".into(), branch: "b".into(), repo: PathBuf::from("repo"), claimed_raw: raw.into(), base_fq: "local/main".into(), ..Default::default() },
         };
-        r.write_static_prompt(Path::new("w"), "", "", "").ok().expect("the prompt is written");
+        assert!(r.write_static_prompt(Path::new("w"), "", "", "").is_ok(), "the prompt is written");
         let task = std::fs::read_to_string(dir.path().join("sp-x.task.md")).unwrap();
         let line = task.find("sp-dep LANDED since 2026-11-19T21:30:20Z, 8ce75d2da5 on the landing ref").unwrap_or_else(|| panic!("{task}"));
         assert!(line < task.find("waits on sp-dep").expect("the notes are in the brief"), "{task}");
