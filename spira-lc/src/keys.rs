@@ -154,6 +154,15 @@ pub fn stay_day(state: &str, day: i64) -> String {
     format!("{STAYS}{state}/{day:010}")
 }
 
+/// The tally of bead edges: `edges/<utc-minute>` holds one minute's counts and newest `at` per
+/// edge, and `edges/cursor` where `fold_edges` has read to. Written by `fold_edges` alone.
+pub const EDGES: &str = "edges/";
+pub const EDGES_CURSOR: &str = "edges/cursor";
+
+pub fn edge_minute(minute: i64) -> String {
+    format!("{EDGES}{minute:010}")
+}
+
 /// Every history entry of `id`: one per txn whose audit names it.
 pub fn history(id: &str) -> String {
     format!("{HISTORY}{id}/")

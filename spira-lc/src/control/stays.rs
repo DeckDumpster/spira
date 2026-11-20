@@ -48,11 +48,11 @@ pub struct Cursor {
 }
 
 impl Cursor {
-    fn stored(&self) -> Value {
+    pub(super) fn stored(&self) -> Value {
         json!({ "rev": self.rev, "filled_from": self.filled_from, "fill_to": self.fill_to })
     }
 
-    fn read(v: &Value) -> Option<Cursor> {
+    pub(super) fn read(v: &Value) -> Option<Cursor> {
         Some(Cursor { rev: v["rev"].as_u64()?, filled_from: v["filled_from"].as_i64()?, fill_to: v["fill_to"].as_u64()? })
     }
 }
@@ -111,13 +111,13 @@ impl<B: Backend> Store<B> {
         Ok(self.contract().get(keys::STAYS_CURSOR)?.and_then(|i| Cursor::read(&i.value.data).map(|c| (c, i.mod_rev))))
     }
 
-    fn events_from(&self, rev: u64, limit: usize, head: u64) -> Result<Vec<Item>> {
+    pub(super) fn events_from(&self, rev: u64, limit: usize, head: u64) -> Result<Vec<Item>> {
         let after = (rev > 0).then(|| events_key(rev - 1));
         self.contract().range_at(EVENTS_PREFIX, after.as_deref(), limit, head)
     }
 
     /// The first revision at which the log holds an audit at or after `floor`, found by bisection.
-    fn first_rev_within(&self, floor: i64, head: u64) -> Result<u64> {
+    pub(super) fn first_rev_within(&self, floor: i64, head: u64) -> Result<u64> {
         let within = |r: u64| -> Result<bool> {
             let page = self.events_from(r, PROBE, head)?;
             if page.is_empty() {
@@ -133,6 +133,14 @@ impl<B: Backend> Store<B> {
         Ok(lo)
     }
 
+    /// The cursor of a first fill: from the oldest revision holding an audit at or after `floor`.
+    pub(super) fn first_fill(&self, floor: i64, head: u64) -> Result<Cursor> {
+        let start = self.first_rev_within(floor, head)?;
+        let oldest = self.events_from(0, 1, head)?.first().map(|i| i.mod_rev.main);
+        let filled_from = if oldest.is_none_or(|o| o >= start) { 0 } else { floor };
+        Ok(Cursor { rev: start.saturating_sub(1), filled_from, fill_to: head })
+    }
+
     /// Folds the ended stays of at most `max_revs` revisions past the cursor into the tally, in
     /// one txn guarded by the cursor. The first call with no cursor starts from the oldest
     /// revision holding an audit within the window.
@@ -143,10 +151,7 @@ impl<B: Backend> Store<B> {
         let (mut cursor, guard) = match &held {
             Some((c, rev)) => (c.clone(), Some(*rev)),
             None => {
-                let start = self.first_rev_within(floor, head)?;
-                let oldest = self.events_from(0, 1, head)?.first().map(|i| i.mod_rev.main);
-                let filled_from = if oldest.is_none_or(|o| o >= start) { 0 } else { floor };
-                (Cursor { rev: start.saturating_sub(1), filled_from, fill_to: head }, None)
+                (self.first_fill(floor, head)?, None)
             }
         };
         let page = self.events_from(cursor.rev + 1, max_revs, head)?;
