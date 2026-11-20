@@ -59,6 +59,7 @@ struct Rig<B: Backend> {
     n: Cell<u32>,
     sink: MetricsSink,
     outside: Loop,
+    cold: Cell<bool>,
 }
 
 fn rig() -> Rig<MemBackend> {
@@ -74,6 +75,7 @@ fn rig_on<B: Backend>(backend: B) -> Rig<B> {
         n: Cell::new(0),
         sink: MetricsSink::new(None, "test", std::time::Duration::from_millis(1)),
         outside: Loop::default(),
+        cold: Cell::new(false),
     }
 }
 
@@ -108,13 +110,22 @@ impl<B: Backend> Rig<B> {
         self.call_with(&self.sink, argv, body)
     }
 
+    /// The sweep thread's warm-up, which a publish otherwise finds already done.
+    fn warm(&self) {
+        if !self.cold.get() {
+            self.store.warm_dwell(self.now() as i64, 3 * DAY, 100_000).unwrap();
+        }
+    }
+
     fn publish(&self) -> Value {
+        self.warm();
         let (code, v) = self.call(&["publish-section", "lifecycle"], None);
         assert_eq!(code, 0, "{v}");
         v
     }
 
     fn publish_from(&self, outside: &dyn Outside) -> Value {
+        self.warm();
         self.n.set(self.n.get() + 1);
         let request = format!("t/{}", self.n.get());
         let args: Vec<String> = ["publish-section", "lifecycle"].map(String::from).to_vec();
@@ -510,9 +521,9 @@ fn an_index_short_of_the_window_is_unobservable_not_zero() {
     let now = r.now();
     r.land("b-1", "harness", now - 2 * H - 20 * MIN, now - 2 * H);
     r.land("b-2", "harness", now - 40 * MIN, now - 30 * MIN);
-    crate::control::dwell::SCAN_CAP.with(|c| c.set(Some(0)));
+    r.cold.set(true);
     r.publish();
-    crate::control::dwell::SCAN_CAP.with(|c| c.set(None));
+    r.cold.set(false);
     let st = r.status();
     let why = st["landed_24h"]["unobservable"].as_str().unwrap_or_else(|| panic!("not unobservable: {st}"));
     assert!(why.contains("reaches back only to"), "{why}");

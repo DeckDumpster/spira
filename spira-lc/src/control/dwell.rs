@@ -7,9 +7,10 @@
 //! - **last**: per repo, the newest applied Claim, Submit, Deliver (the bead's half of a round
 //!   cut) and Delivered (any arrival in LANDED from a working state, by any event: a round land,
 //!   a hand-landing, a settle) at or after `now - --window`. The audit log is read once into a
-//!   [`LastIndex`] the store keeps: each answer reads the revisions committed since the last one,
-//!   and reads back in revision chunks only until the index is older than `--window` seconds or
-//!   [`MAX_SCANNED`] audits have been read in the call. `horizon` is the oldest time the index
+//!   [`LastIndex`] the store keeps: each answer folds the revisions committed since the last one
+//!   (bounded by [`FORWARD_REVS`]), and [`Store::warm_dwell`], on lc-serve's sweep thread, reads
+//!   back in revision chunks until the index is older than the window. An index not yet there
+//!   answers `complete: false`. `horizon` is the oldest time the index
 //!   reached, so a kind not seen is known only to be older than it.
 //!   `Deliver` is also the newest cut round's `opened_at` per repo, read from the round records
 //!   every cut writes, so a cut is seen whatever the audit scan covered.
@@ -47,19 +48,12 @@ pub const KINDS: [&str; 4] = ["Claim", "Submit", "Deliver", "Delivered"];
 const CHUNK_REVS: u64 = 500;
 /// Items per range read inside a chunk.
 const PAGE: usize = 1_000;
-/// The most audit keys one answer reads, whatever the window: the read stays bounded.
-pub const MAX_SCANNED: usize = 60_000;
-
-#[cfg(test)]
-thread_local!(pub(super) static SCAN_CAP: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) });
-
-fn scan_cap() -> usize {
-    #[cfg(test)]
-    if let Some(cap) = SCAN_CAP.with(|c| c.get()) {
-        return cap;
-    }
-    MAX_SCANNED
-}
+/// The most audit keys one sweep's [`Store::warm_dwell`] reads: a few chunks, so the index
+/// lock is held briefly and a request waits behind at most that.
+pub const WARM_SCANNED: usize = 5 * CHUNK_REVS as usize;
+/// The most revisions a request folds forward; past it the answer is incomplete and the rest
+/// is left to [`Store::warm_dwell`], so a long-idle index cannot rebuild the cut.
+const FORWARD_REVS: u64 = 2_000;
 
 /// The most rounds one dwell answer reads from the `opened_at` index; a full read is an error.
 pub const DWELL_ROUNDS_MAX: usize = 5_000;
@@ -87,7 +81,7 @@ pub struct Dwell {
     pub now: i64,
     pub window_s: u64,
     /// The oldest `at` the scan covered: `now - window_s` when it read that far, else the oldest
-    /// audit it reached before the log or [`MAX_SCANNED`] ran out.
+    /// audit it reached; now when the index is behind the head.
     pub horizon: i64,
     /// The scan reached `now - window_s` or the start of the log.
     pub complete: bool,
@@ -320,49 +314,87 @@ impl<B: Backend> Store<B> {
         Ok(d)
     }
 
-    /// The one advance of the audit index to `head`, and back until it reaches `now - window_s`
-    /// or [`MAX_SCANNED`] is spent; whether it reached that far, and the horizon it holds.
+    /// Folds the revisions committed since the index last advanced, at most [`FORWARD_REVS`] of
+    /// them, and reports whether the index now covers `window_s` back from `now` up to `head`.
+    /// It never reads backward: that is [`Store::warm_dwell`]'s, off the request path.
     fn advance(&self, idx: &mut LastIndex, head: u64, now: i64, window_s: u64, known: &mut BTreeMap<String, Option<String>>, scanned: &mut usize) -> Result<(bool, i64)> {
-        let floor = now.saturating_sub(window_s as i64);
-        let mut repo = |id: &str| -> Result<Option<String>> {
-            if let Some(r) = known.get(id) {
-                return Ok(r.clone());
-            }
-            let key = keys::lifecycle(id);
-            let found = match self.contract().get_at(&key, head)? {
-                Some(i) => Some(repo_of(&decode::<LifecycleRecord>(&key, &i.value)?)),
-                None => None,
-            };
-            known.insert(id.to_string(), found.clone());
-            Ok(found)
-        };
         if !idx.started {
             (idx.low_rev, idx.high_rev, idx.started) = (head, head, true);
         }
         if idx.high_rev < head {
-            let after = events_key(idx.high_rev);
-            let oldest = self.scan(idx, Some(after), events_key(head), head, head - idx.high_rev, scanned, &mut repo)?;
-            idx.high_rev = head;
-            idx.reached(oldest);
+            self.fold_forward(idx, head, FORWARD_REVS, known, scanned)?;
         }
-        let mut span = CHUNK_REVS;
-        while idx.horizon > floor && idx.low_rev > 0 && *scanned < scan_cap() {
-            let hi = idx.low_rev;
-            let lo = hi.saturating_sub(span);
-            let oldest = self.scan(idx, Some(events_key(lo)), events_key(hi), head, hi - lo, scanned, &mut repo)?;
-            idx.low_rev = lo;
-            idx.reached(oldest);
-            // Revisions with no audit (lock renewals, a reopen's jump, the import's baseline)
-            // are crossed in doubling strides, so a gap costs a few reads, not one per chunk.
-            span = if oldest.is_some() { CHUNK_REVS } else { (span * 2).min(CHUNK_REVS * 64) };
+        Ok(Self::coverage(idx, head, now, window_s))
+    }
+
+    /// Whether the index reaches `now - window_s`, and the horizon it truly holds. An index
+    /// behind `head` claims nothing: the revisions it lacks are the newest.
+    fn coverage(idx: &mut LastIndex, head: u64, now: i64, window_s: u64) -> (bool, i64) {
+        let floor = now.saturating_sub(window_s as i64);
+        idx.prune(now - DELIVERED_KEPT_S);
+        if idx.high_rev < head {
+            return (false, now);
         }
         let complete = idx.horizon <= floor || idx.low_rev == 0;
         let mut horizon = now.min(idx.horizon);
         if complete {
             horizon = horizon.min(floor);
         }
-        idx.prune(now - DELIVERED_KEPT_S);
-        Ok((complete, horizon))
+        (complete, horizon)
+    }
+
+    fn fold_forward(&self, idx: &mut LastIndex, head: u64, revs: u64, known: &mut BTreeMap<String, Option<String>>, scanned: &mut usize) -> Result<()> {
+        let mut repo = |id: &str| self.repo_at(known, head, id);
+        let to = head.min(idx.high_rev + revs);
+        let oldest = self.scan(idx, Some(events_key(idx.high_rev)), events_key(to), head, to - idx.high_rev, scanned, &mut repo)?;
+        idx.high_rev = to;
+        idx.reached(oldest);
+        Ok(())
+    }
+
+    fn repo_at(&self, known: &mut BTreeMap<String, Option<String>>, head: u64, id: &str) -> Result<Option<String>> {
+        if let Some(r) = known.get(id) {
+            return Ok(r.clone());
+        }
+        let key = keys::lifecycle(id);
+        let found = match self.contract().get_at(&key, head)? {
+            Some(i) => Some(repo_of(&decode::<LifecycleRecord>(&key, &i.value)?)),
+            None => None,
+        };
+        known.insert(id.to_string(), found.clone());
+        Ok(found)
+    }
+
+    /// Advances the index off the request path: forward to the head, then back in
+    /// [`CHUNK_REVS`] chunks until it reaches `now - window_s`, the start of the log, or
+    /// `max_scanned` audit keys are read in this call. Whether the index now covers the window,
+    /// and the keys read.
+    pub fn warm_dwell(&self, now: i64, window_s: u64, max_scanned: usize) -> Result<(bool, usize)> {
+        let head = self.contract().head()?;
+        let floor = now.saturating_sub(window_s as i64);
+        let mut scanned = 0;
+        let mut known = BTreeMap::new();
+        let mut idx = self.dwell_index.lock().unwrap_or_else(|e| e.into_inner());
+        if !idx.started {
+            (idx.low_rev, idx.high_rev, idx.started) = (head, head, true);
+        }
+        while idx.high_rev < head && scanned < max_scanned {
+            self.fold_forward(&mut idx, head, FORWARD_REVS, &mut known, &mut scanned)?;
+        }
+        let mut repo = |id: &str| self.repo_at(&mut known, head, id);
+        let mut span = CHUNK_REVS;
+        while idx.high_rev >= head && idx.horizon > floor && idx.low_rev > 0 && scanned < max_scanned {
+            let hi = idx.low_rev;
+            let lo = hi.saturating_sub(span);
+            let oldest = self.scan(&mut idx, Some(events_key(lo)), events_key(hi), head, hi - lo, &mut scanned, &mut repo)?;
+            idx.low_rev = lo;
+            idx.reached(oldest);
+            // Revisions with no audit (lock renewals, a reopen's jump, the import's baseline)
+            // are crossed in doubling strides, so a gap costs a few reads, not one per chunk.
+            span = if oldest.is_some() { CHUNK_REVS } else { (span * 2).min(CHUNK_REVS * 64) };
+        }
+        let (complete, _) = Self::coverage(&mut idx, head, now, window_s);
+        Ok((complete, scanned))
     }
 
     /// The loop's LANDED arrivals and ended CERTIFIED stays at or after `now - window_s`, from

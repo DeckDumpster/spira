@@ -321,16 +321,24 @@ pub fn run(args: &[String]) -> i32 {
         std::thread::spawn(crate::plan::run_mirror);
         std::thread::spawn(crate::settle::run);
         std::thread::spawn(move || {
-            let _holder = state_store::phases::holder_scoped("mending-sweep", "");
             loop {
             std::thread::sleep(SWEEP_EVERY);
             alarm_tick();
             match crate::control::served::configured() {
-                Some(Ok(store)) => match store_sweep(&store, crate::db::now_epoch()) {
-                    Ok(n) if n > 0 => eprintln!("spira-lc serve: {n} overdue mending rows expired"),
-                    Ok(_) => {}
-                    Err(e) => eprintln!("spira-lc serve: mending sweep: {e}"),
-                },
+                Some(Ok(store)) => {
+                    {
+                        let _holder = state_store::phases::holder_scoped("mending-sweep", "");
+                        match store_sweep(&store, crate::db::now_epoch()) {
+                            Ok(n) if n > 0 => eprintln!("spira-lc serve: {n} overdue mending rows expired"),
+                            Ok(_) => {}
+                            Err(e) => eprintln!("spira-lc serve: mending sweep: {e}"),
+                        }
+                    }
+                    let _holder = state_store::phases::holder_scoped("dwell-warm", "");
+                    if let Err(e) = warm_tick(&store, crate::db::now_epoch()) {
+                        eprintln!("spira-lc serve: dwell warm: {e}");
+                    }
+                }
                 Some(Err(e)) => eprintln!("spira-lc serve: mending sweep: the control store: {e}"),
                 None => {}
             }
@@ -632,6 +640,21 @@ fn store_sweep<B: state_store::Backend>(store: &crate::control::store::Store<B>,
         (0, out) => out.trim().parse().map_err(|_| format!("sweep answered {out:?}")),
         (code, out) => Err(format!("exit {code}: {out}")),
     }
+}
+
+/// The widest window any caller of the audit index asks: the transitions task's, from the same
+/// bounds it reads, and the lifecycle section's two-day lookback.
+fn dwell_window_s() -> Result<u64, String> {
+    let keys = ["SPIRA_TRANSITIONS_SUBMIT_BOUND", "SPIRA_TRANSITIONS_CUT_BOUND", "SPIRA_TRANSITIONS_DELIVER_BOUND", "SPIRA_TRANSITIONS_ACTIVATE_BOUND"];
+    let bounds = keys.iter().map(|k| spira_config::process::cfg_parse::<u64>(k)).collect::<Result<Vec<_>, _>>()?;
+    let transitions = bounds.into_iter().max().unwrap_or(0) + 600;
+    Ok(transitions.max(2 * spira_lc::goodput::DAY_SECS))
+}
+
+/// One bounded step of the backward read of the audit index; each sweep takes the next.
+fn warm_tick<B: state_store::Backend>(store: &crate::control::store::Store<B>, now: i64) -> Result<(), String> {
+    let window = dwell_window_s()?;
+    store.warm_dwell(now, window, crate::control::dwell::WARM_SCANNED).map(|_| ()).map_err(|e| e.to_string())
 }
 
 fn alarm_tick() {
