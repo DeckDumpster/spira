@@ -413,6 +413,12 @@ fn audits_newest_reads_only_the_newest_chunk_of_a_long_log() {
     assert_eq!(call(&s, &["audits", "--newest"]), serde_json::json!({ "newest_at": now - 10 }));
     let read = counter.load(Ordering::SeqCst);
     assert!(read as u64 <= 2 * CHUNK_REVS, "--newest read {read} keys of a 2,000-audit log");
+    assert_eq!(call(&s, &["audits", "--newest", "--window", "5"]), serde_json::json!({ "newest_at": null }), "the window narrows the floor");
+    assert_eq!(call(&s, &["audits", "--newest", "--to-state", "DROPPED"]), serde_json::json!({ "newest_at": null }), "no audit moved into that state, and the walk went on past the newest chunk");
+    for bad in [&["audits", "--to-state", "LANDED"][..], &["audits", "--window", "5"], &["audits", "--newest", "--window", "x"]] {
+        let args: Vec<String> = bad.iter().map(|a| a.to_string()).collect();
+        assert_ne!(verbs::run(&s, &args).0, 0, "{bad:?}");
+    }
     assert_eq!(call(&s, &["audits", "--newest", "--to-state", "LANDED"]), serde_json::json!({ "newest_at": now - 10, "lc_key": "sp-l" }));
 }
 

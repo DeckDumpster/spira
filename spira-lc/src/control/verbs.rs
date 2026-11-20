@@ -180,7 +180,7 @@ fn audits<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, Strin
     }
     if newest {
         let window = number(args, "--window", NEWEST_WINDOW_SECS as u64).map_err(|e| format!("audits: {e}"))?;
-        let floor = crate::db::now_epoch().saturating_sub(window as i64);
+        let floor = crate::db::now_epoch().saturating_sub(window.min(i64::MAX as u64) as i64);
         let to_state = flag(args, "--to-state");
         let found = match to_state {
             Some(ref state) => store.newest_audit(floor, |m| m.machine == "bead" && m.applied && m.to_state == state),
