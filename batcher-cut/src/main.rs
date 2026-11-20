@@ -387,6 +387,12 @@ struct LiveOps<'a> {
 const MEND_DEADLINE_SECS: i64 = 900;
 
 impl LiveOps<'_> {
+    fn keep_own_commits(&self) {
+        if let Err(e) = vm::keep_round_commits(Path::new(&self.evidence), &self.own_commits) {
+            eprintln!("batcher {}: could not keep the round's own commits for attribution: {e}", self.repo.name);
+        }
+    }
+
     fn mending(
         &mut self,
         batch: &str,
@@ -618,20 +624,23 @@ impl drive::RoundOps for LiveOps<'_> {
     }
 
     fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
-        merge_round(
+        let rebuilt = merge_round(
             self.env,
             self.repo,
             self.wt,
             &self.start_sha,
             survivors.to_vec(),
             &self.own_commits,
-        )
+        );
+        self.keep_own_commits();
+        rebuilt
     }
 
     fn fix_integration(&mut self, members: &[Member], suites: &[String]) -> bool {
         match io::integration_fix(self.env, self.wt, &self.start_sha, members) {
             Ok((fixes, sha)) if !fixes.is_empty() => {
                 self.own_commits.borrow_mut().extend(sha);
+                self.keep_own_commits();
                 println!(
                     "batcher {}: integration red ({}) — round commit: {}",
                     self.repo.name,
@@ -1090,6 +1099,9 @@ fn stabilize_round(
     let deny = &lifted_deny;
     let mut runner =
         vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?.with_round_commits(own_commits.clone()).in_batch(batch).with_deny_list(deny)?;
+    if let Err(e) = vm::keep_round_commits(&runner.results, &own_commits) {
+        eprintln!("batcher {}: could not keep the round's own commits for attribution: {e}", repo.name);
+    }
     let stage_bg = match batch {
         Some(_) if !stage.is_empty() && !env_.hypervisor.fits_a_staged_round() => {
             println!("batcher {}: no round staged — the hypervisor cannot hold the staged round beside this one and a CI runner", repo.name);
@@ -2415,7 +2427,12 @@ fn attribute_in(
         Some(pass) => vm::DenySnapshot::from_pass(pass).ok_or_else(|| format!("{} holds no deny list of the round's pass; refusing to attribute with another", pass.display()))?,
         None => resolve_deny(&env_, now()).map_err(|e| e.msg)?,
     };
+    if let Some(pass) = o.after_pass.as_deref().filter(|p| !p.join(vm::ROUND_COMMITS_FILE).is_file()) {
+        eprintln!("batcher {}: {} holds no {}; the round's own commits are unknown to this attribution", repo.name, pass.display(), vm::ROUND_COMMITS_FILE);
+    }
+    let own_commits = o.after_pass.as_deref().map(vm::round_commits_of_pass).unwrap_or_default();
     let mut runner = vm::VmRunner::new(&env_, &repo, &wt, &start_sha, &round, changed.clone())?
+        .with_round_commits(own_commits.clone())
         .in_batch(o.batch.as_deref())
         .attribution()
         .after_pass(o.after_pass.clone())
@@ -2437,7 +2454,7 @@ fn attribute_in(
         pass: o.after_pass.clone(),
         round,
         changed,
-        own_commits: vm::RoundCommits::default(),
+        own_commits,
         tips: members
             .iter()
             .map(|m| (m.id.clone(), m.tip.clone()))
