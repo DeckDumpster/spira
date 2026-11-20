@@ -3,6 +3,7 @@
 pub mod audits;
 pub mod claimable;
 pub mod dwell;
+pub mod edges;
 pub mod facts;
 pub mod feed;
 pub mod gh_closeout;

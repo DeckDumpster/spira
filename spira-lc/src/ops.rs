@@ -10,6 +10,7 @@ use serde_json::{json, Map, Value};
 use state_store::Backend;
 
 use crate::control::audits::Move;
+use crate::control::edges::EdgeTally;
 use crate::control::stays::Tally as StayTally;
 use crate::control::store::Store;
 
@@ -183,36 +184,30 @@ fn ops_recent<B: Backend>(store: &Store<B>, now: i64) -> Result<Vec<Value>, Stri
     Ok(out)
 }
 
-type Tally = (u64, u64, i64);
-
-fn tally(map: &mut BTreeMap<(String, String, String), Tally>, key: (&str, &str, &str), at: i64, now: i64) {
-    let e = map.entry((key.0.to_string(), key.1.to_string(), key.2.to_string())).or_insert((0, 0, i64::MIN));
-    e.0 += u64::from(at >= now - HOUR_S);
-    e.1 += 1;
-    e.2 = e.2.max(at);
-}
-
-/// How often each transition applied and each refusal happened in the last hour and day, folded
-/// one audit at a time.
+/// How often each transition applied and each refusal happened in the last hour and day.
+#[derive(Default)]
 struct Edges {
-    now: i64,
-    applied: BTreeMap<(String, String, String), Tally>,
-    refused: BTreeMap<(String, String, String), Tally>,
+    applied: BTreeMap<(String, String, String), (u64, u64, i64)>,
+    refused: BTreeMap<(String, String, String), (u64, u64, i64)>,
 }
 
 impl Edges {
-    fn new(now: i64) -> Self {
-        Edges { now, applied: BTreeMap::new(), refused: BTreeMap::new() }
-    }
-
-    fn take(&mut self, m: &Move) {
-        if m.machine != "bead" || m.at < self.now - DAY_S {
+    /// The reference fold of one audit, newest first, that the tally is tested against.
+    #[cfg(test)]
+    fn take(&mut self, now: i64, m: &Move) {
+        fn tally(map: &mut BTreeMap<(String, String, String), (u64, u64, i64)>, key: (&str, &str, &str), at: i64, now: i64) {
+            let e = map.entry((key.0.to_string(), key.1.to_string(), key.2.to_string())).or_insert((0, 0, i64::MIN));
+            e.0 += u64::from(at >= now - HOUR_S);
+            e.1 += 1;
+            e.2 = e.2.max(at);
+        }
+        if m.machine != "bead" || m.at < now - DAY_S {
             return;
         }
         if !m.applied {
-            tally(&mut self.refused, (m.from_state, m.event, m.refusal.unwrap_or_default()), m.at, self.now);
+            tally(&mut self.refused, (m.from_state, m.event, m.refusal.unwrap_or_default()), m.at, now);
         } else if m.from_state != m.to_state {
-            tally(&mut self.applied, (m.from_state, m.to_state, m.event), m.at, self.now);
+            tally(&mut self.applied, (m.from_state, m.to_state, m.event), m.at, now);
         }
     }
 
@@ -233,6 +228,14 @@ impl Edges {
 /// The p95 and sample count per state from the stay tally, or why there are none yet.
 fn stay_tally<B: Backend>(store: &Store<B>, now: i64) -> Result<StayTally, String> {
     store.stay_tally(now).map_err(|e| e.to_string())
+}
+
+/// `ops_edges`: the edge tally's counts as rows, or why there are none yet.
+fn ops_edges<B: Backend>(store: &Store<B>, now: i64) -> Result<Vec<Value>, String> {
+    match store.edge_tally(now).map_err(|e| e.to_string())? {
+        EdgeTally::Filling { covered_from } => Err(format!("the edge tally is filling: covered from {}", covered_from.map_or("none".to_string(), |at| at.to_string()))),
+        EdgeTally::Ready(c) => Ok(Edges { applied: c.applied, refused: c.refused }.rows()),
+    }
 }
 
 fn filling(covered_from: Option<i64>) -> String {
@@ -378,10 +381,7 @@ fn view_rows<B: Backend>(store: &Store<B>, view: &str, now: i64) -> (i32, String
         "ops_live" => ops_live(store),
         "ops_round" => ops_round(store),
         "ops_recent" => ops_recent(store, now),
-        "ops_edges" => {
-            let mut edges = Edges::new(now);
-            folded(store, now, DAY_S, |m| edges.take(&m)).map(|()| edges.rows())
-        }
+        "ops_edges" => ops_edges(store, now),
         "ops_dwell_p95" => ops_dwell_p95(store, now),
         _ => ops_dwell(store, now),
     };
@@ -617,21 +617,127 @@ mod tests {
         assert!(rows[0]["examples"].as_str().unwrap().starts_with(&format!("sp-6@{}", now - 94)));
     }
 
+    fn edge_rows<B: Backend>(store: &Store<B>, now: i64) -> Value {
+        let (rc, out) = view_rows(store, "ops_edges", now);
+        assert_eq!(rc, 0, "{out}");
+        serde_json::from_str(&out).unwrap()
+    }
+
+    fn reference_rows<B: Backend>(store: &Store<B>, now: i64) -> Value {
+        let mut edges = Edges::default();
+        folded(store, now, DAY_S, |m| edges.take(now, &m)).unwrap();
+        Value::Array(edges.rows())
+    }
+
+    fn refused(bead: &str, from: &str, why: &str, at: i64) -> Logged {
+        let mut l = audit(bead, "Submit", from, from, false, "d", at);
+        l.audit.refusal = Some(why.into());
+        l
+    }
+
+    fn edge_keys<B: Backend>(s: &Store<B>) -> Vec<(String, Value)> {
+        let (items, _) = s.contract().list(&[crate::control::keys::EDGES], &state_store::Selector::Everything).unwrap();
+        items.into_iter().filter(|i| i.key != crate::control::keys::EDGES_CURSOR).map(|i| (i.key, i.value.data)).collect()
+    }
+
     #[test]
-    fn the_edges_count_the_hour_and_the_day_and_keep_refusals_apart() {
-        let now = 1_000_000;
+    fn the_edge_tally_answers_what_a_fold_of_the_days_audits_answers() {
+        let now = 1_000_020;
+        let mut other = audit("sp-o", "Claim", "READY", "WORKING", true, "d", now - 10);
+        other.audit.machine = "batch".into();
         let log = [
-            audit("sp-a", "Claim", "READY", "WORKING", true, "d", now - 60),
+            audit("sp-old", "Claim", "READY", "WORKING", true, "d", now - DAY_S - 120),
+            refused("sp-old", "READY", "IllegalTransition", now - DAY_S - 60),
             audit("sp-b", "Claim", "READY", "WORKING", true, "d", now - 2 * HOUR_S),
+            audit("sp-a", "Claim", "READY", "WORKING", true, "d", now - 3 * HOUR_S),
+            audit("sp-a", "Release", "WORKING", "READY", true, "d", now - 125),
+            audit("sp-a", "Claim", "READY", "WORKING", true, "d", now - 60),
+            audit("sp-c", "Submit", "READY", "READY", false, "d", now - 30),
+            refused("sp-c", "READY", "StaleVersion", now - 31),
+            refused("sp-c", "READY", "StaleVersion", now - 3 * HOUR_S),
+            audit("sp-n", "Touch", "READY", "READY", true, "d", now - 20),
+            other,
+        ];
+        let store = logged_store(&log);
+        store.fold_edges(now, 100_000).unwrap();
+        let rows = edge_rows(&store, now);
+        assert_eq!(rows, reference_rows(&store, now));
+        assert_eq!(rows.as_array().unwrap().len(), 4, "{rows}");
+        let refusals: Vec<_> = rows.as_array().unwrap().iter().filter(|r| r["kind"] == "refused").map(|r| r["refusal"].as_str().unwrap()).collect();
+        assert_eq!(refusals.len(), 2, "{refusals:?}");
+    }
+
+    #[test]
+    fn the_edge_tally_counts_the_hour_and_the_day_and_keeps_refusals_apart() {
+        let now = 1_000_020;
+        let log = [
+            audit("sp-b", "Claim", "READY", "WORKING", true, "d", now - 2 * HOUR_S),
+            audit("sp-a", "Claim", "READY", "WORKING", true, "d", now - 60),
             audit("sp-c", "Submit", "READY", "READY", false, "d", now - 30),
         ];
-        let mut edges = Edges::new(now);
-        log.iter().rev().for_each(|l| edges.take(&move_of(l)));
-        let rows = edges.rows();
-        let applied = rows.iter().find(|r| r["kind"] == "applied").unwrap();
+        let store = logged_store(&log);
+        store.fold_edges(now, 100_000).unwrap();
+        let rows = edge_rows(&store, now);
+        let applied = rows.as_array().unwrap().iter().find(|r| r["kind"] == "applied").unwrap();
         assert_eq!((applied["n_1h"].as_str(), applied["n_24h"].as_str(), applied["last_at"].as_str()), (Some("1"), Some("2"), Some((now - 60).to_string().as_str())));
-        let refused = rows.iter().find(|r| r["kind"] == "refused").unwrap();
+        let refused = rows.as_array().unwrap().iter().find(|r| r["kind"] == "refused").unwrap();
         assert_eq!((refused["to_state"].clone(), refused["refusal"].as_str()), (Value::Null, Some("IllegalTransition")));
+    }
+
+    #[test]
+    fn folding_the_edges_twice_or_in_small_steps_gives_the_tally_of_one_fold() {
+        let now = 1_000_000_000;
+        let (whole, _) = worked(25, now);
+        let (stepped, _) = worked(25, now);
+        let at = now - 5 * DAY_S + 30_000;
+        whole.fold_edges(at, 10_000).unwrap();
+        let again = whole.fold_edges(at, 10_000).unwrap();
+        assert!(!again.committed, "a fold with nothing new writes nothing: {again:?}");
+        let mut steps = 0;
+        loop {
+            steps += 1;
+            if stepped.fold_edges(at, 3).unwrap().revs < 3 {
+                break;
+            }
+        }
+        assert!(steps > 5, "{steps}");
+        assert_eq!(edge_keys(&stepped), edge_keys(&whole));
+        assert!(!edge_keys(&whole).is_empty());
+        stepped.fold_edges(at, 3).unwrap();
+        assert_eq!(edge_keys(&stepped), edge_keys(&whole), "a repeated step changes nothing");
+    }
+
+    #[test]
+    fn while_the_edge_tally_fills_ops_edges_cannot_tell() {
+        let now = 1_000_020;
+        let log = [audit("sp-a", "Claim", "READY", "WORKING", true, "d", now - 60), audit("sp-b", "Claim", "READY", "WORKING", true, "d", now - 50), audit("sp-c", "Claim", "READY", "WORKING", true, "d", now - 40)];
+        let store = logged_store(&log);
+        let (rc, out) = view_rows(&store, "ops_edges", now);
+        assert_eq!((rc, out.starts_with("cannot tell: the edge tally is filling: ")), (2, true), "{out}");
+        store.fold_edges(now, 1).unwrap();
+        let (rc, out) = view_rows(&store, "ops_edges", now);
+        assert_eq!((rc, out.starts_with("cannot tell: the edge tally is filling: ")), (2, true), "{out}");
+        store.fold_edges(now, 100).unwrap();
+        assert_eq!(edge_rows(&store, now).as_array().unwrap().len(), 1);
+        let empty = logged_store(&[]);
+        empty.fold_edges(now, 100).unwrap();
+        assert_eq!(edge_rows(&empty, now), json!([]));
+    }
+
+    #[test]
+    fn a_minute_older_than_a_day_is_not_counted_and_the_next_fold_deletes_it() {
+        use state_store::{Object, Txn};
+        let now = 1_000_020;
+        let store = logged_store(&[audit("sp-old", "Claim", "READY", "WORKING", true, "d", now - DAY_S - 120), audit("sp-a", "Claim", "READY", "WORKING", true, "d", now - 60)]);
+        store.fold_edges(now, 10_000).unwrap();
+        let stale = crate::control::keys::edge_minute((now - DAY_S).div_euclid(60) - 1);
+        let plant = json!({ "e": [[false, "READY", "WORKING", "Claim", 5, now - DAY_S - 60]] });
+        store.contract().txn(&Txn::new().put(&stale, Object::new(plant)), &Request::new("plant", "t", "t")).unwrap();
+        let rows = edge_rows(&store, now);
+        assert_eq!((rows[0]["n_24h"].as_str(), rows.as_array().unwrap().len()), (Some("1"), 1), "a minute outside the day is not counted");
+        store.fold_edges(now, 10_000).unwrap();
+        assert!(edge_keys(&store).iter().all(|(k, _)| *k != stale), "the stale minute is deleted by the next fold");
+        assert_eq!(edge_keys(&store).len(), 1);
     }
 
     /// `n` beads each worked for a known time, committed through the store: the WORKING stays.
@@ -750,6 +856,33 @@ mod tests {
         s.fold_stays(now, 10_000).unwrap();
         assert_eq!(samples(&s), 1);
         assert!(day_keys(&s).iter().all(|(k, _)| *k != stale), "the stale day key is deleted by the next fold");
+    }
+
+    #[test]
+    fn the_edges_view_reads_neither_the_audit_log_nor_the_history() {
+        use crate::counting::Counting;
+        let (store, now, _dir) = with_records_on(Counting::new, 8_000);
+        store.contract().backend().take();
+        let (rc, out) = view_rows(&store, "ops_edges", now);
+        assert_eq!(rc, 0, "{out}");
+        let reads = store.contract().backend().take();
+        let log: Vec<_> = reads.iter().filter(|(k, key, _)| (*k == "get" || *k == "range") && (key.starts_with("events/") || key.starts_with("history/"))).collect();
+        assert!(log.is_empty(), "ops_edges read the log: {log:?}");
+    }
+
+    #[test]
+    fn the_edges_view_reads_no_more_than_a_day_of_minutes_for_a_longer_history() {
+        use crate::counting::Counting;
+        let reads = |audits| {
+            let (store, now, _dir) = with_records_on(Counting::new, audits);
+            store.contract().backend().take();
+            let (rc, out) = view_rows(&store, "ops_edges", now);
+            assert_eq!(rc, 0, "{out}");
+            store.contract().backend().take().len()
+        };
+        let a_day = (DAY_S / 60) as usize / crate::control::edges::MINUTES_PAGE + 1;
+        let (short, long) = (reads(2_000), reads(8_000));
+        assert!(short <= a_day + 4 && long <= a_day + 4, "{short} reads for 2000 audits and {long} for 8000, a day is {a_day} pages");
     }
 
     #[test]
@@ -875,6 +1008,7 @@ mod tests {
         let (b, now, dir) = fortnight_backend(audits);
         let store = open_on(b);
         store.fold_stays(now, 100_000).unwrap();
+        store.fold_edges(now, 100_000).unwrap();
         (store, now, dir)
     }
 
@@ -919,6 +1053,7 @@ mod tests {
         let (rc, out) = crate::journal::sweep_until_done(&mut |argv| crate::journal::answer(crate::journal::run(&argv[1..], &store)), false);
         assert_eq!(rc, 0, "{out}");
         store.fold_stays(now, 100_000).unwrap();
+        store.fold_edges(now, 100_000).unwrap();
         (store, now, dir)
     }
 
