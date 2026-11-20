@@ -12,7 +12,7 @@ use super::keys;
 use super::stays::{Cursor, DAY_S};
 use super::store::Store;
 
-const HOUR_S: i64 = 3_600;
+pub const HOUR_S: i64 = 3_600;
 /// Minutes `edge_tally` holds at a time: its memory is a page, and its reads at most a day's minutes over this.
 pub const MINUTES_PAGE: usize = 100;
 /// Keys a txn may write are bounded, so a chunk of the fold stops once it holds this many minutes.
