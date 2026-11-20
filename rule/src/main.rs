@@ -990,7 +990,7 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
             return 1;
         }
     };
-    let (toc, mut pointers) = match read_toc_at(&repo).and_then(|t| read_pointers_for_write(&repo).map(|p| (t, p))) {
+    let (toc, pointers) = match read_toc_at(&repo).and_then(|t| read_pointers_for_write(&repo).map(|p| (t, p))) {
         Ok(tp) => tp,
         Err(e) => {
             eprintln!("{e}");
@@ -1009,18 +1009,18 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
                 eprintln!("rule: refusing to rename {from}: {to} is already a statute in force (or another rename's target)");
                 failed = true;
             }
-            Entry::Amend { key, text } if dry_run => println!("{key}\n{text}\n"),
-            Entry::Rename { from, to, text, .. } if dry_run => println!("{from} → {to}\n{text}\n"),
             _ => {}
         }
     }
     if dry_run {
+        print!("{}", rule::vocab::dry_run_report(&strings(&before), &entries));
         println!("DRY RUN: {} statute(s) would be rewritten. Nothing written.", entries.iter().filter(|e| matches!(e, Entry::Amend { .. } | Entry::Rename { .. })).count());
         return i32::from(failed);
     }
 
     let mut after = before.clone();
     let mut written = 0usize;
+    let mut renamed: Vec<(String, String, bool)> = Vec::new();
     for e in &entries {
         let (key, text, from) = match e {
             Entry::Amend { key, text } => (key, text, None),
@@ -1046,9 +1046,7 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
                 continue;
             }
             after.remove(from);
-            if *numbered {
-                pointers.retired.push(code::Retired { slug: from.clone(), reason: "renamed out of retired vocabulary".into(), replaced_by: Some(key.clone()), on: today() });
-            }
+            renamed.push((from.clone(), key.clone(), *numbered));
             println!("renamed {from} → {key}");
         } else {
             println!("amended {key}");
@@ -1072,7 +1070,7 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
         Err(e) => eprintln!("rule: {e} — wiki page NOT regenerated."),
     }
     let book = strings(&after);
-    let landed = code::catch_up(&toc, &pointers, &book, None).map_err(|e| format!("rule: {e}")).and_then(|caught| land_law(home, &repo, "rename-vocabulary", "book", &caught, &pointers, &book));
+    let landed = rule::vocab::record_renames(&toc, &pointers, &renamed, &today()).and_then(|(toc, pointers)| code::catch_up(&toc, &pointers, &book, None).map(|caught| (caught, pointers))).map_err(|e| format!("rule: {e}")).and_then(|(caught, pointers)| land_law(home, &repo, "rename-vocabulary", "book", &caught, &pointers, &book));
     match landed {
         Ok((branch, bead)) => println!("law/: {written} statute(s) rewritten; committed on {branch}, submitted under {bead}."),
         Err(e) => {

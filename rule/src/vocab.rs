@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use spira_lint::rules::ffx_vocabulary::rewrite;
 
-use crate::code::{Part, Pointers};
+use crate::code::{self, Part, Pointers};
 use crate::vocabulary_terms;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,4 +45,49 @@ pub fn plan(book: &BTreeMap<String, String>, toc: &[Part], pointers: &Pointers) 
         }
     }
     out
+}
+
+fn changed_sentences(old: &str, new: &str) -> String {
+    let mut out = String::new();
+    for (o, n) in old.split_inclusive(". ").zip(new.split_inclusive(". ")).filter(|(o, n)| o != n) {
+        out.push_str(&format!("- {}\n+ {}\n", o.trim_end(), n.trim_end()));
+    }
+    out
+}
+
+/// The dry run's listing: each statute the plan writes, with every changed sentence old then new.
+pub fn dry_run_report(before: &BTreeMap<String, String>, plan: &Plan) -> String {
+    let mut out = String::new();
+    for e in plan {
+        let (head, old, new) = match e {
+            Entry::Amend { key, text } => (key.clone(), before.get(key), text),
+            Entry::Rename { from, to, text, .. } => (format!("{from} → {to}"), before.get(from), text),
+            _ => continue,
+        };
+        out.push_str(&head);
+        out.push('\n');
+        out.push_str(&changed_sentences(old.map_or("", String::as_str), new));
+        out.push('\n');
+    }
+    out
+}
+
+/// The toc and pointers after `renamed` (from, to, numbered) was written: an unnumbered old slug
+/// is numbered first so the pointer naming it passes `code::check_pointers`.
+pub fn record_renames(toc: &[Part], pointers: &Pointers, renamed: &[(String, String, bool)], today: &str) -> Result<(Vec<Part>, Pointers), String> {
+    let mut toc = toc.to_vec();
+    let mut pointers = pointers.clone();
+    for (from, to, numbered) in renamed {
+        if !numbered {
+            toc = code::append(&toc, 1, from)?;
+        }
+        let pointed = pointers.retired.iter().any(|r| r.slug == *from)
+            || pointers.moved.iter().any(|m| m.slug == *from)
+            || pointers.merged.iter().any(|m| m.from == *from);
+        if pointed {
+            continue;
+        }
+        pointers.retired.push(code::Retired { slug: from.clone(), reason: "renamed out of retired vocabulary".into(), replaced_by: Some(to.clone()), on: today.into() });
+    }
+    Ok((toc, pointers))
 }

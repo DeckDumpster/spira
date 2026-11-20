@@ -1655,6 +1655,12 @@ deliberate edges:
   from the table on purpose). The price of camelCase splitting is a false hit on a word
   joined from a term, such as `AtmoSphere`.
 
+Rewriting is grammatical. The article before a replacement is fixed across a space or a `-`
+(`law-an-aeon-x` becomes `law-a-dwarf-x`). After a singular determiner (a, an, the, one, each, every,
+this, that, any, no) `summons` becomes `call` and `chamber` becomes `rune`; bare, `chamber` is
+`runes` (the directory). A bare `summons` is rewritten to `calls` only with a number among the two
+words before it, and is otherwise left in place so it is reported and the caller rephrases it.
+
 `the Sending` (any case of `the`, capital `Sending`) and `sending_keys` are matched as phrases;
 `sending` alone is ordinary English and is not a hit.
 
