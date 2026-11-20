@@ -771,7 +771,7 @@ fn client(e: &Effects, deadline_ms: u64) -> LcClient {
 /// (a closed child still counts toward its epic), and any live-row bead the open list lacks.
 /// Never the whole history; `None` when any of it is unreadable.
 pub fn beads_on(lc: &LcClient, epic_labels: &[String], live_ids: &[String]) -> Option<Vec<sentinel::model::Bead>> {
-    let read = |args: &[&str]| held_answer(lc, &[&["content", "list", "--limit", "0", "--json"][..], args].concat()).ok().and_then(|t| sentinel::model::parse_beads(&t).ok());
+    let read = |args: &[&str]| held_answer(lc, &[&["content", "list", "--limit", "0", "--brief", "--json"][..], args].concat()).ok().and_then(|t| sentinel::model::parse_beads(&t).ok());
     let mut beads = read(&[])?;
     let mut have: std::collections::HashSet<String> = beads.iter().map(|b| b.id.clone()).collect();
     let mut extra = Vec::new();
@@ -1167,6 +1167,13 @@ mod beads_on_tests {
         let everything: Vec<sentinel::model::Bead> = store.rows.iter().filter_map(|r| serde_json::from_value(r.clone()).ok()).collect();
         assert_eq!(sentinel::pilgrimage::open_epic_children(&beads, &labels), sentinel::pilgrimage::open_epic_children(&everything, &labels), "the epic children are what the whole history yields");
         assert!(store.requests().iter().all(|r| !spira_store::lc_call::reads_whole_history(r)), "{:?}", store.requests());
+    }
+
+    #[test]
+    fn the_open_list_asks_for_no_free_text() {
+        let store = store();
+        beads_on(&LcClient::over(store.clone(), true), &["spira".to_string()], &[]).unwrap();
+        assert!(store.requests().iter().all(|r| r.iter().any(|a| a == "--brief")), "{:?}", store.requests());
     }
 
     #[test]

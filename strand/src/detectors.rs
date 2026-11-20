@@ -56,7 +56,7 @@ fn registry(cfg: &Config) -> Registry {
 fn list_beads(lc: &LcClient, args: &[&str]) -> Vec<Bead> {
     let mut full = vec!["content", "list"];
     full.extend_from_slice(args);
-    full.extend(["--limit", "0", "--json"]);
+    full.extend(["--limit", "0", "--brief", "--json"]);
     let raw = lc.answer(&full).unwrap_or_default();
     if raw.trim().is_empty() {
         return Vec::new();
@@ -345,7 +345,7 @@ fn read_closed(cfg: &Config, door: &LcClient, after: Option<&str>) -> Option<Str
     if let Some(t) = after {
         args.extend(["--closed-after", t]);
     }
-    args.extend(["--limit", "0", "--json"]);
+    args.extend(["--limit", "0", "--brief", "--json"]);
     door.answer(&args).ok().filter(|raw| !raw.trim().is_empty())
 }
 
@@ -490,8 +490,18 @@ mod tests {
         let second = std::sync::Arc::new(Closes(Default::default(), "[]", 0));
         detect_invalid_closed(&cfg, &LcClient::over(second.clone(), true));
         let seen = second.0.lock().unwrap().clone();
-        assert_eq!(seen[0], ["content", "list", "--all", "--closed-after", "2026-11-03T00:00:00Z", "--limit", "0", "--json"]);
+        assert_eq!(seen[0], ["content", "list", "--all", "--closed-after", "2026-11-03T00:00:00Z", "--limit", "0", "--brief", "--json"]);
         assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "2026-11-03T00:00:00Z", "an empty read leaves the watermark");
+    }
+
+    #[test]
+    fn the_invalid_closed_read_asks_for_no_free_text_and_classifies_as_before() {
+        let rows = r#"[{"id":"sp-a","title":"t","status":"closed","closed_at":"2026-11-03T00:00:00Z","close_reason":"done"}]"#;
+        let door = std::sync::Arc::new(Closes(Default::default(), rows, 0));
+        let cfg = Config::test_fixture();
+        let out = detect_invalid_closed_since(&cfg, &LcClient::over(door.clone(), true), "2026-11-01T00:00:00Z");
+        assert!(door.0.lock().unwrap()[0].iter().any(|a| a == "--brief"));
+        assert_eq!(out, classify_closed(rows, &cfg));
     }
 
     #[test]
@@ -510,7 +520,7 @@ mod tests {
     fn the_listings_go_to_the_content_door_with_no_bound_but_their_label() {
         let door = std::sync::Arc::new(Closes(Default::default(), "[]", 0));
         list_beads(&LcClient::over(door.clone(), true), &["--all", "--label", "incident"]);
-        assert_eq!(door.0.lock().unwrap()[0], ["content", "list", "--all", "--label", "incident", "--limit", "0", "--json"]);
+        assert_eq!(door.0.lock().unwrap()[0], ["content", "list", "--all", "--label", "incident", "--limit", "0", "--brief", "--json"]);
     }
 
     #[test]

@@ -400,9 +400,11 @@ fn quoted(items: &[String]) -> String {
     items.iter().map(|i| format!("'{}'", escape(i))).collect::<Vec<_>>().join(",")
 }
 
-fn issue_columns() -> String {
+fn issue_columns(brief: bool) -> String {
+    let free_text = if brief { "" } else { "description, design, acceptance_criteria, notes, " };
+    let metadata = if brief { "" } else { "metadata, " };
     format!(
-        "id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, owner, created_by, external_ref, close_reason, await_type, await_id, metadata, \
+        "id, title, {free_text}status, priority, issue_type, assignee, owner, created_by, external_ref, close_reason, await_type, await_id, {metadata}\
          DATE_FORMAT(created_at, '{RFC3339}') AS created_at, DATE_FORMAT(updated_at, '{RFC3339}') AS updated_at, DATE_FORMAT(closed_at, '{RFC3339}') AS closed_at, DATE_FORMAT(defer_until, '{RFC3339}') AS defer_until"
     )
 }
@@ -462,7 +464,7 @@ impl List {
     }
 
     pub fn issues_sql(&self, db: &str) -> String {
-        format!("SELECT {} FROM {db}.issues WHERE {}{}", issue_columns(), self.where_clause(db), Self::order(self.limit))
+        format!("SELECT {} FROM {db}.issues WHERE {}{}", issue_columns(self.brief), self.where_clause(db), Self::order(self.limit))
     }
 
     fn order(limit: Option<u64>) -> String {
@@ -555,7 +557,7 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
             Ok(array(fill(sql, db, &issues, l.brief)?))
         }
         Read::Show(ids) => {
-            let issues = sql.rows(&format!("SELECT {} FROM {db}.issues WHERE id IN ({}) ORDER BY id", issue_columns(), quoted(&ids)))?;
+            let issues = sql.rows(&format!("SELECT {} FROM {db}.issues WHERE id IN ({}) ORDER BY id", issue_columns(false), quoted(&ids)))?;
             if issues.is_empty() {
                 return Err(Failure::Request(format!("no issue found matching {}", ids.iter().map(|i| format!("{i:?}")).collect::<Vec<_>>().join(", "))));
             }
@@ -608,7 +610,7 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
                 let any = ["id", "title", "description", "notes"].iter().map(|c| format!("LOCATE(LOWER('{q}'), LOWER({c})) > 0")).collect::<Vec<_>>().join(" OR ");
                 format!("({any})")
             }).collect::<Vec<_>>().join(" AND ");
-            let issues = sql.rows(&format!("SELECT {} FROM {db}.issues WHERE {} AND ({hit}){}", issue_columns(), l.where_clause(db), List::order(limit)))?;
+            let issues = sql.rows(&format!("SELECT {} FROM {db}.issues WHERE {} AND ({hit}){}", issue_columns(true), l.where_clause(db), List::order(limit)))?;
             Ok(array(fill(sql, db, &issues, true)?))
         }
         Read::DepList { id, up, kind } => {
@@ -669,7 +671,7 @@ const KV_PREFIX: &str = "kv.";
 
 /// The bead `id` with its labels and edges; `None` when the store holds none.
 pub fn bead(sql: &dyn Sql, db: &str, id: &str) -> Res<Option<Bead>> {
-    let issues = sql.rows(&format!("SELECT {} FROM {db}.issues WHERE id = '{}'", issue_columns(), escape(id)))?;
+    let issues = sql.rows(&format!("SELECT {} FROM {db}.issues WHERE id = '{}'", issue_columns(false), escape(id)))?;
     Ok(fill(sql, db, &issues, false)?.into_iter().next())
 }
 

@@ -152,6 +152,45 @@ fn brief_leaves_out_the_free_text_and_the_metadata() {
     assert_eq!(rows[0]["title"], "A");
 }
 
+const FREE_TEXT: [&str; 5] = ["description", "design", "acceptance_criteria", "notes", "metadata"];
+
+fn select_list(sql: &str) -> &str {
+    sql.split(" FROM ").next().unwrap()
+}
+
+#[test]
+fn a_brief_list_selects_none_of_the_free_text_columns() {
+    let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
+    answer(&f, DB, &v(&["list", "--all", "--closed-after", "2026-11-01T00:00:00Z", "--label", "spira", "--limit", "0", "--brief", "--json"])).unwrap();
+    let sql = first_sql(&f);
+    for col in FREE_TEXT {
+        assert!(!sql.contains(col), "{col} in {sql}");
+    }
+    assert!(sql.contains("close_reason") && sql.contains("closed_at"), "{sql}");
+}
+
+#[test]
+fn a_list_without_brief_still_selects_the_free_text_columns() {
+    let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
+    answer(&f, DB, &v(&["list", "--json"])).unwrap();
+    let sql = first_sql(&f);
+    for col in FREE_TEXT {
+        assert!(sql.contains(col), "{col} in {sql}");
+    }
+}
+
+#[test]
+fn a_search_selects_no_free_text_column_but_still_matches_on_them() {
+    let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
+    answer(&f, DB, &v(&["search", "foo"])).unwrap();
+    let sql = first_sql(&f);
+    let select = select_list(&sql);
+    for col in FREE_TEXT {
+        assert!(!select.contains(col), "{col} in {select}");
+    }
+    assert!(sql.contains("LOWER(description)"), "{sql}");
+}
+
 #[test]
 fn show_names_the_bead_it_cannot_find() {
     let f = Fake::default();
