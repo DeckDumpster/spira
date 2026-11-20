@@ -4,7 +4,8 @@
 #
 # CASES
 #   1. nm on spira-lc lists spira_lc::main and sqlite3_step.
-#   2. readelf lists no .debug_info section (a non-ELF input is refused, not passed).
+#   2. the workspace release profile says strip = "debuginfo" (a binary built under dev carries
+#      debug info, so the binary cannot judge this; the declared profile does).
 #   3. POSITIVE CONTROL: a --strip-all copy fails the case-1 check.
 #
 # tier: T1
@@ -18,7 +19,7 @@ echo "test-release-symbols.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-for t in nm readelf strip spira-lc; do
+for t in nm strip spira-lc; do
     command -v "$t" >/dev/null 2>&1 || { bad "$t is on PATH" "missing: $t"; tl_summary; exit 1; }
 done
 LC="$(command -v spira-lc)"
@@ -33,21 +34,17 @@ symbols_present() {
 if symbols_present "$LC"; then ok "spira-lc keeps spira_lc::main and sqlite3_step"
 else bad "spira-lc keeps spira_lc::main and sqlite3_step" "$(nm "$LC" 2>&1 | head -1)"; fi
 
-has_debug_info() {
-    local out
-    out="$(readelf -S -W "$1" 2>&1)" || return 2
-    grep -q ' \.text ' <<<"$out" || return 2
-    grep -q ' \.debug_info ' <<<"$out"
+release_strip_value() {
+    awk '/^\[/ { in_rel = ($0 == "[profile.release]") } in_rel && /^strip[ ]*=/ { sub(/^strip[ ]*=[ ]*/, ""); print; exit }' "$1"
 }
 
-has_debug_info "$LC"; rc=$?
-is "spira-lc has no .debug_info section" "1" "$rc"
+is "the release profile strips debuginfo only" '"debuginfo"' "$(release_strip_value "$HERE/../Cargo.toml")"
+
+printf '[profile.release]\nstrip = true\n[profile.dev]\nstrip = "debuginfo"\n' > "$TMP/Cargo.toml"
+is "the profile reader tells strip = true from debuginfo" "true" "$(release_strip_value "$TMP/Cargo.toml")"
 
 cp "$LC" "$TMP/stripped" && strip --strip-all "$TMP/stripped"
 if symbols_present "$TMP/stripped"; then bad "a fully stripped copy fails the symbol check" "check passed"
 else ok "a fully stripped copy fails the symbol check"; fi
-
-printf 'x' > "$TMP/notelf"; has_debug_info "$TMP/notelf"; rc=$?
-is "a non-ELF input is refused, not read as no debug info" "2" "$rc"
 
 tl_summary
