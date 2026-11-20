@@ -1165,6 +1165,18 @@ pub fn notify_ready(socket: Option<&str>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn notify_ready_reaches_an_abstract_namespace_socket() {
+        use std::os::linux::net::SocketAddrExt;
+        let name = format!("spira-lc-notify-{}", std::process::id());
+        let addr = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes()).unwrap();
+        let rx = std::os::unix::net::UnixDatagram::bind_addr(&addr).unwrap();
+        super::notify_ready(Some(&format!("@{name}"))).unwrap();
+        let mut buf = [0u8; 64];
+        let n = rx.recv(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"READY=1");
+    }
+
+    #[test]
     fn notify_ready_sends_one_ready_datagram_to_the_notify_socket_and_nothing_when_unset() {
         let dir = testkit::TempDir::new("notify");
         let path = dir.join("notify.sock");

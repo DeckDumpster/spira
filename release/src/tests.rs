@@ -2048,9 +2048,19 @@ fn a_store_server_restart_that_fails_names_its_start_bound_and_is_rolled_back() 
 }
 
 #[test]
+fn a_store_server_restart_that_fails_with_no_known_bound_gives_the_bare_error() {
+    let w = world_activating_the_store_server_among_others();
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    run_the_three(&sc);
+    sc.restart_fails.insert("lc-serve.service".into());
+    let e = activate_with(&w, &sc).unwrap_err();
+    assert!(e.contains("lc-serve.service: simulated restart failure") && !e.contains("TimeoutStartSec"), "{e}");
+}
+
+#[test]
 fn the_shipped_store_server_unit_is_notify_with_a_finite_start_bound() {
     let t = shipped_unit("lc-serve.service");
-    assert!(t.lines().any(|l| l == "Type=notify"), "{t}");
+    assert!(t.lines().any(|l| l == "Type=notify") && t.lines().any(|l| l == "NotifyAccess=main"), "{t}");
     let bound = t.lines().find_map(|l| l.strip_prefix("TimeoutStartSec=")).expect("TimeoutStartSec");
     assert!(bound.parse::<u64>().is_ok_and(|n| n > 0), "{bound}");
 }
