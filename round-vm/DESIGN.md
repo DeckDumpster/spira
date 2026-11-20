@@ -191,6 +191,10 @@ and `SPIRA_BATCH_RESULTS=~/attr-results/<job>`. After `corpus.done`, `run` keeps
 pass, then releases the VM (G2 unchanged: a signal still releases it). The exit code is the
 corpus's, as without the spool.
 
+`--no-corpus` (valid only with `--attr-spool`) leases, places and pushes the tree as usual, skips
+the remote corpus batch, writes `corpus.done` with `rc=0` and serves the spool until `close` or the
+linger: a separate attribution process gets a VM to answer its probes without paying for a corpus.
+
 ### 2.2b `template` — a round template whose test image is built, not loaded (sp-dvfea)
 
 **Why.** A round's VM must hold `localhost/spira-testenv:<tag>` (the tag is the hash of the
