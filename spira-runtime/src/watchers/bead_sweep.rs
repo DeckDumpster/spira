@@ -133,6 +133,9 @@ pub struct Repair {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Repaired {
     pub ids: Vec<String>,
+    /// The `blocks` edges mirrored into the lifecycle store for each bead in `ids`.
+    #[serde(default)]
+    pub edges: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub claimed: Vec<String>,
 }
@@ -264,6 +267,22 @@ pub fn rowless(ask_label: &str, snap: &Snapshot) -> Vec<Rowless> {
             title: b.title.replace(['\t', '\n'], " "),
         })
         .collect()
+}
+
+/// The beads the repair completes: those with no row, and those whose row is still OPEN because an
+/// earlier pass could not read or mirror their edges.
+pub fn repairable(ask_label: &str, snap: &Snapshot) -> Vec<Rowless> {
+    let mut out = rowless(ask_label, snap);
+    let open: BTreeSet<&str> = snap.rows.iter().filter(|r| r.state == "OPEN").map(|r| r.id.as_str()).collect();
+    let term: BTreeSet<&str> = snap.terminal.iter().map(|(i, _)| i.as_str()).collect();
+    let none = BTreeSet::new();
+    out.extend(snap.content.iter().filter(|b| open.contains(b.id.as_str()) && is_ours(ask_label, b, &none, &term) && is_open(Kind::Ask, &b.status)).map(|b| Rowless {
+        id: b.id.clone(),
+        priority: b.priority,
+        repo: b.labels.iter().find_map(|l| l.strip_prefix("repo:")).map(str::to_string),
+        title: b.title.replace(['\t', '\n'], " "),
+    }));
+    out
 }
 
 fn is_ours(ask_label: &str, b: &Bead, rows: &BTreeSet<&str>, term: &BTreeSet<&str>) -> bool {
@@ -401,7 +420,8 @@ pub fn decide(p: &BeadSweep, carry: &Carry, snap: &Snapshot, room: Option<&Room>
     }
     for id in &repaired.ids {
         if let Some(b) = snap.content.iter().find(|b| &b.id == id) {
-            say.push(format!("REPAIRED {id} open bead had no lifecycle row; created it (priority {}, repo {})", b.priority, b.labels.iter().find_map(|l| l.strip_prefix("repo:")).unwrap_or("none")));
+            let edges = repaired.edges.get(id).filter(|e| !e.is_empty()).map(|e| format!("; mirrored blocks edges {}", e.join(", "))).unwrap_or_default();
+            say.push(format!("REPAIRED {id} open bead had no lifecycle row; created it (priority {}, repo {}){edges}", b.priority, b.labels.iter().find_map(|l| l.strip_prefix("repo:")).unwrap_or("none")));
         }
     }
     let now_set: Vec<Suspect> = suspects(p, snap, room, &repaired.claimed, now).into_iter().filter(|s| !repaired.ids.iter().any(|id| s.line.starts_with(&format!("SUSPECT {id} ROWLESS")))).collect();
@@ -465,7 +485,7 @@ impl Handler for BeadSweep {
                     return self.finish(ctx, view, ev, &snap, &serde_json::from_str::<Repaired>(&ids).unwrap_or_default());
                 }
                 let mut spent = "{\"ids\":[]}".len();
-                let ids: Vec<String> = rowless(&self.ask_label, &snap).into_iter().take(REPAIR_BATCH).map(|r| r.id).take_while(|id| {
+                let ids: Vec<String> = repairable(&self.ask_label, &snap).into_iter().take(REPAIR_BATCH).map(|r| r.id).take_while(|id| {
                     let next = spent + serde_json::to_string(id).map_or(0, |j| j.len()) + 1;
                     let first = spent == "{\"ids\":[]}".len();
                     (next <= REPAIR_BYTES || first).then(|| spent = next).is_some()

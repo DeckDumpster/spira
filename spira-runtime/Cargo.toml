@@ -63,6 +63,11 @@ path = "tests/world_readiness_dependents.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "world_sweep_repair"
+path = "tests/world_sweep_repair.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "world_sweep_snapshot"
 path = "tests/world_sweep_snapshot.rs"
 required-features = ["integration"]
