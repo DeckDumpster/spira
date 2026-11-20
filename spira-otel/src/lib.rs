@@ -49,6 +49,14 @@ pub struct Call<'a> {
     pub start: SystemTime,
     pub end: SystemTime,
     pub queue_wait: Duration,
+    /// Request received to the worker being handed it.
+    pub before_work: Duration,
+    /// Handing the worker the request to its answer, or to the cutoff.
+    pub answer_wait: Duration,
+    /// The answer in hand to the end of the span: reply, settling, counters.
+    pub after_answer: Duration,
+    /// The answer was the deadline answer.
+    pub cut: bool,
     /// Request read to answer written; `None` where no request was read.
     pub answered: Option<Duration>,
     /// The request cutoff that abandoned the call; `None` where it answered in time.
@@ -122,6 +130,10 @@ impl Sink {
             kv_int("rpc.request.size", c.request_size),
             kv_int("rpc.response.size", c.response_size),
             kv_int("spira.queue_wait_us", c.queue_wait.as_micros() as u64),
+            kv_int("spira.serve.before_work_us", c.before_work.as_micros() as u64),
+            kv_int("spira.serve.answer_wait_us", c.answer_wait.as_micros() as u64),
+            kv_int("spira.serve.after_answer_us", c.after_answer.as_micros() as u64),
+            KeyValue { key: "spira.serve.cut".into(), value: Some(AnyValue { value: Some(Value::BoolValue(c.cut)) }) },
         ];
         if let Some(answered) = c.answered {
             attributes.push(kv_int("spira.answer_us", answered.as_micros() as u64));
@@ -249,7 +261,7 @@ mod tests {
 
     fn call(code: i32) -> Call<'static> {
         let start = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        Call { method: "list", caller: "work/list", request_size: 40, response_size: 439_002, exit_code: code, start, end: start + Duration::from_millis(12), queue_wait: Duration::ZERO, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, open_phase: None }
+        Call { method: "list", caller: "work/list", request_size: 40, response_size: 439_002, exit_code: code, start, end: start + Duration::from_millis(12), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, open_phase: None }
     }
 
     fn tmp(name: &str) -> testkit::TempDir {
@@ -366,7 +378,7 @@ mod tests {
         let rows = [("show", "work/show", 61, 1_204, 0, 8), ("list", "work/list", 33, 439_002, 0, 212), ("show", "gate-run", 58, 96, 1, 3), ("event", "lifecycle/event", 412, 0, 0, 41)];
         for (i, (m, who, rq, rs, code, ms)) in rows.into_iter().enumerate() {
             let start = t0 + Duration::from_secs(i as u64);
-            let c = Call { method: m, caller: who, request_size: rq, response_size: rs, exit_code: code, start, end: start + Duration::from_millis(ms), queue_wait: Duration::ZERO, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, open_phase: None };
+            let c = Call { method: m, caller: who, request_size: rq, response_size: rs, exit_code: code, start, end: start + Duration::from_millis(ms), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, open_phase: None };
             sink.write(&c, start).unwrap();
         }
         fs::copy(dir.join("spira-lc.2023-11-14.jsonl"), testkit::manifest_dir().join("tests/fixtures/spira-lc.ndjson")).unwrap();
