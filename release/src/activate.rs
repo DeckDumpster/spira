@@ -446,10 +446,6 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
             out.deferred.push(unit.clone());
         }
     }
-    if let Err(e) = live(&out.restarted) {
-        let undo = undo(ctx, &changes, prev.as_deref(), &[]);
-        return Err(format!("cannot record the activation of {sha}: {e}; nothing was restarted; rolled back{undo}"));
-    }
     let mut failed = Vec::new();
     let mut attempted = Vec::new();
     for u in &out.restarted {
@@ -492,6 +488,11 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         }
         out.down = restart_again_under_target(ctx, &out.restarted, &attempted, &failed);
         failed.clear();
+    }
+    if failed.is_empty() {
+        if let Err(e) = live(&out.restarted) {
+            failed.push(format!("cannot record the activation of {sha}: {e}"));
+        }
     }
     if !failed.is_empty() {
         let undo = undo(ctx, &changes, prev.as_deref(), &attempted);
@@ -1148,7 +1149,9 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
     let recorded = std::cell::Cell::new(false);
     let live = |restarted: &[String]| {
         write_history(&state, &activated)?;
-        machine::enter_with(&state, sha, ReleaseState::Activated, "current switched", restarted)?;
+        if let Err(e) = machine::enter_with(&state, sha, ReleaseState::Activated, "current switched", restarted) {
+            return write_history(&state, &history).and(Err(e));
+        }
         recorded.set(true);
         Ok(())
     };
@@ -1157,8 +1160,9 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
         Err(e) => {
             let unrecorded = recorded
                 .get()
-                .then(|| write_history(&state, &history).and(machine::enter(&state, sha, ReleaseState::RolledBack, "activation failed and was undone")))
-                .and_then(Result::err);
+                .then(|| write_history(&state, &history))
+                .and_then(Result::err)
+                .or_else(|| undone_in_record(&state, sha).err());
             return Err(match unrecorded {
                 Some(why) => format!("{e}\n  THE RECORD OF THE UNDONE ACTIVATION IS STILL THERE: {why}"),
                 None => e,
@@ -1184,6 +1188,15 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
         return Err(e);
     }
     Ok(out)
+}
+
+/// A failed activation leaves its release `rolled_back`, whether or not it got as far as
+/// `activated`. A release that never reached `published` has no activation to undo.
+fn undone_in_record(state: &Path, sha: &str) -> Result<(), String> {
+    match machine::load(state, sha)?.and_then(|r| r.state()) {
+        None | Some(ReleaseState::Published | ReleaseState::Activated) => machine::enter(state, sha, ReleaseState::RolledBack, "activation failed and was undone"),
+        Some(_) => Ok(()),
+    }
 }
 
 /// `release rollback`: activate the release below the top of the history stack.

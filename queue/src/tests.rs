@@ -478,6 +478,9 @@ struct FScripts {
     during_gate: RefCell<Option<Box<dyn Fn()>>>,
     /// `release activate` answers consumed in order before `release_rc` applies.
     activate_seq: RefCell<std::collections::VecDeque<(i32, String)>>,
+    /// The unit the caller runs in, and the keys `release_detached` was started under.
+    caller_unit: RefCell<Option<String>>,
+    detached_keys: RefCell<Vec<String>>,
     /// `ActiveState` answers in order (the last repeats; empty reads `active`), and the units asked about.
     unit_states: RefCell<std::collections::VecDeque<String>>,
     unit_asked: RefCell<Vec<String>>,
@@ -819,6 +822,13 @@ impl Scripts for FScripts {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         testkit::write_exe(dir.join("release"), "#!/bin/sh\n");
         Ok(Box::new(()))
+    }
+    fn own_unit_restarted_by(&self, _rel: &Path) -> Option<String> {
+        self.caller_unit.borrow().clone()
+    }
+    fn release_detached(&self, key: &str, bin: &Path, args: &[String], db: &str, _log: &Path) -> RunOut {
+        self.detached_keys.borrow_mut().push(key.to_string());
+        self.release(bin, args, db)
     }
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
         self.release_calls.borrow_mut().push((
@@ -3783,6 +3793,42 @@ fn activation_runs_the_built_releases_own_binary_when_the_round_build_has_none()
         calls[0].1.starts_with(&format!("activate {sha} ")),
         "{calls:?}"
     );
+}
+
+fn activating_from_unit(restarted_caller: Option<&str>) -> (Vec<String>, usize) {
+    let t = T::new(LandMode::QueueLocal);
+    let rel = t.s().releases.clone().unwrap();
+    let sha = "0ed1c65f3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    fs::create_dir_all(rel.join(sha).join("bin")).unwrap();
+    testkit::write_exe(rel.join(sha).join("bin/release"), "#!/bin/sh\n");
+    *t.scripts.caller_unit.borrow_mut() = restarted_caller.map(str::to_string);
+    let plan = crate::ops::deploy::Plan {
+        repo: PathBuf::from("repo"),
+        landref: "local/main".into(),
+        releases: rel,
+        run: t.s().run.clone(),
+        bins: None,
+        db: "db".into(),
+    };
+    let r = t.with_world(|w| crate::ops::deploy::activate(w, &plan, sha));
+    assert_eq!(r, Ok(()));
+    let keys = t.scripts.detached_keys.borrow().clone();
+    let n = t.scripts.release_calls.borrow().len();
+    (keys, n)
+}
+
+#[test]
+fn an_activation_called_from_a_unit_it_restarts_runs_in_a_unit_of_its_own() {
+    let (keys, calls) = activating_from_unit(Some("spira-runtime-prod.service"));
+    assert_eq!(keys, vec!["0ed1c65f3aaa".to_string()]);
+    assert_eq!(calls, 1);
+}
+
+#[test]
+fn an_activation_called_from_a_unit_it_leaves_alone_runs_as_a_child() {
+    let (keys, calls) = activating_from_unit(None);
+    assert!(keys.is_empty(), "{keys:?}");
+    assert_eq!(calls, 1);
 }
 
 #[test]

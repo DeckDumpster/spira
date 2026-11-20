@@ -1181,6 +1181,54 @@ impl Scripts for RealScripts {
             },
         }
     }
+    fn own_unit_restarted_by(&self, rel: &Path) -> Option<String> {
+        let cgroup = std::fs::read_to_string(format!("{}/cgroup", system_paths::PROC_SELF)).ok()?;
+        let unit = unit_of_cgroup(&cgroup)?;
+        match spira_config::process::cfg("SPIRA_INSTANCE").ok().filter(|i| !i.is_empty()) {
+            Some(instance) => release::units::is_shipped_by(rel, &instance, &unit).then_some(unit),
+            None => Some(unit),
+        }
+    }
+    fn release_detached(&self, key: &str, bin: &Path, args: &[String], db: &str, log: &Path) -> RunOut {
+        use runtime::units::{Exit, UnitHandle, UnitProps, UnitSpec, UnitState, Units};
+        let fail = |why: String| RunOut { rc: 127, out: String::new(), err: why };
+        let units = match runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock)) {
+            Ok(u) => u,
+            Err(e) => return fail(format!("cannot reach systemd to start the release in a unit of its own: {}", e.0)),
+        };
+        let _ = fs::remove_file(log);
+        let mut env: Vec<(String, String)> = std::env::vars().collect();
+        env.retain(|(k, _)| k != "SPIRA_DB");
+        env.push(("SPIRA_DB".into(), db.into()));
+        let mut argv = vec![bin.display().to_string()];
+        argv.extend(args.iter().cloned());
+        let spec = UnitSpec { task: "release-activate".into(), key: key.into(), argv, env, cwd: std::env::current_dir().ok() };
+        let props = UnitProps { output_append: Some(log.to_path_buf()), ..UnitProps::default() };
+        let handle: UnitHandle = match units.start_with(&spec, &props) {
+            Ok(h) => h,
+            Err(e) => return fail(format!("cannot start release in a unit of its own: {}", e.0)),
+        };
+        let rc = loop {
+            match units.facts(&handle) {
+                Ok(f) => match f.state {
+                    UnitState::Absent if fs::metadata(log).is_ok_and(|m| m.len() > 0) => break 0,
+                    UnitState::Absent => return fail(format!("{} ended without a trace in {}", handle.name, log.display())),
+                    UnitState::Failed | UnitState::Inactive => {
+                        let _ = units.reset_failed(&handle);
+                        break match f.exit {
+                            Some(Exit::Code(c)) => c,
+                            _ => 1,
+                        };
+                    }
+                    _ => {}
+                },
+                Err(e) => return fail(format!("cannot read the state of {}: {}", handle.name, e.0)),
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        };
+        let err = fs::read_to_string(log).unwrap_or_default();
+        RunOut { rc, out: String::new(), err }
+    }
     fn stop_round_legs(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
         let units =
             runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock))
@@ -2721,6 +2769,19 @@ mod tests {
 }
 
 #[cfg(test)]
+mod unit_of_cgroup_tests {
+    use super::unit_of_cgroup;
+
+    #[test]
+    fn the_unit_is_the_last_component_of_the_unified_line() {
+        let text = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/spira-runtime-prod.service\n";
+        assert_eq!(unit_of_cgroup(text).as_deref(), Some("spira-runtime-prod.service"));
+        assert_eq!(unit_of_cgroup("0::/user.slice/session-3.scope\n").as_deref(), Some("session-3.scope"));
+        assert_eq!(unit_of_cgroup("0::/\n"), None);
+    }
+}
+
+#[cfg(test)]
 mod vtime_tests {
     use super::*;
     use crate::ports::Clock;
@@ -2730,4 +2791,10 @@ mod vtime_tests {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, || SysClock.now());
         assert_eq!(got, 1_900_000_000);
     }
+}
+
+/// The service or scope a `/proc/<pid>/cgroup` text places its process in: the last path
+/// component of the unified-hierarchy line that names one.
+fn unit_of_cgroup(cgroup: &str) -> Option<String> {
+    cgroup.lines().filter_map(|l| l.strip_prefix("0::")).flat_map(|p| p.rsplit('/').next()).find(|n| n.ends_with(".service") || n.ends_with(".scope")).map(str::to_string)
 }

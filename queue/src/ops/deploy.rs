@@ -109,10 +109,25 @@ fn step(
     plan: &Plan,
     bin: &Path,
     what: &str,
+    a: Vec<String>,
+) -> Result<String, String> {
+    step_in(w, plan, bin, what, a, None)
+}
+
+/// [`step`], run in a transient unit of its own named for `detached` when that is given.
+fn step_in(
+    w: &World,
+    plan: &Plan,
+    bin: &Path,
+    what: &str,
     mut a: Vec<String>,
+    detached: Option<(&str, &Path)>,
 ) -> Result<String, String> {
     a.extend(plan.common());
-    let r = w.scripts.release(bin, &a, &plan.db);
+    let r = match detached {
+        Some((key, log)) => w.scripts.release_detached(key, bin, &a, &plan.db, log),
+        None => w.scripts.release(bin, &a, &plan.db),
+    };
     let err = r.err.trim_end_matches('\n');
     if !err.is_empty() {
         w.err(err);
@@ -248,7 +263,10 @@ fn activation_bin(w: &World, plan: &Plan, sha: &str) -> Result<PathBuf, String> 
 
 fn activate_once(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
     let bin = activation_bin(w, plan, sha)?;
-    let out = step(
+    let key: String = sha.chars().take(12).collect();
+    let log = plan.run.join(format!("release-activate-{key}.log"));
+    let detached = w.scripts.own_unit_restarted_by(&plan.releases.join(sha)).map(|_| (key.as_str(), log.as_path()));
+    let out = step_in(
         w,
         plan,
         &bin,
@@ -263,6 +281,7 @@ fn activate_once(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
             "--drain-wait",
             &LAND_DRAIN_WAIT_SECS.to_string(),
         ]),
+        detached,
     )?;
     let out = out.trim_end_matches('\n');
     if !out.is_empty() {
