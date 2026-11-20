@@ -87,6 +87,9 @@ fn warmed(ctx: &Ctx, rel: &Path, restarted: Option<std::time::Instant>) -> Resul
                 break;
             }
             if std::time::Instant::now() >= give_up {
+                if let (0, Some(_)) = (i, restarted) {
+                    (ctx.report)(&format!("release: WARN: the store did not answer inside {} s of its restart", ctx.warm_wait.as_secs()));
+                }
                 return Err(format!("spira-lc {} still not answering inside {} ms after {} s ({})", args.join(" "), ctx.steady.as_millis(), ctx.warm_wait.as_secs(), said.err().unwrap_or_else(|| format!("took {} ms", took.as_millis()))));
             }
             std::thread::sleep(ctx.warm_pause);
@@ -495,9 +498,6 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
             Ok(()) => {
                 if let Err(e) = warmed(ctx, &rel, out.store_restarted_at) {
                     eprintln!("release: WARN: the store server is still cold: {e}");
-                    if out.store_restarted_at.is_some() {
-                        (ctx.report)(&format!("release: WARN: the store did not answer inside {} s of its restart", ctx.warm_wait.as_secs()));
-                    }
                 }
             }
         }

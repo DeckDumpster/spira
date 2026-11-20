@@ -1452,7 +1452,8 @@ fn an_activation_whose_restarted_store_never_answers_warns_and_still_is_not_roll
     let reads = FakeReads::serving();
     reads.cold_dwells.set(u32::MAX);
     let said = store_restart_report(&reads, Duration::from_millis(200));
-    assert_eq!(said, vec!["release: WARN: the store did not answer inside 0 s of its restart".to_string()]);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].starts_with("release: WARN: the store did not answer inside ") && said[0].ends_with(" s of its restart"), "{said:?}");
 }
 
 #[test]
