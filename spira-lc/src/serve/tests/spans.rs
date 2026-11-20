@@ -55,6 +55,9 @@ fn span_of(snapshot: &state_store::phases::Snapshot) -> opentelemetry_proto::ton
         phases: &snapshot.phases,
         commits_us: &snapshot.commits_us,
         reads: snapshot.reads,
+        read_max_us: snapshot.read_max_us,
+        reads_ended: snapshot.reads_ended,
+        reads_overran: snapshot.reads_overran,
         open_phase: snapshot.open,
     };
     super::record_span(Some(&sink), &call);
@@ -72,6 +75,8 @@ fn a_span_from_a_recorder_with_two_commits_names_both() {
     phases::time(Phase::Commit, || ());
     phases::time(Phase::Commit, || ());
     phases::time(Phase::Read, || ());
+    phases::record_read(std::time::Duration::from_micros(70), phases::ReadEnd::Ended);
+    phases::record_read(std::time::Duration::from_micros(9), phases::ReadEnd::Overran);
     std::mem::forget(phases::begin(Phase::WriterWait));
     phases::untrack();
     let span = span_of(&rec.snapshot());
@@ -79,6 +84,9 @@ fn a_span_from_a_recorder_with_two_commits_names_both() {
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
     assert!(matches!(attr("spira.store.commits"), Some(Value::IntValue(2))));
     assert!(matches!(attr("spira.store.reads"), Some(Value::IntValue(1))));
+    assert!(matches!(attr("spira.store.read_max_us"), Some(Value::IntValue(70))));
+    assert!(matches!(attr("spira.store.reads_ended"), Some(Value::IntValue(1))));
+    assert!(matches!(attr("spira.store.reads_overran"), Some(Value::IntValue(1))));
     assert!(matches!(attr("spira.phase.commits_us"), Some(Value::ArrayValue(a)) if a.values.len() == 2));
     assert!(attr("spira.phase.commit_us").is_some() && attr("spira.phase.read_us").is_some());
     assert!(matches!(attr("spira.phase.open"), Some(Value::StringValue(s)) if s == "writer_wait"));

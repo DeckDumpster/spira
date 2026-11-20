@@ -67,6 +67,9 @@ pub struct Call<'a> {
     pub commits_us: &'a [u64],
     /// SQLite read transactions.
     pub reads: u64,
+    pub read_max_us: u64,
+    pub reads_ended: u64,
+    pub reads_overran: u64,
     /// The store phase a request cut at its deadline was still in.
     pub open_phase: Option<&'a str>,
 }
@@ -151,6 +154,9 @@ impl Sink {
         }
         if c.reads > 0 {
             attributes.push(kv_int("spira.store.reads", c.reads));
+            attributes.push(kv_int("spira.store.read_max_us", c.read_max_us));
+            attributes.push(kv_int("spira.store.reads_ended", c.reads_ended));
+            attributes.push(kv_int("spira.store.reads_overran", c.reads_overran));
         }
         if let Some(open) = c.open_phase {
             attributes.push(kv_str("spira.phase.open", open));
@@ -261,7 +267,7 @@ mod tests {
 
     fn call(code: i32) -> Call<'static> {
         let start = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        Call { method: "list", caller: "work/list", request_size: 40, response_size: 439_002, exit_code: code, start, end: start + Duration::from_millis(12), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, open_phase: None }
+        Call { method: "list", caller: "work/list", request_size: 40, response_size: 439_002, exit_code: code, start, end: start + Duration::from_millis(12), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, read_max_us: 0, reads_ended: 0, reads_overran: 0, open_phase: None }
     }
 
     fn tmp(name: &str) -> testkit::TempDir {
@@ -393,7 +399,7 @@ mod tests {
         let rows = [("show", "work/show", 61, 1_204, 0, 8), ("list", "work/list", 33, 439_002, 0, 212), ("show", "gate-run", 58, 96, 1, 3), ("event", "lifecycle/event", 412, 0, 0, 41)];
         for (i, (m, who, rq, rs, code, ms)) in rows.into_iter().enumerate() {
             let start = t0 + Duration::from_secs(i as u64);
-            let c = Call { method: m, caller: who, request_size: rq, response_size: rs, exit_code: code, start, end: start + Duration::from_millis(ms), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, open_phase: None };
+            let c = Call { method: m, caller: who, request_size: rq, response_size: rs, exit_code: code, start, end: start + Duration::from_millis(ms), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, read_max_us: 0, reads_ended: 0, reads_overran: 0, open_phase: None };
             sink.write(&c, start).unwrap();
         }
         fs::copy(dir.join("spira-lc.2023-11-14.jsonl"), testkit::manifest_dir().join("tests/fixtures/spira-lc.ndjson")).unwrap();

@@ -561,6 +561,9 @@ impl Startup {
             phases: &us,
             commits_us: &[],
             reads: 0,
+            read_max_us: 0,
+            reads_ended: 0,
+            reads_overran: 0,
             open_phase: None,
         });
     }
@@ -847,6 +850,9 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
                 phases: &none.phases,
                 commits_us: &none.commits_us,
                 reads: none.reads,
+                read_max_us: none.read_max_us,
+                reads_ended: none.reads_ended,
+                reads_overran: none.reads_overran,
                 open_phase: none.open,
             };
             record_span(spans, &call);
@@ -938,6 +944,9 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
         phases: &store.phases,
         commits_us: &store.commits_us,
         reads: store.reads,
+        read_max_us: store.read_max_us,
+        reads_ended: store.reads_ended,
+        reads_overran: store.reads_overran,
         open_phase: store.open,
     };
     record_span(spans, &call);

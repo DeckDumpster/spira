@@ -1644,6 +1644,8 @@ impl SqliteBackend {
                 Ok(())
             }
         };
+        let began = inner.clock.now_ms();
+        let mut overran = false;
         let out = (|| {
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Deferred)
@@ -1654,14 +1656,26 @@ impl SqliteBackend {
             }
             check()?;
             let v = f(&tx, &snap, &check)?;
+            if let Err(e) = check() {
+                overran = true;
+                return Err(e);
+            }
             tx.commit().map_err(db)?;
             Ok(v)
         })();
         reader.deadline.store(u64::MAX, Ordering::SeqCst);
-        out.map_err(|e| match e {
+        let took = Duration::from_millis(inner.clock.now_ms().saturating_sub(began));
+        let out = out.map_err(|e| match e {
             Error::Backend(m) if m == INTERRUPTED => ended(),
             e => e,
-        })
+        });
+        let end = match &out {
+            _ if overran => phases::ReadEnd::Overran,
+            Err(e) if is_read_ended(e) => phases::ReadEnd::Ended,
+            _ => phases::ReadEnd::Finished,
+        };
+        phases::record_read(took, end);
+        out
     }
 
     /// Loads `items` into an empty store as one revision: every key gets `create_rev =
@@ -2578,6 +2592,58 @@ mod tests {
             Err(Error::Backend(m)) => assert!(m.contains("max_read_ms"), "{m}"),
             other => panic!("the long statement was not ended: {other:?}"),
         }
+    }
+
+    fn recorded<T>(f: impl FnOnce() -> T) -> (T, phases::Snapshot) {
+        let rec = Arc::new(phases::Recorder::default());
+        let _t = phases::track_scoped(rec.clone());
+        let out = f();
+        (out, rec.snapshot())
+    }
+
+    struct Steered(AtomicU64);
+
+    impl Clock for Steered {
+        fn now_ms(&self) -> u64 {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    #[test]
+    fn a_read_that_runs_past_max_read_ms_after_its_last_statement_is_ended_and_counted_as_overrun() {
+        let dir = testkit::TempDir::new("sqlite-overran");
+        let clock = Arc::new(Steered(AtomicU64::new(0)));
+        let opts = Options { max_read_ms: 100, readers: 1, clock: clock.clone(), ..Options::default() };
+        let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
+        let (out, snap) = recorded(|| {
+            b.read(|_, _, _| {
+                clock.0.store(500, Ordering::SeqCst);
+                Ok(())
+            })
+        });
+        assert!(is_read_ended(&out.unwrap_err()));
+        assert_eq!((snap.reads_overran, snap.reads_ended), (1, 0));
+        assert_eq!(snap.read_max_us, 500_000);
+    }
+
+    #[test]
+    fn a_read_stopped_by_the_progress_handler_is_counted_ended_not_overrun() {
+        let dir = testkit::TempDir::new("sqlite-ended");
+        let clock = Arc::new(JumpAfter { calls: AtomicUsize::new(0), free: AtomicUsize::new(3) });
+        let opts = Options { max_read_ms: 100, readers: 1, clock, ..Options::default() };
+        let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
+        let (out, snap) = recorded(|| {
+            b.read(|conn, _, _| {
+                conn.prepare(
+                    "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 5000000)
+                     SELECT count(*) FROM n",
+                )
+                .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
+                .map_err(db)
+            })
+        });
+        assert!(is_read_ended(&out.unwrap_err()));
+        assert_eq!((snap.reads_ended, snap.reads_overran), (1, 0));
     }
 
     fn put_write(key: &str, value: &[u8], main: u64, prev: Option<Rev>) -> Write {
