@@ -1,4 +1,0 @@
-[spira]
-runtime_cr_comments_hot_secs = 30
-runtime_cr_comments_cold_secs = 300
-runtime_cr_comments_window_secs = 900

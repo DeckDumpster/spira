@@ -394,6 +394,23 @@ activation_store_bound = 90
 dolt_persist_history_keep = 10000
 land_stale = 1800
 land_escalate_every = 3600
+lc_answer_ms = 100
+lc_waiting_verbs = "watch"
+cr_count_limit = 50
+cr_page_lines = 60
+cr_oversize_pages = 6
+cr_churn_days = 60
+cr_exclude = "**/fixtures/**,**/*.generated.*,**/vendor/**,Cargo.lock"
+seed = ""
+cr_findings_dir = ""
+cr_repo_owner = ""
+cr_repo_name = ""
+bead_file_retry_window_secs = 900
+lc_request_deadline_ms = 1000
+lc_slow_verb_deadlines = "ops-view=3000@sp-7k53jt,list=3000@sp-49d6su,content=3000@sp-qygk8y,close=3000@sp-qygk8y,audits=3000@sp-d1rdwk,rc=3000@sp-te7k3s,plan=3000@sp-qygk8y,publish-section=3000@sp-qygk8y,dwell=3000@sp-hhdr20,requeue-orphans=3000@sp-0cwaud"
+runtime_cr_comments_hot_secs = 30
+runtime_cr_comments_cold_secs = 300
+runtime_cr_comments_window_secs = 900
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok
