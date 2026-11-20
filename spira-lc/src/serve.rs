@@ -757,7 +757,7 @@ fn gc_lines(tick: &state_store::gc::Tick, wall_ms: u64) -> Vec<String> {
 /// the store does not have, and epics are reconciled by the `reconcile-content` verb.
 fn store_sweep<B: state_store::Backend>(store: &crate::control::store::Store<B>, now: i64) -> Result<usize, String> {
     let request = crate::control::served::request_id();
-    let call = crate::control::state::Call { now, request: &request, inputs: &crate::control::claimable::Live };
+    let call = crate::control::state::Call { now, request: &request, inputs: &*crate::control::claimable::LIVE };
     let argv: Vec<String> = ["mending", "sweep", "--actor", "spira-lc.sweep"].iter().map(|s| s.to_string()).collect();
     match crate::control::state::run(store, &argv, &call) {
         (0, out) => out.trim().parse().map_err(|_| format!("sweep answered {out:?}")),

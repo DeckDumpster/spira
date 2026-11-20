@@ -27,7 +27,7 @@ impl<B: Backend> Plane<'_, B> {
     /// A primitive read (`show`, `list`) as `spira-lc` itself answers it.
     pub(crate) fn read(&self, args: &[String]) -> (i32, String) {
         let request = crate::control::served::request_id();
-        state::run(self.0, args, &state::Call { now: crate::db::now_epoch(), request: &request, inputs: &crate::control::claimable::Live })
+        state::run(self.0, args, &state::Call { now: crate::db::now_epoch(), request: &request, inputs: &*crate::control::claimable::LIVE })
     }
 
     /// One bead event from wherever the row is now, under its CAS.

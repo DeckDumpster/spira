@@ -297,10 +297,10 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
             let request = call_request_id();
             let call = state::Call {
                 now: crate::db::now_epoch(),
-                request: &request, inputs: &crate::control::claimable::Live,
+                request: &request, inputs: &*crate::control::claimable::LIVE,
             };
             if claimable::VERBS.contains(&verb.as_str()) {
-                claimable::run(&store, args, &claimable::Live, &call)
+                claimable::run(&store, args, &*claimable::LIVE, &call)
             } else if readiness::VERBS.contains(&verb.as_str()) {
                 readiness::run(&store, args, &call)
             } else {
@@ -310,7 +310,7 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
         Ok(store) if closeout => super::gh_closeout::run(&store, args, &call_request_id()),
         Ok(store) if args.iter().any(|a| a == "--rows") => {
             let request = call_request_id();
-            let call = state::Call { now: crate::db::now_epoch(), request: &request, inputs: &crate::control::claimable::Live };
+            let call = state::Call { now: crate::db::now_epoch(), request: &request, inputs: &*crate::control::claimable::LIVE };
             verbs::run_with_rows(&store, args, &call)
         }
         Ok(store) => verbs::run(&store, args),

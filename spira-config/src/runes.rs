@@ -605,6 +605,31 @@ pub fn partitions(home: &Path, env_override: Option<&str>, queue_wait: &str, ope
     Ok(out)
 }
 
+/// What `partitions` read: the roster and each rune file's path, mtime and length. Two equal
+/// stamps mean `partitions` would answer the same.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PartitionsStamp {
+    roster: String,
+    files: Vec<(PathBuf, Option<std::time::SystemTime>, Option<u64>)>,
+}
+
+/// The stamp of the roster and rune files `partitions(home, env_override, ..)` would read now, without
+/// parsing the predicates. The label overlay `rune_predicate` also reads is pinned with the config.
+pub fn partitions_stamp(home: &Path, env_override: Option<&str>) -> PartitionsStamp {
+    let roster = spira_runes(home, env_override);
+    let dir = runes_dir(home);
+    let files = roster
+        .split_whitespace()
+        .map(|f| {
+            let path = dir.join(format!("{f}.rune"));
+            let meta = std::fs::metadata(&path).ok();
+            let mtime = meta.as_ref().and_then(|m| m.modified().ok());
+            (path, mtime, meta.map(|m| m.len()))
+        })
+        .collect();
+    PartitionsStamp { roster, files }
+}
+
 /// The names of the partitions that take a bead carrying `labels`.
 pub fn taking(labels: &[String], parts: &[Partition], queue_wait: &str) -> Vec<String> {
     let shared: Vec<&str> = [queue_wait].into_iter().filter(|s| !s.is_empty()).collect();
@@ -621,6 +646,22 @@ mod tests {
         let dir = runes_dir(home);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(format!("{name}.rune")), body).unwrap();
+    }
+
+    #[test]
+    fn partitions_stamp_moves_with_the_roster_a_deletion_and_a_rewrite() {
+        let ws = testkit::TempDir::new("spira-config-runes-stamp");
+        write_rune(&ws, "ops", "RUNE_LABELS=ops\n");
+        let first = partitions_stamp(&ws, None);
+        assert_eq!(first, partitions_stamp(&ws, None));
+        write_rune(&ws, "builder", "RUNE_LABELS=spira\n");
+        let added = partitions_stamp(&ws, None);
+        assert_ne!(first, added);
+        write_rune(&ws, "builder", "RUNE_LABELS=spira,plan\n");
+        let rewritten = partitions_stamp(&ws, None);
+        assert_ne!(added, rewritten);
+        std::fs::remove_file(runes_dir(&ws).join("builder.rune")).unwrap();
+        assert_ne!(rewritten, partitions_stamp(&ws, None));
     }
 
     #[test]

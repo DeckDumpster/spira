@@ -574,6 +574,10 @@ impl crate::control::claimable::Inputs for Fixed {
         Ok(self.run.clone())
     }
 
+    fn partitions_stamp(&self) -> Result<spira_config::runes::PartitionsStamp, String> {
+        Ok(Default::default())
+    }
+
     fn partitions(&self, _: &crate::control::claimable::Config) -> Result<Vec<spira_config::runes::Partition>, String> {
         Ok(Vec::new())
     }
