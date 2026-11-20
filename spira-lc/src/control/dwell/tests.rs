@@ -52,7 +52,14 @@ fn ask(s: &Store<MemBackend>, id: &str, at: i64) {
     assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
 }
 
+/// The sweep thread's warm-up to `window` before `now`, which a request otherwise finds done.
+fn warm(s: &Store<MemBackend>, now: i64, window: u64) {
+    s.warm_dwell(now, window, 100_000).unwrap();
+}
+
 fn dwell(s: &Store<MemBackend>, argv: &[&str]) -> Value {
+    let flag = |name: &str| argv.iter().position(|a| *a == name).and_then(|i| argv.get(i + 1)).and_then(|v| v.parse::<i64>().ok());
+    warm(s, flag("--now").unwrap_or(0), flag("--window").unwrap_or(3_600) as u64);
     let mut args = vec!["dwell".to_string()];
     args.extend(argv.iter().map(|a| a.to_string()));
     let (code, out) = verbs::run(s, &args);
@@ -147,17 +154,69 @@ fn a_bad_flag_cannot_tell() {
 }
 
 /// Production's size: ~13k records (400 waiting) and ~300k audited txns, `recent` of them one a
-/// second inside the last day (more than [`super::MAX_SCANNED`]), over the 600 beads in flight.
+/// second inside the last day (more than [`1_000_000`]), over the 600 beads in flight.
 /// Written straight through the backend so the fixture builds in seconds. Returns the store, the
 /// clock it is read at, and the newest time per repo and kind (and every Delivered) at or after
 /// `now - 86_400`, as the audits say.
 struct Sized {
-    store: Store<state_store_sqlite::SqliteBackend>,
+    store: Store<Counting<state_store_sqlite::SqliteBackend>>,
     now: i64,
     waiting: u64,
     last: std::collections::BTreeMap<String, std::collections::BTreeMap<String, i64>>,
     delivered: std::collections::BTreeMap<String, Vec<i64>>,
     _dir: testkit::TempDir,
+}
+
+/// A backend that counts the `events/` keys it hands out.
+struct Counting<B> {
+    inner: B,
+    events: std::sync::atomic::AtomicUsize,
+}
+
+impl<B> Counting<B> {
+    fn new(inner: B) -> Self {
+        Counting { inner, events: Default::default() }
+    }
+    fn events_read(&self) -> usize {
+        self.events.swap(0, std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl<B: state_store::Backend> state_store::Backend for Counting<B> {
+    fn head(&self) -> state_store::Result<u64> {
+        self.inner.head()
+    }
+    fn due(&self, now: u64, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
+        self.inner.due(now, limit, at)
+    }
+    fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
+        self.inner.owned_by(owner, after, limit, at)
+    }
+    fn get(&self, key: &str, at: u64) -> state_store::Result<Option<state_store::Version>> {
+        self.inner.get(key, at)
+    }
+    fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
+        let rows = self.inner.range(prefix, after, limit, at)?;
+        if prefix == state_store::EVENTS_PREFIX {
+            self.events.fetch_add(rows.len(), std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(rows)
+    }
+    fn range_in_state(&self, prefix: &str, state: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
+        self.inner.range_in_state(prefix, state, after, limit, at)
+    }
+    fn commit(&self, expect: u64, batch: &[state_store::Write]) -> state_store::Result<u64> {
+        self.inner.commit(expect, batch)
+    }
+    fn log(&self, from: u64, max_mains: usize) -> state_store::Result<Vec<state_store::LogEntry>> {
+        self.inner.log(from, max_mains)
+    }
+    fn compact(&self, rev: u64) -> state_store::Result<()> {
+        self.inner.compact(rev)
+    }
+    fn compacted(&self) -> state_store::Result<u64> {
+        self.inner.compacted()
+    }
 }
 
 fn production_sized(recent: u64) -> Sized {
@@ -200,7 +259,7 @@ fn production_sized(recent: u64) -> Sized {
         }
     }
     let clock = VirtualClock::new(0);
-    let c = Contract::open(b, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: FLOOR_MS }).unwrap();
+    let c = Contract::open(Counting::new(b), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: FLOOR_MS }).unwrap();
     Sized { store: Store::new(c, FLOOR_MS), now, waiting, last, delivered, _dir: dir }
 }
 
@@ -214,7 +273,7 @@ fn dwell_over_a_day_on_a_production_sized_store_answers_from_the_index_inside_20
     let mark = now - 3_600;
     let mut complete = false;
     for _ in 0..10 {
-        complete = s.dwell(now, 86_400, Some(mark)).unwrap().complete;
+        complete = s.warm_dwell(now, 86_400, 1_000_000).unwrap().0;
         if complete {
             break;
         }
@@ -261,19 +320,21 @@ fn dwell_over_a_day_on_a_production_sized_store_answers_from_the_index_inside_20
 fn a_warm_dwell_reads_only_the_revisions_committed_since_the_last_answer() {
     let s = fresh();
     work(&s, "sp-a", "harness", 2_000, Some(2_500));
+    warm(&s, 4_000, 100_000);
     let first = s.dwell(4_000, 100_000, None).unwrap();
-    assert!(first.scanned > 0);
+    assert_eq!(first.scanned, 0, "the warm-up read it all");
     assert_eq!(s.dwell(4_000, 100_000, None).unwrap().scanned, 0, "nothing new");
     work(&s, "sp-b", "harness", 3_000, None);
     let d = s.dwell(4_000, 100_000, None).unwrap();
     assert_eq!(d.last["harness"]["Claim"], 3_000, "{d:?}");
-    assert!(d.scanned > 0 && d.scanned < first.scanned + 8, "{d:?}");
+    assert!(d.scanned > 0 && d.scanned < 8, "{d:?}");
 }
 
 #[test]
 fn a_narrower_window_does_not_report_what_a_wider_one_indexed() {
     let s = fresh();
     work(&s, "sp-a", "harness", 2_000, Some(2_500));
+    warm(&s, 4_000, 100_000);
     let wide = s.dwell(4_000, 100_000, None).unwrap();
     assert_eq!(wide.last["harness"]["Submit"], 2_500);
     let narrow = s.dwell(4_000, 100, None).unwrap();
@@ -404,6 +465,7 @@ fn a_delivery_whose_audit_recorded_no_commit_is_reported_with_an_empty_one() {
 fn loop_transitions_and_dwell_share_one_advance() {
     let s = fresh();
     work(&s, "sp-a", "harness", 2_000, Some(2_500));
+    warm(&s, 4_000, 100_000);
     s.dwell(4_000, 100_000, None).unwrap();
     let t = s.loop_transitions(4_000, 100_000).unwrap();
     assert_eq!((t.scanned, t.complete), (0, true), "{t:?}");
@@ -434,6 +496,7 @@ fn a_stay_ending_in_the_window_is_reported_and_one_with_no_entry_in_the_index_is
     assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
     let out = s.apply("sp-a", &ev(BeadState::Certified, 2, BeadEventKind::Deliver, 2_300), &req("d")).unwrap();
     assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
+    warm(&s, 3_000, 5_000);
     let t = s.loop_transitions(3_000, 5_000).unwrap();
     assert_eq!(t.stays, [(2_300, 300)], "{t:?}");
     assert!(s.loop_transitions(3_000, 600).unwrap().stays.is_empty(), "left before the window");
@@ -488,4 +551,66 @@ fn a_correction_or_a_non_landing_is_not_a_delivery() {
     idx.fold_states("sp-a", 200, ("LANDED", "LANDED"), &mut repo).unwrap();
     idx.fold_states("sp-b", 300, ("READY", "WORKING"), &mut repo).unwrap();
     assert_eq!(idx.last["harness"]["Delivered"], 50, "only the real arrival counts: {:?}", idx.last);
+}
+
+#[test]
+fn the_first_dwell_on_a_production_sized_store_reads_no_more_than_a_chunk_and_says_it_is_short_and_warming_then_completes_it() {
+    let z = production_sized(80_000);
+    let (s, now) = (&z.store, z.now);
+    s.contract().backend().events_read();
+    let (code, out) = verbs::run(s, &["dwell".into(), "--window".into(), "86400".into(), "--now".into(), now.to_string()]);
+    assert_eq!(code, 0, "{out}");
+    let d: Value = serde_json::from_str(&out).unwrap();
+    let read = s.contract().backend().events_read();
+    assert!(read <= super::CHUNK_REVS as usize, "a cold request read {read} events keys");
+    assert_eq!(d["complete"], false, "{d}");
+    assert!(d["horizon"].as_i64().unwrap() >= now - 86_400, "{d}");
+    warming_in_calls(&z);
+}
+
+fn warming_in_calls(z: &Sized) {
+    let (s, now) = (&z.store, z.now);
+    let mark = now - 3_600;
+    let mut calls = 0;
+    while !s.warm_dwell(now, 86_400, super::CHUNK_REVS as usize * 10).unwrap().0 {
+        calls += 1;
+        assert!(calls < 200, "never covered the day");
+    }
+    assert!(calls > 1, "the budget should have split the read");
+    let d = s.dwell(now, 86_400, Some(mark)).unwrap();
+    assert!(d.complete, "{d:?}");
+    assert_eq!(d.last, z.last);
+    let got: std::collections::BTreeMap<String, Vec<i64>> = d.landed_after.iter().map(|(r, ls)| (r.clone(), ls.iter().map(|l| l.at).collect())).collect();
+    let want: std::collections::BTreeMap<String, Vec<i64>> = z
+        .delivered
+        .iter()
+        .map(|(r, ts)| (r.clone(), ts.iter().copied().filter(|t| *t > mark).collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>()))
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
+    assert_eq!(got, want);
+}
+
+#[test]
+fn loop_transitions_on_a_fresh_store_reads_nothing_back_and_is_short_until_warmed() {
+    let s = fresh();
+    work(&s, "sp-a", "harness", 2_000, Some(2_500));
+    let t = s.loop_transitions(4_000, 100_000).unwrap();
+    assert_eq!((t.scanned, t.complete), (0, false), "{t:?}");
+    warm(&s, 4_000, 100_000);
+    let t = s.loop_transitions(4_000, 100_000).unwrap();
+    assert_eq!((t.scanned, t.complete), (0, true), "{t:?}");
+}
+
+#[test]
+fn a_request_folds_a_bounded_tail_and_answers_short_until_the_sweep_catches_up() {
+    let s = fresh();
+    warm(&s, 4_000, 100);
+    for i in 0..(super::FORWARD_REVS as usize) {
+        work(&s, &format!("sp-{i}"), "harness", 2_000 + i as i64, None);
+    }
+    let d = s.dwell(4_000, 100, None).unwrap();
+    assert!(!d.complete && d.scanned <= super::FORWARD_REVS as usize, "complete {} scanned {}", d.complete, d.scanned);
+    assert_eq!(d.horizon, 4_000, "an index behind the head claims no coverage");
+    warm(&s, 4_000, 100);
+    assert!(s.dwell(4_000, 100, None).unwrap().complete);
 }
