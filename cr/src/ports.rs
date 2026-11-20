@@ -29,6 +29,7 @@ pub struct Config {
     pub oversize_pages: u32,
     pub exclude: Vec<String>,
     pub churn_days: u32,
+    pub count_limit: usize,
 }
 
 impl Config {
