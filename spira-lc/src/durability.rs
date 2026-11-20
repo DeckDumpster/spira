@@ -245,8 +245,9 @@ pub fn admin_dolt_assemble(args: &[String]) -> (i32, String) {
         (None, Some(s)) => dolt::newest_manifest(Path::new(s)),
         _ => return (CANNOT_TELL, DOLT_ASSEMBLE_USAGE.into()),
     };
-    match manifest.and_then(|m| dolt::assemble(&m, Path::new(files), Path::new(out))) {
-        Ok(a) => (0, format!("{} {} {}", a.head, a.files, a.bytes)),
+    let assembled = manifest.and_then(|m| dolt::assemble(&m, Path::new(files), Path::new(out)).map(|a| (a, m)));
+    match assembled {
+        Ok((a, m)) => (0, format!("{} {} {} {}", a.head, a.files, a.bytes, m.display())),
         Err(e) => (1, format!("admin-dolt-assemble: {e}")),
     }
 }
@@ -280,6 +281,21 @@ mod tests {
             sh.tick().unwrap();
         }
         sh
+    }
+
+    #[test]
+    fn admin_dolt_assemble_prints_the_manifest_it_used_after_head_files_and_bytes() {
+        let dir = TempDir::new("lc-assemble-manifest");
+        let state = dir.path().join("state");
+        std::fs::create_dir_all(state.join("manifests")).unwrap();
+        std::fs::create_dir_all(dir.path().join("files")).unwrap();
+        let m = state.join("manifests/20261102T010000000Z-h1");
+        std::fs::write(&m, "5:__DOLT__:l:r:g").unwrap();
+        let (files, st, mp) = (dir.path().join("files").display().to_string(), state.display().to_string(), m.display().to_string());
+        let (rc, via_state) = admin_dolt_assemble(&s(&["--state", &st, "--files", &files, "--out", &dir.path().join("a").display().to_string()]));
+        assert_eq!((rc, via_state), (0, format!("h1 0 0 {mp}")));
+        let (rc, via_file) = admin_dolt_assemble(&s(&["--manifest", &mp, "--files", &files, "--out", &dir.path().join("b").display().to_string()]));
+        assert_eq!((rc, via_file), (0, format!("h1 0 0 {mp}")));
     }
 
     #[test]
