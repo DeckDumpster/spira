@@ -76,6 +76,12 @@ const CASED: &[(&str, &str)] = &[("Sin", "Fenrir")];
 
 const PHRASES: &[(&str, &str)] = &[("the Sending", "Hel"), ("sending_keys", "hel_keys")];
 
+/// A singular noun's replacement when a singular determiner stands before it; the term is
+/// ambiguous bare ("summons" is a noun here, either number), "chamber" is a directory.
+const SINGULAR_AFTER_DETERMINER: &[(&str, &str)] = &[("summons", "call"), ("chamber", "rune")];
+
+const DETERMINERS: &[&str] = &["a", "an", "the", "one", "each", "every", "this", "that", "any", "no"];
+
 const NO_REPLACEMENT: &str = "(none; rephrase)";
 
 /// What replaces a term `terms_in` returned.
@@ -157,7 +163,7 @@ fn recase(word: &str, to: &str) -> String {
 fn article_before(out: &mut String, next: &str) {
     let Some(first) = next.chars().next() else { return };
     let vowel = matches!(first.to_ascii_lowercase(), 'a' | 'e' | 'i' | 'o' | 'u');
-    let Some(stem) = out.strip_suffix(' ') else { return };
+    let Some((stem, sep)) = out.strip_suffix(' ').map(|s| (s, ' ')).or_else(|| out.strip_suffix('-').map(|s| (s, '-'))) else { return };
     let cut = stem.char_indices().rev().find(|(_, c)| !c.is_ascii_alphabetic()).map_or(0, |(i, c)| i + c.len_utf8());
     let fixed = match (&stem[cut..], vowel) {
         ("a", true) => "an",
@@ -168,7 +174,7 @@ fn article_before(out: &mut String, next: &str) {
     };
     out.truncate(cut);
     out.push_str(fixed);
-    out.push(' ');
+    out.push(sep);
 }
 
 /// `text` with every term `terms_in` finds replaced by `replacement`, keeping case and the
@@ -192,9 +198,25 @@ fn rewrite_line(line: &str) -> String {
     });
     let mut out = String::with_capacity(phrased.len());
     let mut at = 0;
-    for (start, w) in words(&phrased) {
+    let ws = words(&phrased);
+    let joined = |i: usize| i > 0 && {
+        let (at, prev) = ws[i - 1];
+        let gap = &phrased[at + prev.len()..ws[i].0];
+        !gap.is_empty() && gap.chars().all(|c| c.is_whitespace() || c == '-')
+    };
+    for (i, &(start, w)) in ws.iter().enumerate() {
         let lower = w.to_ascii_lowercase();
         let to = TERMS.iter().find(|(t, _)| *t == lower).map(|(_, r)| *r).or_else(|| CASED.iter().find(|(t, _)| *t == w).map(|(_, r)| *r));
+        let singular = joined(i) && DETERMINERS.contains(&ws[i - 1].1.to_ascii_lowercase().as_str());
+        let to = match SINGULAR_AFTER_DETERMINER.iter().find(|(t, _)| *t == lower) {
+            Some((_, one)) if singular => Some(*one),
+            _ if lower == "summons" => {
+                let digits = |k: usize| i >= k && ws[i - k].1.bytes().all(|b| b.is_ascii_digit());
+                let counted = joined(i) && (digits(1) || joined(i - 1) && digits(2));
+                if counted { to } else { None }
+            }
+            _ => to,
+        };
         let Some(to) = to.filter(|r| *r != NO_REPLACEMENT) else { continue };
         out.push_str(&phrased[at..start]);
         let new = if CASED.iter().any(|(t, _)| *t == w) { to.to_string() } else { recase(w, to) };
@@ -391,6 +413,18 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert_eq!(out, "A dwarf's dwarf-fence.sh; Dwarves called Hel.\nffx-ok aeon\n");
         assert!(terms_in(out.lines().next().unwrap()).is_empty());
         assert_eq!(rewrite("AeonState SPIRA_MAX_AEONS a ifrit, Sin, sending_keys, magus"), "DwarfState SPIRA_MAX_DWARVES an eitri, Fenrir, hel_keys, magus");
+    }
+
+    #[test]
+    fn a_slug_article_a_singular_determiner_and_a_bare_summons_are_read_for_grammar() {
+        assert_eq!(rewrite("law-an-aeon-touches-only-its-own-ref"), "law-a-dwarf-touches-only-its-own-ref"); // ffx-ok
+        assert_eq!(rewrite("A guard, a summons or a refusal"), "A guard, a call or a refusal"); // ffx-ok
+        let bare = rewrite("still live, summons reopened"); // ffx-ok
+        assert!(bare.contains("summons") && terms_in(&bare) == ["summons"], "{bare}"); // ffx-ok
+        assert_eq!(rewrite("law-drain-gates-summons-not-delivery"), "law-drain-gates-summons-not-delivery"); // ffx-ok
+        assert_eq!(rewrite("from a chamber persona"), "from a rune persona"); // ffx-ok
+        assert_eq!(rewrite("572 idle summons"), "572 idle calls"); // ffx-ok
+        assert_eq!(rewrite("spira/chamber/ SPIRA_CHAMBERS"), "spira/runes/ SPIRA_RUNES"); // ffx-ok
     }
 
     #[test]

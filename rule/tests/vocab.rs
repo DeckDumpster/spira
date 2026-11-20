@@ -53,3 +53,44 @@ fn an_em_dash_before_an_article_does_not_stop_the_plan() {
     let got = plan(&book, &[], &Pointers::default());
     assert_eq!(got, vec![Entry::Amend { key: "law-e".into(), text: "One rule—a dwarf per worktree.".into() }]); // ffx-ok
 }
+
+#[test]
+fn a_slug_article_and_a_bare_summons_are_planned_by_grammar() {
+    let book = store(&[("law-an-aeon-x", "A summons."), ("law-w", "summons reopened")]); // ffx-ok
+    let got = plan(&book, &[], &Pointers::default());
+    assert_eq!(
+        got,
+        vec![
+            Entry::Rename { from: "law-an-aeon-x".into(), to: "law-a-dwarf-x".into(), text: "A call.".into(), numbered: false }, // ffx-ok
+            Entry::Unresolved { key: "law-w".into(), terms: vec!["summons".into()] }, // ffx-ok
+        ]
+    );
+}
+
+#[test]
+fn the_dry_run_prints_only_the_changed_sentences_old_then_new_and_a_rename_as_from_to() {
+    let before = store(&[("law-a", "Keep this. An aeon acts."), ("law-aeon-b", "Same.")]); // ffx-ok
+    let got = plan(&before, &[], &Pointers::default());
+    let report = rule::vocab::dry_run_report(&before, &got);
+    assert_eq!(report, "law-a\n- An aeon acts.\n+ A dwarf acts.\n\nlaw-aeon-b → law-dwarf-b\n\n"); // ffx-ok
+}
+
+#[test]
+fn every_rename_leaves_a_pointer_and_an_unnumbered_old_slug_is_numbered_first() {
+    use rule::code::{catch_up, check_pointers, resolve};
+    use rule::vocab::record_renames;
+    let toc = parse_toc(TOC).unwrap();
+    let renamed = [("law-an-aeon-x".to_string(), "law-a-dwarf-x".to_string(), false)]; // ffx-ok
+    let (toc, pointers) = record_renames(&toc, &Pointers::default(), &renamed, "d").unwrap();
+    let book = store(&[("law-a-dwarf-x", "X.")]);
+    let toc = catch_up(&toc, &pointers, &book, None).unwrap();
+    assert!(check_pointers(&toc, &pointers).is_empty());
+    let r = resolve(&toc, &pointers, "law-an-aeon-x").unwrap(); // ffx-ok
+    assert_eq!(r.slug, "law-a-dwarf-x");
+    assert_eq!(r.hops.len(), 1, "{:?}", r.hops);
+
+    let numbered = [("law-y".to_string(), "law-z".to_string(), true)];
+    let (toc2, p2) = record_renames(&parse_toc(TOC).unwrap(), &Pointers::default(), &numbered, "d").unwrap();
+    assert_eq!(toc2.iter().flat_map(|p| &p.slugs).filter(|s| *s == "law-y").count(), 1);
+    assert_eq!(p2.retired.len(), 1);
+}

@@ -131,10 +131,15 @@ lint fires. `retire` writes no text and is not checked.
 
 `rename-vocabulary` migrates the statutes that predate that refusal, using the same table
 (`ffx_vocabulary::rewrite`). A statute whose text alone holds a term is amended in place; one whose
-slug holds a term is enacted under the renamed slug and the old key forgotten, with a `[[retired]]`
-pointer to the new slug only when the old one was already numbered in the toc or a pointer. A
-rename onto a key in force, and a term with no replacement, are listed and left, exit 1; the rest
-is applied and `law/` landed once. `--dry-run` prints each `old → new` and the text and writes nothing.
+slug holds a term is enacted under the renamed slug and the old key forgotten. Every rename leaves a
+`[[retired]]` pointer to the new slug: an old slug not yet numbered is numbered first
+(`vocab::record_renames`), so `check_pointers` keeps holding. The rewrite is grammatical: a
+singular determiner before "summons" or "chamber" gives "call" or "rune", and the article fix
+reaches slugs. A bare "summons" (no determiner, no count before it) is unreadable as singular or
+plural and is listed as unresolved. A rename onto a key in force, and a term with no replacement,
+are listed and left, exit 1; the rest is applied and `law/` landed once. `--dry-run` prints each
+statute and, under it, each changed sentence as a `-` old and `+` new line (a rename prints
+`old → new`), and writes nothing.
 
 ## Pointers: a change to the book leaves one, never a gap
 
