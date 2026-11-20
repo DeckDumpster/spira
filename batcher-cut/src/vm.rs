@@ -636,7 +636,12 @@ fn filter_red_in(
         .filter(|(_, stage)| phases.contains(stage))
         .flat_map(|(_, stage)| batcher::unitattr::failing_lines(&fs::read_to_string(results.join(format!("{stage}.out"))).unwrap_or_default()))
         .collect();
-    Some(FilterRed { name, named, failed, harness })
+    let assertion_lines: Vec<String> = TEST_PHASES
+        .iter()
+        .filter(|(_, stage)| phases.contains(stage))
+        .flat_map(|(_, stage)| batcher::unitattr::assertion_delta(&fs::read_to_string(results.join(format!("{stage}.out"))).unwrap_or_default()))
+        .collect();
+    Some(FilterRed { name, named, failed, harness, assertion_lines })
 }
 
 const UNIT_TESTS: &str = "unit-tests";
@@ -1847,6 +1852,20 @@ mod tests {
         ]);
         assert_eq!(named_path_owner(BASE_LINE, &ms, &neither), None);
         assert_eq!(named_path_owner("member=sp-owner1 r: f.rs:1: x", &ms, &one), None);
+    }
+
+    #[test]
+    fn filter_red_carries_the_lines_a_red_unit_phases_failed_assertion_differs_by() {
+        let d = testkit::TempDir::new("vm-filter-red-assertion");
+        let ms = [member("sp-a")];
+        fs::write(d.path().join("unit.json"), "{\"verdict\":\"red\"}").unwrap();
+        fs::write(
+            d.path().join("unit-tests.out"),
+            "FAIL gate tests::t\nassertion `left == right` failed\n  left: \"a = 1\\nstatus-level = \\\"skip\\\"\\n\"\n right: \"a = 1\\n\"\n",
+        )
+        .unwrap();
+        let red = filter_red_in(d.path(), &ms, &BTreeMap::new(), &[]).unwrap();
+        assert_eq!(red.assertion_lines, ["status-level = \"skip\""]);
     }
 
     #[test]

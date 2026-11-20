@@ -162,7 +162,7 @@ pub trait RoundRunner {
 
 /// A filter's red. `named` is each member the filter's own output blames, with the line that does;
 /// empty when the red names no member of this round.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FilterRed {
     pub name: String,
     pub named: Vec<(Id, String)>,
@@ -170,6 +170,8 @@ pub struct FilterRed {
     pub failed: Vec<String>,
     /// The filter's output lines whose culprit is a commit the round made itself.
     pub harness: Vec<String>,
+    /// The lines one side of a failed `left == right` assertion holds and the other lacks.
+    pub assertion_lines: Vec<String>,
 }
 
 /// A filter red that named no member, kept so the next round can tell it recurs.
@@ -252,6 +254,10 @@ pub trait RoundOps {
     }
     /// This round's name, as a later round's evidence cites it.
     fn round_name(&self) -> String {
+        String::new()
+    }
+    /// The repo this round lands in, as `queue round eject` takes it.
+    fn repo_name(&self) -> String {
         String::new()
     }
     /// Keeps this repo's latest red that named no member, in place of any earlier one.
@@ -1148,10 +1154,36 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         };
         match control {
             Control::Fault => {
+                let diffs = ops.diffs(&ids);
+                let faults = fault_reasons(runner.probe_faults());
+                if let Some((id, line)) = unitattr::assertion_owner(&f.assertion_lines, &diffs, &vias) {
+                    let via = vias.get(&id).cloned().unwrap_or_default();
+                    let why = format!(
+                        "{} red{tests}: its diff adds `{line}`, the line the failing assertion's one side holds and the other lacks; it reaches {via}; the control probe gave no verdict{faults}",
+                        f.name
+                    );
+                    let actions = vec![Action::Eject { id, line: why }];
+                    let left = who_left(members, &leaving(members, &actions, &f.name));
+                    return Ok(
+                        match apply_build_actions(ops, members, &actions, &f.name, &f.failed)? {
+                            Some(next) => FilterEject::Survivors(next),
+                            None => FilterEject::Emptied(left),
+                        },
+                    );
+                }
+                let touched: Vec<String> = diffs
+                    .iter()
+                    .map(|d| {
+                        let via = vias.get(&d.id).map_or("none", String::as_str);
+                        format!("{}: {} (reach: {via})", d.id, d.paths.join(", "))
+                    })
+                    .collect();
                 return Ok(FilterEject::Faulted(format!(
-                    "{} red{tests}: the control probe on the full membership gave no verdict twice{}",
+                    "{} red{tests}: the control probe on the full membership gave no verdict twice{faults}; members: {}; eject the owner with: queue round eject {} <id> {} --by concierge --reason \"<why>\"",
                     f.name,
-                    fault_reasons(runner.probe_faults())
+                    touched.join("; "),
+                    ops.round_name(),
+                    ops.repo_name()
                 )))
             }
             Control::Green => kind = "flipped",
@@ -3383,6 +3415,9 @@ pub(crate) mod tests {
         fn round_name(&self) -> String {
             "b-now".into()
         }
+        fn repo_name(&self) -> String {
+            "repo-x".into()
+        }
         fn record_unnamed_red(&mut self, name: &str, failed: &[String], members: &[Member]) {
             self.unnamed = Some(UnnamedRed {
                 filter: name.into(),
@@ -4115,8 +4150,7 @@ pub(crate) mod tests {
                 harness: vec![],
                 name: "spira-lint".into(),
                 named: vec![],
-                failed: vec![],
-            })
+                failed: vec![], ..Default::default() })
         }));
         let mut ops = Ops::default();
         let end = attribute_round(
@@ -4382,8 +4416,7 @@ pub(crate) mod tests {
             harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
-            failed: vec!["FAIL dir:testenv t".into()],
-        };
+            failed: vec!["FAIL dir:testenv t".into()], ..Default::default() };
         let mut f = Fake::new(|_, _| false);
         f.bisects = true;
         f.prior = Some(red);
@@ -4425,8 +4458,7 @@ pub(crate) mod tests {
             harness: vec![],
             name: "fence-round-image-preflight".into(),
             named: vec![],
-            failed: vec![],
-        });
+            failed: vec![], ..Default::default() });
         let ops = Ops {
             refuse_eject: refusal.map(String::from),
             ..Ops::default()
@@ -4985,15 +5017,13 @@ pub(crate) mod tests {
             name: "spira-lint".into(),
             named: vec![],
             failed: vec![],
-            harness: vec![],
-        });
+            harness: vec![], ..Default::default() });
         f.filter = Some(Box::new(|tree| {
             tree.contains("m3").then(|| FilterRed {
                 name: "spira-lint".into(),
                 named: vec![],
                 failed: vec![],
-                harness: vec![],
-            })
+                harness: vec![], ..Default::default() })
         }));
         let end = attribute_round(&mut f, &mut ops, &["test-spike.sh".to_string()], round, budget6()).unwrap();
         assert_eq!(f.probes[0], ["m1", "m2", "m4", "m5", "m6"]);
@@ -5355,8 +5385,7 @@ pub(crate) mod tests {
                         "member={culprit} ffx-vocabulary: dwarf/src/lib.rs:26: the term \"banned\""
                     ),
                 )],
-                failed: vec![],
-            })
+                failed: vec![], ..Default::default() })
         })
     }
 
@@ -5371,8 +5400,7 @@ pub(crate) mod tests {
                 harness: vec![],
                 name: "unit-tests".into(),
                 named: vec![],
-                failed: FAILING.iter().map(|l| l.to_string()).collect(),
-            })
+                failed: FAILING.iter().map(|l| l.to_string()).collect(), ..Default::default() })
         })
     }
 
@@ -5457,8 +5485,7 @@ pub(crate) mod tests {
                 harness: vec![],
                 name: "unit-tests".into(),
                 named: vec![],
-                failed: vec![CONFIG_FAILING.to_string()],
-            })
+                failed: vec![CONFIG_FAILING.to_string()], ..Default::default() })
         })
     }
 
@@ -5567,8 +5594,7 @@ pub(crate) mod tests {
                 harness: vec![],
                 name: "unit-tests".into(),
                 named: vec![],
-                failed: vec![RELEASE_FAILING.to_string()],
-            })
+                failed: vec![RELEASE_FAILING.to_string()], ..Default::default() })
         })
     }
 
@@ -5716,6 +5742,61 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Faulted(_)), "no verdict from the control probe: {end:?}");
     }
 
+    const SKIP_LINE: &str = "status-level = \"skip\"";
+
+    fn faulted_unit_red_adding(m2: &str, m3: &str) -> (RoundEnd, Ops) {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = false;
+        f.filter = Some(Box::new(|tree| {
+            tree.contains("m2").then(|| FilterRed {
+                name: "unit-tests".into(),
+                failed: vec![RELEASE_FAILING.to_string()],
+                assertion_lines: vec![SKIP_LINE.to_string()],
+                ..Default::default()
+            })
+        }));
+        let mut ops = two_suspects();
+        for d in ops.diffs.iter_mut() {
+            match d.id.as_str() {
+                "m2" => d.added = m2.into(),
+                "m3" => d.added = m3.into(),
+                _ => {}
+            }
+        }
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), four(), budget6()).unwrap();
+        (end, ops)
+    }
+
+    #[test]
+    fn a_faulted_control_charges_the_one_member_whose_diff_adds_the_assertions_line() {
+        let (end, ops) = faulted_unit_red_adding("+other = 1\n", &format!("+{SKIP_LINE}\n"));
+        assert_eq!(ops.ejected, vec![("m3".to_string(), vec!["unit-tests".to_string()])]);
+        let note = &ops.eject_evidence[0].1;
+        assert!(note.contains(SKIP_LINE) && note.contains("config-delta") && note.contains("shipped_delta_carries"), "{note}");
+        assert!(!matches!(end, RoundEnd::Faulted(_)), "{end:?}");
+    }
+
+    #[test]
+    fn a_faulted_control_charges_no_member_on_a_substring_of_the_assertions_line() {
+        let (end, ops) = faulted_unit_red_adding("+status-level = \"skip-all\"\n", "+other = 1\n");
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert!(matches!(end, RoundEnd::Faulted(_)), "{end:?}");
+    }
+
+    #[test]
+    fn a_faulted_control_with_two_adders_pages_with_each_members_files_and_the_eject_command() {
+        let line = format!("+{SKIP_LINE}\n");
+        let (end, ops) = faulted_unit_red_adding(&line, &line);
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        match end {
+            RoundEnd::Faulted(why) => {
+                assert!(why.contains("spira/conf.d/SPIRA_TASK_MODES") && why.contains("spira/config-delta.d/m3.toml"), "{why}");
+                assert!(why.contains("queue round eject b-now <id> repo-x --by concierge --reason"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
     #[test]
     fn a_control_probe_with_no_verdict_names_each_probes_own_reason_in_the_fault() {
         let mut f = Fake::new(|_, _| false);
@@ -5793,8 +5874,7 @@ pub(crate) mod tests {
                 harness: vec![],
                 name: "unit-tests".into(),
                 named: vec![],
-                failed: vec![FAILING[0].to_string()],
-            })
+                failed: vec![FAILING[0].to_string()], ..Default::default() })
         }));
         let mut ops = Ops {
             graph: Some(loom_graph()),
@@ -5829,8 +5909,7 @@ pub(crate) mod tests {
                 harness: vec![],
                 name: "integration-tests".into(),
                 named: vec![],
-                failed: vec![FAILING[0].to_string()],
-            })
+                failed: vec![FAILING[0].to_string()], ..Default::default() })
         }));
         let mut ops = Ops {
             graph: Some(loom_graph()),
@@ -5859,8 +5938,7 @@ pub(crate) mod tests {
                 harness: vec![],
                 name: "unit-tests".into(),
                 named: vec![],
-                failed: vec![FAILING[0].to_string()],
-            })
+                failed: vec![FAILING[0].to_string()], ..Default::default() })
         }));
         let mut ops = Ops {
             graph: Some(loom_graph()),
@@ -6911,8 +6989,7 @@ pub(crate) mod tests {
                     harness: vec![],
                     name: "unit-tests".into(),
                     named: vec![],
-                    failed: vec![],
-                })
+                    failed: vec![], ..Default::default() })
         })
     }
 
@@ -6958,8 +7035,7 @@ pub(crate) mod tests {
                 name: "spira-lint".into(),
                 named: vec![],
                 failed: vec![],
-                harness: vec![line.clone()],
-            })
+                harness: vec![line.clone()], ..Default::default() })
         }));
         let mut ops = Ops::default();
         let end = attribute_round(
@@ -6995,8 +7071,7 @@ pub(crate) mod tests {
             name: "spira-lint".into(),
             named: vec![],
             failed: vec![],
-            harness: vec![line],
-        });
+            harness: vec![line], ..Default::default() });
         let mut ops = Ops::default();
         let end = attribute_round(
             &mut f,
@@ -7118,8 +7193,7 @@ pub(crate) mod tests {
                 harness: vec![],
                 name: "unit-tests".into(),
                 named: vec![],
-                failed: vec![],
-            })
+                failed: vec![], ..Default::default() })
         }));
         f.bisects = true;
         let mut ops = Ops::default();
@@ -7144,8 +7218,7 @@ pub(crate) mod tests {
             harness: vec![],
             name: "unit-tests".into(),
             named: vec![],
-            failed: failed.iter().map(|l| l.to_string()).collect(),
-        }
+            failed: failed.iter().map(|l| l.to_string()).collect(), ..Default::default() }
     }
 
     fn red_once_on_the_whole_tree(red: FilterRed) -> FilterFn {
@@ -7565,8 +7638,7 @@ pub(crate) mod tests {
             harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
-            failed: vec!["FAIL dir:testenv lint_x".into()],
-        }));
+            failed: vec!["FAIL dir:testenv lint_x".into()], ..Default::default() }));
         f.bisects = true;
         f.rerun_green = true;
         let graph = PackageGraph {
@@ -7593,8 +7665,7 @@ pub(crate) mod tests {
             harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
-            failed: vec!["FAIL test:conformance_sqlite the_wal_x".into()],
-        }));
+            failed: vec!["FAIL test:conformance_sqlite the_wal_x".into()], ..Default::default() }));
         f.bisects = true;
         f.rerun_green = true;
         let graph = PackageGraph {
@@ -7711,8 +7782,7 @@ pub(crate) mod tests {
                     harness: vec![],
                     name: "integration-tests".into(),
                     named: vec![],
-                    failed: INTEG_FAILING.iter().map(|l| l.to_string()).collect(),
-                })
+                    failed: INTEG_FAILING.iter().map(|l| l.to_string()).collect(), ..Default::default() })
         })
     }
 
@@ -7756,8 +7826,7 @@ pub(crate) mod tests {
             harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
-            failed: vec!["FAIL dir:testenv lint_does_not_refuse_a_key".into()],
-        };
+            failed: vec!["FAIL dir:testenv lint_does_not_refuse_a_key".into()], ..Default::default() };
         let mut f = Fake::new(|_, _| false);
         f.bisects = true;
         f.runs_alone = true;
@@ -7812,8 +7881,7 @@ pub(crate) mod tests {
             harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
-            failed: vec!["FAIL dir:testenv lint_x".into()],
-        };
+            failed: vec!["FAIL dir:testenv lint_x".into()], ..Default::default() };
         let mut f = Fake::new(|_, _| false);
         f.bisects = true;
         f.runs_alone = true;
@@ -7861,8 +7929,7 @@ pub(crate) mod tests {
             harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
-            failed: vec!["FAIL dir:testenv lint_x".into()],
-        };
+            failed: vec!["FAIL dir:testenv lint_x".into()], ..Default::default() };
         let mut f = Fake::new(|_, _| false);
         f.prior = Some(red);
         let mut ops = Ops::default();
@@ -7887,8 +7954,7 @@ pub(crate) mod tests {
             harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
-            failed: vec!["FAIL dir:testenv t".into()],
-        };
+            failed: vec!["FAIL dir:testenv t".into()], ..Default::default() };
         let mut f = Fake::new(|_, _| false);
         f.prior = Some(red);
         let mut ops = Ops::default();
@@ -8031,8 +8097,7 @@ pub(crate) mod tests {
                 harness: vec![],
                 name: "integration-tests".into(),
                 named: vec![],
-                failed: vec![],
-            })
+                failed: vec![], ..Default::default() })
         }));
         let mut ops = Ops::default();
         let end = attribute_round(
@@ -8064,8 +8129,7 @@ pub(crate) mod tests {
                 harness: vec![],
                 name: "spira-lint".into(),
                 named: vec![],
-                failed: vec![],
-            })
+                failed: vec![], ..Default::default() })
         }));
         let mut ops = Ops::default();
         let end = attribute_round(
@@ -8097,8 +8161,7 @@ pub(crate) mod tests {
                 harness: vec![],
                 name: "fence-fixture-config".into(),
                 named: vec![],
-                failed: vec![],
-            })
+                failed: vec![], ..Default::default() })
         }));
         let mut ops = Ops::default();
         let end = attribute_round(
@@ -8156,8 +8219,7 @@ pub(crate) mod tests {
                 harness: vec![],
                 name: "spira-lint".into(),
                 named: vec![],
-                failed: vec![],
-            })
+                failed: vec![], ..Default::default() })
         }));
         let mut ops = Ops::default();
         let end = attribute_round(
