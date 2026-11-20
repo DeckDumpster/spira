@@ -733,6 +733,21 @@ Suite headers are read by the one parser the bash used (`covers_of`, and `tier_o
 `docs/test-plan/`; a catalogue with no use case. **Positive control:** `fence: plan-matrix
 checked <use cases> use-cases (<n> suites here, <m> at the base)`.
 
+## Rule `no-new-shell-suite`
+
+**Intent.** Shell tests are not allowed: a test is written in Rust, and a shell suite that
+exists is ported or deleted, never grown. Nothing refused a new `spira/test-*.sh`, so one landed.
+
+**Checks**, against [`--base`]: every `spira/test-*.sh` (a direct child of `spira/`) present in
+the work tree, tracked or untracked, that the merge-base's tree does not have is a finding
+naming the file and the exit (write the test in Rust). A suite at the base is never a finding,
+whatever its content; a deleted one is absent from the walk; a rename is a new path. "New" is
+read from one `git ls-tree` of the base, so no list is kept and there is no allow file. The
+rule is `BASE_RELATIVE`, so `--diff` leaves its findings whole.
+
+**Refuses** (exit 3): no base; a base that does not resolve; a failing `ls-tree`.
+**Positive control:** `fence: no-new-shell-suite checked <n> suites (<m> at the base)`.
+
 ## Rule `plan-lint`
 
 Ported from `spira/plan-lint.sh`'s default (`--lint`) mode (sp-pppt0). The script itself is

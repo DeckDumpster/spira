@@ -17,7 +17,7 @@ use test_plan::{
 };
 
 use crate::rules::covers_entries::covers_of;
-use crate::{direct_child, Entry, Finding, LintError, Rule, Tree};
+use crate::{is_suite, Entry, Finding, LintError, Rule, Tree};
 
 const NAME: &str = "plan-matrix";
 const CATALOGUE_DIR: &str = "docs/test-plan";
@@ -26,11 +26,6 @@ const CATALOGUE_DIR: &str = "docs/test-plan";
 pub struct PlanMatrix {
     /// (use cases, suites here, suites at the base) after a clean check.
     checked: Cell<Option<(usize, usize, usize)>>,
-}
-
-/// `spira/test-*.sh`, directly in spira/.
-fn is_suite(path: &str) -> bool {
-    direct_child(path, "spira").is_some_and(|b| b.starts_with("test-") && b.ends_with(".sh"))
 }
 
 /// `suite_tier_of`: the first `# tier:` value before `set -` — the selector crate's parser
