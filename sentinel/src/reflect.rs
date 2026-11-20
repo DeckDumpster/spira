@@ -7,7 +7,7 @@
 //! output is never an action on the graph: the deny rules bind the model's tools.
 //!
 //! [`prompt`], [`answer`], [`recur_key`] and [`recur`] are pure; [`run`] is the leg the
-//! scheduler's `sentinel-pass` starts as a unit (`sentinel --reflect <ids>`), since one model
+//! scheduler's `sentinel-pass` starts as a unit (`spira-runtime reflect <ids>`), since one model
 //! call runs for minutes and no effect may block that long.
 
 use std::path::Path;

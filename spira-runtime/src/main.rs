@@ -11,7 +11,7 @@ use spira_runtime::{sink::OtlpSink, Effects, Settings};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-const USAGE: &str = "usage: spira-runtime serve|check-config|land-escalate <age-secs>";
+const USAGE: &str = "usage: spira-runtime serve|check-config|reflect <ids>…|land-escalate <age-secs>";
 
 /// The OTLP log queue: a full queue drops and counts rather than blocking the loop.
 const LOG_QUEUE: usize = 1024;
@@ -42,6 +42,17 @@ fn land_escalate(age: Option<String>) -> Result<(), String> {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some(spira_runtime::tasks::a::sentinel_pass::REFLECT_VERB) {
+        let ids = spira_runtime::tasks::a::sentinel_pass::reflect_ids(std::env::args().skip(2));
+        match sentinel::reflect::run(&ids) {
+            Ok(log) => print!("{log}"),
+            Err(e) => {
+                eprintln!("spira-runtime reflect: {e}"); // loop-safe: no event loop exists on this path
+                std::process::exit(1); // loop-safe: same
+            }
+        }
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("land-escalate") && std::env::args().count() == 3 {
         if let Err(e) = land_escalate(std::env::args().nth(2)) {
             eprintln!("spira-runtime: {e}");  // loop-safe: a one-shot verb, no loop runs
