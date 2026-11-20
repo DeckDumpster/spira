@@ -469,7 +469,45 @@ fn submit_stranded(home: &str, repo: &(String, Option<String>), branch: &str) ->
     code::submit_law(Path::new(&repo.0), reg.home_repo(), &wt_root, branch, "code", "book").map(|(id, _)| id)
 }
 
+fn report_law_branches(home: &str) -> Result<bool, String> {
+    let repo = locate_repo(home)?;
+    let base = repo.1.clone().ok_or("rule: no landing ref resolves for the home repository — refusing")?;
+    let path = Path::new(&repo.0);
+    let branches = code::law_branches(path, &base);
+    let tip = code::book_tip_ref(path, &base).map(|t| match t {
+        code::BookTip::Stranded(b) | code::BookTip::InFlight(b) => b,
+    });
+    let mut clean = true;
+    for (branch, kind) in &branches {
+        match kind {
+            code::LawBranch::Tip => {}
+            code::LawBranch::CarriedBy(by) => println!("law/: {branch} carried by {by}"),
+            code::LawBranch::InBook => {
+                code::git_in(path, &["branch", "-D", branch])?;
+                println!("law/: {branch} already in the book at {base}; deleted");
+            }
+            code::LawBranch::Unreconciled => {
+                println!("law/: {branch} holds statutes neither the book nor {} carries — refusing to delete it", tip.as_deref().unwrap_or(&base));
+                clean = false;
+            }
+        }
+    }
+    Ok(clean)
+}
+
 fn cmd_land_book(db: &str, home: &str) -> i32 {
+    let code = cmd_land_tip(db, home);
+    match report_law_branches(home) {
+        Ok(true) => code,
+        Ok(false) => 1,
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    }
+}
+
+fn cmd_land_tip(db: &str, home: &str) -> i32 {
     let run = || -> Result<Option<Landed>, String> {
         let repo = locate_repo(home)?;
         let toc = read_toc_at(&repo)?;
