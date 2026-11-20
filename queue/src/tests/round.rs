@@ -5327,7 +5327,7 @@ fn resubmit_says_a_held_bead_is_not_cut_by_the_batcher() {
     let held = rework_world(&["manual"]);
     let a = args(&tip_arg);
     assert_eq!(held.run(&a.iter().map(String::as_str).collect::<Vec<_>>()), 0, "{}", held.err());
-    assert!(held.out().contains("stays held manual") && held.out().contains("queue round open --members sp-a:"), "{}", held.out());
+    assert!(held.out().contains("stays held manual") && held.out().contains("it is screened and gated") && held.out().contains("queue round open --members sp-a:"), "{}", held.out());
     assert!(!held.out().contains("joins the next round"), "{}", held.out());
 
     let waiting = rework_world(&["wait"]);
