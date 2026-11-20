@@ -302,6 +302,9 @@ fn prune_results(s: &Settings, own: &str) {
     s.results_retention.prune("testenv", &s.results_root, now_epoch(), &|n| n == own);
 }
 
+pub(crate) const TESTS_WITHOUT_UNIT_TIER: &str =
+    "batch: --tests filters the unit-tests tier, and --suites leaves it out — add unit-tests to --suites, or drop --suites and --tests selects it alone";
+
 fn stderr(msg: &str) {
     eprintln!("{msg}");
 }
@@ -1349,6 +1352,16 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                 return Finish::fault(2, "unknown-suite", 0);
             }
         },
+        None if args.tests.is_some() => match selection::from_list(&crate::unit::resolve(crate::unit::NAME), &exists) {
+            Ok(v) => {
+                deps.log("--tests: no --suites, so the unit-tests tier alone is selected");
+                (v, Producer::Explicit)
+            }
+            Err(selection::UnknownSuite(n)) => {
+                stderr(&format!("batch: unknown suite: {n}"));
+                return Finish::fault(2, "unknown-suite", 0);
+            }
+        },
         None => {
             // The ONE selector, linked (sp-wx2tw). It fails closed: a selection it cannot
             // compute is a fault here, never an empty selection read as "nothing to do".
@@ -1404,7 +1417,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         }
     };
     if args.tests.is_some() && !crate::unit::selected(&selected) {
-        stderr("batch: --tests filters the unit-tests tier, and it is not selected — add unit-tests to --suites");
+        stderr(TESTS_WITHOUT_UNIT_TIER);
         return Finish::fault(2, "tests-without-unit-tier", 0);
     }
     if selected.is_empty() {
@@ -1417,11 +1430,22 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             Some(named) => crate::unit::write_named(&wt.path, named, args.tests.as_deref()),
             None => crate::unit::write_crates(&repo.path, &base, br, &wt.path, args.tests.as_deref(), !args.direct),
         };
-        let crates = match picked {
-            Ok(p) if p.affected.is_empty() && args.tests.is_some() => {
-                stderr("batch: --tests: the diff touches no crate, so no named test can run");
-                return Finish::fault(2, "tests-no-crates", 0);
+        let picked = match (&picked, &args.crates, args.tests.as_deref()) {
+            (Ok(p), None, Some(tests)) if p.affected.is_empty() => {
+                let held = crate::unit::write_holding(&wt.path, tests);
+                if let Ok(h) = &held {
+                    deps.log(&format!(
+                        "unit-tests: --tests {}: the diff touches no crate; {} workspace crate(s) hold them: {}",
+                        tests.join(","),
+                        h.crates.len(),
+                        h.crates.join(" ")
+                    ));
+                }
+                held
             }
+            _ => picked,
+        };
+        let crates = match picked {
             Ok(crate::unit::Picked { affected: c, crates }) => {
                 deps.log(&format!(
                     "unit-tests: {} affected crate(s) (selection={}): {}",

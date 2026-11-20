@@ -276,6 +276,11 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
 
     /// As above over the suites of the csv `suite`, with `deny` as the run's deny-list file; also the output lines.
     fn run_with_deny(pool: &str, suite: &str, deny: Option<&str>, state: Option<&str>) -> (String, Vec<String>, usize, Vec<String>) {
+        run_flags(pool, suite, deny, state, &["--suites", suite], "")
+    }
+
+    /// As above with the run's own flags; `shell_only` makes the branch touch a script, not crate `c`.
+    fn run_flags(pool: &str, suite: &str, deny: Option<&str>, state: Option<&str>, flags: &[&str], shell_only: &str) -> (String, Vec<String>, usize, Vec<String>) {
         let root = testkit::TempDir::new("testenv-admission-cancel");
         let (repo, harness, owner) = (root.join("repo"), root.join("harness"), root.join("owner"));
         for d in [&repo.join("spira"), &harness.join("spira"), &owner] {
@@ -293,6 +298,10 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         fs::write(repo.join("c/Cargo.toml"), "[package]\nname = \"c\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
         fs::write(repo.join("c/src/lib.rs"), "").unwrap();
         git(&repo, "git init -q -b main && git add . && git commit -qm base && git checkout -qb topic && echo '// x' > c/src/lib.rs && git add . && git commit -qm topic && git checkout -q main");
+        if !shell_only.is_empty() {
+            fs::write(repo.join("c/src/lib.rs"), format!("#[test]\nfn {shell_only}() {{}}\n")).unwrap();
+            git(&repo, "git add . && git commit -qm held && git checkout -qb shell && git commit -q --allow-empty -m s && echo '#!/bin/sh' > spira/x.sh && git add . && git commit -qm sh && git checkout -q main");
+        }
         let deny_file = root.join("deny-list");
         let mut extra = vec![];
         if let Some(text) = deny {
@@ -358,7 +367,8 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
             load1: &|| Some(0.0),
             sleep: &sleep,
         };
-        let full: Vec<String> = ["--suites", suite, "topic"].iter().map(|s| s.to_string()).chain([repo.display().to_string()]).collect();
+        let branch = if shell_only.is_empty() { "topic" } else { "shell" };
+        let full: Vec<String> = flags.iter().chain([&branch]).map(|s| s.to_string()).chain([repo.display().to_string()]).collect();
         let inv = parse(&full).unwrap();
         assert!(matches!(inv, Invocation::Run(_)));
         execute(inv, &deps);
@@ -517,6 +527,28 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert!(!preempted(&lines) && slept == 1, "nor does it widen a quarantined deny row: {lines:?}");
         let (_, _, _, lines) = one("quarantined\tsuite:test-a.sh\tsp-1\t-\ndisabled\tsuite:test-a.sh\tsp-2\t-\n", None);
         assert!(preempted(&lines), "disabled and quarantined together disable: {lines:?}");
+    }
+
+    #[test]
+    fn tests_without_suites_select_the_unit_tier_alone() {
+        let (last, _, _, lines) = run_flags("test", "unit-tests.sh", None, None, &["--tests", "foo"], "");
+        assert!(!last.contains("tests-without-unit-tier"), "{last}");
+        assert!(lines.iter().any(|l| l.contains("the unit-tests tier alone")), "{lines:?}");
+    }
+
+    #[test]
+    fn an_explicit_suite_list_without_the_unit_tier_is_refused_naming_both_exits() {
+        let (last, _, _, _) = run_flags("test", "test-a.sh", None, None, &["--suites", "test-a.sh", "--tests", "foo"], "");
+        assert!(last.contains("reason=tests-without-unit-tier"), "{last}");
+        let m = crate::run::TESTS_WITHOUT_UNIT_TIER;
+        assert!(m.contains("add unit-tests to --suites") && m.contains("drop --suites"), "{m}");
+    }
+
+    #[test]
+    fn tests_on_a_diff_touching_no_crate_run_the_crates_that_hold_them() {
+        let (last, _, _, lines) = run_flags("test", "unit-tests.sh", None, None, &["--tests", "held_test_name"], "held_test_name");
+        assert!(!last.contains("tests-no-crates"), "{last}");
+        assert!(lines.iter().any(|l| l.contains("the diff touches no crate; 1 workspace crate(s) hold them: c")), "{lines:?}");
     }
 
     #[test]
