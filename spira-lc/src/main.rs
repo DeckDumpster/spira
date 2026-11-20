@@ -76,7 +76,7 @@ fn run_deadline(verb: &str, args: &[String]) -> (i32, String) {
     match (verb, args.split_first()) {
         ("deadline-check", _) => deadline::deadline_check(args, &slow, &dir, now),
         ("deadline", Some((sub, rest))) if sub == "lower" => deadline::deadline_lower(rest, &slow, &dir, now, &mut deadline::spira_config),
-        _ => (CANNOT_TELL, "spira-lc deadline: usage: deadline lower --ms N --file F [--verb V]".to_string()),
+        _ => (CANNOT_TELL, "spira-lc deadline: usage: deadline-check (--ms N [--verb V] | --configured) | deadline lower --ms N --file F [--verb V]".to_string()),
     }
 }
 

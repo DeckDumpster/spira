@@ -77,7 +77,7 @@ pub(crate) fn parse_slow_entries(value: &str) -> Result<Vec<(String, u64, String
     Ok(out)
 }
 
-fn deadlines_from(read: impl Fn(&str) -> Result<String, String>) -> Result<Deadlines, String> {
+pub(crate) fn deadlines_from(read: impl Fn(&str) -> Result<String, String>) -> Result<Deadlines, String> {
     let default = read(DEADLINE_KEY).map_err(|e| format!("spira.lc_request_deadline_ms: {e}"))?;
     let default: u64 = spira_config::process::parse_declared(DEADLINE_KEY, &default).map_err(|e| format!("spira.lc_request_deadline_ms: {e}"))?;
     if default == 0 || default > MAX_CONFIGURED_MS {
@@ -141,19 +141,19 @@ impl Ledger {
 
     /// The answer to the request `id`: the recorded one, the in-flight one's once it ends, or
     /// `work`'s own, run at most once however many sends arrive. No answer within `wait` is a
-    /// deadline answer, and a worker still running keeps its slot until it has a real one.
-    fn answer(&self, id: &str, wait: Duration, work: impl FnOnce() -> Answer + Send + 'static) -> Answer {
+    /// `None` (the caller makes the deadline answer), and a worker still running keeps its slot until it has a real one.
+    fn answer_in_time(&self, id: &str, wait: Duration, work: impl FnOnce() -> Answer + Send + 'static) -> Option<Answer> {
         let end = Instant::now() + wait;
         let mut slots = self.0.slots.lock().unwrap_or_else(|e| e.into_inner());
         loop {
             let ttl = self.0.ttl;
             slots.retain(|_, s| !matches!(s, Entry::Done(_, at) if at.elapsed() >= ttl));
             match slots.get(id) {
-                Some(Entry::Done(ans, _)) => return Answer { owed: Box::new([]), cert_log: None, ..ans.clone() },
+                Some(Entry::Done(ans, _)) => return Some(Answer { owed: Box::new([]), cert_log: None, ..ans.clone() }),
                 Some(Entry::InFlight) => {
                     let left = end.saturating_duration_since(Instant::now());
                     if left.is_zero() {
-                        return deadline_answer();
+                        return None;
                     }
                     slots = self.0.changed.wait_timeout(slots, left).unwrap_or_else(|e| e.into_inner()).0;
                 }
@@ -168,7 +168,6 @@ impl Ledger {
             settle.record(&ans);
             ans
         })
-        .unwrap_or_else(deadline_answer)
     }
 }
 
@@ -512,6 +511,7 @@ impl Startup {
             end: SystemTime::now(),
             queue_wait: Duration::ZERO,
             answered: None,
+            cut_at: None,
             phases: &us,
             commits_us: &[],
             reads: 0,
@@ -793,6 +793,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
                 end: SystemTime::now(),
                 queue_wait: Instant::now().saturating_duration_since(accepted),
                 answered: None,
+                cut_at: None,
                 phases: &none.phases,
                 commits_us: &none.commits_us,
                 reads: none.reads,
@@ -808,6 +809,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     let argv_seen = req.argv.clone();
     let task = req.task.clone();
     let recorder = Arc::new(state_store::phases::Recorder::default());
+    let mut cut_at = None;
     let ans = match crate::work::bind_peer(&req.argv, peer_uid(&stream), &map) {
         Ok(argv) => {
             let who = caller.clone();
@@ -829,10 +831,14 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
                 work(req)
             };
             let wait = limit.saturating_sub(received.elapsed());
-            match ledgered {
-                Some(id) => door.ledger.answer(&id, wait, run),
-                None => within(wait, run).unwrap_or_else(deadline_answer),
-            }
+            let in_time = match ledgered {
+                Some(id) => door.ledger.answer_in_time(&id, wait, run),
+                None => within(wait, run),
+            };
+            in_time.unwrap_or_else(|| {
+                cut_at = Some(limit);
+                deadline_answer()
+            })
         }
         Err((code, out)) => Answer::out(code, out),
     };
@@ -865,6 +871,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
         end: SystemTime::now(),
         queue_wait: waited,
         answered: Some(answered),
+        cut_at,
         phases: &store.phases,
         commits_us: &store.commits_us,
         reads: store.reads,
@@ -1248,6 +1255,7 @@ mod tests {
             end: now,
             queue_wait: std::time::Duration::ZERO,
             answered: None,
+            cut_at: None,
             phases: &snapshot.phases,
             commits_us: &snapshot.commits_us,
             reads: snapshot.reads,
@@ -1949,16 +1957,20 @@ mod tests {
 
     /// One request, `request_id` in its head, through `serve_one` over a socket pair.
     fn send(door: &Arc<super::Door>, argv: &[&str], request_id: Option<&str>) -> (i32, String) {
+        send_spanned(door, None, argv, request_id)
+    }
+
+    fn send_spanned(door: &Arc<super::Door>, sink: Option<&spira_otel::Sink>, argv: &[&str], request_id: Option<&str>) -> (i32, String) {
         use std::io::{Read, Write};
         let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
         let head = spira_store::lc_call::request_head(&argv, None, &Default::default(), None, request_id).unwrap();
         let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
         (&client).write_all(format!("{head}\n").as_bytes()).unwrap();
-        let door = Arc::clone(door);
-        let served = std::thread::spawn(move || super::serve_one(server, None, std::time::Instant::now(), &door));
         let mut got = String::new();
-        (&client).read_to_string(&mut got).unwrap();
-        served.join().unwrap();
+        std::thread::scope(|scope| {
+            scope.spawn(|| super::serve_one(server, sink, std::time::Instant::now(), door));
+            (&client).read_to_string(&mut got).unwrap();
+        });
         let (line, rest) = got.split_once('\n').unwrap();
         let head: serde_json::Value = serde_json::from_str(line).unwrap();
         let len = head["len"].as_u64().unwrap() as usize;
@@ -2134,7 +2146,7 @@ mod tests {
         let first = {
             let ledger = ledger.clone();
             std::thread::spawn(move || {
-                ledger.answer("r", Duration::from_secs(10), move || {
+                ledger.answer_in_time("r", Duration::from_secs(10), move || {
                     started.send(()).unwrap();
                     release_rx.recv().unwrap();
                     crate::callers::Answer::out(0, "real".to_string())
@@ -2142,11 +2154,10 @@ mod tests {
             })
         };
         started_rx.recv().unwrap();
-        let waited = ledger.answer("r", Duration::from_millis(30), || panic!("a second arrival never runs the work"));
-        assert_eq!((waited.code, waited.stdout.as_str()), (2, "cannot tell: deadline"));
+        assert!(ledger.answer_in_time("r", Duration::from_millis(30), || panic!("a second arrival never runs the work")).is_none());
         release.send(()).unwrap();
-        assert_eq!(first.join().unwrap().stdout, "real");
-        let replay = ledger.answer("r", Duration::from_secs(1), || panic!("a recorded answer is replayed, not run again"));
+        assert_eq!(first.join().unwrap().unwrap().stdout, "real");
+        let replay = ledger.answer_in_time("r", Duration::from_secs(1), || panic!("a recorded answer is replayed, not run again")).unwrap();
         assert_eq!(replay.stdout, "real");
     }
 
@@ -2161,6 +2172,44 @@ mod tests {
 
     fn fifty_ms() -> super::Deadlines {
         super::Deadlines { default: Duration::from_millis(50), slow: Default::default() }
+    }
+
+    fn span_attr(dir: &testkit::TempDir, verb: &str, key: &str) -> Option<Option<i64>> {
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+        let file = std::fs::read_dir(dir).unwrap().flatten().next().expect("a span file");
+        let text = std::fs::read_to_string(file.path()).unwrap();
+        let span = text
+            .lines()
+            .map(|l| serde_json::from_str::<opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone())
+            .rfind(|s| s.name == verb)
+            .expect("a span for the verb");
+        span.attributes.iter().find(|a| a.key == key).map(|a| match a.value.as_ref()?.value.as_ref()? {
+            Value::IntValue(n) => Some(*n),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn a_span_records_the_cutoff_only_for_a_call_the_cutoff_abandoned() {
+        let dir = testkit::TempDir::new("lc-serve-cut");
+        let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
+        let r = rig(false, three_seconds());
+        let _ = send_spanned(&r.door, Some(&sink), &["show", "sp-none"], None);
+        assert!(span_attr(&dir, "show", "spira.answer_us").is_some(), "an in-time call records its answer time");
+        assert_eq!(span_attr(&dir, "show", "spira.deadline_cut_ms"), None, "an in-time call records no cutoff");
+
+        let parked = rig(true, fifty_ms());
+        let cut = send_spanned(&parked.door, Some(&sink), &["content", "note", "sp-a", "x"], None);
+        assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
+        assert_eq!(span_attr(&dir, "content", "spira.deadline_cut_ms"), Some(Some(50)));
+        assert!(span_attr(&dir, "content", "spira.answer_us").is_some());
+        parked.notes.release();
+
+        let ledgered = rig(true, fifty_ms());
+        let cut = send_spanned(&ledgered.door, Some(&sink), &["content", "note", "sp-b", "y"], Some("req-cut"));
+        assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
+        assert_eq!(span_attr(&dir, "content", "spira.deadline_cut_ms"), Some(Some(50)), "a write under a request id is cut the same way");
+        ledgered.notes.release();
     }
 
     #[test]

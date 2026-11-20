@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::{CANNOT_TELL, REFUSED};
 
 const ANSWER_US: &str = "spira.answer_us";
+const CUT_MS: &str = "spira.deadline_cut_ms";
 const DEADLINE_PATH: &str = "spira.lc_request_deadline_ms";
 const SLOW_PATH: &str = "spira.lc_slow_verb_deadlines";
 
@@ -37,6 +38,7 @@ impl Scope {
 struct Measured {
     verb: String,
     answer_us: Option<u64>,
+    cut_ms: Option<u64>,
 }
 
 fn int(v: &serde_json::Value) -> Option<u64> {
@@ -54,37 +56,51 @@ fn measured(text: &str, since_ns: u64) -> Vec<Measured> {
             if start_ns < since_ns {
                 continue;
             }
-            let answer_us = span["attributes"].as_array().and_then(|a| a.iter().find(|kv| kv["key"] == ANSWER_US)).and_then(|kv| int(&kv["value"]["intValue"]));
-            out.push(Measured { verb: span["name"].as_str().unwrap_or_default().to_string(), answer_us });
+            let attr = |key: &str| span["attributes"].as_array().and_then(|a| a.iter().find(|kv| kv["key"] == key)).and_then(|kv| int(&kv["value"]["intValue"]));
+            out.push(Measured { verb: span["name"].as_str().unwrap_or_default().to_string(), answer_us: attr(ANSWER_US), cut_ms: attr(CUT_MS) });
         }
     }
     out
 }
 
-/// Judges the files' spans: `Err` (exit 3) naming each offending verb, or a covered span with no `spira.answer_us`.
+/// Judges the files' spans: `Err` (exit 3) naming each verb with a call over `ms` or cut by the request cutoff, and each file with a covered span lacking `spira.answer_us`.
+/// A cut call's answer time is the cutoff, not the call's, so it is unmeasured whatever it says.
 fn judge(files: &[(String, String)], ms: u64, scope: &Scope, since_ns: u64, hours: u64) -> Result<String, String> {
-    let mut by_verb: BTreeMap<String, (u64, u64, u64)> = BTreeMap::new();
+    #[derive(Default)]
+    struct Tally {
+        max: u64,
+        over: u64,
+        total: u64,
+        cut: u64,
+        cut_ms: u64,
+    }
+    let mut by_verb: BTreeMap<String, Tally> = BTreeMap::new();
     let mut unmeasured = Vec::new();
     for (name, text) in files {
-        let spans = measured(text, since_ns);
-        let missing = spans.iter().filter(|s| s.answer_us.is_none() && scope.covers(&s.verb)).count();
+        let covered: Vec<Measured> = measured(text, since_ns).into_iter().filter(|s| scope.covers(&s.verb)).collect();
+        let missing = covered.iter().filter(|s| s.answer_us.is_none() && s.cut_ms.is_none()).count();
         if missing > 0 {
             unmeasured.push(format!("{name}: {missing} span(s) without {ANSWER_US}"));
         }
-        for s in spans.iter().filter(|s| scope.covers(&s.verb)) {
-            let Some(us) = s.answer_us else { continue };
-            let e = by_verb.entry(s.verb.clone()).or_default();
-            e.0 = e.0.max(us.div_ceil(1000));
-            e.1 += u64::from(us > ms * 1000);
-            e.2 += 1;
+        for s in &covered {
+            let t = by_verb.entry(s.verb.clone()).or_default();
+            t.total += 1;
+            if let Some(cut) = s.cut_ms {
+                t.cut += 1;
+                t.cut_ms = t.cut_ms.max(cut);
+            } else if let Some(us) = s.answer_us {
+                t.max = t.max.max(us.div_ceil(1000));
+                t.over += u64::from(us > ms * 1000);
+            }
         }
     }
-    let mut refusals: Vec<String> = by_verb.iter().filter(|(_, v)| v.1 > 0).map(|(verb, (max, over, total))| format!("{verb} max={max}ms over={over}/{total}")).collect();
+    let mut refusals: Vec<String> = by_verb.iter().filter(|(_, t)| t.over > 0).map(|(verb, t)| format!("{verb} max={}ms over={}/{}", t.max, t.over, t.total)).collect();
+    refusals.extend(by_verb.iter().filter(|(_, t)| t.cut > 0).map(|(verb, t)| format!("{verb} cut={}/{} at {}ms: answer time unknown", t.cut, t.total, t.cut_ms)));
     refusals.extend(unmeasured);
     if !refusals.is_empty() {
         return Err(refusals.join("\n"));
     }
-    let calls: u64 = by_verb.values().map(|v| v.2).sum();
+    let calls: u64 = by_verb.values().map(|t| t.total).sum();
     Ok(format!("no call to {} took over {ms} ms in {hours} h ({calls} calls)", scope.label()))
 }
 
@@ -106,14 +122,16 @@ fn window_files(dir: &Path, since_day: &str) -> Vec<(String, String)> {
 }
 
 struct Parsed {
-    ms: u64,
+    /// `None` under `--configured`, which takes every value from the config.
+    ms: Option<u64>,
     verb: Option<String>,
     hours: u64,
     file: Option<String>,
+    configured: bool,
 }
 
 fn parse(args: &[String]) -> Result<Parsed, String> {
-    let (mut ms, mut verb, mut hours, mut file) = (None, None, 24, None);
+    let (mut ms, mut verb, mut hours, mut file, mut configured) = (None, None, 24, None, false);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = |flag: &str| it.next().cloned().ok_or_else(|| format!("{flag} needs a value"));
@@ -122,28 +140,45 @@ fn parse(args: &[String]) -> Result<Parsed, String> {
             "--hours" => hours = value("--hours")?.parse::<u64>().map_err(|_| "--hours is a whole number".to_string())?,
             "--verb" => verb = Some(value("--verb")?),
             "--file" => file = Some(value("--file")?),
+            "--configured" => configured = true,
             other => return Err(format!("unknown argument {other:?}")),
         }
+    }
+    if configured {
+        if ms.is_some() || verb.is_some() || file.is_some() {
+            return Err("--configured checks the configured values and excludes --ms, --verb and --file".to_string());
+        }
+        return Ok(Parsed { ms: None, verb, hours, file, configured });
     }
     let ms = ms.ok_or("--ms is required")?;
     if ms == 0 || ms > 3000 {
         return Err("--ms is 1..=3000".to_string());
     }
-    Ok(Parsed { ms, verb, hours, file })
+    Ok(Parsed { ms: Some(ms), verb, hours, file, configured })
 }
 
 fn default_scope(slow: &str) -> Result<Scope, String> {
+    Ok(default_scope_without(crate::serve::parse_slow_entries(slow)?.into_iter().map(|(v, _, _)| v)))
+}
+
+fn default_scope_without(slow_verbs: impl Iterator<Item = String>) -> Scope {
     let mut excluded: BTreeSet<String> = ["work", "unpublished", "watch"].iter().map(|v| v.to_string()).collect();
     excluded.extend(crate::composed::SWEEPS.iter().map(|v| v.to_string()));
-    excluded.extend(crate::serve::parse_slow_entries(slow)?.into_iter().map(|(v, _, _)| v));
-    Ok(Scope::Default { excluded })
+    excluded.extend(slow_verbs);
+    Scope::Default { excluded }
 }
 
 fn usage(why: &str) -> (i32, String) {
-    (CANNOT_TELL, format!("spira-lc deadline: {why}\nusage: deadline-check --ms N [--verb V] [--hours H]\n       deadline lower --ms N --file F [--verb V]"))
+    (CANNOT_TELL, format!("spira-lc deadline: {why}\nusage: deadline-check (--ms N [--verb V] | --configured) [--hours H]\n       deadline lower --ms N --file F [--verb V]"))
 }
 
-fn run_check(p: &Parsed, slow: &str, dir: &Path, now: SystemTime) -> (i32, String) {
+fn window(p: &Parsed, dir: &Path, now: SystemTime) -> (u64, Vec<(String, String)>) {
+    let since = now.checked_sub(Duration::from_secs(p.hours * 3600)).unwrap_or(UNIX_EPOCH);
+    let since_ns = since.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
+    (since_ns, window_files(dir, &spira_otel::utc_date(since)))
+}
+
+fn run_check(p: &Parsed, ms: u64, slow: &str, dir: &Path, now: SystemTime) -> (i32, String) {
     let scope = match &p.verb {
         Some(v) => Scope::Verb(v.clone()),
         None => match default_scope(slow) {
@@ -151,19 +186,37 @@ fn run_check(p: &Parsed, slow: &str, dir: &Path, now: SystemTime) -> (i32, Strin
             Err(e) => return (CANNOT_TELL, e),
         },
     };
-    let since = now.checked_sub(Duration::from_secs(p.hours * 3600)).unwrap_or(UNIX_EPOCH);
-    let since_ns = since.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
-    let files = window_files(dir, &spira_otel::utc_date(since));
-    match judge(&files, p.ms, &scope, since_ns, p.hours) {
+    let (since_ns, files) = window(p, dir, now);
+    match judge(&files, ms, &scope, since_ns, p.hours) {
         Ok(line) => (0, line),
         Err(lines) => (REFUSED, lines),
     }
 }
 
+/// The configured default over the verbs that get it, then each slow-list entry over its own verb, each at its own value.
+fn run_configured(p: &Parsed, d: &crate::serve::Deadlines, dir: &Path, now: SystemTime) -> (i32, String) {
+    let default = default_scope_without(d.slow.keys().cloned());
+    let (since_ns, files) = window(p, dir, now);
+    let mut checks = vec![(default, d.default.as_millis() as u64)];
+    checks.extend(d.slow.iter().map(|(v, (ms, _))| (Scope::Verb(v.clone()), ms.as_millis() as u64)));
+    let (mut ok, mut refused) = (Vec::new(), Vec::new());
+    for (scope, ms) in &checks {
+        match judge(&files, *ms, scope, since_ns, p.hours) {
+            Ok(line) => ok.push(line),
+            Err(lines) => refused.push(lines),
+        }
+    }
+    if refused.is_empty() { (0, ok.join("\n")) } else { (REFUSED, refused.join("\n")) }
+}
+
 /// `args` after `deadline-check`.
 pub(crate) fn deadline_check(args: &[String], slow: &str, dir: &Path, now: SystemTime) -> (i32, String) {
     match parse(args) {
-        Ok(p) => run_check(&p, slow, dir, now),
+        Ok(p) if p.configured => match crate::serve::deadlines_from(spira_config::process::cfg) {
+            Ok(d) => run_configured(&p, &d, dir, now),
+            Err(e) => (CANNOT_TELL, e),
+        },
+        Ok(p) => run_check(&p, p.ms.unwrap_or_default(), slow, dir, now),
         Err(e) => usage(&e),
     }
 }
@@ -184,16 +237,17 @@ pub(crate) fn deadline_lower(args: &[String], slow: &str, dir: &Path, now: Syste
         Ok(p) => p,
         Err(e) => return usage(&e),
     };
+    let Some(ms) = p.ms else { return usage("--configured is for deadline-check; lowering takes --ms") };
     let Some(file) = &p.file else { return usage("--file is required") };
     let (key, value) = match &p.verb {
-        None => (DEADLINE_PATH, p.ms.to_string()),
-        Some(v) => match rewrite_entry(slow, v, p.ms) {
+        None => (DEADLINE_PATH, ms.to_string()),
+        Some(v) => match rewrite_entry(slow, v, ms) {
             Ok(Some(joined)) => (SLOW_PATH, joined),
             Ok(None) => return (CANNOT_TELL, format!("spira-lc deadline: {SLOW_PATH} has no entry for `{v}`")),
             Err(e) => return (CANNOT_TELL, e),
         },
     };
-    let (code, text) = run_check(&p, slow, dir, now);
+    let (code, text) = run_check(&p, ms, slow, dir, now);
     if code != 0 {
         return (code, text);
     }
@@ -218,6 +272,10 @@ mod tests {
     fn span(verb: &str, answer_ms: Option<u64>) -> String {
         let attrs = answer_ms.map(|ms| format!(r#"{{"key":"{ANSWER_US}","value":{{"intValue":"{}"}}}}"#, ms * 1000)).unwrap_or_default();
         format!(r#"{{"resourceSpans":[{{"scopeSpans":[{{"spans":[{{"name":"{verb}","startTimeUnixNano":"1700000000000000000","attributes":[{attrs}]}}]}}]}}]}}"#)
+    }
+
+    fn cut_span(verb: &str, answer_ms: u64, cut_ms: u64) -> String {
+        span(verb, Some(answer_ms)).replace(r#""attributes":["#, &format!(r#""attributes":[{{"key":"{CUT_MS}","value":{{"intValue":"{cut_ms}"}}}},"#))
     }
 
     fn text(spans: &[(&str, Option<u64>)]) -> String {
@@ -323,5 +381,53 @@ mod tests {
             assert!(excluded.contains(v), "{v}");
         }
         assert!(!excluded.contains("show"));
+    }
+
+    #[test]
+    fn a_cut_call_is_unmeasured_even_when_its_elapsed_time_passes() {
+        let t = [cut_span("watch", 1000, 1000), cut_span("watch", 1000, 1000)].join("\n");
+        assert_eq!(check(&t, 1000, &Scope::Verb("watch".into())).unwrap_err(), "watch cut=2/2 at 1000ms: answer time unknown");
+        let mixed = format!("{}\n{}", text(&[("watch", Some(5))]), cut_span("watch", 1000, 1000));
+        assert_eq!(check(&mixed, 1000, &Scope::Verb("watch".into())).unwrap_err(), "watch cut=1/2 at 1000ms: answer time unknown");
+    }
+
+    #[test]
+    fn lower_over_a_cut_call_runs_no_spira_config_command() {
+        let dir = day_dir(&cut_span("show", 1000, 1000));
+        let mut calls = Vec::new();
+        let (code, out) = deadline_lower(&args(&["--ms", "1000", "--file", "f.toml"]), "", dir.path(), now(), &mut |a| {
+            calls.push(a.to_vec());
+            0
+        });
+        assert_eq!((code, out.as_str()), (3, "show cut=1/1 at 1000ms: answer time unknown"));
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn configured_excludes_ms_and_verb_and_is_not_a_lowering() {
+        let dir = day_dir("");
+        for bad in [&["--configured", "--ms", "900"][..], &["--configured", "--verb", "list"][..]] {
+            assert_eq!(deadline_check(&args(bad), "", dir.path(), now()).0, CANNOT_TELL);
+        }
+        let mut none = |_: &[String]| 0;
+        assert_eq!(deadline_lower(&args(&["--configured", "--file", "f"]), "", dir.path(), now(), &mut none).0, CANNOT_TELL);
+    }
+
+    fn configured(body: &str) -> (i32, String) {
+        let dir = day_dir(body);
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_LC_REQUEST_DEADLINE_MS", "1000"), ("SPIRA_LC_SLOW_VERB_DEADLINES", "list=3000@sp-a")]);
+        let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        deadline_check(&args(&["--configured"]), "", dir.path(), now())
+    }
+
+    #[test]
+    fn configured_judges_the_default_and_each_slow_entry_at_its_own_value() {
+        let (code, out) = configured(&text(&[("list", Some(2000)), ("show", Some(20))]));
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(out.lines().count(), 2, "one line per check: {out}");
+        let (code, out) = configured(&text(&[("list", Some(3500)), ("show", Some(20))]));
+        assert_eq!((code, out.as_str()), (3, "list max=3500ms over=1/1"));
+        let (code, out) = configured(&text(&[("list", Some(2000)), ("show", Some(1200))]));
+        assert_eq!((code, out.as_str()), (3, "show max=1200ms over=1/1"));
     }
 }
