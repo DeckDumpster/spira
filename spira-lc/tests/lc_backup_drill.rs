@@ -52,7 +52,7 @@ fn drill(args: &str, restored: &str, contains: &str, contains_err: &str) -> Run 
         std::fs::create_dir_all(d.join(sub)).unwrap();
     }
     for n in ["dolt", "spira-lc"] {
-        testkit::write_exe(&d.join("bin").join(n), STUBS);
+        testkit::write_exe(d.join("bin").join(n), STUBS);
     }
     std::fs::write(d.join("run/lc-backup.alpha.ok"), "1 hhhh -\n").unwrap();
     let manifest = d.join("20261120T164737186Z-hhhh");
