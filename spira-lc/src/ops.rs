@@ -728,6 +728,31 @@ mod tests {
     }
 
     #[test]
+    fn a_day_before_the_window_is_not_counted_and_the_next_fold_deletes_it() {
+        use state_store::{Object, Txn};
+        let now = 2_000_000_000;
+        let s = store();
+        let at = now - DAY_S;
+        s.create("sp-a", Some("harness"), None, at - 1, &Request::new("c-a", "t", "t")).unwrap();
+        let claim = BeadEvent { expect: BeadState::Ready, version: 0, kind: BeadEventKind::Claim { holder: "d".into(), lease_until: at + 3_600, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None }, actor: "d".into(), at: Some(at) };
+        s.claim("sp-a", &claim, &Request::new("k-a", "t", "t")).unwrap();
+        s.fold_stays(now, 10_000).unwrap();
+        let stale = crate::control::keys::stay_day("WORKING", (now - 14 * DAY_S).div_euclid(DAY_S) - 1);
+        s.contract().txn(&Txn::new().put(&stale, Object::new(json!({"n": 5, "b": {"200": 5}}))), &Request::new("plant", "t", "t")).unwrap();
+        let samples = |s: &Store<MemBackend>| match s.stay_tally(now).unwrap() {
+            StayTally::Ready(p) => p.get("WORKING").map_or(0, |w| w.1),
+            _ => panic!("filling"),
+        };
+        assert_eq!(samples(&s), 0, "a day outside the window is not counted");
+        let version = s.record("sp-a").unwrap().unwrap().value.row.version;
+        let release = BeadEvent { expect: BeadState::Working, version, kind: BeadEventKind::Release, actor: "d".into(), at: Some(at + 60) };
+        s.apply("sp-a", &release, &Request::new("r-a", "t", "t")).unwrap();
+        s.fold_stays(now, 10_000).unwrap();
+        assert_eq!(samples(&s), 1);
+        assert!(day_keys(&s).iter().all(|(k, _)| *k != stale), "the stale day key is deleted by the next fold");
+    }
+
+    #[test]
     fn the_dwell_views_read_neither_the_audit_log_nor_the_history() {
         use crate::counting::Counting;
         let (store, now, _dir) = with_records_on(Counting::new, 8_000);
