@@ -271,7 +271,11 @@ fn checks_proven(
         let mut names = Vec::new();
         let ids = proof::failing_tests(run, id, &check);
         if !ids.is_empty() {
-            if let Ok(deny) = w.scripts.deny_list(w.clock.now()) {
+            let deny = w.scripts.deny_list(w.clock.now());
+            if let Err(e) = &deny {
+                w.out(format!("queue.sh {verb}: deny list unreadable ({e}); running {check} whole"));
+            }
+            if let Ok(deny) = deny {
                 let disabled = disabled_rows(&deny);
                 let (off, active): (Vec<&String>, Vec<&String>) = ids.iter().partition(|i| disabled.iter().any(|(d, _)| d == *i));
                 if active.is_empty() {
