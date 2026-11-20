@@ -3,7 +3,7 @@
 //! connections; forking the `dolt` CLI per query cost a process start on every call. The
 //! lifecycle machine itself never touches this: it lives in the control store.
 
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 
 use serde_json::Value;
 
@@ -20,6 +20,10 @@ pub const ADMIN_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 
 /// The socket limit of a collection, which answers only when the whole live store is rewritten.
 pub const GC_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4 * 3600); // batch-job: a gc rewrites the whole live store
+
+/// How many sessions a reader connection holds open at most: a read waits for another only
+/// when all of them are busy.
+pub const READER_SESSIONS: usize = 4;
 
 /// A connect that fails is retried this many times in all: nothing has been sent, so a
 /// retry cannot double a write.
@@ -66,9 +70,9 @@ pub struct Conn {
     password: Mutex<String>,
     password_file: Option<String>,
     pub database: String,
-    /// The one live connection, opened on first use and dropped on any failure: after an
-    /// error a transaction may still be open, so the next call starts from a fresh session.
-    session: Mutex<Option<Wire>>,
+    /// Live sessions, opened on demand and dropped on any failure: after an error a
+    /// transaction may still be open, so the next call starts from a fresh session.
+    sessions: Sessions<Wire>,
     /// The socket read/write limit for this connection.
     pub io_timeout: std::time::Duration,
 }
@@ -85,7 +89,7 @@ impl Conn {
             password: Mutex::new(password),
             password_file: Some(password_file.to_string()).filter(|p| !p.is_empty()),
             database: database.to_string(),
-            session: Mutex::new(None),
+            sessions: Sessions::new(READER_SESSIONS),
             io_timeout: QUERY_DEADLINE,
         })
     }
@@ -99,7 +103,7 @@ impl Conn {
             password: Mutex::new(password),
             password_file: None,
             database: String::new(),
-            session: Mutex::new(None),
+            sessions: Sessions::new(1),
             io_timeout: ADMIN_IO_TIMEOUT,
         }
     }
@@ -114,7 +118,7 @@ impl Conn {
             password: Mutex::new(String::new()),
             password_file: None,
             database: String::new(),
-            session: Mutex::new(None),
+            sessions: Sessions::new(1),
             io_timeout: std::time::Duration::from_millis(200),
         }
     }
@@ -176,23 +180,89 @@ impl Conn {
     }
 
     fn run(&self, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
-        let mut guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
-        #[allow(clippy::manual_filter)]
-        let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
-        let wire = reusable.map(Ok).unwrap_or_else(|| self.connect());
-        crate::slow::record(std::time::Duration::ZERO, "CONNECT");
-        match wire {
-            Ok(mut wire) => {
-                let started = std::time::Instant::now();
-                let out = wire.exec(script);
-                crate::slow::record(started.elapsed(), script);
-                if out.is_ok() {
-                    *guard = Some(wire);
-                }
-                out
+        self.sessions.run(|| self.connect(), script)
+    }
+}
+
+/// What a pooled session does: `Wire` over the socket, a double in tests.
+pub(crate) trait Session {
+    fn exec(&mut self, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure>;
+    fn idle_too_long(&self) -> bool;
+    fn ping(&mut self) -> bool;
+}
+
+impl Session for Wire {
+    fn exec(&mut self, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
+        Wire::exec(self, script)
+    }
+    fn idle_too_long(&self) -> bool {
+        Wire::idle_too_long(self)
+    }
+    fn ping(&mut self) -> bool {
+        Wire::ping(self)
+    }
+}
+
+struct Pool<S> {
+    idle: Vec<S>,
+    /// Sessions idle or checked out; a failed one stops counting.
+    open: usize,
+}
+
+pub(crate) struct Sessions<S> {
+    cap: usize,
+    pool: Mutex<Pool<S>>,
+    released: Condvar,
+}
+
+impl<S: Session> Sessions<S> {
+    pub(crate) fn new(cap: usize) -> Self {
+        Sessions { cap, pool: Mutex::new(Pool { idle: Vec::new(), open: 0 }), released: Condvar::new() }
+    }
+
+    /// Runs `script` on an idle session, a fresh one while under the cap, or the next one released.
+    /// The pool lock is never held across a query or a connect.
+    pub(crate) fn run(&self, open: impl Fn() -> Result<S, ScriptFailure>, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
+        let mut pool = self.pool.lock().unwrap_or_else(|e| e.into_inner());
+        let idle = loop {
+            if let Some(s) = pool.idle.pop() {
+                break Some(s);
             }
-            Err(e) => Err(e),
+            if pool.open < self.cap {
+                pool.open += 1;
+                break None;
+            }
+            pool = self.released.wait(pool).unwrap_or_else(|e| e.into_inner());
+        };
+        drop(pool);
+        #[allow(clippy::manual_filter)]
+        let ready = idle.and_then(|mut s| if s.idle_too_long() && !s.ping() { None } else { Some(s) });
+        let session = match ready {
+            Some(s) => Ok(s),
+            None => {
+                let opened = open();
+                crate::slow::record(std::time::Duration::ZERO, "CONNECT");
+                opened
+            }
+        };
+        let (out, back) = match session {
+            Ok(mut s) => {
+                let started = std::time::Instant::now();
+                let out = s.exec(script);
+                crate::slow::record(started.elapsed(), script);
+                let keep = out.is_ok();
+                (out, keep.then_some(s))
+            }
+            Err(e) => (Err(e), None),
+        };
+        let mut pool = self.pool.lock().unwrap_or_else(|e| e.into_inner());
+        match back {
+            Some(s) => pool.idle.push(s),
+            None => pool.open -= 1,
         }
+        drop(pool);
+        self.released.notify_one();
+        out
     }
 }
 
@@ -262,5 +332,129 @@ mod connect_tests {
     fn connect_backoff_doubles_from_200ms() {
         assert_eq!(connect_backoff(1), std::time::Duration::from_millis(200));
         assert_eq!(connect_backoff(2), std::time::Duration::from_millis(400));
+    }
+}
+
+#[cfg(test)]
+mod session_pool_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc::{channel, Receiver, Sender};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// A session whose `block` query waits for a release; any other query answers; `boom` fails.
+    struct Double {
+        entered: Sender<()>,
+        release: Arc<(Mutex<usize>, Condvar)>,
+    }
+
+    impl Session for Double {
+        fn exec(&mut self, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
+            match script {
+                "block" => {
+                    self.entered.send(()).unwrap();
+                    let (m, c) = &*self.release;
+                    let mut n = m.lock().unwrap();
+                    while *n == 0 {
+                        n = c.wait(n).unwrap();
+                    }
+                    *n -= 1;
+                    Ok(vec![])
+                }
+                "boom" => Err(ScriptFailure::CannotTell("boom".into())),
+                _ => Ok(vec![vec![Value::from(1)]]),
+            }
+        }
+        fn idle_too_long(&self) -> bool {
+            false
+        }
+        fn ping(&mut self) -> bool {
+            true
+        }
+    }
+
+    struct Rig {
+        pool: Arc<Sessions<Double>>,
+        opens: Arc<AtomicUsize>,
+        entered_tx: Sender<()>,
+        entered: Receiver<()>,
+        release: Arc<(Mutex<usize>, Condvar)>,
+    }
+
+    impl Rig {
+        fn new(cap: usize) -> Rig {
+            let (entered_tx, entered) = channel();
+            Rig {
+                pool: Arc::new(Sessions::new(cap)),
+                opens: Arc::new(AtomicUsize::new(0)),
+                entered_tx,
+                entered,
+                release: Arc::new((Mutex::new(0), Condvar::new())),
+            }
+        }
+        fn read(&self, script: &'static str) -> Receiver<()> {
+            let (done_tx, done) = channel();
+            let (pool, opens, tx, release) = (self.pool.clone(), self.opens.clone(), self.entered_tx.clone(), self.release.clone());
+            std::thread::spawn(move || {
+                let _ = pool.run(
+                    || {
+                        opens.fetch_add(1, Ordering::SeqCst);
+                        Ok(Double { entered: tx.clone(), release: release.clone() })
+                    },
+                    script,
+                );
+                let _ = done_tx.send(());
+            });
+            done
+        }
+        fn release_one(&self) {
+            *self.release.0.lock().unwrap() += 1;
+            self.release.1.notify_all();
+        }
+    }
+
+    const BOUND: Duration = Duration::from_secs(1);
+
+    #[test]
+    fn a_held_read_does_not_block_another() {
+        let rig = Rig::new(READER_SESSIONS);
+        let first = rig.read("block");
+        rig.entered.recv_timeout(BOUND).unwrap();
+        let second = rig.read("fast");
+        second.recv_timeout(BOUND).expect("read 2 answered while read 1 was held");
+        rig.release_one();
+        first.recv_timeout(BOUND).unwrap();
+    }
+
+    #[test]
+    fn the_cap_holds_and_a_read_over_it_waits_for_a_release() {
+        let rig = Rig::new(READER_SESSIONS);
+        let held: Vec<_> = (0..READER_SESSIONS).map(|_| rig.read("block")).collect();
+        for _ in 0..READER_SESSIONS {
+            rig.entered.recv_timeout(BOUND).unwrap();
+        }
+        let fifth = rig.read("fast");
+        assert!(fifth.recv_timeout(Duration::from_millis(100)).is_err(), "5th read ran past the cap");
+        rig.release_one();
+        fifth.recv_timeout(BOUND).expect("5th read answered after a release");
+        assert_eq!(rig.opens.load(Ordering::SeqCst), READER_SESSIONS);
+        for _ in 1..READER_SESSIONS {
+            rig.release_one();
+        }
+        for h in held {
+            h.recv_timeout(BOUND).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_failed_session_is_not_reused() {
+        let rig = Rig::new(READER_SESSIONS);
+        rig.read("fast").recv_timeout(BOUND).unwrap();
+        assert_eq!(rig.opens.load(Ordering::SeqCst), 1);
+        rig.read("boom").recv_timeout(BOUND).unwrap();
+        assert_eq!(rig.opens.load(Ordering::SeqCst), 1, "boom reused the idle session");
+        rig.read("fast").recv_timeout(BOUND).unwrap();
+        assert_eq!(rig.opens.load(Ordering::SeqCst), 2);
     }
 }
