@@ -380,11 +380,28 @@ struct LiveOps<'a> {
     prior: batcher::mender::Prior,
     send_back: Option<String>,
     mend_pass: std::cell::Cell<u32>,
+    attributed_pass: Option<u32>,
     lifted: io::LiftedRows,
     returns_read: std::cell::RefCell<Option<(std::time::Instant, Vec<batcher::mender::Failure>)>>,
 }
 
 const MEND_DEADLINE_SECS: i64 = 900;
+
+fn batch_pass(env: &io::Env, batch: &str) -> Result<u32, String> {
+    let shown = io::lcq_held(env, &["show-batch", batch])?;
+    serde_json::from_str::<serde_json::Value>(&shown)
+        .ok()
+        .and_then(|v| v.get("pass").and_then(serde_json::Value::as_u64))
+        .map(|p| p as u32)
+        .ok_or_else(|| format!("spira-lc show-batch {batch}: no pass in the reply"))
+}
+
+fn returns_of(
+    pass: u32,
+    rows: impl FnOnce(u32) -> Result<Vec<endpass::Row>, String>,
+) -> Result<Vec<batcher::mender::Failure>, String> {
+    Ok(endpass::returns(rows(pass)?))
+}
 
 impl LiveOps<'_> {
     fn keep_own_commits(&self) {
@@ -452,15 +469,9 @@ impl LiveOps<'_> {
 
 impl LiveOps<'_> {
     fn read_returns(&self, batch: &str) -> Result<Vec<batcher::mender::Failure>, String> {
-        let shown = io::lcq_held(self.env, &["show-batch", batch])?;
-        let pass = serde_json::from_str::<serde_json::Value>(&shown)
-            .ok()
-            .and_then(|v| v.get("pass").and_then(serde_json::Value::as_u64))
-            .ok_or_else(|| format!("spira-lc show-batch {batch}: no pass in the reply"))?
-            as u32;
+        let pass = batch_pass(self.env, batch)?;
         self.mend_pass.set(pass);
-        let mut lc = endpass::LcMenders { env: self.env, batch, pass };
-        Ok(endpass::returns(endpass::Menders::rows(&mut lc)?))
+        returns_of(pass, |pass| endpass::Menders::rows(&mut endpass::LcMenders { env: self.env, batch, pass }))
     }
 
     fn eject_with(
@@ -868,6 +879,15 @@ impl drive::RoundOps for LiveOps<'_> {
         self.mending(batch, d, members).transpose()
     }
 
+    fn returned_for_attribution(&self) -> Vec<batcher::mender::Failure> {
+        let (Some(batch), Some(pass)) = (self.batch, self.attributed_pass) else { return vec![] };
+        self.mend_pass.set(pass);
+        returns_of(pass, |pass| endpass::Menders::rows(&mut endpass::LcMenders { env: self.env, batch, pass })).unwrap_or_else(|e| {
+            eprintln!("batcher {}: reading the mending rows of pass {pass}: {e}", self.repo.name);
+            vec![]
+        })
+    }
+
     fn mender_returns(&self) -> Vec<batcher::mender::Failure> {
         let Some(batch) = self.batch else { return vec![] };
         let every = std::time::Duration::from_secs(endpass::POLL_SECS as u64);
@@ -1156,6 +1176,7 @@ fn stabilize_round(
         prior: batcher::mender::Prior::default(),
         send_back: None,
         mend_pass: Default::default(),
+        attributed_pass: None,
         lifted: io::LiftedRows::new(lifted),
         returns_read: Default::default(),
     };
@@ -2450,6 +2471,9 @@ fn attribute_in(
         .after_pass(o.after_pass.clone())
         .with_deny_list(&deny)?
         .confirmed(o.confirmed);
+    let attributed_pass = o.batch.as_deref().zip(o.after_pass.as_deref()).and_then(|(b, _)| {
+        batch_pass(&env_, b).map_err(|e| eprintln!("batcher {}: the attributed pass is unknown, so a mender's return goes untried: {e}", repo.name)).ok()
+    });
     if let (Some(b), Some(pass)) = (o.batch.as_deref(), o.after_pass.as_deref()) {
         io::round_corpus_ended_red(&env_, &repo, b);
         if pass.is_dir() {
@@ -2477,6 +2501,7 @@ fn attribute_in(
         prior: batcher::mender::Prior::default(),
         send_back: None,
         mend_pass: Default::default(),
+        attributed_pass,
         lifted: io::LiftedRows::default(),
         returns_read: Default::default(),
     };
@@ -2777,6 +2802,24 @@ fn dispatch() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_returned_row_of_the_attributed_pass_is_read_by_its_pass_number_not_the_current_one() {
+        let row = |state: &str| endpass::Row {
+            suite: "test-spike.sh".into(),
+            state: state.into(),
+            deadline: None,
+            diagnosis: "loses the note".into(),
+            returned: vec!["m3".into()],
+            ask_open: false,
+        };
+        let by_pass = |pass: u32| Ok(if pass == 1 { vec![row("RETURNED")] } else { vec![] });
+        let current = 2;
+        assert!(returns_of(current, by_pass).unwrap().is_empty());
+        let got = returns_of(1, by_pass).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].members, ["m3"]);
+    }
 
     fn pause_opts(run: &Path, by: Option<&str>) -> Opts {
         Opts {
