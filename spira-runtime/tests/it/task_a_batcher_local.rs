@@ -760,6 +760,31 @@ fn sp_8nlvra_a_paused_repo_is_held_and_names_the_pause() {
     assert!(why.contains("paused") && why.contains("local corpus red") && why.contains("batcher pause-lift --repo spira"), "{why}");
 }
 
+fn paused_with_undriven_round() -> Snapshot {
+    let mut s = paused("b0");
+    let r = s.repos.get_mut("spira").unwrap();
+    r.open_round = Some(Round { id: "r9".into(), members: vec!["sp-a".into()], head: "h".into(), worktree: "w".into(), phase: "opened".into(), age_secs: 60, ..Round::default() });
+    s
+}
+
+#[test]
+fn sp_s9qcq8_a_paused_repo_drives_an_open_round_it_does_not_drive_and_cuts_no_new_one() {
+    let (carry, acts) = decide(&Carry::default(), &paused_with_undriven_round());
+    let names = effects(&acts);
+    assert!(names.contains(&REDRIVE), "{acts:?}");
+    assert!(!names.contains(&FETCH) && !names.contains(&ASSEMBLE), "{acts:?}");
+    let why = carry.repos["spira"].skip_why.clone().expect("the pause is still named");
+    assert!(why.contains("paused") && why.contains("local corpus red"), "{why}");
+}
+
+#[test]
+fn sp_s9qcq8_a_stopped_repo_still_holds_an_open_round() {
+    let mut snap = paused_with_undriven_round();
+    snap.repos.get_mut("spira").unwrap().stopped = true;
+    let (_, acts) = decide(&Carry::default(), &snap);
+    assert!(acts.is_empty(), "{acts:?}");
+}
+
 /// Once a round has landed past the base the pause was seen on, the red it guarded is behind the
 /// repo: the pass lifts the pause and cuts the waiting member.
 #[test]

@@ -28,7 +28,8 @@
 //!
 //! | State | Event | → State |
 //! |---|---|---|
-//! | Idle | observe: stopped / paused (`pace.rs:77`) | Held (no write) |
+//! | Idle | observe: stopped, or paused with no open round to drive (`pace.rs:77`) | Held (no write) |
+//! | Idle | observe: paused, open round not ours | as the open-round rows below (a pause stops only a new cut) |
 //! | Idle | observe: open round, driven | Idle |
 //! | Idle | observe: open round, undriven, last pass red | Attributing (`adopt_red`: attribute that pass's kept results) |
 //! | Idle | observe: open round, undriven | Orphan (`orphan_step`: Wait / Redrive once / then `abandon` naming why, pace Infra) |
@@ -1772,7 +1773,21 @@ impl Machine<'_> {
         let paused = self.pause_in_force(policy, repo);
         if let Some(h) = pace::hold(paused, repo.stopped) {
             self.rc.skip_why = Some(hold_why(&h, self.repo, repo));
-            self.go(Trigger::Stopped);
+            let ours: Vec<&str> = live.iter().filter_map(|r| r.batch.as_deref()).collect();
+            let undriven = (h == pace::Hold::Paused && !live.iter().any(|r| matches!(r.state, State::Assembling | State::Opened)))
+                .then(|| repo.open_rounds().find(|r| !ours.contains(&r.id.as_str())))
+                .flatten();
+            match undriven {
+                Some(open) => {
+                    if self.rc.state == State::Held {
+                        self.go(Trigger::Released);
+                    }
+                    self.foreign(policy, open, repo, &st);
+                }
+                None => {
+                    self.go(Trigger::Stopped);
+                }
+            }
             return;
         }
         self.rc.skip_why = self.rc.assemble_failed.as_ref().map(|(err, n)| assemble_failed_why(err, *n));
