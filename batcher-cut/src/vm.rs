@@ -2348,22 +2348,33 @@ mod abandon_tests {
         let mut env = lifecycle_tests_env(d.path());
         let calls = d.path().join("queue-calls");
         env.queue_bin = d.path().join("queue-stub");
-        testkit::write_exe(&env.queue_bin, &format!("#!/bin/sh\necho \"$@\" >> {}\n", calls.display()));
         let repo = repo(d.path());
         let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new())
             .unwrap()
             .in_batch(Some("b1"))
             .attribution();
+        fs::create_dir_all(&r.spool).unwrap();
+        testkit::write_exe(
+            &env.queue_bin,
+            &format!("#!/bin/sh\necho \"$@ reqs=$(ls {} | grep -c '[.]req$')\" >> {}\n", r.spool.display(), calls.display()),
+        );
         let _ = r.start_main(MainKind::Corpus, &["a.sh".to_string()]);
         r.main = Main::Corpus { suites: vec!["a.sh".into()], seen: BTreeSet::new() };
-        fs::create_dir_all(&r.spool).unwrap();
         fs::write(r.spool.join("corpus.done"), "rc=1\n").unwrap();
         let _ = r.poll_main();
-        let seen = fs::read_to_string(&calls).unwrap_or_default();
-        let last = seen.lines().last().unwrap_or("");
-        assert!(last.starts_with("round pass-verdict --verdict incomplete") && last.ends_with("b1 fx"), "{seen}");
+        let after_run = fs::read_to_string(&calls).unwrap_or_default();
+        let last = after_run.lines().last().unwrap_or("");
+        assert!(
+            last.starts_with("round pass-verdict --verdict incomplete") && last.ends_with("b1 fx reqs=0"),
+            "the verdict lands before any probe request is written: {after_run}"
+        );
+        r.child = Some(Command::new("sleep").arg("5").spawn().unwrap());
+        r.request("p1", "br", &["a.sh".to_string()], "artifacts").unwrap();
         let _ = r.poll_main();
-        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), seen.lines().count(), "one verdict per run");
+        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), after_run.lines().count(), "one verdict per run");
+        if let Some(c) = r.child.as_mut() {
+            let _ = c.kill();
+        }
     }
 
     #[test]

@@ -3886,8 +3886,10 @@ fn eject_refuses_when_the_lifecycle_row_cannot_be_read() {
 
 #[test]
 fn an_attributing_red_round_admits_an_eject_of_a_member() {
-    let (t, batch) = pass_world();
-    *t.lc.batch_view.borrow_mut() = Some(("ATTRIBUTING".into(), 4, 1, String::new()));
+    let t = round_world();
+    let batch = red_round(&t, "sp-a:ta,sp-b:tb,sp-c:tc");
+    seed_suite(&t, "test-b.sh");
+    *t.lc.batch_view.borrow_mut() = Some(("ATTRIBUTING".into(), 4, 2, String::new()));
     let argv = ["round", "eject", batch.as_str(), "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"];
     assert_eq!(t.run(&argv), 0, "{}", t.err());
     assert!(t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
