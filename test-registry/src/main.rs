@@ -1,3 +1,4 @@
+use runtime::ports::SeededRng;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -13,6 +14,8 @@ const OPERATIONS: &[&str] = &[
     "clear-landed",
     "repoint",
     "backup",
+    "mint",
+    "stamp",
 ];
 
 fn main() -> ExitCode {
@@ -30,9 +33,16 @@ fn main() -> ExitCode {
         let cfg = test_registry::cli::with_run_default(spira_config::process::cfg, || {
             spira_config::resolve::run_dir_for_process().map(|d| d.display().to_string())
         });
-        let out = test_registry::cli::run(&args, now, &cfg, &|p| {
-            test_registry::open(p)
-        });
+        let seed = spira_config::process::cfg("SPIRA_SEED")
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or_else(|| {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0)
+            });
+        let out = test_registry::cli::run(&args, now, &cfg, &|p| test_registry::open(p), &mut SeededRng::new(seed));
         if !out.stdout.is_empty() {
             println!("{}", out.stdout.trim_end_matches('\n'));
         }

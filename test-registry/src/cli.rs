@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use rusqlite::Connection;
+use runtime::ports::Rng;
 use serde_json::{json, Value};
 
 use crate::store::{self, Row, Set};
@@ -40,9 +41,11 @@ const VERBS: &[(&str, &[&str], &[&str])] = &[
     ("clear-landed", &["bead", "actor"], &[]),
     ("repoint", &["from", "to", "actor"], &[]),
     ("backup", &["out"], &[]),
+    ("mint", &[], &[]),
+    ("stamp", &["path"], &[]),
 ];
 
-const REPEATABLE: &[(&str, &str)] = &[("clear-landed", "bead")];
+const REPEATABLE: &[(&str, &str)] = &[("clear-landed", "bead"), ("stamp", "path")];
 
 fn parse(args: &[String]) -> Result<Args, String> {
     let (verb, rest) = args
@@ -63,7 +66,10 @@ fn parse(args: &[String]) -> Result<Args, String> {
         let name = a
             .strip_prefix("--")
             .filter(|n| required.contains(n) || optional.contains(n))
-            .ok_or_else(|| format!("{verb}: unexpected argument {a:?}"))?;
+            .ok_or_else(|| {
+                let hint = if verb == "stamp" { " (named arguments only: stamp --path <file> [--path <file>…])" } else { "" };
+                format!("{verb}: unexpected argument {a:?}{hint}")
+            })?;
         let value = it
             .next()
             .ok_or_else(|| format!("{verb}: --{name} needs a value"))?;
@@ -184,13 +190,102 @@ pub fn with_run_default(cfg: impl Fn(&str) -> Result<String, String>, run_dir: i
     }
 }
 
-pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener) -> Outcome {
+pub const INTENT: &str = "A test's id is stable with the test's intent, not its name or its code. Rename or move a test and keep its id. A test rewritten to check something else is a new test: delete the attribute and run `test-registry stamp`.";
+
+pub const HELP: &str = "usage: test-registry <verb> --name value … [--json]
+  disable|quarantine --test T --bead B --reason R --actor A [--until TIME]
+  activate --test T --reason R --actor A
+  show --test T | history --test T | list [--at TIME] | deny-list --at TIME
+  clear-landed --bead B [--bead B…] --actor A | repoint --from F --to T --actor A | backup --out FILE
+  mint                            print a fresh test id
+  stamp --path FILE [--path FILE…]  write #[test_id(<id>)] above each unstamped test
+exit codes: 0 ok, 1 refused (stamp: a #[test] inside macro_rules!), 2 usage, 3 the registry cannot be opened
+mint and stamp never open the registry.
+
+";
+
+fn mint_id(rng: &mut dyn Rng) -> String {
+    const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut n = rng.next_u64();
+    let mut id = String::from("t");
+    for _ in 0..6 {
+        id.push(ALPHABET[(n % 36) as usize] as char);
+        n /= 36;
+    }
+    id
+}
+
+fn stamp(paths: &str, rng: &mut dyn Rng) -> Outcome {
+    let usage = |msg: String| Outcome { code: 2, stdout: String::new(), stderr: msg };
+    let mut files: Vec<(String, String)> = Vec::new();
+    for p in paths.split('\n') {
+        if files.iter().any(|(q, _)| q == p) {
+            continue;
+        }
+        match std::fs::read_to_string(p) {
+            Ok(src) => files.push((p.to_string(), src)),
+            Err(e) => return usage(format!("stamp: cannot read {p}: {e}")),
+        }
+    }
+    let mut seen: std::collections::BTreeSet<String> = files
+        .iter()
+        .flat_map(|(_, src)| spira_lint::rust_test::test_sites(src.as_bytes()))
+        .filter_map(|s| s.id)
+        .collect();
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    for (path, src) in &files {
+        let mut text = src.clone();
+        let mut sites = spira_lint::rust_test::test_sites(src.as_bytes());
+        sites.sort_by_key(|s| s.line);
+        let mut inserts: Vec<(usize, String)> = Vec::new();
+        for s in sites.iter().filter(|s| s.id.is_none()) {
+            if s.in_macro_rules {
+                stderr.push(format!("{path}:{}: a #[test] inside macro_rules! cannot be stamped: give the macro an id argument and write #[test_id($id)] in its body", s.line));
+                continue;
+            }
+            let id = loop {
+                let id = mint_id(rng);
+                if seen.insert(id.clone()) {
+                    break id;
+                }
+            };
+            stdout.push(format!("{path}:{}\ttest:{id}\t{}", s.line, s.fn_name));
+            inserts.push((s.line, format!("{}#[test_id({id})]\n", s.indent)));
+        }
+        let starts: Vec<usize> = std::iter::once(0)
+            .chain(src.match_indices('\n').map(|(i, _)| i + 1))
+            .collect();
+        for (line, attr) in inserts.iter().rev() {
+            text.insert_str(starts[line - 1], attr);
+        }
+        if text != *src {
+            if let Err(e) = std::fs::write(path, &text) {
+                return usage(format!("stamp: cannot write {path}: {e}"));
+            }
+        }
+    }
+    Outcome {
+        code: i32::from(!stderr.is_empty()),
+        stdout: stdout.join("\n"),
+        stderr: stderr.join("\n"),
+    }
+}
+
+pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener, rng: &mut dyn Rng) -> Outcome {
+    if matches!(args.first().map(String::as_str), Some("-h" | "--help")) {
+        return Outcome { code: 0, stdout: format!("{HELP}{INTENT}"), stderr: String::new() };
+    }
     let json_mode = args.iter().any(|a| a == "--json");
     let a = match parse(args) {
         Ok(a) => a,
         Err(e) => return fail(2, json_mode, e),
     };
     let j = a.json;
+    match a.verb.as_str() {
+        "mint" => return out(0, j, mint_id(rng), json!({"ok": true})),
+        "stamp" => return stamp(a.named.get("path").map(String::as_str).unwrap_or(""), rng),
+        _ => {}
+    }
     let get = |k: &str| a.named.get(k).map(String::as_str).unwrap_or("");
     let time = |k: &str| a.named.get(k).map(|v| parse_time(v)).transpose();
     let (until, at) = match (time("until"), time("at")) {
@@ -335,6 +430,11 @@ pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use runtime::ports::SeededRng;
+
+    fn run(args: &[String], now: i64, cfg: Cfg, open: Opener) -> Outcome {
+        super::run(args, now, cfg, open, &mut SeededRng::new(0))
+    }
 
     fn argv(s: &str) -> Vec<String> {
         s.split_whitespace().map(String::from).collect()
@@ -637,5 +737,98 @@ mod tests {
         assert_eq!(parse_time("2026-11-15T00:00:00Z").unwrap(), 1794700800);
         assert_eq!(parse_time("1234").unwrap(), 1234);
         assert!(parse_time("tomorrow").is_err());
+    }
+
+    fn no_registry(_: &str) -> Result<Connection, String> {
+        panic!("mint and stamp must not open the registry")
+    }
+
+    fn id_run(line: &str, seed: u64) -> Outcome {
+        super::run(&argv(line), 1, &cfg_with(""), &no_registry, &mut SeededRng::new(seed))
+    }
+
+    fn is_id(s: &str) -> bool {
+        s.len() == 7 && s.starts_with('t') && s[1..].bytes().all(|c| c.is_ascii_digit() || c.is_ascii_lowercase())
+    }
+
+    const SRC: &str = "const S: &str = \"#[test] fn fake() {}\";\n#[test]\nfn one() {}\n\nmod m {\n    #[tokio::test]\n    async fn two() {}\n\n    #[test_id(t7k3m9q)]\n    #[test]\n    fn three() {}\n}\n";
+
+    fn fixture(tag: &str, src: &str) -> (testkit::TempDir, String) {
+        let dir = testkit::TempDir::new(tag);
+        let p = dir.path().join("f.rs");
+        std::fs::write(&p, src).unwrap();
+        let p = p.display().to_string();
+        (dir, p)
+    }
+
+    #[test]
+    fn mint_under_one_seed_prints_the_same_id_twice_and_it_fits_the_grammar() {
+        let (a, b) = (id_run("mint", 7), id_run("mint", 7));
+        assert_eq!((a.code, a.stdout.as_str()), (0, b.stdout.as_str()));
+        assert!(is_id(&a.stdout), "{}", a.stdout);
+        assert_ne!(id_run("mint", 8).stdout, a.stdout);
+    }
+
+    #[test]
+    fn stamp_writes_an_attribute_above_each_unstamped_test_at_its_indent_and_only_there() {
+        let (_d, p) = fixture("test-registry-stamp", SRC);
+        let o = id_run(&format!("stamp --path {p}"), 7);
+        assert_eq!(o.code, 0, "{}", o.stderr);
+        let after = std::fs::read_to_string(&p).unwrap();
+        let lines: Vec<&str> = after.lines().collect();
+        assert_eq!(after.matches("#[test_id(").count(), 3, "{after}");
+        let one = lines.iter().position(|l| *l == "fn one() {}").unwrap();
+        assert!(lines[one - 2].starts_with("#[test_id(t") && lines[one - 1] == "#[test]", "{after}");
+        let two = lines.iter().position(|l| l.contains("async fn two")).unwrap();
+        assert!(lines[two - 2].starts_with("    #[test_id(t") && lines[two - 1] == "    #[tokio::test]", "{after}");
+        assert!(after.contains("\"#[test] fn fake() {}\""), "{after}");
+        let reported: Vec<&str> = o.stdout.lines().collect();
+        assert_eq!(reported.len(), 2, "{}", o.stdout);
+        assert!(reported[0].starts_with(&format!("{p}:2\ttest:t")) && reported[0].ends_with("\tone"), "{}", o.stdout);
+        let ids: Vec<&str> = after.lines().filter_map(|l| l.trim().strip_prefix("#[test_id(")?.strip_suffix(")]")).collect();
+        assert_eq!(ids.len(), 3);
+        assert!(ids.iter().all(|i| is_id(i)) && ids.iter().collect::<std::collections::BTreeSet<_>>().len() == 3);
+    }
+
+    #[test]
+    fn a_second_stamp_changes_no_byte_and_exits_0() {
+        let (_d, p) = fixture("test-registry-stamp-twice", SRC);
+        id_run(&format!("stamp --path {p}"), 7);
+        let once = std::fs::read(&p).unwrap();
+        let o = id_run(&format!("stamp --path {p}"), 9);
+        assert_eq!((o.code, o.stdout.as_str()), (0, ""));
+        assert_eq!(std::fs::read(&p).unwrap(), once);
+    }
+
+    #[test]
+    fn a_test_inside_macro_rules_is_refused_by_line_and_the_rest_is_still_stamped() {
+        let src = "macro_rules! m {\n    ($n:ident) => {\n        #[test]\n        fn $n() {}\n    };\n}\n#[test]\nfn plain() {}\n";
+        let (_d, p) = fixture("test-registry-stamp-macro", src);
+        let o = id_run(&format!("stamp --path {p}"), 7);
+        assert_eq!(o.code, 1);
+        assert!(o.stderr.contains(&format!("{p}:3: a #[test] inside macro_rules! cannot be stamped")), "{}", o.stderr);
+        let after = std::fs::read_to_string(&p).unwrap();
+        assert_eq!(after.matches("#[test_id(").count(), 1, "{after}");
+        assert!(after.contains("fn plain"));
+    }
+
+    #[test]
+    fn stamp_without_a_path_or_with_a_positional_one_is_usage_naming_path() {
+        let none = id_run("stamp", 7);
+        assert_eq!(none.code, 2);
+        assert!(none.stderr.contains("--path"), "{}", none.stderr);
+        let (_d, p) = fixture("test-registry-stamp-positional", SRC);
+        let pos = id_run(&format!("stamp {p}"), 7);
+        assert_eq!(pos.code, 2);
+        assert!(pos.stderr.contains("--path"), "{}", pos.stderr);
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), SRC);
+        assert_eq!(id_run("stamp --path /nonexistent/zz.rs", 7).code, 2);
+    }
+
+    #[test]
+    fn help_carries_the_intent_paragraph_and_each_new_verb() {
+        let o = id_run("-h", 7);
+        assert_eq!(o.code, 0);
+        assert!(o.stdout.contains(INTENT) && o.stdout.contains("stamp --path") && o.stdout.contains("mint"));
     }
 }

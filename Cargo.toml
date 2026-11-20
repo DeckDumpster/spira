@@ -43,6 +43,7 @@ members = [
     "round-vm",
     "sccache-dav",
     "test-registry",
+    "spira-test-id",
     "spira-claim",
     "strand",
     "mender",

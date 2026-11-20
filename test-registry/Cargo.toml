@@ -17,10 +17,12 @@ test = false
 integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration"]
 
 [dependencies]
+runtime = { path = "../runtime" }
 rusqlite = { version = "0.37", features = ["bundled", "backup"] }
 serde_json = "1"
 sha2 = "0.10"
 spira-config = { path = "../spira-config" }
+spira-lint = { path = "../spira-lint" }
 spira-otel = { path = "../spira-otel" }
 
 [dev-dependencies]

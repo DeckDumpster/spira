@@ -2374,6 +2374,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "spira-test-id"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "tokio",
+]
+
+[[package]]
 name = "spira-world"
 version = "1.0.0"
 dependencies = [
@@ -2529,10 +2537,12 @@ dependencies = [
 name = "test-registry"
 version = "0.1.0"
 dependencies = [
+ "runtime",
  "rusqlite",
  "serde_json",
  "sha2",
  "spira-config",
+ "spira-lint",
  "spira-otel",
  "testkit",
 ]

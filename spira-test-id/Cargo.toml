@@ -1,0 +1,13 @@
+[package]
+name = "spira-test-id"
+version = "0.1.0"
+edition = "2021"
+description = "spira-test-id — #[test_id(<id>)]: pins a test's identity to an id that is not its name."
+
+[lib]
+proc-macro = true
+test = false
+
+[dev-dependencies]
+proptest = { version = "=1.5.0", default-features = false, features = ["std"] }
+tokio = { version = "1", features = ["macros", "rt"] }
