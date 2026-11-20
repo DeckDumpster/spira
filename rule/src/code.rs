@@ -611,9 +611,66 @@ pub fn catch_up(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, Strin
 /// statute book, so a later law commit cut on it fast-forwards.
 pub fn newest_book_only_tip(repo_path: &Path, base: &str) -> Option<String> {
     let refs = git_in(repo_path, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)", &format!("--no-merged={base}"), "refs/heads/law", "refs/heads/spira"]).ok()?;
+    let held = base_book(repo_path, base);
     refs.lines().find(|r| {
         git_in(repo_path, &["diff", "--name-only", &format!("{base}...{r}")]).is_ok_and(|names| !names.is_empty() && names.lines().all(|n| n.starts_with("law/") || n.starts_with("spira/statutes/")))
+            && !(r.starts_with("refs/heads/law/") && in_book(repo_path, r, held.as_ref()))
     }).map(str::to_string)
+}
+
+fn base_book(repo_path: &Path, base: &str) -> Option<(Vec<Part>, Pointers)> {
+    let toc = parse_toc(&git_in(repo_path, &["show", &format!("{base}:law/toc.toml")]).ok()?).ok()?;
+    let pointers = git_in(repo_path, &["show", &format!("{base}:law/{POINTERS_FILE}")]).ok().and_then(|t| parse_pointers(&t).ok()).unwrap_or_default();
+    Some((toc, pointers))
+}
+
+/// Whether every slug and pointer record on `r` is already on the base.
+fn in_book(repo_path: &Path, r: &str, held: Option<&(Vec<Part>, Pointers)>) -> bool {
+    let Some((toc, pointers)) = held else { return false };
+    let Some(theirs) = git_in(repo_path, &["show", &format!("{r}:law/toc.toml")]).ok().and_then(|t| parse_toc(&t).ok()) else { return false };
+    let their_pointers = match git_in(repo_path, &["show", &format!("{r}:law/{POINTERS_FILE}")]) {
+        Ok(t) => match parse_pointers(&t) {
+            Ok(p) => p,
+            Err(_) => return false,
+        },
+        Err(_) => Pointers::default(),
+    };
+    theirs.iter().all(|p| p.slugs.iter().all(|s| toc.iter().any(|b| b.slugs.contains(s))))
+        && their_pointers.moved.iter().all(|m| pointers.moved.contains(m))
+        && their_pointers.merged.iter().all(|m| pointers.merged.contains(m))
+        && their_pointers.retired.iter().all(|m| pointers.retired.contains(m))
+}
+
+/// What `law_branches` finds a `law/*` branch not merged into the base to be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LawBranch {
+    Tip,
+    CarriedBy(String),
+    InBook,
+    Unreconciled,
+}
+
+/// Every `law/*` branch not merged into `base`, newest first, with what becomes of it.
+pub fn law_branches(repo_path: &Path, base: &str) -> Vec<(String, LawBranch)> {
+    let Ok(refs) = git_in(repo_path, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)", &format!("--no-merged={base}"), "refs/heads/law"]) else {
+        return Vec::new();
+    };
+    let held = base_book(repo_path, base);
+    let tip = newest_book_only_tip(repo_path, base);
+    refs.lines()
+        .map(|r| {
+            let kind = if in_book(repo_path, r, held.as_ref()) {
+                LawBranch::InBook
+            } else if tip.as_deref() == Some(r) {
+                LawBranch::Tip
+            } else if let Some(t) = tip.as_deref().filter(|t| git_in(repo_path, &["merge-base", "--is-ancestor", r, t]).is_ok()) {
+                LawBranch::CarriedBy(t.strip_prefix("refs/heads/").unwrap_or(t).to_string())
+            } else {
+                LawBranch::Unreconciled
+            };
+            (r.strip_prefix("refs/heads/").unwrap_or(r).to_string(), kind)
+        })
+        .collect()
 }
 
 /// Where the newest book-only unlanded tip sits: a `law/*` branch no bead carries yet, or a
