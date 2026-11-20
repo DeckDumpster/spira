@@ -825,11 +825,13 @@ pub(super) fn retire_failure_mender(w: &World, c: &Ctx, batch: &str, pass: u32, 
 }
 
 /// Keeps the red evidence of an eject (the failing tests' names, each red suite's first FAIL line,
-/// the mender's excerpt) under the send-back store, which the next pass's wipe of the round's
-/// results does not reach, and names where it is kept after the reason's first line.
+/// the mender's excerpt) and each red suite's whole `.out` beside it, under the send-back store,
+/// which the next pass's wipe of the round's results does not reach, and names where it is kept
+/// after the reason's first line.
 fn with_kept_evidence(w: &World, c: &Ctx, batch: &str, reason: &str, suites: &str) -> String {
     let results = rounds_dir(c).join(format!("{batch}.results"));
     let mut text = format!("{reason}\n");
+    let mut outs: Vec<(String, Vec<u8>)> = Vec::new();
     for s in suites.split(',').filter(|s| !s.is_empty()) {
         let fail = suite_output(&results, s, 0)
             .or_else(|| phase_evidence(&results, s, |o| o.to_string()))
@@ -839,12 +841,23 @@ fn with_kept_evidence(w: &World, c: &Ctx, batch: &str, reason: &str, suites: &st
         if let Some(e) = phase_evidence(&results, s, failure_excerpt) {
             text.push_str(&format!("{e}\n"));
         }
+        let stages: Vec<String> = if s == UNIT_RED { phase_reds(&results).into_iter().map(|p| p.stage).collect() } else { vec![s.to_string()] };
+        for stage in stages {
+            if let Some(full) = suite_output(&results, &stage, 0) {
+                let name = format!("{stage}.out");
+                text.push_str(&format!("{stage}: full output kept as {name}\n"));
+                outs.push((name, full.into_bytes()));
+            }
+        }
     }
+    outs.insert(0, ("red-evidence".to_string(), text.into_bytes()));
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let kept = w
         .env
         .config("SPIRA_SENDBACK_KEEP_DAYS")
         .and_then(|d| d.trim().parse::<u32>().map_err(|e| e.to_string()))
-        .and_then(|days| spira_config::sendback::keep_text(&c.s.run, "eject", "red-evidence", &text, days));
+        .and_then(|days| spira_config::sendback::keep(&c.s.run, "eject", &outs, days, now))
+        .map(|id| spira_config::sendback::root(&c.s.run).join(id).join("red-evidence"));
     let line = match kept {
         Ok(p) => format!("Red evidence kept at {}.", p.display()),
         Err(e) => format!("Red evidence not kept: {e}."),

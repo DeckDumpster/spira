@@ -10010,6 +10010,61 @@ fn an_ejects_red_evidence_is_kept_where_the_next_pass_start_does_not_wipe_it() {
     assert!(fs::read_to_string(&kept).is_ok_and(|e| e.contains("FAIL: b_broke_the_wal")), "{kept}");
 }
 
+fn kept_evidence_after_eject(t: &T, batch: &str, suites: &str) -> std::path::PathBuf {
+    let eject = ["round", "eject", batch, "sp-b", "--reason", "red", "--red", "--suites", suites];
+    assert_eq!(t.run(&eject), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow().join("\n");
+    let p = calls
+        .split("Red evidence kept at ")
+        .nth(1)
+        .and_then(|r| r.split(".\n").next())
+        .map(|r| r.split(" Red").next().unwrap().trim_end_matches(['.', '"', ' ']).to_string())
+        .unwrap_or_else(|| panic!("the reason names no kept evidence: {calls}"));
+    std::path::PathBuf::from(p)
+}
+
+#[test]
+fn an_ejects_kept_evidence_holds_each_red_suites_whole_output() {
+    let t = round_world();
+    t.env.resolved.borrow_mut().insert("SPIRA_SENDBACK_KEEP_DAYS".into(), "7".into());
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    seed_suite(&t, "test-b.sh");
+    let results = t.lib.s.run.join("rounds").join(format!("{batch}.results"));
+    fs::create_dir_all(&results).unwrap();
+    let full = "ok 1\nnot ok 2 - b broke\n# wanted [x] in [y]\nmore\n";
+    fs::write(results.join("test-b.sh.out"), full).unwrap();
+    let ev = kept_evidence_after_eject(&t, &batch, "test-b.sh");
+    let _ = t.run(&["round", "pass-start", &batch]);
+    fs::remove_dir_all(&results).ok();
+    assert_eq!(fs::read(ev.with_file_name("test-b.sh.out")).unwrap(), full.as_bytes());
+    let text = fs::read_to_string(&ev).unwrap();
+    assert!(text.contains("not ok 2 - b broke") && text.contains("test-b.sh.out"), "{text}");
+}
+
+#[test]
+fn a_unit_tests_ejects_kept_evidence_holds_each_red_phases_whole_output() {
+    let t = round_world();
+    t.env.resolved.borrow_mut().insert("SPIRA_SENDBACK_KEEP_DAYS".into(), "7".into());
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let results = t.lib.s.run.join("rounds").join(format!("{batch}.results"));
+    fs::create_dir_all(&results).unwrap();
+    let full = "running 1 test\nFAIL t1\nafter the failure\n";
+    fs::write(results.join("integration-tests.out"), full).unwrap();
+    fs::write(
+        results.join("integration.json"),
+        r#"{"stage":"integration-tests","verdict":"red","failed":["t1"],"cause":"x","secs":3}"#,
+    )
+    .unwrap();
+    let ev = kept_evidence_after_eject(&t, &batch, "unit-tests");
+    fs::remove_dir_all(&results).ok();
+    assert_eq!(fs::read(ev.with_file_name("integration-tests.out")).unwrap(), full.as_bytes());
+    assert!(fs::read_to_string(&ev).unwrap().contains("integration-tests.out"));
+}
+
 fn deploy_faulting_round(detached: bool) -> (T, String) {
     let (t, batch) = certified_round();
     if detached {
