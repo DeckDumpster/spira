@@ -2,9 +2,12 @@ use std::cell::Cell;
 
 use lifecycle::mending::MendingState;
 use runtime::ports::VirtualClock;
-use state_store::{Config, Contract, MemBackend, Ports, Request};
+use state_store::{Backend, Config, Contract, MemBackend, Object, Ports, Request, Txn};
 
 use super::Store;
+use crate::control::store::counting::Counting;
+use crate::control::records::encode;
+use crate::control::store::MendingRecord;
 use crate::control::keys;
 use crate::control::state::{self, Call};
 
@@ -14,15 +17,21 @@ const T2: &str = "2222222222222222222222222222222222222222";
 const FACTS: &str =
     r#"{"changes":[],"member_files":[],"required_checks":[],"checked":[],"ask":null}"#;
 
-struct Rig {
-    s: Store<MemBackend>,
+struct Rig<B: Backend = MemBackend> {
+    s: Store<B>,
     n: Cell<u64>,
 }
 
 impl Rig {
     fn new() -> Self {
+        Rig::on(MemBackend::new())
+    }
+}
+
+impl<B: Backend> Rig<B> {
+    fn on(b: B) -> Self {
         let c = Contract::open(
-            MemBackend::new(),
+            b,
             Ports::virtual_clock(&VirtualClock::new(AT as u64 * 1_000)),
             Config {
                 min_lock_ttl_ms: 1_000,
@@ -251,6 +260,36 @@ fn an_overdue_mend_expires_on_sweep_and_a_waiting_failure_of_an_ended_round_is_r
         .map(|v| v["state"].as_str().unwrap())
         .collect();
     assert_eq!(states, ["RETURNED", "RETURNED"]);
+}
+
+#[test]
+fn a_sweep_reads_the_live_rows_through_the_state_index_not_every_row_ever() {
+    use MendingState::{Mending, Returned, Waiting};
+    let r = Rig::on(Counting::default());
+    let put = |suite: &str, state: MendingState, deadline: i64, ask: Option<&str>| {
+        let mut m = MendingRecord::failed("b-1", 1, suite, 10);
+        m.row.state = state;
+        m.row.deadline = Some(deadline);
+        m.row.awaiting_ask = ask.map(String::from);
+        let key = keys::mending(&m.row.key());
+        let req = Request::new(&format!("put-{suite}"), "t", "t");
+        r.s.contract().txn(&Txn::new().put(&key, Object::new(encode(&m).unwrap())), &req).unwrap();
+    };
+    for i in 0..300 {
+        put(&format!("old-{i}.sh"), if i % 2 == 0 { Returned } else { MendingState::Mended }, 5, None);
+    }
+    put("late.sh", Mending, AT - 10, None);
+    put("asked.sh", Mending, AT - 10, Some("ask-1"));
+    put("waiting.sh", Waiting, AT - 10, None);
+    r.s.contract().backend().take();
+    assert_eq!(r.ok(&["mending", "sweep", "--actor", "sweeper"]), "1");
+    assert_eq!(r.s.mending("b-1", 1, "late.sh").unwrap().unwrap().row.state, Returned);
+    let reads = r.s.contract().backend().take();
+    let under = |k: &str| reads.iter().filter(|(kind, p, _)| *kind == k && p.starts_with(keys::MENDINGS)).count();
+    assert_eq!(under("range"), 0, "no scan of mendings/: {reads:?}");
+    assert!(under("range_in_state") >= 2, "{reads:?}");
+    let gets = reads.iter().filter(|(k, _, _)| *k == "get").count();
+    assert!(gets <= 3 * 8, "{gets} point reads for 3 live rows: {reads:?}");
 }
 
 fn hand_facts(evidence_tip: &str) -> String {

@@ -192,7 +192,7 @@ impl<B: Backend> Mender<'_, B> {
         &self,
         keep: impl Fn(&MendingRecord) -> bool,
     ) -> Result<Vec<MendingRow>, (i32, String)> {
-        let mut rows: Vec<MendingRecord> = self.store.mendings().map_err(cannot)?;
+        let mut rows: Vec<MendingRecord> = self.store.live_mendings().map_err(cannot)?;
         rows.retain(keep);
         rows.sort_by(|a, b| {
             let k = |r: &MendingRecord| {

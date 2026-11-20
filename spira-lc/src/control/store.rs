@@ -1117,6 +1117,8 @@ fn born_submit_audit(id: &str, tip: &str, at: i64, actor: &str) -> Audit {
 }
 
 mod asks;
+#[cfg(test)]
+pub(crate) mod counting;
 mod direct;
 mod gh_closeout;
 mod mending;
