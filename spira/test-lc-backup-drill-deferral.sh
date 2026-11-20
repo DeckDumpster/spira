@@ -27,6 +27,7 @@ out="$(cmd_drill 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && ok "a deferred drill exits red" || bad "a deferred drill exits red" "rc=$rc"
 v="$SPIRA_RUN/lc-backup/alpha/drill.verdict"
 grep -q 'DEFERRED' "$v" 2>/dev/null && ok "the deferral is the recorded verdict" || bad "the deferral is the recorded verdict" "$(cat "$v" 2>/dev/null)"
+grep -Eq '\(quiet wait [0-9]+s\)' "$v" 2>/dev/null && ok "the deferral names the seconds it waited" || bad "the deferral names the seconds it waited" "$(cat "$v" 2>/dev/null)"
 SERVICE_RESULT=exit-code cmd_explain_drill 2>/dev/null
 grep -q 'DEFERRED' "$T/reported" 2>/dev/null && ok "explain-drill reports the deferral" || bad "explain-drill reports the deferral" "$(cat "$T/reported" 2>/dev/null)"
 
@@ -59,7 +60,7 @@ grep -q '^OnCalendar=Sun ' "$HERE/../systemd/lc-backup-drill.timer" && ok "the t
 mkdir -p "$T/bin"
 cat > "$T/bin/spira-lc" <<'STUB'
 #!/usr/bin/env bash
-echo "drill: stub says $STUB_SAY"
+echo "drill ok: stub says $STUB_SAY"
 exit "$STUB_RC"
 STUB
 chmod +x "$T/bin/spira-lc"

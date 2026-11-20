@@ -12,14 +12,14 @@ const STUBS: &str = r#"#!/bin/bash
 case "$(basename "$0")" in
 dolt)
     case "$1 $2" in
-    "backup restore") [ -z "${STUB_RESTORE_FAIL:-}" ] || exit 5; mkdir -p "$4"; exit 0 ;;
+    "backup restore") sleep "${STUB_SLEEP:-0}"; [ -z "${STUB_RESTORE_FAIL:-}" ] || exit 5; mkdir -p "$4"; exit 0 ;;
     esac
     q="$5"
     case "$q" in
     *"SELECT commit_hash"*) [ -z "${STUB_HEAD_ERR:-}" ] || { echo "$STUB_HEAD_ERR" >&2; exit 4; }; printf 'commit_hash\n%s\n' "$STUB_RESTORED_HEAD" ;;
     *"FROM dolt_log WHERE"*) [ -z "${STUB_CONTAINS_ERR:-}" ] || { echo "$STUB_CONTAINS_ERR" >&2; exit 3; }; printf 'c\n%s\n' "$STUB_CONTAINS" ;;
     *"SHOW FULL TABLES"*) printf 'Tables\nt1\n' ;;
-    *"COUNT(*) FROM \`t1\`"*) printf 'c\n5\n' ;;
+    *"COUNT(*) FROM \`t1\`"*) sleep "${STUB_SLEEP:-0}"; printf 'c\n5\n' ;;
     esac ;;
 spira-lc)
     echo "$*" >> "$STUB_LOG"
@@ -48,7 +48,14 @@ struct Run {
     control: String,
 }
 
+const DRILL_OUT: &str = "sqlite-checkpoint: /x/control.db: 482 passes\ndrill ok: snapshot at 0, restored through 6, 6 keys compared";
+
 fn drill(args: &str, restored: &str, contains: &str, contains_err: &str, head_err: &str, restore_fail: &str) -> Run {
+    drill_with(args, restored, contains, contains_err, head_err, restore_fail, DRILL_OUT, "")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drill_with(args: &str, restored: &str, contains: &str, contains_err: &str, head_err: &str, restore_fail: &str, drill_out: &str, sleep: &str) -> Run {
     let tmp = testkit::TempDir::new("lc-backup-drill");
     let d = tmp.path();
     for sub in ["bin", "run", "data/alpha/.dolt", "sync", "scratch"] {
@@ -78,8 +85,9 @@ fn drill(args: &str, restored: &str, contains: &str, contains_err: &str, head_er
         .env("SPIRA_LC_BACKUP_SYNC_DIR", d.join("sync"))
         .env("SPIRA_LC_BACKUP_DRILL_DIR", d.join("scratch"))
         .env("SPIRA_LC_BACKUP_DRILL_WAIT_SECS", "5")
-        .env("SPIRA_LC_STORE_PATH", if args.contains("control") { "/unused" } else { "" })
-        .env("STUB_DRILL_OUT", "sqlite-checkpoint: /x/control.db: 482 passes\ndrill ok: snapshot at 0, restored through 6, 6 keys compared")
+        .env("SPIRA_LC_STORE_PATH", if args.contains("control") { "control-store" } else { "" })
+        .env("STUB_DRILL_OUT", drill_out)
+        .env("STUB_SLEEP", sleep)
         .env("STUB_LOG", d.join("assemble.log"))
         .env("STUB_MANIFEST", &manifest)
         .env("STUB_SET_HEAD", "hhhh")
@@ -187,5 +195,28 @@ fn the_control_verdict_keeps_the_drill_ok_line_and_its_seconds() {
     let r = drill("--db control", "hhhh", "1", "", "", "");
     assert_eq!(r.code, Some(0), "{}", r.out);
     assert!(r.control.starts_with("lc-backup: drill ok — control: drill ok: snapshot at 0, restored through 6, 6 keys compared"), "{}", r.control);
+    assert!(seconds_of(&r.control, "admin-drill"), "{}", r.control);
+}
+
+fn phase_seconds(verdict: &str, phase: &str) -> u64 {
+    let at = verdict.find(&format!("{phase} ")).unwrap() + phase.len() + 1;
+    verdict[at..].chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap()
+}
+
+#[test]
+fn a_phase_clock_counts_the_seconds_the_phase_took() {
+    let r = drill_with("--db alpha", "hhhh", "1", "", "", "", DRILL_OUT, "1");
+    assert_eq!(r.code, Some(0), "{}", r.out);
+    for phase in ["restore", "live counts", "restored counts"] {
+        assert!(phase_seconds(&r.verdict, phase) >= 1, "{phase}: {}", r.verdict);
+    }
+    assert_eq!(phase_seconds(&r.verdict, "assemble"), 0, "{}", r.verdict);
+}
+
+#[test]
+fn a_control_drill_without_a_drill_ok_line_fails_rather_than_passing_on_another_line() {
+    let r = drill_with("--db control", "hhhh", "1", "", "", "", "sqlite-checkpoint: fine", "");
+    assert_eq!(r.code, Some(1), "{}", r.out);
+    assert!(r.control.starts_with("lc-backup: drill: control: admin-drill printed no drill ok: line"), "{}", r.control);
     assert!(seconds_of(&r.control, "admin-drill"), "{}", r.control);
 }

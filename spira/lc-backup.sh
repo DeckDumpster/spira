@@ -343,7 +343,7 @@ _lcb_drill_db_locked() {
         fi
     done
     _LCB_PHASES="${_LCB_PHASES:+$_LCB_PHASES, }live counts $(( live_ns / 1000000000 ))s, restored counts $(( restored_ns / 1000000000 ))s"
-    for t1 in "${fails[@]}"; do _lcb_drill_fail "$db" "$t1" >/dev/null; done
+    [ "${#fails[@]}" = 0 ] || { t1="$(printf '%s\nlc-backup: drill: ' "${fails[@]}")"; _lcb_drill_fail "$db" "${t1%$'\n'lc-backup: drill: }" >/dev/null; }
     rm -rf "$scratch"
     if [ "$rc" = 0 ]; then
         local note="identical at $head"
@@ -377,7 +377,7 @@ _lcb_drill_wait_quiet() {
     local why t0; t0="$(date +%s)"
     while why="$(_lcb_drill_busy)"; [ -n "$why" ]; do
         if [ "$(date +%s)" -ge "$_LCB_DRILL_DEADLINE" ]; then
-            echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $why ($(( $(date +%s) - t0 ))s quiet wait)" | _lcb_record_deferral "$@" >&2
+            echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $why (quiet wait $(( $(date +%s) - t0 ))s)" | _lcb_record_deferral "$@" >&2
             return 1
         fi
         echo "lc-backup: drill: deferring — $why"
@@ -399,7 +399,10 @@ _lcb_drill_control() {
     rm -rf "$scratch"
     printf '%s\n' "$out"
     if [ "$rc" -eq 0 ]; then
-        line="$(grep -m1 '^drill ok:' <<<"$out")"; [ -n "$line" ] || line="$(head -n1 <<<"$out")"
+        line="$(grep -m1 '^drill ok:' <<<"$out")"
+        [ -n "$line" ] || { out="admin-drill printed no drill ok: line: $out"; rc=1; }
+    fi
+    if [ "$rc" -eq 0 ]; then
         echo "lc-backup: drill ok — control: $line$(_lcb_phases_note)" > "$verdict"
         date +%s > "$SPIRA_RUN/lc-backup/control/drill.ok"
     else
