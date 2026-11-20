@@ -147,12 +147,23 @@ _lcb_run_registry() {
     echo "lc-backup: uploaded $_LCB_REGISTRY as $key: $out"
 }
 
+_lcb_import_drill_stamps() {
+    local db v s at
+    for db in $(_lcb_dbs) ${SPIRA_LC_STORE_PATH:+control}; do
+        v="$(_lcb_verdict "$db")"; s="$(dirname "$v")/drill.ok"
+        [ ! -e "$s" ] && [ "$(head -n1 "$v" 2>/dev/null | cut -c1-19)" = "lc-backup: drill ok" ] || continue
+        at="$(date -r "$v" +%s)" && [ -n "$at" ] || continue
+        echo "$at" > "$s" && echo "lc-backup: drill: imported $db's drill.ok from its passing verdict ($at)"
+    done
+}
+
 cmd_run() {
     _lcb_refuse_unconfigured || return 1
     _lcb_refuse_same_disk || return 1
     local db rc=0 mlock="$SPIRA_RUN/maintenance/lc-backup.lock"
     mkdir -p "$SPIRA_RUN/maintenance" || return 1
     exec 8>"$mlock" && flock -n 8 || { echo "lc-backup: another run holds $mlock" >&2; return 1; }
+    _lcb_import_drill_stamps
     for db in $(_lcb_dbs); do _lcb_run_db "$db" || rc=1; done
     _lcb_run_registry || rc=1
     return "$rc"
@@ -348,6 +359,7 @@ cmd_drill() {
             *) echo "lc-backup.sh: drill: unknown argument '$1'" >&2; return 2 ;;
         esac
     done
+    _lcb_import_drill_stamps
     if [ -n "$SPIRA_LC_STORE_PATH" ] && { [ -z "$only" ] || [ "$only" = control ]; }; then
         _lcb_drill_control || rc=1
         [ "$only" = control ] && return "$rc"
