@@ -100,6 +100,10 @@ content (`git_evidence::content_on_base`, the `content-landed` verb's proof), el
 - **Transitional adapters.** `lc_certify`/`lc_resubmit` remain in lib.sh as one-line calls
   of `spira-lc certify/resubmit` for batch.sh's stale-certification sweep, whose own port
   (wave 2b) calls the verbs directly; delete them with batch.sh.
+- **Tests are one file per feature.** A module's tests live in `<module>/tests/`, a shared rig
+  in `tests/mod.rs` and each feature in its own file (`sections/tests/`, `serve/tests/`,
+  `control/store/rounds/tests/`). A new feature adds a file and does not append to an existing
+  one, so two features landing together do not conflict in a test file.
 
 ## 4. Parity (sp-arpjt)
 
