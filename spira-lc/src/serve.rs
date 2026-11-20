@@ -134,7 +134,7 @@ impl Drop for Settle {
 }
 
 fn deadline_answer() -> Answer {
-    Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE))
+    Answer::out(2, spira_store::lc_call::DEADLINE_ANSWER.to_string())
 }
 
 impl Ledger {
@@ -2465,6 +2465,41 @@ mod tests {
         assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
         assert_eq!(span_attr(&dir, "content", "spira.deadline_cut_ms"), Some(Some(50)), "a write under a request id is cut the same way");
         ledgered.notes.release();
+    }
+
+    #[test]
+    fn a_write_the_server_cut_at_its_deadline_is_resent_under_its_id_and_applied_once() {
+        use std::io::{BufRead, Read, Write};
+        let dir = testkit::TempDir::new("lc-serve-resend");
+        let path = dir.join("sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let r = rig(true, fifty_ms());
+        let (door, notes) = (Arc::clone(&r.door), Arc::clone(&r.notes));
+        let ids = Arc::new(Mutex::new(Vec::<Option<String>>::new()));
+        let seen = Arc::clone(&ids);
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut head = String::new();
+                std::io::BufReader::new(&stream).read_line(&mut head).unwrap();
+                let parsed: serde_json::Value = serde_json::from_str(head.trim()).unwrap();
+                seen.lock().unwrap().push(parsed["request_id"].as_str().map(str::to_string));
+                let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+                (&client).write_all(head.as_bytes()).unwrap();
+                let mut got = Vec::new();
+                std::thread::scope(|scope| {
+                    scope.spawn(|| super::serve_one(server, None, std::time::Instant::now(), &door));
+                    (&client).read_to_end(&mut got).unwrap();
+                });
+                (&stream).write_all(&got).unwrap();
+                notes.release();
+            }
+        });
+        let (code, out, err) = crate::client::forward_with(path.to_str().unwrap(), &["content", "note", "sp-a", "x"].map(String::from), None);
+        assert_eq!(code, 0, "{out}{err}");
+        let ids = ids.lock().unwrap().clone();
+        assert_eq!(ids.len(), 2, "cut once, then re-sent: {ids:?}");
+        assert!(ids[0].is_some() && ids[0] == ids[1], "both sends carry one request id: {ids:?}");
+        assert_eq!(r.notes.mutations().len(), 1, "the write is applied once");
     }
 
     fn spans_of(dir: &testkit::TempDir) -> Vec<opentelemetry_proto::tonic::trace::v1::Span> {

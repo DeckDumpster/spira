@@ -151,6 +151,19 @@ fn exit_code(r: &Result<String>) -> i64 {
     }
 }
 
+/// The argv of a request head: a bare array, or the `{"argv", …}` object a write under a request id sends.
+fn argv_of(head: &str) -> serde_json::Result<Vec<String>> {
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Head {
+        Bare(Vec<String>),
+        Object { argv: Vec<String> },
+    }
+    serde_json::from_str(head).map(|h| match h {
+        Head::Bare(argv) | Head::Object { argv } => argv,
+    })
+}
+
 /// Serves one connection in the protocol `lc_call` speaks: a JSON argv line in; a head line
 /// `{"exit_code","len"}` and `len` bytes of body out; reads and writes held to the client's deadline.
 pub fn answer_one(stream: UnixStream, respond: &dyn Fn(&[String]) -> Result<String>) -> std::io::Result<()> {
@@ -158,7 +171,7 @@ pub fn answer_one(stream: UnixStream, respond: &dyn Fn(&[String]) -> Result<Stri
     stream.set_write_timeout(Some(DEADLINE))?;
     let mut line = String::new();
     BufReader::new(&stream).take(64 * 1024).read_line(&mut line)?;
-    let reply = match serde_json::from_str::<Vec<String>>(line.trim()) {
+    let reply = match argv_of(line.trim()) {
         Ok(argv) => respond(&argv),
         Err(e) => Err(RuntimeError::refused(format!("request is not a JSON argv: {e}"))),
     };
@@ -216,6 +229,18 @@ impl Journal for SocketJournal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_write_sent_under_a_request_id_is_answered_with_its_argv() {
+        use std::io::{Read, Write};
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let t = std::thread::spawn(move || answer_one(server, &|argv| Ok(argv.join(" "))).unwrap());
+        writeln!(client, "{}", serde_json::json!({ "argv": ["hold", "sp-a"], "request_id": "r-1" })).unwrap();
+        let mut got = String::new();
+        client.read_to_string(&mut got).unwrap();
+        t.join().unwrap();
+        assert_eq!(got.lines().nth(1), Some("hold sp-a"), "{got}");
+    }
 
     #[test]
     fn a_closed_connection_with_no_reply_is_a_cannot_tell() {
