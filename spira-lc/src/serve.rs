@@ -773,9 +773,9 @@ fn handle(stream: UnixStream, accepted: Instant) {
 }
 
 fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Instant, door: &Door) {
+    let started = SystemTime::now();
     let received = Instant::now();
     let started_work = Arc::new(std::sync::Mutex::new(None::<Instant>));
-    let started = SystemTime::now();
     let mut reader = BufReader::new(stream.try_clone().expect("clone unix stream"));
     let read_at;
     let (req, size) = match read_request(&mut reader) {
