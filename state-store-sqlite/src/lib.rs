@@ -106,6 +106,10 @@ pub const WAL_BYTES_GAUGE: &str = "spira_state_store_wal_bytes";
 const GAUGE_EVERY: Duration = Duration::from_secs(60);
 const RESTART_POLL: Duration = Duration::from_millis(1);
 const GATE_HOLD: Duration = Duration::from_millis(50);
+
+/// WAL frames past which a restart holds the read gate until every read in flight has ended:
+/// 16 MiB at 4 KiB pages.
+pub const WAL_RESTART_CAP_FRAMES: i64 = 4_096;
 const RETRY_AFTER: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
@@ -139,11 +143,18 @@ fn report_due(last: &mut Option<(String, std::time::Instant)>, text: &str, now: 
 
 /// A TRUNCATE checkpoint that never waits for a reader under the writer mutex. Each attempt
 /// holds that mutex only for its own I/O, with the writer connection's timeout at zero, so a read
-/// in flight makes it `busy` at once and commits run between attempts. For at most `GATE_HOLD`
-/// (never past `max_read_ms`) it polls for the readers to drain with `gate` held, so no new read
-/// starts meanwhile and the WAL can restart under continuous reads; then it gives up `busy`.
-fn restart_wal(writer: &Mutex<Writer>, gate: &Mutex<()>, max_read_ms: u64) -> std::result::Result<Checkpoint, String> {
-    let give_up = std::time::Instant::now() + GATE_HOLD.min(Duration::from_millis(max_read_ms));
+/// in flight makes it `busy` at once and commits run between attempts. It polls for the readers
+/// to drain with `gate` held, so no new read starts meanwhile: for `GATE_HOLD` while the WAL
+/// holds at most `cap` frames, and past `cap` until every read in flight has ended, so the WAL
+/// is bounded by `cap` plus the commits of one `max_read_ms`. Commits never wait either way.
+fn restart_wal(
+    writer: &Mutex<Writer>,
+    gate: &Mutex<()>,
+    max_read_ms: u64,
+    cap: i64,
+) -> std::result::Result<Checkpoint, String> {
+    static OVERRUN: Mutex<Option<(String, std::time::Instant)>> = Mutex::new(None);
+    let started = std::time::Instant::now();
     let _gate = lock(gate);
     loop {
         let pass = {
@@ -153,7 +164,23 @@ fn restart_wal(writer: &Mutex<Writer>, gate: &Mutex<()>, max_read_ms: u64) -> st
                 .and_then(|mut s| s.query_row([], checkpoint_row))
                 .map_err(|e| e.to_string())?
         };
-        if !pass.busy || std::time::Instant::now() >= give_up {
+        if !pass.busy {
+            return Ok(pass);
+        }
+        let held = started.elapsed();
+        let max_read = Duration::from_millis(max_read_ms);
+        if pass.wal_frames <= cap {
+            if held >= GATE_HOLD.min(max_read) {
+                return Ok(pass);
+            }
+        } else if held >= max_read + RESTART_POLL {
+            let text = format!(
+                "a WAL restart past {cap} frames ({} in the log) found a read still in flight after max_read_ms ({max_read_ms} ms)",
+                pass.wal_frames
+            );
+            if report_due(&mut lock(&OVERRUN), &text, std::time::Instant::now()) {
+                eprintln!("sqlite-checkpoint: {text}");
+            }
             return Ok(pass);
         }
         std::thread::sleep(RESTART_POLL);
@@ -168,13 +195,14 @@ fn checkpoint_step(
     writer: &Mutex<Writer>,
     gate: &Mutex<()>,
     max_read_ms: u64,
+    cap: i64,
     passive: bool,
     on_passive: impl FnOnce(bool),
 ) -> std::result::Result<Checkpoint, String> {
     if passive {
         on_passive(passive_complete(conn)?);
     }
-    restart_wal(writer, gate, max_read_ms)
+    restart_wal(writer, gate, max_read_ms, cap)
 }
 
 fn checkpoint_row(r: &rusqlite::Row) -> rusqlite::Result<Checkpoint> {
@@ -219,6 +247,7 @@ struct Checkpointer {
     wake: Condvar,
     done: Condvar,
     every: u64,
+    cap: i64,
 }
 
 impl Checkpointer {
@@ -274,7 +303,7 @@ impl Checkpointer {
             wait = GAUGE_EVERY;
             if seen >= self.every || owed {
                 let mut passive_done = None;
-                let step = checkpoint_step(&conn, &writer, &gate, max_read_ms.load(Ordering::SeqCst), seen >= self.every, |done| {
+                let step = checkpoint_step(&conn, &writer, &gate, max_read_ms.load(Ordering::SeqCst), self.cap, seen >= self.every, |done| {
                     passive_done = Some(done);
                     if done {
                         counts.passive_complete += 1;
@@ -370,6 +399,8 @@ pub struct Options {
     pub day_receipts: bool,
     /// Commits between background PASSIVE checkpoints.
     pub checkpoint_every: u64,
+    /// WAL frames past which a restart waits out every read in flight; see [`restart_wal`].
+    pub wal_restart_cap_frames: i64,
     /// Where the checkpointer reports its gauge; `None` reports nowhere.
     pub metrics: Option<spira_otel::metrics::MetricsSink>,
 }
@@ -392,6 +423,7 @@ impl Default for Options {
             commit_probe: None,
             day_receipts: true,
             checkpoint_every: CHECKPOINT_EVERY,
+            wal_restart_cap_frames: WAL_RESTART_CAP_FRAMES,
             metrics: None,
         }
     }
@@ -432,6 +464,7 @@ struct Inner {
     history_bytes: usize,
     outbox: Mutex<Option<Outbox>>,
     max_read_ms: Arc<AtomicU64>,
+    wal_restart_cap_frames: i64,
     clock: Arc<dyn Clock>,
     probe: Option<Arc<dyn Fn() + Send + Sync>>,
     dated: Vec<Files>,
@@ -1171,6 +1204,7 @@ impl SqliteBackend {
             wake: Condvar::new(),
             done: Condvar::new(),
             every: opts.checkpoint_every.max(1),
+            cap: opts.wal_restart_cap_frames,
         });
         let checkpoint_conn = connect(path)?;
         checkpoint_conn.busy_timeout(Duration::ZERO).map_err(db)?;
@@ -1199,6 +1233,7 @@ impl SqliteBackend {
             history_bytes: opts.history_bytes,
             outbox: Mutex::new(outbox),
             max_read_ms,
+            wal_restart_cap_frames: opts.wal_restart_cap_frames,
             clock: opts.clock,
             probe: opts.read_probe,
             dated,
@@ -1547,7 +1582,6 @@ impl SqliteBackend {
         if phases::deadline_passed() {
             return Err(Error::Deadline);
         }
-        drop(lock(&self.0.read_gate));
         let inner = &self.0;
         let n = inner.readers.len();
         let start = inner.next_reader.fetch_add(1, Ordering::Relaxed);
@@ -1560,6 +1594,7 @@ impl SqliteBackend {
                     (r, lock(&r.conn))
                 })
         });
+        drop(lock(&inner.read_gate));
         let _reading = phases::begin(Phase::Read);
         let max_read_ms = inner.max_read_ms.load(Ordering::SeqCst);
         let deadline = inner.clock.now_ms().saturating_add(max_read_ms);
