@@ -345,10 +345,8 @@ fn rows_after(args: &[String], stdout: &str, m: &mut dyn crate::callers::Machine
             }
             let (mut errs, mut rowed) = (Vec::new(), Vec::new());
             for id in &ids {
-                let mut argv = vec!["create-bead".to_string(), id.clone(), "--ready".to_string()];
-                if let Some(repo) = bead::bdq::created_repo(args) {
-                    argv.extend(["--repo".to_string(), repo]);
-                }
+                let repo = bead::bdq::created_repo(args);
+                let argv = crate::settle::row_argv(id, repo.as_deref());
                 let mut last = m.call(&argv);
                 for n in 1..ROW_ATTEMPTS {
                     if last.0 == 0 {
@@ -356,6 +354,9 @@ fn rows_after(args: &[String], stdout: &str, m: &mut dyn crate::callers::Machine
                     }
                     std::thread::sleep(std::time::Duration::from_millis(backoff_ms * u64::from(n)));
                     last = m.call(&argv);
+                }
+                if last.0 != 0 && state_store::phases::deadline_passed() && crate::settle::owe_row(id, repo.as_deref()) {
+                    continue;
                 }
                 if last.0 != 0 {
                     errs.push(format!("create-bead {id} --ready exited {}: {}", last.0, last.1.trim()));
