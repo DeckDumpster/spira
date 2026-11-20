@@ -513,6 +513,17 @@ fn a_rollback_whose_unit_is_slow_to_start_stays_on_the_target_and_names_what_is_
 }
 
 #[test]
+fn a_rollback_whose_unit_cannot_be_restarted_at_all_still_stays_on_the_target_and_names_it() {
+    let w = world_rolling_back_to_a();
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.restart_fails.insert("spira-tool-prod.service".into());
+    let e = rollback_with(&w, &sc).unwrap_err();
+    assert_eq!(current_of(&w), A, "{e}");
+    assert!(e.contains("spira-tool-prod.service (restart failed") && e.contains("systemctl --user start spira-tool-prod.service"), "{e}");
+    assert!(!e.contains("UNDO INCOMPLETE"), "{e}");
+}
+
+#[test]
 fn a_rollback_whose_slow_unit_comes_up_on_the_second_restart_succeeds() {
     let w = world_rolling_back_to_a();
     let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());

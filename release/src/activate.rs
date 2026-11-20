@@ -490,7 +490,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         for f in &failed {
             eprintln!("release: {f}");
         }
-        out.down = restart_again_under_target(ctx, &out.restarted, &attempted);
+        out.down = restart_again_under_target(ctx, &out.restarted, &attempted, &failed);
         failed.clear();
     }
     if !failed.is_empty() {
@@ -646,7 +646,7 @@ fn heal_stale_executables(ctx: &Ctx, rendered: &[(String, String, String, bool)]
 /// A rollback's second chance: the target release is the one that served before, so a unit
 /// that is slow to start is restarted once more under it and reported if still down, never
 /// undone onto the release being left. Units the first pass never reached are restarted too.
-fn restart_again_under_target(ctx: &Ctx, restarted: &[String], attempted: &[String]) -> Vec<Down> {
+fn restart_again_under_target(ctx: &Ctx, restarted: &[String], attempted: &[String], failed: &[String]) -> Vec<Down> {
     let mut down = Vec::new();
     let mut waiting = Vec::new();
     let mut seen = BTreeSet::new();
@@ -654,7 +654,8 @@ fn restart_again_under_target(ctx: &Ctx, restarted: &[String], attempted: &[Stri
         if !seen.insert(u.clone()) {
             continue;
         }
-        let up = attempted.contains(u) && matches!(ctx.sc.state(u), Ok(st) if st.active == "active");
+        let named = failed.iter().any(|f| f.starts_with(&format!("{u}: ")));
+        let up = attempted.contains(u) && !named && matches!(ctx.sc.state(u), Ok(st) if st.active == "active");
         if up {
             continue;
         }
@@ -669,6 +670,12 @@ fn restart_again_under_target(ctx: &Ctx, restarted: &[String], attempted: &[Stri
             Ok(st) if st.active == "active" => {}
             Ok(st) => down.push(Down { unit: u, state: format!("ActiveState={}, Result={}", st.active, st.result) }),
             Err(e) => down.push(Down { unit: u, state: format!("cannot read its state: {e}") }),
+        }
+    }
+    let settled: Vec<String> = waiting.into_iter().filter(|u| !down.iter().any(|d| &d.unit == u)).collect();
+    for f in stayed_up(ctx, &settled) {
+        if let Some((unit, state)) = f.split_once(": ") {
+            down.push(Down { unit: unit.into(), state: state.into() });
         }
     }
     down
