@@ -37,7 +37,7 @@ impl ReleaseState {
         use ReleaseState::*;
         matches!(
             (self, to),
-            (Cut, Accepted) | (Accepted, Published) | (Published, Activated) | (Activated, RolledBack) | (RolledBack, Published)
+            (Cut, Accepted) | (Accepted, Published) | (Published, Activated) | (Published, RolledBack) | (Activated, RolledBack) | (RolledBack, Published)
         )
     }
 }
@@ -212,7 +212,7 @@ pub fn enter_with(state: &Path, sha: &str, to: ReleaseState, reason: &str, resta
     }
     let now = now_secs();
     if r.state().is_none() {
-        for s in ReleaseState::ALL.into_iter().take_while(|s| *s != to).filter(|s| *s != ReleaseState::RolledBack) {
+        for s in ReleaseState::ALL.into_iter().take_while(|s| *s != to).filter(|s| *s != ReleaseState::RolledBack && !(to == ReleaseState::RolledBack && *s == ReleaseState::Activated)) {
             r.record(s, "backfilled: the release predates its record", now)?;
         }
     }
@@ -235,7 +235,7 @@ mod tests {
     use ReleaseState::*;
 
     const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
-    const LEGAL: [(ReleaseState, ReleaseState); 5] = [(Cut, Accepted), (Accepted, Published), (Published, Activated), (Activated, RolledBack), (RolledBack, Published)];
+    const LEGAL: [(ReleaseState, ReleaseState); 6] = [(Cut, Accepted), (Accepted, Published), (Published, Activated), (Published, RolledBack), (Activated, RolledBack), (RolledBack, Published)];
 
     fn at(state: ReleaseState) -> Release {
         let mut r = Release::new(SHA);
@@ -321,8 +321,10 @@ mod tests {
         assert!(r.events[0].reason.contains("backfilled") && r.events[2].reason == "activating");
         enter(t.path(), SHA, Published, "again").unwrap();
         assert_eq!(load(t.path(), SHA).unwrap().unwrap().events.len(), 3);
-        let e = enter(t.path(), SHA, RolledBack, "no").unwrap_err();
-        assert!(e.contains("published") && e.contains("rolled_back"), "{e}");
+        let other = "b".repeat(40);
+        enter(t.path(), &other, Accepted, "built").unwrap();
+        let e = enter(t.path(), &other, RolledBack, "no").unwrap_err();
+        assert!(e.contains("accepted") && e.contains("rolled_back"), "{e}");
         assert_eq!(load(t.path(), SHA).unwrap().unwrap().events.len(), 3, "a refusal writes nothing");
         enter(t.path(), SHA, Activated, "up").unwrap();
         enter(t.path(), SHA, RolledBack, "down").unwrap();

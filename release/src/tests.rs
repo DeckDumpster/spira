@@ -1132,22 +1132,79 @@ fn activate_reading_within(w: &World, sc: &FakeSystemctl, reads: &FakeReads, ste
     activate::activate(&ctx, A, None)
 }
 
+fn recorded_state(w: &World) -> Option<String> {
+    crate::machine::load(&w.cfg.state_dir().unwrap(), A).unwrap().and_then(|r| r.state()).map(|s| s.as_str().to_string())
+}
+
+fn published(w: &World) {
+    crate::machine::enter(&w.cfg.state_dir().unwrap(), A, crate::machine::ReleaseState::Published, "activation started").unwrap();
+}
+
+fn activated_entries(w: &World) -> usize {
+    crate::machine::load(&w.cfg.state_dir().unwrap(), A).unwrap().map_or(0, |r| r.events.iter().filter(|e| e.to == crate::machine::ReleaseState::Activated).count())
+}
+
 #[test]
-fn the_activation_is_recorded_before_the_first_restart_so_a_restart_that_kills_the_activator_loses_nothing() {
+fn the_activation_is_recorded_only_after_the_restarted_units_are_checked_up() {
     let w = world_activating_a_changed_unit();
+    published(&w);
     let state = w.cfg.state_dir().unwrap();
     let seen = {
         let state = state.clone();
-        move || {
-            let machine = crate::machine::load(&state, A).unwrap().and_then(|r| r.state()).map(|s| s.as_str().to_string());
-            format!("{machine:?} {}", fs::read_to_string(state.join("history")).unwrap_or_default().trim())
-        }
+        move || format!("{:?} {}", crate::machine::load(&state, A).unwrap().and_then(|r| r.state()).map(|s| s.as_str().to_string()), fs::read_to_string(state.join("history")).unwrap_or_default().trim())
     };
     let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
     sc.on_restart = Some(Box::new(seen));
     activate_with(&w, &sc).unwrap();
-    assert_eq!(*sc.restarts.borrow(), vec!["spira-tool-prod.service".to_string()]);
-    assert_eq!(*sc.at_restart.borrow(), vec![format!("Some(\"activated\") {A} landed")]);
+    assert_eq!(*sc.at_restart.borrow(), vec!["Some(\"published\") ".to_string()]);
+    assert_eq!(recorded_state(&w).as_deref(), Some("activated"));
+    assert!(fs::read_to_string(state.join("history")).unwrap().contains(A));
+}
+
+#[test]
+fn a_scheduler_that_keeps_going_back_to_activating_is_rolled_back_and_never_recorded_activated() {
+    let w = world_activating_a_changed_unit();
+    published(&w);
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.slow_starts.borrow_mut().insert("spira-tool-prod.service".into(), usize::MAX);
+    let e = activate_with(&w, &sc).unwrap_err();
+    assert!(e.contains("spira-tool-prod.service") && e.contains("did not come up") && e.contains("rolled back"), "{e}");
+    assert!(!w.cfg.releases.join("current").exists(), "current is put back");
+    assert_eq!(fs::read_to_string(w.cfg.unit_dir.join("spira-tool-prod.service")).unwrap(), OLD_UNIT);
+    assert_eq!(recorded_state(&w).as_deref(), Some("rolled_back"));
+    assert_eq!(activated_entries(&w), 0);
+    assert!(!fs::read_to_string(w.cfg.state_dir().unwrap().join("history")).unwrap_or_default().contains(A));
+}
+
+#[test]
+fn an_activator_stopped_right_after_the_last_restart_leaves_no_activated_entry() {
+    let w = world_activating_a_changed_unit();
+    published(&w);
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.on_restart = Some(Box::new(|| panic!("the activator is killed with the unit it restarted")));
+    let died = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| activate_with(&w, &sc)));
+    assert!(died.is_err());
+    assert_eq!(activated_entries(&w), 0);
+    assert_eq!(recorded_state(&w).as_deref(), Some("published"));
+}
+
+#[test]
+fn an_activation_whose_record_cannot_be_written_after_the_units_are_up_is_undone_and_names_it() {
+    let w = world_activating_a_changed_unit();
+    published(&w);
+    let path = w.cfg.state_dir().unwrap().join("machine").join(format!("{A}.json"));
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.on_restart = Some(Box::new(move || {
+        if path.is_file() {
+            fs::remove_file(&path).unwrap();
+            fs::create_dir(&path).unwrap();
+        }
+        String::new()
+    }));
+    let e = activate_with(&w, &sc).unwrap_err();
+    assert!(e.contains("cannot record the activation of") && e.contains("rolled back"), "{e}");
+    assert!(!w.cfg.releases.join("current").exists(), "current is put back");
+    assert!(!fs::read_to_string(w.cfg.state_dir().unwrap().join("history")).unwrap_or_default().contains(A), "history is put back");
 }
 
 #[test]
