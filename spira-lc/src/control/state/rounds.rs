@@ -628,12 +628,19 @@ pub(super) fn list_batches<B: Backend>(
                 })
                 .collect();
             let last_at = events.iter().map(|c| c.audit.at).max();
+            let mut pr: Option<u64> = None;
+            for m in &r.members {
+                let delivery = store.delivery(&m.bead_id)?;
+                if let Some(d) = delivery.filter(|d| d.value.batch_id.as_deref() == Some(id)) {
+                    pr = pr.max(d.value.pr);
+                }
+            }
             out.push(json!({
                 "batch_id": id,
                 "repo": row.repo,
                 "state": row.state.as_str(),
                 "parent": row.parent,
-                "pr": null,
+                "pr": pr,
                 "reason": row.reason,
                 "pass": row.pass.to_string(),
                 "phase": row.phase.map(|p| p.as_str()),

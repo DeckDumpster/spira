@@ -143,14 +143,6 @@ fn gather_state_machine(s: &mut Snapshot) {
         }
         Err(e) => store_failed(s, e),
     }
-    match lc_json(&["list", "--delivery"]) {
-        Ok(rows) => {
-            for b in s.batches.iter_mut().filter(|b| b.pr == 0) {
-                b.pr = rows.iter().filter(|d| text(&d["batch_id"]) == b.id).filter_map(|d| num(&d["pr"])).max().unwrap_or(0);
-            }
-        }
-        Err(e) => store_failed(s, e),
-    }
     // Eject times for the newest round only: that is the one the pane names.
     if let Some(b) = s.batches.iter_mut().max_by_key(|b| b.opened_at.max(b.last_at)).filter(|b| !b.ejected.is_empty()) {
         match lc_json(&["history", &b.id, "--machine", "batch"]) {
@@ -803,6 +795,9 @@ mod tests {
         }
         if code.contains("lc_json(&[\"list\"])") || code.contains("run(\"spira-lc\", &[\"list\"])") {
             found.push("unfiltered spira-lc list");
+        }
+        if code.contains("lc_json(&[\"list\", \"--delivery\"])") {
+            found.push("list --delivery");
         }
         if code.contains("spira-claim") {
             found.push("spira-claim");

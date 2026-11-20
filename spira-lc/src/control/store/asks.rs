@@ -72,6 +72,11 @@ impl<B: Backend> Store<B> {
             .collect()
     }
 
+    /// Every ask in `state`, from one snapshot, in id order: a read of the state index.
+    pub fn asks_in(&self, state: AskState) -> Result<Vec<AskRecord>> {
+        self.records_in_state(keys::ASKS, &state)
+    }
+
     /// Closes ask `id` by `kind`, and lifts the ask hold on its work bead: a `Reply` carrying
     /// `message_id` for an answer, `AskWithdrawn` for any other exit. A work bead with no
     /// record, or whose machine will not take the lift, is nothing to lift.

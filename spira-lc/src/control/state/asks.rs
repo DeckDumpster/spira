@@ -79,11 +79,15 @@ fn show<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
 /// title is its bead's, a planning field this plane does not keep.
 fn list<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
     let state = flag(args, "--state").unwrap_or_else(|| "OPEN".into());
-    let mut asks = match store.asks() {
+    let read = if state == "ALL" {
+        store.asks()
+    } else {
+        lifecycle::ask::AskState::from_str(&state).map_or(Ok(Vec::new()), |s| store.asks_in(s))
+    };
+    let mut asks = match read {
         Ok(a) => a,
         Err(e) => return cannot_tell(e),
     };
-    asks.retain(|a| state == "ALL" || a.row.state.as_str() == state);
     asks.sort_by(|a, b| (a.opened_at, &a.row.ask_id).cmp(&(b.opened_at, &b.row.ask_id)));
     let rows: Vec<Value> = asks
         .iter()

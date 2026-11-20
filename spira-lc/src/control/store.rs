@@ -202,6 +202,33 @@ fn project_lease(rec: &mut LifecycleRecord, lock: Option<&Item>) {
 }
 
 impl<B: Backend> Store<B> {
+    /// Every record under `prefix` whose `data.state` is `state`, from one snapshot, in key
+    /// order: pages of the state index, so no terminal record is read.
+    pub(crate) fn records_in_state<T: serde::de::DeserializeOwned>(
+        &self,
+        prefix: &str,
+        state: &impl serde::Serialize,
+    ) -> Result<Vec<T>> {
+        const CHUNK: usize = 500;
+        let name = serde_json::to_value(state)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .ok_or_else(|| Error::Backend("a record state with no name".into()))?;
+        let rev = self.contract.head()?;
+        let mut out = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = self.contract.range_in_state(prefix, &name, cursor.as_deref(), CHUNK, rev)?;
+            for i in &page {
+                out.push(crate::control::records::decode(&i.key, &i.value)?);
+            }
+            if page.len() < CHUNK {
+                return Ok(out);
+            }
+            cursor = page.last().map(|i| i.key.clone());
+        }
+    }
+
     pub fn new(contract: Contract<B>, claim_floor_ms: u64) -> Self {
         Store {
             contract,
