@@ -2663,6 +2663,28 @@ fn the_unit_cap_the_config_names_narrows_the_crates_the_gate_builds() {
 }
 
 #[test]
+fn the_shipped_unit_cap_covers_every_workspace_member() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let registry = spira_config::registry::Registry::from_dirs(&root.join("spira")).unwrap();
+    let default = registry.get("SPIRA_GATE_UNIT_MAX_CRATES").and_then(|k| k.default_expr()).unwrap().trim_matches('"').parse::<usize>().unwrap();
+    let manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml")).unwrap().parse().unwrap();
+    let members = manifest["workspace"]["members"].as_array().unwrap().len();
+    assert!(default >= members, "the cap {default} is below the {members} workspace members");
+}
+
+#[test]
+fn a_narrowed_unit_gate_names_the_dependents_it_left_to_the_round() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.put_var("SPIRA_GATE_UNIT_MAX_CRATES", "1");
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(
+        f.stderr().contains("narrowed past SPIRA_GATE_UNIT_MAX_CRATES=1: not tested here (the round tests them): queue"),
+        "{}",
+        f.stderr()
+    );
+}
+
+#[test]
 fn a_unit_cap_that_is_not_a_positive_count_runs_the_gate_string_whole() {
     for bad in ["0", "", "many"] {
         let f = unit_fake(&["spira-config/src/lib.rs"]);

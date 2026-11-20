@@ -783,7 +783,7 @@ impl<'w, W: World> Trial<'w, W> {
         if !re.required.is_empty() {
             self.s.compose.push_str("+reentry");
         }
-        w.eprint(&describe(&comp));
+        w.eprint(&describe(&comp, ctx.var("SPIRA_GATE_UNIT_MAX_CRATES")));
         if let Some(line) = describe_reentry(&self.s.bead, &re) {
             w.eprint(&line);
         }
@@ -2187,7 +2187,7 @@ pub fn tools_field(from: &str, phases: &[(String, u64)]) -> String {
 }
 
 /// The line the trial prints once it has chosen what to run.
-pub fn describe(c: &Composition) -> String {
+pub fn describe(c: &Composition, unit_cap: &str) -> String {
     match c {
         Composition::Suites { why } => format!(
             "gate: composition=suites ({why}) — the repository's gate string, whole"
@@ -2195,12 +2195,19 @@ pub fn describe(c: &Composition) -> String {
         Composition::Fences => {
             "gate: composition=fences — the fences and the build fence, suites off (nothing buildable touched, or gate_mode=fences)".into()
         }
-        Composition::Unit { touched, crates, .. } => format!(
-            "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for {} crates: {} (touched: {})",
-            crates.len(),
-            crates.join(" "),
-            touched.join(" ")
-        ),
+        Composition::Unit { touched, crates, dropped, .. } => {
+            let line = format!(
+                "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for {} crates: {} (touched: {})",
+                crates.len(),
+                crates.join(" "),
+                touched.join(" ")
+            );
+            if dropped.is_empty() {
+                line
+            } else {
+                format!("{line} — narrowed past SPIRA_GATE_UNIT_MAX_CRATES={unit_cap}: not tested here (the round tests them): {}", dropped.join(" "))
+            }
+        }
     }
 }
 
