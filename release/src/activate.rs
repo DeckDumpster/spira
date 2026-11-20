@@ -66,18 +66,24 @@ fn serves_reads(reads: &dyn Reads, rel: &Path) -> Result<(), String> {
 /// `Ctx::steady` before activation is done: the server's first reads pay for its cold build.
 const WARM_READS: [&[&str]; 2] = [&["dwell"], &["list", "--state", "READY"]];
 
+/// The unit that serves the control store.
+const STORE_SERVER: &str = "lc-serve.service";
+
 /// Asks each of `WARM_READS` until it answers inside `steady`, up to `wait` in all. A server that
 /// stays slow is reported, not rolled back: the release served its reads, and another restart
-/// would only make it cold again.
-fn warmed(ctx: &Ctx, rel: &Path) -> Result<(), String> {
+/// would only make it cold again. `restarted` is when the store's restart was issued, if it was.
+fn warmed(ctx: &Ctx, rel: &Path, restarted: Option<std::time::Instant>) -> Result<(), String> {
     let give_up = std::time::Instant::now() + ctx.warm_wait;
-    for args in WARM_READS {
+    for (i, args) in WARM_READS.into_iter().enumerate() {
         loop {
             let began = std::time::Instant::now();
             let said = ctx.reads.lc(rel, args);
             let took = began.elapsed();
             if said.is_ok() && took <= ctx.steady {
                 eprintln!("release: warm read through {}: spira-lc {} in {} ms", rel.display(), args.join(" "), took.as_millis());
+                if let (0, Some(at)) = (i, restarted) {
+                    (ctx.report)(&format!("release: the store answered {} ms after its restart (bound {} s)", at.elapsed().as_millis(), ctx.warm_wait.as_secs()));
+                }
                 break;
             }
             if std::time::Instant::now() >= give_up {
@@ -109,6 +115,8 @@ pub struct Ctx<'a> {
     pub warm_wait: Duration,
     /// The pause between warm-up attempts.
     pub warm_pause: Duration,
+    /// Where the lines that state a measurement go.
+    pub report: &'a dyn Fn(&str),
 }
 
 /// A standing hotfix: the running system is on a commit that has not landed.
@@ -259,6 +267,8 @@ struct Change {
 /// What a successful switch did.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Switched {
+    /// When the store server's restart was issued; `None` when it was not restarted.
+    pub store_restarted_at: Option<std::time::Instant>,
     pub rewritten: Vec<String>,
     pub restarted: Vec<String>,
     /// Running services whose unit text and programs match the outgoing release's: untouched.
@@ -455,6 +465,9 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
     for u in &out.restarted {
         eprintln!("release: restarting {u}");
         attempted.push(u.clone());
+        if u == STORE_SERVER {
+            out.store_restarted_at = Some(std::time::Instant::now());
+        }
         if let Err(e) = ctx.sc.reset_failed(u).and_then(|()| restart_unit(ctx.sc, u)) {
             failed.push(format!("{u}: restart failed: {e}"));
             break;
@@ -480,8 +493,11 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         match serves_reads(ctx.reads, &rel) {
             Err(e) => failed.push(e),
             Ok(()) => {
-                if let Err(e) = warmed(ctx, &rel) {
+                if let Err(e) = warmed(ctx, &rel, out.store_restarted_at) {
                     eprintln!("release: WARN: the store server is still cold: {e}");
+                    if out.store_restarted_at.is_some() {
+                        (ctx.report)(&format!("release: WARN: the store did not answer inside {} s of its restart", ctx.warm_wait.as_secs()));
+                    }
                 }
             }
         }
@@ -624,6 +640,9 @@ fn heal_stale_executables(ctx: &Ctx, rendered: &[(String, String, String, bool)]
     for (unit, exe) in &first {
         eprintln!("release: HEALED: {unit}: a process runs {}; restarting it onto {}", exe.display(), new.display());
         attempted.push(unit.clone());
+        if unit == STORE_SERVER {
+            out.store_restarted_at = Some(std::time::Instant::now());
+        }
         if let Err(e) = ctx.sc.reset_failed(unit).and_then(|()| restart_unit(ctx.sc, unit)) {
             failed.push(format!("{unit}: still executes a superseded release and restarting it failed: {e}"));
         } else if !out.restarted.contains(unit) {

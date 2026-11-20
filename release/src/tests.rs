@@ -490,7 +490,7 @@ fn world_rolling_back_to_a() -> World {
 
 fn rollback_with(w: &World, sc: &FakeSystemctl) -> Result<String, String> {
     let reads = FakeReads::serving();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1) };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {} };
     activate::rollback(&ctx)
 }
 
@@ -1128,7 +1128,11 @@ fn activate_reading(w: &World, sc: &FakeSystemctl, reads: &FakeReads) -> Result<
 }
 
 fn activate_reading_within(w: &World, sc: &FakeSystemctl, reads: &FakeReads, steady: Duration, warm_wait: Duration) -> Result<activate::Switched, String> {
-    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady, warm_wait, warm_pause: Duration::from_millis(1) };
+    activate_reporting(w, sc, reads, steady, warm_wait, &|_| {})
+}
+
+fn activate_reporting(w: &World, sc: &FakeSystemctl, reads: &FakeReads, steady: Duration, warm_wait: Duration, report: &dyn Fn(&str)) -> Result<activate::Switched, String> {
+    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady, warm_wait, warm_pause: Duration::from_millis(5), report };
     activate::activate(&ctx, A, None)
 }
 
@@ -1421,6 +1425,43 @@ fn an_activation_whose_store_server_stays_cold_is_done_and_not_rolled_back() {
     let reads = FakeReads::serving();
     reads.cold_dwells.set(u32::MAX);
     activate_reading_within(&w, &sc, &reads, Duration::from_millis(500), Duration::from_millis(200)).unwrap();
+}
+
+fn store_restart_report(reads: &FakeReads, warm_wait: Duration) -> Vec<String> {
+    let (w, old_bin) = world_with_an_lc_serve_left_on_the_previous_release();
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.restart_lands = Some(w.cfg.releases.join(A).join("bin/spira-lc"));
+    lc_serve_running(&sc, &old_bin);
+    let said = RefCell::new(Vec::new());
+    activate_reporting(&w, &sc, reads, Duration::from_millis(500), warm_wait, &|l| said.borrow_mut().push(l.to_string())).unwrap();
+    said.into_inner()
+}
+
+#[test]
+fn an_activation_that_restarts_the_store_states_how_long_it_took_to_answer() {
+    let reads = FakeReads::serving();
+    reads.cold_dwells.set(2);
+    let said = store_restart_report(&reads, Duration::from_secs(60));
+    let ms: u128 = said.iter().find_map(|l| l.strip_prefix("release: the store answered ")?.split(' ').next()?.parse().ok()).unwrap_or_else(|| panic!("no store answered line: {said:?}"));
+    assert!(ms >= 10, "two refused asks 5 ms apart: {ms} ms");
+    assert!(said.iter().any(|l| l.ends_with("(bound 60 s)")), "{said:?}");
+}
+
+#[test]
+fn an_activation_whose_restarted_store_never_answers_warns_and_still_is_not_rolled_back() {
+    let reads = FakeReads::serving();
+    reads.cold_dwells.set(u32::MAX);
+    let said = store_restart_report(&reads, Duration::from_millis(200));
+    assert_eq!(said, vec!["release: WARN: the store did not answer inside 0 s of its restart".to_string()]);
+}
+
+#[test]
+fn an_activation_that_leaves_the_store_running_states_nothing_about_it() {
+    let w = world_activating_a_changed_unit();
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    let said = RefCell::new(Vec::new());
+    activate_reporting(&w, &sc, &FakeReads::serving(), Duration::from_secs(60), Duration::from_secs(60), &|l| said.borrow_mut().push(l.to_string())).unwrap();
+    assert!(said.into_inner().is_empty());
 }
 
 #[test]

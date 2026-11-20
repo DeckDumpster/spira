@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=runtime
+DOC=Seconds the lifecycle store may be unreadable after a release activation starts: sized to cover the activation's settle plus its warm wait. A failed store read inside it is a non-paging WAIT BLIND; past it, P0 BLIND.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ACTIVATION_STORE_BOUND:=90}"
+SPIRA_CONF_DEFAULT_EOF
