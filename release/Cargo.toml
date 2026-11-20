@@ -26,6 +26,7 @@ integration = ["runtime/integration", "spira-config/integration", "spira-store/i
 system-paths = { path = "../system-paths" }
 sha2 = "0.10"
 toml = "0.8"
+rustc-demangle = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 spira-config = { path = "../spira-config" }
