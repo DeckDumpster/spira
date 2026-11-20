@@ -130,6 +130,7 @@ pub const ROUND_OPEN: &str = "batcher.local.round_open";
 pub const CORPUS: &str = "batcher.local.corpus";
 pub const STAGE: &str = "batcher.local.stage";
 pub const STAGE_TEST: &str = "batcher.local.stage_test";
+const SOLE_KEY: &str = ":sole";
 pub const EJECT: &str = "batcher.local.eject";
 pub const EJECT_GATE_RED: &str = "batcher.local.eject_red";
 pub const WITHDRAW: &str = "batcher.local.withdraw";
@@ -2091,7 +2092,6 @@ impl Machine<'_> {
             }
             (State::Certifying, false) if self.rc.members.len() != 1 && certify_red_evidence(out).0.is_none() && certify_red_evidence(out).1.is_empty() && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => self.certify_faulted(exit, out),
             (State::Certifying, false) => {
-                self.go(Trigger::CertifyRed);
                 let (verdict, reds) = certify_red_evidence(out);
                 let why = match (&verdict, reds.is_empty()) {
                     (Some(v), _) => format!("queue round certify judged the round red: {v}"),
@@ -2101,12 +2101,13 @@ impl Machine<'_> {
                 let output = out.lines().rev().find_map(|l| l.strip_prefix(RED_OUTPUT)).map(str::trim);
                 if let [(id, tip)] = self.rc.members.clone().as_slice() {
                     let evidence = output.map_or_else(|| why.clone(), |o| format!("{why}; output kept at {o}"));
-                    let key = format!("{}:{}:sole", self.repo, self.rc.batch.clone().unwrap_or_default());
-                    self.acts.push(Leg { bead: id.clone(), head: tip.clone(), why: evidence, reds: reds.clone(), key, ..self.leg() }.act(EJECT));
-                    self.abandon_ejecting(&why, reds, Some(1));
-                    self.finish(pace::Outcome::Quiet, "");
+                    let key = format!("{}:{}{SOLE_KEY}", self.repo, self.rc.batch.clone().unwrap_or_default());
+                    self.acts.push(Leg { bead: id.clone(), head: tip.clone(), why: evidence, reds, key, ..self.leg() }.act(EJECT));
+                    self.rc.leg = None;
+                    self.rc.leg_at_ms = self.now_ms;
                     return;
                 }
+                self.go(Trigger::CertifyRed);
                 // The guilty leave the round charged: the members whose files the repository's
                 // red output names (`io::implicated`, as `finish_local_round` ejects them).
                 if let Some(output) = output {
@@ -2197,13 +2198,18 @@ impl Machine<'_> {
             }
             (State::Corpus | State::Attributing, CORPUS) | (State::Certifying, CERTIFY) if !ok && self.rc.leg.as_deref() == Some(leg.unit.as_str()) => self.leg_unstarted(&format!("it could not be started ({})", body.trim())),
             (State::Corpus | State::Attributing | State::Certifying, EJECT) if ok && self.rc.eject_held.as_ref().is_some_and(|h| h.issued) => self.eject_released(),
+            (State::Certifying, EJECT) if ok && leg.key.ends_with(SOLE_KEY) => {
+                self.rc.members.retain(|(id, _)| *id != leg.bead);
+                self.end_emptied_round("the red round's only member was ejected");
+            }
             (State::Corpus | State::Attributing | State::Certifying, EJECT) if !ok && self.rc.eject_held.as_ref().is_none_or(|h| !h.issued) && batcher_cut::io::HeldEject::parse(body).is_some() => {
                 self.hold_eject(batcher_cut::io::HeldEject::parse(body).unwrap_or_default());
             }
             (State::Corpus | State::Attributing | State::Certifying, EJECT) if !ok => {
                 self.rc.eject_held = None;
                 self.go(Trigger::LegLost);
-                self.red_naming(&format!("eject of {} refused: {}", leg.bead, body.trim()), leg.reds.clone());
+                let evidence = if leg.key.ends_with(SOLE_KEY) { format!("; {}", leg.why) } else { String::new() };
+                self.red_naming(&format!("eject of {} refused: {}{evidence}", leg.bead, body.trim()), leg.reds.clone());
             }
             (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) if ok => {
                 self.rc.members.retain(|(id, _)| !leg.bead.split(',').any(|b| b == id));
