@@ -314,6 +314,18 @@ fn sp_z43b7y_a_red_certify_of_a_one_member_round_ejects_the_member_and_writes_no
     }
 }
 
+/// While the sole member's eject is in flight the dead certify leg is not judged lost: the next
+/// tick starts no certify and abandons nothing.
+#[test]
+fn sp_z1vzxd_a_tick_between_the_sole_eject_and_its_outcome_starts_nothing() {
+    let mut r = carried(&attributed(sole_member(driving(State::Certifying, "spira.c3"))));
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
+    let n = r.requested().len();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let names: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
+    assert!(names.iter().all(|e| ![CERTIFY, CORPUS, ABANDON, PAUSE, LAND].contains(&e.as_str())), "{names:?}");
+}
+
 /// A refused eject of the sole member abandons the round, names the refusal and keeps the red evidence.
 #[test]
 fn sp_z1vzxd_a_refused_eject_of_the_sole_member_abandons_the_round_naming_the_refusal() {

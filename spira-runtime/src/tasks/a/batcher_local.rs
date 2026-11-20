@@ -2088,6 +2088,8 @@ impl Machine<'_> {
                     let evidence = output.map_or_else(|| why.clone(), |o| format!("{why}; output kept at {o}"));
                     let key = format!("{}:{}{SOLE_KEY}", self.repo, self.rc.batch.clone().unwrap_or_default());
                     self.acts.push(Leg { bead: id.clone(), head: tip.clone(), why: evidence, reds, key, ..self.leg() }.act(EJECT));
+                    self.rc.leg = None;
+                    self.rc.leg_at_ms = self.now_ms;
                     return;
                 }
                 self.go(Trigger::CertifyRed);
