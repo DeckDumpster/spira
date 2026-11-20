@@ -580,4 +580,5 @@ slugs = [
   "sop-write-fails-from-aeon-context",
   "sop-write-fails-silently",
   "sop-write-fails-unset-spira-home",
+  "law-no-new-shell-test-suites",
 ]

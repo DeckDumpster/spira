@@ -578,3 +578,4 @@ Placeholder Part until the table of contents is approved.
 - §1.574 sop-write-fails-from-aeon-context — MATCH: failed to write sop-[a-z0-9-]+|sop write fails SYMPTOM: sop write exits "sop: failed to write sop-<slug>" from an aeon worktree; no shelf entry; sop applied writes ledger but no bead note.
 - §1.575 sop-write-fails-silently — MATCH: sop: failed to write|sop write fails SYMPTOM: `sop write <slug> -` prints "sop: failed to write <slug>" from an aeon, while `bdq remember` by hand works.
 - §1.576 sop-write-fails-unset-spira-home — MATCH: sop: failed to write|SPIRA_HOME=\.|default SPIRA_HOME falls back SYMPTOM: `sop write`/`sop applied` from an aeon prints only "sop: failed to write", exit 96.
+- §1.577 law-no-new-shell-test-suites — No new shell test suite: a test is written in Rust; a shell suite that exists is ported or deleted, never grown.
