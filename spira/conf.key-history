@@ -796,3 +796,4 @@ seed
 cr_count_limit
 cr_repo_owner
 cr_repo_name
+cr_findings_dir

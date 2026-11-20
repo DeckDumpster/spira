@@ -9,6 +9,7 @@ cr_churn_days = 60
 cr_count_limit = 50
 cr_repo_owner = "fixture-owner"
 cr_repo_name = "fixture-reviews"
+cr_findings_dir = "fixture-findings"
 cr_exclude = "**/fixtures/**,**/*.generated.*,**/vendor/**,Cargo.lock"
 seed = ""
 cockpit_bottom_pct = 40
