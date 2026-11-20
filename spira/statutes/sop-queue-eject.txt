@@ -1,6 +1,0 @@
-MATCH: member of open batch fails CI or gate; must be removed without closing the batch
-SYMPTOM: One branch in the open batch reproduces red; other members are clean. Landstate shows BATCHED, bead still in_progress.
-CHECK: queue.sh eject <id> --dry-run confirms the id is in the open batch and bd can resolve the bead.
-FIX: queue.sh eject <id> --reason '<failing suites and assertion lines>' — writes RED to landstate, reopens bead with assignee cleared, posts comment with evidence, removes id from batch members field. Then rebuild the batch separately.
-ESCALATE: If the batch record cannot be rewritten (disk full, lock held), check batch lock at $SPIRA_QUEUE_DIR/<repo>/lock and retry. If bd refuses reopen, check bead status manually via bd show <id>.
-REF: sp-sggv8

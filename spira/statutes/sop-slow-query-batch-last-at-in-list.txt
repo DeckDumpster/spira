@@ -1,6 +1,0 @@
-MATCH: SELECT lc_key AS batch_id, MAX\(at\) AS last_at FROM event WHERE machine = \? AND applied = \? AND lc_key IN
-SYMPTOM: batch-list verb's last_at query (spira-lc/src/main.rs:373) over 1s, count 1, under host load (load avg 20-30).
-CHECK: work show | grep -E 'verbs: list|count:'; uptime shows load > cores; event_lc_key_idx(machine, lc_key) exists (see sop-slow-query-lc-facts-in-list).
-FIX: count<=3 and load high => load-induced contention; record applied and close. If recurring with high count while unloaded, EXPLAIN on a fixture db and file via work file --for builder. No migration.
-ESCALATE: never for a single low-count occurrence.
-REF: wiki/notes/standard-operating-procedures.md

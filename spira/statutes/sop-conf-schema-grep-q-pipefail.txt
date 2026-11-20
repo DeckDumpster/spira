@@ -1,5 +1,0 @@
-MATCH: bd migrate schema failed.*dolt_server_port|schema.*failed.*deprecated|conf.sh.*grep.*pipefail
-SYMPTOM: test-suites.sh or any suite that sources conf.sh fails with "spira: bd migrate schema failed — Warning: dolt_server_port in metadata.json is deprecated", even though the database schema is fine and the warning is expected.
-CHECK: In conf.sh, locate the schema check block (around "SCHEMA CHECK CACHE"). Find elif branches that use `printf '%s\n' "$var" | grep -q 'pattern'`. These are broken under pipefail: grep -q exits after the first match, printf gets SIGPIPE (141), and pipefail propagates 141 rather than 0, causing the elif to evaluate false when the pattern is present.
-FIX: Replace `printf '%s\n' "$var" | grep -q 'pattern'` with `grep -q 'pattern' <<< "$var"`. The herestring form has no pipe and no SIGPIPE risk (law-no-grep-q-under-pipefail).
-REF: sp-m2zdm

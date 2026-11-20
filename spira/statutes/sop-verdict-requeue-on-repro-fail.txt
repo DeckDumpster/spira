@@ -1,6 +1,0 @@
-MATCH: verdict requeues all batch members instead of ejecting the broken one
-SYMPTOM: Batch fails red; verdict requeues all members rather than ejecting culprit. Sign: ejected=0 in verdict log after red batch.
-CHECK: Manual repro of failing suites against broken commit passes, but verdict failed to eject. This means testenv-batch.sh mounts production (main) rather than the branch under test.
-FIX: testenv-batch.sh must check out the branch before running suites. Until sp-2f51e lands, hand-eject via batch.sh: write RED <sha> to landstate with reason, re-run batch.
-ESCALATE: None — sp-2f51e tracked.
-REF: sp-2f51e, sp-uu8oy

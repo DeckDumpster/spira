@@ -1,6 +1,0 @@
-MATCH: spira-watch-view-prod\.service.*(failing|failed)|Start request repeated too quickly.*watch-view
-SYMPTOM: watch-view unit exits 75 because an orphan hand-started cockpit-remote watch (ppid 1) holds the flock.
-CHECK: ps -eo pid,ppid,etime,cmd | grep '[c]ockpit-remote watch'
-FIX: Operator only: kill the orphan pid; systemctl --user reset-failed spira-watch-view-prod.service; systemctl --user start spira-watch-view-prod.service
-ESCALATE: Ops changes nothing; leave bead open, mail operator the three commands.
-REF: wiki/notes/standard-operating-procedures.md

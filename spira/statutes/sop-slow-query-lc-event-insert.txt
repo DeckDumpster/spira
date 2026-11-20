@@ -1,6 +1,0 @@
-MATCH: SLOW QUERY.*INSERT INTO event \(machine, lc_key, event, expect
-SYMPTOM: single lifecycle event INSERT (START TRANSACTION; INSERT INTO event ...; COMMIT) over 1s (1.2-5s seen), count 1, while host load avg ~29-31 on 4 cores. A one-row insert cannot take 5s on plan; it is commit/fsync contention.
-CHECK: cat /proc/loadavg; payload count==1 and load >> cores means contention, not plan.
-FIX: none if count 1 and load high. If it recurs at normal load, check dolt server commit latency and event table size via a builder bead. Do not keep re-claiming: if the bead is parked needs-ryan (e.g. repo:spira missing from repo-map, sp-q88a4), the sessions only re-find the same thing; record applied, note once, exit.
-ESCALATE: not Ops's to fix; recurrence at low load goes to a builder bead. Load-driven recurrences: the cause is host oversubscription, not this query.
-REF: wiki/notes/standard-operating-procedures.md

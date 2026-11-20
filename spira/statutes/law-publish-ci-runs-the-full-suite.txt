@@ -1,1 +1,1 @@
-A publish PR's CI runs every suite, never the selection its diff picks; what reaches main has passed the full suite on CI's VM, as every landing round has on the round VM. Scar: publish CI ran a diff selection, so four reds on local/main reached main unseen (per Ryan, 2026-10-04).
+A publish PR's CI runs every suite, never the selection its diff picks; what reaches main has passed the full suite on CI's VM, as every landing round has on the round VM. Scar: publish CI ran a diff selection, so four reds on local/main reached main unseen.

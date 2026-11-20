@@ -1,6 +1,0 @@
-MATCH: Land stranded spira/sp-[a-z0-9]+ .*closed without landing
-SYMPTOM: A bead closed but its commits are not ancestors of local/main; the branch also carries later follow-up commits.
-CHECK: git merge-base --is-ancestor <sha> local/main || echo NOT-LANDED; git log --oneline local/main..spira/<bead>
-FIX: cherry-pick EVERY commit in local/main..spira/<bead> (not only the one named in the incident) onto the incident branch, in order; git rebase local/main; commit subject names the incident bead.
-ESCALATE: cherry-pick conflicts that change meaning.
-REF: wiki/notes/standard-operating-procedures.md

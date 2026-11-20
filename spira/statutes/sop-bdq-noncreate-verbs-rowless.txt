@@ -1,6 +1,0 @@
-MATCH: bdq lifecycle-row hook only fires on literal 'create'
-SYMPTOM: beads created via bd q/create-form/import/mol have no lifecycle row because bdq is_create only matches args[0]==create
-CHECK: PATH=$PATH:$HOME/.local/bin bd --help | grep -E '^\s+(q|create-form|import|mol)\b'; grep -n 'fn is_create' bead/src/bdq.rs
-FIX: widen is_create in bead/src/bdq.rs and surface after_create errors; bd lives at ~/.local/bin/bd (not on aeon PATH)
-ESCALATE: none
-REF: wiki/notes/standard-operating-procedures.md

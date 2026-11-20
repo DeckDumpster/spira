@@ -1,6 +1,0 @@
-MATCH: LAND DEPLOY FAULT.*not activated.*(units-install --render exited 1|not a git checkout)
-SYMPTOM: Deploy-fault incident: release verify pre-activate fails because units-install derives repo from the extracted release dir (no .git) and SPIRA_DOLT_DATA is empty.
-CHECK: readlink the releases/current symlink, then git merge-base --is-ancestor <landed-sha> <current-sha>. If a later release is current and contains the landing, the fault self-cleared and the deploy-fault marker is gone.
-FIX: Nothing if a later release activated. Otherwise export SPIRA_REPO to the real checkout and rerun release verify then release activate. If it recurs on every release, file a bead for units-install --render to honour SPIRA_REPO during verify.
-ESCALATE: If no later release activates and the marker persists.
-REF: wiki/notes/standard-operating-procedures.md

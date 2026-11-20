@@ -1,6 +1,0 @@
-MATCH: SLOW QUERY.*INSERT INTO bead \(bead_id, state, holds, version, updated_at\)
-SYMPTOM: single create-bead INSERT ... WHERE NOT EXISTS over 1s (count 1, p50==max), one-off spike.
-CHECK: uptime; nproc. Compare load to nproc (32 on this box as of 2026-10-06, not 4). Load >> nproc means dolt contention, not plan. Load near or below nproc does not confirm contention (sp-9lv1s8: load 29-35 on 32, 2.3s).
-FIX: none if count 1 and load clearly >> nproc. Otherwise, or if it recurs (sp-512dd, sp-cba2y2, sp-9lv1s8 within days), EXPLAIN the insert and confirm bead.bead_id is the primary key; file a builder bead. Do not close the incident as load-only on 3+ recurrences.
-ESCALATE: not Ops's to fix; recurrence at low load goes to a builder bead.
-REF: wiki/notes/standard-operating-procedures.md

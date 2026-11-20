@@ -1,6 +1,0 @@
-MATCH: SLOW QUERY: START TRANSACTION; UPDATE batch SET state = \?, parent = NULL, head = \?, base = \?
-SYMPTOM: lifecycle batch transition (UPDATE batch ... WHERE batch_id=? AND version=?; INSERT event) over 1s, verbs: land, count 1, p50==max ~1.6s.
-CHECK: uptime; compare load avg to nproc (32 cores). Load near/above nproc means dolt commit contention; UPDATE is by primary key + version.
-FIX: none if load is high (sp-46baa2: load 27/32, 1 occurrence). Record applied. If it recurs at low load, EXPLAIN the UPDATE and file a builder bead.
-ESCALATE: not Ops's to fix; low-load recurrence goes to a builder bead.
-REF: wiki/notes/standard-operating-procedures.md

@@ -1,6 +1,0 @@
-MATCH: refused Unhold from (SUPERSEDED|DONE|DROPPED) \(Terminal\) by reconciler
-SYMPTOM: reconciler hold_sweep repeats Unhold on terminal beads; machine refuses each tick (hundreds of refusals).
-CHECK: git log local/main --format=%s | grep -E 'sp-df9o2s|sp-4w8730'  (fixes landed); then compare refused-Unhold count after the prod reconciler deploy.
-FIX: code fixes landed (hold sweep lists only live beads, skips terminal). Landed is not in force: confirm reconciler deployed on prod; if refusals continue after deploy, file a builder bead.
-ESCALATE: if refusals continue after the deployed fix.
-REF: wiki/notes/standard-operating-procedures.md

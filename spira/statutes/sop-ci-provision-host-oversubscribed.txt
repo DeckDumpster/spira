@@ -1,6 +1,0 @@
-MATCH: ephemeral-ci provision starved|qga guest-file-open times? out|runner never registers|66 vCPU on 48 cores
-SYMPTOM: Publish-PR CI provision fails; ephemeral CI VM guest agent times out and the runner never registers. The host is oversubscribed: CI VM 32 vCPU plus certification-sweep VMs of 16 each, 66 vCPU on 48 cores, load 20-37.
-CHECK: uptime; check vCPU sum across running VMs (qm list) against host cores.
-FIX: Do NOT raise qga or registration timeouts. Pause the cert-sweep VMs while CI provisions (cert-sweep/round-vm). Tracked in sp-i3rkp; a builder implements it. Verify with one green publish PR from a forge-access session. Aeons have no forge read path.
-ESCALATE: Verification needs a forge-access session; the operator or Concierge must run it.
-REF: wiki/notes/standard-operating-procedures.md

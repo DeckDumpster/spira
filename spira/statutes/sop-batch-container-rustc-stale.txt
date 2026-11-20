@@ -1,6 +1,0 @@
-MATCH: harness-fault|NO_VERDICT.*exit 75|rustc too old for lockfile|not built.*spira-config|install failed — harness fault
-SYMPTOM: Gate returns VERDICT=NO_VERDICT reason=harness-fault (exit 75) for a clean branch: image's rustc too old for Cargo.lock's lockfile version, Rust binaries "not built", conf.sh/install.sh fail on missing target/release artifacts. Not the branch's fault; nothing auto-retries the gate, so it sits stuck. Likely affects every branch batched through that image — corroborate with a growing stranded-branch count (see sp-67an8-style alerts).
-CHECK: grep -E 'rustc too old for lockfile|harness fault' in the gate log; bead is CLOSED with a commit but no LANDED record, VERDICT=NO_VERDICT reason=harness-fault.
-FIX: Ops has no access to rebuild/redeploy the container. Escalate to queue/batch team/operator: rebuild image with rustc matching current lockfile version, then re-submit each stranded branch via queue.sh submit. File one action bead for the rebuild; link every stranded branch as blocked-by it.
-ESCALATE: Always — Ops cannot rebuild the gate container. Send the operator a decision request rather than closing quietly.
-REF: wiki/notes/standard-operating-procedures.md

@@ -1,6 +1,0 @@
-MATCH: idle-while-ready.*(persona-claimable|unclaimable)
-SYMPTOM: idle-while-ready:ops fires, bead claims P0/P1 epics are ready but unclaimable by persona.
-CHECK: grep -n exclude-type on spira-claim ready_args; it already passes --exclude-type epic,event, so epic premise is stale.
-FIX: none; at an idle firing compare bulk_ready_by_fayth ids vs spira-claim select to find a concrete unclaimable id; if none, close as not-reproducible.
-ESCALATE: only if a concrete unclaimable id appears (certified-not-landed blockers, fayth preference gaps).
-REF: wiki/notes/standard-operating-procedures.md

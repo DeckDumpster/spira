@@ -1,8 +1,0 @@
-MATCH: ROUND OPEN r-auto-[^ ]+ UNDRIVEN
-SYMPTOM: A spira round has been open 20+ minutes with no driver: no certify, recert or land is running, no pause is set, and the loop's own auto-recerts (incomplete pass, after ejects) did not apply. Landing is stopped until it is finished.
-CHECK: queue round status spira shows round=open with this batch_id, and no round-recert-<batch> or concierge-recert unit is active.
-FIX: Run one certification pass of the open round (certify, then land on green) in its own unit; a red verdict leaves it open with its reds named for attribution.
-RUN: release round-recert --batch {batch} --repo {repo}
-DEADLINE: 900
-ESCALATE: The tool exits non-zero, times out, or the pass is red (attribute and eject); a second UNDRIVEN page for the same batch.
-REF: sp-l9ejj9 (round-recert verb); r-auto-87 and r-auto-57 sat open with no driver (2026-10-12/13)

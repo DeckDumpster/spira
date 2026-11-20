@@ -1,6 +1,0 @@
-MATCH: SLOW QUERY: START TRANSACTION; UPDATE bead SET state = \?, tip = (\?|NULL), gate_key = NULL, holder
-SYMPTOM: lifecycle transition (UPDATE bead ... WHERE bead_id=? AND version=?; INSERT event) over 1s, verbs: work or event, count 1-5, p50==max 1-5s, recurring (sp-v3qgw, sp-cts54 68 recurrences, sp-3gig3k, sp-90uyo7 15+). Variant tip = NULL.
-CHECK: uptime; cat /proc/pressure/io. Host has 32 cores. Plan is NOT the cause: lifecycle/schema.sql shows UPDATE is a PK point lookup and event has only 2 secondary indexes (event_lc_key_idx, event_since_idx), so do not index or EXPLAIN again. 2026-10-08: recurred at load 4.6-7/32 with io PSI full avg10 ~4.9% (some 5.9), so the suspect is dolt per-transaction commit cost (fsync/journal/chunk-store flush), not CPU.
-FIX: none from Ops. Record applied. Do not re-EXPLAIN. Remaining work (builder bead sp-118txp): on a fixture dolt time START;UPDATE;INSERT;COMMIT vs fsync latency, check journal size and dolt gc state.
-ESCALATE: builder bead, not Ops. Never raise the threshold.
-REF: wiki/notes/standard-operating-procedures.md

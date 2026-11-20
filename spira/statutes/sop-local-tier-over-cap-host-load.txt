@@ -1,6 +1,0 @@
-MATCH: landing-ref-red.*(VERDICT FAULT rc=2 ran=[0-9]|over-cap)
-SYMPTOM: basefail-local incident; testenv local-tier suite (rust, or ui at ran=4 after lint/plan/rust/frontend-check ok) still running at the 900s cap. Scratch slots 0-2 "unable to read tree" are stale clones; harness falls through correctly. Trailing "run event not recorded: run is verdict(FAULT)" is cosmetic. "warm cache publish skipped after 120s waiting for the lock (not a verdict)" is also cosmetic.
-CHECK: uptime (load avg vs nproc; 32 cores now: load 28 was still saturated) and sibling over-cap incidents (sp-nhcnj3, sp-5z5l75). Warden notes may name the owner bead (sp-lwl425).
-FIX: not a code defect. Wait for load to drop (uptime 1-min load falling) and let the batcher re-run. Do not raise the 900s cap. If over-cap recurs at low load, work file --for builder about the suite runtime.
-ESCALATE: recurs at low load, or load stays high with no heavy job identifiable.
-REF: wiki/notes/standard-operating-procedures.md

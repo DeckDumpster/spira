@@ -1,6 +1,0 @@
-MATCH: quarantine.*threshold|quarantine.*no bead|auto-quarantine.*none filed
-SYMPTOM: Flake observer quarantines suites without proper threshold validation or accountability checks, potentially disarming real failure detection.
-CHECK: bash spira/test-observe-flake-threshold.sh && bash spira/test-observe-flake-bead-required.sh
-FIX: Code fixes applied in spira/suites.sh: threshold validation rejects threshold <= 1, quarantine fails if bead cannot be filed.
-ESCALATE: Defect 1 (red-red suite detection) requires gate integration to mark suites in suite-state when they fail twice. Coordinate with engineering.
-REF: sp-zmd3u

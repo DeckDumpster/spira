@@ -1,1 +1,0 @@
-An aeon's commit subject must contain the id of the bead it is working. That string is not how landing is proved — the typed lifecycle record is (see law-landed-is-content) — but the naming stays required: it is the human-readable link from a commit to its bead. Closed is not landed; the record, not the close, says landed. (amended sp-6p5nt, sp-sa8pn, sp-ntlv0)

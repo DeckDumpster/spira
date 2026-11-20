@@ -1,6 +1,0 @@
-MATCH: SLOW QUERY.*batch_id, bead_id, outcome FROM batch_member
-SYMPTOM: lifecycle list verb runs SELECT batch_id, bead_id, outcome FROM batch_member WHERE batch_id IN (?) ORDER BY bead_id; count 1 per tick, 1-3.3s, recurring. Point lookup by batch_id on a small table.
-CHECK: uptime; nproc. Load above core count (seen 45 on 32 cores) means host contention, not plan.
-FIX: none while load is high; same family as slow-query-batch-list. If it recurs at low load, EXPLAIN it and file a builder bead (work file --for builder --repo spira) for an index on batch_member(batch_id, bead_id).
-ESCALATE: not Ops's to fix; low-load recurrence goes to a builder bead.
-REF: wiki/notes/standard-operating-procedures.md

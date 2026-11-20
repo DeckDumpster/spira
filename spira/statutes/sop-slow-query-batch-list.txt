@@ -1,6 +1,0 @@
-MATCH: SLOW QUERY.*batch_id, repo, state, reason, opened_at, version FROM batch
-SYMPTOM: lifecycle batch list (spira-lc/src/main.rs ~357, ORDER BY opened_at DESC, batch_id DESC LIMIT BATCHES_SHOWN) over 1s; count 1-4 per tick, p50 1.1-5.3s, recurring every ~7min.
-CHECK: uptime; compare load to core count (nproc). Contention means load >= cores (seen 33 on 4 cores; 42 on 32 cores on 2026-10-08). Load 25-31 on 32 cores is ambiguous.
-FIX: none while load >= cores. If it recurs with load well under cores, EXPLAIN it and have a builder bead (work file --for builder --repo spira) add an index on batch(opened_at, batch_id).
-ESCALATE: not Ops's to fix; low-load recurrence goes to a builder bead.
-REF: wiki/notes/standard-operating-procedures.md

@@ -1,6 +1,0 @@
-MATCH: external_ref:^incident:test-testenv-batch|repeat-refused:topic:|test-fx-red\.sh
-SYMPTOM: incident.sh files a bead on a branch (e.g. "topic") that doesn't exist and/or a suite name that only appears in heredoc self-test fixtures inside spira/test-testenv-batch.sh. A fixture batch key got written into the real $SPIRA_DB, not an isolated test db.
-CHECK: git rev-parse --verify <branch-in-payload> fails, and the suite name only appears in heredocs writing to $REMOTE/$SUITE_B2 in spira/test-testenv-batch.sh.
-FIX: root cause was bdq() in spira/lib.sh calling bd -C "$SPIRA_DB" with no guard for empty/unset SPIRA_DB, so bd fell through to auto-discovery (can hit production). Fixed by making bdq() refuse (return 1) when SPIRA_DB is empty/unset. Landed via sp-ejqfy (audit: sp-25b7s; first never-landed attempt: sp-agdzk). No cleanup of existing litter rows needed; they're harmless once recognized by CHECK.
-ESCALATE: if branch is real or suite isn't a self-test fixture, it's a real incident — diagnose normally.
-REF: wiki/notes/sop-test-fixture-litter-in-store.md

@@ -1,6 +1,0 @@
-MATCH: sp-kogm|stranded.*bead|requeue.*escalat
-SYMPTOM: Stranded beads (CLOSED, commits not on main, no open batch) with escalations to queue/batch team that close without action. Alert recurs 65+ times. Escalation mechanism broken at "queue/batch acts" step.
-CHECK: Verify beads are CLOSED, commits not on origin/main, no open batch_id. Branches exist with landing-ready commits.
-FIX: Ops decision (sp-nmu4v): Proceed with Option A — Ops directly re-queues/lands stranded beads. Default recommendation accepted; escalation mail sent to operator with this default; proceeding with immediate action. This is reversible.
-ESCALATE: none — decision made via prior escalation, default recommendation now implemented
-REF: wiki/notes/stranded-bead-detection.md, sp-nmu4v (escalation bead)

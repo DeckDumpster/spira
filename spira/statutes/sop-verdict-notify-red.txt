@@ -1,6 +1,0 @@
-MATCH: red queue batch verdict produces no operator notification; together-only break (ejected=0, requeued=N) goes unreported
-SYMPTOM: Batch PR fails CI, verdict.sh runs and requeues or halves members, but operator receives no mail. Landstate shows CERTIFIED members. Batch file is gone. No mail in the queue.
-CHECK: grep for 'verdict.*red\|together-only red' in landing.log; grep for 'red in PR' in mail queue ($SPIRA_MAIL_DIR). If the log shows a red verdict but no mail file exists for it, the notification path failed. Confirm verdict.sh version has _attr_notify_red: grep -n '_attr_notify_red' $HERE/verdict.sh
-FIX: _attr_notify_red is now called from _q_attribute on every red verdict path (ejection, together-only halve, requeue-all). No manual intervention is needed once the fixed verdict.sh (sp-uu8oy, commit 43a136f) is in force. To confirm: run test-verdict.sh via testenv-batch.sh — case 8.5 covers the together-only path.
-ESCALATE: If notifications are still absent after the fix, check mail.sh is reachable from the verdict context and that SPIRA_MAIL_DIR is set. A stuck mail-deliver service would queue the notification without delivering it — check spira-mail-deliver.service status.
-REF: sp-uu8oy

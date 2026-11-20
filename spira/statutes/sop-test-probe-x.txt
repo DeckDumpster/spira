@@ -1,6 +1,0 @@
-MATCH: zzzprobe
-SYMPTOM: probe
-CHECK: true
-FIX: none
-ESCALATE: none
-REF: wiki/notes/x.md

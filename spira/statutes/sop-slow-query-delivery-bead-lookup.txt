@@ -1,6 +1,0 @@
-MATCH: SLOW QUERY.*FROM delivery WHERE bead_id = \?
-SYMPTOM: point lookup of one delivery row by bead_id (verbs: show) over 1s, count 1, p50==max (~1s). Single sample, not a trend.
-CHECK: uptime; nproc. Compare load to cores (this host has 32; load ~21-25 is heavy dolt contention, not a plan problem). Count 1 near the 1s threshold under load is noise.
-FIX: none if count <=2 and load is high. If it recurs at low load, EXPLAIN it, confirm delivery.bead_id is PRIMARY KEY/indexed, file a builder bead.
-ESCALATE: recurrence at low load goes to a builder bead; not Ops's to fix.
-REF: wiki/notes/standard-operating-procedures.md

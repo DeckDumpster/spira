@@ -1,6 +1,0 @@
-MATCH: SLOW QUERY.*SELECT bead_id, state, tip, gate_key, holder, lease_until, holds, reason, version.*WHERE bead_id = \?
-SYMPTOM: lifecycle point lookup of bead by primary key (verbs: show OR event) over 1s, count 1-8, p50 1-3.5s, recurring in bursts (sp-iydyt, sp-49bmpi, sp-reifz1 with 4 recurrences in 15min).
-CHECK: uptime; nproc. Host has 32 cores, not 4: load 13 is NOT saturation, but load 30-37 (seen 2026-10-08, sp-reifz1) IS: sustained 15min load avg > nproc means contention is the cause. A PK lookup has no plan to fix.
-FIX: none by Ops. Record applied. If it recurs at load < nproc/2, EXPLAIN it, confirm bead.bead_id is PRIMARY KEY, and file a builder bead. If load > nproc, find the source per sop-slow-query-connect-host-load.
-ESCALATE: not Ops's to fix; builder bead for repeated bursts (3+ recurrences in one day) at low load.
-REF: wiki/notes/standard-operating-procedures.md

@@ -1,9 +1,0 @@
-MATCH: test-aeon-presession-death.sh.*FAIL.*FATAL
-SYMPTOM: Test-aeon-presession-death.sh fails with FATAL line not present, attempt not charged, or error not propagated when run against sp-dd785 or similar pre-session death fixes.
-CHECK: Run test-aeon-presession-death.sh directly; grep output for "FAIL.*FATAL" and "status=pre-session" in ledger
-FIX: The fix is incomplete in the target branch. Examine aeon.sh error handling path for:
-  1. Worktree creation errors being swallowed rather than captured
-  2. Attempt counting not triggering on pre-session deaths
-  3. Error message propagation (git errors not appearing in FATAL line)
-ESCALATE: Route to whoever is working on aeon.sh pre-session death handling. Not Ops to fix.
-REF: wiki/notes/standard-operating-procedures.md

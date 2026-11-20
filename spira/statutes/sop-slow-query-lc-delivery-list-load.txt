@@ -1,6 +1,0 @@
-MATCH: SLOW QUERY.*SELECT bead_id, mode, state, batch_id, pr, merge_sha, version
-SYMPTOM: lifecycle delivery list query (delivery LEFT JOIN event MAX(at) GROUP BY lc_key,to_state) over 1s, count 1 per tick, p50 1.2-3.3s, recurring.
-CHECK: uptime; load >> 4 cores means contention, not plan.
-FIX: none while load is high. If it recurs at load < ~4, EXPLAIN and add index on event(machine, applied, lc_key, to_state, at) via work file --for builder --repo spira.
-ESCALATE: recurrence at low load goes to a builder bead.
-REF: wiki/notes/standard-operating-procedures.md

@@ -1,6 +1,0 @@
-MATCH: SLOW QUERY.*bead_id, state, tip, holder, lease_until
-SYMPTOM: lifecycle list query (spira-lc/src/main.rs, LEFT JOIN event MAX(at) GROUP BY) over 1s; count 1-4 per tick, p50 1-5.4s, recurring across several ticks, while host load avg 15-30 on 4 cores.
-CHECK: uptime; load >> cores (even with count up to 4 and several recurrences) still means contention, not plan.
-FIX: none while load is high. If it recurs at normal load (load < ~4), EXPLAIN the query and add index on event(machine, applied, lc_key, to_state, at) via a builder bead (work file --for builder).
-ESCALATE: not Ops's to fix; recurrence at low load goes to a builder bead.
-REF: wiki/notes/standard-operating-procedures.md

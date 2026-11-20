@@ -1,6 +1,0 @@
-MATCH: basefail-local:[a-z]+:gate-fences:fences
-SYMPTOM: Round red on gate-fences; log shows only "VERDICT=FAIL reason=over-cap ... killed at the 300s hard cap" after a syntax-only PASS. No suite assertion failed. NOTE: the MATCH also fires on spira-config refusals (log is a one-line "undeclared in spira.toml" refusal) - those are NOT this SOP.
-CHECK: tail the batch-results *-fences.log (expect over-cap, no failing test) and `uptime` (load 15-26 on 4 cores = host starvation). If the log is a spira-config refusal (missing key), this SOP does not apply: file a builder bead adding the key, or if the blocker beads are closed and no newer fences log than the refusal exists, leave open - the next round re-runs; close once a fresh round is green.
-FIX: Do not raise the cap. Waiting has NOT held across 10+ recurrences of sp-3a2wrg (held=no each time); local-tier rounds oversubscribe the box (sp-4s8uw0), and sp-knhhw3 is closed yet the red still files. Do not re-diagnose: record applied (held=no), leave open, exit. Only act if load is low (<4) at CHECK time.
-ESCALATE: If over-cap recurs with load low, file a builder bead for what the fences gate does for 300s. If it recurs with load high after sp-knhhw3/sp-4s8uw0 closed, escalate that the closed fix did not land/work (needs-ryan).
-REF: wiki/notes/standard-operating-procedures.md

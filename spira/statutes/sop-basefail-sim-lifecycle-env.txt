@@ -1,6 +1,0 @@
-MATCH: basefail-local.*test-sim-happy-path
-SYMPTOM: round red on test-sim-happy-path.sh; sim run exits 1 with "SPIRA_LC_LIFECYCLE_ON_STORE must be 0 or 1" because the clean gate env leaves it unset.
-CHECK: grep -n "must be 0 or 1" <batch-results>/corpus/test-sim-happy-path.sh.out ; then git grep "ON_STORE must be" local/main (absent = a landing since reverted it)
-FIX: if the string is gone from local/main, a revert already cleared it; do nothing. Otherwise file a builder bead: the sim must default the var or the test must pass it explicitly.
-ESCALATE: if it recurs with the string present on main.
-REF: wiki/notes/standard-operating-procedures.md

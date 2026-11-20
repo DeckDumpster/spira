@@ -1,6 +1,0 @@
-MATCH: filesystem 8[0-9]% used|filesystem 9[0-9]% used|Root .* filesystem.*approaching critical
-SYMPTOM: Root filesystem at critical capacity; accumulated worktrees from completed beads consuming significant storage
-CHECK: du -sh $SPIRA_RUN/worktree && ls -d $SPIRA_RUN/worktree/* 2>/dev/null | wc -l
-FIX: Identify completed/closed beads with corresponding worktrees and remove stale worktrees; implement automated cleanup after bead closure
-ESCALATE: Implement automated worktree cleanup mechanism — storage management requires operator decision on retention policy and deployment
-REF: wiki/notes/standard-operating-procedures.md

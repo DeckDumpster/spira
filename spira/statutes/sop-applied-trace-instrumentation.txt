@@ -1,6 +1,0 @@
-MATCH: sop\.sh applied.*(hang|timed? ?out|13[0-9]s)|sop applied.*(slow|~130s)
-SYMPTOM: sop applied took ~130s. Cause was the bash sop.sh blank check ${raw//[[:space:]]/} on the ~200KB shelf JSON (quadratic), not dolt/lock contention. sop.sh was since rewritten as the Rust sop crate (sp-8fsql), so the bash bug no longer exists.
-CHECK: test -f spira/sop.sh; time sop applied <slug> --bead X --check pass --held yes (should take well under 5s)
-FIX: If still slow on the Rust binary, time sop list and sop applied separately; look at ledger and bd memories latency. Do not blame dolt contention without a trace.
-ESCALATE: If sop applied is still above 30s on the Rust binary, file a bead with timings.
-REF: wiki/notes/standard-operating-procedures.md

@@ -1,6 +1,0 @@
-MATCH: (VERDICT=PASS.*later.*RED verdict|verdict.*persists.*after.*close|closed.*cached.*RED)
-SYMPTOM: A closed bead shows a RED verdict in the cache or recurrence check, contradicting its VERDICT=PASS close reason. The repeat-refused mechanism detects this and blocks re-runs.
-CHECK: (1) Verify the bead is CLOSED with VERDICT=PASS in close reason. (2) Check $SPIRA_RUN/verdicts/ for cached verdict with .RED or failure markers. (3) Verify current code/branch passes all tests. If current code passes but cached verdict is RED, cache stale state detected.
-FIX: (1) Identify the commit hash that produced the RED verdict. (2) Correlate with the verdict cache key in $SPIRA_RUN/verdicts/<hash>. (3) Review verdict.sh's cache invalidation on bead close, rebase, or conflict resolution. (4) If bead was rebased after close, stale cache entry should have been invalidated. (5) Clear the verdict cache entry: rm $SPIRA_RUN/verdicts/<hash> (6) Re-run the bead's tests to verify pass, or escalate to verdict.sh code review if pattern is systematic.
-ESCALATE: If multiple beads exhibit this pattern, root cause is in verdict.sh cache key generation or invalidation logic. File child bead to review verdict.sh for hash collisions, branch-aware cache keys, and close-time invalidation.
-REF: wiki/notes/sop-verdict-cache-stale-on-closed-bead.md

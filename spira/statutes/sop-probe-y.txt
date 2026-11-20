@@ -1,6 +1,0 @@
-MATCH: zzzz-never-matches-probe
-SYMPTOM: probe
-CHECK: true
-FIX: none
-ESCALATE: none
-REF: wiki/notes/standard-operating-procedures.md
