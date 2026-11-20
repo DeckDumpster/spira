@@ -209,6 +209,7 @@ fn sp_ljgmia_a_directed_dwarf_takes_a_slot_in_the_fleet_ceiling() {
         (f.total(), starts(&decide(&Carry::default(), &snap).1))
     };
     assert_eq!(call(&u), (5, 0), "four pooled and one directed fill a ceiling of five");
+    assert_eq!(fleet(&u, &roster, &|r: &str| r.to_string()).unwrap().live_by_rune.get("builder"), Some(&5), "the directed unit is attributed to its rune");
 
     u.install(&directed, facts(UnitState::Inactive));
     assert_eq!(call(&u).0, 4, "the slot comes back when the directed dwarf exits");
