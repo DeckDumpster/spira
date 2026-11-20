@@ -613,7 +613,7 @@ pub struct PartitionsStamp {
     files: Vec<(PathBuf, Option<std::time::SystemTime>, Option<u64>)>,
 }
 
-/// The stamp of what `partitions(home, env_override, ..)` would read now, by stat alone.
+/// The stamp of what `partitions(home, env_override, ..)` would read now, without parsing the predicates.
 pub fn partitions_stamp(home: &Path, env_override: Option<&str>) -> PartitionsStamp {
     let roster = spira_runes(home, env_override);
     let dir = runes_dir(home);
@@ -645,6 +645,22 @@ mod tests {
         let dir = runes_dir(home);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(format!("{name}.rune")), body).unwrap();
+    }
+
+    #[test]
+    fn partitions_stamp_moves_with_the_roster_a_deletion_and_a_rewrite() {
+        let ws = testkit::TempDir::new("spira-config-runes-stamp");
+        write_rune(&ws, "ops", "RUNE_LABELS=ops\n");
+        let first = partitions_stamp(&ws, None);
+        assert_eq!(first, partitions_stamp(&ws, None));
+        write_rune(&ws, "builder", "RUNE_LABELS=spira\n");
+        let added = partitions_stamp(&ws, None);
+        assert_ne!(first, added);
+        write_rune(&ws, "builder", "RUNE_LABELS=spira,plan\n");
+        let rewritten = partitions_stamp(&ws, None);
+        assert_ne!(added, rewritten);
+        std::fs::remove_file(runes_dir(&ws).join("builder.rune")).unwrap();
+        assert_ne!(rewritten, partitions_stamp(&ws, None));
     }
 
     #[test]

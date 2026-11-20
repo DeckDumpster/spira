@@ -199,7 +199,7 @@ pub trait Inputs {
     /// The rune partitions that decide which runes would take a claimable bead.
     fn partitions(&self, config: &Config) -> Result<Vec<Partition>, String>;
     /// What `partitions` would read, by stat alone; equal stamps mean an equal answer. The
-    /// default never changes.
+    /// default never changes: an implementor whose partitions can change must override it.
     fn partitions_stamp(&self) -> Result<PartitionsStamp, String> {
         Ok(PartitionsStamp::default())
     }
@@ -371,7 +371,7 @@ pub struct Viewed {
 pub type ViewRead = (BTreeMap<String, LifecycleRecord>, BTreeMap<String, Viewed>);
 
 /// The claim view of `cands` (READY and REWORK records), read from the records at `rev` and
-/// the inputs, with the records it consulted. It keeps nothing itself; `Pinned` inputs keep the config and the rune partitions.
+/// the inputs, with the records it consulted. Only `Pinned` inputs keep anything between calls.
 pub fn view<B: Backend>(
     store: &Store<B>,
     rev: u64,
