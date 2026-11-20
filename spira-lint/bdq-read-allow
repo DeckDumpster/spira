@@ -38,8 +38,6 @@
 3 perf-watch/src/lib.rs
 5 reconciler/src/hold_sweep.rs
 7 reconciler/src/lib.rs
-2 rule/src/code.rs
-2 rule/src/main.rs
 2 runtime-watch/src/real.rs
 1 skew/src/real.rs
 1 spira-runtime/src/reconcile_host.rs
@@ -52,13 +50,5 @@
 2 spira-world/src/bin/world.rs
 1 spira-world/src/checkpoint.rs
 1 spira-world/src/freeze.rs
-1 spira/confine.sh
-2 spira/first-run.sh
-1 spira/law-synth.sh
-2 spira/pilgrimage.sh
-1 spira/ready.sh
-2 spira/reflect.sh
-1 spira/seed.sh
-3 spira/verify-landed.sh
 7 watchtower/src/lc.rs
 1 watchtower/src/probes.rs

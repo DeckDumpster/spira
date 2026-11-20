@@ -66,16 +66,17 @@ SPIRA_EPIC_LABELS="${SPIRA_EPIC_LABELS:-spira}"
 SPIRA_DEFAULT_WATCHERS="${SPIRA_DEFAULT_WATCHERS:-$SPIRA_OPERATOR_ACTOR}"
 
 DRY=0
+lc_content() { timeout "${BD_TIMEOUT:-30}" spira-lc content "$@"; }
 kv_get() {   # kv_get <key> -> value on stdout, rc 1 if unset
-    bdq kv get "$1" --json 2>/dev/null | json_only | python3 -c '
+    lc_content kv get "$1" --json 2>/dev/null | json_only | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(1)
 if not d.get("found"): sys.exit(1)
 print(d.get("value") or "")' 2>/dev/null
 }
-kv_set()   { bdq kv set "$1" "$2" >/dev/null 2>&1; }
-kv_clear() { bdq kv clear "$1" >/dev/null 2>&1; }
+kv_set()   { lc_content kv set "$1" "$2" >/dev/null 2>&1; }
+kv_clear() { lc_content kv clear "$1" >/dev/null 2>&1; }
 
 subs_key()   { printf 'spira.watch.%s' "$1"; }
 subs_of() {   # subs_of <epic-id> -> comma-separated addresses; empty means silenced
@@ -124,33 +125,41 @@ pilgrimage_branches_landed() {
 }
 
 # --------------------------------------------------------------------------------------
-# The partition, as one query. Emits TSV: id, closed, total, complete(1|0), title.
-# `bd epic status` has no --limit, so there is no paging trap here — but it also has no
-# --label, which is why the filter runs in this process.
+# The partition. Emits TSV: id, closed, total, complete(1|0), title.
+# The open epics carrying every wanted label come from one list read, each one's children
+# from a `--parent` read; the label filter runs in this process.
 # --------------------------------------------------------------------------------------
 pilgrimages() {
-    bdjson epic status | SPIRA_EPIC_LABELS="$SPIRA_EPIC_LABELS" python3 -c '
+    local epics id title closed total
+    epics="$(lc_content list --type epic --limit 0 --json 2>/dev/null | json_only | SPIRA_EPIC_LABELS="$SPIRA_EPIC_LABELS" python3 -c '
 import sys, json, os
 want = {l.strip() for l in os.environ["SPIRA_EPIC_LABELS"].split(",") if l.strip()}
 try: rows = json.load(sys.stdin)
 except Exception: sys.exit(0)
-for r in rows if isinstance(rows, list) else [rows]:
-    e = r.get("epic") or {}
-    if not want <= set(e.get("labels") or []):
-        continue
-    total, closed = int(r.get("total_children") or 0), int(r.get("closed_children") or 0)
-    # An epic with no children is EMPTY, not complete. Treating zero-of-zero as done is how
-    # a freshly created epic closes itself before anyone has decomposed it.
-    done = 1 if total > 0 and closed >= total else 0
-    print("\t".join([e.get("id",""), str(closed), str(total), str(done),
-                     (e.get("title") or "").replace("\t", " ")]))
-' 2>/dev/null
+for e in rows if isinstance(rows, list) else [rows]:
+    if e.get("id") and want <= set(e.get("labels") or []):
+        print("\t".join([e["id"], (e.get("title") or "").replace("\t", " ")]))
+' 2>/dev/null)"
+    while IFS=$'\t' read -r id title; do
+        [ -n "$id" ] || continue
+        read -r closed total < <(lc_content list --all --limit 0 --parent "$id" --json 2>/dev/null | json_only | python3 -c '
+import sys, json
+try: rows = json.load(sys.stdin)
+except Exception: rows = []
+rows = rows if isinstance(rows, list) else [rows]
+print(sum(1 for r in rows if r.get("status") == "closed"), len(rows))' 2>/dev/null)
+        closed="${closed:-0}"; total="${total:-0}"
+        # An epic with no children is EMPTY, not complete. Treating zero-of-zero as done is how
+        # a freshly created epic closes itself before anyone has decomposed it.
+        if [ "$total" -gt 0 ] && [ "$closed" -ge "$total" ]; then done_=1; else done_=0; fi
+        printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$closed" "$total" "$done_" "$title"
+    done <<<"$epics"
 }
 
 # What actually landed. Parsed from JSON rather than scraped from the rendered tree, whose
 # header line carries the epic's own id and put the parent in its own manifest.
 children_ids() {   # children_ids <epic-id>
-    bdjson children "$1" | EPIC="$1" python3 -c '
+    lc_content list --all --limit 0 --parent "$1" --json 2>/dev/null | json_only | EPIC="$1" python3 -c '
 import sys, json, os
 try: rows = json.load(sys.stdin)
 except Exception: sys.exit(0)
@@ -184,7 +193,7 @@ MAILEOF
             ;;
         bead:*)
             [ "$DRY" = 1 ] && { log "  would note ${addr#bead:}: $subject"; return 0; }
-            bdq note "${addr#bead:}" "$subject"$'\n'"$body" >/dev/null 2>&1
+            printf '%s\n%s' "$subject" "$body" | lc_content note "${addr#bead:}" --stdin >/dev/null 2>&1
             ;;
         log)
             printf '%s\n%s\n' "$subject" "$body"
@@ -247,7 +256,7 @@ cmd_check() {
         fi
 
         if [ "$failed" = 1 ]; then
-            bdq note "$id" "Pilgrimage complete, but a subscriber could not be notified. Left open deliberately; the next sentinel pass retries." >/dev/null 2>&1
+            printf '%s' "Pilgrimage complete, but a subscriber could not be notified. Left open deliberately; the next sentinel pass retries." | lc_content note "$id" --stdin >/dev/null 2>&1
             continue
         fi
 

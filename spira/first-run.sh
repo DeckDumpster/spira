@@ -68,7 +68,7 @@ for stem in $stems; do
     fi
     failed=$((failed+1))
     printf 'first-run: FAIL %s (exit %s)\n' "$unit" "$crc"
-    if [ -n "$bead" ] && BD_TIMEOUT=5 bdq comments "$bead" 2>/dev/null \
+    if [ -n "$bead" ] && timeout 5 spira-lc content comments "$bead" 2>/dev/null \
             | grep -qF "$marker $unit"; then
         printf 'first-run: %s already filed for %s\n' "$unit" "$release"; continue
     fi
@@ -90,7 +90,7 @@ print(next((l[5:] for l in d.get("labels") or [] if l.startswith("repo:")), ""))
     "$BEAD" file "unit $unit failed its first run after $release" \
         --for builder --priority 1 "${extra[@]}" --body-file "$bodyf" >/dev/null || rc=1
     rm -f "$bodyf"
-    [ -z "$bead" ] || BD_TIMEOUT=5 bdq comments add "$bead" \
+    [ -z "$bead" ] || timeout 5 spira-lc content comments add "$bead" \
         "$marker $unit FAIL (exit $crc); follow-up filed." >/dev/null 2>&1 || true
 done
 printf 'first-run: %s unit(s) run, %s failed\n' "$ran" "$failed"

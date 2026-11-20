@@ -58,7 +58,7 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # conf.sh peel — wave4-decomposition.md). Every function below either IS log/die, or IS a
 # shim: the family-by-family move named in that plan has landed, in-process callers read
 # the owning crate directly, and a bash caller that still types the OLD name by habit —
-# `repo_root`, `bdq`, whatever — reaches the same logic one
+# `repo_root`, whatever — reaches the same logic one
 # subprocess call away. `spira-lint`'s `lib-sh-shims` rule enforces this mechanically: a
 # function here that is not a shim fails the gate unless it is named, with why, in
 # `spira-lint/lib-sh-shims-allow` — today that is `host_cores`; `ready_raw_args`/
@@ -93,59 +93,10 @@ mkdir -p "$SPIRA_RUN"
 # than a PATH entry because lib.sh overwrites PATH outright, as it must to run under
 # systemd, so a directory prepended by a test would be thrown away by the export above.
 #
-# SPIRA_BDJSON_FIXTURE is the one sanctioned exception: a read-only, per-probe test that
-# needs a pure classification result, not bd's own filtering behaviour, points it at a
-# canned-JSON file and bdsim answers `list`/`show`/`memories` from that file instead of a
-# live store. Query shapes bdsim does not simulate stay on real bd, in
-# the real-bd cockpit contract check.
-# bdq AND ITS THREE CREATE-TIME FENCES ARE NOW bead::bdq (sp-w3h16, wave 4.14,
-# wave4-decomposition.md row A, safety note (c1)): one library plus a `bdq` binary every
-# caller already types by that bare name. Every fence, the czar-fence dispatch, the
-# SPIRA_BDJSON_FIXTURE route, the empty-SPIRA_DB refusal, the SOP_APPLIED_TRACE wrapper and
-# the invalid-connection retry loop moved with it — see bead/src/bdq.rs and
-# bead/src/bin/bdq.rs.
-#
-# EXEC-BOUNDARY TRAP: conf.sh deliberately never exports SPIRA_HOME, SPIRA_REPO,
-# SPIRA_REPO_DERIVED, SPIRA_HOME_REPO or SPIRA_REPO_MAP (each a per-copy fact, not
-# configuration — conf.sh's own comment on SPIRA_REPO_DERIVED says why). The repo-label fence
-# reads the repo registry IN-PROCESS now (spira_config::repos::Registry, not another
-# `spira-config repo ...` shell-out), so the binary needs these five in its OWN environment —
-# `command bdq` only inherits what this shim threads through explicitly, the same shape
-# `_spira_config_repo` above already uses. Every other value `bdq` reads (SPIRA_DB, SPIRA_BD,
-# SPIRA_ASK_LABEL, SPIRA_RUN) is already on conf.sh's own export list; SPIRA_RUNE/
-# SPIRA_CZAR_CLASS/SPIRA_CZAR_TRIGGER_BEAD/SPIRA_BDJSON_FIXTURE/BD_TIMEOUT/
-# SPIRA_BDQ_CONN_RETRIES/SOP_APPLIED_TRACE* are never conf.sh keys at all — set (if at all) by
-# whatever already-exported environment spawned this shell — so none of those need
-# re-threading here.
-#
-# `command bdq` (not a bare `bdq`) bypasses this very function: bash's own function lookup
-# shadows a same-named command on PATH, so an unqualified `bdq "$@"` inside this function
-# would recurse into itself forever.
-bdq() {
-    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_REPO="${SPIRA_REPO:-}" \
-    SPIRA_REPO_DERIVED="${SPIRA_REPO_DERIVED:-}" SPIRA_HOME_REPO="${SPIRA_HOME_REPO:-}" \
-    SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-}" \
-        command bdq "$@"
-}
-
-# This is also called directly, by name, from a test suite
-# — not only from inside bdq() above — so it
-# gets its own shim onto the binary's `__fence` subcommand rather than relying on bdq()'s own
-# dispatch to reach them.
-_bdq_check_repo_label() {   # _bdq_check_repo_label <create-args> -> 0 or refuse
-    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_REPO="${SPIRA_REPO:-}" \
-    SPIRA_REPO_DERIVED="${SPIRA_REPO_DERIVED:-}" SPIRA_HOME_REPO="${SPIRA_HOME_REPO:-}" \
-    SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-}" \
-        command bdq __fence repo-label "$@"
-}
-
-# `gh` gets the same treatment and for the same reason. The pull-request landing path is the
-# part of this harness that reaches OUTSIDE the box, so it is the part that most needs a
-# fixture — and, like bd, a stub cannot be put in front of it by prepending to PATH, because
-# the export above throws that away.
-# Moved with bdq into bead::bdq (sp-w3h16, wave4-decomposition.md row B): GH_TIMEOUT and
-# SPIRA_GH are never conf.sh keys, so nothing needs re-exporting across the exec boundary.
-ghq() { command bdq __ghq "$@"; }
+# `gh` runs the way forge::real runs it: under `timeout $GH_TIMEOUT`, as $SPIRA_GH when that
+# is non-empty (empty means the system gh). It is a function so a suite can fake the outside
+# world, which a PATH entry cannot do because the export above replaces PATH.
+ghq() { timeout "${GH_TIMEOUT:-120}" "${SPIRA_GH:-gh}" "$@"; }
 
 log() { printf '%s spira: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 die() { log "FATAL $*" >&2; exit 1; }
@@ -161,15 +112,9 @@ host_cores() {
     printf '1'
 }
 
-# `bd --json` can print warnings on stdout before the payload, so never pipe it straight
-# into a parser. This strips anything before the first JSON token.
-# Moved into bead::bdq (sp-w3h16, wave4-decomposition.md row B) as a pure stdin filter;
-# json_only here is a generic pipe filter (pilgrimage.sh and others pipe arbitrary output
-# through it, not only bdq's own), so it keeps its own `__json_only` subcommand rather than
-# being folded into bdjson's.
-json_only() { command bdq __json_only; }
-
-bdjson() { bdq "$@" --json 2>/dev/null | json_only; }
+# A command's --json output can carry warnings before the payload, so never pipe it straight
+# into a parser: this strips anything before the first JSON token.
+json_only() { sed -n '/^[[{]/,$p'; }
 
 # ask_already_open/ask_closed_subject retired (sp-j3fim, wave 4.31, family AB): both
 # ported natively into gh-intake/src/closeout.rs — the GitHub-closeout family (AB) was
@@ -187,12 +132,7 @@ bdjson() { bdq "$@" --json 2>/dev/null | json_only; }
 # it calls the Rust versions in-process now. `landing-pass noverdict ...` and
 # `sentinel --land-escalate` drive the native versions standalone for the
 # real-sender suites. ask_already_open itself retired with the GitHub-closeout family
-# (sp-j3fim, wave 4.31) — see the note above json_only.
-
-# How many rows a `bd --json` payload carries. Never `| wc -l` and never a grep: the payload
-# is one line, and a warning printed before it would be counted as a row.
-# Moved into bead::bdq (sp-w3h16, wave4-decomposition.md row B).
-json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an integer, 0 on anything unparseable
+# (sp-j3fim, wave 4.31).
 
 # --------------------------------------------------------------------------------------
 # Liveness is the lease and nothing else: a dwarf is alive while the deadline in its
@@ -568,10 +508,11 @@ park_unmapped() {
     case "$state" in
         ""|LANDED|SUPERSEDED|DROPPED|DONE) release_own_claim "$id"; return ;;
     esac
-    bdq label add "$id" "overseer"          >/dev/null 2>&1 || true
+    timeout "${BD_TIMEOUT:-30}" spira-lc content label add "$id" "overseer" >/dev/null 2>&1 || true
     # The hold alone (sp-psztcc): a label standing in for it outlived every withdrawal.
     spira-lc hold "$id" ask "repo:$repo_name has no repo-map entry" dwarf.sh >/dev/null 2>&1 || true
-    bdq note "$id" "Parked by dwarf.sh: this bead carries repo:$repo_name, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Held with an ask (and labelled overseer) — no dwarf will claim it again until a human corrects the label or adds the repo to the map and withdraws the ask (spira-lc withdraw-ask $id). Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
+    printf '%s' "Parked by dwarf.sh: this bead carries repo:$repo_name, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Held with an ask (and labelled overseer) — no dwarf will claim it again until a human corrects the label or adds the repo to the map and withdraws the ask (spira-lc withdraw-ask $id). Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." \
+        | timeout "${BD_TIMEOUT:-30}" spira-lc content note "$id" --stdin >/dev/null 2>&1
     release_own_claim "$id"
 }
 

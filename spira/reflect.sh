@@ -27,8 +27,15 @@ set -uo pipefail
 IDS="${1:-}"
 [ -n "$IDS" ] || { log "reflect: nothing to reflect on"; exit 0; }
 
-STATE="$(for id in $IDS; do bdq show "$id" 2>/dev/null | grep -vE '^💡|^warning|^  Fix|^  Or'; echo; done)"
-BLOCKED="$(bdq blocked --limit 0 2>/dev/null | grep -E '^\[|sp-' | head -40)"
+STATE="$(for id in $IDS; do timeout "${BD_TIMEOUT:-30}" spira-lc content show "$id" 2>/dev/null | grep -vE '^💡|^warning|^  Fix|^  Or'; echo; done)"
+BLOCKED="$(timeout "${BD_TIMEOUT:-30}" spira-lc list --live --json 2>/dev/null | json_only | python3 -c '
+import sys, json
+try: rows = json.load(sys.stdin)
+except Exception: sys.exit(0)
+for r in rows:
+    if r.get("blocked_by"):
+        print("%s (blocked by: %s)" % (r.get("id", ""), ", ".join(r["blocked_by"])))
+' | grep -E '^\[|sp-' | head -40)"
 
 PROMPT="You are the Spira sentinel's judgement tier. Every deterministic check has passed
 and the work graph is still not moving: beads remain open, none are ready, none are

@@ -1074,8 +1074,8 @@ fn memories_json_cached() -> Result<String, String> {
 }
 
 /// `SPIRA_MEMORIES_CMD` stands in for the live read in every test but one — set, it runs
-/// verbatim through a shell and `bd`/`bdq` is never touched. Unset, this is `bdjson
-/// memories` = `bdq memories --json 2>/dev/null | json_only`.
+/// verbatim through a shell and the store is never touched. Unset, it is the content door's
+/// `memories --json`.
 fn fetch_memories_json() -> String {
     if let Ok(cmd) = std::env::var("SPIRA_MEMORIES_CMD") {
         if !cmd.is_empty() {
@@ -1098,14 +1098,21 @@ fn fetch_memories_json() -> String {
                 .unwrap_or_default();
         }
     }
-    spira_config::bounded::bounded("bdq")
-        .args(["memories", "--json"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .map(|o| json_only(&String::from_utf8_lossy(&o.stdout)).trim_end_matches('\n').to_string())
-        .unwrap_or_default()
+    match spira_store::lc_call::LcClient::configured() {
+        Ok(lc) => memories_through(&lc),
+        Err(e) => {
+            eprintln!("rule: {e}");
+            String::new()
+        }
+    }
+}
+
+/// The statute book as one `content memories --json` request; any failure is empty.
+fn memories_through(lc: &spira_store::lc_call::LcClient) -> String {
+    match lc.call(&["content", "memories", "--json"]) {
+        Ok(r) if r.code == 0 => json_only(&r.out).trim_end_matches('\n').to_string(),
+        _ => String::new(),
+    }
 }
 
 /// `json_only`: keep the first line (and everything after) that starts, at column 1, with
@@ -1145,6 +1152,25 @@ fn cmd_system_prompt_split(rest: &[String]) -> i32 {
 #[cfg(test)]
 mod statute_dir_tests {
     use super::*;
+
+    struct Answers(std::sync::Mutex<Vec<Vec<String>>>, i32);
+
+    impl spira_store::lc_call::Transport for Answers {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+            self.0.lock().unwrap().push(argv.to_vec());
+            Ok(spira_store::lc_call::Reply { code: self.1, out: "warning\n{\"law-a\":\"x\"}\n".into(), err: String::new() })
+        }
+    }
+
+    #[test]
+    fn the_memories_read_is_a_content_memories_json_request() {
+        let t = std::sync::Arc::new(Answers(Default::default(), 0));
+        let got = memories_through(&spira_store::lc_call::LcClient::over(t.clone(), true));
+        assert_eq!(got, "{\"law-a\":\"x\"}");
+        assert_eq!(*t.0.lock().unwrap(), vec![vec!["content".to_string(), "memories".into(), "--json".into()]]);
+        let failed = memories_through(&spira_store::lc_call::LcClient::over(std::sync::Arc::new(Answers(Default::default(), 3)), true));
+        assert_eq!(failed, "");
+    }
 
     #[test]
     fn an_empty_key_defaults_under_run() {

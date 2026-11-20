@@ -78,7 +78,7 @@ _lib_loaded=1
 trap - EXIT
 
 if [ -z "$labels" ]; then
-    labels="$(bdjson show "$ID" 2>/dev/null | python3 -c '
+    labels="$(timeout "${BD_TIMEOUT:-30}" spira-lc content show "$ID" --json 2>/dev/null | json_only | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
 except Exception: raise SystemExit
