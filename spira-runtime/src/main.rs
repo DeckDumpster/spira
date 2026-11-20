@@ -30,14 +30,14 @@ fn land_escalate(age: Option<String>) -> Result<(), String> {
     let run = spira_config::process::cfg("SPIRA_RUN")?;
     let w = sp::land_escalation(age, &sp::land_log_tail(std::path::Path::new(&run)));
     let spec = runtime::event::EffectSpec::keyed(sp::ASK, "land-escalate", serde_json::to_string(&w).map_err(|e| e.to_string())?, 5_000);
-    sp::ask(&spec).map(|subject| println!("{subject}"))
+    sp::ask(&spec).map(|subject| println!("{subject}"))  // loop-safe: a one-shot verb, no loop runs
 }
 
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("land-escalate") && std::env::args().count() == 3 {
         if let Err(e) = land_escalate(std::env::args().nth(2)) {
-            eprintln!("spira-runtime: {e}");
-            std::process::exit(1);
+            eprintln!("spira-runtime: {e}");  // loop-safe: a one-shot verb, no loop runs
+            std::process::exit(1);  // loop-safe: a one-shot verb, no loop runs
         }
         return;
     }

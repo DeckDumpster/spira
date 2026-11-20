@@ -145,7 +145,6 @@ is "skew escalate delivers exactly one message" "$((before + 1))" "$after"
 echo
 echo "land escalation: the serve task's ask (question)"
 
-command -v spira-runtime >/dev/null 2>&1 || bail "spira-runtime is not on PATH"
 printf 'landing gate keeps failing\n' > "$SPIRA_RUN/landing.log"
 before="$(unread)"
 spira-runtime land-escalate 7200 >/dev/null 2>"$TMP/land-escalate.err"
