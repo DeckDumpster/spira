@@ -6,6 +6,16 @@ use cr::ports::{Config, GitTree, Ports, SourceTree, VirtualClock};
 use std::path::Path;
 use std::process::Command;
 
+struct NoGh;
+impl forge::ports::Gh for NoGh {
+    fn call(&self, _: Option<&Path>, _: &[&str]) -> forge::ports::GhOut {
+        unreachable!("cr pick makes no forge call")
+    }
+    fn call_merged(&self, _: Option<&Path>, _: &[&str], _: Option<&[u8]>) -> forge::ports::GhOut {
+        unreachable!("cr pick makes no forge call")
+    }
+}
+
 fn git(dir: &Path, args: &[&str]) {
     let ok = Command::new("git")
         .arg("-C")
@@ -54,7 +64,7 @@ fn cr_pick_runs_over_a_real_git_tree() {
     let dir = repo();
     let tree = GitTree::new(dir.path().to_str().unwrap(), "main").unwrap();
     let config = Config { page_lines: 60, oversize_pages: 6, exclude: vec![], churn_days: 60, count_limit: 50 };
-    let ports = Ports { clock: Box::new(VirtualClock::new(1_700_000_000_000)), tree: Box::new(tree), ledger: Ledger::default(), config, env_seed: None };
+    let ports = Ports { run_dir: dir.path().join("unused-run"), gh: Box::new(NoGh), repo_owner: String::new(), repo_name: String::new(), source_repo: "k".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(1_700_000_000_000)), tree: Box::new(tree), ledger: Ledger::default(), config, env_seed: None };
     let o = run(&["pick".into(), "--seed".into(), "1".into(), "--json".into()], &ports);
     assert_eq!(o.code, 0, "{}{}", o.stdout, o.stderr);
     let v: serde_json::Value = serde_json::from_str(&o.stdout).unwrap();

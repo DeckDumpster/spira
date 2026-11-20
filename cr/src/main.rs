@@ -1,4 +1,4 @@
-//! `cr pick` and `cr count` — see `cr -h`.
+//! `cr pick | count | open | seal | unseal | status` — see `cr -h`.
 
 use cr::cli::{self, Outcome};
 use cr::ledger::Ledger;
@@ -28,7 +28,26 @@ fn build_ports() -> Result<Ports, String> {
         Some(secs) => Box::new(VirtualClock::new(secs.saturating_mul(1000))),
         None => Box::new(WallClock),
     };
-    Ok(Ports { clock, tree: Box::new(tree), ledger: Ledger::load(&ledger_path)?, config, env_seed: spira_config::process::cfg("SPIRA_SEED").ok().filter(|s| !s.is_empty()) })
+    let run_dir = spira_config::resolve::run_dir_for_process()?;
+    let key = |k: &str| spira_config::process::cfg(k).unwrap_or_default();
+    let stdin = if std::env::args().nth(1).as_deref() == Some("seal") {
+        use std::io::Read;
+        let mut s = String::new();
+        std::io::stdin().read_to_string(&mut s).map_err(|e| format!("reading stdin: {e}"))?;
+        s
+    } else {
+        String::new()
+    };
+    Ok(Ports {
+        run_dir,
+        gh: Box::new(forge::real::RealGh),
+        repo_owner: key("SPIRA_CR_REPO_OWNER"),
+        repo_name: key("SPIRA_CR_REPO_NAME"),
+        source_repo: repo.clone(),
+        stdin,
+        clock, tree: Box::new(tree), ledger: Ledger::load(&ledger_path)?, config,
+        env_seed: spira_config::process::cfg("SPIRA_SEED").ok().filter(|s| !s.is_empty()),
+    })
 }
 
 fn emit(o: &Outcome) -> std::process::ExitCode {
@@ -42,7 +61,7 @@ fn main() -> std::process::ExitCode {
     if cli::wants_help(&argv) {
         return emit(&Outcome { code: 0, stdout: cli::HELP.to_string(), stderr: String::new() });
     }
-    let metrics = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "cr", argv.first().map(String::as_str).filter(|v| matches!(*v, "pick" | "count")).unwrap_or("none"));
+    let metrics = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "cr", argv.first().map(String::as_str).filter(|v| matches!(*v, "pick" | "count" | "open" | "seal" | "unseal" | "status")).unwrap_or("none"));
     let outcome = match build_ports() {
         Ok(ports) => cli::run(&argv, &ports),
         Err(e) => cli::error_outcome(1, cli::wants_json(&argv), &e),

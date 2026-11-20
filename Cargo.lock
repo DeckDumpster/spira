@@ -281,10 +281,13 @@ dependencies = [
 name = "cr"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "forge",
  "regex",
  "runtime",
  "serde",
  "serde_json",
+ "sha2",
  "spira-config",
  "spira-otel",
  "testkit",

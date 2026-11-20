@@ -4,6 +4,8 @@ use crate::count;
 use crate::index::Index;
 use crate::pick::{self, Scored, Shaped, Stratum};
 use crate::ports::{Ports, SeededRng};
+use crate::record;
+use crate::review;
 use crate::units;
 use serde_json::{json, Value};
 
@@ -19,10 +21,22 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
 
   cr pick  [--aim <X>] [--seed <n>] [--json]
   cr count --regex <re> [--path <glob>]... [--limit <n>] [--json]
+  cr open [--count <N>] [--aim <X>] [--seed <n>] [--scheduled]
+  cr seal --review <NNN> < comments.json
+  cr unseal --review <NNN> [--said <comment-id>]
+  cr status [--json]
+
+  open stages N units (default 1) as reviews and makes no forge call. seal reads the
+  Concierge's own review, a JSON array of {path, line, body}, stores it hashed, and opens the
+  pull request in the review repository. unseal posts it once the operator has published.
 
   --aim <X>   aim the draw: a path, a workspace crate, a struct/enum/trait/type name, or words
               (every word must appear in a unit's paths or module docs, case-folded)
   --seed <n>  the draw's seed; default SPIRA_SEED, else the clock's milliseconds; always printed
+  --count <N> how many units open stages
+  --scheduled mark the reviews as scheduled rather than on demand
+  --review <NNN>  the review to seal or unseal
+  --said <id> the operator's conversation comment on the pull request, standing for publishing
   --json      print one JSON object on every path, errors included
   --regex <re>   (count) the pattern; matched per line against code in .rs .sh .toml .py files
   --path <glob>  (count) search only paths matching the glob; repeatable
@@ -56,6 +70,23 @@ enum Cmd {
     Help,
     Pick(Args),
     Count(CountArgs),
+    Open(review::OpenArgs),
+    Seal(u32),
+    Unseal { number: u32, said: Option<String> },
+    Status { json: bool },
+}
+
+const VERBS: [(&str, &[&str], &[&str]); 6] = [
+    ("pick", &["--aim", "--seed"], &["--json"]),
+    ("count", &["--regex", "--path", "--limit"], &["--json"]),
+    ("open", &["--count", "--aim", "--seed"], &["--scheduled"]),
+    ("seal", &["--review"], &[]),
+    ("unseal", &["--review", "--said"], &[]),
+    ("status", &[], &["--json"]),
+];
+
+fn takes_value(flag: &str) -> bool {
+    VERBS.iter().any(|(_, valued, _)| valued.contains(&flag))
 }
 
 /// The one reader of argv: the command, and whether `--json` stood in a flag position.
@@ -63,51 +94,80 @@ fn parse(argv: &[String]) -> (Result<Cmd, String>, bool) {
     let mut json = false;
     let mut flags = argv.iter();
     while let Some(a) = flags.next() {
-        match a.as_str() {
-            "--aim" | "--seed" | "--regex" | "--path" | "--limit" => {
-                flags.next();
-            }
-            "--json" => json = true,
-            _ => {}
+        if takes_value(a) {
+            flags.next();
+        } else if a == "--json" {
+            json = true;
         }
     }
-    let mut it = argv.iter();
-    let first = it.next().map(String::as_str);
+    let first = argv.first().map(String::as_str);
     if matches!(first, Some("-h" | "--help")) {
         return (Ok(Cmd::Help), false);
     }
-    let r = (|| {
-        let count = match first {
-            Some("pick") => false,
-            Some("count") => true,
-            Some(other) => return Err(format!("unknown command `{other}`; the commands are `cr pick` and `cr count` (see -h)")),
-            None => return Err("no command; use `cr pick` or `cr count` (see -h)".to_string()),
-        };
-        let mut a = Args { aim: None, seed: None };
-        let mut c = CountArgs { regex: None, paths: vec![], limit: None };
-        while let Some(arg) = it.next() {
-            match arg.as_str() {
-                "-h" | "--help" => return Ok(Cmd::Help),
-                "--aim" if !count => a.aim = Some(it.next().ok_or("--aim needs a value")?.clone()),
-                "--seed" if !count => {
-                    let v = it.next().ok_or("--seed needs a value")?;
-                    a.seed = Some(v.parse().map_err(|_| format!("--seed {v:?} is not a non-negative integer"))?);
-                }
-                "--regex" if count => c.regex = Some(it.next().ok_or("--regex needs a value")?.clone()),
-                "--path" if count => c.paths.push(it.next().ok_or("--path needs a value")?.clone()),
-                "--limit" if count => {
-                    let v = it.next().ok_or("--limit needs a value")?;
-                    c.limit = Some(v.parse().map_err(|_| format!("--limit {v:?} is not a non-negative integer"))?);
-                }
-                "--json" => {}
-                f if f.starts_with('-') => return Err(format!("unknown flag `{f}` (see -h)")),
-                positional if count => return Err(format!("positional argument `{positional}` is not accepted; name it: `--regex {positional}`")),
-                positional => return Err(format!("positional argument `{positional}` is not accepted; name it: `--aim {positional}`")),
-            }
+    (parse_verb(argv, first), json)
+}
+
+fn parse_verb(argv: &[String], first: Option<&str>) -> Result<Cmd, String> {
+    let names: Vec<&str> = VERBS.iter().map(|v| v.0).collect();
+    let verb = match first {
+        Some(v) if names.contains(&v) => v,
+        Some(other) => return Err(format!("unknown command `{other}`; the commands are {} (see -h)", names.join(", "))),
+        None => return Err(format!("no command; use one of {} (see -h)", names.join(", "))),
+    };
+    let (_, valued, bare) = VERBS.iter().find(|v| v.0 == verb).expect("verb is in the table");
+    let mut values: std::collections::BTreeMap<&str, String> = Default::default();
+    let mut paths: Vec<String> = Vec::new();
+    let mut set: Vec<&str> = Vec::new();
+    let mut it = argv.iter().skip(1);
+    while let Some(arg) = it.next() {
+        let arg = arg.as_str();
+        if matches!(arg, "-h" | "--help") {
+            return Ok(Cmd::Help);
         }
-        Ok(if count { Cmd::Count(c) } else { Cmd::Pick(a) })
-    })();
-    (r, json)
+        if let Some(f) = valued.iter().find(|f| **f == arg) {
+            let v = it.next().ok_or(format!("{f} needs a value"))?.clone();
+            if *f == "--path" {
+                paths.push(v);
+            } else {
+                values.insert(f, v);
+            }
+        } else if let Some(f) = bare.iter().find(|f| **f == arg) {
+            set.push(f);
+        } else if arg.starts_with('-') {
+            return Err(format!("unknown flag `{arg}` for `cr {verb}` (see -h)"));
+        } else {
+            let hint = match verb {
+                "open" => "--count",
+                "count" => "--regex",
+                "seal" | "unseal" => "--review",
+                _ => "--aim",
+            };
+            return Err(format!("positional argument `{arg}` is not accepted; name it: `{hint} {arg}`"));
+        }
+    }
+    let seed = match values.get("--seed") {
+        Some(v) => Some(v.parse().map_err(|_| format!("--seed {v:?} is not a non-negative integer"))?),
+        None => None,
+    };
+    let review = || -> Result<u32, String> { record::parse_number(values.get("--review").ok_or("--review <NNN> is required")?) };
+    let limit = match values.get("--limit") {
+        Some(v) => Some(v.parse().map_err(|_| format!("--limit {v:?} is not a non-negative integer"))?),
+        None => None,
+    };
+    Ok(match verb {
+        "count" => Cmd::Count(CountArgs { regex: values.get("--regex").cloned(), paths, limit }),
+        "pick" => Cmd::Pick(Args { aim: values.get("--aim").cloned(), seed }),
+        "open" => {
+            let count = match values.get("--count") {
+                Some(v) => v.parse::<usize>().map_err(|_| format!("--count {v:?} is not a positive integer"))?,
+                None => 1,
+            };
+            Cmd::Open(review::OpenArgs { count, aim: values.get("--aim").cloned(), seed, scheduled: set.contains(&"--scheduled") })
+        }
+        "seal" => Cmd::Seal(review()?),
+        "unseal" => Cmd::Unseal { number: review()?, said: values.get("--said").cloned() },
+        _ => Cmd::Status { json: set.contains(&"--json") },
+    })
 }
 
 pub fn wants_help(argv: &[String]) -> bool {
@@ -141,6 +201,10 @@ pub fn run(argv: &[String], ports: &Ports) -> Outcome {
         Ok(Cmd::Help) => return Outcome { code: 0, stdout: HELP.to_string(), stderr: String::new() },
         Ok(Cmd::Count(c)) => return run_count(c, json, ports),
         Ok(Cmd::Pick(a)) => a,
+        Ok(Cmd::Open(a)) => return review::open(&a, ports),
+        Ok(Cmd::Seal(n)) => return review::seal(n, ports),
+        Ok(Cmd::Unseal { number, said }) => return review::unseal(number, said.as_deref(), ports),
+        Ok(Cmd::Status { json }) => return review::status(json, ports),
         Err(e) => return fail(2, json, &e, &[], None, None),
     };
     let now = ports.clock.now_ms();

@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=cr
+DOC=The name of the private GitHub repository cr opens its review pull requests in. Used by cr seal and cr unseal; an empty value is refused.
+SCHEMA=REQUIRED: The name of the private review repository cr seal and cr unseal call. Nothing defaults it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF
