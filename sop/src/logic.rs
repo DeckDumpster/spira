@@ -109,6 +109,17 @@ pub fn show(bd: &dyn Bd, key: &str) -> Report {
             r
         }
         None => match retired_record(bd, &key).ok().flatten() {
+            Some(rec) if rec.replaced_by.is_some() => {
+                let to = rec.replaced_by.unwrap_or_default();
+                match bd.recall(&to) {
+                    Some(text) => {
+                        r.say(format!("{key} was renamed to {to}"));
+                        r.say(text.trim_end().to_string());
+                        r
+                    }
+                    None => r.fail(1, format!("{key} was renamed to {to}, which is not on the shelf")),
+                }
+            }
             Some(rec) => r.fail(1, format!("{key} is retired (by {} at {}): {}", rec.by, rec.at, rec.reason)),
             None => r.fail(1, format!("no such SOP: {key}")),
         },
@@ -427,7 +438,7 @@ pub fn retire(bd: &dyn Bd, clock: &dyn Clock, env: &Env, key: &str, reason: &str
         };
     };
     let (epoch, at) = clock.now();
-    let rec = shelf::Retired { by: env.actor.clone(), at, epoch, reason: reason.to_string(), text: text.clone() };
+    let rec = shelf::Retired { by: env.actor.clone(), at, epoch, reason: reason.to_string(), text: text.clone(), replaced_by: None };
     let record_key = shelf::retired_key(&key);
     if let Err(cause) = bd.remember(&record_key, &rec.to_json()) {
         return r.fail(1, format!("failed to record the retirement of {key}: {cause}"));

@@ -1005,6 +1005,17 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
     }
 }
 
+fn retirement_record(from: &str, to: &str, before: &BTreeMap<String, serde_json::Value>) -> String {
+    use sop::ports::Clock;
+    let (epoch, at) = sop::real::RealClock { tz: "UTC".into() }.now();
+    let by = std::env::var("BEADS_ACTOR")
+        .ok()
+        .or_else(|| std::env::var("USER").ok())
+        .unwrap_or_else(|| "unknown".to_string());
+    let text = before.get(from).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    sop::shelf::Retired { by, at, epoch, reason: "renamed out of retired vocabulary".into(), text, replaced_by: Some(to.to_string()) }.to_json()
+}
+
 fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
     use rule::vocab::{plan, Entry};
     let dry_run = match rest {
@@ -1053,12 +1064,17 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
     }
     if dry_run {
         print!("{}", rule::vocab::dry_run_report(&strings(&before), &entries));
-        println!("DRY RUN: {} statute(s) would be rewritten. Nothing written.", entries.iter().filter(|e| matches!(e, Entry::Amend { .. } | Entry::Rename { .. })).count());
+        let runbook = |e: &Entry| matches!(e, Entry::Amend { key, .. } if key.starts_with("sop-")) || matches!(e, Entry::Rename { from, .. } if from.starts_with("sop-"));
+        let written = entries.iter().filter(|e| matches!(e, Entry::Amend { .. } | Entry::Rename { .. }));
+        let runbooks = written.clone().filter(|e| runbook(e)).count();
+        let statutes = written.count() - runbooks;
+        println!("DRY RUN: {statutes} statute(s) and {runbooks} runbook(s) would be rewritten. Nothing written.");
         return i32::from(failed);
     }
 
     let mut after = before.clone();
     let mut written = 0usize;
+    let (mut statutes_written, mut runbooks_written) = (0usize, 0usize);
     let mut renamed: Vec<(String, String, bool)> = Vec::new();
     for e in &entries {
         let (key, text, from) = match e {
@@ -1078,16 +1094,42 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
         }
         after.insert(key.clone(), serde_json::Value::String(text.clone()));
         if let (Some(from), Entry::Rename { numbered, .. }) = (from, e) {
+            let runbook = from.starts_with("sop-");
+            let record_key = sop::shelf::retired_key(from);
+            if runbook {
+                let record = retirement_record(from, key, &before);
+                let (code, _, stderr) = run_bd(db, &["remember", "--key", &record_key, &record]);
+                if code != 0 {
+                    eprintln!("rule: failed to record the retirement of {from}: {stderr}");
+                    run_bd(db, &["forget", key]);
+                    after.remove(key);
+                    failed = true;
+                    continue;
+                }
+            }
             let (code, _, stderr) = run_bd(db, &["forget", from]);
             if code != 0 {
                 eprintln!("rule: failed to forget {from}: {stderr}");
+                if runbook {
+                    run_bd(db, &["forget", &record_key]);
+                }
                 failed = true;
                 continue;
             }
             after.remove(from);
-            renamed.push((from.clone(), key.clone(), *numbered));
+            if runbook {
+                runbooks_written += 1;
+            } else {
+                renamed.push((from.clone(), key.clone(), *numbered));
+                statutes_written += 1;
+            }
             println!("renamed {from} → {key}");
         } else {
+            if key.starts_with("sop-") {
+                runbooks_written += 1;
+            } else {
+                statutes_written += 1;
+            }
             println!("amended {key}");
         }
         written += 1;
@@ -1108,10 +1150,14 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
         Ok(hook) => eprintln!("rule: hook '{hook}' failed — wiki page NOT regenerated."),
         Err(e) => eprintln!("rule: {e} — wiki page NOT regenerated."),
     }
+    if statutes_written == 0 {
+        println!("law/: no statute rewritten; nothing to land.");
+        return i32::from(failed);
+    }
     let book = strings(&after);
     let landed = rule::vocab::record_renames(&toc, &pointers, &renamed, &today()).and_then(|(toc, pointers)| code::catch_up(&toc, &pointers, &book, None).map(|caught| (caught, pointers))).map_err(|e| format!("rule: {e}")).and_then(|(caught, pointers)| land_law(home, &repo, "rename-vocabulary", "book", &caught, &pointers, &book));
     match landed {
-        Ok((branch, bead)) => println!("law/: {written} statute(s) rewritten; committed on {branch}, submitted under {bead}."),
+        Ok((branch, bead)) => println!("law/: {statutes_written} statute(s) rewritten ({runbooks_written} runbook(s) in the store); committed on {branch}, submitted under {bead}."),
         Err(e) => {
             eprintln!("{e}");
             log_law_book_failure("rename-vocabulary", "book", &e);
