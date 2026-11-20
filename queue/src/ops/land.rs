@@ -242,6 +242,31 @@ pub struct PendingActivation {
     /// The queue directory and repository the activation lock is taken under.
     queue_dir: PathBuf,
     repo: String,
+    /// The landing mail, held until the activation's outcome can be told in it.
+    mail: Option<LandingMail>,
+}
+
+struct LandingMail {
+    mailbox: String,
+    repo: String,
+    subject: String,
+    body: String,
+}
+
+/// The sentence a landing mail closes with about its release; empty when no activation was tried.
+fn deploy_note(head: &str, outcome: Option<&super::deploy::Outcome>) -> String {
+    match outcome {
+        Some(super::deploy::Outcome::Activated(sha)) => format!(" Release {sha} activated."),
+        Some(super::deploy::Outcome::Superseded(why)) => format!(" Release not activated: {why}."),
+        Some(super::deploy::Outcome::Fault(why)) => {
+            format!(" DEPLOY FAULT: {head} landed but its release was not activated: {why}.")
+        }
+        None => String::new(),
+    }
+}
+
+fn send_landing_mail(w: &World, m: LandingMail, head: &str, outcome: Option<&super::deploy::Outcome>) {
+    w.lib.notify(&m.mailbox, &m.repo, &m.subject, &format!("{}{}", m.body, deploy_note(head, outcome)));
 }
 
 impl PendingActivation {
@@ -254,7 +279,10 @@ impl PendingActivation {
     }
 
     /// Give the release up unactivated, releasing its pin.
-    pub fn discard(self) {
+    pub fn discard(mut self, w: &World) {
+        if let Some(m) = self.mail.take() {
+            send_landing_mail(w, m, &self.head, None);
+        }
         if let Some(pin) = &self.pin {
             let _ = fs::remove_file(pin);
         }
@@ -268,7 +296,15 @@ impl PendingActivation {
     /// or a round verb held behind it timed out and failed. Activations serialise on their own
     /// lock instead, and one whose head a later landing has already moved past is not run: that
     /// landing's release carries this one, and activating this one after it would roll back.
-    pub fn activate(self, w: &World) -> super::deploy::Outcome {
+    pub fn activate(mut self, w: &World) -> super::deploy::Outcome {
+        let outcome = self.run_activation(w);
+        if let Some(m) = self.mail.take() {
+            send_landing_mail(w, m, &self.head, Some(&outcome));
+        }
+        outcome
+    }
+
+    fn run_activation(&self, w: &World) -> super::deploy::Outcome {
         let _serial = crate::lock::activation_lock(&self.queue_dir, &self.repo);
         if let Some(tip) = w.git.rev_parse(&self.plan.repo, &self.base) {
             if tip != self.head && w.git.is_ancestor(&self.plan.repo, &self.head, &tip) {
@@ -571,8 +607,9 @@ pub fn land_local_deferring(
             pin: pin.clone(),
             queue_dir: c.s.queue_dir.clone(),
             repo: c.r.name.clone(),
+            mail: None,
         });
-    let (pending, outcome) = if defer {
+    let (mut pending, outcome) = if defer {
         (pending, None)
     } else {
         // The landing is recorded: the queue lock goes before the activation, not after it.
@@ -584,24 +621,20 @@ pub fn land_local_deferring(
             let _ = fs::remove_file(pin);
         }
     }
-    let deploy_note = match &outcome {
-        Some(super::deploy::Outcome::Activated(sha)) => format!(" Release {sha} activated."),
-        Some(super::deploy::Outcome::Superseded(why)) => format!(" Release not activated: {why}."),
-        Some(super::deploy::Outcome::Fault(why)) => {
-            format!(" DEPLOY FAULT: {head} landed but its release was not activated: {why}.")
-        }
-        None => String::new(),
-    };
     let listed = ms.iter().map(Member::render).collect::<Vec<_>>().join(",");
-    w.lib.notify(
-        &c.s.mailbox,
-        &name,
-        &format!("local landing (round {n})"),
-        &format!(
-            "{base} fast-forwarded to {head} (round {n}, archived at {archive}). Members: {listed}{}{deploy_note}",
+    let mail = LandingMail {
+        mailbox: c.s.mailbox.clone(),
+        repo: name.clone(),
+        subject: format!("local landing (round {n})"),
+        body: format!(
+            "{base} fast-forwarded to {head} (round {n}, archived at {archive}). Members: {listed}{}",
             ungated.as_ref().map(|r| format!(". UNGATED — no gate PASS or round GREEN for this tree; SPIRA_LAND_UNGATED={} by={} evidence={}", r.reason, r.by, r.evidence)).unwrap_or_default()
         ),
-    );
+    };
+    match pending.as_mut() {
+        Some(p) => p.mail = Some(mail),
+        None => send_landing_mail(w, mail, &head, outcome.as_ref()),
+    }
     w.out(format!(
         "queue.sh land-local: {base} fast-forwarded to {head} (round {n}, archived at {archive})"
     ));

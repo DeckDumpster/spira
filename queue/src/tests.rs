@@ -282,6 +282,8 @@ impl Bd for FBd {
 }
 
 struct FLib {
+    /// Every `notify`, as (subject, body), in order sent.
+    mails: RefCell<Vec<(String, String)>>,
     s: Settings,
     r: RefCell<RepoCtx>,
     calls: RefCell<Vec<String>>,
@@ -377,8 +379,9 @@ impl Lib for FLib {
     fn comment(&self, id: &str, text: &str) {
         self.log(format!("comment {id} {text}"));
     }
-    fn notify(&self, _mailbox: &str, repo: &str, subject: &str, _body: &str) {
+    fn notify(&self, _mailbox: &str, repo: &str, subject: &str, body: &str) {
         self.log(format!("notify {repo} {subject}"));
+        self.mails.borrow_mut().push((subject.to_string(), body.to_string()));
     }
     fn event(&self, kind: &str, title: &str, detail: &str) {
         self.log(format!("event {kind} {title} {detail}"));
@@ -481,6 +484,8 @@ struct FScripts {
     activate_seq: RefCell<std::collections::VecDeque<(i32, String)>>,
     /// The unit the caller runs in, and the keys `release_detached` was started under.
     caller_unit: RefCell<Option<String>>,
+    /// A rolled-back activation: exits 0 and leaves `<releases>/current` where it was.
+    leave_current: Cell<bool>,
     detached_keys: RefCell<Vec<String>>,
     /// `ActiveState` answers in order (the last repeats; empty reads `active`), and the units asked about.
     unit_states: RefCell<std::collections::VecDeque<String>>,
@@ -875,6 +880,13 @@ impl Scripts for FScripts {
         } else {
             String::new()
         };
+        if args[0] == "activate" && rc == 0 && !self.leave_current.get() {
+            if let Some(rel) = args.iter().position(|a| a == "--releases").and_then(|i| args.get(i + 1)) {
+                let cur = Path::new(rel).join("current");
+                let _ = fs::remove_file(&cur);
+                let _ = std::os::unix::fs::symlink(&args[1], &cur);
+            }
+        }
         RunOut { rc, out, err }
     }
 }
@@ -1911,6 +1923,7 @@ impl T {
         let git = FGit::default();
         git.fetch_ok.set(true);
         let lib = FLib {
+            mails: RefCell::default(),
             s,
             r: RefCell::new(r),
             calls: RefCell::default(),
