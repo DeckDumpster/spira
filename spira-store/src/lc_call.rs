@@ -953,6 +953,29 @@ mod tests {
     }
 
     #[test]
+    fn a_write_cut_every_time_gives_the_last_cut_answer_when_the_budget_runs_out() {
+        let argv = vec!["hold".to_string(), "sp-a".to_string()];
+        let mut sends = 0;
+        let got = retrying_resent(&argv, std::path::Path::new("sock"), Duration::from_millis(300), Duration::ZERO, |_| {
+            sends += 1;
+            Ok(Reply { code: CANNOT_TELL, out: DEADLINE_ANSWER.to_string(), err: String::new() })
+        });
+        assert!(sends >= 2, "re-sent at least once: {sends}");
+        assert_eq!(got.unwrap().out, DEADLINE_ANSWER);
+    }
+
+    #[test]
+    fn a_write_whose_connection_dropped_gets_one_attempt_from_the_resending_step() {
+        let argv = vec!["hold".to_string(), "sp-a".to_string()];
+        let mut sends = 0;
+        let got = retrying_resent(&argv, std::path::Path::new("sock"), DEADLINE, Duration::ZERO, |_| {
+            sends += 1;
+            Err(Fail::Dropped("gone".into()))
+        });
+        assert_eq!((sends, got), (1, Err(Fail::Dropped("gone".into()))));
+    }
+
+    #[test]
     fn a_read_is_never_sent_under_a_minted_id() {
         let (got, sent) = scripted(&[(0, "[]")], &["show", "sp-a"], None);
         assert_eq!(got.unwrap().code, 0);
