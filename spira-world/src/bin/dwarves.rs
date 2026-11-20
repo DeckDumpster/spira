@@ -88,7 +88,7 @@ fn cmd_status() -> i32 {
     }
     match (&limit_ceiling, file_ceiling) {
         (Limit::Unanswered { file: None, .. }, None) => println!("  fleet ceiling     none  (SPIRA_MAX_LIVE_DWARVES unset)"),
-        (l, _) => println!("  fleet ceiling     {}   (SPIRA_MAX_LIVE_DWARVES — counts every dwarf; a directed one is outside it)", l.render()),
+        (l, _) => println!("  fleet ceiling     {}   (SPIRA_MAX_LIVE_DWARVES — counts every live dwarf, directed ones included)", l.render()),
     }
     match (&limit_pool, file_pool) {
         (Limit::Unanswered { file: None, .. }, None) => println!("  task pool         ?   (SPIRA_MAX_DWARVES — builders and other task runes)"),

@@ -260,7 +260,7 @@ pub fn slots_line(snap: &Snapshot) -> String {
     };
     let directed = match snap.get("SP_SLOTS_DIRECTED").map(|d| d.trim()) {
         Some("0") | Some("") | None => String::new(),
-        Some(d) => format!("  {DIM}{d} directed{RST}"),
+        Some(d) => format!("  {DIM}({d} directed){RST}"),
     };
     format!(
         " {DIM}SLOTS{RST}   {B}{}/{}{RST}  {col}{free} free{RST}{pending}{unconfirmed}{directed}",

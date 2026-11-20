@@ -191,18 +191,28 @@ fn sp_bpnmzg_dwarves_sh_and_sentinel_call_count_the_same_units() {
     assert_eq!((sh, call), (5, 5), "dwarves.sh {sh} and sentinel-call {call} must both count the 5 live dwarves (3 scheduler-started, 2 by name)");
 }
 
-/// A dwarf directed onto a named bead runs outside the caps: the fleet the scheduler reads back
-/// leaves it out, so a full fleet still reads full and an empty one still reads empty.
+/// A dwarf directed onto a named bead holds a slot while it lives: four pooled builders and one
+/// directed one fill a ceiling of five, so the scheduler calls nobody, and the slot returns when it exits.
 #[test]
-fn sp_8mbnup_a_directed_dwarf_takes_no_slot_in_the_fleet_ceiling() {
+fn sp_ljgmia_a_directed_dwarf_takes_a_slot_in_the_fleet_ceiling() {
     let (_clock, u) = manager(1_000_000);
     let facts = |state| UnitFacts { state, main_pid: Some(7), exit: None, since_ms: Some(1) };
     let roster = vec!["builder".to_string()];
-    u.install("spira-dwarf-builder-1794006550.service", facts(UnitState::Active));
-    let before = fleet(&u, &roster, &|r: &str| r.to_string()).unwrap().total();
-    u.install(&format!("{}.service", units::directed_unit_stem("builder", 1794006551)), facts(UnitState::Active));
-    let after = fleet(&u, &roster, &|r: &str| r.to_string()).unwrap();
-    assert_eq!((before, after.total()), (1, 1), "one ordinary dwarf counts, the directed one beside it does not: {after:?}");
+    for i in 0..4 {
+        u.install(&format!("spira-dwarf-builder-{}.service", 1794006550 + i), facts(UnitState::Active));
+    }
+    let directed = format!("{}.service", units::directed_unit_stem("builder", 1794006560));
+    u.install(&directed, facts(UnitState::Active));
+    let call = |u: &ScriptedUnits| {
+        let f = fleet(u, &roster, &|r: &str| r.to_string()).unwrap();
+        let snap = Snapshot { live_by_rune: f.live_by_rune.clone(), max_live: Some(5), ..busy() };
+        (f.total(), starts(&decide(&Carry::default(), &snap).1))
+    };
+    assert_eq!(call(&u), (5, 0), "four pooled and one directed fill a ceiling of five");
+    assert_eq!(fleet(&u, &roster, &|r: &str| r.to_string()).unwrap().live_by_rune.get("builder"), Some(&5), "the directed unit is attributed to its rune");
+
+    u.install(&directed, facts(UnitState::Inactive));
+    assert_eq!(call(&u).0, 4, "the slot comes back when the directed dwarf exits");
 }
 
 fn at_work() -> TaskRig {

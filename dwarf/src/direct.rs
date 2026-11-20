@@ -1,10 +1,10 @@
-//! direct — a dwarf of one rune on one named bead, outside the caps and the world's state.
+//! direct — a dwarf of one rune on one named bead, past the caps and the world's state.
 //! `dwarf direct <rune> <bead> --by <who> --reason <why>`.
 //!
 //! The dwarf is the sentinel's own (same rune prompt, hooks, fences, build-dir lease, submit
 //! and session end): this starts it by the same transient-unit call, and only the claim differs.
 //! The unit is named `spira-dwarf-<rune>-directed-<epoch>` so drain, slay and the cockpit see a
-//! dwarf while no cap counts it (`runtime::units::counts_toward_caps`). The claim is the
+//! dwarf; once live it holds a slot in the fleet ceiling and its rune's count, though starting it checks no cap. The claim is the
 //! ordinary compare-and-set, so a second direct of the same bead loses it: one directed dwarf
 //! per bead. A bead a dwarf holds is taken over: that dwarf is stopped with its work kept, then
 //! the bead is claimed on the same branch.
@@ -359,6 +359,18 @@ mod tests {
         let f = { let mut f = fake(row("READY", None), 0); f.after_launch = Some(row("WORKING", Some("dwarf-new"))); f };
         let (rc, _) = go(&f);
         assert_eq!((rc, progs(&f)), (0, a(&["spira-lc", "systemd-run", "spira-lc"])));
+    }
+
+    #[test]
+    fn a_direct_past_a_full_fleet_still_builds_its_unit_call_and_asks_no_cap() {
+        let f = { let mut f = fake(row("READY", None), 0); f.after_launch = Some(row("WORKING", Some("dwarf-new"))); f };
+        let (rc, _) = go(&f);
+        let calls = f.calls.lock().unwrap();
+        let started = calls.iter().filter(|c| c.0 == "systemd-run").count();
+        let asked_a_cap = calls.iter().any(|c| !matches!(c.0.as_str(), "spira-lc" | "systemd-run" | "slay"));
+        assert_eq!((rc, started, asked_a_cap), (0, 1, false), "{calls:?}");
+        let unit = calls.iter().find(|c| c.0 == "systemd-run").unwrap();
+        assert!(unit.1.iter().any(|x| x.starts_with("--unit=spira-dwarf-builder-directed-")), "{unit:?}");
     }
 
     #[test]

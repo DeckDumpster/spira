@@ -774,17 +774,11 @@ pub fn directed_unit_stem(rune_name: &str, epoch: i64) -> String {
     format!("{DWARF_PREFIX}{rune_name}{DIRECTED_MARK}{epoch}")
 }
 
-/// Whether `name` is a dwarf directed onto a named bead (`dwarf direct`): a dwarf unit in
-/// every respect but the caps.
+/// Whether `name` is a dwarf directed onto a named bead (`dwarf direct`): a dwarf unit that
+/// counts in every cap while live, though starting it checks none.
 pub fn is_directed(name: &str) -> bool {
     let Some(rest) = name.strip_prefix(DWARF_PREFIX).and_then(|r| r.strip_suffix(SUFFIX)) else { return false };
     rest.rsplit_once(DIRECTED_MARK).is_some_and(|(rune, epoch)| !rune.is_empty() && !epoch.is_empty() && epoch.bytes().all(|b| b.is_ascii_digit()))
-}
-
-/// Whether a dwarf unit counts toward `max_live_dwarves`, a lane's cap or a rune's
-/// concurrency: every dwarf but a directed one.
-pub fn counts_toward_caps(name: &str) -> bool {
-    is_dwarf_unit(name) && !is_directed(name)
 }
 
 /// The globs that together list every dwarf unit, by either name.
@@ -2400,17 +2394,17 @@ mod tests {
     }
 
     #[test]
-    fn a_directed_dwarf_is_a_dwarf_unit_that_no_cap_counts() {
+    fn a_directed_dwarf_is_a_dwarf_unit_every_cap_counts() {
         let n = format!("{}.service", directed_unit_stem("builder", 1794009721));
         assert_eq!(n, "spira-dwarf-builder-directed-1794009721.service");
-        assert!(is_dwarf_unit(&n) && is_directed(&n) && !counts_toward_caps(&n));
-        assert!(is_live_dwarf(&n, UnitState::Active), "drain, slay and the cockpit still see it");
+        assert!(is_dwarf_unit(&n) && is_directed(&n));
+        assert_eq!(dwarf_rune(&n), None, "a prefix-named unit's rune is read by is_dwarf_of");
+        assert!(is_dwarf_of(&n, "builder", "builder") && !is_dwarf_of(&n, "ops", "ops"), "a directed dwarf counts in its rune");
+        assert!(is_live_dwarf(&n, UnitState::Active), "a live directed dwarf holds a slot, and drain, slay and the cockpit see it");
         assert!(dwarf_globs().iter().any(|g| glob_match(g, &n)));
         for other in ["spira-dwarf-builder-17.service", "spira-dwarf-builder-directed-x.service", "spira-dwarf--directed-1.service", "spira-dwarf-builder-directed-1.scope"] {
             assert!(!is_directed(other), "{other}");
         }
-        assert!(counts_toward_caps("spira-dwarf-builder-17.service"));
-        assert!(counts_toward_caps(&unit_name(DWARF_TASK, "builder-1-0").unwrap()));
     }
 
     #[test]
