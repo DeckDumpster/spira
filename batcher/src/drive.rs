@@ -267,6 +267,21 @@ pub trait RoundOps {
     /// Disables every proven flip (registry ids) for the registry's hold, naming a follow-on
     /// bead for each, and puts the rows on the round's deny list; an error blocks the round.
     fn disable_flips(&mut self, tests: &[String]) -> Result<(), String>;
+    /// The registry rows this round lifted, each as (registry test id, owner member).
+    fn lifted(&self) -> Vec<(String, Id)> {
+        vec![]
+    }
+    /// A lifted row's test is red on the merged tree and on the base: file one fix bead, re-point
+    /// the row at it and keep it out of the round's later passes. Returns the new bead.
+    fn keep_lifted(
+        &mut self,
+        _test: &str,
+        _owner: &Id,
+        _merged_lines: &[String],
+        _base_lines: &[String],
+    ) -> Result<String, String> {
+        Err("this round cannot keep a lifted row".into())
+    }
     fn record(&mut self, iteration: u32, decision: &Decision);
     /// `member` owns red `suite`; `rerun` is that suite rerun on the full round tree (`None`
     /// when the rerun faulted): green there means it flipped.
@@ -371,6 +386,8 @@ pub struct Settled {
     pub filter: Option<FilterRed>,
     /// Returns that named a round member and stopped the pass before it settled.
     pub returned: Vec<crate::mender::Failure>,
+    /// Lifted suites that ran red: judged on the base before any member is named for them.
+    pub lifted_reds: Vec<String>,
 }
 
 /// One main run with concurrent attribution, to the point where every red is settled.
@@ -397,6 +414,11 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
         })
         .collect();
     let mut a = Attributor::new(budget, Shape::new(&ids, &prereqs), suites.len());
+    let lifted_suites: BTreeSet<String> = lifted_in(ops, members)
+        .into_iter()
+        .filter_map(|(t, _)| t.strip_prefix("suite:").map(str::to_string))
+        .collect();
+    let mut lifted_reds: Vec<String> = vec![];
     runner.set_members(members);
     runner.start_main(kind, suites)?;
     let mut seen = std::collections::BTreeSet::new();
@@ -414,6 +436,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 settled_at: now,
                 filter: None,
                 returned: vec![],
+                lifted_reds: vec![],
             });
         }
         let returned: Vec<_> = ops
@@ -431,6 +454,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 settled_at: now,
                 filter: None,
                 returned,
+                lifted_reds: vec![],
             });
         }
         let poll = runner.poll_main()?;
@@ -438,7 +462,10 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
         for (suite, green) in poll.results {
             if seen.insert(suite.clone()) {
                 idle.advanced(runner);
-                if !green {
+                if !green && lifted_suites.contains(&suite) {
+                    lifted_reds.push(suite.clone());
+                    a.on_main_result(&suite, true, &[], now);
+                } else if !green {
                     red_main(&mut a, ops, &suite, &ids, now);
                 } else {
                     a.on_main_result(&suite, green, &[], now);
@@ -457,6 +484,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                     settled_at: now,
                     filter: None,
                     returned: vec![],
+                    lifted_reds: vec![],
                 });
             }
             if kind == MainKind::Corpus && main_end_at.is_none() {
@@ -468,6 +496,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                         settled_at: now,
                         filter: Some(filter),
                         returned: vec![],
+                        lifted_reds: vec![],
                     });
                 }
             }
@@ -475,7 +504,12 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 // Absence is never green: a selected suite with no result is red.
                 for s in suites {
                     if seen.insert(s.clone()) {
-                        red_main(&mut a, ops, s, &ids, now);
+                        if lifted_suites.contains(s) {
+                            lifted_reds.push(s.clone());
+                            a.on_main_result(s, true, &[], now);
+                        } else {
+                            red_main(&mut a, ops, s, &ids, now);
+                        }
                     }
                 }
                 a.on_main_done(now);
@@ -512,6 +546,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 settled_at: now,
                 filter: None,
                 returned: vec![],
+                lifted_reds,
             });
         }
         if let Some(idle_secs) = idle.stalled(runner) {
@@ -529,6 +564,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 settled_at: now,
                 filter: None,
                 returned: vec![],
+                lifted_reds: vec![],
             });
         }
         runner.wait();
@@ -1134,25 +1170,28 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
 pub fn flip_ids(failed: &[String], graph: Option<&PackageGraph>) -> Option<Vec<String>> {
     let mut ids: Vec<String> = vec![];
     for line in failed {
-        let mut w = line.split_whitespace();
-        let (Some(_), Some(binary), Some(test), None) = (w.next(), w.next(), w.next(), w.next())
-        else {
-            return None;
-        };
-        let id = if binary.starts_with("dir:") || binary.starts_with("test:") {
-            let package = graph?.resolve(&[binary.to_string()]).remove(0);
-            if package.starts_with("dir:") || package.starts_with("test:") {
-                return None;
-            }
-            format!("integration:{package} {test}")
-        } else {
-            format!("unit:{binary} {test}")
-        };
+        let id = line_id(line, graph)?;
         if !ids.contains(&id) {
             ids.push(id);
         }
     }
     (!ids.is_empty()).then_some(ids)
+}
+
+fn line_id(line: &str, graph: Option<&PackageGraph>) -> Option<String> {
+    let mut w = line.split_whitespace();
+    let (Some(_), Some(binary), Some(test), None) = (w.next(), w.next(), w.next(), w.next()) else {
+        return None;
+    };
+    if binary.starts_with("dir:") || binary.starts_with("test:") {
+        let package = graph?.resolve(&[binary.to_string()]).remove(0);
+        if package.starts_with("dir:") || package.starts_with("test:") {
+            return None;
+        }
+        Some(format!("integration:{package} {test}"))
+    } else {
+        Some(format!("unit:{binary} {test}"))
+    }
 }
 
 /// How many failing tests an eject note lists before it counts the rest.
@@ -1692,6 +1731,140 @@ fn own_by_touch<O: RoundOps>(ops: &O, d: &mut Decision, members: &[Member]) {
 
 const EJECT_REFUSED: &str = "\u{1}eject-refused\u{1}";
 
+/// The lifted rows whose owner is still in the round.
+fn lifted_in<O: RoundOps + ?Sized>(ops: &O, members: &[Member]) -> Vec<(String, Id)> {
+    ops.lifted().into_iter().filter(|(_, o)| members.iter().any(|m| &m.id == o)).collect()
+}
+
+enum Check {
+    Suite(String),
+    Filter { name: String, scope: Vec<String>, lines: Vec<String> },
+}
+
+struct LiftedRed {
+    test: String,
+    owner: Id,
+    check: Check,
+}
+
+enum Lifted {
+    Blocked(String),
+    Emptied(String),
+    Members { members: Vec<Member>, ejected: bool },
+}
+
+/// A filter red split into the failing lines that belong to lifted rows and the filter's own remainder.
+fn split_lifted_filter<O: RoundOps>(ops: &O, f: &FilterRed, members: &[Member]) -> (Vec<LiftedRed>, FilterRed) {
+    let lifted = lifted_in(ops, members);
+    if lifted.is_empty() {
+        return (vec![], f.clone());
+    }
+    let graph = ops.package_graph();
+    let mut reds: Vec<LiftedRed> = vec![];
+    let mut rest = f.clone();
+    rest.failed.clear();
+    for line in &f.failed {
+        let hit = line_id(line, graph.as_ref()).and_then(|id| lifted.iter().find(|(t, _)| *t == id).cloned());
+        match hit {
+            Some((test, owner)) => reds.push(LiftedRed {
+                check: Check::Filter {
+                    name: f.name.clone(),
+                    scope: unitattr::rerun_scope(std::slice::from_ref(line), graph.as_ref()),
+                    lines: vec![line.clone()],
+                },
+                test,
+                owner,
+            }),
+            None => rest.failed.push(line.clone()),
+        }
+    }
+    (reds, rest)
+}
+
+fn suite_reds<O: RoundOps>(ops: &O, suites: &[String], members: &[Member]) -> Vec<LiftedRed> {
+    let lifted = lifted_in(ops, members);
+    suites
+        .iter()
+        .filter_map(|s| {
+            let id = format!("suite:{s}");
+            lifted.iter().find(|(t, _)| *t == id).map(|(t, o)| LiftedRed {
+                test: t.clone(),
+                owner: o.clone(),
+                check: Check::Suite(s.clone()),
+            })
+        })
+        .collect()
+}
+
+/// Judges each lifted red on the base before any member is named for it. Red there too, the row
+/// is kept and the round goes on; green there, the red came from the round: the members whose tree
+/// alone is red leave, and when none is, the row's owner did not fix its flip and leaves.
+fn settle_lifted<R: RoundRunner, O: RoundOps>(
+    runner: &mut R,
+    ops: &mut O,
+    reds: &[LiftedRed],
+    members: &[Member],
+) -> Result<Lifted, String> {
+    let mut actions: Vec<Action> = vec![];
+    let mut tests: Vec<&str> = vec![];
+    for red in reds {
+        let mut green = |on: &[Member]| match &red.check {
+            Check::Suite(s) => runner.suite_green(s, on),
+            Check::Filter { name, scope, .. } => runner.filter_green_in(name, scope, on),
+        };
+        match green(&[]) {
+            Some(false) => {
+                let base_lines: Vec<String> = Some(runner.probe_output()).filter(|t| !t.trim().is_empty()).into_iter().collect();
+                let merged: &[String] = match &red.check {
+                    Check::Filter { lines, .. } => lines,
+                    Check::Suite(_) => &[],
+                };
+                println!("batcher: {} red on the base too — the row stays, its owner {} lands", red.test, red.owner);
+                match ops.keep_lifted(&red.test, &red.owner, merged, &base_lines) {
+                    Ok(bead) => println!("batcher: {} kept, re-pointed at {bead}", red.test),
+                    Err(e) => {
+                        return Ok(Lifted::Blocked(format!("cannot keep the row of {}: {e}", red.test)));
+                    }
+                }
+            }
+            Some(true) => {
+                let culprits: Vec<&Member> = if members.len() > 1 {
+                    members.iter().filter(|m| green(std::slice::from_ref(m)) == Some(false)).collect()
+                } else {
+                    vec![]
+                };
+                let named: Vec<(Id, String)> = if culprits.is_empty() {
+                    vec![(
+                        red.owner.clone(),
+                        format!("{} still red on the merged tree with {}'s fix, green on the base", red.test, red.owner),
+                    )]
+                } else {
+                    culprits
+                        .iter()
+                        .map(|m| (m.id.clone(), format!("{} red with only {} merged onto the base", red.test, m.id)))
+                        .collect()
+                };
+                for (id, line) in named {
+                    if !actions.iter().any(|a| *action_id(a) == id) {
+                        actions.push(Action::Eject { id, line });
+                    }
+                }
+                tests.push(&red.test);
+            }
+            None => {
+                return Ok(Lifted::Blocked(format!("cannot tell whether {} is red on the base", red.test)));
+            }
+        }
+    }
+    if actions.is_empty() {
+        return Ok(Lifted::Members { members: members.to_vec(), ejected: false });
+    }
+    Ok(match apply_build_actions(ops, members, &actions, &tests.join(","))? {
+        Some(next) => Lifted::Members { members: next, ejected: true },
+        None => Lifted::Emptied(format!("{} red with the owner's fix", tests.join(","))),
+    })
+}
+
 fn refused(reason: String) -> String {
     format!("{EJECT_REFUSED}{reason}")
 }
@@ -1765,6 +1938,20 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
         }
     }
     if let Some(f) = runner.prior_red() {
+        let (reds, rest) = split_lifted_filter(&*ops, &f, &members);
+        let f = if reds.is_empty() {
+            f
+        } else {
+            match settle_lifted(runner, ops, &reds, &members)? {
+                Lifted::Blocked(why) => return Ok(RoundEnd::Blocked(why)),
+                Lifted::Emptied(why) => return Ok(RoundEnd::Emptied(why)),
+                Lifted::Members { members: next, .. } => members = next,
+            }
+            if rest.failed.is_empty() {
+                return Ok(RoundEnd::Land { members, attribution_secs: None });
+            }
+            rest
+        };
         println!(
             "batcher: {} red in the corpus pass — attributing it by its failing tests, without running the corpus again",
             f.name
@@ -1814,6 +2001,21 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
         .into_iter()
         .filter(|s| corpus.contains(s))
         .collect();
+    let lifted_prior = suite_reds(&*ops, &prior_reds, &members);
+    let prior_reds: Vec<String> = prior_reds
+        .into_iter()
+        .filter(|s| !lifted_prior.iter().any(|r| matches!(&r.check, Check::Suite(x) if x == s)))
+        .collect();
+    if !lifted_prior.is_empty() {
+        match settle_lifted(runner, ops, &lifted_prior, &members)? {
+            Lifted::Blocked(why) => return Ok(RoundEnd::Blocked(why)),
+            Lifted::Emptied(why) => return Ok(RoundEnd::Emptied(why)),
+            Lifted::Members { members: next, .. } => members = next,
+        }
+        if prior_reds.is_empty() {
+            return Ok(RoundEnd::Land { members, attribution_secs: None });
+        }
+    }
     if !prior_reds.is_empty() {
         println!(
             "batcher: {} suite(s) red in the corpus pass — attributing them alone, without the corpus again",
@@ -1951,6 +2153,21 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             ));
         }
         if let Some(f) = &s.filter {
+            let (reds, rest) = split_lifted_filter(&*ops, f, &members);
+            let f = &if reds.is_empty() {
+                f.clone()
+            } else {
+                match settle_lifted(runner, ops, &reds, &members)? {
+                    Lifted::Blocked(why) => return Ok(RoundEnd::Blocked(why)),
+                    Lifted::Emptied(why) => return Ok(RoundEnd::Emptied(why)),
+                    Lifted::Members { members: next, .. } => members = next,
+                }
+                if rest.failed.is_empty() {
+                    runner.stop_main()?;
+                    continue;
+                }
+                rest
+            };
             println!(
                 "batcher: {} red before any suite ran, naming {} member(s)",
                 f.name,
@@ -2043,6 +2260,22 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             continue;
         }
         let mut d = s.decision;
+        let lifted_reds = suite_reds(&*ops, &s.lifted_reds, &members);
+        if !lifted_reds.is_empty() {
+            match settle_lifted(runner, ops, &lifted_reds, &members)? {
+                Lifted::Blocked(why) => return Ok(RoundEnd::Blocked(why)),
+                Lifted::Emptied(why) => return Ok(RoundEnd::Emptied(why)),
+                Lifted::Members { members: next, ejected: true } => {
+                    println!("batcher: an owner left for its lifted row — re-cutting {} member(s)", next.len());
+                    runner.stop_main()?;
+                    members = next;
+                    suites = d.records.iter().map(|r| r.suite.clone()).collect();
+                    kind = MainKind::Verify;
+                    continue;
+                }
+                Lifted::Members { ejected: false, .. } => {}
+            }
+        }
         if !d.records.is_empty() {
             println!(
                 "batcher: iteration {iteration}: main run ended at +{}s, decision at +{}s",
@@ -2762,6 +2995,9 @@ pub(crate) mod tests {
         pub returned_at: Vec<u64>,
         /// The kept red that named no member.
         pub unnamed: Option<UnnamedRed>,
+        pub lifted: Vec<(String, String)>,
+        pub kept: Vec<(String, String, Vec<String>, Vec<String>)>,
+        pub keep_refused: Option<String>,
     }
 
     impl RoundOps for Ops {
@@ -2890,6 +3126,16 @@ pub(crate) mod tests {
             }
             self.disabled.push(tests.to_vec());
             Ok(())
+        }
+        fn lifted(&self) -> Vec<(String, Id)> {
+            self.lifted.clone()
+        }
+        fn keep_lifted(&mut self, test: &str, owner: &Id, merged: &[String], base: &[String]) -> Result<String, String> {
+            if let Some(why) = &self.keep_refused {
+                return Err(why.clone());
+            }
+            self.kept.push((test.to_string(), owner.clone(), merged.to_vec(), base.to_vec()));
+            Ok(format!("sp-kept{}", self.kept.len()))
         }
         fn record(&mut self, iteration: u32, decision: &Decision) {
             self.recorded.push((iteration, decision.clone()));
@@ -6584,6 +6830,184 @@ pub(crate) mod tests {
         let (end, ops) = recur_round(prior, Box::new(|_| None));
         assert!(matches!(end, RoundEnd::Land { .. }), "{end:?}");
         assert!(ops.unnamed.is_none());
+    }
+
+    const LIFTED_SUITE: &str = "test-01.sh";
+
+    fn lifted_ops(test: &str) -> Ops {
+        let mut ops = touching_ops(&[(LIFTED_SUITE, &["m2"])]);
+        ops.lifted = vec![(test.to_string(), "m2".to_string())];
+        ops
+    }
+
+    fn lifted_suite_round(f: &mut Fake, ops: &mut Ops) -> RoundEnd {
+        f.runs_alone = true;
+        attribute_round(f, ops, &corpus(3), three(), budget6()).unwrap()
+    }
+
+    #[test]
+    fn a_lifted_suite_green_on_the_round_tree_lands_every_member_and_keeps_nothing() {
+        let mut f = Fake::new(|_, _| false);
+        let mut ops = lifted_ops("suite:test-01.sh");
+        let end = lifted_suite_round(&mut f, &mut ops);
+        assert!(ops.kept.is_empty());
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn a_lifted_suite_red_on_the_round_tree_and_the_base_keeps_its_row_and_lands_the_owner_whose_diff_touches_it() {
+        let mut f = Fake::new(|s, _| s == LIFTED_SUITE);
+        let mut ops = lifted_ops("suite:test-01.sh");
+        let end = lifted_suite_round(&mut f, &mut ops);
+        assert_eq!(ops.kept.len(), 1, "{:?}", ops.kept);
+        assert_eq!((ops.kept[0].0.as_str(), ops.kept[0].1.as_str()), ("suite:test-01.sh", "m2"));
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert!(ops.disabled.is_empty());
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn a_lifted_suite_red_on_the_round_tree_green_on_the_base_and_alone_ejects_the_owner_for_not_fixing_its_flip() {
+        let mut f = Fake::new(|s, tree| s == LIFTED_SUITE && tree.len() == 3);
+        let mut ops = lifted_ops("suite:test-01.sh");
+        let end = lifted_suite_round(&mut f, &mut ops);
+        let gone: Vec<&str> = ops.eject_evidence.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(gone, ["m2"]);
+        assert!(ops.eject_evidence[0].1.contains("still red on the merged tree with m2's fix, green on the base"), "{:?}", ops.eject_evidence);
+        assert!(ops.disabled.is_empty());
+        assert!(ops.kept.is_empty());
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+    }
+
+    #[test]
+    fn a_lifted_suite_red_with_another_member_alone_ejects_that_member_not_the_owner() {
+        let mut f = Fake::new(|s, tree| s == LIFTED_SUITE && tree.contains("m3"));
+        let mut ops = lifted_ops("suite:test-01.sh");
+        let end = lifted_suite_round(&mut f, &mut ops);
+        let gone: Vec<&str> = ops.eject_evidence.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(gone, ["m3"]);
+        assert_eq!(land_ids(end), vec!["m1", "m2"]);
+    }
+
+    #[test]
+    fn a_lifted_suite_in_the_corpus_pass_red_is_judged_on_the_base_before_any_member_is_named() {
+        let mut f = Fake::new(|s, _| s == LIFTED_SUITE);
+        f.prior_suites = vec![LIFTED_SUITE.into()];
+        let mut ops = lifted_ops("suite:test-01.sh");
+        let end = lifted_suite_round(&mut f, &mut ops);
+        assert_eq!(ops.kept.len(), 1);
+        assert!(ops.ejected.is_empty());
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn a_refused_keep_blocks_the_round_with_the_refusal() {
+        let mut f = Fake::new(|s, _| s == LIFTED_SUITE);
+        let mut ops = lifted_ops("suite:test-01.sh");
+        ops.keep_refused = Some("registry busy".into());
+        let end = lifted_suite_round(&mut f, &mut ops);
+        assert!(matches!(&end, RoundEnd::Blocked(w) if w.contains("registry busy")), "{end:?}");
+    }
+
+    #[test]
+    fn a_lifted_suite_red_in_the_corpus_pass_and_green_on_the_base_ejects_the_owner() {
+        let mut f = Fake::new(|s, tree| s == LIFTED_SUITE && tree.len() == 3);
+        f.prior_suites = vec![LIFTED_SUITE.into()];
+        let mut ops = lifted_ops("suite:test-01.sh");
+        let end = lifted_suite_round(&mut f, &mut ops);
+        let gone: Vec<&str> = ops.eject_evidence.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(gone, ["m2"]);
+        assert!(ops.kept.is_empty() && ops.disabled.is_empty());
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+    }
+
+    #[test]
+    fn a_lifted_unit_red_in_the_round_pass_and_green_on_the_base_ejects_the_owner() {
+        let mut f = Fake::new(|_, _| false);
+        let fired = std::cell::Cell::new(false);
+        f.filter = Some(Box::new(move |tree| (tree.len() == 3 && !fired.replace(true)).then(|| flip_red(&[FLIP_UNIT]))));
+        f.bisects = true;
+        f.runs_alone = true;
+        let mut ops = lifted_ops(LIFTED_UNIT);
+        let end = flip_round(&mut f, &mut ops);
+        let gone: Vec<&str> = ops.eject_evidence.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(gone, ["m2"]);
+        assert!(ops.kept.is_empty() && ops.disabled.is_empty());
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+    }
+
+    const LIFTED_UNIT: &str = "unit:loom factory::tests::a";
+
+    fn lifted_unit_round(red: Option<FilterFn>, prior: bool) -> (RoundEnd, Ops) {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = red;
+        f.bisects = true;
+        f.runs_alone = true;
+        if prior {
+            f.prior = Some(flip_red(&[FLIP_UNIT]));
+        }
+        let mut ops = lifted_ops(LIFTED_UNIT);
+        let end = flip_round(&mut f, &mut ops);
+        (end, ops)
+    }
+
+    #[test]
+    fn a_lifted_unit_green_on_the_round_tree_lands_every_member_and_keeps_nothing() {
+        let (end, ops) = lifted_unit_round(None, false);
+        assert!(ops.kept.is_empty());
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn a_lifted_unit_red_on_the_round_tree_and_the_base_keeps_its_row_and_lands_the_owner() {
+        let red: FilterFn = Box::new(|_| Some(flip_red(&[FLIP_UNIT])));
+        let (end, ops) = lifted_unit_round(Some(red), true);
+        assert_eq!(ops.kept.len(), 1, "{:?}", ops.kept);
+        assert_eq!(ops.kept[0].0, LIFTED_UNIT);
+        assert_eq!(ops.kept[0].2, vec![FLIP_UNIT.to_string()]);
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert!(ops.disabled.is_empty());
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn a_lifted_unit_red_in_the_round_pass_and_on_the_base_keeps_its_row_and_the_corpus_runs_again() {
+        let mut f = Fake::new(|_, _| false);
+        let fired = std::cell::Cell::new(false);
+        f.filter = Some(Box::new(move |tree| {
+            (tree.is_empty() || (tree.len() == 3 && !fired.replace(true))).then(|| flip_red(&[FLIP_UNIT]))
+        }));
+        f.bisects = true;
+        let mut ops = lifted_ops(LIFTED_UNIT);
+        let end = flip_round(&mut f, &mut ops);
+        assert_eq!(ops.kept.len(), 1, "{:?}", ops.kept);
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn a_lifted_unit_red_on_the_round_tree_green_on_the_base_and_alone_ejects_the_owner() {
+        let red: FilterFn = Box::new(|tree| (tree.len() == 3).then(|| flip_red(&[FLIP_UNIT])));
+        let (end, ops) = lifted_unit_round(Some(red), true);
+        let gone: Vec<&str> = ops.eject_evidence.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(gone, ["m2"]);
+        assert!(ops.eject_evidence[0].1.contains("still red on the merged tree with m2's fix, green on the base"));
+        assert!(ops.disabled.is_empty());
+        assert!(ops.kept.is_empty());
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+    }
+
+    #[test]
+    fn a_suite_that_is_not_lifted_and_red_on_the_base_still_ends_the_round_base_red() {
+        let mut f = Fake::new(|s, _| s.starts_with("test-0"));
+        f.confirmed = true;
+        f.runs_alone = true;
+        f.prior_suites = reds3();
+        let mut ops = touching_ops(&[]);
+        ops.lifted = vec![("suite:test-09.sh".into(), "m1".into())];
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], budget6()).unwrap();
+        assert!(matches!(end, RoundEnd::BaseRed { .. }), "{end:?}");
+        assert!(ops.kept.is_empty() && ops.ejected.is_empty());
     }
 
     fn flip_round(f: &mut Fake, ops: &mut Ops) -> RoundEnd {

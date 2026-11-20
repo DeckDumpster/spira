@@ -151,3 +151,82 @@ fn the_registrys_default_hold_is_seven_days() {
     assert!(shipped.contains(&format!(":={}}}", spira_sim::registryworld::DEFAULT_HOLD_SECS)), "{shipped}");
     assert_eq!(spira_sim::registryworld::DEFAULT_HOLD_SECS, 604_800);
 }
+
+const LIFTED: &str = "suite:test-pilgrim-world.sh";
+
+/// An owner whose fix lands with another member while its test's row is in force; the round lifts
+/// the row, runs the test on the merged tree and decides what the landing may clear.
+fn lift_script(red: bool) -> Script {
+    loopworld::parse(&format!(
+        r#"
+driver = "loop"
+until = 10000000
+max_concurrent = 2
+settings = {{ SPIRA_TEST_REGISTRY_HOLD_SECS = "7200" }}
+
+[[bead]]
+id = "sp-lf01"
+at = 30000
+
+[[bead]]
+id = "sp-lf02"
+at = 30000
+
+[[bead]]
+id = "sp-lf04"
+at = 8000000
+
+[[lift]]
+test = "{LIFTED}"
+owner = "sp-lf01"
+fix = "sp-lf03"
+red = {red}
+blocks_again_after = 8000000
+
+[[look]]
+at = 3000000
+rows = {rows}
+
+[[look]]
+at = 8200000
+rows = []
+"#,
+        rows = if red { format!("[{{ test = \"{LIFTED}\", bead = \"sp-lf03\" }}]") } else { "[]".to_string() }
+    ))
+    .expect("it parses")
+}
+
+#[test]
+fn a_lifted_test_green_on_the_merged_tree_is_cleared_by_the_owners_landing() {
+    let script = lift_script(false);
+    let r = walk(script.clone());
+    assert_eq!(r.missed(&script), None, "{}", r.dump());
+    assert!(r.kept.is_empty() && r.reds.is_empty(), "{:?} {:?}", r.kept, r.reds);
+    assert!(r.cleared.iter().any(|(_, rows)| rows.iter().any(|t| t == LIFTED)), "{:?}", r.cleared);
+    assert_eq!(r.rows["sp-lf01"].state, BeadState::Landed, "{}", r.dump());
+}
+
+#[test]
+fn a_lifted_test_red_on_the_merged_tree_and_the_base_keeps_its_row_at_one_new_bead_and_lands_the_round() {
+    let script = lift_script(true);
+    let r = walk(script.clone());
+    assert_eq!(r.missed(&script), None, "{}", r.dump());
+    assert_eq!(r.kept.len(), 1, "exactly one fix bead is filed: {:?} {}", r.kept, r.dump());
+    assert_eq!((r.kept[0].test.as_str(), r.kept[0].bead.as_str()), (LIFTED, "sp-lf03"));
+    assert!(r.kept[0].reason.starts_with("kept: ") && r.kept[0].reason.contains("re-pointed from sp-lf01 to sp-lf03"), "{}", r.kept[0].reason);
+    assert_eq!(r.opened[0].iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["sp-lf01", "sp-lf02"], "{}", r.dump());
+    for id in ["sp-lf01", "sp-lf02"] {
+        assert_eq!(r.rows[id].state, BeadState::Landed, "{id}: {}", r.dump());
+    }
+    assert!(r.cleared.iter().all(|(_, rows)| !rows.iter().any(|t| t == LIFTED)), "the landing leaves the kept row: {:?}", r.cleared);
+}
+
+#[test]
+fn a_kept_row_expires_on_its_new_hold_and_its_test_blocks_the_next_round_again() {
+    let script = lift_script(true);
+    let r = walk(script);
+    let (_, after) = r.looks.iter().find(|(i, _)| *i == 1).expect("the look after the expiry");
+    assert!(after.held.is_empty(), "{}", after.pane);
+    assert!(r.reds.iter().any(|(at, _, t)| t == LIFTED && *at >= 8_000_000), "{:?}", r.reds);
+    assert_eq!(r.kept[0].until - r.kept[0].since, 7_200, "the new row holds for the registry's hold");
+}
