@@ -51,6 +51,14 @@ fn current() -> Option<Arc<Settler>> {
     SETTLER.get().cloned()
 }
 
+/// Installs a settler for this thread only, so a test sees lc-serve's owed closes while the rest close inline.
+#[cfg(test)]
+pub(crate) fn install_for_test() -> Arc<Settler> {
+    let s = Arc::new(Settler::default());
+    TEST.with(|t| *t.borrow_mut() = Some(Arc::clone(&s)));
+    s
+}
+
 pub fn has_settler() -> bool {
     current().is_some()
 }
@@ -164,9 +172,7 @@ mod tests {
 
     /// Installs a settler for this thread only, so a test queues while the rest write inline.
     fn installed() -> Arc<Settler> {
-        let s = Arc::new(Settler::default());
-        TEST.with(|t| *t.borrow_mut() = Some(Arc::clone(&s)));
-        s
+        install_for_test()
     }
 
     /// The world, whose request deadline passes once the write it served has landed.

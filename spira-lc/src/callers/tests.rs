@@ -34,6 +34,7 @@ struct Fake {
     seq: u64,
     changed: Vec<String>,
     content_reads: usize,
+    list_asks: usize,
     /// `list` calls with no `--ids`, `--state` or `--live`: every record.
     whole_lists: usize,
     deleted: Vec<String>,
@@ -203,7 +204,10 @@ impl Machine for Fake {
                 self.batches.get_mut(&bead).unwrap().retain(|(b, _)| *b != args[1]);
                 (0, String::new())
             }
-            "list-asks" => (0, "[]".into()),
+            "list-asks" => {
+                self.list_asks += 1;
+                (0, "[]".into())
+            }
             "show-ask" if self.ask_rows.contains(&args[1]) => {
                 let closed = self.ask_closes.iter().any(|c| c[1] == args[1]);
                 (0, json!({"ask_id": args[1], "state": if closed { "WITHDRAWN" } else { "OPEN" }, "quote": "q"}).to_string())
@@ -1235,6 +1239,48 @@ fn reconcile_content_since_seq_and_apply_by_id_never_list_every_record() {
     assert_eq!(f.whole_lists, 0, "a scoped pass reads the records of its ids only");
     reconcile_content(&[], &mut f, &mut b);
     assert_eq!(f.whole_lists, 1, "a full pass lists once");
+}
+
+#[test]
+fn apply_by_id_in_lc_serve_owes_the_close_and_settles_it_after_the_answer() {
+    let w = super::world::World::new();
+    w.file("sp-a", "task", None, &[]);
+    w.ok(&["create-bead", "sp-a", "--ready"]);
+    w.drop("sp-a");
+    let _settler = crate::settle::install_for_test();
+    let (mut m, mut b) = (&w, &w);
+    let ans = reconcile_content(&v(&["--apply", "sp-a"]), &mut m, &mut b);
+    assert_eq!(ans.code, APPLIED, "{ans:?}");
+    assert!(ans.stdout.contains("owed sp-a") && ans.stdout.ends_with("reconcile-content: 1 owed"), "{}", ans.stdout);
+    assert!(w.writes.borrow().is_empty(), "owed, not forked inside the request");
+    crate::callers::settle_owed_with(&ans.owed, &mut |id, r| crate::reconcile_content::settle_owed(&mut b, id, r));
+    assert_eq!(*w.writes.borrow(), ["close sp-a"]);
+}
+
+#[test]
+fn apply_by_id_reads_the_ask_by_key_and_the_planning_row_once() {
+    let mut f = Fake { ask_rows: vec!["sp-a".into()], ..Default::default() };
+    f.bead("sp-a", BeadState::Landed);
+    f.content.insert("sp-a".into(), "open".into());
+    let mut b = FakeBd::default();
+    b.rows.insert("sp-a".into(), ("task".into(), None));
+    let ans = reconcile_content(&v(&["--apply", "sp-a"]), &mut f, &mut b);
+    assert_eq!(ans.code, APPLIED, "{}", ans.stderr);
+    assert_eq!(f.content_reads, 1, "one plan items read for the id");
+    assert_eq!(f.list_asks, 0, "the ask is read by key, never listed");
+}
+
+#[test]
+fn apply_by_id_with_the_planes_skewed_refuses_and_owes_nothing() {
+    let mut f = Fake::default();
+    f.bead("sp-a", BeadState::Landed);
+    f.content.insert("sp-a".into(), "open".into());
+    f.skew = Some((REFUSED, SKEWED.into()));
+    let _settler = crate::settle::install_for_test();
+    let mut b = FakeBd::default();
+    let ans = reconcile_content(&v(&["--apply", "sp-a"]), &mut f, &mut b);
+    assert_eq!(ans.code, REFUSED);
+    assert!(ans.owed.is_empty() && b.closed.is_empty());
 }
 
 #[test]
