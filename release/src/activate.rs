@@ -1155,7 +1155,7 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
     fs::create_dir_all(&state).map_err(|e| format!("cannot create {}: {e}", state.display()))?;
     let rel = verify::release_dir(ctx.cfg, sha)?;
     let standing = read_hotfix(&state)?;
-    let after = hotfix_rule(ctx, standing, sha, hotfix_reason)?;
+    let after = hotfix_rule(ctx, standing.clone(), sha, hotfix_reason)?;
     let history = read_history(&state)?;
     let delta = config_delta::complete_for(ctx.cfg, &rel, config_delta::load(&rel)?)?;
     let delta = delta.or_else(|| (!config_delta::load_retired(&state).is_empty() || config_delta::must_resolve(ctx.cfg, &rel)).then(config_delta::Delta::default));
@@ -1172,8 +1172,25 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
             return write_history(&state, &history).and(Err(e));
         }
         recorded.set(true);
+        match &after {
+            HotfixAfter::Unchanged | HotfixAfter::Superseded(_) => {}
+            HotfixAfter::Record(h) => {
+                eprintln!("release: RUNNING UNLANDED {}: {}", h.sha, h.reason);
+                write_hotfix(&state, Some(h))?;
+            }
+        }
+        if let Some(t) = &txn {
+            config_delta::save_undo(&state, sha, &t.undo)?;
+            config_delta::save_retired(&state, &t.deferred)?;
+        }
         Ok(())
     };
+    let mut cleared = false;
+    if let HotfixAfter::Superseded(h) = &after {
+        eprintln!("release: hotfix {} has landed and is in {sha}; superseded", h.sha);
+        write_hotfix(&state, None)?;
+        cleared = true;
+    }
     let (out, late) = match switch_with_config(ctx, sha, txn.as_ref(), true, &live) {
         Ok(done) => done,
         Err(e) => {
@@ -1181,6 +1198,7 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
                 .get()
                 .then(|| write_history(&state, &history))
                 .and_then(Result::err)
+                .or_else(|| (cleared || recorded.get()).then(|| write_hotfix(&state, standing.as_ref())).and_then(Result::err))
                 .or_else(|| undone_in_record(&state, sha).err());
             return Err(match unrecorded {
                 Some(why) => format!("{e}\n  THE RECORD OF THE UNDONE ACTIVATION IS STILL THERE: {why}"),
@@ -1188,21 +1206,6 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
             });
         }
     };
-    if let Some(t) = &txn {
-        config_delta::save_undo(&state, sha, &t.undo)?;
-        config_delta::save_retired(&state, &t.deferred)?;
-    }
-    match after {
-        HotfixAfter::Unchanged => {}
-        HotfixAfter::Record(h) => {
-            eprintln!("release: RUNNING UNLANDED {}: {}", h.sha, h.reason);
-            write_hotfix(&state, Some(&h))?;
-        }
-        HotfixAfter::Superseded(h) => {
-            eprintln!("release: hotfix {} has landed and is in {sha}; superseded", h.sha);
-            write_hotfix(&state, None)?;
-        }
-    }
     if let Some(e) = late {
         return Err(e);
     }
