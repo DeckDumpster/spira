@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use crate::watchers::inbox_keeper;
 use crate::forge::{slug, Forge};
+use crate::watchers::cr_cadence;
 use crate::watchers::cr_comments::{self, ReviewObs};
 use crate::watchers::pr_notify::{self, RepoObs};
 use crate::watchers::asks;
@@ -42,6 +43,9 @@ pub struct World {
     pub run_dir: PathBuf,
     /// `owner/name` of the review repository; empty while `SPIRA_CR_REPO_OWNER` or `SPIRA_CR_REPO_NAME` is unset.
     pub cr_repo: String,
+    /// `SPIRA_CR_TZ` and `SPIRA_CR_OPEN_HOUR` as configured; each is empty while unset.
+    pub cr_tz: String,
+    pub cr_open_hour: String,
     pub queue_dir: PathBuf,
     pub repo_map: PathBuf,
     pub home_repo: String,
@@ -409,6 +413,40 @@ impl World {
         });
         forge.report_spend();
         serde_json::to_string(&snap).map_err(|e| e.to_string())
+    }
+
+    /// Every review and the epoch the next scheduled one is due. An unset or malformed zone or hour is an
+    /// `Err` naming its key.
+    pub fn cr_cadence_snapshot(&self, input: &str) -> Result<String, String> {
+        let carry: cr_cadence::Carry = serde_json::from_str(input).unwrap_or_default();
+        let (tz, hour) = (self.cr_tz.trim(), self.cr_open_hour.trim());
+        if tz.is_empty() {
+            return Err("SPIRA_CR_TZ is not set; the review cadence has no zone".into());
+        }
+        let hour: u32 = hour.parse().ok().filter(|h| *h < 24).ok_or_else(|| format!("SPIRA_CR_OPEN_HOUR must be an hour 0 to 23, got {hour:?}"))?;
+        let reviews = cr::record::all(&self.run_dir)?;
+        let newest_closed = reviews.iter().filter(|r| r.kind == cr::record::Kind::Scheduled).max_by_key(|r| r.number).and_then(|r| r.closed_at);
+        let due_at = match newest_closed {
+            Some(closed) => cr_open_epoch(tz, hour, closed, 1)?,
+            None => {
+                let base = carry.anchor.unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()));
+                let today = cr_open_epoch(tz, hour, base, 0)?;
+                if today > base { today } else { cr_open_epoch(tz, hour, base, 1)? }
+            }
+        };
+        let obs = reviews.iter().map(|r| cr_cadence::ReviewObs { number: r.number, kind: r.kind, state: r.state, staged_at: r.staged_at, closed_at: r.closed_at }).collect();
+        serde_json::to_string(&cr_cadence::Snapshot { reviews: obs, due_at }).map_err(|e| e.to_string())
+    }
+
+    /// Stages the next scheduled review with `cr`; its stdout is the answer and its stderr the failure.
+    pub fn cr_open(&self) -> Result<String, String> {
+        let cr = spira_config::release_env::tool("cr")?;
+        let out = spira_config::bounded::bounded_for(cr, &cr_cadence::OPEN_CALL_SECS.to_string()).args(["open", "--count", "1", "--scheduled"]).output().map_err(|e| format!("cr: {e}"))?;
+        if out.status.success() {
+            return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+        }
+        let err = String::from_utf8_lossy(&out.stderr);
+        Err(format!("cr exited {}: {}", out.status, err.trim()))
     }
 
     /// Applies the review state changes and keeps each review's comments where `cr thread` reads them.
@@ -1764,6 +1802,70 @@ mod bounded_store_tests {
         assert!(got.is_none(), "the worker is still blocked, so the call returned on its bound");
         *release.0.lock().unwrap() = true;
         release.1.notify_all();
+    }
+}
+
+/// The epoch of `hour`:00 in zone `tz`, `days_after` local days after the local day of epoch `at`.
+/// The zone conversion is the `date` program's, as in `idea-prompt`.
+pub fn cr_open_epoch(tz: &str, hour: u32, at: u64, days_after: u32) -> Result<u64, String> {
+    let date = |args: &[&str]| -> Result<String, String> {
+        let out = spira_config::bounded::bounded("date").env("TZ", tz).args(args).output().map_err(|e| format!("date: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("date for TZ={tz} exited {}", out.status));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    let day = date(&["-d", &format!("@{at}"), "+%F"])?;
+    date(&["-d", &format!("{day} {hour:02}:00 {days_after} day"), "+%s"])?.parse().map_err(|_| format!("date gave no epoch for TZ={tz}"))
+}
+
+#[cfg(test)]
+mod cr_cadence_tests {
+    use super::*;
+    use cr::record::{self, Kind, Review, State};
+
+    const LA: &str = "America/Los_Angeles";
+    const LATE: u64 = 1_795_159_800; // 2026-11-19 23:30 PST, which is already the 20th in UTC
+    const SEVEN_NEXT_MORNING: u64 = 1_795_186_800; // 2026-11-20 07:00 PST
+    const SMALL_HOURS: u64 = 1_795_086_000; // 2026-11-19 03:00 PST
+
+    fn world(run: &Path, tz: &str, hour: &str) -> World {
+        World { run_dir: run.into(), cr_tz: tz.into(), cr_open_hour: hour.into(), ..World::default() }
+    }
+
+    fn scheduled(run: &Path, state: State, closed_at: Option<u64>) {
+        let unit = cr::units::Unit { id: "u".into(), kind: cr::units::Kind::Module, files: vec![], title: "t".into() };
+        let n = record::allocate(run).unwrap();
+        let r = Review { number: n, kind: Kind::Scheduled, state, source_repo: "s".into(), source_sha: "c".into(), branch: "b".into(), pr: None, pr_url: None, unit, sealed_sha256: None, staged_at: 0, opened_at: None, published_at: None, closed_at };
+        record::save(run, &r).unwrap();
+    }
+
+    fn due(w: &World, input: &str) -> u64 {
+        serde_json::from_str::<cr_cadence::Snapshot>(&w.cr_cadence_snapshot(input).unwrap()).unwrap().due_at
+    }
+
+    #[test]
+    fn a_review_closed_at_half_past_eleven_local_is_due_the_next_days_open_hour() {
+        let t = testkit::TempDir::new("cr-cadence-late");
+        scheduled(t.path(), State::Closed, Some(LATE));
+        assert_eq!(due(&world(t.path(), LA, "7"), ""), SEVEN_NEXT_MORNING);
+    }
+
+    #[test]
+    fn with_no_scheduled_review_ever_the_first_is_due_the_next_open_hour_after_the_anchor() {
+        let t = testkit::TempDir::new("cr-cadence-first");
+        let carry = |anchor| serde_json::to_string(&cr_cadence::Carry { anchor: Some(anchor), ..Default::default() }).unwrap();
+        let w = world(t.path(), LA, "7");
+        assert_eq!((due(&w, &carry(LATE)), due(&w, &carry(SMALL_HOURS))), (SEVEN_NEXT_MORNING, SEVEN_NEXT_MORNING - 86_400));
+    }
+
+    #[test]
+    fn an_unset_zone_or_a_bad_hour_fails_naming_its_key() {
+        let t = testkit::TempDir::new("cr-cadence-unset");
+        assert!(world(t.path(), "", "7").cr_cadence_snapshot("").unwrap_err().contains("SPIRA_CR_TZ"));
+        for hour in ["", "24", "seven"] {
+            assert!(world(t.path(), LA, hour).cr_cadence_snapshot("").unwrap_err().contains("SPIRA_CR_OPEN_HOUR"), "{hour}");
+        }
     }
 }
 

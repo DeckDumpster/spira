@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=cr
+DOC=Days a review may stay unclosed before the cr-cadence watcher reports it to the inbox, once.
+SCHEMA=Days a review may stay unclosed before the cr-cadence watcher reports it to the inbox, once. (unit: days; integer; default 7). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_CR_STALE_DAYS:=7}"
+SPIRA_CONF_DEFAULT_EOF
