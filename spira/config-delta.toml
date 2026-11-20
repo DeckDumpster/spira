@@ -390,6 +390,10 @@ noverdict_window = 172800
 noverdict_max = 3
 slow_query_ms = 1000
 ops_sweep_keep_days = 1
+activation_store_bound = 90
+dolt_persist_history_keep = 10000
+land_stale = 1800
+land_escalate_every = 3600
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok
