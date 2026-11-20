@@ -1970,6 +1970,15 @@ fn a_non_bare_list_reads_records_locks_and_blockers_in_chunks_not_per_key() {
         assert!(of(&lock_prefix) <= 1, "{argv:?}: {calls:?}");
         assert!(of(keys::LIFECYCLE) <= 2, "{argv:?}: {calls:?}");
     }
+    let page = |argv: &[&str]| -> serde_json::Value {
+        let (rc, out) = r.lc(argv);
+        assert_eq!(rc, 0, "{out}");
+        serde_json::from_str(&out).unwrap()
+    };
+    let by_ids = page(&["list", "--ids", &live.join(",")]);
+    let expected: Vec<&serde_json::Value> = by_ids.as_array().unwrap().iter().take(7).collect();
+    let by_state = page(&["list", "--state", "READY,WORKING", "--limit", "7"]);
+    assert_eq!(by_state.as_array().unwrap().iter().collect::<Vec<_>>(), expected, "a state page stops at its limit, in id order");
 }
 
 /// On the real store a `list --ids` costs the same read transactions for 140 ids as for 10.
