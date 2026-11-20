@@ -216,6 +216,79 @@ pub fn build_probe_result(rc: i32) -> Option<bool> {
     }
 }
 
+/// What one probe ran and found, as printed and as written to the round's progress record.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ProbeFacts {
+    pub job: String,
+    pub build: String,
+    pub scope: String,
+    pub members: Vec<String>,
+    pub verdict: &'static str,
+    pub why: String,
+}
+
+impl ProbeFacts {
+    fn line(&self) -> String {
+        let on = if self.members.is_empty() { "base".to_string() } else { self.members.join(",") };
+        let why = if self.verdict == "cannot-tell" { format!(": {}", self.why) } else { String::new() };
+        format!("batcher: probe {} {} scope={} on {on} → {}{why}", self.job, self.build, self.scope, self.verdict)
+    }
+}
+
+/// The probes spent on the red now being attributed.
+#[derive(Clone, Debug, Default)]
+struct AttributionTrace {
+    target: String,
+    probes: u32,
+    suspects: Vec<String>,
+    last: Option<ProbeFacts>,
+}
+
+impl AttributionTrace {
+    fn aim(&mut self, target: &str) {
+        if self.target != target {
+            *self = AttributionTrace { target: target.to_string(), ..Default::default() };
+        }
+    }
+
+    fn record(&mut self, facts: ProbeFacts) {
+        self.probes += 1;
+        if facts.verdict == "red" && (self.suspects.is_empty() || facts.members.len() < self.suspects.len()) {
+            self.suspects = facts.members.clone();
+        }
+        self.last = Some(facts);
+    }
+
+    /// `progress` with the `attribution` key set to this trace; every other key is kept.
+    fn merged_into(&self, mut progress: serde_json::Value, ceiling: usize) -> serde_json::Value {
+        let last = self.last.as_ref().map(|f| serde_json::json!({
+            "job": f.job, "build": f.build, "scope": f.scope, "members": f.members, "verdict": f.verdict, "why": f.why,
+        }));
+        if !progress.is_object() {
+            progress = serde_json::json!({});
+        }
+        progress["attribution"] = serde_json::json!({
+            "target": self.target, "probes": self.probes, "ceiling": ceiling, "suspects": self.suspects, "last": last,
+        });
+        progress
+    }
+}
+
+/// Why a probe that exited `rc` had no verdict.
+fn rc_why(rc: i32) -> String {
+    format!("rc {rc}")
+}
+
+/// A suite probe's verdict, once the result the probe left for the suite is read: the exit and
+/// the result must agree, and a result that is missing or disagrees says why.
+fn suite_verdict(green: bool, seen: Option<bool>, suite: &str) -> Result<bool, String> {
+    match seen {
+        Some(s) if s == green => Ok(green),
+        Some(_) => Err(format!("{suite}.result disagrees with the exit")),
+        None => Err(format!("no {suite}.result")),
+    }
+}
+
 /// What a testenv suite job's exit code says: 0 it passed, 1 it did not, anything else is a fault.
 pub fn suite_probe_result(rc: i32) -> Option<bool> {
     match rc {
@@ -417,6 +490,7 @@ pub struct VmRunner<'a> {
     subset: bool,
     /// The round's deny list, handed to every round-vm the runner starts.
     deny: Option<DenySnapshot>,
+    trace: AttributionTrace,
 }
 
 /// A number that changes when anything under `path` is added, grown or touched.
@@ -672,6 +746,21 @@ impl<'a> VmRunner<'a> {
         scope: &str,
         verdict: fn(i32) -> Option<bool>,
     ) -> Option<bool> {
+        let (job, ran) = self.run_probe(subset, build, scope);
+        let (found, why) = match ran {
+            Ok(rc) => match verdict(rc) {
+                Some(green) => (Some(green), String::new()),
+                None => (None, rc_why(rc)),
+            },
+            Err(why) => (None, why),
+        };
+        self.report_probe(&job, build, scope, subset, found, why);
+        found
+    }
+
+    /// Runs the `build` job on the base plus exactly `subset` and answers its exit code, or why
+    /// there is none.
+    fn run_probe(&mut self, subset: &[Member], build: &str, scope: &str) -> (String, Result<i32, String>) {
         self.build_n += 1;
         let job = format!("b{}", self.build_n);
         let removal: Vec<Id> = self
@@ -680,35 +769,50 @@ impl<'a> VmRunner<'a> {
             .filter(|m| !subset.iter().any(|s| s.id == m.id))
             .map(|m| m.id.clone())
             .collect();
-        let tried = subset
-            .iter()
-            .map(|m| m.id.as_str())
-            .collect::<Vec<_>>()
-            .join(",");
-        let branch = self
-            .tree_without(self.branch(&job), &job, &removal)
-            .inspect_err(|e| eprintln!("batcher: {build} probe tree not built: {e}"))
-            .ok()?;
-        self.request(&job, &branch, &[scope.to_string()], build)
-            .inspect_err(|e| eprintln!("batcher: {e}"))
-            .ok()?;
+        let branch = match self.tree_without(self.branch(&job), &job, &removal) {
+            Ok(b) => b,
+            Err(e) => return (job, Err(format!("probe tree not built: {e}"))),
+        };
+        if let Err(e) = self.request(&job, &branch, &[scope.to_string()], build) {
+            return (job, Err(e));
+        }
         let done = self.spool.join("res").join(format!("{job}.done"));
         let deadline = epoch() + self.env.wall_secs;
-        let rc = loop {
+        loop {
             if let Some(rc) = read_rc(&done) {
-                break rc;
+                return (job, Ok(rc));
             }
             if self.child_exited().is_some() || epoch() >= deadline {
-                eprintln!("batcher: {build} probe of [{tried}] got no answer from round-vm");
-                return None;
+                return (job, Err("no answer from round-vm".into()));
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
-        };
-        let built = verdict(rc);
-        if built.is_none() {
-            eprintln!("batcher: {build} probe of [{tried}] faulted (rc {rc})");
         }
-        built
+    }
+
+    /// Prints what a probe ran and found, and writes it to the round's progress record.
+    fn report_probe(&mut self, job: &str, build: &str, scope: &str, subset: &[Member], found: Option<bool>, why: String) {
+        let facts = ProbeFacts {
+            job: job.to_string(),
+            build: build.to_string(),
+            scope: scope.to_string(),
+            members: subset.iter().map(|m| m.id.clone()).collect(),
+            verdict: match found {
+                Some(true) => "green",
+                Some(false) => "red",
+                None => "cannot-tell",
+            },
+            why,
+        };
+        println!("{}", facts.line());
+        self.trace.record(facts);
+        self.publish_attribution();
+    }
+
+    fn publish_attribution(&self) {
+        let Some(batch) = self.batch.as_deref() else { return };
+        if let Err(e) = io::batch_progress_merge(self.env, batch, |p| self.trace.merged_into(p, self.members.len() + 2)) {
+            eprintln!("batcher: attribution progress not recorded: {e}");
+        }
     }
 
     /// Runs fence `fence` of the tree that is the base plus exactly `subset`, on the host: a fence
@@ -717,23 +821,34 @@ impl<'a> VmRunner<'a> {
         let removal: Vec<Id> = self.members.iter().filter(|m| !subset.iter().any(|s| s.id == m.id)).map(|m| m.id.clone()).collect();
         self.build_n += 1;
         let key = format!("b{}", self.build_n);
-        let branch = self.tree_without(self.branch(&key), &key, &removal).inspect_err(|e| eprintln!("batcher: fence probe tree not built: {e}")).ok()?;
+        let branch = match self.tree_without(self.branch(&key), &key, &removal) {
+            Ok(b) => b,
+            Err(e) => {
+                self.report_probe(&key, "fence", fence, subset, None, format!("probe tree not built: {e}"));
+                return None;
+            }
+        };
         // FORK-EDGE: machine leg gate (fence-run: one fence of the subset tree, seconds, no build)
         let out = spira_config::bounded::bounded_for(&self.env.gate_bin, FENCE_PROBE_DEADLINE)
             .args(["fence-run", fence, "--repo"])
             .arg(&self.repo.path)
             .args(["--tip", &branch, "--base", &self.base_sha])
             .stdin(Stdio::null())
-            .output()
-            .inspect_err(|e| eprintln!("batcher: fence {fence} probe: {e}"))
-            .ok()?;
-        let green = suite_probe_result(out.status.code().unwrap_or(-1));
+            .output();
+        let out = match out {
+            Ok(o) => o,
+            Err(e) => {
+                self.report_probe(&key, "fence", fence, subset, None, format!("not run: {e}"));
+                return None;
+            }
+        };
+        let rc = out.status.code().unwrap_or(-1);
+        let green = suite_probe_result(rc);
         if green == Some(false) {
             self.probe_said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         }
-        if green.is_none() {
-            eprintln!("batcher: fence {fence} probe faulted: {}", String::from_utf8_lossy(&out.stderr).trim());
-        }
+        let why = if green.is_none() { format!("{}: {}", rc_why(rc), String::from_utf8_lossy(&out.stderr).trim()) } else { String::new() };
+        self.report_probe(&key, "fence", fence, subset, green, why);
         green
     }
 
@@ -848,6 +963,7 @@ impl<'a> VmRunner<'a> {
             confirmed: false,
             subset: false,
             deny: None,
+            trace: AttributionTrace::default(),
         })
     }
 
@@ -1213,6 +1329,7 @@ impl RoundRunner for VmRunner<'_> {
     }
 
     fn builds(&mut self, subset: &[Member]) -> Option<bool> {
+        self.trace.aim("workspace-build");
         self.probe_subset(subset, "workspace", &[], build_probe_result)
     }
 
@@ -1231,9 +1348,23 @@ impl RoundRunner for VmRunner<'_> {
     fn suite_green(&mut self, suite: &str, subset: &[Member]) -> Option<bool> {
         let removal: Vec<Id> = self.members.iter().filter(|m| !subset.iter().any(|s| s.id == m.id)).map(|m| m.id.clone()).collect();
         let build = build_for(&removal, &self.changed);
-        let green = self.probe_scoped(subset, build, suite, suite_probe_result)?;
-        let seen = io::result_status(&self.spool.join("res").join(format!("b{}", self.build_n)), suite);
-        (seen == Some(green)).then_some(green)
+        self.trace.aim(suite);
+        let (job, ran) = self.run_probe(subset, build, suite);
+        let (found, why) = match ran {
+            Ok(rc) => match suite_probe_result(rc) {
+                Some(green) => {
+                    let seen = io::result_status(&self.spool.join("res").join(&job), suite);
+                    match suite_verdict(green, seen, suite) {
+                        Ok(g) => (Some(g), String::new()),
+                        Err(why) => (None, why),
+                    }
+                }
+                None => (None, rc_why(rc)),
+            },
+            Err(why) => (None, why),
+        };
+        self.report_probe(&job, build, suite, subset, found, why);
+        found
     }
 
     fn probe_output(&mut self) -> String {
@@ -1242,6 +1373,7 @@ impl RoundRunner for VmRunner<'_> {
 
     fn filter_green_in(&mut self, name: &str, scope: &[String], subset: &[Member]) -> Option<bool> {
         self.probe_said.clear();
+        self.trace.aim(name);
         match probe_of(name)? {
             Probe::Lint => self.probe_subset(subset, "lint", &[], unit_probe_result),
             Probe::Unit => self.probe_subset(subset, "unit", scope, unit_probe_result),
@@ -1251,6 +1383,7 @@ impl RoundRunner for VmRunner<'_> {
     }
 
     fn runner_survives(&mut self, subset: &[Member]) -> Option<bool> {
+        self.trace.aim("runner-survives");
         self.probe_subset(subset, "unit", &[], survival_probe_result)
     }
 
@@ -1596,6 +1729,45 @@ mod tests {
             blocked_by: Vec::new(),
         provisional: false,
         }
+    }
+
+    #[test]
+    fn a_suite_probe_that_exits_green_with_no_result_file_says_cannot_tell_and_why() {
+        assert_eq!(suite_verdict(true, None, "test-x.sh"), Err("no test-x.sh.result".to_string()));
+        assert_eq!(suite_verdict(true, Some(false), "test-x.sh"), Err("test-x.sh.result disagrees with the exit".to_string()));
+        assert_eq!(suite_verdict(false, Some(false), "test-x.sh"), Ok(false));
+        let d = testkit::TempDir::new("vm-probe-trace");
+        let env = crate::io::lifecycle_tests_env(d.path());
+        let repo = crate::io::Repo { name: "alpha".into(), path: d.path().to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: crate::io::Land::Local };
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        r.members = vec![member("m1"), member("m2")];
+        r.trace.aim("test-x.sh");
+        r.report_probe("b3", "unit", "test-x.sh", &[member("m1")], None, "no test-x.sh.result".into());
+        let last = r.trace.last.clone().unwrap();
+        assert_eq!(last.line(), "batcher: probe b3 unit scope=test-x.sh on m1 → cannot-tell: no test-x.sh.result");
+        let stored = serde_json::json!({"passes": 2, "red": 1});
+        let body = r.trace.merged_into(stored, r.members.len() + 2);
+        assert_eq!(body["passes"], 2, "the stored pass counts stay: {body}");
+        assert_eq!(body["attribution"]["probes"], 1);
+        assert_eq!(body["attribution"]["ceiling"], 4);
+        assert_eq!(body["attribution"]["target"], "test-x.sh");
+        assert_eq!(body["attribution"]["last"]["verdict"], "cannot-tell");
+        assert_eq!(body["attribution"]["last"]["why"], "no test-x.sh.result");
+        assert_eq!(body["attribution"]["last"]["members"], serde_json::json!(["m1"]));
+    }
+
+    #[test]
+    fn a_red_probe_names_its_members_as_suspects_and_a_smaller_red_replaces_them() {
+        let mut t = AttributionTrace::default();
+        t.aim("unit-tests");
+        let probe = |ids: &[&str], verdict| ProbeFacts { job: "b1".into(), build: "unit".into(), scope: "unit".into(), members: ids.iter().map(|s| s.to_string()).collect(), verdict, why: String::new() };
+        t.record(probe(&["m1", "m2", "m3"], "red"));
+        t.record(probe(&["m1"], "green"));
+        t.record(probe(&["m2", "m3"], "red"));
+        assert_eq!((t.probes, t.suspects.clone()), (3, vec!["m2".to_string(), "m3".to_string()]));
+        t.aim("other");
+        assert_eq!(t.probes, 0, "a new red starts its own count");
+        assert_eq!(probe(&[], "green").line(), "batcher: probe b1 unit scope=unit on base → green");
     }
 
     fn changed_of(rows: &[(&str, &[&str])]) -> BTreeMap<Id, Vec<String>> {

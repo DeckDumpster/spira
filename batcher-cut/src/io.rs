@@ -230,6 +230,16 @@ pub fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
     lc_answer(client.call(args))
 }
 
+/// Sets the round's progress record to what `merge` makes of the one stored now, so the keys a
+/// pass wrote stay beside the ones `merge` adds.
+pub fn batch_progress_merge(env: &Env, batch: &str, merge: impl FnOnce(serde_json::Value) -> serde_json::Value) -> Result<(), String> {
+    let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
+    let client = spira_store::lc_call::LcClient::for_bin(&bin.to_string_lossy())?.within(std::time::Duration::from_secs(env.lc_timeout));
+    let shown: serde_json::Value = serde_json::from_str(&lc_answer(client.call(&["show-batch", batch]))?).map_err(|e| format!("show-batch {batch}: {e}"))?;
+    let body = merge(shown.get("progress").cloned().unwrap_or(serde_json::Value::Null));
+    lc_answer(client.call_stdin(&["batch-progress", batch], &body.to_string())).map(|_| ())
+}
+
 /// [`lcq`] for a read the process's store views hold (content, `show-batch`, `list --batches`):
 /// answered from them when the process keeps the store's watch, else asked of the store.
 pub fn lcq_held(env: &Env, args: &[&str]) -> Result<String, String> {
