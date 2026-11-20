@@ -66,7 +66,8 @@ spira-lc admin-store-compact --store "$TRIAL/old.db" | tee "$TRIAL/report.json"
 rm -r "$TRIAL"
 ```
 
-The downtime is the trial's `elapsed_ms` plus the stop and start. Record it where the stop is
+VACUUM writes a temporary copy of the live data, so the store's disk needs that much free
+space (`df` the directory of `$STORE`) before the stop. The downtime is the trial's `elapsed_ms` plus the stop and start. Record it where the stop is
 scheduled. Then, announcing the stop first:
 
 ```sh

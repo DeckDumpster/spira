@@ -1690,15 +1690,16 @@ fn compact_refuses_a_store_whose_wal_is_not_empty_and_writes_nothing() {
 #[test]
 fn a_snapshot_of_a_none_mode_store_is_incremental_and_so_is_its_restore() {
     let dir = TempDir::new("sqlite-snapshot-incremental");
-    let wall = VirtualClock::new(D0);
     let path = dir.path().join("s.db");
-    none_mode_store(&path);
-    let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
+    none_mode_store_with_free_pages(&path);
+    let b = SqliteBackend::open(&path, Options { day_receipts: false, ..Options::default() }).unwrap();
     b.commit(0, &[put_write("live/a", b"1", 1, None)]).unwrap();
     assert_eq!(count(&path, "PRAGMA auto_vacuum"), 0);
     let snap = dir.path().join("snap.db");
     b.snapshot_to(&snap).unwrap();
     assert_eq!(count(&snap, "PRAGMA auto_vacuum"), 2);
+    assert_eq!(count(&snap, "PRAGMA freelist_count"), 0);
+    assert!(!dir.path().join("snap.db-wal").exists());
     let revlog = dir.path().join("revlog");
     std::fs::create_dir(&revlog).unwrap();
     let out = dir.path().join("restored.db");

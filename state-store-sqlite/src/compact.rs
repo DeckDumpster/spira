@@ -56,6 +56,9 @@ pub fn compact(path: &Path) -> Result<Report> {
     conn.pragma_update(None, "auto_vacuum", 2).map_err(db)?;
     conn.prepare("VACUUM").and_then(|mut s| s.execute([])).map_err(db)?;
     let auto_vacuum: i64 = conn.pragma_query_value(None, "auto_vacuum", |r| r.get(0)).map_err(db)?;
+    if auto_vacuum != 2 {
+        return Err(Error::Backend(format!("{}: auto_vacuum reads {auto_vacuum} after VACUUM, not 2", path.display())));
+    }
     let (bytes_after, free_bytes_after) = usage(&conn, path)?;
     Ok(Report {
         bytes_before,
