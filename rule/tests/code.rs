@@ -238,7 +238,7 @@ fn behind_names_store_slugs_the_toc_and_pointers_do_not_account_for() {
     let _env = testkit::env_read();
     let toc = parse_toc(TOC).unwrap();
     let p = ptrs("[[retired]]\nslug = \"law-five\"\nreason = \"Gone.\"\non = \"d\"\n");
-    let store: BTreeMap<String, String> = ["law-one", "law-three", "law-four", "law-five", "law-six"].iter().map(|s| (s.to_string(), String::new())).collect();
+    let store: BTreeMap<String, String> = ["law-one", "law-three", "law-four", "law-five", "law-six", "sop-x"].iter().map(|s| (s.to_string(), String::new())).collect();
     assert_eq!(rule::code::behind(&toc, &p, &store), ["law-four", "law-six"]);
 }
 
@@ -386,4 +386,39 @@ fn a_branch_adding_a_slug_neither_the_base_nor_the_tip_holds_is_unreconciled() {
     let got: std::collections::BTreeMap<_, _> = rule::code::law_branches(p, "main").into_iter().collect();
     assert_eq!(got[&branch], LawBranch::Tip);
     assert_eq!(got["law/stray"], LawBranch::Unreconciled);
+}
+
+#[test]
+fn a_dated_provenance_mark_never_reaches_a_rendered_file() {
+    let _env = testkit::env_read();
+    let toc = parse_toc("[[part]]\nnumber = 1\nname = \"A\"\nslug = \"a\"\nscope = \"s\"\nslugs = [\"law-one\", \"law-two\", \"law-three\"]\n").unwrap();
+    let tree = generate(&toc, &Pointers::default(), |slug| match slug {
+        "law-one" => Some("Do one (per Ryan, 2026-09-29).".into()),
+        "law-two" => Some("Do two (per Ryan, 2026-10-15). Then three.".into()),
+        "law-three" => Some("Do four (per the spec) always.".into()),
+        _ => None,
+    });
+    let flat = |k: &str| tree[k].split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat("1-a/1.1-law-one.md").ends_with("Do one."));
+    assert!(flat("1-a/1.2-law-two.md").ends_with("Do two. Then three."));
+    assert!(flat("1-a/1.3-law-three.md").ends_with("Do four (per the spec) always."));
+    let pat = spira_lint::rules::inventory::pattern_re(&[]).unwrap();
+    for (f, content) in &tree {
+        assert!(spira_lint::rules::inventory::scan(content.as_bytes(), &pat).is_empty(), "{f}: {content}");
+    }
+}
+
+#[test]
+fn an_in_flight_toc_slug_that_is_not_a_statute_is_not_carried() {
+    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
+    let repo = law_repo();
+    let p = repo.path();
+    testkit::git(p, &["checkout", "-q", "-b", "law/polluted"]);
+    std::fs::write(p.join("law/toc.toml"), TOC.replace("\"law-two\",", "\"law-two\",\n  \"sop-y\",\n  \"law-nine\",")).unwrap();
+    testkit::git(p, &["commit", "-q", "-am", "polluted"]);
+    testkit::git(p, &["checkout", "-q", "main"]);
+    let out = rule::code::with_in_flight(p, Some("main"), parse_toc(TOC).unwrap());
+    let slugs: Vec<_> = out.iter().flat_map(|x| x.slugs.iter().cloned()).collect();
+    assert!(!slugs.contains(&"sop-y".to_string()), "{slugs:?}");
+    assert!(slugs.contains(&"law-nine".to_string()), "{slugs:?}");
 }

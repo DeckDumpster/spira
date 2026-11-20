@@ -341,17 +341,52 @@ pub fn append(parts: &[Part], number: u32, slug: &str) -> Result<Vec<Part>, Stri
 /// A statute's trailing parenthetical citing the operator (`(per ...)`) or a bead
 /// (`(sp-...: ...)`) names the case that produced it; the shipped projection carries the rule,
 /// the store and the wiki keep the history.
-fn without_citation(text: &str) -> &str {
+fn without_citation(text: &str) -> std::borrow::Cow<'_, str> {
     let mut rest = text.trim_end();
-    while rest.ends_with(')') {
-        let Some(i) = rest.rfind('(').filter(|&i| is_citation(&rest[i..])) else { break };
-        rest = rest[..i].trim_end();
+    let mut punct = "";
+    let mut trimmed = false;
+    loop {
+        let t = rest.trim_end();
+        let (core, p) = match t.strip_suffix(['.', ';']) {
+            Some(c) if c.ends_with(')') => (c, &t[c.len()..]),
+            _ => (t, ""),
+        };
+        let Some(i) = core.strip_suffix(')').and_then(|_| core.rfind('(')).filter(|&i| is_citation(&core[i..])) else { break };
+        if !trimmed {
+            punct = p;
+        }
+        trimmed = true;
+        rest = core[..i].trim_end();
     }
-    if rest.len() == text.trim_end().len() {
-        text
+    let head = if trimmed { format!("{rest}{punct}") } else { text.to_string() };
+    let cleaned = without_dated_provenance(&head);
+    if cleaned == text {
+        std::borrow::Cow::Borrowed(text)
     } else {
-        rest
+        std::borrow::Cow::Owned(cleaned)
     }
+}
+
+/// Drops every `(per ...)` parenthetical holding a `YYYY-MM-DD` date, with the space before it.
+fn without_dated_provenance(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("(per ") {
+        let Some(len) = rest[i..].find(')') else { break };
+        if has_date(&rest[i..i + len]) {
+            out.push_str(rest[..i].trim_end_matches([' ', '\t']));
+        } else {
+            out.push_str(&rest[..i + len + 1]);
+        }
+        rest = &rest[i + len + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn has_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.windows(10).any(|w| w.iter().enumerate().all(|(k, c)| if k == 4 || k == 7 { *c == b'-' } else { c.is_ascii_digit() }))
 }
 
 fn is_citation(paren: &str) -> bool {
@@ -392,7 +427,7 @@ pub fn generate(parts: &[Part], pointers: &Pointers, text_of: impl Fn(&str) -> O
                 match &text {
                     Some(t) => {
                         let t = without_citation(t);
-                        (first_sentence(t), t.trim_end_matches('\n').to_string())
+                        (first_sentence(&t), t.trim_end_matches('\n').to_string())
                     }
                     None => ("[Reserved]".to_string(), "[Reserved] — no longer in force.".to_string()),
                 }
@@ -487,7 +522,7 @@ pub fn write_seeds(wt: &Path, toc: &[Part], book: &BTreeMap<String, String>) -> 
     for slug in toc.iter().flat_map(|p| p.slugs.iter()) {
         let f = dir.join(format!("{slug}.txt"));
         match book.get(slug) {
-            Some(text) => std::fs::write(&f, without_citation(text)).map_err(|e| format!("rule: {}: {e}", f.display()))?,
+            Some(text) => std::fs::write(&f, without_citation(text).as_ref()).map_err(|e| format!("rule: {}: {e}", f.display()))?,
             // Retired: law/ renders it without its text, so its seed goes too.
             None if f.exists() => std::fs::remove_file(&f).map_err(|e| format!("rule: {}: {e}", f.display()))?,
             None => {}
@@ -590,7 +625,7 @@ pub fn land_law(repo: &LawRepo, wt_root: &Path, verb: &str, key: &str, toc: &[Pa
 /// book is behind the store by these.
 pub fn behind(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Vec<String> {
     let accounted = |s: &str| toc.iter().any(|p| p.slugs.iter().any(|t| t == s)) || pointers.retired.iter().any(|r| r.slug == s) || pointers.merged.iter().any(|m| m.from == s);
-    book.keys().filter(|s| !accounted(s)).cloned().collect()
+    book.keys().filter(|s| s.starts_with("law-") && !accounted(s)).cloned().collect()
 }
 
 /// `toc` with every behind slug appended in store key order under Part 1, the enacted key under
@@ -716,7 +751,7 @@ pub fn with_in_flight(repo_path: &Path, base: Option<&str>, toc: Vec<Part>) -> V
         let Ok(text) = git_in(repo_path, &["show", &format!("{r}:law/toc.toml")]) else { continue };
         let Ok(theirs) = parse_toc(&text) else { continue };
         for p in &theirs {
-            for slug in &p.slugs {
+            for slug in p.slugs.iter().filter(|s| s.starts_with("law-")) {
                 if !merged.iter().any(|m| m.slugs.contains(slug)) {
                     if let Some(home) = merged.iter_mut().find(|m| m.number == p.number) {
                         home.slugs.push(slug.clone());
