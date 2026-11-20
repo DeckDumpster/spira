@@ -2571,7 +2571,7 @@ pub fn round_results_dir(run: &Path, batch: &str) -> PathBuf {
     run.join("rounds").join(format!("{batch}.results"))
 }
 
-/// The failed tests and first FAIL line of each red test phase (`unit.json`, `integration.json`)
+/// The failed tests and failure excerpt of each red test phase (`unit.json`, `integration.json`)
 /// in the round's results, read from that phase's own output.
 fn test_phase_evidence(results: &Path) -> Vec<String> {
     let mut lines = Vec::new();
@@ -2586,8 +2586,8 @@ fn test_phase_evidence(results: &Path) -> Vec<String> {
         if !names.is_empty() {
             lines.push(format!("{stage} failed: {}", names.join(", ")));
         }
-        if let Some(l) = suite_first_fail(results, None, stage) {
-            lines.push(format!("{stage}: {l}"));
+        if let Some((_, text)) = red_suite_steps(results, None, &[stage.to_string()]).pop() {
+            lines.push(format!("{stage}:\n{}", spira_config::sendback::failure_excerpt(&text)));
         }
     }
     lines
@@ -5458,13 +5458,14 @@ mod fail_line_tests {
         let results = run.path().join("rounds").join("b1.results");
         fs::create_dir_all(&results).unwrap();
         let test = "the_wal_stays_within_three_checkpoint_intervals_while_reads_never_stop";
-        fs::write(results.join("integration-tests.out"), format!("running 1 test\nFAIL {test}\n")).unwrap();
+        fs::write(results.join("integration-tests.out"), format!("running 1 test\nFAIL {test}\n    thread 'x' panicked at x.rs:1:1:\n    boom\n")).unwrap();
         fs::write(results.join("integration.json"), format!(r#"{{"stage":"integration-tests","verdict":"red","failed":["{test}"]}}"#)).unwrap();
         let why = keep_red_evidence(run.path(), "b1", "red", &["unit-tests".to_string()], Ok(7));
         fs::remove_dir_all(&results).unwrap();
         let at = why.lines().last().unwrap().strip_prefix("evidence kept: ").expect(&why);
         let kept = fs::read_to_string(at).unwrap();
         assert!(kept.contains(&format!("integration-tests failed: {test}")) && kept.contains(&format!("FAIL {test}")), "{kept}");
+        assert!(kept.contains("panicked at x.rs:1:1"), "{kept}");
     }
 
     fn pass_and_corpus(run: &Path, corpus_has_b: bool) -> (PathBuf, PathBuf) {

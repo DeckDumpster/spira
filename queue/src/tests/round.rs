@@ -7804,7 +7804,7 @@ fn a_mender_calls_carries_a_failure_spec_its_verbs_can_read() {
         spec["output"],
         format!(
             "{}\nassertion Z failed",
-            crate::ops::round::NO_FAILURE_FOUND
+            spira_config::sendback::NO_FAILURE_FOUND
         )
     );
     assert!(
@@ -7822,7 +7822,7 @@ fn a_mender_calls_carries_a_failure_spec_its_verbs_can_read() {
 
 #[test]
 fn a_failure_excerpt_names_the_failing_test_past_forty_crates_of_doc_tests() {
-    use crate::ops::round::failure_excerpt;
+    use spira_config::sendback::failure_excerpt;
     let mut o = String::from("     Running unittests src/lib.rs (target/debug/deps/gate-abc)\n\nrunning 2 tests\ntest a ... ok\ntest b ... FAILED\n\nfailures:\n\n---- b stdout ----\nthread 'b' panicked at gate/src/lib.rs:42:9:\nassertion failed: x\n\nfailures:\n    b\n\ntest result: FAILED. 1 passed; 1 failed\n\n");
     for i in 0..40 {
         o.push_str(&format!(
@@ -7843,12 +7843,41 @@ fn a_failure_excerpt_names_the_failing_test_past_forty_crates_of_doc_tests() {
 
 #[test]
 fn a_failure_excerpt_of_a_shell_suite_keeps_its_fail_lines() {
-    use crate::ops::round::failure_excerpt;
+    use spira_config::sendback::failure_excerpt;
     let x = failure_excerpt("ok one\nFAIL: two\n  expected 1\n  got 2\nok three\nok four\n");
     assert!(
         x.starts_with("FAIL: two") && x.contains("got 2") && !x.contains("ok four"),
         "{x}"
     );
+}
+
+#[test]
+fn a_failure_excerpt_of_nextest_output_keeps_each_failing_tests_panic_block_once() {
+    use spira_config::sendback::failure_excerpt;
+    let fail = "FAIL spira-lc::bin/spira-lc control::store::rounds::tests::list_batches_reads_only_the_rounds_it_shows";
+    let text = format!(
+        "PASS spira-lc::bin/spira-lc a::b\n{fail}\n    thread '...shows' (3) panicked at spira-lc/src/control/store/rounds/tests.rs:1163:9:\n    61 reads: [(\"range_newest_opened\", \"batches/\", ...), ...]\nPASS spira-lc::bin/spira-lc c::d\n------------\n     Summary [   1.0s] 2 tests run: 1 passed, 1 failed\n{fail}\nerror: test run failed\nerror: test run failed\n"
+    );
+    let x = failure_excerpt(&text);
+    assert!(x.contains("panicked at spira-lc/src/control/store/rounds/tests.rs:1163:9") && x.contains("61 reads:"), "{x}");
+    assert_eq!(x.matches(fail).count(), 1, "{x}");
+    assert!(!x.contains("PASS"), "{x}");
+}
+
+#[test]
+fn a_failure_excerpt_keeps_the_same_test_name_failing_in_two_crates() {
+    use spira_config::sendback::failure_excerpt;
+    let x = failure_excerpt(
+        "        FAIL [   0.1s] (1/2) a t::x\n            panicked at a.rs:1:1:\n        FAIL [   0.1s] (2/2) b t::x\n            panicked at b.rs:2:2:\nerror: test run failed\n",
+    );
+    assert!(x.contains("panicked at a.rs:1:1") && x.contains("panicked at b.rs:2:2"), "{x}");
+}
+
+#[test]
+fn a_failure_excerpt_keeps_not_ok_lines_beside_fail_blocks() {
+    use spira_config::sendback::failure_excerpt;
+    let x = failure_excerpt("FAIL x\n  why x\nnot ok 3 - y\n");
+    assert!(x.contains("why x") && x.contains("not ok 3 - y"), "{x}");
 }
 
 #[test]
