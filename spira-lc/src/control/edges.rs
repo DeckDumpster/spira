@@ -147,13 +147,13 @@ impl<B: Backend> Store<B> {
                     continue;
                 };
                 let minute = m.at.div_euclid(60);
-                if !minutes.contains_key(&minute) {
-                    let held = self.contract().get(&keys::edge_minute(minute))?;
-                    minutes.insert(
-                        minute,
-                        held.map(|i| read_minute(&i.value.data)).unwrap_or_default(),
-                    );
-                }
+                let slot = match minutes.entry(minute) {
+                    std::collections::btree_map::Entry::Occupied(o) => o.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(v) => {
+                        let held = self.contract().get(&keys::edge_minute(minute))?;
+                        v.insert(held.map(|i| read_minute(&i.value.data)).unwrap_or_default())
+                    }
+                };
                 let edge = if m.applied {
                     (
                         false,
@@ -173,11 +173,7 @@ impl<B: Backend> Store<B> {
                         ),
                     )
                 };
-                let e = minutes
-                    .get_mut(&minute)
-                    .expect("loaded above")
-                    .entry(edge)
-                    .or_insert((0, i64::MIN));
+                let e = slot.entry(edge).or_insert((0, i64::MIN));
                 e.0 += 1;
                 e.1 = e.1.max(m.at);
                 done.edges += 1;
