@@ -31,8 +31,12 @@ fn bash_in(dir: &std::path::Path, cargo_home: &str, script: &str, arg: &str) -> 
 }
 
 fn bash_in_code(dir: &std::path::Path, cargo_home: &str, script: &str, arg: &str) -> (Option<i32>, String) {
+    bash_in_code2(dir, cargo_home, script, arg, "")
+}
+
+fn bash_in_code2(dir: &std::path::Path, cargo_home: &str, script: &str, arg: &str, arg2: &str) -> (Option<i32>, String) {
     let mut cmd = Command::new("bash");
-    cmd.arg("-c").arg(script).arg("bash").arg(arg).current_dir(dir).env_clear().env("HOME", std::env::var("HOME").unwrap()).env("PATH", format!("{cargo_home}/bin:/usr/local/bin:/usr/bin:/bin"));
+    cmd.arg("-c").arg(script).arg("bash").arg(arg).arg(arg2).current_dir(dir).env_clear().env("HOME", std::env::var("HOME").unwrap()).env("PATH", format!("{cargo_home}/bin:/usr/local/bin:/usr/bin:/bin"));
     for k in ["RUSTUP_TOOLCHAIN", "RUSTUP_HOME"] {
         if let Some(v) = std::env::var_os(k) {
             cmd.env(k, v);
@@ -53,20 +57,42 @@ fn run_in(tmp: &testkit::TempDir, cargo_home: &str, list: &str) -> (Option<i32>,
     let dir = tmp.path().to_path_buf();
     let deny = spira_config::unit_tier::DenyList::parse(list).unwrap();
     let script = format!(
-        "export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n{}\n{}\n{}\nwrite_unit_nextest_config 10 1 \"$PWD/round-nextest.toml\" \"$1\"\nunit_cargo || exit 90\nunit_nextest > run.log 2>&1\nrc=$?\ncat run.log >&2\nexit $rc\n",
+        "export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n{}\n{}\n{}\n{}\nwrite_unit_nextest_config 10 1 \"$PWD/round-nextest.toml\" \"$1\"\nunit_cargo || exit 90\nunit_nextest > run.log 2>&1\nrc=$?\ncat run.log >&2\nprintf '%s' \"$2\" > round-deny-list\nunit_registry_skips round-deny-list run.log\nexit $rc\n",
+        function("unit_registry_skips"),
         function("unit_env"),
         function("write_unit_nextest_config"),
         function("unit_cargo"),
         function("unit_nextest").replace("$HOME/round-nextest.toml", "$PWD/round-nextest.toml"),
     );
-    bash_in_code(&dir, cargo_home, &script, &deny.config_filter_line())
+    bash_in_code2(&dir, cargo_home, &script, &deny.config_filter_line(), list)
 }
 
 #[test]
 fn a_denied_unit_test_is_absent_from_the_nextest_run_and_the_others_pass() {
     let log = run_tiny("disabled\tunit:tiny t::drop\tsp-x\t-\n");
     assert!(log.contains("PASS") && log.contains("t::keep"), "{log}");
-    assert!(!log.contains("t::drop"), "the denied test appears nowhere in the run: {log}");
+    assert!(log.contains("SKIPPED (registry disabled) tiny t::drop"), "{log}");
+    assert!(!names_in_pass_or_fail(&log, "t::drop"), "{log}");
+    assert_eq!(unit_stream_reds(&log), "", "a SKIP line is no red: {log}");
+}
+
+#[test]
+fn a_deny_row_naming_no_test_says_it_matched_none() {
+    let log = run_tiny("disabled\tunit:tiny t::gone\tsp-x\t-\n");
+    assert!(log.contains("registry row tiny t::gone matched no test in the run"), "{log}");
+    assert!(!log.contains("SKIPPED"), "{log}");
+}
+
+fn names_in_pass_or_fail(log: &str, test: &str) -> bool {
+    log.lines().any(|l| l.contains(test) && (l.trim_start().starts_with("PASS") || l.contains("FAIL")))
+}
+
+fn unit_stream_reds(log: &str) -> String {
+    let (tmp, _) = tiny_crate();
+    std::fs::write(tmp.path().join("run.log"), log).unwrap();
+    let script = format!("{}\nunit_stream 9 prog < run.log 2>&1 >/dev/null | grep UNIT-TEST\n", function("unit_stream"));
+    let out = Command::new("bash").arg("-c").arg(script).current_dir(tmp.path()).output().unwrap();
+    String::from_utf8_lossy(&out.stdout).to_string()
 }
 
 #[test]
@@ -113,7 +139,7 @@ fn a_disabled_row_excludes_exactly_that_test_from_a_gate_run_and_a_round_run() {
     assert!(list.contains("disabled\tunit:tiny t::drop"), "{list}");
     for (who, log) in [("gate", gate_unit_run(&list)), ("round", run_tiny(&list))] {
         assert!(log.contains("PASS") && log.contains("t::keep"), "{who}: {log}");
-        assert!(!log.contains("t::drop"), "{who}: the disabled test does not run: {log}");
+        assert!(!names_in_pass_or_fail(&log, "t::drop"), "{who}: the disabled test does not run: {log}");
     }
 
     let o = registry(&path, &["activate", "--test", "unit:tiny t::drop", "--reason", "fixed", "--actor", "a"], 1200);
@@ -172,7 +198,7 @@ fn a_test_red_once_on_the_round_tree_is_disabled_through_the_rounds_own_path_and
     std::fs::remove_file(tmp.path().join("drop.mark")).unwrap();
     let (code, log) = run_in(&tmp, &cargo_home, &round_list);
     assert_eq!(code, Some(0), "{log}");
-    assert!(log.contains("t::keep") && !log.contains("t::drop"), "the re-certifying pass does not run the disabled test: {log}");
+    assert!(log.contains("t::keep") && !names_in_pass_or_fail(&log, "t::drop"), "the re-certifying pass does not run the disabled test: {log}");
 }
 
 #[test]

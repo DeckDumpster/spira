@@ -60,7 +60,7 @@ macro_rules! unit_tier_integration {
 #[macro_export]
 macro_rules! unit_tier_config_printf {
     () => {
-        "[profile.default]\\nslow-timeout = { period = \"%ss\", terminate-after = %s }\\n"
+        "[profile.default]\\nslow-timeout = { period = \"%ss\", terminate-after = %s }\\nstatus-level = \"skip\"\\n"
     };
 }
 
@@ -192,7 +192,7 @@ impl DenyList {
 /// The nextest config of one deadline: `secs` per period, terminated after `periods`.
 pub fn nextest_config(secs: u64, periods: u64, deny: &DenyList) -> String {
     format!(
-        "[profile.default]\nslow-timeout = {{ period = \"{secs}s\", terminate-after = {periods} }}\n{}",
+        "[profile.default]\nslow-timeout = {{ period = \"{secs}s\", terminate-after = {periods} }}\nstatus-level = \"skip\"\n{}",
         deny.config_filter_line()
     )
 }
@@ -331,7 +331,7 @@ mod tests {
         let d = DenyList::default();
         assert_eq!(d.nextest_filter(), None);
         assert_eq!(d.integration_skips(), "");
-        assert_eq!(nextest_config(7, 3, &d), "[profile.default]\nslow-timeout = { period = \"7s\", terminate-after = 3 }\n");
+        assert_eq!(nextest_config(7, 3, &d), "[profile.default]\nslow-timeout = { period = \"7s\", terminate-after = 3 }\nstatus-level = \"skip\"\n");
         assert_eq!(DenyList::parse("# test-registry deny-list at=1 rows=0\n").unwrap(), d);
     }
 

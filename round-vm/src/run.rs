@@ -635,7 +635,7 @@ unit_stream() {
         nx_done { next }
         match($0, /^ *[A-Z][A-Z-]+ +\[[ >]*[0-9.]+s\] +\( *[0-9]+\/[0-9]+\) +[^ ]+ +/) {
             n = substr($0, RLENGTH + 1); st = $1; split(substr($0, 1, RLENGTH), c, /[()\/]/); k = c[2] + 0; total = c[3] + 0
-            if (st != "PASS" && st != "LEAK" && st != "FLAKY") { reds = reds " " n; printf "round-vm: UNIT-TEST %s %s (%d/%d)\n", n, st, k, total > "/dev/stderr"; fflush("/dev/stderr") }
+            if (st != "PASS" && st != "LEAK" && st != "FLAKY" && st != "SKIP") { reds = reds " " n; printf "round-vm: UNIT-TEST %s %s (%d/%d)\n", n, st, k, total > "/dev/stderr"; fflush("/dev/stderr") }
             printf "%d %d%s\n", k, total, reds > prog; close(prog); next }
         /^ *Running / { name = $0; if (match(name, /\(.*\)/)) { name = substr(name, RSTART + 1, RLENGTH - 2); sub(/.*\//, "", name); sub(/-[0-9a-f]+$/, "", name) } else { sub(/^ *Running /, "", name) } next }
         /^ *Doc-tests / { name = "doc-tests " $2; next }
@@ -996,6 +996,14 @@ rdir="$HOME/round-work/.runtime/spira/batch-results"
 write_unit_timings() {
     { echo "unit_build_secs $unit_build_secs"; echo "unit_secs $unit_secs"; grep -E '"#, spira_config::unit_tier_timing_lines!(), r#"' ~/round-unit-tests.log; } > "$rdir/unit-timings" || true
 }
+# One line per `unit:` row of the deny list ($1) saying whether nextest ($2) reported that test skipped.
+unit_registry_skips() {
+    [ -r "$1" ] && [ -r "$2" ] || return 0
+    awk -F'\t' 'NR == FNR { if ($2 ~ /^unit:/) { split(substr($2, 6), w, " "); row[++n] = w[1] " " w[2]; state[n] = $1 } next }
+        /^ *SKIP +\[/ { n2 = split($0, f, " "); seen[f[n2-1] " " f[n2]] = 1 }
+        END { for (i = 1; i <= n; i++) if (row[i] in seen) printf "round-vm: UNIT-TESTS: SKIPPED (registry %s) %s\n", state[i], row[i] > "/dev/stderr"
+              else printf "round-vm: UNIT-TESTS: registry row %s matched no test in the run\n", row[i] > "/dev/stderr" }' "$1" "$2"
+}
 unit_progress="$rdir/unit-progress"
 mkdir -p "$rdir"
 unit_lib_total=$(grep -c '^ *Executable unittests ' ~/round-unit-build.log)
@@ -1016,8 +1024,9 @@ wait "$stream_pid"
 [ ! -s "$unit_hung" ] || [ "$unit_rc" -ne 0 ] || unit_rc=1
 echo "round-vm: UNIT-TESTS took ${unit_secs}s (--lib --bins, ${unit_lib_total} test binaries)" >&2
 write_unit_timings
+unit_registry_skips ~/round-deny-list ~/round-unit-tests.log
 if [ "$unit_rc" -eq 0 ]; then
-    echo "round-vm: UNIT-TESTS: PASS ($(awk '/^ *Summary \[/ { print $4 }' ~/round-unit-tests.log) tests)" >&2
+    echo "round-vm: UNIT-TESTS: PASS ($(awk '/^ *Summary \[/ { print $4 }' ~/round-unit-tests.log) tests, $(awk '/^ *Summary \[/ { for (i = 1; i < NF; i++) if ($(i+1) ~ /^skipped/) print $i }' ~/round-unit-tests.log | grep . || echo 0) skipped)" >&2
 else
     phase_failed unit-tests "$unit_rc"
     echo "round-vm: UNIT-TESTS: FAIL (unit run rc=$unit_rc):" >&2
@@ -4134,6 +4143,15 @@ mod tests {
         let body = script_fn("write_unit_timings");
         assert!(body.contains("unit_build_secs") && body.contains("unit_secs") && body.contains("$rdir/unit-timings") && body.contains("round-unit-tests.log"), "{body}");
         assert!(body.contains(&format!("grep -E '{}'", spira_config::unit_tier_timing_lines!())), "{body}");
+    }
+
+    #[test]
+    fn the_registry_skips_are_reported_after_the_timings_before_either_verdict_line() {
+        let call = REMOTE_SCRIPT.find("\nunit_registry_skips ~/round-deny-list ~/round-unit-tests.log\n").expect("the call");
+        let write = REMOTE_SCRIPT.find("write_unit_timings\n").unwrap();
+        let green = REMOTE_SCRIPT.find("UNIT-TESTS: PASS").unwrap();
+        let fail = REMOTE_SCRIPT.find("UNIT-TESTS: FAIL").unwrap();
+        assert!(write < call && call < green && call < fail, "one call ahead of the PASS and FAIL branches");
     }
 
     #[test]
