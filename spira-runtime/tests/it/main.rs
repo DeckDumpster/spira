@@ -106,6 +106,7 @@ mod watcher_brain_dirty;
 mod watcher_design_asks;
 mod watcher_inbox_keeper;
 mod watcher_overrides;
+mod watcher_cr_cadence;
 mod watcher_cr_comments;
 mod watcher_pr_notify;
 mod watcher_publish_backlog;

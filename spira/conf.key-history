@@ -804,3 +804,7 @@ lc_waiting_verbs
 runtime_cr_comments_hot_secs
 runtime_cr_comments_cold_secs
 runtime_cr_comments_window_secs
+cr_tz
+cr_open_hour
+cr_stale_days
+runtime_cr_cadence_secs

@@ -3,6 +3,7 @@
 //! what it has to say leaves as an `inbox.append` effect.
 
 pub mod asks;
+pub mod cr_cadence;
 pub mod cr_comments;
 pub mod design_asks;
 pub mod halt;

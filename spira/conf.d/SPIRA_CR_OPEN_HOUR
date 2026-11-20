@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=cr
+DOC=The local hour, 0 to 23, at which the cr-cadence watcher stages the next scheduled review on the day after one closes.
+SCHEMA=REQUIRED: The local hour (0 to 23, in SPIRA_CR_TZ) at which the next scheduled review is staged on the day after one closes. Unset or out of range, the cr-cadence observe fails naming this key; nothing defaults it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF

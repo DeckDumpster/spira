@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=cr
+DOC=The time zone in which the cr-cadence watcher reads SPIRA_CR_OPEN_HOUR.
+SCHEMA=REQUIRED: The time zone, as the tz database names it, in which SPIRA_CR_OPEN_HOUR is read. Unset, the cr-cadence observe fails naming this key; nothing defaults it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF
