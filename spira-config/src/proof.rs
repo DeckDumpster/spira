@@ -3,7 +3,8 @@
 //! recorded pass at the tip being submitted.
 //!
 //! Layout under `$SPIRA_RUN/proof/<bead>/`: `failing` (one check per line, newest ejection
-//! only) and `pass/<tip>/<check>` (the tool's exit code and summary line).
+//! only), `failing-tests/<check>` (the registry ids of the tests that check failed, one per
+//! line) and `pass/<tip>/<check>` (the tool's exit code and summary line).
 
 use std::fs;
 use std::io;
@@ -63,6 +64,28 @@ pub fn clear_failing(run: &Path, bead: &str) {
     if let Ok(dir) = bead_dir(run, bead) {
         let _ = fs::remove_file(dir.join("failing"));
     }
+}
+
+/// Keeps the registry ids of the tests `check` failed in the newest ejection (replacing any
+/// earlier record); no ids keeps nothing, so the check is judged whole.
+pub fn record_failing_tests(run: &Path, bead: &str, check: &str, ids: &[String]) -> io::Result<()> {
+    if !valid_check(check) || ids.iter().any(|i| i.is_empty() || i.contains('\n')) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "bad check or test id"));
+    }
+    let path = bead_dir(run, bead)?.join("failing-tests").join(check);
+    if ids.is_empty() {
+        let _ = fs::remove_file(path);
+        return Ok(());
+    }
+    write_atomic(&path, &(ids.join("\n") + "\n"))
+}
+
+pub fn failing_tests(run: &Path, bead: &str, check: &str) -> Vec<String> {
+    let Ok(dir) = bead_dir(run, bead) else { return Vec::new() };
+    if !valid_check(check) {
+        return Vec::new();
+    }
+    fs::read_to_string(dir.join("failing-tests").join(check)).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(String::from).collect()
 }
 
 pub fn record_run(run: &Path, bead: &str, tip: &str, check: &str, exit: i32, summary: &str) -> io::Result<()> {
@@ -150,11 +173,25 @@ pub fn drop_deleted_suites(run: &Path, bead: &str, root: &str, landref: &str, re
     if gone.is_empty() {
         return Ok(gone);
     }
+    remove_checks(run, bead, &gone)?;
+    Ok(gone)
+}
+
+/// Removes `gone` from the bead's failing checks, its recorded failing tests and the gate's
+/// `ejected/<bead>` sidecar.
+fn remove_checks(run: &Path, bead: &str, gone: &[String]) -> Result<(), String> {
+    let sidecar = run.join("ejected").join(bead);
+    let named: Vec<String> = fs::read_to_string(&sidecar).unwrap_or_default().lines().next().unwrap_or("").split(|c: char| c == ',' || c.is_whitespace()).filter(|w| !w.is_empty()).map(String::from).collect();
     let kept: Vec<String> = failing(run, bead).into_iter().filter(|c| !gone.contains(c)).collect();
     if kept.is_empty() {
         clear_failing(run, bead);
     } else {
         write_atomic(&bead_dir(run, bead).map_err(|e| e.to_string())?.join("failing"), &(kept.join("\n") + "\n")).map_err(|e| e.to_string())?;
+    }
+    for c in gone {
+        if valid_check(c) {
+            let _ = record_failing_tests(run, bead, c, &[]);
+        }
     }
     let kept_sidecar: Vec<&String> = named.iter().filter(|c| !gone.contains(c)).collect();
     if kept_sidecar.is_empty() {
@@ -162,7 +199,13 @@ pub fn drop_deleted_suites(run: &Path, bead: &str, root: &str, landref: &str, re
     } else {
         write_atomic(&sidecar, &kept_sidecar.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(",")).map_err(|e| e.to_string())?;
     }
-    Ok(gone)
+    Ok(())
+}
+
+/// Drops `checks` from the bead's requirement: its failing checks, their recorded tests and the
+/// `ejected/<bead>` sidecar. The caller has already recorded why.
+pub fn drop_disabled_checks(run: &Path, bead: &str, checks: &[String]) -> Result<(), String> {
+    remove_checks(run, bead, checks)
 }
 
 #[cfg(test)]
@@ -191,6 +234,38 @@ mod tests {
         assert!(fs::read_to_string(r.join("proof/sp-a/pass").join(T1).join("test-x.sh")).unwrap().contains("summary=12 passed"));
         clear_failing(&r, "sp-a");
         assert!(unproven(&r, "sp-a", T1).is_empty());
+    }
+
+    #[test]
+    fn failing_tests_round_trip_per_check_and_an_empty_record_keeps_nothing() {
+        let d = run();
+        let r = d.path().to_path_buf();
+        let ids = vec!["integration:state-store-sqlite a_test".to_string(), "unit:bin t".to_string()];
+        record_failing_tests(&r, "sp-a", "unit-tests", &ids).unwrap();
+        assert_eq!(failing_tests(&r, "sp-a", "unit-tests"), ids);
+        assert!(failing_tests(&r, "sp-a", "other").is_empty());
+        assert!(record_failing_tests(&r, "sp-a", "../x", &ids).is_err());
+        record_failing_tests(&r, "sp-a", "unit-tests", &[]).unwrap();
+        assert!(failing_tests(&r, "sp-a", "unit-tests").is_empty());
+    }
+
+    #[test]
+    fn dropping_a_disabled_check_leaves_the_other_checks_in_place() {
+        let d = run();
+        let r = d.path().to_path_buf();
+        record_failing(&r, "sp-a", &["unit-tests".into(), "test-y.sh".into()]).unwrap();
+        record_failing_tests(&r, "sp-a", "unit-tests", &["unit:b t".to_string()]).unwrap();
+        record_failing_tests(&r, "sp-a", "test-y.sh", &["unit:c t".to_string()]).unwrap();
+        fs::create_dir_all(r.join("ejected")).unwrap();
+        fs::write(r.join("ejected/sp-a"), "unit-tests,test-y.sh").unwrap();
+        drop_disabled_checks(&r, "sp-a", &["unit-tests".to_string()]).unwrap();
+        assert_eq!(failing(&r, "sp-a"), ["test-y.sh"]);
+        assert!(failing_tests(&r, "sp-a", "unit-tests").is_empty());
+        assert_eq!(failing_tests(&r, "sp-a", "test-y.sh"), ["unit:c t"]);
+        assert_eq!(fs::read_to_string(r.join("ejected/sp-a")).unwrap(), "test-y.sh");
+        drop_disabled_checks(&r, "sp-a", &["test-y.sh".to_string()]).unwrap();
+        assert!(failing(&r, "sp-a").is_empty());
+        assert!(!r.join("ejected/sp-a").exists());
     }
 
     fn repo_without(dir: &Path) -> String {

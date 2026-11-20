@@ -465,6 +465,7 @@ struct FScripts {
     lint_red: RefCell<BTreeMap<String, String>>,
     suite_red: RefCell<Vec<String>>,
     suite_rc: RefCell<BTreeMap<String, i32>>,
+    suite_out: RefCell<BTreeMap<String, (i32, String)>>,
     /// Set once `release activate` ran; the store's fake reads it to begin its outage.
     activated: std::rc::Rc<Cell<bool>>,
     /// `release <sub>` exit status by subcommand (absent = 0), and the stderr line it prints.
@@ -547,10 +548,14 @@ impl Scripts for FScripts {
             None => (0, String::new()),
         }
     }
-    fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool) -> (i32, String) {
+    fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool, tests: &[String]) -> (i32, String) {
+        let only = if tests.is_empty() { String::new() } else { format!(" tests={}", tests.join(",")) };
         self.calls.borrow_mut().push(format!(
-            "suite_run {check} {tip} {repo} first={first_check}"
+            "suite_run {check} {tip} {repo} first={first_check}{only}"
         ));
+        if let Some(out) = self.suite_out.borrow().get(check) {
+            return out.clone();
+        }
         if let Some(rc) = self.suite_rc.borrow().get(check) {
             return (
                 *rc,

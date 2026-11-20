@@ -254,6 +254,7 @@ fn checks_proven(
     repo: &str,
     id: &str,
     tip: &str,
+    by: &str,
 ) -> Option<Vec<String>> {
     use spira_config::proof;
     let mut notes = Vec::new();
@@ -267,7 +268,40 @@ fn checks_proven(
             continue;
         }
         let first_check = !proof::recorded(run, id, tip, &check);
-        let (rc, out) = w.scripts.suite_run(&check, tip, repo, first_check);
+        let mut names = Vec::new();
+        let ids = proof::failing_tests(run, id, &check);
+        if !ids.is_empty() {
+            if let Ok(deny) = w.scripts.deny_list(w.clock.now()) {
+                let disabled = disabled_rows(&deny);
+                let (off, active): (Vec<&String>, Vec<&String>) = ids.iter().partition(|i| disabled.iter().any(|(d, _)| d == *i));
+                if active.is_empty() {
+                    let named: Vec<String> = off
+                        .iter()
+                        .map(|i| format!("{i} (disabled on {})", disabled.iter().find(|(d, _)| d == *i).map_or("?", |(_, b)| b)))
+                        .collect();
+                    let cause = format!("{check} at {tip} not run: every test the ejection named is disabled in the test registry now: {}", named.join("; "));
+                    w.out(format!("queue.sh {verb}: {cause}"));
+                    if let Err((rc, e)) = w.lc.fact(id, "check-waived-disabled", by, &cause) {
+                        w.err(format!("queue.sh {verb}: cannot record the waiver of {check}: rc={rc}: {e} — refused"));
+                        return None;
+                    }
+                    if let Err(e) = proof::drop_disabled_checks(run, id, std::slice::from_ref(&check)) {
+                        w.err(format!("queue.sh {verb}: cannot drop {check}: {e} — refused"));
+                        return None;
+                    }
+                    continue;
+                }
+                for i in active {
+                    let name = i.split_once(' ').map_or(i.as_str(), |(_, t)| t).to_string();
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+        let via = if names.is_empty() { String::new() } else { format!(" --tests {}", names.join(",")) };
+        w.out(format!("queue.sh {verb}: running {check} at {tip} via testenv{via}"));
+        let (rc, out) = w.scripts.suite_run(&check, tip, repo, first_check, &names);
         if let Err(e) = proof::record_run(run, id, tip, &check, rc, &out) {
             w.err(format!(
                 "queue.sh {verb}: cannot record the run of {check}: {e} — refused"
@@ -275,12 +309,16 @@ fn checks_proven(
             return None;
         }
         if rc != 0 {
-            let last = out
+            let verdict = out
                 .lines()
                 .rev()
                 .map(str::trim)
                 .find(|l| !l.is_empty())
                 .unwrap_or("no output");
+            let last = match out.lines().map(str::trim).find(|l| l.starts_with("over-cap:")) {
+                Some(cause) => format!("{cause}\n  {verdict}"),
+                None => verdict.to_string(),
+            };
             if out.lines().any(|l| l.starts_with("VERDICT RED ")) {
                 failed.push(format!("{check} failed at {tip} (rc={rc}): {last}"));
             } else {
@@ -305,6 +343,18 @@ fn checks_proven(
         w.err(format!("queue.sh {verb}: {id} was ejected for checks that could not be verified at {tip} — refused:\n  {}", notes.join("\n  ")));
     }
     None
+}
+
+/// The `(test id, bead)` of each row of a `test-registry deny-list` text.
+fn disabled_rows(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| {
+            let mut f = l.split('\t');
+            let (_state, id, bead) = (f.next()?, f.next()?, f.next()?);
+            Some((id.to_string(), bead.to_string()))
+        })
+        .collect()
 }
 
 /// A suite the landing ref no longer contains cannot be run, so an ejection for it is not a
@@ -743,7 +793,7 @@ pub fn resubmit(
     if !drop_deleted_suites(w, &c, id, by) {
         return FAIL;
     }
-    let Some(round_only_notes) = checks_proven(w, "resubmit", &c.s.run, &c.r.name, id, tip) else {
+    let Some(round_only_notes) = checks_proven(w, "resubmit", &c.s.run, &c.r.name, id, tip, by) else {
         return FAIL;
     };
     if super::require_lc(w, "resubmit").is_err() {

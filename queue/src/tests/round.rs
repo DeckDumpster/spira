@@ -9442,6 +9442,66 @@ fn resubmit_drops_a_forced_suite_the_landing_ref_deleted_and_records_why() {
     assert!(spira_config::proof::failing(&run, "sp-a").is_empty() && !run.join("ejected/sp-a").exists());
 }
 
+const TEST_A: &str = "integration:state-store-sqlite wal_stays_bounded";
+const TEST_B: &str = "unit:queue other_test";
+
+fn unit_red_world(ids: &[&str], deny: &str) -> T {
+    let t = rework_world(&["manual"]);
+    let run = t.s().run.clone();
+    spira_config::proof::record_failing(&run, "sp-a", &["unit-tests".to_string()]).unwrap();
+    let ids: Vec<String> = ids.iter().map(|i| i.to_string()).collect();
+    spira_config::proof::record_failing_tests(&run, "sp-a", "unit-tests", &ids).unwrap();
+    fs::create_dir_all(run.join("ejected")).unwrap();
+    fs::write(run.join("ejected/sp-a"), "unit-tests").unwrap();
+    *t.scripts.deny_list.borrow_mut() = Some(Ok(format!("# test-registry deny-list at=1 rows=1\n{deny}")));
+    t
+}
+
+fn resubmit_unit_red(t: &T) -> i32 {
+    let tip_arg = format!("--tip={T_FIX}");
+    t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=r", "--evidence=e", &ev_tip()])
+}
+
+#[test]
+fn resubmit_runs_nothing_when_every_test_the_eject_named_is_now_disabled() {
+    let t = unit_red_world(&[TEST_A], &format!("disabled\t{TEST_A}\tsp-gm7sti\t9999999999\n"));
+    assert_eq!(resubmit_unit_red(&t), 0, "{}", t.err());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("suite_run")), "{:?}", t.scripts.calls.borrow());
+    let facts: Vec<String> = t.lc.calls.borrow().iter().filter(|c| c.starts_with("fact sp-a check-waived-disabled concierge")).cloned().collect();
+    assert_eq!(facts.len(), 1, "{facts:?}");
+    assert!(facts[0].contains(TEST_A) && facts[0].contains("sp-gm7sti"), "{facts:?}");
+    let run = t.s().run.clone();
+    assert!(spira_config::proof::failing(&run, "sp-a").is_empty() && !run.join("ejected/sp-a").exists());
+}
+
+#[test]
+fn resubmit_runs_only_the_still_active_tests_when_some_named_tests_are_disabled() {
+    let t = unit_red_world(&[TEST_A, TEST_B], &format!("disabled\t{TEST_A}\tsp-gm7sti\t9999999999\n"));
+    assert_eq!(resubmit_unit_red(&t), 0, "{}", t.err());
+    let runs: Vec<String> = t.scripts.calls.borrow().iter().filter(|c| c.starts_with("suite_run")).cloned().collect();
+    assert_eq!(runs, [format!("suite_run unit-tests {T_FIX} spira first=true tests=other_test")]);
+    assert!(t.out().contains(&format!("running unit-tests at {T_FIX} via testenv --tests other_test")), "{}", t.out());
+}
+
+#[test]
+fn resubmit_reports_testenvs_over_cap_cause_with_the_verdict() {
+    let t = unit_red_world(&[], "");
+    t.scripts.suite_out.borrow_mut().insert(
+        "unit-tests".into(),
+        (2, "over-cap: unit-tests was still running at the 600s cap (x)\nVERDICT FAULT rc=2 ran=0 reason=over-cap".into()),
+    );
+    assert_eq!(resubmit_unit_red(&t), 1);
+    assert!(t.err().contains("over-cap: unit-tests was still running at the 600s cap") && t.err().contains("VERDICT FAULT rc=2"), "{}", t.err());
+}
+
+#[test]
+fn resubmit_runs_the_whole_check_when_the_eject_recorded_no_test_ids() {
+    let t = unit_red_world(&[], "");
+    assert_eq!(resubmit_unit_red(&t), 0, "{}", t.err());
+    let runs: Vec<String> = t.scripts.calls.borrow().iter().filter(|c| c.starts_with("suite_run")).cloned().collect();
+    assert_eq!(runs, [format!("suite_run unit-tests {T_FIX} spira first=true")]);
+}
+
 fn round_records(t: &T) -> Vec<(String, String, String)> {
     let get = |r: &[(String, serde_json::Value)], k: &str| {
         r.iter()
