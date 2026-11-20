@@ -1101,6 +1101,8 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
                 let (code, _, stderr) = run_bd(db, &["remember", "--key", &record_key, &record]);
                 if code != 0 {
                     eprintln!("rule: failed to record the retirement of {from}: {stderr}");
+                    run_bd(db, &["forget", key]);
+                    after.remove(key);
                     failed = true;
                     continue;
                 }
