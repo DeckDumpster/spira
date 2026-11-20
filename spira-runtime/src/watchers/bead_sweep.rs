@@ -605,6 +605,22 @@ mod tests {
     }
 
     #[test]
+    fn a_p0_bead_whose_claim_is_not_claimable_is_not_announced_behind_a_full_pool() {
+        for verdict in [Some("cannot-tell"), Some("snoozed"), None] {
+            let mut snap = pool(ready("sp-p"), 0);
+            snap.rows[0].claim = verdict.map(str::to_string);
+            assert!(!said(&snap, FULL).iter().any(|l| l.contains("WAITING")), "{verdict:?}");
+        }
+    }
+
+    #[test]
+    fn a_stale_room_judgement_is_not_read_as_a_full_pool() {
+        let stale = Some(Room { since_ms: None, at_ms: 0 });
+        let lines = said(&pool(ready("sp-p"), 0), stale);
+        assert!(!lines.iter().any(|l| l.contains("WAITING")), "{lines:?}");
+    }
+
+    #[test]
     fn a_p1_ready_bead_behind_a_full_pool_raises_nothing() {
         assert!(said(&pool(ready("sp-p"), 1), FULL).is_empty());
     }
