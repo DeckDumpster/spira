@@ -37,9 +37,7 @@ impl<B: Backend> Backend for Counting<B> {
         self.inner.get(key, at)
     }
     fn get_many(&self, keys: &[&str], at: u64) -> state_store::Result<Vec<Option<state_store::Version>>> {
-        for k in keys {
-            self.note("get_many", k, 1);
-        }
+        self.note("get_many", keys.first().copied().unwrap_or(""), keys.len());
         self.inner.get_many(keys, at)
     }
     fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {

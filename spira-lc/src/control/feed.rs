@@ -10,7 +10,7 @@ use state_store::{
 
 use super::keys;
 use super::records::Audit;
-use super::store::Store;
+use super::store::{Store, RECORD_CHUNK};
 
 /// One audited change: the txn's revision and the audit it carried.
 #[derive(Clone, Debug, PartialEq)]
@@ -60,9 +60,22 @@ impl<B: Backend> Store<B> {
     /// changes imported from the old store come first, each at its old seq, which is below
     /// every revision since.
     pub fn history(&self, id: &str, machine: Option<&str>) -> Result<Vec<Change>> {
-        let (entries, _) = self
-            .contract()
-            .list(&[keys::history(id).as_str()], &Selector::Everything)?;
+        let prefix = keys::history(id);
+        let mut entries = Vec::new();
+        let mut cursor = None;
+        let list_rev = loop {
+            let mut page = self.contract().list_page(
+                &[prefix.as_str()],
+                &Selector::Everything,
+                RECORD_CHUNK,
+                cursor.as_ref(),
+            )?;
+            entries.append(&mut page.items);
+            match page.next {
+                Some(next) => cursor = Some(next),
+                None => break page.list_rev,
+            }
+        };
         let wanted = |a: &Audit| a.lc_key == id && machine.is_none_or(|m| a.machine == m);
         let (imported, entries): (Vec<_>, Vec<_>) =
             entries.iter().partition(|e| e.value.data.get("seq").is_some());
@@ -80,19 +93,24 @@ impl<B: Backend> Store<B> {
         }
         out.sort_by_key(|c| c.rev);
         let revs: BTreeSet<u64> = entries.iter().map(|e| e.mod_rev.main).collect();
-        for rev in revs {
-            let Some(events) = self.contract().get(&events_key(rev))? else {
-                return Err(Error::Backend(format!(
-                    "{}: its history names rev {rev}, which has no events key",
-                    keys::history(id)
-                )));
-            };
-            out.extend(
-                branch_audits(&events)
-                    .into_iter()
-                    .filter(|a| wanted(a))
-                    .map(|audit| Change { rev, audit }),
-            );
+        let revs: Vec<u64> = revs.into_iter().collect();
+        for chunk in revs.chunks(RECORD_CHUNK) {
+            let wanted_keys: Vec<String> = chunk.iter().map(|r| events_key(*r)).collect();
+            let refs: Vec<&str> = wanted_keys.iter().map(String::as_str).collect();
+            let found = self.contract().get_many_at(&refs, list_rev)?;
+            for (rev, events) in chunk.iter().zip(found) {
+                let Some(events) = events else {
+                    return Err(Error::Backend(format!(
+                        "{prefix}: its history names rev {rev}, which has no events key"
+                    )));
+                };
+                out.extend(
+                    branch_audits(&events)
+                        .into_iter()
+                        .filter(|a| wanted(a))
+                        .map(|audit| Change { rev: *rev, audit }),
+                );
+            }
         }
         Ok(out)
     }

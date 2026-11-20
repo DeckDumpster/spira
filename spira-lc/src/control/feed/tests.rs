@@ -346,6 +346,44 @@ fn history_outlives_forgetting_revisions<B: Backend>(s: &Store<B>) {
     assert_eq!(seqs, [first, second]);
 }
 
+#[test]
+fn history_reads_a_beads_keys_in_pages_and_their_events_in_chunks_at_one_revision() {
+    use crate::control::store::RECORD_CHUNK;
+    use crate::counting::Counting;
+    use state_store::{Object, Rev, Write};
+    let s = store(Counting::new(MemBackend::new()), &VirtualClock::new(0));
+    create(&s, "sp-a");
+    let txns = 2 * RECORD_CHUNK + 50;
+    let revs: Vec<u64> = (0..txns).map(|n| toggle(&s, "sp-a", n as u32)).collect();
+    let imported = 3;
+    for n in 0..imported {
+        let audit = serde_json::json!({ "machine": "bead", "lc_key": "sp-a", "event": "Claim", "expect": "READY", "from_state": "READY", "to_state": "WORKING", "applied": true, "refusal": null, "evidence": {}, "actor": "a", "at": 1 });
+        let head = s.contract().head().unwrap();
+        s.contract()
+            .backend()
+            .commit(head, &[Write::Put {
+                key: keys::history_entry("sp-a", 0, &format!("import-{n}")),
+                value: Object::new(serde_json::json!({ "seq": n + 1, "audit": audit })).encode(),
+                create_rev: Rev::new(head + 1, 0),
+                prev: None,
+            }])
+            .unwrap();
+    }
+    let seqs = |h: &Value| -> Vec<u64> { h.as_array().unwrap().iter().map(|r| r["seq"].as_u64().unwrap()).collect() };
+    s.contract().backend().take();
+    let h = call(&s, &["history", "sp-a"]);
+    let reads = s.contract().backend().take();
+    let history_keys = txns + 1 + imported;
+    let bound = 1 + history_keys.div_ceil(RECORD_CHUNK) + (txns + 1).div_ceil(RECORD_CHUNK);
+    assert!(reads.len() <= bound, "{} reads, over {bound}: {reads:?}", reads.len());
+    assert!(!reads.iter().any(|(k, key, _)| *k == "get" && key.starts_with("events/")), "{reads:?}");
+    assert!(reads.iter().all(|(_, _, n)| *n <= RECORD_CHUNK), "{reads:?}");
+    let got = seqs(&h);
+    assert_eq!(got[..imported], [1, 2, 3], "the imported changes come first, at their old seqs");
+    assert_eq!(got[got.len() - txns..], revs[..], "then each txn's change in revision order");
+    assert_eq!(call(&s, &["history", "sp-a", "--machine", "bead"]), h);
+}
+
 fn store_usage_answers_one_bounded_page_with_a_cursor_and_refuses_a_page_above_the_cap<B: Backend>(
     s: &Store<B>,
 ) {
