@@ -1770,6 +1770,7 @@ fn dwell_with_a_window_holding_the_cap_of_rounds_errors_naming_it() {
     many_rounds(&r, 0, crate::control::dwell::DWELL_ROUNDS_MAX, &[]);
     let e = r.s.dwell(AT, 100 * crate::control::dwell::DWELL_ROUNDS_MAX as u64, None).unwrap_err();
     assert!(e.to_string().contains("DWELL_ROUNDS_MAX"), "{e}");
+}
 
 fn seed<T: serde::Serialize>(r: &Rig<Counting>, key: &str, rec: &T) {
     r.s.contract()
