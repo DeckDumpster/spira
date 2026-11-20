@@ -327,8 +327,8 @@ impl GateQueue {
         }
     }
 
-    /// Take the next job for this slot: base fixes first, then the repository holding the
-    /// fewest running slots, then lowest priority number, then oldest. The move into
+    /// Take the next job for this slot: base fixes first, then express, then lowest
+    /// priority number, then the repository holding the fewest running slots, then oldest. The move into
     /// `claimed/<slot>/` is a single `rename(2)` of the inbox file: whichever slot's rename
     /// lands first wins the job, and every other slot's rename of that same (now-gone)
     /// source path fails and falls through to the next candidate — no two slots can ever

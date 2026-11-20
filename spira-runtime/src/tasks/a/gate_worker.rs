@@ -39,8 +39,8 @@
 //! ## Decide
 //!
 //! - `pick(snapshot, slot) -> Option<Job>` is `pick_key`, the order `claim` uses: fix branches
-//!   first, then the repo with the fewest running jobs, then priority, then age
-//!   (`gateq.rs:66-68,242-254`).
+//!   first, then express, then priority, then the repo with the fewest running jobs, then age
+//!   (`gateq.rs`).
 //! - `check_tip(job, tip) -> Proceed | Drop(gone|moved)` (`lib.rs:309-322`).
 //! - `classify(rc, out) -> GateRun` (`lib.rs:259-267`). It is already pure and is reused as is.
 //!   Only the gate's own status may yield FAIL. Not-found, not-started and killed give NO_VERDICT.
@@ -156,6 +156,8 @@ pub struct Job {
     pub bead: String,
     /// A fix branch goes first.
     pub fix: bool,
+    #[serde(default)]
+    pub express: bool,
     pub priority: u8,
     pub enqueued_ms: u64,
 }
@@ -353,12 +355,12 @@ pub fn step(state: State, event: Trigger) -> Result<State, String> {
     TABLE.iter().find(|(s, e, _)| *s == state && *e == event).map(|(_, _, to)| *to).ok_or_else(|| format!("{NAME}: {event:?} is not legal in state {}", word(state)))
 }
 
-/// `pick_key`'s order (`landing_pass::gateq::order_key`): fix branches first, then the repo
-/// with the fewest running, then priority, then age. Every slot drains the one queue in the
+/// `pick_key`'s order (`landing_pass::gateq::order_key`): fix branches first, then express,
+/// then priority, then the repo with the fewest running, then age. Every slot drains the one queue in the
 /// one order, so `slot` does not change the answer.
 pub fn pick(snap: &Snapshot, _slot: usize) -> Option<Job> {
     let running = |repo: &str| snap.running_by_repo.get(repo).copied().unwrap_or(0) as usize;
-    snap.inbox.iter().min_by_key(|j| landing_pass::gateq::order_key(j.fix, running(&j.repo), i64::from(j.priority), u128::from(j.enqueued_ms))).cloned()
+    snap.inbox.iter().min_by_key(|j| landing_pass::gateq::order_key(j.fix, j.express, i64::from(j.priority), running(&j.repo), u128::from(j.enqueued_ms))).cloned()
 }
 
 pub fn check_tip(job: &Job, tip: Option<&str>) -> TipCheck {
@@ -636,7 +638,7 @@ fn queue(e: &crate::Effects) -> landing_pass::gateq::GateQueue {
 }
 
 fn task_job(j: &landing_pass::gateq::Job) -> Job {
-    Job { repo: j.repo.clone(), branch: j.branch.clone(), tip: j.tip.clone(), bead: j.bead.clone(), fix: j.fix, priority: j.priority.clamp(0, i64::from(u8::MAX)) as u8, enqueued_ms: (j.queued / 1_000_000) as u64 }
+    Job { repo: j.repo.clone(), branch: j.branch.clone(), tip: j.tip.clone(), bead: j.bead.clone(), fix: j.fix, express: j.express, priority: j.priority.clamp(0, i64::from(u8::MAX)) as u8, enqueued_ms: (j.queued / 1_000_000) as u64 }
 }
 
 fn slot_job(input: &str, effect: &str) -> Result<SlotJob, String> {
@@ -831,5 +833,24 @@ mod hold_tests {
         assert_eq!(lines.borrow().len(), 1);
         assert!(lines.borrow()[0].contains("NOT placed: socket gone"), "{:?}", lines.borrow());
         assert!(word.contains("socket gone"), "{word}");
+    }
+}
+
+#[cfg(test)]
+mod pick_order_tests {
+    use super::*;
+
+    fn job(bead: &str, repo: &str, express: bool, priority: u8) -> Job {
+        Job { repo: repo.into(), branch: format!("spira/{bead}"), bead: bead.into(), express, priority, ..Job::default() }
+    }
+
+    #[test]
+    fn pick_takes_express_before_a_lower_priority_number_and_priority_before_repo_fairness() {
+        let mut snap = Snapshot::default();
+        snap.running_by_repo.insert("A".into(), 1);
+        snap.inbox = vec![job("p0", "A", false, 0), job("p2-idle", "B", false, 2), job("x", "A", true, 1)];
+        assert_eq!(pick(&snap, 0).unwrap().bead, "x");
+        snap.inbox.retain(|j| j.bead != "x");
+        assert_eq!(pick(&snap, 0).unwrap().bead, "p0");
     }
 }

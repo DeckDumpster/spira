@@ -361,3 +361,16 @@ fn a_second_death_at_the_cap_is_filed_with_both_deaths_as_evidence() {
 fn a_gate_that_ends_for_another_reason_is_filed_at_once() {
     assert_eq!(drain_one(75, "gate: VERDICT=NO_VERDICT reason=lock").reason.as_deref(), Some("lock"));
 }
+
+#[test]
+fn the_pick_log_line_names_an_express_job() {
+    let d = tmp("express-log");
+    let q = GateQueue::new(&d);
+    q.enqueue(&Job::new("r", "spira/sp-a", "sp-a", "t1", false).with_priority(1).with_express(true)).unwrap();
+    let g = Scripted(RefCell::new(vec![(0, "gate: VERDICT=PASS".to_string())]));
+    let lines = RefCell::new(Vec::<String>::new());
+    let log = |l: &str| lines.borrow_mut().push(l.to_string());
+    let w = Worker { queue: &q, gate: &g, branches: &Tip(Some("t1".into())), clock: &Tick(AtomicU64::new(0)), lock_wait: 5400, log: &log, slot: 0 };
+    assert_eq!(w.drain(), 1);
+    assert!(lines.borrow().iter().any(|l| l.contains("picked spira/sp-a (repo r, P1 express,")), "{:?}", lines.borrow());
+}
