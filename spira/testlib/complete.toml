@@ -678,6 +678,7 @@ gate_target_root = ""
 cargo_home = ""
 lc_backup_part_bytes = 134217728
 lc_history_ring_bytes = 33554432
+lc_wal_line_bytes = 8388608
 testenv_sandbox_target_keep = 24
 testenv_scratch_root = "/tmp/spira-testenv-scratch"
 preflight_cache_root = "/tmp/spira-preflight-cache"

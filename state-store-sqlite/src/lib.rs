@@ -108,9 +108,8 @@ const GAUGE_EVERY: Duration = Duration::from_secs(60);
 const RESTART_POLL: Duration = Duration::from_millis(1);
 const GATE_HOLD: Duration = Duration::from_millis(50);
 
-/// WAL frames past which a restart holds the read gate until every read in flight has ended:
-/// 16 MiB at 4 KiB pages.
-pub const WAL_RESTART_CAP_FRAMES: i64 = 4_096;
+/// WAL bytes past which a restart holds the read gate until every read in flight has ended.
+pub const WAL_LINE_BYTES: u64 = 8 << 20;
 const RETRY_AFTER: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
@@ -146,38 +145,42 @@ fn report_due(last: &mut Option<(String, std::time::Instant)>, text: &str, now: 
 /// holds that mutex only for its own I/O, with the writer connection's timeout at zero, so a read
 /// in flight makes it `busy` at once and commits run between attempts. It polls for the readers
 /// to drain with `gate` held, so no new read starts meanwhile: for `GATE_HOLD` while the WAL
-/// holds at most `cap` frames, and past `cap` until every read in flight has ended, so the WAL
-/// is bounded by `cap` plus the commits of one `max_read_ms`. Commits never wait either way.
+/// holds at most `line` bytes, and past `line` until every read in flight has ended, so the WAL
+/// is bounded by `line` plus the commits of one `max_read_ms`. Commits never wait either way.
+/// The hold is timed on `clock`, the one the readers' deadlines run on.
 fn restart_wal(
     writer: &Mutex<Writer>,
     gate: &Mutex<()>,
+    clock: &dyn Clock,
     max_read_ms: u64,
-    cap: i64,
+    line: u64,
 ) -> std::result::Result<Checkpoint, String> {
     static OVERRUN: Mutex<Option<(String, std::time::Instant)>> = Mutex::new(None);
-    let started = std::time::Instant::now();
+    let started = clock.now_ms();
     let _gate = lock(gate);
     loop {
-        let pass = {
+        let (pass, page_size) = {
             let w = lock(writer);
-            w.conn
+            let pass = w
+                .conn
                 .prepare_cached("PRAGMA wal_checkpoint(TRUNCATE)")
                 .and_then(|mut s| s.query_row([], checkpoint_row))
-                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            let page_size = w.conn.query_row("PRAGMA page_size", [], |r| r.get::<_, i64>(0)).map_err(|e| e.to_string())?;
+            (pass, page_size.max(0) as u64)
         };
         if !pass.busy {
             return Ok(pass);
         }
-        let held = started.elapsed();
-        let max_read = Duration::from_millis(max_read_ms);
-        if pass.wal_frames <= cap {
-            if held >= GATE_HOLD.min(max_read) {
+        let held = clock.now_ms().saturating_sub(started);
+        let wal_bytes = (pass.wal_frames.max(0) as u64).saturating_mul(page_size);
+        if wal_bytes <= line {
+            if held >= (GATE_HOLD.as_millis() as u64).min(max_read_ms) {
                 return Ok(pass);
             }
-        } else if held >= max_read + RESTART_POLL {
+        } else if held > max_read_ms {
             let text = format!(
-                "a WAL restart past {cap} frames ({} in the log) found a read still in flight after max_read_ms ({max_read_ms} ms)",
-                pass.wal_frames
+                "a WAL restart past {line} bytes ({wal_bytes} in the log) found a read still in flight after max_read_ms ({max_read_ms} ms)"
             );
             if report_due(&mut lock(&OVERRUN), &text, std::time::Instant::now()) {
                 eprintln!("sqlite-checkpoint: {text}");
@@ -195,15 +198,16 @@ fn checkpoint_step(
     conn: &Connection,
     writer: &Mutex<Writer>,
     gate: &Mutex<()>,
+    clock: &dyn Clock,
     max_read_ms: u64,
-    cap: i64,
+    line: u64,
     passive: bool,
     on_passive: impl FnOnce(bool),
 ) -> std::result::Result<Checkpoint, String> {
     if passive {
         on_passive(passive_complete(conn)?);
     }
-    restart_wal(writer, gate, max_read_ms, cap)
+    restart_wal(writer, gate, clock, max_read_ms, line)
 }
 
 fn checkpoint_row(r: &rusqlite::Row) -> rusqlite::Result<Checkpoint> {
@@ -248,7 +252,7 @@ struct Checkpointer {
     wake: Condvar,
     done: Condvar,
     every: u64,
-    cap: i64,
+    line: u64,
 }
 
 impl Checkpointer {
@@ -269,6 +273,7 @@ impl Checkpointer {
         path: &Path,
         metrics: Option<spira_otel::metrics::MetricsSink>,
         max_read_ms: Arc<AtomicU64>,
+        clock: Arc<dyn Clock>,
     ) {
         let wal_path = format!("{}-wal", path.display());
         let wal_bytes = || std::fs::metadata(&wal_path).map(|m| m.len()).unwrap_or(0);
@@ -304,7 +309,7 @@ impl Checkpointer {
             wait = GAUGE_EVERY;
             if seen >= self.every || owed {
                 let mut passive_done = None;
-                let step = checkpoint_step(&conn, &writer, &gate, max_read_ms.load(Ordering::SeqCst), self.cap, seen >= self.every, |done| {
+                let step = checkpoint_step(&conn, &writer, &gate, &*clock, max_read_ms.load(Ordering::SeqCst), self.line, seen >= self.every, |done| {
                     passive_done = Some(done);
                     if done {
                         counts.passive_complete += 1;
@@ -400,8 +405,8 @@ pub struct Options {
     pub day_receipts: bool,
     /// Commits between background PASSIVE checkpoints.
     pub checkpoint_every: u64,
-    /// WAL frames past which a restart waits out every read in flight; see [`restart_wal`].
-    pub wal_restart_cap_frames: i64,
+    /// WAL bytes past which a restart waits out every read in flight; see [`restart_wal`].
+    pub wal_line_bytes: u64,
     /// Where the checkpointer reports its gauge; `None` reports nowhere.
     pub metrics: Option<spira_otel::metrics::MetricsSink>,
 }
@@ -424,7 +429,7 @@ impl Default for Options {
             commit_probe: None,
             day_receipts: true,
             checkpoint_every: CHECKPOINT_EVERY,
-            wal_restart_cap_frames: WAL_RESTART_CAP_FRAMES,
+            wal_line_bytes: WAL_LINE_BYTES,
             metrics: None,
         }
     }
@@ -465,7 +470,7 @@ struct Inner {
     history_bytes: usize,
     outbox: Mutex<Option<Outbox>>,
     max_read_ms: Arc<AtomicU64>,
-    wal_restart_cap_frames: i64,
+    wal_line_bytes: u64,
     clock: Arc<dyn Clock>,
     probe: Option<Arc<dyn Fn() + Send + Sync>>,
     dated: Vec<Files>,
@@ -1242,7 +1247,7 @@ impl SqliteBackend {
             wake: Condvar::new(),
             done: Condvar::new(),
             every: opts.checkpoint_every.max(1),
-            cap: opts.wal_restart_cap_frames,
+            line: opts.wal_line_bytes,
         });
         let checkpoint_conn = connect(path)?;
         checkpoint_conn.busy_timeout(Duration::ZERO).map_err(db)?;
@@ -1252,10 +1257,10 @@ impl SqliteBackend {
         let read_gate = Arc::new(Mutex::new(()));
         let thread = {
             let c = checkpointer.clone();
-            let (w, g, p, mr) = (writer.clone(), read_gate.clone(), path.to_path_buf(), max_read_ms.clone());
+            let (w, g, p, mr, ck) = (writer.clone(), read_gate.clone(), path.to_path_buf(), max_read_ms.clone(), opts.clock.clone());
             std::thread::Builder::new()
                 .name("sqlite-checkpoint".into())
-                .spawn(move || c.run(checkpoint_conn, w, g, &p, metrics, mr))
+                .spawn(move || c.run(checkpoint_conn, w, g, &p, metrics, mr, ck))
                 .map_err(|e| Error::Backend(format!("{}: the checkpointer: {e}", path.display())))?
         };
         Ok(SqliteBackend(Arc::new(Inner {
@@ -1271,7 +1276,7 @@ impl SqliteBackend {
             history_bytes: opts.history_bytes,
             outbox: Mutex::new(outbox),
             max_read_ms,
-            wal_restart_cap_frames: opts.wal_restart_cap_frames,
+            wal_line_bytes: opts.wal_line_bytes,
             clock: opts.clock,
             probe: opts.read_probe,
             dated,
@@ -1623,6 +1628,8 @@ impl SqliteBackend {
         let inner = &self.0;
         let n = inner.readers.len();
         let start = inner.next_reader.fetch_add(1, Ordering::Relaxed);
+        let max_read_ms = inner.max_read_ms.load(Ordering::SeqCst);
+        let deadline = inner.clock.now_ms().saturating_add(max_read_ms);
         let (reader, mut conn) = phases::time(Phase::ReaderWait, || {
             (0..n)
                 .map(|i| &inner.readers[(start + i) % n])
@@ -1632,10 +1639,11 @@ impl SqliteBackend {
                     (r, lock(&r.conn))
                 })
         });
+        let gate_began = inner.clock.now_ms();
+        let waiting = phases::begin_unconfirmed(Phase::GateWait);
         drop(lock(&inner.read_gate));
+        waiting.confirm_after(Duration::from_millis(inner.clock.now_ms().saturating_sub(gate_began)));
         let _reading = phases::begin(Phase::Read);
-        let max_read_ms = inner.max_read_ms.load(Ordering::SeqCst);
-        let deadline = inner.clock.now_ms().saturating_add(max_read_ms);
         reader.deadline.store(deadline, Ordering::SeqCst);
         let ended = || Error::Backend(format!("{READ_ENDED} ({max_read_ms} ms)"));
         let check = || {
@@ -2512,8 +2520,40 @@ mod tests {
         phases::untrack();
         let s = rec.snapshot();
         let names: Vec<_> = s.phases.iter().map(|p| p.0).collect();
-        assert_eq!(names, ["writer_wait", "commit", "reader_wait", "read", "drain"]);
+        assert_eq!(names, ["writer_wait", "commit", "reader_wait", "gate_wait", "read", "drain"]);
         assert_eq!(s.reads, 1);
+    }
+
+    #[test]
+    fn a_read_counts_its_wait_at_the_read_gate_against_its_own_limit_and_reports_the_wait() {
+        let dir = testkit::TempDir::new("sqlite-gate-wait");
+        let clock = runtime::ports::VirtualClock::new(0);
+        let probe_clock = clock.clone();
+        let opts = Options {
+            max_read_ms: 100,
+            clock: Arc::new(clock.clone()),
+            read_probe: Some(Arc::new(move || probe_clock.advance(60))),
+            ..Options::default()
+        };
+        let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
+        let rec = Arc::new(phases::Recorder::default());
+        let gate = lock(&b.0.read_gate);
+        let reader = {
+            let (b, rec) = (b.clone(), rec.clone());
+            std::thread::spawn(move || {
+                phases::track(rec);
+                b.get("k", 0)
+            })
+        };
+        while rec.snapshot().open != Some("gate_wait") {
+            std::thread::yield_now();
+        }
+        clock.advance(60);
+        drop(gate);
+        let out = reader.join().unwrap();
+        assert!(matches!(&out, Err(Error::Backend(m)) if m.starts_with(READ_ENDED)), "{out:?}");
+        let waited = rec.snapshot().phases.iter().find(|p| p.0 == "gate_wait").map(|p| p.1);
+        assert_eq!(waited, Some(60_000));
     }
 
     #[test]

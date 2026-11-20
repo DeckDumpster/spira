@@ -77,9 +77,10 @@ fn backend_at(path: &str, opts: Options) -> Result<Served, String> {
 
 fn open(path: &str) -> Result<Store<Served>, String> {
     let history_bytes = spira_config::process::cfg_parse::<usize>("SPIRA_LC_HISTORY_RING_BYTES")?;
+    let wal_line_bytes = spira_config::process::cfg_parse::<u64>("SPIRA_LC_WAL_LINE_BYTES")?;
     let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
     let metrics = Some(spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", std::time::Duration::from_millis(250)));
-    let backend = backend_at(path, Options { history_bytes, wall: Arc::new(Wall), metrics, readers: READERS, ..Options::default() })?;
+    let backend = backend_at(path, Options { history_bytes, wal_line_bytes, wall: Arc::new(Wall), metrics, readers: READERS, ..Options::default() })?;
     let floor = lock_floor_ms()?;
     let ports = Ports {
         mono: Arc::new(MonotonicClock::new()),
@@ -396,6 +397,19 @@ mod tests {
         let listed = state_store::Backend::range(contract.backend(), crate::control::keys::LIFECYCLE, None, 10, head).unwrap();
         assert_eq!(listed.len(), 10);
         assert!(contract.backend().take_read_steps() >= 10, "the counter sees a range read, so the low count above is real");
+    }
+
+    #[test]
+    fn open_refuses_a_config_that_lacks_the_wal_line_naming_the_key() {
+        let dir = testkit::TempDir::new("lc-served-wal-line");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[]);
+        let text = std::fs::read_to_string(&toml).unwrap();
+        assert!(text.contains("lc_wal_line_bytes"), "the complete fixture declares the key");
+        let without: String = text.lines().filter(|l| !l.contains("lc_wal_line_bytes")).map(|l| format!("{l}\n")).collect();
+        std::fs::write(&toml, without).unwrap();
+        let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        let err = open(dir.path().join("control.db").to_str().unwrap()).err().expect("a missing key is refused");
+        assert!(err.contains("SPIRA_LC_WAL_LINE_BYTES"), "{err}");
     }
 
     #[test]
