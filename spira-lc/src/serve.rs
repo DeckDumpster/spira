@@ -1775,6 +1775,16 @@ mod tests {
     }
 
     #[test]
+    fn an_owed_close_of_a_bead_nothing_records_is_dropped() {
+        let w = World::new();
+        let settler = crate::settle::install_for_test();
+        assert!(crate::settle::owe_closes(&[("sp-none".to_string(), "r".to_string())]));
+        settle_pass(&settler, &w);
+        assert!(w.writes.borrow().is_empty());
+        assert!(!settler.owes());
+    }
+
+    #[test]
     fn an_ask_close_owes_its_decision_beads_close_to_the_settler() {
         let (w, c) = (World::new(), Content::default());
         w.file("sp-q", "task", None, &[]);

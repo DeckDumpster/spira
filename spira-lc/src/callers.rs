@@ -1610,7 +1610,7 @@ pub fn close(
     let mut ans = withdraw_named_asks(&id, &asked_about, &actor, m);
     if !rowless && row_terminal && ans.code == APPLIED {
         ans.owed = vec![(id, reason)].into();
-    } else if let Some(owed) = owed_ask.filter(|_| ans.code == APPLIED) {
+    } else if let Some(owed) = owed_ask {
         ans.owed = vec![owed].into();
     }
     ans
