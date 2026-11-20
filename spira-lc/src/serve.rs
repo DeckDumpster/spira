@@ -2220,7 +2220,7 @@ mod tests {
     }
 
     #[test]
-    fn the_journal_sweep_finishes_on_a_production_sized_store_as_bounded_steps_through_the_door() {
+    fn the_journal_sweep_finishes_on_a_production_sized_store_in_bounded_steps() {
         use crate::control::journal::SWEEP_STEP;
         use crate::journal::counting::Counting;
         use serde_json::{json, Value};
@@ -2252,20 +2252,16 @@ mod tests {
             let txn = chunk.iter().fold(Txn::new(), |t, (k, v)| t.put(k, Object::new(v.clone())));
             assert!(raw.txn(&txn, &Request::new(&format!("seed-{n}"), "test", "seed")).unwrap().succeeded);
         }
-        let work: super::Work = {
-            let store = Arc::clone(&store);
-            Arc::new(move |req| {
-                let (code, out) = crate::journal::answer(crate::journal::run(&req.argv[1..], &*store));
-                super::Answer::out(code, out)
-            })
+        let step = |argv: &[&str]| {
+            let argv: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
+            crate::journal::answer(crate::journal::run(&argv, &*store))
         };
-        let door = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadlines: test_deadlines() });
         let bound = 2 * SWEEP_STEP + 100;
         let sweep = |dry: bool| -> (u64, u64, u64) {
             let mut cursor: Option<String> = None;
             let mut totals = (0, 0, 0);
             loop {
-                let mut argv = vec!["journal", "sweep"];
+                let mut argv = vec!["sweep"];
                 if dry {
                     argv.push("--dry-run");
                 }
@@ -2273,7 +2269,7 @@ mod tests {
                     argv.extend(["--from", c]);
                 }
                 counter.store(0, Ordering::SeqCst);
-                let (code, out) = send(&door, &argv, None);
+                let (code, out) = step(&argv);
                 assert_eq!(code, 0, "{out}");
                 let asked = counter.load(Ordering::SeqCst);
                 assert!(asked <= bound, "one step asked the backend for {asked} keys (bound {bound})");
@@ -2295,9 +2291,9 @@ mod tests {
         assert_eq!(sweep(false), (12_000, 1, 1));
         assert!(exists(&indexed) && !exists(&key("schedule", "carried00000")) && exists(&key("resolved", "ghost00000")));
         assert!(exists(&key("pending", "live")) && exists(&key("open-effect", "open")), "the open rows are indexed");
-        for (argv, wanted) in [(["journal", "open-effects"], "open"), (["journal", "due"], "live")] {
+        for (argv, wanted) in [(["open-effects"], "open"), (["due"], "live")] {
             counter.store(0, Ordering::SeqCst);
-            let (code, out) = send(&door, &argv, None);
+            let (code, out) = step(&argv);
             let rows: Value = serde_json::from_str(&out).unwrap();
             assert_eq!(code, 0, "{out}");
             assert!(rows.as_array().unwrap().len() == 1 && out.contains(wanted), "{argv:?}: {out}");
