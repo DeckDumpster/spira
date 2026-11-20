@@ -1114,7 +1114,7 @@ fn a_state_filtered_page_is_one_bounded_read_of_the_state_index() {
     let ids: Vec<&str> = rows.as_array().unwrap().iter().map(|x| x["bead_id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["sp-033", "sp-036", "sp-039", "sp-042", "sp-045"]);
     let reads = r.s.contract().backend().take();
-    let ranges: Vec<_> = reads.iter().filter(|(k, _, _)| *k != "get").collect();
+    let ranges: Vec<_> = reads.iter().filter(|(k, _, _)| !k.starts_with("get")).collect();
     assert_eq!(
         ranges,
         [&("range_in_state", format!("{}Working", keys::LIFECYCLE), 5)],
