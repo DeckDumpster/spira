@@ -225,7 +225,7 @@ mod tests {
     use super::*;
 
     fn person(id: u64, body: &str) -> Comment {
-        Comment { id, author: "ryan".into(), path: Some("a/b.rs".into()), line: Some(12), body: body.into(), ..Comment::default() }
+        Comment { id, author: "reviewer".into(), path: Some("a/b.rs".into()), line: Some(12), body: body.into(), ..Comment::default() }
     }
 
     fn review(comments: Vec<Comment>) -> ReviewObs {
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn a_new_person_comment_is_one_line_with_its_place_and_its_thread_command() {
         let (_, said, records) = decide(&Carry::default(), &snap(review(vec![person(41, "why\n  this\tway?")])), 1000);
-        assert_eq!(said, ["CR 007 #3 comment 41 by ryan at a/b.rs:12: why this way? — cr thread --review 007 --comment 41"]);
+        assert_eq!(said, ["CR 007 #3 comment 41 by reviewer at a/b.rs:12: why this way? — cr thread --review 007 --comment 41"]);
         assert_eq!(records.threads.len(), 1, "the comment is kept for cr thread");
     }
 
@@ -254,7 +254,7 @@ mod tests {
         let mut r = review(vec![]);
         r.conversation = Some(vec![Comment { path: None, line: None, ..person(9, "publish it") }]);
         let (_, said, _) = decide(&Carry::default(), &snap(r), 1000);
-        assert_eq!(said, ["CR 007 #3 comment 9 by ryan: publish it — cr thread --review 007 --comment 9"]);
+        assert_eq!(said, ["CR 007 #3 comment 9 by reviewer: publish it — cr thread --review 007 --comment 9"]);
     }
 
     #[test]
@@ -274,7 +274,7 @@ mod tests {
     }
 
     fn submitted(bot: bool, state: &str) -> ReviewEvent {
-        ReviewEvent { id: 70, author: "ryan".into(), bot, state: state.into(), submitted_at: 900 }
+        ReviewEvent { id: 70, author: "reviewer".into(), bot, state: state.into(), submitted_at: 900 }
     }
 
     #[test]
@@ -282,7 +282,7 @@ mod tests {
         let mut r = review(vec![]);
         r.reviews = Some(vec![submitted(false, "COMMENTED")]);
         let (c, said, records) = decide(&Carry::default(), &snap(r.clone()), 1000);
-        assert_eq!(said, ["CR 007 published (review 70 by ryan)"]);
+        assert_eq!(said, ["CR 007 published (review 70 by reviewer)"]);
         assert_eq!(records.changes, [Change { number: 7, state: State::Published, at: 900 }]);
         let (_, said, records) = decide(&c, &snap(r), 1030);
         assert_eq!((said, records.changes), (vec![], vec![]));

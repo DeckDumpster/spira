@@ -21,7 +21,7 @@ fn review(number: u32, pr: Option<u64>, state: State) -> Review {
 }
 
 fn comment(id: u64) -> Comment {
-    Comment { id, author: "ryan".into(), path: Some("a.rs".into()), line: Some(2), body: "why".into(), ..Comment::default() }
+    Comment { id, author: "reviewer".into(), path: Some("a.rs".into()), line: Some(2), body: "why".into(), ..Comment::default() }
 }
 
 struct Forge {

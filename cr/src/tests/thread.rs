@@ -50,9 +50,9 @@ fn thread_prints_the_code_around_the_line_and_the_thread_in_order() {
     let w = world();
     w.opened();
     w.keep(&[
-        comment(30, Some(10), "ryan", Some(6), "and the error path?", 300),
-        comment(10, None, "ryan", Some(6), "why open here?", 100),
-        comment(99, None, "ryan", Some(3), "unrelated", 150),
+        comment(30, Some(10), "reviewer", Some(6), "and the error path?", 300),
+        comment(10, None, "reviewer", Some(6), "why open here?", 100),
+        comment(99, None, "reviewer", Some(3), "unrelated", 150),
         comment(20, Some(10), "concierge", Some(6), "it is the only opener", 200),
     ]);
     let o = w.cr(&["thread", "--review", "001", "--comment", "20"]);
@@ -70,7 +70,7 @@ fn thread_prints_the_code_around_the_line_and_the_thread_in_order() {
 fn thread_of_a_conversation_comment_has_no_code() {
     let w = world();
     w.opened();
-    w.keep(&[Comment { path: None, line: None, ..comment(5, None, "ryan", None, "publish it", 10) }]);
+    w.keep(&[Comment { path: None, line: None, ..comment(5, None, "reviewer", None, "publish it", 10) }]);
     let o = w.cr(&["thread", "--review", "001", "--comment", "5"]);
     assert_eq!(o.code, 0, "{}", o.stderr);
     assert!(o.stdout.starts_with("conversation\n") && o.stdout.contains("publish it"), "{}", o.stdout);

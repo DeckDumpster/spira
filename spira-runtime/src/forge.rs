@@ -627,7 +627,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_second_review_comments_call_revalidates_by_etag_and_a_304_answers_from_the_kept_body() {
-        let body = r#"[{"id":5,"in_reply_to_id":null,"user":{"login":"ryan","type":"User"},"path":"a.rs","line":3,"body":"why","created_at":"2026-11-19T10:00:00Z"}]"#;
+        let body = r#"[{"id":5,"in_reply_to_id":null,"user":{"login":"reviewer","type":"User"},"path":"a.rs","line":3,"body":"why","created_at":"2026-11-19T10:00:00Z"}]"#;
         let (api, seen) = stub(vec![answer("200 OK", "ETag: \"v1\"\r\n", body), answer("304 Not Modified", "", "")]);
         let f = forge_at(api);
         let fresh = api_budget::calls("cr_review_comments", api_budget::FRESH);
