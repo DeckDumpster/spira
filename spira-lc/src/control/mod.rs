@@ -8,6 +8,7 @@ pub mod facts;
 pub mod feed;
 pub mod gh_closeout;
 pub mod journal;
+pub mod landed;
 pub use spira_lc::keys;
 pub mod readiness;
 pub mod records;
