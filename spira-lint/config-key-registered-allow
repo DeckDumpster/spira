@@ -593,6 +593,7 @@ SPIRA_REPO_DERIVED dwarf/src/seam.rs
 SPIRA_REPO_DERIVED spira-config/src/repos.rs
 SPIRA_REPO_DERIVED spira/conf.sh
 SPIRA_REPO_DERIVED spira/lib.sh
+SPIRA_REQUIRE_EXPRESS dwarf/src/run.rs
 SPIRA_REQUIRE_EXPRESS spira-runtime/src/tasks/a/sentinel_call.rs
 SPIRA_RESOLVE_SH watchtower/src/process.rs
 SPIRA_ROUND_BATCH_ID testenv/src/settings.rs

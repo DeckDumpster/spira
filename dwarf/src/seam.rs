@@ -218,7 +218,6 @@ pub fn parse_snapshot(raw: &str) -> Result<Snapshot, String> {
     Ok(snap)
 }
 
-/// The real seam.
 /// The argv of the dwarf's ready-set call to spira-claim.
 pub fn ready_set_argv(rune: &str, express: bool) -> Vec<String> {
     let mut v: Vec<String> = ["rune-ready", rune, "--json", "--dropped"].iter().map(|x| x.to_string()).collect();
@@ -228,6 +227,7 @@ pub fn ready_set_argv(rune: &str, express: bool) -> Vec<String> {
     v
 }
 
+/// The real seam.
 pub struct BashSeam<'a> {
     pub lib: PathBuf,
     pub rune_file: PathBuf,
