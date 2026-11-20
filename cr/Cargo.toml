@@ -1,0 +1,29 @@
+[package]
+name = "cr"
+version = "0.1.0"
+edition = "2021"
+autotests = false
+description = "cr — draws one related unit of code for the operator to review: weighted, rotated through kinds, reproducible from a seed."
+
+[lib]
+name = "cr"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cr"
+path = "src/main.rs"
+test = false
+
+[features]
+integration = ["spira-config/integration", "runtime/integration", "spira-otel/integration", "testkit/integration"]
+
+[dependencies]
+runtime = { path = "../runtime" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
+toml = "0.8"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

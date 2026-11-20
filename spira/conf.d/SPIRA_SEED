@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=cr
+DOC=Seed for randomised choices (cr pick); empty means the clock decides. An explicit --seed wins.
+SCHEMA=Seed for randomised choices; empty draws from the clock.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_SEED:=}"
+SPIRA_CONF_DEFAULT_EOF
