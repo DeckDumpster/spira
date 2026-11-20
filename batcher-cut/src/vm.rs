@@ -1223,6 +1223,10 @@ impl RoundRunner for VmRunner<'_> {
         (seen == Some(green)).then_some(green)
     }
 
+    fn probe_label(&self) -> String {
+        format!("b{}", self.build_n)
+    }
+
     fn probe_output(&mut self) -> String {
         std::mem::take(&mut self.probe_said)
     }

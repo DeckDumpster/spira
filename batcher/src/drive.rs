@@ -141,6 +141,10 @@ pub trait RoundRunner {
     fn probe_output(&mut self) -> String {
         String::new()
     }
+    /// The name the last subset probe ran under, for evidence that cites it.
+    fn probe_label(&self) -> String {
+        String::new()
+    }
     /// Like `filter_green`, judging only `scope` (`unitattr::rerun_scope`): the tests that failed.
     fn filter_green_in(
         &mut self,
@@ -290,6 +294,11 @@ pub trait RoundOps {
     /// mender owns the pass, which leaves the owners to be ejected as before.
     fn settle_mending(&mut self, _: &Decision, _: &[Member]) -> Option<Result<Mended, String>> {
         None
+    }
+    /// The settled RETURNED failures of the pass whose red is being attributed, which is not
+    /// the batch's current pass once the attribution has opened its own.
+    fn returned_for_attribution(&self) -> Vec<crate::mender::Failure> {
+        vec![]
     }
     /// The current pass's settled RETURNED failures that name a member, read while the pass
     /// still runs.
@@ -1892,6 +1901,83 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     end
 }
 
+fn is_filter_suite(name: &str) -> bool {
+    matches!(name, "unit-tests" | "integration-tests" | "spira-lint") || name.starts_with("fence-")
+}
+
+/// Tries a mender's return of the attributed pass with one probe: the red suite run without the
+/// member it named. Green ejects the member on that evidence; anything else leaves the search.
+fn probe_returned<R: RoundRunner, O: RoundOps>(
+    runner: &mut R,
+    ops: &mut O,
+    members: &[Member],
+    red_suites: &[String],
+) -> Result<Option<RoundEnd>, String> {
+    let in_round = |id: &Id| members.iter().any(|m| &m.id == id);
+    for f in ops.returned_for_attribution() {
+        let filter = is_filter_suite(&f.suite);
+        if f.members.is_empty()
+            || !f.members.iter().all(in_round)
+            || !(filter || red_suites.contains(&f.suite))
+        {
+            continue;
+        }
+        let mut out: BTreeMap<Id, Vec<String>> = f
+            .members
+            .iter()
+            .map(|id| (id.clone(), vec![f.suite.clone()]))
+            .collect();
+        with_dependents(members, &mut out);
+        let survivors: Vec<Member> = members
+            .iter()
+            .filter(|m| !out.contains_key(&m.id))
+            .cloned()
+            .collect();
+        let named = f.members.join(",");
+        let verdict = if filter {
+            runner.filter_green_in(&f.suite, &[], &survivors)
+        } else {
+            runner.suite_green(&f.suite, &survivors)
+        };
+        if verdict != Some(true) {
+            let said = match verdict {
+                Some(_) => "still red",
+                None => "could not tell",
+            };
+            println!(
+                "batcher: the mender returned {named} for {} — {} without them {said} (probe {}); searching the round",
+                f.suite,
+                f.suite,
+                runner.probe_label()
+            );
+            continue;
+        }
+        let evidence = format!(
+            "{} — {} green without {named} (probe {})",
+            f.diagnosis,
+            f.suite,
+            runner.probe_label()
+        );
+        println!("batcher: the mender returned {named} for {}: {evidence}", f.suite);
+        for m in members.iter().filter(|m| out.contains_key(&m.id)) {
+            if f.members.contains(&m.id) {
+                ops.eject_returned(m, &out[&m.id], &evidence)
+            } else {
+                ops.eject(m, &out[&m.id], false)
+            }
+            .map_err(refused)?;
+        }
+        if survivors.is_empty() {
+            return Ok(Some(RoundEnd::Emptied("round emptied by ejection".into())));
+        }
+        return Ok(Some(RoundEnd::Land {
+            members: survivors,
+            attribution_secs: None,
+        }));
+    }
+    Ok(None)
+}
+
 fn attribute_members<R: RoundRunner, O: RoundOps>(
     runner: &mut R,
     ops: &mut O,
@@ -1936,6 +2022,10 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                 attribution_secs: None,
             });
         }
+    }
+    let prior_suites = runner.prior_red_suites();
+    if let Some(end) = probe_returned(runner, ops, &members, &prior_suites)? {
+        return Ok(end);
     }
     if let Some(f) = runner.prior_red() {
         let (reds, rest) = split_lifted_filter(&*ops, &f, &members);
@@ -1996,8 +2086,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             }
         }
     }
-    let prior_reds: Vec<String> = runner
-        .prior_red_suites()
+    let prior_reds: Vec<String> = prior_suites
         .into_iter()
         .filter(|s| corpus.contains(s))
         .collect();
@@ -2991,6 +3080,7 @@ pub(crate) mod tests {
         pub refuse_disable: Option<String>,
         /// (time it settles, failure): what `mender_returns` answers once the fake clock reaches it.
         pub returns: Vec<(u64, crate::mender::Failure)>,
+        pub attributed_returns: Vec<crate::mender::Failure>,
         pub clock: Option<std::rc::Rc<std::cell::Cell<u64>>>,
         pub returned_at: Vec<u64>,
         /// The kept red that named no member.
@@ -3149,6 +3239,9 @@ pub(crate) mod tests {
                 unattributed: vec![],
                 suites: d.owned_suites(),
             }))
+        }
+        fn returned_for_attribution(&self) -> Vec<crate::mender::Failure> {
+            self.attributed_returns.clone()
         }
         fn mender_returns(&self) -> Vec<crate::mender::Failure> {
             let now = self.clock.as_ref().map_or(0, |c| c.get());
@@ -4604,6 +4697,49 @@ pub(crate) mod tests {
             diagnosis: "bad at x.rs:9".into(),
             members: vec![member.into()],
         }
+    }
+
+    fn six_members_with_a_return_of_m3() -> (Fake, Ops, Vec<Member>) {
+        let mut f = Fake::new(|s, tree| s == "test-spike.sh" && tree.contains("m3"));
+        f.runs_alone = true;
+        f.bisects = true;
+        f.prior_suites = vec!["test-spike.sh".into()];
+        let ops = Ops {
+            attributed_returns: vec![returned_failure("test-spike.sh", "m3")],
+            ..Ops::default()
+        };
+        let round = (1..=6).map(|i| member(&format!("m{i}"))).collect();
+        (f, ops, round)
+    }
+
+    #[test]
+    fn a_returned_member_is_ejected_on_one_green_probe_without_it() {
+        let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
+        let end = attribute_round(&mut f, &mut ops, &["test-spike.sh".to_string()], round, budget6()).unwrap();
+        assert_eq!(f.alone.len(), 1, "{:?}", f.alone);
+        assert_eq!(f.alone[0].0, "test-spike.sh");
+        assert_eq!(f.alone[0].1, ["m1", "m2", "m4", "m5", "m6"]);
+        assert!(f.probes.is_empty(), "no bisection probe: {:?}", f.probes);
+        assert_eq!(ops.returned.len(), 1);
+        assert_eq!(ops.returned[0].0, "m3");
+        assert!(ops.returned[0].1.contains("bad at x.rs:9"), "{:?}", ops.returned);
+        assert!(ops.returned[0].1.contains("green without m3"), "{:?}", ops.returned);
+        match end {
+            RoundEnd::Land { members, .. } => assert_eq!(members.len(), 5),
+            other => panic!("expected Land, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_returned_member_whose_probe_stays_red_costs_one_probe_before_the_search() {
+        let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
+        f.red = Box::new(|s, tree| s == "test-spike.sh" && (tree.contains("m3") || tree.contains("m5")));
+        let end = attribute_round(&mut f, &mut ops, &["test-spike.sh".to_string()], round, budget6()).unwrap();
+        assert_eq!(f.alone[0].1, ["m1", "m2", "m4", "m5", "m6"]);
+        assert!(ops.returned.is_empty(), "{:?}", ops.returned);
+        let gone: Vec<&str> = ops.ejected.iter().map(|(id, _)| id.as_str()).collect();
+        assert!(gone.contains(&"m3") && gone.contains(&"m5"), "{gone:?}");
+        assert!(matches!(end, RoundEnd::Land { .. }), "{end:?}");
     }
 
     fn slow_a_and_a_return_at_30(
