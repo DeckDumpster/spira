@@ -357,7 +357,11 @@ fn the_ended_view_is_each_forge_batch_the_machine_or_the_queue_ended_newest_firs
         );
         assert!(matches!(w.p.batch_view_ended("spira"), Err(LcError::Refused(m)) if m.contains("not loaded")));
         w.p.refresh_batches().unwrap();
+        w.script.lock().unwrap().seen.clear();
         let ended = w.p.batch_view_ended("spira").unwrap();
+        let body: Value = serde_json::from_str(w.script.lock().unwrap().seen.last().unwrap().last().unwrap()).unwrap();
+        assert_eq!(body["prefixes"], json!(["batches/spira/"]));
+        assert!(body["states"].as_array().unwrap().iter().all(|s| ["Landed", "Settled", "Abandoned", "Discarded", "LANDED", "SETTLED", "ABANDONED", "DISCARDED"].contains(&s.as_str().unwrap())), "{body}");
         assert_eq!(ended.rev, 9);
         assert_eq!(ended.value.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["deck-2", "deck-0"], "the open batch, a local round and another repo's are left out");
         assert_eq!(ended.value[1].render(), "batch_id=deck-0\nrepo=spira\nmembers=sp-a:ta\nopened=800\nforge.phase=armed\npr=11\nreason=red\n", "a batch_id the queue kept in its own fields is not shown twice");
