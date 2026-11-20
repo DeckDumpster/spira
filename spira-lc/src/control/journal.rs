@@ -234,7 +234,7 @@ impl<B: Backend> Store<B> {
                 let request = open.0;
                 if let Some(i) = self.contract().get(&keys::runtime(EFFECT, &[&text(&open.1, "task"), &text(&open.1, "ekey")]))? {
                     let row = effect_of(&i.value.data);
-                    if keys::component(&row.request_id) == request {
+                    if keys::component(&row.request_id) == request && self.contract().get(&keys::runtime(RESOLVED, &[&row.request_id]))?.is_none() {
                         rows.push(row);
                     }
                 }
@@ -254,7 +254,11 @@ impl<B: Backend> Store<B> {
         let mut rows: Vec<ScheduleRow> = if self.indexed()? {
             let mut rows = Vec::new();
             for (_, p) in self.table(PENDING)? {
-                if let Some(i) = self.contract().get(&keys::runtime(SCHEDULE, &[&text(&p, "id")]))? {
+                let id = text(&p, "id");
+                if self.contract().get(&keys::runtime(FIRED, &[&id]))?.is_some() {
+                    continue;
+                }
+                if let Some(i) = self.contract().get(&keys::runtime(SCHEDULE, &[&id]))? {
                     rows.push(schedule_of(&i.value.data));
                 }
             }

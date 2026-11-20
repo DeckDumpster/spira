@@ -457,6 +457,17 @@ mod tests {
     }
 
     #[test]
+    fn an_index_key_left_for_a_row_that_closed_meanwhile_does_not_reopen_it() {
+        let (s, raw) = shared_store();
+        call(&s, &["turn", &json!({"effects": [effect()], "schedules": [sched("r1", 4)]}).to_string()]);
+        parsed(&s, &["sweep"]);
+        call(&s, &["turn", &json!({"resolved": ["r1"], "fired": ["r1"]}).to_string()]);
+        put_raw(&raw, &crate::control::keys::runtime("pending", &["r1"]), json!({"id": "r1"}));
+        put_raw(&raw, &crate::control::keys::runtime("open-effect", &["r1"]), json!({"task": "t", "ekey": "k'1/x"}));
+        assert_eq!((call(&s, &["due"]).1, call(&s, &["open-effects"]).1), ("[]".to_string(), "[]".to_string()));
+    }
+
+    #[test]
     fn the_sweep_dry_run_counts_what_it_would_remove_and_the_sweep_removes_exactly_that() {
         let (s, raw) = shared_store();
         let mut resolved_effect = effect();
@@ -475,7 +486,7 @@ mod tests {
         assert_eq!((key_count("schedule"), key_count("resolved")), before, "a dry run removes nothing");
         assert_eq!(key_count("pending"), 1, "a dry run writes no index");
         let done = parsed(&s, &["sweep"]);
-        assert_eq!((done["idless_schedules"].clone(), done["orphan_resolved"].clone()), (json!(3), json!(1)), "{done}");
+        assert_eq!((done["idless_schedules"].clone(), done["orphan_resolved"].clone(), done["indexed_schedules"].clone(), done["indexed_effects"].clone()), (json!(3), json!(1), json!(1), json!(1)), "{done}");
         assert_eq!((key_count("schedule"), key_count("resolved")), (before.0 - 3, before.1 - 1));
         assert_eq!((parsed(&s, &["open-effects"]), parsed(&s, &["due"])), (open_before, due_before), "every legitimate row reads as it did");
     }
