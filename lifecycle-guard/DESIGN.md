@@ -29,10 +29,9 @@ Scope, which is not an allow-list:
 
 ### The rowless controls
 
-Two functions are the rule's named exceptions, listed by file and function in
-`ROWLESS_CONTROLS` and argued again at each definition:
+One function is the rule's named exception, listed by file and function in
+`ROWLESS_CONTROLS` and argued again at its definition:
 
-- `sentinel/src/lifecycle.rs` `rowless`
 - `watchtower/src/probes.rs` `rowless_beads`
 
 Each is the positive control for "no bead is rowless" (law-absence-needs-a-positive-control).
@@ -72,6 +71,5 @@ bead's bd status is now a red at the gate (`gate_mode_refuses_a_rust_bd_status_r
 `ready` or `events` handed to bd as a Rust argument vector (`src/bd_read.rs`). bd's ready set
 is its status and assignee, and a bead's events are the old attempt ledger; both are the
 lifecycle row's. It is reported by a plain run and counted on the gate's summary line, and is
-not in `GATE_CLASSES` yet: the sentinel's ready snapshot (`sentinel/src/store.rs`) and
-spira-claim's `READY_ARGS_BASE` still ask bd for the set the open-children and queue-wait
+not in `GATE_CLASSES` yet: spira-claim's `READY_ARGS_BASE` still asks bd for the set the open-children and queue-wait
 label decisions read. It joins the list in the commit that moves those onto `lc_state`.
