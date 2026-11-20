@@ -145,11 +145,11 @@ Placeholder Part until the table of contents is approved.
 - §1.141 law-a-writable-resource-gets-full-crudl — Any resource an agent or API can write gets the full set: create, read, list, update and delete.
 - §1.142 law-a-wrong-lane-attempt-is-not-the-works — An attempt spent in the wrong lane is not the work's fault: before poisoning or escalating a bead, check its labels put it in the lane that can land it; when builder work carries incident or alarm labels, relabel it to the builder and unpoison it without asking, naming the relabel as the cause.
 - §1.143 law-address-the-store-with-spira-bd — Address a production beads store with $SPIRA_BD and name it by absolute path, bd -C "$SPIRA_DB", never by discovery from the working directory or $HOME: a stray .beads there is a shadow store that answers confidently.
-- §1.144 law-aeon-commits-name-their-bead — [Reserved]
-- §1.145 law-aeons-hold-no-forge-credential — [Reserved]
-- §1.146 law-aeons-never-operate-the-queue — [Reserved]
+- §1.144 law-aeon-commits-name-their-bead — [Retired 2026-11-20] renamed in the vocabulary migration
+- §1.145 law-aeons-hold-no-forge-credential — [Retired 2026-11-20] renamed in the vocabulary migration
+- §1.146 law-aeons-never-operate-the-queue — [Retired 2026-11-20] renamed in the vocabulary migration
 - §1.147 law-alerts-must-be-actionable — A false alert is a real cost, not a harmless one.
-- §1.148 law-an-aeon-touches-only-its-own-ref — [Reserved]
+- §1.148 law-an-aeon-touches-only-its-own-ref — [Retired 2026-11-20] renamed in the vocabulary migration
 - §1.149 law-an-agent-is-the-first-production-customer — An agent is every product's first production customer.
 - §1.150 law-an-answer-that-contradicts-a-statute-amends-it — When an operator answer contradicts a statute in force, amend the statute in the same act and name the amendment on the ask; never build a mechanism from a verdict without first reading the statute that already covers it.
 - §1.151 law-an-eject-names-its-evidence — Never eject a round member on suspicion.
@@ -213,7 +213,7 @@ Placeholder Part until the table of contents is approved.
 - §1.209 law-development-goes-to-the-loop — The brain session designs, decomposes and curates; it does not implement.
 - §1.210 law-do-not-ask-whether-to-file — Never ask Ryan whether to do a piece of work yourself or file it as a bead.
 - §1.211 law-dont-invent-his-deadlines — Never put a date, an assignment or an obligation on Ryan's list that he did not state or that a published source does not carry.
-- §1.212 law-drain-gates-summons-not-delivery — [Reserved]
+- §1.212 law-drain-gates-summons-not-delivery — [Retired 2026-11-20] renamed in the vocabulary migration
 - §1.213 law-drop-a-bead-through-the-tool — When Ryan says to remove, drop or kill a bead, run .claude/bead.sh drop <id> --reason <text>.
 - §1.214 law-duplicate-not-a-hard-merge — A rebase that conflicts on code already present on the base branch means the bead is a DUPLICATE, not a hard merge.
 - §1.215 law-escalate-decisions-not-problems — An escalation is a decision request: the question, a default, what it blocks, what reversing costs.
@@ -292,7 +292,7 @@ Placeholder Part until the table of contents is approved.
 - §1.288 law-nothing-waits-without-progress — Nothing in Spira waits without progress for more than a few seconds unnoticed: every wait state has a heartbeat, a bound measured in seconds (minutes only for an external dependency in progress), and an automatic action its owning component takes when the bound passes — re-drive, eject, abandon, restart or release.
 - §1.289 law-off-box-backups-are-private-and-write-only — Every off-box backup of Spira's stores goes to a private bucket the operator owns, written with a key that can only upload: the writer can add a snapshot but never read, list, overwrite or delete one, so a compromised or buggy writer cannot destroy history; the bucket is versioned, encrypted and blocks public access, and restore uses the operator's own identity.
 - §1.290 law-off-path-transitions-carry-provenance — Any lifecycle transition that bypasses the normal path (break glass: a hand resubmit, a hold lifted by hand, a landing from salvaged evidence) is allowed, but the tool refuses it without provenance: who, why the normal path was bypassed, and the quality evidence run on that exact tip.
-- §1.291 law-one-aeon-one-worktree — [Reserved]
+- §1.291 law-one-aeon-one-worktree — [Retired 2026-11-20] renamed in the vocabulary migration
 - §1.292 law-one-feature-certifies-all-up — When every open change serves one feature, do not gate them one by one: finish all the work first, then run the whole certification suite once, under a hard 15-minute cap with a 12-minute target; fix each failure it names, bring the fixes back together, and run the whole suite again.
 - §1.293 law-one-language-runtime-per-repo — A repository uses one language runtime: its code, tests, fixtures and tools are written in the system's own language.
 - §1.294 law-one-supervised-pass-before-you-arm — After changing what a timer runs, never re-arm the timer to find out whether the fix worked.
