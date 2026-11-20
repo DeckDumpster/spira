@@ -110,7 +110,8 @@ resolver = "2"
 opt-level = 2
 lto = false
 codegen-units = 16
-strip = true
+# symbol names stay so perf samples resolve; debug info stays out
+strip = "debuginfo"
 
 # The round's unit-test build: workspace members unoptimised, dependencies as release builds
 # them, so their compiled artefacts are shared with the release build.
