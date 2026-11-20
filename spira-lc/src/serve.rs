@@ -26,6 +26,7 @@ use crate::callers::Answer;
 const STAYS_REVS_PER_TICK: usize = 1_000;
 /// Revisions of `events/` one sweep tick folds into the edge tally.
 const EDGES_REVS_PER_TICK: usize = 1_000;
+const REFUSALS_REVS_PER_TICK: usize = 1_000;
 /// Revisions of `events/` one sweep tick folds into the landed list.
 const LANDED_REVS_PER_TICK: usize = 1_000;
 const SWEEP_EVERY: Duration = Duration::from_secs(5);
@@ -414,6 +415,10 @@ pub fn run(args: &[String]) -> i32 {
                     let _holder = state_store::phases::holder_scoped("edge-tally", "");
                     if let Err(e) = store.fold_edges(crate::db::now_epoch(), EDGES_REVS_PER_TICK) {
                         eprintln!("spira-lc serve: edge tally: {e}");
+                    }
+                    let _holder = state_store::phases::holder_scoped("refusal-tally", "");
+                    if let Err(e) = store.fold_refusals(crate::db::now_epoch(), REFUSALS_REVS_PER_TICK) {
+                        eprintln!("spira-lc serve: refusal tally: {e}");
                     }
                     let _holder = state_store::phases::holder_scoped("landed-list", "");
                     if let Err(e) = store.fold_landed(crate::db::now_epoch(), LANDED_REVS_PER_TICK) {

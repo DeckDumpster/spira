@@ -14,6 +14,7 @@ use crate::control::edges::EdgeTally;
 #[cfg(test)]
 use crate::control::edges::HOUR_S;
 use crate::control::landed::Landed as LandedList;
+use crate::control::refusals::{Class, Group as TallyGroup, RefusalTally};
 use crate::control::stays::Tally as StayTally;
 use crate::control::store::Store;
 
@@ -308,11 +309,13 @@ fn transitions<B: Backend>(store: &Store<B>, machine: &str, now: i64) -> Result<
 
 /// Refused bead events inside the window, one row per (actor, event, from_state, refusal) with
 /// the count, the span and the newest five `bead@epoch` examples.
+#[cfg(test)]
 struct Refusals {
     floor: i64,
     groups: BTreeMap<(String, String, String, String), Group>,
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct Group {
     n: usize,
@@ -321,6 +324,7 @@ struct Group {
     newest: Vec<(i64, String)>,
 }
 
+#[cfg(test)]
 impl Refusals {
     fn new(floor: i64) -> Self {
         Refusals { floor, groups: BTreeMap::new() }
@@ -426,14 +430,37 @@ pub fn cmd_ops_refusals(args: &[String]) -> (i32, String) {
     let Some(window) = args.first().and_then(|a| a.parse::<u64>().ok()).filter(|w| *w > 0) else {
         return (2, "ops-refusals: takes one positive <window-secs>".into());
     };
-    with_store(|store| {
-        let now = crate::db::now_epoch();
-        let mut refused = Refusals::new(now - window as i64);
-        match folded(store, now, window as i64, |m| refused.take(&m)) {
-            Ok(()) => (0, json!({ "now": now, "classes": refused.rows() }).to_string()),
-            Err(e) => cannot(e),
-        }
-    })
+    with_store(|store| refusals_answer(store, crate::db::now_epoch(), window))
+}
+
+fn refusals_answer<B: Backend>(store: &Store<B>, now: i64, window: u64) -> (i32, String) {
+    if window > DAY_S as u64 {
+        return cannot(format!("ops-refusals reads at most {DAY_S} s from the refusal tally; asked {window}"));
+    }
+    match store.refusal_tally(now, window as i64) {
+        Ok(RefusalTally::Filling { covered_from }) => cannot(format!("the refusal tally is filling: covered from {}", covered_from.map_or("none".to_string(), |at| at.to_string()))),
+        Ok(RefusalTally::Ready(groups)) => (0, json!({ "now": now, "classes": refusal_rows(groups) }).to_string()),
+        Err(e) => cannot(e),
+    }
+}
+
+fn refusal_rows(groups: BTreeMap<Class, TallyGroup>) -> Vec<Value> {
+    groups
+        .into_iter()
+        .map(|((actor, event, from, refusal), g)| {
+            let examples: Vec<String> = g.newest.iter().map(|(at, key)| format!("{key}@{at}")).collect();
+            object(vec![
+                ("actor", text(actor)),
+                ("event", text(event)),
+                ("from_state", text(from)),
+                ("refusal", text(refusal)),
+                ("n", text(g.n)),
+                ("first_at", text(g.first_at)),
+                ("last_at", text(g.last_at)),
+                ("examples", text(examples.join(","))),
+            ])
+        })
+        .collect()
 }
 
 /// One bead's whole timeline, refused events included, with the row that says who holds it.
@@ -648,6 +675,119 @@ mod tests {
         let mut l = audit(bead, "Submit", from, from, false, "d", at);
         l.audit.refusal = Some(why.into());
         l
+    }
+
+
+    #[test]
+    fn ops_refusals_reads_neither_the_audit_log_nor_the_history() {
+        use crate::counting::Counting;
+        let (store, now, _dir) = with_records_on(Counting::new, 8_000);
+        store.contract().backend().take();
+        let (rc, out) = refusals_answer(&store, now, DAY_S as u64);
+        assert_eq!(rc, 0, "{out}");
+        let reads = store.contract().backend().take();
+        let log: Vec<_> = reads.iter().filter(|(k, key, _)| (*k == "get" || *k == "range") && (key.starts_with("events/") || key.starts_with("history/"))).collect();
+        assert!(log.is_empty(), "ops-refusals read the log: {log:?}");
+    }
+
+    fn refusal_reference<B: Backend>(store: &Store<B>, now: i64, window: i64) -> Value {
+        let mut refused = Refusals::new(now - window);
+        folded(store, now, window, |m| refused.take(&m)).unwrap();
+        Value::Array(refused.rows())
+    }
+
+    fn refusal_rows<B: Backend>(store: &Store<B>, now: i64, window: u64) -> Value {
+        let (rc, out) = refusals_answer(store, now, window);
+        assert_eq!(rc, 0, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["now"], now);
+        v["classes"].clone()
+    }
+
+    #[test]
+    fn the_refusal_tally_answers_what_a_fold_of_the_days_audits_answers() {
+        let now = 1_000_020;
+        let mut other = refused("sp-o", "READY", "IllegalTransition", now - 10);
+        other.audit.machine = "batch".into();
+        let mut log = vec![
+            refused("sp-old", "READY", "IllegalTransition", now - DAY_S - 60),
+            audit("sp-n", "Submit", "READY", "SUBMITTED", true, "d", now - 20),
+            other,
+        ];
+        for n in 0..8 {
+            log.push(refused(&format!("sp-{n}"), "READY", "IllegalTransition", now - 7_000 + n * 40));
+        }
+        for n in 0..3 {
+            let mut l = refused(&format!("sp-e{n}"), "READY", "IllegalTransition", now - 100 + n);
+            l.audit.actor = "e".into();
+            log.push(l);
+        }
+        log.push(refused("sp-s", "WORKING", "StaleVersion", now - 90_000 + 3_600 * 24));
+        log.sort_by_key(|l| l.audit.at);
+        let store = logged_store(&log);
+        store.fold_refusals(now, 100_000).unwrap();
+        for window in [DAY_S, 3_600] {
+            let rows = refusal_rows(&store, now, window as u64);
+            assert_eq!(rows, refusal_reference(&store, now, window), "window {window}");
+        }
+        let rows = refusal_rows(&store, now, DAY_S as u64);
+        assert!(rows.as_array().unwrap().iter().any(|r| r["actor"] == "d" && r["n"] == "8" && r["examples"].as_str().unwrap().split(',').count() == 5), "{rows}");
+        assert!(rows.as_array().unwrap().iter().any(|r| r["actor"] == "e" && r["n"] == "3"), "{rows}");
+    }
+
+    fn refusal_keys<B: Backend>(s: &Store<B>) -> Vec<(String, Value)> {
+        let (items, _) = s.contract().list(&[crate::control::keys::REFUSALS], &state_store::Selector::Everything).unwrap();
+        items.into_iter().filter(|i| i.key != crate::control::keys::REFUSALS_CURSOR).map(|i| (i.key, i.value.data)).collect()
+    }
+
+    #[test]
+    fn while_the_refusal_tally_fills_ops_refusals_cannot_tell() {
+        let now = 1_000_020;
+        let log = [refused("sp-a", "READY", "IllegalTransition", now - 60), refused("sp-b", "READY", "IllegalTransition", now - 50), refused("sp-c", "READY", "IllegalTransition", now - 40)];
+        let store = logged_store(&log);
+        let filling = |store: &_| {
+            let (rc, out) = refusals_answer(store, now, 3_600);
+            (rc, out.starts_with("cannot tell: the refusal tally is filling: covered from "))
+        };
+        assert_eq!(filling(&store), (2, true));
+        store.fold_refusals(now, 1).unwrap();
+        assert_eq!(filling(&store), (2, true));
+        store.fold_refusals(now, 100).unwrap();
+        assert_eq!(refusal_rows(&store, now, 3_600).as_array().unwrap().len(), 1);
+        let empty = logged_store(&[]);
+        empty.fold_refusals(now, 100).unwrap();
+        assert_eq!(refusal_rows(&empty, now, 3_600), json!([]));
+    }
+
+    #[test]
+    fn a_window_over_a_day_is_not_answered_from_the_refusal_tally() {
+        let store = logged_store(&[]);
+        store.fold_refusals(1_000_020, 100).unwrap();
+        let (rc, out) = refusals_answer(&store, 1_000_020, 14 * DAY_S as u64);
+        assert_eq!((rc, out.as_str()), (2, "cannot tell: ops-refusals reads at most 86400 s from the refusal tally; asked 1209600"));
+    }
+
+    #[test]
+    fn folding_the_refusals_twice_or_in_small_steps_gives_the_tally_of_one_fold() {
+        let now = 1_000_000_000;
+        let log: Vec<Logged> = (0..40).map(|n| refused(&format!("sp-{}", n % 7), "READY", if n % 3 == 0 { "StaleVersion" } else { "IllegalTransition" }, now - 50_000 + n * 600)).collect();
+        let (whole, stepped) = (logged_store(&log), logged_store(&log));
+        whole.fold_refusals(now, 10_000).unwrap();
+        let again = whole.fold_refusals(now, 10_000).unwrap();
+        assert!(!again.committed, "a fold with nothing new writes nothing: {again:?}");
+        let mut steps = 0;
+        loop {
+            steps += 1;
+            if stepped.fold_refusals(now, 3).unwrap().revs < 3 {
+                break;
+            }
+        }
+        assert!(steps > 5, "{steps}");
+        assert_eq!(refusal_keys(&stepped), refusal_keys(&whole));
+        assert!(!refusal_keys(&whole).is_empty());
+        stepped.fold_refusals(now, 3).unwrap();
+        assert_eq!(refusal_keys(&stepped), refusal_keys(&whole), "a repeated step changes nothing");
+        assert_eq!(refusal_rows(&stepped, now, DAY_S as u64), refusal_reference(&stepped, now, DAY_S));
     }
 
     fn edge_keys<B: Backend>(s: &Store<B>) -> Vec<(String, Value)> {
@@ -1225,6 +1365,7 @@ mod tests {
         assert_eq!(rc, 0, "{out}");
         store.fold_stays(now, 100_000).unwrap();
         store.fold_edges(now, 100_000).unwrap();
+        store.fold_refusals(now, 100_000).unwrap();
         (store, now, dir)
     }
 
@@ -1248,11 +1389,7 @@ mod tests {
             Err(e) => (2, e),
         })));
         out.push(("ops-refusals", Box::new(|s, now| {
-            let mut refused = Refusals::new(now - 14 * DAY_S);
-            match folded(s, now, 14 * DAY_S, |m| refused.take(&m)) {
-                Ok(()) => (0, json!(refused.rows()).to_string()),
-                Err(e) => (2, e),
-            }
+            refusals_answer(s, now, DAY_S as u64)
         })));
         for (name, argv) in [
             ("list --live", args(&["list", "--live"])),

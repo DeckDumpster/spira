@@ -163,6 +163,15 @@ pub fn edge_minute(minute: i64) -> String {
     format!("{EDGES}{minute:010}")
 }
 
+/// The tally of refused bead events: `refusals/<utc-minute>` holds one minute's groups by who
+/// asked, and `refusals/cursor` where `fold_refusals` has read to. Written by `fold_refusals` alone.
+pub const REFUSALS: &str = "refusals/";
+pub const REFUSALS_CURSOR: &str = "refusals/cursor";
+
+pub fn refusal_minute(minute: i64) -> String {
+    format!("{REFUSALS}{minute:010}")
+}
+
 /// The day's landings: `landed/at/<at>/<bead>` holds one applied move into LANDED, zero-padded so
 /// key order is time order, and `landed/cursor` where `fold_landed` has read to. Written by
 /// `fold_landed` alone.
