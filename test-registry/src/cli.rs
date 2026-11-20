@@ -38,6 +38,7 @@ const VERBS: &[(&str, &[&str], &[&str])] = &[
     ("history", &["test"], &[]),
     ("deny-list", &["at"], &[]),
     ("clear-landed", &["bead", "actor"], &[]),
+    ("repoint", &["from", "to", "actor"], &[]),
     ("backup", &["out"], &[]),
 ];
 
@@ -176,9 +177,14 @@ fn fail(code: i32, json_mode: bool, msg: String) -> Outcome {
 pub const REGISTRY_FILE: &str = "test-registry.sqlite";
 
 /// `cfg` with an empty registry path read as the registry file in the run directory.
-pub fn with_run_default(cfg: impl Fn(&str) -> Result<String, String>, run_dir: impl Fn() -> Result<String, String>) -> impl Fn(&str) -> Result<String, String> {
+pub fn with_run_default(
+    cfg: impl Fn(&str) -> Result<String, String>,
+    run_dir: impl Fn() -> Result<String, String>,
+) -> impl Fn(&str) -> Result<String, String> {
     move |k| match cfg(k) {
-        Ok(p) if k == PATH_KEY && p.trim().is_empty() => run_dir().map(|d| format!("{}/{REGISTRY_FILE}", d.trim_end_matches('/'))),
+        Ok(p) if k == PATH_KEY && p.trim().is_empty() => {
+            run_dir().map(|d| format!("{}/{REGISTRY_FILE}", d.trim_end_matches('/')))
+        }
         other => other,
     }
 }
@@ -260,6 +266,10 @@ pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener) -> Outcome {
                 Err(e) => refused(e),
             }
         }
+        "repoint" => match store::repoint(&conn, now, get("from"), get("to"), get("actor")) {
+            Ok(moved) => out(0, j, moved.join("\n"), json!({"ok": true, "moved": moved})),
+            Err(e) => refused(e),
+        },
         "show" => match store::show(&conn, get("test")) {
             Ok(Some(r)) => out(
                 0,
@@ -533,6 +543,49 @@ mod tests {
             "{}",
             o.stdout
         );
+    }
+
+    #[test]
+    fn repoint_prints_the_moved_tests_in_text_and_json() {
+        let dir = testkit::TempDir::new("test-registry-cli-repoint");
+        let file: &'static str =
+            Box::leak(dir.join("r.sqlite").display().to_string().into_boxed_str());
+        let c = cfg_with(file);
+        let real = |p: &str| store::open(p);
+        for (t, b) in [("suite:a.sh", "sp-i"), ("suite:b.sh", "sp-x")] {
+            let line = format!("disable --test {t} --bead {b} --reason r --actor a --until 5000");
+            assert_eq!(run(&argv(&line), 1000, &c, &real).code, 0);
+        }
+        let o = run(
+            &argv("repoint --from sp-i --to sp-f --actor bead"),
+            1100,
+            &c,
+            &real,
+        );
+        assert_eq!(
+            (o.code, o.stdout.as_str()),
+            (0, "suite:a.sh"),
+            "{}",
+            o.stderr
+        );
+        let o = run(
+            &argv("repoint --from sp-i --to sp-f --actor bead --json"),
+            1100,
+            &c,
+            &real,
+        );
+        let v: serde_json::Value = serde_json::from_str(&o.stdout).unwrap();
+        assert_eq!(
+            (o.code, v),
+            (0, serde_json::json!({"moved": [], "ok": true}))
+        );
+        let o = run(
+            &argv("clear-landed --bead sp-f --actor batcher"),
+            1200,
+            &c,
+            &real,
+        );
+        assert_eq!(o.stdout, "suite:a.sh");
     }
 
     #[test]

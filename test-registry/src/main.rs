@@ -11,6 +11,7 @@ const OPERATIONS: &[&str] = &[
     "history",
     "deny-list",
     "clear-landed",
+    "repoint",
     "backup",
 ];
 
@@ -29,9 +30,7 @@ fn main() -> ExitCode {
         let cfg = test_registry::cli::with_run_default(spira_config::process::cfg, || {
             spira_config::resolve::run_dir_for_process().map(|d| d.display().to_string())
         });
-        let out = test_registry::cli::run(&args, now, &cfg, &|p| {
-            test_registry::open(p)
-        });
+        let out = test_registry::cli::run(&args, now, &cfg, &|p| test_registry::open(p));
         if !out.stdout.is_empty() {
             println!("{}", out.stdout.trim_end_matches('\n'));
         }

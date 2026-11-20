@@ -14,17 +14,25 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use bead::claimdesc;
 use bead::bdq::{
-    check_repo_label, id_bearing_args, is_create, json_count, json_only,
-    should_retry, retryable, backoff_ms, is_write, WRITER_LOCK_BUSY,
+    backoff_ms, check_repo_label, id_bearing_args, is_create, is_write, json_count, json_only,
+    retryable, should_retry, WRITER_LOCK_BUSY,
 };
+use bead::claimdesc;
 use spira_config::repos::Registry;
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    let op = argv.first().map(String::as_str).filter(|a| a.starts_with("__")).unwrap_or("bdq");
-    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-bdq", op);
+    let op = argv
+        .first()
+        .map(String::as_str)
+        .filter(|a| a.starts_with("__"))
+        .unwrap_or("bdq");
+    spira_otel::oneshot::begin(
+        spira_config::process::metrics_endpoint().as_deref(),
+        "spira-bdq",
+        op,
+    );
     let rc = match argv.first().map(String::as_str) {
         Some("__fence") => cmd_fence(&argv[1..]),
         Some("__json_only") => cmd_json_only(),
@@ -61,7 +69,10 @@ fn cmd_latency() -> i32 {
 }
 
 fn env_or(key: &str, default: &str) -> String {
-    std::env::var(key).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default.to_string())
+    std::env::var(key)
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| default.to_string())
 }
 
 fn env_nonempty(key: &str) -> Option<String> {
@@ -143,7 +154,11 @@ fn cmd_json_count() -> i32 {
 
 /// `bdq:<noun>-<verb>`; an `api` path is never part of the label, which stays a small closed set.
 fn ghq_caller(argv: &[&str]) -> String {
-    let words: Vec<&str> = argv.iter().take_while(|a| !a.starts_with('-')).copied().collect();
+    let words: Vec<&str> = argv
+        .iter()
+        .take_while(|a| !a.starts_with('-'))
+        .copied()
+        .collect();
     match words.as_slice() {
         [] => "bdq:other".to_string(),
         ["api", ..] => "bdq:api".to_string(),
@@ -169,9 +184,15 @@ fn cmd_ghq(args: &[String]) -> i32 {
     };
     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
     let caller = ghq_caller(&argv);
-    forge::spend::counted_status(&forge::telemetry::sink(), &caller, &argv, || Command::new("timeout").arg(&gh_timeout).arg(&gh_bin).args(&argv).status())
-        .map(|s| s.code().unwrap_or(1))
-        .unwrap_or(127)
+    forge::spend::counted_status(&forge::telemetry::sink(), &caller, &argv, || {
+        Command::new("timeout")
+            .arg(&gh_timeout)
+            .arg(&gh_bin)
+            .args(&argv)
+            .status()
+    })
+    .map(|s| s.code().unwrap_or(1))
+    .unwrap_or(127)
 }
 
 // =========================================================================================
@@ -192,35 +213,58 @@ fn writer_lock_for(args: &[String]) -> Option<(String, String)> {
     if !is_write(args) || env_or("SPIRA_BDQ_WRITERS", "1") == "0" {
         return None;
     }
-    let run = spira_config::process::cfg("SPIRA_RUN").ok().filter(|v| !v.is_empty())?;
+    let run = spira_config::process::cfg("SPIRA_RUN")
+        .ok()
+        .filter(|v| !v.is_empty())?;
     let dir = format!("{run}/bdq");
     std::fs::create_dir_all(&dir).ok()?;
-    Some((format!("{dir}/write.lock"), env_or("SPIRA_BDQ_WRITER_WAIT_S", "30")))
+    Some((
+        format!("{dir}/write.lock"),
+        env_or("SPIRA_BDQ_WRITER_WAIT_S", "30"),
+    ))
 }
 
-fn run_bd_once(timeout_s: &str, bd_bin: &str, db: &str, args: &[String], capture_stdout: bool, writer_lock: Option<&(String, String)>) -> (i32, String, Vec<u8>) {
+fn run_bd_once(
+    timeout_s: &str,
+    bd_bin: &str,
+    db: &str,
+    args: &[String],
+    capture_stdout: bool,
+    writer_lock: Option<&(String, String)>,
+) -> (i32, String, Vec<u8>) {
     // FORK-EDGE: content store — this is the store's own edge: bdq runs bd, and the content store is out of scope.
     let mut cmd = match writer_lock {
         Some((file, wait_s)) => {
             let mut c = Command::new("flock");
-            c.arg("-w").arg(wait_s).arg("-E").arg(WRITER_LOCK_BUSY.to_string()).arg(file).arg("timeout");
+            c.arg("-w")
+                .arg(wait_s)
+                .arg("-E")
+                .arg(WRITER_LOCK_BUSY.to_string())
+                .arg(file)
+                .arg("timeout");
             c
         }
         None => Command::new("timeout"),
     };
     cmd.arg(timeout_s).arg(bd_bin).arg("-C").arg(db).args(args);
     cmd.stdin(Stdio::inherit());
-    cmd.stdout(if capture_stdout { Stdio::piped() } else { Stdio::inherit() });
+    cmd.stdout(if capture_stdout {
+        Stdio::piped()
+    } else {
+        Stdio::inherit()
+    });
     cmd.stderr(Stdio::piped());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(_) => return (127, String::new(), Vec::new()),
     };
     let mut out_buf = Vec::new();
-    let reader = child.stdout.take().map(|mut o| std::thread::spawn(move || {
-        let _ = o.read_to_end(&mut out_buf);
-        out_buf
-    }));
+    let reader = child.stdout.take().map(|mut o| {
+        std::thread::spawn(move || {
+            let _ = o.read_to_end(&mut out_buf);
+            out_buf
+        })
+    });
     let mut buf = Vec::new();
     if let Some(mut err) = child.stderr.take() {
         let _ = err.read_to_end(&mut buf);
@@ -248,14 +292,29 @@ impl Drop for Body {
 }
 
 fn create_body(args: &[String]) -> Result<Body, String> {
-    let mut b = Body { args: args.to_vec(), text: None, spool: None };
-    let Some(i) = args.iter().position(|a| a == "--body-file").filter(|_| is_create(args)) else { return Ok(b) };
-    let Some(src) = args.get(i + 1) else { return Ok(b) };
+    let mut b = Body {
+        args: args.to_vec(),
+        text: None,
+        spool: None,
+    };
+    let Some(i) = args
+        .iter()
+        .position(|a| a == "--body-file")
+        .filter(|_| is_create(args))
+    else {
+        return Ok(b);
+    };
+    let Some(src) = args.get(i + 1) else {
+        return Ok(b);
+    };
     if src == "-" {
         let mut text = String::new();
-        std::io::stdin().read_to_string(&mut text).map_err(|e| format!("reading the body from stdin: {e}"))?;
+        std::io::stdin()
+            .read_to_string(&mut text)
+            .map_err(|e| format!("reading the body from stdin: {e}"))?;
         let spool = std::env::temp_dir().join(format!("bdq-body-{}", std::process::id()));
-        std::fs::write(&spool, &text).map_err(|e| format!("spooling the body to {}: {e}", spool.display()))?;
+        std::fs::write(&spool, &text)
+            .map_err(|e| format!("spooling the body to {}: {e}", spool.display()))?;
         b.args[i + 1] = spool.display().to_string();
         b.spool = Some(spool);
         b.text = Some(text);
@@ -282,7 +341,14 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let env_var = |var: &str| std::env::var(var).ok();
     let ask_label = || spira_config::process::cfg("SPIRA_ASK_LABEL");
     let no_rows = |_: &str| None;
-    let ctx = bead::guard::Ctx { who: "bdq", vars: &env_var, rows: &no_rows, now: 0, ask_label: &ask_label, registry: &build_registry };
+    let ctx = bead::guard::Ctx {
+        who: "bdq",
+        vars: &env_var,
+        rows: &no_rows,
+        now: 0,
+        ask_label: &ask_label,
+        registry: &build_registry,
+    };
     let fenced = bead::guard::create(args, body.text.as_deref(), &ctx)
         .and_then(|()| bead::guard::ask_label_write(args, &ctx))
         .and_then(|()| bead::guard::state_verb(args, &env_var, "bdq"));
@@ -319,7 +385,9 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let db = match spira_config::process::cfg("SPIRA_DB") {
         Ok(d) if !d.is_empty() => d,
         Ok(_) => {
-            eprintln!("bdq: refusing - SPIRA_DB is empty/unset (would fall through to bd auto-discovery)");
+            eprintln!(
+                "bdq: refusing - SPIRA_DB is empty/unset (would fall through to bd auto-discovery)"
+            );
             return 1;
         }
         Err(e) => {
@@ -374,14 +442,18 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let mut forced: Option<(String, claimdesc::LiveClaim, String)> = None;
     if args.first().map(String::as_str) == Some("update") {
         // bd has no --force-claimed: spira's own flag never reaches it.
-        call_args = std::iter::once("update".to_string()).chain(claimdesc::parse_update_args(&args[1..]).passthrough).collect();
+        call_args = std::iter::once("update".to_string())
+            .chain(claimdesc::parse_update_args(&args[1..]).passthrough)
+            .collect();
     }
     // The claim is the lifecycle row's (sp-mve9i). A machine that cannot answer refuses
     // nothing, as a failed bd show refused nothing before it. `bead::guard::claim` is the one
     // implementation, shared with the content door.
     let rows = |id: &str| {
         spira_store::lc_state::row(id).unwrap_or_else(|e| {
-            eprintln!("bdq: lifecycle state unreadable for {id} ({e}); not checking for a live claim");
+            eprintln!(
+                "bdq: lifecycle state unreadable for {id} ({e}); not checking for a live claim"
+            );
             None
         })
     };
@@ -395,8 +467,12 @@ fn cmd_bdq(args: &[String]) -> i32 {
     }
     let id_args = id_bearing_args(&call_args);
     let args = &id_args[..];
-    let max_tries: u32 = env_nonempty("SPIRA_BDQ_CONN_RETRIES").and_then(|s| s.parse().ok()).unwrap_or(3);
-    let backoff_base: u64 = env_nonempty("SPIRA_BDQ_CONN_BACKOFF_MS").and_then(|s| s.parse().ok()).unwrap_or(1000);
+    let max_tries: u32 = env_nonempty("SPIRA_BDQ_CONN_RETRIES")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3);
+    let backoff_base: u64 = env_nonempty("SPIRA_BDQ_CONN_BACKOFF_MS")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1000);
     let t_start = std::time::Instant::now();
 
     let after = bead::guard::after(args);
@@ -404,28 +480,38 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let writer_lock = writer_lock_for(args);
     let mut try_n: u32 = 1;
     let (rc, stderr_buf, created_out) = loop {
-        let (mut rc, mut err, mut out) = run_bd_once(&timeout_s, &bd_bin, &db, args, lc_row, writer_lock.as_ref());
+        let (mut rc, mut err, mut out) =
+            run_bd_once(&timeout_s, &bd_bin, &db, args, lc_row, writer_lock.as_ref());
         if writer_lock.is_some() && rc == WRITER_LOCK_BUSY {
             eprintln!("bdq: writer slot busy; running uncapped rather than failing the write");
             (rc, err, out) = run_bd_once(&timeout_s, &bd_bin, &db, args, lc_row, None);
         }
         if should_retry(rc, try_n, max_tries, retryable(args, &err)) {
             eprintln!("bdq: invalid connection (attempt {try_n}/{max_tries}); retrying");
-            std::thread::sleep(std::time::Duration::from_millis(backoff_ms(backoff_base, try_n)));
+            std::thread::sleep(std::time::Duration::from_millis(backoff_ms(
+                backoff_base,
+                try_n,
+            )));
             try_n += 1;
             continue;
         }
         break (rc, err, out);
     };
     eprint!("{stderr_buf}");
-    if let Some(note) = bead::bdq::silent_failure_note(args, rc, &stderr_buf, try_n, t_start.elapsed().as_millis()) {
+    if let Some(note) =
+        bead::bdq::silent_failure_note(args, rc, &stderr_buf, try_n, t_start.elapsed().as_millis())
+    {
         eprint!("{note}");
     }
     if lc_row {
         let _ = std::io::stdout().write_all(&created_out);
         let _ = std::io::stdout().flush();
         if rc == 0 {
-            if let Err(e) = spira_store::lifecycle_row::after_create_ids("bdq", &String::from_utf8_lossy(&created_out), bead::bdq::created_repo(args).as_deref()) {
+            if let Err(e) = spira_store::lifecycle_row::after_create_ids(
+                "bdq",
+                &String::from_utf8_lossy(&created_out),
+                bead::bdq::created_repo(args).as_deref(),
+            ) {
                 eprintln!("bdq: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
             }
         }
@@ -435,17 +521,43 @@ fn cmd_bdq(args: &[String]) -> i32 {
             let _ = spira_store::lifecycle_row::after_close("bdq", args);
         }
         let rowless_create = bead::bdq::creates_beads(args) && !lc_row;
-        let claim_ids = if rowless_create { Vec::new() } else { spira_store::planning::claim_inputs_changed(args, &String::from_utf8_lossy(&created_out)) };
+        let claim_ids = if rowless_create {
+            Vec::new()
+        } else {
+            spira_store::planning::claim_inputs_changed(
+                args,
+                &String::from_utf8_lossy(&created_out),
+            )
+        };
         let _ = spira_store::lifecycle_row::sync_claim_inputs("bdq", &claim_ids);
         if spira_store::planning::is_planning_write(args) {
             spira_store::planning::stamp_after("bdq");
         }
     }
-    if let Some(run) = spira_config::process::cfg("SPIRA_RUN").ok().filter(|v| !v.is_empty()) {
+    if let Some(run) = spira_config::process::cfg("SPIRA_RUN")
+        .ok()
+        .filter(|v| !v.is_empty())
+    {
         let dir = format!("{run}/bdq");
         let _ = std::fs::create_dir_all(&dir);
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(format!("{dir}/latency.log")) {
-            let _ = writeln!(f, "{} rc={} tries={} ms={} verb={} caller={}", date_now_utc_nanos(), rc, try_n, t_start.elapsed().as_millis(), args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or(""), bead::latency::parent_name());
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(format!("{dir}/latency.log"))
+        {
+            let _ = writeln!(
+                f,
+                "{} rc={} tries={} ms={} verb={} caller={}",
+                date_now_utc_nanos(),
+                rc,
+                try_n,
+                t_start.elapsed().as_millis(),
+                args.iter()
+                    .find(|a| !a.starts_with('-'))
+                    .map(String::as_str)
+                    .unwrap_or(""),
+                bead::latency::parent_name()
+            );
         }
     }
 
@@ -464,7 +576,11 @@ fn cmd_bdq(args: &[String]) -> i32 {
             try_n,
             args.join(" ")
         );
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&tf) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&tf)
+        {
             let _ = f.write_all(line.as_bytes());
         }
     }
@@ -473,7 +589,10 @@ fn cmd_bdq(args: &[String]) -> i32 {
 }
 
 fn now_epoch() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// stdout of one bd call, stderr dropped; empty on any failure.
@@ -492,7 +611,14 @@ fn bd_capture(timeout_s: &str, bd_bin: &str, db: &str, args: &[&str]) -> String 
         .unwrap_or_default()
 }
 
-fn acknowledge_forced_edit(timeout_s: &str, bd_bin: &str, db: &str, id: &str, claim: &claimdesc::LiveClaim, reason: &str) {
+fn acknowledge_forced_edit(
+    timeout_s: &str,
+    bd_bin: &str,
+    db: &str,
+    id: &str,
+    claim: &claimdesc::LiveClaim,
+    reason: &str,
+) {
     let actor = env_nonempty("BEADS_ACTOR")
         .or_else(|| {
             Command::new("git")
@@ -520,7 +646,10 @@ mod ghq_tests {
 
     #[test]
     fn a_ghq_call_is_labelled_by_noun_and_verb_and_an_api_path_never_widens_the_label() {
-        assert_eq!(ghq_caller(&["pr", "view", "spira/sp-x", "--json", "state"]), "bdq:pr-view");
+        assert_eq!(
+            ghq_caller(&["pr", "view", "spira/sp-x", "--json", "state"]),
+            "bdq:pr-view"
+        );
         assert_eq!(ghq_caller(&["api", "repos/o/r/actions/runs"]), "bdq:api");
         assert_eq!(ghq_caller(&["--version"]), "bdq:other");
     }

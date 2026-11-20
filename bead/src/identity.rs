@@ -15,12 +15,17 @@ pub fn parse(text: &str) -> BTreeMap<String, Vec<String>> {
         if t.is_empty() || t.starts_with('#') {
             continue;
         }
-        let Some((repo, terms)) = t.split_once('|') else { continue };
+        let Some((repo, terms)) = t.split_once('|') else {
+            continue;
+        };
         let repo = repo.trim();
         if repo.is_empty() {
             continue;
         }
-        let terms = terms.split(',').map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty());
+        let terms = terms
+            .split(',')
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty());
         out.entry(repo.to_string()).or_default().extend(terms);
     }
     out
@@ -30,7 +35,10 @@ fn contains_term(haystack: &str, term: &str) -> bool {
     let word = |c: char| c.is_alphanumeric() || c == '_';
     haystack.match_indices(term).any(|(i, m)| {
         let before = haystack[..i].chars().next_back().is_none_or(|c| !word(c));
-        let after = haystack[i + m.len()..].chars().next().is_none_or(|c| !word(c));
+        let after = haystack[i + m.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !word(c));
         before && after
     })
 }
@@ -64,7 +72,9 @@ pub fn foreign_terms(
 }
 
 pub fn refusal(repo: &str, hits: &[(String, String)]) -> String {
-    let mut m = format!("bead: refusing: this bead is for repo:{repo} but carries another repo's identity terms:\n");
+    let mut m = format!(
+        "bead: refusing: this bead is for repo:{repo} but carries another repo's identity terms:\n"
+    );
     for (term, owner) in hits {
         m.push_str(&format!("  {term:?} belongs to {owner}\n"));
     }
@@ -75,7 +85,9 @@ pub fn refusal(repo: &str, hits: &[(String, String)]) -> String {
 }
 
 pub fn override_reason(value: Option<String>) -> Option<String> {
-    value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 pub fn recorded_line(reason: &str) -> String {

@@ -6,13 +6,13 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use spira_config::amendment;
 use bead::claimdesc::notify_live_dwarf;
 use bead::{
-    runes_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
-    stack_after_refusal, lint_judge, parse_created_id, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
-    persona_line, repos_by_name, repos_section, work_labels,
+    epic_blocks_refusal, incident_blocks_refusal, is_blocks_type, lint_judge, non_work_labels,
+    parse_blocks_targets, parse_created_id, parse_list_ids, parse_show_row, persona_line,
+    repos_by_name, repos_section, runes_partitions, stack_after_refusal, work_labels,
 };
+use spira_config::amendment;
 
 fn main() {
     let argv: Vec<String> = env::args().skip(1).collect();
@@ -31,7 +31,11 @@ fn main() {
     let cmd = args.next().unwrap_or_default();
     let rest: Vec<String> = args.collect();
 
-    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-bead", &cmd);
+    spira_otel::oneshot::begin(
+        spira_config::process::metrics_endpoint().as_deref(),
+        "spira-bead",
+        &cmd,
+    );
     let rc = match cmd.as_str() {
         "file" => cmd_file(&home, &rest),
         "pilgrimage" => cmd_pilgrimage(&home, &rest),
@@ -45,13 +49,17 @@ fn main() {
         "event" => cmd_event(&rest),
         // `czar-fence.sh <class>`'s answer: 0 act, 1 shadow (the default), 2 otherwise, read
         // from this process's environment as the script read it (bead::guard::czar_stage).
-        "czar-fence" => match bead::guard::czar_stage(rest.first().map(String::as_str).unwrap_or(""), &|k| env::var(k).ok()) {
-            Ok(()) => 0,
-            Err(r) => {
-                eprint!("{}", r.text);
-                r.code
+        "czar-fence" => {
+            match bead::guard::czar_stage(rest.first().map(String::as_str).unwrap_or(""), &|k| {
+                env::var(k).ok()
+            }) {
+                Ok(()) => 0,
+                Err(r) => {
+                    eprint!("{}", r.text);
+                    r.code
+                }
             }
-        },
+        }
         "dep" => match rest.first().map(String::as_str) {
             Some("add") => cmd_dep_add(&rest[1..]),
             Some("remove") => cmd_dep_remove(&rest[1..]),
@@ -85,6 +93,14 @@ const DOOR_UNREACHABLE: i32 = 90;
 #[cfg(test)]
 thread_local! {
     static TEST_DOOR: std::cell::RefCell<Option<spira_store::lc_call::LcClient>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+type RepointSeam = (Vec<(String, String)>, Result<Vec<String>, String>);
+
+#[cfg(test)]
+thread_local! {
+    static TEST_REPOINT: std::cell::RefCell<RepointSeam> = const { std::cell::RefCell::new((Vec::new(), Ok(Vec::new()))) };
 }
 
 /// The store's client: its socket in production, the declared stand-in in a fixture.
@@ -124,7 +140,9 @@ fn put_capture(args: &[&str], body: Option<&str>) -> (i32, String) {
             return (DOOR_UNREACHABLE, String::new());
         }
     };
-    let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
+    let argv: Vec<&str> = std::iter::once("content")
+        .chain(args.iter().copied())
+        .collect();
     let sent = match body {
         Some(b) => client.call_stdin(&argv, b),
         None => client.call(&argv),
@@ -163,12 +181,24 @@ fn parent_labels(id: &str) -> Vec<String> {
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
 #[allow(clippy::too_many_arguments)]
-fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
+fn door_create(
+    args: &[String],
+    body: Option<&str>,
+    incident: Option<(&str, &[String])>,
+    blockers: &[String],
+    title: Option<&str>,
+    lookup_title: Option<&str>,
+    express: bool,
+    submitted_tip: Option<&str>,
+    repo: Option<&str>,
+) -> i32 {
     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
     if incident.is_none() && blockers.is_empty() && lookup_title.is_none() && !express {
         return put(&argv, body);
     }
-    let since = bead::bdq::utc_stamp_nanos(std::time::SystemTime::now() - std::time::Duration::from_secs(60));
+    let since = bead::bdq::utc_stamp_nanos(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(60),
+    );
     let (mut code, mut stdout) = put_capture(&argv, body);
     if parse_created_id(&stdout).is_none() {
         if let Some(title) = lookup_title {
@@ -239,7 +269,12 @@ fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[St
         }
     }
     if let Some((incident, labels)) = incident {
-        if let Some((from, to)) = bead::remedy_edge(labels, &cfg_label("SPIRA_INCIDENT_LABEL"), &new_id, incident) {
+        if let Some((from, to)) = bead::remedy_edge(
+            labels,
+            &cfg_label("SPIRA_INCIDENT_LABEL"),
+            &new_id,
+            incident,
+        ) {
             let r = put(&["dep", "add", &from, &to, "--type", "blocks"], None);
             if r != 0 {
                 eprintln!("bead: file: {new_id} filed but the blocks edge {from} -> {to} failed; add it: bd dep add {from} {to}");
@@ -267,7 +302,13 @@ const CANNOT_TELL: i32 = 2;
 
 /// Filing is two writes; the second is retried through a store restart, so it never strands the first.
 fn create_row_retrying(id: &str, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
-    bead::lc::create_row_retrying(&lc()?, id, tip, repo, &spira_store::lifecycle_row::Retry::configured()?)
+    bead::lc::create_row_retrying(
+        &lc()?,
+        id,
+        tip,
+        repo,
+        &spira_store::lifecycle_row::Retry::configured()?,
+    )
 }
 
 fn s(strs: &[&str]) -> Vec<String> {
@@ -314,14 +355,26 @@ fn skuld_gate(op: &str, title: &str, body: &str, drafted_by: Option<&str>) -> Re
     let Some(row) = parse_show_row(&shown) else {
         return refuse(format!("--drafted-by {id}: no such bead; get a draft or review: bead.sh file \"<title>\" --for skuld --repo <r> --body-file <intent or draft>"));
     };
-    match bead::skuld_drafted(title, body, &cfg_label("SPIRA_SKULD_LABEL"), id, &row.labels, &row.notes) {
+    match bead::skuld_drafted(
+        title,
+        body,
+        &cfg_label("SPIRA_SKULD_LABEL"),
+        id,
+        &row.labels,
+        &row.notes,
+    ) {
         Ok(()) => Ok(id.to_string()),
         Err(why) => refuse(why),
     }
 }
 
 fn requires_build_spec(home: &str, rune: &str) -> bool {
-    spira_config::runes::rune_get(Path::new(&runes_home(home)), rune, REQUIRES_BUILD_SPEC_KEY, "") == "1"
+    spira_config::runes::rune_get(
+        Path::new(&runes_home(home)),
+        rune,
+        REQUIRES_BUILD_SPEC_KEY,
+        "",
+    ) == "1"
 }
 
 /// `RUNE_LABELS`/`RUNE_EXCLUDE_LABELS`, fully resolved and FAIL-CLOSED — delegates to
@@ -330,7 +383,10 @@ fn requires_build_spec(home: &str, rune: &str) -> bool {
 /// site that decides what a bead gets FILED as (`bead file --for`): a predicate that
 /// would otherwise widen to the whole ready queue must refuse the filing outright, never
 /// hand back an empty label silently.
-fn rune_predicate(home: &str, rune: &str) -> Result<spira_config::runes::Predicate, spira_config::runes::Refusal> {
+fn rune_predicate(
+    home: &str,
+    rune: &str,
+) -> Result<spira_config::runes::Predicate, spira_config::runes::Refusal> {
     spira_config::runes::rune_predicate(Path::new(&runes_home(home)), rune)
 }
 
@@ -352,7 +408,9 @@ fn runes_home(home_arg: &str) -> String {
 }
 
 fn runes_dir(home: &str) -> String {
-    spira_config::runes::runes_dir(Path::new(&runes_home(home))).to_string_lossy().into_owned()
+    spira_config::runes::runes_dir(Path::new(&runes_home(home)))
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// `rune_names`: every `*.rune` basename under `<home>/runes`, sorted — bash's own
@@ -427,7 +485,15 @@ fn schema_name(home: &str, key: &str) -> String {
 /// ambiguous ones are refused, because the lifecycle compares tips byte for byte.
 fn resolve_full_tip(repo_path: &str, raw: &str) -> Result<String, String> {
     let out = spira_config::bounded::bounded("git")
-        .args(["-C", repo_path, "rev-parse", "--verify", "--quiet", "--end-of-options", &format!("{raw}^{{commit}}")])
+        .args([
+            "-C",
+            repo_path,
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--end-of-options",
+            &format!("{raw}^{{commit}}"),
+        ])
         .output()
         .map_err(|e| format!("cannot run git: {e}"))?;
     let full = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -457,13 +523,16 @@ fn load_identity() -> std::collections::BTreeMap<String, Vec<String>> {
     if path.is_empty() {
         return Default::default();
     }
-    std::fs::read_to_string(&path).map(|t| bead::identity::parse(&t)).unwrap_or_default()
+    std::fs::read_to_string(&path)
+        .map(|t| bead::identity::parse(&t))
+        .unwrap_or_default()
 }
 
 /// `Err` is the exit code of a refusal; `Ok(Some(line))` is the line to record on the bead
 /// when the named override admitted text that carried another repo's terms.
 fn identity_guard(repo: &str, text: &str) -> Result<Option<String>, i32> {
-    bead::filing::identity_guard(&load_identity(), repo, text, &|k| env::var(k).ok()).map_err(refused)
+    bead::filing::identity_guard(&load_identity(), repo, text, &|k| env::var(k).ok())
+        .map_err(refused)
 }
 
 fn refused(r: bead::guard::Refusal) -> i32 {
@@ -475,7 +544,8 @@ fn refused(r: bead::guard::Refusal) -> i32 {
 /// bead; an unreadable or malformed registry refuses, and only an empty key is inert.
 fn statute_guard(text: &str) -> Result<Option<String>, i32> {
     let statutes = bead::filing::Statutes::at(&cfg_label("SPIRA_STATUTE_GUARDS"));
-    let note = bead::filing::statute_guard(&statutes, text, &|k| env::var(k).ok()).map_err(refused)?;
+    let note =
+        bead::filing::statute_guard(&statutes, text, &|k| env::var(k).ok()).map_err(refused)?;
     eprint!("{}", note.shown);
     Ok(note.line)
 }
@@ -506,7 +576,11 @@ fn with_target_line(target: &str, body_file: Option<&str>) -> Result<String, Str
         None => String::new(),
     };
     let path = env::temp_dir().join(format!("bead-target-{}.md", std::process::id()));
-    std::fs::write(&path, format!("{}{target}\n\n{body}", spira_config::target::TARGET_PREFIX)).map_err(|e| format!("writing {}: {e}", path.display()))?;
+    std::fs::write(
+        &path,
+        format!("{}{target}\n\n{body}", spira_config::target::TARGET_PREFIX),
+    )
+    .map_err(|e| format!("writing {}: {e}", path.display()))?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -619,7 +693,10 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     }
 
     if is_concierge() && for_rune.as_deref().is_some_and(|r| requires_skuld(home, r)) {
-        let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
+        let body = body_file
+            .as_deref()
+            .map(|f| std::fs::read_to_string(f).unwrap_or_default())
+            .unwrap_or_default();
         let id = match skuld_gate("file", &title, &body, drafted_by.as_deref()) {
             Ok(id) => id,
             Err(rc) => return rc,
@@ -660,10 +737,14 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
     let parent_labels = parent.as_deref().map(parent_labels).unwrap_or_default();
     let incident_parent: Option<(String, Vec<String>)> = match &parent {
-        Some(_) if bead::is_incident(&parent_labels, &incident_label) => parent.take().map(|p| (p, parent_labels)),
+        Some(_) if bead::is_incident(&parent_labels, &incident_label) => {
+            parent.take().map(|p| (p, parent_labels))
+        }
         _ => None,
     };
-    let incident_parent = incident_parent.as_ref().map(|(p, l)| (p.as_str(), l.as_slice()));
+    let incident_parent = incident_parent
+        .as_ref()
+        .map(|(p, l)| (p.as_str(), l.as_slice()));
 
     let repos = load_repos();
     if let Some(r) = &repo {
@@ -680,11 +761,15 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     }
 
     if let Some(r) = &repo {
-        let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
+        let body = body_file
+            .as_deref()
+            .map(|f| std::fs::read_to_string(f).unwrap_or_default())
+            .unwrap_or_default();
         match identity_guard(r, &format!("{title}\n{body}")) {
             Err(rc) => return rc,
             Ok(Some(why)) => {
-                let path = env::temp_dir().join(format!("bead-crossrepo-{}.md", std::process::id()));
+                let path =
+                    env::temp_dir().join(format!("bead-crossrepo-{}.md", std::process::id()));
                 if let Err(e) = std::fs::write(&path, format!("{why}\n\n{body}")) {
                     eprintln!("bead: writing {}: {e}", path.display());
                     return 1;
@@ -696,7 +781,10 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     }
 
     {
-        let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
+        let body = body_file
+            .as_deref()
+            .map(|f| std::fs::read_to_string(f).unwrap_or_default())
+            .unwrap_or_default();
         match statute_guard(&format!("{title}\n{body}")) {
             Err(rc) => return rc,
             Ok(Some(line)) => {
@@ -781,7 +869,10 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         };
         if submitted {
             let Some(raw) = tip.take() else { return 2 };
-            let path = repos.get(&repo).map(|r| r.path.as_str()).unwrap_or_default();
+            let path = repos
+                .get(&repo)
+                .map(|r| r.path.as_str())
+                .unwrap_or_default();
             match resolve_full_tip(path, &raw) {
                 Ok(full) => tip = Some(full),
                 Err(e) => {
@@ -807,10 +898,25 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return 2;
         }
 
-        let lane_override = env::var("SPIRA_BEAD_LANE_OVERRIDE").map(|v| !v.is_empty()).unwrap_or(false);
-        let persona = bead::filing::Persona { name: for_rune.clone(), labels: rune_labels.split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(), requires_build_spec: requires_build_spec(home, &for_rune), unresolved: None };
-        let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
-        if let Err(r) = bead::filing::persona_guards(&persona, &repo, &body, &repos, lane_override) {
+        let lane_override = env::var("SPIRA_BEAD_LANE_OVERRIDE")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let persona = bead::filing::Persona {
+            name: for_rune.clone(),
+            labels: rune_labels
+                .split(',')
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect(),
+            requires_build_spec: requires_build_spec(home, &for_rune),
+            unresolved: None,
+        };
+        let body = body_file
+            .as_deref()
+            .map(|f| std::fs::read_to_string(f).unwrap_or_default())
+            .unwrap_or_default();
+        if let Err(r) = bead::filing::persona_guards(&persona, &repo, &body, &repos, lane_override)
+        {
             return refused(r);
         }
 
@@ -819,7 +925,13 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         let filed_labels: Vec<String> = labels.split(',').map(str::to_string).collect();
         match bead::filing::contract_guard(&repo, &filed_labels, &contract, &|k| env::var(k).ok()) {
             Ok(Some(line)) => {
-                let path = env::temp_dir().join(format!("bead-contract-{}-{}.md", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())));
+                let path = env::temp_dir().join(format!(
+                    "bead-contract-{}-{}.md",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_nanos())
+                ));
                 if let Err(e) = std::fs::write(&path, format!("{line}\n\n{body}")) {
                     eprintln!("bead: writing {}: {e}", path.display());
                     return 1;
@@ -839,7 +951,11 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
 
         if let Some(base) = &stack_after {
             let shown = shown_row(base);
-            let terminal = bead::lc_done(&bead::door::DoorSource::lifecycle_only(vec![base.clone()], lifecycle_rows), &mut None, base);
+            let terminal = bead::lc_done(
+                &bead::door::DoorSource::lifecycle_only(vec![base.clone()], lifecycle_rows),
+                &mut None,
+                base,
+            );
             if let Some(why) = stack_after_refusal(base, shown.as_ref(), terminal, &repo) {
                 eprintln!("bead: {why}");
                 return 2;
@@ -859,7 +975,11 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push("-p".into());
             bd_args.push(p.clone());
         }
-        let create_body = match body_file.as_deref().map(std::fs::read_to_string).transpose() {
+        let create_body = match body_file
+            .as_deref()
+            .map(std::fs::read_to_string)
+            .transpose()
+        {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("bead: file: cannot read the body file: {e}");
@@ -880,9 +1000,23 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = door_create(&bd_args, create_body.as_deref(), incident_parent, &bead::filing::blockers(stack_after.as_deref(), &depends_on), Some(&title_for_row), Some(&title_for_row), express, tip.as_deref(), Some(repo.as_str()));
+        let rc = door_create(
+            &bd_args,
+            create_body.as_deref(),
+            incident_parent,
+            &bead::filing::blockers(stack_after.as_deref(), &depends_on),
+            Some(&title_for_row),
+            Some(&title_for_row),
+            express,
+            tip.as_deref(),
+            Some(repo.as_str()),
+        );
         if rc == 0 {
-            spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", &for_rune), ("repo", &repo), ("kind", "work")]);
+            spira_otel::oneshot::event(
+                "spira_beads_filed",
+                1,
+                &[("persona", &for_rune), ("repo", &repo), ("kind", "work")],
+            );
         }
         rc
     } else {
@@ -920,7 +1054,11 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push("-p".into());
             bd_args.push(p.clone());
         }
-        let create_body = match body_file.as_deref().map(std::fs::read_to_string).transpose() {
+        let create_body = match body_file
+            .as_deref()
+            .map(std::fs::read_to_string)
+            .transpose()
+        {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("bead: file: cannot read the body file: {e}");
@@ -941,9 +1079,27 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = door_create(&bd_args, create_body.as_deref(), incident_parent, &[], None, Some(&title_for_lookup), express, None, None);
+        let rc = door_create(
+            &bd_args,
+            create_body.as_deref(),
+            incident_parent,
+            &[],
+            None,
+            Some(&title_for_lookup),
+            express,
+            None,
+            None,
+        );
         if rc == 0 {
-            spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", ""), ("repo", repo.as_deref().unwrap_or("")), ("kind", &kind)]);
+            spira_otel::oneshot::event(
+                "spira_beads_filed",
+                1,
+                &[
+                    ("persona", ""),
+                    ("repo", repo.as_deref().unwrap_or("")),
+                    ("kind", &kind),
+                ],
+            );
         }
         rc
     }
@@ -951,9 +1107,11 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
 
 /// `work law`'s table of contents, read from the home repository's tracked `law/` tree.
 fn law_contents(home: &str) -> String {
-    let reg = spira_config::repos::Registry::from_env_checkout(env::vars().collect(), Path::new(home));
+    let reg =
+        spira_config::repos::Registry::from_env_checkout(env::vars().collect(), Path::new(home));
     let path = reg.root("").map(|r| Path::new(&r).join("law/index.md"));
-    path.and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_else(|| "(law/index.md not found — run `work law`)\n".to_string())
+    path.and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_else(|| "(law/index.md not found — run `work law`)\n".to_string())
 }
 
 /// Files the design's pilgrimage bead for the pilgrim, blocked by every build bead named with `--after`.
@@ -1026,14 +1184,28 @@ fn cmd_pilgrimage(home: &str, args: &[String]) -> i32 {
             return 1;
         }
     };
-    let mut file = vec!["--home".to_string(), home.to_string(), "file".into(), title, "--for".into(), "pilgrim".into(), "--repo".into(), repo, "--body-file".into(), body_path.to_string_lossy().into_owned()];
+    let mut file = vec![
+        "--home".to_string(),
+        home.to_string(),
+        "file".into(),
+        title,
+        "--for".into(),
+        "pilgrim".into(),
+        "--repo".into(),
+        repo,
+        "--body-file".into(),
+        body_path.to_string_lossy().into_owned(),
+    ];
     if let Some(p) = priority {
         file.push("--priority".into());
         file.push(p);
     }
     // batch-job: re-enters bead file, which bounds its own store calls
     // FORK-EDGE: machine leg (catalogue phase) — the self re-exec becomes a task state
-    let out = std::process::Command::new(exe).args(&file).stderr(Stdio::inherit()).output();
+    let out = std::process::Command::new(exe)
+        .args(&file)
+        .stderr(Stdio::inherit())
+        .output();
     let _ = std::fs::remove_file(&body_path);
     let out = match out {
         Ok(o) => o,
@@ -1171,12 +1343,25 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         eprintln!("bead: amend: --ack-within qualifies --live");
         return 2;
     }
-    if live && (body_file.is_some() || replace || express || priority.is_some() || (note.is_none() && append_file.is_none())) {
+    if live
+        && (body_file.is_some()
+            || replace
+            || express
+            || priority.is_some()
+            || (note.is_none() && append_file.is_none()))
+    {
         eprintln!("bead: amend: --live takes --note and/or --append-body only: the text is merged into the description when it is accepted");
         return 2;
     }
-    if note.is_none() && body_file.is_none() && append_file.is_none() && !express && priority.is_none() {
-        eprintln!("bead: amend: --note, --body-file, --append-body, --express, or --priority required");
+    if note.is_none()
+        && body_file.is_none()
+        && append_file.is_none()
+        && !express
+        && priority.is_none()
+    {
+        eprintln!(
+            "bead: amend: --note, --body-file, --append-body, --express, or --priority required"
+        );
         return 2;
     }
     if body_file.is_some() && append_file.is_some() {
@@ -1196,26 +1381,38 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         let (_, shown) = door(&s(&["show", &id, "--json"]));
         let labels = parse_show_row(&shown).map(|r| r.labels).unwrap_or_default();
         let skuld_bound = rune_names(home).iter().any(|r| {
-            let own: Vec<String> = rune_label(home, r).split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+            let own: Vec<String> = rune_label(home, r)
+                .split(',')
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect();
             requires_skuld(home, r) && bead::is_builder_bead(&labels, &own)
         });
         if skuld_bound {
-            let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
+            let body = body_file
+                .as_deref()
+                .map(|f| std::fs::read_to_string(f).unwrap_or_default())
+                .unwrap_or_default();
             let title = bead::parse_title(&shown).unwrap_or_default();
             if let Err(rc) = skuld_gate("amend", &title, &body, drafted_by.as_deref()) {
                 return rc;
             }
         }
     } else if drafted_by.is_some() {
-        eprintln!("bead: amend: --drafted-by applies only to the Concierge's --replace of a builder bead");
+        eprintln!(
+            "bead: amend: --drafted-by applies only to the Concierge's --replace of a builder bead"
+        );
         return 2;
     }
 
     let mut override_note: Option<String> = None;
     if note.is_some() || body_file.is_some() || append_file.is_some() {
         let (_, shown) = door(&s(&["show", &id, "--json"]));
-        let repo = bead::parse_show_row(&shown)
-            .and_then(|r| r.labels.iter().find_map(|l| l.strip_prefix("repo:").map(str::to_string)));
+        let repo = bead::parse_show_row(&shown).and_then(|r| {
+            r.labels
+                .iter()
+                .find_map(|l| l.strip_prefix("repo:").map(str::to_string))
+        });
         if let Some(repo) = repo {
             let mut text = note.clone().unwrap_or_default();
             for f in [&body_file, &append_file].into_iter().flatten() {
@@ -1246,7 +1443,13 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
         let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
         if bead::claimdesc::live_dwarf(&id, &run, &mail) {
-            return amend_live(&id, &mail, note.as_deref(), append_file.as_deref(), ack_within.as_deref());
+            return amend_live(
+                &id,
+                &mail,
+                note.as_deref(),
+                append_file.as_deref(),
+                ack_within.as_deref(),
+            );
         }
         eprintln!("bead: amend: no live dwarf on {id}; recording the amendment without an acknowledgement");
     }
@@ -1321,10 +1524,18 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
                     return 1;
                 }
             };
-            bead::appended_body(&old, &addition, &spira_otel::utc_date(std::time::SystemTime::now()))
+            bead::appended_body(
+                &old,
+                &addition,
+                &spira_otel::utc_date(std::time::SystemTime::now()),
+            )
         } else {
             eprintln!("bead: amend: {id}: {}", bead::replaced_body_summary(&old));
-            match body_file.as_deref().map(std::fs::read_to_string).transpose() {
+            match body_file
+                .as_deref()
+                .map(std::fs::read_to_string)
+                .transpose()
+            {
                 Ok(b) => b.unwrap_or_default(),
                 Err(e) => {
                     eprintln!("bead: amend: cannot read the body file: {e}");
@@ -1332,8 +1543,22 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
                 }
             }
         };
-        rc |= put(&["update", &id, "--body-file", "-", bead::claimdesc::FORCE_FLAG, "bead.sh amend"], Some(&new_body));
-        let (text, plain) = if append_file.is_some() { ("Description appended.", "description appended") } else { ("Description updated.", "description updated") };
+        rc |= put(
+            &[
+                "update",
+                &id,
+                "--body-file",
+                "-",
+                bead::claimdesc::FORCE_FLAG,
+                "bead.sh amend",
+            ],
+            Some(&new_body),
+        );
+        let (text, plain) = if append_file.is_some() {
+            ("Description appended.", "description appended")
+        } else {
+            ("Description updated.", "description updated")
+        };
         bead::claimdesc::append_change(&mut changed, text);
         applied.push(plain.into());
     }
@@ -1344,24 +1569,39 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     // "nothing to notify".
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
     let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
-    for line in bead::claimdesc::amend_report(&id, &applied, &notify_live_dwarf(&id, &changed, &run, &mail)) {
+    for line in bead::claimdesc::amend_report(
+        &id,
+        &applied,
+        &notify_live_dwarf(&id, &changed, &run, &mail),
+    ) {
         println!("bead: amend: {line}");
     }
     rc
 }
 
 fn now_epoch() -> i64 {
-    env::var("SPIRA_NOW").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
-    })
+    env::var("SPIRA_NOW")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0)
+        })
 }
 
 fn amender() -> String {
-    ["BEADS_ACTOR", "USER"].iter().find_map(|k| env::var(k).ok().filter(|a| !a.is_empty())).unwrap_or_else(|| "concierge".into())
+    ["BEADS_ACTOR", "USER"]
+        .iter()
+        .find_map(|k| env::var(k).ok().filter(|a| !a.is_empty()))
+        .unwrap_or_else(|| "concierge".into())
 }
 
 fn amend_mail_cfg() -> Option<String> {
-    spira_config::process::cfg("SPIRA_MAIL").ok().filter(|m| !m.is_empty())
+    spira_config::process::cfg("SPIRA_MAIL")
+        .ok()
+        .filter(|m| !m.is_empty())
 }
 
 fn merge_into_body(id: &str, addition: &str) -> i32 {
@@ -1372,10 +1612,26 @@ fn merge_into_body(id: &str, addition: &str) -> i32 {
     };
     let date = spira_otel::utc_date(std::time::SystemTime::now());
     let body = bead::appended_body(&old, addition, &date);
-    put(&["update", id, "--body-file", "-", bead::claimdesc::FORCE_FLAG, "bead.sh amend"], Some(&body))
+    put(
+        &[
+            "update",
+            id,
+            "--body-file",
+            "-",
+            bead::claimdesc::FORCE_FLAG,
+            "bead.sh amend",
+        ],
+        Some(&body),
+    )
 }
 
-fn amend_live(id: &str, mail: &str, note: Option<&str>, append_file: Option<&str>, ack_within: Option<&str>) -> i32 {
+fn amend_live(
+    id: &str,
+    mail: &str,
+    note: Option<&str>,
+    append_file: Option<&str>,
+    ack_within: Option<&str>,
+) -> i32 {
     let secs = match ack_within {
         None => amendment::DEFAULT_ACK_SECS,
         Some(d) => match amendment::parse_duration(d) {
@@ -1408,7 +1664,15 @@ fn amend_live(id: &str, mail: &str, note: Option<&str>, append_file: Option<&str
             return 1;
         }
     };
-    let rc = put_note(id, &format!("Live amendment {} by {} awaiting acknowledgement (within {secs}s):\n\n{}", rec.id, rec.amender, rec.text.trim()));
+    let rc = put_note(
+        id,
+        &format!(
+            "Live amendment {} by {} awaiting acknowledgement (within {secs}s):\n\n{}",
+            rec.id,
+            rec.amender,
+            rec.text.trim()
+        ),
+    );
     bead::claimdesc::mail_to(
         &format!("dwarf-{id}"),
         "amend <amend@spira>",
@@ -1445,7 +1709,12 @@ fn amend_ack(id: &str, aid: &str, answer: amendment::State) -> i32 {
         _ => unreachable!(),
     };
     rc |= put_note(id, &format!("Amendment {aid} {verdict}"));
-    bead::claimdesc::mail_to(&rec.amender, "amend <amend@spira>", &format!("Amendment {aid} answered"), &tell);
+    bead::claimdesc::mail_to(
+        &rec.amender,
+        "amend <amend@spira>",
+        &format!("Amendment {aid} answered"),
+        &tell,
+    );
     rc
 }
 
@@ -1458,7 +1727,10 @@ fn amend_settle(id: &str) -> i32 {
     let mut rc = 0;
     for rec in amendment::unanswered(&mail, id) {
         if merge_into_body(id, &rec.text) != 0 {
-            eprintln!("bead: amend: could not merge {} into {id}; left pending", rec.id);
+            eprintln!(
+                "bead: amend: could not merge {} into {id}; left pending",
+                rec.id
+            );
             rc = 1;
             continue;
         }
@@ -1467,7 +1739,13 @@ fn amend_settle(id: &str) -> i32 {
             rc = 1;
             continue;
         }
-        rc |= put_note(id, &format!("Amendment {} merged into the body: its session ended before it was answered", rec.id));
+        rc |= put_note(
+            id,
+            &format!(
+                "Amendment {} merged into the body: its session ended before it was answered",
+                rec.id
+            ),
+        );
     }
     rc
 }
@@ -1498,16 +1776,32 @@ fn amend_enforce(aid: &str) -> i32 {
         eprintln!("bead: amend: {e}");
         return 1;
     }
-    let reason = format!("amendment {aid} {why}; slain and requeued with the amendment merged into the body");
+    let reason = format!(
+        "amendment {aid} {why}; slain and requeued with the amendment merged into the body"
+    );
     rc |= put_note(&id, &format!("Enforced {aid}: {reason}"));
     // batch-job: slay waits out the holder's shutdown and salvages its work
     // FORK-EDGE: needs a hel/Units library for slay (stop the holder, salvage, reopen); slay is another crate's binary
-    let slay = Command::new(match spira_config::release_env::tool("slay") { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } })
-        .args(["--bead", &id, "--why", &reason, "--reopen"])
-        .envs(match spira_config::release_env::child_path_env_for_process() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } })
-        .status()
-        .map(|s| s.code().unwrap_or(1))
-        .unwrap_or(127);
+    let slay = Command::new(match spira_config::release_env::tool("slay") {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("bead: {e}");
+            return 1;
+        }
+    })
+    .args(["--bead", &id, "--why", &reason, "--reopen"])
+    .envs(
+        match spira_config::release_env::child_path_env_for_process() {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("bead: {e}");
+                return 1;
+            }
+        },
+    )
+    .status()
+    .map(|s| s.code().unwrap_or(1))
+    .unwrap_or(127);
     if slay != 0 {
         eprintln!("bead: amend: slay --bead {id} failed ({slay}); the amendment is merged and marked enforced");
     }
@@ -1599,7 +1893,9 @@ fn cmd_event(args: &[String]) -> i32 {
     let run_dir = match spira_config::process::cfg("SPIRA_RUN") {
         Ok(v) if !v.is_empty() => PathBuf::from(v),
         Ok(_) => {
-            eprintln!("spira_event: SPIRA_RUN resolved empty — refusing rather than drop the event");
+            eprintln!(
+                "spira_event: SPIRA_RUN resolved empty — refusing rather than drop the event"
+            );
             return 2;
         }
         Err(e) => {
@@ -1609,13 +1905,19 @@ fn cmd_event(args: &[String]) -> i32 {
     };
     // SPIRA_EVENT_COOLDOWN / SPIRA_NOW are not registered config keys (spira/conf.d has no
     // entry for either) — left as plain env reads with their existing defaults.
-    let cooldown: i64 = env::var("SPIRA_EVENT_COOLDOWN").ok().and_then(|v| v.parse().ok()).unwrap_or(3600);
-    let now: i64 = env::var("SPIRA_NOW").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0)
-    });
+    let cooldown: i64 = env::var("SPIRA_EVENT_COOLDOWN")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3600);
+    let now: i64 = env::var("SPIRA_NOW")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0)
+        });
 
     match bead::event::emit(&run_dir, cooldown, now, &kind, &target, &title, &detail) {
         Ok(()) => 0,
@@ -1652,7 +1954,9 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
     if out.iter().any(|l| l.starts_with("no partition label")) {
         eprintln!(
             "{}; add one of: {}",
-            out.iter().find(|l| l.starts_with("no partition label")).unwrap(),
+            out.iter()
+                .find(|l| l.starts_with("no partition label"))
+                .unwrap(),
             partitions.join(", ")
         );
         return 1;
@@ -1683,7 +1987,13 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
     let spec_partitions = rune_names(home)
         .into_iter()
         .filter(|f| requires_build_spec(home, f))
-        .map(|f| rune_label(home, &f).split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+        .map(|f| {
+            rune_label(home, &f)
+                .split(',')
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
         .collect();
     let cfg = bead::LintCfg {
         partitions,
@@ -1789,15 +2099,62 @@ fn cmd_dep_add(args: &[String]) -> i32 {
         }
     }
 
+    let from_incident = is_blocks_type(dep_type.as_deref()) && {
+        let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
+        shown_row(&id).is_some_and(|r| r.labels.iter().any(|l| l == &incident_label))
+    };
+
     let mut call = s(&["dep", "add"]);
-    call.push(id);
-    call.push(depid);
+    call.push(id.clone());
+    call.push(depid.clone());
     if let Some(t) = &dep_type {
         call.push("--type".into());
         call.push(dep_type_name(t).into());
     }
     call.extend(rest);
-    put(&call.iter().map(String::as_str).collect::<Vec<_>>(), None)
+    let code = put(&call.iter().map(String::as_str).collect::<Vec<_>>(), None);
+    if code != 0 || !from_incident {
+        return code;
+    }
+    match repoint_registry(&id, &depid) {
+        Ok(moved) if moved.is_empty() => 0,
+        Ok(moved) => {
+            eprintln!(
+                "bead: dep add: registry row(s) {} now name {depid}",
+                moved.join(" ")
+            );
+            0
+        }
+        Err(e) => {
+            eprintln!("bead: dep add: the edge {id} -> {depid} is in, but the registry rows naming {id} did not move to {depid}: {e}");
+            1
+        }
+    }
+}
+
+/// The seam: moves the test-registry rows naming `from` to `to`; returns the moved test ids.
+fn repoint_registry(from: &str, to: &str) -> Result<Vec<String>, String> {
+    #[cfg(test)]
+    return TEST_REPOINT.with(|r| {
+        let mut r = r.borrow_mut();
+        r.0.push((from.to_string(), to.to_string()));
+        r.1.clone()
+    });
+    #[cfg(not(test))]
+    {
+        let bin = spira_config::release_env::tool("test-registry")?;
+        let out = std::process::Command::new(bin)
+            .args(["repoint", "--from", from, "--to", to, "--actor", "bead"])
+            .output()
+            .map_err(|e| format!("test-registry: {e}"))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect())
+    }
 }
 
 /// bd's spellings of a `blocks` edge, normalised to the name the lifecycle store records.
@@ -1815,7 +2172,9 @@ fn dep_type_name(t: &str) -> &str {
 // =========================================================================================
 
 fn cmd_dep_epic_edges() -> i32 {
-    let (code, out) = door(&s(&["list", "--type", "epic", "--brief", "--json", "--limit", "0"]));
+    let (code, out) = door(&s(&[
+        "list", "--type", "epic", "--brief", "--json", "--limit", "0",
+    ]));
     if code != 0 {
         eprintln!("bead: dep epic-edges: bd list exited {code}");
         return 1;
@@ -1825,7 +2184,16 @@ fn cmd_dep_epic_edges() -> i32 {
         return 0;
     }
     for epic in &epics {
-        let (code, out) = door(&s(&["dep", "list", epic, "--direction", "up", "--type", "blocks", "--json"]));
+        let (code, out) = door(&s(&[
+            "dep",
+            "list",
+            epic,
+            "--direction",
+            "up",
+            "--type",
+            "blocks",
+            "--json",
+        ]));
         if code != 0 {
             eprintln!("bead: dep epic-edges: bd dep list {epic} exited {code}");
             return 1;
@@ -1856,7 +2224,9 @@ fn cmd_dep_convert(args: &[String]) -> i32 {
     }
     let rc = put(&["dep", "remove", &id, &epic], None);
     if rc != 0 {
-        eprintln!("bead: dep convert: the edge removal was refused (exit {rc}); the edge is unchanged");
+        eprintln!(
+            "bead: dep convert: the edge removal was refused (exit {rc}); the edge is unchanged"
+        );
         return rc;
     }
     let rc = put(&["dep", "add", &id, &epic, "--type", "parent-child"], None);
@@ -1874,7 +2244,11 @@ fn cmd_dep_convert(args: &[String]) -> i32 {
 
 fn cmd_label(home: &str, args: &[String]) -> i32 {
     let (verb, id, label) = match args {
-        [v, i, l] if (v == "add" || v == "remove") && !i.starts_with('-') && !l.starts_with('-') => (v.as_str(), i.clone(), l.clone()),
+        [v, i, l]
+            if (v == "add" || v == "remove") && !i.starts_with('-') && !l.starts_with('-') =>
+        {
+            (v.as_str(), i.clone(), l.clone())
+        }
         _ => {
             eprintln!("usage: bead.sh label add|remove <id> <label>");
             return 2;
@@ -1901,7 +2275,10 @@ fn cmd_label(home: &str, args: &[String]) -> i32 {
     };
     let has = row.labels.iter().any(|l| l == &label);
     if (verb == "add") == has {
-        println!("{id}: label {label} already {}", if has { "present" } else { "absent" });
+        println!(
+            "{id}: label {label} already {}",
+            if has { "present" } else { "absent" }
+        );
         return 0;
     }
 
@@ -1973,8 +2350,32 @@ fn cmd_drop(args: &[String]) -> i32 {
     // batch-job: ejects from batches and closes the store, bounded by timeout(1)
     // FORK-EDGE: unserved verb drop-bead (the spira-lc CLI composes it; the socket does not serve it)
     let status = Command::new("timeout")
-        .args(["120", match spira_store::lifecycle_row::lc_bin() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } }.as_str(), "drop-bead", &id, "--reason", &reason, "--actor", "bead"])
-        .envs(match spira_config::release_env::child_path_env_for_process() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } })
+        .args([
+            "120",
+            match spira_store::lifecycle_row::lc_bin() {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("bead: {e}");
+                    return 1;
+                }
+            }
+            .as_str(),
+            "drop-bead",
+            &id,
+            "--reason",
+            &reason,
+            "--actor",
+            "bead",
+        ])
+        .envs(
+            match spira_config::release_env::child_path_env_for_process() {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("bead: {e}");
+                    return 1;
+                }
+            },
+        )
         .status()
         .map(|s| s.code().unwrap_or(1))
         .unwrap_or(127);
@@ -2038,18 +2439,46 @@ mod tests {
     }
 
     impl Transport for Door {
-        fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
-            self.sent.lock().unwrap().push((argv.to_vec(), stdin.map(str::to_string)));
+        fn exchange(
+            &self,
+            argv: &[String],
+            stdin: Option<&str>,
+            _: std::time::Duration,
+        ) -> Result<Reply, String> {
+            self.sent
+                .lock()
+                .unwrap()
+                .push((argv.to_vec(), stdin.map(str::to_string)));
             let line = argv.join(" ");
-            let (_, code, text) = self.answers.iter().find(|(p, _, _)| line.starts_with(p)).copied().unwrap_or(("", 0, ""));
-            Ok(Reply { code, out: if code == 0 { text.into() } else { String::new() }, err: if code == 0 { String::new() } else { text.into() } })
+            let (_, code, text) = self
+                .answers
+                .iter()
+                .find(|(p, _, _)| line.starts_with(p))
+                .copied()
+                .unwrap_or(("", 0, ""));
+            Ok(Reply {
+                code,
+                out: if code == 0 {
+                    text.into()
+                } else {
+                    String::new()
+                },
+                err: if code == 0 {
+                    String::new()
+                } else {
+                    text.into()
+                },
+            })
         }
     }
 
     const BEAD: &str = r#"[{"id":"sp-a","issue_type":"task","priority":2,"description":"old","labels":["repo:r"]}]"#;
 
     fn install(answers: Vec<(&'static str, i32, &'static str)>) -> Arc<Door> {
-        let d = Arc::new(Door { sent: Mutex::new(vec![]), answers });
+        let d = Arc::new(Door {
+            sent: Mutex::new(vec![]),
+            answers,
+        });
         TEST_DOOR.with(|t| *t.borrow_mut() = Some(LcClient::over(d.clone(), true)));
         d
     }
@@ -2060,7 +2489,13 @@ mod tests {
 
     fn writes(d: &Door) -> Sent {
         const READS: [&str; 3] = ["show", "list", "ref"];
-        d.sent.lock().unwrap().iter().filter(|(a, _)| !READS.contains(&a[1].as_str()) && !(a[1] == "dep" && a[2] == "list")).cloned().collect()
+        d.sent
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(a, _)| !READS.contains(&a[1].as_str()) && !(a[1] == "dep" && a[2] == "list"))
+            .cloned()
+            .collect()
     }
 
     fn sent(d: &Door) -> Vec<Vec<String>> {
@@ -2069,7 +2504,13 @@ mod tests {
 
     fn configured(dir: &std::path::Path) -> testkit::EnvGuard {
         let toml = spira_config::process::fixture_toml(dir, &[]);
-        testkit::env(&[("SPIRA_TOML", Some(&toml.to_string_lossy())), ("SPIRA_HOME", Some(&testkit::manifest_dir().join("../spira").to_string_lossy()))])
+        testkit::env(&[
+            ("SPIRA_TOML", Some(&toml.to_string_lossy())),
+            (
+                "SPIRA_HOME",
+                Some(&testkit::manifest_dir().join("../spira").to_string_lossy()),
+            ),
+        ])
     }
 
     #[test]
@@ -2083,41 +2524,185 @@ mod tests {
 
         let d = install(vec![show]);
         assert_eq!(cmd_amend(".", &argv(&["sp-a", "--note", "n"])), 0);
-        assert_eq!(writes(&d), vec![(argv(&["content", "note", "sp-a", "--stdin"]), Some("n".into()))]);
+        assert_eq!(
+            writes(&d),
+            vec![(
+                argv(&["content", "note", "sp-a", "--stdin"]),
+                Some("n".into())
+            )]
+        );
 
         let d = install(vec![show]);
         assert_eq!(cmd_amend(".", &argv(&["sp-a", "-p", "1"])), 0);
         let w = writes(&d);
-        assert_eq!(w[0].0, argv(&["content", "update", "sp-a", "--priority", "1"]));
+        assert_eq!(
+            w[0].0,
+            argv(&["content", "update", "sp-a", "--priority", "1"])
+        );
         assert_eq!(w[1].0, argv(&["content", "note", "sp-a", "--stdin"]));
         assert!(w[1].1.as_deref().unwrap().contains("P2"), "{w:?}");
 
         let d = install(vec![show]);
-        assert_eq!(cmd_amend(".", &argv(&["sp-a", "--body-file", &body, "--replace"])), 0);
-        assert_eq!(writes(&d), vec![(argv(&["content", "update", "sp-a", "--body-file", "-", "--force-claimed", "bead.sh amend"]), Some("the new text".into()))]);
+        assert_eq!(
+            cmd_amend(".", &argv(&["sp-a", "--body-file", &body, "--replace"])),
+            0
+        );
+        assert_eq!(
+            writes(&d),
+            vec![(
+                argv(&[
+                    "content",
+                    "update",
+                    "sp-a",
+                    "--body-file",
+                    "-",
+                    "--force-claimed",
+                    "bead.sh amend"
+                ]),
+                Some("the new text".into())
+            )]
+        );
 
         let d = install(vec![show]);
         assert_eq!(cmd_dep_add(&argv(&["sp-a", "sp-b"])), 0);
-        assert_eq!(sent(&d), vec![argv(&["content", "dep", "add", "sp-a", "sp-b"])]);
+        assert_eq!(
+            sent(&d),
+            vec![argv(&["content", "dep", "add", "sp-a", "sp-b"])]
+        );
 
-        let d = install(vec![show, ("content dep list", 0, r#"[{"depends_on_id":"sp-a"}]"#)]);
+        let d = install(vec![
+            show,
+            ("content dep list", 0, r#"[{"depends_on_id":"sp-a"}]"#),
+        ]);
         assert_eq!(cmd_dep_remove(&argv(&["sp-a", "sp-a"])), 0);
-        assert_eq!(sent(&d), vec![argv(&["content", "dep", "remove", "sp-a", "sp-a"])]);
+        assert_eq!(
+            sent(&d),
+            vec![argv(&["content", "dep", "remove", "sp-a", "sp-a"])]
+        );
 
         let d = install(vec![show]);
         assert_eq!(cmd_label(".", &argv(&["add", "sp-a", "tag"])), 0);
-        assert_eq!(sent(&d), vec![argv(&["content", "label", "add", "sp-a", "tag"])]);
+        assert_eq!(
+            sent(&d),
+            vec![argv(&["content", "label", "add", "sp-a", "tag"])]
+        );
 
         let d = install(vec![]);
         assert_eq!(label_dropped("sp-a"), 0);
-        assert_eq!(sent(&d), vec![argv(&["content", "label", "add", "sp-a", DROPPED_LABEL])]);
+        assert_eq!(
+            sent(&d),
+            vec![argv(&["content", "label", "add", "sp-a", DROPPED_LABEL])]
+        );
 
         let d = install(vec![("content create", 0, "sp-new\n")]);
-        let args = argv(&["create", "T", "-l", "repo:r", "--silent", "--body-file", "-"]);
-        assert_eq!(door_create(&args, Some("the body"), None, &[], Some("T"), Some("T"), false, None, Some("r")), 0);
+        let args = argv(&[
+            "create",
+            "T",
+            "-l",
+            "repo:r",
+            "--silent",
+            "--body-file",
+            "-",
+        ]);
+        assert_eq!(
+            door_create(
+                &args,
+                Some("the body"),
+                None,
+                &[],
+                Some("T"),
+                Some("T"),
+                false,
+                None,
+                Some("r")
+            ),
+            0
+        );
         let w = writes(&d);
-        assert_eq!(w[0], (argv(&["content", "create", "T", "-l", "repo:r", "--silent", "--body-file", "-"]), Some("the body".into())));
-        assert_eq!(w[1].0[..2], argv(&["create-bead", "sp-new"])[..], "the lifecycle row is the store's own verb on the same client");
+        assert_eq!(
+            w[0],
+            (
+                argv(&[
+                    "content",
+                    "create",
+                    "T",
+                    "-l",
+                    "repo:r",
+                    "--silent",
+                    "--body-file",
+                    "-"
+                ]),
+                Some("the body".into())
+            )
+        );
+        assert_eq!(
+            w[1].0[..2],
+            argv(&["create-bead", "sp-new"])[..],
+            "the lifecycle row is the store's own verb on the same client"
+        );
+    }
+
+    fn repoint_calls() -> Vec<(String, String)> {
+        TEST_REPOINT.with(|r| std::mem::take(&mut r.borrow_mut().0))
+    }
+
+    #[test]
+    fn a_blocks_edge_from_an_incident_moves_its_registry_rows_to_the_fix() {
+        let dir = testkit::TempDir::new("bead-dep-repoint");
+        let _env = configured(dir.path());
+        let label = cfg_label("SPIRA_INCIDENT_LABEL");
+        let inc: &'static str = Box::leak(
+            format!(r#"[{{"id":"sp-i","issue_type":"task","labels":["{label}"]}}]"#)
+                .into_boxed_str(),
+        );
+        repoint_calls();
+        TEST_REPOINT.with(|r| r.borrow_mut().1 = Ok(vec!["suite:a.sh".into()]));
+
+        let d = install(vec![
+            ("content show sp-i", 0, inc),
+            ("content show sp-f", 0, BEAD),
+        ]);
+        assert_eq!(cmd_dep_add(&argv(&["sp-i", "sp-f"])), 0);
+        assert_eq!(
+            sent(&d),
+            vec![argv(&["content", "dep", "add", "sp-i", "sp-f"])]
+        );
+        assert_eq!(
+            repoint_calls(),
+            vec![("sp-i".to_string(), "sp-f".to_string())]
+        );
+
+        install(vec![
+            ("content show sp-i", 0, inc),
+            ("content show sp-f", 0, BEAD),
+        ]);
+        assert_eq!(
+            cmd_dep_add(&argv(&["sp-i", "sp-f", "--type", "related"])),
+            0
+        );
+        assert!(repoint_calls().is_empty(), "a related edge moves nothing");
+
+        install(vec![
+            ("content show sp-a", 0, BEAD),
+            ("content show sp-f", 0, BEAD),
+        ]);
+        assert_eq!(cmd_dep_add(&argv(&["sp-a", "sp-f"])), 0);
+        assert!(
+            repoint_calls().is_empty(),
+            "a non-incident dependent moves nothing"
+        );
+
+        TEST_REPOINT.with(|r| r.borrow_mut().1 = Err("db locked".into()));
+        let d = install(vec![
+            ("content show sp-i", 0, inc),
+            ("content show sp-f", 0, BEAD),
+        ]);
+        assert_eq!(cmd_dep_add(&argv(&["sp-i", "sp-f"])), 1);
+        assert_eq!(
+            sent(&d),
+            vec![argv(&["content", "dep", "add", "sp-i", "sp-f"])],
+            "the edge stays"
+        );
     }
 
     #[test]
@@ -2127,20 +2712,51 @@ mod tests {
     }
 
     #[test]
-    fn dep_convert_removes_the_blocks_edge_then_adds_the_parent_edge_and_leaves_the_edge_it_did_not_add() {
-        let epic = ("content show sp-e", 0, r#"[{"id":"sp-e","issue_type":"epic","labels":[]}]"#);
+    fn dep_convert_removes_the_blocks_edge_then_adds_the_parent_edge_and_leaves_the_edge_it_did_not_add(
+    ) {
+        let epic = (
+            "content show sp-e",
+            0,
+            r#"[{"id":"sp-e","issue_type":"epic","labels":[]}]"#,
+        );
         let d = install(vec![epic]);
         assert_eq!(cmd_dep_convert(&argv(&["sp-c", "sp-e"])), 0);
-        assert_eq!(sent(&d), vec![argv(&["content", "dep", "remove", "sp-c", "sp-e"]), argv(&["content", "dep", "add", "sp-c", "sp-e", "--type", "parent-child"])]);
+        assert_eq!(
+            sent(&d),
+            vec![
+                argv(&["content", "dep", "remove", "sp-c", "sp-e"]),
+                argv(&[
+                    "content",
+                    "dep",
+                    "add",
+                    "sp-c",
+                    "sp-e",
+                    "--type",
+                    "parent-child"
+                ])
+            ]
+        );
 
         let d = install(vec![epic, ("content dep add", 3, "refused\n")]);
         assert_eq!(cmd_dep_convert(&argv(&["sp-c", "sp-e"])), 3);
-        assert_eq!(sent(&d).len(), 2, "the removal stood and the add was tried once");
+        assert_eq!(
+            sent(&d).len(),
+            2,
+            "the removal stood and the add was tried once"
+        );
         let left = convert_left_edge("sp-c", "sp-e", 3);
-        assert!(left.contains("edge is now absent") && left.contains("bead.sh dep add sp-c sp-e --type parent-child"), "{left}");
+        assert!(
+            left.contains("edge is now absent")
+                && left.contains("bead.sh dep add sp-c sp-e --type parent-child"),
+            "{left}"
+        );
 
         let d = install(vec![epic, ("content dep remove", 3, "refused\n")]);
         assert_eq!(cmd_dep_convert(&argv(&["sp-c", "sp-e"])), 3);
-        assert_eq!(sent(&d), vec![argv(&["content", "dep", "remove", "sp-c", "sp-e"])], "a refused removal tries no add");
+        assert_eq!(
+            sent(&d),
+            vec![argv(&["content", "dep", "remove", "sp-c", "sp-e"])],
+            "a refused removal tries no add"
+        );
     }
 }

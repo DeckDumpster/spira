@@ -220,6 +220,10 @@ Quote the current reading in the close reason. If the condition still holds:
 - **The cause is not a bead (infrastructure, config, deliberate state):** file a new bead
   for the root cause, link it with `{{DEP}}`, and leave this bead open.
 
+  Link a fix with `work dep-add <incident> <fix>`: it also moves the test-registry rows that
+  name the incident to the fix. The fix's round then runs the disabled test and its landing
+  clears the row, so the incident closes on the fix landing, not on the row's expiry.
+
 - **The condition is a deliberate state** (gate in progress, known backlog): do not close and
   do not add a dependency — file a bead against the watcher's predicate so it stops firing
   while the state is legitimate. Leave this bead open pointing at that child.

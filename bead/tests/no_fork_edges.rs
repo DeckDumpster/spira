@@ -3,7 +3,18 @@
 
 use std::path::{Path, PathBuf};
 
-const BANNED: &[&str] = &["spira-lc", "bd", "bdq", "bash", "systemctl", "systemd-run", "tsd-write", "mail", "queue", "pgrep"];
+const BANNED: &[&str] = &[
+    "spira-lc",
+    "bd",
+    "bdq",
+    "bash",
+    "systemctl",
+    "systemd-run",
+    "tsd-write",
+    "mail",
+    "queue",
+    "pgrep",
+];
 
 /// Every unmarked site in `text`, as `line: text`.
 fn unmarked(text: &str) -> Vec<String> {
@@ -11,7 +22,9 @@ fn unmarked(text: &str) -> Vec<String> {
     let quoted = |s: &str, x: &str| s.contains(&format!("\"{x}\""));
     let mut hits = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        let opener = ["Command::new(", "bounded::bounded(", "bounded("].iter().find_map(|o| line.find(o).map(|p| &line[p + o.len()..]));
+        let opener = ["Command::new(", "bounded::bounded(", "bounded("]
+            .iter()
+            .find_map(|o| line.find(o).map(|p| &line[p + o.len()..]));
         let Some(rest) = opener else { continue };
         let banned = if rest.starts_with("\"timeout\"") {
             let next: String = lines[i..(i + 4).min(lines.len())].join("\n");
@@ -19,7 +32,9 @@ fn unmarked(text: &str) -> Vec<String> {
         } else {
             BANNED.iter().any(|x| rest.starts_with(&format!("\"{x}\"")))
         };
-        let marked = lines[i.saturating_sub(2)..=i].iter().any(|l| l.contains("FORK-EDGE:"));
+        let marked = lines[i.saturating_sub(2)..=i]
+            .iter()
+            .any(|l| l.contains("FORK-EDGE:"));
         if banned && !marked {
             hits.push(format!("{}: {}", i + 1, line.trim()));
         }
@@ -45,16 +60,25 @@ fn no_unmarked_spira_child_remains_in_src() {
     let mut found = Vec::new();
     for f in files {
         let text = std::fs::read_to_string(&f).expect("read");
-        found.extend(unmarked(&text).into_iter().map(|h| format!("{}:{h}", f.display())));
+        found.extend(
+            unmarked(&text)
+                .into_iter()
+                .map(|h| format!("{}:{h}", f.display())),
+        );
     }
-    assert!(found.is_empty(), "unmarked Spira→Spira children:\n{}", found.join("\n"));
+    assert!(
+        found.is_empty(),
+        "unmarked Spira→Spira children:\n{}",
+        found.join("\n")
+    );
 }
 
 #[test]
 fn a_planted_site_is_caught_and_a_marked_one_is_not() {
     let planted = "fn f() {\n    let _ = Command::new(\"spira-lc\").arg(\"show\");\n}\n";
     assert_eq!(unmarked(planted).len(), 1);
-    let behind_timeout = "fn f() {\n    Command::new(\"timeout\")\n        .args([\"5\", \"bd\", \"show\"]);\n}\n";
+    let behind_timeout =
+        "fn f() {\n    Command::new(\"timeout\")\n        .args([\"5\", \"bd\", \"show\"]);\n}\n";
     assert_eq!(unmarked(behind_timeout).len(), 1);
     let runner = "fn f() { spira_config::bounded::bounded(\"mail\").arg(\"send\"); }\n";
     assert_eq!(unmarked(runner).len(), 1);
@@ -69,7 +93,8 @@ fn spawns_bdq(text: &str) -> Vec<String> {
         .enumerate()
         .filter(|(_, l)| {
             let code = l.split("//").next().unwrap_or("");
-            code.contains("tool(\"bdq\")") || (code.contains("Command::new(") && code.contains("\"bdq\""))
+            code.contains("tool(\"bdq\")")
+                || (code.contains("Command::new(") && code.contains("\"bdq\""))
         })
         .map(|(n, l)| format!("{}: {}", n + 1, l.trim()))
         .collect()
@@ -77,9 +102,14 @@ fn spawns_bdq(text: &str) -> Vec<String> {
 
 #[test]
 fn no_bdq_spawn_remains_in_bead_main() {
-    let text = std::fs::read_to_string(testkit::manifest_dir().join("src/main.rs")).expect("read main.rs");
+    let text =
+        std::fs::read_to_string(testkit::manifest_dir().join("src/main.rs")).expect("read main.rs");
     let found = spawns_bdq(&text);
-    assert!(found.is_empty(), "bead's main.rs spawns bdq; its writes go to `spira-lc content`:\n{}", found.join("\n"));
+    assert!(
+        found.is_empty(),
+        "bead's main.rs spawns bdq; its writes go to `spira-lc content`:\n{}",
+        found.join("\n")
+    );
 }
 
 #[test]
