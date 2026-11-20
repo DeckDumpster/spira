@@ -2327,7 +2327,7 @@ mod tests {
         let d = install(vec![("content create", 0, "sp-new\n")]);
         *d.first.lock().unwrap() = vec![("content create", 2, "cannot tell: deadline")];
         let args = argv(&["create", "T", "--silent", "--body-file", "-"]);
-        assert_eq!(door_create(&args, Some("the body"), None, &[], Some("T"), Some("T"), true, None, Some("r")), 0);
+        assert_eq!(door_create(&args, Some("the body"), None, &[], Some("T"), Some("T"), false, None, Some("r")), 0);
         let w = writes(&d);
         let creates: Vec<_> = w.iter().filter(|(a, _)| a[1] == "create").collect();
         assert_eq!(creates.len(), 2, "{w:?}");
