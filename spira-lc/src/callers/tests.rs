@@ -1972,7 +1972,7 @@ fn the_admin_verbs_that_read_the_table_ask_for_pages_or_the_one_state_they_act_o
 
     let mut r = Recording { inner: &mut f, sent: Vec::new() };
     run("list-all", &v(&[]), &mut r);
-    assert_eq!(first(&r.sent), ["list", "--limit", "1000"]);
+    assert_eq!(first(&r.sent), ["list", "--bare", "--limit", "1000"]);
 
     let mut r = Recording { inner: &mut f, sent: Vec::new() };
     reconcile_closed(&[], &mut r, &mut b);
