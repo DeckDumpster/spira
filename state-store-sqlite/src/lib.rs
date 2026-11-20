@@ -104,6 +104,8 @@ pub const UNCHECKPOINTED_GAUGE: &str = "spira_state_store_uncheckpointed_commits
 /// The control store's WAL file size in bytes, pushed beside [`UNCHECKPOINTED_GAUGE`].
 pub const WAL_BYTES_GAUGE: &str = "spira_state_store_wal_bytes";
 const GAUGE_EVERY: Duration = Duration::from_secs(60);
+const RESTART_POLL: Duration = Duration::from_millis(1);
+const GATE_HOLD: Duration = Duration::from_millis(50);
 const RETRY_AFTER: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
@@ -135,21 +137,27 @@ fn report_due(last: &mut Option<(String, std::time::Instant)>, text: &str, now: 
     due
 }
 
-/// A TRUNCATE checkpoint under the writer mutex, so no commit races it and the WAL restarts. It
-/// waits up to `max_read_ms` for reads already in flight, which the store ends by then; commits
-/// keep a zero timeout. `busy` when another checkpoint holds the lock.
-fn restart_wal(writer: &Mutex<Writer>, max_read_ms: u64) -> std::result::Result<Checkpoint, String> {
-    let w = lock(writer);
-    w.conn.busy_timeout(Duration::from_millis(max_read_ms)).map_err(|e| e.to_string())?;
-    let pass = w
-        .conn
-        .prepare_cached("PRAGMA wal_checkpoint(TRUNCATE)")
-        .and_then(|mut s| s.query_row([], checkpoint_row))
-        .map_err(|e| e.to_string());
-    let reset = w.conn.busy_timeout(Duration::ZERO).map_err(|e| e.to_string());
-    let pass = pass?;
-    reset?;
-    Ok(pass)
+/// A TRUNCATE checkpoint that never waits for a reader under the writer mutex. Each attempt
+/// holds that mutex only for its own I/O, with the writer connection's timeout at zero, so a read
+/// in flight makes it `busy` at once and commits run between attempts. For at most `GATE_HOLD`
+/// (never past `max_read_ms`) it polls for the readers to drain with `gate` held, so no new read
+/// starts meanwhile and the WAL can restart under continuous reads; then it gives up `busy`.
+fn restart_wal(writer: &Mutex<Writer>, gate: &Mutex<()>, max_read_ms: u64) -> std::result::Result<Checkpoint, String> {
+    let give_up = std::time::Instant::now() + GATE_HOLD.min(Duration::from_millis(max_read_ms));
+    let _gate = lock(gate);
+    loop {
+        let pass = {
+            let w = lock(writer);
+            w.conn
+                .prepare_cached("PRAGMA wal_checkpoint(TRUNCATE)")
+                .and_then(|mut s| s.query_row([], checkpoint_row))
+                .map_err(|e| e.to_string())?
+        };
+        if !pass.busy || std::time::Instant::now() >= give_up {
+            return Ok(pass);
+        }
+        std::thread::sleep(RESTART_POLL);
+    }
 }
 
 /// One pass of the checkpointer's work, shared by its thread and the bench: PASSIVE when
@@ -158,6 +166,7 @@ fn restart_wal(writer: &Mutex<Writer>, max_read_ms: u64) -> std::result::Result<
 fn checkpoint_step(
     conn: &Connection,
     writer: &Mutex<Writer>,
+    gate: &Mutex<()>,
     max_read_ms: u64,
     passive: bool,
     on_passive: impl FnOnce(bool),
@@ -165,7 +174,7 @@ fn checkpoint_step(
     if passive {
         on_passive(passive_complete(conn)?);
     }
-    restart_wal(writer, max_read_ms)
+    restart_wal(writer, gate, max_read_ms)
 }
 
 fn checkpoint_row(r: &rusqlite::Row) -> rusqlite::Result<Checkpoint> {
@@ -226,6 +235,7 @@ impl Checkpointer {
         &self,
         conn: Connection,
         writer: Arc<Mutex<Writer>>,
+        gate: Arc<Mutex<()>>,
         path: &Path,
         metrics: Option<spira_otel::metrics::MetricsSink>,
         max_read_ms: Arc<AtomicU64>,
@@ -264,7 +274,7 @@ impl Checkpointer {
             wait = GAUGE_EVERY;
             if seen >= self.every || owed {
                 let mut passive_done = None;
-                let step = checkpoint_step(&conn, &writer, max_read_ms.load(Ordering::SeqCst), seen >= self.every, |done| {
+                let step = checkpoint_step(&conn, &writer, &gate, max_read_ms.load(Ordering::SeqCst), seen >= self.every, |done| {
                     passive_done = Some(done);
                     if done {
                         counts.passive_complete += 1;
@@ -414,6 +424,7 @@ pub struct SqliteBackend(Arc<Inner>);
 struct Inner {
     path: PathBuf,
     writer: Arc<Mutex<Writer>>,
+    read_gate: Arc<Mutex<()>>,
     readers: Vec<Reader>,
     next_reader: AtomicUsize,
     head: AtomicU64,
@@ -1166,12 +1177,13 @@ impl SqliteBackend {
         let metrics = opts.metrics;
         let max_read_ms = Arc::new(AtomicU64::new(opts.max_read_ms));
         let writer = Arc::new(Mutex::new(Writer { conn }));
+        let read_gate = Arc::new(Mutex::new(()));
         let thread = {
             let c = checkpointer.clone();
-            let (w, p, mr) = (writer.clone(), path.to_path_buf(), max_read_ms.clone());
+            let (w, g, p, mr) = (writer.clone(), read_gate.clone(), path.to_path_buf(), max_read_ms.clone());
             std::thread::Builder::new()
                 .name("sqlite-checkpoint".into())
-                .spawn(move || c.run(checkpoint_conn, w, &p, metrics, mr))
+                .spawn(move || c.run(checkpoint_conn, w, g, &p, metrics, mr))
                 .map_err(|e| Error::Backend(format!("{}: the checkpointer: {e}", path.display())))?
         };
         Ok(SqliteBackend(Arc::new(Inner {
@@ -1179,6 +1191,7 @@ impl SqliteBackend {
             checkpoint_thread: Mutex::new(Some(thread)),
             path: path.to_path_buf(),
             writer,
+            read_gate,
             readers,
             next_reader: AtomicUsize::new(0),
             head: AtomicU64::new(head),
@@ -1534,6 +1547,7 @@ impl SqliteBackend {
         if phases::deadline_passed() {
             return Err(Error::Deadline);
         }
+        drop(lock(&self.0.read_gate));
         let inner = &self.0;
         let n = inner.readers.len();
         let start = inner.next_reader.fetch_add(1, Ordering::Relaxed);

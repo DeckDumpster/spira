@@ -1828,3 +1828,66 @@ fn a_large_store_left_by_an_unclean_stop_has_only_a_bounded_wal_to_recover() {
     assert!(frames <= bound, "the WAL the next open recovers holds {frames} frames, over {bound}");
     SqliteBackend::open(&path, Options { outbox: false, ..Options::default() }).unwrap();
 }
+
+#[test]
+fn a_commit_is_not_held_by_a_wal_restart_that_is_waiting_on_a_reader() {
+    use std::sync::mpsc::channel;
+    let dir = TempDir::new("sqlite-restart-no-hold");
+    let (held_tx, held_rx) = channel::<()>();
+    let (release_tx, release_rx) = channel::<()>();
+    let armed = Arc::new(AtomicBool::new(false));
+    let probe = {
+        let armed = armed.clone();
+        let held_tx = Mutex::new(held_tx);
+        let release_rx = Mutex::new(release_rx);
+        Arc::new(move || {
+            if armed.swap(false, Ordering::SeqCst) {
+                held_tx.lock().unwrap().send(()).unwrap();
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }) as Arc<dyn Fn() + Send + Sync>
+    };
+    let opts = Options {
+        max_read_ms: 120_000,
+        readers: 1,
+        read_probe: Some(probe),
+        ..Options::default()
+    };
+    let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
+    put_next(&b);
+
+    armed.store(true, Ordering::SeqCst);
+    let reader = {
+        let b = b.clone();
+        std::thread::spawn(move || {
+            let head = b.head().unwrap();
+            let _ = b.range("", None, 10, head);
+        })
+    };
+    held_rx
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the reader never opened");
+
+    let pass = {
+        let b = b.clone();
+        std::thread::spawn(move || state_store_sqlite::bench::checkpoint_pass(&b))
+    };
+    let (done_tx, done_rx) = channel::<()>();
+    let committer = {
+        let b = b.clone();
+        std::thread::spawn(move || {
+            for _ in 0..50 {
+                put_next(&b);
+            }
+            let _ = done_tx.send(());
+        })
+    };
+    let returned = done_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .is_ok();
+    release_tx.send(()).unwrap();
+    reader.join().unwrap();
+    pass.join().unwrap().unwrap();
+    committer.join().unwrap();
+    assert!(returned, "commits were held until the reader was released: the restart holds the writer while it waits");
+}
