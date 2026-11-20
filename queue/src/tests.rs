@@ -3567,6 +3567,10 @@ fn land_local_ungated_override_lands_and_logs_the_reason() {
         t.err()
     );
     assert!(t.landing_log().contains(&format!("QUEUE UNGATED 1000 repo=spira head=h1 tree={T1} by=operator evidence=b0 reason={reason}")), "{}", t.landing_log());
+    let mails = t.lib.mails.borrow();
+    let landing: Vec<_> = mails.iter().filter(|(s, _)| s.starts_with("local landing")).collect();
+    assert_eq!(landing.len(), 1, "{mails:?}");
+    assert!(landing[0].1.contains("UNGATED"), "{}", landing[0].1);
 }
 
 #[test]

@@ -10002,11 +10002,14 @@ fn a_deferred_landing_whose_activation_faults_mails_once_after_it_with_the_fault
 }
 
 #[test]
-fn a_deferred_landing_that_activates_mails_once_naming_the_release() {
+fn a_deferred_landing_that_activates_is_a_landing_log_record_and_no_mail() {
     let (t, batch) = certified_round();
     assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
     let mails = t.lib.mails.borrow();
-    let landing: Vec<_> = mails.iter().filter(|(s, _)| s.starts_with("local landing")).collect();
-    assert_eq!(landing.len(), 1, "{mails:?}");
-    assert!(landing[0].1.contains("Release ") && landing[0].1.contains(" activated."), "{}", landing[0].1);
+    assert!(!mails.iter().any(|(s, _)| s.starts_with("local landing")), "{mails:?}");
+    let log = t.landing_log();
+    let lines: Vec<_> = log.lines().filter(|l| l.starts_with("QUEUE LANDED ")).collect();
+    assert_eq!(lines.len(), 1, "{log}");
+    assert!(lines[0].contains(" round=") && lines[0].contains(" head=") && lines[0].contains(" release="), "{}", lines[0]);
+    assert!(!lines[0].contains("release=none") && !lines[0].contains("not activated"), "{}", lines[0]);
 }
