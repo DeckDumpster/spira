@@ -343,6 +343,15 @@ pub fn settle_reopen(m: &mut dyn Machine, bd: &mut dyn Bd, id: &str) -> Result<b
     }
 }
 
+/// Settle a reopen the settler owes: bd follows the row only while it still reads READY or
+/// REWORK, so a bead claimed again or finished meanwhile is not touched.
+pub fn settle_owed_reopen(m: &mut dyn Machine, bd: &mut dyn Bd, id: &str) -> Result<(), String> {
+    match record_state(m, id)? {
+        Some(state) if state == "READY" || state == "REWORK" => bd.reopen(id),
+        _ => Ok(()),
+    }
+}
+
 pub(crate) fn record_state(m: &mut dyn Machine, id: &str) -> Result<Option<String>, String> {
     match show(m, id) {
         Ok(v) => Ok(Some(bead_field(&v, "state"))),

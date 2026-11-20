@@ -220,11 +220,7 @@ impl Settler {
         }
         for id in taken.reopens {
             let _deadline = fresh_deadline();
-            let written = match crate::reconcile_content::record_state(m, &id) {
-                Ok(Some(state)) if state == "READY" || state == "REWORK" => bd.reopen(&id),
-                Ok(_) => Ok(()),
-                Err(e) => Err(e),
-            };
+            let written = crate::reconcile_content::settle_owed_reopen(m, bd, &id);
             if let Err(e) = written {
                 count_refused("reopen");
                 eprintln!("spira-lc reopen: {id}: the store reopen is still owed ({})", e.trim());
