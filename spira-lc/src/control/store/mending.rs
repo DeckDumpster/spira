@@ -43,6 +43,9 @@ pub struct MendRecord {
     pub checked: Vec<String>,
     pub diagnosis: Option<String>,
     pub at: i64,
+    /// Equal to `at`: the key the `opened_at` index reads.
+    #[serde(default)]
+    pub opened_at: i64,
 }
 
 /// A member a mend moves: `(bead, from tip, to tip)`.
@@ -81,11 +84,43 @@ impl<B: Backend> Store<B> {
         items.iter().map(|i| decode(&i.key, &i.value)).collect()
     }
 
-    /// Every mend recorded at or after `since`, from one snapshot.
+    /// The rows still WAITING or MENDING, from the state index: bounded by the live rows.
+    pub fn live_mendings(&self) -> Result<Vec<MendingRecord>> {
+        const CHUNK: usize = 500;
+        let rev = self.contract().head()?;
+        let mut out = Vec::new();
+        for state in [MendingState::Waiting, MendingState::Mending] {
+            let name = serde_json::to_value(state)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .ok_or_else(|| state_store::Error::Backend(format!("{state:?}: no state name")))?;
+            let mut cursor: Option<String> = None;
+            loop {
+                let page = self.contract().range_in_state(keys::MENDINGS, &name, cursor.as_deref(), CHUNK, rev)?;
+                for i in &page {
+                    out.push(decode(&i.key, &i.value)?);
+                }
+                if page.len() < CHUNK {
+                    break;
+                }
+                cursor = page.last().map(|i| i.key.clone());
+            }
+        }
+        Ok(out)
+    }
+
+    /// Every mend recorded at or after `since`, from one snapshot, read through the `opened_at`
+    /// index: bounded by the mends since, not by every mend ever.
     pub fn mends_since(&self, since: i64) -> Result<Vec<MendRecord>> {
-        let (items, _) = self.contract().list(&[keys::MENDS], &Selector::Everything)?;
-        let mends = items.iter().map(|i| decode::<MendRecord>(&i.key, &i.value)).collect::<Result<Vec<_>>>()?;
-        Ok(mends.into_iter().filter(|m| m.at >= since).collect())
+        let rev = self.contract().head()?;
+        let mut limit = 256;
+        loop {
+            let items = self.contract().range_newest_opened(keys::MENDS, since, limit, rev)?;
+            if items.len() < limit {
+                return items.iter().map(|i| decode(&i.key, &i.value)).collect();
+            }
+            limit *= 4;
+        }
     }
 
     /// Plans `kind` on the row read into `c`: the step and the row's next value, or the
@@ -252,6 +287,7 @@ impl<B: Backend> Store<B> {
                 checked: checked.to_vec(),
                 diagnosis: cur.row.diagnosis.clone(),
                 at,
+                opened_at: at,
             };
             c.put(self, &keys::mend(bead, planned_at, n), &m, &[])?;
         }

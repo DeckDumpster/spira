@@ -63,7 +63,7 @@ pub fn with_retries<T, E>(attempts: u32, pause: std::time::Duration, mut read: i
 /// The rows still MENDING past their deadline, soonest first, with no ask holding them.
 fn overdue_rows<B: state_store::Backend>(store: &crate::control::store::Store<B>, now: i64) -> Result<Vec<serde_json::Value>, state_store::Error> {
     let mut rows: Vec<_> = store
-        .mendings()?
+        .live_mendings()?
         .into_iter()
         .filter(|m| m.row.state == lifecycle::mending::MendingState::Mending && m.row.awaiting_ask.is_none())
         .filter_map(|m| m.row.deadline.filter(|d| *d <= now).map(|d| (d, m)))
@@ -162,7 +162,7 @@ mod tests {
     fn mends_are_counted_per_bead_over_the_last_day_only() {
         let s = store();
         let mend = |bead: &str, n: usize, at: i64| {
-            let m = MendRecord { batch_id: "b".into(), pass: 1, suite: "s".into(), bead_id: bead.into(), from_tip: "f".into(), tip: "t".into(), ask_id: None, checked: vec![], diagnosis: None, at };
+            let m = MendRecord { batch_id: "b".into(), pass: 1, suite: "s".into(), bead_id: bead.into(), from_tip: "f".into(), tip: "t".into(), ask_id: None, checked: vec![], diagnosis: None, at, opened_at: at };
             put(&s, &keys::mend(bead, at as u64, n), encode(&m).unwrap());
         };
         let now = 200_000;
@@ -175,6 +175,52 @@ mod tests {
         let n = |bead: &str| counts.iter().find(|r| r["bead"] == bead).map(|r| r["n"].as_str().unwrap().to_string());
         assert_eq!((n("sp-loop"), n("sp-once")), (Some("3".to_string()), Some("1".to_string())));
         assert!(collect(&[], &counts, now).iter().any(|b| b.key == "mends:sp-loop"));
+    }
+
+    #[test]
+    fn mend_counts_read_the_opened_at_index_not_every_mend_ever() {
+        use crate::control::store::counting::Counting;
+        let clock = runtime::ports::VirtualClock::new(0);
+        let c = Contract::open(Counting::default(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let s = Store::new(c, 1_000);
+        let now = 400_000;
+        let record = |bead: &str, n: usize, at: i64| {
+            let mut row = MendingRecord::failed("b", n as u32, "s", at);
+            row.row.state = lifecycle::mending::MendingState::Mending;
+            let key = keys::mending(&row.row.key());
+            s.contract().txn(&Txn::new().put(&key, Object::new(encode(&row).unwrap())), &Request::new(&format!("row-{bead}-{n}"), "t", "t")).unwrap();
+            s.record_mend(&row.row, &[(bead.into(), "f".into(), "t".into())], None, &[], None, "a", at, &Request::new(&format!("mend-{bead}-{n}"), "t", "t")).unwrap();
+        };
+        for n in 0..200 {
+            record("sp-old", n, now - DAY_S - 1_000 - n as i64);
+        }
+        for n in 0..3 {
+            record("sp-new", 1_000 + n, now - 100 - n as i64);
+        }
+        s.contract().backend().take();
+        let counts = mend_counts(&s, now).unwrap();
+        let n = |bead: &str| counts.iter().find(|r| r["bead"] == bead).map(|r| r["n"].as_str().unwrap().to_string());
+        assert_eq!((n("sp-new"), n("sp-old")), (Some("3".to_string()), None));
+        let reads = s.contract().backend().take();
+        assert!(reads.iter().all(|(k, p, _)| !(*k == "range" && p.starts_with(keys::MENDS))), "{reads:?}");
+        assert!(reads.iter().any(|(k, p, _)| *k == "range_newest_opened" && p.starts_with(keys::MENDS)), "{reads:?}");
+    }
+
+    #[test]
+    fn more_recent_mends_than_the_first_page_are_all_counted() {
+        let clock = runtime::ports::VirtualClock::new(0);
+        let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let s = Store::new(c, 1_000);
+        let now = 400_000;
+        for n in 0..300usize {
+            let mut row = MendingRecord::failed("b", n as u32, "s", now - 100 - n as i64);
+            row.row.state = lifecycle::mending::MendingState::Mending;
+            let key = keys::mending(&row.row.key());
+            s.contract().txn(&Txn::new().put(&key, Object::new(encode(&row).unwrap())), &Request::new(&format!("row-{n}"), "t", "t")).unwrap();
+            s.record_mend(&row.row, &[("sp-many".into(), "f".into(), "t".into())], None, &[], None, "a", now - 100 - n as i64, &Request::new(&format!("mend-{n}"), "t", "t")).unwrap();
+        }
+        let counts = mend_counts(&s, now).unwrap();
+        assert_eq!(counts.iter().find(|r| r["bead"] == "sp-many").map(|r| r["n"].as_str().unwrap().to_string()), Some("300".to_string()));
     }
 
     #[test]
