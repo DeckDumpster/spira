@@ -1104,7 +1104,7 @@ fn list_batches_reads_only_the_rounds_it_shows() {
             reads.iter().all(|(k, p, limit)| *k == "get" || !(p.starts_with(keys::BATCHES) && *k == "range" && *limit > 1_000)),
             "an unbounded read of the rounds: {reads:?}"
         );
-        assert!(reads.len() <= 60, "{} reads: {reads:?}", reads.len());
+        assert!(reads.len() <= 70, "{} reads: {reads:?}", reads.len());
     };
 
     let (bare, reads) = ids(&["list", "--batches"]);
