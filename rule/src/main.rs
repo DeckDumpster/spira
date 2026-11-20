@@ -434,7 +434,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
     });
     match landed {
         Ok((n, branch, bead)) => {
-            println!("law/: {n} statute(s) added; committed on {branch}, submitted under {bead}.");
+            println!("law/: {n} statute(s) added; committed on {branch}, submitted under {bead} (SUBMITTED).");
             0
         }
         Err(e) => {
@@ -532,7 +532,7 @@ fn cmd_land_tip(db: &str, home: &str) -> i32 {
             0
         }
         Ok(Some(Landed::Added(n, branch, bead))) => {
-            println!("law/: {n} statute(s) added; committed on {branch}, submitted under {bead}.");
+            println!("law/: {n} statute(s) added; committed on {branch}, submitted under {bead} (SUBMITTED).");
             0
         }
         Ok(Some(Landed::Stranded(branch, bead))) => {
@@ -954,7 +954,7 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
     let landed = code::catch_up(&toc, &pointers, &book, None).map_err(|e| format!("rule: {e}")).and_then(|caught| land_law(home, &repo, "retire", &key, &caught, &pointers, &book));
     match landed {
         Ok((branch, bead)) => {
-            println!("law/: {key} keeps its number, marked retired; committed on {branch}, submitted under {bead}.");
+            println!("law/: {key} keeps its number, marked retired; committed on {branch}, submitted under {bead} (SUBMITTED).");
             0
         }
         Err(e) => {
@@ -1074,7 +1074,7 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
     let book = strings(&after);
     let landed = code::catch_up(&toc, &pointers, &book, None).map_err(|e| format!("rule: {e}")).and_then(|caught| land_law(home, &repo, "rename-vocabulary", "book", &caught, &pointers, &book));
     match landed {
-        Ok((branch, bead)) => println!("law/: {written} statute(s) rewritten; committed on {branch}, submitted under {bead}."),
+        Ok((branch, bead)) => println!("law/: {written} statute(s) rewritten; committed on {branch}, submitted under {bead} (SUBMITTED)."),
         Err(e) => {
             eprintln!("{e}");
             log_law_book_failure("rename-vocabulary", "book", &e);

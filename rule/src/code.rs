@@ -821,6 +821,10 @@ fn submit_law_on(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch: 
     if !filed.status.success() {
         return Err(format!("rule: bead.sh file: {}", String::from_utf8_lossy(&filed.stderr).trim()));
     }
+    let said = String::from_utf8_lossy(&filed.stderr);
+    if said.contains("reporting it as filed") {
+        eprintln!("rule: the law/ item was already filed; submitting its branch");
+    }
     let id = filed_id(&String::from_utf8_lossy(&filed.stdout))?;
     let branch = format!("spira/{id}");
     git_in(repo_path, &["branch", "-m", law_branch, &branch])?;
@@ -843,7 +847,7 @@ pub fn queue_submit_command(queue: &str, branch: &str, repo_name: &str) -> std::
 }
 
 /// The id `bead.sh file --json` printed: the first JSON object (or one-element array) on stdout.
-fn filed_id(out: &str) -> Result<String, String> {
+pub fn filed_id(out: &str) -> Result<String, String> {
     let start = out.find(['{', '[']).ok_or_else(|| format!("rule: no JSON in bead.sh file's output: {out:?}"))?;
     let v: serde_json::Value = serde_json::from_str(out[start..].trim()).map_err(|e| format!("rule: bead.sh file's output is not JSON: {e}"))?;
     let v = match v {
@@ -851,6 +855,22 @@ fn filed_id(out: &str) -> Result<String, String> {
         o => o,
     };
     v.get("id").and_then(|i| i.as_str()).map(str::to_string).ok_or_else(|| format!("rule: no id in bead.sh file's output: {out:?}"))
+}
+
+#[cfg(test)]
+mod filed_id_tests {
+    use super::filed_id;
+
+    #[test]
+    fn filed_id_accepts_the_object_bead_prints_for_an_already_filed_item() {
+        assert_eq!(filed_id("{\"id\":\"sp-x\"}\n").as_deref(), Ok("sp-x"));
+    }
+
+    #[test]
+    fn filed_id_on_a_bare_id_names_bead_sh_s_output() {
+        let e = filed_id("sp-x\n").unwrap_err();
+        assert!(e.contains("bead.sh file's output"), "{e}");
+    }
 }
 
 /// Writes `toc`, `pointers` and the generated tree under `law` and stages it.
