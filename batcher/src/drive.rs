@@ -3415,6 +3415,9 @@ pub(crate) mod tests {
         fn round_name(&self) -> String {
             "b-now".into()
         }
+        fn repo_name(&self) -> String {
+            "repo-x".into()
+        }
         fn record_unnamed_red(&mut self, name: &str, failed: &[String], members: &[Member]) {
             self.unnamed = Some(UnnamedRed {
                 filter: name.into(),
@@ -5769,7 +5772,7 @@ pub(crate) mod tests {
         let (end, ops) = faulted_unit_red_adding("+other = 1\n", &format!("+{SKIP_LINE}\n"));
         assert_eq!(ops.ejected, vec![("m3".to_string(), vec!["unit-tests".to_string()])]);
         let note = &ops.eject_evidence[0].1;
-        assert!(note.contains(SKIP_LINE) && note.contains("config-delta") , "{note}");
+        assert!(note.contains(SKIP_LINE) && note.contains("config-delta") && note.contains("shipped_delta_carries"), "{note}");
         assert!(!matches!(end, RoundEnd::Faulted(_)), "{end:?}");
     }
 
@@ -5788,7 +5791,7 @@ pub(crate) mod tests {
         match end {
             RoundEnd::Faulted(why) => {
                 assert!(why.contains("spira/conf.d/SPIRA_TASK_MODES") && why.contains("spira/config-delta.d/m3.toml"), "{why}");
-                assert!(why.contains("queue round eject b-now "), "{why}");
+                assert!(why.contains("queue round eject b-now <id> repo-x --by concierge --reason"), "{why}");
             }
             other => panic!("{other:?}"),
         }

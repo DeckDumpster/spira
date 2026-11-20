@@ -1855,6 +1855,20 @@ mod tests {
     }
 
     #[test]
+    fn filter_red_carries_the_lines_a_red_unit_phases_failed_assertion_differs_by() {
+        let d = testkit::TempDir::new("vm-filter-red-assertion");
+        let ms = [member("sp-a")];
+        fs::write(d.path().join("unit.json"), "{\"verdict\":\"red\"}").unwrap();
+        fs::write(
+            d.path().join("unit-tests.out"),
+            "FAIL gate tests::t\nassertion `left == right` failed\n  left: \"a = 1\\nstatus-level = \\\"skip\\\"\\n\"\n right: \"a = 1\\n\"\n",
+        )
+        .unwrap();
+        let red = filter_red_in(d.path(), &ms, &BTreeMap::new(), &[]).unwrap();
+        assert_eq!(red.assertion_lines, ["status-level = \"skip\""]);
+    }
+
+    #[test]
     fn filter_red_sets_aside_a_culprit_the_round_made_by_its_recorded_sha_alone() {
         let d = testkit::TempDir::new("vm-filter-red-harness");
         let ms = [member("sp-a"), member("sp-b")];
