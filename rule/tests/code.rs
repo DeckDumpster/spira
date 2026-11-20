@@ -450,3 +450,53 @@ fn seed_texts_carry_no_dated_provenance_whatever_punctuation_follows_it() {
         assert!(spira_lint::rules::inventory::scan(&t, &pat).is_empty(), "{slug}");
     }
 }
+
+#[test]
+fn code_check_reads_law_at_the_landing_ref_from_a_directory_that_is_not_a_checkout() {
+    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
+    let world = testkit::TempDir::new("rule-check-ref");
+    let map = spira_config::process::fixture_repo_map(world.path(), &["fixture"]);
+    let toml = spira_config::process::fixture_toml(world.path(), &[("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_HOME_REPO", "fixture")]);
+    let p = world.path().join("fixture");
+    std::fs::create_dir_all(&p).unwrap();
+    testkit::git(&p, &["init", "-q", "-b", "scratch"]);
+    let texts = testkit::TempDir::new("rule-check-ref-texts");
+    for (slug, text) in [("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three.")] {
+        std::fs::write(texts.path().join(format!("{slug}.txt")), text).unwrap();
+    }
+    let elsewhere = testkit::TempDir::new("rule-check-ref-cwd");
+    let harness_home = spira_config::resolve::locate_home_for_process().unwrap();
+    let home = p.to_str().unwrap();
+    let run = |args: &[&str], cwd: &std::path::Path| {
+        std::process::Command::new(testkit::bin_exe("rule"))
+            .args(["--home", home, "code"])
+            .args(args)
+            .arg("--texts")
+            .arg(texts.path())
+            .current_dir(cwd)
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("SPIRA_TOML", &toml)
+            .env("SPIRA_HOME", &harness_home)
+            .output()
+            .unwrap()
+    };
+    std::fs::create_dir_all(p.join("law")).unwrap();
+    std::fs::write(p.join("law/toc.toml"), TOC).unwrap();
+    assert_eq!(run(&[], &p).status.code(), Some(0));
+    testkit::git(&p, &["add", "-A"]);
+    testkit::git(&p, &["commit", "-q", "-m", "law"]);
+    testkit::git(&p, &["branch", "local/main"]);
+
+    let clean = run(&["--check"], elsewhere.path());
+    assert_eq!(clean.status.code(), Some(0), "{}", String::from_utf8_lossy(&clean.stderr));
+
+    let section = testkit::git(&p, &["ls-files", "law/1-alpha"]).lines().next().unwrap().to_string();
+    std::fs::write(p.join(&section), "edited\n").unwrap();
+    testkit::git(&p, &["commit", "-q", "-am", "edit"]);
+    testkit::git(&p, &["branch", "-f", "local/main", "scratch"]);
+    let drifted = run(&["--check"], elsewhere.path());
+    assert_eq!(drifted.status.code(), Some(1));
+    let name = section.strip_prefix("law/").unwrap();
+    assert!(String::from_utf8_lossy(&drifted.stderr).contains(&format!("law/{name}: differs")), "{}", String::from_utf8_lossy(&drifted.stderr));
+}

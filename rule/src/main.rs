@@ -79,7 +79,7 @@ fn main() {
         "show" => cmd_show(&db, &home, &rest),
         "audit" => cmd_audit(&db, &home, &rest),
         "code" if rest.len() == 1 && rest[0] == "--land" => cmd_land_book(&db, &home),
-        "code" => cmd_code(&db, &rest),
+        "code" => cmd_code(&db, &home, &rest),
         "render-memories" => cmd_render_memories(&home, &rest),
         "system-prompt-split" => cmd_system_prompt_split(&rest),
         _ => {
@@ -636,7 +636,10 @@ fn read_pointers_for_write(repo: &(String, Option<String>)) -> Result<code::Poin
 }
 
 fn read_toc(law: &Path) -> Result<Vec<code::Part>, String> {
-    let text = std::fs::read_to_string(law.join("toc.toml")).map_err(|e| format!("rule: {}: {e}", law.join("toc.toml").display()))?;
+    let text = std::fs::read_to_string(law.join("toc.toml")).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => format!("rule: {} not found — run this from a worktree of the home repository", law.join("toc.toml").display()),
+        _ => format!("rule: {}: {e}", law.join("toc.toml").display()),
+    })?;
     code::parse_toc(&text).map_err(|e| format!("rule: {e}"))
 }
 
@@ -649,7 +652,7 @@ fn book_texts(book: &BTreeMap<String, serde_json::Value>) -> impl Fn(&str) -> Op
 }
 
 
-fn cmd_code(db: &str, rest: &[String]) -> i32 {
+fn cmd_code(db: &str, home: &str, rest: &[String]) -> i32 {
     let (mut check, mut texts) = (false, None);
     let mut it = rest.iter();
     while let Some(a) = it.next() {
@@ -662,15 +665,31 @@ fn cmd_code(db: &str, rest: &[String]) -> i32 {
             }
         }
     }
-    let law = match law_dir() {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("{e}");
-            return 1;
-        }
+    // With no config naming a repo map there is no home repository to ask; fall back to the caller's checkout.
+    let repo = if check && std::env::var_os("SPIRA_TOML").is_some_and(|v| !v.is_empty()) { locate_repo(home).ok() } else { None };
+    let law = match &repo {
+        Some((root, _)) => Path::new(root).join("law"),
+        None => match law_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("{e}");
+                return 1;
+            }
+        },
     };
-    let toc = match read_toc(&law) {
-        Ok(t) => t,
+    let loaded = match &repo {
+        Some(r) => read_toc_at(r).and_then(|t| {
+            let p = read_pointers_at(r);
+            let n = match &r.1 {
+                Some(b) => code::law_files_at(Path::new(&r.0), b).map(|f| code::numbers_of(&f))?,
+                None => code::numbers_on_disk(&law),
+            };
+            Ok((t, p, n))
+        }),
+        None => read_toc(&law).map(|t| (t, read_pointers(&law), code::numbers_on_disk(&law))),
+    };
+    let (toc, on_disk, numbers) = match loaded {
+        Ok(l) => l,
         Err(e) => {
             eprintln!("{e}");
             return 1;
@@ -697,8 +716,7 @@ fn cmd_code(db: &str, rest: &[String]) -> i32 {
             }
         },
     };
-    let on_disk = read_pointers(&law);
-    let pointers = match on_disk.as_ref().map_err(String::clone).and_then(|p| code::record_moves(&code::numbers_on_disk(&law), &toc, p, &today())) {
+    let pointers = match on_disk.as_ref().map_err(String::clone).and_then(|p| code::record_moves(&numbers, &toc, p, &today())) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{}", e.trim_start_matches("rule: "));
@@ -708,7 +726,18 @@ fn cmd_code(db: &str, rest: &[String]) -> i32 {
     let old = on_disk.unwrap_or_default();
     let new_moves = &pointers.moved[old.moved.len()..];
     if check {
-        let mut drift = code::drift(&law, &code::generate(&toc, &pointers, book_texts(&book)));
+        let expected = code::generate(&toc, &pointers, book_texts(&book));
+        let found = match &repo {
+            Some((root, Some(b))) => code::drift_at(Path::new(root), b, &expected),
+            _ => Ok(code::drift(&law, &expected)),
+        };
+        let mut drift = match found {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("{e}");
+                return 1;
+            }
+        };
         drift.extend(code::check_pointers(&toc, &pointers));
         drift.extend(new_moves.iter().map(|m| format!("{}: §{} moved to {}, not yet recorded", code::POINTERS_FILE, m.section, code::section_of(&toc, &m.slug).unwrap_or_default())));
         for d in &drift {
