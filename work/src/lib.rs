@@ -880,6 +880,40 @@ mod tests {
     }
 
     #[test]
+    fn the_spira_lint_row_runs_under_the_trees_fixture_config_not_the_callers() {
+        let root = testkit::manifest_dir().parent().unwrap().to_path_buf();
+        let row = declared_rows(&root).unwrap().into_iter().find(|r| r.name == "spira-lint").expect("a spira-lint row");
+        let t = testkit::TempDir::new("work-lint-row");
+        let w = |rel: &str, body: &str| {
+            let p = t.path().join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        };
+        w("spira/testlib/complete.toml", "[spira]\nffx_vocabulary_mode = \"enforce\"\n");
+        w("spira/lint-staged.sh", &std::fs::read_to_string(root.join("spira/lint-staged.sh")).unwrap());
+        let caller = t.path().join("caller.toml");
+        std::fs::write(&caller, "[spira]\nffx_vocabulary_mode = \"report\"\n").unwrap();
+        let bin = t.path().join("fakebin");
+        std::fs::create_dir_all(&bin).unwrap();
+        testkit::write_exe(bin.join("release"), "#!/bin/bash\n[ \"$1\" = config-stage ] && echo \"$SPIRA_TOML\"\n");
+        let target = t.path().join("target");
+        std::fs::create_dir_all(target.join("debug")).unwrap();
+        testkit::write_exe(target.join("debug/spira-lint"), "#!/bin/bash\ngrep -q 'ffx_vocabulary_mode = \"enforce\"' \"$SPIRA_TOML\" || exit 0\necho 'ffx-vocabulary: enforced'; exit 1\n");
+        testkit::write_exe(bin.join("cargo"), "#!/bin/bash\nexit 0\n");
+        let argv = check_argv(&row.run, &Affected::Crates(vec![]), "b", rec_path()).unwrap();
+        let out = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .current_dir(t.path())
+            .env_clear()
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("SPIRA_TOML", &caller)
+            .env("CARGO_TARGET_DIR", &target)
+            .output()
+            .unwrap();
+        assert!(!out.status.success() && String::from_utf8_lossy(&out.stdout).contains("ffx-vocabulary"), "{out:?}");
+    }
+
+    #[test]
     fn a_branch_token_in_a_row_becomes_the_current_branch() {
         let scope = Affected::Crates(vec![]);
         assert_eq!(
