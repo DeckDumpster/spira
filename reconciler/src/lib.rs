@@ -28,6 +28,7 @@ use spira_desired_state::resource::{parse_resource, CockpitSpec, DiskSpec, Fleet
 use spira_desired_state::store::FsStore;
 pub mod hold_sweep;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
@@ -292,6 +293,10 @@ pub trait Host: Send + Sync {
     }
     /// Live dwarves of `rune`; `None` when this host cannot count them without `strand`.
     fn dwarf_count(&self, _rune: &str) -> Option<i64> {
+        None
+    }
+    /// The runes the sentinel's last call pass left uncalled with ready work, each with its reason; `None` when this host cannot tell, `Err` when that pass cannot be read.
+    fn uncalled(&self) -> Option<Result<BTreeMap<String, String>, String>> {
         None
     }
     /// Claimable beads under a partition as `(id, updated_at)`; `None` when this host cannot list them without `spira-claim`.
@@ -1129,13 +1134,16 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
 // ──────────────────────────────────────────────────────────────────────────────
 
 struct FleetReadings {
-    /// `(labels, ready beads as (id, updated_at), live, is_task)` per builder partition.
-    rows: Vec<(String, Vec<ReadyBead>, i64, bool)>,
+    /// `(labels, ready beads as (id, updated_at), live, is_task, runes)` per builder partition.
+    rows: Vec<FleetRow>,
     live_reactive: i64,
     live_total: i64,
     max_live: Option<i64>,
     pool: Option<i64>,
 }
+
+/// One partition: `(labels, ready, live, is_task, rune names)`.
+type FleetRow = (String, Vec<ReadyBead>, i64, bool, Vec<String>);
 
 /// A claimable bead: `(id, updated_at)`.
 pub type ReadyBead = (String, String);
@@ -1201,7 +1209,7 @@ fn fleet_readings(cfg: &Config) -> FleetReadings {
         let runes: Vec<&str> = runes.split_whitespace().collect();
         let live = runes.iter().map(|f| live_of(f)).sum();
         let is_task = runes.iter().any(|f| task_runes.iter().any(|t| t == f));
-        rows.push((labels.to_string(), ready, live, is_task));
+        rows.push((labels.to_string(), ready, live, is_task, runes.iter().map(|r| r.to_string()).collect()));
     }
 
     FleetReadings {
@@ -1211,6 +1219,10 @@ fn fleet_readings(cfg: &Config) -> FleetReadings {
         max_live: cfg.max_live_dwarves.trim().parse().ok(),
         pool: cfg.max_dwarves.trim().parse().ok(),
     }
+}
+
+fn fleet_gap(desired_live: i64, ready: &[ReadyBead], live: i64, now_secs: u64) -> RawStatus {
+    RawStatus::Gap { desired: desired_with_beads(desired_live, ready, now_secs), observed: live.to_string(), since_hint: None }
 }
 
 fn observe_fleet(cfg: &Config) -> Vec<Check> {
@@ -1240,7 +1252,8 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
         }
     };
 
-    for (labels, ready, live, is_task) in rows {
+    let uncalled = if rows.is_empty() { None } else { cfg.host.as_ref().and_then(|h| h.uncalled()) };
+    for (labels, ready, live, is_task, runes) in rows {
         let headroom = (max_live - live_reactive).max(0);
         // A task partition draws from the pool the sentinel bounds task starts by, so the pool
         // bounds what is desired of it; pool 0 is an operator pause and leaves nothing desired.
@@ -1251,10 +1264,13 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
         let raw = if live >= desired_live || !slot_free {
             RawStatus::Satisfied
         } else {
-            RawStatus::Gap {
-                desired: desired_with_beads(desired_live, &ready, cfg.now_secs),
-                observed: live.to_string(),
-                since_hint: None,
+            match &uncalled {
+                Some(Err(e)) => RawStatus::Unobservable { reason: e.clone() },
+                Some(Ok(left)) => match runes.iter().find_map(|r| left.get(r).map(|why| format!("{r}: {why}"))) {
+                    Some(reason) => RawStatus::Deliberate { reason },
+                    None => fleet_gap(desired_live, &ready, live, cfg.now_secs),
+                },
+                None => fleet_gap(desired_live, &ready, live, cfg.now_secs),
             }
         };
         checks.push(Check { key: format!("fleet:{}", labels), raw, remedy: Remedy::CallWanted });
@@ -3375,7 +3391,7 @@ mod tests {
             cfg.now_secs = 1_000 + tick * 60;
             let fleet = fleet_readings(&cfg);
             assert_eq!(fleet.live_total, 3);
-            assert_eq!(fleet.rows.iter().map(|(l, r, live, t)| (l.as_str(), r.len(), *live, *t)).collect::<Vec<_>>(), vec![("plan", 5, 2, true)]);
+            assert_eq!(fleet.rows.iter().map(|(l, r, live, t, _)| (l.as_str(), r.len(), *live, *t)).collect::<Vec<_>>(), vec![("plan", 5, 2, true)]);
             assert_eq!(observe_cockpit(&cfg).raw, RawStatus::Satisfied);
             let edges = observe_epic_edges(&cfg);
             assert_eq!(edges.len(), 1, "{edges:?}");
@@ -3599,9 +3615,13 @@ mod tests {
         partition_rune: &'static str,
         ready: i64,
         named: Vec<(String, String)>,
+        uncalled: Option<Result<std::collections::BTreeMap<String, String>, String>>,
     }
 
     impl Host for Fleet {
+        fn uncalled(&self) -> Option<Result<std::collections::BTreeMap<String, String>, String>> {
+            self.uncalled.clone()
+        }
         fn unit_state(&self, _: &str, _: &str) -> Result<String, String> {
             Ok("active".into())
         }
@@ -3643,7 +3663,7 @@ mod tests {
     fn reactive_check(planned_live: i64, ceiling: &str) -> RawStatus {
         let mut cfg = test_config();
         cfg.max_live_dwarves = ceiling.into();
-        cfg.host = Some(Arc::new(Fleet { planned_live, reactive_live: 0, partition_rune: "ops", ready: 3, named: vec![] }));
+        cfg.host = Some(Arc::new(Fleet { planned_live, reactive_live: 0, partition_rune: "ops", ready: 3, named: vec![], uncalled: None }));
         let checks = observe_fleet(&cfg);
         assert_eq!(checks.len(), 1, "{checks:?}");
         checks[0].raw.clone()
@@ -3652,6 +3672,38 @@ mod tests {
     #[test]
     fn a_reactive_partition_with_ready_work_below_the_ceiling_is_a_gap() {
         assert!(matches!(reactive_check(3, "5"), RawStatus::Gap { .. }));
+    }
+
+    fn uncalled_check(uncalled: Option<Result<std::collections::BTreeMap<String, String>, String>>) -> RawStatus {
+        let mut cfg = test_config();
+        cfg.max_live_dwarves = "9".into();
+        cfg.host = Some(Arc::new(Fleet { planned_live: 0, reactive_live: 0, partition_rune: "mender", ready: 4, named: vec![], uncalled }));
+        observe_fleet(&cfg).remove(0).raw
+    }
+
+    #[test]
+    fn a_partition_the_sentinel_left_uncalled_with_a_reason_is_deliberate_not_a_gap() {
+        let left = BTreeMap::from([("mender".to_string(), "yielding — urgent bead(s) unclaimed: sp-x".to_string())]);
+        match uncalled_check(Some(Ok(left))) {
+            RawStatus::Deliberate { reason } => assert!(reason.starts_with("mender: ") && reason.contains("yielding"), "{reason}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_partition_the_sentinel_did_not_account_for_stays_a_gap() {
+        assert!(matches!(uncalled_check(Some(Ok(BTreeMap::from([("other".to_string(), "full".to_string())])))), RawStatus::Gap { .. }));
+        assert!(matches!(uncalled_check(Some(Ok(BTreeMap::new()))), RawStatus::Gap { .. }));
+    }
+
+    #[test]
+    fn an_unreadable_sentinel_pass_makes_the_gap_unobservable() {
+        assert_eq!(uncalled_check(Some(Err("no sentinel pass yet".into()))), RawStatus::Unobservable { reason: "no sentinel pass yet".into() });
+    }
+
+    #[test]
+    fn a_host_that_cannot_read_the_sentinel_leaves_the_gap_as_it_was() {
+        assert!(matches!(uncalled_check(None), RawStatus::Gap { .. }));
     }
 
     #[test]
@@ -3672,7 +3724,7 @@ mod tests {
         cfg.max_dwarves = "3".into();
         cfg.now_secs = 1_793_166_343;
         let named: Vec<(String, String)> = named.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
-        cfg.host = Some(Arc::new(Fleet { planned_live: 0, reactive_live: 0, partition_rune: "plan", ready: named.len() as i64, named }));
+        cfg.host = Some(Arc::new(Fleet { planned_live: 0, reactive_live: 0, partition_rune: "plan", ready: named.len() as i64, named, uncalled: None }));
         cfg
     }
 
@@ -3728,7 +3780,7 @@ mod tests {
         let mut cfg = test_config();
         cfg.max_live_dwarves = "5".into();
         cfg.max_dwarves = pool.into();
-        cfg.host = Some(Arc::new(Fleet { planned_live: builders_live, reactive_live: 0, partition_rune: "builder", ready: 10, named: vec![] }));
+        cfg.host = Some(Arc::new(Fleet { planned_live: builders_live, reactive_live: 0, partition_rune: "builder", ready: 10, named: vec![], uncalled: None }));
         let checks = observe_fleet(&cfg);
         assert_eq!(checks.len(), 1, "{checks:?}");
         checks[0].raw.clone()
@@ -3754,7 +3806,7 @@ mod tests {
         let mut cfg = test_config();
         cfg.max_live_dwarves = "9".into();
         cfg.max_dwarves = "3".into();
-        cfg.host = Some(Arc::new(Fleet { planned_live: 2, reactive_live: 4, partition_rune: "builder", ready: 10, named: vec![] }));
+        cfg.host = Some(Arc::new(Fleet { planned_live: 2, reactive_live: 4, partition_rune: "builder", ready: 10, named: vec![], uncalled: None }));
         assert_eq!(desired_count(&observe_fleet(&cfg)[0].raw), ("3".to_string(), "2".to_string()));
     }
 
@@ -3771,7 +3823,7 @@ mod tests {
             cfg.max_live_dwarves = "5".into();
             cfg.max_dwarves = "3".into();
             cfg.starting = starting.iter().map(|(r, n)| (r.to_string(), *n)).collect();
-            cfg.host = Some(Arc::new(Fleet { planned_live: 2, reactive_live: 0, partition_rune: "builder", ready: 5, named: vec![] }));
+            cfg.host = Some(Arc::new(Fleet { planned_live: 2, reactive_live: 0, partition_rune: "builder", ready: 5, named: vec![], uncalled: None }));
             observe_fleet(&cfg)[0].raw.clone()
         };
         assert_eq!(check(&[("builder", 1)]), RawStatus::Satisfied);

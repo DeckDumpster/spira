@@ -11,7 +11,7 @@ use runtime::{EventKind, RuntimeError, HALT_STREAM, SCHEDULER_HALTED, SCHEDULER_
 /// Bumped when a field changes meaning or goes away.
 pub const SCHEMA: u64 = 1;
 
-const NO_PASS: &str = "cannot tell: no call pass has run yet";
+pub(crate) const NO_PASS: &str = "cannot tell: no call pass has run yet";
 
 pub type SubmitFn = Arc<dyn Fn(&str, &str, EventKind) -> Result<(), String> + Send + Sync>;
 
@@ -103,19 +103,23 @@ impl Control {
         }
     }
 
-    /// The reply says the request is journaled; the engine acts on it when it reads it.
     fn call_carry(&self) -> runtime::Result<crate::tasks::a::sentinel_call::Carry> {
-        let s = self.board.get().ok_or_else(|| RuntimeError::new(NO_PASS))?;
-        let carried = s.tasks.iter().find(|t| t.name == crate::tasks::a::sentinel_call::NAME).and_then(|t| t.state.as_ref());
-        match carried {
-            Some(c) => serde_json::from_str(&c.body).map_err(|e| RuntimeError::new(format!("the carried call state does not decode: {e}"))),
-            None => Ok(Default::default()),
-        }
+        sentinel_carry(&self.board)
     }
 
     fn gate(&self, tag: &str, reason: &str) -> runtime::Result<String> {
         let id = format!("{tag}/{}/{}", self.clock.now_ms(), self.seq.fetch_add(1, Ordering::SeqCst));
         (self.submit)(&id, HALT_STREAM, EventKind::new(tag, reason)).map_err(RuntimeError::new)?;
         Ok(format!("{tag} {id}"))
+    }
+}
+
+/// The sentinel_call carry as the status board last saw it; the one read `scheduler bound|uncalled` and the reconciler's fleet check share.
+pub fn sentinel_carry(board: &runtime::engine::StatusBoard) -> runtime::Result<crate::tasks::a::sentinel_call::Carry> {
+    let s = board.get().ok_or_else(|| RuntimeError::new(NO_PASS))?;
+    let carried = s.tasks.iter().find(|t| t.name == crate::tasks::a::sentinel_call::NAME).and_then(|t| t.state.as_ref());
+    match carried {
+        Some(c) => serde_json::from_str(&c.body).map_err(|e| RuntimeError::new(format!("the carried call state does not decode: {e}"))),
+        None => Ok(Default::default()),
     }
 }
