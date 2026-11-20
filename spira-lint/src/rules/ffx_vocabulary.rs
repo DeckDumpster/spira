@@ -18,7 +18,6 @@ const MODE_KEY: &str = "SPIRA_FFX_VOCABULARY_MODE";
 const SELF_PATH: &str = "spira-lint/src/rules/ffx_vocabulary.rs";
 const KEY_HISTORY_PATH: &str = "spira/conf.key-history";
 const POINTERS_PATH: &str = "law/pointers.toml";
-const TOC_PATH: &str = "law/toc.toml";
 const LINE_MARKER: &str = "ffx-ok";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -246,16 +245,15 @@ pub fn terms_in(text: &str) -> Vec<String> {
     out
 }
 
-/// Slugs the tree's own pointers retire and its toc still lists, longest first.
+/// Slugs the tree's own pointers retire or merge away, longest first.
 fn retired_slugs(tree: &Tree) -> Vec<String> {
     let parse = |path: &str| tree.text_of(path).and_then(|t| t.parse::<toml::Table>().ok());
-    let (Some(pointers), Some(toc)) = (parse(POINTERS_PATH), parse(TOC_PATH)) else { return Vec::new() };
+    let Some(pointers) = parse(POINTERS_PATH) else { return Vec::new() };
     let strings = |key: &str, field: &str| -> Vec<String> {
         pointers.get(key).and_then(|v| v.as_array()).into_iter().flatten().filter_map(|row| row.get(field)?.as_str()).map(String::from).collect()
     };
-    let listed: Vec<&str> = toc.get("part").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|p| p.get("slugs")?.as_array()).flatten().filter_map(|s| s.as_str()).collect();
     let mut out = strings("retired", "slug");
-    out.extend(strings("merged", "from").into_iter().filter(|f| listed.contains(&f.as_str())));
+    out.extend(strings("merged", "from"));
     out.retain(|s| !s.is_empty());
     out.sort_by_key(|s| std::cmp::Reverse(s.len()));
     out.dedup();
@@ -456,7 +454,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
     fn the_book_pointer_file_is_exempt_as_rename_history() {
         let t = TempDir::new("ffx-ptr");
         t.write("law/pointers.toml", "[[retired]]\nslug = \"law-aeons-x\"\n");
-        t.write("law/other.toml", "slug = \"law-aeons-x\"\n");
+        t.write("law/other.toml", "slug = \"law-aeons-y\"\n");
         let found = FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&tree(&t, &["law/pointers.toml", "law/other.toml"])).unwrap();
         assert_eq!(found.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["law/other.toml"]);
     }
@@ -494,7 +492,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
     }
 
     #[test]
-    fn a_merged_slug_is_skipped_only_while_the_toc_lists_it_and_other_terms_stay_findings() {
+    fn a_merged_slug_is_skipped_listed_or_not_and_other_terms_stay_findings() {
         let t = TempDir::new("ffx-merged");
         t.write("law/toc.toml", "[[part]]\nnumber = 1\nslugs = [\"law-aeon-listed\", \"law-live\"]\n"); // ffx-ok
         t.write("law/pointers.toml", "[[merged]]\nfrom = \"law-aeon-listed\"\n[[merged]]\nfrom = \"law-aeon-unlisted\"\n[[retired]]\nslug = \"law-gone\"\nreason = \"an aeon left\"\n"); // ffx-ok
@@ -502,15 +500,14 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         t.write("law/b.md", "law-aeon-other\n"); // ffx-ok
         let found = FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&tree(&t, &["law/toc.toml", "law/pointers.toml", "law/a.md", "law/b.md"])).unwrap();
         let at: Vec<_> = found.iter().map(|f| (f.path.as_str(), f.line)).collect();
-        assert_eq!(at, [("law/a.md", Some(2)), ("law/a.md", Some(3)), ("law/b.md", Some(1))], "{found:?}");
+        assert_eq!(at, [("law/a.md", Some(3)), ("law/b.md", Some(1))], "{found:?}");
     }
 
     #[test]
-    fn a_missing_or_unparseable_toc_or_pointers_file_leaves_every_finding() {
+    fn a_missing_pointers_file_or_an_unparseable_file_leaves_every_finding() {
         let body = "law-aeon-old\n"; // ffx-ok
-        let pointers = "[[retired]]\nslug = \"law-aeon-old\"\n"; // ffx-ok
         let toc = "[[part]]\nslugs = [\"law-aeon-old\"]\n"; // ffx-ok
-        for (p, c) in [(None, Some(toc)), (Some(pointers), None), (Some(pointers), Some("not [ toml")), (Some("not [ toml"), Some(toc))] {
+        for (p, c) in [(None::<&str>, Some(toc)), (Some("not [ toml"), Some(toc))] {
             let t = TempDir::new("ffx-failsafe");
             t.write("law/a.md", body);
             let mut files = vec!["law/a.md"];

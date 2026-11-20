@@ -427,9 +427,9 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         return rc;
     }
     let book = strings(&after);
-    let landed = read_pointers_for_write(&repo).and_then(|pointers| {
-        let caught = code::catch_up(&toc, &pointers, &book, Some((key.as_str(), part))).map_err(|e| format!("rule: {e}"))?;
-        let added = caught.iter().map(|p| p.slugs.len()).sum::<usize>() - toc.iter().map(|p| p.slugs.len()).sum::<usize>();
+    let landed = read_pointers_for_write(&repo, &book).and_then(|pointers| {
+        let (caught, pointers) = code::catch_up(&toc, &pointers, &book, Some((key.as_str(), part)), &landed_numbers(&repo)?, &today()).map_err(|e| format!("rule: {e}"))?;
+        let added = caught.iter().map(|p| p.slugs.len()).sum::<usize>().saturating_sub(toc.iter().map(|p| p.slugs.len()).sum::<usize>());
         land_law(home, &repo, "enact", &key, &caught, &pointers, &book).map(|(branch, bead)| (added, branch, bead))
     });
     match landed {
@@ -512,19 +512,19 @@ fn cmd_land_tip(db: &str, home: &str) -> i32 {
     let run = || -> Result<Option<Landed>, String> {
         let repo = locate_repo(home)?;
         let toc = read_toc_at(&repo)?;
-        let pointers = read_pointers_for_write(&repo)?;
         let book = strings(&read_book(db)?);
-        let caught = code::catch_up(&toc, &pointers, &book, None).map_err(|e| format!("rule: {e}"))?;
+        let pointers = read_pointers_for_write(&repo, &book)?;
+        let (caught, caught_pointers) = code::catch_up(&toc, &pointers, &book, None, &landed_numbers(&repo)?, &today()).map_err(|e| format!("rule: {e}"))?;
         let base = repo.1.clone().ok_or("rule: no landing ref resolves for the home repository — refusing")?;
-        if caught == toc && !code::book_drifted(Path::new(&repo.0), &base, &toc, &pointers, &book) {
+        if caught == toc && caught_pointers == pointers && !code::book_drifted(Path::new(&repo.0), &base, &toc, &pointers, &book) {
             return match code::book_tip_ref(Path::new(&repo.0), &base) {
                 Some(code::BookTip::Stranded(branch)) => submit_stranded(home, &repo, &branch).map(|bead| Some(Landed::Stranded(branch, bead))),
                 Some(code::BookTip::InFlight(branch)) => Ok(Some(Landed::InFlight(branch))),
                 None => Ok(None),
             };
         }
-        let added = caught.iter().map(|p| p.slugs.len()).sum::<usize>() - toc.iter().map(|p| p.slugs.len()).sum::<usize>();
-        land_law(home, &repo, "code", "book", &caught, &pointers, &book).map(|(branch, bead)| Some(Landed::Added(added, branch, bead)))
+        let added = caught.iter().map(|p| p.slugs.len()).sum::<usize>().saturating_sub(toc.iter().map(|p| p.slugs.len()).sum::<usize>());
+        land_law(home, &repo, "code", "book", &caught, &caught_pointers, &book).map(|(branch, bead)| Some(Landed::Added(added, branch, bead)))
     };
     match run() {
         Ok(None) => {
@@ -631,8 +631,16 @@ fn read_pointers_at(repo: &(String, Option<String>)) -> Result<code::Pointers, S
     }
 }
 
-fn read_pointers_for_write(repo: &(String, Option<String>)) -> Result<code::Pointers, String> {
-    read_pointers_at(repo).map(|p| code::with_in_flight_pointers(Path::new(&repo.0), repo.1.as_deref(), p))
+fn read_pointers_for_write(repo: &(String, Option<String>), book: &BTreeMap<String, String>) -> Result<code::Pointers, String> {
+    read_pointers_at(repo).map(|p| code::with_store_pointers(code::with_in_flight_pointers(Path::new(&repo.0), repo.1.as_deref(), p), book))
+}
+
+/// Slug -> section of the `law/` tree on the landing ref (the checkout when there is none).
+fn landed_numbers(repo: &(String, Option<String>)) -> Result<BTreeMap<String, String>, String> {
+    match &repo.1 {
+        Some(b) => code::law_files_at(Path::new(&repo.0), b).map(|f| code::numbers_of(&f)),
+        None => Ok(code::numbers_on_disk(&Path::new(&repo.0).join("law"))),
+    }
 }
 
 fn read_toc(law: &Path) -> Result<Vec<code::Part>, String> {
@@ -690,11 +698,7 @@ fn cmd_code(db: &str, home: &str, rest: &[String]) -> i32 {
     let loaded = match &repo {
         Some(r) => read_toc_at(r).and_then(|t| {
             let p = read_pointers_at(r);
-            let n = match &r.1 {
-                Some(b) => code::law_files_at(Path::new(&r.0), b).map(|f| code::numbers_of(&f))?,
-                None => code::numbers_on_disk(&law),
-            };
-            Ok((t, p, n))
+            Ok((t, p, landed_numbers(r)?))
         }),
         None => read_toc(&law).map(|t| (t, read_pointers(&law), code::numbers_on_disk(&law))),
     };
@@ -726,7 +730,10 @@ fn cmd_code(db: &str, home: &str, rest: &[String]) -> i32 {
             }
         },
     };
-    let pointers = match on_disk.as_ref().map_err(String::clone).and_then(|p| code::record_moves(&numbers, &toc, p, &today())) {
+    let loaded_toc = toc.clone();
+    let recorded_retired = on_disk.as_ref().map_or(0, |p| p.retired.len());
+    let on_disk = on_disk.map(|p| code::with_store_pointers(p, &strings(&book)));
+    let (toc, pointers) = match on_disk.as_ref().map_err(String::clone).and_then(|p| code::in_force(&toc, p, &strings(&book), &numbers, &today())) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{}", e.trim_start_matches("rule: "));
@@ -735,6 +742,7 @@ fn cmd_code(db: &str, home: &str, rest: &[String]) -> i32 {
     };
     let old = on_disk.unwrap_or_default();
     let new_moves = &pointers.moved[old.moved.len()..];
+    let recorded = pointers.retired.len() == recorded_retired;
     if check {
         let expected = code::generate(&toc, &pointers, book_texts(&book));
         let found = match &repo {
@@ -748,6 +756,12 @@ fn cmd_code(db: &str, home: &str, rest: &[String]) -> i32 {
                 return 1;
             }
         };
+        if toc != loaded_toc {
+            drift.push("toc.toml: lists statutes the store lacks".to_string());
+        }
+        if !recorded {
+            drift.push(format!("{}: retirements in the store not yet recorded", code::POINTERS_FILE));
+        }
         drift.extend(code::check_pointers(&toc, &pointers));
         drift.extend(new_moves.iter().map(|m| format!("{}: §{} moved to {}, not yet recorded", code::POINTERS_FILE, m.section, code::section_of(&toc, &m.slug).unwrap_or_default())));
         for d in &drift {
@@ -945,7 +959,7 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
             return 1;
         }
     };
-    let (toc, mut pointers) = match read_toc_at(&repo).and_then(|t| read_pointers_for_write(&repo).map(|p| (t, p))) {
+    let (toc, mut pointers) = match read_toc_at(&repo).and_then(|t| read_pointers_for_write(&repo, &strings(&memories)).map(|p| (t, p))) {
         Ok(tp) => tp,
         Err(e) => {
             eprintln!("{e}");
@@ -957,6 +971,8 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         return 1;
     }
     let on = today();
+    let record_key = code::retired_key(&key);
+    let record = merged_into.is_none().then(|| retirement_record(&key, &reason, replaced_by.as_deref(), &memories));
     match merged_into {
         Some(into) => pointers.merged.push(code::Merged { from: key.clone(), into, reason, on }),
         None => pointers.retired.push(code::Retired { slug: key.clone(), reason, replaced_by, on }),
@@ -966,9 +982,19 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         return 1;
     }
 
+    if let Some(record) = &record {
+        let (code, _, stderr) = run_bd(db, &["remember", "--key", &record_key, record]);
+        if code != 0 {
+            eprintln!("rule: failed to record the retirement of {key}, nothing forgotten: {stderr}");
+            return 1;
+        }
+    }
     let (code, _, stderr) = run_bd(db, &["forget", &key]);
     if code != 0 {
         eprintln!("rule: failed to forget {key}: {stderr}");
+        if record.is_some() {
+            run_bd(db, &["forget", &record_key]);
+        }
         return 1;
     }
     println!("forgot {key}");
@@ -990,10 +1016,12 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         return rc;
     }
     let book = strings(&after);
-    let landed = code::catch_up(&toc, &pointers, &book, None).map_err(|e| format!("rule: {e}")).and_then(|caught| land_law(home, &repo, "retire", &key, &caught, &pointers, &book));
+    let landed = landed_numbers(&repo)
+        .and_then(|n| code::catch_up(&toc, &pointers, &book, None, &n, &today()).map_err(|e| format!("rule: {e}")))
+        .and_then(|(caught, pointers)| land_law(home, &repo, "retire", &key, &caught, &pointers, &book));
     match landed {
         Ok((branch, bead)) => {
-            println!("law/: {key} keeps its number, marked retired; committed on {branch}, submitted under {bead}.");
+            println!("law/: {key} leaves the book and its pointer stays; committed on {branch}, submitted under {bead}.");
             0
         }
         Err(e) => {
@@ -1005,7 +1033,7 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
     }
 }
 
-fn retirement_record(from: &str, to: &str, before: &BTreeMap<String, serde_json::Value>) -> String {
+fn retirement_record(from: &str, reason: &str, replaced_by: Option<&str>, before: &BTreeMap<String, serde_json::Value>) -> String {
     use sop::ports::Clock;
     let (epoch, at) = sop::real::RealClock { tz: "UTC".into() }.now();
     let by = std::env::var("BEADS_ACTOR")
@@ -1013,7 +1041,7 @@ fn retirement_record(from: &str, to: &str, before: &BTreeMap<String, serde_json:
         .or_else(|| std::env::var("USER").ok())
         .unwrap_or_else(|| "unknown".to_string());
     let text = before.get(from).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    sop::shelf::Retired { by, at, epoch, reason: "renamed out of retired vocabulary".into(), text, replaced_by: Some(to.to_string()) }.to_json()
+    sop::shelf::Retired { by, at, epoch, reason: reason.into(), text, replaced_by: replaced_by.map(String::from) }.to_json()
 }
 
 fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
@@ -1040,7 +1068,7 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
             return 1;
         }
     };
-    let (toc, pointers) = match read_toc_at(&repo).and_then(|t| read_pointers_for_write(&repo).map(|p| (t, p))) {
+    let (toc, pointers) = match read_toc_at(&repo).and_then(|t| read_pointers_for_write(&repo, &strings(&before)).map(|p| (t, p))) {
         Ok(tp) => tp,
         Err(e) => {
             eprintln!("{e}");
@@ -1095,24 +1123,20 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
         after.insert(key.clone(), serde_json::Value::String(text.clone()));
         if let (Some(from), Entry::Rename { numbered, .. }) = (from, e) {
             let runbook = from.starts_with("sop-");
-            let record_key = sop::shelf::retired_key(from);
-            if runbook {
-                let record = retirement_record(from, key, &before);
-                let (code, _, stderr) = run_bd(db, &["remember", "--key", &record_key, &record]);
-                if code != 0 {
-                    eprintln!("rule: failed to record the retirement of {from}: {stderr}");
-                    run_bd(db, &["forget", key]);
-                    after.remove(key);
-                    failed = true;
-                    continue;
-                }
+            let record_key = if runbook { sop::shelf::retired_key(from) } else { code::retired_key(from) };
+            let record = retirement_record(from, "renamed out of retired vocabulary", Some(key), &before);
+            let (code, _, stderr) = run_bd(db, &["remember", "--key", &record_key, &record]);
+            if code != 0 {
+                eprintln!("rule: failed to record the retirement of {from}: {stderr}");
+                run_bd(db, &["forget", key]);
+                after.remove(key);
+                failed = true;
+                continue;
             }
             let (code, _, stderr) = run_bd(db, &["forget", from]);
             if code != 0 {
                 eprintln!("rule: failed to forget {from}: {stderr}");
-                if runbook {
-                    run_bd(db, &["forget", &record_key]);
-                }
+                run_bd(db, &["forget", &record_key]);
                 failed = true;
                 continue;
             }
@@ -1155,7 +1179,7 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
         return i32::from(failed);
     }
     let book = strings(&after);
-    let landed = rule::vocab::record_renames(&toc, &pointers, &renamed, &today()).and_then(|(toc, pointers)| code::catch_up(&toc, &pointers, &book, None).map(|caught| (caught, pointers))).map_err(|e| format!("rule: {e}")).and_then(|(caught, pointers)| land_law(home, &repo, "rename-vocabulary", "book", &caught, &pointers, &book));
+    let landed = rule::vocab::record_renames(&toc, &pointers, &renamed, &today()).and_then(|(toc, pointers)| code::catch_up(&toc, &pointers, &book, None, &landed_numbers(&repo)?, &today())).map_err(|e| format!("rule: {e}")).and_then(|(caught, pointers)| land_law(home, &repo, "rename-vocabulary", "book", &caught, &pointers, &book));
     match landed {
         Ok((branch, bead)) => println!("law/: {statutes_written} statute(s) rewritten ({runbooks_written} runbook(s) in the store); committed on {branch}, submitted under {bead}."),
         Err(e) => {

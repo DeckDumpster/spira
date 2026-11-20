@@ -73,14 +73,21 @@ pub fn dry_run_report(before: &BTreeMap<String, String>, plan: &Plan) -> String 
     out
 }
 
-/// The toc and pointers after `renamed` (from, to, numbered) was written: an unnumbered old slug
-/// is numbered first so the pointer naming it passes `code::check_pointers`.
+/// The toc and pointers after `renamed` (from, to, numbered) was written: a numbered old slug's
+/// section passes to its successor; an unnumbered one was never in the toc.
 pub fn record_renames(toc: &[Part], pointers: &Pointers, renamed: &[(String, String, bool)], today: &str) -> Result<(Vec<Part>, Pointers), String> {
     let mut toc = toc.to_vec();
     let mut pointers = pointers.clone();
-    for (from, to, numbered) in renamed {
-        if !numbered {
-            toc = code::append(&toc, 1, from)?;
+    for (from, to, _) in renamed {
+        let listed = toc.iter().any(|p| p.slugs.contains(to));
+        for p in &mut toc {
+            if let Some(i) = p.slugs.iter().position(|s| s == from) {
+                if listed {
+                    p.slugs.remove(i);
+                } else {
+                    p.slugs[i] = to.clone();
+                }
+            }
         }
         let pointed = pointers.retired.iter().any(|r| r.slug == *from)
             || pointers.moved.iter().any(|m| m.slug == *from)
