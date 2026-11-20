@@ -433,60 +433,34 @@ impl<B: Backend> Store<B> {
     }
 
     /// `id`'s readiness at `rev`.
+    #[cfg(test)]
     pub fn readiness_at(&self, id: &str, rev: u64) -> Result<Option<Readiness>> {
         Ok(self
             .read::<Readiness>(&keys::readiness(id), Some(rev))?
             .map(|(r, _)| r.value))
     }
 
-    /// The readiness of each of `ids` that has one, at `rev`. A few are read by key; more are
-    /// read as key ranges over the span they cover, because every point read is a read
-    /// transaction of its own, and one per row was most of a whole-table list's time. A range
-    /// decodes only the readiness it was asked for: decoding every one in the span cost 300 ms
-    /// to find 650 of 13k.
+    /// The readiness of each of `ids` that has one, at `rev`: read by key, a chunk to a read
+    /// transaction, so the cost follows the ids asked for and not the readiness table.
     pub fn readiness_of(
         &self,
         ids: &[&str],
         rev: u64,
     ) -> Result<std::collections::BTreeMap<String, Readiness>> {
-        const BY_KEY_MAX: usize = 256;
         let mut out = std::collections::BTreeMap::new();
         let wanted: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
-        let (Some(first), Some(last)) = (wanted.first(), wanted.last()) else {
-            return Ok(out);
-        };
-        if wanted.len() <= BY_KEY_MAX {
-            for id in &wanted {
-                if let Some(r) = self.readiness_at(id, rev)? {
-                    out.insert(id.to_string(), r);
+        let wanted: Vec<&str> = wanted.into_iter().collect();
+        for chunk in wanted.chunks(RECORD_CHUNK) {
+            let keys: Vec<String> = chunk.iter().map(|id| keys::readiness(id)).collect();
+            let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+            let items = self.contract.get_many_at(&key_refs, rev)?;
+            for ((id, key), item) in chunk.iter().zip(&keys).zip(items) {
+                if let Some(item) = item {
+                    out.insert(id.to_string(), decode(key, &item.value)?);
                 }
             }
-            return Ok(out);
         }
-        // A range starts strictly after its cursor, so the first id is read by key.
-        if let Some(r) = self.readiness_at(first, rev)? {
-            out.insert(first.to_string(), r);
-        }
-        let end = keys::readiness(last);
-        let mut cursor = keys::readiness(first);
-        loop {
-            let page = self
-                .contract
-                .backend()
-                .range(keys::READINESS, Some(&cursor), RECORD_CHUNK, rev)?;
-            for (key, version) in &page {
-                if *key > end {
-                    return Ok(out);
-                }
-                if let Some(id) = keys::id_of(keys::READINESS, key).filter(|id| wanted.contains(id)) {
-                    out.insert(id.to_string(), decode(key, &Object::decode(&version.value)?)?);
-                }
-            }
-            match page.last() {
-                Some((k, _)) if page.len() == RECORD_CHUNK => cursor = k.clone(),
-                _ => return Ok(out),
-            }
-        }
+        Ok(out)
     }
 
     /// `id`'s state at `rev`, or `None` with no record.

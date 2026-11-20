@@ -302,6 +302,10 @@ pub(crate) mod counting {
             self.spent(1);
             self.0.get(key, at)
         }
+        fn get_many(&self, keys: &[&str], at: u64) -> state_store::Result<Vec<Option<state_store::Version>>> {
+            self.spent(keys.len());
+            self.0.get_many(keys, at)
+        }
         fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
             let rows = self.0.range(prefix, after, limit, at)?;
             self.spent(rows.len());

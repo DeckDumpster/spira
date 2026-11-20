@@ -609,6 +609,19 @@ impl<B: Backend> Contract<B> {
         self.read(key, at)
     }
 
+    /// Each of `keys` as of `at`, in the order given, read together.
+    pub fn get_many_at(&self, keys: &[&str], at: u64) -> Result<Vec<Option<Item>>> {
+        self.backend
+            .get_many(keys, at)?
+            .into_iter()
+            .zip(keys)
+            .map(|(v, k)| {
+                v.map(|v| item((*k).to_string(), v).map(|i| self.with_expiry(i)))
+                    .transpose()
+            })
+            .collect()
+    }
+
     fn read(&self, key: &str, at: u64) -> Result<Option<Item>> {
         self.backend
             .get(key, at)?

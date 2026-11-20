@@ -55,6 +55,12 @@ impl<B: Backend + Clone> Backend for Scoped<B> {
         self.inner.get(&self.outer(key), at)
     }
 
+    fn get_many(&self, keys: &[&str], at: u64) -> Result<Vec<Option<Version>>> {
+        let outer: Vec<String> = keys.iter().map(|k| self.outer(k)).collect();
+        let outer: Vec<&str> = outer.iter().map(String::as_str).collect();
+        self.inner.get_many(&outer, at)
+    }
+
     fn range(
         &self,
         prefix: &str,
@@ -173,6 +179,7 @@ live_scenarios!(
     watch_resumes_from_a_revision,
     a_watch_on_a_quiet_prefix_returns_progress_rev,
     a_value_overwritten_or_deleted_inside_the_ring_reads_as_of_a_revision_between_the_writes,
+    get_many_answers_what_get_answers_per_key_at_the_head_and_below_it,
     a_lock_expires_on_the_virtual_clock,
     a_paused_holders_fenced_write_is_refused_after_expiry_and_reacquisition,
     reopen_extends_every_lock,
