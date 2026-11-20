@@ -455,7 +455,7 @@ impl<B: Backend> Store<B> {
         req: &Request,
     ) -> Result<Orphans> {
         let records = self.in_state(BeadState::InDelivery)?;
-        let rounds = self.batches()?;
+        let rounds = self.open_batches()?;
         let named: BTreeSet<&str> = rounds
             .iter()
             .filter(|(_, r)| !FINISHED.contains(&r.value.row.state))

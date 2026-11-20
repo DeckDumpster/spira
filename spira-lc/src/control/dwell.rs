@@ -61,6 +61,9 @@ fn scan_cap() -> usize {
     MAX_SCANNED
 }
 
+/// The most rounds one dwell answer reads from the `opened_at` index; a full read is an error.
+pub const DWELL_ROUNDS_MAX: usize = 5_000;
+
 /// How far back the index keeps Delivered times, whatever window was asked.
 const DELIVERED_KEPT_S: i64 = 7 * 86_400;
 
@@ -299,7 +302,11 @@ impl<B: Backend> Store<B> {
         let mut idx = self.dwell_index.lock().unwrap_or_else(|e| e.into_inner());
         (d.complete, d.horizon) = self.advance(&mut idx, head, now, window_s, &mut repos, &mut d.scanned)?;
         d.last = idx.last_since(floor);
-        for (_, round) in self.batches()? {
+        let rounds = self.batches_opened_since(floor, DWELL_ROUNDS_MAX)?;
+        if rounds.len() >= DWELL_ROUNDS_MAX {
+            return Err(state_store::Error::Backend(format!("dwell: {DWELL_ROUNDS_MAX} rounds opened inside the window; DWELL_ROUNDS_MAX caps the read, narrow the window")));
+        }
+        for (_, round) in rounds {
             let (cut, repo) = (round.value.opened_at, round.value.row.repo.clone());
             if round.value.row.state == BatchState::Staged || cut < floor {
                 continue;

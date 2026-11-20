@@ -430,18 +430,6 @@ impl<B: Backend> Store<B> {
         Ok(self.read(&key, None)?.map(|(r, _)| (key, r)))
     }
 
-    /// Every round, from one snapshot, by key.
-    pub fn batches(&self) -> Result<Vec<(String, Read<BatchRecord>)>> {
-        let (items, _) = self
-            .contract()
-            .list(&[keys::BATCHES], &Selector::Everything)?;
-        items
-            .iter()
-            .filter(|i| batch_key(&i.key).is_some())
-            .map(|i| Ok((i.key.clone(), read_of(i)?)))
-            .collect()
-    }
-
     /// The round `id` and its key, as [`Store::batch`], for each id under `batch-ids/` after
     /// `after`, in id order, at most `limit`: a page by the id index, never the rounds' prefix.
     pub fn batches_page(&self, after: Option<&str>, limit: usize) -> Result<Vec<(String, Read<BatchRecord>)>> {
