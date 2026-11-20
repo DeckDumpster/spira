@@ -135,3 +135,17 @@ fn the_row_is_registered_with_its_cadence_and_effects() {
     assert_eq!((t.cadence_ms)(&s), 5000.max(s.cr_cadence.interval_ms));
     assert_eq!((s.cr_cadence.stale_days, s.world.cr_tz.as_str(), s.world.cr_open_hour.as_str()), (7, "Pacific/Auckland", "6"));
 }
+
+#[test]
+fn an_observe_that_fails_changes_nothing() {
+    let (_, stream, kind) = CrCadence::boot();
+    let mut rig = TaskRig::new(1, config().registration())
+        .unwrap()
+        .double(OBSERVE, |_| Err("SPIRA_CR_TZ is not set; the review cadence has no zone".into()))
+        .double(OPEN, |_| Ok("001 unit".into()))
+        .double(INBOX_APPEND, |l| Ok(l.into()));
+    rig.tick(stream, kind).unwrap();
+    rig.advance(48 * HOUR_MS).unwrap();
+    let asked: Vec<String> = rig.requested().iter().map(|q| q.name.clone()).filter(|n| n != OBSERVE).collect();
+    assert_eq!(asked, Vec::<String>::new());
+}

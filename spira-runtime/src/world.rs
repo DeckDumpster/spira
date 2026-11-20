@@ -441,7 +441,7 @@ impl World {
     /// Stages the next scheduled review with `cr`; its stdout is the answer and its stderr the failure.
     pub fn cr_open(&self) -> Result<String, String> {
         let cr = spira_config::release_env::tool("cr")?;
-        let out = spira_config::bounded::bounded_for(cr, "100").args(["open", "--count", "1", "--scheduled"]).stdin(std::process::Stdio::null()).output().map_err(|e| format!("cr: {e}"))?;
+        let out = spira_config::bounded::bounded_for(cr, &cr_cadence::OPEN_CALL_SECS.to_string()).args(["open", "--count", "1", "--scheduled"]).stdin(std::process::Stdio::null()).output().map_err(|e| format!("cr: {e}"))?;
         if out.status.success() {
             return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
         }

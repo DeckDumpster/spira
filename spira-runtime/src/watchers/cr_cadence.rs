@@ -18,7 +18,8 @@ pub const OPEN: &str = "cr-cadence.open";
 pub const NAME: &str = "cr-cadence";
 
 const OBSERVE_DEADLINE_MS: u64 = 60_000;
-const OPEN_DEADLINE_MS: u64 = 120_000;
+pub const OPEN_CALL_SECS: u64 = 100;
+const OPEN_DEADLINE_MS: u64 = (OPEN_CALL_SECS + 20) * 1000;
 const DEADLINE_MS: u64 = 10_000;
 const DAY: u64 = 86_400;
 
