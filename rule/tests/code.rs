@@ -423,3 +423,30 @@ fn an_in_flight_toc_slug_that_is_not_a_statute_is_not_carried() {
     assert!(!slugs.contains(&"sop-y".to_string()), "{slugs:?}");
     assert!(slugs.contains(&"law-nine".to_string()), "{slugs:?}");
 }
+
+#[test]
+fn seed_texts_carry_no_dated_provenance_whatever_punctuation_follows_it() {
+    let _env = testkit::env_read();
+    let toc = parse_toc(TOC).unwrap();
+    let mark = format!("(per Ann, 2026-09-19, sp-xu7la)");
+    let book: BTreeMap<String, String> = [
+        ("law-one", format!("Do one {mark};  the broker holds.")),
+        ("law-two", format!("Do two {mark}.")),
+        ("law-three", "Do three (per the spec) always.".to_string()),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect();
+    let wt = testkit::TempDir::new("rule-seeds");
+    rule::code::write_seeds(wt.path(), &toc, &book).unwrap();
+    let dir = wt.path().join(rule::code::SEEDS_DIR);
+    let one = std::fs::read_to_string(dir.join("law-one.txt")).unwrap();
+    assert_eq!(one.split_whitespace().collect::<Vec<_>>().join(" "), "Do one; the broker holds.");
+    assert_eq!(std::fs::read_to_string(dir.join("law-two.txt")).unwrap(), "Do two.");
+    assert_eq!(std::fs::read_to_string(dir.join("law-three.txt")).unwrap(), "Do three (per the spec) always.");
+    let pat = spira_lint::rules::inventory::pattern_re(&[]).unwrap();
+    for slug in ["law-one", "law-two", "law-three"] {
+        let t = std::fs::read(dir.join(format!("{slug}.txt"))).unwrap();
+        assert!(spira_lint::rules::inventory::scan(&t, &pat).is_empty(), "{slug}");
+    }
+}
