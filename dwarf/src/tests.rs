@@ -233,6 +233,34 @@ pub(crate) mod verdict_run {
         }
     }
 
+    struct StackAnswer(&'static str);
+    impl Exec for StackAnswer {
+        fn exec(&self, prog: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            if prog == "spira-claim" && args.first().map(String::as_str) == Some("stack") {
+                return Out::ok(self.0);
+            }
+            Out::ok("")
+        }
+    }
+
+    fn lead_for_proposal(answer: &'static str) -> String {
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_REPO".into(), "shared".into());
+        with_run_over(vars, &NoBd, Dirty(vec![]), &StackAnswer(answer), &|| 0, &Seams(Default::default()), "", |r| {
+            r.claim_bin = "spira-claim".into();
+            r.s.stack = r.stack_proposal("sp-x", "t").stack;
+            r.lead_briefs(Path::new("w/own"), "head", &[])
+        })
+    }
+
+    #[test]
+    fn a_claim_stacked_on_a_prerequisite_tells_the_builder_in_its_task_text() {
+        let lead = lead_for_proposal(r#"{"claimable":true,"stack":{"sp-a":"tipA"},"stack_depth":1,"stack_max_depth":4}"#);
+        assert!(lead.contains("## Stacked on unlanded work") && lead.contains("- sp-a at tipA"), "{lead}");
+        let plain = lead_for_proposal(r#"{"claimable":true,"stack":{},"stack_depth":0,"stack_max_depth":4}"#);
+        assert!(!plain.contains("Stacked on"), "{plain}");
+    }
+
     #[test]
     fn the_env_the_session_port_receives_carries_the_worktree_tmpdir() {
         let work = testkit::TempDir::new("dwarf-tmpdir-spec");

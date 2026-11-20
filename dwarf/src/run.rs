@@ -262,10 +262,10 @@ impl<'a> Run<'a> {
     }
 
     /// The brief's leading sections: why the bead was sent back, then its last closeout failure.
-    fn lead_briefs(&self, work: &Path, head: &str, amendments: &[spira_config::amendment::Record]) -> String {
+    pub(crate) fn lead_briefs(&self, work: &Path, head: &str, amendments: &[spira_config::amendment::Record]) -> String {
         let heads = [self.s.claim_head.as_str(), head];
         let red = self.last_fast_tier_red();
-        format!("{}{}{}", brief::dependencies_brief(&self.dependencies()), brief::send_back_brief(&self.send_backs(), amendments, &heads), brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)))
+        format!("{}{}{}{}", brief::stacked_brief(&self.s.stack), brief::dependencies_brief(&self.dependencies()), brief::send_back_brief(&self.send_backs(), amendments, &heads), brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)))
     }
 
     pub fn record_fact(&self, kind: &str, cause: &str) {
@@ -586,7 +586,7 @@ impl<'a> Run<'a> {
     /// proposal when the binary is missing or its answer does not parse: a claim never
     /// blocks on this the way it blocks on `lc_claim_bead` itself, since the worst case is
     /// only that this round misses the speed the stack would have bought it.
-    fn stack_proposal(&self, id: &str, who: &str) -> stack::Proposal {
+    pub(crate) fn stack_proposal(&self, id: &str, who: &str) -> stack::Proposal {
         let claim_bin = self.claim_bin.clone();
         let o = self.d.exec.exec(&claim_bin, &s(&["stack", id]), None, None);
         match stack::parse_proposal(&o.stdout) {

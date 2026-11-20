@@ -526,6 +526,20 @@ pub fn dependencies_brief(deps: &[Dep]) -> String {
     out
 }
 
+/// The claim's stack, told to the builder: the base already merges each tip, and landing order
+/// is the queue's to sequence, so there is nothing to ask the operator.
+pub fn stacked_brief(stack: &std::collections::BTreeMap<String, String>) -> String {
+    if stack.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("## Stacked on unlanded work\n\n");
+    for (prereq, tip) in stack {
+        out.push_str(&format!("- {prereq} at {tip}\n"));
+    }
+    out.push_str("\nYour worktree's base already merges these tips; do not duplicate their changes. Submit when your own work is done: the queue admits this item only after each prerequisite lands, and a later rebase onto the landing ref is the queue's, not a question for the operator.\n\n");
+    out
+}
+
 const EARLIER_SENDS_MAX: usize = 5;
 
 fn first_line(t: &str) -> &str {
@@ -862,6 +876,18 @@ mod tests {
         assert!(!sys.contains("{{") && sys.contains("`w/sp-a`") && sys.contains("work item `sp-a`"));
         assert!(sys.starts_with("You are a builder:") && !sys.contains("Warden"));
         assert!(rune.contains("{{ID}}"), "positive control: the template carries its tokens");
+    }
+
+    #[test]
+    fn stacked_brief_names_each_prerequisite_its_tip_and_says_to_submit() {
+        let b = stacked_brief(&[("sp-a".to_string(), "abc123def".to_string())].into());
+        assert!(b.contains("## Stacked on unlanded work") && b.contains("- sp-a at abc123def"), "{b}");
+        assert!(b.contains("already merges") && b.contains("do not duplicate") && b.contains("Submit when"), "{b}");
+    }
+
+    #[test]
+    fn stacked_brief_is_empty_for_an_empty_stack() {
+        assert_eq!(stacked_brief(&Default::default()), "");
     }
 
     #[test]
