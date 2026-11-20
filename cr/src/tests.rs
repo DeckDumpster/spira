@@ -12,7 +12,7 @@ const DAY: u64 = 86_400_000;
 pub(crate) const NOW: u64 = 100 * DAY;
 
 pub(crate) fn cfg() -> Config {
-    Config { page_lines: 10, oversize_pages: 3, exclude: ["**/fixtures/**", "**/*.generated.*", "**/vendor/**", "Cargo.lock"].map(String::from).to_vec(), churn_days: 60 }
+    Config { page_lines: 10, oversize_pages: 3, exclude: ["**/fixtures/**", "**/*.generated.*", "**/vendor/**", "Cargo.lock"].map(String::from).to_vec(), churn_days: 60, count_limit: 7 }
 }
 
 fn big_source() -> String {
@@ -52,7 +52,11 @@ pub(crate) fn fixture() -> FixtureTree {
 }
 
 fn ports_with(tree: FixtureTree, ledger: Vec<Row>, config: Config) -> Ports {
-    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), gh: Box::new(gh::FakeGh::default()), repo_owner: String::new(), repo_name: String::new(), source_repo: "src".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree: Box::new(tree), ledger: Ledger::from_rows(ledger), config, env_seed: None }
+    Ports { tree: Box::new(tree), ledger: Ledger::from_rows(ledger), config, ..ports_with_tree(Box::new(Unreadable)) }
+}
+
+fn ports_with_tree(tree: Box<dyn SourceTree>) -> Ports {
+    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), gh: Box::new(gh::FakeGh::default()), repo_owner: String::new(), repo_name: String::new(), source_repo: "src".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree, ledger: Ledger::from_rows(vec![]), config: cfg(), env_seed: None }
 }
 
 fn ports() -> Ports {
@@ -408,11 +412,17 @@ impl SourceTree for Unreadable {
     fn history(&self, _: &str, _: u64) -> History {
         History::default()
     }
+    fn authors(&self, _: &str) -> Vec<String> {
+        Vec::new()
+    }
+    fn at(&self, _: &str) -> Result<Box<dyn SourceTree>, String> {
+        Err("unreadable".into())
+    }
 }
 
 #[test]
 fn count_on_an_unreadable_tree_exits_one_and_prints_no_total() {
-    let p = Ports { clock: Box::new(VirtualClock::new(NOW)), tree: Box::new(Unreadable), ledger: Ledger::from_rows(vec![]), config: cfg(), env_seed: None };
+    let p = ports_with_tree(Box::new(Unreadable));
     let o = go(&p, &["count", "--regex", "x"]);
     assert_eq!(o.code, 1);
     assert!(!o.stdout.contains("total") && o.stderr.contains("object store"), "{o:?}");

@@ -18,8 +18,8 @@ test = false
 integration = ["forge/integration", "spira-config/integration", "runtime/integration", "spira-otel/integration", "testkit/integration"]
 
 [dependencies]
-regex = "1"
 base64 = "0.22"
+regex = "1"
 forge = { path = "../forge" }
 runtime = { path = "../runtime" }
 serde = { version = "1", features = ["derive"] }
