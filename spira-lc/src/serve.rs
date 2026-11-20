@@ -436,6 +436,9 @@ pub fn run(args: &[String]) -> i32 {
     startup.mark("bind");
     eprintln!("spira-lc serve: listening on {socket_path}");
     startup.ready(SPANS.get());
+    if let Err(e) = notify_ready(std::env::var("NOTIFY_SOCKET").ok().as_deref()) {
+        eprintln!("spira-lc serve: {e}");
+    }
     let flights = Arc::new(Flights::default());
     let (done, finished) = std::sync::mpsc::channel::<()>();
     {
@@ -1145,8 +1148,50 @@ fn write_raw(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str
     stream.write_all(&buf)
 }
 
+/// sd_notify `READY=1` to `$NOTIFY_SOCKET` (`@` prefix: abstract namespace); nothing when unset.
+pub fn notify_ready(socket: Option<&str>) -> Result<(), String> {
+    use std::os::linux::net::SocketAddrExt;
+    use std::os::unix::net::{SocketAddr, UnixDatagram};
+    let Some(s) = socket.filter(|s| !s.is_empty()) else { return Ok(()) };
+    let fail = |e: std::io::Error| format!("cannot tell systemd READY=1 at {s}: {e}");
+    let addr = match s.strip_prefix('@') {
+        Some(name) => SocketAddr::from_abstract_name(name.as_bytes()),
+        None => SocketAddr::from_pathname(s),
+    }
+    .map_err(fail)?;
+    UnixDatagram::unbound().and_then(|d| d.send_to_addr(b"READY=1", &addr)).map(|_| ()).map_err(fail)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn notify_ready_reaches_an_abstract_namespace_socket() {
+        use std::os::linux::net::SocketAddrExt;
+        let name = format!("spira-lc-notify-{}", std::process::id());
+        let addr = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes()).unwrap();
+        let rx = std::os::unix::net::UnixDatagram::bind_addr(&addr).unwrap();
+        super::notify_ready(Some(&format!("@{name}"))).unwrap();
+        let mut buf = [0u8; 64];
+        let n = rx.recv(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"READY=1");
+    }
+
+    #[test]
+    fn notify_ready_sends_one_ready_datagram_to_the_notify_socket_and_nothing_when_unset() {
+        let dir = testkit::TempDir::new("notify");
+        let path = dir.join("notify.sock");
+        let rx = std::os::unix::net::UnixDatagram::bind(&path).unwrap();
+        rx.set_nonblocking(true).unwrap();
+        super::notify_ready(None).unwrap();
+        super::notify_ready(Some("")).unwrap();
+        let mut buf = [0u8; 64];
+        assert!(rx.recv(&mut buf).is_err(), "nothing sent while unset");
+        super::notify_ready(Some(path.to_str().unwrap())).unwrap();
+        let n = rx.recv(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"READY=1");
+        assert!(super::notify_ready(Some(dir.join("absent").to_str().unwrap())).is_err());
+    }
+
     fn lc(store: &crate::control::store::Store<state_store::MemBackend>, argv: &[&str], now: i64) -> String {
         let args: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
         let request = crate::control::served::request_id();

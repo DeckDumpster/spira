@@ -462,7 +462,8 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
     let mut failed = Vec::new();
     let mut attempted = Vec::new();
     let mut logs = OwnLogs::default();
-    for u in &out.restarted {
+    let store_first = out.restarted.iter().filter(|u| *u == STORE_SERVER).chain(out.restarted.iter().filter(|u| *u != STORE_SERVER));
+    for u in store_first {
         eprintln!("release: restarting {u}");
         if let Some(text) = rendered.iter().find(|r| &r.0 == u).map(|r| &r.2) {
             logs.mark(u, text);
@@ -472,7 +473,8 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
             out.store_restarted_at = Some(std::time::Instant::now());
         }
         if let Err(e) = ctx.sc.reset_failed(u).and_then(|()| restart_unit(ctx.sc, u)) {
-            failed.push(format!("{u}: restart failed: {e}{}", logs.since_restart(u)));
+            let bound = (u == STORE_SERVER).then(|| ctx.sc.start_budget(u)).flatten().map(|b| format!(" (its start bound is TimeoutStartSec={}s)", b.as_secs())).unwrap_or_default();
+            failed.push(format!("{u}: restart failed: {e}{bound}{}", logs.since_restart(u)));
             break;
         }
     }

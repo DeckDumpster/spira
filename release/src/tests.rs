@@ -201,6 +201,7 @@ struct FakeSystemctl {
     pinned: BTreeSet<String>,
     /// Restarts of a unit that leave it `activating`, as a slow boot does, before one that comes up.
     slow_starts: RefCell<BTreeMap<String, usize>>,
+    start_budgets: BTreeMap<String, std::time::Duration>,
 }
 
 impl FakeSystemctl {
@@ -236,6 +237,7 @@ impl FakeSystemctl {
             restart_lands: None,
             pinned: BTreeSet::new(),
             slow_starts: RefCell::new(BTreeMap::new()),
+            start_budgets: BTreeMap::new(),
         }
     }
 }
@@ -257,6 +259,9 @@ impl Systemctl for FakeSystemctl {
             }
         }
         Ok(self.states.borrow().get(unit).cloned().unwrap_or_else(|| UnitState { active: "inactive".into(), result: "success".into(), kind: "simple".into() }))
+    }
+    fn start_budget(&self, unit: &str) -> Option<std::time::Duration> {
+        self.start_budgets.get(unit).copied()
     }
     fn executables(&self, unit: &str) -> Vec<PathBuf> {
         self.exes.borrow().get(unit).cloned().into_iter().collect()
@@ -1996,4 +2001,66 @@ fn a_unit_with_only_a_standard_output_append_log_is_named_with_its_last_line() {
     sc.on_restart = Some(append_to(log, "out: refused\n"));
     let e = activate_with(&w, &sc).unwrap_err();
     assert!(e.contains("its own last line: \"out: refused\""), "{e}");
+}
+
+/// Release `A` shipping new templates for `a-early`, `lc-serve` and `spira-runtime`, each over an old installed copy.
+fn world_activating_the_store_server_among_others() -> World {
+    let w = World::with_git(FakeGit::default());
+    let rel = w.cfg.releases.join(A);
+    for n in ["a-early.service", "lc-serve.service", "spira-runtime.service"] {
+        file(&rel.join("systemd").join(n), NEW_UNIT);
+    }
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    for n in ["a-early.service", "lc-serve.service", "spira-runtime-prod.service"] {
+        file(&w.cfg.unit_dir.join(n), OLD_UNIT);
+    }
+    w
+}
+
+fn run_the_three(sc: &FakeSystemctl) {
+    for n in ["a-early.service", "lc-serve.service", "spira-runtime-prod.service"] {
+        sc.states.borrow_mut().insert(n.into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
+    }
+}
+
+#[test]
+fn an_activation_restarts_the_store_server_before_every_other_unit() {
+    let w = world_activating_the_store_server_among_others();
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    run_the_three(&sc);
+    activate_with(&w, &sc).unwrap();
+    let restarts = sc.restarts.borrow().clone();
+    assert_eq!(restarts.first().map(String::as_str), Some("lc-serve.service"), "{restarts:?}");
+    assert!(restarts.contains(&"a-early.service".to_string()) && restarts.contains(&"spira-runtime-prod.service".to_string()), "{restarts:?}");
+}
+
+#[test]
+fn a_store_server_restart_that_fails_names_its_start_bound_and_is_rolled_back() {
+    let w = world_activating_the_store_server_among_others();
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    run_the_three(&sc);
+    sc.restart_fails.insert("lc-serve.service".into());
+    sc.start_budgets.insert("lc-serve.service".into(), std::time::Duration::from_secs(600));
+    let e = activate_with(&w, &sc).unwrap_err();
+    assert!(e.contains("TimeoutStartSec=600s"), "{e}");
+    assert!(e.contains("rolled back"), "{e}");
+}
+
+#[test]
+fn a_store_server_restart_that_fails_with_no_known_bound_gives_the_bare_error() {
+    let w = world_activating_the_store_server_among_others();
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    run_the_three(&sc);
+    sc.restart_fails.insert("lc-serve.service".into());
+    let e = activate_with(&w, &sc).unwrap_err();
+    assert!(e.contains("lc-serve.service: simulated restart failure") && !e.contains("TimeoutStartSec"), "{e}");
+}
+
+#[test]
+fn the_shipped_store_server_unit_is_notify_with_a_finite_start_bound() {
+    let t = shipped_unit("lc-serve.service");
+    assert!(t.lines().any(|l| l == "Type=notify") && t.lines().any(|l| l == "NotifyAccess=main"), "{t}");
+    let bound = t.lines().find_map(|l| l.strip_prefix("TimeoutStartSec=")).expect("TimeoutStartSec");
+    assert!(bound.parse::<u64>().is_ok_and(|n| n > 0), "{bound}");
 }
