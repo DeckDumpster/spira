@@ -26,8 +26,10 @@ const STUB: &str = r#"#!/usr/bin/env bash
 set -u
 shift
 wt="$1"; shift
+suites=""; nocorpus=""
 while [ $# -gt 0 ]; do
     case "$1" in
+        --no-corpus) nocorpus=1; shift; continue ;;
         --suites) suites="$2" ;; --maxpar) maxpar="$2" ;; --results-dir) res="$2" ;; --attr-spool) spool="$2" ;;
     esac
     shift 2
@@ -58,7 +60,7 @@ serve() {
                 mkdir -p "$spool/res/$j"; rc=0
                 for x in ${s//,/ }; do
                     runone "$d" "$x" "$spool/res/$j"
-                    grep -q '^ok' "$spool/res/$j/$x.result" || rc=1
+                    grep -q '^ok' "$spool/res/$j/$x.result" || { rc=1; [ "$build" = unit ] && rc=5; }
                 done
                 if [ "$build" = round ]; then
                     printf 'tree=%s\n' "$(git -C "$d" rev-parse 'HEAD^{tree}')" > "$spool/res/$j/batch.meta"
@@ -76,8 +78,11 @@ serve() {
 }
 serve & srv=$!
 export wt res
-printf '%s\n' ${suites//,/ } | xargs -P "$maxpar" -I{} bash -c 'runone "$wt" {} "$res"'
-rc=0; grep -q '^red' "$res"/*.result && rc=1
+rc=0
+if [ -z "$nocorpus" ]; then
+    printf '%s\n' ${suites//,/ } | xargs -P "$maxpar" -I{} bash -c 'runone "$wt" {} "$res"'
+    grep -q '^red' "$res"/*.result && rc=1
+fi
 printf 'corpus-end %s\n' "$(date +%s.%N)" >> "$spool/../stub.log"
 printf 'rc=%s\n' "$rc" > "$spool/.corpus.tmp"; mv "$spool/.corpus.tmp" "$spool/corpus.done"
 wait "$srv"
@@ -386,4 +391,70 @@ impl CloneMembers for RoundEnd {
             RoundEnd::Unconverged { red, probes, .. } => format!("unconverged: {red} after {probes} probes"),
         }
     }
+}
+
+#[test]
+#[ignore]
+fn e2e_an_attribution_leg_with_no_corpus_gets_its_control_probe_answered() {
+    let d = testkit::TempDir::new("batcher-e2e-nocorpus");
+    let repo_dir = d.join("repo");
+    write(&repo_dir.join("spira/gate"), "#!/bin/bash\n[ -e pilgrim.rs ] && exit 1\nexit 0\n");
+    write(&repo_dir.join("spira/test-a.sh"), "");
+    git(&repo_dir, &["init", "-q", "-b", "main"]);
+    commit(&repo_dir, "base");
+    let start = git(&repo_dir, &["rev-parse", "HEAD"]);
+    let mut tips = vec![];
+    for (id, file) in [("sp-a", "pilgrim.rs"), ("sp-b", "other.rs")] {
+        git(&repo_dir, &["checkout", "-q", "-b", &format!("spira/{id}"), &start]);
+        write(&repo_dir.join(file), "x\n");
+        commit(&repo_dir, id);
+        tips.push(git(&repo_dir, &["rev-parse", "HEAD"]));
+    }
+    git(&repo_dir, &["checkout", "-q", "main"]);
+    let wt = d.join("round-wt");
+    git(&repo_dir, &["worktree", "add", "-q", "--detach", wt.to_str().unwrap(), &start]);
+    for tip in &tips {
+        git(&wt, &["merge", "-q", "--no-ff", "--no-edit", tip]);
+    }
+    let pass = d.join("rounds/b-1.results");
+    fs::create_dir_all(&pass).unwrap();
+    for f in ["disk-usage", "fence-times", "round-phase", "round-script.log", "run.events", "runner.out", "unit-build", "vm-batch.err", "vm-batch.out"] {
+        write(&pass.join(f), "");
+    }
+    write(&pass.join("deny-list"), "# test-registry deny-list at=7 rows=0\n");
+    write(&pass.join("unit.json"), "{\"verdict\":\"red\"}");
+    write(&pass.join("unit-tests.out"), "FAIL gate tests::broken\n");
+    let mut env = crate::io::lifecycle_tests_env(&d);
+    env.round_vm = d.join("round-vm-stub");
+    testkit::write_exe(&env.round_vm, STUB);
+    testkit::write_exe(&env.queue_bin, "#!/bin/sh\nexit 0\n");
+    env.maxpar = 1;
+    let repo = Repo { name: "fx".into(), path: repo_dir, base: "main".into(), forge: PathBuf::new(), land: Land::Local };
+    let o = crate::Opts {
+        cmd: "attribute".into(),
+        repo: "fx".into(),
+        run: Some(d.to_path_buf()),
+        db: None,
+        home: Some(d.to_path_buf()),
+        round_vm: None,
+        suites: None,
+        members: None,
+        evidence: None,
+        reds: None,
+        after_pass: Some(pass),
+        record: None,
+        wt: Some(wt.clone()),
+        base: Some(start.clone()),
+        batch: None,
+        by: None,
+        reason: None,
+        all: false,
+        confirmed: false,
+    };
+    let given = vec![("sp-a".to_string(), tips[0].clone()), ("sp-b".to_string(), tips[1].clone())];
+    let line = crate::attribute_in(&o, env.clone(), repo, wt, start, given).unwrap();
+    let found = Command::new("find").arg(d.path()).args(["-path", "*/spool/res/b1.done"]).output().unwrap();
+    let served = !found.stdout.is_empty();
+    assert!(served, "the control probe's request was never served: {line}");
+    assert!(!line.contains("gave no verdict"), "{line}");
 }

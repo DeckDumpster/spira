@@ -145,6 +145,10 @@ pub trait RoundRunner {
     fn probe_label(&self) -> String {
         String::new()
     }
+    /// Each probe that had no verdict since the last call, as `job build members: why`.
+    fn probe_faults(&mut self) -> Vec<String> {
+        Vec::new()
+    }
     /// Like `filter_green`, judging only `scope` (`unitattr::rerun_scope`): the tests that failed.
     fn filter_green_in(
         &mut self,
@@ -1143,8 +1147,9 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         match control {
             Control::Fault => {
                 return Ok(FilterEject::Faulted(format!(
-                    "{} red{tests}: the control probe on the full membership gave no verdict twice",
-                    f.name
+                    "{} red{tests}: the control probe on the full membership gave no verdict twice{}",
+                    f.name,
+                    fault_reasons(runner.probe_faults())
                 )))
             }
             Control::Green => kind = "flipped",
@@ -1745,12 +1750,20 @@ enum Alone {
     Unconverged,
 }
 
+fn fault_reasons(faults: Vec<String>) -> String {
+    if faults.is_empty() {
+        String::new()
+    } else {
+        format!(": {}", faults.join("; "))
+    }
+}
+
 /// `red_alone` for a suite, after a positive control on the full membership and under the probe ceiling.
 fn suite_alone<R: RoundRunner>(runner: &mut R, suite: &str, members: &[Member]) -> (Alone, Probes) {
     let mut probes = Probes::new(members.len());
     match probes.control(members, &mut |m| runner.suite_green(suite, m)) {
         Control::Green => return (Alone::Flipped(NOT_IN_PROBE.into()), probes),
-        Control::Fault => return (Alone::Cleared("control probe gave no verdict".into()), probes),
+        Control::Fault => return (Alone::Cleared(format!("control probe gave no verdict{}", fault_reasons(runner.probe_faults()))), probes),
         Control::Red => {}
     }
     let found = red_alone(
@@ -2881,6 +2894,7 @@ pub(crate) mod tests {
         pub probes: Vec<Vec<String>>,
         /// Whether the fake can run a suite on a member subset, and each (suite, subset) it was asked for.
         pub runs_alone: bool,
+        pub faults: Vec<String>,
         pub alone: Vec<(String, Vec<String>)>,
         /// The packages each scoped filter probe was asked to judge.
         pub scoped: Vec<Vec<String>>,
@@ -2951,6 +2965,7 @@ pub(crate) mod tests {
                 bisects: false,
                 probes: vec![],
                 runs_alone: false,
+                faults: Vec::new(),
                 alone: vec![],
                 scoped: vec![],
                 prior: None,
@@ -3121,6 +3136,9 @@ pub(crate) mod tests {
             self.probes.push(tree.iter().cloned().collect());
             (self.bisects || self.runs_alone)
                 .then(|| self.filter.as_ref().is_none_or(|f| f(&tree).is_none()))
+        }
+        fn probe_faults(&mut self) -> Vec<String> {
+            std::mem::take(&mut self.faults)
         }
         fn filter_green_in(
             &mut self,
@@ -5669,6 +5687,20 @@ pub(crate) mod tests {
         let end = attribute_round(&mut f, &mut ops, &corpus(3), four(), budget6()).unwrap();
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
         assert!(matches!(end, RoundEnd::Faulted(_)), "no verdict from the control probe: {end:?}");
+    }
+
+    #[test]
+    fn a_control_probe_with_no_verdict_names_each_probes_own_reason_in_the_fault() {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = false;
+        f.filter = Some(release_red_when("m2"));
+        f.faults = vec!["b1 unit [m1,m2]: no round-vm is running".into()];
+        let mut ops = two_suspects();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), four(), budget6()).unwrap();
+        match end {
+            RoundEnd::Faulted(why) => assert!(why.contains("gave no verdict twice") && why.contains("b1 unit [m1,m2]: no round-vm is running"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
