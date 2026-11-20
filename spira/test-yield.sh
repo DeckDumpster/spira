@@ -243,6 +243,23 @@ rm -f "$YDIR/repo.spira_sp-ancient.-.branch-red"
 
 # ======================================================================================
 echo
+echo "a red whose reason is a fact about the branch alone is classified on arrival:"
+# ======================================================================================
+# no-rebase and phantom-bead-id are decided from the branch's own merge and citations, so
+# no later pass is needed to say whose fault they were. A branch-red from a suite is NOT:
+# it may be the box, so it stays UNKNOWN (the positive control for the matcher).
+YDIR_KEPT="$YDIR"; YDIR="$TMP/yield-reason"
+yield record repo spira/sp-norebase 1 no-rebase - - >/dev/null
+yield record repo spira/sp-phantom 1 phantom-bead-id - - >/dev/null
+yield record repo spira/sp-suite 1 branch-red - phase:test >/dev/null
+R="$(yield report)"
+is "the two branch-only reds are defects"      2 "$(f "$R" YIELD_DEFECT)"
+is "and both are marked inferred"              2 "$(f "$R" YIELD_DEFECT_INFERRED)"
+is "a suite's branch-red is still UNKNOWN"     1 "$(f "$R" YIELD_UNKNOWN)"
+YDIR="$YDIR_KEPT"
+
+# ======================================================================================
+echo
 echo "the cost, as a distribution against concurrency:"
 # ======================================================================================
 # A LANDING GATE NEVER RUNS SOLO. Every dwarf runs one before it closes and the landing pass

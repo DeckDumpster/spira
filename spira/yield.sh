@@ -177,7 +177,12 @@ cmd_record() {
     # refusing to charge an attempt. Recording them as anything but GATE_FAULT here would be
     # two parts of one program disagreeing about a question one of them has already decided.
     if spira_gate_blames_branch "$status"; then
-        verdict=UNKNOWN; by=""; why=""
+        case "$reason" in
+            no-rebase|phantom-bead-id)
+                verdict=DEFECT; by="auto:reason"
+                why="$reason is decided from the branch's own merge and citations, not from the box" ;;
+            *) verdict=UNKNOWN; by=""; why="" ;;
+        esac
     else
         verdict=GATE_FAULT; by="auto:$outcome"
         why="the gate itself says the branch is not at fault — $outcome/$reason"
