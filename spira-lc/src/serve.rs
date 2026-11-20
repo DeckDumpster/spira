@@ -1765,6 +1765,93 @@ mod tests {
     }
 
     #[test]
+    fn the_journal_sweep_finishes_on_a_production_sized_store_as_bounded_steps_through_the_door() {
+        use crate::control::journal::SWEEP_STEP;
+        use crate::journal::counting::Counting;
+        use serde_json::{json, Value};
+        use state_store::{Config, Contract, MemBackend, Object, Ports, Request, Txn};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let counter = Arc::new(AtomicUsize::new(0));
+        let backend = Counting(MemBackend::new(), counter.clone());
+        let ports = || Ports::virtual_clock(&runtime::ports::VirtualClock::new(1_000));
+        let raw = Contract::open(backend.clone(), ports(), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let store = Arc::new(crate::control::store::Store::new(Contract::open(backend, ports(), Config { min_lock_ttl_ms: 1_000 }).unwrap(), 1_000));
+        let key = |table: &str, id: &str| crate::control::keys::runtime(table, &[id]);
+        let mut writes: Vec<(String, Value)> = Vec::new();
+        for n in 0..12_000 {
+            writes.push((key("schedule", &format!("carried{n:05}")), json!({"at": 0, "stream": "s"})));
+        }
+        for n in 0..10_000 {
+            writes.push((key("resolved", &format!("ghost{n:05}")), json!({})));
+        }
+        for n in 0..300 {
+            writes.push((key("schedule", &format!("old{n}")), json!({"id": format!("old{n}"), "at": 1, "stream": "s", "kind": {"tag": "t", "body": "b"}, "cause": null, "correlation": "c"})));
+            writes.push((key("fired", &format!("old{n}")), json!({})));
+            let effect = |id: String| json!({"task": "t", "ekey": format!("e{id}"), "request_id": id, "stream": "s", "spec": {}, "requested_at": 1, "deadline_at": 2});
+            writes.push((crate::control::keys::runtime("effect", &["t", &format!("edone{n}")]), effect(format!("done{n}"))));
+            writes.push((key("resolved", &format!("done{n}")), json!({})));
+        }
+        writes.push((key("schedule", "live"), json!({"id": "live", "at": 1, "stream": "s", "kind": {"tag": "t", "body": "b"}, "cause": null, "correlation": "c"})));
+        writes.push((crate::control::keys::runtime("effect", &["t", "eopen"]), json!({"task": "t", "ekey": "eopen", "request_id": "open", "stream": "s", "spec": {}, "requested_at": 1, "deadline_at": 2})));
+        for (n, chunk) in writes.chunks(100).enumerate() {
+            let txn = chunk.iter().fold(Txn::new(), |t, (k, v)| t.put(k, Object::new(v.clone())));
+            assert!(raw.txn(&txn, &Request::new(&format!("seed-{n}"), "test", "seed")).unwrap().succeeded);
+        }
+        let work: super::Work = {
+            let store = Arc::clone(&store);
+            Arc::new(move |req| {
+                let (code, out) = crate::journal::answer(crate::journal::run(&req.argv[1..], &*store));
+                super::Answer::out(code, out)
+            })
+        };
+        let door = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadline: super::request_deadline });
+        let bound = 2 * SWEEP_STEP + 100;
+        let sweep = |dry: bool| -> (u64, u64, u64) {
+            let mut cursor: Option<String> = None;
+            let mut totals = (0, 0, 0);
+            loop {
+                let mut argv = vec!["journal", "sweep"];
+                if dry {
+                    argv.push("--dry-run");
+                }
+                if let Some(c) = &cursor {
+                    argv.extend(["--from", c]);
+                }
+                counter.store(0, Ordering::SeqCst);
+                let (code, out) = send(&door, &argv, None);
+                assert_eq!(code, 0, "{out}");
+                let asked = counter.load(Ordering::SeqCst);
+                assert!(asked <= bound, "one step asked the backend for {asked} keys (bound {bound})");
+                let v: Value = serde_json::from_str(&out).unwrap();
+                totals = (totals.0 + v["idless_schedules"].as_u64().unwrap(), totals.1 + v["indexed_schedules"].as_u64().unwrap(), totals.2 + v["indexed_effects"].as_u64().unwrap());
+                match v["next"].as_str() {
+                    Some(c) => cursor = Some(c.to_string()),
+                    None => return totals,
+                }
+            }
+        };
+        let exists = |k: &str| raw.get(k).unwrap().is_some();
+        let indexed = crate::control::keys::runtime("journal-meta", &["indexed"]);
+        let count = |table: &str| raw.list(&[crate::control::keys::runtime_table(table).as_str()], &state_store::Selector::Everything).unwrap().0.len();
+        let tables = || ["schedule", "pending", "open-effect", "resolved", "journal-meta"].map(count);
+        let before = tables();
+        assert_eq!(sweep(true), (12_000, 1, 1));
+        assert!(tables() == before && !exists(&indexed), "a dry run writes nothing");
+        assert_eq!(sweep(false), (12_000, 1, 1));
+        assert!(exists(&indexed) && !exists(&key("schedule", "carried00000")) && exists(&key("resolved", "ghost00000")));
+        assert!(exists(&key("pending", "live")) && exists(&key("open-effect", "open")), "the open rows are indexed");
+        for (argv, wanted) in [(["journal", "open-effects"], "open"), (["journal", "due"], "live")] {
+            counter.store(0, Ordering::SeqCst);
+            let (code, out) = send(&door, &argv, None);
+            let rows: Value = serde_json::from_str(&out).unwrap();
+            assert_eq!(code, 0, "{out}");
+            assert!(rows.as_array().unwrap().len() == 1 && out.contains(wanted), "{argv:?}: {out}");
+            let asked = counter.load(Ordering::SeqCst);
+            assert!(asked <= 8, "{argv:?} asked the backend for {asked} keys");
+        }
+    }
+
+    #[test]
     fn an_event_sent_twice_under_one_request_id_advances_the_bead_once() {
         let r = rig(false, three_seconds);
         filed(&r.world.lock().unwrap(), "sp-a");
