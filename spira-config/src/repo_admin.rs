@@ -856,7 +856,7 @@ mod tests {
         assert!(pid > 0);
         let stat = format!("{}/{pid}/stat", system_paths::PROC);
         let mut polls = 0u64;
-        while !std::fs::read_to_string(&stat).is_ok_and(|s| s.rsplit_once(')').is_some_and(|(_, r)| r.trim_start().starts_with('Z'))) {
+        while !std::fs::read_to_string(&stat).is_ok_and(|s| stat_state_is_gone(&s)) {
             polls += 1;
             assert!(polls < 50_000_000, "child never became a zombie");
             std::thread::yield_now();
