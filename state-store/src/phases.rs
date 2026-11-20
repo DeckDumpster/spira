@@ -14,9 +14,12 @@ pub enum Phase {
     ReaderWait,
     Read,
     Drain,
+    ContentWait,
+    ContentQuery,
+    Child,
 }
 
-const PHASES: usize = 6;
+const PHASES: usize = 9;
 
 impl Phase {
     pub fn name(self) -> &'static str {
@@ -27,6 +30,9 @@ impl Phase {
             Phase::ReaderWait => "reader_wait",
             Phase::Read => "read",
             Phase::Drain => "drain",
+            Phase::ContentWait => "content_wait",
+            Phase::ContentQuery => "content_query",
+            Phase::Child => "child",
         }
     }
 
@@ -37,6 +43,9 @@ impl Phase {
         Phase::ReaderWait,
         Phase::Read,
         Phase::Drain,
+        Phase::ContentWait,
+        Phase::ContentQuery,
+        Phase::Child,
     ];
 }
 
@@ -45,6 +54,7 @@ struct Inner {
     sum: [Duration; PHASES],
     count: [u64; PHASES],
     commits: Vec<Duration>,
+    programs: Vec<String>,
     open: Vec<Phase>,
     read_max: Duration,
     reads_ended: u64,
@@ -72,6 +82,12 @@ pub struct Snapshot {
     pub reads_overran: u64,
     /// The innermost phase still running.
     pub open: Option<&'static str>,
+    /// Dolt SQL statements run.
+    pub content_queries: u64,
+    /// Child processes run.
+    pub children: u64,
+    /// Basename of each child's program, in order.
+    pub programs: Vec<String>,
 }
 
 impl Recorder {
@@ -102,6 +118,9 @@ impl Recorder {
             reads_ended: g.reads_ended,
             reads_overran: g.reads_overran,
             open: g.open.last().map(|p| p.name()),
+            content_queries: g.count[Phase::ContentQuery as usize],
+            children: g.count[Phase::Child as usize],
+            programs: g.programs.clone(),
         }
     }
 }
@@ -257,6 +276,16 @@ pub fn record_read(took: Duration, end: ReadEnd) {
     }
 }
 
+/// Times `f`, a child process of `program`, as one `child` and records the program's basename.
+pub fn child<T>(program: &str, f: impl FnOnce() -> T) -> T {
+    let out = time(Phase::Child, f);
+    if let Some(rec) = current() {
+        let base = program.rsplit('/').next().unwrap_or(program);
+        rec.inner().programs.push(base.to_string());
+    }
+    out
+}
+
 /// How many commits the installed recorder holds; 0 when none is installed.
 fn commits() -> usize {
     current().map_or(0, |r| r.inner().commits.len())
@@ -332,6 +361,16 @@ mod tests {
         let _ = commit(|| Ok::<(), ()>(()));
         untrack();
         assert_eq!(rec.snapshot().commits_us.len(), 2);
+    }
+
+    #[test]
+    fn a_child_is_counted_and_named_by_its_basename() {
+        let rec = tracked();
+        child("/usr/bin/bd", || ());
+        child("git", || ());
+        untrack();
+        let s = rec.snapshot();
+        assert_eq!((s.children, s.programs), (2, vec!["bd".to_string(), "git".to_string()]));
     }
 
     #[test]

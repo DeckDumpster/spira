@@ -565,6 +565,10 @@ impl Startup {
             reads_ended: 0,
             reads_overran: 0,
             open_phase: None,
+            content_queries: 0,
+            children: 0,
+            programs: &[],
+            subverb: None,
         });
     }
 }
@@ -854,6 +858,10 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
                 reads_ended: none.reads_ended,
                 reads_overran: none.reads_overran,
                 open_phase: none.open,
+                content_queries: none.content_queries,
+                children: none.children,
+                programs: &none.programs,
+                subverb: None,
             };
             record_span(spans, &call);
             return;
@@ -948,6 +956,10 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
         reads_ended: store.reads_ended,
         reads_overran: store.reads_overran,
         open_phase: store.open,
+        content_queries: store.content_queries,
+        children: store.children,
+        programs: &store.programs,
+        subverb: subverb_of(&argv_seen),
     };
     record_span(spans, &call);
 }
@@ -1080,6 +1092,14 @@ fn reply_then_settle(stream: &UnixStream, ans: &Answer, answered: impl FnOnce(),
     if !crate::settle::owe_closes(&ans.owed) {
         crate::callers::settle_owed_with(&ans.owed, settle);
     }
+}
+
+/// `argv[1]` when it is a plain lowercase word, so bead ids and free text are never emitted.
+fn subverb_of(argv: &[String]) -> Option<&str> {
+    let word = argv.get(1)?;
+    let mut chars = word.chars();
+    let plain = chars.next().is_some_and(|c| c.is_ascii_lowercase()) && word.len() <= 32 && chars.all(|c| c.is_ascii_lowercase() || c == '-');
+    plain.then_some(word.as_str())
 }
 
 fn record_span(spans: Option<&spira_otel::Sink>, call: &spira_otel::Call) {

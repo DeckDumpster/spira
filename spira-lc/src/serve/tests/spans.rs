@@ -59,6 +59,10 @@ fn span_of(snapshot: &state_store::phases::Snapshot) -> opentelemetry_proto::ton
         reads_ended: snapshot.reads_ended,
         reads_overran: snapshot.reads_overran,
         open_phase: snapshot.open,
+        content_queries: snapshot.content_queries,
+        children: snapshot.children,
+        programs: &snapshot.programs,
+        subverb: None,
     };
     super::record_span(Some(&sink), &call);
     let file = std::fs::read_dir(&dir).unwrap().flatten().next().unwrap();
@@ -91,6 +95,36 @@ fn a_span_from_a_recorder_with_two_commits_names_both() {
     assert!(attr("spira.phase.commit_us").is_some() && attr("spira.phase.read_us").is_some());
     assert!(matches!(attr("spira.phase.open"), Some(Value::StringValue(s)) if s == "writer_wait"));
     assert!(attr("spira.queue_wait_us").is_some());
+}
+
+#[test]
+fn a_span_names_its_children_and_content_queries() {
+    use opentelemetry_proto::tonic::common::v1::any_value::Value;
+    use state_store::phases::{self, Phase};
+    let rec = std::sync::Arc::new(phases::Recorder::default());
+    phases::track(rec.clone());
+    phases::child("bd", || ());
+    phases::time(Phase::ContentQuery, || ());
+    phases::time(Phase::ContentQuery, || ());
+    phases::time(Phase::ContentWait, || ());
+    phases::untrack();
+    let span = span_of(&rec.snapshot());
+    let attr = |k: &str| span.attributes.iter().find(|a| a.key == k).and_then(|a| a.value.clone()).and_then(|v| v.value);
+    assert!(matches!(attr("spira.children"), Some(Value::IntValue(1))));
+    assert!(matches!(attr("spira.children.programs"), Some(Value::StringValue(s)) if s == "bd"));
+    assert!(matches!(attr("spira.content.queries"), Some(Value::IntValue(2))));
+    for k in ["spira.phase.child_us", "spira.phase.content_query_us", "spira.phase.content_wait_us"] {
+        assert!(attr(k).is_some(), "{k}");
+    }
+}
+
+#[test]
+fn the_subverb_is_a_plain_second_word_and_never_an_id_or_free_text() {
+    let argv = |w: &[&str]| w.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(super::subverb_of(&argv(&["content", "note", "sp-a", "x"])), Some("note"));
+    assert_eq!(super::subverb_of(&argv(&["history", "sp-a1b2"])), None);
+    assert_eq!(super::subverb_of(&argv(&["content", "Free text"])), None);
+    assert_eq!(super::subverb_of(&argv(&["content"])), None);
 }
 
 #[test]

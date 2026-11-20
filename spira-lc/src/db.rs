@@ -248,7 +248,7 @@ impl<S: Session> Sessions<S> {
     pub(crate) fn run(&self, open: impl Fn() -> Result<S, ScriptFailure>, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
         self.with_session(open, |session| {
             let started = std::time::Instant::now();
-            let out = session.exec(script);
+            let out = state_store::phases::time(state_store::phases::Phase::ContentQuery, || session.exec(script));
             crate::slow::record(started.elapsed(), script);
             let healthy = out.is_ok();
             (out, healthy)
@@ -258,6 +258,7 @@ impl<S: Session> Sessions<S> {
     /// Hands `f` an idle session, a fresh one while under the cap, or the next one released; `f`
     /// says whether the session may be reused. The pool lock is never held across `f` or a connect.
     pub(crate) fn with_session<T>(&self, open: impl Fn() -> Result<S, ScriptFailure>, f: impl FnOnce(&mut S) -> (T, bool)) -> Result<T, ScriptFailure> {
+        let waiting = state_store::phases::begin(state_store::phases::Phase::ContentWait);
         let mut pool = self.pool.lock().unwrap_or_else(|e| e.into_inner());
         let idle = loop {
             if let Some(s) = pool.idle.pop() {
@@ -281,6 +282,7 @@ impl<S: Session> Sessions<S> {
                 opened?
             }
         };
+        drop(waiting);
         let (out, healthy) = f(&mut session);
         if healthy {
             slot.session = Some(session);
@@ -316,7 +318,7 @@ struct WireTx<'a> {
 impl crate::content_write::Tx for WireTx<'_> {
     fn send(&mut self, sql: &str) -> Result<(), crate::content_write::Fail> {
         let started = std::time::Instant::now();
-        let out = self.wire.exec(sql);
+        let out = state_store::phases::time(state_store::phases::Phase::ContentQuery, || self.wire.exec(sql));
         crate::slow::record(started.elapsed(), sql);
         out.map(|_| ()).map_err(|e| match e {
             ScriptFailure::LostRace => crate::content_write::Fail::Conflict,
@@ -508,6 +510,41 @@ mod session_pool_tests {
         for h in held {
             h.recv_timeout(BOUND).unwrap();
         }
+    }
+
+    fn run_tracked(rig: &Rig, script: &str) -> state_store::phases::Snapshot {
+        let rec = Arc::new(state_store::phases::Recorder::default());
+        state_store::phases::track(rec.clone());
+        let (tx, release) = (rig.entered_tx.clone(), rig.release.clone());
+        let _ = rig.pool.run(|| Ok(Double { entered: tx.clone(), release: release.clone() }), script);
+        state_store::phases::untrack();
+        rec.snapshot()
+    }
+
+    #[test]
+    fn a_run_records_one_content_query() {
+        let rig = Rig::new(1);
+        assert_eq!(run_tracked(&rig, "fast").content_queries, 1);
+    }
+
+    #[test]
+    fn a_run_waiting_for_the_only_session_records_the_wait() {
+        let rig = Rig::new(1);
+        let held = rig.read("block");
+        rig.entered.recv_timeout(BOUND).unwrap();
+        let releaser = {
+            let release = rig.release.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(50));
+                *release.0.lock().unwrap() += 1;
+                release.1.notify_all();
+            })
+        };
+        let snap = run_tracked(&rig, "fast");
+        releaser.join().unwrap();
+        held.recv_timeout(BOUND).unwrap();
+        let waited = snap.phases.iter().find(|p| p.0 == "content_wait").map(|p| p.1).unwrap_or(0);
+        assert!(waited >= 50_000, "waited {waited} us");
     }
 
     #[test]

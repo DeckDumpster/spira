@@ -60,12 +60,12 @@ pub fn show_row(id: &str) -> Option<Row> {
     // same best-effort bail this whole module already uses.
     let db = spira_config::process::cfg("SPIRA_DB").ok().filter(|d| !d.is_empty())?;
     let bd = spira_config::process::cfg("SPIRA_BD").ok().filter(|b| !b.is_empty())?;
-    let out = Command::new("timeout").arg(CALL_SECS).arg(bd).args(["-C", &db, "show", id, "--json"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let out = state_store::phases::child("bd", || Command::new("timeout").arg(CALL_SECS).arg(&bd).args(["-C", &db, "show", id, "--json"]).stdin(Stdio::null()).stderr(Stdio::null()).output()).ok()?;
     out.status.success().then(|| parse_row(&String::from_utf8_lossy(&out.stdout))).flatten()
 }
 
 fn branch_exists(root: &str, branch: &str) -> bool {
-    Command::new("timeout").args([CALL_SECS, "git", "-C", root, "show-ref", "--verify", "-q", &format!("refs/heads/{branch}")]).status().map(|s| s.success()).unwrap_or(false)
+    state_store::phases::child("git", || Command::new("timeout").args([CALL_SECS, "git", "-C", root, "show-ref", "--verify", "-q", &format!("refs/heads/{branch}")]).status()).map(|s| s.success()).unwrap_or(false)
 }
 
 fn reap(id: &str, branch: &str, root: &str, why: &str) -> Result<(), String> {
@@ -75,7 +75,7 @@ fn reap(id: &str, branch: &str, root: &str, why: &str) -> Result<(), String> {
         c.arg("--status-from").arg(f);
     }
     c.args([id, branch, root, why]).stdin(Stdio::null()).stderr(Stdio::null());
-    match c.output() {
+    match state_store::phases::child("hel", || c.output()) {
         Ok(o) if o.status.success() => Ok(()),
         Ok(o) => {
             let t = String::from_utf8_lossy(&o.stdout).trim().to_string();
