@@ -34,7 +34,12 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
 fn utc_stamp(t: i64) -> String {
     let (y, m, d) = civil_from_days(t.div_euclid(86400));
     let s = t.rem_euclid(86400);
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", s / 3600, s % 3600 / 60, s % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        s / 3600,
+        s % 3600 / 60,
+        s % 60
+    )
 }
 
 /// `HH:MMZ`.
@@ -48,7 +53,13 @@ fn sanitize_key(kind: &str, target: &str) -> String {
     let target = if target.is_empty() { "plan" } else { target };
     format!("{kind}@{target}")
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '@' | '-') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '@' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -63,7 +74,15 @@ fn sanitize_key(kind: &str, target: &str) -> String {
 /// `title`, or a `run_dir/events` it cannot create. Every later failure (the log append)
 /// is swallowed, as the bash's own `|| true` swallows it — `Ok(())` either way.
 #[allow(clippy::result_unit_err, clippy::too_many_arguments)]
-pub fn emit(run_dir: &Path, cooldown: i64, now: i64, kind: &str, target: &str, title: &str, detail: &str) -> Result<(), ()> {
+pub fn emit(
+    run_dir: &Path,
+    cooldown: i64,
+    now: i64,
+    kind: &str,
+    target: &str,
+    title: &str,
+    detail: &str,
+) -> Result<(), ()> {
     if kind.is_empty() || title.is_empty() {
         return Err(());
     }
@@ -182,7 +201,16 @@ mod tests {
     #[test]
     fn a_first_outcome_is_recorded_whole() {
         let d = tmp("first");
-        emit(&d, 3600, 1000, "bead.landed", "sp-x", "landed spira/sp-x on brain's main", "merged as abc1234").unwrap();
+        emit(
+            &d,
+            3600,
+            1000,
+            "bead.landed",
+            "sp-x",
+            "landed spira/sp-x on brain's main",
+            "merged as abc1234",
+        )
+        .unwrap();
         assert_eq!(rows(&d), 1);
         let log = events_log(&d);
         assert!(log.contains("kind: bead.landed"));
@@ -202,9 +230,27 @@ mod tests {
     #[test]
     fn a_repeat_inside_the_window_is_not_a_second_row() {
         let d = tmp("repeat");
-        emit(&d, 3600, 1000, "branch.reclaimed", "sp-b0c", "reclaimed sp-b0c — reclaim 1", "").unwrap();
+        emit(
+            &d,
+            3600,
+            1000,
+            "branch.reclaimed",
+            "sp-b0c",
+            "reclaimed sp-b0c — reclaim 1",
+            "",
+        )
+        .unwrap();
         assert_eq!(rows(&d), 1);
-        emit(&d, 3600, 1001, "branch.reclaimed", "sp-b0c", "reclaimed sp-b0c — reclaim 2", "").unwrap();
+        emit(
+            &d,
+            3600,
+            1001,
+            "branch.reclaimed",
+            "sp-b0c",
+            "reclaimed sp-b0c — reclaim 2",
+            "",
+        )
+        .unwrap();
         assert_eq!(rows(&d), 1);
     }
 
@@ -212,13 +258,31 @@ mod tests {
     fn a_storm_is_one_row_but_distinct_beads_are_not_suppressed() {
         let d = tmp("storm");
         for n in 1..=26 {
-            emit(&d, 3600, 1000 + n, "branch.reclaimed", "sp-b0c", &format!("reclaimed sp-b0c — reclaim {n}"), "").unwrap();
+            emit(
+                &d,
+                3600,
+                1000 + n,
+                "branch.reclaimed",
+                "sp-b0c",
+                &format!("reclaimed sp-b0c — reclaim {n}"),
+                "",
+            )
+            .unwrap();
         }
         assert_eq!(rows(&d), 1, "a 26-reclaim storm is one row, not 26");
 
         let d2 = tmp("storm-distinct");
         for n in 1..=6 {
-            emit(&d2, 3600, 1000, "branch.reclaimed", &format!("sp-storm{n}"), &format!("reclaimed sp-storm{n}"), "").unwrap();
+            emit(
+                &d2,
+                3600,
+                1000,
+                "branch.reclaimed",
+                &format!("sp-storm{n}"),
+                &format!("reclaimed sp-storm{n}"),
+                "",
+            )
+            .unwrap();
         }
         assert_eq!(rows(&d2), 6, "six different beads reclaiming is six rows");
     }
@@ -234,24 +298,75 @@ mod tests {
     #[test]
     fn suppressed_rides_out_on_the_next_emission_with_a_count() {
         let d = tmp("suppressed");
-        emit(&d, 1, 1000, "branch.reclaimed", "sp-b0c", "reclaimed sp-b0c — reclaim 1", "").unwrap();
+        emit(
+            &d,
+            1,
+            1000,
+            "branch.reclaimed",
+            "sp-b0c",
+            "reclaimed sp-b0c — reclaim 1",
+            "",
+        )
+        .unwrap();
         for _ in 0..3 {
-            emit(&d, 999, 1000, "branch.reclaimed", "sp-b0c", "reclaimed sp-b0c — repeat", "").unwrap();
+            emit(
+                &d,
+                999,
+                1000,
+                "branch.reclaimed",
+                "sp-b0c",
+                "reclaimed sp-b0c — repeat",
+                "",
+            )
+            .unwrap();
         }
         assert_eq!(rows(&d), 1, "three repeats are held");
-        emit(&d, 1, 1002, "branch.reclaimed", "sp-b0c", "reclaimed sp-b0c — reclaim 5", "").unwrap();
+        emit(
+            &d,
+            1,
+            1002,
+            "branch.reclaimed",
+            "sp-b0c",
+            "reclaimed sp-b0c — reclaim 5",
+            "",
+        )
+        .unwrap();
         assert_eq!(rows(&d), 2, "the expired window emits again");
-        assert!(events_log(&d).contains("+3 more since"), "carrying what it held back");
+        assert!(
+            events_log(&d).contains("+3 more since"),
+            "carrying what it held back"
+        );
     }
 
     #[test]
     fn the_window_belongs_to_the_first_emission_not_the_last_suppression() {
         let d = tmp("hot");
-        emit(&d, 2, 1000, "branch.reclaimed", "sp-hot", "reclaimed sp-hot — 1", "").unwrap();
+        emit(
+            &d,
+            2,
+            1000,
+            "branch.reclaimed",
+            "sp-hot",
+            "reclaimed sp-hot — 1",
+            "",
+        )
+        .unwrap();
         for n in 1..=4 {
-            emit(&d, 2, 1000 + n, "branch.reclaimed", "sp-hot", &format!("reclaimed sp-hot — {}", n + 1), "").unwrap();
+            emit(
+                &d,
+                2,
+                1000 + n,
+                "branch.reclaimed",
+                "sp-hot",
+                &format!("reclaimed sp-hot — {}", n + 1),
+                "",
+            )
+            .unwrap();
         }
-        assert!(rows(&d) >= 2, "a loop faster than the window still surfaces");
+        assert!(
+            rows(&d) >= 2,
+            "a loop faster than the window still surfaces"
+        );
     }
 
     #[test]

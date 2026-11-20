@@ -27,9 +27,19 @@ struct ListArgs {
 }
 
 fn parse_list_args(args: &[String]) -> Result<ListArgs, (i32, String)> {
-    let mut a = ListArgs { status: None, labels: Vec::new(), all: false, limit: 0, closed_after: None };
+    let mut a = ListArgs {
+        status: None,
+        labels: Vec::new(),
+        all: false,
+        limit: 0,
+        closed_after: None,
+    };
     let mut i = 0;
-    let value = |i: usize| args.get(i).cloned().ok_or_else(|| (1, "bdsim: missing value".to_string()));
+    let value = |i: usize| {
+        args.get(i)
+            .cloned()
+            .ok_or_else(|| (1, "bdsim: missing value".to_string()))
+    };
     while i < args.len() {
         match args[i].as_str() {
             "--json" => {}
@@ -40,7 +50,12 @@ fn parse_list_args(args: &[String]) -> Result<ListArgs, (i32, String)> {
             }
             "--label" | "-l" => {
                 i += 1;
-                a.labels.extend(value(i)?.split(',').filter(|x| !x.is_empty()).map(str::to_string));
+                a.labels.extend(
+                    value(i)?
+                        .split(',')
+                        .filter(|x| !x.is_empty())
+                        .map(str::to_string),
+                );
             }
             "--closed-after" => {
                 i += 1;
@@ -48,7 +63,9 @@ fn parse_list_args(args: &[String]) -> Result<ListArgs, (i32, String)> {
             }
             "--limit" | "-n" => {
                 i += 1;
-                a.limit = value(i)?.parse().map_err(|_| (1, "bdsim: bad --limit".to_string()))?;
+                a.limit = value(i)?
+                    .parse()
+                    .map_err(|_| (1, "bdsim: bad --limit".to_string()))?;
             }
             other => return Err((1, format!("bdsim: list '{other}' is not simulated"))),
         }
@@ -61,7 +78,11 @@ fn bd_list(beads: &[Value], a: &ListArgs) -> Vec<Value> {
     let keep = |b: &Value| {
         let status = b.get("status").and_then(Value::as_str);
         if let Some(after) = &a.closed_after {
-            let closed_at = b.get("closed_at").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or(after);
+            let closed_at = b
+                .get("closed_at")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(after);
             if status != Some("closed") || closed_at < after.as_str() {
                 return false;
             }
@@ -79,8 +100,11 @@ fn bd_list(beads: &[Value], a: &ListArgs) -> Vec<Value> {
             }
         }
         if !a.labels.is_empty() {
-            let have: BTreeSet<&str> =
-                b.get("labels").and_then(Value::as_array).map(|l| l.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+            let have: BTreeSet<&str> = b
+                .get("labels")
+                .and_then(Value::as_array)
+                .map(|l| l.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
             if !a.labels.iter().all(|l| have.contains(l.as_str())) {
                 return false;
             }
@@ -97,7 +121,12 @@ fn bd_list(beads: &[Value], a: &ListArgs) -> Vec<Value> {
 
 fn bd_show(pool: &[Value], ids: &[&String]) -> Vec<Value> {
     ids.iter()
-        .filter_map(|want| pool.iter().rev().find(|b| b.get("id").and_then(Value::as_str) == Some(want.as_str())).cloned())
+        .filter_map(|want| {
+            pool.iter()
+                .rev()
+                .find(|b| b.get("id").and_then(Value::as_str) == Some(want.as_str()))
+                .cloned()
+        })
         .collect()
 }
 
@@ -106,7 +135,13 @@ pub fn answer(fixture: &str, sub: &str, rest: &[String]) -> Answer {
     let fx: Value = serde_json::from_str(fixture).map_err(|_| (1, String::new()))?;
     let (top_list, top): (Vec<Value>, Value) = match &fx {
         Value::Array(a) => (a.clone(), json!({})),
-        Value::Object(o) => (o.get("list").and_then(Value::as_array).cloned().unwrap_or_default(), fx.clone()),
+        Value::Object(o) => (
+            o.get("list")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            fx.clone(),
+        ),
         _ => return Err((1, String::new())),
     };
     let out = match sub {
@@ -132,7 +167,9 @@ pub fn run(argv: &[String]) -> i32 {
         eprintln!("usage: bdsim <fixture-file> <bd-subcommand> [args...]");
         return 1;
     }
-    let Ok(text) = std::fs::read_to_string(&argv[0]) else { return 1 };
+    let Ok(text) = std::fs::read_to_string(&argv[0]) else {
+        return 1;
+    };
     match answer(&text, &argv[1], &argv[2..]) {
         Ok(out) => {
             print!("{out}");
@@ -157,23 +194,51 @@ mod tests {
     const FX: &str = r#"[{"id":"a","status":"open","labels":["x","y"]},{"id":"b","status":"closed","labels":["x"],"closed_at":"2026-01-02"},{"id":"c","status":"open","labels":["y"]}]"#;
 
     fn ids(out: &str) -> Vec<String> {
-        serde_json::from_str::<Vec<Value>>(out).unwrap().iter().map(|b| b["id"].as_str().unwrap().to_string()).collect()
+        serde_json::from_str::<Vec<Value>>(out)
+            .unwrap()
+            .iter()
+            .map(|b| b["id"].as_str().unwrap().to_string())
+            .collect()
     }
 
     #[test]
     fn list_hides_closed_unless_asked_and_ands_labels() {
-        assert_eq!(ids(&answer(FX, "list", &s(&["--json"])).unwrap()), ["a", "c"]);
-        assert_eq!(ids(&answer(FX, "list", &s(&["--all"])).unwrap()), ["a", "b", "c"]);
-        assert_eq!(ids(&answer(FX, "list", &s(&["--label", "x,y"])).unwrap()), ["a"]);
-        assert_eq!(ids(&answer(FX, "list", &s(&["--status", "closed"])).unwrap()), ["b"]);
-        assert_eq!(ids(&answer(FX, "list", &s(&["--all", "--limit", "2"])).unwrap()), ["a", "b"]);
-        assert_eq!(ids(&answer(FX, "list", &s(&["--all", "--closed-after", "2026-01-01"])).unwrap()), ["b"]);
-        assert!(ids(&answer(FX, "list", &s(&["--all", "--closed-after", "2026-02-01"])).unwrap()).is_empty());
+        assert_eq!(
+            ids(&answer(FX, "list", &s(&["--json"])).unwrap()),
+            ["a", "c"]
+        );
+        assert_eq!(
+            ids(&answer(FX, "list", &s(&["--all"])).unwrap()),
+            ["a", "b", "c"]
+        );
+        assert_eq!(
+            ids(&answer(FX, "list", &s(&["--label", "x,y"])).unwrap()),
+            ["a"]
+        );
+        assert_eq!(
+            ids(&answer(FX, "list", &s(&["--status", "closed"])).unwrap()),
+            ["b"]
+        );
+        assert_eq!(
+            ids(&answer(FX, "list", &s(&["--all", "--limit", "2"])).unwrap()),
+            ["a", "b"]
+        );
+        assert_eq!(
+            ids(&answer(FX, "list", &s(&["--all", "--closed-after", "2026-01-01"])).unwrap()),
+            ["b"]
+        );
+        assert!(
+            ids(&answer(FX, "list", &s(&["--all", "--closed-after", "2026-02-01"])).unwrap())
+                .is_empty()
+        );
     }
 
     #[test]
     fn show_returns_requested_ids_in_order_and_object_fixtures_split_keys() {
-        assert_eq!(ids(&answer(FX, "show", &s(&["c", "--json", "a", "zz"])).unwrap()), ["c", "a"]);
+        assert_eq!(
+            ids(&answer(FX, "show", &s(&["c", "--json", "a", "zz"])).unwrap()),
+            ["c", "a"]
+        );
         let obj = r#"{"list":[{"id":"a"}],"show":{"k":{"id":"s"}},"memories":{"m":1}}"#;
         assert_eq!(ids(&answer(obj, "show", &s(&["s"])).unwrap()), ["s"]);
         assert_eq!(answer(obj, "memories", &[]).unwrap().trim(), r#"{"m":1}"#);

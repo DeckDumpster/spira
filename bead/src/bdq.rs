@@ -126,7 +126,9 @@ fn schema_delete_fields(args: &[String]) -> (String, String) {
 
 /// The first `repo:<val>` token out of a comma-joined labels string.
 fn repo_label_value(labels: &str) -> Option<&str> {
-    labels.split(',').find_map(|t| t.trim().strip_prefix("repo:"))
+    labels
+        .split(',')
+        .find_map(|t| t.trim().strip_prefix("repo:"))
 }
 
 /// Every `-l`/`--labels`/`--labels=` value in argv, joined with commas: bd accepts the flag
@@ -175,8 +177,14 @@ pub fn check_repo_label(args: &[String], registry: &Registry) -> Option<String> 
         return None;
     }
     names.sort();
-    let valid = if names.is_empty() { "<map not found>".to_string() } else { names.join(" ") };
-    Some(format!("spira: repo:{repo_val} is not in the repo map; valid keys: {valid}\n"))
+    let valid = if names.is_empty() {
+        "<map not found>".to_string()
+    } else {
+        names.join(" ")
+    };
+    Some(format!(
+        "spira: repo:{repo_val} is not in the repo map; valid keys: {valid}\n"
+    ))
 }
 
 /// A bead's state is its lifecycle row's (sp-6oimlm): bdq refuses every verb that writes bd's
@@ -190,7 +198,9 @@ pub fn check_state_verb(args: &[String]) -> Option<&'static str> {
     let writes = match verb {
         "close" | "reopen" | "defer" | "undefer" => true,
         "update" => args.iter().skip(1).any(|a| {
-            matches!(a.as_str(), "--status" | "-s" | "--defer") || a.starts_with("--status=") || a.starts_with("--defer=")
+            matches!(a.as_str(), "--status" | "-s" | "--defer")
+                || a.starts_with("--status=")
+                || a.starts_with("--defer=")
         }),
         _ => false,
     };
@@ -212,8 +222,14 @@ pub fn check_ask_label_write(args: &[String], ask_label: &str) -> Option<String>
         return None;
     }
     let writes = match args.first().map(String::as_str) {
-        Some("label") => args.get(1).map(String::as_str) == Some("add") && args.iter().skip(3).any(|a| a == ask_label),
-        Some("update") => args.windows(2).any(|w| matches!(w[0].as_str(), "--add-label" | "--set-labels") && w[1].split(',').any(|l| l == ask_label)),
+        Some("label") => {
+            args.get(1).map(String::as_str) == Some("add")
+                && args.iter().skip(3).any(|a| a == ask_label)
+        }
+        Some("update") => args.windows(2).any(|w| {
+            matches!(w[0].as_str(), "--add-label" | "--set-labels")
+                && w[1].split(',').any(|l| l == ask_label)
+        }),
         _ => false,
     };
     if !writes {
@@ -233,10 +249,14 @@ pub fn check_ask_shape(args: &[String], ask_label: &str) -> Option<String> {
         return None;
     }
     let has_question = title.contains('?') || desc.contains("## Question");
-    let has_default = desc.lines().any(|l| l.trim_start().to_ascii_lowercase().starts_with("default:") && l.trim().len() > "default:".len());
+    let has_default = desc.lines().any(|l| {
+        l.trim_start().to_ascii_lowercase().starts_with("default:")
+            && l.trim().len() > "default:".len()
+    });
     let has_class = desc.lines().any(|l| {
         let l = l.trim().to_ascii_lowercase();
-        l.strip_prefix("class:").is_some_and(|c| ["permissions", "policy", "destructive", "design"].contains(&c.trim()))
+        l.strip_prefix("class:")
+            .is_some_and(|c| ["permissions", "policy", "destructive", "design"].contains(&c.trim()))
     });
     if has_question && has_default && has_class {
         return None;
@@ -251,7 +271,10 @@ pub fn check_ask_shape(args: &[String], ask_label: &str) -> Option<String> {
 /// The schema-migrations-DELETE regex, kept as a pure matcher.
 pub fn schema_delete_match(text: &str) -> bool {
     static PATTERN: &str = r"delete[[:space:]]+from[[:space:]]+schema_migrations";
-    let re = regex::RegexBuilder::new(PATTERN).case_insensitive(true).build().expect("static pattern");
+    let re = regex::RegexBuilder::new(PATTERN)
+        .case_insensitive(true)
+        .build()
+        .expect("static pattern");
     re.is_match(text)
 }
 
@@ -279,7 +302,10 @@ pub fn check_schema_delete(args: &[String]) -> Option<String> {
 /// `[ "${1:-}" = create ]` — whether this call is a `bd create`, which is when all three
 /// fences above run.
 pub fn is_create(args: &[String]) -> bool {
-    matches!(args.first().map(String::as_str), Some("create" | "create-form" | "q"))
+    matches!(
+        args.first().map(String::as_str),
+        Some("create" | "create-form" | "q")
+    )
 }
 
 /// Whether this call creates beads by any verb: `create` and its kin, `import`, and the
@@ -319,7 +345,10 @@ pub fn creates_closed(args: &[String]) -> bool {
         .windows(2)
         .find(|w| w[0] == flag)
         .map(|w| w[1].as_str())
-        .or_else(|| args.iter().find_map(|a| a.strip_prefix(flag).and_then(|v| v.strip_prefix('='))));
+        .or_else(|| {
+            args.iter()
+                .find_map(|a| a.strip_prefix(flag).and_then(|v| v.strip_prefix('=')))
+        });
     value.is_some_and(|v| is_closed(Kind::Insight, v))
 }
 
@@ -355,7 +384,11 @@ pub fn czar_fence_class<'a>(
         Some("reopen") => Some(czar_class),
         Some("update") | Some("close") => {
             let second = args.get(1).map(String::as_str).unwrap_or("");
-            let trigger = if czar_trigger_bead.is_empty() { "__none__" } else { czar_trigger_bead };
+            let trigger = if czar_trigger_bead.is_empty() {
+                "__none__"
+            } else {
+                czar_trigger_bead
+            };
             if second != trigger {
                 Some(czar_class)
             } else {
@@ -378,7 +411,14 @@ pub fn czar_fence(class: &str, stage_of: &dyn Fn(&str) -> Option<String>) -> Res
 pub fn utc_stamp_nanos(t: std::time::SystemTime) -> String {
     let d = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     let secs = d.as_secs() % 86_400;
-    format!("{}T{:02}:{:02}:{:02}.{:09}Z", spira_otel::utc_date(t), secs / 3600, secs / 60 % 60, secs % 60, d.subsec_nanos())
+    format!(
+        "{}T{:02}:{:02}:{:02}.{:09}Z",
+        spira_otel::utc_date(t),
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60,
+        d.subsec_nanos()
+    )
 }
 
 // =========================================================================================
@@ -420,22 +460,46 @@ pub fn json_count(input: &str) -> u64 {
 /// `[ "$_bdq_rc" -eq 0 ] || [ "$_bdq_try" -ge "$_bdq_tries" ] || ! grep -q "invalid connection" "$_bdq_err"`
 /// decides when to BREAK; this is the negation (when to keep going), spelled out positively
 /// so the caller's loop reads as "retry while this is true".
-pub fn should_retry(rc: i32, try_n: u32, max_tries: u32, stderr_has_invalid_connection: bool) -> bool {
+pub fn should_retry(
+    rc: i32,
+    try_n: u32,
+    max_tries: u32,
+    stderr_has_invalid_connection: bool,
+) -> bool {
     rc != 0 && try_n < max_tries.max(1) && stderr_has_invalid_connection
 }
 
 /// What bdq says when bd failed and said nothing, so the caller's refusal carries a cause
 /// instead of an empty stderr. A write that exited non-zero may still have committed.
-pub fn silent_failure_note(args: &[String], rc: i32, stderr: &str, tries: u32, ms: u128) -> Option<String> {
+pub fn silent_failure_note(
+    args: &[String],
+    rc: i32,
+    stderr: &str,
+    tries: u32,
+    ms: u128,
+) -> Option<String> {
     if rc == 0 || !stderr.trim().is_empty() {
         return None;
     }
-    let verb = args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or("");
-    let unknown = if is_write(args) { "; the write's outcome is unknown, read it back before repeating it" } else { "" };
-    Some(format!("bdq: bd {verb} exited {rc} with no output after {tries} attempt(s) in {ms}ms{unknown}\n"))
+    let verb = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map(String::as_str)
+        .unwrap_or("");
+    let unknown = if is_write(args) {
+        "; the write's outcome is unknown, read it back before repeating it"
+    } else {
+        ""
+    };
+    Some(format!(
+        "bdq: bd {verb} exited {rc} with no output after {tries} attempt(s) in {ms}ms{unknown}\n"
+    ))
 }
 
-const READ_VERBS: &[&str] = &["show", "list", "count", "ready", "blocked", "query", "search", "stats", "status", "children", "dep", "graph", "find", "export"];
+const READ_VERBS: &[&str] = &[
+    "show", "list", "count", "ready", "blocked", "query", "search", "stats", "status", "children",
+    "dep", "graph", "find", "export",
+];
 
 /// A read may be retried on any dropped connection. A write only when bd never got as far as
 /// the statement ("failed to open database"), so it cannot have committed.
@@ -443,7 +507,11 @@ pub fn retryable(args: &[String], stderr: &str) -> bool {
     if !stderr.contains("invalid connection") {
         return false;
     }
-    let verb = args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or("");
+    let verb = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map(String::as_str)
+        .unwrap_or("");
     READ_VERBS.contains(&verb)
         || stderr.contains("failed to open database")
         || stderr.contains("failed to check if database")
@@ -452,7 +520,11 @@ pub fn retryable(args: &[String], stderr: &str) -> bool {
 /// A call that mutates the store: anything whose verb is not a read. These are the calls the
 /// writer cap serialises.
 pub fn is_write(args: &[String]) -> bool {
-    let verb = args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or("");
+    let verb = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map(String::as_str)
+        .unwrap_or("");
     !verb.is_empty() && !READ_VERBS.contains(&verb)
 }
 
@@ -486,8 +558,12 @@ mod tests {
     fn czar_fence_admits_act_only_and_defaults_to_shadow() {
         let stage = |v: &str| (v == "SPIRA_CZAR_STAGE_LOOP_STALLED").then(|| "act".to_string());
         assert_eq!(czar_fence("loop-stalled", &stage), Ok(()));
-        assert!(czar_fence("deadlock", &stage).unwrap_err().contains("SPIRA_CZAR_STAGE_DEADLOCK=act"));
-        assert!(czar_fence("deadlock", &|_| Some("wat".into())).unwrap_err().contains("unknown stage wat"));
+        assert!(czar_fence("deadlock", &stage)
+            .unwrap_err()
+            .contains("SPIRA_CZAR_STAGE_DEADLOCK=act"));
+        assert!(czar_fence("deadlock", &|_| Some("wat".into()))
+            .unwrap_err()
+            .contains("unknown stage wat"));
         assert!(czar_fence("", &stage).is_err());
     }
 
@@ -498,7 +574,10 @@ mod tests {
     }
 
     fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     fn s(strs: &[&str]) -> Vec<String> {
@@ -509,19 +588,40 @@ mod tests {
 
     #[test]
     fn every_state_verb_is_refused_and_names_the_machines_door() {
-        for argv in [&["close", "sp-a", "--reason", "x"][..], &["reopen", "sp-a"], &["defer", "sp-a"], &["undefer", "sp-a"],
-            &["update", "sp-a", "--status", "open"], &["update", "sp-a", "-s", "closed"], &["update", "sp-a", "--status=open"],
-            &["update", "sp-a", "--defer", "2026-10-08"]] {
-            let exit = check_state_verb(&s(argv)).unwrap_or_else(|| panic!("{argv:?} was not refused"));
-            assert!(exit.contains("spira-lc") || exit.contains("lifecycle"), "{argv:?}: {exit}");
+        for argv in [
+            &["close", "sp-a", "--reason", "x"][..],
+            &["reopen", "sp-a"],
+            &["defer", "sp-a"],
+            &["undefer", "sp-a"],
+            &["update", "sp-a", "--status", "open"],
+            &["update", "sp-a", "-s", "closed"],
+            &["update", "sp-a", "--status=open"],
+            &["update", "sp-a", "--defer", "2026-10-08"],
+        ] {
+            let exit =
+                check_state_verb(&s(argv)).unwrap_or_else(|| panic!("{argv:?} was not refused"));
+            assert!(
+                exit.contains("spira-lc") || exit.contains("lifecycle"),
+                "{argv:?}: {exit}"
+            );
         }
-        assert!(check_state_verb(&s(&["reopen", "sp-a"])).unwrap().contains("spira-lc reopen"));
+        assert!(check_state_verb(&s(&["reopen", "sp-a"]))
+            .unwrap()
+            .contains("spira-lc reopen"));
     }
 
     #[test]
     fn reads_notes_labels_and_creates_are_not_state_verbs() {
-        for argv in [&["show", "sp-a"][..], &["list", "--status", "open"], &["note", "sp-a", "--stdin"], &["label", "add", "sp-a", "x"],
-            &["update", "sp-a", "--add-label", "x"], &["update", "sp-a", "--assignee", ""], &["create", "t", "--labels", "spira"], &[]] {
+        for argv in [
+            &["show", "sp-a"][..],
+            &["list", "--status", "open"],
+            &["note", "sp-a", "--stdin"],
+            &["label", "add", "sp-a", "x"],
+            &["update", "sp-a", "--add-label", "x"],
+            &["update", "sp-a", "--assignee", ""],
+            &["create", "t", "--labels", "spira"],
+            &[],
+        ] {
             assert_eq!(check_state_verb(&s(argv)), None, "{argv:?}");
         }
     }
@@ -531,14 +631,24 @@ mod tests {
     fn repo_label_allows_home_repo_and_known_repos() {
         let e = env(&[("SPIRA_HOME_REPO", "spira")]);
         let reg = registry_from_env(&e, Path::new("x"));
-        assert_eq!(check_repo_label(&s(&["create", "title", "--labels", "plan,repo:spira"]), &reg), None);
+        assert_eq!(
+            check_repo_label(
+                &s(&["create", "title", "--labels", "plan,repo:spira"]),
+                &reg
+            ),
+            None
+        );
     }
 
     // covers: UC-config-store-preflight-13
     #[test]
     fn repo_label_refuses_unknown_repo_and_names_valid_keys() {
         let map = "spira | /srv/spira | push | origin/main | |\nwidget | /srv/widget | pr | origin/main | |\n";
-        let reg = Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", "homerepo")]), Path::new("x"));
+        let reg = Registry::new(
+            Some(map),
+            &env(&[("SPIRA_HOME_REPO", "homerepo")]),
+            Path::new("x"),
+        );
         let msg = check_repo_label(&s(&["create", "title", "--labels", "plan,repo:nope"]), &reg);
         let msg = msg.expect("refused");
         assert!(msg.contains("repo:nope"), "{msg}");
@@ -552,8 +662,12 @@ mod tests {
         text.match_indices("repo:")
             .filter_map(|(i, _)| {
                 let rest = &text[i + 5..];
-                let word: String = rest.chars().take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-').collect();
-                (word.chars().next().is_some_and(|c| c.is_ascii_lowercase())).then(|| format!("repo:{word}"))
+                let word: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
+                    .collect();
+                (word.chars().next().is_some_and(|c| c.is_ascii_lowercase()))
+                    .then(|| format!("repo:{word}"))
             })
             .collect()
     }
@@ -562,9 +676,15 @@ mod tests {
     #[test]
     fn no_shipped_runes_persona_names_a_repository_by_literal() {
         let planted = "bd create -l \"plan,repo:sentinel-test-literal\" and repo:<name> and repo:${SPIRA_HOME_REPO}";
-        assert_eq!(bare_repo_literals(planted), vec!["repo:sentinel-test-literal"], "positive control: the matcher fires on a literal only");
+        assert_eq!(
+            bare_repo_literals(planted),
+            vec!["repo:sentinel-test-literal"],
+            "positive control: the matcher fires on a literal only"
+        );
 
-        let dir = spira_config::resolve::locate_home_for_process().unwrap().join("runes");
+        let dir = spira_config::resolve::locate_home_for_process()
+            .unwrap()
+            .join("runes");
         let mut checked = 0;
         let mut found = Vec::new();
         for e in std::fs::read_dir(&dir).unwrap().filter_map(Result::ok) {
@@ -574,32 +694,63 @@ mod tests {
             }
             checked += 1;
             for lit in bare_repo_literals(&std::fs::read_to_string(&p).unwrap()) {
-                found.push(format!("{}: {lit}", p.file_name().unwrap().to_string_lossy()));
+                found.push(format!(
+                    "{}: {lit}",
+                    p.file_name().unwrap().to_string_lossy()
+                ));
             }
         }
-        assert!(checked >= 10, "the sweep saw the shipped personas: {checked}");
-        assert!(found.is_empty(), "personas that hardcode a repository: {found:?}");
+        assert!(
+            checked >= 10,
+            "the sweep saw the shipped personas: {checked}"
+        );
+        assert!(
+            found.is_empty(),
+            "personas that hardcode a repository: {found:?}"
+        );
     }
 
     #[test]
     fn repo_label_no_repo_label_at_all_is_allowed() {
         let reg = registry_from_env(&env(&[]), Path::new("x"));
-        assert_eq!(check_repo_label(&s(&["create", "title", "--labels", "plan"]), &reg), None);
+        assert_eq!(
+            check_repo_label(&s(&["create", "title", "--labels", "plan"]), &reg),
+            None
+        );
     }
 
     #[test]
     fn repo_label_in_a_non_last_labels_flag_is_still_checked() {
         let map = "spira | /srv/spira | push | origin/main | |\n";
-        let reg = Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", "homerepo")]), Path::new("x"));
-        let msg = check_repo_label(&s(&["create", "title", "-l", "repo:nope", "-l", "plan"]), &reg);
+        let reg = Registry::new(
+            Some(map),
+            &env(&[("SPIRA_HOME_REPO", "homerepo")]),
+            Path::new("x"),
+        );
+        let msg = check_repo_label(
+            &s(&["create", "title", "-l", "repo:nope", "-l", "plan"]),
+            &reg,
+        );
         assert!(msg.expect("refused").contains("repo:nope"));
-        assert_eq!(check_repo_label(&s(&["create", "title", "-l", "repo:spira", "--labels=plan"]), &reg), None);
+        assert_eq!(
+            check_repo_label(
+                &s(&["create", "title", "-l", "repo:spira", "--labels=plan"]),
+                &reg
+            ),
+            None
+        );
     }
 
     #[test]
     fn created_repo_reads_the_repo_label_from_every_labels_flag() {
-        assert_eq!(created_repo(&s(&["create", "T", "-l", "repo:deck", "-l", "plan"])), Some("deck".into()));
-        assert_eq!(created_repo(&s(&["create", "T", "-l", "plan", "--labels=a, repo:deck"])), Some("deck".into()));
+        assert_eq!(
+            created_repo(&s(&["create", "T", "-l", "repo:deck", "-l", "plan"])),
+            Some("deck".into())
+        );
+        assert_eq!(
+            created_repo(&s(&["create", "T", "-l", "plan", "--labels=a, repo:deck"])),
+            Some("deck".into())
+        );
         assert_eq!(created_repo(&s(&["create", "T", "-l", "plan"])), None);
     }
 
@@ -608,35 +759,94 @@ mod tests {
     #[test]
     fn ask_label_cannot_be_added_to_an_existing_bead() {
         let a = "needs-ryan"; // literal-ok: fixture/fallback
-        assert!(check_ask_label_write(&s(&["label", "add", "sp-1", a]), a).unwrap().contains("Exit:"));
+        assert!(check_ask_label_write(&s(&["label", "add", "sp-1", a]), a)
+            .unwrap()
+            .contains("Exit:"));
         assert!(check_ask_label_write(&s(&["update", "sp-1", "--add-label", a]), a).is_some());
-        assert!(check_ask_label_write(&s(&["update", "sp-1", "--add-label", "x,needs-ryan"]), a).is_some()); // literal-ok: fixture/fallback
-        assert_eq!(check_ask_label_write(&s(&["label", "add", "sp-1", "overseer"]), a), None);
-        assert_eq!(check_ask_label_write(&s(&["label", "remove", "sp-1", a]), a), None);
-        assert_eq!(check_ask_label_write(&s(&["update", "sp-1", "--remove-label", a]), a), None);
-        assert_eq!(check_ask_label_write(&s(&["label", "add", "sp-1", a]), ""), None);
+        assert!(
+            check_ask_label_write(&s(&["update", "sp-1", "--add-label", "x,needs-ryan"]), a)
+                .is_some()
+        ); // literal-ok: fixture/fallback
+        assert_eq!(
+            check_ask_label_write(&s(&["label", "add", "sp-1", "overseer"]), a),
+            None
+        );
+        assert_eq!(
+            check_ask_label_write(&s(&["label", "remove", "sp-1", a]), a),
+            None
+        );
+        assert_eq!(
+            check_ask_label_write(&s(&["update", "sp-1", "--remove-label", a]), a),
+            None
+        );
+        assert_eq!(
+            check_ask_label_write(&s(&["label", "add", "sp-1", a]), ""),
+            None
+        );
     }
 
     #[test]
     fn ask_shape_refuses_a_bare_alarm_and_accepts_a_decision() {
-        let alarm = s(&["create", "SLOW QUERY on dolt", "--labels", "needs-ryan,overseer"]); // literal-ok: fixture/fallback
-        assert!(check_ask_shape(&alarm, "needs-ryan").unwrap().contains("Exit:")); // literal-ok: fixture/fallback
-        let ok = s(&["create", "Grant the token?", "-l", "needs-ryan", "-d", "## Question\nq\nDefault: grant\nClass: permissions"]); // literal-ok: fixture/fallback
+        let alarm = s(&[
+            "create",
+            "SLOW QUERY on dolt",
+            "--labels",
+            "needs-ryan,overseer",
+        ]); // literal-ok: fixture/fallback
+        assert!(check_ask_shape(&alarm, "needs-ryan")
+            .unwrap()
+            .contains("Exit:")); // literal-ok: fixture/fallback
+        let ok = s(&[
+            "create",
+            "Grant the token?",
+            "-l",
+            "needs-ryan",
+            "-d",
+            "## Question\nq\nDefault: grant\nClass: permissions",
+        ]); // literal-ok: fixture/fallback
         assert_eq!(check_ask_shape(&ok, "needs-ryan"), None); // literal-ok: fixture/fallback
-        let design = s(&["create", "Pick a shape?", "-l", "needs-ryan", "-d", "## Question\nq\nDefault: a\nClass: design"]); // literal-ok: fixture/fallback
+        let design = s(&[
+            "create",
+            "Pick a shape?",
+            "-l",
+            "needs-ryan",
+            "-d",
+            "## Question\nq\nDefault: a\nClass: design",
+        ]); // literal-ok: fixture/fallback
         assert_eq!(check_ask_shape(&design, "needs-ryan"), None); // literal-ok: fixture/fallback
-        let bad_class = s(&["create", "Pick one?", "-l", "needs-ryan", "-d", "Default: a\nClass: architecture"]); // literal-ok: fixture/fallback
+        let bad_class = s(&[
+            "create",
+            "Pick one?",
+            "-l",
+            "needs-ryan",
+            "-d",
+            "Default: a\nClass: architecture",
+        ]); // literal-ok: fixture/fallback
         assert!(check_ask_shape(&bad_class, "needs-ryan").is_some()); // literal-ok: fixture/fallback
-        assert_eq!(check_ask_shape(&s(&["create", "SLOW QUERY", "-l", "overseer"]), "needs-ryan"), None); // literal-ok: fixture/fallback
+        assert_eq!(
+            check_ask_shape(
+                &s(&["create", "SLOW QUERY", "-l", "overseer"]),
+                "needs-ryan"
+            ),
+            None
+        ); // literal-ok: fixture/fallback
     }
 
     // covers: UC-safety-fences-13
     #[test]
     fn schema_delete_is_detected_regardless_of_case_or_spacing() {
         assert!(check_schema_delete(&s(&["create", "DELETE   FROM schema_migrations"])).is_some());
-        assert!(check_schema_delete(&s(&["create", "clean", "-d", "please delete from schema_migrations now"]))
-            .is_some());
-        assert_eq!(check_schema_delete(&s(&["create", "delete from somewhere_else"])), None);
+        assert!(check_schema_delete(&s(&[
+            "create",
+            "clean",
+            "-d",
+            "please delete from schema_migrations now"
+        ]))
+        .is_some());
+        assert_eq!(
+            check_schema_delete(&s(&["create", "delete from somewhere_else"])),
+            None
+        );
     }
 
     #[test]
@@ -658,11 +868,16 @@ mod tests {
     #[test]
     fn a_no_row_type_create_leaves_no_lifecycle_row() {
         for ty in ["event", "epic", "decision", "gate"] {
-            assert!(creates_rowless_type(&s(&["create", "t", "--type", ty])), "{ty}");
+            assert!(
+                creates_rowless_type(&s(&["create", "t", "--type", ty])),
+                "{ty}"
+            );
         }
         assert!(creates_rowless_type(&s(&["create", "t", "--type=event"])));
         assert!(creates_rowless_type(&s(&["create", "t", "-t", "event"])));
-        assert!(!creates_rowless_type(&s(&["create", "t", "--type", "task"])));
+        assert!(!creates_rowless_type(&s(&[
+            "create", "t", "--type", "task"
+        ])));
         assert!(!creates_rowless_type(&s(&["create", "event"])));
     }
 
@@ -708,9 +923,18 @@ mod tests {
 
     #[test]
     fn id_bearing_args_adds_json_only_where_ids_are_otherwise_unprinted() {
-        assert_eq!(id_bearing_args(&s(&["import", "f"])), s(&["import", "f", "--json"]));
-        assert_eq!(id_bearing_args(&s(&["mol", "pour", "p"])), s(&["mol", "pour", "p", "--json"]));
-        assert_eq!(id_bearing_args(&s(&["import", "f", "--json"])), s(&["import", "f", "--json"]));
+        assert_eq!(
+            id_bearing_args(&s(&["import", "f"])),
+            s(&["import", "f", "--json"])
+        );
+        assert_eq!(
+            id_bearing_args(&s(&["mol", "pour", "p"])),
+            s(&["mol", "pour", "p", "--json"])
+        );
+        assert_eq!(
+            id_bearing_args(&s(&["import", "f", "--json"])),
+            s(&["import", "f", "--json"])
+        );
         assert_eq!(id_bearing_args(&s(&["create", "t"])), s(&["create", "t"]));
     }
 
@@ -718,36 +942,70 @@ mod tests {
 
     #[test]
     fn czar_fence_fires_on_reopen_when_czar_with_class() {
-        assert_eq!(czar_fence_class("czar", "deadlock", "", &s(&["reopen", "sp-a"])), Some("deadlock"));
+        assert_eq!(
+            czar_fence_class("czar", "deadlock", "", &s(&["reopen", "sp-a"])),
+            Some("deadlock")
+        );
     }
 
     #[test]
     fn czar_fence_skips_non_czar_or_empty_class() {
-        assert_eq!(czar_fence_class("builder", "deadlock", "", &s(&["reopen", "sp-a"])), None);
-        assert_eq!(czar_fence_class("czar", "", "", &s(&["reopen", "sp-a"])), None);
+        assert_eq!(
+            czar_fence_class("builder", "deadlock", "", &s(&["reopen", "sp-a"])),
+            None
+        );
+        assert_eq!(
+            czar_fence_class("czar", "", "", &s(&["reopen", "sp-a"])),
+            None
+        );
     }
 
     #[test]
     fn czar_fence_update_close_skip_the_trigger_bead_itself() {
-        assert_eq!(czar_fence_class("czar", "deadlock", "sp-trigger", &s(&["update", "sp-trigger"])), None);
         assert_eq!(
-            czar_fence_class("czar", "deadlock", "sp-trigger", &s(&["update", "sp-other"])),
+            czar_fence_class(
+                "czar",
+                "deadlock",
+                "sp-trigger",
+                &s(&["update", "sp-trigger"])
+            ),
+            None
+        );
+        assert_eq!(
+            czar_fence_class(
+                "czar",
+                "deadlock",
+                "sp-trigger",
+                &s(&["update", "sp-other"])
+            ),
             Some("deadlock")
         );
-        assert_eq!(czar_fence_class("czar", "deadlock", "", &s(&["close", "sp-a"])), Some("deadlock"));
+        assert_eq!(
+            czar_fence_class("czar", "deadlock", "", &s(&["close", "sp-a"])),
+            Some("deadlock")
+        );
     }
 
     #[test]
     fn czar_fence_ignores_other_verbs() {
-        assert_eq!(czar_fence_class("czar", "deadlock", "", &s(&["create", "x"])), None);
-        assert_eq!(czar_fence_class("czar", "deadlock", "", &s(&["list"])), None);
+        assert_eq!(
+            czar_fence_class("czar", "deadlock", "", &s(&["create", "x"])),
+            None
+        );
+        assert_eq!(
+            czar_fence_class("czar", "deadlock", "", &s(&["list"])),
+            None
+        );
     }
 
     // -- json_only ----------------------------------------------------------------------------
 
     #[test]
     fn json_only_drops_a_warning_banner_before_the_json() {
-        assert_eq!(json_only("warning: schema drift\n[{\"a\":1}]\n"), "[{\"a\":1}]\n");
+        assert_eq!(
+            json_only("warning: schema drift\n[{\"a\":1}]\n"),
+            "[{\"a\":1}]\n"
+        );
         assert_eq!(json_only("{\"a\":1}\n"), "{\"a\":1}\n");
     }
 
@@ -802,10 +1060,17 @@ mod tests {
     #[test]
     fn a_silent_failed_write_says_its_outcome_is_unknown_and_a_loud_one_adds_nothing() {
         let w = silent_failure_note(&s(&["create", "t"]), 2, "", 3, 1200).unwrap();
-        assert!(w.contains("bd create exited 2 with no output after 3 attempt(s)") && w.contains("outcome is unknown"), "{w}");
+        assert!(
+            w.contains("bd create exited 2 with no output after 3 attempt(s)")
+                && w.contains("outcome is unknown"),
+            "{w}"
+        );
         let r = silent_failure_note(&s(&["list"]), 2, "  \n", 1, 5).unwrap();
         assert!(!r.contains("unknown"), "{r}");
-        assert_eq!(silent_failure_note(&s(&["create", "t"]), 2, "boom", 1, 5), None);
+        assert_eq!(
+            silent_failure_note(&s(&["create", "t"]), 2, "boom", 1, 5),
+            None
+        );
         assert_eq!(silent_failure_note(&s(&["create", "t"]), 0, "", 1, 5), None);
     }
 
@@ -814,16 +1079,25 @@ mod tests {
         assert!(should_retry(1, 1, 2, true));
         assert!(!should_retry(0, 1, 2, true), "success never retries");
         assert!(!should_retry(1, 2, 2, true), "budget exhausted");
-        assert!(!should_retry(1, 1, 2, false), "a different error never retries");
+        assert!(
+            !should_retry(1, 1, 2, false),
+            "a different error never retries"
+        );
     }
 
     #[test]
     fn retryable_reads_on_any_drop_writes_only_before_the_statement() {
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert!(retryable(&a(&["show", "x"]), "Error: invalid connection"));
-        assert!(retryable(&a(&["--json", "count"]), "Error: invalid connection"));
+        assert!(retryable(
+            &a(&["--json", "count"]),
+            "Error: invalid connection"
+        ));
         assert!(!retryable(&a(&["close", "x"]), "Error: invalid connection"));
-        assert!(retryable(&a(&["close", "x"]), "failed to open database: invalid connection"));
+        assert!(retryable(
+            &a(&["close", "x"]),
+            "failed to open database: invalid connection"
+        ));
         assert!(retryable(
             &a(&["note", "x"]),
             "failed to check if database spira exists on server: invalid connection"
