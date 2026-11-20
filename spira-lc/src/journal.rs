@@ -618,9 +618,10 @@ mod tests {
         assert_eq!(removed.len(), 4, "{removed:?}");
         assert!(removed.iter().all(gone), "{removed:?}");
         let after = all_keys(&raw);
-        for kept in ["runtime/effect/", "runtime/open-effect/", "runtime/state/keep", "runtime/journal-meta/indexed"] {
-            assert!(after.iter().any(|k| k.starts_with(kept)), "{kept} missing from {after:?}");
-        }
+        let kept: Vec<_> = before.iter().filter(|k| !gone(k)).cloned().collect();
+        assert!(kept.iter().all(|k| after.contains(k)), "a key a reader uses was removed");
+        assert!(kept.iter().any(|k| k.starts_with("runtime/effect/")) && kept.iter().any(|k| k.starts_with("runtime/open-effect/")) && kept.contains(&"runtime/state/keep".to_string()));
+        assert!(after.contains(&"runtime/journal-meta/indexed".to_string()));
     }
 
     #[test]
@@ -659,6 +660,7 @@ mod tests {
         for argv in [&["sweep", "--now"][..], &["sweep", "--from"][..], &["sweep", "--from", "nowhere"][..], &["sweep", "--dry-run", "--dry-run"][..]] {
             assert_eq!(call(&s, argv).0, REFUSED, "{argv:?}");
         }
+        assert_eq!(call(&s, &["sweep", "--from", "legacy:zzz"]).0, REFUSED);
         assert_eq!(call(&s, &["sweep", "--from", "effect:", "--dry-run"]).0, 0);
     }
 

@@ -34,7 +34,7 @@ pub enum SweepPhase {
     Effect,
 }
 
-/// Tables removed by sp-neicv8, written last by the 11-03 import; the sweep deletes their rows.
+/// Tables no reader or writer uses any more, whose rows an old import carried over; the sweep deletes them.
 const LEGACY: &[&str] = &["event", "applied", "cursor"];
 
 /// Where the next sweep step resumes: the table and the last key read, as one argv token.
@@ -64,7 +64,11 @@ impl std::str::FromStr for SweepCursor {
             Some(("effect", _)) => SweepPhase::Effect,
             _ => return Err(format!("journal: sweep cursor {s:?} is not schedule:<key>, legacy:<key> or effect:<key>")),
         };
-        Ok(SweepCursor { phase, after: s.split_once(':').map_or(String::new(), |(_, k)| k.to_string()) })
+        let after = s.split_once(':').map_or(String::new(), |(_, k)| k.to_string());
+        if phase == SweepPhase::Legacy && !after.is_empty() && !LEGACY.iter().any(|t| after.starts_with(&keys::runtime_table(t))) {
+            return Err(format!("journal: sweep cursor {s:?} is in no legacy table"));
+        }
+        Ok(SweepCursor { phase, after })
     }
 }
 
@@ -326,7 +330,7 @@ impl<B: Backend> Store<B> {
         let contract = self.contract();
         let head = contract.head()?;
         let (phase, after) = from.map_or((SweepPhase::Schedule, None), |c| (c.phase, Some(c.after.as_str()).filter(|a| !a.is_empty())));
-        let legacy_at = after.and_then(|a| LEGACY.iter().position(|t| a.starts_with(&keys::runtime_table(t)))).unwrap_or(0);
+        let legacy_at = after.filter(|_| phase == SweepPhase::Legacy).and_then(|a| LEGACY.iter().position(|t| a.starts_with(&keys::runtime_table(t)))).unwrap_or(0);
         let table = match phase {
             SweepPhase::Schedule => SCHEDULE,
             SweepPhase::Legacy => LEGACY[legacy_at],
