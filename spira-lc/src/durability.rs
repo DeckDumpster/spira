@@ -245,8 +245,9 @@ pub fn admin_dolt_assemble(args: &[String]) -> (i32, String) {
         (None, Some(s)) => dolt::newest_manifest(Path::new(s)),
         _ => return (CANNOT_TELL, DOLT_ASSEMBLE_USAGE.into()),
     };
-    match manifest.and_then(|m| dolt::assemble(&m, Path::new(files), Path::new(out))) {
-        Ok(a) => (0, format!("{} {} {}", a.head, a.files, a.bytes)),
+    let assembled = manifest.and_then(|m| dolt::assemble(&m, Path::new(files), Path::new(out)).map(|a| (a, m)));
+    match assembled {
+        Ok((a, m)) => (0, format!("{} {} {} {}", a.head, a.files, a.bytes, m.display())),
         Err(e) => (1, format!("admin-dolt-assemble: {e}")),
     }
 }

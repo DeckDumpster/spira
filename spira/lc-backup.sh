@@ -4,7 +4,7 @@
 #
 #   lc-backup.sh run                 per database: sync the local backup dir, upload its new table files and a new manifest, stamp it
 #   lc-backup.sh age [--now EPOCH]   exit 0 when every database's newest good backup is younger than SPIRA_LC_BACKUP_MAX_AGE
-#   lc-backup.sh drill [--db NAME]   per database: restore the newest uploaded manifest's file set into a scratch dir; row counts must equal live; exit 1 with a recorded DEFERRED verdict when the store stays busy past the wait cap (once a week, no second slot). With SPIRA_LC_STORE_PATH set, the control store (--db control) first: spira-lc admin-drill
+#   lc-backup.sh drill [--db NAME [--manifest FILE]]   per database: restore the newest uploaded manifest's file set into a scratch dir; row counts must equal live; exit 1 with a recorded DEFERRED verdict when the store stays busy past the wait cap (once a week, no second slot). With SPIRA_LC_STORE_PATH set, the control store (--db control) first: spira-lc admin-drill
 #   lc-backup.sh watch [--interval S] [--ticks N]   watchd daemon: mails the crossing into and out of stale
 #   lc-backup.sh health              exit non-zero when the watch loop has stopped polling
 #   lc-backup.sh explain             after a failed run: put the log's last error line on stderr and in the journal
@@ -24,10 +24,10 @@
 # SPIRA_LC_BACKUP_DB is a space-separated list of databases. Each has its own stamp
 # (lc-backup.<db>.ok), backup dir and ledger, so one database's fresh backup cannot mask another's.
 #
-# A stamp is written only after the manifest's upload exits clean, and carries the commit it
-# holds. The drill restores the newest uploaded manifest's file set and compares every table's
-# count AS OF the stamped commit, live and restored alike, so writes landing meanwhile cannot
-# move either side.
+# A stamp is written only after the manifest's upload exits clean, and names a commit the backup
+# holds; the sync may hold later ones. The drill restores the newest uploaded manifest's file set,
+# requires the stamped commit in its history and compares every table's count AS OF that commit,
+# live and restored alike, so writes landing meanwhile cannot move either side.
 #
 # No destination, an unreadable stamp or an age beyond the limit is red, never a skip — a
 # store that was never backed up must look different from one that is.
@@ -237,11 +237,11 @@ cmd_age() {
 }
 
 _lcb_drill_db() {
-    local db="$1" lock left
+    local db="$1" manifest="${2:-}" lock left
     lock="$(_lcb_lock "$db")" || return 1
     left=$(( _LCB_DRILL_DEADLINE - $(date +%s) )); [ "$left" -ge 0 ] || left=0
     ( flock -w "$left" 9 || { echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $db: a run holds the lock" | _lcb_record_deferral "$db" >&2; exit 1; }
-      _lcb_drill_db_locked "$db" ) 9>"$lock"
+      _lcb_drill_db_locked "$db" "$manifest" ) 9>"$lock"
 }
 
 _lcb_verdict() { printf '%s/lc-backup/%s/drill.verdict' "$SPIRA_RUN" "$1"; }
@@ -253,49 +253,78 @@ _lcb_drill_fail() {
     return 1
 }
 
+# Runs one query on the restored copy: rows (header dropped) on stdout, exit code and stderr kept under $scratch/$tag.
+_lcb_restored_sql() {
+    local scratch="$1" db="$2" tag="$3" out rc
+    # batch-job: reads of the restored scratch copy
+    out="$( cd "$scratch/$db" && dolt sql -r csv -q "$4" 2>"$scratch/$tag.err" )"; rc=$?
+    printf '%s\n' "$rc" > "$scratch/$tag.rc"
+    printf '%s\n' "$out" | tail -n +2
+    return "$rc"
+}
+
+# What each named restored-copy query answered: its exit code and its stderr, never nothing.
+_lcb_query_report() {
+    local scratch="$1" tag err sep=""; shift
+    for tag in "$@"; do
+        err="$(tr '\n' ' ' < "$scratch/$tag.err" 2>/dev/null)"; err="${err% }"
+        printf '%s%s: exit %s, %s' "$sep" "$tag" "$(cat "$scratch/$tag.rc" 2>/dev/null || echo '?')" "${err:+stderr $err}${err:-(no stderr)}"
+        sep="; "
+    done
+}
+
 # The restore source is laid down as an off-box restore would be: a fresh dir holding the newest
-# uploaded manifest and only the files it names, never the backup dir itself.
+# uploaded manifest (or the one named) and only the files it names, never the backup dir itself.
 _lcb_drill_db_locked() {
-    local db="$1" stamp verdict t head scratch rc=0 tables tbl live restored live_head set set_head bytes need have
+    local db="$1" named="${2:-}" stamp verdict t head scratch rc=0 tables tbl live restored live_head set set_head bytes manifest need have held
     stamp="$(_lcb_stamp "$db")"
     _lcb_require_db "$db" || return 1
     verdict="$(_lcb_verdict "$db")"
     mkdir -p "$(dirname "$verdict")" && : > "$verdict" || return 1
-    [ -r "$stamp" ] || { _lcb_drill_fail "$db" "$db: no stamp — nothing has been backed up"; return 1; }
     [ -n "$SPIRA_LC_BACKUP_SYNC_DIR" ] || { _lcb_drill_fail "$db" "SPIRA_LC_BACKUP_SYNC_DIR is empty — no local backup dir to restore from"; return 1; }
-    read -r t head _ < "$stamp"
+    if [ -n "$named" ]; then
+        head="$(basename "$named")"; head="${head#*-}"
+    else
+        [ -r "$stamp" ] || { _lcb_drill_fail "$db" "$db: no stamp — nothing has been backed up"; return 1; }
+        read -r t head _ < "$stamp"
+    fi
     mkdir -p "$SPIRA_LC_BACKUP_DRILL_DIR" && scratch="$(mktemp -d "$SPIRA_LC_BACKUP_DRILL_DIR/$db.XXXXXX")" \
         || { _lcb_drill_fail "$db" "$db: cannot make a scratch dir under $SPIRA_LC_BACKUP_DRILL_DIR"; return 1; }
-    set="$(spira-lc admin-dolt-assemble --state "$(_lcb_work "$db")" --files "$(_lcb_sync_dir "$db")" --out "$scratch/snap" 2>&1)" \
-        || { _lcb_drill_fail "$db" "$db: cannot lay down the newest manifest's file set: $set"; rm -rf "$scratch"; return 1; }
-    read -r set_head _ bytes <<<"$set"
+    local which=(--state "$(_lcb_work "$db")"); [ -z "$named" ] || which=(--manifest "$named")
+    set="$(spira-lc admin-dolt-assemble "${which[@]}" --files "$(_lcb_sync_dir "$db")" --out "$scratch/snap" 2>&1)" \
+        || { _lcb_drill_fail "$db" "$db: cannot lay down the newest manifest's file set: ${set:-(no output)}"; rm -rf "$scratch"; return 1; }
+    read -r set_head _ bytes manifest <<<"$set"
+    manifest="$(basename "${manifest:-?}")"
     [ "$set_head" = "$head" ] \
-        || { _lcb_drill_fail "$db" "the newest uploaded manifest is at ${set_head:-?}, not the stamped head $head"; rm -rf "$scratch"; return 1; }
+        || { _lcb_drill_fail "$db" "the manifest $manifest is at ${set_head:-?}, not the stamped head $head"; rm -rf "$scratch"; return 1; }
     need=$(( ${bytes:-0} * 5 / 4 / 1024 ))
     have="$(df -Pk "$scratch" | awk 'NR==2{print $4}')"
     [ "${have:-0}" -ge "$need" ] \
         || { _lcb_drill_fail "$db" "$SPIRA_LC_BACKUP_DRILL_DIR has ${have:-0}KiB free, the restore needs ~${need}KiB"; rm -rf "$scratch"; return 1; }
     # batch-job: restoring the manifest's file set into the scratch dir
     ( cd "$scratch" && dolt backup restore "file://$scratch/snap" "$db" ) >"$scratch/restore.log" 2>&1 \
-        || { _lcb_drill_fail "$db" "restore failed: $(cat "$scratch/restore.log")"; rm -rf "$scratch"; return 1; }
-    # batch-job: reads of the restored scratch copy
-    live_head="$( cd "$scratch/$db" && dolt sql -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1" 2>"$scratch/sql.err" | tail -n +2 )"
-    [ "$live_head" = "$head" ] \
-        || { _lcb_drill_fail "$db" "restored head ${live_head:-?} is not the stamped head $head: $(cat "$scratch/sql.err")"; rm -rf "$scratch"; return 1; }
-    tables="$(_lcb_sql "$db" -r csv -q "SHOW FULL TABLES AS OF '$head' WHERE Table_type='BASE TABLE'" 2>"$scratch/sql.err" | awk -F, 'NR>1{print $1}')"
-    [ -n "$tables" ] || { _lcb_drill_fail "$db" "list tables as of $head: none listed: $(cat "$scratch/sql.err")"; rm -rf "$scratch"; return 1; }
+        || { _lcb_drill_fail "$db" "restore of $manifest failed: $(cat "$scratch/restore.log")"; rm -rf "$scratch"; return 1; }
+    live_head="$(_lcb_restored_sql "$scratch" "$db" head "SELECT commit_hash FROM dolt_log LIMIT 1")"
+    held="$(_lcb_restored_sql "$scratch" "$db" contains "SELECT COUNT(*) FROM dolt_log WHERE commit_hash = '$head'")"
+    if [ "$(cat "$scratch/contains.rc")" != 0 ] || [ "$held" != 1 ]; then
+        _lcb_drill_fail "$db" "stamped head $head is not in the history restored from $manifest (restored head ${live_head:-?}; contains count ${held:-?}): $(_lcb_query_report "$scratch" head contains)"
+        rm -rf "$scratch"; return 1
+    fi
+    tables="$(_lcb_sql "$db" -r csv -q "SHOW FULL TABLES AS OF '$head' WHERE Table_type='BASE TABLE'" 2>"$scratch/tables.err" | awk -F, 'NR>1{print $1}')"
+    [ -n "$tables" ] || { _lcb_drill_fail "$db" "list tables as of $head: none listed: $(tr '\n' ' ' < "$scratch/tables.err" | sed 's/^ *$/(no stderr)/')"; rm -rf "$scratch"; return 1; }
     for tbl in $tables; do
         live="$(_lcb_sql "$db" -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" 2>"$scratch/live.err" | tail -n +2)"
-        # batch-job: reads of the restored scratch copy
-        restored="$( cd "$scratch/$db" && dolt sql -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" 2>"$scratch/restored.err" | tail -n +2 )"
+        restored="$(_lcb_restored_sql "$scratch" "$db" restored "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'")"
         if [ -z "$live" ] || [ "$live" != "$restored" ]; then
-            _lcb_drill_fail "$db" "count $tbl: live ${live:-?} != restored ${restored:-?}: $(cat "$scratch/live.err" "$scratch/restored.err" 2>/dev/null | tr '\n' ' ')"; rc=1
+            _lcb_drill_fail "$db" "count $tbl: live ${live:-?} != restored ${restored:-?}: live stderr: $(tr '\n' ' ' < "$scratch/live.err" | sed 's/^ *$/(no stderr)/'); $(_lcb_query_report "$scratch" restored)"; rc=1
         fi
     done
     rm -rf "$scratch"
     if [ "$rc" = 0 ]; then
-        echo "lc-backup: drill ok — $db: $(printf '%s\n' "$tables" | wc -l) table(s) identical at $head" | tee "$verdict"
-        date +%s > "$(dirname "$verdict")/drill.ok"
+        local note="identical at $head"
+        [ "$live_head" = "$head" ] || note="$note; restored head $live_head is newer than the stamped head $head"
+        echo "lc-backup: drill ok — $db: $(printf '%s\n' "$tables" | wc -l) table(s) $note" | tee "$verdict"
+        [ -n "$named" ] || date +%s > "$(dirname "$verdict")/drill.ok"
     fi
     return "$rc"
 }
@@ -352,13 +381,18 @@ _lcb_drill_control() {
 }
 
 cmd_drill() {
-    local only="" db rc=0
+    local only="" db rc=0 manifest=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --db) only="${2:?--db needs a value}"; shift 2 ;;
+            --manifest) manifest="${2:?--manifest needs a value}"; shift 2 ;;
             *) echo "lc-backup.sh: drill: unknown argument '$1'" >&2; return 2 ;;
         esac
     done
+    if [ -n "$manifest" ]; then
+        { [ -n "$only" ] && [ "$only" != control ]; } || { echo "lc-backup.sh: drill: --manifest needs --db <database>" >&2; return 2; }
+        [ -r "$manifest" ] || { echo "lc-backup.sh: drill: manifest '$manifest' is not readable" >&2; return 2; }
+    fi
     _lcb_import_drill_stamps
     if [ -n "$SPIRA_LC_STORE_PATH" ] && { [ -z "$only" ] || [ "$only" = control ]; }; then
         _lcb_drill_control || rc=1
@@ -366,7 +400,7 @@ cmd_drill() {
     fi
     _LCB_DRILL_DEADLINE=$(( $(date +%s) + SPIRA_LC_BACKUP_DRILL_WAIT_SECS ))
     _lcb_drill_wait_quiet ${only:-$(_lcb_dbs)} || return 1
-    for db in ${only:-$(_lcb_dbs)}; do _lcb_drill_db "$db" || rc=1; done
+    for db in ${only:-$(_lcb_dbs)}; do _lcb_drill_db "$db" "$manifest" || rc=1; done
     return "$rc"
 }
 
@@ -437,7 +471,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
         health) cmd_health; exit $? ;;
         explain) cmd_explain; exit $? ;;
         explain-drill) cmd_explain_drill; exit $? ;;
-        *) echo "usage: lc-backup.sh run | age [--now EPOCH] | drill [--db NAME] | watch [--interval S] [--ticks N] | health | explain | explain-drill" >&2
+        *) echo "usage: lc-backup.sh run | age [--now EPOCH] | drill [--db NAME [--manifest FILE]] | watch [--interval S] [--ticks N] | health | explain | explain-drill" >&2
            exit 2 ;;
     esac
 fi

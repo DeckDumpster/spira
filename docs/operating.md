@@ -182,8 +182,8 @@ is the backup). The backup key can only upload, so a restore runs under your own
    ```
 
    `admin-dolt-assemble` refuses when the manifest names a file `files/` lacks, and prints
-   `<head> <files> <bytes>`. Check `SELECT commit_hash FROM dolt_log LIMIT 1` in the restored
-   database equals `<head>`.
+   `<head> <files> <bytes> <manifest>`. Check `SELECT COUNT(*) FROM dolt_log WHERE commit_hash = '<head>'`
+   in the restored database is `1`; its newest commit may be later than `<head>`.
 4. **For bd, reconcile the planes** as the control store's drill prints under `skew guard`:
    the restored planning store is as old as the manifest's stamp.
 
