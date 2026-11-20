@@ -551,9 +551,14 @@ data, not the code; the refusal is the contract).
   (before the cutover) the step is skipped with a loud line: `release step skipped: no release
   is in force (…/current is absent) — production does not run <head> until a release is
   activated`. The first activation is the cutover's (sp-6p20x), never a routine landing's.
-  1. **Before the CAS:** `--worktree` is required and passes D2's tree check (refusal:
-     `--worktree <round worktree> is required to land <repo>: its release ships the round's own
-     tested build (law-deploy-the-tested-artifacts), never a rebuild`).
+  1. **Before the CAS:** `--worktree` passes D2's tree check, or the head is text-only from the
+     release in force: when that release is a text-only ancestor of the head and its `bin/release`
+     is executable, the new release takes its `bin/` — the tested build of the same non-text tree
+     (law-text-only-changes-land-without-a-round). Refusal: `--worktree <round worktree> is
+     required to land <repo> (its release ships the round's own tested build,
+     law-deploy-the-tested-artifacts), or a head whose diff from the release in force is text
+     only: <why>`. A text-only tip the release in force cannot lend to is not landed by lint:
+     `submit` says it lands in the next round and `round open` admits it.
   2. **The landing is recorded first:** CAS, round-seq, archive ref, every member LANDED and
      closed — before the slow part, so a killed or failed deploy never loses the record.
   3. **Then, running the round's own `release` binary (§8 D14), each with `SPIRA_DB` set**

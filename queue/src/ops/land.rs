@@ -41,6 +41,47 @@ pub fn round_bins(w: &World, repo: &Path, head: &str, worktree: &Path) -> Result
     Ok(dir)
 }
 
+/// The `bin/` of the release in force, lent to a text-only head: those binaries are the tested
+/// build of the same non-text tree (law-text-only-changes-land-without-a-round). `Ok(None)` when
+/// landing `repo` publishes no release; Err names the first condition that fails.
+pub fn lent_bins(
+    w: &World,
+    s: &crate::ports::Settings,
+    repo: &str,
+    path: &Path,
+    head: &str,
+) -> Result<Option<PathBuf>, String> {
+    if !ships_release(s, repo) {
+        return Ok(None);
+    }
+    let Some(releases) = s.releases.as_deref() else {
+        return Ok(None);
+    };
+    let rel = fs::read_link(releases.join("current"))
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .ok_or_else(|| "the release in force names no release".to_string())?;
+    if w.git.rev_parse(path, &rel).is_none() {
+        return Err(format!("the release in force ({rel}) is not a commit of this repository"));
+    }
+    if !w.git.is_ancestor(path, &rel, head) {
+        return Err(format!("the release in force ({rel}) is not an ancestor of {head}"));
+    }
+    if !super::simple::diff_is_text_only(w, s, path, &rel, head) {
+        return Err(format!(
+            "{head}'s diff from the release in force ({rel}) touches non-text paths"
+        ));
+    }
+    let bin = releases.join(&rel).join("bin");
+    if !super::simple::is_executable(&bin.join("release")) {
+        return Err(format!(
+            "the release in force ({rel}) has no executable {}",
+            bin.join("release").display()
+        ));
+    }
+    Ok(Some(bin))
+}
+
 /// True when landing `repo` publishes a release: it is the harness and a release is in force.
 pub fn ships_release(s: &crate::ports::Settings, repo: &str) -> bool {
     repo == s.home_repo
@@ -435,7 +476,7 @@ pub fn land_local_deferring(
     let plan = if name != c.s.home_repo {
         None
     } else if let Some(releases) = in_force {
-        match deploy_plan(&c.s, &path, &base, releases, bins) {
+        match deploy_plan(w, &c.s, &path, &base, &head, releases, bins) {
             Ok(p) => Some(p),
             Err(why) => {
                 w.err(format!(
@@ -704,17 +745,37 @@ pub fn lc_deliver(
 /// round's tested build to publish (law-deploy-the-tested-artifacts — never a rebuild). Err
 /// is the refusal reason.
 fn deploy_plan(
+    w: &World,
     s: &crate::ports::Settings,
     repo: &Path,
     landref: &str,
+    head: &str,
     releases: PathBuf,
     bins: Option<PathBuf>,
 ) -> Result<super::deploy::Plan, String> {
-    let Some(bins) = bins else {
-        return Err(format!(
-            "--worktree <round worktree> is required to land {}: its release ships the round's own tested build (law-deploy-the-tested-artifacts), never a rebuild",
-            s.home_repo
-        ));
+    let bins = match bins {
+        Some(b) => b,
+        None => match lent_bins(w, s, &s.home_repo, repo, head) {
+            Ok(Some(dir)) => {
+                let rel = dir
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                w.err(format!(
+                    "queue.sh land-local: {head} is text-only from release {rel}: its release takes {rel}'s tested binaries ({})",
+                    dir.display()
+                ));
+                dir
+            }
+            Ok(None) => return Err(format!("no binaries to ship for {}", s.home_repo)),
+            Err(why) => {
+                return Err(format!(
+                    "--worktree <round worktree> is required to land {} (its release ships the round's own tested build, law-deploy-the-tested-artifacts), or a head whose diff from the release in force is text only: {why}",
+                    s.home_repo
+                ))
+            }
+        },
     };
     Ok(super::deploy::Plan {
         repo: repo.to_path_buf(),
