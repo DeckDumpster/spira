@@ -95,6 +95,7 @@ pub enum Outcome {
 #[derive(PartialEq, Debug)]
 pub enum Hold {
     Paused,
+    CutHeld,
     Stopped,
 }
 
@@ -147,9 +148,11 @@ pub fn pause_expired(st: &State, held_for: u64, lift_after: u64) -> bool {
     held_for >= lift_after && st.pause_lifts < PAUSE_LIFTS_MAX
 }
 
-pub fn hold(paused: bool, stopped: bool) -> Option<Hold> {
+pub fn hold(paused: bool, stopped: bool, cut_held: bool) -> Option<Hold> {
     if stopped {
         Some(Hold::Stopped)
+    } else if cut_held {
+        Some(Hold::CutHeld)
     } else if paused {
         Some(Hold::Paused)
     } else {
@@ -639,7 +642,7 @@ pub fn paced(
             )?;
         }
     }
-    if let Some(h) = hold(files.pause_file().exists(), files.stopped()) {
+    if let Some(h) = hold(files.pause_file().exists(), files.stopped(), false) {
         println!("batcher rounds: {}: held ({h:?}) — no cut", sm.repo);
         return Ok(());
     }
@@ -850,6 +853,14 @@ mod tests {
             2,
             "a new pause pages afresh"
         );
+    }
+
+    #[test]
+    fn a_cut_hold_holds_and_a_stop_outranks_it() {
+        assert_eq!(hold(false, false, true), Some(Hold::CutHeld));
+        assert_eq!(hold(true, false, true), Some(Hold::CutHeld));
+        assert_eq!(hold(false, true, true), Some(Hold::Stopped));
+        assert_eq!(hold(false, false, false), None);
     }
 
     #[test]

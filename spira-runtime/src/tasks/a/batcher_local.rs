@@ -6,7 +6,7 @@
 //!
 //! ## Tick
 //!
-//! - Cadence 30 s, single-flight **per queue.local repo**. A repo cuts a further round only while fewer than `SPIRA_ROUND_MAX_OPEN` are in flight (default 1): it is assembled on the newest open round's head in a tree of its own, certified beside it, and lands only after the rounds below it (`State::Certified` holds a green round until then). A round the queue voids with the one below it is forgotten and its members are cut again.
+//! - Cadence 30 s, single-flight **per queue.local repo**. A repo cuts a further round only while fewer than `SPIRA_ROUND_MAX_OPEN` are in flight (default 1): it is assembled on the newest open round's head in a tree of its own, certified beside it, and lands only after the rounds below it (`State::Certified` holds a green round until then).
 //! - Admission (today `main.rs:1299-1320`, `:1183-1206`): only `land == queue.local` repos; the home repo only while `SPIRA_BATCHER_ENABLE != 0`.
 //! - Wakes, besides the tick (proposed names, none exist today): `bead.certified` (a pool grew), `world.unpaused` for the repo's `rounds` lane, and `unit.ran` for any leg it started.
 //!
@@ -28,7 +28,7 @@
 //!
 //! | State | Event | → State |
 //! |---|---|---|
-//! | Idle | observe: stopped, or paused with no open round to drive (`pace.rs:77`) | Held (no write) |
+//! | Idle | observe: stopped, cut-held by a hand-landing, or paused with no open round to drive (`pace.rs:77`) | Held (no write) |
 //! | Idle | observe: paused, open round not ours | as the open-round rows below (a pause stops only a new cut) |
 //! | Idle | observe: open round, driven | Idle |
 //! | Idle | observe: open round, undriven, last pass red | Attributing (`adopt_red`: attribute that pass's kept results) |
@@ -300,6 +300,9 @@ pub struct Repo {
     /// The scoped stop's own reason (owner and why), when the lane is stopped.
     #[serde(default)]
     pub stop_why: Option<String>,
+    /// A hand-landing's cut hold, `owner (reason) until <until>`: no new round is cut while it stands.
+    #[serde(default)]
+    pub cut_hold: Option<String>,
     /// The pace's pause file (`run/rounds-pace/<repo>/pause`), its text, when it stands: a red
     /// round wrote it. A text that starts with `hold:` is an operator's deliberate hold.
     #[serde(default)]
@@ -1163,6 +1166,7 @@ fn held_key_why(key: &str) -> String {
 fn hold_why(h: &pace::Hold, repo: &str, r: &Repo) -> String {
     match h {
         pace::Hold::Stopped => format!("the rounds lane is stopped ({}) — a landing does not lift it; lift with: queue round start {repo} --by <owner> --reason <why>", r.stop_why.as_deref().unwrap_or("no reason recorded")),
+        pace::Hold::CutHeld => format!("cut held by {} — no cut until it lifts or its holder ends", r.cut_hold.as_deref().unwrap_or("an unnamed holder")),
         pace::Hold::Paused => format!(
             "paused by a red round ({}) — the next landing on {repo} lifts it, or batcher pause-lift --repo {repo} --by concierge --reason \"<why>\"",
             r.paused.as_deref().unwrap_or("").trim()
@@ -1803,7 +1807,7 @@ impl Machine<'_> {
         }
         let st = self.rc.pace.core();
         let paused = self.pause_in_force(policy, repo);
-        if let Some(h) = pace::hold(paused, repo.stopped) {
+        if let Some(h) = pace::hold(paused, repo.stopped, repo.cut_hold.is_some()) {
             self.rc.skip_why = Some(hold_why(&h, self.repo, repo));
             let ours: Vec<&str> = live.iter().filter_map(|r| r.batch.as_deref()).collect();
             let undriven = (h == pace::Hold::Paused && !live.iter().any(|r| matches!(r.state, State::Assembling | State::Opened)))
@@ -3014,9 +3018,22 @@ pub mod edge {
         let open_round = open.next();
         let open_above: Vec<Round> = open.collect();
         let (stopped, stop_why, paused, paused_since) = holds(env, &repo.name);
+        let cut_hold = cut_hold_in_force(&env.queue_dir, &repo.name);
         let unfit = open_round.as_ref().and_then(|r| r.unfit.clone());
         let base_sha = if open_round.is_some() { io::resolve_base_sha(repo).unwrap_or_default() } else { io::resolve_base_sha(repo)? };
-        Ok(Repo { pool, blockers, branch_tips, open_round, open_above, base_sha, stopped, stop_why, paused, paused_since, unfit, ..Repo::default() })
+        Ok(Repo { pool, blockers, branch_tips, open_round, open_above, base_sha, stopped, stop_why, cut_hold, paused, paused_since, unfit, ..Repo::default() })
+    }
+
+    pub fn refuse_if_cut_held(queue_dir: &std::path::Path, repo: &str) -> Result<(), String> {
+        match cut_hold_in_force(queue_dir, repo) {
+            Some(h) => Err(format!("{repo}: cut held by {h} — no cut until it lifts or its holder ends")),
+            None => Ok(()),
+        }
+    }
+
+    pub fn cut_hold_in_force(queue_dir: &std::path::Path, repo: &str) -> Option<String> {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        spira_config::cut_hold::held(queue_dir, repo, now).map(|h| format!("{} ({}) until {}", h.owner, h.reason, h.until))
     }
 
     /// The repo's holds: the scoped stop of its `rounds` lane (and its reason), and the pace's
@@ -3044,6 +3061,7 @@ pub mod edge {
         let (env, leg) = (env()?, leg(spec)?);
         let repo = repo_of(&env, &leg)?;
         let Some(_lock) = io::try_lock(&env, &repo.name)? else { return Err(format!("{}: another operation holds the lock", repo.name)) };
+        refuse_if_cut_held(&env.queue_dir, &repo.name)?;
         let base = io::resolve_base_sha(&repo)?;
         let sorted = batcher::core::topo_order(&core_members(&leg.members));
         let sequenced = batcher::core::stack_sequencing(&sorted);
@@ -3308,6 +3326,23 @@ pub mod edge {
             files.set_pause(&leg.why, "batcher", &leg.why, now)?;
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod cut_hold_tests {
+        use super::*;
+
+        #[test]
+        fn a_cut_held_by_a_live_holder_is_refused_naming_it_and_a_lifted_one_is_not() {
+            let q = testkit::TempDir::new("cut-hold");
+            assert_eq!(refuse_if_cut_held(q.path(), "spira"), Ok(()));
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            let hold = spira_config::cut_hold::CutHold { owner: "concierge".into(), reason: "hand-landing".into(), pid: std::process::id(), since: now, until: now + 600 };
+            spira_config::cut_hold::place(q.path(), "spira", &hold).unwrap();
+            let err = refuse_if_cut_held(q.path(), "spira").unwrap_err();
+            assert!(err.contains("concierge") && err.contains("hand-landing"), "{err}");
+            assert_eq!(refuse_if_cut_held(q.path(), "other"), Ok(()), "another repo is not held");
+        }
     }
 
     #[cfg(test)]
