@@ -263,6 +263,155 @@ pub fn comment_union(text: &str, prefixes: &[&str]) -> Result<String, String> {
     }))
 }
 
+/// Both sides only inserted lines (no base line changed or deleted): ours first, then theirs, at
+/// each base position both filled. A `.rs` file's inserted blocks must each be brace-balanced.
+/// Equal lines make an insertion's position ambiguous; the union is refused unless it reads the
+/// same with every insertion placed as early as it can sit and as late.
+pub fn insertion_union(base: &str, ours: &str, theirs: &str, rust: bool) -> Result<String, String> {
+    let base: Vec<&str> = base.lines().collect();
+    let (o, o_late) = insertions(&base, ours, "ours")?;
+    let (t, t_late) = insertions(&base, theirs, "theirs")?;
+    if rust {
+        for (side, blocks) in [("ours", &o), ("theirs", &t)] {
+            for (at, block) in blocks.iter().enumerate().filter(|(_, b)| !b.is_empty()) {
+                if let Some(why) = brace_imbalance(block) {
+                    return Err(format!(
+                        "{side}'s inserted block before base line {} ({:?}) is {why}",
+                        at + 1,
+                        truncate(block[0], 60)
+                    ));
+                }
+            }
+        }
+    }
+    let out = interleave(&base, &o, &t);
+    if out != interleave(&base, &o_late, &t_late) {
+        return Err("an inserted line equals a base line, so where it sits is ambiguous".into());
+    }
+    Ok(out)
+}
+
+type Blocks<'a> = Vec<Vec<&'a str>>;
+
+fn interleave(base: &[&str], o: &Blocks, t: &Blocks) -> String {
+    let mut out = String::new();
+    for i in 0..=base.len() {
+        let theirs = if o[i] == t[i] { &[][..] } else { &t[i][..] };
+        for l in o[i].iter().chain(theirs).chain(base.get(i)) {
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The lines `side` inserted before each base line (index `base.len()` = at the end), placed as
+/// early as they can sit and as late, or Err when the base is not a subsequence of `side`.
+fn insertions<'a>(base: &[&str], side: &'a str, who: &str) -> Result<(Blocks<'a>, Blocks<'a>), String> {
+    let early = align(base, side.lines(), who)?;
+    let rb: Vec<&str> = base.iter().rev().copied().collect();
+    let mut late = align(&rb, side.lines().rev(), who)?;
+    late.reverse();
+    let late = late.into_iter().map(|b| b.into_iter().rev().collect()).collect();
+    Ok((early, late))
+}
+
+fn align<'a>(base: &[&str], side: impl Iterator<Item = &'a str>, who: &str) -> Result<Blocks<'a>, String> {
+    let mut at = vec![Vec::new(); base.len() + 1];
+    let mut p = 0;
+    for l in side {
+        if p < base.len() && l == base[p] {
+            p += 1;
+        } else {
+            at[p].push(l);
+        }
+    }
+    if p < base.len() {
+        return Err(format!("{who} changed or deleted base line {}", p + 1));
+    }
+    Ok(at)
+}
+
+/// Why `block`'s braces do not balance, counting `{`/`}` outside strings, chars and comments.
+fn brace_imbalance(block: &[&str]) -> Option<String> {
+    let text = block.join("\n");
+    let c: Vec<char> = text.chars().collect();
+    let (mut i, mut depth) = (0, 0i64);
+    while i < c.len() {
+        match c[i] {
+            '/' if c.get(i + 1) == Some(&'/') => {
+                while i < c.len() && c[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '/' if c.get(i + 1) == Some(&'*') => {
+                let mut nest = 1;
+                i += 2;
+                while i < c.len() && nest > 0 {
+                    match (c[i], c.get(i + 1)) {
+                        ('/', Some('*')) => {
+                            nest += 1;
+                            i += 1;
+                        }
+                        ('*', Some('/')) => {
+                            nest -= 1;
+                            i += 1;
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+            }
+            'r' if matches!(c.get(i + 1), Some('"' | '#')) && (i == 0 || !c[i - 1].is_alphanumeric() && c[i - 1] != '_') => {
+                let hashes = c[i + 1..].iter().take_while(|x| **x == '#').count();
+                if c.get(i + 1 + hashes) != Some(&'"') {
+                    i += 1;
+                    continue;
+                }
+                let close: Vec<char> = std::iter::once('"').chain(std::iter::repeat_n('#', hashes)).collect();
+                i += hashes + 2;
+                while i < c.len() && !c[i..].starts_with(&close) {
+                    i += 1;
+                }
+                i += close.len();
+            }
+            '"' => {
+                i += 1;
+                while i < c.len() && c[i] != '"' {
+                    i += if c[i] == '\\' { 2 } else { 1 };
+                }
+                i += 1;
+            }
+            '\'' => {
+                if c.get(i + 1) == Some(&'\\') {
+                    i += 2;
+                    while i < c.len() && c[i] != '\'' {
+                        i += 1;
+                    }
+                    i += 1;
+                } else if c.get(i + 2) == Some(&'\'') {
+                    i += 3;
+                } else {
+                    i += 1;
+                }
+            }
+            '{' => {
+                depth += 1;
+                i += 1;
+            }
+            '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return Some("closing a brace it never opened".into());
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    (depth != 0).then(|| format!("left {depth} brace(s) open"))
+}
+
 fn is_key_line(line: &str) -> bool {
     let t = line.trim();
     if t.is_empty() {
@@ -428,9 +577,18 @@ pub fn resolve_stop(git: &Git, rules: &Rules) -> Result<usize, Vec<ConflictFile>
             }
             None => {
                 let ours = git.stage(2, p);
-                match comment_prefixes(p, ours.as_deref()) {
-                    Some(pf) => comment_union(&text, pf).map(Plan::Write),
-                    None => Err("not a mechanically resolvable file type".to_string()),
+                let inserted = match (git.stage(1, p), &ours, git.stage(3, p)) {
+                    (Some(b), Some(o), Some(t)) => {
+                        insertion_union(&b, o, &t, p.ends_with(".rs")).map_err(|e| format!("insertion union refused: {e}"))
+                    }
+                    _ => Err("insertion union needs all three stages".to_string()),
+                };
+                match inserted {
+                    Ok(s) => Ok(Plan::Write(s)),
+                    Err(why) => match comment_prefixes(p, ours.as_deref()) {
+                        Some(pf) => comment_union(&text, pf).map(Plan::Write).map_err(|e| format!("{e}; {why}")),
+                        None => Err(format!("not a mechanically resolvable file type; {why}")),
+                    },
                 }
             }
         };
@@ -536,5 +694,70 @@ mod tests {
             "X=1\nSPIRA_A SPIRA_B SPIRA_C COCKPIT_D\nY=2\n"
         );
         assert!(keylist_union("<<<<<<< HEAD\nSPIRA_A\n=======\necho hi\n>>>>>>> abc\n").is_err());
+    }
+
+    const BASE: &str = "mod tests {\n    #[test]\n    fn base() {\n    }\n}\n";
+    fn with(test: &str) -> String {
+        BASE.replace("}\n}\n", &format!("}}\n{test}}}\n"))
+    }
+
+    #[test]
+    fn insertion_union_keeps_ours_then_theirs_before_the_one_closing_brace() {
+        let o = with("    #[test]\n    fn ours() {\n    }\n");
+        let t = with("    #[test]\n    fn theirs() {\n    }\n");
+        let got = insertion_union(BASE, &o, &t, true).unwrap();
+        let want = with("    #[test]\n    fn ours() {\n    }\n    #[test]\n    fn theirs() {\n    }\n");
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn insertion_union_refuses_a_side_that_edits_a_base_line() {
+        let o = with("    fn ours() {\n    }\n");
+        let t = BASE.replace("fn base()", "fn renamed()");
+        assert!(insertion_union(BASE, &o, &t, true).unwrap_err().contains("theirs changed or deleted"));
+    }
+
+    #[test]
+    fn insertion_union_refuses_a_block_with_an_unbalanced_brace() {
+        let o = with("    fn ours() {\n");
+        let t = with("    fn theirs() {\n    }\n");
+        let e = insertion_union(BASE, &o, &t, true).unwrap_err();
+        assert!(e.contains("ours's inserted block") && e.contains("fn ours"), "{e}");
+    }
+
+    #[test]
+    fn insertion_union_ignores_braces_in_strings_chars_and_comments() {
+        let o = with("    fn ours() {\n        let _ = (\"{\", '}', r#\"{\"#); // {\n    }\n");
+        assert!(insertion_union(BASE, &o, BASE, true).is_ok());
+    }
+
+    #[test]
+    fn insertion_union_applies_insertions_at_different_places_as_they_are() {
+        let o = format!("// top\n{BASE}");
+        let t = with("    fn theirs() {\n    }\n");
+        let got = insertion_union(BASE, &o, &t, true).unwrap();
+        assert!(got.starts_with("// top\nmod tests") && got.contains("fn theirs"));
+    }
+
+    #[test]
+    fn the_none_arm_alone_calls_inserted_rust_a_real_conflict() {
+        let text = "<<<<<<< HEAD\n    fn ours() {\n    }\n=======\n    fn theirs() {\n    }\n>>>>>>> x\n";
+        let pf = comment_prefixes("a.rs", None).unwrap();
+        assert!(comment_union(text, pf).unwrap_err().contains("not a comment-only hunk"));
+    }
+
+    #[test]
+    fn insertion_union_writes_a_block_both_sides_inserted_once() {
+        let both = with("    use_it();\n");
+        assert_eq!(insertion_union(BASE, &both, &both, true).unwrap(), both);
+    }
+
+    #[test]
+    fn insertion_union_refuses_an_insertion_beside_an_identical_base_line() {
+        let base = "a\n\nb\n";
+        let o = "a\n\nx\n\nb\n";
+        let t = "a\ny\n\nb\n";
+        let e = insertion_union(base, o, t, false).unwrap_err();
+        assert!(e.contains("ambiguous"), "{e}");
     }
 }

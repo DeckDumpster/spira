@@ -107,6 +107,14 @@ impl Store for FileStore {
     fn first_cap_report(&self, id: &str, tip: &str) -> bool {
         self.record(id, SiftEvent::Capped { tip: tip.to_string() }).unwrap_or(false)
     }
+
+    fn first_rebase_attempt(&self, id: &str, tip: &str, base: &str) -> bool {
+        let path = self.dir.join("rebase-attempts").join(format!("{id}-{tip}-{base}"));
+        if path.exists() {
+            return false;
+        }
+        write_atomic(&path, "").is_ok()
+    }
 }
 
 fn write_atomic(path: &PathBuf, body: &str) -> Result<(), String> {

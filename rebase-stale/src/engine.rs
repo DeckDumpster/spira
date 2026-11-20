@@ -384,3 +384,60 @@ pub fn run(
         stderr: None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TESTS_RS: &str = "mod tests {\n    #[test]\n    fn base() {\n    }\n}\n";
+
+    fn add_test(name: &str) -> String {
+        TESTS_RS.replace("}\n}\n", &format!("}}\n    #[test]\n    fn {name}() {{\n    }}\n}}\n"))
+    }
+
+    fn diverged(tmp: &testkit::TempDir, branch_text: &str, main_text: &str) -> Git {
+        let dir = tmp.path().to_path_buf();
+        let g = Git::new(&dir, "t", "t@example.invalid");
+        let commit = |text: &str, msg: &str| {
+            std::fs::write(dir.join("tests.rs"), text).unwrap();
+            assert!(g.run(["commit", "-q", "-am", msg]).ok);
+        };
+        assert!(g.run(["init", "-q", "-b", "main"]).ok);
+        std::fs::write(dir.join("tests.rs"), TESTS_RS).unwrap();
+        assert!(g.run(["add", "tests.rs"]).ok);
+        assert!(g.run(["commit", "-q", "-m", "base"]).ok);
+        assert!(g.run(["checkout", "-q", "-b", "branch"]).ok);
+        commit(branch_text, "branch test");
+        assert!(g.run(["checkout", "-q", "main"]).ok);
+        commit(main_text, "main test");
+        assert!(g.run(["checkout", "-q", "branch"]).ok);
+        g
+    }
+
+    #[test]
+    fn a_branch_and_the_landing_ref_each_adding_a_test_at_the_end_of_a_module_rebase_mechanically() {
+        let tmp = testkit::TempDir::new("rebase-stale-insert");
+        let dir = tmp.path().to_path_buf();
+        let g = diverged(&tmp, &add_test("theirs"), &add_test("ours"));
+        let end = rebase(&g, "main", &Rules::standard(None));
+
+        assert!(matches!(end, RebaseEnd::Done { mechanical: true }));
+        let merged = std::fs::read_to_string(dir.join("tests.rs")).unwrap();
+        assert!(merged.find("fn ours").unwrap() < merged.find("fn theirs").unwrap());
+        assert_eq!(merged.matches("\n}\n").count(), 1);
+    }
+
+    #[test]
+    fn a_branch_that_edits_a_base_line_while_the_landing_ref_inserts_stays_a_real_conflict() {
+        let tmp = testkit::TempDir::new("rebase-stale-edit");
+        let edited = TESTS_RS.replace("fn base()", "fn renamed()");
+        let landed = TESTS_RS.replace("fn base() {\n", "fn base() {\n        landed();\n");
+        let g = diverged(&tmp, &edited, &landed);
+
+        let end = rebase(&g, "main", &Rules::standard(None));
+
+        let RebaseEnd::Conflict(files) = end else { panic!("expected a real conflict") };
+        assert!(files[0].reason.contains("insertion union refused"), "{}", files[0].reason);
+        assert!(files[0].quoted.contains("<<<<<<<"));
+    }
+}
