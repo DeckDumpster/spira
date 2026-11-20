@@ -354,10 +354,19 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
         let mut views = claim_views(store, rev, &recs, call);
         let ids: Vec<&str> = recs.iter().map(|r| r.row.bead_id.as_str()).collect();
         let mut readiness = store.readiness_of(&ids, rev).map_err(e)?;
+        let mut states: std::collections::BTreeMap<String, BeadState> =
+            recs.iter().map(|r| (r.row.bead_id.clone(), r.row.state)).collect();
+        let off_page: std::collections::BTreeSet<&str> = readiness
+            .values()
+            .flat_map(|r| r.blocked_by.iter().map(String::as_str))
+            .filter(|b| !states.contains_key(*b))
+            .collect();
+        let off_page: Vec<&str> = off_page.into_iter().collect();
+        states.extend(store.states_at(&off_page, rev).map_err(e)?);
         let mut rows = Vec::with_capacity(records.len());
         for r in &recs {
             let id = r.row.bead_id.as_str();
-            let ready = blocking(readiness.remove(id), |b| store.state_at(b, rev)).map_err(e)?;
+            let ready = blocking(readiness.remove(id), |b| Ok(states.get(b).copied())).map_err(e)?;
             rows.push(row(r, ready.as_ref(), &views.remove(id).unwrap_or(Value::Null), LISTED));
         }
         Ok(rows)

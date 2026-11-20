@@ -367,11 +367,13 @@ impl<B: Backend> Store<B> {
         chunk: usize,
         mut visit: impl FnMut(Read<LifecycleRecord>) -> bool,
     ) -> Result<()> {
-        let mut take = |item: &Item| -> Result<bool> {
-            match keys::id_of(keys::LIFECYCLE, &item.key) {
-                Some(id) => Ok(visit(self.projected(id, item, rev)?)),
-                None => Ok(false),
+        let mut flush = |items: &[Item]| -> Result<bool> {
+            for read in self.projected_page(items, rev)? {
+                if visit(read) {
+                    return Ok(true);
+                }
             }
+            Ok(false)
         };
         let start = after.map(keys::lifecycle);
         if let Some(ids) = ids {
@@ -379,11 +381,13 @@ impl<B: Backend> Store<B> {
                 ids.iter().filter(|i| after.is_none_or(|a| i.as_str() > a)).collect();
             ids.sort_unstable();
             ids.dedup();
-            for id in ids {
-                if let Some(item) = self.contract.get_at(&keys::lifecycle(id), rev)? {
-                    if take(&item)? {
-                        break;
-                    }
+            for group in ids.chunks(chunk) {
+                let keys: Vec<String> = group.iter().map(|id| keys::lifecycle(id)).collect();
+                let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+                let items: Vec<Item> =
+                    self.contract.get_many_at(&key_refs, rev)?.into_iter().flatten().collect();
+                if flush(&items)? {
+                    break;
                 }
             }
         } else if let Some(states) = states {
@@ -400,6 +404,7 @@ impl<B: Backend> Store<B> {
                     done: false,
                 });
             }
+            let mut batch: Vec<Item> = Vec::new();
             loop {
                 for r in runs.iter_mut().filter(|r| r.buf.is_empty() && !r.done) {
                     let page = self.contract.range_in_state(
@@ -420,21 +425,20 @@ impl<B: Backend> Store<B> {
                 else {
                     break;
                 };
-                let item = next.buf.pop_front().expect("a non-empty run");
-                if take(&item)? {
-                    break;
+                batch.push(next.buf.pop_front().expect("a non-empty run"));
+                if batch.len() >= chunk && flush(&std::mem::take(&mut batch))? {
+                    return Ok(());
                 }
             }
+            flush(&batch)?;
         } else {
             let mut cursor = start;
             loop {
                 let page = self
                     .contract
                     .range_at(keys::LIFECYCLE, cursor.as_deref(), chunk, rev)?;
-                for item in &page {
-                    if take(item)? {
-                        return Ok(());
-                    }
+                if flush(&page)? {
+                    return Ok(());
                 }
                 if page.len() < chunk {
                     break;
@@ -445,18 +449,55 @@ impl<B: Backend> Store<B> {
         Ok(())
     }
 
-    /// `item`, the record of `id` at `rev`, with its lease projected from the claim lock then.
-    fn projected(&self, id: &str, item: &Item, rev: u64) -> Result<Read<LifecycleRecord>> {
-        let mut value: LifecycleRecord = decode(&item.key, &item.value)?;
-        if value.row.state == BeadState::Working {
-            let lock = self.contract.get_at(&keys::claim_lock(id), rev)?;
-            project_lease(&mut value, lock.as_ref());
+    /// Each of `items`, its lease projected from its claim's lock at `rev`; the locks of the
+    /// WORKING records are read in one `get_many_at`.
+    fn projected_page(&self, items: &[Item], rev: u64) -> Result<Vec<Read<LifecycleRecord>>> {
+        let mut values = Vec::with_capacity(items.len());
+        let mut lock_keys = Vec::new();
+        for item in items {
+            let Some(id) = keys::id_of(keys::LIFECYCLE, &item.key) else { continue };
+            let value: LifecycleRecord = decode(&item.key, &item.value)?;
+            if value.row.state == BeadState::Working {
+                lock_keys.push((values.len(), keys::claim_lock(id)));
+            }
+            values.push((value, item));
         }
-        Ok(Read {
-            value,
-            mod_rev: item.mod_rev,
-            create_rev: item.create_rev,
-        })
+        if !lock_keys.is_empty() {
+            let refs: Vec<&str> = lock_keys.iter().map(|(_, k)| k.as_str()).collect();
+            let locks = self.contract.get_many_at(&refs, rev)?;
+            for ((at, _), lock) in lock_keys.iter().zip(locks) {
+                project_lease(&mut values[*at].0, lock.as_ref());
+            }
+        }
+        Ok(values
+            .into_iter()
+            .map(|(value, item)| Read {
+                value,
+                mod_rev: item.mod_rev,
+                create_rev: item.create_rev,
+            })
+            .collect())
+    }
+
+    /// The state of each of `ids` that has a record, at `rev`, a chunk to a read transaction.
+    pub fn states_at(
+        &self,
+        ids: &[&str],
+        rev: u64,
+    ) -> Result<std::collections::BTreeMap<String, BeadState>> {
+        let mut out = std::collections::BTreeMap::new();
+        for group in ids.chunks(RECORD_CHUNK) {
+            let keys: Vec<String> = group.iter().map(|id| keys::lifecycle(id)).collect();
+            let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+            let items = self.contract.get_many_at(&refs, rev)?;
+            for ((id, key), item) in group.iter().zip(&keys).zip(items) {
+                if let Some(item) = item {
+                    let rec: LifecycleRecord = decode(key, &item.value)?;
+                    out.insert(id.to_string(), rec.row.state);
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// `id`'s readiness at `rev`.
@@ -488,13 +529,6 @@ impl<B: Backend> Store<B> {
             }
         }
         Ok(out)
-    }
-
-    /// `id`'s state at `rev`, or `None` with no record.
-    pub fn state_at(&self, id: &str, rev: u64) -> Result<Option<BeadState>> {
-        Ok(self
-            .read::<LifecycleRecord>(&keys::lifecycle(id), Some(rev))?
-            .map(|(r, _)| r.value.row.state))
     }
 
     /// The fence of the claim now holding `id`: its lock, while it is live.
