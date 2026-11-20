@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use crate::watchers::inbox_keeper;
 use crate::forge::{slug, Forge};
+use crate::watchers::cr_comments::{self, ReviewObs};
 use crate::watchers::pr_notify::{self, RepoObs};
 use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
@@ -39,6 +40,8 @@ const STORE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250)
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct World {
     pub run_dir: PathBuf,
+    /// `owner/name` of the review repository; empty while `SPIRA_CR_REPO_OWNER` or `SPIRA_CR_REPO_NAME` is unset.
+    pub cr_repo: String,
     pub queue_dir: PathBuf,
     pub repo_map: PathBuf,
     pub home_repo: String,
@@ -82,6 +85,14 @@ pub type RecordedPrs = BTreeMap<String, Result<Vec<u64>, String>>;
 
 fn pr_number(v: &str) -> Option<u64> {
     v.trim().trim_start_matches('#').parse().ok()
+}
+
+/// Every open or published review, asked of the forge by pull request number. With none, no forge
+/// call is made. A review's answers are each `None` where the forge did not give one.
+pub fn cr_snapshot_from(reviews: &[cr::record::Review], ask: &dyn Fn(u64) -> ReviewObs) -> cr_comments::Snapshot {
+    use cr::record::State::{Open, Published};
+    let watched = reviews.iter().filter(|r| matches!(r.state, Open | Published));
+    cr_comments::Snapshot { reviews: watched.filter_map(|r| Some(ReviewObs { number: r.number, state: Some(r.state), ..ask(r.pr?) })).collect() }
 }
 
 /// The PR the repo's publish record names; an unreadable record is an `Err`, an absent one `None`.
@@ -383,6 +394,33 @@ impl World {
             Err(e) => return Err(format!("{}: {e}", cursor.display())),
         };
         inbox_keeper::observed(&carry, inbox_keeper::Snapshot { waiter_alive, unread: total - pos, cursor_mtime })
+    }
+
+    /// What the forge says of each open review's pull request: comments, conversation, reviews, state.
+    pub fn cr_snapshot(&self, forge: &Forge, _carry: &str) -> Result<String, String> {
+        let reviews = cr::record::all(&self.run_dir)?;
+        let snap = cr_snapshot_from(&reviews, &|pr| {
+            let slug = self.cr_repo.as_str();
+            ReviewObs { pr, comments: forge.review_comments(slug, pr), conversation: forge.issue_comments(slug, pr), reviews: forge.reviews(slug, pr), pull: forge.pull(slug, pr), ..ReviewObs::default() }
+        });
+        if !snap.reviews.is_empty() && self.cr_repo.is_empty() {
+            return Err("SPIRA_CR_REPO_OWNER and SPIRA_CR_REPO_NAME are not both set; the review repository has no name".into());
+        }
+        forge.report_spend();
+        serde_json::to_string(&snap).map_err(|e| e.to_string())
+    }
+
+    /// Applies the review state changes and keeps each review's comments where `cr thread` reads them.
+    pub fn cr_record(&self, input: &str) -> Result<String, String> {
+        let records: cr_comments::Records = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        for (number, comments) in &records.threads {
+            let text = serde_json::to_string_pretty(comments).map_err(|e| e.to_string())?;
+            cr::record::write_atomic(&cr::thread::comments_path(&self.run_dir, *number), text.as_bytes())?;
+        }
+        for c in &records.changes {
+            cr::record::set_state(&self.run_dir, c.number, c.state, c.at)?;
+        }
+        Ok(format!("{} states, {} threads", records.changes.len(), records.threads.len()))
     }
 
     /// The PRs the harness opened and recorded, asked of the forge by number, with the PRs already

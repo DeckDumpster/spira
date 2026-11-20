@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds after a review's last new comment during which it is polled at the hot interval.
+SCHEMA=Seconds after a review's last new comment during which it is polled at the hot interval. (unit: seconds; integer; default 900). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_CR_COMMENTS_WINDOW_SECS:=900}"
+SPIRA_CONF_DEFAULT_EOF

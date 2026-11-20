@@ -97,6 +97,8 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("hel.sweep.close_on_land", Store),
     ("hel.sweep.content_on_base", Store),
     ("hel.sweep.free_worktree", Git),
+    ("cr-comments.observe", Forge),
+    ("cr-comments.record", Host),
     ("hel.sweep.observe", Store),
     ("hel.sweep.orphan_worktree", Git),
     ("hel.sweep.pr_tip", Forge),

@@ -12,12 +12,15 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::api_budget;
+use crate::watchers::cr_comments::{Pull, ReviewEvent};
 use crate::watchers::pr_notify::{classify, Final, OpenPr, Run};
+use cr::thread::Comment;
 use crate::wiki_git::gh_auth_token;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 const PAGE_SIZE: usize = 100;
 const PAGE: &str = "per_page=100";
+const MAX_PAGES: usize = 10;
 
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct Forge {
@@ -83,7 +86,7 @@ fn text(v: &Value, key: &str) -> String {
     v[key].as_str().unwrap_or("").to_string()
 }
 
-fn epoch(stamp: &str) -> Option<u64> {
+pub(crate) fn epoch(stamp: &str) -> Option<u64> {
     let (date, time) = stamp.strip_suffix('Z')?.split_once('T')?;
     let d: Vec<i64> = date.split('-').filter_map(|p| p.parse().ok()).collect();
     let t: Vec<i64> = time.split(':').filter_map(|p| p.parse().ok()).collect();
@@ -162,6 +165,19 @@ struct Got {
     outcome: &'static str,
     /// The ETag to keep with `value` for the next call; `None` when the answer carried none or came from the kept body.
     etag: Option<String>,
+}
+
+fn comment_of(c: &Value, conversation: bool) -> Option<Comment> {
+    Some(Comment {
+        id: c["id"].as_u64()?,
+        in_reply_to: c["in_reply_to_id"].as_u64(),
+        author: text(&c["user"], "login"),
+        bot: c["user"]["type"] == "Bot",
+        path: (!conversation).then(|| text(c, "path")),
+        line: c["line"].as_u64().or_else(|| c["original_line"].as_u64()),
+        body: text(c, "body"),
+        created_at: c["created_at"].as_str().and_then(epoch).unwrap_or(0),
+    })
 }
 
 fn rate_of(r: &ureq::Response) -> Option<api_budget::Rate> {
@@ -261,6 +277,48 @@ impl Forge {
     /// A list the forge may have cut short at one page reads as not answered, never as the whole.
     fn listed(&self, caller: &str, path: &str) -> Option<Vec<Value>> {
         self.get(caller, path)?.as_array().filter(|a| a.len() < PAGE_SIZE).cloned()
+    }
+
+    /// Every page of a list, each its own conditional request; `None` when a page was not answered or the list runs past `MAX_PAGES`.
+    fn paged(&self, caller: &str, path: &str) -> Option<Vec<Value>> {
+        let mut all = vec![];
+        for page in 1..=MAX_PAGES {
+            let got = self.get(caller, &format!("{path}?{PAGE}&page={page}"))?;
+            let got = got.as_array()?;
+            all.extend(got.iter().cloned());
+            if got.len() < PAGE_SIZE {
+                return Some(all);
+            }
+        }
+        None
+    }
+
+    /// The inline comments of a PR's reviews, replies included.
+    pub fn review_comments(&self, slug: &str, n: u64) -> Option<Vec<Comment>> {
+        let all = self.paged("cr_review_comments", &format!("/repos/{slug}/pulls/{n}/comments"))?; // not a path: GitHub API route
+        all.iter().map(|c| comment_of(c, false)).collect()
+    }
+
+    /// The comments in a PR's conversation, which have no file or line.
+    pub fn issue_comments(&self, slug: &str, n: u64) -> Option<Vec<Comment>> {
+        let all = self.paged("cr_issue_comments", &format!("/repos/{slug}/issues/{n}/comments"))?; // not a path: GitHub API route
+        all.iter().map(|c| comment_of(c, true)).collect()
+    }
+
+    /// The reviews submitted on a PR.
+    pub fn reviews(&self, slug: &str, n: u64) -> Option<Vec<ReviewEvent>> {
+        let all = self.paged("cr_reviews", &format!("/repos/{slug}/pulls/{n}/reviews"))?; // not a path: GitHub API route
+        all.iter()
+            .map(|r| {
+                Some(ReviewEvent { id: r["id"].as_u64()?, author: text(&r["user"], "login"), bot: r["user"]["type"] == "Bot", state: text(r, "state"), submitted_at: r["submitted_at"].as_str().and_then(epoch).unwrap_or(0) })
+            })
+            .collect()
+    }
+
+    /// Whether a PR is still open, and when it closed.
+    pub fn pull(&self, slug: &str, n: u64) -> Option<Pull> {
+        let p = self.get("cr_pull", &format!("/repos/{slug}/pulls/{n}"))?; // not a path: GitHub API route
+        Some(Pull { state: p["state"].as_str()?.to_string(), closed_at: p["closed_at"].as_str().and_then(epoch) })
     }
 
     /// One PR by number with its checks classified: `Some(None)` once it is no longer open, `None`
@@ -565,6 +623,49 @@ pub(crate) mod tests {
         assert!(api_budget::first_report_of("once-api", 100));
         assert!(!api_budget::first_report_of("once-api", 100));
         assert!(api_budget::first_report_of("once-api", 200));
+    }
+
+    #[test]
+    fn a_second_review_comments_call_revalidates_by_etag_and_a_304_answers_from_the_kept_body() {
+        let body = r#"[{"id":5,"in_reply_to_id":null,"user":{"login":"ryan","type":"User"},"path":"a.rs","line":3,"body":"why","created_at":"2026-11-19T10:00:00Z"}]"#;
+        let (api, seen) = stub(vec![answer("200 OK", "ETag: \"v1\"\r\n", body), answer("304 Not Modified", "", "")]);
+        let f = forge_at(api);
+        let fresh = api_budget::calls("cr_review_comments", api_budget::FRESH);
+        let cached = api_budget::calls("cr_review_comments", api_budget::CACHED);
+        let first = f.review_comments("o/r", 7).unwrap();
+        let second = f.review_comments("o/r", 7).unwrap();
+        assert_eq!(first, second);
+        assert_eq!((first[0].id, first[0].path.as_deref(), first[0].line, first[0].bot), (5, Some("a.rs"), Some(3), false));
+        let seen = seen.join().unwrap();
+        assert!(seen[0].starts_with("get /repos/o/r/pulls/7/comments?per_page=100&page=1 ") && !seen[0].contains("if-none-match"), "{}", seen[0]);
+        assert!(seen[1].contains("if-none-match: \"v1\""), "{}", seen[1]);
+        assert_eq!((api_budget::calls("cr_review_comments", api_budget::FRESH) - fresh, api_budget::calls("cr_review_comments", api_budget::CACHED) - cached), (1, 1));
+    }
+
+    #[test]
+    fn a_spent_budget_stops_the_review_reads_before_any_request() {
+        let (api, seen) = stub(vec![]);
+        api_budget::note_rate(&api, api_budget::Rate { limit: 5000, remaining: 0, reset: u64::MAX / 2 });
+        let f = forge_at(api);
+        let refused = api_budget::calls("cr_pull", api_budget::REFUSED);
+        assert_eq!(f.pull("o/r", 7), None);
+        assert_eq!(f.reviews("o/r", 7), None);
+        assert_eq!(api_budget::calls("cr_pull", api_budget::REFUSED) - refused, 1);
+        assert!(seen.join().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_review_read_the_forge_did_not_answer_is_none_not_an_empty_list() {
+        let (api, seen) = stub(vec![answer("500 Internal Server Error", "", "{}")]);
+        assert_eq!(forge_at(api).issue_comments("o/r", 7), None);
+        seen.join().unwrap();
+    }
+
+    #[test]
+    fn a_pull_reports_its_state_and_when_it_closed() {
+        let (api, seen) = stub(vec![answer("200 OK", "", r#"{"state":"closed","closed_at":"2026-10-28T05:45:43Z"}"#)]);
+        assert_eq!(forge_at(api).pull("o/r", 7), Some(Pull { state: "closed".into(), closed_at: Some(1_793_166_343) }));
+        seen.join().unwrap();
     }
 
     #[test]

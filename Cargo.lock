@@ -2246,6 +2246,7 @@ dependencies = [
  "bead",
  "cockpit-collect",
  "cockpit-ops",
+ "cr",
  "czar-pass",
  "dwarf",
  "filings-collect",
