@@ -62,7 +62,17 @@ want "the pilgrim files A in its own world" "sp-" "$A"
 pilgrim_work "$T/pilgrim" dep-add "$A" "$B" >/dev/null 2>&1
 is "dep-add exits 0" 0 "$?"
 
-once="$(in_world "$T/pilgrim" "lc-view once" | plain)"
+# A refused claim sync stays owed to the settler (settle.rs sync_claims) while the verb exits 0: the view settles, it does not flip.
+view_once_until() { # view_once_until <grep -F needle present|absent>; leaves the last render in $once
+    local i
+    for i in $(seq 1 40); do
+        once="$(in_world "$T/pilgrim" "lc-view once" | plain)"
+        if [ "$2" = present ]; then grep -qF -- "$1" <<<"$once" && return 0; else grep -qF -- "$1" <<<"$once" || return 0; fi
+        sleep 0.5
+    done
+    return 1
+}
+view_once_until "$A <- $B" present
 want "lc-view shows A blocked on B" "$A <- $B" "$once"
 want "lc-view counts the blocked bead" "BLOCKED 1" "$once"
 nowant "lc-view does not offer A as claimable" "P2 $A" "$(echo "$once" | sed -n '/^NEXT/,/^BLOCKED/p')"
@@ -98,7 +108,7 @@ for attempt in 1 2 3; do
     [[ "$closed" == *"cannot tell"* ]] || break
 done
 is "close-other exits 0: $closed" 0 "$close_rc"
-once="$(in_world "$T/pilgrim" "lc-view once" | plain)"
+view_once_until "$A <- $B" absent
 nowant "lc-view no longer shows A blocked" "$A <- $B" "$once"
 want "lc-view offers A as claimable" "P2 $A" "$(echo "$once" | sed -n '/^NEXT/,/^[A-Z]/p')"
 await_loom "[.view.next[].id] | index(\"$A\") != null"
