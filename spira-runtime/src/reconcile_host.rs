@@ -224,7 +224,7 @@ fn live_dwarves(active: &BTreeMap<String, String>, rune: &str) -> i64 {
     active
         .iter()
         .filter(|(name, state)| {
-            runtime::units::is_live_dwarf(name, runtime::units::state_of_word(state)) && runtime::units::counts_toward_caps(name) && runtime::units::is_dwarf_of(name, rune, rune)
+            runtime::units::is_live_dwarf(name, runtime::units::state_of_word(state)) && runtime::units::is_dwarf_of(name, rune, rune)
         })
         .count() as i64
 }

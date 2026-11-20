@@ -228,10 +228,10 @@ pub fn holder_alive(run: &Path, id: &str) -> bool {
 /// Every live dwarf unit, by the globs and liveness rule `dwarves.sh` and the fleet ceiling count
 /// by. Err when systemd cannot answer: an unreadable list is not an empty fleet.
 pub fn live_units(cfg: &Config) -> Result<Vec<String>, String> {
-    Ok(all_live_units(cfg)?.into_iter().filter(|u| runtime::units::counts_toward_caps(u)).collect())
+    all_live_units(cfg)
 }
 
-/// How many dwarves directed onto a named bead are live: outside every cap, so outside `live_units`.
+/// How many of `live_units` were directed onto a named bead.
 pub fn dwarves_live_directed(cfg: &Config) -> Result<u32, String> {
     Ok(all_live_units(cfg)?.iter().filter(|u| runtime::units::is_directed(u)).count() as u32)
 }
