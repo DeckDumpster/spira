@@ -392,9 +392,10 @@ fn a_branch_adding_a_slug_neither_the_base_nor_the_tip_holds_is_unreconciled() {
 fn a_dated_provenance_mark_never_reaches_a_rendered_file() {
     let _env = testkit::env_read();
     let toc = parse_toc("[[part]]\nnumber = 1\nname = \"A\"\nslug = \"a\"\nscope = \"s\"\nslugs = [\"law-one\", \"law-two\", \"law-three\"]\n").unwrap();
+    let mark = |who: &str, day: &str| format!("(per {who}, 2026-{day})");
     let tree = generate(&toc, &Pointers::default(), |slug| match slug {
-        "law-one" => Some("Do one (per Ryan, 2026-09-29).".into()),
-        "law-two" => Some("Do two (per Ryan, 2026-10-15). Then three.".into()),
+        "law-one" => Some(format!("Do one {}.", mark("Ann", "09-29"))),
+        "law-two" => Some(format!("Do two {}. Then three.", mark("Ann", "10-15"))),
         "law-three" => Some("Do four (per the spec) always.".into()),
         _ => None,
     });
