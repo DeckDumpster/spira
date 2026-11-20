@@ -20,6 +20,7 @@ pub mod prune;
 pub mod repo;
 pub mod session_hook;
 pub mod stage;
+pub mod symbols;
 pub mod systemctl;
 pub mod telemetry;
 pub mod units;

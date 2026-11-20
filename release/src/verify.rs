@@ -57,6 +57,7 @@ pub fn verify(cfg: &Config, sha: &str, o: &VerifyOpts) -> Result<Vec<String>, St
         Ok(p) => problems.extend(p),
         Err(e) => problems.push(e),
     }
+    problems.extend(crate::symbols::problems(&rel));
     if o.pre_activate {
         let pa = rel.join("spira/pre-activate.sh");
         if !fsutil::is_executable(&pa) {

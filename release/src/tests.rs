@@ -1805,3 +1805,28 @@ fn a_release_ships_the_installed_units_its_templates_make_and_no_other() {
     assert!(!units::is_shipped_by(&rel, "prod", "spira-run-sentinel_2dpass-landing.service"));
     assert!(!units::is_shipped_by(&rel, "other", "spira-runtime-prod.service"));
 }
+
+fn verify_symbol_problems(lc: &[u8]) -> Vec<String> {
+    let w = World::with_git(FakeGit::default());
+    let rel = w.cfg.releases.join(A);
+    fs::create_dir_all(rel.join("bin")).unwrap();
+    fs::write(rel.join("bin/spira-lc"), lc).unwrap();
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    let o = verify::VerifyOpts { pre_activate: false, system_dirs: vec![] };
+    verify::verify(&w.cfg, A, &o).unwrap().into_iter().filter(|p| p.starts_with("bin/spira-lc")).collect()
+}
+
+#[test]
+fn verify_refuses_a_spira_lc_whose_function_names_are_stripped() {
+    let p = verify_symbol_problems(&crate::symbols::tests::elf_image(&[], false));
+    assert!(p.iter().any(|p| p.contains("bin/spira-lc")), "{p:?}");
+    let p = verify_symbol_problems(&crate::symbols::tests::elf_image(&["sqlite3_step"], false));
+    assert!(p.iter().any(|p| p.contains("spira_lc::main")), "{p:?}");
+}
+
+#[test]
+fn verify_accepts_a_spira_lc_that_keeps_its_function_names() {
+    let p = verify_symbol_problems(&crate::symbols::tests::elf_image(&["_ZN8spira_lc4main17h0123456789abcdefE", "sqlite3_step"], false));
+    assert_eq!(p, Vec::<String>::new());
+}
