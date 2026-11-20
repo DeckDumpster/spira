@@ -201,6 +201,7 @@ pub trait RoundOps {
         member: &Member,
         filter: &str,
         _line: &str,
+        _failed: &[String],
         owner: bool,
     ) -> Result<(), String> {
         self.eject(member, &[filter.to_string()], owner)
@@ -237,6 +238,7 @@ pub trait RoundOps {
             member,
             WORKSPACE_BUILD,
             &format!("held behind {}: {line}", behind.join(",")),
+            &[],
             false,
         )
     }
@@ -1251,7 +1253,7 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         }
         let left = who_left(members, &leaving(members, &actions, &f.name));
         return Ok(
-            match apply_build_actions(ops, members, &actions, &f.name)? {
+            match apply_build_actions(ops, members, &actions, &f.name, &f.failed)? {
                 Some(next) => FilterEject::Survivors(next),
                 None => FilterEject::Emptied(left),
             },
@@ -1265,7 +1267,7 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
     for m in members {
         if out.contains_key(&m.id) {
             match named.iter().find(|(id, _)| *id == m.id) {
-                Some((_, line)) => ops.eject_on(m, &f.name, line, true).map_err(refused)?,
+                Some((_, line)) => ops.eject_on(m, &f.name, line, &f.failed, true).map_err(refused)?,
                 None => ops
                     .eject(m, std::slice::from_ref(&f.name), false)
                     .map_err(refused)?,
@@ -1303,10 +1305,7 @@ pub fn flip_ids(failed: &[String], graph: Option<&PackageGraph>) -> Option<Vec<S
 }
 
 fn line_id(line: &str, graph: Option<&PackageGraph>) -> Option<String> {
-    let mut w = line.split_whitespace();
-    let (Some(_), Some(binary), Some(test), None) = (w.next(), w.next(), w.next(), w.next()) else {
-        return None;
-    };
+    let [_, binary, test] = crate::unitattr::failing_words(line)?;
     if binary.starts_with("dir:") || binary.starts_with("test:") {
         let package = graph?.resolve(&[binary.to_string()]).remove(0);
         if package.starts_with("dir:") || package.starts_with("test:") {
@@ -1413,7 +1412,7 @@ fn eject_sole_member<O: RoundOps>(
 ) -> Result<RoundEnd, String> {
     let actions = sole_member_culprit(red, members);
     let left = who_left(members, &leaving(members, &actions, filter));
-    apply_build_actions(ops, members, &actions, filter)?;
+    apply_build_actions(ops, members, &actions, filter, &[])?;
     Ok(RoundEnd::Emptied(format!("{filter} red {left}")))
 }
 
@@ -1505,7 +1504,7 @@ fn confirmed_attribution<R: RoundRunner, O: RoundOps>(
         }
     }
     if !found.is_empty() {
-        return Ok(match apply_build_actions(ops, members, &found, &named)? {
+        return Ok(match apply_build_actions(ops, members, &found, &named, &[])? {
             Some(next) => RoundEnd::Land { members: next, attribution_secs: None },
             None => RoundEnd::Emptied(format!("{named} red ejected every member")),
         });
@@ -1633,6 +1632,7 @@ fn eject_recipe_owner<O: RoundOps>(
             line,
         }],
         WORKSPACE_BUILD,
+        &[],
     )
 }
 
@@ -1656,7 +1656,7 @@ fn eject_build_culprits<R: RoundRunner, O: RoundOps>(
         )
         .unwrap_or_default();
     }
-    apply_build_actions(ops, members, &actions, WORKSPACE_BUILD)
+    apply_build_actions(ops, members, &actions, WORKSPACE_BUILD, &[])
 }
 
 /// Ejects or sequences the members `actions` name, and the members stacked on them, and
@@ -1666,6 +1666,7 @@ fn apply_build_actions<O: RoundOps>(
     members: &[Member],
     actions: &[Action],
     filter: &str,
+    failed: &[String],
 ) -> Result<Option<Vec<Member>>, String> {
     if actions.is_empty() {
         return Ok(None);
@@ -1676,7 +1677,7 @@ fn apply_build_actions<O: RoundOps>(
             |a| matches!(a, Action::Eject { id, .. } | Action::Sequence { id, .. } if *id == m.id),
         ) {
             Some(Action::Eject { line, .. }) => {
-                ops.eject_on(m, filter, line, true).map_err(refused)?
+                ops.eject_on(m, filter, line, failed, true).map_err(refused)?
             }
             Some(Action::Sequence { behind, line, .. }) => {
                 ops.sequence(m, behind, line).map_err(refused)?
@@ -1858,7 +1859,7 @@ fn eject_runner_abort<R: RoundRunner, O: RoundOps>(
         return Ok(None);
     };
     Ok(Some(
-        apply_build_actions(ops, members, &[action], RUNNER_ABORT)?.unwrap_or_default(),
+        apply_build_actions(ops, members, &[action], RUNNER_ABORT, &[])?.unwrap_or_default(),
     ))
 }
 
@@ -1885,7 +1886,7 @@ fn eject_config_fault<O: RoundOps>(
         return Ok(None);
     }
     Ok(Some(
-        apply_build_actions(ops, members, &actions, CONFIG_FAULT)?.unwrap_or_default(),
+        apply_build_actions(ops, members, &actions, CONFIG_FAULT, &[])?.unwrap_or_default(),
     ))
 }
 
@@ -2034,7 +2035,7 @@ fn settle_lifted<R: RoundRunner, O: RoundOps>(
     if actions.is_empty() {
         return Ok(Lifted::Members { members: members.to_vec(), ejected: false });
     }
-    Ok(match apply_build_actions(ops, members, &actions, &tests.join(","))? {
+    Ok(match apply_build_actions(ops, members, &actions, &tests.join(","), &[])? {
         Some(next) => Lifted::Members { members: next, ejected: true },
         None => Lifted::Emptied(format!("{} red with the owner's fix", tests.join(","))),
     })
@@ -2358,7 +2359,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                 &members,
             )
             .unwrap_or_default();
-            if let Some(next) = apply_build_actions(ops, &members, &actions, CONFIG_DELTA)? {
+            if let Some(next) = apply_build_actions(ops, &members, &actions, CONFIG_DELTA, &[])? {
                 println!("batcher: the merged config delta does not apply — culprits left, re-cutting {} member(s)", next.len());
                 runner.stop_main()?;
                 members = next;
@@ -2387,6 +2388,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                                 line,
                             }],
                             WORKSPACE_BUILD,
+                            &[],
                         )? {
                             println!("batcher: the round image build failed — {} left, re-cutting {} member(s)", owner.id, next.len());
                             runner.stop_main()?;
@@ -2666,7 +2668,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             }
             if !found.is_empty() {
                 let named = d.unattributed.join(",");
-                match apply_build_actions(ops, &members, &found, &named)? {
+                match apply_build_actions(ops, &members, &found, &named, &[])? {
                     Some(next) => {
                         println!("batcher: {named} red names no member; run alone it was red for {} — re-cutting {} member(s)", found.iter().map(|a| action_id(a).as_str()).collect::<Vec<_>>().join(","), next.len());
                         runner.stop_main()?;
@@ -3231,6 +3233,7 @@ pub(crate) mod tests {
         pub touch: BTreeMap<String, Vec<String>>,
         pub ejected: Vec<(String, Vec<String>)>,
         pub eject_evidence: Vec<(String, String)>,
+        pub eject_failed: Vec<(String, Vec<String>)>,
         pub returned: Vec<(String, String)>,
         pub owner_flags: Vec<(String, bool)>,
         pub rebuilt: Vec<Vec<String>>,
@@ -3301,8 +3304,11 @@ pub(crate) mod tests {
             member: &Member,
             filter: &str,
             line: &str,
+            failed: &[String],
             owner: bool,
         ) -> Result<(), String> {
+            self.eject_failed
+                .push((member.id.clone(), failed.to_vec()));
             self.eject_evidence
                 .push((member.id.clone(), line.to_string()));
             self.eject(member, &[filter.to_string()], owner)
@@ -5625,6 +5631,27 @@ pub(crate) mod tests {
         );
     }
 
+    #[test]
+    fn a_unit_red_pinned_on_one_member_ejects_it_with_the_failing_test_lines() {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.filter = Some(release_red_when("m2"));
+        let mut ops = Ops {
+            graph: Some(release_graph()),
+            diffs: vec![
+                diff_paths("m1", &["spira-config/src/x.rs"]),
+                diff_paths("m2", &["spira-runtime/src/f.rs", "spira/conf.d/SPIRA_TASK_MODES"]),
+            ],
+            ..Ops::default()
+        };
+        let members: Vec<Member> = (1..=2).map(|i| member(&format!("m{i}"))).collect();
+        attribute_round(&mut f, &mut ops, &corpus(3), members, budget6()).unwrap();
+        assert_eq!(
+            ops.eject_failed,
+            vec![("m2".to_string(), vec![RELEASE_FAILING.to_string()])]
+        );
+    }
+
     fn two_suspects() -> Ops {
         Ops {
             graph: Some(release_graph()),
@@ -7553,6 +7580,18 @@ pub(crate) mod tests {
             vec![vec!["integration:state-store-sqlite the_wal_x".to_string()]]
         );
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn a_path_attribution_line_is_no_failing_test_id_and_a_failing_line_is() {
+        assert_eq!(
+            flip_ids(&["unit-tests: names spira-lc/src/serve/tests/sweep.rs".into()], None),
+            None
+        );
+        assert_eq!(
+            flip_ids(&["FAIL spira-lc::bin/spira-lc serve::tests::sweep::t".into()], None),
+            Some(vec!["unit:spira-lc::bin/spira-lc serve::tests::sweep::t".to_string()])
+        );
     }
 
     #[test]

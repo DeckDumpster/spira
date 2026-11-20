@@ -536,7 +536,7 @@ impl drive::RoundOps for LiveOps<'_> {
         self.eject_with(member, suites, &fails, owner, None)
     }
 
-    fn eject_on(&mut self, member: &Member, filter: &str, line: &str, owner: bool) -> Result<(), String> {
+    fn eject_on(&mut self, member: &Member, filter: &str, line: &str, failed: &[String], owner: bool) -> Result<(), String> {
         self.eject_with(
             member,
             &[filter.to_string()],
@@ -546,7 +546,7 @@ impl drive::RoundOps for LiveOps<'_> {
         )?;
         if owner && filter == "unit-tests" {
             let graph = self.package_graph();
-            if let Some(ids) = drive::flip_ids(&[line.to_string()], graph.as_ref()) {
+            if let Some(ids) = drive::flip_ids(failed, graph.as_ref()) {
                 if let Err(e) = spira_config::proof::record_failing_tests(&self.env.run, &member.id, filter, &ids) {
                     eprintln!("batcher: failing tests of {} not recorded: {e}", member.id);
                 }
