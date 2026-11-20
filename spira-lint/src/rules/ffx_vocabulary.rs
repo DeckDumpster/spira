@@ -494,6 +494,38 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
     }
 
     #[test]
+    fn a_merged_slug_is_skipped_only_while_the_toc_lists_it_and_other_terms_stay_findings() {
+        let t = TempDir::new("ffx-merged");
+        t.write("law/toc.toml", "[[part]]\nnumber = 1\nslugs = [\"law-aeon-listed\", \"law-live\"]\n"); // ffx-ok
+        t.write("law/pointers.toml", "[[merged]]\nfrom = \"law-aeon-listed\"\n[[merged]]\nfrom = \"law-aeon-unlisted\"\n[[retired]]\nslug = \"law-gone\"\nreason = \"an aeon left\"\n"); // ffx-ok
+        t.write("law/a.md", "law-aeon-listed\nlaw-aeon-unlisted\nlaw-gone an aeon\n"); // ffx-ok
+        t.write("law/b.md", "law-aeon-other\n"); // ffx-ok
+        let found = FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&tree(&t, &["law/toc.toml", "law/pointers.toml", "law/a.md", "law/b.md"])).unwrap();
+        let at: Vec<_> = found.iter().map(|f| (f.path.as_str(), f.line)).collect();
+        assert_eq!(at, [("law/a.md", Some(2)), ("law/a.md", Some(3)), ("law/b.md", Some(1))], "{found:?}");
+    }
+
+    #[test]
+    fn a_missing_or_unparseable_toc_or_pointers_file_leaves_every_finding() {
+        let body = "law-aeon-old\n"; // ffx-ok
+        let pointers = "[[retired]]\nslug = \"law-aeon-old\"\n"; // ffx-ok
+        let toc = "[[part]]\nslugs = [\"law-aeon-old\"]\n"; // ffx-ok
+        for (p, c) in [(None, Some(toc)), (Some(pointers), None), (Some(pointers), Some("not [ toml")), (Some("not [ toml"), Some(toc))] {
+            let t = TempDir::new("ffx-failsafe");
+            t.write("law/a.md", body);
+            let mut files = vec!["law/a.md"];
+            for (name, text) in [("law/pointers.toml", p), ("law/toc.toml", c)] {
+                if let Some(text) = text {
+                    t.write(name, text);
+                    files.push(name);
+                }
+            }
+            let found = FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&tree(&t, &files)).unwrap();
+            assert!(found.iter().any(|f| f.path == "law/a.md"), "{p:?} {c:?}: {found:?}");
+        }
+    }
+
+    #[test]
     fn replacement_answers_every_term() {
         for t in terms_in(ALL) {
             assert_eq!(replacement(&t) == NO_REPLACEMENT, t == "magus", "{t}");
