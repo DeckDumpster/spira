@@ -787,3 +787,4 @@ dolt_persist_history_keep
 land_stale
 land_escalate_every
 activation_store_bound
+bead_file_retry_window_secs

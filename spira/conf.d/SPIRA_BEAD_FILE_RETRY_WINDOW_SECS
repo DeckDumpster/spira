@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lc
+DOC=Seconds back in which a bead already titled as a filing is taken to be that filing's own, so a retry made after a lost create reply reports it and completes it instead of creating a second; it also bounds the read-back of a create the store could not answer
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_BEAD_FILE_RETRY_WINDOW_SECS:=900}"
+SPIRA_CONF_DEFAULT_EOF
