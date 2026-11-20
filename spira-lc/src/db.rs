@@ -103,6 +103,7 @@ impl Conn {
     /// interleave with another caller's. A session that failed on anything but a lost race is dropped.
     pub fn transaction<T>(&self, f: impl FnOnce(&mut dyn crate::content_write::Tx) -> T) -> Result<T, String> {
         let mut guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        #[allow(clippy::manual_filter)]
         let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
         let wire = match reusable {
             Some(w) => w,
