@@ -359,6 +359,7 @@ mod tests {
             tests: None,
             unit: None,
             runner: None,
+            deny: None,
         }
     }
 

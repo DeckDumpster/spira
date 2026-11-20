@@ -47,6 +47,10 @@ pub struct KeyInputs {
     /// container) leaves every existing key line as it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner: Option<String>,
+    /// The unit tier only: the test paths the registry's deny list leaves out, so a run that
+    /// leaves tests out never answers for one that does not; None leaves every other key as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deny: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,7 +95,8 @@ impl KeyInputs {
             })
             .unwrap_or_default();
         let runner = self.runner.as_deref().map(|r| format!(" runner={r}")).unwrap_or_default();
-        format!("{tests}{unit}{runner}")
+        let deny = self.deny.as_deref().map(|d| format!(" deny={d}")).unwrap_or_default();
+        format!("{tests}{unit}{runner}{deny}")
     }
 
     pub fn key(&self) -> String {
@@ -306,6 +311,7 @@ mod tests {
             tests: None,
             unit: None,
             runner: None,
+            deny: None,
         }
     }
 
@@ -315,6 +321,13 @@ mod tests {
         let sandbox = KeyInputs { runner: Some("sandbox".into()), ..inputs() };
         assert_ne!(container.key(), sandbox.key(), "a sandbox verdict must never answer for a container run");
         assert!(!format!("{:?}", container.tests_suffix()).contains("runner"), "the container's key line is unchanged");
+    }
+
+    #[test]
+    fn a_run_that_leaves_tests_out_has_its_own_key() {
+        let denied = KeyInputs { deny: Some("a::t".into()), ..inputs() };
+        assert_ne!(inputs().key(), denied.key());
+        assert_ne!(denied.key(), KeyInputs { deny: Some("a::u".into()), ..inputs() }.key());
     }
 
     #[test]
