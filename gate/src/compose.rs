@@ -1007,7 +1007,7 @@ mod tests {
                     touched: vec!["gate".into()],
                     crates: vec!["gate".into()],
                     targets: Targets::default(),
- dropped: vec![],
+                    dropped: vec![],
                 },
             ),
             (
@@ -1016,7 +1016,7 @@ mod tests {
                     touched: vec!["gate".into()],
                     crates: vec!["gate".into()],
                     targets: Targets::default(),
- dropped: vec![],
+                    dropped: vec![],
                 },
             ),
             (
@@ -1025,7 +1025,7 @@ mod tests {
                     touched: vec!["gate".into()],
                     crates: vec!["gate".into()],
                     targets: Targets::default(),
- dropped: vec![],
+                    dropped: vec![],
                 },
             ),
             (
@@ -1034,7 +1034,7 @@ mod tests {
                     touched: vec!["panel".into()],
                     crates: vec!["panel".into()],
                     targets: Targets::default(),
- dropped: vec![],
+                    dropped: vec![],
                 },
             ),
             (
@@ -1043,7 +1043,7 @@ mod tests {
                     touched: vec!["panel".into()],
                     crates: vec!["panel".into()],
                     targets: Targets::default(),
- dropped: vec![],
+                    dropped: vec![],
                 },
             ),
             (&["gate/src/engine.rs", "spira/lib.sh"], s("script")),
@@ -1065,7 +1065,7 @@ mod tests {
                     touched: vec!["release".into()],
                     crates: vec!["release".into()],
                     targets: Targets::default(),
- dropped: vec![],
+                    dropped: vec![],
                 },
             ),
             (
@@ -1074,7 +1074,7 @@ mod tests {
                     touched: vec!["release".into()],
                     crates: vec!["release".into()],
                     targets: Targets::default(),
- dropped: vec![],
+                    dropped: vec![],
                 },
             ),
             (
@@ -1083,7 +1083,7 @@ mod tests {
                     touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     targets: Targets::default(),
- dropped: vec![],
+                    dropped: vec![],
                 },
             ),
             (
@@ -1092,7 +1092,7 @@ mod tests {
                     touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     targets: Targets::default(),
- dropped: vec![],
+                    dropped: vec![],
                 },
             ),
             (
@@ -1101,7 +1101,7 @@ mod tests {
                     touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     targets: Targets::default(),
- dropped: vec![],
+                    dropped: vec![],
                 },
             ),
             (&[], Fences),
@@ -1312,7 +1312,7 @@ mod tests {
             touched: vec![],
             crates: vec![],
             targets: Targets::default(),
- dropped: vec![],
+            dropped: vec![],
         };
         assert_eq!(u.label(), "unit");
         assert!(u.suites_off());
@@ -1696,7 +1696,7 @@ cargo: test tests::x ... ok";
             touched: vec!["tsd".into()],
             crates: vec!["tsd".into()],
             targets: Targets::default(),
- dropped: vec![],
+            dropped: vec![],
         }
     }
 

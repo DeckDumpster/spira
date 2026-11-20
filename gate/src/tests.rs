@@ -2664,7 +2664,7 @@ fn the_unit_cap_the_config_names_narrows_the_crates_the_gate_builds() {
 
 #[test]
 fn the_shipped_unit_cap_covers_every_workspace_member() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = testkit::manifest_dir().parent().unwrap().to_path_buf();
     let registry = spira_config::registry::Registry::from_dirs(&root.join("spira")).unwrap();
     let default = registry.get("SPIRA_GATE_UNIT_MAX_CRATES").and_then(|k| k.default_expr()).unwrap().trim_matches('"').parse::<usize>().unwrap();
     let manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml")).unwrap().parse().unwrap();
