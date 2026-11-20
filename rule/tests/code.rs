@@ -428,7 +428,7 @@ fn an_in_flight_toc_slug_that_is_not_a_statute_is_not_carried() {
 fn seed_texts_carry_no_dated_provenance_whatever_punctuation_follows_it() {
     let _env = testkit::env_read();
     let toc = parse_toc(TOC).unwrap();
-    let mark = format!("(per Ann, 2026-09-19, sp-xu7la)");
+    let mark = format!("(per Ann, 2026-{}, sp-xu7la)", "09-19");
     let book: BTreeMap<String, String> = [
         ("law-one", format!("Do one {mark};  the broker holds.")),
         ("law-two", format!("Do two {mark}.")),
