@@ -1,4 +1,4 @@
-//! `cr pick [--aim <X>] [--seed <n>] [--json]` — see `cr -h`.
+//! `cr pick` and `cr count` — see `cr -h`.
 
 use cr::cli::{self, Outcome};
 use cr::ledger::Ledger;
@@ -21,6 +21,7 @@ fn build_ports() -> Result<Ports, String> {
         page_lines: cfg_parse("SPIRA_CR_PAGE_LINES")?,
         oversize_pages: cfg_parse("SPIRA_CR_OVERSIZE_PAGES")?,
         churn_days: cfg_parse("SPIRA_CR_CHURN_DAYS")?,
+        count_limit: cfg_parse::<u32>("SPIRA_CR_COUNT_LIMIT")? as usize,
         exclude: exclude.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect(),
     };
     let clock: Box<dyn Clock> = match spira_config::vtime::override_epoch() {
@@ -41,7 +42,7 @@ fn main() -> std::process::ExitCode {
     if cli::wants_help(&argv) {
         return emit(&Outcome { code: 0, stdout: cli::HELP.to_string(), stderr: String::new() });
     }
-    let metrics = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "cr", "pick");
+    let metrics = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "cr", argv.first().map(String::as_str).filter(|v| matches!(*v, "pick" | "count")).unwrap_or("none"));
     let outcome = match build_ports() {
         Ok(ports) => cli::run(&argv, &ports),
         Err(e) => cli::error_outcome(1, cli::wants_json(&argv), &e),

@@ -2,14 +2,14 @@
 
 use crate::cli::{run, Outcome};
 use crate::ledger::{Ledger, LedgerFile, Row};
-use crate::ports::{blob_of, Config, FixtureTree, Ports, VirtualClock};
+use crate::ports::{blob_of, Config, FixtureTree, History, Ports, SourceTree, VirtualClock};
 use serde_json::Value;
 
 const DAY: u64 = 86_400_000;
 const NOW: u64 = 100 * DAY;
 
 fn cfg() -> Config {
-    Config { page_lines: 10, oversize_pages: 3, exclude: ["**/fixtures/**", "**/*.generated.*", "**/vendor/**", "Cargo.lock"].map(String::from).to_vec(), churn_days: 60 }
+    Config { page_lines: 10, oversize_pages: 3, exclude: ["**/fixtures/**", "**/*.generated.*", "**/vendor/**", "Cargo.lock"].map(String::from).to_vec(), churn_days: 60, count_limit: 7 }
 }
 
 fn big_source() -> String {
@@ -326,4 +326,136 @@ fn the_ledger_round_trips_through_a_file() {
     Ledger::append(&path, &r).unwrap();
     Ledger::append(&path, &r).unwrap();
     assert_eq!(Ledger::load(&path).unwrap().rows, vec![r.clone(), r]);
+}
+
+fn lines(n: std::ops::Range<u32>) -> String {
+    n.map(|i| format!("let hit_{i} = 1;\n")).collect()
+}
+
+fn count_tree() -> FixtureTree {
+    FixtureTree::new("beef01")
+        .with_file("a/one.rs", &format!("// let hit_c = 1;\n{}", lines(0..49)))
+        .with_file("a/two.rs", &lines(0..40))
+        .with_file("b/three.rs", &lines(0..30))
+        .with_file("b/none.rs", "fn quiet() {}\n")
+        .with_file("b/fixtures/planted.rs", &lines(0..9))
+        .with_file("b/notes.md", "let hit_md = 1;\n")
+}
+
+fn count_ports() -> Ports {
+    ports_with(count_tree(), vec![], cfg())
+}
+
+#[test]
+fn count_totals_every_code_line_skips_comments_and_cuts_the_list_at_the_limit() {
+    let o = go(&count_ports(), &["count", "--regex", "hit_", "--limit", "5"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let out: Vec<&str> = o.stdout.lines().collect();
+    assert_eq!(out[0], "total 119 lines in 3 files (4 files searched, 1 comment lines skipped) at beef01");
+    assert_eq!(&out[1..6], ["a/one.rs:2: let hit_0 = 1;", "a/one.rs:3: let hit_1 = 1;", "a/one.rs:4: let hit_2 = 1;", "a/one.rs:5: let hit_3 = 1;", "a/one.rs:6: let hit_4 = 1;"]);
+    assert_eq!(out[6], "… 114 more");
+    assert_eq!(out.len(), 7);
+}
+
+#[test]
+fn count_lists_everything_without_a_closing_line_when_nothing_is_cut() {
+    let o = go(&count_ports(), &["count", "--regex", "hit_c", "--limit", "5"]);
+    assert_eq!(o.stdout.lines().count(), 1, "{}", o.stdout);
+    assert!(o.stdout.starts_with("total 0 lines in 0 files"));
+    let o = go(&count_ports(), &["count", "--regex", "hit_39", "--limit", "5"]);
+    assert_eq!(o.stdout.lines().collect::<Vec<_>>(), ["total 2 lines in 2 files (4 files searched, 0 comment lines skipped) at beef01", "a/one.rs:41: let hit_39 = 1;", "a/two.rs:40: let hit_39 = 1;"]);
+}
+
+#[test]
+fn count_path_globs_narrow_the_search_and_may_repeat() {
+    let (_, v) = json(&count_ports(), &["count", "--regex", "hit_", "--path", "a/**"]);
+    assert_eq!((v["total"].clone(), v["searched"].clone()), (89.into(), 2.into()));
+    let (_, v) = json(&count_ports(), &["count", "--regex", "hit_", "--path", "a/two.rs", "--path", "b/three.rs"]);
+    assert_eq!((v["total"].clone(), v["files"].clone()), (70.into(), 2.into()));
+}
+
+#[test]
+fn count_ignores_excluded_paths_and_prose_files() {
+    let (_, v) = json(&count_ports(), &["count", "--regex", "hit_8$|hit_md", "--limit", "50"]);
+    let paths: Vec<&str> = v["sites"].as_array().unwrap().iter().map(|s| s["path"].as_str().unwrap()).collect();
+    assert!(!paths.iter().any(|p| p.contains("fixtures") || p.ends_with(".md")), "{paths:?}");
+}
+
+#[test]
+fn count_of_nothing_is_zero_and_shows_it_looked() {
+    let o = go(&count_ports(), &["count", "--regex", "zzz_absent"]);
+    assert_eq!(o.code, 0);
+    assert!(o.stdout.starts_with("total 0 lines in 0 files (4 files searched,"), "{}", o.stdout);
+}
+
+struct Unreadable;
+impl SourceTree for Unreadable {
+    fn commit(&self) -> Result<String, String> {
+        Ok("dead".into())
+    }
+    fn files(&self) -> Result<Vec<String>, String> {
+        Err("the object store is gone".into())
+    }
+    fn read(&self, _: &str) -> Option<Vec<u8>> {
+        None
+    }
+    fn blob(&self, _: &str) -> Option<String> {
+        None
+    }
+    fn history(&self, _: &str, _: u64) -> History {
+        History::default()
+    }
+}
+
+#[test]
+fn count_on_an_unreadable_tree_exits_one_and_prints_no_total() {
+    let p = Ports { clock: Box::new(VirtualClock::new(NOW)), tree: Box::new(Unreadable), ledger: Ledger::from_rows(vec![]), config: cfg(), env_seed: None };
+    let o = go(&p, &["count", "--regex", "x"]);
+    assert_eq!(o.code, 1);
+    assert!(!o.stdout.contains("total") && o.stderr.contains("object store"), "{o:?}");
+    let (code, v) = json(&p, &["count", "--regex", "x"]);
+    assert_eq!((code, v["total"].clone()), (1, Value::Null));
+    assert!(v["error"].as_str().unwrap().contains("object store"));
+}
+
+#[test]
+fn count_with_a_bad_regex_or_a_bare_positional_exits_two() {
+    let o = go(&count_ports(), &["count", "--regex", "("]);
+    assert_eq!(o.code, 2);
+    let o = go(&count_ports(), &["count", "foo"]);
+    assert_eq!(o.code, 2);
+    assert!(o.stderr.contains("--regex foo"), "{}", o.stderr);
+    let (code, v) = json(&count_ports(), &["count", "foo"]);
+    assert_eq!((code, v["total"].clone()), (2, Value::Null));
+    assert_eq!(go(&count_ports(), &["count"]).code, 2);
+}
+
+#[test]
+fn count_limit_defaults_to_the_configured_key() {
+    let (_, v) = json(&count_ports(), &["count", "--regex", "hit_"]);
+    assert_eq!((v["sites"].as_array().unwrap().len(), v["more"].clone()), (7, 112.into()));
+}
+
+#[test]
+fn count_json_matches_the_text_totals_and_names_the_commit() {
+    let (code, v) = json(&count_ports(), &["count", "--regex", "hit_", "--limit", "2"]);
+    assert_eq!(code, 0);
+    assert_eq!((v["total"].clone(), v["files"].clone(), v["searched"].clone(), v["skipped_comments"].clone(), v["more"].clone()), (119.into(), 3.into(), 4.into(), 1.into(), 117.into()));
+    assert_eq!(v["commit"], "beef01");
+    assert_eq!(v["sites"][1], serde_json::json!({"path": "a/one.rs", "line": 3, "text": "let hit_1 = 1;"}));
+}
+
+#[test]
+fn count_comment_markers_follow_the_file_type() {
+    let t = FixtureTree::new("c1").with_file("x.sh", "# hit\n  hit\n").with_file("y.py", "# hit\nhit\n").with_file("z.toml", "# hit\n").with_file("w.rs", "# hit\n// hit\n");
+    let (_, v) = json(&ports_with(t, vec![], cfg()), &["count", "--regex", "hit"]);
+    assert_eq!((v["total"].clone(), v["skipped_comments"].clone()), (3.into(), 4.into()));
+}
+
+#[test]
+fn help_documents_count_and_its_exit_codes() {
+    let o = go(&count_ports(), &["-h"]);
+    for want in ["cr count", "--regex", "--path", "--limit"] {
+        assert!(o.stdout.contains(want), "{want}");
+    }
 }

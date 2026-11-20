@@ -1,5 +1,6 @@
 //! `cr` command path: argv in, `Outcome` out. `main` only builds the real ports.
 
+use crate::count;
 use crate::index::Index;
 use crate::pick::{self, Scored, Shaped, Stratum};
 use crate::ports::{Ports, SeededRng};
@@ -16,20 +17,28 @@ pub struct Outcome {
 pub const HELP: &str = "\
 cr — draw one related unit of code to review, weighted, rotated through kinds, reproducible.
 
-  cr pick [--aim <X>] [--seed <n>] [--json]
+  cr pick  [--aim <X>] [--seed <n>] [--json]
+  cr count --regex <re> [--path <glob>]... [--limit <n>] [--json]
 
   --aim <X>   aim the draw: a path, a workspace crate, a struct/enum/trait/type name, or words
               (every word must appear in a unit's paths or module docs, case-folded)
   --seed <n>  the draw's seed; default SPIRA_SEED, else the clock's milliseconds; always printed
   --json      print one JSON object on every path, errors included
+  --regex <re>   (count) the pattern; matched per line against code in .rs .sh .toml .py files
+  --path <glob>  (count) search only paths matching the glob; repeatable
+  --limit <n>    (count) most sites listed; default SPIRA_CR_COUNT_LIMIT. The total is never cut
   -h, --help  this text
+
+count reads the home repository at its landing ref and prints the total of matching code lines,
+the files matched and the files searched. Comment lines (// in .rs, # in .sh .toml .py) and
+SPIRA_CR_EXCLUDE paths are not counted. Sites are path:line: text, sorted, then `… <k> more`.
 
 Arguments are named; a bare positional is refused.
 
 Exit codes:
-  0  a unit was drawn
-  1  the draw could not run: tree, ledger or config unreadable, or no unit is drawable
-  2  usage: unknown or malformed argument, or --aim matched nothing
+  0  a unit was drawn, or a count completed (including a count of zero)
+  1  the draw or count could not run: tree, ledger or config unreadable, or no unit is drawable
+  2  usage: unknown or malformed argument, an invalid --regex, or --aim matched nothing
 ";
 
 struct Args {
@@ -37,9 +46,16 @@ struct Args {
     seed: Option<u64>,
 }
 
+struct CountArgs {
+    regex: Option<String>,
+    paths: Vec<String>,
+    limit: Option<usize>,
+}
+
 enum Cmd {
     Help,
     Pick(Args),
+    Count(CountArgs),
 }
 
 /// The one reader of argv: the command, and whether `--json` stood in a flag position.
@@ -48,7 +64,7 @@ fn parse(argv: &[String]) -> (Result<Cmd, String>, bool) {
     let mut flags = argv.iter();
     while let Some(a) = flags.next() {
         match a.as_str() {
-            "--aim" | "--seed" => {
+            "--aim" | "--seed" | "--regex" | "--path" | "--limit" => {
                 flags.next();
             }
             "--json" => json = true,
@@ -61,26 +77,35 @@ fn parse(argv: &[String]) -> (Result<Cmd, String>, bool) {
         return (Ok(Cmd::Help), false);
     }
     let r = (|| {
-        match first {
-            Some("pick") => {}
-            Some(other) => return Err(format!("unknown command `{other}`; the only command is `cr pick` (see -h)")),
-            None => return Err("no command; use `cr pick` (see -h)".to_string()),
-        }
+        let count = match first {
+            Some("pick") => false,
+            Some("count") => true,
+            Some(other) => return Err(format!("unknown command `{other}`; the commands are `cr pick` and `cr count` (see -h)")),
+            None => return Err("no command; use `cr pick` or `cr count` (see -h)".to_string()),
+        };
         let mut a = Args { aim: None, seed: None };
+        let mut c = CountArgs { regex: None, paths: vec![], limit: None };
         while let Some(arg) = it.next() {
             match arg.as_str() {
                 "-h" | "--help" => return Ok(Cmd::Help),
-                "--aim" => a.aim = Some(it.next().ok_or("--aim needs a value")?.clone()),
-                "--seed" => {
+                "--aim" if !count => a.aim = Some(it.next().ok_or("--aim needs a value")?.clone()),
+                "--seed" if !count => {
                     let v = it.next().ok_or("--seed needs a value")?;
                     a.seed = Some(v.parse().map_err(|_| format!("--seed {v:?} is not a non-negative integer"))?);
                 }
+                "--regex" if count => c.regex = Some(it.next().ok_or("--regex needs a value")?.clone()),
+                "--path" if count => c.paths.push(it.next().ok_or("--path needs a value")?.clone()),
+                "--limit" if count => {
+                    let v = it.next().ok_or("--limit needs a value")?;
+                    c.limit = Some(v.parse().map_err(|_| format!("--limit {v:?} is not a non-negative integer"))?);
+                }
                 "--json" => {}
                 f if f.starts_with('-') => return Err(format!("unknown flag `{f}` (see -h)")),
+                positional if count => return Err(format!("positional argument `{positional}` is not accepted; name it: `--regex {positional}`")),
                 positional => return Err(format!("positional argument `{positional}` is not accepted; name it: `--aim {positional}`")),
             }
         }
-        Ok(Cmd::Pick(a))
+        Ok(if count { Cmd::Count(c) } else { Cmd::Pick(a) })
     })();
     (r, json)
 }
@@ -114,6 +139,7 @@ pub fn run(argv: &[String], ports: &Ports) -> Outcome {
     let (parsed, json) = parse(argv);
     let args = match parsed {
         Ok(Cmd::Help) => return Outcome { code: 0, stdout: HELP.to_string(), stderr: String::new() },
+        Ok(Cmd::Count(c)) => return run_count(c, json, ports),
         Ok(Cmd::Pick(a)) => a,
         Err(e) => return fail(2, json, &e, &[], None, None),
     };
@@ -152,6 +178,43 @@ pub fn run(argv: &[String], ports: &Ports) -> Outcome {
     } else {
         Outcome { code: 0, stdout: body.1, stderr: String::new() }
     }
+}
+
+fn count_fail(code: i32, json: bool, msg: &str, commit: Option<&str>) -> Outcome {
+    if json {
+        let v = json!({"total": null, "files": null, "searched": null, "skipped_comments": null, "commit": commit, "sites": [], "more": null, "error": msg});
+        Outcome { code, stdout: format!("{v}\n"), stderr: String::new() }
+    } else {
+        Outcome { code, stdout: String::new(), stderr: format!("cr: {msg}\n") }
+    }
+}
+
+fn run_count(a: CountArgs, json: bool, ports: &Ports) -> Outcome {
+    let Some(pattern) = a.regex else {
+        return count_fail(2, json, "count needs --regex <re>", None);
+    };
+    let re = match regex::Regex::new(&pattern) {
+        Ok(r) => r,
+        Err(e) => return count_fail(2, json, &format!("--regex {pattern:?} is not a valid regular expression: {e}"), None),
+    };
+    let limit = a.limit.unwrap_or(ports.config.count_limit);
+    let c = match count::count(ports.tree.as_ref(), &re, &a.paths, &ports.config.exclude, limit) {
+        Ok(c) => c,
+        Err(e) => return count_fail(1, json, &e, None),
+    };
+    if json {
+        let sites: Vec<Value> = c.sites.iter().map(|s| json!({"path": s.path, "line": s.line, "text": s.text})).collect();
+        let v = json!({"total": c.total, "files": c.files, "searched": c.searched, "skipped_comments": c.skipped_comments, "commit": c.commit, "sites": sites, "more": c.more});
+        return Outcome { code: 0, stdout: format!("{v}\n"), stderr: String::new() };
+    }
+    let mut t = format!("total {} lines in {} files ({} files searched, {} comment lines skipped) at {}\n", c.total, c.files, c.searched, c.skipped_comments, c.commit);
+    for s in &c.sites {
+        t.push_str(&format!("{}:{}: {}\n", s.path, s.line, s.text));
+    }
+    if c.more > 0 {
+        t.push_str(&format!("… {} more\n", c.more));
+    }
+    Outcome { code: 0, stdout: t, stderr: String::new() }
 }
 
 fn ranges_text(r: &[(u32, u32)]) -> String {
