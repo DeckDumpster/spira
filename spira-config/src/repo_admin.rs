@@ -596,6 +596,10 @@ fn pid_alive(pid: u32) -> bool {
 
 fn is_dead_or_zombie(pid: u32) -> bool {
     let Ok(stat) = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)) else { return false };
+    stat_state_is_gone(&stat)
+}
+
+fn stat_state_is_gone(stat: &str) -> bool {
     let state = stat.rsplit_once(')').and_then(|(_, r)| r.split_whitespace().next());
     matches!(state, Some("Z" | "X"))
 }
@@ -875,5 +879,13 @@ mod tests {
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines[0].starts_with("repo-check: cannot reap ") && lines[0].contains("repo-check-1-1: "), "{lines:?}");
         assert!(lines[1].starts_with("repo-check: kept ") && lines[1].ends_with("repo-check-222-2 (pid 222 still running)"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_stat_line_is_gone_only_in_state_z_or_x() {
+        assert!(stat_state_is_gone("5 (a) b) Z 1 2"));
+        assert!(stat_state_is_gone("5 (sleep) X 1 2"));
+        assert!(!stat_state_is_gone("5 (x Z) S 1 2"));
+        assert!(!stat_state_is_gone("garbage"));
     }
 }
