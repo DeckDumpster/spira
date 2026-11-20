@@ -1224,6 +1224,29 @@ fn list_batches_answers_the_same_bytes_as_it_did_from_history() {
     assert_eq!(got, include_str!("list_batches_pinned.json").trim_end());
 }
 
+/// A round stored before migration 6 has no `batch_events`: `list --batches` says so and does
+/// not read its history, and a later event does not give it a partial field.
+#[test]
+fn a_round_without_batch_events_makes_list_batches_name_the_migration() {
+    let r = Rig::new();
+    many_rounds(&r, 0, 2, &[0]);
+    let key = keys::batch("spira", "b-000");
+    let strip = || {
+        let mut o = r.s.contract().get(&key).unwrap().unwrap().value;
+        o.data.as_object_mut().unwrap().remove(crate::control::records::BATCH_EVENTS);
+        r.s.contract().txn(&state_store::Txn::new().put(&key, o), &r.req()).unwrap();
+    };
+    strip();
+    let (rc, out) = r.lc(&["list", "--batches", "--batch", "b-000"]);
+    assert_eq!(rc, crate::CANNOT_TELL, "{out}");
+    assert!(out.contains("migration 6") && out.contains(&key), "{out}");
+    let (_, rec) = r.s.batch("b-000").unwrap().unwrap();
+    let ev = BatchEvent { expect: rec.value.row.state, version: rec.value.row.version, kind: BatchEventKind::CiStarted { run: "r1".into() }, actor: "test".into() };
+    r.s.batch_event("b-000", &ev, AT, &r.req()).unwrap();
+    assert!(r.s.contract().get(&key).unwrap().unwrap().value.data.get(crate::control::records::BATCH_EVENTS).is_none());
+    assert_eq!(r.lc(&["list", "--batches", "--batch", "b-001"]).0, 0, "a round that has the field still lists");
+}
+
 /// Every state the round machine can be in is either listed as open or is terminal: a round in
 /// a state `list --batches --window` forgot would vanish from it.
 #[test]
@@ -1521,7 +1544,7 @@ fn create_bead_refuses_the_planning_fields_it_used_to_keep() {
 
 fn record_round(r: &Rig, row: lifecycle::batch::BatchRow, opened_at: i64) {
     let key = keys::batch(&row.repo, &row.batch_id);
-    let rec = crate::control::records::BatchRecord { row, members: vec![], opened_at, round: Default::default() };
+    let rec = crate::control::records::BatchRecord { row, members: vec![], opened_at, round: Default::default(), batch_events: None };
     let mut c = super::Cascade::new();
     r.s.new_round(&mut c, &rec.row.repo, &rec.row.batch_id).unwrap().unwrap();
     r.s.put_round(&mut c, &key, &rec).unwrap();

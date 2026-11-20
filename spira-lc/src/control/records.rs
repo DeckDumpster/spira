@@ -137,6 +137,9 @@ pub struct BatchRecord {
     /// `queue`, and carried unchanged through every machine step.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub round: BTreeMap<String, String>,
+    /// The round's applied batch events, folded in by the txn that wrote each ([`BATCH_EVENTS`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_events: Option<Value>,
 }
 
 /// Under `batch-ids/<id>`: the repo a round was cut in, so a round is found by id alone and a
@@ -187,6 +190,37 @@ pub fn fold_entered<'a>(
             entered.insert(a.to_state.clone(), Value::from(a.at));
         }
     }
+}
+
+/// The field a round's stored object keeps beside its row: `{"fetched": [{event, evidence, at}],
+/// "last_at"}`. `fetched` is the round's applied batch audits whose event is in
+/// [`crate::passes::FETCHED`], in revision order; `last_at` is the newest `at` of any applied batch
+/// audit. Every txn that writes a round folds its own audits in, so `list --batches` answers from
+/// the record and never reads history (sp-aiti78).
+pub const BATCH_EVENTS: &str = "batch_events";
+
+/// `events` (a [`BATCH_EVENTS`] object) with each applied batch audit of round `id` folded in.
+pub fn fold_batch_events<'a>(
+    events: &mut serde_json::Map<String, Value>,
+    id: &str,
+    audits: impl IntoIterator<Item = &'a Audit>,
+) {
+    let mut fetched = match events.remove("fetched") {
+        Some(Value::Array(a)) => a,
+        _ => Vec::new(),
+    };
+    let mut last_at = events.get("last_at").and_then(Value::as_i64);
+    for a in audits {
+        if a.machine != "batch" || a.lc_key != id || !a.applied {
+            continue;
+        }
+        if crate::passes::is_fetched(&a.event) {
+            fetched.push(serde_json::json!({ "event": a.event, "evidence": a.evidence, "at": a.at }));
+        }
+        last_at = last_at.max(Some(a.at));
+    }
+    events.insert("fetched".into(), Value::Array(fetched));
+    events.insert("last_at".into(), last_at.map_or(Value::Null, Value::from));
 }
 
 /// When the delivery entered `state`, as its stored object's `entered` says: `None` when the

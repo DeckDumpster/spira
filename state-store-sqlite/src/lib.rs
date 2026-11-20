@@ -2980,6 +2980,114 @@ mod tests {
         assert_eq!(mirrored, 0, "every version row mirrors its latest");
     }
 
+    /// Migration 6 fills each round's `batch_events` from its history once, in place: the
+    /// applied pass and eject audits in revision order (imported entries first, at their seq,
+    /// then each `events/` branch a txn's entry names) and the newest `at` of any applied
+    /// batch audit, in `latest` and in the version row it mirrors.
+    #[test]
+    fn migration_6_fills_each_rounds_batch_events_from_its_history() {
+        let dir = testkit::TempDir::new("sqlite-m6");
+        let path = dir.path().join("m6.db");
+        let obj = |data: serde_json::Value| {
+            serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": data })).unwrap()
+        };
+        let audit = |id: &str, machine: &str, event: &str, at: i64, applied: bool, evidence: serde_json::Value| {
+            serde_json::json!({ "machine": machine, "lc_key": id, "event": event, "at": at,
+                                "applied": applied, "evidence": evidence })
+        };
+        let round = |id: &str| obj(serde_json::json!({ "batch_id": id, "state": "OPEN" }));
+        let nil = serde_json::Value::Null;
+        let eject = serde_json::json!({ "Eject": { "bead_id": "sp-a", "reason": "red" } });
+        let rows: Vec<(&str, i64, Vec<u8>)> = vec![
+            ("batches/spira/b-1", 9, round("b-1")),
+            ("batches/spira/b-1/progress", 9, obj(serde_json::json!({ "done": 1 }))),
+            ("batches/spira/spira/queue/x", 9, round("spira/queue/x")),
+            ("batches/spira/b-2", 9, round("b-2")),
+            ("history/b-1/0/import/1", 1, obj(serde_json::json!({ "seq": 1, "audit": audit("b-1", "batch", "PassStarted", 10, true, serde_json::json!({ "n": 1 })) }))),
+            ("history/b-1/0/import/2", 1, obj(serde_json::json!({ "seq": 2, "audit": audit("b-1", "batch", "MemberAdded", 15, true, nil.clone()) }))),
+            ("history/b-1/0/import/3", 1, obj(serde_json::json!({ "seq": 3, "audit": audit("b-1", "bead", "PassStarted", 99, true, nil.clone()) }))),
+            ("history/b-1/0/import/4", 1, obj(serde_json::json!({ "seq": 4, "audit": audit("b-1", "batch", "PassRed", 98, false, nil.clone()) }))),
+            ("history/b-1/5/r1", 7, obj(serde_json::json!({}))),
+            ("history/b-1/5/r2", 7, obj(serde_json::json!({}))),
+            (
+                "events/00000000000000000007",
+                7,
+                obj(serde_json::json!({ "refused": false, "evidence": {
+                    "then": [
+                        audit("b-1", "batch", "PassRed", 30, true, serde_json::json!({ "n": 1 })),
+                        audit("b-1", "batch", "Eject", 31, true, eject.clone()),
+                        audit("b-1", "delivery", "Eject", 97, true, nil.clone()),
+                    ],
+                    "else": [audit("b-1", "batch", "PassGreen", 96, true, nil.clone())],
+                } })),
+            ),
+            ("history/spira/queue/x/6/r1", 8, obj(serde_json::json!({}))),
+            (
+                "events/00000000000000000008",
+                8,
+                obj(serde_json::json!({ "refused": false, "evidence": {
+                    "then": [audit("spira/queue/x", "batch", "CiStarted", 40, true, nil.clone())],
+                    "else": [],
+                } })),
+            ),
+        ];
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in SCHEMA.iter().chain(MIGRATIONS[..5].iter().flat_map(|m| m.iter())) {
+                exec(&conn, sql, []).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 5).unwrap();
+            for table in ["versions", "latest"] {
+                let sql = format!(
+                    "INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
+                     VALUES (?1, ?2, 0, ?3, ?2, 0, 1)"
+                );
+                for (k, main, v) in &rows {
+                    exec(&conn, &sql, params![k.as_bytes(), main, v]).unwrap();
+                }
+            }
+            exec(&conn, "UPDATE meta SET value = 9 WHERE name = 'head'", []).unwrap();
+        }
+        let opts = Options {
+            jump_on_open: false,
+            ..Options::default()
+        };
+        let b = SqliteBackend::open(&path, opts).unwrap();
+        assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
+        let events = |key: &str| {
+            let v = b.get(key, 9).unwrap().unwrap().value;
+            serde_json::from_slice::<serde_json::Value>(&v).unwrap()["data"]["batch_events"].clone()
+        };
+        assert_eq!(
+            events("batches/spira/b-1"),
+            serde_json::json!({
+                "fetched": [
+                    { "event": "PassStarted", "evidence": { "n": 1 }, "at": 10 },
+                    { "event": "PassRed", "evidence": { "n": 1 }, "at": 30 },
+                    { "event": "Eject", "evidence": eject, "at": 31 },
+                ],
+                "last_at": 31,
+            })
+        );
+        assert_eq!(
+            events("batches/spira/spira/queue/x"),
+            serde_json::json!({ "fetched": [], "last_at": 40 }),
+            "a round id holding a slash finds its own history"
+        );
+        assert_eq!(events("batches/spira/b-2"), serde_json::json!({ "fetched": [], "last_at": null }));
+        assert_eq!(events("batches/spira/b-1/progress"), serde_json::Value::Null, "not a round");
+        let w = lock(&b.0.writer);
+        let mirrored: i64 = w
+            .conn
+            .prepare(
+                "SELECT count(*) FROM versions v JOIN latest l ON l.key = v.key AND l.main = v.main
+                 WHERE v.value IS NOT l.value",
+            )
+            .and_then(|mut s| s.query_row([], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(mirrored, 0, "every version row mirrors its latest");
+    }
+
     /// A store written before `owner_refs` existed answers `owned_by` once opened: the
     /// migration fills the index from `latest`, skipping what is not JSON and what is not owned.
     #[test]

@@ -137,4 +137,80 @@ pub const MIGRATIONS: &[&[&str]] = &[
             THEN json_extract(CAST(value AS TEXT), '$.data.opened_at') END) VIRTUAL",
         "CREATE INDEX latest_by_opened ON latest (opened_at, key) WHERE opened_at IS NOT NULL",
     ],
+    // 6 (sp-aiti78): each round's `batch_events` — `{fetched: [{event, evidence, at}], last_at}`,
+    // its applied batch audits of the pass and eject events in revision order and the newest
+    // `at` of any — filled once from its history, so `list --batches` reads a round's passes,
+    // ejections and last event from the round and never from its history. History is read as in
+    // migration 2: an imported entry carries its audit (and comes first, at its seq), any other
+    // names the `events/<rev>` whose branch carried it. The value is rewritten in place at its
+    // own revision, in `latest` and in the `versions` row it mirrors. A store without `batches/`
+    // keys is untouched.
+    &[
+        "CREATE TEMP TABLE m6_rounds (key BLOB PRIMARY KEY, id TEXT NOT NULL)",
+        "INSERT INTO m6_rounds
+         SELECT key, id
+         FROM (SELECT key, value,
+                      substr(substr(CAST(key AS TEXT), 9), instr(substr(CAST(key AS TEXT), 9), '/') + 1) AS id
+               FROM latest WHERE key >= CAST('batches/' AS BLOB) AND key < CAST('batches0' AS BLOB))
+         WHERE CASE WHEN json_valid(CAST(value AS TEXT))
+                    THEN json_extract(CAST(value AS TEXT), '$.data.batch_id') = id END",
+        "CREATE TEMP TABLE m6_audits (id TEXT NOT NULL, main INTEGER NOT NULL, sub INTEGER NOT NULL,
+                                      event TEXT, evidence TEXT, at INTEGER)",
+        "INSERT INTO m6_audits
+         SELECT r.id, 0, json_extract(CAST(h.value AS TEXT), '$.data.seq'),
+                json_extract(CAST(h.value AS TEXT), '$.data.audit.event'),
+                CAST(h.value AS TEXT) -> '$.data.audit.evidence',
+                json_extract(CAST(h.value AS TEXT), '$.data.audit.at')
+         FROM m6_rounds AS r
+         JOIN latest AS h ON h.key >= CAST('history/' || r.id || '/' AS BLOB)
+                         AND h.key < CAST('history/' || r.id || '0' AS BLOB)
+         WHERE CASE WHEN json_valid(CAST(h.value AS TEXT))
+                    THEN json_extract(CAST(h.value AS TEXT), '$.data.seq') IS NOT NULL
+                     AND json_extract(CAST(h.value AS TEXT), '$.data.audit.machine') = 'batch'
+                     AND json_extract(CAST(h.value AS TEXT), '$.data.audit.applied') = 1
+                     AND json_extract(CAST(h.value AS TEXT), '$.data.audit.lc_key') = r.id END",
+        "CREATE TEMP TABLE m6_revs (id TEXT NOT NULL, main INTEGER NOT NULL, PRIMARY KEY (id, main))",
+        "INSERT OR IGNORE INTO m6_revs
+         SELECT r.id, h.main
+         FROM m6_rounds AS r
+         JOIN latest AS h ON h.key >= CAST('history/' || r.id || '/' AS BLOB)
+                         AND h.key < CAST('history/' || r.id || '0' AS BLOB)
+         WHERE CASE WHEN json_valid(CAST(h.value AS TEXT))
+                    THEN json_extract(CAST(h.value AS TEXT), '$.data.seq') IS NULL END",
+        "INSERT INTO m6_audits
+         SELECT v.id, v.main, a.key, json_extract(a.value, '$.event'), a.value -> '$.evidence',
+                json_extract(a.value, '$.at')
+         FROM m6_revs AS v
+         JOIN latest AS e ON e.key = CAST('events/' || printf('%020d', v.main) AS BLOB)
+         JOIN json_each(CASE WHEN json_valid(CAST(e.value AS TEXT)) THEN CAST(e.value AS TEXT) ELSE '{}' END,
+              CASE WHEN json_extract(CASE WHEN json_valid(CAST(e.value AS TEXT)) THEN CAST(e.value AS TEXT) ELSE '{}' END,
+                                     '$.data.refused')
+                   THEN '$.data.evidence.else' ELSE '$.data.evidence.then' END) AS a
+         WHERE json_extract(a.value, '$.machine') = 'batch'
+           AND json_extract(a.value, '$.lc_key') = v.id
+           AND json_extract(a.value, '$.applied') = 1",
+        "UPDATE latest
+         SET value = CAST(json_set(CAST(value AS TEXT), '$.data.batch_events', json_object(
+             'fetched', json(coalesce((
+                 SELECT json_group_array(json_object('event', event, 'evidence', json(evidence), 'at', at))
+                 FROM (SELECT event, evidence, at FROM m6_audits
+                       WHERE id = (SELECT id FROM m6_rounds WHERE key = latest.key)
+                         AND event IN ('PassStarted', 'SuitesStarted', 'PassGreen', 'PassRed',
+                                       'PassIncomplete', 'PassPreempted', 'PassRebuilt', 'Eject')
+                       ORDER BY main, sub)), '[]')),
+             'last_at', (SELECT max(at) FROM m6_audits
+                         WHERE id = (SELECT id FROM m6_rounds WHERE key = latest.key)))) AS BLOB)
+         WHERE key IN (SELECT key FROM m6_rounds)
+           AND CASE WHEN json_valid(CAST(value AS TEXT))
+                    THEN json_type(CAST(value AS TEXT), '$.data') = 'object'
+                     AND json_type(CAST(value AS TEXT), '$.data.batch_events') IS NULL END",
+        "UPDATE versions SET value = l.value
+         FROM latest AS l
+         WHERE l.key = versions.key AND l.main = versions.main
+           AND l.key IN (SELECT key FROM m6_rounds)
+           AND versions.value IS NOT l.value",
+        "DROP TABLE m6_audits",
+        "DROP TABLE m6_revs",
+        "DROP TABLE m6_rounds",
+    ],
 ];
