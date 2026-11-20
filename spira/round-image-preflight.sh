@@ -59,7 +59,9 @@ else
     [ -n "$BASE" ] || { echo "round-image-preflight: no base given (--base or SPIRA_GATE_BASE)" >&2; exit 2; }
     plan_args=(--tree "$TREE" --base "$BASE" --head "$HEAD_REF")
 fi
-plan_out="$(round-vm preflight-plan "${plan_args[@]}")" || exit 2
+if round-vm preflight-plan --force >/dev/null 2>&1; then plan_cmd=(round-vm)
+else plan_cmd=(timeout "$LIMIT" cargo run -q --manifest-path "$TREE/Cargo.toml" -p round-vm --); fi
+plan_out="$("${plan_cmd[@]}" preflight-plan "${plan_args[@]}")" || exit 2
 while IFS='=' read -r k v; do
     case "$k" in plan) plan="$v" ;; npaths) npaths="$v" ;; touched) hit="$v" ;; apt_line) apt_line="$v" ;; esac
 done <<<"$plan_out"

@@ -413,6 +413,7 @@ fn preflight_plan_verb(args: &[String]) -> i32 {
         return 2;
     };
     let git = |extra: &[&str], paths: &[&str]| -> Option<String> {
+        // batch-job: a local diff of the gate's own tree, run once per preflight
         let out = std::process::Command::new("git").args(["-C", tree, "diff"]).args(extra).arg(format!("{base}...{head}")).args(paths).output().ok()?;
         out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
     };
