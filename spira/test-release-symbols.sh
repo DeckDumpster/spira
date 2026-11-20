@@ -6,7 +6,7 @@
 #   1. nm on spira-lc lists spira_lc::main and sqlite3_step.
 #   2. the workspace release profile says strip = "debuginfo" (a binary built under dev carries
 #      debug info, so the binary cannot judge this; the declared profile does).
-#   3. POSITIVE CONTROL: a --strip-all copy fails the case-1 check.
+#   3. POSITIVE CONTROL: a copy written with strip --strip-all -o fails the case-1 check.
 #
 # tier: T1
 # covers: Cargo.toml
@@ -43,8 +43,10 @@ is "the release profile strips debuginfo only" '"debuginfo"' "$(release_strip_va
 printf '[profile.release]\nstrip = true\n[profile.dev]\nstrip = "debuginfo"\n' > "$TMP/Cargo.toml"
 is "the profile reader tells strip = true from debuginfo" "true" "$(release_strip_value "$TMP/Cargo.toml")"
 
-cp "$LC" "$TMP/stripped" && strip --strip-all "$TMP/stripped"
-if symbols_present "$TMP/stripped"; then bad "a fully stripped copy fails the symbol check" "check passed"
+strip_err="$(strip --strip-all -o "$TMP/stripped" "$LC" 2>&1)"
+strip_rc=$?
+if [ "$strip_rc" -ne 0 ]; then bad "a fully stripped copy fails the symbol check" "strip failed: $strip_err"
+elif symbols_present "$TMP/stripped"; then bad "a fully stripped copy fails the symbol check" "check passed"
 else ok "a fully stripped copy fails the symbol check"; fi
 
 tl_summary
