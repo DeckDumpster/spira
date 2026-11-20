@@ -4,7 +4,7 @@
 use crate::SyncCell as Cell;
 use std::collections::BTreeSet;
 
-use crate::{direct_child, Entry, Finding, LintError, Rule, Tree};
+use crate::{is_suite, Entry, Finding, LintError, Rule, Tree};
 
 const NAME: &str = "no-new-shell-suite";
 
@@ -12,10 +12,6 @@ const NAME: &str = "no-new-shell-suite";
 pub struct NoNewShellSuite {
     /// (suites in the tree, suites at the base) after a clean check.
     checked: Cell<Option<(usize, usize)>>,
-}
-
-fn is_suite(path: &str) -> bool {
-    direct_child(path, "spira").is_some_and(|b| b.starts_with("test-") && b.ends_with(".sh"))
 }
 
 impl Rule for NoNewShellSuite {
@@ -36,7 +32,12 @@ impl Rule for NoNewShellSuite {
             String::from_utf8_lossy(&listing).lines().filter(|l| is_suite(l)).map(str::to_string).collect();
         let mut here = 0;
         let mut out = Vec::new();
-        for e in crate::scope(tree, self)? {
+        let suites = match crate::scope(tree, self) {
+            Ok(s) => s,
+            Err(LintError::EmptyScope) => Vec::new(),
+            Err(e) => return Err(e),
+        };
+        for e in suites {
             if tree.content(e).is_none() {
                 continue;
             }
@@ -135,6 +136,13 @@ mod tests {
             A,
             false,
         );
+        assert!(NoNewShellSuite::default().check(&tr).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_branch_deleting_every_suite_is_not_refused() {
+        let t = TempDir::new("nnss");
+        let tr = tree(&t, &["spira/other.sh"], &[], A, false);
         assert!(NoNewShellSuite::default().check(&tr).unwrap().is_empty());
     }
 

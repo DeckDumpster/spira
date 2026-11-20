@@ -476,6 +476,11 @@ pub fn direct_child<'a>(path: &'a str, dir: &str) -> Option<&'a str> {
     path.strip_prefix(dir)?.strip_prefix('/').filter(|rest| !rest.is_empty() && !rest.contains('/'))
 }
 
+/// `spira/test-*.sh`, directly in spira/: what the suite runner would run as a suite.
+pub(crate) fn is_suite(path: &str) -> bool {
+    direct_child(path, "spira").is_some_and(|b| b.starts_with("test-") && b.ends_with(".sh"))
+}
+
 /// A line with its leading whitespace stripped (`sed 's/^[[:space:]]*//'`), for messages.
 pub fn trim_lead(line: &[u8]) -> String {
     let start = line.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(line.len());
