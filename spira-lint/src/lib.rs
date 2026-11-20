@@ -579,6 +579,11 @@ pub fn red_summary(refused: &[(&str, usize)], errored: &[&str], reported: &[(&st
     s
 }
 
+/// Whether `--diff` scope `scope` keeps `f` of `rule`; no scope keeps all.
+pub fn kept_by(scope: Option<&DiffScope>, rule: &str, f: &Finding) -> bool {
+    scope.is_none_or(|s| BASE_RELATIVE.contains(&rule) || s.keeps(f))
+}
+
 /// [`red_summary`] over `results`, counting findings kept by `scope` (as the printed ones are).
 /// `None` when no rule refused or errored.
 pub fn red_summary_of(results: &[RuleResult], scope: Option<&DiffScope>) -> Option<String> {
@@ -594,7 +599,7 @@ pub fn red_summary_of(results: &[RuleResult], scope: Option<&DiffScope>) -> Opti
             Ok(v) => {
                 let n = v
                     .iter()
-                    .filter(|f| scope.is_none_or(|s| BASE_RELATIVE.contains(&r.rule) || s.keeps(f)))
+                    .filter(|f| kept_by(scope, r.rule, f))
                     .count();
                 if n > 0 {
                     refused.push((r.rule, n));

@@ -171,9 +171,7 @@ fn real_main() -> ExitCode {
         match &r.outcome {
             Ok(v) => {
                 let mut v = v.clone();
-                if let Some(s) = scope.as_ref().filter(|_| !spira_lint::BASE_RELATIVE.contains(&r.rule)) {
-                    v.retain(|f| s.keeps(f));
-                }
+                v.retain(|f| spira_lint::kept_by(scope.as_ref(), r.rule, f));
                 if v.is_empty() {
                     continue;
                 }
