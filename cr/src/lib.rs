@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod count;
+pub mod findings;
 pub mod glob;
 pub mod index;
 pub mod ledger;

@@ -6,7 +6,7 @@ pub use forge::ports::Gh;
 pub use runtime::ports::{Clock, Rng, SeededRng, VirtualClock, WallClock};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -44,11 +44,47 @@ impl Config {
     }
 }
 
+/// Commits `paths` in the git repository at `dir`, and only those paths.
+pub trait Committer {
+    fn commit(&self, dir: &Path, paths: &[&str], message: &str) -> Result<(), String>;
+}
+
+pub struct GitCommitter;
+
+impl Committer for GitCommitter {
+    fn commit(&self, dir: &Path, paths: &[&str], message: &str) -> Result<(), String> {
+        use std::io::Write;
+        let git = |args: &[&str]| {
+            let mut c = Command::new("git");
+            c.arg("-C").arg(dir).args(args).arg("--").args(paths);
+            c
+        };
+        let out = git(&["add"]).output().map_err(|e| format!("git add: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("git add in {}: {}", dir.display(), String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        let staged = git(&["diff", "--cached", "--quiet"]).status().map_err(|e| format!("git diff: {e}"))?;
+        if staged.success() {
+            return Ok(());
+        }
+        let mut child = git(&["commit", "-F", "-"]).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).spawn().map_err(|e| format!("git commit: {e}"))?;
+        child.stdin.take().ok_or("git commit: no stdin")?.write_all(message.as_bytes()).map_err(|e| format!("git commit: {e}"))?;
+        let out = child.wait_with_output().map_err(|e| format!("git commit: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(format!("git commit in {}: {}", dir.display(), String::from_utf8_lossy(&out.stderr).trim()))
+        }
+    }
+}
+
 pub struct Ports {
     pub run_dir: PathBuf,
     pub gh: Box<dyn Gh>,
     pub repo_owner: String,
     pub repo_name: String,
+    pub findings_dir: String,
+    pub committer: Box<dyn Committer>,
     pub source_repo: String,
     /// Standard input, read by `main` for the verb that takes it.
     pub stdin: String,

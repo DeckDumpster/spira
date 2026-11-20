@@ -47,6 +47,8 @@ fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
         gh: Box::new(Shared(gh.clone())),
         repo_owner: OWNER.into(),
         repo_name: NAME.into(),
+        findings_dir: String::new(),
+        committer: Box::new(cr::ports::GitCommitter),
         source_repo: "k".into(),
         stdin: String::new(),
         clock: Box::new(VirtualClock::new(1_700_000_000_000)),

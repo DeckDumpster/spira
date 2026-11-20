@@ -6,6 +6,7 @@ use crate::ports::{blob_of, Config, FixtureTree, History, Ports, SourceTree, Vir
 use serde_json::Value;
 
 mod gh;
+mod findings;
 mod review;
 
 const DAY: u64 = 86_400_000;
@@ -56,7 +57,7 @@ fn ports_with(tree: FixtureTree, ledger: Vec<Row>, config: Config) -> Ports {
 }
 
 fn ports_with_tree(tree: Box<dyn SourceTree>) -> Ports {
-    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), gh: Box::new(gh::FakeGh::default()), repo_owner: String::new(), repo_name: String::new(), source_repo: "src".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree, ledger: Ledger::from_rows(vec![]), config: cfg(), env_seed: None }
+    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), gh: Box::new(gh::FakeGh::default()), repo_owner: String::new(), repo_name: String::new(), findings_dir: String::new(), committer: Box::new(NoCommit), source_repo: "src".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree, ledger: Ledger::from_rows(vec![]), config: cfg(), env_seed: None }
 }
 
 fn ports() -> Ports {
@@ -393,6 +394,13 @@ fn count_of_nothing_is_zero_and_shows_it_looked() {
     let o = go(&count_ports(), &["count", "--regex", "zzz_absent"]);
     assert_eq!(o.code, 0);
     assert!(o.stdout.starts_with("total 0 lines in 0 files (4 files searched,"), "{}", o.stdout);
+}
+
+pub(crate) struct NoCommit;
+impl crate::ports::Committer for NoCommit {
+    fn commit(&self, _: &std::path::Path, _: &[&str], _: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 struct Unreadable;
