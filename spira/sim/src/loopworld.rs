@@ -481,7 +481,7 @@ fn sentinel_unit_start(w: &World, input: &str) -> Result<String, String> {
     drop(lc);
     w.units.script(sc::NAME, DWARF_MS, Exit::Code(0));
     let spec = UnitSpec { task: sc::NAME.into(), key: start.key, argv: vec!["dwarf".into(), "--home".into(), "sim/home".into(), start.rune], env: vec![], cwd: None };
-    units::effect(&*w.units, UNIT_START, &json(&StartSpec { unit: spec, props: sc::dwarf_props("3600")? })?)
+    units::effect(&*w.units, UNIT_START, &json(&StartSpec { unit: spec, props: units::dwarf_props("3600")? })?)
 }
 
 // --- sift ---------------------------------------------------------------------------------------

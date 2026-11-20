@@ -118,6 +118,27 @@ pub fn refusal_path(run: &Path, bead: &str) -> PathBuf {
     run.join("direct-refused").join(bead)
 }
 
+/// Where a directed dwarf's stdout and stderr go: the launcher reads its last line when the
+/// dwarf neither claims nor refuses.
+pub fn output_path(run: &Path, bead: &str) -> PathBuf {
+    run.join("direct-out").join(format!("{bead}.log"))
+}
+
+/// The `systemd-run` flags of a directed dwarf's unit: its environment as `--setenv`, then its
+/// properties.
+pub fn call_flags(env_pairs: &[(String, String)], props: &runtime::units::UnitProps) -> Result<Vec<String>, String> {
+    let mut flags: Vec<String> = env_pairs.iter().map(|(k, v)| format!("--setenv={k}={v}")).collect();
+    flags.extend(props.run_flags().map_err(|e| e.to_string())?);
+    Ok(flags)
+}
+
+/// What a dwarf that exited silently said last: its last line naming a FATAL, else its last
+/// non-empty line.
+fn last_said(output: &str) -> String {
+    let lines: Vec<&str> = output.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    lines.iter().rev().find(|l| l.contains("FATAL")).or(lines.last()).map_or("the dwarf printed nothing".to_string(), |l| l.to_string())
+}
+
 /// Records why this directed dwarf turned the bead away. Best effort: the ledger and stderr
 /// carry the same reason.
 pub fn write_refusal(run: &Path, bead: &str, reason: &str) {
@@ -190,6 +211,8 @@ pub fn run(exec: &dyn Exec, sink: &dyn Sink, sleep: &dyn Fn(Duration), run_dir: 
     sink.out(&util::log_line(now, &format!("direct {}: calling a {} dwarf directly (caps and the world's state bypassed)", req.bead, req.rune)));
     let refusal = refusal_path(run_dir, &req.bead);
     let _ = std::fs::remove_file(&refusal);
+    let output = output_path(run_dir, &req.bead);
+    let _ = std::fs::write(&output, "");
     let o = exec.exec(call_bin, &argv, None, None);
     o.stdout.lines().for_each(|l| sink.out(l));
     o.stderr.lines().for_each(|l| sink.err(l));
@@ -208,7 +231,8 @@ pub fn run(exec: &dyn Exec, sink: &dyn Sink, sleep: &dyn Fn(Duration), run_dir: 
         }
         sleep(TICK);
     }
-    fatal(format!("the dwarf neither claimed nor refused it within {WAIT_TICKS}s — it exited without a reason; see its unit's journal"))
+    let said = last_said(&std::fs::read_to_string(&output).unwrap_or_default());
+    fatal(format!("the dwarf neither claimed nor refused it within {WAIT_TICKS}s — its last output ({}): {said}", output.display()))
 }
 
 #[cfg(test)]
@@ -246,6 +270,19 @@ mod tests {
     }
 
     #[test]
+    fn call_flags_carry_the_environment_and_the_dwarf_calls_properties_before_the_dwarf() {
+        let env: Vec<(String, String)> = [("SPIRA_RELEASE", "r"), ("PATH", "r/bin"), ("HOME", "h"), ("SPIRA_TOML", "c.toml")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let props = runtime::units::UnitProps { output_append: Some(PathBuf::from("o/sp-x.log")), ..runtime::units::dwarf_props("3600").unwrap() };
+        let flags = call_flags(&env, &props).unwrap();
+        for want in ["--setenv=SPIRA_RELEASE=r", "--setenv=PATH=r/bin", "--setenv=HOME=h", "--setenv=SPIRA_TOML=c.toml", "--property=TimeoutStartSec=3600", "--property=IOSchedulingClass=idle", "--property=IOWeight=10", "--property=StandardOutput=append:o/sp-x.log", "--property=StandardError=append:o/sp-x.log"] {
+            assert!(flags.iter().any(|f| f == want), "{want}: {flags:?}");
+        }
+        let argv = build_argv(&req(), None, Path::new("h"), "rel/bin/dwarf", &flags, 1000);
+        let dwarf = argv.iter().position(|x| x == "rel/bin/dwarf").unwrap();
+        assert!(flags.iter().all(|f| argv.iter().position(|x| x == f).is_some_and(|i| i < dwarf)), "{argv:?}");
+    }
+
+    #[test]
     fn the_claim_record_names_requester_reason_and_previous_holder() {
         let s = Direct { bead: "sp-x".into(), by: "concierge".into(), reason: "a \"quoted\" why".into(), replaced: None };
         let v: serde_json::Value = serde_json::from_str(&s.claim_json()).unwrap();
@@ -265,6 +302,7 @@ mod tests {
         /// What the row reads once the unit is launched; and what the unit leaves behind.
         after_launch: Option<Out>,
         refusal: Option<String>,
+        output: Option<String>,
         run_dir: PathBuf,
     }
     impl Exec for Fake {
@@ -288,6 +326,10 @@ mod tests {
                     if let Some(why) = &self.refusal {
                         write_refusal(&self.run_dir, "sp-x", why);
                     }
+                    if let Some(said) = &self.output {
+                        std::fs::create_dir_all(output_path(&self.run_dir, "sp-x").parent().unwrap()).unwrap();
+                        std::fs::write(output_path(&self.run_dir, "sp-x"), format!("{said}\n")).unwrap();
+                    }
                     Out::ok("")
                 }
                 _ => Out::ok(""),
@@ -295,7 +337,7 @@ mod tests {
         }
     }
     fn fake(show: Out, slay_rc: i32) -> Fake {
-        Fake { show, slay_rc, slay_out: (String::new(), "slay said no".into()), calls: Mutex::default(), teardown_reads: Mutex::new(0), after_launch: None, refusal: None, run_dir: PathBuf::from("nonexistent") }
+        Fake { show, slay_rc, slay_out: (String::new(), "slay said no".into()), calls: Mutex::default(), teardown_reads: Mutex::new(0), after_launch: None, refusal: None, output: None, run_dir: PathBuf::from("nonexistent") }
     }
     fn row(state: &str, holder: Option<&str>) -> Out {
         let h = holder.map_or("null".to_string(), |h| format!("\"{h}\""));
@@ -404,10 +446,37 @@ mod tests {
 
     #[test]
     fn a_dwarf_that_neither_claims_nor_refuses_fails_the_call() {
-        let f = fake(row("READY", None), 0);
+        let dir = testkit::TempDir::new("dwarf-direct-silent");
+        let said = "FATAL dwarf: neither SPIRA_HOME nor SPIRA_RELEASE is set — refusing to search for the harness home";
+        let f = { let mut f = fake(row("READY", None), 0); f.run_dir = dir.to_path_buf(); f.output = Some(said.into()); f };
         let (rc, sink) = go(&f);
         assert_eq!(rc, 1);
-        assert!(sink.all().contains("neither claimed nor refused"), "{}", sink.all());
+        let all = sink.all();
+        assert!(all.contains("neither claimed nor refused"), "{all}");
+        assert!(all.contains(said), "{all}");
+        assert!(all.contains(&output_path(&dir, "sp-x").display().to_string()), "{all}");
+        assert!(!all.contains("journal"), "{all}");
+    }
+
+    #[test]
+    fn the_last_thing_a_silent_dwarf_said_is_its_last_fatal_else_its_last_line_else_nothing() {
+        assert_eq!(last_said("a\nFATAL one\nlater\n\n"), "FATAL one");
+        assert_eq!(last_said("a\nFATAL one\nFATAL two\nlater\n"), "FATAL two");
+        assert_eq!(last_said("first\nlast\n\n"), "last");
+        assert_eq!(last_said("\n \n"), "the dwarf printed nothing");
+        assert_eq!(last_said(""), "the dwarf printed nothing");
+    }
+
+    #[test]
+    fn a_stale_output_log_is_not_quoted_for_a_dwarf_that_printed_nothing() {
+        let dir = testkit::TempDir::new("dwarf-direct-stale");
+        std::fs::create_dir_all(output_path(&dir, "sp-x").parent().unwrap()).unwrap();
+        std::fs::write(output_path(&dir, "sp-x"), "FATAL an earlier dwarf\n").unwrap();
+        let f = { let mut f = fake(row("READY", None), 0); f.run_dir = dir.to_path_buf(); f };
+        let (rc, sink) = go(&f);
+        assert_eq!(rc, 1);
+        let all = sink.all();
+        assert!(all.contains("the dwarf printed nothing") && !all.contains("an earlier dwarf"), "{all}");
     }
 
     #[test]

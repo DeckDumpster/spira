@@ -97,7 +97,7 @@ fn the_ported_scenarios_call_through_the_seam_with_the_call_effects_argv() {
     let path = format!("r/bin:r/spira:{}", system_paths::SYSTEM_PATH);
     assert_eq!(env, [("SPIRA_RELEASE", "r"), ("PATH", path.as_str()), ("HOME", "home/u"), ("SPIRA_TOML", "c/sim.toml")]);
     for p in ["--property=TimeoutStartSec=3600", "--property=IOSchedulingClass=idle", "--property=IOWeight=10"] {
-        assert!(argv.iter().any(|a| a == p), "{p} (sentinel_call::dwarf_props): {argv:?}");
+        assert!(argv.iter().any(|a| a == p), "{p} (units::dwarf_props): {argv:?}");
     }
 }
 

@@ -83,10 +83,10 @@ fn t5_a_full_fleet_calls_nobody_and_an_open_one_calls_the_ready_rune() {
 /// the idle IO class, IO weight 10, and no `ExecStopPost` re-exec.
 #[test]
 fn t5_a_dwarf_call_carries_call_argvs_properties() {
-    let p = dwarf_props("3600").unwrap();
+    let p = runtime::units::dwarf_props("3600").unwrap();
     assert_eq!((p.start_timeout_ms, p.io_class.as_deref(), p.io_weight), (Some(3_600_000), Some("idle"), Some(10)));
     assert!(p.exec_stop_post.is_empty(), "the --call-only re-exec is retired");
-    assert!(dwarf_props("soon").is_err(), "a timeout that is not seconds refuses");
+    assert!(runtime::units::dwarf_props("soon").is_err(), "a timeout that is not seconds refuses");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -112,7 +112,7 @@ fn start_all(u: &ScriptedUnits, acts: &[Act]) -> usize {
     for a in acts.iter().filter(|a| a.effect == UNIT_START) {
         let start: Start = serde_json::from_str(&a.input).unwrap();
         let unit = UnitSpec { task: NAME.into(), key: start.key, argv: vec!["rel/bin/dwarf".into(), start.rune], env: vec![], cwd: None };
-        let spec = StartSpec { unit, props: dwarf_props("3600").unwrap() };
+        let spec = StartSpec { unit, props: runtime::units::dwarf_props("3600").unwrap() };
         units::effect(u, units::UNIT_START, &serde_json::to_string(&spec).unwrap()).unwrap();
         n += 1;
     }

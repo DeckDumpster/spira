@@ -111,10 +111,58 @@ impl UnitProps {
         .collect()
     }
 
+    /// Each set field as a `systemd-run --property=<Name>=<value>` flag, in [`UnitProps::names`]'
+    /// order; `output_append` sets `StandardOutput` and `StandardError` both.
+    pub fn run_flags(&self) -> Result<Vec<String>> {
+        let mut flags = Vec::new();
+        let mut set = |name: &str, value: String| flags.push(format!("--property={name}={value}"));
+        let secs = |ms: u64| if ms.is_multiple_of(1000) { (ms / 1000).to_string() } else { format!("{ms}ms") };
+        if let Some(ms) = self.start_timeout_ms {
+            set("TimeoutStartSec", secs(ms));
+        }
+        if let Some(ms) = self.runtime_max_ms {
+            set("RuntimeMaxSec", secs(ms));
+        }
+        if let Some(class) = &self.io_class {
+            self.io_class_number()?;
+            set("IOSchedulingClass", class.clone());
+        }
+        if let Some(w) = self.io_weight {
+            set("IOWeight", w.to_string());
+        }
+        if let Some(n) = self.nice {
+            set("Nice", n.to_string());
+        }
+        if let Some(q) = self.cpu_quota_pct {
+            set("CPUQuota", format!("{q}%"));
+        }
+        if let Some(b) = self.memory_max_bytes {
+            set("MemoryMax", b.to_string());
+        }
+        for argv in &self.exec_stop_post {
+            if argv.iter().any(|a| a.is_empty() || a.contains(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '\\')) {
+                return Err(RuntimeError::refused(format!("ExecStopPost {argv:?}: an argument with whitespace or a quote cannot be carried as one flag")));
+            }
+            set("ExecStopPost", argv.join(" "));
+        }
+        if let Some(path) = &self.output_append {
+            set("StandardOutput", format!("append:{}", path.display()));
+            set("StandardError", format!("append:{}", path.display()));
+        }
+        Ok(flags)
+    }
+
     /// The `IOSchedulingClass` number, or a refusal naming a word systemd does not know.
     pub fn io_class_number(&self) -> Result<Option<i32>> {
         self.io_class.as_deref().map(|c| IO_CLASSES.iter().find(|(w, _)| *w == c).map(|(_, n)| *n).ok_or_else(|| RuntimeError::refused(format!("IOSchedulingClass {c:?} is not one of realtime, best-effort, idle")))).transpose()
     }
+}
+
+/// The properties every dwarf call starts under: the rune's `RUNE_TIMEOUT_SECONDS` as
+/// `TimeoutStartSec`, the idle IO class, IO weight 10, no `ExecStopPost`.
+pub fn dwarf_props(timeout_secs: &str) -> std::result::Result<UnitProps, String> {
+    let secs: u64 = timeout_secs.trim().parse().map_err(|_| format!("RUNE_TIMEOUT_SECONDS must be whole seconds, got {timeout_secs:?}"))?;
+    Ok(UnitProps { start_timeout_ms: Some(secs * 1000), io_class: Some("idle".into()), io_weight: Some(10), ..UnitProps::default() })
 }
 
 /// The `unit.start` input: the unit and the properties it starts under.
@@ -2248,6 +2296,50 @@ pub fn from_value(clock: Arc<dyn Clock>, value: Option<&str>) -> Result<Backend>
 mod tests {
     use super::*;
     use crate::ports::VirtualClock;
+
+    #[test]
+    fn run_flags_render_every_field_under_the_names_names_gives() {
+        let p = UnitProps {
+            start_timeout_ms: Some(3_600_000),
+            runtime_max_ms: Some(1500),
+            io_class: Some("idle".into()),
+            io_weight: Some(10),
+            nice: Some(-5),
+            cpu_quota_pct: Some(200),
+            memory_max_bytes: Some(1024),
+            exec_stop_post: vec![vec!["true".into(), "x".into()]],
+            output_append: Some(PathBuf::from("o/log")),
+        };
+        let flags = p.run_flags().unwrap();
+        assert_eq!(
+            flags,
+            [
+                "--property=TimeoutStartSec=3600",
+                "--property=RuntimeMaxSec=1500ms",
+                "--property=IOSchedulingClass=idle",
+                "--property=IOWeight=10",
+                "--property=Nice=-5",
+                "--property=CPUQuota=200%",
+                "--property=MemoryMax=1024",
+                "--property=ExecStopPost=true x",
+                "--property=StandardOutput=append:o/log",
+                "--property=StandardError=append:o/log",
+            ]
+        );
+        let named: BTreeSet<&str> = flags.iter().map(|f| f["--property=".len()..].split('=').next().unwrap()).collect();
+        let mut want: BTreeSet<&str> = p.names().into_iter().collect();
+        want.insert("StandardError");
+        assert_eq!(named, want);
+        assert!(UnitProps::default().run_flags().unwrap().is_empty());
+        assert!(UnitProps { io_class: Some("fast".into()), ..UnitProps::default() }.run_flags().is_err());
+    }
+
+    #[test]
+    fn dwarf_props_carry_the_calls_properties_and_refuse_a_timeout_that_is_not_seconds() {
+        let p = dwarf_props("3600").unwrap();
+        assert_eq!((p.start_timeout_ms, p.io_class.as_deref(), p.io_weight), (Some(3_600_000), Some("idle"), Some(10)));
+        assert!(dwarf_props("soon").is_err());
+    }
 
     fn spec(task: &str, key: &str, argv: &[&str]) -> UnitSpec {
         UnitSpec { task: task.into(), key: key.into(), argv: argv.iter().map(|s| s.to_string()).collect(), env: vec![], cwd: None }
