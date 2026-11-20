@@ -312,9 +312,10 @@ mod cost {
             let id = format!("r-{i}");
             let owner = json!({ "ownerReferences": [format!("batches/spira/{id}")] });
             rows.push((format!("batches/spira/{id}"), next(), obj(json!({}), json!({ "batch_id": id, "state": "OPEN", "opened_at": i }))));
-            rows.push((format!("deliveries/{id}"), next(), obj(owner.clone(), json!({ "bead_id": id, "state": "Batched" }))));
+            rows.push((format!("deliveries/d-{i}"), next(), obj(owner.clone(), json!({ "bead_id": format!("d-{i}"), "state": "Batched" }))));
+            for id in [format!("r-{i}"), format!("d-{i}")] {
             for seq in 0..4i64 {
-                let machine = if seq % 2 == 0 { "batch" } else { "delivery" };
+                let machine = if id.starts_with('r') { "batch" } else { "delivery" };
                 let event = ["PassStarted", "PassRed", "Eject", "PassGreen"][seq as usize];
                 rows.push((
                     format!("history/{id}/0/import/{seq}"),
@@ -333,6 +334,7 @@ mod cost {
                     m,
                     obj(json!({}), json!({ "refused": false, "at": 1000 + m, "evidence": { "then": then, "else": [] } })),
                 ));
+            }
             }
             for prefix in ["telemetry", "intents"] {
                 rows.push((format!("{prefix}/{id}"), next(), obj(json!({ "ttl_secs": 60, "ownerReferences": [format!("batches/spira/{id}")] }), json!({ "state": "x" }))));
@@ -360,7 +362,12 @@ mod cost {
     }
 
     fn run(version: usize, rounds: usize) -> (u64, u128) {
-        let conn = store_at(version - 1, &shaped_rows(rounds));
+        measure(version - 1, MIGRATIONS[version - 1], rounds)
+    }
+
+    fn measure(at: usize, migration: &[&str], rounds: usize) -> (u64, u128) {
+        let conn = store_at(at, &shaped_rows(rounds));
+        let before = conn.total_changes();
         let steps = Arc::new(AtomicU64::new(0));
         let counter = Arc::clone(&steps);
         conn.progress_handler(1, Some(move || {
@@ -368,9 +375,11 @@ mod cost {
             false
         }));
         let start = Instant::now();
-        for sql in MIGRATIONS[version - 1] {
+        for sql in migration {
             exec(&conn, sql, []).unwrap();
         }
+        let writes = migration.iter().any(|sql| sql.starts_with("INSERT") || sql.starts_with("UPDATE"));
+        assert!(!writes || conn.total_changes() > before, "the generated store gave the migration no rows to rewrite");
         (steps.load(Ordering::Relaxed), start.elapsed().as_millis())
     }
 
@@ -392,5 +401,17 @@ mod cost {
             }
         }
         assert!(red.is_empty(), "{}", red.join("\n"));
+    }
+
+    #[test]
+    fn a_correlated_subquery_over_an_unindexed_temp_table_is_over_the_bound() {
+        let planted = [
+            "CREATE TEMP TABLE planted (id TEXT NOT NULL)",
+            "INSERT INTO planted SELECT CAST(key AS TEXT) FROM latest",
+            "UPDATE latest SET value = value WHERE (SELECT count(*) FROM planted WHERE id = CAST(latest.key AS TEXT)) > 5",
+        ];
+        let (s1, _) = measure(MIGRATIONS.len(), &planted, ROUNDS);
+        let (s4, _) = measure(MIGRATIONS.len(), &planted, ROUNDS * GROWTH);
+        assert!(s4 > BOUND * s1, "{s1} -> {s4}");
     }
 }
