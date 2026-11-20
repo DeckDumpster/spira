@@ -217,7 +217,7 @@ impl Tree {
 
 /// Rules that already judge the branch against the base themselves; `--diff` leaves their
 /// findings whole.
-pub const BASE_RELATIVE: &[&str] = &["plan-matrix", "lockfile-lint", "config-delta", "config-delta-folded", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config", "otel-binaries", "journal-reads", "release-tool-exec", "bare-unit-name", "test-real-clock", "registry-readers"];
+pub const BASE_RELATIVE: &[&str] = &["plan-matrix", "lockfile-lint", "config-delta", "config-delta-folded", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config", "otel-binaries", "journal-reads", "release-tool-exec", "bare-unit-name", "test-real-clock", "registry-readers", "no-new-shell-suite"];
 
 /// What a branch changed relative to `git merge-base <base> HEAD`: per touched file, the
 /// new-side line ranges it adds or changes (`None` for a whole file: untracked, or binary).
@@ -652,5 +652,14 @@ mod tests {
         assert!(pathspec_match("*.rs", "broker/src/main.rs"));
         assert!(!pathspec_match("spira/*.sh", "spiral/a.sh"));
         assert!(!pathspec_match("spira/gate-suites", "spira/gate-suites2"));
+    }
+
+    #[test]
+    fn every_base_relative_name_is_a_rule_and_no_new_shell_suite_is_one() {
+        let names: Vec<&str> = all_rules().iter().map(|r| r.name()).collect();
+        for n in BASE_RELATIVE {
+            assert!(names.contains(n), "{n} is not a rule");
+        }
+        assert!(BASE_RELATIVE.contains(&"no-new-shell-suite"));
     }
 }
