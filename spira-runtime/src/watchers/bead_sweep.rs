@@ -133,6 +133,9 @@ pub struct Repair {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Repaired {
     pub ids: Vec<String>,
+    /// The `blocks` edges mirrored into the lifecycle store for each bead in `ids`.
+    #[serde(default)]
+    pub edges: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub claimed: Vec<String>,
 }
@@ -264,6 +267,22 @@ pub fn rowless(ask_label: &str, snap: &Snapshot) -> Vec<Rowless> {
             title: b.title.replace(['\t', '\n'], " "),
         })
         .collect()
+}
+
+/// The beads the repair completes: those with no row, and those whose row is still OPEN because an
+/// earlier pass could not read or mirror their edges.
+pub fn repairable(ask_label: &str, snap: &Snapshot) -> Vec<Rowless> {
+    let mut out = rowless(ask_label, snap);
+    let open: BTreeSet<&str> = snap.rows.iter().filter(|r| r.state == "OPEN").map(|r| r.id.as_str()).collect();
+    let term: BTreeSet<&str> = snap.terminal.iter().map(|(i, _)| i.as_str()).collect();
+    let none = BTreeSet::new();
+    out.extend(snap.content.iter().filter(|b| open.contains(b.id.as_str()) && is_ours(ask_label, b, &none, &term) && is_open(Kind::Ask, &b.status)).map(|b| Rowless {
+        id: b.id.clone(),
+        priority: b.priority,
+        repo: b.labels.iter().find_map(|l| l.strip_prefix("repo:")).map(str::to_string),
+        title: b.title.replace(['\t', '\n'], " "),
+    }));
+    out
 }
 
 fn is_ours(ask_label: &str, b: &Bead, rows: &BTreeSet<&str>, term: &BTreeSet<&str>) -> bool {
@@ -401,7 +420,8 @@ pub fn decide(p: &BeadSweep, carry: &Carry, snap: &Snapshot, room: Option<&Room>
     }
     for id in &repaired.ids {
         if let Some(b) = snap.content.iter().find(|b| &b.id == id) {
-            say.push(format!("REPAIRED {id} open bead had no lifecycle row; created it (priority {}, repo {})", b.priority, b.labels.iter().find_map(|l| l.strip_prefix("repo:")).unwrap_or("none")));
+            let edges = repaired.edges.get(id).filter(|e| !e.is_empty()).map(|e| format!("; mirrored blocks edges {}", e.join(", "))).unwrap_or_default();
+            say.push(format!("REPAIRED {id} open bead had no lifecycle row; created it (priority {}, repo {}){edges}", b.priority, b.labels.iter().find_map(|l| l.strip_prefix("repo:")).unwrap_or("none")));
         }
     }
     let now_set: Vec<Suspect> = suspects(p, snap, room, &repaired.claimed, now).into_iter().filter(|s| !repaired.ids.iter().any(|id| s.line.starts_with(&format!("SUSPECT {id} ROWLESS")))).collect();
@@ -465,7 +485,7 @@ impl Handler for BeadSweep {
                     return self.finish(ctx, view, ev, &snap, &serde_json::from_str::<Repaired>(&ids).unwrap_or_default());
                 }
                 let mut spent = "{\"ids\":[]}".len();
-                let ids: Vec<String> = rowless(&self.ask_label, &snap).into_iter().take(REPAIR_BATCH).map(|r| r.id).take_while(|id| {
+                let ids: Vec<String> = repairable(&self.ask_label, &snap).into_iter().take(REPAIR_BATCH).map(|r| r.id).take_while(|id| {
                     let next = spent + serde_json::to_string(id).map_or(0, |j| j.len()) + 1;
                     let first = spent == "{\"ids\":[]}".len();
                     (next <= REPAIR_BYTES || first).then(|| spent = next).is_some()
@@ -657,6 +677,23 @@ mod tests {
         assert!(say.is_empty());
         let (c, _) = decide(&p, &c, &Snapshot::default(), None, &Repaired::default(), 0.0);
         assert_eq!(decide(&p, &c, &snap, None, &Repaired::default(), 0.0).1.len(), 1);
+    }
+
+    #[test]
+    fn the_repaired_line_names_the_edges_it_mirrored() {
+        let snap = Snapshot { content: vec![Bead { id: "sp-o".into(), status: "open".into(), priority: 2, ..Bead::default() }], ..Snapshot::default() };
+        let repaired = Repaired { ids: vec!["sp-o".into()], edges: BTreeMap::from([("sp-o".to_string(), vec!["sp-b".to_string()])]), ..Repaired::default() };
+        let say = decide(&sweep(), &Carry::default(), &snap, None, &repaired, 0.0).1;
+        assert_eq!(say, ["REPAIRED sp-o open bead had no lifecycle row; created it (priority 2, repo none); mirrored blocks edges sp-b"]);
+    }
+
+    #[test]
+    fn only_an_open_row_is_completed_again_and_a_ready_one_is_left_alone() {
+        let content = |id: &str| Bead { id: id.into(), status: "open".into(), ..Bead::default() };
+        let row = |id: &str, state: &str| Row { id: id.into(), state: state.into(), ..Row::default() };
+        let snap = Snapshot { content: vec![content("sp-open"), content("sp-ready"), content("sp-none")], rows: vec![row("sp-open", "OPEN"), row("sp-ready", "READY")], ..Snapshot::default() };
+        let ids: Vec<String> = repairable("", &snap).into_iter().map(|r| r.id).collect();
+        assert_eq!(ids, ["sp-none", "sp-open"]);
     }
 
     #[test]

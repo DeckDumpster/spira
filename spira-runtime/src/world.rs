@@ -835,7 +835,18 @@ impl World {
         out
     }
 
-    /// Gives each rowless bead the row it lacks; `create-bead` ignores a bead that already has one.
+    /// Mirrors the `blocks` edges the content bead carries into the lifecycle store; the edges, or why not all of them were.
+    fn mirror_blocks(&self, id: &str) -> Result<Vec<String>, String> {
+        let listed = lc_call(&self.lc_socket, &["content", "dep", "list", id, "--type", "blocks", "--json"]).map_err(|e| format!("edges unreadable: {e}"))?;
+        let targets = bead::parse_blocks_targets(&listed);
+        for t in &targets {
+            let argv = bead::lc::dep_argv("dep-add", id, t, Some("blocks"));
+            lc_call(&self.lc_socket, &argv.iter().map(String::as_str).collect::<Vec<_>>()).map_err(|e| format!("edge {id} -> {t} not mirrored: {e}"))?;
+        }
+        Ok(targets)
+    }
+
+    /// Gives each rowless bead the row it lacks, OPEN, then its edges, then promotes it; `create-bead` ignores a bead that already has one.
     /// Nothing is created while `skew-check` refuses: after a restore bd can be hours behind the
     /// control plane, and its open beads may be ones the control plane already closed.
     pub fn sweep_repair(&self, input: &str) -> Result<String, String> {
@@ -845,19 +856,30 @@ impl World {
             return serde_json::to_string(&Repaired::default()).map_err(|e| e.to_string());
         }
         let snap: bead_sweep::Snapshot = serde_json::from_str(&self.sweep_snapshot()?).map_err(|e| e.to_string())?;
-        let todo: Vec<_> = bead_sweep::rowless(&self.ask_label, &snap).into_iter().filter(|r| asked.contains(&r.id)).collect();
-        let ids = todo
-            .iter()
-            .filter(|r| {
+        let todo: Vec<_> = bead_sweep::repairable(&self.ask_label, &snap).into_iter().filter(|r| asked.contains(&r.id)).collect();
+        let has_row: BTreeSet<&str> = snap.rows.iter().map(|r| r.id.as_str()).collect();
+        let mut edges = BTreeMap::new();
+        let mut ids = vec![];
+        for r in &todo {
+            if !has_row.contains(r.id.as_str()) {
                 let mut argv = vec!["create-bead", &r.id];
                 if let Some(repo) = &r.repo {
                     argv.extend(["--repo", repo]);
                 }
-                argv.push("--ready");
-                self.lc(&argv).is_some()
-            })
-            .map(|r| r.id.clone())
-            .collect();
+                if self.lc(&argv).is_none() {
+                    continue;
+                }
+            }
+            match self.mirror_blocks(&r.id) {
+                Ok(mirrored) => {
+                    if self.lc(&["promote-filed", &r.id]).is_some() {
+                        edges.insert(r.id.clone(), mirrored);
+                        ids.push(r.id.clone());
+                    }
+                }
+                Err(e) => eprintln!("bead-sweep: {} keeps its OPEN row, its edges are retried next pass: {e}", r.id),
+            }
+        }
         let todo_claims: Vec<String> = bead_sweep::claim_unset(&snap).into_iter().filter(|id| claims.contains(id)).collect();
         let claimed = todo_claims
             .into_iter()
@@ -869,7 +891,7 @@ impl World {
                 }
             })
             .collect();
-        serde_json::to_string(&Repaired { ids, claimed }).map_err(|e| e.to_string())
+        serde_json::to_string(&Repaired { ids, edges, claimed }).map_err(|e| e.to_string())
     }
 
     /// Per queue.local repo, how far the forge trails the landing ref, as `spira-lc unpublished` measures it.

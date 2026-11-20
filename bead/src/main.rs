@@ -164,29 +164,42 @@ fn parent_labels(id: &str) -> Vec<String> {
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
 #[allow(clippy::too_many_arguments)]
 fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
-    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
     if incident.is_none() && blockers.is_empty() && lookup_title.is_none() && !express {
-        return put(&argv, body);
+        return put(&args.iter().map(String::as_str).collect::<Vec<_>>(), body);
     }
-    let since = bead::bdq::utc_stamp_nanos(std::time::SystemTime::now() - std::time::Duration::from_secs(60));
-    let (mut code, mut stdout) = put_capture(&argv, body);
-    if parse_created_id(&stdout).is_none() {
-        if let Some(title) = lookup_title {
-            if code == 0 || code == CANNOT_TELL {
-                let (list_code, listing) = door(&s(&["list", "--limit", "0", "--json"]));
-                match bead::readback(list_code, &listing, title, &since[..19]) {
-                    bead::Readback::Found(found) => {
-                        eprintln!("bead: file: bd create exited {code} without an id; read back from the store: {found} exists, reporting it as filed");
-                        stdout = format!("{found}\n");
-                        code = 0;
-                    }
-                    bead::Readback::Absent if code == CANNOT_TELL => eprintln!("bead: file: bd create exited {CANNOT_TELL}; read back from the store: no bead titled {title:?} exists, nothing was recorded"),
-                    bead::Readback::Ambiguous if code == CANNOT_TELL => eprintln!("bead: file: bd create exited {CANNOT_TELL}; the store holds several beads titled {title:?}, so whether this one was written is unknown; look them up before filing again"),
-                    _ if code == CANNOT_TELL => eprintln!("bead: file: bd create exited {CANNOT_TELL} and the store could not be read back; the bead may exist, so look it up by title {title:?} before filing again"),
-                    _ => {}
-                }
-            }
+    let argv_owned = bead::filing::create_args_with_deps(args, blockers);
+    let argv: Vec<&str> = argv_owned.iter().map(String::as_str).collect();
+    let window = match spira_config::process::cfg_parse::<u64>(FILE_WINDOW_KEY) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("bead: file: {e}");
+            return 1;
         }
+    };
+    let since = bead::bdq::utc_stamp_nanos(std::time::SystemTime::now() - std::time::Duration::from_secs(window));
+    let created_at = std::cell::Cell::new(std::time::Instant::now());
+    let mut create = || {
+        let sent = put_capture(&argv, body);
+        created_at.set(std::time::Instant::now());
+        sent
+    };
+    let mut read = || {
+        let (list_code, listing) = door(&s(&["list", "--limit", "0", "--json"]));
+        bead::readback(list_code, &listing, lookup_title.unwrap_or_default(), &since[..19])
+    };
+    let mut wait = || {
+        if created_at.get().elapsed() >= spira_store::lc_call::DEADLINE {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500)); // waits-on: the store's listing; cap lc_call::DEADLINE
+        true
+    };
+    let utc = || bead::bdq::utc_stamp_nanos(std::time::SystemTime::now())[..19].to_string() + "Z";
+    let mut say = |t: &str| eprintln!("{t}");
+    let (code, stdout) = bead::filing::create_or_find(lookup_title, &mut bead::filing::CreateDoor { create: &mut create, read: &mut read, wait: &mut wait, utc: &utc, say: &mut say });
+    let by_hand = unrecovered(None, express, incident.map(|(i, _)| i));
+    if code == CANNOT_TELL && parse_created_id(&stdout).is_none() && !by_hand.is_empty() {
+        eprintln!("bead: file: bead-sweep cannot restore these if the bead turns up{by_hand}");
     }
     if submitted_tip.is_none() {
         print!("{stdout}");
@@ -197,7 +210,7 @@ fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[St
             if submitted_tip.is_none() && create_row_retrying(&id, None, repo).is_ok() {
                 eprintln!("bead: file: bd create exited {code} after creating {id}; its lifecycle row was created");
             } else {
-                eprintln!("bead: file: bd create exited {code} after creating {id}; repair: spira-lc create-bead {id} --ready");
+                eprintln!("bead: file: bd create exited {code} after creating {id}; repair: spira-lc create-bead {id} --ready{}", unrecovered(Some(&id), express, incident.map(|(i, _)| i)));
             }
         }
         return code;
@@ -256,14 +269,46 @@ fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[St
     rc |= bead::filing::edges_then_promote(
         &new_id,
         blockers,
-        &mut |from, to| put(&["dep", "add", from, to, "--type", "blocks"], None),
+        &mut |from, to| blocks_edge_present_ok(from, to),
         promote_row.then_some(&mut promote as &mut dyn FnMut()),
     );
     rc
 }
 
-/// The exit a store answers when it cannot tell whether a write committed.
-const CANNOT_TELL: i32 = 2;
+use bead::filing::CANNOT_TELL;
+
+/// An edge that rode the create is already in the content store, which is not a failure, but the
+/// lifecycle side is mirrored here because the add that would have mirrored it was refused.
+fn blocks_edge_present_ok(from: &str, to: &str) -> i32 {
+    let r = put(&["dep", "add", from, to, "--type", "blocks"], None);
+    if r == 0 {
+        return 0;
+    }
+    let (_, listed) = door(&s(&["dep", "list", from, "--type", "blocks", "--json"])); // BDQ_READ_CONSIDERED="through the content door, as every read here"
+    if !bead::parse_blocks_targets(&listed).iter().any(|t| t == to) {
+        return r;
+    }
+    match lc().map(|c| c.call(&bead::lc::dep_argv("dep-add", from, to, Some("blocks")))) {
+        Ok(Ok(reply)) if reply.code == 0 => 0,
+        _ => r,
+    }
+}
+
+/// The registered window in which a bead of the same title is the one a retried filing wants.
+const FILE_WINDOW_KEY: &str = "SPIRA_BEAD_FILE_RETRY_WINDOW_SECS";
+
+/// The repairs of the parts bead-sweep cannot recover from a bead it finds: the express mark and the incident edge.
+fn unrecovered(id: Option<&str>, express: bool, incident: Option<&str>) -> String {
+    let id = id.unwrap_or("<id>");
+    let mut parts = Vec::new();
+    if express {
+        parts.push(format!("mark it express: bead.sh amend {id} --express"));
+    }
+    if let Some(i) = incident {
+        parts.push(format!("wire the incident edge: bd dep add {i} {id}"));
+    }
+    if parts.is_empty() { String::new() } else { format!("; {}", parts.join("; ")) }
+}
 
 /// Filing is two writes; the second is retried through a store restart, so it never strands the first.
 fn create_row_retrying(id: &str, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
@@ -2233,6 +2278,48 @@ mod tests {
         let d = install(vec![("content show sp-i", 0, inc), ("content show sp-f", 0, BEAD)]);
         assert_eq!(cmd_dep_add(&argv(&["sp-i", "sp-f"])), 1);
         assert_eq!(sent(&d), vec![argv(&["content", "dep", "add", "sp-i", "sp-f"])], "the edge stays");
+    }
+
+    #[test]
+    fn a_filing_with_a_blocker_sends_it_as_deps_on_the_content_create() {
+        let dir = testkit::TempDir::new("bead-door-deps");
+        let _env = configured(dir.path());
+        let d = install(vec![("content create", 0, "sp-new\n")]);
+        let args = argv(&["create", "T", "--silent"]);
+        assert_eq!(door_create(&args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r")), 0);
+        assert_eq!(writes(&d)[0].0, argv(&["content", "create", "T", "--silent", "--deps", "blocks:sp-a"]));
+    }
+
+    const LISTED_NOW: &str = r#"[{"id":"sp-held","title":"T","issue_type":"task","created_at":"2999-01-01T00:00:00Z"}]"#;
+
+    #[test]
+    fn a_retry_of_a_title_the_store_holds_sends_no_create_and_still_completes_the_bead() {
+        let dir = testkit::TempDir::new("bead-door-retry");
+        let _env = configured(dir.path());
+        let d = install(vec![("content list", 0, LISTED_NOW), ("content create", 0, "sp-dup\n")]);
+        let args = argv(&["create", "T", "--silent"]);
+        assert_eq!(door_create(&args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r")), 0);
+        let w = sent(&d);
+        assert!(w.iter().all(|a| a[1] != "create"), "{w:?}");
+        assert_eq!(w, [argv(&["create-bead", "sp-held", "--repo", "r"]), argv(&["content", "dep", "add", "sp-held", "sp-a", "--type", "blocks"])]);
+    }
+
+    #[test]
+    fn an_edge_already_in_the_content_store_is_mirrored_to_the_lifecycle_store_not_failed() {
+        let dir = testkit::TempDir::new("bead-door-present");
+        let _env = configured(dir.path());
+        let d = install(vec![("content dep add", 1, "already exists\n"), ("content dep list", 0, r#"[{"depends_on_id":"sp-a"}]"#)]);
+        assert_eq!(blocks_edge_present_ok("sp-new", "sp-a"), 0);
+        assert!(d.sent.lock().unwrap().iter().any(|(a, _)| a[0] == "dep-add" && a[1..] == argv(&["sp-new", "sp-a", "--type", "blocks"])[..]));
+        install(vec![("content dep add", 1, "refused\n"), ("content dep list", 0, "[]")]);
+        assert_eq!(blocks_edge_present_ok("sp-new", "sp-a"), 1, "an edge the store does not hold stays a failure");
+    }
+
+    #[test]
+    fn an_unfinished_filing_names_the_express_mark_and_the_incident_edge_with_their_repairs() {
+        let text = unrecovered(None, true, Some("sp-inc"));
+        assert!(text.contains("bead.sh amend <id> --express") && text.contains("bd dep add sp-inc <id>"), "{text}");
+        assert_eq!(unrecovered(Some("sp-x"), false, None), "");
     }
 
     #[test]

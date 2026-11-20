@@ -57,6 +57,67 @@ pub fn edges_then_promote(new_id: &str, blockers: &[String], dep_add: &mut dyn F
     rc
 }
 
+/// `args` (a `create`) with `blockers` as `--deps`, so the edges commit in the write that creates the bead.
+pub fn create_args_with_deps(args: &[String], blockers: &[String]) -> Vec<String> {
+    let mut out = args.to_vec();
+    if !blockers.is_empty() {
+        out.push("--deps".into());
+        out.push(blockers.iter().map(|b| format!("blocks:{b}")).collect::<Vec<_>>().join(","));
+    }
+    out
+}
+
+/// The exit a store answers when it cannot tell whether a write committed.
+pub const CANNOT_TELL: i32 = 2;
+
+/// What [`create_or_find`] asks of the store and the clock.
+pub struct CreateDoor<'a> {
+    pub create: &'a mut dyn FnMut() -> (i32, String),
+    pub read: &'a mut dyn FnMut() -> crate::Readback,
+    /// Waits before the next read; false once the door's write deadline has passed again.
+    pub wait: &'a mut dyn FnMut() -> bool,
+    pub utc: &'a dyn Fn() -> String,
+    pub say: &'a mut dyn FnMut(&str),
+}
+
+/// A create whose reply may be lost. A bead already titled `title` in the window is reported, not
+/// created again; a create the store could not answer is read back until the title is found or the
+/// deadline passes, because a write can commit after the client gave up. Returns exit and stdout.
+pub fn create_or_find(title: Option<&str>, d: &mut CreateDoor) -> (i32, String) {
+    let Some(title) = title else { return (d.create)() };
+    if let crate::Readback::Found(id) = (d.read)() {
+        (d.say)(&format!("bead: file: {id} already holds the title {title:?}, reporting it as filed and not creating it again"));
+        return (0, format!("{id}\n"));
+    }
+    let (code, out) = (d.create)();
+    if crate::parse_created_id(&out).is_some() || !(code == 0 || code == CANNOT_TELL) {
+        return (code, out);
+    }
+    let mut last = (d.read)();
+    while code == CANNOT_TELL && !matches!(last, crate::Readback::Found(_)) && (d.wait)() {
+        last = (d.read)();
+    }
+    match last {
+        crate::Readback::Found(found) => {
+            (d.say)(&format!("bead: file: bd create exited {code} without an id; read back from the store: {found} exists, reporting it as filed"));
+            (0, format!("{found}\n"))
+        }
+        crate::Readback::Absent if code == CANNOT_TELL => {
+            (d.say)(&format!("bead: file: bd create exited {CANNOT_TELL}; no bead titled {title:?} found by {}; it may still be written — bead-sweep gives it its row and edges if it is; look it up by title before filing again", (d.utc)()));
+            (code, out)
+        }
+        crate::Readback::Ambiguous if code == CANNOT_TELL => {
+            (d.say)(&format!("bead: file: bd create exited {CANNOT_TELL}; the store holds several beads titled {title:?}, so whether this one was written is unknown; look them up before filing again"));
+            (code, out)
+        }
+        _ if code == CANNOT_TELL => {
+            (d.say)(&format!("bead: file: bd create exited {CANNOT_TELL} and the store could not be read back; the bead may exist, so look it up by title {title:?} before filing again"));
+            (code, out)
+        }
+        _ => (code, out),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Persona {
     pub name: String,
@@ -573,5 +634,65 @@ mod tests {
         create(&mut args, &mut None, &p, &|k| (k == CONTRACT_OVERRIDE_ENV).then(|| "bootstrapping".to_string())).unwrap();
         let text = args.last().unwrap();
         assert!(text.starts_with("Contract considered: bootstrapping") && text.contains("cannot tell") && text.ends_with("\n\nd"), "{text}");
+    }
+
+    use crate::Readback;
+
+    /// Runs `create_or_find` over scripted listings; returns (exit, stdout, said, creates sent).
+    fn run(creates: Vec<(i32, &str)>, mut listings: Vec<Readback>, waits: usize) -> (i32, String, Vec<String>, usize) {
+        let mut sent = 0;
+        let (mut said, mut left) = (Vec::<String>::new(), waits);
+        let mut creates = creates.into_iter();
+        let (code, out) = {
+            let mut create = || {
+                sent += 1;
+                let (c, o) = creates.next().expect("a create was scripted");
+                (c, o.to_string())
+            };
+            let mut read = || if listings.len() > 1 { listings.remove(0) } else { std::mem::replace(&mut listings[0], Readback::Absent) };
+            let mut wait = || {
+                let more = left > 0;
+                left = left.saturating_sub(1);
+                more
+            };
+            let mut say = |t: &str| said.push(t.to_string());
+            create_or_find(Some("T"), &mut CreateDoor { create: &mut create, read: &mut read, wait: &mut wait, utc: &|| "2026-11-19T20:12:30Z".into(), say: &mut say })
+        };
+        (code, out, said, sent)
+    }
+
+    #[test]
+    fn a_create_that_commits_after_the_deadline_is_found_by_the_second_listing_and_reported_filed() {
+        let (code, out, said, _) = run(vec![(CANNOT_TELL, "")], vec![Readback::Absent, Readback::Absent, Readback::Found("sp-late".into())], 3);
+        assert_eq!((code, out.as_str()), (0, "sp-late\n"));
+        assert!(said.iter().all(|t| !t.contains("nothing was recorded")), "{said:?}");
+    }
+
+    #[test]
+    fn a_create_never_found_says_it_may_still_be_written_and_exits_non_zero() {
+        let (code, _, said, _) = run(vec![(CANNOT_TELL, "")], vec![Readback::Absent], 2);
+        assert_eq!(code, CANNOT_TELL);
+        let text = said.join("\n");
+        assert!(text.contains("may still be written") && text.contains("2026-11-19T20:12:30Z") && !text.contains("nothing was recorded"), "{text}");
+    }
+
+    #[test]
+    fn a_retry_of_a_title_the_store_holds_sends_no_second_create_and_prints_the_existing_id() {
+        let (code, out, _, sent) = run(vec![], vec![Readback::Found("sp-old".into())], 0);
+        assert_eq!((code, out.as_str(), sent), (0, "sp-old\n", 0));
+    }
+
+    #[test]
+    fn a_create_that_answers_normally_is_not_read_back() {
+        let (code, out, said, sent) = run(vec![(0, "sp-new\n")], vec![Readback::Absent], 0);
+        assert_eq!((code, out.as_str(), sent), (0, "sp-new\n", 1));
+        assert!(said.is_empty());
+    }
+
+    #[test]
+    fn blockers_ride_the_create_as_deps_so_the_new_bead_is_the_blocked_one() {
+        let args = create_args_with_deps(&["create".into(), "T".into()], &["sp-a".into(), "sp-b".into()]);
+        assert_eq!(args, ["create", "T", "--deps", "blocks:sp-a,blocks:sp-b"]);
+        assert_eq!(create_args_with_deps(&["create".into()], &[]), ["create"], "no blockers, no flag");
     }
 }
