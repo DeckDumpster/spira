@@ -1486,9 +1486,11 @@ fn closing_an_ask_with_no_bead_row_closes_its_ask_row_withdrawn_and_a_bead_with_
     let mut f = Fake { ask_rows: vec!["sp-ask".into()], ..Default::default() };
     f.bead("sp-w", BeadState::Landed);
     let mut bd = FakeBd::default();
-    assert_eq!(close(&v(&["sp-ask", "--reason", "moot", "--actor", "claude"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
+    let a = close(&v(&["sp-ask", "--reason", "moot", "--actor", "claude"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, APPLIED);
     assert_eq!(f.ask_closes, vec![v(&["close-ask", "sp-ask", "--exit", "withdrawn", "--quote", "moot", "--actor", "claude"])]);
-    assert_eq!(bd.closed, vec![("sp-ask".to_string(), "ask withdrawn: q".to_string())], "the decision bead follows its closed ask");
+    assert!(bd.closed.is_empty(), "the request forks no bd");
+    assert_eq!(a.owed.to_vec(), vec![("sp-ask".to_string(), "ask withdrawn: q".to_string())], "the decision bead follows its closed ask");
     assert_eq!(close(&v(&["sp-w", "--reason", "landed at abc"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
     assert_eq!(f.ask_closes.len(), 1, "a bead with a row is no ask");
 }

@@ -3,7 +3,7 @@
 //! passed, and a store write begun past it is refused unstarted. A settler thread writes them
 //! each under a deadline of its own and keeps a refused one owed until it is written.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -12,17 +12,26 @@ use crate::claim_sync::{self, ONLY_IF_UNSET};
 
 const RETRY_AFTER: Duration = Duration::from_secs(5);
 
+/// Passes a refused store close stays owed before reconcile-content is left to close it.
+const CLOSE_TRIES: u32 = 3;
+
 #[derive(Default)]
 struct Owed {
     rows: BTreeSet<(String, Option<String>)>,
     claims: BTreeSet<String>,
     only_if_unset: BTreeSet<String>,
     stamp: bool,
+    closes: BTreeMap<String, String>,
+    close_tries: BTreeMap<String, u32>,
 }
 
 impl Owed {
     fn is_empty(&self) -> bool {
-        self.rows.is_empty() && self.claims.is_empty() && self.only_if_unset.is_empty() && !self.stamp
+        self.rows.is_empty()
+            && self.claims.is_empty()
+            && self.only_if_unset.is_empty()
+            && !self.stamp
+            && self.closes.is_empty()
     }
 }
 
@@ -111,6 +120,19 @@ pub fn owe_row(id: &str, repo: Option<&str>) -> bool {
     true
 }
 
+/// Queues the store closes a reply owes; `false` when no settler is installed.
+pub fn owe_closes(owed: &[(String, String)]) -> bool {
+    let Some(s) = current() else { return false };
+    if owed.is_empty() {
+        return true;
+    }
+    let mut g = s.owed.lock().unwrap_or_else(|e| e.into_inner());
+    g.closes.extend(owed.iter().cloned());
+    drop(g);
+    s.wake.notify_one();
+    true
+}
+
 /// Owed writes after the reply are not request work; they keep the receiver's 3 s bound.
 const SETTLE_DEADLINE: Duration = Duration::from_secs(3);
 
@@ -163,8 +185,38 @@ impl Settler {
                 back.stamp = true;
             }
         }
+        let mut tries = taken.close_tries;
+        for (id, reason) in taken.closes {
+            let _deadline = fresh_deadline();
+            let settled = match crate::reconcile_content::record_state(m, &id) {
+                Ok(Some(state)) if crate::reconcile_content::terminal(&state) => crate::reconcile_content::settle_owed(bd, &id, &reason),
+                Ok(None) => match crate::reconcile_content::owed_ask_close(m, &id) {
+                    Ok(Some(_)) => crate::reconcile_content::settle_owed(bd, &id, &reason),
+                    Ok(None) => Ok(()),
+                    Err(e) => Err(e),
+                },
+                Ok(Some(_)) => Ok(()),
+                Err(e) => Err(e),
+            };
+            let Err(e) = settled else { continue };
+            count_refused("store-close");
+            let n = tries.get(&id).copied().unwrap_or(0) + 1;
+            if n >= CLOSE_TRIES {
+                eprintln!("spira-lc close: {id}: the store close failed ({}); reconcile-content will close it", e.trim());
+            } else {
+                tries.insert(id.clone(), n);
+                back.closes.insert(id, reason);
+            }
+        }
+        back.close_tries = tries.into_iter().filter(|(id, _)| back.closes.contains_key(id)).collect();
         let mut g = self.owed.lock().unwrap_or_else(|e| e.into_inner());
         g.rows.extend(back.rows);
+        for (id, reason) in back.closes {
+            g.closes.entry(id).or_insert(reason);
+        }
+        for (id, n) in back.close_tries {
+            g.close_tries.insert(id, n);
+        }
         g.claims.extend(back.claims);
         g.only_if_unset.extend(back.only_if_unset);
         g.stamp |= back.stamp;
@@ -177,7 +229,7 @@ impl Settler {
         }
     }
 
-    fn owes(&self) -> bool {
+    pub(crate) fn owes(&self) -> bool {
         !self.owed.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
     }
 }
