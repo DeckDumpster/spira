@@ -1,0 +1,51 @@
+//! `cr pick [--aim <X>] [--seed <n>] [--json]` — see `cr -h`.
+
+use cr::cli::{self, Outcome};
+use cr::ledger::Ledger;
+use cr::ports::{Clock, Config, GitTree, Ports, VirtualClock, WallClock};
+use spira_config::process::cfg_parse;
+use spira_config::repos::{Column, Registry};
+use std::collections::BTreeMap;
+
+fn build_ports() -> Result<Ports, String> {
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let home = spira_config::resolve::locate_home_for_process()?;
+    let reg = Registry::from_env(env, &home);
+    let repo = reg.home_repo().to_string();
+    let root = reg.root(&repo).ok_or_else(|| format!("the repo map has no path for the home repository {repo:?}"))?;
+    let base = reg.field(&repo, Column::Base).filter(|b| !b.is_empty()).ok_or_else(|| format!("the repo map names no base for the home repository {repo:?}"))?;
+    let tree = GitTree::new(&root, &base)?;
+    let ledger_path = spira_config::resolve::run_dir_for_process()?.join("cr").join("ledger.jsonl");
+    let exclude: String = cfg_parse("SPIRA_CR_EXCLUDE")?;
+    let config = Config {
+        page_lines: cfg_parse("SPIRA_CR_PAGE_LINES")?,
+        oversize_pages: cfg_parse("SPIRA_CR_OVERSIZE_PAGES")?,
+        churn_days: cfg_parse("SPIRA_CR_CHURN_DAYS")?,
+        exclude: exclude.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect(),
+    };
+    let clock: Box<dyn Clock> = match spira_config::vtime::override_epoch() {
+        Some(secs) => Box::new(VirtualClock::new(secs.saturating_mul(1000))),
+        None => Box::new(WallClock),
+    };
+    Ok(Ports { clock, tree: Box::new(tree), ledger: Ledger::load(&ledger_path)?, config, env_seed: spira_config::process::cfg("SPIRA_SEED").ok().filter(|s| !s.is_empty()) })
+}
+
+fn emit(o: &Outcome) -> std::process::ExitCode {
+    print!("{}", o.stdout);
+    eprint!("{}", o.stderr);
+    std::process::ExitCode::from(o.code.clamp(0, 255) as u8)
+}
+
+fn main() -> std::process::ExitCode {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if cli::wants_help(&argv) {
+        return emit(&Outcome { code: 0, stdout: cli::HELP.to_string(), stderr: String::new() });
+    }
+    let metrics = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "cr", "pick");
+    let outcome = match build_ports() {
+        Ok(ports) => cli::run(&argv, &ports),
+        Err(e) => cli::error_outcome(1, cli::wants_json(&argv), &e),
+    };
+    metrics.end(spira_otel::metrics::outcome_of_exit(std::process::ExitCode::from(outcome.code.clamp(0, 255) as u8)));
+    emit(&outcome)
+}

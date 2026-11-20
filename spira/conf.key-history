@@ -788,3 +788,8 @@ land_stale
 land_escalate_every
 activation_store_bound
 bead_file_retry_window_secs
+cr_page_lines
+cr_oversize_pages
+cr_churn_days
+cr_exclude
+seed
