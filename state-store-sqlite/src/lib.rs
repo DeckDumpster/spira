@@ -1072,8 +1072,7 @@ fn newest_opened_at_head(
 fn kind_since_at_head(
     conn: &Connection,
     snap: &Snapshot,
-    prefix: &[u8],
-    hi: Option<&[u8]>,
+    (prefix, hi): (&[u8], Option<&[u8]>),
     kind: &str,
     cursor: (i64, &[u8]),
     limit: usize,
@@ -1975,14 +1974,13 @@ impl Backend for SqliteBackend {
             let hi = successor(prefix.as_bytes());
             let cursor = (cur_at, cur_key.as_bytes());
             if at == snap.head {
-                return kind_since_at_head(conn, snap, prefix.as_bytes(), hi.as_deref(), kind, cursor, limit, deadline);
+                return kind_since_at_head(conn, snap, (prefix.as_bytes(), hi.as_deref()), kind, cursor, limit, deadline);
             }
             let touched = lock(&self.0.history).touched_after(prefix.as_bytes(), hi.as_deref(), at)?;
             let rows = kind_since_at_head(
                 conn,
                 snap,
-                prefix.as_bytes(),
-                hi.as_deref(),
+                (prefix.as_bytes(), hi.as_deref()),
                 kind,
                 cursor,
                 limit.saturating_add(touched.len()),
