@@ -455,6 +455,8 @@ fn e2e_an_attribution_leg_with_no_corpus_gets_its_control_probe_answered() {
     let line = crate::attribute_in(&o, env.clone(), repo, wt, start, given).unwrap();
     let found = Command::new("find").arg(d.path()).args(["-path", "*/spool/res/b1.done"]).output().unwrap();
     let served = !found.stdout.is_empty();
+    let req = Command::new("find").arg(d.path()).args(["-path", "*/spool/req/b1.req"]).output().unwrap();
+    assert!(!req.stdout.is_empty(), "no b1.req was written: {line}");
     assert!(served, "the control probe's request was never served: {line}");
     assert!(!line.contains("gave no verdict"), "{line}");
 }

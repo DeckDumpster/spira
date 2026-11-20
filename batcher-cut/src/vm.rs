@@ -2517,6 +2517,19 @@ mod abandon_tests {
     }
 
     #[test]
+    fn a_probe_with_no_verdict_leaves_its_reason_in_probe_faults_once() {
+        let d = testkit::TempDir::new("vm-probe-faults");
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        r.report_probe("b1", "unit", "a", &[], None, "round-vm --no-corpus not started: x".into());
+        r.report_probe("b2", "unit", "a", &[], Some(true), String::new());
+        let got = RoundRunner::probe_faults(&mut r);
+        assert_eq!(got, vec!["b1 unit [base]: round-vm --no-corpus not started: x".to_string()]);
+        assert!(RoundRunner::probe_faults(&mut r).is_empty());
+    }
+
+    #[test]
     fn a_request_with_no_round_vm_to_answer_it_fails_naming_the_request() {
         let d = testkit::TempDir::new("vm-request-no-child");
         let env = lifecycle_tests_env(d.path());
