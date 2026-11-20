@@ -1,6 +1,7 @@
 //! `cr` command path: argv in, `Outcome` out. `main` only builds the real ports.
 
 use crate::count;
+use crate::findings;
 use crate::index::Index;
 use crate::pick::{self, Scored, Shaped, Stratum};
 use crate::ports::{Ports, SeededRng};
@@ -23,8 +24,15 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   cr count --regex <re> [--path <glob>]... [--limit <n>] [--json]
   cr open [--count <N>] [--aim <X>] [--seed <n>] [--scheduled]
   cr seal --review <NNN> < comments.json
+  cr finding --review <NNN> < finding.json
+  cr findings --review <NNN> [--post]
   cr unseal --review <NNN> [--said <comment-id>]
   cr status [--json]
+
+  finding records one verdict of a review (JSON: {id?, words, comment_id?, exemplar: {path, line},
+  kind, rule, scope, became}) and prints its id; an id already recorded is replaced. findings
+  regenerates the review's page and the pattern catalogue in SPIRA_CR_FINDINGS_DIR, commits those
+  two files, and prints the closeout comment; --post posts it on the review's pull request.
 
   open stages N units (default 1) as reviews and makes no forge call. seal reads the
   Concierge's own review, a JSON array of {path, line, body}, stores it hashed, and opens the
@@ -73,15 +81,19 @@ enum Cmd {
     Open(review::OpenArgs),
     Seal(u32),
     Unseal { number: u32, said: Option<String> },
+    Finding(u32),
+    Findings { number: u32, post: bool },
     Status { json: bool },
 }
 
-const VERBS: [(&str, &[&str], &[&str]); 6] = [
+const VERBS: [(&str, &[&str], &[&str]); 8] = [
     ("pick", &["--aim", "--seed"], &["--json"]),
     ("count", &["--regex", "--path", "--limit"], &["--json"]),
     ("open", &["--count", "--aim", "--seed"], &["--scheduled"]),
     ("seal", &["--review"], &[]),
     ("unseal", &["--review", "--said"], &[]),
+    ("finding", &["--review"], &[]),
+    ("findings", &["--review"], &["--post"]),
     ("status", &[], &["--json"]),
 ];
 
@@ -139,7 +151,7 @@ fn parse_verb(argv: &[String], first: Option<&str>) -> Result<Cmd, String> {
             let hint = match verb {
                 "open" => "--count",
                 "count" => "--regex",
-                "seal" | "unseal" => "--review",
+                "seal" | "unseal" | "finding" | "findings" => "--review",
                 _ => "--aim",
             };
             return Err(format!("positional argument `{arg}` is not accepted; name it: `{hint} {arg}`"));
@@ -166,6 +178,8 @@ fn parse_verb(argv: &[String], first: Option<&str>) -> Result<Cmd, String> {
         }
         "seal" => Cmd::Seal(review()?),
         "unseal" => Cmd::Unseal { number: review()?, said: values.get("--said").cloned() },
+        "finding" => Cmd::Finding(review()?),
+        "findings" => Cmd::Findings { number: review()?, post: set.contains(&"--post") },
         _ => Cmd::Status { json: set.contains(&"--json") },
     })
 }
@@ -204,6 +218,8 @@ pub fn run(argv: &[String], ports: &Ports) -> Outcome {
         Ok(Cmd::Open(a)) => return review::open(&a, ports),
         Ok(Cmd::Seal(n)) => return review::seal(n, ports),
         Ok(Cmd::Unseal { number, said }) => return review::unseal(number, said.as_deref(), ports),
+        Ok(Cmd::Finding(n)) => return findings::record_finding(n, ports),
+        Ok(Cmd::Findings { number, post }) => return findings::findings(number, post, ports),
         Ok(Cmd::Status { json }) => return review::status(json, ports),
         Err(e) => return fail(2, json, &e, &[], None, None),
     };

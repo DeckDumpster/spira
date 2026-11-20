@@ -41,3 +41,8 @@ required-features = ["integration"]
 name = "review_flow"
 path = "tests/review_flow.rs"
 required-features = ["integration"]
+
+[[test]]
+name = "findings_commit"
+path = "tests/findings_commit.rs"
+required-features = ["integration"]

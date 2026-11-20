@@ -190,7 +190,7 @@ fn branch_files(tree: &dyn SourceTree, unit: &units::Unit) -> Result<Vec<(String
     Ok(out)
 }
 
-fn line_count(bytes: &[u8]) -> u32 {
+pub(crate) fn line_count(bytes: &[u8]) -> u32 {
     String::from_utf8_lossy(bytes).lines().count() as u32
 }
 
@@ -329,7 +329,7 @@ fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, V
     m
 }
 
-fn gh(ports: &Ports, method: &str, endpoint: &str, body: Option<&Value>) -> Result<Value, String> {
+pub(crate) fn gh(ports: &Ports, method: &str, endpoint: &str, body: Option<&Value>) -> Result<Value, String> {
     let (args, input): (Vec<&str>, Option<Vec<u8>>) = match body {
         Some(b) => (vec!["api", "--method", method, endpoint, "--input", "-"], Some(b.to_string().into_bytes())),
         None => (vec!["api", endpoint], None),
@@ -361,7 +361,7 @@ fn save_progress(dir: &Path, p: &Progress) -> Result<(), String> {
     record::write_atomic(&dir.join("progress.json"), serde_json::to_string_pretty(p).map_err(|e| e.to_string())?.as_bytes())
 }
 
-fn repo_refusal(ports: &Ports) -> Option<Outcome> {
+pub(crate) fn repo_refusal(ports: &Ports) -> Option<Outcome> {
     for (key, v) in [(OWNER_KEY, &ports.repo_owner), (NAME_KEY, &ports.repo_name)] {
         if v.trim().is_empty() {
             return Some(refuse(2, &format!("{key} is empty; name the review repository in the config, it has no default")));
