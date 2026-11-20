@@ -132,6 +132,9 @@ pub fn cmd_plan(args: &[String]) -> (i32, String) {
 /// How long an `inflow` answer is held: its window moves with the clock, not only with a write.
 const INFLOW_HOLD: Duration = Duration::from_secs(60);
 
+/// Most answers held at one watermark; a full hold is emptied rather than grown.
+const HELD_ANSWERS: usize = 256;
+
 /// Whole answers by joined argv, held under the planning watermark they were read at.
 type HeldAnswers = Mutex<(Option<u64>, BTreeMap<String, (Value, Instant)>)>;
 
@@ -165,6 +168,9 @@ fn answer_with(args: &[String], conn: &dyn Sql, cdb: &str, watermark: Option<u64
     if let Some(w) = watermark {
         let mut g = lock();
         if g.0 == Some(w) {
+            if g.1.len() >= HELD_ANSWERS {
+                g.1.clear();
+            }
             g.1.insert(key, (answer.clone(), now));
         }
     }
