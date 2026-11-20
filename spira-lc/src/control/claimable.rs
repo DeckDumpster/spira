@@ -9,7 +9,7 @@ use serde::Serialize;
 use serde_json::json;
 use spira_config::edges::{self, Gate};
 use spira_config::nonwork::{self, SPLIT_LABEL};
-use spira_config::runes::{self, Partition};
+use spira_config::runes::{self, Partition, PartitionsStamp};
 use state_store::Backend;
 
 use super::records::LifecycleRecord;
@@ -198,8 +198,14 @@ pub trait Inputs {
     fn run_dir(&self) -> Result<PathBuf, String>;
     /// The rune partitions that decide which runes would take a claimable bead.
     fn partitions(&self, config: &Config) -> Result<Vec<Partition>, String>;
+    /// What `partitions` would read, by stat alone; equal stamps mean an equal answer. The
+    /// default never changes.
+    fn partitions_stamp(&self) -> Result<PartitionsStamp, String> {
+        Ok(PartitionsStamp::default())
+    }
 }
 
+#[derive(Clone)]
 pub struct Config {
     pub queue_wait: String,
     pub stack_max: u32,
@@ -243,6 +249,68 @@ impl Inputs for Live {
         let home = spira_config::resolve::locate_home_for_process()?;
         let roster = cfg("SPIRA_RUNES")?;
         runes::partitions(&home, Some(roster.as_str()), &config.queue_wait, &cfg("SPIRA_OPEN_CHILDREN_LABEL")?)
+    }
+
+    fn partitions_stamp(&self) -> Result<PartitionsStamp, String> {
+        let home = spira_config::resolve::locate_home_for_process()?;
+        let roster = spira_config::process::cfg("SPIRA_RUNES")?;
+        Ok(runes::partitions_stamp(&home, Some(roster.as_str())))
+    }
+}
+
+/// The process-wide inputs: config pinned at the first read, partitions re-read when a rune changes.
+pub static LIVE: std::sync::LazyLock<Pinned<Live>> = std::sync::LazyLock::new(|| Pinned::new(Live));
+
+/// `inner` with its config pinned at the first successful read and its partitions kept until
+/// their stamp changes. A failed read is not kept.
+pub struct Pinned<I> {
+    inner: I,
+    config: std::sync::OnceLock<Config>,
+    parts: std::sync::Mutex<Option<(PartitionsStamp, Vec<Partition>)>>,
+}
+
+impl<I: Inputs> Pinned<I> {
+    pub fn new(inner: I) -> Self {
+        Pinned { inner, config: std::sync::OnceLock::new(), parts: std::sync::Mutex::new(None) }
+    }
+}
+
+impl<I: Inputs> Inputs for Pinned<I> {
+    fn config(&self) -> Result<Config, String> {
+        if let Some(c) = self.config.get() {
+            return Ok(c.clone());
+        }
+        let read = self.inner.config()?;
+        Ok(self.config.get_or_init(|| read).clone())
+    }
+
+    fn statuses(&self, ids: &[String]) -> Result<BTreeMap<String, (String, String)>, String> {
+        self.inner.statuses(ids)
+    }
+
+    fn items(&self, ids: &[String]) -> Result<Vec<serde_json::Value>, String> {
+        self.inner.items(ids)
+    }
+
+    fn run_dir(&self) -> Result<PathBuf, String> {
+        self.inner.run_dir()
+    }
+
+    fn partitions(&self, config: &Config) -> Result<Vec<Partition>, String> {
+        let stamp = self.inner.partitions_stamp()?;
+        let mut kept = self.parts.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((s, parts)) = kept.as_ref() {
+            if *s == stamp {
+                return Ok(parts.clone());
+            }
+        }
+        let parts = self.inner.partitions(config)?;
+        *kept = Some((stamp, parts.clone()));
+        Ok(parts)
+    }
+
+    fn partitions_stamp(&self) -> Result<PartitionsStamp, String> {
+        self.inner.partitions_stamp()
     }
 }
 
@@ -303,7 +371,7 @@ pub struct Viewed {
 pub type ViewRead = (BTreeMap<String, LifecycleRecord>, BTreeMap<String, Viewed>);
 
 /// The claim view of `cands` (READY and REWORK records), read from the records at `rev` and
-/// the inputs, with the records it consulted. Nothing is kept between calls.
+/// the inputs, with the records it consulted. It keeps nothing itself; `Pinned` inputs keep the config and the rune partitions.
 pub fn view<B: Backend>(
     store: &Store<B>,
     rev: u64,

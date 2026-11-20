@@ -605,6 +605,30 @@ pub fn partitions(home: &Path, env_override: Option<&str>, queue_wait: &str, ope
     Ok(out)
 }
 
+/// What `partitions` read: the roster and each rune file's path, mtime and length. Two equal
+/// stamps mean `partitions` would answer the same.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PartitionsStamp {
+    roster: String,
+    files: Vec<(PathBuf, Option<std::time::SystemTime>, Option<u64>)>,
+}
+
+/// The stamp of what `partitions(home, env_override, ..)` would read now, by stat alone.
+pub fn partitions_stamp(home: &Path, env_override: Option<&str>) -> PartitionsStamp {
+    let roster = spira_runes(home, env_override);
+    let dir = runes_dir(home);
+    let files = roster
+        .split_whitespace()
+        .map(|f| {
+            let path = dir.join(format!("{f}.rune"));
+            let meta = std::fs::metadata(&path).ok();
+            let mtime = meta.as_ref().and_then(|m| m.modified().ok());
+            (path, mtime, meta.map(|m| m.len()))
+        })
+        .collect();
+    PartitionsStamp { roster, files }
+}
+
 /// The names of the partitions that take a bead carrying `labels`.
 pub fn taking(labels: &[String], parts: &[Partition], queue_wait: &str) -> Vec<String> {
     let shared: Vec<&str> = [queue_wait].into_iter().filter(|s| !s.is_empty()).collect();
