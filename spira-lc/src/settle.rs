@@ -22,6 +22,7 @@ struct Owed {
     only_if_unset: BTreeSet<String>,
     stamp: bool,
     closes: BTreeMap<String, String>,
+    reopens: BTreeSet<String>,
     close_tries: BTreeMap<String, u32>,
 }
 
@@ -32,6 +33,7 @@ impl Owed {
             && self.only_if_unset.is_empty()
             && !self.stamp
             && self.closes.is_empty()
+            && self.reopens.is_empty()
     }
 }
 
@@ -133,6 +135,14 @@ pub fn owe_closes(owed: &[(String, String)]) -> bool {
     true
 }
 
+/// Queues the bd half of a reopen whose row has moved; `false` when no settler is installed.
+pub fn owe_reopen(id: &str) -> bool {
+    let Some(s) = current() else { return false };
+    s.owed.lock().unwrap_or_else(|e| e.into_inner()).reopens.insert(id.to_string());
+    s.wake.notify_one();
+    true
+}
+
 /// Owed writes after the reply are not request work; they keep the receiver's 3 s bound.
 const SETTLE_DEADLINE: Duration = Duration::from_secs(3);
 
@@ -208,6 +218,15 @@ impl Settler {
                 back.closes.insert(id, reason);
             }
         }
+        for id in taken.reopens {
+            let _deadline = fresh_deadline();
+            let written = crate::reconcile_content::settle_owed_reopen(m, bd, &id);
+            if let Err(e) = written {
+                count_refused("reopen");
+                eprintln!("spira-lc reopen: {id}: the store reopen is still owed ({})", e.trim());
+                back.reopens.insert(id);
+            }
+        }
         back.close_tries = tries.into_iter().filter(|(id, _)| back.closes.contains_key(id)).collect();
         let mut g = self.owed.lock().unwrap_or_else(|e| e.into_inner());
         g.rows.extend(back.rows);
@@ -217,6 +236,7 @@ impl Settler {
         for (id, n) in back.close_tries {
             g.close_tries.insert(id, n);
         }
+        g.reopens.extend(back.reopens);
         g.claims.extend(back.claims);
         g.only_if_unset.extend(back.only_if_unset);
         g.stamp |= back.stamp;
@@ -227,6 +247,11 @@ impl Settler {
         while g.is_empty() {
             g = self.wake.wait(g).unwrap_or_else(|e| e.into_inner());
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn owed_reopens(&self) -> Vec<String> {
+        self.owed.lock().unwrap_or_else(|e| e.into_inner()).reopens.iter().cloned().collect()
     }
 
     pub(crate) fn owes(&self) -> bool {
@@ -462,5 +487,89 @@ mod tests {
         let w = World::new();
         settler.pass(&mut &w, &mut &w, &mut || crate::plan::stamp_control(&store));
         assert_eq!(seq(), 8);
+    }
+
+    struct ReopenBd {
+        fail: bool,
+        reopened: Vec<String>,
+    }
+
+    impl crate::callers::Bd for ReopenBd {
+        fn issue_type(&mut self, _: &str) -> Result<String, String> {
+            unreachable!()
+        }
+        fn close(&mut self, _: &str, _: &str) -> Result<(), String> {
+            unreachable!()
+        }
+        fn closed(&mut self, _: &[String]) -> Result<Vec<(String, String)>, String> {
+            unreachable!()
+        }
+        fn known(&mut self, _: &[String]) -> Result<Vec<String>, String> {
+            unreachable!()
+        }
+        fn open_among(&mut self, _: &[String]) -> Result<Vec<String>, String> {
+            unreachable!()
+        }
+        fn reopen(&mut self, id: &str) -> Result<(), String> {
+            if std::mem::take(&mut self.fail) {
+                return Err("bd down".into());
+            }
+            self.reopened.push(id.into());
+            Ok(())
+        }
+        fn work_beads(&mut self, _: &str) -> Result<Vec<String>, String> {
+            unreachable!()
+        }
+        fn external(&mut self, _: &str) -> Result<bool, String> {
+            unreachable!()
+        }
+        fn blocking_dependents(&mut self, _: &str) -> Result<Vec<String>, String> {
+            unreachable!()
+        }
+        fn planning_watermark(&mut self) -> Result<Option<u64>, String> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn an_owed_reopen_whose_bd_write_fails_stays_owed_and_the_next_pass_writes_it() {
+        let w = World::new();
+        w.file("sp-a", "task", Some("sp-e"), &[]);
+        w.ok(&["create-bead", "sp-a", "--ready"]);
+        let settler = installed();
+        assert!(owe_reopen("sp-a"));
+        let mut bd = ReopenBd { fail: true, reopened: Vec::new() };
+        settler.pass(&mut &w, &mut bd, &mut || Ok(1));
+        assert!(settler.owes() && bd.reopened.is_empty());
+        settler.pass(&mut &w, &mut bd, &mut || Ok(1));
+        assert!(!settler.owes());
+        assert_eq!(bd.reopened, ["sp-a"]);
+    }
+
+    #[test]
+    fn an_owed_reopen_whose_row_has_been_claimed_again_is_dropped_without_a_bd_write() {
+        let w = World::new();
+        w.file("sp-a", "task", Some("sp-e"), &[]);
+        w.ok(&["create-bead", "sp-a", "--ready"]);
+        let claim = serde_json::to_string(&lifecycle::bead::BeadEventKind::Claim { holder: "d".into(), lease_until: 1, stack: Default::default(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None }).unwrap();
+        w.ok(&["event", "bead", "sp-a", "--expect", "READY", "--version", "0", "--actor", "d", "--kind", &claim]);
+        let settler = installed();
+        assert!(owe_reopen("sp-a"));
+        let mut bd = ReopenBd { fail: false, reopened: Vec::new() };
+        settler.pass(&mut &w, &mut bd, &mut || Ok(1));
+        assert!(!settler.owes() && bd.reopened.is_empty());
+    }
+
+    #[test]
+    fn an_owed_reopen_whose_row_has_gone_terminal_is_dropped_without_a_bd_write() {
+        let w = World::new();
+        w.file("sp-a", "task", Some("sp-e"), &[]);
+        w.ok(&["create-bead", "sp-a", "--ready"]);
+        w.ok(&["event", "bead", "sp-a", "--expect", "READY", "--version", "0", "--actor", "t", "--kind", "{\"Drop\":{\"reason\":\"closed-no-branch\"}}"]);
+        let settler = installed();
+        assert!(owe_reopen("sp-a"));
+        let mut bd = ReopenBd { fail: false, reopened: Vec::new() };
+        settler.pass(&mut &w, &mut bd, &mut || Ok(1));
+        assert!(!settler.owes() && bd.reopened.is_empty());
     }
 }
