@@ -600,16 +600,13 @@ pub(super) fn list_batches<B: Backend>(
         for r in rounds {
             let row = &r.row;
             let id = row.batch_id.as_str();
-            let events: Vec<_> = store
-                .history(id, Some("batch"))?
-                .into_iter()
-                .filter(|c| c.audit.applied)
-                .collect();
-            let folded: Vec<Value> = events
-                .iter()
-                .filter(|c| crate::passes::FETCHED.contains(&format!("'{}'", c.audit.event)))
-                .map(|c| json!({ "event": c.audit.event, "evidence": c.audit.evidence, "at": c.audit.at }))
-                .collect();
+            let Some(events) = &r.batch_events else {
+                return Err(state_store::Error::Backend(format!(
+                    "{} keeps no `batch_events`: the store predates migration 6 (sp-aiti78)",
+                    crate::control::keys::batch(&row.repo, id)
+                )));
+            };
+            let folded: Vec<Value> = events["fetched"].as_array().cloned().unwrap_or_default();
             let (passes, since) = crate::passes::fold(&folded);
             let mut members: Vec<Value> = r
                 .members
@@ -619,15 +616,15 @@ pub(super) fn list_batches<B: Backend>(
                 })
                 .collect();
             members.sort_by(|a, b| a["bead_id"].as_str().cmp(&b["bead_id"].as_str()));
-            let ejected: Vec<Value> = events
+            let ejected: Vec<Value> = folded
                 .iter()
-                .filter(|c| c.audit.event == "Eject")
-                .map(|c| {
-                    let e = &c.audit.evidence["Eject"];
+                .filter(|e| e["event"] == "Eject")
+                .map(|e| {
+                    let e = &e["evidence"]["Eject"];
                     json!({ "batch_id": id, "bead_id": e["bead_id"], "reason": e["reason"] })
                 })
                 .collect();
-            let last_at = events.iter().map(|c| c.audit.at).max();
+            let last_at = events["last_at"].as_i64();
             let mut pr: Option<u64> = None;
             for m in &r.members {
                 let delivery = store.delivery(&m.bead_id)?;

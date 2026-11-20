@@ -1150,6 +1150,115 @@ fn list_batches_costs_the_same_over_a_larger_history_on_the_real_store() {
     }
 }
 
+/// Rounds 0-9 of `many_rounds`, each with five pass events and an `Eject`, then landed.
+fn eventful_rounds<B: Backend>(r: &Rig<B>) {
+    use lifecycle::batch::BatchState;
+    let open: Vec<usize> = (0..10).chain([25, 33]).collect();
+    many_rounds(r, 0, ROUNDS, &open);
+    for i in 0..10 {
+        let round = format!("b-{i:03}");
+        let kinds = [
+            BatchEventKind::PassStarted { n: 1, head: "H1".into() },
+            BatchEventKind::SuitesStarted { n: 1 },
+            BatchEventKind::PassRed { n: 1, red_suites: vec!["test-a.sh".into()], suites_s: 3, build_s: 2 },
+            BatchEventKind::Eject { bead_id: format!("sp-{i:03}"), reason: format!("red {i}") },
+            BatchEventKind::PassRebuilt { head: "H2".into() },
+            BatchEventKind::PassStarted { n: 2, head: "H2".into() },
+        ];
+        for (k, kind) in kinds.into_iter().enumerate() {
+            let (_, rec) = r.s.batch(&round).unwrap().unwrap();
+            let ev = BatchEvent { expect: rec.value.row.state, version: rec.value.row.version, kind, actor: "test".into() };
+            let ran = r.s.batch_event(&round, &ev, AT - 100 * i as i64 + k as i64, &r.req()).unwrap();
+            assert!(matches!(&ran, Ran::Done { applied, .. } if applied == &[true]), "{round} event {k}: {ran:?}");
+        }
+        let (_, mut rec) = r.s.batch(&round).unwrap().unwrap();
+        rec.value.row.state = BatchState::Landed;
+        let put = state_store::Txn::new().put(
+            &keys::batch("spira", &round),
+            state_store::Object::new(crate::control::records::encode(&rec.value).unwrap()),
+        );
+        r.s.contract().txn(&put, &r.req()).unwrap();
+    }
+}
+
+/// `list --batches` answers each round's passes, ejections and last event from the round's own
+/// record: no history range and no `events/` read, and at most two point reads a round shown.
+#[test]
+fn list_batches_reads_each_rounds_events_from_its_record_never_history() {
+    let r = Rig::on(Counting::default(), &clock());
+    eventful_rounds(&r);
+    for (argv, shown) in [
+        (&["list", "--batches", "--window", "1000"][..], 13usize),
+        (&["list", "--batches", "--limit", "3", "--after", "b-010"], 3),
+        (&["list", "--batches", "--batch", "b-003"], 1),
+    ] {
+        r.s.contract().backend().take();
+        let (rc, out) = r.lc(argv);
+        assert_eq!(rc, 0, "{argv:?}: {out}");
+        let reads = r.s.contract().backend().take();
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), shown, "{argv:?}");
+        let history: Vec<_> = reads.iter().filter(|(_, k, _)| k.starts_with(keys::HISTORY) || k.starts_with("events/")).collect();
+        assert!(history.is_empty(), "{argv:?}: {history:?}");
+        let points = reads.iter().filter(|(k, key, _)| k.starts_with("get") && key.starts_with("batches/")).count();
+        assert!(points <= 2 * shown, "{argv:?}: {points} point reads for {shown} rounds: {reads:?}");
+    }
+}
+
+/// The three scopes over `eventful_rounds`, as they were answered from history.
+#[test]
+fn list_batches_answers_the_same_bytes_as_it_did_from_history() {
+    let r = Rig::new();
+    eventful_rounds(&r);
+    let mut got = serde_json::Map::new();
+    for (name, argv) in [
+        ("window", &["list", "--batches", "--window", "1000"][..]),
+        ("page", &["list", "--batches", "--limit", "3", "--after", "b-010"]),
+        ("one", &["list", "--batches", "--batch", "b-003"]),
+    ] {
+        let (rc, out) = r.lc(argv);
+        assert_eq!(rc, 0, "{argv:?}: {out}");
+        got.insert(name.into(), serde_json::from_str(&out).unwrap());
+    }
+    let got = serde_json::to_string_pretty(&serde_json::Value::Object(got)).unwrap();
+    assert_eq!(got, include_str!("list_batches_pinned.json").trim_end());
+}
+
+/// A round stored before migration 6 has no `batch_events`: `list --batches` says so and does
+/// not read its history, and a later event does not give it a partial field.
+#[test]
+fn a_round_without_batch_events_makes_list_batches_name_the_migration() {
+    let r = Rig::new();
+    many_rounds(&r, 0, 2, &[0]);
+    let key = keys::batch("spira", "b-000");
+    let strip = || {
+        let mut o = r.s.contract().get(&key).unwrap().unwrap().value;
+        o.data.as_object_mut().unwrap().remove(crate::control::records::BATCH_EVENTS);
+        r.s.contract().txn(&state_store::Txn::new().put(&key, o), &r.req()).unwrap();
+    };
+    strip();
+    let (rc, out) = r.lc(&["list", "--batches", "--batch", "b-000"]);
+    assert_eq!(rc, crate::CANNOT_TELL, "{out}");
+    assert!(out.contains("migration 6") && out.contains(&key), "{out}");
+    let (_, rec) = r.s.batch("b-000").unwrap().unwrap();
+    let ev = BatchEvent { expect: rec.value.row.state, version: rec.value.row.version, kind: BatchEventKind::CiStarted { run: "r1".into() }, actor: "test".into() };
+    r.s.batch_event("b-000", &ev, AT, &r.req()).unwrap();
+    assert!(r.s.contract().get(&key).unwrap().unwrap().value.data.get(crate::control::records::BATCH_EVENTS).is_none());
+    assert_eq!(r.lc(&["list", "--batches", "--batch", "b-001"]).0, 0, "a round that has the field still lists");
+}
+
+/// Migration 6 fills `batch_events` with the events `fold_batch_events` keeps: the two lists
+/// name the same events.
+#[test]
+fn migration_6_selects_the_events_the_fold_keeps() {
+    let sql = state_store_sqlite::MIGRATIONS[5].join("\n");
+    let listed: Vec<&str> = crate::passes::FETCHED.split(',').collect();
+    assert_eq!(listed.len(), 8);
+    for quoted in listed {
+        assert!(sql.contains(quoted), "{quoted} is fetched but migration 6 does not select it");
+    }
+}
+
 /// Every state the round machine can be in is either listed as open or is terminal: a round in
 /// a state `list --batches --window` forgot would vanish from it.
 #[test]
@@ -1447,7 +1556,7 @@ fn create_bead_refuses_the_planning_fields_it_used_to_keep() {
 
 fn record_round(r: &Rig, row: lifecycle::batch::BatchRow, opened_at: i64) {
     let key = keys::batch(&row.repo, &row.batch_id);
-    let rec = crate::control::records::BatchRecord { row, members: vec![], opened_at, round: Default::default() };
+    let rec = crate::control::records::BatchRecord { row, members: vec![], opened_at, round: Default::default(), batch_events: None };
     let mut c = super::Cascade::new();
     r.s.new_round(&mut c, &rec.row.repo, &rec.row.batch_id).unwrap().unwrap();
     r.s.put_round(&mut c, &key, &rec).unwrap();

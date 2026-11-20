@@ -6,6 +6,10 @@ const PASS_EVENTS: [&str; 7] = ["PassStarted", "SuitesStarted", "PassGreen", "Pa
 
 pub const FETCHED: &str = "'PassStarted','SuitesStarted','PassGreen','PassRed','PassIncomplete','PassPreempted','PassRebuilt','Eject'";
 
+pub fn is_fetched(event: &str) -> bool {
+    FETCHED.contains(&format!("'{event}'"))
+}
+
 /// `events`: one batch's applied events in `seq` order, as rows of `event`, `evidence` and `at`.
 /// Returns the passes (with their timings, verdict and ejects) and when the batch last changed
 /// pass or phase.

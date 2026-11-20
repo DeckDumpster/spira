@@ -1,0 +1,897 @@
+{
+  "window": [
+    {
+      "batch_id": "b-000",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "2",
+      "phase": "build",
+      "progress": null,
+      "opened_at": "1767225600",
+      "version": "7",
+      "head": "H2",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-000",
+          "bead_id": "sp-000",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [
+        {
+          "batch_id": "b-000",
+          "bead_id": "sp-000",
+          "reason": "red 0"
+        }
+      ],
+      "phase_since": 1767225605,
+      "last_pass": {
+        "n": 2,
+        "head": "H2",
+        "started_at": 1767225605,
+        "suites_at": null,
+        "verdict": null,
+        "ejects": 0
+      },
+      "passes": [
+        {
+          "n": 1,
+          "head": "H1",
+          "started_at": 1767225600,
+          "suites_at": 1767225601,
+          "verdict": "red",
+          "ejects": 1,
+          "red_suites": [
+            "test-a.sh"
+          ],
+          "build_s": 2,
+          "suites_s": 3,
+          "ended_at": 1767225602
+        },
+        {
+          "n": 2,
+          "head": "H2",
+          "started_at": 1767225605,
+          "suites_at": null,
+          "verdict": null,
+          "ejects": 0
+        }
+      ],
+      "last_at": "1767225605"
+    },
+    {
+      "batch_id": "b-001",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "2",
+      "phase": "build",
+      "progress": null,
+      "opened_at": "1767225500",
+      "version": "7",
+      "head": "H2",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-001",
+          "bead_id": "sp-001",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [
+        {
+          "batch_id": "b-001",
+          "bead_id": "sp-001",
+          "reason": "red 1"
+        }
+      ],
+      "phase_since": 1767225505,
+      "last_pass": {
+        "n": 2,
+        "head": "H2",
+        "started_at": 1767225505,
+        "suites_at": null,
+        "verdict": null,
+        "ejects": 0
+      },
+      "passes": [
+        {
+          "n": 1,
+          "head": "H1",
+          "started_at": 1767225500,
+          "suites_at": 1767225501,
+          "verdict": "red",
+          "ejects": 1,
+          "red_suites": [
+            "test-a.sh"
+          ],
+          "build_s": 2,
+          "suites_s": 3,
+          "ended_at": 1767225502
+        },
+        {
+          "n": 2,
+          "head": "H2",
+          "started_at": 1767225505,
+          "suites_at": null,
+          "verdict": null,
+          "ejects": 0
+        }
+      ],
+      "last_at": "1767225505"
+    },
+    {
+      "batch_id": "b-002",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "2",
+      "phase": "build",
+      "progress": null,
+      "opened_at": "1767225400",
+      "version": "7",
+      "head": "H2",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-002",
+          "bead_id": "sp-002",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [
+        {
+          "batch_id": "b-002",
+          "bead_id": "sp-002",
+          "reason": "red 2"
+        }
+      ],
+      "phase_since": 1767225405,
+      "last_pass": {
+        "n": 2,
+        "head": "H2",
+        "started_at": 1767225405,
+        "suites_at": null,
+        "verdict": null,
+        "ejects": 0
+      },
+      "passes": [
+        {
+          "n": 1,
+          "head": "H1",
+          "started_at": 1767225400,
+          "suites_at": 1767225401,
+          "verdict": "red",
+          "ejects": 1,
+          "red_suites": [
+            "test-a.sh"
+          ],
+          "build_s": 2,
+          "suites_s": 3,
+          "ended_at": 1767225402
+        },
+        {
+          "n": 2,
+          "head": "H2",
+          "started_at": 1767225405,
+          "suites_at": null,
+          "verdict": null,
+          "ejects": 0
+        }
+      ],
+      "last_at": "1767225405"
+    },
+    {
+      "batch_id": "b-003",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "2",
+      "phase": "build",
+      "progress": null,
+      "opened_at": "1767225300",
+      "version": "7",
+      "head": "H2",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-003",
+          "bead_id": "sp-003",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [
+        {
+          "batch_id": "b-003",
+          "bead_id": "sp-003",
+          "reason": "red 3"
+        }
+      ],
+      "phase_since": 1767225305,
+      "last_pass": {
+        "n": 2,
+        "head": "H2",
+        "started_at": 1767225305,
+        "suites_at": null,
+        "verdict": null,
+        "ejects": 0
+      },
+      "passes": [
+        {
+          "n": 1,
+          "head": "H1",
+          "started_at": 1767225300,
+          "suites_at": 1767225301,
+          "verdict": "red",
+          "ejects": 1,
+          "red_suites": [
+            "test-a.sh"
+          ],
+          "build_s": 2,
+          "suites_s": 3,
+          "ended_at": 1767225302
+        },
+        {
+          "n": 2,
+          "head": "H2",
+          "started_at": 1767225305,
+          "suites_at": null,
+          "verdict": null,
+          "ejects": 0
+        }
+      ],
+      "last_at": "1767225305"
+    },
+    {
+      "batch_id": "b-004",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "2",
+      "phase": "build",
+      "progress": null,
+      "opened_at": "1767225200",
+      "version": "7",
+      "head": "H2",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-004",
+          "bead_id": "sp-004",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [
+        {
+          "batch_id": "b-004",
+          "bead_id": "sp-004",
+          "reason": "red 4"
+        }
+      ],
+      "phase_since": 1767225205,
+      "last_pass": {
+        "n": 2,
+        "head": "H2",
+        "started_at": 1767225205,
+        "suites_at": null,
+        "verdict": null,
+        "ejects": 0
+      },
+      "passes": [
+        {
+          "n": 1,
+          "head": "H1",
+          "started_at": 1767225200,
+          "suites_at": 1767225201,
+          "verdict": "red",
+          "ejects": 1,
+          "red_suites": [
+            "test-a.sh"
+          ],
+          "build_s": 2,
+          "suites_s": 3,
+          "ended_at": 1767225202
+        },
+        {
+          "n": 2,
+          "head": "H2",
+          "started_at": 1767225205,
+          "suites_at": null,
+          "verdict": null,
+          "ejects": 0
+        }
+      ],
+      "last_at": "1767225205"
+    },
+    {
+      "batch_id": "b-005",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "2",
+      "phase": "build",
+      "progress": null,
+      "opened_at": "1767225100",
+      "version": "7",
+      "head": "H2",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-005",
+          "bead_id": "sp-005",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [
+        {
+          "batch_id": "b-005",
+          "bead_id": "sp-005",
+          "reason": "red 5"
+        }
+      ],
+      "phase_since": 1767225105,
+      "last_pass": {
+        "n": 2,
+        "head": "H2",
+        "started_at": 1767225105,
+        "suites_at": null,
+        "verdict": null,
+        "ejects": 0
+      },
+      "passes": [
+        {
+          "n": 1,
+          "head": "H1",
+          "started_at": 1767225100,
+          "suites_at": 1767225101,
+          "verdict": "red",
+          "ejects": 1,
+          "red_suites": [
+            "test-a.sh"
+          ],
+          "build_s": 2,
+          "suites_s": 3,
+          "ended_at": 1767225102
+        },
+        {
+          "n": 2,
+          "head": "H2",
+          "started_at": 1767225105,
+          "suites_at": null,
+          "verdict": null,
+          "ejects": 0
+        }
+      ],
+      "last_at": "1767225105"
+    },
+    {
+      "batch_id": "b-006",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "2",
+      "phase": "build",
+      "progress": null,
+      "opened_at": "1767225000",
+      "version": "7",
+      "head": "H2",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-006",
+          "bead_id": "sp-006",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [
+        {
+          "batch_id": "b-006",
+          "bead_id": "sp-006",
+          "reason": "red 6"
+        }
+      ],
+      "phase_since": 1767225005,
+      "last_pass": {
+        "n": 2,
+        "head": "H2",
+        "started_at": 1767225005,
+        "suites_at": null,
+        "verdict": null,
+        "ejects": 0
+      },
+      "passes": [
+        {
+          "n": 1,
+          "head": "H1",
+          "started_at": 1767225000,
+          "suites_at": 1767225001,
+          "verdict": "red",
+          "ejects": 1,
+          "red_suites": [
+            "test-a.sh"
+          ],
+          "build_s": 2,
+          "suites_s": 3,
+          "ended_at": 1767225002
+        },
+        {
+          "n": 2,
+          "head": "H2",
+          "started_at": 1767225005,
+          "suites_at": null,
+          "verdict": null,
+          "ejects": 0
+        }
+      ],
+      "last_at": "1767225005"
+    },
+    {
+      "batch_id": "b-007",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "2",
+      "phase": "build",
+      "progress": null,
+      "opened_at": "1767224900",
+      "version": "7",
+      "head": "H2",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-007",
+          "bead_id": "sp-007",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [
+        {
+          "batch_id": "b-007",
+          "bead_id": "sp-007",
+          "reason": "red 7"
+        }
+      ],
+      "phase_since": 1767224905,
+      "last_pass": {
+        "n": 2,
+        "head": "H2",
+        "started_at": 1767224905,
+        "suites_at": null,
+        "verdict": null,
+        "ejects": 0
+      },
+      "passes": [
+        {
+          "n": 1,
+          "head": "H1",
+          "started_at": 1767224900,
+          "suites_at": 1767224901,
+          "verdict": "red",
+          "ejects": 1,
+          "red_suites": [
+            "test-a.sh"
+          ],
+          "build_s": 2,
+          "suites_s": 3,
+          "ended_at": 1767224902
+        },
+        {
+          "n": 2,
+          "head": "H2",
+          "started_at": 1767224905,
+          "suites_at": null,
+          "verdict": null,
+          "ejects": 0
+        }
+      ],
+      "last_at": "1767224905"
+    },
+    {
+      "batch_id": "b-008",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "2",
+      "phase": "build",
+      "progress": null,
+      "opened_at": "1767224800",
+      "version": "7",
+      "head": "H2",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-008",
+          "bead_id": "sp-008",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [
+        {
+          "batch_id": "b-008",
+          "bead_id": "sp-008",
+          "reason": "red 8"
+        }
+      ],
+      "phase_since": 1767224805,
+      "last_pass": {
+        "n": 2,
+        "head": "H2",
+        "started_at": 1767224805,
+        "suites_at": null,
+        "verdict": null,
+        "ejects": 0
+      },
+      "passes": [
+        {
+          "n": 1,
+          "head": "H1",
+          "started_at": 1767224800,
+          "suites_at": 1767224801,
+          "verdict": "red",
+          "ejects": 1,
+          "red_suites": [
+            "test-a.sh"
+          ],
+          "build_s": 2,
+          "suites_s": 3,
+          "ended_at": 1767224802
+        },
+        {
+          "n": 2,
+          "head": "H2",
+          "started_at": 1767224805,
+          "suites_at": null,
+          "verdict": null,
+          "ejects": 0
+        }
+      ],
+      "last_at": "1767224805"
+    },
+    {
+      "batch_id": "b-009",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "2",
+      "phase": "build",
+      "progress": null,
+      "opened_at": "1767224700",
+      "version": "7",
+      "head": "H2",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-009",
+          "bead_id": "sp-009",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [
+        {
+          "batch_id": "b-009",
+          "bead_id": "sp-009",
+          "reason": "red 9"
+        }
+      ],
+      "phase_since": 1767224705,
+      "last_pass": {
+        "n": 2,
+        "head": "H2",
+        "started_at": 1767224705,
+        "suites_at": null,
+        "verdict": null,
+        "ejects": 0
+      },
+      "passes": [
+        {
+          "n": 1,
+          "head": "H1",
+          "started_at": 1767224700,
+          "suites_at": 1767224701,
+          "verdict": "red",
+          "ejects": 1,
+          "red_suites": [
+            "test-a.sh"
+          ],
+          "build_s": 2,
+          "suites_s": 3,
+          "ended_at": 1767224702
+        },
+        {
+          "n": 2,
+          "head": "H2",
+          "started_at": 1767224705,
+          "suites_at": null,
+          "verdict": null,
+          "ejects": 0
+        }
+      ],
+      "last_at": "1767224705"
+    },
+    {
+      "batch_id": "b-010",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "0",
+      "phase": null,
+      "progress": null,
+      "opened_at": "1767224600",
+      "version": "1",
+      "head": "H",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-010",
+          "bead_id": "sp-010",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [],
+      "phase_since": null,
+      "last_pass": null,
+      "passes": [],
+      "last_at": "1767224600"
+    },
+    {
+      "batch_id": "b-025",
+      "repo": "spira",
+      "state": "OPEN",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "0",
+      "phase": null,
+      "progress": null,
+      "opened_at": "1767223100",
+      "version": "1",
+      "head": "H",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-025",
+          "bead_id": "sp-025",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [],
+      "phase_since": null,
+      "last_pass": null,
+      "passes": [],
+      "last_at": "1767223100"
+    },
+    {
+      "batch_id": "b-033",
+      "repo": "spira",
+      "state": "OPEN",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "0",
+      "phase": null,
+      "progress": null,
+      "opened_at": "1767222300",
+      "version": "1",
+      "head": "H",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-033",
+          "bead_id": "sp-033",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [],
+      "phase_since": null,
+      "last_pass": null,
+      "passes": [],
+      "last_at": "1767222300"
+    }
+  ],
+  "page": [
+    {
+      "batch_id": "b-011",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "0",
+      "phase": null,
+      "progress": null,
+      "opened_at": "1767224500",
+      "version": "1",
+      "head": "H",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-011",
+          "bead_id": "sp-011",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [],
+      "phase_since": null,
+      "last_pass": null,
+      "passes": [],
+      "last_at": "1767224500"
+    },
+    {
+      "batch_id": "b-012",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "0",
+      "phase": null,
+      "progress": null,
+      "opened_at": "1767224400",
+      "version": "1",
+      "head": "H",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-012",
+          "bead_id": "sp-012",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [],
+      "phase_since": null,
+      "last_pass": null,
+      "passes": [],
+      "last_at": "1767224400"
+    },
+    {
+      "batch_id": "b-013",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "0",
+      "phase": null,
+      "progress": null,
+      "opened_at": "1767224300",
+      "version": "1",
+      "head": "H",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-013",
+          "bead_id": "sp-013",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [],
+      "phase_since": null,
+      "last_pass": null,
+      "passes": [],
+      "last_at": "1767224300"
+    }
+  ],
+  "one": [
+    {
+      "batch_id": "b-003",
+      "repo": "spira",
+      "state": "LANDED",
+      "parent": null,
+      "pr": null,
+      "reason": null,
+      "pass": "2",
+      "phase": "build",
+      "progress": null,
+      "opened_at": "1767225300",
+      "version": "7",
+      "head": "H2",
+      "base": "B",
+      "run": null,
+      "members": [
+        {
+          "batch_id": "b-003",
+          "bead_id": "sp-003",
+          "outcome": null,
+          "tip": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "ejected": [
+        {
+          "batch_id": "b-003",
+          "bead_id": "sp-003",
+          "reason": "red 3"
+        }
+      ],
+      "phase_since": 1767225305,
+      "last_pass": {
+        "n": 2,
+        "head": "H2",
+        "started_at": 1767225305,
+        "suites_at": null,
+        "verdict": null,
+        "ejects": 0
+      },
+      "passes": [
+        {
+          "n": 1,
+          "head": "H1",
+          "started_at": 1767225300,
+          "suites_at": 1767225301,
+          "verdict": "red",
+          "ejects": 1,
+          "red_suites": [
+            "test-a.sh"
+          ],
+          "build_s": 2,
+          "suites_s": 3,
+          "ended_at": 1767225302
+        },
+        {
+          "n": 2,
+          "head": "H2",
+          "started_at": 1767225305,
+          "suites_at": null,
+          "verdict": null,
+          "ejects": 0
+        }
+      ],
+      "last_at": "1767225305"
+    }
+  ]
+}

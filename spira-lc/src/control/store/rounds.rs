@@ -20,7 +20,7 @@ use super::{Read, Store};
 use crate::control::keys;
 use crate::control::records::{
     decode, encode, entered_at, fold_entered, Audit, BatchIndex, BatchRecord, LifecycleRecord,
-    Member, ENTERED,
+    fold_batch_events, Member, BATCH_EVENTS, ENTERED,
 };
 
 /// A machine event's audit, in the dolt `event` row's terms.
@@ -155,6 +155,9 @@ impl Cascade {
                 if let (Some(e), Value::Object(d)) = (prior.data.get(ENTERED), &mut data) {
                     d.entry(ENTERED).or_insert_with(|| e.clone());
                 }
+                if let (Some(e), Value::Object(d)) = (prior.data.get(BATCH_EVENTS), &mut data) {
+                    d.entry(BATCH_EVENTS).or_insert_with(|| e.clone());
+                }
                 Object {
                     metadata: prior.metadata,
                     data,
@@ -238,29 +241,40 @@ impl Cascade {
         }
         for s in written() {
             if let Some(v) = &s.value {
-                t = t.put(&s.key, self.with_entered(s, v));
+                t = t.put(&s.key, self.with_folded(s, v));
             }
         }
         t
     }
 
-    /// A delivery's object with this cascade's applied audits of it folded into `entered`. A
-    /// stored delivery without the field is never given a partial map: its reads refuse until
-    /// the store's migration fills it from history.
-    fn with_entered(&self, s: &Slot, v: &Object) -> Object {
+    /// A delivery's object with this cascade's applied audits of it folded into `entered`, and a
+    /// round's into `batch_events`. A stored object without the field is never given a partial
+    /// one: its reads refuse until the store's migration fills it from history.
+    fn with_folded(&self, s: &Slot, v: &Object) -> Object {
         let mut v = v.clone();
-        let (Some(id), Value::Object(data)) = (keys::id_of(keys::DELIVERIES, &s.key), &mut v.data)
-        else {
+        let Value::Object(data) = &mut v.data else {
             return v;
         };
-        match data.get_mut(ENTERED) {
-            Some(Value::Object(m)) => fold_entered(m, id, &self.then),
-            _ if s.read_rev.is_none() => {
-                let mut m = serde_json::Map::new();
-                fold_entered(&mut m, id, &self.then);
-                data.insert(ENTERED.into(), Value::Object(m));
+        if let Some(id) = keys::id_of(keys::DELIVERIES, &s.key) {
+            match data.get_mut(ENTERED) {
+                Some(Value::Object(m)) => fold_entered(m, id, &self.then),
+                _ if s.read_rev.is_none() => {
+                    let mut m = serde_json::Map::new();
+                    fold_entered(&mut m, id, &self.then);
+                    data.insert(ENTERED.into(), Value::Object(m));
+                }
+                _ => {}
             }
-            _ => {}
+        } else if let Some((_, id)) = batch_key(&s.key) {
+            match data.get_mut(BATCH_EVENTS) {
+                Some(Value::Object(m)) => fold_batch_events(m, id, &self.then),
+                _ if s.read_rev.is_none() => {
+                    let mut m = serde_json::Map::new();
+                    fold_batch_events(&mut m, id, &self.then);
+                    data.insert(BATCH_EVENTS.into(), Value::Object(m));
+                }
+                _ => {}
+            }
         }
         v
     }
@@ -943,6 +957,7 @@ impl<B: Backend> Store<B> {
                 .collect(),
             opened_at: cut.at,
             round: Default::default(),
+            batch_events: None,
         };
         self.put_round(&mut c, &key, &rec)?;
         Ok(Planned::Cascade(c))
