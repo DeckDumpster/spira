@@ -72,7 +72,7 @@ impl Journal for Lifting {
 
 fn boot(journal: Arc<dyn Journal>, clock: &VirtualClock, seen: &Arc<Seen>, extra: Vec<Registration>) -> VirtualDriver {
     let c: Arc<dyn Clock> = Arc::new(clock.clone());
-    let mut engine = open_engine(&fixture(), journal, c, Arc::new(NullMarker), Arc::new(NullSink), extra).unwrap();
+    let mut engine = open_engine(&fixture(), journal, c, Arc::new(NullMarker), Arc::new(NullSink), extra, std::time::Duration::from_secs(10)).unwrap();
     start_tasks(&mut engine);
     VirtualDriver::new(engine, clock.clone(), Arc::new(Recording(seen.clone())))
 }
