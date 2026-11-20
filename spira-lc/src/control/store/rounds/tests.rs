@@ -1717,3 +1717,59 @@ fn eject_member_of_a_round_whose_pass_is_running_refuses_with_its_exit_and_chang
     assert_eq!(after.value.row, before.value.row);
     assert_eq!(r.state("sp-a"), BeadState::InDelivery);
 }
+
+fn ranges_of_rounds(reads: &[(&'static str, String, usize)]) -> usize {
+    reads.iter().filter(|(k, p, _)| *k == "range" && p.starts_with(keys::BATCHES)).count()
+}
+
+fn end_round<B: Backend>(r: &Rig<B>, round: &str, state: BatchState) {
+    let (_, mut rec) = r.s.batch(round).unwrap().unwrap();
+    rec.value.row.state = state;
+    let put = state_store::Txn::new().put(&keys::batch("spira", round), state_store::Object::new(crate::control::records::encode(&rec.value).unwrap()));
+    r.s.contract().txn(&put, &r.req()).unwrap();
+}
+
+/// law-list-reads-paginate-in-the-database: the orphan sweep reads the open rounds through the
+/// state index, never the `batches/` prefix.
+#[test]
+fn requeue_orphans_reads_the_open_rounds_by_state_not_the_batches_prefix() {
+    let r = Rig::on(Counting::default(), &clock());
+    many_rounds(&r, 0, 240, &[3, 7]);
+    r.certified("sp-orph", T1);
+    let members = vec![("sp-orph".to_string(), T1.to_string())];
+    let cut = Cut { batch_id: "b-orph", at: AT - 100_000, ..r.cut_spec(&members) };
+    let p = r.s.plan_cut(&cut).unwrap();
+    r.s.run_planned(p, &r.req(), "cut").unwrap();
+    end_round(&r, "b-orph", BatchState::Abandoned);
+    r.s.contract().backend().take();
+    let found = r.s.requeue_orphans("test", false, 1800, AT + 3600, &Default::default(), &r.req()).unwrap();
+    let reads = r.s.contract().backend().take();
+    assert_eq!(ranges_of_rounds(&reads), 0, "{reads:?}");
+    assert!(reads.iter().any(|(k, _, _)| *k == "range_in_state"), "{reads:?}");
+    let mut expected: Vec<String> = (0..240).map(|i| format!("sp-{i:03}")).collect();
+    expected.push("sp-orph".into());
+    assert_eq!(found.orphans, expected, "the answer the full scan gave");
+    assert_eq!(found.phantom_batches, ["b-003", "b-007"]);
+}
+
+/// The dwell verb's rounds come from the `opened_at` index, and a Staged round is still skipped.
+#[test]
+fn dwell_reads_the_rounds_in_its_window_from_the_opened_at_index() {
+    let r = Rig::on(Counting::default(), &clock());
+    many_rounds(&r, 0, 240, &[3, 7]);
+    end_round(&r, "b-000", BatchState::Staged);
+    r.s.contract().backend().take();
+    let d = r.s.dwell(AT, 1000, None).unwrap();
+    let reads = r.s.contract().backend().take();
+    assert_eq!(ranges_of_rounds(&reads), 0, "{reads:?}");
+    assert_eq!(reads.iter().filter(|(k, _, _)| *k == "range_newest_opened").count(), 1, "{reads:?}");
+    assert_eq!(d.last["spira"]["Deliver"], AT - 100, "b-000 is staged and skipped; b-001 is next");
+}
+
+#[test]
+fn dwell_with_a_window_holding_the_cap_of_rounds_errors_naming_it() {
+    let r = Rig::new();
+    many_rounds(&r, 0, crate::control::dwell::DWELL_ROUNDS_MAX, &[]);
+    let e = r.s.dwell(AT, 100 * crate::control::dwell::DWELL_ROUNDS_MAX as u64, None).unwrap_err();
+    assert!(e.to_string().contains("DWELL_ROUNDS_MAX"), "{e}");
+}
