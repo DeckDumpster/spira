@@ -13,6 +13,7 @@ use crate::control::audits::Move;
 use crate::control::edges::EdgeTally;
 #[cfg(test)]
 use crate::control::edges::HOUR_S;
+use crate::control::landed::Landed as LandedList;
 use crate::control::stays::Tally as StayTally;
 use crate::control::store::Store;
 
@@ -149,17 +150,30 @@ fn ops_round<B: Backend>(store: &Store<B>) -> Result<Vec<Value>, String> {
     Ok(out)
 }
 
-/// `ops_recent`: the beads that landed in the last day, found from the day's audits and read by
-/// key, so the call's work follows the day's events and not the LANDED records the store holds.
+/// `ops_recent`: the beads that landed in the last day, named by the kept landed list and read by
+/// key, so the call's work follows the day's landings and not the audit log.
 fn ops_recent<B: Backend>(store: &Store<B>, now: i64) -> Result<Vec<Value>, String> {
+    let ids = match store.landed_ids(now).map_err(|e| e.to_string())? {
+        LandedList::Filling { covered_from } => return Err(format!("the landed list is filling: covered from {}", covered_from.map_or("none".to_string(), |at| at.to_string()))),
+        LandedList::Ready(ids) => ids,
+    };
+    recent_of(store, now, &ids)
+}
+
+#[cfg(test)]
+fn recent_by_fold<B: Backend>(store: &Store<B>, now: i64) -> Result<Vec<Value>, String> {
     let mut ids = std::collections::BTreeSet::new();
     folded(store, now, DAY_S, |m| {
         if m.machine == "bead" && m.applied && m.to_state == BeadState::Landed.as_str() && m.from_state != m.to_state {
             ids.insert(m.lc_key.to_string());
         }
     })?;
+    recent_of(store, now, &ids.into_iter().collect::<Vec<_>>())
+}
+
+fn recent_of<B: Backend>(store: &Store<B>, now: i64, ids: &[String]) -> Result<Vec<Value>, String> {
     let mut landed = Vec::new();
-    for id in &ids {
+    for id in ids {
         let rec = store.record(id).map_err(|e| e.to_string())?;
         if let Some(r) = rec.map(|r| r.value).filter(|r| r.row.state == BeadState::Landed && r.row.since.is_some_and(|s| s >= now - DAY_S)) {
             landed.push(r);
@@ -859,6 +873,136 @@ mod tests {
         assert!(day_keys(&s).iter().all(|(k, _)| *k != stale), "the stale day key is deleted by the next fold");
     }
 
+    fn landed_keys<B: Backend>(s: &Store<B>) -> Vec<(String, Value)> {
+        let (items, _) = s.contract().list(&["landed/"], &state_store::Selector::Everything).unwrap();
+        items.into_iter().map(|i| (i.key, i.value.data)).collect()
+    }
+
+    fn rows_of<B: Backend>(s: &Store<B>, view: &str, now: i64) -> Vec<Value> {
+        let (rc, out) = view_rows(s, view, now);
+        assert_eq!(rc, 0, "{view}: {out}");
+        serde_json::from_str(&out).unwrap()
+    }
+
+    fn keep_record<B: Backend>(s: &Store<B>, id: &str, state: BeadState, since: i64) {
+        use crate::control::{keys, records::{encode, LifecycleRecord}};
+        let mut rec = LifecycleRecord::born(id, Some("harness"), None, since);
+        rec.row.state = state;
+        rec.row.since = Some(since);
+        s.contract().create(&keys::lifecycle(id), state_store::Object::new(encode(&rec).unwrap()), &Request::new(&format!("rec-{id}"), "t", "t")).unwrap();
+    }
+
+    #[test]
+    fn the_recent_view_reads_neither_the_audit_log_nor_the_history() {
+        use crate::counting::Counting;
+        let (store, now, _dir) = with_records_on(Counting::new, 8_000);
+        store.fold_landed(now, 100_000).unwrap();
+        store.contract().backend().take();
+        let rows = rows_of(&store, "ops_recent", now);
+        let ids: Vec<&str> = rows.iter().map(|r| r["bead_id"].as_str().unwrap()).collect();
+        assert_eq!(ids, (20..30).map(|n| format!("sp-{n:05}")).collect::<Vec<_>>());
+        let reads = store.contract().backend().take();
+        let log: Vec<_> = reads.iter().filter(|(k, key, _)| (*k == "get" || *k == "range") && (key.starts_with("events/") || key.starts_with("history/"))).collect();
+        assert!(log.is_empty(), "ops_recent read the log: {log:?}");
+    }
+
+    #[test]
+    fn the_landed_list_answers_what_a_fold_of_the_days_audits_answers() {
+        let now = 1_000_000;
+        let mut other = audit("sp-f", "FastForward", "CERTIFIED", "LANDED", true, "d", now - 50);
+        other.audit.machine = "batch".into();
+        let log = [
+            audit("sp-a", "FastForward", "CERTIFIED", "LANDED", true, "d", now - 100),
+            audit("sp-b", "FastForward", "CERTIFIED", "LANDED", true, "d", now - DAY_S - 100),
+            audit("sp-c", "FastForward", "CERTIFIED", "LANDED", true, "d", now - 90),
+            audit("sp-c", "Reopen", "LANDED", "REWORK", true, "d", now - 80),
+            audit("sp-d", "FastForward", "CERTIFIED", "LANDED", false, "d", now - 70),
+            audit("sp-e", "Touch", "LANDED", "LANDED", true, "d", now - 60),
+            other,
+        ];
+        let s = logged_store(&log);
+        keep_record(&s, "sp-a", BeadState::Landed, now - 100);
+        keep_record(&s, "sp-b", BeadState::Landed, now - DAY_S - 100);
+        keep_record(&s, "sp-c", BeadState::Rework, now - 80);
+        keep_record(&s, "sp-d", BeadState::Certified, now - 70);
+        keep_record(&s, "sp-e", BeadState::Landed, now - 60);
+        keep_record(&s, "sp-f", BeadState::Landed, now - 50);
+        s.fold_landed(now, 10_000).unwrap();
+        let listed = rows_of(&s, "ops_recent", now);
+        assert_eq!(listed.iter().map(|r| r["bead_id"].as_str().unwrap()).collect::<Vec<_>>(), ["sp-a"]);
+        assert_eq!(listed, recent_by_fold(&s, now).unwrap());
+    }
+
+    #[test]
+    fn folding_the_landed_list_twice_or_in_small_steps_gives_the_list_of_one_fold() {
+        let now = 1_000_000;
+        let log: Vec<Logged> = (0..10).map(|n| audit(&format!("sp-{n}"), "FastForward", "CERTIFIED", "LANDED", true, "d", now - 100 + n)).collect();
+        let (whole, stepped) = (logged_store(&log), logged_store(&log));
+        whole.fold_landed(now, 10_000).unwrap();
+        let again = whole.fold_landed(now, 10_000).unwrap();
+        assert!(!again.committed, "a fold with nothing new writes nothing: {again:?}");
+        let mut steps = 0;
+        loop {
+            steps += 1;
+            if stepped.fold_landed(now, 3).unwrap().revs < 3 {
+                break;
+            }
+        }
+        assert!(steps > 2, "{steps}");
+        let keys = |s: &Sqlite| landed_keys(s).into_iter().filter(|(k, _)| k != crate::control::keys::LANDED_CURSOR).collect::<Vec<_>>();
+        assert_eq!(keys(&stepped), keys(&whole));
+        assert_eq!(keys(&whole).len(), 10);
+        stepped.fold_landed(now, 3).unwrap();
+        assert_eq!(keys(&stepped), keys(&whole), "a repeated step changes nothing");
+    }
+
+    #[test]
+    fn while_the_landed_list_fills_ops_recent_cannot_tell() {
+        let now = 1_000_000;
+        let s = logged_store(&[audit("sp-a", "FastForward", "CERTIFIED", "LANDED", true, "d", now - 100)]);
+        let (rc, out) = view_rows(&s, "ops_recent", now);
+        assert_eq!(rc, 2, "{out}");
+        assert!(out.contains("the landed list is filling: "), "{out}");
+        let head = s.contract().head().unwrap();
+        s.contract().create(crate::control::keys::LANDED_CURSOR, state_store::Object::new(json!({ "rev": 0, "filled_from": 0, "fill_to": head })), &Request::new("cur", "t", "t")).unwrap();
+        let (rc, out) = view_rows(&s, "ops_recent", now);
+        assert_eq!(rc, 2, "{out}");
+        assert!(out.contains("the landed list is filling: "), "{out}");
+        let empty = logged_store(&[]);
+        empty.fold_landed(now, 10_000).unwrap();
+        assert_eq!(view_rows(&empty, "ops_recent", now), (0, "[]".to_string()));
+    }
+
+    #[test]
+    fn a_landing_older_than_a_day_is_not_listed_and_the_next_fold_deletes_it() {
+        use state_store::{Object, Txn};
+        let now = 2_000_000_000;
+        let s = logged_store(&[audit("sp-a", "FastForward", "CERTIFIED", "LANDED", true, "d", now - 100)]);
+        s.fold_landed(now, 10_000).unwrap();
+        let stale = crate::control::keys::landed_entry(now - DAY_S - 5, "sp-old");
+        s.contract().txn(&Txn::new().put(&stale, Object::new(json!({ "at": now - DAY_S - 5 }))), &Request::new("plant", "t", "t")).unwrap();
+        let listed = || match s.landed_ids(now).unwrap() {
+            crate::control::landed::Landed::Ready(ids) => ids,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(listed(), ["sp-a"], "an entry older than a day is not listed");
+        s.fold_landed(now, 10_000).unwrap();
+        assert!(landed_keys(&s).iter().all(|(k, _)| *k != stale), "the stale entry is deleted by the next fold");
+        assert_eq!(listed(), ["sp-a"]);
+    }
+
+    #[test]
+    fn the_recent_view_reads_as_many_keys_for_a_longer_history() {
+        use crate::counting::Counting;
+        let reads = |audits| {
+            let (store, now, _dir) = with_records_on(Counting::new, audits);
+            store.contract().backend().take();
+            rows_of(&store, "ops_recent", now);
+            store.contract().backend().take().len()
+        };
+        assert_eq!(reads(2_000), reads(8_000));
+    }
+
     #[test]
     fn the_edges_view_reads_neither_the_audit_log_nor_the_history() {
         use crate::counting::Counting;
@@ -1010,6 +1154,7 @@ mod tests {
         let store = open_on(b);
         store.fold_stays(now, 100_000).unwrap();
         store.fold_edges(now, 100_000).unwrap();
+        store.fold_landed(now, 100_000).unwrap();
         (store, now, dir)
     }
 
@@ -1043,6 +1188,7 @@ mod tests {
         }
         b.commit(b.head().unwrap(), &writes).unwrap();
         let store = open_on(wrap(b));
+        store.fold_landed(now, 100_000).unwrap();
         for n in 0..audits / 8 {
             let (request, row) = (format!("r{n}"), format!("s{n}"));
             let effect = json!({ "task": "t", "ekey": format!("k{n}/x"), "request_id": request, "stream": "s", "spec": { "name": "n", "input": "i", "deadline_ms": 5, "key": format!("k{n}") }, "requested_at": n, "deadline_at": n + 5 });

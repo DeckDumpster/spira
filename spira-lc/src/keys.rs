@@ -163,6 +163,16 @@ pub fn edge_minute(minute: i64) -> String {
     format!("{EDGES}{minute:010}")
 }
 
+/// The day's landings: `landed/at/<at>/<bead>` holds one applied move into LANDED, zero-padded so
+/// key order is time order, and `landed/cursor` where `fold_landed` has read to. Written by
+/// `fold_landed` alone.
+pub const LANDED_AT: &str = "landed/at/";
+pub const LANDED_CURSOR: &str = "landed/cursor";
+
+pub fn landed_entry(at: i64, id: &str) -> String {
+    format!("{LANDED_AT}{at:010}/{id}")
+}
+
 /// Every history entry of `id`: one per txn whose audit names it.
 pub fn history(id: &str) -> String {
     format!("{HISTORY}{id}/")
