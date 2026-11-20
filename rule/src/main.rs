@@ -225,40 +225,38 @@ fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
         Ok(w) if !w.is_empty() && Path::new(&w).join(".git").is_dir() => w,
         _ => return CommitOutcome::Skipped,
     };
+    let script = format!("{home}/wiki-commit.sh");
+    let msg = format!("law: {verb} {key}");
+    let finish = format!("run: echo <page> | bash {script} {wiki} '{msg}'");
+    let failed = |why: String| CommitOutcome::Failed(format!("{}; {finish}", why.trim()));
     let page = match spira_config::process::cfg("SPIRA_STATUTE_PAGE").ok().filter(|p| !p.is_empty()) {
         Some(p) => p,
-        None => {
-            eprintln!("rule: SPIRA_STATUTE_PAGE is not resolvable from spira_config — wiki page NOT committed.");
-            return CommitOutcome::Failed;
-        }
+        None => return failed("SPIRA_STATUTE_PAGE is not resolvable from spira_config".to_string()),
     };
-    let script = format!("{home}/wiki-commit.sh");
     let envs = match spira_config::release_env::child_path_env_for_process() {
         Ok(e) => e,
-        Err(e) => {
-            eprintln!("rule: {e} — wiki page NOT committed.");
-            return CommitOutcome::Failed;
-        }
+        Err(e) => return failed(e.to_string()),
     };
     // batch-job: runs a gate, build or forge script that takes as long as its work
     let mut child = match Command::new("bash").envs(envs)
         .arg(&script)
         .arg(&wiki)
-        .arg(format!("law: {verb} {key}"))
+        .arg(&msg)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
     {
         Ok(c) => c,
-        Err(_) => return CommitOutcome::Failed,
+        Err(e) => return failed(format!("{script}: {e}")),
     };
     if let Some(mut stdin) = child.stdin.take() {
         let _ = writeln!(stdin, "{page}");
     }
-    match child.wait() {
-        Ok(status) if status.success() => CommitOutcome::Committed,
-        _ => CommitOutcome::Failed,
+    match child.wait_with_output() {
+        Ok(out) if out.status.success() => CommitOutcome::Committed,
+        Ok(out) => failed(format!("{} ({})", String::from_utf8_lossy(&out.stderr).trim(), out.status)),
+        Err(e) => failed(format!("{script}: {e}")),
     }
 }
 
@@ -291,7 +289,7 @@ fn finish_write(
         let outcome = commit_common_law(home, verb, key);
         let msg = outcome.message(verb, key);
         match outcome {
-            CommitOutcome::Failed => eprintln!("{msg}"),
+            CommitOutcome::Failed(_) => eprintln!("{msg}"),
             _ => println!("{msg}"),
         }
         0
@@ -459,8 +457,20 @@ fn log_law_book_failure(verb: &str, key: &str, err: &str) {
     }
 }
 
+enum Landed {
+    Added(usize, String, String),
+    Stranded(String, String),
+    InFlight(String),
+}
+
+fn submit_stranded(home: &str, repo: &(String, Option<String>), branch: &str) -> Result<String, String> {
+    let wt_root = spira_config::process::cfg("SPIRA_RUN").map(|r| Path::new(&r).join("worktree"))?;
+    let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), Path::new(home));
+    code::submit_law(Path::new(&repo.0), reg.home_repo(), &wt_root, branch, "code", "book").map(|(id, _)| id)
+}
+
 fn cmd_land_book(db: &str, home: &str) -> i32 {
-    let run = || -> Result<Option<(usize, String, String)>, String> {
+    let run = || -> Result<Option<Landed>, String> {
         let repo = locate_repo(home)?;
         let toc = read_toc_at(&repo)?;
         let pointers = read_pointers_for_write(&repo)?;
@@ -468,18 +478,30 @@ fn cmd_land_book(db: &str, home: &str) -> i32 {
         let caught = code::catch_up(&toc, &pointers, &book, None).map_err(|e| format!("rule: {e}"))?;
         let base = repo.1.clone().ok_or("rule: no landing ref resolves for the home repository — refusing")?;
         if caught == toc && !code::book_drifted(Path::new(&repo.0), &base, &toc, &pointers, &book) {
-            return Ok(None);
+            return match code::book_tip_ref(Path::new(&repo.0), &base) {
+                Some(code::BookTip::Stranded(branch)) => submit_stranded(home, &repo, &branch).map(|bead| Some(Landed::Stranded(branch, bead))),
+                Some(code::BookTip::InFlight(branch)) => Ok(Some(Landed::InFlight(branch))),
+                None => Ok(None),
+            };
         }
         let added = caught.iter().map(|p| p.slugs.len()).sum::<usize>() - toc.iter().map(|p| p.slugs.len()).sum::<usize>();
-        land_law(home, &repo, "code", "book", &caught, &pointers, &book).map(|(branch, bead)| Some((added, branch, bead)))
+        land_law(home, &repo, "code", "book", &caught, &pointers, &book).map(|(branch, bead)| Some(Landed::Added(added, branch, bead)))
     };
     match run() {
         Ok(None) => {
             println!("law/: book is up to date with the store.");
             0
         }
-        Ok(Some((n, branch, bead))) => {
+        Ok(Some(Landed::Added(n, branch, bead))) => {
             println!("law/: {n} statute(s) added; committed on {branch}, submitted under {bead}.");
+            0
+        }
+        Ok(Some(Landed::Stranded(branch, bead))) => {
+            println!("law/: submitted stranded {branch} under {bead}.");
+            0
+        }
+        Ok(Some(Landed::InFlight(branch))) => {
+            println!("law/: in flight on {branch}.");
             0
         }
         Err(e) => {

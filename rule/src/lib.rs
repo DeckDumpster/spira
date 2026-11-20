@@ -229,17 +229,17 @@ pub fn list_body(memories: &BTreeMap<String, serde_json::Value>) -> String {
 
 /// One outcome of `commit_common_law`: whether the wiki checkout was committed, skipped (no
 /// checkout configured), or the commit itself failed. Mirrors the bash's 0/1/2 return codes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommitOutcome {
     Committed,
     Skipped,
-    Failed,
+    Failed(String),
 }
 
 impl CommitOutcome {
     /// The line printed for this outcome (to stdout for Committed/Skipped, stderr for
     /// Failed — `main.rs` picks the stream; this just picks the words).
-    pub fn message(self, verb: &str, key: &str) -> String {
+    pub fn message(&self, verb: &str, key: &str) -> String {
         match self {
             CommitOutcome::Committed => {
                 format!("wiki/notes/common-law.md committed (law: {verb} {key}).")
@@ -247,8 +247,8 @@ impl CommitOutcome {
             CommitOutcome::Skipped => {
                 "Commit wiki/notes/common-law.md to replicate it off this box.".to_string()
             }
-            CommitOutcome::Failed => {
-                format!("rule: {key} is in force, wiki sync failed — wiki/notes/common-law.md was not committed; commit it manually.")
+            CommitOutcome::Failed(reason) => {
+                format!("rule: {key} is in force, wiki sync failed: {reason}")
             }
         }
     }
@@ -477,8 +477,8 @@ mod tests {
             "Commit wiki/notes/common-law.md to replicate it off this box."
         );
         assert_eq!(
-            CommitOutcome::Failed.message("enact", "law-x"),
-            "rule: law-x is in force, wiki sync failed — wiki/notes/common-law.md was not committed; commit it manually."
+            CommitOutcome::Failed("hook said no; run: wiki-commit.sh w m".to_string()).message("enact", "law-x"),
+            "rule: law-x is in force, wiki sync failed: hook said no; run: wiki-commit.sh w m"
         );
     }
 }

@@ -45,4 +45,10 @@ out="$(printf 'retry.md\n' | WIKI_COMMIT_LOCK_WAIT=20 bash "$HERE/wiki-commit.sh
 wait
 is   "lock cleared during wait: exits 0" 0 "$rc"
 is   "lock cleared during wait: committed" "retried" "$(git -C "$W" log -1 --format=%s)"
+rm -f "$W/.git/index.lock"; printf 'h\n' > "$W/hook.md"
+mkdir -p "$W/.git/hooks"; printf '#!/bin/sh\necho "hook-says-no-commit" >&2\nexit 1\n' > "$W/.git/hooks/pre-commit"; chmod +x "$W/.git/hooks/pre-commit"
+out="$(printf 'hook.md\n' | bash "$HERE/wiki-commit.sh" "$W" hooked 2>&1 >/dev/null)"; rc=$?
+is   "git commit fails: exit is non-zero" 1 "$([ "$rc" -ne 0 ] && echo 1 || echo 0)"
+want "git commit fails: the hook text reaches stderr" "hook-says-no-commit" "$out"
+rm -f "$W/.git/hooks/pre-commit"
 tl_summary

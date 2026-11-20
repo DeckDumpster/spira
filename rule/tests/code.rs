@@ -291,6 +291,21 @@ fn a_second_law_commit_is_cut_on_the_unlanded_first() {
 }
 
 #[test]
+fn the_newest_book_only_tip_is_named_stranded_or_in_flight_by_its_namespace() {
+    use rule::code::BookTip;
+    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
+    let repo = law_repo();
+    let wt_root = testkit::TempDir::new("rule-tip-wt");
+    assert_eq!(rule::code::book_tip_ref(repo.path(), "main"), None, "nothing unlanded names no tip");
+    let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
+    let branch = rule::code::commit_law(repo.path(), Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
+    assert!(branch.starts_with("law/"), "{branch}");
+    assert_eq!(rule::code::book_tip_ref(repo.path(), "main"), Some(BookTip::Stranded(branch.clone())));
+    testkit::git(repo.path(), &["branch", "-m", &branch, "spira/sp-abc"]);
+    assert_eq!(rule::code::book_tip_ref(repo.path(), "main"), Some(BookTip::InFlight("spira/sp-abc".to_string())));
+}
+
+#[test]
 fn the_law_book_log_is_watched() {
     let _env = testkit::env_read();
     let rows = include_str!("../../spira/watchers");

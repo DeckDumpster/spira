@@ -308,7 +308,7 @@ fn skuld_gate(op: &str, title: &str, body: &str, drafted_by: Option<&str>) -> Re
         Err(2)
     };
     let Some(id) = drafted_by else {
-        return refuse("a builder bead the Concierge files needs --drafted-by <request-id>: the id of a Skuld request whose note holds this exact text. Get a draft or review first: bead.sh file \"<title>\" --for skuld --repo <r> --body-file <the intent, or your draft for review>, then file the note's text with --drafted-by <that id>".to_string());
+        return refuse(bead::SKULD_NEEDS_DRAFT.to_string());
     };
     let (_, shown) = door(&s(&["show", id, "--json"]));
     let Some(row) = parse_show_row(&shown) else {
@@ -618,7 +618,8 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         body_file = Some(path.to_string_lossy().into_owned());
     }
 
-    if is_concierge() && for_rune.as_deref().is_some_and(|r| requires_skuld(home, r)) {
+    let parent_cmdline = std::fs::read(format!("/proc/{}/cmdline", std::os::unix::process::parent_id())).unwrap_or_default();
+    if bead::skuld_fence_binds(is_concierge(), for_rune.as_deref().is_some_and(|r| requires_skuld(home, r)), &parent_cmdline) {
         let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
         let id = match skuld_gate("file", &title, &body, drafted_by.as_deref()) {
             Ok(id) => id,

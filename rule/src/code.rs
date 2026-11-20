@@ -616,6 +616,25 @@ pub fn newest_book_only_tip(repo_path: &Path, base: &str) -> Option<String> {
     }).map(str::to_string)
 }
 
+/// Where the newest book-only unlanded tip sits: a `law/*` branch no bead carries yet, or a
+/// `spira/<id>` branch already submitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BookTip {
+    Stranded(String),
+    InFlight(String),
+}
+
+/// Names the branch [`newest_book_only_tip`] measures, short, classified by its namespace.
+pub fn book_tip_ref(repo_path: &Path, base: &str) -> Option<BookTip> {
+    let r = newest_book_only_tip(repo_path, base)?;
+    let name = r.strip_prefix("refs/heads/").unwrap_or(&r).to_string();
+    if name.starts_with("law/") {
+        Some(BookTip::Stranded(name))
+    } else {
+        Some(BookTip::InFlight(name))
+    }
+}
+
 /// Whether the tree `commit_law` would cut from (the newest book-only unlanded tip, else `base`)
 /// holds anything but what `toc`, `pointers` and `book` generate.
 pub fn book_drifted(repo_path: &Path, base: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> bool {
