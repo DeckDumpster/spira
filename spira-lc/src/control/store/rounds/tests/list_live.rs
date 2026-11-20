@@ -138,3 +138,44 @@ fn list_ids_read_transactions_do_not_grow_with_the_ids_on_the_real_store() {
         live.len()
     );
 }
+
+/// law-hot-reads-answer-in-500ms: no read call `list --live` makes asks for more than
+/// 200 keys or rows, whatever the live set holds, and the answer is the same rows.
+#[test]
+fn list_live_never_asks_one_read_for_more_than_a_record_chunk() {
+    const BEADS: usize = 1_500;
+    let r = Rig::on(Counting::default(), &clock());
+    let id = |i: usize| format!("sp-{i:04}");
+    for i in 0..BEADS {
+        let mut args = vec!["create-bead", "", "--repo", "spira"];
+        let name = id(i);
+        args[1] = &name;
+        if i < 600 {
+            args.push("--ready");
+        }
+        r.ok(&args);
+    }
+    for i in 0..300 {
+        r.bead_event(&id(i), "READY", "0", r#"{"Claim":{"holder":"dwarf-1","lease_until":1767229200}}"#);
+    }
+    for i in 300..600 {
+        r.ok(&["set-claim-inputs", &id(i), "--block", &id(600 + i - 300)]);
+    }
+    r.s.contract().backend().take_widths();
+    let (rc, out) = r.lc(&["list", "--live"]);
+    assert_eq!(rc, 0, "{out}");
+    let widths = r.s.contract().backend().take_widths();
+    let widest = widths.iter().max_by_key(|(_, n)| *n).unwrap();
+    assert!(widest.1 <= 200, "a {} call asked for {} keys or rows: {widths:?}", widest.0, widest.1);
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    assert_eq!(rows.len(), BEADS);
+    assert!(!out.contains("\"error\""), "a claim view could not be read: {out}");
+    let working = rows.iter().filter(|x| x["state"] == "WORKING").count();
+    let ready = rows.iter().filter(|x| x["state"] == "READY").count();
+    assert_eq!((working, ready), (300, 300), "{:?}", rows[0]);
+    let all: Vec<String> = (0..BEADS).map(id).collect();
+    let (rc, by_key) = r.lc(&["list", "--ids", &all.join(",")]);
+    assert_eq!(rc, 0, "{by_key}");
+    assert_eq!(rows, serde_json::from_str::<Vec<serde_json::Value>>(&by_key).unwrap());
+}
+
