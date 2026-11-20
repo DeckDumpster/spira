@@ -94,7 +94,7 @@ pub fn release_root_for_process() -> Result<PathBuf, String> {
 }
 
 /// The environment a dwarf's transient unit is started with, whose user manager carries no
-/// `SPIRA_*`: this process's release, the `PATH` built from it, `HOME` and `SPIRA_TOML`. One
+/// `SPIRA_*`: this process's release, the `PATH` built from it, `HOME` and the spec location. One
 /// source for the library's dwarf call and `dwarf direct`; any unset input is a refusal.
 pub fn dwarf_unit_env() -> Result<Vec<(String, String)>, String> {
     let release = release_root_for_process()?.display().to_string();
@@ -103,7 +103,7 @@ pub fn dwarf_unit_env() -> Result<Vec<(String, String)>, String> {
         (crate::RELEASE_ENV.to_string(), release.clone()),
         ("PATH".to_string(), format!("{release}/bin:{release}/spira:/usr/local/bin:/usr/bin:/bin")),
         ("HOME".to_string(), home),
-        ("SPIRA_TOML".to_string(), crate::process::spec()?),
+        (crate::process::TOML_ENV.to_string(), crate::process::spec()?),
     ])
 }
 

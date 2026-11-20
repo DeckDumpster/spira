@@ -116,7 +116,7 @@ impl UnitProps {
     pub fn run_flags(&self) -> Result<Vec<String>> {
         let mut flags = Vec::new();
         let mut set = |name: &str, value: String| flags.push(format!("--property={name}={value}"));
-        let secs = |ms: u64| if ms % 1000 == 0 { (ms / 1000).to_string() } else { format!("{ms}ms") };
+        let secs = |ms: u64| if ms.is_multiple_of(1000) { (ms / 1000).to_string() } else { format!("{ms}ms") };
         if let Some(ms) = self.start_timeout_ms {
             set("TimeoutStartSec", secs(ms));
         }
@@ -2307,8 +2307,8 @@ mod tests {
             nice: Some(-5),
             cpu_quota_pct: Some(200),
             memory_max_bytes: Some(1024),
-            exec_stop_post: vec![vec!["/bin/true".into(), "x".into()]],
-            output_append: Some(PathBuf::from("/o/log")),
+            exec_stop_post: vec![vec!["true".into(), "x".into()]],
+            output_append: Some(PathBuf::from("o/log")),
         };
         let flags = p.run_flags().unwrap();
         assert_eq!(
@@ -2321,9 +2321,9 @@ mod tests {
                 "--property=Nice=-5",
                 "--property=CPUQuota=200%",
                 "--property=MemoryMax=1024",
-                "--property=ExecStopPost=/bin/true x",
-                "--property=StandardOutput=append:/o/log",
-                "--property=StandardError=append:/o/log",
+                "--property=ExecStopPost=true x",
+                "--property=StandardOutput=append:o/log",
+                "--property=StandardError=append:o/log",
             ]
         );
         let named: BTreeSet<&str> = flags.iter().map(|f| f["--property=".len()..].split('=').next().unwrap()).collect();
