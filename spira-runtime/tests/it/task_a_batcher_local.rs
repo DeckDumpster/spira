@@ -785,6 +785,31 @@ fn sp_s9qcq8_a_stopped_repo_still_holds_an_open_round() {
     assert!(acts.is_empty(), "{acts:?}");
 }
 
+fn pause_on(mut snap: Snapshot) -> Snapshot {
+    snap.repos.get_mut("spira").unwrap().paused = paused("b0").repos["spira"].paused.clone();
+    snap
+}
+
+#[test]
+fn sp_s9qcq8_a_paused_repo_lands_an_open_green_round_and_attributes_an_open_red_one() {
+    let (carry, snap) = green_orphan();
+    let (carry, acts) = decide(&carry, &pause_on(snap));
+    assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Landing);
+    let (carry, snap) = red_orphan();
+    let (carry, acts) = decide(&carry, &pause_on(snap));
+    assert_eq!(effects(&acts), [CORPUS], "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Attributing);
+}
+
+#[test]
+fn sp_s9qcq8_a_paused_repo_with_no_open_round_is_held_and_one_that_drives_it_is_not() {
+    let (carry, _) = decide(&Carry::default(), &paused("b0"));
+    assert_eq!(carry.repos["spira"].state, State::Held);
+    let (carry, _) = decide(&carry, &paused_with_undriven_round());
+    assert_ne!(carry.repos["spira"].state, State::Held);
+}
+
 /// Once a round has landed past the base the pause was seen on, the red it guarded is behind the
 /// repo: the pass lifts the pause and cuts the waiting member.
 #[test]
