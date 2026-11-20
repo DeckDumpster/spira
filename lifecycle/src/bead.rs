@@ -543,6 +543,7 @@ pub fn apply(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow> {
         out.row.persona = None;
         out.row.lease_until = None;
         out.row.holds.clear();
+        out.row.manual_hold = None;
     }
     out
 }
@@ -2705,6 +2706,9 @@ mod tests {
         let off = apply(&second.row, &ev(BeadState::Ready, 2, BeadEventKind::Unhold { kind: HoldKind::Manual, break_glass: Default::default() }));
         assert!(off.applied);
         assert_eq!(off.row.manual_hold, None);
+        let dropped = apply(&second.row, &ev(BeadState::Ready, 2, BeadEventKind::Drop { reason: DropReason::Unwanted }));
+        assert!(dropped.applied && dropped.row.holds.is_empty(), "{dropped:?}");
+        assert_eq!(dropped.row.manual_hold, None, "a terminal row keeps no raise with no hold behind it");
     }
 
     #[test]

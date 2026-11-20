@@ -661,3 +661,20 @@ fn promote<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
 
 #[cfg(test)]
 mod parity;
+
+#[cfg(test)]
+mod manual_hold_columns {
+    use super::*;
+    use lifecycle::bead::ManualHold;
+    use lifecycle::reason::HoldCause;
+
+    #[test]
+    fn list_and_show_print_the_manual_hold_a_record_carries_and_null_otherwise() {
+        let mut rec = LifecycleRecord::born("sp-a", Some("spira"), None, 100);
+        assert_eq!(listed(&rec, None)["manual_hold"], Value::Null);
+        rec.row.manual_hold = Some(ManualHold { at: Some(7), cause: HoldCause::SupersedeRequest, detail: Some("sp-b".into()) });
+        let want = serde_json::json!({ "at": 7, "cause": "supersede-request", "detail": "sp-b" });
+        assert_eq!(listed(&rec, None)["manual_hold"], want);
+        assert_eq!(row(&rec, None, &Value::Null, SHOWN)["manual_hold"], want);
+    }
+}
