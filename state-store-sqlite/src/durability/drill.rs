@@ -17,8 +17,8 @@ use std::path::Path;
 
 use serde_json::Value;
 use state_store::{
-    carries_ttl, events_key, Backend, LogEntry, Object, Rev, Version, EVENTS_PREFIX, HISTORY_PREFIX,
-    REQUESTS_PREFIX, TELEMETRY_PREFIX,
+    carries_ttl, events_key, Backend, LogEntry, Object, Rev, Version, EVENTS_PREFIX,
+    HISTORY_PREFIX, REQUESTS_PREFIX, TELEMETRY_PREFIX,
 };
 
 use super::restore::{self, Restored};
@@ -93,7 +93,9 @@ const PAGE: usize = 1_000;
 /// Every key at `at` but the bookkeeping, `history/` included though GC skips it.
 fn all_keys(b: &SqliteBackend, at: u64) -> Result<Vec<(String, Version)>, String> {
     let mut out = paged(|after, size| b.gc_range(after, size, at))?;
-    out.extend(paged(|after, size| b.range(HISTORY_PREFIX, after, size, at))?);
+    out.extend(paged(|after, size| {
+        b.range(HISTORY_PREFIX, after, size, at)
+    })?);
     Ok(out)
 }
 
@@ -323,7 +325,16 @@ pub fn drill(
     }
     fs::copy(&snapshot, &base_path).map_err(|e| format!("{}: {e}", base_path.display()))?;
     let open = |p: &Path| {
-        SqliteBackend::open(p, Options { jump_on_open: false, outbox: false, day_receipts: false, ..Options::default() }).map_err(|e| format!("{}: {e}", p.display()))
+        SqliteBackend::open(
+            p,
+            Options {
+                jump_on_open: false,
+                outbox: false,
+                day_receipts: false,
+                ..Options::default()
+            },
+        )
+        .map_err(|e| format!("{}: {e}", p.display()))
     };
     let report = fold_compare(&open(&base_path)?, &restored.runs, &open(&out)?, ex)?;
     Ok((restored, report))

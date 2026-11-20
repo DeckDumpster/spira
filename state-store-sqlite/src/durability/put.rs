@@ -62,7 +62,9 @@ pub struct S3Creds {
 impl S3Creds {
     pub fn from_env() -> Result<S3Creds, String> {
         let creds = Self::from_vars(|k| std::env::var(k).ok())?;
-        creds.with_part_bytes(spira_config::process::cfg_parse::<u64>("SPIRA_LC_BACKUP_PART_BYTES")?)
+        creds.with_part_bytes(spira_config::process::cfg_parse::<u64>(
+            "SPIRA_LC_BACKUP_PART_BYTES",
+        )?)
     }
 
     /// These keys cutting a multipart upload into `n`-byte parts, `n` within S3's bounds.
@@ -70,7 +72,10 @@ impl S3Creds {
         if !(MIN_PART_BYTES..=MAX_PUT_BYTES).contains(&n) {
             return Err(format!("SPIRA_LC_BACKUP_PART_BYTES={n} is not a size from {MIN_PART_BYTES} to {MAX_PUT_BYTES}"));
         }
-        Ok(S3Creds { part_bytes: n, ..self })
+        Ok(S3Creds {
+            part_bytes: n,
+            ..self
+        })
     }
 
     /// The same keys read through `lookup`, so a caller can resolve them from a unit's
@@ -150,14 +155,19 @@ fn auth_config(c: &S3Creds) -> String {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// A query value with everything but unreserved characters percent-encoded.
 fn query_value(v: &str) -> String {
     v.bytes()
         .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
             _ => format!("%{b:02X}"),
         })
         .collect()
@@ -172,25 +182,66 @@ fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
 impl Uploader {
     /// One signed request of a multipart upload. A part (`body` set) answers with its response
     /// headers on stdout; the other calls answer with their body.
-    fn call(&self, method: &str, url: &str, body: Option<(&Path, &str)>, xml: bool) -> Result<String, String> {
-        let c = self.creds.as_ref().ok_or("an s3:// destination with no credentials")?;
+    fn call(
+        &self,
+        method: &str,
+        url: &str,
+        body: Option<(&Path, &str)>,
+        xml: bool,
+    ) -> Result<String, String> {
+        let c = self
+            .creds
+            .as_ref()
+            .ok_or("an s3:// destination with no credentials")?;
         let secs = self.deadline.as_secs().max(1).to_string();
         let sum = match body {
             Some((_, sum)) => sum.to_string(),
             None => sha256_hex(b""),
         };
-        let mut args: Vec<String> = ["-q", "-sS", "--connect-timeout", "5", "--fail-with-body", "--max-time", &secs, "-X", method]
-            .map(String::from)
-            .to_vec();
+        let mut args: Vec<String> = [
+            "-q",
+            "-sS",
+            "--connect-timeout",
+            "5",
+            "--fail-with-body",
+            "--max-time",
+            &secs,
+            "-X",
+            method,
+        ]
+        .map(String::from)
+        .to_vec();
         match body {
-            Some((path, _)) if xml => args.extend(["--data-binary".into(), format!("@{}", path.display()), "-H".into(), "Content-Type: application/xml".into()]),
-            Some((path, _)) => args.extend(["-T".into(), path.display().to_string(), "-D".into(), "-".into(), "-o".into(), system_paths::DEV_NULL.into()]),
+            Some((path, _)) if xml => args.extend([
+                "--data-binary".into(),
+                format!("@{}", path.display()),
+                "-H".into(),
+                "Content-Type: application/xml".into(),
+            ]),
+            Some((path, _)) => args.extend([
+                "-T".into(),
+                path.display().to_string(),
+                "-D".into(),
+                "-".into(),
+                "-o".into(),
+                system_paths::DEV_NULL.into(),
+            ]),
             None => args.extend(["--data-binary".into(), String::new()]),
         }
-        args.extend(["--aws-sigv4".into(), format!("aws:amz:{}:s3", c.region), "-K".into(), "-".into()]);
+        args.extend([
+            "--aws-sigv4".into(),
+            format!("aws:amz:{}:s3", c.region),
+            "-K".into(),
+            "-".into(),
+        ]);
         args.extend(["-H".into(), format!("x-amz-content-sha256: {sum}")]);
         args.push(url.into());
-        let out = self.proc.run(&ProcSpec { prog: "curl".into(), args, stdin: auth_config(c).into_bytes(), deadline: self.deadline + Duration::from_secs(5) })?;
+        let out = self.proc.run(&ProcSpec {
+            prog: "curl".into(),
+            args,
+            stdin: auth_config(c).into_bytes(),
+            deadline: self.deadline + Duration::from_secs(5),
+        })?;
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         match out.code {
             Some(0) if !text.contains("<Error>") => Ok(text),
@@ -198,22 +249,40 @@ impl Uploader {
                 "{method} {url}: curl exit {}: {}{}",
                 code.map_or("signal".into(), |c| c.to_string()),
                 String::from_utf8_lossy(&out.stderr).trim(),
-                if text.contains("<Error>") { text.as_str() } else { "" }
+                if text.contains("<Error>") {
+                    text.as_str()
+                } else {
+                    ""
+                }
             )),
         }
     }
 
     /// Uploads `file` of `len` bytes as an S3 multipart upload of `part_bytes` parts, each cut
     /// into a temporary beside `file`; a failed upload is aborted so its parts are not kept.
-    fn multipart(&self, bucket: &str, key: &str, file: &Path, len: u64, part_bytes: u64) -> Result<(), (u16, String)> {
+    fn multipart(
+        &self,
+        bucket: &str,
+        key: &str,
+        file: &Path,
+        len: u64,
+        part_bytes: u64,
+    ) -> Result<(), (u16, String)> {
         let unsent = |e: String| (0, e);
-        let c = self.creds.as_ref().ok_or_else(|| unsent("an s3:// destination with no credentials".into()))?;
+        let c = self
+            .creds
+            .as_ref()
+            .ok_or_else(|| unsent("an s3:// destination with no credentials".into()))?;
         let count = len.div_ceil(part_bytes);
         if count > MAX_PARTS {
-            return Err(unsent(format!("PUT {key}: {len} bytes needs {count} parts, over S3's limit of {MAX_PARTS}")));
+            return Err(unsent(format!(
+                "PUT {key}: {len} bytes needs {count} parts, over S3's limit of {MAX_PARTS}"
+            )));
         }
         let base = object_url(c, bucket, key);
-        let started = self.call("POST", &format!("{base}?uploads"), None, false).map_err(unsent)?;
+        let started = self
+            .call("POST", &format!("{base}?uploads"), None, false)
+            .map_err(unsent)?;
         let id = between(&started, "<UploadId>", "</UploadId>")
             .ok_or_else(|| unsent(format!("POST {key}?uploads: no UploadId in {started:?}")))?
             .to_string();
@@ -221,38 +290,62 @@ impl Uploader {
         let piece = PathBuf::from(format!("{}.part", file.display()));
         let done = format!("{}.complete", file.display());
         let sent = (|| -> Result<(), String> {
-            let mut src = std::fs::File::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
+            let mut src =
+                std::fs::File::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
             let mut etags = Vec::new();
             for n in 1..=count {
                 let want = part_bytes.min(len - (n - 1) * part_bytes);
-                let mut out = std::fs::File::create(&piece).map_err(|e| format!("{}: {e}", piece.display()))?;
+                let mut out = std::fs::File::create(&piece)
+                    .map_err(|e| format!("{}: {e}", piece.display()))?;
                 let mut hash = Sha256::new();
                 let mut left = want;
                 let mut buf = vec![0u8; 1 << 20];
                 while left > 0 {
                     let take = left.min(buf.len() as u64) as usize;
-                    std::io::Read::read_exact(&mut src, &mut buf[..take]).map_err(|e| format!("{}: {e}", file.display()))?;
+                    std::io::Read::read_exact(&mut src, &mut buf[..take])
+                        .map_err(|e| format!("{}: {e}", file.display()))?;
                     hash.update(&buf[..take]);
-                    std::io::Write::write_all(&mut out, &buf[..take]).map_err(|e| format!("{}: {e}", piece.display()))?;
+                    std::io::Write::write_all(&mut out, &buf[..take])
+                        .map_err(|e| format!("{}: {e}", piece.display()))?;
                     left -= take as u64;
                 }
                 drop(out);
                 let sum: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-                let headers = self.call("PUT", &format!("{base}?partNumber={n}&{upload}"), Some((&piece, &sum)), false)?;
+                let headers = self.call(
+                    "PUT",
+                    &format!("{base}?partNumber={n}&{upload}"),
+                    Some((&piece, &sum)),
+                    false,
+                )?;
                 let etag = headers
                     .lines()
-                    .find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case("etag")).map(|(_, v)| v.trim().to_string()))
+                    .find_map(|l| {
+                        l.split_once(':')
+                            .filter(|(k, _)| k.eq_ignore_ascii_case("etag"))
+                            .map(|(_, v)| v.trim().to_string())
+                    })
                     .ok_or_else(|| format!("PUT {key} part {n}: no ETag in {headers:?}"))?;
                 etags.push(etag);
             }
             let parts: String = etags
                 .iter()
                 .enumerate()
-                .map(|(i, e)| format!("<Part><PartNumber>{}</PartNumber><ETag>{}</ETag></Part>", i + 1, e.replace('"', "&quot;")))
+                .map(|(i, e)| {
+                    format!(
+                        "<Part><PartNumber>{}</PartNumber><ETag>{}</ETag></Part>",
+                        i + 1,
+                        e.replace('"', "&quot;")
+                    )
+                })
                 .collect();
             let xml = format!("<CompleteMultipartUpload>{parts}</CompleteMultipartUpload>");
             std::fs::write(&done, &xml).map_err(|e| format!("{done}: {e}"))?;
-            self.call("POST", &format!("{base}?{upload}"), Some((Path::new(&done), &sha256_hex(xml.as_bytes()))), true)?;
+            self.call(
+                "POST",
+                &format!("{base}?{upload}"),
+                Some((Path::new(&done), &sha256_hex(xml.as_bytes()))),
+                true,
+            )?;
             Ok(())
         })();
         let _ = std::fs::remove_file(&piece);
@@ -303,7 +396,13 @@ impl Uploader {
     /// One signed PUT; with `if_absent`, conditional on no object under `key`, and a failure
     /// carries the HTTP status curl reports (0 when it reports none) so a refusal can be told
     /// apart.
-    fn signed(&self, bucket: &str, key: &str, file: &Path, if_absent: bool) -> Result<(), (u16, String)> {
+    fn signed(
+        &self,
+        bucket: &str,
+        key: &str,
+        file: &Path,
+        if_absent: bool,
+    ) -> Result<(), (u16, String)> {
         let unsent = |e: String| (0, e);
         let c = self
             .creds
@@ -352,7 +451,9 @@ impl Uploader {
         .map(String::from)
         .to_vec();
         if if_absent {
-            args.extend(["-H", "If-None-Match: *", "--write-out", "%{http_code}"].map(String::from));
+            args.extend(
+                ["-H", "If-None-Match: *", "--write-out", "%{http_code}"].map(String::from),
+            );
         }
         args.push(url);
         let out = self
@@ -367,7 +468,10 @@ impl Uploader {
         match out.code {
             Some(0) => Ok(()),
             code => Err((
-                String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0),
+                String::from_utf8_lossy(&out.stdout)
+                    .trim()
+                    .parse()
+                    .unwrap_or(0),
                 format!(
                     "PUT {key}: curl exit {}: {}",
                     code.map_or("signal".into(), |c| c.to_string()),
@@ -430,7 +534,10 @@ mod tests {
         );
         assert_eq!(Dest::parse("file://x").unwrap(), Dest::File("x".into()));
         let root = testkit::TempDir::new("put-dest-abs");
-        assert_eq!(Dest::parse(&format!("file://{}/x", root.display())).unwrap(), Dest::File(format!("{}/x", root.display()).into()));
+        assert_eq!(
+            Dest::parse(&format!("file://{}/x", root.display())).unwrap(),
+            Dest::File(format!("{}/x", root.display()).into())
+        );
         assert!(Dest::parse("gs://b").is_err());
         assert!(Dest::parse("s3:///p").is_err());
     }
@@ -443,14 +550,30 @@ mod tests {
         fn run(&self, spec: &ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
             self.1.lock().unwrap().push(spec.args.clone());
             let code = if self.0 < 400 { 0 } else { 22 };
-            Ok(runtime::ports::ProcOutput { code: Some(code), stdout: self.0.to_string().into_bytes(), stderr: Vec::new() })
+            Ok(runtime::ports::ProcOutput {
+                code: Some(code),
+                stdout: self.0.to_string().into_bytes(),
+                stderr: Vec::new(),
+            })
         }
     }
 
     fn s3(status: u16) -> (Uploader, Arc<Answering>) {
         let curl = Arc::new(Answering(status, Default::default()));
-        let creds = S3Creds { access_key: "AK".into(), secret_key: "sk".into(), session_token: None, region: "r".into(), endpoint: Some("http://s3.test".into()), part_bytes: PART_BYTES };
-        let up = Uploader { dest: Dest::parse("s3://b/p/").unwrap(), creds: Some(creds), proc: curl.clone(), deadline: Duration::from_secs(5) };
+        let creds = S3Creds {
+            access_key: "AK".into(),
+            secret_key: "sk".into(),
+            session_token: None,
+            region: "r".into(),
+            endpoint: Some("http://s3.test".into()),
+            part_bytes: PART_BYTES,
+        };
+        let up = Uploader {
+            dest: Dest::parse("s3://b/p/").unwrap(),
+            creds: Some(creds),
+            proc: curl.clone(),
+            deadline: Duration::from_secs(5),
+        };
         (up, curl)
     }
 
@@ -462,25 +585,41 @@ mod tests {
         let (up, curl) = s3(200);
         assert_eq!(up.put_new(&f, "archive/k"), Ok(()));
         let args = curl.1.lock().unwrap()[0].clone();
-        assert!(args.windows(2).any(|w| w == ["-H", "If-None-Match: *"]), "{args:?}");
+        assert!(
+            args.windows(2).any(|w| w == ["-H", "If-None-Match: *"]),
+            "{args:?}"
+        );
         assert_eq!(args.last().unwrap(), "http://s3.test/b/p/archive/k");
         let (up, _) = s3(412);
         assert_eq!(up.put_new(&f, "archive/k"), Err(PutNew::Exists));
         let (up, _) = s3(403);
-        assert!(matches!(up.put_new(&f, "archive/k"), Err(PutNew::Failed(m)) if m.contains("PUT p/archive/k")));
+        assert!(
+            matches!(up.put_new(&f, "archive/k"), Err(PutNew::Failed(m)) if m.contains("PUT p/archive/k"))
+        );
     }
 
     #[test]
     fn a_put_new_to_a_directory_never_replaces_what_is_there() {
         let dir = testkit::TempDir::new("put-new-file");
-        let up = Uploader { dest: Dest::File(dir.path().join("off")), creds: None, proc: Arc::new(Answering(200, Default::default())), deadline: Duration::from_secs(5) };
+        let up = Uploader {
+            dest: Dest::File(dir.path().join("off")),
+            creds: None,
+            proc: Arc::new(Answering(200, Default::default())),
+            deadline: Duration::from_secs(5),
+        };
         let (a, b) = (dir.path().join("a"), dir.path().join("b"));
         std::fs::write(&a, b"first").unwrap();
         std::fs::write(&b, b"second").unwrap();
         assert_eq!(up.put_new(&a, "archive/k"), Ok(()));
         assert_eq!(up.put_new(&b, "archive/k"), Err(PutNew::Exists));
-        assert_eq!(std::fs::read(dir.path().join("off/archive/k")).unwrap(), b"first");
-        let left: Vec<_> = std::fs::read_dir(dir.path().join("off/archive")).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(
+            std::fs::read(dir.path().join("off/archive/k")).unwrap(),
+            b"first"
+        );
+        let left: Vec<_> = std::fs::read_dir(dir.path().join("off/archive"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
         assert_eq!(left, ["k"], "no temporary left beside it");
     }
 
@@ -501,10 +640,20 @@ mod tests {
             let url = a.last().unwrap().clone();
             let method = a[a.iter().position(|x| x == "-X").unwrap() + 1].clone();
             self.calls.lock().unwrap().push(format!("{method} {url}"));
-            let ok = |out: String| Ok(runtime::ports::ProcOutput { code: Some(0), stdout: out.into_bytes(), stderr: Vec::new() });
+            let ok = |out: String| {
+                Ok(runtime::ports::ProcOutput {
+                    code: Some(0),
+                    stdout: out.into_bytes(),
+                    stderr: Vec::new(),
+                })
+            };
             if url.ends_with("?uploads") {
                 if self.fail_create {
-                    return Ok(runtime::ports::ProcOutput { code: Some(22), stdout: Vec::new(), stderr: b"503".to_vec() });
+                    return Ok(runtime::ports::ProcOutput {
+                        code: Some(22),
+                        stdout: Vec::new(),
+                        stderr: b"503".to_vec(),
+                    });
                 }
                 return ok("<InitiateMultipartUploadResult><UploadId>up/1 2</UploadId></InitiateMultipartUploadResult>".into());
             }
@@ -512,11 +661,18 @@ mod tests {
                 let n: u64 = between(&url, "partNumber=", "&").unwrap().parse().unwrap();
                 assert!(url.ends_with("uploadId=up%2F1%202"), "{url}");
                 if self.fail_part == Some(n) {
-                    return Ok(runtime::ports::ProcOutput { code: Some(22), stdout: Vec::new(), stderr: b"503".to_vec() });
+                    return Ok(runtime::ports::ProcOutput {
+                        code: Some(22),
+                        stdout: Vec::new(),
+                        stderr: b"503".to_vec(),
+                    });
                 }
                 let file = &a[a.iter().position(|x| x == "-T").unwrap() + 1];
                 let body = std::fs::read(file).unwrap();
-                let want = a.iter().find_map(|x| x.strip_prefix("x-amz-content-sha256: ")).unwrap();
+                let want = a
+                    .iter()
+                    .find_map(|x| x.strip_prefix("x-amz-content-sha256: "))
+                    .unwrap();
                 assert_eq!(want, sha256_hex(&body));
                 self.parts.lock().unwrap().push(body);
                 return ok(format!("HTTP/1.1 200 OK\r\nETag: \"etag{n}\"\r\n\r\n"));
@@ -531,8 +687,20 @@ mod tests {
     }
 
     fn uploader_on(store: &Arc<Store>) -> Uploader {
-        let creds = S3Creds { access_key: "AK".into(), secret_key: "sk".into(), session_token: None, region: "r".into(), endpoint: Some("http://s3.test".into()), part_bytes: PART_BYTES };
-        Uploader { dest: Dest::parse("s3://b/p/").unwrap(), creds: Some(creds), proc: store.clone(), deadline: Duration::from_secs(5) }
+        let creds = S3Creds {
+            access_key: "AK".into(),
+            secret_key: "sk".into(),
+            session_token: None,
+            region: "r".into(),
+            endpoint: Some("http://s3.test".into()),
+            part_bytes: PART_BYTES,
+        };
+        Uploader {
+            dest: Dest::parse("s3://b/p/").unwrap(),
+            creds: Some(creds),
+            proc: store.clone(),
+            deadline: Duration::from_secs(5),
+        }
     }
 
     #[test]
@@ -543,28 +711,58 @@ mod tests {
         std::fs::write(&f, &bytes).unwrap();
         let store = Arc::new(Store::default());
         let up = uploader_on(&store);
-        up.multipart("b", "p/snapshot/1", &f, bytes.len() as u64, 1_000).unwrap();
+        up.multipart("b", "p/snapshot/1", &f, bytes.len() as u64, 1_000)
+            .unwrap();
         let parts = store.parts.lock().unwrap();
-        assert_eq!(parts.iter().map(Vec::len).collect::<Vec<_>>(), [1_000, 1_000, 500]);
+        assert_eq!(
+            parts.iter().map(Vec::len).collect::<Vec<_>>(),
+            [1_000, 1_000, 500]
+        );
         assert_eq!(parts.concat(), bytes);
         let xml = store.completed.lock().unwrap().clone().unwrap();
-        assert!(xml.contains("<PartNumber>3</PartNumber><ETag>&quot;etag3&quot;</ETag>"), "{xml}");
+        assert!(
+            xml.contains("<PartNumber>3</PartNumber><ETag>&quot;etag3&quot;</ETag>"),
+            "{xml}"
+        );
         assert!(xml.find("PartNumber>1<").unwrap() < xml.find("PartNumber>2<").unwrap());
         let calls = store.calls.lock().unwrap();
-        assert_eq!(calls.first().unwrap(), "POST http://s3.test/b/p/snapshot/1?uploads");
-        assert!(calls.last().unwrap().starts_with("POST ") && calls.last().unwrap().ends_with("uploadId=up%2F1%202"));
-        assert!(!dir.path().join("snap.part").exists() && !dir.path().join("snap.complete").exists());
+        assert_eq!(
+            calls.first().unwrap(),
+            "POST http://s3.test/b/p/snapshot/1?uploads"
+        );
+        assert!(
+            calls.last().unwrap().starts_with("POST ")
+                && calls.last().unwrap().ends_with("uploadId=up%2F1%202")
+        );
+        assert!(
+            !dir.path().join("snap.part").exists() && !dir.path().join("snap.complete").exists()
+        );
     }
 
     #[test]
-    fn a_part_the_store_refuses_fails_the_upload_without_an_abort_the_key_could_not_send_and_leaves_no_temporary() {
+    fn a_part_the_store_refuses_fails_the_upload_without_an_abort_the_key_could_not_send_and_leaves_no_temporary(
+    ) {
         let dir = testkit::TempDir::new("put-multipart-abort");
         let f = dir.path().join("snap");
         std::fs::write(&f, vec![7u8; 2_500]).unwrap();
-        let store = Arc::new(Store { fail_part: Some(2), ..Store::default() });
-        let err = uploader_on(&store).multipart("b", "k", &f, 2_500, 1_000).unwrap_err();
+        let store = Arc::new(Store {
+            fail_part: Some(2),
+            ..Store::default()
+        });
+        let err = uploader_on(&store)
+            .multipart("b", "k", &f, 2_500, 1_000)
+            .unwrap_err();
         assert!(err.1.contains("curl exit 22"), "{err:?}");
-        assert!(store.calls.lock().unwrap().iter().all(|c| !c.starts_with("DELETE ")), "{:?}", store.calls);
+        assert!(
+            store
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|c| !c.starts_with("DELETE ")),
+            "{:?}",
+            store.calls
+        );
         assert!(store.completed.lock().unwrap().is_none());
         assert!(!dir.path().join("snap.part").exists());
     }
@@ -575,17 +773,34 @@ mod tests {
         let f = dir.path().join("snap");
         let file = std::fs::File::create(&f).unwrap();
         file.set_len(MAX_PUT_BYTES + 1).unwrap();
-        let store = Arc::new(Store { fail_create: true, ..Store::default() });
+        let store = Arc::new(Store {
+            fail_create: true,
+            ..Store::default()
+        });
         let err = uploader_on(&store).put(&f, "snapshot/1").unwrap_err();
         assert!(!err.contains("single-PUT limit"), "{err}");
-        assert!(store.calls.lock().unwrap()[0].ends_with("?uploads"), "{:?}", store.calls);
+        assert!(
+            store.calls.lock().unwrap()[0].ends_with("?uploads"),
+            "{:?}",
+            store.calls
+        );
     }
 
     #[test]
     fn the_part_size_defaults_to_256_mib_and_refuses_what_s3_would() {
-        let base = S3Creds::from_vars(|k| Some(if k == "AWS_REGION" { "r".into() } else { "x".into() })).unwrap();
+        let base = S3Creds::from_vars(|k| {
+            Some(if k == "AWS_REGION" {
+                "r".into()
+            } else {
+                "x".into()
+            })
+        })
+        .unwrap();
         assert_eq!(base.part_bytes, 256 << 20);
-        assert_eq!(base.clone().with_part_bytes(10 << 20).unwrap().part_bytes, 10 << 20);
+        assert_eq!(
+            base.clone().with_part_bytes(10 << 20).unwrap().part_bytes,
+            10 << 20
+        );
         for bad in [0, 1024, MAX_PUT_BYTES + 1] {
             assert!(base.clone().with_part_bytes(bad).is_err(), "{bad}");
         }

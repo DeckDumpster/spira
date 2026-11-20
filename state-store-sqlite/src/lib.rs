@@ -37,7 +37,10 @@ use runtime::ports::Clock;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use state_store::history::{overlay, AsOf, Written};
 use state_store::phases::{self, Phase};
-use state_store::{Backend, CommitNote, Error, History, LogEntry, Result, Rev, UsagePage, Version, VersionUsagePage, Write};
+use state_store::{
+    Backend, CommitNote, Error, History, LogEntry, Result, Rev, UsagePage, Version,
+    VersionUsagePage, Write,
+};
 
 use dated::{DatedFile, Family, Files, SideRow, EVENTS, FAMILIES};
 use outbox::Outbox;
@@ -117,7 +120,15 @@ struct CheckpointState {
 /// `busy` for frames a reader's snapshot kept it from copying. `Err` is SQLite's own text.
 fn passive_complete(conn: &Connection) -> std::result::Result<bool, String> {
     conn.prepare_cached("PRAGMA wal_checkpoint(PASSIVE)")
-        .and_then(|mut s| s.query_row([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))))
+        .and_then(|mut s| {
+            s.query_row([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })
+        })
         .map(|(busy, log, done)| busy == 0 && done >= log)
         .map_err(|e| e.to_string())
 }
@@ -125,7 +136,11 @@ fn passive_complete(conn: &Connection) -> std::result::Result<bool, String> {
 const REPEAT_REPORT_AFTER: Duration = Duration::from_secs(3600);
 
 /// Whether a failure is worth a line: the first, a new text, or the same text an hour on.
-fn report_due(last: &mut Option<(String, std::time::Instant)>, text: &str, now: std::time::Instant) -> bool {
+fn report_due(
+    last: &mut Option<(String, std::time::Instant)>,
+    text: &str,
+    now: std::time::Instant,
+) -> bool {
     let due = last
         .as_ref()
         .is_none_or(|(t, at)| t != text || now.duration_since(*at) >= REPEAT_REPORT_AFTER);
@@ -138,15 +153,23 @@ fn report_due(last: &mut Option<(String, std::time::Instant)>, text: &str, now: 
 /// A TRUNCATE checkpoint under the writer mutex, so no commit races it and the WAL restarts. It
 /// waits up to `max_read_ms` for reads already in flight, which the store ends by then; commits
 /// keep a zero timeout. `busy` when another checkpoint holds the lock.
-fn restart_wal(writer: &Mutex<Writer>, max_read_ms: u64) -> std::result::Result<Checkpoint, String> {
+fn restart_wal(
+    writer: &Mutex<Writer>,
+    max_read_ms: u64,
+) -> std::result::Result<Checkpoint, String> {
     let w = lock(writer);
-    w.conn.busy_timeout(Duration::from_millis(max_read_ms)).map_err(|e| e.to_string())?;
+    w.conn
+        .busy_timeout(Duration::from_millis(max_read_ms))
+        .map_err(|e| e.to_string())?;
     let pass = w
         .conn
         .prepare_cached("PRAGMA wal_checkpoint(TRUNCATE)")
         .and_then(|mut s| s.query_row([], checkpoint_row))
         .map_err(|e| e.to_string());
-    let reset = w.conn.busy_timeout(Duration::ZERO).map_err(|e| e.to_string());
+    let reset = w
+        .conn
+        .busy_timeout(Duration::ZERO)
+        .map_err(|e| e.to_string());
     let pass = pass?;
     reset?;
     Ok(pass)
@@ -169,7 +192,11 @@ fn checkpoint_step(
 }
 
 fn checkpoint_row(r: &rusqlite::Row) -> rusqlite::Result<Checkpoint> {
-    Ok(Checkpoint { busy: r.get::<_, i64>(0)? != 0, wal_frames: r.get(1)?, checkpointed: r.get(2)? })
+    Ok(Checkpoint {
+        busy: r.get::<_, i64>(0)? != 0,
+        wal_frames: r.get(1)?,
+        checkpointed: r.get(2)?,
+    })
 }
 
 /// Checkpoint passes since the last summary line.
@@ -185,7 +212,11 @@ struct PassCounts {
 
 impl PassCounts {
     fn passes(&self) -> u64 {
-        self.passive_complete + self.passive_incomplete + self.restart_done + self.restart_busy + self.errors
+        self.passive_complete
+            + self.passive_incomplete
+            + self.restart_done
+            + self.restart_busy
+            + self.errors
     }
 }
 
@@ -241,8 +272,14 @@ impl Checkpointer {
             if let Some(m) = &metrics {
                 m.push(
                     &[
-                        spira_otel::metrics::Point::Gauge { name: UNCHECKPOINTED_GAUGE, value: pending as f64 },
-                        spira_otel::metrics::Point::Gauge { name: WAL_BYTES_GAUGE, value: wal_bytes() as f64 },
+                        spira_otel::metrics::Point::Gauge {
+                            name: UNCHECKPOINTED_GAUGE,
+                            value: pending as f64,
+                        },
+                        spira_otel::metrics::Point::Gauge {
+                            name: WAL_BYTES_GAUGE,
+                            value: wal_bytes() as f64,
+                        },
                     ],
                     &[],
                 );
@@ -254,7 +291,11 @@ impl Checkpointer {
             let seen = {
                 let mut s = lock(&self.state);
                 if !s.stop && (s.pending < self.every || wait == RETRY_AFTER) {
-                    s = self.wake.wait_timeout(s, wait).unwrap_or_else(|p| p.into_inner()).0;
+                    s = self
+                        .wake
+                        .wait_timeout(s, wait)
+                        .unwrap_or_else(|p| p.into_inner())
+                        .0;
                 }
                 if s.stop {
                     return;
@@ -264,15 +305,21 @@ impl Checkpointer {
             wait = GAUGE_EVERY;
             if seen >= self.every || owed {
                 let mut passive_done = None;
-                let step = checkpoint_step(&conn, &writer, max_read_ms.load(Ordering::SeqCst), seen >= self.every, |done| {
-                    passive_done = Some(done);
-                    if done {
-                        counts.passive_complete += 1;
-                        lock(&self.state).pending -= seen;
-                    } else {
-                        counts.passive_incomplete += 1;
-                    }
-                })
+                let step = checkpoint_step(
+                    &conn,
+                    &writer,
+                    max_read_ms.load(Ordering::SeqCst),
+                    seen >= self.every,
+                    |done| {
+                        passive_done = Some(done);
+                        if done {
+                            counts.passive_complete += 1;
+                            lock(&self.state).pending -= seen;
+                        } else {
+                            counts.passive_incomplete += 1;
+                        }
+                    },
+                )
                 .map(|p| {
                     counts.wal_frames = p.wal_frames;
                     owed = p.busy;
@@ -559,7 +606,8 @@ fn connect(path: &Path) -> Result<Connection> {
             | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(db)?;
-    conn.pragma_update(None, "cache_size", -CACHE_KIB).map_err(db)?;
+    conn.pragma_update(None, "cache_size", -CACHE_KIB)
+        .map_err(db)?;
     Ok(conn)
 }
 
@@ -574,17 +622,30 @@ fn exec(conn: &Connection, sql: &str, p: impl rusqlite::Params) -> Result<usize>
 /// a crash could lose would let the next open jump from the older head and reissue revisions.
 fn record_jump(conn: &mut Connection, head: u64, through: u64) -> Result<u64> {
     if through <= head {
-        return Err(Error::Backend(format!("a jump to {through} does not pass the head {head}")));
+        return Err(Error::Backend(format!(
+            "a jump to {through} does not pass the head {head}"
+        )));
     }
-    let mode: i64 = conn.pragma_query_value(None, "synchronous", |r| r.get(0)).map_err(db)?;
-    conn.pragma_update(None, "synchronous", "FULL").map_err(db)?;
+    let mode: i64 = conn
+        .pragma_query_value(None, "synchronous", |r| r.get(0))
+        .map_err(db)?;
+    conn.pragma_update(None, "synchronous", "FULL")
+        .map_err(db)?;
     let done = (|| {
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db)?;
         let at = meta(&tx, "head")?.unwrap_or(0);
         if at != head {
-            return Err(Error::Backend(format!("a jump from {head} found the head at {at}")));
+            return Err(Error::Backend(format!(
+                "a jump from {head} found the head at {at}"
+            )));
         }
-        exec(&tx, "INSERT INTO jumps (from_main, to_main) VALUES (?1, ?2)", params![main_i64(head + 1)?, main_i64(through)?])?;
+        exec(
+            &tx,
+            "INSERT INTO jumps (from_main, to_main) VALUES (?1, ?2)",
+            params![main_i64(head + 1)?, main_i64(through)?],
+        )?;
         set_meta(&tx, "head", through)?;
         tx.commit().map_err(db)
     })();
@@ -608,29 +669,53 @@ const EVENTS_STAMPED: &str = "events_stamped";
 fn stamped_found(conn: &Connection) -> Result<Option<(Vec<u8>, u64)>> {
     let blob = conn
         .prepare_cached("SELECT value FROM meta WHERE name = ?1")
-        .and_then(|mut s| s.query_row([EVENTS_STAMPED], |r| r.get::<_, Vec<u8>>(0)).optional())
+        .and_then(|mut s| {
+            s.query_row([EVENTS_STAMPED], |r| r.get::<_, Vec<u8>>(0))
+                .optional()
+        })
         .map_err(db)?;
-    Ok(blob.and_then(|b| Some((b.get(8..)?.to_vec(), u64::from_be_bytes(b.get(..8)?.try_into().ok()?)))))
+    Ok(blob.and_then(|b| {
+        Some((
+            b.get(8..)?.to_vec(),
+            u64::from_be_bytes(b.get(..8)?.try_into().ok()?),
+        ))
+    }))
 }
 
 fn set_stamped_found(conn: &Connection, key: &[u8], at: u64) -> Result<()> {
     let mut blob = at.to_be_bytes().to_vec();
     blob.extend_from_slice(key);
-    exec(conn, "INSERT OR REPLACE INTO meta (name, value) VALUES (?1, ?2)", params![EVENTS_STAMPED, blob]).map(drop)
+    exec(
+        conn,
+        "INSERT OR REPLACE INTO meta (name, value) VALUES (?1, ?2)",
+        params![EVENTS_STAMPED, blob],
+    )
+    .map(drop)
 }
 
 /// The persisted cursor of an unfinished event scan, stored as a blob: SQLite keeps whatever
 /// type it is given in an INTEGER column.
 fn scan_from(conn: &Connection) -> Result<Option<Vec<u8>>> {
     conn.prepare_cached("SELECT value FROM meta WHERE name = ?1")
-        .and_then(|mut s| s.query_row([EVENTS_SCAN_FROM], |r| r.get::<_, Vec<u8>>(0)).optional())
+        .and_then(|mut s| {
+            s.query_row([EVENTS_SCAN_FROM], |r| r.get::<_, Vec<u8>>(0))
+                .optional()
+        })
         .map_err(db)
 }
 
 fn set_scan_from(conn: &Connection, cursor: Option<&[u8]>) -> Result<()> {
     match cursor {
-        Some(c) => exec(conn, "INSERT OR REPLACE INTO meta (name, value) VALUES (?1, ?2)", params![EVENTS_SCAN_FROM, c]),
-        None => exec(conn, "DELETE FROM meta WHERE name = ?1", params![EVENTS_SCAN_FROM]),
+        Some(c) => exec(
+            conn,
+            "INSERT OR REPLACE INTO meta (name, value) VALUES (?1, ?2)",
+            params![EVENTS_SCAN_FROM, c],
+        ),
+        None => exec(
+            conn,
+            "DELETE FROM meta WHERE name = ?1",
+            params![EVENTS_SCAN_FROM],
+        ),
     }
     .map(drop)
 }
@@ -690,11 +775,13 @@ fn version_row(r: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<Option<Ve
 const USAGE_KEYS: &str =
     "SELECT key, length(CAST(value AS BLOB)) FROM latest WHERE key > ?1 ORDER BY key LIMIT ?2";
 /// The version rows strictly after `(?1, ?2)`: one range of the `versions` primary key.
-const VERSION_USAGE: &str = "SELECT key, main, length(CAST(coalesce(value, X'') AS BLOB)) FROM versions
+const VERSION_USAGE: &str =
+    "SELECT key, main, length(CAST(coalesce(value, X'') AS BLOB)) FROM versions
      WHERE (key, main) > (?1, ?2) ORDER BY key, main LIMIT ?3";
 
 /// The head's newest version of `?1`: one read of `latest`'s primary key.
-const GET_LATEST: &str = "SELECT main, sub, value, create_main, create_sub FROM latest WHERE key = ?1";
+const GET_LATEST: &str =
+    "SELECT main, sub, value, create_main, create_sub FROM latest WHERE key = ?1";
 
 /// The head's live keys in `[?1, ?2)`: one key-ordered range over `latest`, reading its page.
 const LATEST_BOUNDED: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
@@ -714,7 +801,8 @@ const NEWEST_OPENED: &str = "SELECT key, main, sub, value, create_main, create_s
      ORDER BY opened_at DESC, key DESC LIMIT ?4";
 
 /// The head's live keys naming owner `?1`, after `?2`: one range of `owner_refs`.
-const OWNED_BY: &str = "SELECT key FROM owner_refs WHERE owner = ?1 AND key > ?2 ORDER BY key LIMIT ?3";
+const OWNED_BY: &str =
+    "SELECT key FROM owner_refs WHERE owner = ?1 AND key > ?2 ORDER BY key LIMIT ?3";
 
 /// The head's live keys whose `expires_at` is at or before `?1`, oldest first: one range of
 /// `latest_by_expiry`.
@@ -722,9 +810,13 @@ const DUE: &str = "SELECT key FROM latest WHERE expires_at <= ?1 ORDER BY expire
 
 /// Whether a key's value may name owners: the contract writes none under these prefixes.
 fn may_be_owned(key: &str) -> bool {
-    ![state_store::EVENTS_PREFIX, state_store::REQUESTS_PREFIX, state_store::HISTORY_PREFIX]
-        .iter()
-        .any(|p| key.starts_with(p))
+    ![
+        state_store::EVENTS_PREFIX,
+        state_store::REQUESTS_PREFIX,
+        state_store::HISTORY_PREFIX,
+    ]
+    .iter()
+    .any(|p| key.starts_with(p))
 }
 
 /// Replaces `key`'s `owner_refs` rows with the owners `value` names (none for a delete), in the
@@ -737,11 +829,25 @@ fn set_owner_refs(tx: &rusqlite::Transaction<'_>, key: &str, value: Option<&[u8]
         .prepare_cached("SELECT value FROM latest WHERE key = ?1")
         .and_then(|mut s| s.query_row([key.as_bytes()], |r| r.get(0)).optional())
         .map_err(db)?;
-    for owner in old.map(|v| state_store::backend::owners_of(&v)).unwrap_or_default() {
-        exec(tx, "DELETE FROM owner_refs WHERE owner = ?1 AND key = ?2", params![owner.as_bytes(), key.as_bytes()])?;
+    for owner in old
+        .map(|v| state_store::backend::owners_of(&v))
+        .unwrap_or_default()
+    {
+        exec(
+            tx,
+            "DELETE FROM owner_refs WHERE owner = ?1 AND key = ?2",
+            params![owner.as_bytes(), key.as_bytes()],
+        )?;
     }
-    for owner in value.map(state_store::backend::owners_of).unwrap_or_default() {
-        exec(tx, "INSERT OR IGNORE INTO owner_refs (owner, key) VALUES (?1, ?2)", params![owner.as_bytes(), key.as_bytes()])?;
+    for owner in value
+        .map(state_store::backend::owners_of)
+        .unwrap_or_default()
+    {
+        exec(
+            tx,
+            "INSERT OR IGNORE INTO owner_refs (owner, key) VALUES (?1, ?2)",
+            params![owner.as_bytes(), key.as_bytes()],
+        )?;
     }
     Ok(())
 }
@@ -755,16 +861,28 @@ enum Drain {
 
 /// The wall time an audit record was written at, when it carries one.
 fn recorded_at(value: &[u8]) -> Option<u64> {
-    serde_json::from_slice::<serde_json::Value>(value).ok()?.get("data")?.get("at")?.as_u64()
+    serde_json::from_slice::<serde_json::Value>(value)
+        .ok()?
+        .get("data")?
+        .get("at")?
+        .as_u64()
 }
 
 /// The first `limit` rows of `[lo, hi)` in key order.
-fn event_page(tx: &rusqlite::Transaction<'_>, lo: &[u8], hi: Option<&[u8]>, limit: usize) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+fn event_page(
+    tx: &rusqlite::Transaction<'_>,
+    lo: &[u8],
+    hi: Option<&[u8]>,
+    limit: usize,
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
     let mut stmt = tx
         .prepare_cached("SELECT key, value FROM latest WHERE key >= ?1 AND (?2 IS NULL OR key < ?2) ORDER BY key LIMIT ?3")
         .map_err(db)?;
     let rows = stmt
-        .query_map(params![lo, hi, i64::try_from(limit).unwrap_or(i64::MAX)], |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_map(
+            params![lo, hi, i64::try_from(limit).unwrap_or(i64::MAX)],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
         .map_err(db)?;
     rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db)
 }
@@ -794,7 +912,10 @@ fn first_stamped_from(
         let page = event_page(tx, &cursor, hi, take)?;
         rows.fetch_add(page.len() as u64, Ordering::Relaxed);
         left -= page.len();
-        if let Some((k, at)) = page.iter().find_map(|(k, v)| recorded_at(v).map(|at| (k, at))) {
+        if let Some((k, at)) = page
+            .iter()
+            .find_map(|(k, v)| recorded_at(v).map(|at| (k, at)))
+        {
             return Ok(Scan::Found(k.clone(), at));
         }
         match page.last() {
@@ -864,7 +985,8 @@ fn range_rows(
         }
     }
     let n = stmt.reset_status(rusqlite::StatementStatus::VmStep);
-    snap.steps.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
+    snap.steps
+        .fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
     let state = match source {
         Source::State(s) => Some(s),
         _ => None,
@@ -882,7 +1004,11 @@ fn merge_dated(
     limit: usize,
     state: Option<&str>,
 ) -> Result<Vec<(String, Version)>> {
-    let reached: Vec<_> = snap.dated.iter().filter(|(fam, files)| !files.is_empty() && fam.overlaps(lo, hi)).collect();
+    let reached: Vec<_> = snap
+        .dated
+        .iter()
+        .filter(|(fam, files)| !files.is_empty() && fam.overlaps(lo, hi))
+        .collect();
     if reached.is_empty() {
         return Ok(main);
     }
@@ -930,9 +1056,16 @@ fn range_rows_at(
     let mut next = 0;
     while out.len() < limit {
         let page = range_rows(conn, snap, Source::Head, &cursor, hi, limit, deadline)?;
-        let upto = (page.len() == limit).then(|| page.last().map(|(k, _)| k.clone())).flatten();
+        let upto = (page.len() == limit)
+            .then(|| page.last().map(|(k, _)| k.clone()))
+            .flatten();
         let span = touched[next..].partition_point(|(k, _)| upto.as_ref().is_none_or(|u| k <= u));
-        out.extend(overlay(page, &touched[next..next + span], None, upto.as_deref()));
+        out.extend(overlay(
+            page,
+            &touched[next..next + span],
+            None,
+            upto.as_deref(),
+        ));
         next += span;
         match upto {
             Some(u) => {
@@ -964,16 +1097,36 @@ fn range_in_state_at(
     let touched: Vec<(String, Option<Version>)> = lock(history)
         .touched_after(lo, hi, at)?
         .into_iter()
-        .map(|(k, v)| (k, v.filter(|v| state_store::backend::state_of(&v.value).as_deref() == Some(state))))
+        .map(|(k, v)| {
+            (
+                k,
+                v.filter(|v| state_store::backend::state_of(&v.value).as_deref() == Some(state)),
+            )
+        })
         .collect();
     let mut out = Vec::new();
     let mut cursor = lo.to_vec();
     let mut next = 0;
     while out.len() < limit {
-        let page = range_rows(conn, snap, Source::State(state), &cursor, hi, limit, deadline)?;
-        let upto = (page.len() == limit).then(|| page.last().map(|(k, _)| k.clone())).flatten();
+        let page = range_rows(
+            conn,
+            snap,
+            Source::State(state),
+            &cursor,
+            hi,
+            limit,
+            deadline,
+        )?;
+        let upto = (page.len() == limit)
+            .then(|| page.last().map(|(k, _)| k.clone()))
+            .flatten();
         let span = touched[next..].partition_point(|(k, _)| upto.as_ref().is_none_or(|u| k <= u));
-        out.extend(overlay(page, &touched[next..next + span], None, upto.as_deref()));
+        out.extend(overlay(
+            page,
+            &touched[next..next + span],
+            None,
+            upto.as_deref(),
+        ));
         next += span;
         match upto {
             Some(u) => {
@@ -1003,7 +1156,12 @@ fn newest_opened_at_head(
     let mut out = Vec::new();
     {
         let mut rows = stmt
-            .query(params![since, prefix, hi, i64::try_from(limit).unwrap_or(i64::MAX)])
+            .query(params![
+                since,
+                prefix,
+                hi,
+                i64::try_from(limit).unwrap_or(i64::MAX)
+            ])
             .map_err(db)?;
         while let Some(r) = rows.next().map_err(db)? {
             deadline()?;
@@ -1014,7 +1172,8 @@ fn newest_opened_at_head(
         }
     }
     let n = stmt.reset_status(rusqlite::StatementStatus::VmStep);
-    snap.steps.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
+    snap.steps
+        .fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
     Ok(out)
 }
 
@@ -1034,7 +1193,10 @@ fn rows_outside(
     sorted.sort_unstable();
     let mut skipped: Vec<(&[u8], Vec<u8>)> = Vec::new();
     for p in sorted {
-        if skipped.last().is_some_and(|(q, _)| p.as_bytes().starts_with(q)) {
+        if skipped
+            .last()
+            .is_some_and(|(q, _)| p.as_bytes().starts_with(q))
+        {
             continue;
         }
         skipped.push((p.as_bytes(), successor(p.as_bytes()).unwrap_or_default()));
@@ -1117,13 +1279,20 @@ impl SqliteBackend {
             files.open_existing()?;
             for f in files.handles() {
                 f.trim_above(head).map_err(|e| {
-                    Error::Backend(format!("{}: rows above the head {head} could not be removed: {e}", f.path().display()))
+                    Error::Backend(format!(
+                        "{}: rows above the head {head} could not be removed: {e}",
+                        f.path().display()
+                    ))
                 })?;
             }
             files.retire_behind(dated::day_of(now));
         }
         if opts.day_receipts {
-            exec(&conn, "INSERT OR IGNORE INTO meta (name, value) VALUES ('receipts_from_at', ?1)", [main_i64(now)?])?;
+            exec(
+                &conn,
+                "INSERT OR IGNORE INTO meta (name, value) VALUES ('receipts_from_at', ?1)",
+                [main_i64(now)?],
+            )?;
         }
         let receipts_from_at = meta(&conn, "receipts_from_at")?.unwrap_or(now);
         let events_due = meta(&conn, EVENTS_DUE)?.unwrap_or(0);
@@ -1231,7 +1400,9 @@ impl SqliteBackend {
             if let Err(u) = f.delete_main(main) {
                 let file = f.path().display().to_string();
                 *lock(&self.0.unclear) = Some(file.clone());
-                return Error::Backend(format!("{cause}; {file} could not take back main {main}: {u}"));
+                return Error::Backend(format!(
+                    "{cause}; {file} could not take back main {main}: {u}"
+                ));
             }
         }
         cause
@@ -1241,14 +1412,20 @@ impl SqliteBackend {
     /// day old: a key-range delete that writes no log entry and does not move the head. A
     /// failure is retried by the next commit.
     fn drain_receipts(&self, w: &mut Writer, now: u64) -> bool {
-        let due = self.0.receipts_from_at.saturating_add(state_store::REQUEST_TTL_SECS * 1_000);
+        let due = self
+            .0
+            .receipts_from_at
+            .saturating_add(state_store::REQUEST_TTL_SECS * 1_000);
         if !self.0.day_receipts || now < due || self.0.drained.load(Ordering::SeqCst) {
             return false;
         }
         let lo = state_store::REQUESTS_PREFIX.as_bytes();
         let hi = successor(lo);
         let drained = (|| {
-            let tx = w.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
+            let tx = w
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(db)?;
             let n = i64::try_from(DRAIN_PER_COMMIT).unwrap_or(i64::MAX);
             let latest = exec(
                 &tx,
@@ -1277,9 +1454,16 @@ impl SqliteBackend {
             return false;
         }
         let drained = (|| {
-            let tx = w.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
+            let tx = w
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(db)?;
             let n = i64::try_from(DRAIN_PER_COMMIT).unwrap_or(i64::MAX);
-            let gone = exec(&tx, "DELETE FROM versions WHERE rowid IN (SELECT rowid FROM versions LIMIT ?1)", params![n])?;
+            let gone = exec(
+                &tx,
+                "DELETE FROM versions WHERE rowid IN (SELECT rowid FROM versions LIMIT ?1)",
+                params![n],
+            )?;
             tx.commit().map_err(db)?;
             Ok::<bool, Error>(gone < DRAIN_PER_COMMIT)
         })();
@@ -1297,12 +1481,16 @@ impl SqliteBackend {
         }
         let mut reclaimed = false;
         let _ = (|| {
-            let free: i64 = w.conn.pragma_query_value(None, "freelist_count", |r| r.get(0))?;
+            let free: i64 = w
+                .conn
+                .pragma_query_value(None, "freelist_count", |r| r.get(0))?;
             if free == 0 {
                 return Ok(());
             }
             reclaimed = true;
-            let mut stmt = w.conn.prepare(&format!("PRAGMA incremental_vacuum({VACUUM_PAGES_PER_COMMIT})"))?;
+            let mut stmt = w.conn.prepare(&format!(
+                "PRAGMA incremental_vacuum({VACUUM_PAGES_PER_COMMIT})"
+            ))?;
             let mut rows = stmt.query([])?;
             while rows.next()?.is_some() {}
             Ok::<(), rusqlite::Error>(())
@@ -1314,7 +1502,10 @@ impl SqliteBackend {
     /// older than the retention window: no log entry, the head unmoved. A failure is retried by
     /// the next commit.
     fn drain_events(&self, w: &mut Writer, now: u64) -> bool {
-        if !self.0.day_receipts || self.0.events_drained.load(Ordering::SeqCst) || now < self.0.events_due.load(Ordering::SeqCst) {
+        if !self.0.day_receipts
+            || self.0.events_drained.load(Ordering::SeqCst)
+            || now < self.0.events_due.load(Ordering::SeqCst)
+        {
             return false;
         }
         let rows_before = self.0.drain_rows.load(Ordering::Relaxed);
@@ -1322,16 +1513,24 @@ impl SqliteBackend {
         let lo = EVENTS.prefix.as_bytes();
         let hi = successor(lo);
         let outcome = (|| {
-            let tx = w.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
+            let tx = w
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(db)?;
             let page = event_page(&tx, lo, hi.as_deref(), DRAIN_PER_COMMIT)?;
-            self.0.drain_rows.fetch_add(page.len() as u64, Ordering::Relaxed);
+            self.0
+                .drain_rows
+                .fetch_add(page.len() as u64, Ordering::Relaxed);
             if page.is_empty() {
                 return Ok::<Drain, Error>(Drain::Empty);
             }
             let unstamped_age = match page.iter().find_map(|(_, v)| recorded_at(v)) {
                 Some(at) => Some(at),
                 None if page.len() < DRAIN_PER_COMMIT => None,
-                None if lock(&self.0.events_stamped).as_ref().is_some_and(|(k, _)| page[page.len() - 1].0 < *k) => {
+                None if lock(&self.0.events_stamped)
+                    .as_ref()
+                    .is_some_and(|(k, _)| page[page.len() - 1].0 < *k) =>
+                {
                     lock(&self.0.events_stamped).as_ref().map(|(_, at)| *at)
                 }
                 None => {
@@ -1340,7 +1539,13 @@ impl SqliteBackend {
                         c.push(0);
                         c
                     });
-                    match first_stamped_from(&tx, resume, hi.as_deref(), DRAIN_PER_COMMIT, &self.0.drain_rows)? {
+                    match first_stamped_from(
+                        &tx,
+                        resume,
+                        hi.as_deref(),
+                        DRAIN_PER_COMMIT,
+                        &self.0.drain_rows,
+                    )? {
                         Scan::Found(k, at) => {
                             set_stamped_found(&tx, &k, at)?;
                             *lock(&self.0.events_stamped) = Some((k, at));
@@ -1374,8 +1579,16 @@ impl SqliteBackend {
                 last = Some(k);
             }
             if let Some(last) = last {
-                exec(&tx, "DELETE FROM latest WHERE key >= ?1 AND key <= ?2", params![lo, last])?;
-                exec(&tx, "DELETE FROM versions WHERE key >= ?1 AND key <= ?2", params![lo, last])?;
+                exec(
+                    &tx,
+                    "DELETE FROM latest WHERE key >= ?1 AND key <= ?2",
+                    params![lo, last],
+                )?;
+                exec(
+                    &tx,
+                    "DELETE FROM versions WHERE key >= ?1 AND key <= ?2",
+                    params![lo, last],
+                )?;
             }
             if let Some(due) = blocked_at {
                 set_meta(&tx, EVENTS_DUE, due.max(now.saturating_add(1)))?;
@@ -1391,7 +1604,10 @@ impl SqliteBackend {
         })();
         match outcome {
             Ok(Drain::Empty) => self.0.events_drained.store(true, Ordering::SeqCst),
-            Ok(Drain::Waiting(due)) => self.0.events_due.store(due.max(now.saturating_add(1)), Ordering::SeqCst),
+            Ok(Drain::Waiting(due)) => self
+                .0
+                .events_due
+                .store(due.max(now.saturating_add(1)), Ordering::SeqCst),
             Ok(Drain::More) | Err(_) => {}
         }
         self.0.drain_rows.load(Ordering::Relaxed) > rows_before
@@ -1420,7 +1636,10 @@ impl SqliteBackend {
     }
 
     pub fn synchronous(&self) -> Result<i64> {
-        lock(&self.0.writer).conn.pragma_query_value(None, "synchronous", |r| r.get(0)).map_err(db)
+        lock(&self.0.writer)
+            .conn
+            .pragma_query_value(None, "synchronous", |r| r.get(0))
+            .map_err(db)
     }
 
     /// The recorded jumps that end after `after` and start at or before `through`, in order.
@@ -1431,7 +1650,9 @@ impl SqliteBackend {
             .prepare_cached("SELECT from_main, to_main FROM jumps WHERE to_main > ?1 AND from_main <= ?2 ORDER BY from_main")
             .map_err(db)?;
         let rows = st
-            .query_map(params![main_i64(after)?, main_i64(through)?], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64)))
+            .query_map(params![main_i64(after)?, main_i64(through)?], |r| {
+                Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))
+            })
             .map_err(db)?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db)
     }
@@ -1442,7 +1663,9 @@ impl SqliteBackend {
         let mut w = lock(&self.0.writer);
         let head = self.0.head.load(Ordering::SeqCst);
         if from != head + 1 {
-            return Err(Error::Backend(format!("a jump from {from} does not follow the head {head}")));
+            return Err(Error::Backend(format!(
+                "a jump from {from} does not follow the head {head}"
+            )));
         }
         let at = record_jump(&mut w.conn, head, through)?;
         self.0.head.store(at, Ordering::SeqCst);
@@ -1459,7 +1682,10 @@ impl SqliteBackend {
         let Some(o) = guard.as_ref() else {
             return Err(Error::Backend("the store keeps no outbox".into()));
         };
-        match o.after(from, head, max_mains, &jumps).map_err(Error::Backend)? {
+        match o
+            .after(from, head, max_mains, &jumps)
+            .map_err(Error::Backend)?
+        {
             Ok(commits) => Ok(commits.into_iter().flat_map(|(_, e)| e).collect()),
             Err(gap) => Err(Error::TooOld { compacted: gap.at }),
         }
@@ -1487,9 +1713,10 @@ impl SqliteBackend {
         let mut guard = lock(&self.0.outbox);
         guard.take();
         match std::fs::remove_dir_all(outbox_dir(&self.0.path)) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                Err(Error::Backend(format!("{}: {e}", outbox_dir(&self.0.path).display())))
-            }
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(Error::Backend(format!(
+                "{}: {e}",
+                outbox_dir(&self.0.path).display()
+            ))),
             _ => Ok(()),
         }
     }
@@ -1517,9 +1744,7 @@ impl SqliteBackend {
         let w = lock(&self.0.writer);
         w.conn
             .prepare_cached("PRAGMA wal_checkpoint(TRUNCATE)")
-            .and_then(|mut s| {
-                s.query_row([], checkpoint_row)
-            })
+            .and_then(|mut s| s.query_row([], checkpoint_row))
             .map_err(db)
     }
 
@@ -1627,7 +1852,10 @@ impl SqliteBackend {
     /// The names of the `latest` columns a row is stored in: every one that is not generated.
     pub fn latest_columns(&self) -> Result<Vec<String>> {
         let w = lock(&self.0.writer);
-        let mut s = w.conn.prepare("SELECT name FROM pragma_table_xinfo('latest') WHERE hidden = 0 ORDER BY cid").map_err(db)?;
+        let mut s = w
+            .conn
+            .prepare("SELECT name FROM pragma_table_xinfo('latest') WHERE hidden = 0 ORDER BY cid")
+            .map_err(db)?;
         let names = s.query_map([], |r| r.get(0)).map_err(db)?;
         names.collect::<std::result::Result<_, _>>().map_err(db)
     }
@@ -1642,14 +1870,19 @@ impl SqliteBackend {
         rows: impl IntoIterator<Item = Result<StoredRow>>,
     ) -> Result<()> {
         let mut w = lock(&self.0.writer);
-        let tx = w.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
+        let tx = w
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db)?;
         let any: Option<i64> = tx
             .prepare_cached("SELECT 1 FROM latest LIMIT 1")
             .and_then(|mut s| s.query_row([], |r| r.get(0)).optional())
             .map_err(db)?;
         let at = meta(&tx, "head")?.unwrap_or(0);
         if at != 0 || any.is_some() {
-            return Err(Error::Backend(format!("import_as_stored needs an empty store; this one is at revision {at}")));
+            return Err(Error::Backend(format!(
+                "import_as_stored needs an empty store; this one is at revision {at}"
+            )));
         }
         {
             let mut put_latest = tx.prepare_cached(PUT_LATEST).map_err(db)?;
@@ -1657,12 +1890,24 @@ impl SqliteBackend {
                 let r = row?;
                 set_owner_refs(&tx, &key_of(r.key.clone())?, Some(&r.value))?;
                 put_latest
-                    .execute(params![r.key, r.main, r.sub, r.value, r.create_main, r.create_sub, r.version])
+                    .execute(params![
+                        r.key,
+                        r.main,
+                        r.sub,
+                        r.value,
+                        r.create_main,
+                        r.create_sub,
+                        r.version
+                    ])
                     .map_err(db)?;
             }
         }
         for (from, to) in jumps {
-            exec(&tx, "INSERT INTO jumps (from_main, to_main) VALUES (?1, ?2)", [main_i64(*from)?, main_i64(*to)?])?;
+            exec(
+                &tx,
+                "INSERT INTO jumps (from_main, to_main) VALUES (?1, ?2)",
+                [main_i64(*from)?, main_i64(*to)?],
+            )?;
         }
         set_meta(&tx, "head", head)?;
         set_meta(&tx, "compacted", head)?;
@@ -1696,15 +1941,18 @@ impl SqliteBackend {
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
         .map_err(db)?;
-        src.busy_timeout(Duration::from_millis(self.0.max_read_ms.load(Ordering::SeqCst)))
-            .map_err(db)?;
+        src.busy_timeout(Duration::from_millis(
+            self.0.max_read_ms.load(Ordering::SeqCst),
+        ))
+        .map_err(db)?;
         // The compacted copy is written once, straight to `dest`: no full-size copy to vacuum
         // and no WAL of that size beside it.
-        let into = dest.to_str().ok_or_else(|| {
-            Error::Backend(format!("{}: not a UTF-8 path", dest.display()))
-        })?;
+        let into = dest
+            .to_str()
+            .ok_or_else(|| Error::Backend(format!("{}: not a UTF-8 path", dest.display())))?;
         exec(&src, "VACUUM INTO ?1", [into])?;
-        let copy = Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(db)?;
+        let copy =
+            Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(db)?;
         let rev = meta(&copy, "head")?.unwrap_or(0);
         for f in files {
             let mut cursor = Vec::new();
@@ -1752,7 +2000,13 @@ impl SqliteBackend {
 }
 
 impl SqliteBackend {
-    fn get_in(&self, conn: &Connection, snap: &Snapshot, key: &str, at: u64) -> Result<Option<Version>> {
+    fn get_in(
+        &self,
+        conn: &Connection,
+        snap: &Snapshot,
+        key: &str,
+        at: u64,
+    ) -> Result<Option<Version>> {
         snap.readable(at)?;
         let was = if at == snap.head {
             AsOf::Live
@@ -1791,7 +2045,11 @@ impl Backend for SqliteBackend {
     }
 
     fn get_many(&self, keys: &[&str], at: u64) -> Result<Vec<Option<Version>>> {
-        self.read(|conn, snap, _| keys.iter().map(|k| self.get_in(conn, snap, k, at)).collect())
+        self.read(|conn, snap, _| {
+            keys.iter()
+                .map(|k| self.get_in(conn, snap, k, at))
+                .collect()
+        })
     }
 
     fn range(
@@ -1805,7 +2063,15 @@ impl Backend for SqliteBackend {
             snap.readable(at)?;
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
-            range_rows(conn, snap, source(snap, at, &self.0.history), &lo, hi.as_deref(), limit, deadline)
+            range_rows(
+                conn,
+                snap,
+                source(snap, at, &self.0.history),
+                &lo,
+                hi.as_deref(),
+                limit,
+                deadline,
+            )
         })
     }
 
@@ -1823,9 +2089,27 @@ impl Backend for SqliteBackend {
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
             if at == snap.head {
-                return range_rows(conn, snap, Source::State(state), &lo, hi.as_deref(), limit, deadline);
+                return range_rows(
+                    conn,
+                    snap,
+                    Source::State(state),
+                    &lo,
+                    hi.as_deref(),
+                    limit,
+                    deadline,
+                );
             }
-            range_in_state_at(conn, snap, state, &lo, hi.as_deref(), limit, at, &self.0.history, deadline)
+            range_in_state_at(
+                conn,
+                snap,
+                state,
+                &lo,
+                hi.as_deref(),
+                limit,
+                at,
+                &self.0.history,
+                deadline,
+            )
         })
     }
 
@@ -1842,9 +2126,18 @@ impl Backend for SqliteBackend {
             snap.readable(at)?;
             let hi = successor(prefix.as_bytes());
             if at == snap.head {
-                return newest_opened_at_head(conn, snap, prefix.as_bytes(), hi.as_deref(), since, limit, deadline);
+                return newest_opened_at_head(
+                    conn,
+                    snap,
+                    prefix.as_bytes(),
+                    hi.as_deref(),
+                    since,
+                    limit,
+                    deadline,
+                );
             }
-            let touched = lock(&self.0.history).touched_after(prefix.as_bytes(), hi.as_deref(), at)?;
+            let touched =
+                lock(&self.0.history).touched_after(prefix.as_bytes(), hi.as_deref(), at)?;
             let rows = newest_opened_at_head(
                 conn,
                 snap,
@@ -1856,12 +2149,17 @@ impl Backend for SqliteBackend {
             )?;
             let mut merged: Vec<(i64, String, Version)> = rows
                 .into_iter()
-                .filter(|(k, _)| touched.binary_search_by(|(t, _)| t.as_str().cmp(k)).is_err())
+                .filter(|(k, _)| {
+                    touched
+                        .binary_search_by(|(t, _)| t.as_str().cmp(k))
+                        .is_err()
+                })
                 .filter_map(|(k, v)| Some((state_store::backend::opened_at_of(&v.value)?, k, v)))
                 .collect();
             merged.extend(touched.into_iter().filter_map(|(k, v)| {
                 let v = v?;
-                let opened = state_store::backend::opened_at_of(&v.value).filter(|o| *o >= since)?;
+                let opened =
+                    state_store::backend::opened_at_of(&v.value).filter(|o| *o >= since)?;
                 Some((opened, k, v))
             }));
             merged.sort_by(|a, b| (b.0, &b.1).cmp(&(a.0, &a.1)));
@@ -1880,7 +2178,15 @@ impl Backend for SqliteBackend {
     ) -> Result<Vec<(String, Version)>> {
         self.read(|conn, snap, deadline| {
             snap.readable(at)?;
-            rows_outside(conn, snap, source(snap, at, &self.0.history), skip, after, limit, deadline)
+            rows_outside(
+                conn,
+                snap,
+                source(snap, at, &self.0.history),
+                skip,
+                after,
+                limit,
+                deadline,
+            )
         })
     }
 
@@ -1899,14 +2205,20 @@ impl Backend for SqliteBackend {
                     deadline()?;
                     let key = key_of(r.get::<_, Vec<u8>>(0).map_err(db)?)?;
                     let bytes: i64 = r.get(1).map_err(db)?;
-                    let u = page.prefixes.entry(state_store::backend::usage_prefix(&key).to_string()).or_default();
+                    let u = page
+                        .prefixes
+                        .entry(state_store::backend::usage_prefix(&key).to_string())
+                        .or_default();
                     u.keys += 1;
                     u.bytes += u64::try_from(bytes).unwrap_or(0);
                     page.examined += 1;
                     last = Some(key);
                 }
             }
-            steps.fetch_add(u64::try_from(stmt.reset_status(rusqlite::StatementStatus::VmStep)).unwrap_or(0), Ordering::Relaxed);
+            steps.fetch_add(
+                u64::try_from(stmt.reset_status(rusqlite::StatementStatus::VmStep)).unwrap_or(0),
+                Ordering::Relaxed,
+            );
             if page.examined == limit {
                 page.next = last;
             }
@@ -1914,9 +2226,15 @@ impl Backend for SqliteBackend {
         })
     }
 
-    fn version_usage_page(&self, after: Option<(&str, u64)>, limit: usize) -> Result<VersionUsagePage> {
+    fn version_usage_page(
+        &self,
+        after: Option<(&str, u64)>,
+        limit: usize,
+    ) -> Result<VersionUsagePage> {
         self.read(|conn, _snap, deadline| {
-            let (key, main) = after.map_or((Vec::new(), -1), |(k, m)| (k.as_bytes().to_vec(), i64::try_from(m).unwrap_or(i64::MAX)));
+            let (key, main) = after.map_or((Vec::new(), -1), |(k, m)| {
+                (k.as_bytes().to_vec(), i64::try_from(m).unwrap_or(i64::MAX))
+            });
             let sql_limit = i64::try_from(limit).unwrap_or(i64::MAX);
             let mut page = VersionUsagePage::default();
             let mut last = None;
@@ -1929,16 +2247,20 @@ impl Backend for SqliteBackend {
                     let key = key_of(r.get::<_, Vec<u8>>(0).map_err(db)?)?;
                     let main: i64 = r.get(1).map_err(db)?;
                     let bytes: i64 = r.get(2).map_err(db)?;
-                    let u = page.prefixes.entry(state_store::backend::usage_prefix(&key).to_string()).or_default();
+                    let u = page
+                        .prefixes
+                        .entry(state_store::backend::usage_prefix(&key).to_string())
+                        .or_default();
                     u.versions += 1;
                     u.version_bytes += u64::try_from(bytes).unwrap_or(0);
                     page.examined += 1;
                     last = Some((key, u64::try_from(main).unwrap_or(0)));
                 }
             }
-            self.0
-                .read_steps
-                .fetch_add(u64::try_from(stmt.reset_status(rusqlite::StatementStatus::VmStep)).unwrap_or(0), Ordering::Relaxed);
+            self.0.read_steps.fetch_add(
+                u64::try_from(stmt.reset_status(rusqlite::StatementStatus::VmStep)).unwrap_or(0),
+                Ordering::Relaxed,
+            );
             if page.examined == limit {
                 page.next = last;
             }
@@ -1954,11 +2276,16 @@ impl Backend for SqliteBackend {
     fn file_bytes(&self) -> Result<(u64, u64)> {
         self.read(|conn, _snap, _deadline| {
             let pragma = |name: &str| -> Result<u64> {
-                let n: i64 = conn.pragma_query_value(None, name, |r| r.get(0)).map_err(db)?;
+                let n: i64 = conn
+                    .pragma_query_value(None, name, |r| r.get(0))
+                    .map_err(db)?;
                 Ok(u64::try_from(n).unwrap_or(0))
             };
             let size = pragma("page_size")?;
-            Ok((pragma("page_count")? * size, pragma("freelist_count")? * size))
+            Ok((
+                pragma("page_count")? * size,
+                pragma("freelist_count")? * size,
+            ))
         })
     }
 
@@ -2037,7 +2364,10 @@ impl Backend for SqliteBackend {
         }
         for wr in batch {
             if matches!(wr, Write::Put { prev: Some(_), .. }) && self.filed(wr.key()).is_some() {
-                return Err(Error::Backend(format!("{}: a filed row is written once", wr.key())));
+                return Err(Error::Backend(format!(
+                    "{}: a filed row is written once",
+                    wr.key()
+                )));
             }
         }
         let now = self.0.wall.now_ms();
@@ -2057,7 +2387,13 @@ impl Backend for SqliteBackend {
             .dated
             .iter()
             .enumerate()
-            .map(|(i, f)| if batch.iter().any(|w| self.filed(w.key()) == Some(i)) { f.handles() } else { Vec::new() })
+            .map(|(i, f)| {
+                if batch.iter().any(|w| self.filed(w.key()) == Some(i)) {
+                    f.handles()
+                } else {
+                    Vec::new()
+                }
+            })
             .collect();
         {
             let mut current = tx
@@ -2093,7 +2429,12 @@ impl Backend for SqliteBackend {
                         };
                         if let Some(fam) = filed_key {
                             previous = None;
-                            filed[fam].push(SideRow { key, sub: sub as u32, value, create_rev: *create_rev });
+                            filed[fam].push(SideRow {
+                                key,
+                                sub: sub as u32,
+                                value,
+                                create_rev: *create_rev,
+                            });
                         } else {
                             set_owner_refs(&tx, key, Some(value))?;
                             put_latest
@@ -2177,13 +2518,18 @@ impl Backend for SqliteBackend {
             let e = self.clear_sides(&wrote, main, e);
             if let (Some(o), Some(mark)) = (lock(&self.0.outbox).as_mut(), mark) {
                 if let Err(u) = o.undo(mark) {
-                    return Err(Error::Backend(format!("{e}; the outbox could not take back main {main}: {u}")));
+                    return Err(Error::Backend(format!(
+                        "{e}; the outbox could not take back main {main}: {u}"
+                    )));
                 }
             }
             return Err(e);
         }
         committing.confirm();
-        *lock(&self.0.last_commit) = CommitNote { writer_wait, checkpointed: backfilled != self.backfill() };
+        *lock(&self.0.last_commit) = CommitNote {
+            writer_wait,
+            checkpointed: backfilled != self.backfill(),
+        };
         self.0.head.store(main, Ordering::SeqCst);
         self.0.checkpointer.committed();
         let draining = state_store::phases::begin_unconfirmed(state_store::phases::Phase::Drain);
@@ -2235,25 +2581,60 @@ mod tests {
         let t0 = std::time::Instant::now();
         let mut last = None;
         assert!(report_due(&mut last, "disk I/O error", t0));
-        assert!(!report_due(&mut last, "disk I/O error", t0 + Duration::from_secs(1)));
-        assert!(report_due(&mut last, "database is locked", t0 + Duration::from_secs(2)));
-        assert!(!report_due(&mut last, "database is locked", t0 + Duration::from_secs(3599)));
-        assert!(report_due(&mut last, "database is locked", t0 + Duration::from_secs(3602)));
+        assert!(!report_due(
+            &mut last,
+            "disk I/O error",
+            t0 + Duration::from_secs(1)
+        ));
+        assert!(report_due(
+            &mut last,
+            "database is locked",
+            t0 + Duration::from_secs(2)
+        ));
+        assert!(!report_due(
+            &mut last,
+            "database is locked",
+            t0 + Duration::from_secs(3599)
+        ));
+        assert!(report_due(
+            &mut last,
+            "database is locked",
+            t0 + Duration::from_secs(3602)
+        ));
     }
 
     #[test]
     fn a_passive_checkpoint_a_reader_holds_back_is_not_complete() {
         let dir = testkit::TempDir::new("sqlite-passive-partial");
         let path = dir.path().join("s.db");
-        let b = SqliteBackend::open(&path, Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
-        let put = |prev: Option<Rev>, n: u64| Write::Put { key: "k".into(), value: vec![1; 4096], create_rev: Rev::new(1, 0), prev: prev.map(|_| Rev::new(n, 0)) };
+        let b = SqliteBackend::open(
+            &path,
+            Options {
+                checkpoint_every: u64::MAX,
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        let put = |prev: Option<Rev>, n: u64| Write::Put {
+            key: "k".into(),
+            value: vec![1; 4096],
+            create_rev: Rev::new(1, 0),
+            prev: prev.map(|_| Rev::new(n, 0)),
+        };
         b.commit(0, &[put(None, 0)]).unwrap();
         let reader = connect(&path).unwrap();
         exec(&reader, "BEGIN", []).unwrap();
-        reader.prepare("SELECT count(*) FROM latest").unwrap().query_row([], |r| r.get::<_, i64>(0)).unwrap();
+        reader
+            .prepare("SELECT count(*) FROM latest")
+            .unwrap()
+            .query_row([], |r| r.get::<_, i64>(0))
+            .unwrap();
         b.commit(1, &[put(Some(Rev::new(1, 0)), 1)]).unwrap();
         let ck = connect(&path).unwrap();
-        assert!(!passive_complete(&ck).unwrap(), "frames past the reader's snapshot were counted as copied");
+        assert!(
+            !passive_complete(&ck).unwrap(),
+            "frames past the reader's snapshot were counted as copied"
+        );
         exec(&reader, "COMMIT", []).unwrap();
         assert!(passive_complete(&ck).unwrap());
     }
@@ -2285,9 +2666,24 @@ mod tests {
                 Ok(())
             })
         };
-        let b = SqliteBackend::open(&path, Options { commit_probe: Some(probe), ..Options::default() }).unwrap();
-        let put = |key: &str| Write::Put { key: key.into(), value: vec![7u8; 1 << 10], create_rev: Rev::new(1, 0), prev: None };
-        assert!(b.backfill().is_some(), "the WAL index must be readable or no commit can report a checkpoint");
+        let b = SqliteBackend::open(
+            &path,
+            Options {
+                commit_probe: Some(probe),
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        let put = |key: &str| Write::Put {
+            key: key.into(),
+            value: vec![7u8; 1 << 10],
+            create_rev: Rev::new(1, 0),
+            prev: None,
+        };
+        assert!(
+            b.backfill().is_some(),
+            "the WAL index must be readable or no commit can report a checkpoint"
+        );
         let mut head = b.head().unwrap();
         head = b.commit(head, &[put("a")]).unwrap();
         assert!(!b.last_commit().checkpointed);
@@ -2303,23 +2699,58 @@ mod tests {
     fn a_checkpoint_completion_is_signalled_once_checkpoint_every_commits_have_landed() {
         let dir = testkit::TempDir::new("sqlite-signal");
         let path = dir.path().join("s.db");
-        let b = SqliteBackend::open(&path, Options { checkpoint_every: 4, ..Options::default() }).unwrap();
-        let put = |key: &str| Write::Put { key: key.into(), value: vec![7u8; 1 << 10], create_rev: Rev::new(1, 0), prev: None };
+        let b = SqliteBackend::open(
+            &path,
+            Options {
+                checkpoint_every: 4,
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        let put = |key: &str| Write::Put {
+            key: key.into(),
+            value: vec![7u8; 1 << 10],
+            create_rev: Rev::new(1, 0),
+            prev: None,
+        };
         let mut head = b.head().unwrap();
         for k in ["a", "b", "c", "d"] {
             head = b.commit(head, &[put(k)]).unwrap();
         }
-        assert_eq!(bench::await_checkpoint(&b, 0, Duration::from_secs(60)), Some(1));
-        assert_eq!(std::fs::metadata(format!("{}-wal", path.display())).unwrap().len(), 0);
+        assert_eq!(
+            bench::await_checkpoint(&b, 0, Duration::from_secs(60)),
+            Some(1)
+        );
+        assert_eq!(
+            std::fs::metadata(format!("{}-wal", path.display()))
+                .unwrap()
+                .len(),
+            0
+        );
     }
 
     #[test]
     fn no_checkpoint_is_signalled_below_checkpoint_every() {
         let dir = testkit::TempDir::new("sqlite-no-signal");
-        let b = SqliteBackend::open(&dir.path().join("s.db"), Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
-        let put = Write::Put { key: "a".into(), value: vec![7u8; 1 << 10], create_rev: Rev::new(1, 0), prev: None };
+        let b = SqliteBackend::open(
+            &dir.path().join("s.db"),
+            Options {
+                checkpoint_every: u64::MAX,
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        let put = Write::Put {
+            key: "a".into(),
+            value: vec![7u8; 1 << 10],
+            create_rev: Rev::new(1, 0),
+            prev: None,
+        };
         b.commit(b.head().unwrap(), &[put]).unwrap();
-        assert_eq!(bench::await_checkpoint(&b, 0, Duration::from_millis(200)), None);
+        assert_eq!(
+            bench::await_checkpoint(&b, 0, Duration::from_millis(200)),
+            None
+        );
     }
 
     #[test]
@@ -2328,7 +2759,12 @@ mod tests {
         let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
         let rec = Arc::new(phases::Recorder::default());
         phases::track(rec.clone());
-        let put = Write::Put { key: "k".into(), value: b"1".to_vec(), create_rev: Rev::new(1, 0), prev: None };
+        let put = Write::Put {
+            key: "k".into(),
+            value: b"1".to_vec(),
+            create_rev: Rev::new(1, 0),
+            prev: None,
+        };
         let rev = b.commit(0, &[put]).unwrap();
         let s = rec.snapshot();
         let names: Vec<_> = s.phases.iter().map(|p| p.0).collect();
@@ -2338,7 +2774,10 @@ mod tests {
         phases::untrack();
         let s = rec.snapshot();
         let names: Vec<_> = s.phases.iter().map(|p| p.0).collect();
-        assert_eq!(names, ["writer_wait", "commit", "reader_wait", "read", "drain"]);
+        assert_eq!(
+            names,
+            ["writer_wait", "commit", "reader_wait", "read", "drain"]
+        );
         assert_eq!(s.reads, 1);
     }
 
@@ -2348,7 +2787,12 @@ mod tests {
         let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
         let rec = Arc::new(phases::Recorder::default());
         phases::track(rec.clone());
-        let bad = Write::Put { key: "k".into(), value: b"1".to_vec(), create_rev: Rev::new(u64::MAX, 0), prev: None };
+        let bad = Write::Put {
+            key: "k".into(),
+            value: b"1".to_vec(),
+            create_rev: Rev::new(u64::MAX, 0),
+            prev: None,
+        };
         assert!(b.commit(0, &[bad]).is_err());
         phases::untrack();
         let s = rec.snapshot();
@@ -2360,7 +2804,10 @@ mod tests {
     fn a_read_begun_past_the_request_deadline_is_refused() {
         let dir = testkit::TempDir::new("sqlite-read-deadline");
         let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
-        assert!(b.get("k", 0).is_ok(), "a read with no deadline bound is served");
+        assert!(
+            b.get("k", 0).is_ok(),
+            "a read with no deadline bound is served"
+        );
         let _passed = phases::deadline_scoped(std::time::Instant::now());
         assert!(matches!(b.get("k", 0), Err(Error::Deadline)));
     }
@@ -2369,7 +2816,10 @@ mod tests {
     fn every_connection_reads_through_a_page_cache_sized_for_a_large_file() {
         let dir = testkit::TempDir::new("sqlite-cache");
         let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
-        let size = |c: &Connection| c.pragma_query_value(None, "cache_size", |r| r.get::<_, i64>(0)).unwrap();
+        let size = |c: &Connection| {
+            c.pragma_query_value(None, "cache_size", |r| r.get::<_, i64>(0))
+                .unwrap()
+        };
         assert_eq!(size(&lock(&b.0.readers[0].conn)), -CACHE_KIB);
         assert_eq!(size(&lock(&b.0.writer).conn), -CACHE_KIB);
     }
@@ -2377,7 +2827,11 @@ mod tests {
     #[test]
     fn lowering_the_read_budget_lowers_the_readers_busy_timeout() {
         let dir = testkit::TempDir::new("sqlite-busy");
-        let opts = Options { max_read_ms: 120_000, readers: 1, ..Options::default() };
+        let opts = Options {
+            max_read_ms: 120_000,
+            readers: 1,
+            ..Options::default()
+        };
         let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
         b.set_max_read_ms(1_000);
         let busy: i64 = lock(&b.0.readers[0].conn)
@@ -2427,7 +2881,12 @@ mod tests {
             calls: AtomicUsize::new(0),
             free: AtomicUsize::new(usize::MAX),
         });
-        let opts = Options { max_read_ms: 100, readers: 1, clock: clock.clone(), ..Options::default() };
+        let opts = Options {
+            max_read_ms: 100,
+            readers: 1,
+            clock: clock.clone(),
+            ..Options::default()
+        };
         let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
         let count = |b: &SqliteBackend| {
             b.read(|conn, _, _| {
@@ -2449,7 +2908,12 @@ mod tests {
     }
 
     fn put_write(key: &str, value: &[u8], main: u64, prev: Option<Rev>) -> Write {
-        Write::Put { key: key.into(), value: value.to_vec(), create_rev: Rev::new(main, 0), prev }
+        Write::Put {
+            key: key.into(),
+            value: value.to_vec(),
+            create_rev: Rev::new(main, 0),
+            prev,
+        }
     }
 
     fn count(b: &SqliteBackend, table: &str) -> i64 {
@@ -2489,14 +2953,24 @@ mod tests {
                 exec(&w.conn, sql, []).unwrap();
             }
         }
-        assert!(b.commit(1, &[put_write("a", b"2", 2, Some(Rev::new(1, 0)))]).is_err());
+        assert!(b
+            .commit(1, &[put_write("a", b"2", 2, Some(Rev::new(1, 0)))])
+            .is_err());
         assert_eq!(b.head().unwrap(), 1);
-        assert_eq!(lock(&b.0.history).newest(), 1, "the ring holds nothing above the head");
+        assert_eq!(
+            lock(&b.0.history).newest(),
+            1,
+            "the ring holds nothing above the head"
+        );
         assert_eq!(b.outbox_mains().unwrap(), [1], "nor does the outbox");
         exec(&lock(&b.0.writer).conn, "DROP TRIGGER refuse", []).unwrap();
-        b.commit(1, &[put_write("a", b"3", 2, Some(Rev::new(1, 0)))]).unwrap();
+        b.commit(1, &[put_write("a", b"3", 2, Some(Rev::new(1, 0)))])
+            .unwrap();
         let log = b.log(0, 10).unwrap();
-        let seen: Vec<_> = log.iter().map(|e| (e.rev.main, e.value.clone().unwrap())).collect();
+        let seen: Vec<_> = log
+            .iter()
+            .map(|e| (e.rev.main, e.value.clone().unwrap()))
+            .collect();
         assert_eq!(seen, [(1, b"1".to_vec()), (2, b"3".to_vec())]);
         assert_eq!(b.outbox_mains().unwrap(), [1, 2]);
         assert_eq!(b.get("a", 1).unwrap().unwrap().value, b"1");
@@ -2528,7 +3002,10 @@ mod tests {
             .iter()
             .step_by(2)
             .enumerate()
-            .map(|(i, k)| Write::Delete { key: k.clone(), prev: Rev::new(1, (i * 2) as u32) })
+            .map(|(i, k)| Write::Delete {
+                key: k.clone(),
+                prev: Rev::new(1, (i * 2) as u32),
+            })
             .collect();
         batch.push(put_write("p/new", b"n", 2, None));
         b.commit(1, &batch).unwrap();
@@ -2587,7 +3064,12 @@ mod tests {
                 KEYS * VERSIONS - 1
             );
             exec(&conn, &versions, []).unwrap();
-            exec(&conn, &format!("UPDATE meta SET value = {VERSIONS} WHERE name = 'head'"), []).unwrap();
+            exec(
+                &conn,
+                &format!("UPDATE meta SET value = {VERSIONS} WHERE name = 'head'"),
+                [],
+            )
+            .unwrap();
         }
         let opts = Options {
             jump_on_open: false,
@@ -2598,7 +3080,10 @@ mod tests {
 
     fn plan(b: &SqliteBackend, sql: &str) -> Vec<String> {
         let w = lock(&b.0.writer);
-        let mut stmt = w.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let mut stmt = w
+            .conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap();
         let mut rows = stmt.raw_query();
         let mut out = Vec::new();
         while let Some(r) = rows.next().unwrap() {
@@ -2622,9 +3107,22 @@ mod tests {
         let keys: Vec<&str> = page.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(keys.len(), PAGE);
         assert_eq!(keys[0], "p/025001");
-        assert_eq!(page[0].1.mod_rev, Rev::new(VERSIONS as u64, 25_001), "the newest version");
-        assert!(steps <= 20 * PAGE as u64, "{steps} VM steps for a page of {PAGE}");
-        for sql in [LATEST_BOUNDED, LATEST_OPEN, STATE_BOUNDED, STATE_OPEN, GET_LATEST] {
+        assert_eq!(
+            page[0].1.mod_rev,
+            Rev::new(VERSIONS as u64, 25_001),
+            "the newest version"
+        );
+        assert!(
+            steps <= 20 * PAGE as u64,
+            "{steps} VM steps for a page of {PAGE}"
+        );
+        for sql in [
+            LATEST_BOUNDED,
+            LATEST_OPEN,
+            STATE_BOUNDED,
+            STATE_OPEN,
+            GET_LATEST,
+        ] {
             for step in plan(&b, sql) {
                 assert!(
                     !step.starts_with("SCAN") && !step.contains("TEMP B-TREE"),
@@ -2633,20 +3131,40 @@ mod tests {
             }
         }
         for sql in [STATE_BOUNDED, STATE_OPEN] {
-            assert!(plan(&b, sql).iter().any(|s| s.contains("latest_by_state")), "{sql}");
+            assert!(
+                plan(&b, sql).iter().any(|s| s.contains("latest_by_state")),
+                "{sql}"
+            );
         }
         let steps = plan(&b, GET_LATEST);
-        assert!(steps.iter().all(|s| s.contains("PRIMARY KEY") && !s.starts_with("SCAN")), "{steps:?}");
+        assert!(
+            steps
+                .iter()
+                .all(|s| s.contains("PRIMARY KEY") && !s.starts_with("SCAN")),
+            "{steps:?}"
+        );
     }
 
     /// Keys under `a/` (one rewritten five times), `b/` and `events/`, one commit each.
     fn usage_store(dir: &testkit::TempDir) -> SqliteBackend {
-        let b = SqliteBackend::open(&dir.path().join("u.db"), Options { day_receipts: false, ..Options::default() }).unwrap();
+        let b = SqliteBackend::open(
+            &dir.path().join("u.db"),
+            Options {
+                day_receipts: false,
+                ..Options::default()
+            },
+        )
+        .unwrap();
         let put = |key: &str, value: &[u8], prev: Option<Rev>| {
             let head = b.head().unwrap();
             b.commit(
                 head,
-                &[Write::Put { key: key.into(), value: value.to_vec(), create_rev: Rev::new(1, 0), prev }],
+                &[Write::Put {
+                    key: key.into(),
+                    value: value.to_vec(),
+                    create_rev: Rev::new(1, 0),
+                    prev,
+                }],
             )
             .unwrap();
             Rev::new(head + 1, 0)
@@ -2668,7 +3186,10 @@ mod tests {
     }
 
     fn vusage(versions: u64, version_bytes: u64) -> state_store::VersionUsage {
-        state_store::VersionUsage { versions, version_bytes }
+        state_store::VersionUsage {
+            versions,
+            version_bytes,
+        }
     }
 
     #[test]
@@ -2681,7 +3202,13 @@ mod tests {
         assert_eq!(page.prefixes["a/"], usage(2, 5));
         assert_eq!(page.prefixes["b/"], usage(2, 5));
         assert_eq!(page.prefixes["events/"], usage(2, 7));
-        assert!(b.version_usage_page(None, 1000).unwrap().prefixes.is_empty(), "a commit writes no version row");
+        assert!(
+            b.version_usage_page(None, 1000)
+                .unwrap()
+                .prefixes
+                .is_empty(),
+            "a commit writes no version row"
+        );
         for (i, key) in ["a/old", "a/older", "b/old"].iter().enumerate() {
             exec(
                 &lock(&b.0.writer).conn,
@@ -2704,7 +3231,8 @@ mod tests {
             for sql in SCHEMA {
                 exec(&conn, sql, []).unwrap();
             }
-            let hot = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200000)
+            let hot =
+                "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200000)
                  INSERT INTO versions (key, main, sub, value, create_main, create_sub, version)
                  SELECT CAST('a/hot' AS BLOB), i, 0, CAST('v' AS BLOB), 1, 0, i FROM n";
             exec(&conn, hot, []).unwrap();
@@ -2717,9 +3245,21 @@ mod tests {
                 )
                 .unwrap();
             }
-            exec(&conn, "UPDATE meta SET value = 200000 WHERE name = 'head'", []).unwrap();
+            exec(
+                &conn,
+                "UPDATE meta SET value = 200000 WHERE name = 'head'",
+                [],
+            )
+            .unwrap();
         }
-        SqliteBackend::open(&path, Options { jump_on_open: false, ..Options::default() }).unwrap()
+        SqliteBackend::open(
+            &path,
+            Options {
+                jump_on_open: false,
+                ..Options::default()
+            },
+        )
+        .unwrap()
     }
 
     #[test]
@@ -2745,20 +3285,36 @@ mod tests {
         assert_eq!(page.next, Some(("a/hot".to_string(), 1000)));
         assert_eq!(page.prefixes["a/"].versions, 1000);
         assert!(steps <= 20 * 1000, "{steps} VM steps");
-        let literal = VERSION_USAGE.replace("?1", "X''").replace("?2", "-1").replace("?3", "10");
+        let literal = VERSION_USAGE
+            .replace("?1", "X''")
+            .replace("?2", "-1")
+            .replace("?3", "10");
         let steps = plan(&b, &literal);
-        assert!(steps.iter().any(|s| s.starts_with("SEARCH versions USING INDEX sqlite_autoindex_versions_1")), "{steps:?}");
-        assert!(steps.iter().all(|s| !s.starts_with("SCAN") && !s.contains("TEMP B-TREE")), "{steps:?}");
+        assert!(
+            steps
+                .iter()
+                .any(|s| s.starts_with("SEARCH versions USING INDEX sqlite_autoindex_versions_1")),
+            "{steps:?}"
+        );
+        assert!(
+            steps
+                .iter()
+                .all(|s| !s.starts_with("SCAN") && !s.contains("TEMP B-TREE")),
+            "{steps:?}"
+        );
     }
 
     #[test]
     fn walking_versions_pages_sums_to_the_table() {
         let dir = testkit::TempDir::new("sqlite-versions-walk");
         let b = history_store(&dir);
-        let mut sum: std::collections::BTreeMap<String, state_store::VersionUsage> = Default::default();
+        let mut sum: std::collections::BTreeMap<String, state_store::VersionUsage> =
+            Default::default();
         let mut after: Option<(String, u64)> = None;
         loop {
-            let page = b.version_usage_page(after.as_ref().map(|(k, m)| (k.as_str(), *m)), 10_000).unwrap();
+            let page = b
+                .version_usage_page(after.as_ref().map(|(k, m)| (k.as_str(), *m)), 10_000)
+                .unwrap();
             assert!(page.examined <= 10_000);
             for (p, u) in &page.prefixes {
                 sum.entry(p.clone()).or_default().add(u);
@@ -2852,13 +3408,24 @@ mod tests {
         let b = fixture(&dir);
         let head = b.head().unwrap();
         b.take_read_steps();
-        let page = b.range_in_state("p/", "s3", Some("p/010000"), PAGE, head).unwrap();
+        let page = b
+            .range_in_state("p/", "s3", Some("p/010000"), PAGE, head)
+            .unwrap();
         let steps = b.take_read_steps();
         assert_eq!(page.len(), PAGE);
-        assert!(steps <= 20 * PAGE as u64, "{steps} VM steps for a page of {PAGE}");
-        let scanned =
-            state_store::backend::range_in_state_by_scan(&b, "p/", "s3", Some("p/010000"), PAGE, head)
-                .unwrap();
+        assert!(
+            steps <= 20 * PAGE as u64,
+            "{steps} VM steps for a page of {PAGE}"
+        );
+        let scanned = state_store::backend::range_in_state_by_scan(
+            &b,
+            "p/",
+            "s3",
+            Some("p/010000"),
+            PAGE,
+            head,
+        )
+        .unwrap();
         assert_eq!(page, scanned);
     }
 
@@ -2867,17 +3434,22 @@ mod tests {
     /// ring's touched keys, and answers as the scan does: a key that left the state since is
     /// still in it at `at`, one that entered it since is not.
     #[test]
-    fn a_state_filtered_page_below_the_head_reads_o_page_rows_and_judges_touched_keys_at_the_revision() {
+    fn a_state_filtered_page_below_the_head_reads_o_page_rows_and_judges_touched_keys_at_the_revision(
+    ) {
         let dir = testkit::TempDir::new("sqlite-state-below");
         let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
-        let doc = |state: &str| serde_json::to_vec(&serde_json::json!({ "data": { "state": state } })).unwrap();
+        let doc = |state: &str| {
+            serde_json::to_vec(&serde_json::json!({ "data": { "state": state } })).unwrap()
+        };
         let put = |key: String, state: &str, prev: Option<Rev>| Write::Put {
             key,
             value: doc(state),
             create_rev: Rev::new(1, 0),
             prev,
         };
-        let mut batch: Vec<Write> = (0..20_000).map(|i| put(format!("life/t{i:06}"), "done", None)).collect();
+        let mut batch: Vec<Write> = (0..20_000)
+            .map(|i| put(format!("life/t{i:06}"), "done", None))
+            .collect();
         batch.extend((0..30).map(|i| put(format!("life/l{i:02}"), "live", None)));
         let at = b.commit(b.head().unwrap(), &batch).unwrap();
         let live_5 = b.get("life/l05", at).unwrap().unwrap();
@@ -2900,10 +3472,18 @@ mod tests {
         assert!(keys.contains(&"life/l05"), "left the state after `at`");
         assert!(!keys.contains(&"life/t000007") && !keys.contains(&"life/l99"));
         for (state, limit) in [("live", 100), ("live", 7), ("done", 100)] {
-            let by_scan = state_store::backend::range_in_state_by_scan(&b, "life/", state, None, limit, at).unwrap();
-            assert_eq!(b.range_in_state("life/", state, None, limit, at).unwrap(), by_scan, "{state} {limit}");
+            let by_scan =
+                state_store::backend::range_in_state_by_scan(&b, "life/", state, None, limit, at)
+                    .unwrap();
+            assert_eq!(
+                b.range_in_state("life/", state, None, limit, at).unwrap(),
+                by_scan,
+                "{state} {limit}"
+            );
         }
-        let after = b.range_in_state("life/", "live", Some("life/l10"), 100, at).unwrap();
+        let after = b
+            .range_in_state("life/", "live", Some("life/l10"), 100, at)
+            .unwrap();
         assert_eq!(after.len(), 19);
     }
 
@@ -2917,17 +3497,49 @@ mod tests {
         let obj = |data: serde_json::Value| {
             serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": data })).unwrap()
         };
-        let audit = |machine: &str, to: &str, at: i64, applied: bool| {
-            serde_json::json!({ "machine": machine, "lc_key": "sp-a", "to_state": to, "at": at, "applied": applied })
-        };
+        let audit = |machine: &str, to: &str, at: i64, applied: bool| serde_json::json!({ "machine": machine, "lc_key": "sp-a", "to_state": to, "at": at, "applied": applied });
         let rows: Vec<(&str, i64, Vec<u8>)> = vec![
-            ("deliveries/sp-a", 9, obj(serde_json::json!({ "bead_id": "sp-a", "state": "Batched" }))),
-            ("deliveries/sp-b", 9, obj(serde_json::json!({ "bead_id": "sp-b", "state": "Queued" }))),
-            ("deliveries/sp-c/x", 9, obj(serde_json::json!({ "state": "Queued" }))),
-            ("history/sp-a/0/import/1", 1, obj(serde_json::json!({ "seq": 1, "audit": audit("delivery", "QUEUED", 10, true) }))),
-            ("history/sp-a/0/import/2", 1, obj(serde_json::json!({ "seq": 2, "audit": audit("delivery", "BATCHED", 20, true) }))),
-            ("history/sp-a/0/import/3", 1, obj(serde_json::json!({ "seq": 3, "audit": audit("bead", "BATCHED", 99, true) }))),
-            ("history/sp-a/0/import/4", 1, obj(serde_json::json!({ "seq": 4, "audit": audit("delivery", "BATCHED", 98, false) }))),
+            (
+                "deliveries/sp-a",
+                9,
+                obj(serde_json::json!({ "bead_id": "sp-a", "state": "Batched" })),
+            ),
+            (
+                "deliveries/sp-b",
+                9,
+                obj(serde_json::json!({ "bead_id": "sp-b", "state": "Queued" })),
+            ),
+            (
+                "deliveries/sp-c/x",
+                9,
+                obj(serde_json::json!({ "state": "Queued" })),
+            ),
+            (
+                "history/sp-a/0/import/1",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 1, "audit": audit("delivery", "QUEUED", 10, true) }),
+                ),
+            ),
+            (
+                "history/sp-a/0/import/2",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 2, "audit": audit("delivery", "BATCHED", 20, true) }),
+                ),
+            ),
+            (
+                "history/sp-a/0/import/3",
+                1,
+                obj(serde_json::json!({ "seq": 3, "audit": audit("bead", "BATCHED", 99, true) })),
+            ),
+            (
+                "history/sp-a/0/import/4",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 4, "audit": audit("delivery", "BATCHED", 98, false) }),
+                ),
+            ),
             ("history/sp-a/5/r1", 7, obj(serde_json::json!({}))),
             (
                 "events/00000000000000000007",
@@ -2965,9 +3577,16 @@ mod tests {
             let v = b.get(key, 9).unwrap().unwrap().value;
             serde_json::from_slice::<serde_json::Value>(&v).unwrap()["data"]["entered"].clone()
         };
-        assert_eq!(entered("deliveries/sp-a"), serde_json::json!({ "QUEUED": 10, "BATCHED": 30 }));
+        assert_eq!(
+            entered("deliveries/sp-a"),
+            serde_json::json!({ "QUEUED": 10, "BATCHED": 30 })
+        );
         assert_eq!(entered("deliveries/sp-b"), serde_json::json!({}));
-        assert_eq!(entered("deliveries/sp-c/x"), serde_json::Value::Null, "not a delivery");
+        assert_eq!(
+            entered("deliveries/sp-c/x"),
+            serde_json::Value::Null,
+            "not a delivery"
+        );
         let w = lock(&b.0.writer);
         let mirrored: i64 = w
             .conn
@@ -2991,7 +3610,12 @@ mod tests {
         let obj = |data: serde_json::Value| {
             serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": data })).unwrap()
         };
-        let audit = |id: &str, machine: &str, event: &str, at: i64, applied: bool, evidence: serde_json::Value| {
+        let audit = |id: &str,
+                     machine: &str,
+                     event: &str,
+                     at: i64,
+                     applied: bool,
+                     evidence: serde_json::Value| {
             serde_json::json!({ "machine": machine, "lc_key": id, "event": event, "at": at,
                                 "applied": applied, "evidence": evidence })
         };
@@ -3000,13 +3624,41 @@ mod tests {
         let eject = serde_json::json!({ "Eject": { "bead_id": "sp-a", "reason": "red" } });
         let rows: Vec<(&str, i64, Vec<u8>)> = vec![
             ("batches/spira/b-1", 9, round("b-1")),
-            ("batches/spira/b-1/progress", 9, obj(serde_json::json!({ "done": 1 }))),
+            (
+                "batches/spira/b-1/progress",
+                9,
+                obj(serde_json::json!({ "done": 1 })),
+            ),
             ("batches/spira/spira/queue/x", 9, round("spira/queue/x")),
             ("batches/spira/b-2", 9, round("b-2")),
-            ("history/b-1/0/import/1", 1, obj(serde_json::json!({ "seq": 1, "audit": audit("b-1", "batch", "PassStarted", 10, true, serde_json::json!({ "n": 1 })) }))),
-            ("history/b-1/0/import/2", 1, obj(serde_json::json!({ "seq": 2, "audit": audit("b-1", "batch", "MemberAdded", 15, true, nil.clone()) }))),
-            ("history/b-1/0/import/3", 1, obj(serde_json::json!({ "seq": 3, "audit": audit("b-1", "bead", "PassStarted", 99, true, nil.clone()) }))),
-            ("history/b-1/0/import/4", 1, obj(serde_json::json!({ "seq": 4, "audit": audit("b-1", "batch", "PassRed", 98, false, nil.clone()) }))),
+            (
+                "history/b-1/0/import/1",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 1, "audit": audit("b-1", "batch", "PassStarted", 10, true, serde_json::json!({ "n": 1 })) }),
+                ),
+            ),
+            (
+                "history/b-1/0/import/2",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 2, "audit": audit("b-1", "batch", "MemberAdded", 15, true, nil.clone()) }),
+                ),
+            ),
+            (
+                "history/b-1/0/import/3",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 3, "audit": audit("b-1", "bead", "PassStarted", 99, true, nil.clone()) }),
+                ),
+            ),
+            (
+                "history/b-1/0/import/4",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 4, "audit": audit("b-1", "batch", "PassRed", 98, false, nil.clone()) }),
+                ),
+            ),
             ("history/b-1/5/r1", 7, obj(serde_json::json!({}))),
             ("history/b-1/5/r2", 7, obj(serde_json::json!({}))),
             (
@@ -3033,7 +3685,10 @@ mod tests {
         ];
         {
             let conn = Connection::open(&path).unwrap();
-            for sql in SCHEMA.iter().chain(MIGRATIONS[..5].iter().flat_map(|m| m.iter())) {
+            for sql in SCHEMA
+                .iter()
+                .chain(MIGRATIONS[..5].iter().flat_map(|m| m.iter()))
+            {
                 exec(&conn, sql, []).unwrap();
             }
             conn.pragma_update(None, "user_version", 5).unwrap();
@@ -3074,8 +3729,15 @@ mod tests {
             serde_json::json!({ "fetched": [], "last_at": 40 }),
             "a round id holding a slash finds its own history"
         );
-        assert_eq!(events("batches/spira/b-2"), serde_json::json!({ "fetched": [], "last_at": null }));
-        assert_eq!(events("batches/spira/b-1/progress"), serde_json::Value::Null, "not a round");
+        assert_eq!(
+            events("batches/spira/b-2"),
+            serde_json::json!({ "fetched": [], "last_at": null })
+        );
+        assert_eq!(
+            events("batches/spira/b-1/progress"),
+            serde_json::Value::Null,
+            "not a round"
+        );
         let w = lock(&b.0.writer);
         let mirrored: i64 = w
             .conn
@@ -3094,18 +3756,50 @@ mod tests {
     fn migration_7_fills_a_manual_held_records_manual_hold_from_its_history() {
         let dir = testkit::TempDir::new("sqlite-m7");
         let path = dir.path().join("m7.db");
-        let obj = |data: serde_json::Value| serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": data })).unwrap();
+        let obj = |data: serde_json::Value| {
+            serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": data })).unwrap()
+        };
         let hold = |id: &str, kind: &str, cause: &str, detail: &str, at: i64, applied: bool| {
             serde_json::json!({ "machine": "bead", "lc_key": id, "event": "Hold", "at": at, "applied": applied,
                 "evidence": { "Hold": { "kind": kind, "cause": cause, "detail": detail } } })
         };
         let rows: Vec<(&str, i64, Vec<u8>)> = vec![
-            ("lifecycle/sp-a", 9, obj(serde_json::json!({ "bead_id": "sp-a", "holds": ["Manual", "Wait"] }))),
-            ("lifecycle/sp-b", 9, obj(serde_json::json!({ "bead_id": "sp-b", "holds": [] }))),
-            ("lifecycle/sp-c", 9, obj(serde_json::json!({ "bead_id": "sp-c", "holds": ["Wait"] }))),
-            ("history/sp-a/0/import/1", 1, obj(serde_json::json!({ "seq": 1, "audit": hold("sp-a", "Manual", "manual-hold", "first", 10, true) }))),
-            ("history/sp-a/0/import/2", 1, obj(serde_json::json!({ "seq": 2, "audit": hold("sp-a", "Wait", "unlanded-blocker", "wait", 99, true) }))),
-            ("history/sp-a/0/import/3", 1, obj(serde_json::json!({ "seq": 3, "audit": hold("sp-a", "Manual", "manual-hold", "refused", 98, false) }))),
+            (
+                "lifecycle/sp-a",
+                9,
+                obj(serde_json::json!({ "bead_id": "sp-a", "holds": ["Manual", "Wait"] })),
+            ),
+            (
+                "lifecycle/sp-b",
+                9,
+                obj(serde_json::json!({ "bead_id": "sp-b", "holds": [] })),
+            ),
+            (
+                "lifecycle/sp-c",
+                9,
+                obj(serde_json::json!({ "bead_id": "sp-c", "holds": ["Wait"] })),
+            ),
+            (
+                "history/sp-a/0/import/1",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 1, "audit": hold("sp-a", "Manual", "manual-hold", "first", 10, true) }),
+                ),
+            ),
+            (
+                "history/sp-a/0/import/2",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 2, "audit": hold("sp-a", "Wait", "unlanded-blocker", "wait", 99, true) }),
+                ),
+            ),
+            (
+                "history/sp-a/0/import/3",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 3, "audit": hold("sp-a", "Manual", "manual-hold", "refused", 98, false) }),
+                ),
+            ),
             ("history/sp-a/5/r1", 7, obj(serde_json::json!({}))),
             (
                 "events/00000000000000000007",
@@ -3115,11 +3809,20 @@ mod tests {
                     "else": [hold("sp-a", "Manual", "manual-hold", "not taken", 97, true)],
                 } })),
             ),
-            ("history/sp-b/0/import/1", 1, obj(serde_json::json!({ "seq": 1, "audit": hold("sp-b", "Manual", "manual-hold", "lifted", 5, true) }))),
+            (
+                "history/sp-b/0/import/1",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 1, "audit": hold("sp-b", "Manual", "manual-hold", "lifted", 5, true) }),
+                ),
+            ),
         ];
         {
             let conn = Connection::open(&path).unwrap();
-            for sql in SCHEMA.iter().chain(MIGRATIONS[..6].iter().flat_map(|m| m.iter())) {
+            for sql in SCHEMA
+                .iter()
+                .chain(MIGRATIONS[..6].iter().flat_map(|m| m.iter()))
+            {
                 exec(&conn, sql, []).unwrap();
             }
             conn.pragma_update(None, "user_version", 6).unwrap();
@@ -3134,16 +3837,30 @@ mod tests {
             }
             exec(&conn, "UPDATE meta SET value = 9 WHERE name = 'head'", []).unwrap();
         }
-        let opts = Options { jump_on_open: false, ..Options::default() };
+        let opts = Options {
+            jump_on_open: false,
+            ..Options::default()
+        };
         let b = SqliteBackend::open(&path, opts).unwrap();
         assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
         let manual_hold = |key: &str| {
             let v = b.get(key, 9).unwrap().unwrap().value;
             serde_json::from_slice::<serde_json::Value>(&v).unwrap()["data"]["manual_hold"].clone()
         };
-        assert_eq!(manual_hold("lifecycle/sp-a"), serde_json::json!({ "at": 30, "cause": "supersede-request", "detail": "sp-z" }));
-        assert_eq!(manual_hold("lifecycle/sp-b"), serde_json::Value::Null, "unheld");
-        assert_eq!(manual_hold("lifecycle/sp-c"), serde_json::Value::Null, "no manual hold");
+        assert_eq!(
+            manual_hold("lifecycle/sp-a"),
+            serde_json::json!({ "at": 30, "cause": "supersede-request", "detail": "sp-z" })
+        );
+        assert_eq!(
+            manual_hold("lifecycle/sp-b"),
+            serde_json::Value::Null,
+            "unheld"
+        );
+        assert_eq!(
+            manual_hold("lifecycle/sp-c"),
+            serde_json::Value::Null,
+            "no manual hold"
+        );
         let w = lock(&b.0.writer);
         let mirrored: i64 = w
             .conn
@@ -3196,9 +3913,21 @@ mod tests {
         };
         let b = SqliteBackend::open(&path, opts).unwrap();
         assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
-        assert_eq!(b.owned_by("owners/o", None, 10, 6).unwrap(), ["deps/a", "deps/b"]);
-        assert_eq!(b.owned_by("owners/p", Some("deps/b"), 10, 6).unwrap(), ["deps/c"]);
-        assert_eq!(b.owned_by("owners/o", None, 10, 5), Err(Error::Stale { expected: 5, head: 6 }));
+        assert_eq!(
+            b.owned_by("owners/o", None, 10, 6).unwrap(),
+            ["deps/a", "deps/b"]
+        );
+        assert_eq!(
+            b.owned_by("owners/p", Some("deps/b"), 10, 6).unwrap(),
+            ["deps/c"]
+        );
+        assert_eq!(
+            b.owned_by("owners/o", None, 10, 5),
+            Err(Error::Stale {
+                expected: 5,
+                head: 6
+            })
+        );
     }
 
     #[test]
@@ -3206,7 +3935,10 @@ mod tests {
         let dir = testkit::TempDir::new("sqlite-owned-plan");
         let b = SqliteBackend::open(&dir.path().join("o.db"), Options::default()).unwrap();
         for step in plan(&b, OWNED_BY) {
-            assert!(!step.starts_with("SCAN") && !step.contains("TEMP B-TREE"), "{step}");
+            assert!(
+                !step.starts_with("SCAN") && !step.contains("TEMP B-TREE"),
+                "{step}"
+            );
         }
     }
 
@@ -3215,7 +3947,10 @@ mod tests {
         let dir = testkit::TempDir::new("sqlite-due-plan");
         let b = SqliteBackend::open(&dir.path().join("d.db"), Options::default()).unwrap();
         for step in plan(&b, DUE) {
-            assert!(!step.starts_with("SCAN") && !step.contains("TEMP B-TREE"), "{step}");
+            assert!(
+                !step.starts_with("SCAN") && !step.contains("TEMP B-TREE"),
+                "{step}"
+            );
         }
     }
 
@@ -3234,21 +3969,30 @@ mod tests {
         const HOUR: i64 = 3_600_000;
         let now = wall();
         let ttl = |secs: i64| {
-            serde_json::to_vec(&serde_json::json!({ "metadata": { "ttl_secs": secs }, "data": 1 })).unwrap()
+            serde_json::to_vec(&serde_json::json!({ "metadata": { "ttl_secs": secs }, "data": 1 }))
+                .unwrap()
         };
         let record = |at: i64| {
-            serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": { "at": at } })).unwrap()
+            serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": { "at": at } }))
+                .unwrap()
         };
         let rows: Vec<(String, i64, Vec<u8>)> = vec![
             ("intents/a".into(), 5, ttl(86_400)),
-            ("events/00000000000000000005".into(), 5, record(now - 25 * HOUR)),
+            (
+                "events/00000000000000000005".into(),
+                5,
+                record(now - 25 * HOUR),
+            ),
             ("intents/b".into(), 6, ttl(86_400)),
             ("events/00000000000000000006".into(), 6, record(now - HOUR)),
             ("telemetry/s".into(), 7, ttl(3_600)),
         ];
         {
             let conn = Connection::open(&path).unwrap();
-            for sql in SCHEMA.iter().chain(MIGRATIONS[..3].iter().flat_map(|m| m.iter())) {
+            for sql in SCHEMA
+                .iter()
+                .chain(MIGRATIONS[..3].iter().flat_map(|m| m.iter()))
+            {
                 exec(&conn, sql, []).unwrap();
             }
             conn.pragma_update(None, "user_version", 3).unwrap();
@@ -3278,7 +4022,10 @@ mod tests {
         assert_eq!(b.due(now as u64, 10, 7).unwrap(), ["intents/a"]);
         assert_eq!(expires("intents/b"), now - HOUR + 24 * HOUR);
         let s = expires("telemetry/s");
-        assert!(before + HOUR <= s && s <= after + HOUR, "{before} <= {s} <= {after} + 1h");
+        assert!(
+            before + HOUR <= s && s <= after + HOUR,
+            "{before} <= {s} <= {after} + 1h"
+        );
         let w = lock(&b.0.writer);
         let mirrored: i64 = w
             .conn
@@ -3298,13 +4045,23 @@ mod tests {
     fn migration_5_indexes_opened_at_for_the_keys_a_store_already_holds() {
         let dir = testkit::TempDir::new("sqlite-m5");
         let path = dir.path().join("m5.db");
-        let doc = |opened: i64| serde_json::to_vec(&serde_json::json!({ "data": { "opened_at": opened } })).unwrap();
-        let mut rows: Vec<(String, Vec<u8>)> = (0..2_000).map(|i| (format!("r/{i:05}"), doc(1_000 + (i * 7) % 2_000))).collect();
+        let doc = |opened: i64| {
+            serde_json::to_vec(&serde_json::json!({ "data": { "opened_at": opened } })).unwrap()
+        };
+        let mut rows: Vec<(String, Vec<u8>)> = (0..2_000)
+            .map(|i| (format!("r/{i:05}"), doc(1_000 + (i * 7) % 2_000)))
+            .collect();
         rows.push(("other/x".into(), doc(9_999)));
-        rows.push(("r/none".into(), br#"{"data":{"opened_at":"soon"}}"#.to_vec()));
+        rows.push((
+            "r/none".into(),
+            br#"{"data":{"opened_at":"soon"}}"#.to_vec(),
+        ));
         {
             let conn = Connection::open(&path).unwrap();
-            for sql in SCHEMA.iter().chain(MIGRATIONS[..4].iter().flat_map(|m| m.iter())) {
+            for sql in SCHEMA
+                .iter()
+                .chain(MIGRATIONS[..4].iter().flat_map(|m| m.iter()))
+            {
                 exec(&conn, sql, []).unwrap();
             }
             conn.pragma_update(None, "user_version", 4).unwrap();
@@ -3319,24 +4076,48 @@ mod tests {
             }
             exec(&conn, "UPDATE meta SET value = 1 WHERE name = 'head'", []).unwrap();
         }
-        let b = SqliteBackend::open(&path, Options { jump_on_open: false, ..Options::default() }).unwrap();
+        let b = SqliteBackend::open(
+            &path,
+            Options {
+                jump_on_open: false,
+                ..Options::default()
+            },
+        )
+        .unwrap();
         assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
         b.take_read_steps();
         let newest = b.range_newest_opened("r/", i64::MIN, 5, 1).unwrap();
         let steps = b.take_read_steps();
         assert!(steps <= 200, "{steps} VM steps for 5 of 2000 rows");
         let opened = |rows: &[(String, Version)]| -> Vec<i64> {
-            rows.iter().map(|(_, v)| state_store::backend::opened_at_of(&v.value).unwrap()).collect()
+            rows.iter()
+                .map(|(_, v)| state_store::backend::opened_at_of(&v.value).unwrap())
+                .collect()
         };
-        assert!(opened(&newest).windows(2).all(|w| w[0] >= w[1]), "{:?}", opened(&newest));
-        assert_eq!(newest, state_store::backend::range_newest_opened_by_scan(&b, "r/", i64::MIN, 5, 1).unwrap());
-        let by_scan = state_store::backend::range_newest_opened_by_scan(&b, "r/", 1_500, 100, 1).unwrap();
+        assert!(
+            opened(&newest).windows(2).all(|w| w[0] >= w[1]),
+            "{:?}",
+            opened(&newest)
+        );
+        assert_eq!(
+            newest,
+            state_store::backend::range_newest_opened_by_scan(&b, "r/", i64::MIN, 5, 1).unwrap()
+        );
+        let by_scan =
+            state_store::backend::range_newest_opened_by_scan(&b, "r/", 1_500, 100, 1).unwrap();
         assert_eq!(b.range_newest_opened("r/", 1_500, 100, 1).unwrap(), by_scan);
-        assert!(newest.iter().all(|(k, _)| k.starts_with("r/") && k != "r/none"));
+        assert!(newest
+            .iter()
+            .all(|(k, _)| k.starts_with("r/") && k != "r/none"));
         for step in plan(&b, NEWEST_OPENED) {
-            assert!(!step.starts_with("SCAN") && !step.contains("TEMP B-TREE"), "{step}");
+            assert!(
+                !step.starts_with("SCAN") && !step.contains("TEMP B-TREE"),
+                "{step}"
+            );
         }
-        assert!(plan(&b, NEWEST_OPENED).iter().any(|s| s.contains("latest_by_opened")));
+        assert!(plan(&b, NEWEST_OPENED)
+            .iter()
+            .any(|s| s.contains("latest_by_opened")));
     }
 
     /// Below the head the newest rows are still the index's, with the ring's keys judged by
@@ -3345,9 +4126,18 @@ mod tests {
     fn the_newest_opened_below_the_head_reads_the_index_and_judges_touched_keys_at_the_revision() {
         let dir = testkit::TempDir::new("sqlite-newest-below");
         let b = SqliteBackend::open(&dir.path().join("n.db"), Options::default()).unwrap();
-        let doc = |opened: i64| serde_json::to_vec(&serde_json::json!({ "data": { "opened_at": opened } })).unwrap();
-        let put = |key: String, opened: i64, prev: Option<Rev>| Write::Put { key, value: doc(opened), create_rev: Rev::new(1, 0), prev };
-        let batch: Vec<Write> = (0..5_000).map(|i| put(format!("r/{i:05}"), 1_000 + i, None)).collect();
+        let doc = |opened: i64| {
+            serde_json::to_vec(&serde_json::json!({ "data": { "opened_at": opened } })).unwrap()
+        };
+        let put = |key: String, opened: i64, prev: Option<Rev>| Write::Put {
+            key,
+            value: doc(opened),
+            create_rev: Rev::new(1, 0),
+            prev,
+        };
+        let batch: Vec<Write> = (0..5_000)
+            .map(|i| put(format!("r/{i:05}"), 1_000 + i, None))
+            .collect();
         let at = b.commit(b.head().unwrap(), &batch).unwrap();
         let newest = b.get("r/04999", at).unwrap().unwrap();
         let old = b.get("r/00003", at).unwrap().unwrap();
@@ -3358,7 +4148,10 @@ mod tests {
                 put("r/04999".into(), 1, Some(newest.create_rev)),
                 put("r/00003".into(), 99_999, Some(old.create_rev)),
                 put("r/new".into(), 88_888, None),
-                Write::Delete { key: "r/04998".into(), prev: gone.mod_rev },
+                Write::Delete {
+                    key: "r/04998".into(),
+                    prev: gone.mod_rev,
+                },
             ],
         )
         .unwrap();
@@ -3367,10 +4160,19 @@ mod tests {
         let steps = b.take_read_steps();
         assert!(steps <= 400, "{steps} VM steps for 5 of 5000 rows");
         let keys: Vec<&str> = rows.iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(keys, ["r/04999", "r/04998", "r/04997", "r/04996", "r/04995"]);
+        assert_eq!(
+            keys,
+            ["r/04999", "r/04998", "r/04997", "r/04996", "r/04995"]
+        );
         for (since, limit) in [(i64::MIN, 5), (5_990, 50), (1_000, 7)] {
-            let by_scan = state_store::backend::range_newest_opened_by_scan(&b, "r/", since, limit, at).unwrap();
-            assert_eq!(b.range_newest_opened("r/", since, limit, at).unwrap(), by_scan, "{since} {limit}");
+            let by_scan =
+                state_store::backend::range_newest_opened_by_scan(&b, "r/", since, limit, at)
+                    .unwrap();
+            assert_eq!(
+                b.range_newest_opened("r/", since, limit, at).unwrap(),
+                by_scan,
+                "{since} {limit}"
+            );
         }
     }
 
@@ -3385,7 +4187,9 @@ mod tests {
         conn.pragma_update(None, "user_version", SCHEMA_MIGRATIONS as i64 + 1)
             .unwrap();
         drop(conn);
-        let e = SqliteBackend::open(&path, Options::default()).err().unwrap();
+        let e = SqliteBackend::open(&path, Options::default())
+            .err()
+            .unwrap();
         assert!(e.to_string().contains("this binary knows"), "{e}");
     }
 }

@@ -103,7 +103,11 @@ const OVER_BUDGET: &[&str] = &["request_bytes_at_the_limit_pass_and_one_over_is_
 
 #[test]
 fn every_scenario_of_the_suite_is_its_own_test_here() {
-    let want: Vec<&str> = SCENARIOS.iter().copied().filter(|s| !OVER_BUDGET.contains(s)).collect();
+    let want: Vec<&str> = SCENARIOS
+        .iter()
+        .copied()
+        .filter(|s| !OVER_BUDGET.contains(s))
+        .collect();
     assert_eq!(COVERED, want.as_slice());
 }
 
@@ -160,12 +164,22 @@ fn after_deleting_the_highest_revision_keys_and_reopening_the_next_main_is_great
     drop(b);
     let b = open(&path);
     let head = b.head().unwrap();
-    assert!(head >= last, "the counter is read back from its meta row, never from the keys: head {head}, last {last}");
+    assert!(
+        head >= last,
+        "the counter is read back from its meta row, never from the keys: head {head}, last {last}"
+    );
     let clock = VirtualClock::new(1_000);
     let c = contract(b, &clock);
     let next = put(&c, "n/c", json!(3), "after-reopen");
-    assert!(next > last, "a reopened store never reissues a revision: next {next}, last {last}");
-    assert_eq!(next, head + 1, "the next txn follows the head the reopen read back");
+    assert!(
+        next > last,
+        "a reopened store never reissues a revision: next {next}, last {last}"
+    );
+    assert_eq!(
+        next,
+        head + 1,
+        "the next txn follows the head the reopen read back"
+    );
 }
 
 /// The ring is empty after a restart and its floor is the head the file held at close: a read
@@ -185,7 +199,10 @@ fn straight_after_a_restart_history_below_the_close_head_is_too_old_and_the_head
     let head = c.head().unwrap();
     assert!(head > close, "the open jumped the head");
     assert_eq!(c.get_at("t/a", r1), Err(Error::TooOld { compacted: close }));
-    assert_eq!(c.watch("t/", r1, 0), Err(Error::TooOld { compacted: close }));
+    assert_eq!(
+        c.watch("t/", r1, 0),
+        Err(Error::TooOld { compacted: close })
+    );
     assert_eq!(
         c.watch("t/", close, 0).unwrap(),
         state_store::Watched::Progress { progress_rev: head }
@@ -201,7 +218,10 @@ fn a_revision_the_ring_has_turned_past_is_too_old_to_read_or_watch() {
     let clock = VirtualClock::new(1_000);
     let b = SqliteBackend::open(
         &dir.path().join("s.db"),
-        Options { history_bytes: 4_000, ..Options::default() },
+        Options {
+            history_bytes: 4_000,
+            ..Options::default()
+        },
     )
     .unwrap();
     let c = contract(b, &clock);
@@ -213,7 +233,10 @@ fn a_revision_the_ring_has_turned_past_is_too_old_to_read_or_watch() {
     let floor = c.backend().compacted().unwrap();
     assert!(floor > r1);
     assert_eq!(c.get_at("t/a", r1), Err(Error::TooOld { compacted: floor }));
-    assert_eq!(c.watch("t/", r1, 0), Err(Error::TooOld { compacted: floor }));
+    assert_eq!(
+        c.watch("t/", r1, 0),
+        Err(Error::TooOld { compacted: floor })
+    );
     assert!(c.get_at("t/a", floor).is_ok());
 }
 
@@ -400,7 +423,14 @@ fn a_snapshot_copy_taken_while_another_thread_commits_holds_one_revision() {
         rev
     });
     let live = c.backend().clone();
-    let copy = SqliteBackend::open(&dest, Options { jump_on_open: false, ..Options::default() }).unwrap();
+    let copy = SqliteBackend::open(
+        &dest,
+        Options {
+            jump_on_open: false,
+            ..Options::default()
+        },
+    )
+    .unwrap();
     assert_eq!(copy.head().unwrap(), rev);
     assert_eq!(keys_at(&copy, "", rev), keys_at(&live, "", rev));
 }
@@ -434,20 +464,36 @@ fn gc_range_skips_events_and_history_and_pages_across_them() {
 fn a_snapshot_copy_does_not_carry_the_pages_deleted_rows_left_free_in_the_live_file() {
     let dir = TempDir::new("sqlite-snapshot-vacuum");
     let path = dir.path().join("s.db");
-    let b = SqliteBackend::open(&path, Options { day_receipts: false, ..Options::default() }).unwrap();
+    let b = SqliteBackend::open(
+        &path,
+        Options {
+            day_receipts: false,
+            ..Options::default()
+        },
+    )
+    .unwrap();
     let clock = VirtualClock::new(0);
     let c = contract(b, &clock);
     for i in 0..200 {
-        put(&c, &format!("k/{i}"), json!("x".repeat(16_384)), &format!("p{i}"));
+        put(
+            &c,
+            &format!("k/{i}"),
+            json!("x".repeat(16_384)),
+            &format!("p{i}"),
+        );
     }
     for i in 0..200 {
-        c.delete(&format!("k/{i}"), None, &req(&format!("d{i}"))).unwrap();
+        c.delete(&format!("k/{i}"), None, &req(&format!("d{i}")))
+            .unwrap();
     }
     let dest = dir.path().join("snap.db");
     c.backend().snapshot_to(&dest).unwrap();
     let live = std::fs::metadata(&path).unwrap().len();
     let snap = std::fs::metadata(&dest).unwrap().len();
-    assert!(snap * 4 < live, "snapshot {snap} bytes beside a live file of {live}");
+    assert!(
+        snap * 4 < live,
+        "snapshot {snap} bytes beside a live file of {live}"
+    );
 }
 
 #[test]
@@ -464,7 +510,11 @@ fn a_snapshot_is_compacted_straight_to_its_destination_in_rollback_mode() {
     // Header bytes 18 and 19 are 2 only for a file a WAL travels with: the copy-then-VACUUM
     // path wrote a WAL of the whole store beside it.
     let head = std::fs::read(&dest).unwrap();
-    assert_eq!((head[18], head[19]), (1, 1), "the snapshot is not a WAL-mode file");
+    assert_eq!(
+        (head[18], head[19]),
+        (1, 1),
+        "the snapshot is not a WAL-mode file"
+    );
     assert!(!dir.path().join("copy.db-wal").exists());
     let copy = SqliteBackend::open(
         &dest,
@@ -483,7 +533,11 @@ const D0: u64 = 20_000 * DAY_MS;
 
 /// Reads in day-file tests are never ended by time: the read clock is separate from `wall` and never advances.
 fn day_opts(wall: &VirtualClock) -> Options {
-    Options { wall: Arc::new(wall.clone()), clock: Arc::new(VirtualClock::new(0)), ..Options::default() }
+    Options {
+        wall: Arc::new(wall.clone()),
+        clock: Arc::new(VirtualClock::new(0)),
+        ..Options::default()
+    }
 }
 
 fn receipt_files(dir: &Path) -> Vec<String> {
@@ -501,8 +555,14 @@ fn day_file(dir: &Path, date: &str) -> PathBuf {
 }
 
 fn count(path: &Path, sql: &str) -> i64 {
-    let conn = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let n = conn.prepare(sql).unwrap().query_row([], |r| r.get(0)).unwrap();
+    let conn =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    let n = conn
+        .prepare(sql)
+        .unwrap()
+        .query_row([], |r| r.get(0))
+        .unwrap();
     n
 }
 
@@ -519,8 +579,20 @@ fn a_receipt_lands_in_the_day_file_of_its_commit_and_answers_a_retry_through_the
     let t = Txn::new().put("a", Object::new(json!(1)));
     let first = c.txn(&t, &req("once")).unwrap();
     let file = day_file(dir.path(), "2024-10-04");
-    assert_eq!(count(&file, "SELECT count(*) FROM rows WHERE CAST(key AS TEXT) = 'requests/once'"), 1);
-    assert_eq!(count(&path, "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'requests/%'"), 0);
+    assert_eq!(
+        count(
+            &file,
+            "SELECT count(*) FROM rows WHERE CAST(key AS TEXT) = 'requests/once'"
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            &path,
+            "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'requests/%'"
+        ),
+        0
+    );
     assert!(c.txn(&t, &req("once")).unwrap().already_applied);
     wall.advance_to(D0 + 2 * DAY_MS - 60_000);
     let again = c.txn(&t, &req("once")).unwrap();
@@ -544,16 +616,29 @@ fn a_failure_between_the_side_commit_and_the_main_commit_leaves_no_row_above_the
     };
     let b = SqliteBackend::open(
         &dir.path().join("s.db"),
-        Options { commit_probe: Some(probe), ..day_opts(&wall) },
+        Options {
+            commit_probe: Some(probe),
+            ..day_opts(&wall)
+        },
     )
     .unwrap();
     let head = b.head().unwrap();
     assert!(b.commit(head, &[receipt("x", b"first", head + 1)]).is_err());
     assert_eq!(b.head().unwrap(), head);
     let file = day_file(dir.path(), "2024-10-04");
-    assert_eq!(count(&file, &format!("SELECT count(*) FROM rows WHERE main > {head}")), 0);
-    b.commit(head, &[receipt("x", b"second", head + 1)]).unwrap();
-    let got = b.get(&state_store::request_key("x"), head + 1).unwrap().unwrap();
+    assert_eq!(
+        count(
+            &file,
+            &format!("SELECT count(*) FROM rows WHERE main > {head}")
+        ),
+        0
+    );
+    b.commit(head, &[receipt("x", b"second", head + 1)])
+        .unwrap();
+    let got = b
+        .get(&state_store::request_key("x"), head + 1)
+        .unwrap()
+        .unwrap();
     assert_eq!(got.value, b"second");
 }
 
@@ -573,11 +658,18 @@ fn a_side_row_above_the_head_is_gone_when_the_store_reopens() {
         .execute(rusqlite::params![b"requests/torn".as_slice(), head + 1])
         .unwrap();
     let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
-    assert_eq!(count(&file, "SELECT count(*) FROM rows"), 1, "trimmed before the first read");
+    assert_eq!(
+        count(&file, "SELECT count(*) FROM rows"),
+        1,
+        "trimmed before the first read"
+    );
     let at = b.head().unwrap();
     assert!(b.get("requests/torn", at).unwrap().is_none());
     b.commit(at, &[receipt("torn", b"real", at + 1)]).unwrap();
-    assert_eq!(b.get("requests/torn", at + 1).unwrap().unwrap().value, b"real");
+    assert_eq!(
+        b.get("requests/torn", at + 1).unwrap().unwrap().value,
+        b"real"
+    );
 }
 
 fn open_fds_naming(prefix: &str) -> Vec<String> {
@@ -606,7 +698,10 @@ fn a_retired_day_file_waits_for_the_read_in_flight_and_then_leaves_nothing_behin
     };
     let b = SqliteBackend::open(
         &dir.path().join("s.db"),
-        Options { read_probe: Some(probe), ..day_opts(&wall) },
+        Options {
+            read_probe: Some(probe),
+            ..day_opts(&wall)
+        },
     )
     .unwrap();
     let head = b.commit(0, &[receipt("old", b"v", 1)]).unwrap();
@@ -639,12 +734,17 @@ fn thirty_days_of_commits_never_leave_more_than_two_day_files_and_today_is_one()
     for i in 0..120u64 {
         wall.advance_to(D0 + i * 6 * 3_600_000);
         let head = b.head().unwrap();
-        b.commit(head, &[receipt(&format!("r{i}"), b"v", head + 1)]).unwrap();
+        b.commit(head, &[receipt(&format!("r{i}"), b"v", head + 1)])
+            .unwrap();
         let files = receipt_files(dir.path());
         assert!(files.len() <= 2, "{files:?} after commit {i}");
         let today = D0 + i * 6 * 3_600_000;
         let day = today / DAY_MS - 20_000;
-        let (month, dom) = if day < 28 { (10, 4 + day) } else { (11, day - 27) };
+        let (month, dom) = if day < 28 {
+            (10, 4 + day)
+        } else {
+            (11, day - 27)
+        };
         let name = format!("s.receipts-2024-{month:02}-{dom:02}.db");
         assert!(files.contains(&name), "{name} missing from {files:?}");
     }
@@ -670,10 +770,19 @@ fn main_file_receipts_drain_five_hundred_a_commit_once_they_are_a_day_old() {
         }
     }
     let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
-    let left = |table: &str| count(&path, &format!("SELECT count(*) FROM {table} WHERE CAST(key AS TEXT) LIKE 'requests/%'"));
+    let left = |table: &str| {
+        count(
+            &path,
+            &format!("SELECT count(*) FROM {table} WHERE CAST(key AS TEXT) LIKE 'requests/%'"),
+        )
+    };
     let live = |b: &SqliteBackend, i: u64| {
         let head = b.head().unwrap();
-        b.commit(head, &[put_write(&format!("live/{i}"), b"1", head + 1, None)]).unwrap();
+        b.commit(
+            head,
+            &[put_write(&format!("live/{i}"), b"1", head + 1, None)],
+        )
+        .unwrap();
     };
     wall.advance_to(D0 + DAY_MS - 1);
     live(&b, 1);
@@ -687,7 +796,13 @@ fn main_file_receipts_drain_five_hundred_a_commit_once_they_are_a_day_old() {
     }
     assert_eq!(seen, [700, 200, 0]);
     assert_eq!(left("versions"), 0);
-    assert_eq!(count(&path, "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'live/%'"), 6);
+    assert_eq!(
+        count(
+            &path,
+            "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'live/%'"
+        ),
+        6
+    );
 }
 
 fn family_files(dir: &Path, family: &str) -> Vec<String> {
@@ -724,16 +839,32 @@ fn an_event_lands_in_the_day_file_of_its_commit_and_not_in_the_main_file() {
     let rev = put(&c, "a", json!(1), "w1");
     let file = dir.path().join("s.events-2024-10-04.db");
     let key = state_store::events_key(rev);
-    assert_eq!(count(&file, &format!("SELECT count(*) FROM rows WHERE CAST(key AS TEXT) = '{key}'")), 1);
-    assert_eq!(count(&path, "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'events/%'"), 0);
+    assert_eq!(
+        count(
+            &file,
+            &format!("SELECT count(*) FROM rows WHERE CAST(key AS TEXT) = '{key}'")
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            &path,
+            "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'events/%'"
+        ),
+        0
+    );
     assert!(c.backend().get(&key, rev).unwrap().is_some());
 }
 
 #[test]
-fn thirty_days_of_audited_commits_keep_fifteen_event_files_and_an_event_reads_back_for_fourteen_days() {
+fn thirty_days_of_audited_commits_keep_fifteen_event_files_and_an_event_reads_back_for_fourteen_days(
+) {
     let dir = TempDir::new("sqlite-event-thirty");
     let wall = VirtualClock::new(D0);
-    let c = contract(SqliteBackend::open(&dir.path().join("s.db"), day_opts(&wall)).unwrap(), &wall);
+    let c = contract(
+        SqliteBackend::open(&dir.path().join("s.db"), day_opts(&wall)).unwrap(),
+        &wall,
+    );
     let mut revs = Vec::new();
     for i in 0..120u64 {
         wall.advance_to(D0 + i * 6 * 3_600_000);
@@ -743,27 +874,51 @@ fn thirty_days_of_audited_commits_keep_fifteen_event_files_and_an_event_reads_ba
     }
     let head = c.backend().head().unwrap();
     for (day, rev) in revs {
-        let read = c.backend().get(&state_store::events_key(rev), head).unwrap();
+        let read = c
+            .backend()
+            .get(&state_store::events_key(rev), head)
+            .unwrap();
         assert_eq!(read.is_some(), 29 - day <= 14, "event of day {day}");
     }
 }
 
 #[test]
-fn a_failed_main_commit_leaves_neither_an_event_nor_a_receipt_above_the_head_in_process_or_after_a_reopen() {
+fn a_failed_main_commit_leaves_neither_an_event_nor_a_receipt_above_the_head_in_process_or_after_a_reopen(
+) {
     let dir = TempDir::new("sqlite-event-fail");
     let wall = VirtualClock::new(D0);
     let path = dir.path().join("s.db");
     let (fail, probe) = failing_once();
-    let b = SqliteBackend::open(&path, Options { commit_probe: Some(probe), ..day_opts(&wall) }).unwrap();
+    let b = SqliteBackend::open(
+        &path,
+        Options {
+            commit_probe: Some(probe),
+            ..day_opts(&wall)
+        },
+    )
+    .unwrap();
     let c = contract(b.clone(), &wall);
     put(&c, "a", json!(1), "first");
     let head = b.head().unwrap();
     fail.store(true, Ordering::SeqCst);
-    assert!(c.txn(&Txn::new().put("b", Object::new(json!(2))), &req("second")).is_err());
+    assert!(c
+        .txn(&Txn::new().put("b", Object::new(json!(2))), &req("second"))
+        .is_err());
     assert_eq!(b.head().unwrap(), head);
-    let (events, receipts) = (dir.path().join("s.events-2024-10-04.db"), day_file(dir.path(), "2024-10-04"));
+    let (events, receipts) = (
+        dir.path().join("s.events-2024-10-04.db"),
+        day_file(dir.path(), "2024-10-04"),
+    );
     for file in [&events, &receipts] {
-        assert_eq!(count(file, &format!("SELECT count(*) FROM rows WHERE main > {head}")), 0, "{}", file.display());
+        assert_eq!(
+            count(
+                file,
+                &format!("SELECT count(*) FROM rows WHERE main > {head}")
+            ),
+            0,
+            "{}",
+            file.display()
+        );
     }
     drop(c);
     drop(b);
@@ -777,7 +932,15 @@ fn a_failed_main_commit_leaves_neither_an_event_nor_a_receipt_above_the_head_in_
     }
     let _b = open_day(&path, &wall);
     for file in [&events, &receipts] {
-        assert_eq!(count(file, &format!("SELECT count(*) FROM rows WHERE main > {head}")), 0, "{}", file.display());
+        assert_eq!(
+            count(
+                file,
+                &format!("SELECT count(*) FROM rows WHERE main > {head}")
+            ),
+            0,
+            "{}",
+            file.display()
+        );
     }
 }
 
@@ -800,7 +963,14 @@ fn a_retired_events_file_waits_for_the_range_in_flight_and_then_leaves_nothing_b
             }
         }) as Arc<dyn Fn() + Send + Sync>
     };
-    let b = SqliteBackend::open(&dir.path().join("s.db"), Options { read_probe: Some(probe), ..day_opts(&wall) }).unwrap();
+    let b = SqliteBackend::open(
+        &dir.path().join("s.db"),
+        Options {
+            read_probe: Some(probe),
+            ..day_opts(&wall)
+        },
+    )
+    .unwrap();
     let ev = |main: u64| put_write(&state_store::events_key(main), b"{}", main, None);
     b.commit(0, &[ev(1)]).unwrap();
     let file = dir.path().join("s.events-2024-10-04.db");
@@ -839,7 +1009,10 @@ fn seed_events(path: &Path, rows: &[(u64, Option<u64>)]) {
                  VALUES (CAST(?1 AS BLOB), 1, 0, ?2, 1, 0, 1)"
             ))
             .unwrap()
-            .execute(rusqlite::params![format!("events/{i:020}"), value.as_bytes()])
+            .execute(rusqlite::params![
+                format!("events/{i:020}"),
+                value.as_bytes()
+            ])
             .unwrap();
         }
     }
@@ -853,10 +1026,17 @@ fn many_unstamped_then_one_stamped() -> Vec<(u64, Option<u64>)> {
 }
 
 fn events_left(path: &Path) -> i64 {
-    count(path, "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'events/%'")
+    count(
+        path,
+        "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'events/%'",
+    )
 }
 
-fn seeded_store(dir: &TempDir, wall: &VirtualClock, rows: &[(u64, Option<u64>)]) -> (PathBuf, SqliteBackend) {
+fn seeded_store(
+    dir: &TempDir,
+    wall: &VirtualClock,
+    rows: &[(u64, Option<u64>)],
+) -> (PathBuf, SqliteBackend) {
     let path = dir.path().join("s.db");
     let b = open_day(&path, wall);
     b.commit(0, &[put_write("live/a", b"1", 1, None)]).unwrap();
@@ -868,15 +1048,20 @@ fn seeded_store(dir: &TempDir, wall: &VirtualClock, rows: &[(u64, Option<u64>)])
 
 fn live_commit(b: &SqliteBackend, i: u64) {
     let head = b.head().unwrap();
-    b.commit(head, &[put_write(&format!("live/{i}"), b"1", head + 1, None)]).unwrap();
+    b.commit(
+        head,
+        &[put_write(&format!("live/{i}"), b"1", head + 1, None)],
+    )
+    .unwrap();
 }
 
 #[test]
 fn main_file_events_older_than_fourteen_days_drain_five_hundred_a_commit_and_the_rest_stay() {
     let dir = TempDir::new("sqlite-event-drain");
     let wall = VirtualClock::new(D0 + 30 * DAY_MS);
-    let rows: Vec<(u64, Option<u64>)> =
-        (1..=1_200).map(|i| (i, Some(if i <= 1_000 { D0 } else { D0 + 29 * DAY_MS }))).collect();
+    let rows: Vec<(u64, Option<u64>)> = (1..=1_200)
+        .map(|i| (i, Some(if i <= 1_000 { D0 } else { D0 + 29 * DAY_MS })))
+        .collect();
     let (path, b) = seeded_store(&dir, &wall, &rows);
     let mut seen = Vec::new();
     for i in 0..5 {
@@ -884,14 +1069,23 @@ fn main_file_events_older_than_fourteen_days_drain_five_hundred_a_commit_and_the
         seen.push(events_left(&path));
     }
     assert_eq!(seen, [700, 200, 200, 200, 200]);
-    assert_eq!(count(&path, "SELECT count(*) FROM versions"), 0, "the legacy rows drain whatever their age");
+    assert_eq!(
+        count(&path, "SELECT count(*) FROM versions"),
+        0,
+        "the legacy rows drain whatever their age"
+    );
 }
 
 #[test]
 fn unstamped_main_file_events_are_as_old_as_the_first_stamped_one_after_them() {
     let dir = TempDir::new("sqlite-event-unstamped");
     let wall = VirtualClock::new(D0 + 30 * DAY_MS);
-    let rows = [(1, None), (2, None), (3, Some(D0)), (4, Some(D0 + 29 * DAY_MS))];
+    let rows = [
+        (1, None),
+        (2, None),
+        (3, Some(D0)),
+        (4, Some(D0 + 29 * DAY_MS)),
+    ];
     let (path, b) = seeded_store(&dir, &wall, &rows);
     live_commit(&b, 1);
     assert_eq!(events_left(&path), 1);
@@ -899,7 +1093,11 @@ fn unstamped_main_file_events_are_as_old_as_the_first_stamped_one_after_them() {
     let rows = [(1, None), (2, Some(D0 + 29 * DAY_MS))];
     let (path, b) = seeded_store(&dir, &wall, &rows);
     live_commit(&b, 1);
-    assert_eq!(events_left(&path), 2, "nothing older than the window is stamped");
+    assert_eq!(
+        events_left(&path),
+        2,
+        "nothing older than the window is stamped"
+    );
 }
 
 #[test]
@@ -911,7 +1109,10 @@ fn a_reopen_over_many_unstamped_main_file_events_drains_a_bounded_page_a_commit(
     live_commit(&b, 0);
     let rows = b.take_drain_rows();
     assert!(rows > 0, "the commit drained nothing");
-    assert!(rows <= (2 * DRAIN_PER_COMMIT) as u64, "the first commit examined {rows} rows");
+    assert!(
+        rows <= (2 * DRAIN_PER_COMMIT) as u64,
+        "the first commit examined {rows} rows"
+    );
     assert_eq!(events_left(&path), 20_001, "nothing in the window is older");
 }
 
@@ -955,13 +1156,20 @@ fn a_scan_resumes_from_its_persisted_cursor_and_drains_once_the_stamped_event_ag
         let (_, c) = seeded_store(&dir, &wall, &many_unstamped_then_one_stamped());
         steps(&c, 0)
     };
-    assert!(resumed + 8 <= cold, "resumed after {resumed} commits, a cold scan takes {cold}");
+    assert!(
+        resumed + 8 <= cold,
+        "resumed after {resumed} commits, a cold scan takes {cold}"
+    );
     assert_eq!(events_left(&path), 20_001, "nothing in the window is older");
     wall.advance(30 * DAY_MS);
     for i in 0..45 {
         live_commit(&b, 300 + i);
     }
-    assert_eq!(events_left(&path), 0, "the unstamped events drain once the stamped one is out of the window");
+    assert_eq!(
+        events_left(&path),
+        0,
+        "the unstamped events drain once the stamped one is out of the window"
+    );
 }
 
 #[test]
@@ -981,8 +1189,15 @@ fn a_reopen_mid_deletion_does_not_rescan_the_unstamped_events_it_already_passed(
     let b = open_day(&path, &wall);
     live_commit(&b, 1_000);
     let rows = b.take_drain_rows();
-    assert!(rows <= DRAIN_PER_COMMIT as u64, "the first commit after the reopen examined {rows} rows");
-    assert_eq!(events_left(&path), before - DRAIN_PER_COMMIT as i64, "the reopen did not go on deleting");
+    assert!(
+        rows <= DRAIN_PER_COMMIT as u64,
+        "the first commit after the reopen examined {rows} rows"
+    );
+    assert_eq!(
+        events_left(&path),
+        before - DRAIN_PER_COMMIT as i64,
+        "the reopen did not go on deleting"
+    );
 }
 
 #[test]
@@ -1005,9 +1220,19 @@ fn log_over_a_mixed_batch_sequence_is_the_same_on_the_memory_and_the_sqlite_back
     let s = SqliteBackend::open(&dir.path().join("s.db"), day_opts(&wall)).unwrap();
     let m = state_store::MemBackend::new();
     let batches = [
-        vec![put_write("a", b"1", 1, None), receipt("r1", b"x", 1), put_write("b", b"1", 1, None)],
+        vec![
+            put_write("a", b"1", 1, None),
+            receipt("r1", b"x", 1),
+            put_write("b", b"1", 1, None),
+        ],
         vec![put_write("a", b"2", 2, Some(Rev::new(1, 0)))],
-        vec![receipt("r2", b"y", 3), Write::Delete { key: "b".into(), prev: Rev::new(1, 2) }],
+        vec![
+            receipt("r2", b"y", 3),
+            Write::Delete {
+                key: "b".into(),
+                prev: Rev::new(1, 2),
+            },
+        ],
         vec![receipt("r3", b"z", 4), receipt("r4", b"z", 4)],
         vec![receipt("r5", b"w", 5)],
     ];
@@ -1016,7 +1241,11 @@ fn log_over_a_mixed_batch_sequence_is_the_same_on_the_memory_and_the_sqlite_back
         s.commit(i as u64, batch).unwrap();
         m.commit(i as u64, batch).unwrap();
     }
-    assert_eq!(receipt_files(dir.path()).len(), 2, "the log spans two day files");
+    assert_eq!(
+        receipt_files(dir.path()).len(),
+        2,
+        "the log spans two day files"
+    );
     assert_eq!(s.log(0, 10).unwrap(), m.log(0, 10).unwrap());
     assert_eq!(s.log(2, 2).unwrap(), m.log(2, 2).unwrap());
 }
@@ -1038,21 +1267,46 @@ fn a_receipt_is_written_once_and_a_failed_cleanup_refuses_every_commit_until_a_r
             Err(Error::Backend("injected".into()))
         }) as Arc<dyn Fn() -> state_store::Result<()> + Send + Sync>
     };
-    let b = SqliteBackend::open(&path, Options { commit_probe: Some(sabotage), ..day_opts(&wall) }).unwrap();
+    let b = SqliteBackend::open(
+        &path,
+        Options {
+            commit_probe: Some(sabotage),
+            ..day_opts(&wall)
+        },
+    )
+    .unwrap();
     let rewrite = put_write("requests/a", b"2", 1, Some(Rev::new(1, 0)));
     assert!(b.commit(0, &[rewrite]).is_err());
     assert_eq!(b.head().unwrap(), 0, "the refusal wrote nothing");
     assert!(!file.exists());
-    let e = b.commit(0, &[receipt("a", b"1", 1)]).unwrap_err().to_string();
+    let e = b
+        .commit(0, &[receipt("a", b"1", 1)])
+        .unwrap_err()
+        .to_string();
     assert!(e.contains("could not take back"), "{e}");
-    let refused = b.commit(0, &[put_write("live/a", b"1", 1, None)]).unwrap_err().to_string();
+    let refused = b
+        .commit(0, &[put_write("live/a", b"1", 1, None)])
+        .unwrap_err()
+        .to_string();
     assert!(refused.contains(&*file.display().to_string()), "{refused}");
     drop(b);
-    rusqlite::Connection::open(&file).unwrap().prepare("DROP TRIGGER stuck").unwrap().execute([]).unwrap();
+    rusqlite::Connection::open(&file)
+        .unwrap()
+        .prepare("DROP TRIGGER stuck")
+        .unwrap()
+        .execute([])
+        .unwrap();
     let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
-    assert_eq!(count(&file, &format!("SELECT count(*) FROM rows WHERE main > {}", 0)), 0);
+    assert_eq!(
+        count(
+            &file,
+            &format!("SELECT count(*) FROM rows WHERE main > {}", 0)
+        ),
+        0
+    );
     let head = b.head().unwrap();
-    b.commit(head, &[put_write("live/a", b"1", head + 1, None)]).unwrap();
+    b.commit(head, &[put_write("live/a", b"1", head + 1, None)])
+        .unwrap();
 }
 
 #[test]
@@ -1071,14 +1325,41 @@ fn deleting_a_receipt_removes_it_from_a_day_file_or_the_main_file_and_the_log_na
         .unwrap()
         .execute([])
         .unwrap();
-    b.commit(1, &[Write::Delete { key: "requests/filed".into(), prev: Rev::new(1, 0) }]).unwrap();
-    b.commit(2, &[Write::Delete { key: "requests/legacy".into(), prev: Rev::new(1, 0) }]).unwrap();
+    b.commit(
+        1,
+        &[Write::Delete {
+            key: "requests/filed".into(),
+            prev: Rev::new(1, 0),
+        }],
+    )
+    .unwrap();
+    b.commit(
+        2,
+        &[Write::Delete {
+            key: "requests/legacy".into(),
+            prev: Rev::new(1, 0),
+        }],
+    )
+    .unwrap();
     assert!(b.get("requests/filed", 3).unwrap().is_none());
     assert!(b.get("requests/legacy", 3).unwrap().is_none());
-    assert_eq!(count(&day_file(dir.path(), "2024-10-04"), "SELECT count(*) FROM rows"), 0);
-    assert_eq!(b.get("requests/filed", 1).unwrap().unwrap().value, b"f", "as of the revision before the delete");
+    assert_eq!(
+        count(
+            &day_file(dir.path(), "2024-10-04"),
+            "SELECT count(*) FROM rows"
+        ),
+        0
+    );
+    assert_eq!(
+        b.get("requests/filed", 1).unwrap().unwrap().value,
+        b"f",
+        "as of the revision before the delete"
+    );
     let log = b.log(1, 10).unwrap();
-    assert_eq!(log.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(), ["requests/filed", "requests/legacy"]);
+    assert_eq!(
+        log.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(),
+        ["requests/filed", "requests/legacy"]
+    );
     assert!(log.iter().all(|e| e.value.is_none()));
 }
 
@@ -1087,13 +1368,22 @@ fn a_store_opened_without_day_receipts_keeps_them_in_its_one_file_and_never_drai
     let dir = TempDir::new("sqlite-receipt-main");
     let wall = VirtualClock::new(D0);
     let path = dir.path().join("s.db");
-    let opts = Options { day_receipts: false, ..day_opts(&wall) };
+    let opts = Options {
+        day_receipts: false,
+        ..day_opts(&wall)
+    };
     let b = SqliteBackend::open(&path, opts).unwrap();
     b.commit(0, &[receipt("a", b"1", 1)]).unwrap();
     wall.advance_to(D0 + 3 * DAY_MS);
     b.commit(1, &[put_write("live/a", b"1", 2, None)]).unwrap();
     assert!(receipt_files(dir.path()).is_empty());
-    assert_eq!(count(&path, "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'requests/%'"), 1);
+    assert_eq!(
+        count(
+            &path,
+            "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'requests/%'"
+        ),
+        1
+    );
     assert_eq!(b.get("requests/a", 2).unwrap().unwrap().value, b"1");
 }
 
@@ -1102,19 +1392,48 @@ fn a_range_lays_receipts_among_the_main_files_keys_at_the_head_and_below_it() {
     let dir = TempDir::new("sqlite-receipt-range");
     let wall = VirtualClock::new(D0);
     let b = SqliteBackend::open(&dir.path().join("s.db"), day_opts(&wall)).unwrap();
-    b.commit(0, &[put_write("a", b"1", 1, None), receipt("r1", b"x", 1), put_write("z", b"1", 1, None)]).unwrap();
+    b.commit(
+        0,
+        &[
+            put_write("a", b"1", 1, None),
+            receipt("r1", b"x", 1),
+            put_write("z", b"1", 1, None),
+        ],
+    )
+    .unwrap();
     wall.advance_to(D0 + DAY_MS);
-    b.commit(1, &[receipt("r2", b"y", 2), put_write("a", b"2", 2, Some(Rev::new(1, 0)))]).unwrap();
-    let keys = |at: u64| -> Vec<String> { b.range("", None, 100, at).unwrap().into_iter().map(|(k, _)| k).collect() };
+    b.commit(
+        1,
+        &[
+            receipt("r2", b"y", 2),
+            put_write("a", b"2", 2, Some(Rev::new(1, 0))),
+        ],
+    )
+    .unwrap();
+    let keys = |at: u64| -> Vec<String> {
+        b.range("", None, 100, at)
+            .unwrap()
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect()
+    };
     assert_eq!(keys(2), ["a", "requests/r1", "requests/r2", "z"]);
     assert_eq!(keys(1), ["a", "requests/r1", "z"]);
     let page = b.range("requests/", Some("requests/r1"), 1, 2).unwrap();
     assert_eq!(page.len(), 1);
     assert_eq!(page[0].0, "requests/r2");
-    let outside: Vec<String> =
-        b.range_outside(&["a"], None, 100, 2).unwrap().into_iter().map(|(k, _)| k).collect();
+    let outside: Vec<String> = b
+        .range_outside(&["a"], None, 100, 2)
+        .unwrap()
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
     assert_eq!(outside, ["requests/r1", "requests/r2", "z"]);
-    assert!(b.gc_range(None, 100, 2).unwrap().iter().all(|(k, _)| !k.starts_with("requests/")));
+    assert!(b
+        .gc_range(None, 100, 2)
+        .unwrap()
+        .iter()
+        .all(|(k, _)| !k.starts_with("requests/")));
 }
 
 #[test]
@@ -1126,11 +1445,25 @@ fn a_snapshot_copy_carries_the_receipts_up_to_its_revision_in_one_file() {
     let dest = dir.path().join("snap.db");
     let rev = b.snapshot_to(&dest).unwrap();
     b.commit(1, &[receipt("r2", b"y", 2)]).unwrap();
-    let copy = SqliteBackend::open(&dest, Options { jump_on_open: false, ..Options::default() }).unwrap();
+    let copy = SqliteBackend::open(
+        &dest,
+        Options {
+            jump_on_open: false,
+            ..Options::default()
+        },
+    )
+    .unwrap();
     assert_eq!(copy.get("requests/r1", rev).unwrap().unwrap().value, b"x");
     assert!(copy.get("requests/r2", rev).unwrap().is_none());
-    assert_eq!(receipt_files(dir.path()).len(), 1, "the copy made no day file of its own");
-    assert!(copy.range_in_state("requests/", "none", None, 10, rev).unwrap().is_empty());
+    assert_eq!(
+        receipt_files(dir.path()).len(),
+        1,
+        "the copy made no day file of its own"
+    );
+    assert!(copy
+        .range_in_state("requests/", "none", None, 10, rev)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -1152,10 +1485,31 @@ fn a_store_opened_without_day_receipts_starts_no_drain_clock() {
     let dir = TempDir::new("sqlite-receipt-clock");
     let wall = VirtualClock::new(D0);
     let path = dir.path().join("s.db");
-    drop(SqliteBackend::open(&path, Options { day_receipts: false, ..day_opts(&wall) }).unwrap());
-    assert_eq!(count(&path, "SELECT count(*) FROM meta WHERE name = 'receipts_from_at'"), 0);
+    drop(
+        SqliteBackend::open(
+            &path,
+            Options {
+                day_receipts: false,
+                ..day_opts(&wall)
+            },
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        count(
+            &path,
+            "SELECT count(*) FROM meta WHERE name = 'receipts_from_at'"
+        ),
+        0
+    );
     drop(SqliteBackend::open(&path, day_opts(&wall)).unwrap());
-    assert_eq!(count(&path, "SELECT count(*) FROM meta WHERE name = 'receipts_from_at'"), 1);
+    assert_eq!(
+        count(
+            &path,
+            "SELECT count(*) FROM meta WHERE name = 'receipts_from_at'"
+        ),
+        1
+    );
 }
 
 #[test]
@@ -1166,16 +1520,43 @@ fn a_failed_main_commit_leaves_a_receipt_the_batch_deleted() {
     let fail = Arc::new(AtomicBool::new(false));
     let probe = {
         let fail = Arc::clone(&fail);
-        Arc::new(move || if fail.load(Ordering::SeqCst) { Err(Error::Backend("injected".into())) } else { Ok(()) })
-            as Arc<dyn Fn() -> state_store::Result<()> + Send + Sync>
+        Arc::new(move || {
+            if fail.load(Ordering::SeqCst) {
+                Err(Error::Backend("injected".into()))
+            } else {
+                Ok(())
+            }
+        }) as Arc<dyn Fn() -> state_store::Result<()> + Send + Sync>
     };
-    let b = SqliteBackend::open(&path, Options { commit_probe: Some(probe), ..day_opts(&wall) }).unwrap();
+    let b = SqliteBackend::open(
+        &path,
+        Options {
+            commit_probe: Some(probe),
+            ..day_opts(&wall)
+        },
+    )
+    .unwrap();
     b.commit(0, &[receipt("a", b"1", 1)]).unwrap();
     fail.store(true, Ordering::SeqCst);
-    let del = Write::Delete { key: state_store::request_key("a"), prev: Rev::new(1, 0) };
+    let del = Write::Delete {
+        key: state_store::request_key("a"),
+        prev: Rev::new(1, 0),
+    };
     assert!(b.commit(1, &[del]).is_err());
-    assert_eq!(b.get(&state_store::request_key("a"), 1).unwrap().unwrap().value, b"1");
-    assert_eq!(count(&day_file(dir.path(), "2024-10-04"), "SELECT count(*) FROM rows"), 1);
+    assert_eq!(
+        b.get(&state_store::request_key("a"), 1)
+            .unwrap()
+            .unwrap()
+            .value,
+        b"1"
+    );
+    assert_eq!(
+        count(
+            &day_file(dir.path(), "2024-10-04"),
+            "SELECT count(*) FROM rows"
+        ),
+        1
+    );
 }
 
 #[test]
@@ -1190,8 +1571,16 @@ fn an_open_whose_trim_of_rows_above_the_head_cannot_complete_fails() {
     });
     let file = day_file(dir.path(), "2024-10-04");
     let conn = rusqlite::Connection::open(&file).unwrap();
-    conn.prepare("INSERT INTO rows VALUES (X'61', 9, 0, X'62', 9, 0)").unwrap().execute([]).unwrap();
-    conn.prepare("CREATE TRIGGER stuck BEFORE DELETE ON rows BEGIN SELECT RAISE(ABORT, 'stuck'); END").unwrap().execute([]).unwrap();
+    conn.prepare("INSERT INTO rows VALUES (X'61', 9, 0, X'62', 9, 0)")
+        .unwrap()
+        .execute([])
+        .unwrap();
+    conn.prepare(
+        "CREATE TRIGGER stuck BEFORE DELETE ON rows BEGIN SELECT RAISE(ABORT, 'stuck'); END",
+    )
+    .unwrap()
+    .execute([])
+    .unwrap();
     drop(conn);
     assert!(SqliteBackend::open(&path, day_opts(&wall)).is_err());
 }
@@ -1249,16 +1638,48 @@ mod relayout {
         let mut rows: Vec<Row> = Vec::new();
         for i in 0..200i64 {
             let state = ["Queued", "Batched"][(i % 2) as usize];
-            rows.push((format!("deliveries/sp-{i:04}").into_bytes(), 10 + i, i % 3, obj(json!({ "state": state, "n": i })), 5 + i / 2, i % 5, 1 + i % 4));
+            rows.push((
+                format!("deliveries/sp-{i:04}").into_bytes(),
+                10 + i,
+                i % 3,
+                obj(json!({ "state": state, "n": i })),
+                5 + i / 2,
+                i % 5,
+                1 + i % 4,
+            ));
         }
-        rows.push((events_key(900).into_bytes(), 900, 0, obj(json!({ "refused": false })), 900, 0, 1));
+        rows.push((
+            events_key(900).into_bytes(),
+            900,
+            0,
+            obj(json!({ "refused": false })),
+            900,
+            0,
+            1,
+        ));
         for h in 0..EVENT_HOURS {
             let m = event_main(h) as i64;
-            rows.push((events_key(m as u64).into_bytes(), m, 0, obj(json!({ "at": event_at(h) })), m, 0, 1));
+            rows.push((
+                events_key(m as u64).into_bytes(),
+                m,
+                0,
+                obj(json!({ "at": event_at(h) })),
+                m,
+                0,
+                1,
+            ));
         }
         for h in 0..48u64 {
             let m = event_main(EVENT_HOURS - 1 - h) as i64;
-            rows.push((request_key(&format!("r{h:02}")).into_bytes(), m, 0, obj(json!({ "main": m, "succeeded": true })), m, 0, 1));
+            rows.push((
+                request_key(&format!("r{h:02}")).into_bytes(),
+                m,
+                0,
+                obj(json!({ "main": m, "succeeded": true })),
+                m,
+                0,
+                1,
+            ));
         }
         for (k, main, sub, v, cm, cs, ver) in &rows {
             conn.prepare("INSERT INTO latest (key, main, sub, value, create_main, create_sub, version) VALUES (?1,?2,?3,?4,?5,?6,?7)")
@@ -1266,8 +1687,14 @@ mod relayout {
                 .execute(params![k, main, sub, v, cm, cs, ver])
                 .unwrap();
         }
-        conn.prepare("UPDATE meta SET value = ?1 WHERE name = 'head'").unwrap().execute([HEAD as i64]).unwrap();
-        conn.prepare("INSERT INTO jumps VALUES (3000, 4000)").unwrap().execute([]).unwrap();
+        conn.prepare("UPDATE meta SET value = ?1 WHERE name = 'head'")
+            .unwrap()
+            .execute([HEAD as i64])
+            .unwrap();
+        conn.prepare("INSERT INTO jumps VALUES (3000, 4000)")
+            .unwrap()
+            .execute([])
+            .unwrap();
         conn.pragma_update(None, "user_version", 2).unwrap();
         conn.pragma_update(None, "wal_checkpoint", "TRUNCATE").ok();
         drop(conn);
@@ -1279,16 +1706,25 @@ mod relayout {
     }
 
     fn files_beside(dir: &Path) -> Vec<String> {
-        let mut v: Vec<String> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
         v.sort();
         v
     }
 
     fn day_rows(dir: &Path, family: &str, date: &str) -> Vec<String> {
         let file = dir.join(format!("new.{family}-{date}.db"));
-        let conn = Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-        let mut s = conn.prepare("SELECT CAST(key AS TEXT) FROM rows ORDER BY key").unwrap();
-        s.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+        let conn =
+            Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let mut s = conn
+            .prepare("SELECT CAST(key AS TEXT) FROM rows ORDER BY key")
+            .unwrap();
+        s.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
     }
 
     fn date(ms: u64) -> String {
@@ -1303,19 +1739,48 @@ mod relayout {
         let sum = sha256_file(&old).unwrap();
 
         let report = relayout(&old, &new, &VirtualClock::new(WALL)).unwrap();
-        assert_eq!(sha256_file(&old).unwrap(), sum, "the old file is never written");
-        assert_eq!(count(&new, "PRAGMA auto_vacuum"), 2, "the --to file is incremental");
+        assert_eq!(
+            sha256_file(&old).unwrap(),
+            sum,
+            "the old file is never written"
+        );
+        assert_eq!(
+            count(&new, "PRAGMA auto_vacuum"),
+            2,
+            "the --to file is incremental"
+        );
         assert_eq!((report.live.read, report.live.copied), (200, 200));
 
-        let b = SqliteBackend::open(&new, Options { jump_on_open: false, wall: Arc::new(VirtualClock::new(WALL)), ..Options::default() }).unwrap();
+        let b = SqliteBackend::open(
+            &new,
+            Options {
+                jump_on_open: false,
+                wall: Arc::new(VirtualClock::new(WALL)),
+                ..Options::default()
+            },
+        )
+        .unwrap();
         assert_eq!(b.head().unwrap(), HEAD);
         assert_eq!(b.jumps(0, HEAD).unwrap(), vec![(3000, 4000)]);
-        let live: Vec<_> = b.range("", None, usize::MAX, HEAD).unwrap().into_iter().filter(|(k, _)| !is_audit(k.as_bytes())).collect();
+        let live: Vec<_> = b
+            .range("", None, usize::MAX, HEAD)
+            .unwrap()
+            .into_iter()
+            .filter(|(k, _)| !is_audit(k.as_bytes()))
+            .collect();
         let want: Vec<&Row> = rows.iter().filter(|r| !is_audit(&r.0)).collect();
         assert_eq!(live.len(), 200);
         for ((k, v), r) in live.iter().zip(&want) {
             assert_eq!(k.as_bytes(), r.0.as_slice());
-            assert_eq!((v.mod_rev, v.create_rev, &v.value), (Rev::new(r.1 as u64, r.2 as u32), Rev::new(r.4 as u64, r.5 as u32), &r.3), "{k}");
+            assert_eq!(
+                (v.mod_rev, v.create_rev, &v.value),
+                (
+                    Rev::new(r.1 as u64, r.2 as u32),
+                    Rev::new(r.4 as u64, r.5 as u32),
+                    &r.3
+                ),
+                "{k}"
+            );
         }
 
         let window = WALL - 14 * DAY_MS;
@@ -1323,17 +1788,26 @@ mod relayout {
             let got = b.get(&events_key(event_main(h)), HEAD).unwrap();
             assert_eq!(got.is_some(), event_at(h) >= window, "event of hour {h}");
             if let Some(v) = got {
-                assert!(day_rows(dir.path(), "events", &date(event_at(h))).contains(&events_key(event_main(h))));
+                assert!(day_rows(dir.path(), "events", &date(event_at(h)))
+                    .contains(&events_key(event_main(h))));
                 assert_eq!(v.value, obj(json!({ "at": event_at(h) })));
             }
         }
-        assert!(b.get(&events_key(900), HEAD).unwrap().is_none(), "an unstamped event is older than any stamped one");
+        assert!(
+            b.get(&events_key(900), HEAD).unwrap().is_none(),
+            "an unstamped event is older than any stamped one"
+        );
         for h in 0..48u64 {
             let at = event_at(EVENT_HOURS - 1 - h);
             let got = b.get(&request_key(&format!("r{h:02}")), HEAD).unwrap();
-            assert_eq!(got.is_some(), at > WALL - 24 * HOUR, "receipt {h} hours old");
+            assert_eq!(
+                got.is_some(),
+                at > WALL - 24 * HOUR,
+                "receipt {h} hours old"
+            );
             if got.is_some() {
-                assert!(day_rows(dir.path(), "receipts", &date(at)).contains(&request_key(&format!("r{h:02}"))));
+                assert!(day_rows(dir.path(), "receipts", &date(at))
+                    .contains(&request_key(&format!("r{h:02}"))));
             }
         }
         assert_eq!(report.events.copied, 14 * 24 + 1);
@@ -1342,14 +1816,20 @@ mod relayout {
     }
 
     #[test]
-    fn relayout_refuses_and_leaves_nothing_when_the_old_store_is_open_the_target_exists_or_the_wal_holds_frames() {
+    fn relayout_refuses_and_leaves_nothing_when_the_old_store_is_open_the_target_exists_or_the_wal_holds_frames(
+    ) {
         let dir = TempDir::new("relayout-refuse");
         let (old, new) = (dir.path().join("old.db"), dir.path().join("new.db"));
         fixture(&old);
         let before = files_beside(dir.path());
         let clock = VirtualClock::new(WALL);
 
-        let held = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.path().join("old.db.lock")).unwrap();
+        let held = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.path().join("old.db.lock"))
+            .unwrap();
         held.try_lock().unwrap();
         let e = relayout(&old, &new, &clock).unwrap_err().to_string();
         assert!(e.contains("open") && e.contains("stop lc-serve"), "{e}");
@@ -1364,13 +1844,22 @@ mod relayout {
         assert!(!new.exists());
 
         std::fs::write(dir.path().join("new.events-2024-10-04.db"), b"x").unwrap();
-        assert!(relayout(&old, &new, &clock).is_err(), "a day file of the target's stem is in the way");
+        assert!(
+            relayout(&old, &new, &clock).is_err(),
+            "a day file of the target's stem is in the way"
+        );
         std::fs::remove_file(dir.path().join("new.events-2024-10-04.db")).unwrap();
         std::fs::write(&new, b"x").unwrap();
         assert!(relayout(&old, &new, &clock).is_err(), "the target exists");
         assert_eq!(std::fs::read(&new).unwrap(), b"x");
         std::fs::remove_file(&new).unwrap();
-        assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")), "{:?}", files_beside(dir.path()));
+        assert!(
+            files_beside(dir.path())
+                .iter()
+                .all(|f| !f.starts_with("new")),
+            "{:?}",
+            files_beside(dir.path())
+        );
     }
 
     #[test]
@@ -1381,7 +1870,9 @@ mod relayout {
         let conn = Connection::open(&old).unwrap();
         conn.pragma_update(None, "user_version", 99).unwrap();
         drop(conn);
-        let e = relayout(&old, &new, &VirtualClock::new(WALL)).unwrap_err().to_string();
+        let e = relayout(&old, &new, &VirtualClock::new(WALL))
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("99"), "{e}");
         assert!(!new.exists());
     }
@@ -1393,28 +1884,53 @@ mod relayout {
         fixture(&old);
         let alter = |to: &Path| {
             let conn = Connection::open(to).unwrap();
-            conn.prepare("UPDATE latest SET value = X'7b7d' WHERE key = CAST('deliveries/sp-0007' AS BLOB)").unwrap().execute([]).unwrap();
+            conn.prepare(
+                "UPDATE latest SET value = X'7b7d' WHERE key = CAST('deliveries/sp-0007' AS BLOB)",
+            )
+            .unwrap()
+            .execute([])
+            .unwrap();
         };
-        let e = relayout_probed(&old, &new, &VirtualClock::new(WALL), &alter).unwrap_err().to_string();
+        let e = relayout_probed(&old, &new, &VirtualClock::new(WALL), &alter)
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("deliveries/sp-0007"), "{e}");
-        assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")), "{:?}", files_beside(dir.path()));
+        assert!(
+            files_beside(dir.path())
+                .iter()
+                .all(|f| !f.starts_with("new")),
+            "{:?}",
+            files_beside(dir.path())
+        );
 
         let alter_event = |to: &Path| {
             let file = to.with_file_name(format!("new.events-{}.db", date(WALL)));
             let conn = Connection::open(file).unwrap();
-            conn.prepare("UPDATE rows SET value = X'7b7d' WHERE key = (SELECT max(key) FROM rows)").unwrap().execute([]).unwrap();
+            conn.prepare("UPDATE rows SET value = X'7b7d' WHERE key = (SELECT max(key) FROM rows)")
+                .unwrap()
+                .execute([])
+                .unwrap();
         };
         assert!(relayout_probed(&old, &new, &VirtualClock::new(WALL), &alter_event).is_err());
-        assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")));
+        assert!(files_beside(dir.path())
+            .iter()
+            .all(|f| !f.starts_with("new")));
 
         let alter_revision = |to: &Path| {
             let file = to.with_file_name(format!("new.events-{}.db", date(WALL)));
             let conn = Connection::open(file).unwrap();
-            conn.prepare("UPDATE rows SET sub = sub + 1 WHERE key = (SELECT max(key) FROM rows)").unwrap().execute([]).unwrap();
+            conn.prepare("UPDATE rows SET sub = sub + 1 WHERE key = (SELECT max(key) FROM rows)")
+                .unwrap()
+                .execute([])
+                .unwrap();
         };
-        let e = relayout_probed(&old, &new, &VirtualClock::new(WALL), &alter_revision).unwrap_err().to_string();
+        let e = relayout_probed(&old, &new, &VirtualClock::new(WALL), &alter_revision)
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("certification failed"), "{e}");
-        assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")));
+        assert!(files_beside(dir.path())
+            .iter()
+            .all(|f| !f.starts_with("new")));
     }
 
     #[test]
@@ -1452,7 +1968,10 @@ fn put_next(b: &SqliteBackend) {
 fn no_commit_runs_a_wal_checkpoint() {
     let dir = TempDir::new("sqlite-no-commit-checkpoint");
     let path = dir.path().join("s.db");
-    let opts = Options { checkpoint_every: u64::MAX, ..Options::default() };
+    let opts = Options {
+        checkpoint_every: u64::MAX,
+        ..Options::default()
+    };
     let b = SqliteBackend::open(&path, opts).unwrap();
     let mut moved = Vec::new();
     for i in 0..state_store_sqlite::JUMP + 10 {
@@ -1462,7 +1981,10 @@ fn no_commit_runs_a_wal_checkpoint() {
             moved.push(i);
         }
     }
-    assert!(moved.is_empty(), "commits {moved:?} moved the WAL backfill mark");
+    assert!(
+        moved.is_empty(),
+        "commits {moved:?} moved the WAL backfill mark"
+    );
 }
 
 #[test]
@@ -1473,8 +1995,16 @@ fn a_checkpoint_completes_after_checkpoint_every_commits() {
     for _ in 0..state_store_sqlite::CHECKPOINT_EVERY {
         put_next(&b);
     }
-    assert!(state_store_sqlite::bench::await_checkpoint(&b, 0, CHECKPOINT_CAP).is_some(), "no checkpoint completed");
-    assert_eq!(std::fs::metadata(format!("{}-wal", path.display())).unwrap().len(), 0);
+    assert!(
+        state_store_sqlite::bench::await_checkpoint(&b, 0, CHECKPOINT_CAP).is_some(),
+        "no checkpoint completed"
+    );
+    assert_eq!(
+        std::fs::metadata(format!("{}-wal", path.display()))
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 fn seed_versions(path: &Path, rows: i64, prefixes: &[&str]) {
@@ -1492,7 +2022,11 @@ fn seed_versions(path: &Path, rows: i64, prefixes: &[&str]) {
 
 fn commit_live(b: &SqliteBackend, i: u64) {
     let head = b.head().unwrap();
-    b.commit(head, &[put_write(&format!("live/{i}"), b"1", head + 1, None)]).unwrap();
+    b.commit(
+        head,
+        &[put_write(&format!("live/{i}"), b"1", head + 1, None)],
+    )
+    .unwrap();
 }
 
 #[test]
@@ -1527,7 +2061,14 @@ fn a_store_opened_without_day_receipts_never_drains_its_version_rows() {
     b.commit(0, &[put_write("live/a", b"1", 1, None)]).unwrap();
     drop(b);
     seed_versions(&path, 1200, &["readiness/", "lifecycle/"]);
-    let b = SqliteBackend::open(&path, Options { day_receipts: false, ..day_opts(&wall) }).unwrap();
+    let b = SqliteBackend::open(
+        &path,
+        Options {
+            day_receipts: false,
+            ..day_opts(&wall)
+        },
+    )
+    .unwrap();
     for i in 1..4 {
         commit_live(&b, i);
     }
@@ -1625,7 +2166,11 @@ const CHECKPOINT_CAP: std::time::Duration = std::time::Duration::from_secs(60);
 /// background thread never takes a pass: the workload runs each interval's checkpoint itself
 /// when `checkpoint`, so host load cannot decide when it happens.
 fn bounded_wal_workload(path: &Path, checkpoint: bool) -> SqliteBackend {
-    let opts = Options { checkpoint_every: u64::MAX, readers: 4, ..Options::default() };
+    let opts = Options {
+        checkpoint_every: u64::MAX,
+        readers: 4,
+        ..Options::default()
+    };
     let b = SqliteBackend::open(path, opts).unwrap();
     let stop = Arc::new(AtomicBool::new(false));
     let reader = {
@@ -1653,7 +2198,14 @@ fn bounded_wal_workload(path: &Path, checkpoint: bool) -> SqliteBackend {
 fn frames_per_commit() -> u32 {
     let dir = TempDir::new("sqlite-frames-per-commit");
     let p = dir.path().join("f.db");
-    let b = SqliteBackend::open(&p, Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
+    let b = SqliteBackend::open(
+        &p,
+        Options {
+            checkpoint_every: u64::MAX,
+            ..Options::default()
+        },
+    )
+    .unwrap();
     let before = mx_frame(&p);
     for _ in 0..10 {
         put_next(&b);
@@ -1676,12 +2228,24 @@ fn the_wal_stays_within_three_checkpoint_intervals_while_reads_never_stop() {
 fn a_checkpoint_pass_on_an_idle_store_restarts_the_wal() {
     let dir = TempDir::new("sqlite-checkpoint-pass-idle");
     let path = dir.path().join("s.db");
-    let b = SqliteBackend::open(&path, Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
+    let b = SqliteBackend::open(
+        &path,
+        Options {
+            checkpoint_every: u64::MAX,
+            ..Options::default()
+        },
+    )
+    .unwrap();
     for _ in 0..4 {
         put_next(&b);
     }
     assert!(state_store_sqlite::bench::checkpoint_pass(&b).unwrap());
-    assert_eq!(std::fs::metadata(format!("{}-wal", path.display())).unwrap().len(), 0);
+    assert_eq!(
+        std::fs::metadata(format!("{}-wal", path.display()))
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 #[test]
@@ -1702,7 +2266,12 @@ fn the_wal_restarts_and_stays_bounded_while_a_reader_never_pauses() {
     let path = dir.path().join("s.db");
     let probe: Arc<dyn Fn() + Send + Sync> =
         Arc::new(|| std::thread::sleep(std::time::Duration::from_millis(1))); // clock-safe: the probe holds a read open a moment; no verdict depends on its length
-    let opts = Options { checkpoint_every: 20, readers: 2, read_probe: Some(probe), ..Options::default() };
+    let opts = Options {
+        checkpoint_every: 20,
+        readers: 2,
+        read_probe: Some(probe),
+        ..Options::default()
+    };
     let b = SqliteBackend::open(&path, opts).unwrap();
     let stop = Arc::new(AtomicBool::new(false));
     let readers: Vec<_> = (0..2)
@@ -1731,7 +2300,10 @@ fn the_wal_restarts_and_stays_bounded_while_a_reader_never_pauses() {
         "the WAL grew to {largest} B, past {bound} B"
     );
     let done = b.checkpoints_completed();
-    assert!(done >= 20, "only {done} checkpoints completed in 2000 commits under continuous reads");
+    assert!(
+        done >= 20,
+        "only {done} checkpoints completed in 2000 commits under continuous reads"
+    );
 }
 
 const CHILD_ENV: &str = "SQLITE_TEST_CHILD";
@@ -1740,8 +2312,16 @@ const CHILD_ENV: &str = "SQLITE_TEST_CHILD";
 fn fill_main_file(b: &SqliteBackend, n: u64) {
     for batch in 0..n / 50 {
         let head = b.head().unwrap();
-        let writes: Vec<Write> =
-            (0..50).map(|i| put_write(&format!("bulk/{batch:06}/{i:02}"), &[3; 4096], head + 1, None)).collect();
+        let writes: Vec<Write> = (0..50)
+            .map(|i| {
+                put_write(
+                    &format!("bulk/{batch:06}/{i:02}"),
+                    &[3; 4096],
+                    head + 1,
+                    None,
+                )
+            })
+            .collect();
         b.commit(head, &writes).unwrap();
     }
 }
@@ -1751,7 +2331,9 @@ fn fill_main_file(b: &SqliteBackend, n: u64) {
 /// `fail:<path>` commits under a file-size limit the main file is already past.
 #[test]
 fn child_work_when_asked() {
-    let Ok(spec) = std::env::var(CHILD_ENV) else { return };
+    let Ok(spec) = std::env::var(CHILD_ENV) else {
+        return;
+    };
     let (mode, path) = spec.split_once(':').unwrap();
     let path = Path::new(path);
     match mode {
@@ -1761,7 +2343,14 @@ fn child_work_when_asked() {
             std::process::exit(0);
         }
         "fail" => {
-            let b = SqliteBackend::open(path, Options { checkpoint_every: 4, ..Options::default() }).unwrap();
+            let b = SqliteBackend::open(
+                path,
+                Options {
+                    checkpoint_every: 4,
+                    ..Options::default()
+                },
+            )
+            .unwrap();
             for _ in 0..8 {
                 put_next(&b);
             }
@@ -1786,11 +2375,20 @@ fn run_child(spec: String, file_limit_blocks: Option<u64>) -> std::process::Outp
         }
     };
     let out = c
-        .args(["--exact", "child_work_when_asked", "--test-threads=1", "--nocapture"])
+        .args([
+            "--exact",
+            "child_work_when_asked",
+            "--test-threads=1",
+            "--nocapture",
+        ])
         .env(CHILD_ENV, spec)
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     out
 }
 
@@ -1806,7 +2404,10 @@ fn a_checkpoint_failure_is_logged_once_with_sqlites_error() {
     assert!(std::fs::metadata(&path).unwrap().len() > 8 << 20);
     let out = run_child(format!("fail:{}", path.display()), Some(1_000));
     let err = String::from_utf8_lossy(&out.stderr);
-    let lines: Vec<&str> = err.lines().filter(|l| l.starts_with("sqlite-checkpoint:")).collect();
+    let lines: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("sqlite-checkpoint:"))
+        .collect();
     assert_eq!(lines.len(), 1, "{err}");
     assert!(lines[0].contains(&path.display().to_string()), "{err}");
 }
@@ -1825,6 +2426,16 @@ fn a_large_store_left_by_an_unclean_stop_has_only_a_bounded_wal_to_recover() {
     let wal = PathBuf::from(format!("{}-wal", path.display()));
     let bound = u64::from(frames_per_commit()) * 3 * BOUND_EVERY;
     let frames = std::fs::metadata(&wal).unwrap().len() / 4120;
-    assert!(frames <= bound, "the WAL the next open recovers holds {frames} frames, over {bound}");
-    SqliteBackend::open(&path, Options { outbox: false, ..Options::default() }).unwrap();
+    assert!(
+        frames <= bound,
+        "the WAL the next open recovers holds {frames} frames, over {bound}"
+    );
+    SqliteBackend::open(
+        &path,
+        Options {
+            outbox: false,
+            ..Options::default()
+        },
+    )
+    .unwrap();
 }

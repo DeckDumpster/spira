@@ -92,8 +92,17 @@ impl<B: Backend + Clone> Backend for Scoped<B> {
             .collect())
     }
 
-    fn range_newest_opened(&self, prefix: &str, since: i64, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
-        Ok(self.strip(self.inner.range_newest_opened(&self.outer(prefix), since, limit, at)?))
+    fn range_newest_opened(
+        &self,
+        prefix: &str,
+        since: i64,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        Ok(self.strip(
+            self.inner
+                .range_newest_opened(&self.outer(prefix), since, limit, at)?,
+        ))
     }
 
     fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {

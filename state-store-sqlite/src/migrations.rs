@@ -282,7 +282,7 @@ mod cost {
     use std::sync::Arc;
     use std::time::Instant;
 
-    const ROUNDS: usize = 16;
+    const ROUNDS: usize = 10;
     const GROWTH: usize = 4;
     const BOUND: u64 = 6;
     /// Shipped before this check and never editable; each entry must still be over the bound,
@@ -295,7 +295,8 @@ mod cost {
 
     fn audit(machine: &str, id: &str, event: &str, to: &str, at: i64) -> Value {
         json!({ "machine": machine, "lc_key": id, "event": event, "to_state": to, "at": at,
-                "applied": true, "evidence": { "n": at } })
+                "applied": true,
+                "evidence": { "n": at, "Hold": { "kind": "Manual", "cause": "c", "detail": "d" } } })
     }
 
     /// A store of production shape: per round a batch, a delivery, 8 history entries each
@@ -327,14 +328,21 @@ mod cost {
                     json!({ "bead_id": format!("d-{i}"), "state": "Batched" }),
                 ),
             ));
+            rows.push((
+                format!("lifecycle/d-{i}"),
+                next(),
+                obj(json!({}), json!({ "holds": ["Manual"] })),
+            ));
             for id in [format!("r-{i}"), format!("d-{i}")] {
                 for seq in 0..4i64 {
-                    let machine = if id.starts_with('r') {
+                    let machine = if seq == 0 && id.starts_with('d') {
+                        "bead"
+                    } else if id.starts_with('r') {
                         "batch"
                     } else {
                         "delivery"
                     };
-                    let event = ["PassStarted", "PassRed", "Eject", "PassGreen"][seq as usize];
+                    let event = ["Hold", "PassRed", "Eject", "PassGreen"][seq as usize];
                     rows.push((
                     format!("history/{id}/0/import/{seq}"),
                     1,

@@ -28,7 +28,15 @@ fn open(path: &Path) -> SqliteBackend {
 /// A copy being checked (a snapshot, a restore, a backup): opened without the jump, so its
 /// revisions read exactly as written (sp-r3yb7x).
 fn verify(path: &Path) -> SqliteBackend {
-    SqliteBackend::open(path, Options { jump_on_open: false, day_receipts: false, ..Options::default() }).unwrap()
+    SqliteBackend::open(
+        path,
+        Options {
+            jump_on_open: false,
+            day_receipts: false,
+            ..Options::default()
+        },
+    )
+    .unwrap()
 }
 
 fn req(id: &str) -> Request {
@@ -81,11 +89,28 @@ struct Curl {
 impl Proc for Curl {
     fn run(&self, spec: &ProcSpec) -> Result<ProcOutput, String> {
         assert_eq!(spec.prog, "curl");
-        let file = spec.args.iter().position(|a| a == "-T").map(|i| spec.args[i + 1].clone()).unwrap();
+        let file = spec
+            .args
+            .iter()
+            .position(|a| a == "-T")
+            .map(|i| spec.args[i + 1].clone())
+            .unwrap();
         let body = std::fs::read(&file).unwrap();
-        self.runs.lock().unwrap().push((spec.args.clone(), String::from_utf8(spec.stdin.clone()).unwrap(), body));
-        let code = if std::mem::take(&mut *self.refuse_next.lock().unwrap()) { 22 } else { 0 };
-        Ok(ProcOutput { code: Some(code), stdout: Vec::new(), stderr: b"The requested URL returned error: 500".to_vec() })
+        self.runs.lock().unwrap().push((
+            spec.args.clone(),
+            String::from_utf8(spec.stdin.clone()).unwrap(),
+            body,
+        ));
+        let code = if std::mem::take(&mut *self.refuse_next.lock().unwrap()) {
+            22
+        } else {
+            0
+        };
+        Ok(ProcOutput {
+            code: Some(code),
+            stdout: Vec::new(),
+            stderr: b"The requested URL returned error: 500".to_vec(),
+        })
     }
 }
 
@@ -137,14 +162,24 @@ fn the_shipper_puts_every_revision_to_a_put_only_endpoint_and_retries_a_refusal_
 
     let runs = curl.runs.lock().unwrap().clone();
     assert!(
-        runs.iter().all(|(a, ..)| a.windows(2).any(|w| w == ["-X", "PUT"])),
+        runs.iter()
+            .all(|(a, ..)| a.windows(2).any(|w| w == ["-X", "PUT"])),
         "only PUTs: {:?}",
         runs.iter().map(|r| &r.0).collect::<Vec<_>>()
     );
-    let urls: Vec<&str> = runs.iter().map(|(a, ..)| a.last().unwrap().as_str()).collect();
+    let urls: Vec<&str> = runs
+        .iter()
+        .map(|(a, ..)| a.last().unwrap().as_str())
+        .collect();
     let retried = urls[2];
-    assert_eq!(urls[3], retried, "the retry is the refused object, under its own name");
-    assert!(retried.starts_with("http://endpoint.test/bucket/spira/lc/revlog/"), "{retried}");
+    assert_eq!(
+        urls[3], retried,
+        "the retry is the refused object, under its own name"
+    );
+    assert!(
+        retried.starts_with("http://endpoint.test/bucket/spira/lc/revlog/"),
+        "{retried}"
+    );
     assert!(
         urls.iter()
             .any(|u| u.starts_with("http://endpoint.test/bucket/spira/lc/snapshot/")),
@@ -155,12 +190,24 @@ fn the_shipper_puts_every_revision_to_a_put_only_endpoint_and_retries_a_refusal_
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();
-        assert!(args.contains(&format!("x-amz-content-sha256: {sum}")), "{args:?}");
-        assert!(args.windows(2).any(|w| w == ["--aws-sigv4", "aws:amz:us-test-1:s3"]), "{args:?}");
-        assert!(config.contains("AKTEST:secret\\\"x"), "the credentials go on stdin: {config}");
+        assert!(
+            args.contains(&format!("x-amz-content-sha256: {sum}")),
+            "{args:?}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|w| w == ["--aws-sigv4", "aws:amz:us-test-1:s3"]),
+            "{args:?}"
+        );
+        assert!(
+            config.contains("AKTEST:secret\\\"x"),
+            "the credentials go on stdin: {config}"
+        );
         assert!(config.contains("x-amz-security-token: tok"), "{config}");
         assert!(
-            !args.iter().any(|a| a.contains("AKTEST") || a.contains("secret") || a.contains("tok")),
+            !args
+                .iter()
+                .any(|a| a.contains("AKTEST") || a.contains("secret") || a.contains("tok")),
             "no credential on argv: {args:?}"
         );
     }
@@ -364,8 +411,8 @@ fn a_flipped_byte_in_a_restored_value_fails_the_drill_naming_the_key() {
         std::fs::create_dir_all(&sub).unwrap();
         let (out, base, runs) = restored_copy(&sub, &s);
         tamper(&out, key, &flipped(c.backend(), key));
-        let rep =
-            drill::fold_compare(&verify(&base), &runs, &verify(&out), Exclusions::CONTRACT).unwrap();
+        let rep = drill::fold_compare(&verify(&base), &runs, &verify(&out), Exclusions::CONTRACT)
+            .unwrap();
         assert_eq!(
             rep.mismatches,
             [Mismatch::Value { key: key.into() }],
@@ -408,7 +455,8 @@ fn the_drill_gives_its_verdict_when_one_read_of_the_keyspace_would_pass_max_read
             "the fixture's single full read must exceed the cap"
         );
     }
-    let paged = drill::fold_compare(&capped(&base), &runs, &capped(&out), Exclusions::CONTRACT).unwrap();
+    let paged =
+        drill::fold_compare(&capped(&base), &runs, &capped(&out), Exclusions::CONTRACT).unwrap();
     assert!(paged.passed(), "{}", drill::render(&paged));
     let whole =
         drill::fold_compare(&verify(&base), &runs, &verify(&out), Exclusions::CONTRACT).unwrap();
@@ -417,8 +465,14 @@ fn the_drill_gives_its_verdict_when_one_read_of_the_keyspace_would_pass_max_read
 
     let key = "intents/claim/sp-1";
     tamper(&out, key, &flipped(c.backend(), key));
-    let rep = drill::fold_compare(&capped(&base), &runs, &capped(&out), Exclusions::CONTRACT).unwrap();
-    assert_eq!(rep.mismatches, [Mismatch::Value { key: key.into() }], "{}", drill::render(&rep));
+    let rep =
+        drill::fold_compare(&capped(&base), &runs, &capped(&out), Exclusions::CONTRACT).unwrap();
+    assert_eq!(
+        rep.mismatches,
+        [Mismatch::Value { key: key.into() }],
+        "{}",
+        drill::render(&rep)
+    );
 }
 
 #[test]
@@ -533,8 +587,8 @@ fn an_audit_record_that_does_not_describe_its_txn_fails_the_drill_naming_it() {
         std::fs::create_dir_all(&sub).unwrap();
         let (out, base, runs) = restored_copy(&sub, &s);
         tamper(&out, &key, &value);
-        let rep =
-            drill::fold_compare(&verify(&base), &runs, &verify(&out), Exclusions::CONTRACT).unwrap();
+        let rep = drill::fold_compare(&verify(&base), &runs, &verify(&out), Exclusions::CONTRACT)
+            .unwrap();
         assert!(
             matches!(rep.mismatches.as_slice(), [Mismatch::Event { main, .. }] if *main == head),
             "{name}: {}",
@@ -708,10 +762,19 @@ fn commits_made_then_the_store_dropped_without_a_stop_hook_ship_every_revision_w
     let off = dir.path().join("off");
     let mut first = {
         let c = suite::open(open(&path), &clock);
-        let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
+        let mut s = Shipper::open(
+            c.backend().clone(),
+            ship_cfg(dir.path(), u64::MAX),
+            file_put(&off),
+            Arc::new(clock.clone()),
+        )
+        .unwrap();
         put(&c, "a", Object::new(json!(1)), "1");
         let t = s.tick().unwrap();
-        assert!(t.snapshot.is_some(), "the first tick takes the snapshot a restore starts from");
+        assert!(
+            t.snapshot.is_some(),
+            "the first tick takes the snapshot a restore starts from"
+        );
         put(&c, "a", Object::new(json!(2)), "2");
         put(&c, "b", Object::new(json!(3)), "3");
         put(&c, "a", Object::new(json!(4)), "4");
@@ -719,7 +782,13 @@ fn commits_made_then_the_store_dropped_without_a_stop_hook_ship_every_revision_w
     };
     assert!(first > 3);
     let c = suite::open(open(&path), &clock);
-    let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
+    let mut s = Shipper::open(
+        c.backend().clone(),
+        ship_cfg(dir.path(), u64::MAX),
+        file_put(&off),
+        Arc::new(clock.clone()),
+    )
+    .unwrap();
     let t = s.tick().unwrap();
     assert_eq!(t.snapshot, None, "no snapshot out of cadence: {t:?}");
     let head = c.backend().head().unwrap();
@@ -755,20 +824,33 @@ fn shipped_entries_leave_the_outbox_and_unshipped_ones_stay() {
         proc: Arc::new(curl.clone()),
         deadline: Duration::from_secs(10),
     });
-    let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), put_to, Arc::new(clock.clone())).unwrap();
+    let mut s = Shipper::open(
+        c.backend().clone(),
+        ship_cfg(dir.path(), u64::MAX),
+        put_to,
+        Arc::new(clock.clone()),
+    )
+    .unwrap();
     let b = c.backend().clone();
     let r1 = put(&c, "a", Object::new(json!(1)), "1");
     let r2 = put(&c, "a", Object::new(json!(2)), "2");
     assert_eq!(b.outbox_mains().unwrap(), [r1, r2]);
     let t = s.tick().unwrap();
     assert_eq!(t.shipped_through, r2);
-    assert!(b.outbox_mains().unwrap().is_empty(), "everything shipped is gone");
+    assert!(
+        b.outbox_mains().unwrap().is_empty(),
+        "everything shipped is gone"
+    );
     let r3 = put(&c, "a", Object::new(json!(3)), "3");
     let r4 = put(&c, "a", Object::new(json!(4)), "4");
     *curl.refuse_next.lock().unwrap() = true;
     let t = s.tick().unwrap();
     assert!(t.failed.is_some() && t.shipped_through == r2, "{t:?}");
-    assert_eq!(b.outbox_mains().unwrap(), [r3, r4], "the unshipped entries remain");
+    assert_eq!(
+        b.outbox_mains().unwrap(),
+        [r3, r4],
+        "the unshipped entries remain"
+    );
     let t = s.tick().unwrap();
     assert_eq!(t.shipped_through, r4);
     assert!(b.outbox_mains().unwrap().is_empty());
@@ -785,13 +867,28 @@ fn an_outbox_entry_above_the_main_head_at_open_is_removed() {
         put(&c, "a", Object::new(json!(1)), "1");
         c.backend().head().unwrap()
     };
-    let mut o = state_store_sqlite::outbox::Outbox::open(&state_store_sqlite::outbox_dir(&path), head, 1 << 20).unwrap();
-    let ghost = LogEntry { key: "ghost".into(), rev: Rev::new(head + 1, 0), value: Some(b"{}".to_vec()), create_rev: Some(Rev::new(head + 1, 0)), prev: None };
+    let mut o = state_store_sqlite::outbox::Outbox::open(
+        &state_store_sqlite::outbox_dir(&path),
+        head,
+        1 << 20,
+    )
+    .unwrap();
+    let ghost = LogEntry {
+        key: "ghost".into(),
+        rev: Rev::new(head + 1, 0),
+        value: Some(b"{}".to_vec()),
+        create_rev: Some(Rev::new(head + 1, 0)),
+        prev: None,
+    };
     o.append(head + 1, &[ghost]).unwrap();
     assert_eq!(o.mains().unwrap().last(), Some(&(head + 1)));
     drop(o);
     let b = open(&path);
-    assert_eq!(b.outbox_mains().unwrap().last(), Some(&head), "the commit that never happened is gone");
+    assert_eq!(
+        b.outbox_mains().unwrap().last(),
+        Some(&head),
+        "the commit that never happened is gone"
+    );
 }
 
 #[test]
@@ -802,7 +899,13 @@ fn a_shipper_whose_outbox_does_not_reach_back_takes_a_snapshot_at_once_and_resum
     let off = dir.path().join("off");
     {
         let c = suite::open(open(&path), &clock);
-        let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
+        let mut s = Shipper::open(
+            c.backend().clone(),
+            ship_cfg(dir.path(), u64::MAX),
+            file_put(&off),
+            Arc::new(clock.clone()),
+        )
+        .unwrap();
         put(&c, "a", Object::new(json!(1)), "1");
         s.tick().unwrap();
         put(&c, "a", Object::new(json!(2)), "2");
@@ -810,10 +913,20 @@ fn a_shipper_whose_outbox_does_not_reach_back_takes_a_snapshot_at_once_and_resum
     }
     std::fs::remove_dir_all(state_store_sqlite::outbox_dir(&path)).unwrap();
     let c = suite::open(open(&path), &clock);
-    let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
+    let mut s = Shipper::open(
+        c.backend().clone(),
+        ship_cfg(dir.path(), u64::MAX),
+        file_put(&off),
+        Arc::new(clock.clone()),
+    )
+    .unwrap();
     let t = s.tick().unwrap();
     let head = c.backend().head().unwrap();
-    assert_eq!(t.snapshot, Some(head), "the snapshot taken out of cadence: {t:?}");
+    assert_eq!(
+        t.snapshot,
+        Some(head),
+        "the snapshot taken out of cadence: {t:?}"
+    );
     assert_eq!(t.staged, None);
     put(&c, "c", Object::new(json!(4)), "4");
     let t = s.tick().unwrap();
@@ -836,17 +949,42 @@ fn reopening_a_store_jumps_its_head_records_the_jump_and_commits_in_normal_mode(
     let first = {
         let c = suite::open(open(&path), &clock);
         assert_eq!(c.backend().synchronous().unwrap(), 1, "NORMAL");
-        put(&c, "lifecycle/sp-1", Object::new(json!({"state": "READY"})), "j1")
+        put(
+            &c,
+            "lifecycle/sp-1",
+            Object::new(json!({"state": "READY"})),
+            "j1",
+        )
     };
     let b = reopened(&path);
     let jumped = first + state_store_sqlite::JUMP;
     assert_eq!(b.head().unwrap(), jumped);
     assert_eq!(b.jumps(0, jumped).unwrap(), vec![(first + 1, jumped)]);
     let c = suite::open(b, &clock);
-    assert_eq!(put(&c, "lifecycle/sp-2", Object::new(json!({"state": "READY"})), "j2"), jumped + 1, "the next commit follows the jump");
+    assert_eq!(
+        put(
+            &c,
+            "lifecycle/sp-2",
+            Object::new(json!({"state": "READY"})),
+            "j2"
+        ),
+        jumped + 1,
+        "the next commit follows the jump"
+    );
     drop(c);
-    let quiet = SqliteBackend::open(&path, Options { jump_on_open: false, ..Options::default() }).unwrap();
-    assert_eq!(quiet.head().unwrap(), jumped + 1, "a verifying open leaves the revisions as they are");
+    let quiet = SqliteBackend::open(
+        &path,
+        Options {
+            jump_on_open: false,
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        quiet.head().unwrap(),
+        jumped + 1,
+        "a verifying open leaves the revisions as they are"
+    );
 }
 
 #[test]
@@ -861,9 +999,19 @@ fn a_jump_at_the_head_with_nothing_after_it_is_shipped() {
     }
     let b = reopened(&path);
     let head = b.head().unwrap();
-    let mut s = Shipper::open(b, ship_cfg(dir.path(), u64::MAX), file_put(&dir.path().join("off")), Arc::new(clock.clone())).unwrap();
+    let mut s = Shipper::open(
+        b,
+        ship_cfg(dir.path(), u64::MAX),
+        file_put(&dir.path().join("off")),
+        Arc::new(clock.clone()),
+    )
+    .unwrap();
     s.tick().unwrap();
-    assert_eq!(s.shipped_through().unwrap(), head, "the jump ships, so the lag clears and compaction can follow");
+    assert_eq!(
+        s.shipped_through().unwrap(),
+        head,
+        "the jump ships, so the lag clears and compaction can follow"
+    );
 }
 
 #[test]
@@ -877,14 +1025,32 @@ fn a_restore_across_a_jump_reproduces_the_head_the_contents_and_the_jump() {
         drop((c, s));
     }
     let c = suite::open(reopened(&path), &clock);
-    put(&c, "lifecycle/sp-9", Object::new(json!({"state": "LANDED"})), "after-jump");
-    let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&dir.path().join("off")), Arc::new(clock.clone())).unwrap();
+    put(
+        &c,
+        "lifecycle/sp-9",
+        Object::new(json!({"state": "LANDED"})),
+        "after-jump",
+    );
+    let mut s = Shipper::open(
+        c.backend().clone(),
+        ship_cfg(dir.path(), u64::MAX),
+        file_put(&dir.path().join("off")),
+        Arc::new(clock.clone()),
+    )
+    .unwrap();
     s.tick().unwrap();
     let live = c.backend().clone();
     let head = live.head().unwrap();
     assert_eq!(s.shipped_through().unwrap(), head);
     let (out, _base, _runs) = restored_copy(dir.path(), &s);
-    let r = SqliteBackend::open(&out, Options { jump_on_open: false, ..Options::default() }).unwrap();
+    let r = SqliteBackend::open(
+        &out,
+        Options {
+            jump_on_open: false,
+            ..Options::default()
+        },
+    )
+    .unwrap();
     assert_eq!(r.head().unwrap(), head);
     assert_eq!(keys_at(&r, head), keys_at(&live, head));
     assert_eq!(r.jumps(0, head).unwrap(), live.jumps(0, head).unwrap());
