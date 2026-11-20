@@ -1630,8 +1630,6 @@ impl SqliteBackend {
         let inner = &self.0;
         let n = inner.readers.len();
         let start = inner.next_reader.fetch_add(1, Ordering::Relaxed);
-        let max_read_ms = inner.max_read_ms.load(Ordering::SeqCst);
-        let deadline = inner.clock.now_ms().saturating_add(max_read_ms);
         let (reader, mut conn) = phases::time(Phase::ReaderWait, || {
             (0..n)
                 .map(|i| &inner.readers[(start + i) % n])
@@ -1641,7 +1639,9 @@ impl SqliteBackend {
                     (r, lock(&r.conn))
                 })
         });
+        let max_read_ms = inner.max_read_ms.load(Ordering::SeqCst);
         let gate_began = inner.clock.now_ms();
+        let deadline = gate_began.saturating_add(max_read_ms);
         let waiting = phases::begin_unconfirmed(Phase::GateWait);
         drop(lock(&inner.read_gate));
         waiting.confirm_after(Duration::from_millis(inner.clock.now_ms().saturating_sub(gate_began)));
