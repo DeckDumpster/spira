@@ -146,6 +146,11 @@ id = "UC-operator-channel-24"
 tier = "T3"
 statement = "land_escalate reaches the operator unless an OPEN ask with the same subject exists. A closed ask does not suppress it (sp-yki4)."
 
+[use_case.uncovered]
+reason = "retired: the behaviour did not survive. The land escalation is the serve task's ask to the concierge mailbox, which carries no ask label, so no open ask suppresses it; repeats are bounded by SPIRA_LAND_ESCALATE_EVERY (spira-runtime task_a_sentinel_pass t5_check6_the_land_escalation_waits_out_its_cooldown)."
+date = "2026-11-19"
+bead = "sp-3i87xd.3"
+
 [[use_case]]
 id = "UC-operator-channel-25"
 tier = "T2"
