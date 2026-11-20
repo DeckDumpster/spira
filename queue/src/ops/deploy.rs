@@ -261,22 +261,11 @@ fn activation_bin(w: &World, plan: &Plan, sha: &str) -> Result<PathBuf, String> 
     release_bin(plan.bins.as_deref(), || w.scripts.release_tool())
 }
 
-/// Whether the activation of `sha` restarts the unit `unit`: the release ships a template
-/// that installs it. The installed name is the template's own, or the template's stem with an
-/// instance suffix.
-fn activation_restarts(plan: &Plan, sha: &str, unit: &str) -> bool {
-    let Ok(templates) = release::units::templates(&plan.releases.join(sha)) else { return false };
-    let Some(stem) = unit.strip_suffix(".service") else { return false };
-    templates.iter().any(|t| {
-        t == unit || t.strip_suffix(".service").is_some_and(|base| !base.ends_with('@') && stem.strip_prefix(base).is_some_and(|rest| rest.starts_with('-')))
-    })
-}
-
 fn activate_once(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
     let bin = activation_bin(w, plan, sha)?;
     let key: String = sha.chars().take(12).collect();
     let log = plan.run.join(format!("release-activate-{key}.log"));
-    let detached = w.scripts.own_unit().filter(|u| activation_restarts(plan, sha, u)).map(|_| (key.as_str(), log.as_path()));
+    let detached = w.scripts.own_unit_restarted_by(&plan.releases.join(sha)).map(|_| (key.as_str(), log.as_path()));
     let out = step_in(
         w,
         plan,

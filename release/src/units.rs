@@ -42,6 +42,12 @@ pub fn template_for(installed: &str, templates: &BTreeSet<String>, instance: &st
     None
 }
 
+/// Whether a template in `rel` makes the installed unit `unit`, so activating `rel` rewrites
+/// and may restart it.
+pub fn is_shipped_by(rel: &Path, instance: &str, unit: &str) -> bool {
+    templates(rel).is_ok_and(|t| template_for(unit, &t, instance).is_some())
+}
+
 /// The unit templates in `<rel>/systemd`.
 pub fn templates(rel: &Path) -> Result<BTreeSet<String>, String> {
     let dir = rel.join("systemd");

@@ -823,7 +823,7 @@ impl Scripts for FScripts {
         testkit::write_exe(dir.join("release"), "#!/bin/sh\n");
         Ok(Box::new(()))
     }
-    fn own_unit(&self) -> Option<String> {
+    fn own_unit_restarted_by(&self, _rel: &Path) -> Option<String> {
         self.caller_unit.borrow().clone()
     }
     fn release_detached(&self, key: &str, bin: &Path, args: &[String], db: &str, _log: &Path) -> RunOut {
@@ -3795,15 +3795,13 @@ fn activation_runs_the_built_releases_own_binary_when_the_round_build_has_none()
     );
 }
 
-fn activating_from_unit(unit: &str) -> (Vec<String>, usize) {
+fn activating_from_unit(restarted_caller: Option<&str>) -> (Vec<String>, usize) {
     let t = T::new(LandMode::QueueLocal);
     let rel = t.s().releases.clone().unwrap();
     let sha = "0ed1c65f3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     fs::create_dir_all(rel.join(sha).join("bin")).unwrap();
-    fs::create_dir_all(rel.join(sha).join("systemd")).unwrap();
-    fs::write(rel.join(sha).join("systemd/spira-runtime.service"), "[Service]\n").unwrap();
     testkit::write_exe(rel.join(sha).join("bin/release"), "#!/bin/sh\n");
-    *t.scripts.caller_unit.borrow_mut() = Some(unit.into());
+    *t.scripts.caller_unit.borrow_mut() = restarted_caller.map(str::to_string);
     let plan = crate::ops::deploy::Plan {
         repo: PathBuf::from("repo"),
         landref: "local/main".into(),
@@ -3821,14 +3819,14 @@ fn activating_from_unit(unit: &str) -> (Vec<String>, usize) {
 
 #[test]
 fn an_activation_called_from_a_unit_it_restarts_runs_in_a_unit_of_its_own() {
-    let (keys, calls) = activating_from_unit("spira-runtime-prod.service");
+    let (keys, calls) = activating_from_unit(Some("spira-runtime-prod.service"));
     assert_eq!(keys, vec!["0ed1c65f3aaa".to_string()]);
     assert_eq!(calls, 1);
 }
 
 #[test]
 fn an_activation_called_from_a_unit_it_leaves_alone_runs_as_a_child() {
-    let (keys, calls) = activating_from_unit("spira-run-sentinel_2dpass-landing.service");
+    let (keys, calls) = activating_from_unit(None);
     assert!(keys.is_empty(), "{keys:?}");
     assert_eq!(calls, 1);
 }

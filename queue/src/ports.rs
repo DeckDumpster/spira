@@ -337,8 +337,9 @@ pub trait Scripts {
     /// (`release verify`'s pre-activate store check reads it). Stdout and stderr are kept
     /// apart: `release build` answers the sha on stdout.
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut;
-    /// The systemd unit this process runs in; `None` outside one.
-    fn own_unit(&self) -> Option<String> {
+    /// The systemd unit this process runs in when the release at `rel` ships it, so activating
+    /// `rel` restarts it; `None` outside any unit or in one the release leaves alone.
+    fn own_unit_restarted_by(&self, _rel: &Path) -> Option<String> {
         None
     }
     /// [`Scripts::release`] started in a transient unit of its own named for `key`, so a restart

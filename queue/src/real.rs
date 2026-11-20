@@ -1181,9 +1181,11 @@ impl Scripts for RealScripts {
             },
         }
     }
-    fn own_unit(&self) -> Option<String> {
+    fn own_unit_restarted_by(&self, rel: &Path) -> Option<String> {
         let cgroup = std::fs::read_to_string(format!("{}/cgroup", system_paths::PROC_SELF)).ok()?;
-        unit_of_cgroup(&cgroup)
+        let unit = unit_of_cgroup(&cgroup)?;
+        let instance = spira_config::process::cfg("SPIRA_INSTANCE").ok().filter(|i| !i.is_empty())?;
+        release::units::is_shipped_by(rel, &instance, &unit).then_some(unit)
     }
     fn release_detached(&self, key: &str, bin: &Path, args: &[String], db: &str, log: &Path) -> RunOut {
         use runtime::units::{Exit, UnitHandle, UnitProps, UnitSpec, UnitState, Units};

@@ -1751,3 +1751,15 @@ fn the_trees_delta_loads_and_replaces_the_backup_age_and_database_defaults() {
     assert_eq!(delta.replaced.get("spira.lc_backup_max_age").and_then(|v| v.as_integer()), Some(50_400));
     assert_eq!(delta.replaced.get("spira.lc_backup_db").and_then(|v| v.as_str()), Some("spira"));
 }
+
+#[test]
+fn a_release_ships_the_installed_units_its_templates_make_and_no_other() {
+    let w = World::with_git(FakeGit::default());
+    let rel = w.cfg.releases.join(A);
+    file(&rel.join("systemd/spira-runtime.service"), SVC);
+    file(&rel.join("systemd/shared.service"), SHARED);
+    assert!(units::is_shipped_by(&rel, "prod", "spira-runtime-prod.service"));
+    assert!(units::is_shipped_by(&rel, "prod", "shared.service"));
+    assert!(!units::is_shipped_by(&rel, "prod", "spira-run-sentinel_2dpass-landing.service"));
+    assert!(!units::is_shipped_by(&rel, "other", "spira-runtime-prod.service"));
+}
