@@ -145,8 +145,8 @@ fn parse(args: &[String]) -> Result<Parsed, String> {
         }
     }
     if configured {
-        if ms.is_some() || verb.is_some() {
-            return Err("--configured checks the configured values and excludes --ms and --verb".to_string());
+        if ms.is_some() || verb.is_some() || file.is_some() {
+            return Err("--configured checks the configured values and excludes --ms, --verb and --file".to_string());
         }
         return Ok(Parsed { ms: None, verb, hours, file, configured });
     }
@@ -158,10 +158,14 @@ fn parse(args: &[String]) -> Result<Parsed, String> {
 }
 
 fn default_scope(slow: &str) -> Result<Scope, String> {
+    Ok(default_scope_without(crate::serve::parse_slow_entries(slow)?.into_iter().map(|(v, _, _)| v)))
+}
+
+fn default_scope_without(slow_verbs: impl Iterator<Item = String>) -> Scope {
     let mut excluded: BTreeSet<String> = ["work", "unpublished", "watch"].iter().map(|v| v.to_string()).collect();
     excluded.extend(crate::composed::SWEEPS.iter().map(|v| v.to_string()));
-    excluded.extend(crate::serve::parse_slow_entries(slow)?.into_iter().map(|(v, _, _)| v));
-    Ok(Scope::Default { excluded })
+    excluded.extend(slow_verbs);
+    Scope::Default { excluded }
 }
 
 fn usage(why: &str) -> (i32, String) {
@@ -191,11 +195,7 @@ fn run_check(p: &Parsed, ms: u64, slow: &str, dir: &Path, now: SystemTime) -> (i
 
 /// The configured default over the verbs that get it, then each slow-list entry over its own verb, each at its own value.
 fn run_configured(p: &Parsed, d: &crate::serve::Deadlines, dir: &Path, now: SystemTime) -> (i32, String) {
-    let list = d.slow.iter().map(|(v, (ms, bead))| format!("{v}={}@{bead}", ms.as_millis())).collect::<Vec<_>>().join(",");
-    let default = match default_scope(&list) {
-        Ok(s) => s,
-        Err(e) => return (CANNOT_TELL, e),
-    };
+    let default = default_scope_without(d.slow.keys().cloned());
     let (since_ns, files) = window(p, dir, now);
     let mut checks = vec![(default, d.default.as_millis() as u64)];
     checks.extend(d.slow.iter().map(|(v, (ms, _))| (Scope::Verb(v.clone()), ms.as_millis() as u64)));

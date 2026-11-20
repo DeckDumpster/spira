@@ -139,13 +139,7 @@ impl Ledger {
 
     /// The answer to the request `id`: the recorded one, the in-flight one's once it ends, or
     /// `work`'s own, run at most once however many sends arrive. No answer within `wait` is a
-    /// deadline answer, and a worker still running keeps its slot until it has a real one.
-    #[cfg(test)]
-    fn answer(&self, id: &str, wait: Duration, work: impl FnOnce() -> Answer + Send + 'static) -> Answer {
-        self.answer_in_time(id, wait, work).unwrap_or_else(deadline_answer)
-    }
-
-    /// [`Ledger::answer`], with `None` where the wait ran out: the cut is a value, never read back from the answer's text.
+    /// `None` (the caller makes the deadline answer), and a worker still running keeps its slot until it has a real one.
     fn answer_in_time(&self, id: &str, wait: Duration, work: impl FnOnce() -> Answer + Send + 'static) -> Option<Answer> {
         let end = Instant::now() + wait;
         let mut slots = self.0.slots.lock().unwrap_or_else(|e| e.into_inner());
@@ -2145,7 +2139,7 @@ mod tests {
         let first = {
             let ledger = ledger.clone();
             std::thread::spawn(move || {
-                ledger.answer("r", Duration::from_secs(10), move || {
+                ledger.answer_in_time("r", Duration::from_secs(10), move || {
                     started.send(()).unwrap();
                     release_rx.recv().unwrap();
                     crate::callers::Answer::out(0, "real".to_string())
@@ -2153,11 +2147,10 @@ mod tests {
             })
         };
         started_rx.recv().unwrap();
-        let waited = ledger.answer("r", Duration::from_millis(30), || panic!("a second arrival never runs the work"));
-        assert_eq!((waited.code, waited.stdout.as_str()), (2, "cannot tell: deadline"));
+        assert!(ledger.answer_in_time("r", Duration::from_millis(30), || panic!("a second arrival never runs the work")).is_none());
         release.send(()).unwrap();
-        assert_eq!(first.join().unwrap().stdout, "real");
-        let replay = ledger.answer("r", Duration::from_secs(1), || panic!("a recorded answer is replayed, not run again"));
+        assert_eq!(first.join().unwrap().unwrap().stdout, "real");
+        let replay = ledger.answer_in_time("r", Duration::from_secs(1), || panic!("a recorded answer is replayed, not run again")).unwrap();
         assert_eq!(replay.stdout, "real");
     }
 
@@ -2204,6 +2197,12 @@ mod tests {
         assert_eq!(span_attr(&dir, "content", "spira.deadline_cut_ms"), Some(Some(50)));
         assert!(span_attr(&dir, "content", "spira.answer_us").is_some());
         parked.notes.release();
+
+        let ledgered = rig(true, fifty_ms());
+        let cut = send_spanned(&ledgered.door, Some(&sink), &["content", "note", "sp-b", "y"], Some("req-cut"));
+        assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
+        assert_eq!(span_attr(&dir, "content", "spira.deadline_cut_ms"), Some(Some(50)), "a write under a request id is cut the same way");
+        ledgered.notes.release();
     }
 
     #[test]
