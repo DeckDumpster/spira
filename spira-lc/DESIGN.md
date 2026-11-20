@@ -103,7 +103,8 @@ content (`git_evidence::content_on_base`, the `content-landed` verb's proof), el
 - **Tests are one file per feature.** A module's tests live in `<module>/tests/`, a shared rig
   in `tests/mod.rs` and each feature in its own file (`sections/tests/`, `serve/tests/`,
   `control/store/rounds/tests/`). A new feature adds a file and does not append to an existing
-  one, so two features landing together do not conflict in a test file.
+  one, plus its `mod` line in `tests/mod.rs`. Two features landing together do not conflict in a
+  test file; adjacent `mod` lines can still collide, and that one-line rebase is the known limit.
 
 ## 4. Parity (sp-arpjt)
 
