@@ -1672,6 +1672,8 @@ words before it, and is otherwise left in place so it is reported and the caller
   line, and exits 0. Each gate round's lint step logs it.
 - `enforce` reports each hit as an ordinary finding, so the run exits 1.
 
+**Retired slugs in `law/`.** Under `law/`, a slug that `law/pointers.toml` retires (or merges away while `law/toc.toml` still lists it) is an identifier, not prose, and is removed from the path and each line before matching; the lint reads both files from the tree itself, and a missing or unparseable file leaves every finding standing.
+
 **No allow list.** The migration is the allow list; nothing is excepted but the history paths and `ffx-ok` lines above.
 
 ## Rule `store-door`

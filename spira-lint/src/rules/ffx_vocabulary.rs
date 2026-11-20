@@ -18,6 +18,7 @@ const MODE_KEY: &str = "SPIRA_FFX_VOCABULARY_MODE";
 const SELF_PATH: &str = "spira-lint/src/rules/ffx_vocabulary.rs";
 const KEY_HISTORY_PATH: &str = "spira/conf.key-history";
 const POINTERS_PATH: &str = "law/pointers.toml";
+const TOC_PATH: &str = "law/toc.toml";
 const LINE_MARKER: &str = "ffx-ok";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -245,6 +246,26 @@ pub fn terms_in(text: &str) -> Vec<String> {
     out
 }
 
+/// Slugs the tree's own pointers retire and its toc still lists, longest first.
+fn retired_slugs(tree: &Tree) -> Vec<String> {
+    let parse = |path: &str| tree.text_of(path).and_then(|t| t.parse::<toml::Table>().ok());
+    let (Some(pointers), Some(toc)) = (parse(POINTERS_PATH), parse(TOC_PATH)) else { return Vec::new() };
+    let strings = |key: &str, field: &str| -> Vec<String> {
+        pointers.get(key).and_then(|v| v.as_array()).into_iter().flatten().filter_map(|row| row.get(field)?.as_str()).map(String::from).collect()
+    };
+    let listed: Vec<&str> = toc.get("part").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|p| p.get("slugs")?.as_array()).flatten().filter_map(|s| s.as_str()).collect();
+    let mut out = strings("retired", "slug");
+    out.extend(strings("merged", "from").into_iter().filter(|f| listed.contains(&f.as_str())));
+    out.retain(|s| !s.is_empty());
+    out.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    out.dedup();
+    out
+}
+
+fn without_slugs(s: &str, slugs: &[String]) -> String {
+    slugs.iter().fold(s.to_string(), |acc, slug| acc.replace(slug.as_str(), ""))
+}
+
 impl FfxVocabulary {
     pub fn with_mode(mode: Result<Mode, String>) -> FfxVocabulary {
         FfxVocabulary { mode: Some(mode), checked: SyncCell::new(None), report: Mutex::new(None) }
@@ -254,8 +275,10 @@ impl FfxVocabulary {
     fn hits(&self, tree: &Tree) -> Result<(Vec<(String, usize, String)>, usize), LintError> {
         let files = crate::scope(tree, self)?;
         let mut hits = Vec::new();
+        let retired = retired_slugs(tree);
         for e in &files {
-            for t in terms_in(&e.path) {
+            let slugs: &[String] = if e.path.starts_with("law/") { &retired } else { &[] };
+            for t in terms_in(&without_slugs(&e.path, slugs)) {
                 hits.push((e.path.clone(), 0, t));
             }
             let Some(src) = tree.content(e) else { continue };
@@ -264,7 +287,7 @@ impl FfxVocabulary {
             }
             let text = String::from_utf8_lossy(src);
             for (i, line) in text.lines().enumerate() {
-                for t in line_terms(line) {
+                for t in line_terms(&without_slugs(line, slugs)) {
                     hits.push((e.path.clone(), i + 1, t));
                 }
             }
@@ -436,6 +459,70 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         t.write("law/other.toml", "slug = \"law-aeons-x\"\n");
         let found = FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&tree(&t, &["law/pointers.toml", "law/other.toml"])).unwrap();
         assert_eq!(found.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["law/other.toml"]);
+    }
+
+    fn retired_fixture(retire: bool) -> TempDir {
+        let t = TempDir::new("ffx-retired");
+        t.write("law/toc.toml", "[[part]]\nnumber = 1\nslugs = [\n  \"law-aeon-old\",\n  \"law-live\",\n]\n"); // ffx-ok
+        t.write("law/pointers.toml", if retire { "[[retired]]\nslug = \"law-aeon-old\"\n" } else { "" }); // ffx-ok
+        t.write("law/1-a/1.1-law-aeon-old.md", "# §1.1 law-aeon-old\n"); // ffx-ok
+        t.write("law/1-a/index.md", "- §1.1 law-aeon-old — [Retired d] r\n"); // ffx-ok
+        t.write("law/1-a/1.2-law-live.md", "an aeon acts\n"); // ffx-ok
+        t.write("docs/x.md", "see law-aeon-old\n"); // ffx-ok
+        t
+    }
+
+    const RETIRED_FILES: &[&str] = &["law/toc.toml", "law/pointers.toml", "law/1-a/1.1-law-aeon-old.md", "law/1-a/index.md", "law/1-a/1.2-law-live.md", "docs/x.md"]; // ffx-ok
+
+    #[test]
+    fn a_retired_slugs_pointer_index_line_and_toc_entry_are_not_findings() {
+        let t = retired_fixture(true);
+        let found = FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&tree(&t, RETIRED_FILES)).unwrap();
+        let mut paths: Vec<_> = found.iter().map(|f| f.path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, ["docs/x.md", "law/1-a/1.2-law-live.md"], "{found:?}");
+    }
+
+    #[test]
+    fn without_a_retired_row_the_old_slug_is_a_finding_everywhere() {
+        let t = retired_fixture(false);
+        let found = FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&tree(&t, RETIRED_FILES)).unwrap();
+        for p in ["law/toc.toml", "law/1-a/1.1-law-aeon-old.md", "law/1-a/index.md", "law/1-a/1.2-law-live.md", "docs/x.md"] { // ffx-ok
+            assert!(found.iter().any(|f| f.path == p), "{p}: {found:?}");
+        }
+        assert!(found.iter().any(|f| f.path == "law/1-a/1.1-law-aeon-old.md" && f.line == Some(1))); // ffx-ok
+    }
+
+    #[test]
+    fn a_merged_slug_is_skipped_only_while_the_toc_lists_it_and_other_terms_stay_findings() {
+        let t = TempDir::new("ffx-merged");
+        t.write("law/toc.toml", "[[part]]\nnumber = 1\nslugs = [\"law-aeon-listed\", \"law-live\"]\n"); // ffx-ok
+        t.write("law/pointers.toml", "[[merged]]\nfrom = \"law-aeon-listed\"\n[[merged]]\nfrom = \"law-aeon-unlisted\"\n[[retired]]\nslug = \"law-gone\"\nreason = \"an aeon left\"\n"); // ffx-ok
+        t.write("law/a.md", "law-aeon-listed\nlaw-aeon-unlisted\nlaw-gone an aeon\n"); // ffx-ok
+        t.write("law/b.md", "law-aeon-other\n"); // ffx-ok
+        let found = FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&tree(&t, &["law/toc.toml", "law/pointers.toml", "law/a.md", "law/b.md"])).unwrap();
+        let at: Vec<_> = found.iter().map(|f| (f.path.as_str(), f.line)).collect();
+        assert_eq!(at, [("law/a.md", Some(2)), ("law/a.md", Some(3)), ("law/b.md", Some(1))], "{found:?}");
+    }
+
+    #[test]
+    fn a_missing_or_unparseable_toc_or_pointers_file_leaves_every_finding() {
+        let body = "law-aeon-old\n"; // ffx-ok
+        let pointers = "[[retired]]\nslug = \"law-aeon-old\"\n"; // ffx-ok
+        let toc = "[[part]]\nslugs = [\"law-aeon-old\"]\n"; // ffx-ok
+        for (p, c) in [(None, Some(toc)), (Some(pointers), None), (Some(pointers), Some("not [ toml")), (Some("not [ toml"), Some(toc))] {
+            let t = TempDir::new("ffx-failsafe");
+            t.write("law/a.md", body);
+            let mut files = vec!["law/a.md"];
+            for (name, text) in [("law/pointers.toml", p), ("law/toc.toml", c)] {
+                if let Some(text) = text {
+                    t.write(name, text);
+                    files.push(name);
+                }
+            }
+            let found = FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&tree(&t, &files)).unwrap();
+            assert!(found.iter().any(|f| f.path == "law/a.md"), "{p:?} {c:?}: {found:?}");
+        }
     }
 
     #[test]
