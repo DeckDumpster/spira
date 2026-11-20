@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=land
+DOC=Seconds between two "Spira is landing nothing" asks; an open ask with the same subject suppresses the next regardless
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LAND_ESCALATE_EVERY:=3600}"
+SPIRA_CONF_DEFAULT_EOF

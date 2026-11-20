@@ -7,9 +7,9 @@
 # real code — not a re-typed body — with mail pointed at a scratch Maildir and with no lint override, so the running message actually clears
 # mail's send path.
 #
-# COVERAGE: land_escalate's real sender was retired with its binary (sp-3i87xd)
-# and has no case here until one exists again. watchd and skew are both compiled binaries now
-# (sp-07yxy's watchd, sp-yyk47's skew) — there is no source text left to sed or source a
+# COVERAGE: land_escalate's real sender is the serve task's `sentinel-pass.ask`, driven through
+# `spira-runtime land-escalate`, which builds the same ask `decide` emits. watchd and skew are
+# both compiled binaries now (sp-07yxy's watchd, sp-yyk47's skew) — there is no source text left to sed or source a
 # function body from, so each is driven through its own real CLI instead: watchd's notify
 # path directly, skew's through a real `skew check --escalate` against a minimal
 # NOT-LATEST fixture.
@@ -27,7 +27,7 @@
 # daily digest is the only path to the operator — so nothing here should ever reach the mailbox.
 #
 # tier: T2
-# covers: spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/runes/archivist.md incident/src/stub_bd.rs mail/src/* incident/* UC-operator-channel-05
+# covers: spira-runtime/src/tasks/a/sentinel_pass.rs spira-runtime/src/main.rs spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/runes/archivist.md incident/src/stub_bd.rs mail/src/* incident/* UC-operator-channel-05 UC-operator-channel-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -141,6 +141,20 @@ after="$(unread)"
 # scratch run dir, and later sections (incident.sh, archivist) must not inherit that.
 tl_config SPIRA_RUN="$SPIRA_RUN"
 is "skew escalate delivers exactly one message" "$((before + 1))" "$after"
+
+echo
+echo "land escalation: the serve task's ask (question)"
+
+command -v spira-runtime >/dev/null 2>&1 || bail "spira-runtime is not on PATH"
+printf 'landing gate keeps failing\n' > "$SPIRA_RUN/landing.log"
+before="$(unread)"
+spira-runtime land-escalate 7200 >/dev/null 2>"$TMP/land-escalate.err"
+after="$(unread)"
+is "land escalation delivers exactly one message" "$((before + 1))" "$after"
+body="$(cat "$(newest_ask)" 2>/dev/null)"
+want "land escalation names the stale age"       "nothing has completed a landing pass in 7200s" "$body"
+want "land escalation carries a Default"         "## Default"                                   "$body"
+want "land escalation quotes the landing log"    "landing gate keeps failing"                   "$body"
 
 echo
 echo "incident.sh: FENRIR escalation (question)"

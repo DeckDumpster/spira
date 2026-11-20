@@ -11,7 +11,7 @@ use spira_runtime::{open_engine, sink::OtlpSink, Effects, Settings};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-const USAGE: &str = "usage: spira-runtime serve|check-config";
+const USAGE: &str = "usage: spira-runtime serve|check-config|land-escalate <age-secs>";
 
 /// The OTLP log queue: a full queue drops and counts rather than blocking the loop.
 const LOG_QUEUE: usize = 1024;
@@ -24,7 +24,23 @@ fn check() -> Result<(), String> {
     Ok(())
 }
 
+fn land_escalate(age: Option<String>) -> Result<(), String> {
+    use spira_runtime::tasks::a::sentinel_pass as sp;
+    let age: u64 = age.and_then(|a| a.parse().ok()).ok_or(USAGE)?;
+    let run = spira_config::process::cfg("SPIRA_RUN")?;
+    let w = sp::land_escalation(age, &sp::land_log_tail(std::path::Path::new(&run)));
+    let spec = runtime::event::EffectSpec::keyed(sp::ASK, "land-escalate", serde_json::to_string(&w).map_err(|e| e.to_string())?, 5_000);
+    sp::ask(&spec).map(|subject| println!("{subject}"))
+}
+
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("land-escalate") && std::env::args().count() == 3 {
+        if let Err(e) = land_escalate(std::env::args().nth(2)) {
+            eprintln!("spira-runtime: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let verb = std::env::args().nth(1);
     if std::env::args().count() != 2 || !matches!(verb.as_deref(), Some("serve" | "check-config")) {
         eprintln!("{USAGE}");

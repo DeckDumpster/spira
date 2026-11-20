@@ -784,3 +784,5 @@ noverdict_max
 slow_query_ms
 ops_sweep_keep_days
 dolt_persist_history_keep
+land_stale
+land_escalate_every

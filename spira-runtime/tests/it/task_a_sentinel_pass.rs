@@ -155,6 +155,43 @@ fn t5_check6_the_landing_leg_carries_its_runtime_bound_and_its_log() {
     assert_eq!(landing_props(&Write::default(), std::path::Path::new("r")).runtime_max_ms, None, "0 is no bound");
 }
 
+fn stale() -> Snapshot {
+    Snapshot { landing_active: false, land_age_secs: Some(7_200), land_stale_secs: 1_800, land_escalate_every_secs: 3_600, land_log_tail: "gate red".into(), ..idle() }
+}
+
+fn asks(acts: &[Act]) -> Vec<Act> {
+    effects(acts, ASK)
+}
+
+#[test]
+fn t5_check6_a_leg_that_completed_nothing_within_the_stale_window_asks_the_concierge_once() {
+    let (next, acts) = decide(&Carry::default(), &stale());
+    let asked = asks(&acts);
+    assert_eq!(asked.len(), 1);
+    let w: Write = serde_json::from_str(&asked[0].input).unwrap();
+    assert!(w.subject.starts_with("Spira is landing nothing"), "{}", w.subject);
+    assert!(w.text.contains("## Question") && w.text.contains("## Default") && w.text.contains("gate red"), "{}", w.text);
+    assert!(w.cause.contains("landing-pass land") && w.id.is_empty());
+    assert_eq!(next.land_escalated_at_ms, Some(NOW));
+}
+
+#[test]
+fn t5_check6_the_land_escalation_waits_out_its_cooldown() {
+    let carry = Carry { land_escalated_at_ms: Some(NOW - 3_599_000), ..Carry::default() };
+    let (next, acts) = decide(&carry, &stale());
+    assert!(asks(&acts).is_empty());
+    assert_eq!(next.land_escalated_at_ms, carry.land_escalated_at_ms);
+    let carry = Carry { land_escalated_at_ms: Some(NOW - 3_600_000), ..Carry::default() };
+    assert_eq!(asks(&decide(&carry, &stale()).1).len(), 1, "at the cooldown it asks again");
+}
+
+#[test]
+fn t5_check6_no_land_escalation_while_the_leg_runs_or_a_landing_is_fresh() {
+    assert!(asks(&decide(&Carry::default(), &Snapshot { landing_active: true, ..stale() }).1).is_empty());
+    assert!(asks(&decide(&Carry::default(), &Snapshot { land_age_secs: Some(1_800), ..stale() }).1).is_empty());
+    assert!(asks(&decide(&Carry::default(), &Snapshot { land_age_secs: None, ..stale() }).1).is_empty());
+}
+
 fn bead(id: &str, labels: &[&str], status: &str) -> Bead {
     Bead { id: id.into(), title: format!("{id} title"), labels: labels.iter().map(|l| l.to_string()).collect(), status: status.into(), ..Bead::default() }
 }
