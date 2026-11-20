@@ -493,6 +493,34 @@ mod tests {
     }
 
     #[test]
+    fn resolving_a_superseded_request_leaves_the_re_requested_effect_open_for_good() {
+        use state_store::gc::Controller;
+        let (s, raw, clock) = clocked_store();
+        let mut again = effect_n("a");
+        again["request_id"] = json!("a2");
+        call(&s, &["turn", &json!({"effects": [effect_n("a")]}).to_string()]);
+        call(&s, &["turn", &json!({"effects": [again]}).to_string()]);
+        call(&s, &["turn", &json!({"resolved": ["a"]}).to_string()]);
+        clock.advance(100 * retain_ms());
+        Controller::new(&raw).tick(clock.now_ms()).unwrap();
+        assert!(present(&raw, "a").0);
+        assert_eq!(parsed(&s, &["open-effects"]).as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_carried_resolved_effect_and_its_marker_expire_and_a_carried_open_one_does_not() {
+        use crate::control::journal::{Carried, EffectRow};
+        use state_store::gc::Controller;
+        let (s, raw, clock) = clocked_store();
+        let row = |id: &str| EffectRow { task: "t".into(), ekey: format!("k{id}"), request_id: id.into(), stream: "s".into(), spec: json!({}), requested_at: 1, deadline_at: 6 };
+        let carried = Carried { effects: vec![(row("a"), true), (row("b"), false)], ..Default::default() };
+        assert_eq!(s.journal_carry(&carried, "test").unwrap(), 2);
+        clock.advance(retain_ms());
+        Controller::new(&raw).tick(clock.now_ms()).unwrap();
+        assert_eq!((present(&raw, "a"), present(&raw, "b")), ((false, false), (true, false)));
+    }
+
+    #[test]
     fn a_sweep_gives_each_resolved_effect_without_a_lifetime_one_and_a_second_sweep_gives_none() {
         use state_store::gc::Controller;
         let (s, raw, clock) = clocked_store();
