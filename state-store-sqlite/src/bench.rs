@@ -94,7 +94,7 @@ pub fn checkpoint_pass(b: &SqliteBackend) -> Result<bool, String> {
     let conn = crate::connect(&b.0.path).map_err(|e| e.to_string())?;
     conn.busy_timeout(Duration::ZERO).map_err(|e| e.to_string())?;
     let max_read_ms = b.0.max_read_ms.load(Ordering::SeqCst);
-    let pass = crate::checkpoint_step(&conn, &b.0.writer, max_read_ms, true, |_| {})?;
+    let pass = crate::checkpoint_step(&conn, &b.0.writer, &b.0.read_gate, max_read_ms, true, |_| {})?;
     Ok(!pass.busy)
 }
 
