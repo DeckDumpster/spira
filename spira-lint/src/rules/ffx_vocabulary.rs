@@ -188,7 +188,7 @@ pub fn rewrite(text: &str) -> String {
 
 fn rewrite_line(line: &str) -> String {
     let phrased = phrase_re().replace_all(line, |c: &regex::Captures| {
-        if c[0].to_ascii_lowercase().contains("keys") { "hel_keys" } else { "Hel" }
+        if c[0].to_ascii_lowercase().contains("keys") { replacement("sending_keys") } else { replacement("the Sending") }
     });
     let mut out = String::with_capacity(phrased.len());
     let mut at = 0;
