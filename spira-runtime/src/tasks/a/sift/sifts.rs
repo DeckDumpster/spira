@@ -113,7 +113,7 @@ fn in_pool_states(r: &Value) -> bool {
 /// Any hold but manual keeps a bead out of the screen; an unreadable `holds` fails closed.
 fn holds_block_screen(r: &Value) -> bool {
     let blocks = |a: &[Value]| {
-        a.iter().any(|h| h.as_str().and_then(|h| spira_store::lc_state::hold_kind(h)).map(|k| k.as_str()) != Some("manual"))
+        a.iter().any(|h| h.as_str().and_then(spira_store::lc_state::hold_kind).map(|k| k.as_str()) != Some("manual"))
     };
     match r.get("holds") {
         None | Some(Value::Null) => false,
