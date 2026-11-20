@@ -231,7 +231,7 @@ fn dwell<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String
 
 /// How far back `store-usage --hot` counts by default; it counts what the history ring holds.
 const HOT_KEYS_DEFAULT_REVS: u64 = 10_000;
-const USAGE_DEFAULT_LIMIT: u64 = 2_000;
+pub(crate) const USAGE_DEFAULT_LIMIT: u64 = 2_000;
 const USAGE_MAX_LIMIT: u64 = 10_000;
 
 /// `store-usage [--after K]`, `--versions [--after-key K --after-main M]`, `--hot N [--revs R]`
