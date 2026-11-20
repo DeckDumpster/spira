@@ -37,7 +37,7 @@ fn the_journal_sweep_finishes_on_a_production_sized_store_in_bounded_steps() {
     use state_store::{Config, Contract, MemBackend, Object, Ports, Request, Txn};
     use std::sync::atomic::{AtomicUsize, Ordering};
     let counter = Arc::new(AtomicUsize::new(0));
-    let backend = Counting(MemBackend::new(), counter.clone());
+    let backend = Counting::new(MemBackend::new(), counter.clone());
     let ports = || Ports::virtual_clock(&runtime::ports::VirtualClock::new(1_000));
     let raw = Contract::open(backend.clone(), ports(), Config { min_lock_ttl_ms: 1_000 }).unwrap();
     let store = Arc::new(crate::control::store::Store::new(Contract::open(backend, ports(), Config { min_lock_ttl_ms: 1_000 }).unwrap(), 1_000));
