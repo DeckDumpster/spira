@@ -30,8 +30,10 @@ while IFS= read -r f; do
         continue
     fi
     add_deadline=$((SECONDS + ${WIKI_COMMIT_LOCK_WAIT:-10}))
-    while ! add_err=$(git -C "$wiki" add -- "$f" 2>&1); do
-        if [ -e "$wiki/.git/index.lock" ] && [ "$SECONDS" -lt "$add_deadline" ]; then
+    while :; do
+        locked_before=0; [ -e "$wiki/.git/index.lock" ] && locked_before=1
+        add_err=$(git -C "$wiki" add -- "$f" 2>&1) && break
+        if { [ "$locked_before" -eq 1 ] || [ -e "$wiki/.git/index.lock" ]; } && [ "$SECONDS" -lt "$add_deadline" ]; then
             sleep 0.2; continue
         fi
         printf 'wiki-commit.sh: git add %s failed:\n%s\n' "$f" "$add_err" >&2

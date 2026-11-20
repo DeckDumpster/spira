@@ -20,6 +20,11 @@ path = "tests/code.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "wiki_commit"
+path = "tests/wiki_commit.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "vocab"
 path = "tests/vocab.rs"
 required-features = ["integration"]
