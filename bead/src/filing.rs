@@ -81,6 +81,12 @@ pub struct CreateDoor<'a> {
     pub wait: &'a mut dyn FnMut() -> bool,
     pub utc: &'a dyn Fn() -> String,
     pub say: &'a mut dyn FnMut(&str),
+    /// The filing was asked for `--json`: a found id prints as the object a fresh create prints.
+    pub json: bool,
+}
+
+fn found_output(id: &str, json: bool) -> String {
+    if json { format!("{{\"id\":\"{id}\"}}\n") } else { format!("{id}\n") }
 }
 
 /// A create whose reply may be lost. A bead already titled `title` in the window is reported, not
@@ -90,7 +96,7 @@ pub fn create_or_find(title: Option<&str>, d: &mut CreateDoor) -> (i32, String) 
     let Some(title) = title else { return (d.create)() };
     if let crate::Readback::Found(id) = (d.read)() {
         (d.say)(&format!("bead: file: {id} already holds the title {title:?}, reporting it as filed and not creating it again"));
-        return (0, format!("{id}\n"));
+        return (0, found_output(&id, d.json));
     }
     let (code, out) = (d.create)();
     if crate::parse_created_id(&out).is_some() || !(code == 0 || code == CANNOT_TELL) {
@@ -103,7 +109,7 @@ pub fn create_or_find(title: Option<&str>, d: &mut CreateDoor) -> (i32, String) 
     match last {
         crate::Readback::Found(found) => {
             (d.say)(&format!("bead: file: bd create exited {code} without an id; read back from the store: {found} exists, reporting it as filed"));
-            (0, format!("{found}\n"))
+            (0, found_output(&found, d.json))
         }
         crate::Readback::Absent if code == CANNOT_TELL => {
             (d.say)(&format!("bead: file: bd create exited {CANNOT_TELL}; no bead titled {title:?} found by {}; it may still be written — bead-sweep gives it its row and edges if it is; look it up by title before filing again", (d.utc)()));
@@ -642,7 +648,11 @@ mod tests {
     use crate::Readback;
 
     /// Runs `create_or_find` over scripted listings; returns (exit, stdout, said, creates sent).
-    fn run(creates: Vec<(i32, &str)>, mut listings: Vec<Readback>, waits: usize) -> (i32, String, Vec<String>, usize) {
+    fn run(creates: Vec<(i32, &str)>, listings: Vec<Readback>, waits: usize) -> (i32, String, Vec<String>, usize) {
+        run_as(creates, listings, waits, false)
+    }
+
+    fn run_as(creates: Vec<(i32, &str)>, mut listings: Vec<Readback>, waits: usize, json: bool) -> (i32, String, Vec<String>, usize) {
         let mut sent = 0;
         let (mut said, mut left) = (Vec::<String>::new(), waits);
         let mut creates = creates.into_iter();
@@ -659,7 +669,7 @@ mod tests {
                 more
             };
             let mut say = |t: &str| said.push(t.to_string());
-            create_or_find(Some("T"), &mut CreateDoor { create: &mut create, read: &mut read, wait: &mut wait, utc: &|| "2026-11-19T20:12:30Z".into(), say: &mut say })
+            create_or_find(Some("T"), &mut CreateDoor { create: &mut create, read: &mut read, wait: &mut wait, utc: &|| "2026-11-19T20:12:30Z".into(), say: &mut say, json })
         };
         (code, out, said, sent)
     }
@@ -669,6 +679,20 @@ mod tests {
         let (code, out, said, _) = run(vec![(CANNOT_TELL, "")], vec![Readback::Absent, Readback::Absent, Readback::Found("sp-late".into())], 3);
         assert_eq!((code, out.as_str()), (0, "sp-late\n"));
         assert!(said.iter().all(|t| !t.contains("nothing was recorded")), "{said:?}");
+    }
+
+    #[test]
+    fn found_paths_print_an_object_with_the_id_when_json_was_asked_for() {
+        for (creates, listings, want) in [
+            (vec![], vec![Readback::Found("sp-old".into())], "sp-old"),
+            (vec![(CANNOT_TELL, "")], vec![Readback::Absent, Readback::Found("sp-late".into())], "sp-late"),
+        ] {
+            let (code, out, _, _) = run_as(creates, listings, 3, true);
+            assert_eq!(code, 0);
+            assert_eq!(crate::parse_created_id(&out).as_deref(), Some(want), "{out}");
+            let v: serde_json::Value = serde_json::from_str(&out).expect("json");
+            assert_eq!(v["id"], want);
+        }
     }
 
     #[test]

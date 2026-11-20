@@ -218,7 +218,7 @@ fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[St
     };
     let utc = || bead::bdq::utc_stamp_nanos(std::time::SystemTime::now())[..19].to_string() + "Z";
     let mut say = |t: &str| eprintln!("{t}");
-    let (code, stdout) = bead::filing::create_or_find(lookup_title, &mut bead::filing::CreateDoor { create: &mut create, read: &mut read, wait: &mut wait, utc: &utc, say: &mut say });
+    let (code, stdout) = bead::filing::create_or_find(lookup_title, &mut bead::filing::CreateDoor { create: &mut create, read: &mut read, wait: &mut wait, utc: &utc, say: &mut say, json: argv.contains(&"--json") });
     let by_hand = unrecovered(None, express, incident.map(|(i, _)| i));
     if code == CANNOT_TELL && parse_created_id(&stdout).is_none() && !by_hand.is_empty() {
         eprintln!("bead: file: bead-sweep cannot restore these if the bead turns up{by_hand}");

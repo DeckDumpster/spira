@@ -434,7 +434,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
     });
     match landed {
         Ok((n, branch, bead)) => {
-            println!("law/: {n} statute(s) added; committed on {branch}, submitted under {bead}.");
+            println!("law/: {n} statute(s) added; committed on {branch}, submitted under {bead} (SUBMITTED).");
             0
         }
         Err(e) => {
@@ -532,7 +532,7 @@ fn cmd_land_tip(db: &str, home: &str) -> i32 {
             0
         }
         Ok(Some(Landed::Added(n, branch, bead))) => {
-            println!("law/: {n} statute(s) added; committed on {branch}, submitted under {bead}.");
+            println!("law/: {n} statute(s) added; committed on {branch}, submitted under {bead} (SUBMITTED).");
             0
         }
         Ok(Some(Landed::Stranded(branch, bead))) => {
