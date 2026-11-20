@@ -27,3 +27,8 @@ toml = "0.8"
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "git_tree"
+path = "tests/git_tree.rs"
+required-features = ["integration"]
