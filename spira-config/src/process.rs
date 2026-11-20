@@ -158,6 +158,11 @@ pub fn metrics_sink(service: &str) -> spira_otel::metrics::MetricsSink {
 
 /// The complete fixture's text, read from the harness tree this crate was built in.
 pub fn complete_fixture_text() -> String {
+    let _env = testkit::env_read();
+    complete_fixture_text_locked()
+}
+
+fn complete_fixture_text_locked() -> String {
     let path = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("testlib/complete.toml");
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
@@ -181,6 +186,7 @@ pub fn fixture_release(dir: &std::path::Path, with_conf_d: bool) -> std::path::P
 /// A harness home for a test that writes into it: `<dir>/home` holding copies of this tree's
 /// `conf.d` and `conf.toml.d`. Point `SPIRA_HOME` at the returned path.
 pub fn fixture_registry_home(dir: &std::path::Path) -> std::path::PathBuf {
+    let _env = testkit::env_read();
     let tree = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
     let home = dir.join("home");
     for d in ["conf.d", "conf.toml.d"] {
@@ -195,7 +201,10 @@ pub fn fixture_registry_home(dir: &std::path::Path) -> std::path::PathBuf {
 /// A complete `spira.toml` for TESTS in any crate: every key declared (`spira/testlib/complete.toml`), with `declare`'s `SPIRA_<KEY>` pairs written as
 /// `spira.<key>`. Written to `<dir>/spira.toml`; point `SPIRA_TOML` at the returned path.
 pub fn fixture_toml(dir: &std::path::Path, declare: &[(&str, &str)]) -> std::path::PathBuf {
-    let mut d = crate::validate(&complete_fixture_text()).expect("the complete fixture validates");
+    let mut d = {
+        let _env = testkit::env_read();
+        crate::validate(&complete_fixture_text_locked()).expect("the complete fixture validates")
+    };
     for (k, v) in declare {
         let rest = k.strip_prefix("SPIRA_").unwrap_or(k);
         d = crate::set_path(&d, &format!("spira.{}", rest.to_ascii_lowercase()), v)
@@ -252,6 +261,9 @@ pub fn fixture_metrics_env(dir: &std::path::Path, endpoint: &str, declare: &[(&s
 pub fn ro_credential(service_file: &str) -> String {
     if service_file.trim().is_empty() { String::new() } else { format!("{service_file}-ro") }
 }
+
+#[cfg(test)]
+mod fixture_env_lock_tests;
 
 #[cfg(test)]
 mod ro_credential_tests;

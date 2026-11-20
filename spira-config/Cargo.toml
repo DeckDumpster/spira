@@ -71,6 +71,7 @@ integration = ["lifecycle/integration", "spira-otel/integration", "system-paths/
 
 [dependencies]
 system-paths = { path = "../system-paths" }
+testkit = { path = "../testkit" }
 spira-otel = { path = "../spira-otel" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
@@ -109,6 +110,3 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-
-[dev-dependencies]
-testkit = { path = "../testkit" }
