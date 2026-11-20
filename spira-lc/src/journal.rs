@@ -5,7 +5,7 @@
 
 use serde_json::{json, Value};
 
-use crate::control::journal::{EffectRow, PoisonRow, ScheduleRow, StateRow, Turn};
+use crate::control::journal::{SweepCursor, EffectRow, PoisonRow, ScheduleRow, StateRow, Turn};
 
 const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
@@ -176,7 +176,7 @@ fn failed(op: &str, what: impl std::fmt::Display) -> String {
     format!("journal {op}: {what}")
 }
 
-fn run<B: state_store::Backend>(args: &[String], store: &crate::control::store::Store<B>) -> Result<String, String> {
+pub(crate) fn run<B: state_store::Backend>(args: &[String], store: &crate::control::store::Store<B>) -> Result<String, String> {
     let op = args.first().map(String::as_str).unwrap_or("");
     let a = |i: usize| args.get(i);
     let cannot = |e: state_store::Error| failed(op, e);
@@ -203,13 +203,18 @@ fn run<B: state_store::Backend>(args: &[String], store: &crate::control::store::
             Ok(Value::Array(rows.iter().map(row_of).collect()).to_string())
         }
         "sweep" => {
-            let dry_run = match a(1).map(String::as_str) {
-                None => false,
-                Some("--dry-run") if args.len() == 2 => true,
-                _ => return Err("journal: sweep takes only --dry-run".into()),
-            };
-            let s = store.journal_sweep(dry_run, "journal-sweep").map_err(cannot)?;
-            Ok(json!({ "dry_run": dry_run, "idless_schedules": s.idless_schedules, "orphan_resolved": s.orphan_resolved, "indexed_schedules": s.indexed_schedules, "indexed_effects": s.indexed_effects }).to_string())
+            let refused = || "journal: sweep takes only --dry-run and --from <cursor>".to_string();
+            let (mut dry_run, mut from) = (false, None);
+            let mut rest = args[1..].iter();
+            while let Some(flag) = rest.next() {
+                match flag.as_str() {
+                    "--dry-run" if !dry_run => dry_run = true,
+                    "--from" if from.is_none() => from = Some(rest.next().ok_or_else(refused)?.parse::<SweepCursor>()?),
+                    _ => return Err(refused()),
+                }
+            }
+            let (s, next) = store.journal_sweep_step(from.as_ref(), dry_run, "journal-sweep").map_err(cannot)?;
+            Ok(json!({ "dry_run": dry_run, "idless_schedules": s.idless_schedules, "indexed_schedules": s.indexed_schedules, "indexed_effects": s.indexed_effects, "next": next.map(|c| c.to_string()) }).to_string())
         }
         "poison" => {
             let p = parse(a(1), "poison")?;
@@ -238,7 +243,7 @@ pub fn dispatch(args: &[String]) -> (i32, String) {
     answer(run(args, &*store))
 }
 
-fn answer(r: Result<String, String>) -> (i32, String) {
+pub(crate) fn answer(r: Result<String, String>) -> (i32, String) {
     match r {
         Ok(out) => (0, out),
         Err(e) if e.starts_with("journal:") => (REFUSED, e),
@@ -246,8 +251,84 @@ fn answer(r: Result<String, String>) -> (i32, String) {
     }
 }
 
+/// Sends `journal sweep` steps through `step` until the cursor runs out and sums their counts.
+pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_run: bool) -> (i32, String) {
+    let mut totals = [0u64; 3];
+    let mut cursor: Option<String> = None;
+    let mut steps = 0;
+    loop {
+        let mut argv: Vec<String> = vec!["journal".into(), "sweep".into()];
+        if dry_run {
+            argv.push("--dry-run".into());
+        }
+        if let Some(c) = &cursor {
+            argv.extend(["--from".into(), c.clone()]);
+        }
+        let (code, out) = step(&argv);
+        let after = || format!("{out}\nafter step {steps}, cursor {}", cursor.as_deref().unwrap_or("(start)"));
+        if code != 0 {
+            return (code, after());
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&out) else { return (CANNOT_TELL, format!("cannot tell: sweep step answered {out:?}")) };
+        steps += 1;
+        for (t, k) in totals.iter_mut().zip(["idless_schedules", "indexed_schedules", "indexed_effects"]) {
+            *t += v[k].as_u64().unwrap_or(0);
+        }
+        match v["next"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+    (0, json!({ "dry_run": dry_run, "idless_schedules": totals[0], "indexed_schedules": totals[1], "indexed_effects": totals[2], "steps": steps }).to_string())
+}
+
+#[cfg(test)]
+pub(crate) mod counting {
+    use state_store::MemBackend;
+    #[derive(Clone)]
+    pub(crate) struct Counting(pub MemBackend, pub std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Counting {
+        pub(crate) fn spent(&self, n: usize) {
+            self.1.fetch_add(n, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl state_store::Backend for Counting {
+        fn head(&self) -> state_store::Result<u64> {
+            self.0.head()
+        }
+        fn get(&self, key: &str, at: u64) -> state_store::Result<Option<state_store::Version>> {
+            self.spent(1);
+            self.0.get(key, at)
+        }
+        fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
+            let rows = self.0.range(prefix, after, limit, at)?;
+            self.spent(rows.len());
+            Ok(rows)
+        }
+        fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
+            self.0.owned_by(owner, after, limit, at)
+        }
+        fn due(&self, now: u64, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
+            self.0.due(now, limit, at)
+        }
+        fn commit(&self, expect: u64, batch: &[state_store::Write]) -> state_store::Result<u64> {
+            self.0.commit(expect, batch)
+        }
+        fn log(&self, from: u64, max_mains: usize) -> state_store::Result<Vec<state_store::LogEntry>> {
+            self.0.log(from, max_mains)
+        }
+        fn compact(&self, rev: u64) -> state_store::Result<()> {
+            self.0.compact(rev)
+        }
+    }
+
+}
+
 #[cfg(test)]
 mod tests {
+    use super::counting::Counting;
     use super::*;
     use runtime::ports::VirtualClock;
     use state_store::{Config, Contract, MemBackend, Ports};
@@ -372,7 +453,7 @@ mod tests {
         call(&s, &["turn", &json!({"schedules": [sched("r1", 4)]}).to_string()]);
         let due = parsed(&s, &["due"]);
         assert_eq!(due.as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap()).collect::<Vec<_>>(), ["r1"]);
-        parsed(&s, &["sweep"]);
+        swept(&s, false);
         assert_eq!(parsed(&s, &["due"]).as_array().unwrap().len(), 1, "still so once the store is indexed");
     }
 
@@ -384,45 +465,6 @@ mod tests {
         let carried = crate::control::journal::Carried { schedules: vec![(row, false)], ..Default::default() };
         let err = store().journal_carry(&carried, "test").unwrap_err().to_string();
         assert!(err.contains("empty id") && err.contains("stream=s") && err.contains("kind=tick"), "{err}");
-    }
-
-    #[derive(Clone)]
-    struct Counting(MemBackend, std::sync::Arc<std::sync::atomic::AtomicUsize>);
-
-    impl Counting {
-        fn spent(&self, n: usize) {
-            self.1.fetch_add(n, std::sync::atomic::Ordering::SeqCst);
-        }
-    }
-
-    impl state_store::Backend for Counting {
-        fn head(&self) -> state_store::Result<u64> {
-            self.0.head()
-        }
-        fn get(&self, key: &str, at: u64) -> state_store::Result<Option<state_store::Version>> {
-            self.spent(1);
-            self.0.get(key, at)
-        }
-        fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
-            let rows = self.0.range(prefix, after, limit, at)?;
-            self.spent(rows.len());
-            Ok(rows)
-        }
-        fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
-            self.0.owned_by(owner, after, limit, at)
-        }
-        fn due(&self, now: u64, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
-            self.0.due(now, limit, at)
-        }
-        fn commit(&self, expect: u64, batch: &[state_store::Write]) -> state_store::Result<u64> {
-            self.0.commit(expect, batch)
-        }
-        fn log(&self, from: u64, max_mains: usize) -> state_store::Result<Vec<state_store::LogEntry>> {
-            self.0.log(from, max_mains)
-        }
-        fn compact(&self, rev: u64) -> state_store::Result<()> {
-            self.0.compact(rev)
-        }
     }
 
     #[test]
@@ -447,7 +489,7 @@ mod tests {
             call(&s, &["turn", &json!({"resolved": resolved, "fired": fired}).to_string()]);
         }
         call(&s, &["turn", &json!({"effects": [effect()], "schedules": [sched("live", 4)]}).to_string()]);
-        parsed(&s, &["sweep"]);
+        swept(&s, false);
         for argv in [&["open-effects"][..], &["due"][..]] {
             counter.store(0, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(parsed(&s, argv).as_array().unwrap().len(), 1);
@@ -460,7 +502,7 @@ mod tests {
     fn an_index_key_left_for_a_row_that_closed_meanwhile_does_not_reopen_it() {
         let (s, raw) = shared_store();
         call(&s, &["turn", &json!({"effects": [effect()], "schedules": [sched("r1", 4)]}).to_string()]);
-        parsed(&s, &["sweep"]);
+        swept(&s, false);
         call(&s, &["turn", &json!({"resolved": ["r1"], "fired": ["r1"]}).to_string()]);
         put_raw(&raw, &crate::control::keys::runtime("pending", &["r1"]), json!({"id": "r1"}));
         put_raw(&raw, &crate::control::keys::runtime("open-effect", &["r1"]), json!({"task": "t", "ekey": "k'1/x"}));
@@ -481,14 +523,76 @@ mod tests {
         let (open_before, due_before) = (parsed(&s, &["open-effects"]), parsed(&s, &["due"]));
         let key_count = |table: &str| raw.list(&[crate::control::keys::runtime_table(table).as_str()], &state_store::Selector::Everything).unwrap().0.len();
         let before = (key_count("schedule"), key_count("resolved"));
-        let dry = parsed(&s, &["sweep", "--dry-run"]);
-        assert_eq!((dry["idless_schedules"].clone(), dry["orphan_resolved"].clone()), (json!(3), json!(1)), "{dry}");
+        let dry = swept(&s, true);
+        assert_eq!(dry["idless_schedules"], json!(3), "{dry}");
         assert_eq!((key_count("schedule"), key_count("resolved")), before, "a dry run removes nothing");
         assert_eq!(key_count("pending"), 1, "a dry run writes no index");
-        let done = parsed(&s, &["sweep"]);
-        assert_eq!((done["idless_schedules"].clone(), done["orphan_resolved"].clone(), done["indexed_schedules"].clone(), done["indexed_effects"].clone()), (json!(3), json!(1), json!(1), json!(1)), "{done}");
-        assert_eq!((key_count("schedule"), key_count("resolved")), (before.0 - 3, before.1 - 1));
+        assert_eq!(key_count("journal-meta"), 0, "a dry run marks nothing indexed");
+        let done = swept(&s, false);
+        assert_eq!((done["idless_schedules"].clone(), done["indexed_schedules"].clone(), done["indexed_effects"].clone(), done["next"].clone()), (json!(3), json!(1), json!(1), json!(null)), "{done}");
+        assert_eq!((key_count("schedule"), key_count("resolved")), (before.0 - 3, before.1), "orphan resolved markers stay");
         assert_eq!((parsed(&s, &["open-effects"]), parsed(&s, &["due"])), (open_before, due_before), "every legitimate row reads as it did");
+    }
+
+    fn swept<B: state_store::Backend>(s: &crate::control::store::Store<B>, dry_run: bool) -> Value {
+        let (code, out) = sweep_until_done(&mut in_process(s), dry_run);
+        assert_eq!(code, 0, "{out}");
+        let mut v: Value = serde_json::from_str(&out).unwrap();
+        v["next"] = Value::Null;
+        v
+    }
+
+    fn seeded(idless: usize) -> (crate::control::store::Store<MemBackend>, Contract<MemBackend>) {
+        let (s, raw) = shared_store();
+        call(&s, &["turn", &json!({"effects": [effect()], "schedules": [sched("live", 4)]}).to_string()]);
+        for n in 0..idless {
+            put_raw(&raw, &crate::control::keys::runtime("schedule", &[&format!("carried{n:05}")]), json!({"at": 0, "stream": "s"}));
+        }
+        (s, raw)
+    }
+
+    fn in_process<B: state_store::Backend>(s: &crate::control::store::Store<B>) -> impl FnMut(&[String]) -> (i32, String) + '_ {
+        move |argv| answer(run(&argv[1..], s))
+    }
+
+    #[test]
+    fn the_sweep_loop_sums_the_counts_of_every_step_until_the_cursor_runs_out() {
+        let (s, _raw) = seeded(2_500);
+        let (code, out) = sweep_until_done(&mut in_process(&s), false);
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(code, 0, "{out}");
+        assert_eq!((v["idless_schedules"].clone(), v["indexed_schedules"].clone(), v["steps"].clone()), (json!(2_500), json!(1), json!(4)), "{v}");
+        assert_eq!(swept(&s, false)["steps"], json!(2), "a swept store ends in the schedule step and the effect step");
+    }
+
+    #[test]
+    fn a_sweep_step_that_fails_stops_the_loop_naming_its_code_and_cursor_and_a_rerun_reaches_the_same_store() {
+        let (s, raw) = seeded(1_500);
+        let key_count = |table: &str| raw.list(&[crate::control::keys::runtime_table(table).as_str()], &state_store::Selector::Everything).unwrap().0.len();
+        let mut calls = 0;
+        let mut inner = in_process(&s);
+        let (code, out) = sweep_until_done(&mut |argv| {
+            calls += 1;
+            if calls == 2 { (CANNOT_TELL, "cannot tell: deadline".into()) } else { inner(argv) }
+        }, false);
+        assert_eq!(code, CANNOT_TELL);
+        assert!(out.contains("cannot tell: deadline") && out.contains("after step 1, cursor schedule:"), "{out}");
+        assert_eq!(key_count("journal-meta"), 0, "not indexed while a step is missing");
+        let (code, out) = sweep_until_done(&mut in_process(&s), false);
+        assert_eq!(code, 0, "{out}");
+        let after_rerun = (key_count("schedule"), key_count("pending"), key_count("open-effect"), key_count("journal-meta"));
+        assert_eq!(after_rerun, (1, 1, 1, 1));
+        sweep_until_done(&mut in_process(&s), false);
+        assert_eq!(after_rerun, (key_count("schedule"), key_count("pending"), key_count("open-effect"), key_count("journal-meta")));
+    }
+
+    #[test]
+    fn a_sweep_refuses_an_argument_it_does_not_know() {
+        let s = store();
+        for argv in [&["sweep", "--now"][..], &["sweep", "--from"][..], &["sweep", "--from", "nowhere"][..], &["sweep", "--dry-run", "--dry-run"][..]] {
+            assert_eq!(call(&s, argv).0, REFUSED, "{argv:?}");
+        }
+        assert_eq!(call(&s, &["sweep", "--from", "effect:", "--dry-run"]).0, 0);
     }
 
     #[test]

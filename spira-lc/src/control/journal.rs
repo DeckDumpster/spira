@@ -24,6 +24,43 @@ const META: &str = "journal-meta";
 /// Ops one txn may carry, with room for the request's own bookkeeping.
 const CHUNK: usize = 100;
 const ATTEMPTS: usize = 8;
+/// Rows one sweep step reads: the store's page.
+pub const SWEEP_STEP: usize = 1_000;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SweepPhase {
+    Schedule,
+    Effect,
+}
+
+/// Where the next sweep step resumes: the table and the last key read, as one argv token.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SweepCursor {
+    pub phase: SweepPhase,
+    pub after: String,
+}
+
+impl std::fmt::Display for SweepCursor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let phase = match self.phase {
+            SweepPhase::Schedule => "schedule",
+            SweepPhase::Effect => "effect",
+        };
+        write!(f, "{phase}:{}", self.after)
+    }
+}
+
+impl std::str::FromStr for SweepCursor {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, String> {
+        let phase = match s.split_once(':') {
+            Some(("schedule", _)) => SweepPhase::Schedule,
+            Some(("effect", _)) => SweepPhase::Effect,
+            _ => return Err(format!("journal: sweep cursor {s:?} is not schedule:<key> or effect:<key>")),
+        };
+        Ok(SweepCursor { phase, after: s.split_once(':').map_or(String::new(), |(_, k)| k.to_string()) })
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StateRow {
@@ -99,12 +136,11 @@ fn pending(id: &str) -> Object {
     Object::new(json!({ "id": id }))
 }
 
-/// What a sweep removed, or with `dry_run` would have: id-less schedule rows and resolved
-/// markers no effect carries, and the index keys it wrote for rows stored before the index.
+/// What a sweep step removed, or with `dry_run` would have: id-less schedule rows, and the index
+/// keys it wrote for rows stored before the index.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Swept {
     pub idless_schedules: usize,
-    pub orphan_resolved: usize,
     pub indexed_schedules: usize,
     pub indexed_effects: usize,
 }
@@ -272,47 +308,60 @@ impl<B: Backend> Store<B> {
         Ok(rows)
     }
 
-    /// Removes the schedule rows stored without an id and the resolved markers no effect carries,
-    /// and indexes the open rows an older release stored without one, then marks the store
-    /// indexed. With `dry_run` it counts and writes nothing.
-    pub fn journal_sweep(&self, dry_run: bool, actor: &str) -> Result<Swept> {
+    /// One bounded step of the sweep: reads at most [`SWEEP_STEP`] rows after `from`, deletes the
+    /// schedule rows stored without an id and indexes the open rows an older release stored
+    /// without one. The step that exhausts the effects marks the store indexed and answers no
+    /// cursor. Every write is idempotent, so a step that fails is run again from the same cursor.
+    /// With `dry_run` it counts and writes nothing.
+    pub fn journal_sweep_step(&self, from: Option<&SweepCursor>, dry_run: bool, actor: &str) -> Result<(Swept, Option<SweepCursor>)> {
         let mut out = Swept::default();
         let mut ops: Vec<state_store::Op> = Vec::new();
-        let fired = self.markers(FIRED)?;
-        for (key, v) in self.table(SCHEDULE)? {
-            let id = text(&v, "id");
-            if id.is_empty() {
-                out.idless_schedules += 1;
-                ops.push(state_store::Op::Delete(format!("{}{key}", keys::runtime_table(SCHEDULE))));
-            } else if !fired.contains(&keys::component(&id)) {
-                out.indexed_schedules += 1;
-                ops.push(state_store::Op::Put(keys::runtime(PENDING, &[&id]), pending(&id)));
+        let contract = self.contract();
+        let head = contract.head()?;
+        let (phase, after) = from.map_or((SweepPhase::Schedule, None), |c| (c.phase, Some(c.after.as_str()).filter(|a| !a.is_empty())));
+        let table = match phase {
+            SweepPhase::Schedule => SCHEDULE,
+            SweepPhase::Effect => EFFECT,
+        };
+        let page = contract.range_at(&keys::runtime_table(table), after, SWEEP_STEP, head)?;
+        for item in &page {
+            let v = &item.value.data;
+            match phase {
+                SweepPhase::Schedule => {
+                    let id = text(v, "id");
+                    if id.is_empty() {
+                        out.idless_schedules += 1;
+                        ops.push(state_store::Op::Delete(item.key.clone()));
+                    } else if contract.get(&keys::runtime(FIRED, &[&id]))?.is_none() {
+                        out.indexed_schedules += 1;
+                        ops.push(state_store::Op::Put(keys::runtime(PENDING, &[&id]), pending(&id)));
+                    }
+                }
+                SweepPhase::Effect => {
+                    let e = effect_of(v);
+                    if contract.get(&keys::runtime(RESOLVED, &[&e.request_id]))?.is_none() {
+                        out.indexed_effects += 1;
+                        ops.push(state_store::Op::Put(keys::runtime(OPEN_EFFECT, &[&e.request_id]), open_effect(&e.task, &e.ekey)));
+                    }
+                }
             }
         }
-        let resolved = self.markers(RESOLVED)?;
-        let mut carried = std::collections::BTreeSet::new();
-        for (_, v) in self.table(EFFECT)? {
-            let e = effect_of(&v);
-            let request = keys::component(&e.request_id);
-            if !resolved.contains(&request) {
-                out.indexed_effects += 1;
-                ops.push(state_store::Op::Put(keys::runtime(OPEN_EFFECT, &[&e.request_id]), open_effect(&e.task, &e.ekey)));
+        let last = page.last().map(|i| i.key.clone());
+        let next = match (page.len() < SWEEP_STEP, phase) {
+            (false, _) => last.map(|after| SweepCursor { phase, after }),
+            (true, SweepPhase::Schedule) => Some(SweepCursor { phase: SweepPhase::Effect, after: String::new() }),
+            (true, SweepPhase::Effect) => None,
+        };
+        if next.is_none() {
+            ops.push(state_store::Op::Put(keys::runtime(META, &["indexed"]), Object::new(json!({}))));
+        }
+        if !dry_run {
+            for chunk in ops.chunks(CHUNK) {
+                let t = Txn { ops: chunk.to_vec(), ..Txn::default() };
+                contract.txn(&t, &Request::new(&super::served::request_id(), actor, "journal-sweep"))?;
             }
-            carried.insert(request);
         }
-        for request in resolved.difference(&carried) {
-            out.orphan_resolved += 1;
-            ops.push(state_store::Op::Delete(format!("{}{request}", keys::runtime_table(RESOLVED))));
-        }
-        if dry_run {
-            return Ok(out);
-        }
-        ops.push(state_store::Op::Put(keys::runtime(META, &["indexed"]), Object::new(json!({}))));
-        for chunk in ops.chunks(CHUNK) {
-            let t = Txn { ops: chunk.to_vec(), ..Txn::default() };
-            self.contract().txn(&t, &Request::new(&super::served::request_id(), actor, "journal-sweep"))?;
-        }
-        Ok(out)
+        Ok((out, next))
     }
 
     /// Records the first poison of a stream; a stream already poisoned keeps its first.
