@@ -560,6 +560,14 @@ pub fn write_seeds(wt: &Path, toc: &[Part], book: &BTreeMap<String, String>) -> 
             None => {}
         }
     }
+    let kept: std::collections::BTreeSet<&str> = toc.iter().flat_map(|p| p.slugs.iter()).filter(|s| book.contains_key(*s)).map(String::as_str).collect();
+    for entry in std::fs::read_dir(&dir).map_err(|e| format!("rule: {}: {e}", dir.display()))? {
+        let path = entry.map_err(|e| format!("rule: {}: {e}", dir.display()))?.path();
+        let stale = path.extension().is_some_and(|x| x == "txt") && !path.file_stem().and_then(|s| s.to_str()).is_some_and(|s| kept.contains(s));
+        if stale {
+            std::fs::remove_file(&path).map_err(|e| format!("rule: {}: {e}", path.display()))?;
+        }
+    }
     Ok(())
 }
 
