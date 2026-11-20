@@ -1150,6 +1150,80 @@ fn list_batches_costs_the_same_over_a_larger_history_on_the_real_store() {
     }
 }
 
+/// Rounds 0-9 of `many_rounds`, each with five pass events and an `Eject`, then landed.
+fn eventful_rounds<B: Backend>(r: &Rig<B>) {
+    use lifecycle::batch::BatchState;
+    let open: Vec<usize> = (0..10).chain([25, 33]).collect();
+    many_rounds(r, 0, ROUNDS, &open);
+    for i in 0..10 {
+        let round = format!("b-{i:03}");
+        let kinds = [
+            BatchEventKind::PassStarted { n: 1, head: "H1".into() },
+            BatchEventKind::SuitesStarted { n: 1 },
+            BatchEventKind::PassRed { n: 1, red_suites: vec!["test-a.sh".into()], suites_s: 3, build_s: 2 },
+            BatchEventKind::Eject { bead_id: format!("sp-{i:03}"), reason: format!("red {i}") },
+            BatchEventKind::PassRebuilt { head: "H2".into() },
+            BatchEventKind::PassStarted { n: 2, head: "H2".into() },
+        ];
+        for (k, kind) in kinds.into_iter().enumerate() {
+            let (_, rec) = r.s.batch(&round).unwrap().unwrap();
+            let ev = BatchEvent { expect: rec.value.row.state, version: rec.value.row.version, kind, actor: "test".into() };
+            let ran = r.s.batch_event(&round, &ev, AT - 100 * i as i64 + k as i64, &r.req()).unwrap();
+            assert!(matches!(&ran, Ran::Done { applied, .. } if applied == &[true]), "{round} event {k}: {ran:?}");
+        }
+        let (_, mut rec) = r.s.batch(&round).unwrap().unwrap();
+        rec.value.row.state = BatchState::Landed;
+        let put = state_store::Txn::new().put(
+            &keys::batch("spira", &round),
+            state_store::Object::new(crate::control::records::encode(&rec.value).unwrap()),
+        );
+        r.s.contract().txn(&put, &r.req()).unwrap();
+    }
+}
+
+/// `list --batches` answers each round's passes, ejections and last event from the round's own
+/// record: no history range and no `events/` read, and at most two point reads a round shown.
+#[test]
+fn list_batches_reads_each_rounds_events_from_its_record_never_history() {
+    let r = Rig::on(Counting::default(), &clock());
+    eventful_rounds(&r);
+    for (argv, shown) in [
+        (&["list", "--batches", "--window", "1000"][..], 13usize),
+        (&["list", "--batches", "--limit", "3", "--after", "b-010"], 3),
+        (&["list", "--batches", "--batch", "b-003"], 1),
+    ] {
+        r.s.contract().backend().take();
+        let (rc, out) = r.lc(argv);
+        assert_eq!(rc, 0, "{argv:?}: {out}");
+        let reads = r.s.contract().backend().take();
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), shown, "{argv:?}");
+        let history: Vec<_> = reads.iter().filter(|(_, k, _)| k.starts_with(keys::HISTORY) || k.starts_with("events/")).collect();
+        assert!(history.is_empty(), "{argv:?}: {history:?}");
+        let points = reads.iter().filter(|(k, key, _)| k.starts_with("get") && key.starts_with("batches/")).count();
+        assert!(points <= 2 * shown, "{argv:?}: {points} point reads for {shown} rounds: {reads:?}");
+    }
+}
+
+/// The three scopes over `eventful_rounds`, as they were answered from history.
+#[test]
+fn list_batches_answers_the_same_bytes_as_it_did_from_history() {
+    let r = Rig::new();
+    eventful_rounds(&r);
+    let mut got = serde_json::Map::new();
+    for (name, argv) in [
+        ("window", &["list", "--batches", "--window", "1000"][..]),
+        ("page", &["list", "--batches", "--limit", "3", "--after", "b-010"]),
+        ("one", &["list", "--batches", "--batch", "b-003"]),
+    ] {
+        let (rc, out) = r.lc(argv);
+        assert_eq!(rc, 0, "{argv:?}: {out}");
+        got.insert(name.into(), serde_json::from_str(&out).unwrap());
+    }
+    let got = serde_json::to_string_pretty(&serde_json::Value::Object(got)).unwrap();
+    assert_eq!(got, include_str!("list_batches_pinned.json").trim_end());
+}
+
 /// Every state the round machine can be in is either listed as open or is terminal: a round in
 /// a state `list --batches --window` forgot would vanish from it.
 #[test]
