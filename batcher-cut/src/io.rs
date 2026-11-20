@@ -3915,6 +3915,11 @@ pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str
 
 /// `ejected` is how many members the caller ejected from the round before abandoning it, when it knows.
 pub fn round_abandon_ejecting(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str, ejected: Option<usize>) -> bool {
+    round_abandon_considered(env, repo, batch, why, cause, &abandon_considered(cause, ejected))
+}
+
+/// [`round_abandon_ejecting`] with the text `queue round abandon` is told the batcher considered.
+pub fn round_abandon_considered(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str, considered: &str) -> bool {
     if spira_config::round_ended::is_ended(&env.run, batch) {
         println!("batcher {}: round {batch} has already ended — no second abandon", repo.name);
         let files = crate::pace::Files::new(&env.run, &repo.name);
@@ -3923,8 +3928,7 @@ pub fn round_abandon_ejecting(env: &Env, repo: &Repo, batch: &str, why: &str, ca
         }
         return true;
     }
-    let considered = abandon_considered(cause, ejected);
-    let vars = [("QUEUE_ABANDON_CONSIDERED", considered.as_str())];
+    let vars = [("QUEUE_ABANDON_CONSIDERED", considered)];
     let files = crate::pace::Files::new(&env.run, &repo.name);
     let refused = match round_verb_with(
         env,
@@ -6245,6 +6249,21 @@ mod abandon_hold_tests {
             crate::pace::Files::new(&e.run, "alpha").abandon_refused().is_none(),
             "the record is gone once the round is"
         );
+    }
+
+    #[test]
+    fn an_unconverged_abandon_carries_its_cause_and_the_probe_summary_as_considered() {
+        let d = testkit::TempDir::new("abandon-considered");
+        let script = format!(
+            "#!/bin/sh\necho \"$@\" > {d}/argv\necho \"$QUEUE_ABANDON_CONSIDERED\" > {d}/considered\nexit 0\n",
+            d = d.path().display()
+        );
+        testkit::write_exe(d.path().join("queue"), &script);
+        let e = lifecycle_tests_env(d.path());
+        assert!(round_abandon_considered(&e, &repo("alpha"), "r1", "red", "attribution-not-converging", "8 probes named no member"));
+        let argv = fs::read_to_string(d.path().join("argv")).unwrap();
+        assert!(argv.contains("abandon r1 alpha") && argv.contains("--cause attribution-not-converging"), "{argv}");
+        assert_eq!(fs::read_to_string(d.path().join("considered")).unwrap().trim(), "8 probes named no member");
     }
 
     #[test]

@@ -383,6 +383,7 @@ impl CloneMembers for RoundEnd {
             RoundEnd::Stalled(w) => format!("stalled: {w}"),
             RoundEnd::Abandoned => "abandoned".to_string(),
             RoundEnd::BaseRed { base, why } => format!("base red at {base}: {why}"),
+            RoundEnd::Unconverged { red, probes, .. } => format!("unconverged: {red} after {probes} probes"),
         }
     }
 }
