@@ -6,6 +6,7 @@ admit_stagger_secs = 30
 cr_page_lines = 60
 cr_oversize_pages = 6
 cr_churn_days = 60
+cr_count_limit = 50
 cr_exclude = "**/fixtures/**,**/*.generated.*,**/vendor/**,Cargo.lock"
 seed = ""
 cockpit_bottom_pct = 40
