@@ -1832,11 +1832,14 @@ mod tests {
         };
         let exists = |k: &str| raw.get(k).unwrap().is_some();
         let indexed = crate::control::keys::runtime("journal-meta", &["indexed"]);
-        let before = raw.get(&key("schedule", "carried00000")).unwrap().is_some();
+        let count = |table: &str| raw.list(&[crate::control::keys::runtime_table(table).as_str()], &state_store::Selector::Everything).unwrap().0.len();
+        let tables = || ["schedule", "pending", "open-effect", "resolved", "journal-meta"].map(count);
+        let before = tables();
         assert_eq!(sweep(true), (12_000, 1, 1));
-        assert!(before && exists(&key("schedule", "carried00000")) && !exists(&indexed), "a dry run writes nothing");
+        assert!(tables() == before && !exists(&indexed), "a dry run writes nothing");
         assert_eq!(sweep(false), (12_000, 1, 1));
         assert!(exists(&indexed) && !exists(&key("schedule", "carried00000")) && exists(&key("resolved", "ghost00000")));
+        assert!(exists(&key("pending", "live")) && exists(&key("open-effect", "open")), "the open rows are indexed");
         for (argv, wanted) in [(["journal", "open-effects"], "open"), (["journal", "due"], "live")] {
             counter.store(0, Ordering::SeqCst);
             let (code, out) = send(&door, &argv, None);

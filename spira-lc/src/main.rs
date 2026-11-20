@@ -210,9 +210,7 @@ fn main() {
     let args = cutover::inline_stdin_payload(args);
     if args.len() >= 2 && args[0] == "journal" && args[1] == "sweep" && args[2..].iter().all(|a| a == "--dry-run") && args.len() <= 3 {
         let (code, out) = journal::sweep_until_done(&mut |a| client::try_socket(a).unwrap_or_else(|| dispatch(a)), args.len() == 3);
-        if !out.is_empty() {
-            println!("{out}");
-        }
+        spira_store::lc_call::print_answer(code, &out);
         std::process::exit(code);
     }
     if let Some((code, out)) = client::try_socket(&args) {
