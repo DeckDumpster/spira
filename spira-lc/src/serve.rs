@@ -345,8 +345,7 @@ pub fn run(args: &[String]) -> i32 {
     }
     startup.mark("content-check");
     // A request may spawn a child (`work blocked` runs `mail`) that calls back into this
-    // socket; serving one connection at a time deadlocks on that. The session mutex still
-    // serializes the queries themselves.
+    // socket; serving one connection at a time deadlocks on that.
     if crate::control::served::configured().is_none() {
         eprintln!("spira-lc serve: SPIRA_LC_STORE_PATH is unset: every lifecycle verb answers cannot-tell");
     }
