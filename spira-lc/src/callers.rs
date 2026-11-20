@@ -1010,13 +1010,9 @@ fn round_owned_cause(cause: &str) -> bool {
 ///
 /// Exit: 0 reopened, or already open · 1 no row · 2 cannot tell · 3 refused (terminal, or the
 /// event lost its CAS).
-fn reopen(m: &mut dyn Machine, id: &str, cause: &str, actor: &str) -> Answer {
+fn reopen(m: &mut dyn Machine, id: &str, cause: &str, actor: &str, v: &Value) -> Answer {
     let refuse = |why: String| Answer { code: REFUSED, stderr: format!("spira-lc reopen: {id}: {why}\n"), ..Default::default() };
-    let v = match show(m, id) {
-        Ok(v) => v,
-        Err(rc) => return Answer::code(rc),
-    };
-    let (state, version) = (bead_field(&v, "state"), bead_field(&v, "version"));
+    let (state, version) = (bead_field(v, "state"), bead_field(v, "version"));
     if state.is_empty() || version.is_empty() {
         return Answer::code(NO_ROW);
     }
@@ -1028,7 +1024,7 @@ fn reopen(m: &mut dyn Machine, id: &str, cause: &str, actor: &str) -> Answer {
         "READY" | "REWORK" => return Answer::code(APPLIED),
         "WORKING" => send(m, &state, &version, BeadEventKind::Release).0,
         "SUBMITTED" => {
-            let kind = BeadEventKind::GateRed { tip: bead_field(&v, "tip"), reason: gate_red_reason(cause), step: None, message: None };
+            let kind = BeadEventKind::GateRed { tip: bead_field(v, "tip"), reason: gate_red_reason(cause), step: None, message: None };
             send(m, &state, &version, kind).0
         }
         "IN_DELIVERY" => {
@@ -1039,9 +1035,9 @@ fn reopen(m: &mut dyn Machine, id: &str, cause: &str, actor: &str) -> Answer {
             send(m, &state, &version, returned).0
         }
         "CERTIFIED" => match send(m, &state, &version, BeadEventKind::Deliver).0 {
-            APPLIED => match state_version(m, id) {
-                Some((st, ver, _)) if st == "IN_DELIVERY" => send(m, &st, &ver, returned).0,
-                _ => CANNOT_TELL,
+            APPLIED => match version.parse::<u64>() {
+                Ok(n) => send(m, "IN_DELIVERY", &(n + 1).to_string(), returned).0,
+                Err(_) => CANNOT_TELL,
             },
             rc => rc,
         },
@@ -1215,10 +1211,13 @@ pub fn reopen_cmd(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answ
     let rowless = match show(m, id) {
         Err(NO_ROW) => true,
         Err(rc) => return Answer { code: rc, stderr: format!("spira-lc reopen: {id}: the lifecycle row is unreadable — nothing reopened\n"), ..Default::default() },
-        Ok(_) => {
-            let a = reopen(m, id, &cause, &actor);
+        Ok(v) => {
+            let a = reopen(m, id, &cause, &actor, &v);
             if a.code != APPLIED {
                 return a;
+            }
+            if crate::settle::owe_reopen(id) {
+                return Answer::code(APPLIED);
             }
             false
         }

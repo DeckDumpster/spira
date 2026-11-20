@@ -1658,6 +1658,29 @@ fn reopen_refuses_a_terminal_row_and_a_missing_row_and_an_unreachable_machine() 
 }
 
 #[test]
+fn a_reopen_inside_lc_serve_reads_the_row_once_and_owes_the_bd_half_to_the_settler() {
+    let settler = crate::settle::install_for_test();
+    let mut f = Fake::default();
+    f.bead("sp-q", BeadState::Certified);
+    let mut bd = FakeBd::default();
+    assert_eq!(reopen_cmd(&v(&["sp-q", "eject", "queue"]), &mut f, &mut bd).code, 0);
+    assert_eq!(reopen_kinds(&f), [r#""Deliver""#, r#"{"Returned":{"reason":"batch-ejected"}}"#]);
+    assert_eq!(f.state("sp-q"), "REWORK");
+    assert_eq!(f.shows, 1, "one show");
+    assert!(bd.reopened.is_empty(), "no inline bd write");
+    assert_eq!(settler.owed_reopens(), ["sp-q"]);
+}
+
+#[test]
+fn a_reopen_with_no_settler_writes_the_bd_half_inline() {
+    let mut f = Fake::default();
+    f.bead("sp-q", BeadState::Certified);
+    let mut bd = FakeBd::default();
+    assert_eq!(reopen_cmd(&v(&["sp-q", "eject", "queue"]), &mut f, &mut bd).code, 0);
+    assert_eq!(bd.reopened, ["sp-q"]);
+}
+
+#[test]
 fn reopen_names_an_eject_as_the_batchs_and_keeps_a_hold() {
     let mut f = Fake::default();
     f.bead("sp-e", BeadState::Certified);
