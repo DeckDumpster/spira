@@ -81,7 +81,7 @@ fn landing_pass(w: &World, s: &Shared) {
     let mut g = gate(s);
     let submitted: Vec<(String, String)> = lc.rows.values().filter(|r| r.state == BeadState::Submitted).map(|r| (r.bead_id.clone(), r.tip.clone().unwrap_or_default())).collect();
     for (id, tip) in submitted {
-        let job = Job { repo: REPO.into(), branch: branch(&id), tip: tip.clone(), bead: id.clone(), fix: false, priority: 2, enqueued_ms: now };
+        let job = Job { repo: REPO.into(), branch: branch(&id), tip: tip.clone(), bead: id.clone(), fix: false, express: false, priority: 2, enqueued_ms: now };
         if let Some(at) = g.done.iter().position(|(j, ..)| j.key() == job.key()) {
             let (_, verdict, _) = g.done.remove(at);
             let kind = match verdict.as_str() {

@@ -32,6 +32,9 @@ pub struct Job {
     /// The bead's priority, lower first; a job queued without one sorts last.
     #[serde(default = "no_priority")]
     pub priority: i64,
+    /// An express bead outranks every non-fix job whatever its priority number.
+    #[serde(default)]
+    pub express: bool,
     /// Gate runs of this tip that died at the cap, each as its `ran=` and `phases=` evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deaths: Vec<String>,
@@ -97,14 +100,17 @@ fn nanos() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
 }
 
-fn pick_key(j: &Job, running: &std::collections::HashMap<String, usize>) -> (bool, usize, i64, u128) {
-    order_key(j.fix, running.get(&j.repo).copied().unwrap_or(0), j.priority, j.queued)
+type PickKey = (bool, bool, i64, usize, u128);
+
+fn pick_key(j: &Job, running: &std::collections::HashMap<String, usize>) -> PickKey {
+    order_key(j.fix, j.express, j.priority, running.get(&j.repo).copied().unwrap_or(0), j.queued)
 }
 
-/// The order jobs are taken in, smallest first: base fixes, then the repository running the
-/// fewest, then the lowest priority number, then the oldest.
-pub fn order_key(fix: bool, running_in_repo: usize, priority: i64, queued: u128) -> (bool, usize, i64, u128) {
-    (!fix, running_in_repo, priority, queued)
+/// The order jobs are taken in, smallest first: base fixes, then express, then the lowest
+/// priority number. Only among jobs of that rank does the repository running the fewest
+/// go first, then the oldest.
+pub fn order_key(fix: bool, express: bool, priority: i64, running_in_repo: usize, queued: u128) -> PickKey {
+    (!fix, !express, priority, running_in_repo, queued)
 }
 
 impl Job {
@@ -115,10 +121,14 @@ impl Job {
         format!("{}{}.json", self.prefix(), branch_key(&self.tip))
     }
     pub fn new(repo: &str, branch: &str, bead: &str, tip: &str, fix: bool) -> Job {
-        Job { repo: repo.into(), branch: branch.into(), bead: bead.into(), tip: tip.into(), fix, queued: nanos(), priority: no_priority(), deaths: Vec::new() }
+        Job { repo: repo.into(), branch: branch.into(), bead: bead.into(), tip: tip.into(), fix, queued: nanos(), priority: no_priority(), express: false, deaths: Vec::new() }
     }
     pub fn with_priority(mut self, priority: i64) -> Job {
         self.priority = priority;
+        self
+    }
+    pub fn with_express(mut self, express: bool) -> Job {
+        self.express = express;
         self
     }
 }
@@ -317,8 +327,8 @@ impl GateQueue {
         }
     }
 
-    /// Take the next job for this slot: base fixes first, then the repository holding the
-    /// fewest running slots, then lowest priority number, then oldest. The move into
+    /// Take the next job for this slot: base fixes first, then express, then lowest
+    /// priority number, then the repository holding the fewest running slots, then oldest. The move into
     /// `claimed/<slot>/` is a single `rename(2)` of the inbox file: whichever slot's rename
     /// lands first wins the job, and every other slot's rename of that same (now-gone)
     /// source path fails and falls through to the next candidate — no two slots can ever
@@ -652,13 +662,50 @@ mod tests {
     }
 
     #[test]
+    fn an_express_job_is_claimed_before_an_older_lower_priority_number() {
+        let d = tmpdir("gq-express");
+        let q = GateQueue::new(&d);
+        q.enqueue(&Job::new("r", "spira/sp-p0", "sp-p0", "t1", false).with_priority(0)).unwrap();
+        q.enqueue(&Job::new("r", "spira/sp-x", "sp-x", "t2", false).with_priority(1).with_express(true)).unwrap();
+        assert_eq!(q.claim(0).unwrap().bead, "sp-x");
+    }
+
+    #[test]
+    fn a_base_fix_still_ranks_above_an_express_job() {
+        let d = tmpdir("gq-fix-express");
+        let q = GateQueue::new(&d);
+        q.enqueue(&Job::new("r", "spira/sp-x", "sp-x", "t1", false).with_priority(0).with_express(true)).unwrap();
+        q.enqueue(&Job::new("r", "spira/sp-f", "sp-f", "t2", true).with_priority(3)).unwrap();
+        assert_eq!(q.claim(0).unwrap().bead, "sp-f");
+    }
+
+    #[test]
+    fn a_job_file_without_express_still_parses() {
+        let j = Job::new("r", "spira/sp-a", "sp-a", "t", false);
+        let mut v = serde_json::to_value(&j).unwrap();
+        v.as_object_mut().unwrap().remove("express");
+        assert!(!serde_json::from_value::<Job>(v).unwrap().express);
+    }
+
+    #[test]
+    fn a_p0_in_a_busy_repo_is_claimed_before_a_p2_in_an_idle_repo() {
+        let d = tmpdir("gq-busy-p0");
+        let q = GateQueue::new(&d);
+        q.enqueue(&Job::new("A", "spira/a1", "a1", "t1", false).with_priority(2)).unwrap();
+        assert_eq!(q.claim(0).unwrap().repo, "A");
+        q.enqueue(&Job::new("A", "spira/a2", "a2", "t2", false).with_priority(0)).unwrap();
+        q.enqueue(&Job::new("B", "spira/b", "b", "tb", false).with_priority(2)).unwrap();
+        assert_eq!(q.claim(1).unwrap().bead, "a2");
+    }
+
+    #[test]
     fn a_free_slot_goes_to_the_repo_holding_fewest_even_behind_older_jobs() {
         let d = tmpdir("gq-fair");
         let q = GateQueue::new(&d);
         for (i, b) in ["a1", "a2", "a3", "a4"].iter().enumerate() {
-            q.enqueue(&Job::new("A", &format!("spira/{b}"), b, &format!("t{i}"), false).with_priority(0)).unwrap();
+            q.enqueue(&Job::new("A", &format!("spira/{b}"), b, &format!("t{i}"), false).with_priority(2)).unwrap();
         }
-        q.enqueue(&Job::new("B", "spira/b1", "b1", "tb", false).with_priority(4)).unwrap();
+        q.enqueue(&Job::new("B", "spira/b1", "b1", "tb", false).with_priority(2)).unwrap();
         assert_eq!(q.claim(0).unwrap().repo, "A");
         assert_eq!(q.claim(1).unwrap().repo, "B");
         assert_eq!(q.claim(2).unwrap().repo, "A");
@@ -669,7 +716,7 @@ mod tests {
         let d = tmpdir("gq-fair2");
         let q = GateQueue::new(&d);
         for i in 0..3 {
-            q.enqueue(&Job::new("A", &format!("spira/a{i}"), "a", &format!("t{i}"), false)).unwrap();
+            q.enqueue(&Job::new("A", &format!("spira/a{i}"), "a", &format!("t{i}"), false).with_priority(4)).unwrap();
         }
         assert_eq!(q.claim(0).unwrap().repo, "A");
         assert_eq!(q.claim(1).unwrap().repo, "A");

@@ -17,7 +17,7 @@ spira_runtime::family_a_acceptance! {
 }
 
 fn job(repo: &str, branch: &str, fix: bool, priority: u8, enqueued_ms: u64) -> Job {
-    Job { repo: repo.into(), branch: branch.into(), tip: format!("{branch}-tip"), bead: format!("sp-{branch}"), fix, priority, enqueued_ms }
+    Job { repo: repo.into(), branch: branch.into(), tip: format!("{branch}-tip"), bead: format!("sp-{branch}"), fix, express: false, priority, enqueued_ms }
 }
 
 /// The contract's idle fixture: an empty inbox.
@@ -71,9 +71,9 @@ fn t3_the_recorded_carry_is_the_carry_read() {
     kit::assert_read_equals_record::<Carry>(&r, STATE, OBSERVE);
 }
 
-/// `gateq.rs:242-254`: fix branches first, then the repo with the fewest running, then priority, then age.
+/// Fix branches first, then express, then priority, then the repo with the fewest running, then age.
 #[test]
-fn t5_pick_takes_the_fix_then_the_quiet_repo_then_priority_then_age() {
+fn t5_pick_takes_the_fix_then_priority_then_the_quiet_repo_then_age() {
     let snap = Snapshot {
         inbox: vec![job("spira", "old", false, 2, 1), job("spira", "fix", true, 3, 9), job("deck", "p1", false, 1, 5), job("deck", "p2", false, 2, 2)],
         running_by_repo: [("spira".to_string(), 1)].into(),
@@ -82,7 +82,7 @@ fn t5_pick_takes_the_fix_then_the_quiet_repo_then_priority_then_age() {
     };
     assert_eq!(pick(&snap, 0).map(|j| j.branch), Some("fix".into()));
     let rest = Snapshot { inbox: snap.inbox.iter().filter(|j| !j.fix).cloned().collect(), ..snap };
-    assert_eq!(pick(&rest, 0).map(|j| j.branch), Some("p1".into()), "deck runs nothing, and P1 beats P2");
+    assert_eq!(pick(&rest, 0).map(|j| j.branch), Some("p1".into()), "P1 beats P2");
 }
 
 /// `lib.rs:309-322`: a gone or moved branch is dropped.

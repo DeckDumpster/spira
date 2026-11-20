@@ -2627,6 +2627,17 @@ fn a_provisional_member_cut_into_a_round_before_its_gate_has_its_gate_queued_bes
 }
 
 #[test]
+fn an_express_provisional_member_is_queued_as_an_express_job() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.bead("sp-a", "IN_DELIVERY", &["express"]);
+    h.beads.batched.borrow_mut().insert("sp-a".into());
+    h.run();
+    let queued = crate::gateq::GateQueue::new(&h.s.run).queued();
+    assert!(queued.len() == 1 && queued[0].express, "{:?}", h.out.lines());
+}
+
+#[test]
 fn a_provisional_member_whose_gate_went_green_keeps_its_verdict_for_the_round() {
     let h = h_worker(LandMode::Queue);
     h.closed("sp-a", "t1");
@@ -2760,4 +2771,17 @@ fn a_close_that_fails_keeps_the_incident_for_the_next_verdict() {
     assert_eq!(h.lib.count("close_incident"), 2, "{:?}", h.lib.calls.borrow());
     h.run();
     assert_eq!(h.lib.count("close_incident"), 2);
+}
+
+#[test]
+fn an_express_bead_is_queued_for_gate_worker_as_an_express_job() {
+    let h = h_worker(LandMode::QueueLocal);
+    h.bead("sp-x", "closed", &["express"]);
+    h.git.add("spira/sp-x", "t1");
+    h.bead("sp-n", "closed", &[]);
+    h.git.add("spira/sp-n", "t2");
+    h.run();
+    let queued = crate::gateq::GateQueue::new(&h.s.run).queued();
+    let express: Vec<(&str, bool)> = queued.iter().map(|j| (j.bead.as_str(), j.express)).collect();
+    assert!(express.contains(&("sp-x", true)) && express.contains(&("sp-n", false)), "{express:?}");
 }

@@ -123,8 +123,8 @@ impl Worker<'_> {
             let Some(job) = self.queue.claim(self.slot) else { break };
             let running = self.queue.running_by_repo().get(&job.repo).copied().unwrap_or(0).saturating_sub(1);
             (self.log)(&format!(
-                "gate-worker: slot {} picked {} (repo {}, P{}, {running} other slot(s) running that repo)",
-                self.slot, job.branch, job.repo, job.priority
+                "gate-worker: slot {} picked {} (repo {}, P{}{}, {running} other slot(s) running that repo)",
+                self.slot, job.branch, job.repo, job.priority, if job.express { " express" } else { "" }
             ));
             if self.run(&job) {
                 filed += 1;
