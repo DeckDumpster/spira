@@ -337,6 +337,16 @@ pub trait Scripts {
     /// (`release verify`'s pre-activate store check reads it). Stdout and stderr are kept
     /// apart: `release build` answers the sha on stdout.
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut;
+    /// The systemd unit this process runs in; `None` outside one.
+    fn own_unit(&self) -> Option<String> {
+        None
+    }
+    /// [`Scripts::release`] started in a transient unit of its own named for `key`, so a restart
+    /// of the caller's unit cannot take it down. Waits for the unit to end; its output is read
+    /// back from `log`, stdout and stderr together, and its exit is the exit code.
+    fn release_detached(&self, _key: &str, bin: &Path, args: &[String], db: &str, _log: &Path) -> RunOut {
+        self.release(bin, args, db)
+    }
     /// The declared release's own `release` binary (`$SPIRA_RELEASE/bin/release`), for a step with
     /// no round bin-dir; a refusal naming `SPIRA_RELEASE` when it is not declared.
     fn release_tool(&self) -> Result<PathBuf, String>;

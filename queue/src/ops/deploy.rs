@@ -109,10 +109,25 @@ fn step(
     plan: &Plan,
     bin: &Path,
     what: &str,
+    a: Vec<String>,
+) -> Result<String, String> {
+    step_in(w, plan, bin, what, a, None)
+}
+
+/// [`step`], run in a transient unit of its own named for `detached` when that is given.
+fn step_in(
+    w: &World,
+    plan: &Plan,
+    bin: &Path,
+    what: &str,
     mut a: Vec<String>,
+    detached: Option<(&str, &Path)>,
 ) -> Result<String, String> {
     a.extend(plan.common());
-    let r = w.scripts.release(bin, &a, &plan.db);
+    let r = match detached {
+        Some((key, log)) => w.scripts.release_detached(key, bin, &a, &plan.db, log),
+        None => w.scripts.release(bin, &a, &plan.db),
+    };
     let err = r.err.trim_end_matches('\n');
     if !err.is_empty() {
         w.err(err);
@@ -246,9 +261,23 @@ fn activation_bin(w: &World, plan: &Plan, sha: &str) -> Result<PathBuf, String> 
     release_bin(plan.bins.as_deref(), || w.scripts.release_tool())
 }
 
+/// Whether the activation of `sha` restarts the unit `unit`: the release ships a template
+/// that installs it. The installed name is the template's own, or the template's stem with an
+/// instance suffix.
+fn activation_restarts(plan: &Plan, sha: &str, unit: &str) -> bool {
+    let Ok(templates) = release::units::templates(&plan.releases.join(sha)) else { return false };
+    let Some(stem) = unit.strip_suffix(".service") else { return false };
+    templates.iter().any(|t| {
+        t == unit || t.strip_suffix(".service").is_some_and(|base| !base.ends_with('@') && stem.strip_prefix(base).is_some_and(|rest| rest.starts_with('-')))
+    })
+}
+
 fn activate_once(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
     let bin = activation_bin(w, plan, sha)?;
-    let out = step(
+    let key: String = sha.chars().take(12).collect();
+    let log = plan.run.join(format!("release-activate-{key}.log"));
+    let detached = w.scripts.own_unit().filter(|u| activation_restarts(plan, sha, u)).map(|_| (key.as_str(), log.as_path()));
+    let out = step_in(
         w,
         plan,
         &bin,
@@ -263,6 +292,7 @@ fn activate_once(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
             "--drain-wait",
             &LAND_DRAIN_WAIT_SECS.to_string(),
         ]),
+        detached,
     )?;
     let out = out.trim_end_matches('\n');
     if !out.is_empty() {
