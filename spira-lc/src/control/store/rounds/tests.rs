@@ -1861,4 +1861,10 @@ fn list_batches_prints_the_pr_of_a_members_delivery_in_the_round() {
     let t = state_store::Txn::new().when(state_store::Compare::ModRev(key.clone(), Some(item.mod_rev))).put(&key, value);
     assert!(r.s.contract().txn(&t, &r.req()).unwrap().succeeded);
     assert_eq!(pr_of(&r), serde_json::json!(42));
+    let item = r.s.contract().get(&key).unwrap().unwrap();
+    let mut value = item.value.clone();
+    value.data["batch_id"] = serde_json::json!("b-other");
+    let t = state_store::Txn::new().when(state_store::Compare::ModRev(key.clone(), Some(item.mod_rev))).put(&key, value);
+    assert!(r.s.contract().txn(&t, &r.req()).unwrap().succeeded);
+    assert_eq!(pr_of(&r), serde_json::Value::Null, "a delivery of another round is not this round's pr");
 }
