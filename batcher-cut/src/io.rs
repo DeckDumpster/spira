@@ -235,6 +235,10 @@ pub fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
 pub fn batch_progress_merge(env: &Env, batch: &str, merge: impl FnOnce(serde_json::Value) -> serde_json::Value) -> Result<(), String> {
     let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
     let client = spira_store::lc_call::LcClient::for_bin(&bin.to_string_lossy())?.within(std::time::Duration::from_secs(env.lc_timeout));
+    batch_progress_merge_via(&client, batch, merge)
+}
+
+fn batch_progress_merge_via(client: &spira_store::lc_call::LcClient, batch: &str, merge: impl FnOnce(serde_json::Value) -> serde_json::Value) -> Result<(), String> {
     let shown: serde_json::Value = serde_json::from_str(&lc_answer(client.call(&["show-batch", batch]))?).map_err(|e| format!("show-batch {batch}: {e}"))?;
     let body = merge(shown.get("progress").cloned().unwrap_or(serde_json::Value::Null));
     lc_answer(client.call_stdin(&["batch-progress", batch], &body.to_string())).map(|_| ())
@@ -6274,6 +6278,31 @@ mod abandon_hold_tests {
         let argv = fs::read_to_string(d.path().join("argv")).unwrap();
         assert!(argv.contains("abandon r1 alpha") && argv.contains("--cause attribution-not-converging"), "{argv}");
         assert_eq!(fs::read_to_string(d.path().join("considered")).unwrap().trim(), "8 probes named no member");
+    }
+
+    struct Lc(std::sync::Mutex<Vec<(Vec<String>, Option<String>)>>);
+    impl spira_store::lc_call::Transport for Lc {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+            self.0.lock().unwrap().push((argv.to_vec(), stdin.map(str::to_string)));
+            let out = if argv[0] == "show-batch" { r#"{"progress":{"passes":2}}"# } else { "" };
+            Ok(spira_store::lc_call::Reply { code: 0, out: out.into(), err: String::new() })
+        }
+    }
+
+    #[test]
+    fn the_attribution_progress_is_written_beside_the_pass_counts_already_stored() {
+        let lc = std::sync::Arc::new(Lc(Default::default()));
+        let client = spira_store::lc_call::LcClient::over(lc.clone(), false);
+        batch_progress_merge_via(&client, "r1", |mut p| {
+            p["attribution"] = serde_json::json!({"probes": 3});
+            p
+        })
+        .unwrap();
+        let calls = lc.0.lock().unwrap();
+        assert_eq!(calls[1].0, ["batch-progress", "r1"]);
+        let body: serde_json::Value = serde_json::from_str(calls[1].1.as_deref().unwrap()).unwrap();
+        assert_eq!(body["passes"], 2);
+        assert_eq!(body["attribution"]["probes"], 3);
     }
 
     #[test]
