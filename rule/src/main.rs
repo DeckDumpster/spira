@@ -666,7 +666,17 @@ fn cmd_code(db: &str, home: &str, rest: &[String]) -> i32 {
         }
     }
     // With no config naming a repo map there is no home repository to ask; fall back to the caller's checkout.
-    let repo = if check && std::env::var_os("SPIRA_TOML").is_some_and(|v| !v.is_empty()) { locate_repo(home).ok() } else { None };
+    let repo = if check && spira_config::process::spec().is_ok() {
+        match locate_repo(home) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                eprintln!("{e}");
+                return 1;
+            }
+        }
+    } else {
+        None
+    };
     let law = match &repo {
         Some((root, _)) => Path::new(root).join("law"),
         None => match law_dir() {
