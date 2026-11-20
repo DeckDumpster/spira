@@ -242,7 +242,10 @@ impl<'a> Run<'a> {
             let v: serde_json::Value = serde_json::from_str(o.stdout.trim()).map_err(|e| format!("not JSON: {e}"))?;
             v.get("bead").filter(|b| b.is_object()).cloned().ok_or_else(|| "no bead in the answer".to_string())
         };
-        let Ok(own) = show(&self.s.bead) else { return Vec::new() };
+        let own = match show(&self.s.bead) {
+            Ok(own) => own,
+            Err(e) => return vec![brief::Dep { id: self.s.bead.clone(), state: format!("cannot tell (this bead's own blockers could not be read: {e})"), since: None, commit: None }],
+        };
         let ids: Vec<String> = own["claim"]["blocks"].as_array().map(|a| a.iter().filter_map(|i| i.as_str().map(String::from)).collect()).unwrap_or_default();
         ids.into_iter()
             .map(|id| match show(&id) {
