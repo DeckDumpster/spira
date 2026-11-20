@@ -97,3 +97,10 @@ fn every_rename_leaves_a_pointer_and_an_unnumbered_old_slug_is_numbered_first() 
     assert!(check_pointers(&toc2, &p2).is_empty());
     assert_eq!(resolve(&toc2, &p2, "law-y").unwrap().hops.len(), 1);
 }
+
+#[test]
+fn a_rename_of_a_slug_a_pointer_already_names_adds_no_second_pointer() {
+    let ptr = Pointers { retired: vec![Retired { slug: "law-an-aeon-x".into(), reason: "r".into(), replaced_by: Some("law-z".into()), on: "d".into() }], ..Pointers::default() }; // ffx-ok
+    let (_, got) = rule::vocab::record_renames(&[], &ptr, &[("law-an-aeon-x".into(), "law-a-dwarf-x".into(), true)], "d").unwrap(); // ffx-ok
+    assert_eq!(got.retired.len(), 1);
+}

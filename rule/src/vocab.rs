@@ -81,6 +81,12 @@ pub fn record_renames(toc: &[Part], pointers: &Pointers, renamed: &[(String, Str
         if !numbered {
             toc = code::append(&toc, 1, from)?;
         }
+        let pointed = pointers.retired.iter().any(|r| r.slug == *from)
+            || pointers.moved.iter().any(|m| m.slug == *from)
+            || pointers.merged.iter().any(|m| m.from == *from);
+        if pointed {
+            continue;
+        }
         pointers.retired.push(code::Retired { slug: from.clone(), reason: "renamed out of retired vocabulary".into(), replaced_by: Some(to.clone()), on: today.into() });
     }
     Ok((toc, pointers))
