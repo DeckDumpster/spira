@@ -247,6 +247,7 @@ struct Checkpointer {
     wake: Condvar,
     done: Condvar,
     every: u64,
+    cap: i64,
 }
 
 impl Checkpointer {
@@ -267,7 +268,6 @@ impl Checkpointer {
         path: &Path,
         metrics: Option<spira_otel::metrics::MetricsSink>,
         max_read_ms: Arc<AtomicU64>,
-        cap: i64,
     ) {
         let wal_path = format!("{}-wal", path.display());
         let wal_bytes = || std::fs::metadata(&wal_path).map(|m| m.len()).unwrap_or(0);
@@ -303,7 +303,7 @@ impl Checkpointer {
             wait = GAUGE_EVERY;
             if seen >= self.every || owed {
                 let mut passive_done = None;
-                let step = checkpoint_step(&conn, &writer, &gate, max_read_ms.load(Ordering::SeqCst), cap, seen >= self.every, |done| {
+                let step = checkpoint_step(&conn, &writer, &gate, max_read_ms.load(Ordering::SeqCst), self.cap, seen >= self.every, |done| {
                     passive_done = Some(done);
                     if done {
                         counts.passive_complete += 1;
@@ -1204,6 +1204,7 @@ impl SqliteBackend {
             wake: Condvar::new(),
             done: Condvar::new(),
             every: opts.checkpoint_every.max(1),
+            cap: opts.wal_restart_cap_frames,
         });
         let checkpoint_conn = connect(path)?;
         checkpoint_conn.busy_timeout(Duration::ZERO).map_err(db)?;
@@ -1213,11 +1214,10 @@ impl SqliteBackend {
         let read_gate = Arc::new(Mutex::new(()));
         let thread = {
             let c = checkpointer.clone();
-            let cap = opts.wal_restart_cap_frames;
             let (w, g, p, mr) = (writer.clone(), read_gate.clone(), path.to_path_buf(), max_read_ms.clone());
             std::thread::Builder::new()
                 .name("sqlite-checkpoint".into())
-                .spawn(move || c.run(checkpoint_conn, w, g, &p, metrics, mr, cap))
+                .spawn(move || c.run(checkpoint_conn, w, g, &p, metrics, mr))
                 .map_err(|e| Error::Backend(format!("{}: the checkpointer: {e}", path.display())))?
         };
         Ok(SqliteBackend(Arc::new(Inner {
