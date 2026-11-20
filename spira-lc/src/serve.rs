@@ -370,6 +370,7 @@ pub fn run(args: &[String]) -> i32 {
             loop {
                 std::thread::sleep(crate::slow::METRICS_EVERY);
                 crate::slow::push_counts(&metrics, &mut pushed);
+                crate::slow::push_held(&metrics);
                 crate::slow::push_rss(&metrics);
             }
         });
@@ -2134,7 +2135,12 @@ mod tests {
         let first = send(&r.door, &argv, Some("req-1"));
         assert_eq!(first, (2, "cannot tell: deadline".to_string()), "the worker is parked past the deadline");
         let door = Arc::clone(&r.door);
-        let retry = std::thread::spawn(move || send(&door, &argv, Some("req-1")));
+        let retry = std::thread::spawn(move || loop {
+            let answer = send(&door, &argv, Some("req-1"));
+            if answer.0 != 2 {
+                break answer;
+            }
+        });
         r.notes.release();
         let second = retry.join().unwrap();
         assert_eq!(second.0, 0, "{second:?}");

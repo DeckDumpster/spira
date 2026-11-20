@@ -332,7 +332,7 @@ fn rounds_are_read_from_typed_pass_and_attribution_rows() {
 #[test]
 fn the_run_directory_reads_the_halt_stamp_and_missing_families_as_empty() {
     let tmp = testkit::TempDir::new("lifecycle-section-rundir");
-    let dir = RunDir(tmp.path().to_path_buf());
+    let dir = RunDir::new(tmp.path().to_path_buf());
     assert!(dir.stops().unwrap().is_empty());
     assert!(dir.rounds(0).unwrap().is_empty(), "no family file yet is no rows");
     std::fs::write(tmp.join("world.halted"), "").unwrap();
@@ -370,7 +370,7 @@ fn a_halt_that_was_released_is_excluded_from_the_trailing_day_by_the_typed_stop_
     }
     r.land("before-halt", "harness", now - 28 * H - MIN, now - 28 * H);
     let tmp = testkit::TempDir::new("lifecycle-halt-released");
-    let dir = RunDir(tmp.path().to_path_buf());
+    let dir = RunDir::new(tmp.path().to_path_buf());
     assert!(dir.records_releases(), "the run directory records releases of the world");
     r.publish_from(&dir);
     let unrecorded = value(&r.status()["goodput_rate_24h"]);
@@ -392,7 +392,7 @@ fn a_revert_whose_landing_names_the_reverted_commit_charges_the_reverted_bead() 
     r.land("undo", "harness", now - 2 * H - MIN, now - 2 * H);
     let tmp = testkit::TempDir::new("lifecycle-reverts");
     write_rows(tmp.path(), "land", &[land_row(now - 3 * H, "bad", "abcdef0123456789", None), land_row(now - 2 * H, "undo", "0123456789abcdef", Some("abcdef0"))]);
-    r.publish_from(&RunDir(tmp.path().to_path_buf()));
+    r.publish_from(&RunDir::new(tmp.path().to_path_buf()));
     let harmful = r.status()["harmful"].clone();
     let beads: Vec<&str> = harmful.as_array().unwrap().iter().map(|h| h["bead"].as_str().unwrap()).collect();
     assert_eq!(beads, vec!["bad"], "{harmful}");
@@ -409,14 +409,14 @@ fn a_revert_subject_without_the_typed_field_charges_nothing() {
     let mut prose = land_row(now - 2 * H, "undo", "0123456789abcdef", None);
     prose["subject"] = json!("Revert \"bad\" (abcdef0123456789)");
     write_rows(tmp.path(), "land", &[land_row(now - 3 * H, "bad", "abcdef0123456789", None), prose]);
-    r.publish_from(&RunDir(tmp.path().to_path_buf()));
+    r.publish_from(&RunDir::new(tmp.path().to_path_buf()));
     assert!(r.status().get("harmful").is_none(), "{}", r.status());
 }
 
 #[test]
 fn the_typed_stop_rows_replace_the_halt_stamp_and_a_pause_names_its_repo_and_bead() {
     let tmp = testkit::TempDir::new("lifecycle-stop-rows");
-    let dir = RunDir(tmp.path().to_path_buf());
+    let dir = RunDir::new(tmp.path().to_path_buf());
     write_rows(tmp.path(), "loop-stop", &[stop_row("halt", 100, None, None), stop_row("release", 200, None, None), stop_row("pause", 300, Some("harness"), Some("b-9")), json!({"ts": tsd::iso_utc(400), "family": "loop-stop", "kind": "halt", "reason": "because"})]);
     let stops = dir.stops().unwrap();
     let kinds: Vec<(StopKind, u64)> = stops.iter().map(|e| match e { LoopEvent::Stop { kind, at, .. } => (*kind, *at), _ => panic!() }).collect();
@@ -487,4 +487,116 @@ fn a_bead_named_only_by_a_red_takes_its_repo_from_a_read_by_id() {
     assert_eq!(r.status()["harmful"][0]["repo"], "site", "{}", r.status());
     let reads = r.store.contract().backend().take();
     assert!(!reads.iter().any(|(k, key, _)| *k == "range" && key.starts_with(crate::control::keys::LIFECYCLE)), "{reads:?}");
+}
+
+/// A loopback metrics endpoint that answers 204 and counts the connections it accepts.
+fn counting_sink() -> (MetricsSink, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let accepted = std::sync::Arc::new(AtomicUsize::new(0));
+    let seen = accepted.clone();
+    std::thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut c) = conn else { return };
+            seen.fetch_add(1, Ordering::SeqCst);
+            c.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+            let mut buf = vec![0u8; 65536];
+            let _ = c.read(&mut buf);
+            let _ = c.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
+        }
+    });
+    (MetricsSink::new(Some(&addr), "test", std::time::Duration::from_secs(2)), accepted)
+}
+
+#[test]
+fn a_publish_posts_no_metric_and_holds_its_gauges_for_one_push() {
+    use std::sync::atomic::Ordering;
+    let r = rig();
+    let now = r.now();
+    for (i, repo) in ["held-a", "held-b", "held-c"].into_iter().enumerate() {
+        r.land(&format!("h-{i}"), repo, now - 2 * H - 20 * MIN, now - 30 * MIN - i as u64 * MIN);
+    }
+    let (sink, accepted) = counting_sink();
+    r.warm();
+    let (code, out) = r.call_with(&sink, &["publish-section", "lifecycle"], None);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(accepted.load(Ordering::SeqCst), 0, "no metric is posted during the request");
+
+    let held = crate::slow::held();
+    let windows = |repo: &str| held.iter().filter(|s| s.labels.contains(&("repo".into(), repo.into()))).filter_map(|s| s.labels.iter().find(|(k, _)| k == "window").map(|(_, w)| w.clone())).collect::<std::collections::BTreeSet<_>>();
+    for repo in ["held-a", "held-b", "held-c", "all"] {
+        assert_eq!(windows(repo).len(), 2, "both windows are held for {repo}: {held:?}");
+    }
+    assert!(held.iter().any(|s| s.name == crate::control::sections::WRITES && s.labels.contains(&("kind".into(), "Lifecycle".into()))), "the section-writes count is held: {held:?}");
+
+    crate::slow::push_held(&sink);
+    assert_eq!(accepted.load(Ordering::SeqCst), 1, "one request carries every held series");
+}
+
+fn seeded_run_dir(tmp: &testkit::TempDir, now: u64) {
+    let ts = |i: u64| tsd::iso_utc(now - 2 * H + i);
+    let passes: Vec<Value> = (0..500).map(|i| pass(&format!("r-{i}"), &["a"], "red-attributed", &ts(i))).collect();
+    let attributions: Vec<Value> = (0..500).map(|i| attribution(&format!("r-{i}"), "a", &ts(i))).collect();
+    let lands: Vec<Value> = (0..50).map(|i| land_row(now - 2 * H + i, &format!("l-{i}"), &format!("{i:016x}"), None)).collect();
+    let stops: Vec<Value> = (0..5).map(|i| stop_row(if i % 2 == 0 { "halt" } else { "release" }, now - 20 * H + i, None, None)).collect();
+    for (family, rows) in [("cert-pass", passes), ("round-attribution", attributions), ("land", lands), ("loop-stop", stops)] {
+        write_rows(tmp.path(), family, &rows);
+    }
+}
+
+fn append_row(dir: &std::path::Path, family: &str, row: &Value) {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new().append(true).open(dir.join("tsd").join(format!("{family}.jsonl"))).unwrap();
+    writeln!(f, "\n{row}").unwrap();
+}
+
+#[test]
+fn a_second_publish_parses_only_the_rows_appended_since_the_first() {
+    let r = rig();
+    let now = r.now();
+    r.land("b-1", "harness", now - 2 * H, now - H);
+    let tmp = testkit::TempDir::new("lifecycle-incremental");
+    seeded_run_dir(&tmp, now);
+    let dir = RunDir::new(tmp.path().to_path_buf());
+    assert_eq!(r.publish_from(&dir)["published"], true);
+    assert_eq!(dir.parsed(), 1_055);
+
+    append_row(tmp.path(), "cert-pass", &pass("r-new", &["a"], "red-attributed", &tsd::iso_utc(now - H)));
+    r.advance(super::MIN_GAP_SECS + 10);
+    r.publish_from(&dir);
+    assert_eq!(dir.parsed(), 1_056, "one appended row, parsed once");
+    let cached = r.status();
+
+    r.advance(super::MIN_GAP_SECS + 10);
+    let fresh = RunDir::new(tmp.path().to_path_buf());
+    r.publish_from(&fresh);
+    assert_eq!(fresh.parsed(), 1_056);
+    assert_eq!(r.status(), cached, "the cached read and a cold read of the same files agree");
+}
+
+#[test]
+fn a_family_file_replaced_by_a_shorter_one_is_read_again_from_the_start() {
+    let r = rig();
+    let now = r.now();
+    r.land("b-1", "harness", now - 2 * H, now - H);
+    let tmp = testkit::TempDir::new("lifecycle-replaced");
+    seeded_run_dir(&tmp, now);
+    let dir = RunDir::new(tmp.path().to_path_buf());
+    r.publish_from(&dir);
+    let before = dir.parsed();
+
+    let short = tmp.join("cert-pass.new");
+    let ts = tsd::iso_utc(now - 2 * H);
+    std::fs::write(&short, pass("r-only", &["a"], "over-cap", &ts).to_string()).unwrap();
+    std::fs::rename(&short, tmp.join("tsd").join("cert-pass.jsonl")).unwrap();
+    r.advance(super::MIN_GAP_SECS + 10);
+    r.publish_from(&dir);
+    assert_eq!(dir.parsed(), before + 1, "the replacement is parsed whole");
+    let cached = r.status();
+
+    r.advance(super::MIN_GAP_SECS + 10);
+    r.publish_from(&RunDir::new(tmp.path().to_path_buf()));
+    assert_eq!(r.status(), cached);
 }
