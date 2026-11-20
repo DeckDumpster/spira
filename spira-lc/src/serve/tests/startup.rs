@@ -1,5 +1,6 @@
 #[test]
 fn notify_ready_reaches_an_abstract_namespace_socket() {
+    let _env = testkit::env_read();
     use std::os::linux::net::SocketAddrExt;
     let name = format!("spira-lc-notify-{}", std::process::id());
     let addr = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes()).unwrap();
@@ -12,6 +13,7 @@ fn notify_ready_reaches_an_abstract_namespace_socket() {
 
 #[test]
 fn notify_ready_sends_one_ready_datagram_to_the_notify_socket_and_nothing_when_unset() {
+    let _env = testkit::env_read();
     let dir = testkit::TempDir::new("notify");
     let path = dir.join("notify.sock");
     let rx = std::os::unix::net::UnixDatagram::bind(&path).unwrap();
@@ -28,6 +30,7 @@ fn notify_ready_sends_one_ready_datagram_to_the_notify_socket_and_nothing_when_u
 
 #[test]
 fn start_up_logs_one_line_per_phase_in_order_and_ready_after_their_sum() {
+    let _env = testkit::env_read();
     use std::time::Duration;
     let phases = [("config", Duration::from_millis(3)), ("open-sqlite", Duration::from_millis(52)), ("bind", Duration::from_millis(5))];
     let lines = super::startup_lines(&phases, 0);
