@@ -161,7 +161,7 @@ fn lease(v: Option<&Value>) -> Result<Option<i64>, String> {
     }
 }
 
-fn express(v: Option<&Value>) -> Result<bool, String> {
+pub fn express(v: Option<&Value>) -> Result<bool, String> {
     match scalar(v).as_deref() {
         None | Some("" | "0" | "false") => Ok(false),
         Some("1" | "true") => Ok(true),

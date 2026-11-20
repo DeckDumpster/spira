@@ -58,6 +58,9 @@ pub struct Row {
     /// Why the claim view cannot tell, when it said so.
     #[serde(default)]
     pub claim_why: Option<String>,
+    /// The lifecycle row carries Express.
+    #[serde(default)]
+    pub express: bool,
 }
 
 /// The call scheduler's judgement of task room: since when a slot has been open, and when it last judged.
@@ -353,6 +356,9 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, claimed: &[
             Some(format!("STALE EDGE blocked_by {} all terminal", py_list(&r.blocked_by)))
         } else if explained {
             None
+        } else if let Some((tail, line)) = pool_wait(p, snap, &content, r, age, room, now) {
+            key_tail = Some(tail);
+            Some(line)
         } else if st == "REWORK" && age > p.rework_min as i64 {
             unclaimed_rework(p, r, room, &why, now)
         } else if st == "CERTIFIED" && !labels.contains(&home) && age > p.cert_min as i64 {
@@ -392,6 +398,20 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, claimed: &[
         }
     }
     out.into_iter().map(|(k, l)| Suspect { key: format!("SUSPECT {k}"), line: format!("SUSPECT {l}") }).collect()
+}
+
+/// The key tail and line for a claimable P0, express or REWORK bead that has waited past the threshold while the scheduler's fresh judgement shows no open slot, naming the WORKING beads that hold the pool.
+fn pool_wait(p: &BeadSweep, snap: &Snapshot, content: &BTreeMap<&str, &Bead>, r: &Row, age: i64, room: Option<&Room>, now: f64) -> Option<(String, String)> {
+    let priority = |id: &str| content.get(id).map_or("P?".to_string(), |b| format!("P{}", b.priority));
+    let express = if r.express { " express" } else { "" };
+    let full = room.is_some_and(|x| (now - x.at_ms as f64 / 1000.0) / 60.0 <= p.rework_min as f64 && x.since_ms.is_none());
+    let eligible = matches!(r.state.as_str(), "READY" | "REWORK") && (r.express || r.state == "REWORK" || content.get(r.id.as_str()).is_some_and(|b| b.priority == 0));
+    if !(full && eligible && age > p.rework_min as i64 && r.claim.as_deref() == Some("claimable")) {
+        return None;
+    }
+    let head = format!("{}{express} WAITING", priority(&r.id));
+    let holders: Vec<String> = snap.rows.iter().filter(|h| h.state == "WORKING").map(|h| format!("{} {}", h.id, priority(&h.id))).collect();
+    Some((format!("{head} for a builder slot: pool full"), format!("{head} over {age}m for a builder slot: pool full, held by {}", holders.join(", "))))
 }
 
 /// The row for a REWORK bead past the threshold, or none while the claim rule or a full scheduler explains the wait.
@@ -539,9 +559,85 @@ mod tests {
 
     const ROW: &str = "SUSPECT sp-r REWORK UNCLAIMED REWORK over 5m (suites-failed)";
 
+    const FULL: Option<Room> = Some(Room { since_ms: None, at_ms: 3_600_000 });
+
+    fn pool(waiting: Row, priority: i64) -> Snapshot {
+        let mut rows = vec![Row { since: Some(NOW - 1200.0), claim: Some("claimable".into()), ..waiting }];
+        let mut content = vec![Bead { id: rows[0].id.clone(), priority, ..Bead::default() }];
+        for (n, p) in [1, 2, 2, 1, 2].into_iter().enumerate() {
+            rows.push(Row { id: format!("sp-w{n}"), state: "WORKING".into(), ..Row::default() });
+            content.push(Bead { id: format!("sp-w{n}"), priority: p, ..Bead::default() });
+        }
+        Snapshot { rows, content, ..Snapshot::default() }
+    }
+
+    fn ready(id: &str) -> Row {
+        Row { id: id.into(), state: "READY".into(), ..Row::default() }
+    }
+
+    const HOLDERS: &str = "held by sp-w0 P1, sp-w1 P2, sp-w2 P2, sp-w3 P1, sp-w4 P2";
+
     #[test]
-    fn a_rework_bead_behind_a_full_task_pool_raises_no_row() {
-        assert!(said(&rework(Some("claimable")), Some(Room { since_ms: None, at_ms: 3_600_000 })).is_empty());
+    fn a_p0_ready_bead_behind_a_full_pool_is_announced_with_its_holders() {
+        assert_eq!(said(&pool(ready("sp-p"), 0), FULL), [format!("SUSPECT sp-p READY P0 WAITING over 20m for a builder slot: pool full, {HOLDERS}")]);
+    }
+
+    #[test]
+    fn an_express_rework_bead_behind_a_full_pool_is_announced_with_its_holders() {
+        let row = Row { state: "REWORK".into(), express: true, ..ready("sp-x") };
+        assert_eq!(said(&pool(row, 2), FULL), [format!("SUSPECT sp-x REWORK P2 express WAITING over 20m for a builder slot: pool full, {HOLDERS}")]);
+    }
+
+    #[test]
+    fn a_plain_rework_bead_behind_a_full_pool_is_announced() {
+        let row = Row { state: "REWORK".into(), ..ready("sp-r") };
+        assert_eq!(said(&pool(row, 1), FULL), [format!("SUSPECT sp-r REWORK P1 WAITING over 20m for a builder slot: pool full, {HOLDERS}")]);
+    }
+
+    #[test]
+    fn a_change_of_holders_does_not_announce_the_wait_again() {
+        let p = sweep();
+        let mut snap = pool(ready("sp-p"), 0);
+        let (c, _) = decide(&p, &Carry::default(), &snap, FULL.as_ref(), &Repaired::default(), NOW);
+        snap.rows[1].id = "sp-new".into();
+        snap.content[1].id = "sp-new".into();
+        assert!(decide(&p, &c, &snap, FULL.as_ref(), &Repaired::default(), NOW).1.is_empty());
+    }
+
+    #[test]
+    fn a_p0_bead_whose_claim_is_not_claimable_is_not_announced_behind_a_full_pool() {
+        for verdict in [Some("cannot-tell"), Some("snoozed"), None] {
+            let mut snap = pool(ready("sp-p"), 0);
+            snap.rows[0].claim = verdict.map(str::to_string);
+            assert!(!said(&snap, FULL).iter().any(|l| l.contains("WAITING")), "{verdict:?}");
+        }
+    }
+
+    #[test]
+    fn a_stale_room_judgement_is_not_read_as_a_full_pool() {
+        let stale = Some(Room { since_ms: None, at_ms: 0 });
+        let lines = said(&pool(ready("sp-p"), 0), stale);
+        assert!(!lines.iter().any(|l| l.contains("WAITING")), "{lines:?}");
+    }
+
+    #[test]
+    fn a_p1_ready_bead_behind_a_full_pool_raises_nothing() {
+        assert!(said(&pool(ready("sp-p"), 1), FULL).is_empty());
+    }
+
+    #[test]
+    fn the_pool_wait_is_announced_once_and_again_after_it_clears() {
+        let p = sweep();
+        let snap = pool(ready("sp-p"), 0);
+        let (c, say) = decide(&p, &Carry::default(), &snap, FULL.as_ref(), &Repaired::default(), NOW);
+        assert_eq!(say.len(), 1);
+        let (c, say) = decide(&p, &c, &snap, FULL.as_ref(), &Repaired::default(), NOW + 60.0);
+        assert!(say.is_empty(), "{say:?}");
+        let open = Some(Room { since_ms: Some(3_600_000), at_ms: 3_660_000 });
+        let (c, say) = decide(&p, &c, &snap, open.as_ref(), &Repaired::default(), NOW + 120.0);
+        assert!(say.is_empty() && c.seen.is_empty(), "{say:?}");
+        let (_, say) = decide(&p, &c, &snap, Some(Room { since_ms: None, at_ms: 3_720_000 }).as_ref(), &Repaired::default(), NOW + 180.0);
+        assert_eq!(say.len(), 1);
     }
 
     #[test]
@@ -588,9 +684,9 @@ mod tests {
         };
         assert_eq!(ask(&mut view), 2, "the state, and the one row: the scheduler has not judged");
         let mut view = Projection::default();
-        let state = sentinel_call::Carry { room_since_ms: None, room_at_ms: Some(3_600_000), ..Default::default() };
+        let state = sentinel_call::Carry { room_since_ms: Some(3_540_000), room_at_ms: Some(3_600_000), ..Default::default() };
         view.push(&Event { id: EventId("s".into()), stream: StreamKey(sentinel_call::STREAM.into()), kind: EventKind::new(sentinel_call::STATE, &serde_json::to_string(&state).unwrap()), at: 1, cause: None, correlation: CorrelationId("s".into()) });
-        assert_eq!(ask(&mut view), 1, "a full pool says nothing, so only the state");
+        assert_eq!(ask(&mut view), 1, "a slot open under the threshold says nothing, so only the state");
     }
 
     fn held(held_at: Option<f64>) -> Snapshot {

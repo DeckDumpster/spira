@@ -1401,6 +1401,7 @@ fn sweep_row(r: &Value) -> Option<Row> {
         claim: r["claim_view"]["verdict"].as_str().map(str::to_string),
         claim_unset: r["claim"].is_null(),
         claim_why: claim_why(&r["claim_view"]),
+        express: spira_store::lc_state::express(r.get("express")).unwrap_or(false),
     })
 }
 
@@ -1531,6 +1532,14 @@ mod sweep_row_tests {
         assert_eq!(why(serde_json::json!({"verdict": "cannot-tell", "missing": ["claim", "repo"]})).as_deref(), Some("no claim, no repo"));
         assert_eq!(why(serde_json::json!({"verdict": "cannot-tell", "missing": [], "error": "store down"})).as_deref(), Some("store down"));
         assert_eq!(why(serde_json::json!({"verdict": "claimable", "missing": []})), None);
+    }
+
+    #[test]
+    fn a_list_rows_express_column_reads_as_a_flag() {
+        let express = |v: serde_json::Value| sweep_row(&serde_json::json!({"bead_id": "sp-r", "express": v})).unwrap().express;
+        assert!(express(serde_json::json!("1")) && express(serde_json::json!(true)) && express(serde_json::json!("true")));
+        assert!(!express(serde_json::json!("0")) && !express(serde_json::json!(false)) && !express(serde_json::Value::Null));
+        assert!(!sweep_row(&serde_json::json!({"bead_id": "sp-r"})).unwrap().express);
     }
 }
 
