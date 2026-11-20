@@ -84,7 +84,7 @@ other first argument, or none, means a full pass. The one second argument read i
 | 0 | the pass ran to its end. That includes every pass whether it called or declined |
 | 1 | `DATABASE UNREADABLE` (the bulk store read failed), skipped under `SPIRA_SKIP_RECLAIM=1`. Also any mode when the harness itself cannot be found: the context probe failed, or lib.sh was not found (new, `FATAL` line). Also a full pass in which the lifecycle machine could not be read or written (`LIFECYCLE UNREACHABLE`); that pass still runs every other check first |
 
-Nothing is printed on stdout except log lines, the verbatim output of the scripts it calls,
+Nothing is printed on stdout except log lines, the verbatim output of the scripts it calls.
 The units append stdout and stderr to `$SPIRA_RUN/sentinel.log`.
 
 ### 2.2 Log lines other programs parse (byte-identical)
@@ -412,8 +412,7 @@ pass writes them.
 Under SKIP_RECLAIM all four are 0 and empty.
 
 The pass then logs `state: …` and applies `roster_warnings`, ported: a WARN line per
-runes rune left out of SPIRA_RUNES, deduplicated by the stamp. the pass then prints
-`\nOpen plan beads:\n` and one `  <id>` line per open plan bead (§9, B3), and exits 0.
+runes rune left out of SPIRA_RUNES, deduplicated by the stamp. The pass then exits 0.
 
 **CHECK 1 — completed pilgrimages.** Runs pilgrimage.sh as §2.5.
 

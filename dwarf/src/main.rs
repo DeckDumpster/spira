@@ -241,23 +241,17 @@ fn main() {
         let exec = RealExec { env: &env, timeout: None };
         let sink = StdSink;
         let call_bin = original.get("SPIRA_CALL").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemd-run".to_string());
-        let call_argv = dwarf::escape::call_argv(&home, &cli.rune).unwrap_or_else(|e| fatal(&format!("dwarf: {e}")));
+        let call_argv = dwarf::escape::call_argv(&home, &cli.rune, None).unwrap_or_else(|e| fatal(&format!("dwarf: {e}")));
         let rc = dwarf::escape::run(&seam, &exec, &env, &sink, &conf, &call_bin, &call_argv, &home, &cli.rune, cli.escape_dry_run, util::now_epoch());
         { let code = rc; spira_otel::run::finish(code); std::process::exit(code) };
     }
     if let Some(req) = &cli.direct {
         let exec = RealExec { env: &env, timeout: None };
-        let timeout = spira_config::runes::rune_get(&home, &req.rune, "RUNE_TIMEOUT_SECONDS", "3600");
         let out_path = dwarf::direct::output_path(&conf.run, &req.bead);
         if let Some(dir) = out_path.parent() {
             std::fs::create_dir_all(dir).unwrap_or_else(|e| fatal(&format!("dwarf: {}: {e}", dir.display())));
         }
-        let call_argv = spira_config::release_env::dwarf_unit_env()
-            .and_then(|pairs| {
-                let props = runtime::units::UnitProps { output_append: Some(out_path.clone()), ..runtime::units::dwarf_props(&timeout)? };
-                dwarf::direct::call_flags(&pairs, &props)
-            })
-            .unwrap_or_else(|e| fatal(&format!("dwarf: {e}")));
+        let call_argv = dwarf::escape::call_argv(&home, &req.rune, Some(out_path.clone())).unwrap_or_else(|e| fatal(&format!("dwarf: {e}")));
         let path = env.child().get("PATH").cloned().unwrap_or_default();
         let dwarf_path = dwarf::escape::find_on_path(&path, "dwarf", dwarf::escape::is_executable);
         let call_bin = original.get("SPIRA_CALL").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemd-run".to_string());

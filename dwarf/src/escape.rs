@@ -17,10 +17,8 @@
 //! `home/runes/<rune>.rune` test every mode uses). Its partition must have ready
 //! work. The account must have API capacity. The bead must not be poisoned. The rune's
 //! own RUNE_SINGLE_FLIGHT is enforced by the called dwarf internally. All of that
-//! still applies — `world_gate` and `rune_ready`/`call_argv` are reached exactly as
-//! `call_rune` reaches them, through lib.sh (§5's seam), because a drain past its TTL
-//! being lifted and logged is family G's (not this bead's) to port. The capacity check is
-//! in-process now (`capacity::check_and_probe`, wave 4.26 — family K's home is this
+//! still applies — `world_gate` and `call_argv` are in-process here; `rune_ready` is
+//! reached through lib.sh (§5's seam). The capacity check is in-process too (`capacity::check_and_probe`, wave 4.26 — family K's home is this
 //! crate, and dwarf is its probe's one owner), so a probe that clears the pause file early
 //! happens exactly once no matter how many of this crate's own entry points ask.
 //!
@@ -30,7 +28,7 @@
 //! RETIRED RATHER THAN PORTED AS A SEPARATE SCRIPT. escape.sh's only job was to gate and
 //! then invoke the `dwarf` binary; the binary now does both.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::conf::Conf;
 use crate::ports::{Env, Exec, Seam};
@@ -126,9 +124,9 @@ pub fn world_gate<S: AsRef<str>>(run: &Path, repos: &[S], rune: &str, prefix: &s
 
 /// The `systemd-run` flags of a called dwarf's unit: its environment, then the properties of
 /// `units::dwarf_props` from the rune's `RUNE_TIMEOUT_SECONDS`.
-pub fn call_argv(home: &Path, rune: &str) -> Result<Vec<String>, String> {
+pub fn call_argv(home: &Path, rune: &str, output_append: Option<PathBuf>) -> Result<Vec<String>, String> {
     let timeout = spira_config::runes::rune_get(home, rune, "RUNE_TIMEOUT_SECONDS", "3600");
-    let props = runtime::units::dwarf_props(&timeout)?;
+    let props = runtime::units::UnitProps { output_append, ..runtime::units::dwarf_props(&timeout)? };
     crate::direct::call_flags(&spira_config::release_env::dwarf_unit_env()?, &props)
 }
 
@@ -166,7 +164,7 @@ pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, conf: &
     match decide(&facts) {
         Outcome::Gated => {
             if facts.world_gate_ok {
-                // world_gate passed; the capacity pause is what gated it — escape.sh's own line.
+                // the world allowed it; the capacity pause is what gated it.
                 sink.out(&util::log_line(now, &format!("escape.sh {rune}: account out of capacity for another {}s — not calling", facts.capacity_left.unwrap_or_default())));
             }
             1
@@ -365,7 +363,7 @@ mod tests {
         let rel = dir.join("rel");
         std::fs::create_dir_all(&rel).unwrap();
         let _g = testkit::env(&[(spira_config::RELEASE_ENV, Some(rel.to_str().unwrap())), ("HOME", Some("h")), (spira_config::process::TOML_ENV, Some("x"))]);
-        let a = call_argv(&dir, "stretchy");
+        let a = call_argv(&dir, "stretchy", None);
         let a = a.expect("argv");
         assert!(a.iter().any(|f| f == "--property=IOWeight=10"), "{a:?}");
         assert!(a.iter().any(|f| f.starts_with("--setenv=SPIRA_RELEASE=")), "{a:?}");
