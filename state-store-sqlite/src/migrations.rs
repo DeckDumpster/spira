@@ -271,3 +271,202 @@ pub const MIGRATIONS: &[&[&str]] = &[
         "DROP TABLE m7_newest",
     ],
 ];
+
+#[cfg(test)]
+mod cost {
+    use super::MIGRATIONS;
+    use crate::{exec, SCHEMA};
+    use rusqlite::{params, Connection};
+    use serde_json::{json, Value};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    const ROUNDS: usize = 10;
+    const GROWTH: usize = 4;
+    const BOUND: u64 = 6;
+    /// Shipped before this check and never editable; each entry must still be over the bound,
+    /// so the list cannot outlive the debt and a new migration cannot be added to it unseen.
+    const SHIPPED_SUPERLINEAR: &[usize] = &[6];
+
+    fn obj(metadata: Value, data: Value) -> Vec<u8> {
+        serde_json::to_vec(&json!({ "metadata": metadata, "data": data })).unwrap()
+    }
+
+    fn audit(machine: &str, id: &str, event: &str, to: &str, at: i64) -> Value {
+        json!({ "machine": machine, "lc_key": id, "event": event, "to_state": to, "at": at,
+                "applied": true,
+                "evidence": { "n": at, "Hold": { "kind": "Manual", "cause": "c", "detail": "d" } } })
+    }
+
+    /// A store of production shape: per round a batch, a delivery, 8 history entries each
+    /// (half imported with `data.seq`, half naming an `events/` revision of 3 audits), and
+    /// about one `telemetry/` and one `intents/` row, each with a ttl and an owner.
+    fn shaped_rows(rounds: usize) -> Vec<(String, i64, Vec<u8>)> {
+        let mut rows = Vec::new();
+        let mut rev = 1i64;
+        let mut next = || {
+            rev += 1;
+            rev
+        };
+        for i in 0..rounds {
+            let id = format!("r-{i}");
+            let owner = json!({ "ownerReferences": [format!("batches/spira/{id}")] });
+            rows.push((
+                format!("batches/spira/{id}"),
+                next(),
+                obj(
+                    json!({}),
+                    json!({ "batch_id": id, "state": "OPEN", "opened_at": i }),
+                ),
+            ));
+            rows.push((
+                format!("deliveries/d-{i}"),
+                next(),
+                obj(
+                    owner.clone(),
+                    json!({ "bead_id": format!("d-{i}"), "state": "Batched" }),
+                ),
+            ));
+            rows.push((
+                format!("lifecycle/d-{i}"),
+                next(),
+                obj(json!({}), json!({ "holds": ["Manual"] })),
+            ));
+            for id in [format!("r-{i}"), format!("d-{i}")] {
+                for seq in 0..4i64 {
+                    let machine = if seq == 0 && id.starts_with('d') {
+                        "bead"
+                    } else if id.starts_with('r') {
+                        "batch"
+                    } else {
+                        "delivery"
+                    };
+                    let event = ["Hold", "PassRed", "Eject", "PassGreen"][seq as usize];
+                    rows.push((
+                    format!("history/{id}/0/import/{seq}"),
+                    1,
+                    obj(json!({}), json!({ "seq": seq + 1, "audit": audit(machine, &id, event, "BATCHED", 10 + seq) })),
+                ));
+                }
+                for k in 0..4i64 {
+                    let m = next();
+                    rows.push((
+                        format!("history/{id}/{m}/r{k}"),
+                        m,
+                        obj(json!({}), json!({})),
+                    ));
+                    let then: Vec<Value> = (0..3)
+                        .map(|a| {
+                            audit(
+                                if a == 2 { "delivery" } else { "batch" },
+                                &id,
+                                ["PassStarted", "PassRed", "Eject"][a],
+                                "QUEUED",
+                                100 + a as i64,
+                            )
+                        })
+                        .collect();
+                    rows.push((
+                    format!("events/{m:020}"),
+                    m,
+                    obj(json!({}), json!({ "refused": false, "at": 1000 + m, "evidence": { "then": then, "else": [] } })),
+                ));
+                }
+            }
+            for prefix in ["telemetry", "intents"] {
+                rows.push((format!("{prefix}/{id}"), next(), obj(json!({ "ttl_secs": 60, "ownerReferences": [format!("batches/spira/{id}")] }), json!({ "state": "x" }))));
+            }
+        }
+        rows
+    }
+
+    fn store_at(version: usize, rows: &[(String, i64, Vec<u8>)]) -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        for sql in SCHEMA
+            .iter()
+            .chain(MIGRATIONS[..version].iter().flat_map(|m| m.iter()))
+        {
+            exec(&conn, sql, []).unwrap();
+        }
+        let tables: &[&str] = if version >= 1 {
+            &["versions", "latest"]
+        } else {
+            &["versions"]
+        };
+        for table in tables {
+            let sql = format!(
+                "INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
+                 VALUES (?1, ?2, 0, ?3, ?2, 0, 1)"
+            );
+            for (k, main, v) in rows {
+                exec(&conn, &sql, params![k.as_bytes(), main, v]).unwrap();
+            }
+        }
+        conn
+    }
+
+    fn run(version: usize, rounds: usize) -> (u64, u128) {
+        measure(version - 1, MIGRATIONS[version - 1], rounds)
+    }
+
+    fn measure(at: usize, migration: &[&str], rounds: usize) -> (u64, u128) {
+        let conn = store_at(at, &shaped_rows(rounds));
+        let before = conn.total_changes();
+        let steps = Arc::new(AtomicU64::new(0));
+        let counter = Arc::clone(&steps);
+        conn.progress_handler(
+            1,
+            Some(move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                false
+            }),
+        );
+        let start = Instant::now();
+        for sql in migration {
+            exec(&conn, sql, []).unwrap();
+        }
+        let writes = migration
+            .iter()
+            .any(|sql| sql.starts_with("INSERT") || sql.starts_with("UPDATE"));
+        assert!(
+            !writes || conn.total_changes() > before,
+            "the generated store gave the migration no rows to rewrite"
+        );
+        (steps.load(Ordering::Relaxed), start.elapsed().as_millis())
+    }
+
+    #[test]
+    fn no_migration_does_work_that_grows_faster_than_the_store() {
+        let mut red = Vec::new();
+        for k in 1..=MIGRATIONS.len() {
+            let (s1, ms1) = run(k, ROUNDS);
+            let (s4, ms4) = run(k, ROUNDS * GROWTH);
+            eprintln!("migration {k}: {s1}/{s4} VM steps, {ms1}/{ms4} ms");
+            let over = s4 > BOUND * s1;
+            let ratio = s4 as f64 / s1.max(1) as f64;
+            if over && !SHIPPED_SUPERLINEAR.contains(&k) {
+                red.push(format!(
+                    "migration {k}: {s1} -> {s4} VM steps over {GROWTH}x the rows (x{ratio:.1}, bound x{BOUND})"
+                ));
+            } else if !over && SHIPPED_SUPERLINEAR.contains(&k) {
+                red.push(format!(
+                    "migration {k}: within bound (x{ratio:.1}); drop it from SHIPPED_SUPERLINEAR"
+                ));
+            }
+        }
+        assert!(red.is_empty(), "{}", red.join("\n"));
+    }
+
+    #[test]
+    fn a_correlated_subquery_over_an_unindexed_temp_table_is_over_the_bound() {
+        let planted = [
+            "CREATE TEMP TABLE planted (id TEXT NOT NULL)",
+            "INSERT INTO planted SELECT CAST(key AS TEXT) FROM latest",
+            "UPDATE latest SET value = value WHERE (SELECT count(*) FROM planted WHERE id = CAST(latest.key AS TEXT)) > 5",
+        ];
+        let (s1, _) = measure(MIGRATIONS.len(), &planted, ROUNDS);
+        let (s4, _) = measure(MIGRATIONS.len(), &planted, ROUNDS * GROWTH);
+        assert!(s4 > BOUND * s1, "{s1} -> {s4}");
+    }
+}
