@@ -2,6 +2,7 @@
 # usage: lint-staged.sh <spira-lint> [args...]
 #        lint-staged.sh --tree [args...]   (builds this tree's spira-lint first)
 # Runs spira-lint under the tree's fixture config, as the round does, never under the caller's SPIRA_TOML.
+# The round also layers its own host keys (repo paths); none of them is a lint rule's mode.
 set -uo pipefail
 tree="$PWD"
 if [ "${1:-}" = --tree ]; then
