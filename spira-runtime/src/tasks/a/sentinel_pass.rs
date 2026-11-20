@@ -1138,7 +1138,7 @@ mod beads_on_tests {
 
     #[test]
     fn reflect_argv_names_the_shipped_entry_point_then_the_ids() {
-        let bin = std::path::Path::new("/rel/bin").join(REFLECT_BIN);
+        let bin = std::path::Path::new("rel/bin").join(REFLECT_BIN);
         let argv = reflect_argv(&bin, &["sp-a".into(), "sp-b".into()]);
         assert_eq!(std::path::Path::new(&argv[0]).file_name().unwrap(), "spira-runtime");
         assert_eq!(&argv[1..], ["reflect", "sp-a", "sp-b"]);

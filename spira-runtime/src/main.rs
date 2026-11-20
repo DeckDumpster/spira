@@ -24,6 +24,7 @@ fn check() -> Result<(), String> {
     Ok(())
 }
 
+<<<<<<< HEAD
 fn land_escalate(age: Option<String>) -> Result<(), String> {
     use spira_runtime::tasks::a::sentinel_pass as sp;
     let age: u64 = age.and_then(|a| a.parse().ok()).ok_or(USAGE)?;
@@ -47,9 +48,19 @@ fn reflect() -> ! {
     }
 }
 
+=======
+>>>>>>> 706a6ac360 (reflect verb: exit from main, relative fixture path for the lint (sp-0umnyv))
 fn main() {
     if std::env::args().nth(1).as_deref() == Some(spira_runtime::tasks::a::sentinel_pass::REFLECT_VERB) {
-        reflect();
+        let ids = spira_runtime::tasks::a::sentinel_pass::reflect_ids(std::env::args().skip(2));
+        match sentinel::reflect::run(&ids) {
+            Ok(log) => print!("{log}"),
+            Err(e) => {
+                eprintln!("spira-runtime reflect: {e}"); // loop-safe: no event loop exists on this path
+                std::process::exit(1); // loop-safe: same
+            }
+        }
+        return;
     }
     if std::env::args().nth(1).as_deref() == Some("land-escalate") && std::env::args().count() == 3 {
         if let Err(e) = land_escalate(std::env::args().nth(2)) {
