@@ -187,7 +187,7 @@ fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[St
         if began.elapsed() >= spira_store::lc_call::DEADLINE {
             return false;
         }
-        std::thread::sleep(std::time::Duration::from_millis(500)); // clock-safe: paces re-reads against a real store
+        std::thread::sleep(std::time::Duration::from_millis(500)); // waits-on: the store's listing; cap lc_call::DEADLINE
         true
     };
     let utc = || bead::bdq::utc_stamp_nanos(std::time::SystemTime::now())[..19].to_string() + "Z";
@@ -280,7 +280,7 @@ fn blocks_edge_present_ok(from: &str, to: &str) -> i32 {
     if r == 0 {
         return 0;
     }
-    let (_, listed) = door(&s(&["dep", "list", from, "--type", "blocks", "--json"]));
+    let (_, listed) = door(&s(&["dep", "list", from, "--type", "blocks", "--json"])); // BDQ_READ_CONSIDERED="through the content door, as every read here"
     if !bead::parse_blocks_targets(&listed).iter().any(|t| t == to) {
         return r;
     }
