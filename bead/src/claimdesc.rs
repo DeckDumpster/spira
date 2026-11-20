@@ -37,42 +37,22 @@ fn first_row(show_json: &str) -> Option<serde_json::Value> {
 /// sha256 hex of the description in a `bd show --json` blob; `None` when unreadable.
 pub fn desc_hash(show_json: &str) -> Option<String> {
     let row = first_row(show_json)?;
-    let desc = row
-        .get("description")
-        .and_then(|d| d.as_str())
-        .unwrap_or("");
-    Some(
-        Sha256::digest(desc.as_bytes())
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect(),
-    )
+    let desc = row.get("description").and_then(|d| d.as_str()).unwrap_or("");
+    Some(Sha256::digest(desc.as_bytes()).iter().map(|b| format!("{b:02x}")).collect())
 }
 
 pub fn metadata_value(show_json: &str, key: &str) -> String {
     first_row(show_json)
-        .and_then(|r| {
-            r.get("metadata")
-                .and_then(|m| m.get(key))
-                .and_then(|v| v.as_str().map(String::from))
-        })
+        .and_then(|r| r.get("metadata").and_then(|m| m.get(key)).and_then(|v| v.as_str().map(String::from)))
         .unwrap_or_default()
 }
 
 /// Splits spira's own `--force-claimed <reason>` pair out of `update`'s args (bd has no such
 /// flag) and reports whether the call edits the title or description.
 pub fn parse_update_args(args: &[String]) -> UpdateArgs {
-    let touches_description = args.iter().any(|a| {
-        matches!(
-            a.as_str(),
-            "--title" | "-d" | "--description" | "--body-file" | "--stdin"
-        )
-    });
-    let id = args
-        .iter()
-        .take_while(|a| !a.starts_with('-'))
-        .next()
-        .cloned();
+    let touches_description =
+        args.iter().any(|a| matches!(a.as_str(), "--title" | "-d" | "--description" | "--body-file" | "--stdin"));
+    let id = args.iter().take_while(|a| !a.starts_with('-')).next().cloned();
     let mut passthrough = Vec::new();
     let mut force = None;
     let mut it = args.iter();
@@ -83,12 +63,7 @@ pub fn parse_update_args(args: &[String]) -> UpdateArgs {
             passthrough.push(a.clone());
         }
     }
-    UpdateArgs {
-        passthrough,
-        force,
-        touches_description,
-        id,
-    }
+    UpdateArgs { passthrough, force, touches_description, id }
 }
 
 /// A bead a dwarf holds: the lifecycle row WORKING, with a holder and a lease that has not
@@ -97,23 +72,12 @@ pub fn parse_update_args(args: &[String]) -> UpdateArgs {
 /// edit costs a wasted session.
 pub fn live_claim(row: Option<&spira_store::lc_state::Row>, now_epoch: i64) -> Option<LiveClaim> {
     let row = row.filter(|r| r.working())?;
-    let holder = row
-        .holder
-        .as_deref()
-        .map(str::trim)
-        .filter(|h| !h.is_empty())?
-        .to_string();
+    let holder = row.holder.as_deref().map(str::trim).filter(|h| !h.is_empty())?.to_string();
     if row.lease_until.is_some_and(|e| e <= now_epoch) {
         return None;
     }
-    let lease = row
-        .lease_until
-        .map(iso_of)
-        .unwrap_or_else(|| "unknown".to_string());
-    Some(LiveClaim {
-        assignee: holder,
-        lease,
-    })
+    let lease = row.lease_until.map(iso_of).unwrap_or_else(|| "unknown".to_string());
+    Some(LiveClaim { assignee: holder, lease })
 }
 
 /// `YYYY-MM-DDTHH:MM:SSZ` for an epoch second (the inverse of [`parse_iso`]'s UTC case).
@@ -128,12 +92,7 @@ pub fn iso_of(epoch: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
-        secs / 3600,
-        secs % 3600 / 60,
-        secs % 60
-    )
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", secs / 3600, secs % 3600 / 60, secs % 60)
 }
 
 pub fn refusal(id: &str, c: &LiveClaim) -> String {
@@ -149,11 +108,7 @@ pub fn is_refusal(text: &str) -> bool {
 }
 
 pub fn override_note(actor: &str, c: &LiveClaim, reason: &str) -> String {
-    let reason = if reason.is_empty() {
-        "no reason given"
-    } else {
-        reason
-    };
+    let reason = if reason.is_empty() { "no reason given" } else { reason };
     format!(
         "Title/description edited by {actor} while claimed by {} (lease expires {}), overridden with {FORCE_FLAG}: {reason}",
         c.assignee, c.lease
@@ -161,11 +116,7 @@ pub fn override_note(actor: &str, c: &LiveClaim, reason: &str) -> String {
 }
 
 pub fn holder_message(actor: &str, reason: &str) -> String {
-    let reason = if reason.is_empty() {
-        "no reason given"
-    } else {
-        reason
-    };
+    let reason = if reason.is_empty() { "no reason given" } else { reason };
     format!("Its title or description was just edited while you hold the claim (overridden by {actor}: {reason}).")
 }
 
@@ -181,10 +132,7 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 pub fn parse_iso(s: &str) -> Option<i64> {
     let s = s.trim();
     let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
-    let epoch = days_from_civil(n(0..4)?, n(5..7)?, n(8..10)?) * 86_400
-        + n(11..13)? * 3600
-        + n(14..16)? * 60
-        + n(17..19)?;
+    let epoch = days_from_civil(n(0..4)?, n(5..7)?, n(8..10)?) * 86_400 + n(11..13)? * 3600 + n(14..16)? * 60 + n(17..19)?;
     let mut rest = s.get(19..)?;
     if let Some(r) = rest.strip_prefix('.') {
         rest = r.trim_start_matches(|c: char| c.is_ascii_digit());
@@ -204,22 +152,9 @@ pub fn parse_iso(s: &str) -> Option<i64> {
 /// does not reopen a close nobody did anything wrong on, file the note, and tell the holder.
 /// `show` answers the bead's JSON; `write` runs one metadata or note write (never a description
 /// edit, so it does not re-enter the claim check).
-pub fn acknowledge_forced_edit(
-    show: &dyn Fn(&str) -> String,
-    write: &mut dyn FnMut(&[&str]),
-    actor: &str,
-    id: &str,
-    claim: &LiveClaim,
-    reason: &str,
-    (run, mail): (&str, &str),
-) {
+pub fn acknowledge_forced_edit(show: &dyn Fn(&str) -> String, write: &mut dyn FnMut(&[&str]), actor: &str, id: &str, claim: &LiveClaim, reason: &str, (run, mail): (&str, &str)) {
     if let Some(hash) = desc_hash(crate::bdq::json_only(&show(id))) {
-        write(&[
-            "update",
-            id,
-            "--set-metadata",
-            &format!("{HASH_KEY}={hash}"),
-        ]);
+        write(&["update", id, "--set-metadata", &format!("{HASH_KEY}={hash}")]);
     }
     write(&["note", id, &override_note(actor, claim, reason)]);
     notify_live_dwarf(id, &holder_message(actor, reason), run, mail);
@@ -241,22 +176,14 @@ pub fn notify_live_dwarf(id: &str, message: &str, run: &str, mail: &str) -> Noti
     let new_dir = format!("{mail}/{to}/new");
     let before = mailbox_files(&new_dir);
     mail_send(&to, message);
-    let arrived = mailbox_files(&new_dir)
-        .into_iter()
-        .find(|f| !before.contains(f));
+    let arrived = mailbox_files(&new_dir).into_iter().find(|f| !before.contains(f));
     match arrived {
         Some(file) => {
             let msg_id = std::fs::read_to_string(format!("{new_dir}/{file}"))
                 .ok()
-                .and_then(|t| {
-                    t.lines()
-                        .find_map(|l| l.strip_prefix("Message-ID:").map(|v| v.trim().to_string()))
-                })
+                .and_then(|t| t.lines().find_map(|l| l.strip_prefix("Message-ID:").map(|v| v.trim().to_string())))
                 .unwrap_or(file);
-            Notified::Mailed {
-                mailbox: to,
-                msg_id,
-            }
+            Notified::Mailed { mailbox: to, msg_id }
         }
         None => Notified::Undelivered { mailbox: to },
     }
@@ -290,12 +217,7 @@ pub fn amend_report(id: &str, applied: &[String], notified: &Notified) -> Vec<St
 }
 
 fn mailbox_files(dir: &str) -> Vec<String> {
-    std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect()
+    std::fs::read_dir(dir).into_iter().flatten().filter_map(|e| e.ok()).filter_map(|e| e.file_name().into_string().ok()).collect()
 }
 
 /// Adds one change to the amend message, set off from what is already there by a blank line.
@@ -319,12 +241,8 @@ pub fn live_dwarf_mailbox(id: &str, run: &str, mail: &str) -> Option<String> {
         .filter(|n| n.starts_with("dwarf-") && n.ends_with(&suffix))
         .collect();
     candidates.sort();
-    candidates
-        .into_iter()
-        .find(|n| dwarf_alive(&format!("{run}/{n}")))?;
-    Path::new(&format!("{mail}/dwarf-{id}/new"))
-        .is_dir()
-        .then(|| format!("dwarf-{id}"))
+    candidates.into_iter().find(|n| dwarf_alive(&format!("{run}/{n}")))?;
+    Path::new(&format!("{mail}/dwarf-{id}/new")).is_dir().then(|| format!("dwarf-{id}"))
 }
 
 pub fn dwarf_alive(pidfile: &str) -> bool {
@@ -332,12 +250,7 @@ pub fn dwarf_alive(pidfile: &str) -> bool {
 }
 
 fn mail_send(dwarf_id: &str, body: &str) {
-    mail_to(
-        dwarf_id,
-        "amend <amend@spira>",
-        "Update while you work",
-        body,
-    );
+    mail_to(dwarf_id, "amend <amend@spira>", "Update while you work", body);
 }
 
 /// Best-effort mail; a mailbox that will not take it loses the message, never the caller.
@@ -365,9 +278,7 @@ pub fn live_dwarf(id: &str, run: &str, mail: &str) -> bool {
         return false;
     }
     let suffix = format!("-{id}.pid");
-    let Ok(entries) = std::fs::read_dir(run) else {
-        return false;
-    };
+    let Ok(entries) = std::fs::read_dir(run) else { return false };
     entries
         .filter_map(|e| e.ok())
         .filter_map(|e| e.file_name().into_string().ok())
@@ -393,10 +304,7 @@ mod tests {
         if mailbox {
             std::fs::create_dir_all(mail.join("dwarf-sp-amend2/new")).unwrap();
         }
-        let (r, m) = (
-            run.to_str().unwrap().to_string(),
-            mail.to_str().unwrap().to_string(),
-        );
+        let (r, m) = (run.to_str().unwrap().to_string(), mail.to_str().unwrap().to_string());
         (t, r, m)
     }
 
@@ -404,10 +312,7 @@ mod tests {
     #[test]
     fn a_live_dwarf_with_an_open_mailbox_is_mailed() {
         let (_t, run, mail) = fixture(true, true);
-        assert_eq!(
-            live_dwarf_mailbox("sp-amend2", &run, &mail).as_deref(),
-            Some("dwarf-sp-amend2")
-        );
+        assert_eq!(live_dwarf_mailbox("sp-amend2", &run, &mail).as_deref(), Some("dwarf-sp-amend2"));
     }
 
     // covers: UC-operator-channel-12
@@ -447,10 +352,7 @@ mod tests {
         let (_t, run, mail) = fixture(false, false);
         let n = notify_live_dwarf("sp-amend2", "Description appended.", &run, &mail);
         assert_eq!(n, Notified::NoLiveHolder);
-        assert!(n
-            .report("sp-amend2")
-            .unwrap()
-            .contains("no live holder on sp-amend2"));
+        assert!(n.report("sp-amend2").unwrap().contains("no live holder on sp-amend2"));
     }
 
     #[test]
@@ -460,13 +362,8 @@ mod tests {
         assert_eq!(lines[0], "sp-x: priority P1 → P0");
         assert_eq!(lines[1], "sp-x: marked express");
         assert!(lines[2].contains("no live holder on sp-x"), "{lines:?}");
-        let mailed = Notified::Mailed {
-            mailbox: "dwarf-sp-x".into(),
-            msg_id: "<1@spira>".into(),
-        };
-        let undelivered = Notified::Undelivered {
-            mailbox: "dwarf-sp-x".into(),
-        };
+        let mailed = Notified::Mailed { mailbox: "dwarf-sp-x".into(), msg_id: "<1@spira>".into() };
+        let undelivered = Notified::Undelivered { mailbox: "dwarf-sp-x".into() };
         for n in [&mailed, &undelivered, &Notified::NothingToSay] {
             let l = amend_report("sp-x", &applied, n);
             assert_eq!(l[1], "sp-x: marked express");
@@ -476,69 +373,41 @@ mod tests {
 
     #[test]
     fn a_mailed_holder_is_reported_with_its_mailbox_and_message_id() {
-        let n = Notified::Mailed {
-            mailbox: "dwarf-sp-amend2".into(),
-            msg_id: "<42@spira>".into(),
-        };
+        let n = Notified::Mailed { mailbox: "dwarf-sp-amend2".into(), msg_id: "<42@spira>".into() };
         let line = n.report("sp-amend2").unwrap();
-        assert!(
-            line.contains("dwarf-sp-amend2") && line.contains("<42@spira>"),
-            "{line}"
-        );
+        assert!(line.contains("dwarf-sp-amend2") && line.contains("<42@spira>"), "{line}");
     }
 
     #[test]
     fn an_amend_with_nothing_to_say_prints_nothing() {
         let (_t, run, mail) = fixture(true, true);
-        assert_eq!(
-            notify_live_dwarf("sp-amend2", "", &run, &mail).report("sp-amend2"),
-            None
-        );
+        assert_eq!(notify_live_dwarf("sp-amend2", "", &run, &mail).report("sp-amend2"), None);
     }
 
     fn a(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+
     #[test]
     fn hash_follows_the_description_only() {
         let h1 = desc_hash(r#"[{"description":"one"}]"#).unwrap();
-        assert_eq!(
-            h1,
-            desc_hash(r#"{"description":"one","title":"t"}"#).unwrap()
-        );
+        assert_eq!(h1, desc_hash(r#"{"description":"one","title":"t"}"#).unwrap());
         assert_ne!(h1, desc_hash(r#"[{"description":"two"}]"#).unwrap());
         assert_eq!(desc_hash("not json"), None);
-        assert_eq!(
-            desc_hash(r#"[{"id":"x"}]"#).unwrap(),
-            desc_hash(r#"[{"description":""}]"#).unwrap()
-        );
+        assert_eq!(desc_hash(r#"[{"id":"x"}]"#).unwrap(), desc_hash(r#"[{"description":""}]"#).unwrap());
     }
 
     #[test]
     fn metadata_reads_a_key_or_empty() {
-        assert_eq!(
-            metadata_value(r#"[{"metadata":{"claim_desc_hash":"abc"}}]"#, HASH_KEY),
-            "abc"
-        );
+        assert_eq!(metadata_value(r#"[{"metadata":{"claim_desc_hash":"abc"}}]"#, HASH_KEY), "abc");
         assert_eq!(metadata_value(r#"[{"id":"x"}]"#, HASH_KEY), "");
     }
 
     #[test]
     fn force_pair_is_stripped_and_description_edits_detected() {
-        let u = parse_update_args(&a(&[
-            "sp-1",
-            "--body-file",
-            "f",
-            "--force-claimed",
-            "why",
-            "--priority",
-            "1",
-        ]));
-        assert_eq!(
-            u.passthrough,
-            a(&["sp-1", "--body-file", "f", "--priority", "1"])
-        );
+        let u = parse_update_args(&a(&["sp-1", "--body-file", "f", "--force-claimed", "why", "--priority", "1"]));
+        assert_eq!(u.passthrough, a(&["sp-1", "--body-file", "f", "--priority", "1"]));
         assert_eq!(u.force.as_deref(), Some("why"));
         assert!(u.touches_description);
         assert_eq!(u.id.as_deref(), Some("sp-1"));
@@ -563,19 +432,11 @@ mod tests {
             ..Default::default()
         };
         let live = live_claim(Some(&row("WORKING", "dwarf-x", Some(now + 3600))), now).unwrap();
-        assert_eq!(
-            (live.assignee.as_str(), live.lease.as_str()),
-            ("dwarf-x", "2026-10-02T13:00:00Z")
-        );
+        assert_eq!((live.assignee.as_str(), live.lease.as_str()), ("dwarf-x", "2026-10-02T13:00:00Z"));
         assert!(live_claim(Some(&row("WORKING", "dwarf-x", Some(now - 3600))), now).is_none());
         assert!(live_claim(Some(&row("READY", "dwarf-x", Some(now + 3600))), now).is_none());
         assert!(live_claim(Some(&row("WORKING", "", Some(now + 3600))), now).is_none());
-        assert_eq!(
-            live_claim(Some(&row("WORKING", "dwarf-x", None)), now)
-                .unwrap()
-                .lease,
-            "unknown"
-        );
+        assert_eq!(live_claim(Some(&row("WORKING", "dwarf-x", None)), now).unwrap().lease, "unknown");
         assert!(live_claim(None, now).is_none());
     }
 

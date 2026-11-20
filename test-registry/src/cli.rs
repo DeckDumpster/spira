@@ -177,14 +177,9 @@ fn fail(code: i32, json_mode: bool, msg: String) -> Outcome {
 pub const REGISTRY_FILE: &str = "test-registry.sqlite";
 
 /// `cfg` with an empty registry path read as the registry file in the run directory.
-pub fn with_run_default(
-    cfg: impl Fn(&str) -> Result<String, String>,
-    run_dir: impl Fn() -> Result<String, String>,
-) -> impl Fn(&str) -> Result<String, String> {
+pub fn with_run_default(cfg: impl Fn(&str) -> Result<String, String>, run_dir: impl Fn() -> Result<String, String>) -> impl Fn(&str) -> Result<String, String> {
     move |k| match cfg(k) {
-        Ok(p) if k == PATH_KEY && p.trim().is_empty() => {
-            run_dir().map(|d| format!("{}/{REGISTRY_FILE}", d.trim_end_matches('/')))
-        }
+        Ok(p) if k == PATH_KEY && p.trim().is_empty() => run_dir().map(|d| format!("{}/{REGISTRY_FILE}", d.trim_end_matches('/'))),
         other => other,
     }
 }
