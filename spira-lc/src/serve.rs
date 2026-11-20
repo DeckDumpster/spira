@@ -461,20 +461,27 @@ pub fn run(args: &[String]) -> i32 {
     };
     startup.mark("bind");
     eprintln!("spira-lc serve: listening on {socket_path}");
-    startup.ready(SPANS.get());
-    if let Err(e) = notify_ready(std::env::var("NOTIFY_SOCKET").ok().as_deref()) {
-        eprintln!("spira-lc serve: {e}");
-    }
     let flights = Arc::new(Flights::default());
     let (done, finished) = std::sync::mpsc::channel::<()>();
+    let (running, accepting) = std::sync::mpsc::channel::<()>();
     {
         let flights = flights.clone();
-        std::thread::spawn(move || {
+        let spawned = std::thread::Builder::new().name("lc-accept".into()).spawn(move || {
+            let _ = running.send(());
             std::thread::scope(|scope| {
                 accept_until_stopped(&listener, &socket_path, scope, &STOPPING, |stream| flights.serve(stream, |stream| handle(stream, Instant::now())))
             });
             let _ = done.send(());
         });
+        if let Err(e) = spawned {
+            eprintln!("spira-lc serve: cannot start the accept thread: {e}");
+            return 2;
+        }
+    }
+    let _ = accepting.recv();
+    startup.ready(SPANS.get());
+    if let Err(e) = notify_ready(std::env::var("NOTIFY_SOCKET").ok().as_deref()) {
+        eprintln!("spira-lc serve: {e}");
     }
     let (drained, answered) = drain(&flights, &STOPPING, &finished, DRAIN_BOUND);
     eprintln!("spira-lc serve: stopped after draining {drained}, answered {answered} at the bound");

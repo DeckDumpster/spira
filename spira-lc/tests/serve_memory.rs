@@ -24,6 +24,13 @@ fn threads(pid: u32) -> u64 {
     status_field(pid, "Threads:")
 }
 
+fn thread_names(pid: u32) -> Vec<String> {
+    let tasks = std::path::Path::new(system_paths::PROC).join(pid.to_string()).join("task");
+    let mut names: Vec<String> = std::fs::read_dir(tasks).expect("the server is alive").flatten().filter_map(|t| std::fs::read_to_string(t.path().join("comm")).ok()).map(|n| n.trim().to_string()).collect();
+    names.sort();
+    names
+}
+
 fn rss_anon(pid: u32) -> u64 {
     status_field(pid, "RssAnon:") << 10
 }
@@ -46,8 +53,15 @@ fn seed(path: &std::path::Path) {
     }
 }
 
-#[test]
-fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_where_it_was() {
+struct Server {
+    child: std::process::Child,
+    socket: std::path::PathBuf,
+    pid: u32,
+    _dir: testkit::TempDir,
+}
+
+/// Starts `spira-lc serve` over a seeded store and returns once it has said ready.
+fn start_server() -> Server {
     let dir = testkit::TempDir::new("spira-lc-serve-memory");
     let run_dir = dir.join("run");
     std::fs::create_dir_all(&run_dir).unwrap();
@@ -82,6 +96,12 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
     }
     std::thread::spawn(move || std::io::copy(&mut stderr, &mut std::io::sink()));
     let pid = child.id();
+    Server { child, socket, pid, _dir: dir }
+}
+
+#[test]
+fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_where_it_was() {
+    let Server { mut child, socket, pid, _dir } = start_server();
     let (at_ready, threads_at_ready) = (rss_anon(pid), threads(pid));
 
     let per = REQUESTS / CONNECTIONS;
@@ -102,11 +122,20 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
     let mut polls = 0;
     while threads(pid) > threads_at_ready {
         polls += 1;
-        assert!(polls < 12_000, "the abandoned work never finished");
+        assert!(polls < 3_000, "threads still above the {threads_at_ready} at ready: {}", thread_names(pid).join(", "));
         std::thread::sleep(Duration::from_millis(10)); // clock-safe: polls the server's thread count, the signal waited on
     }
     let after = rss_anon(pid);
     let _ = child.kill();
     let _ = child.wait();
     assert!(after < at_ready + SLACK, "RssAnon was {at_ready} B at ready and {after} B after {} requests over {} connections", REQUESTS, CONNECTIONS);
+}
+
+#[test]
+fn the_ready_line_is_written_once_the_accept_thread_runs() {
+    let Server { mut child, pid, .. } = start_server();
+    let names = thread_names(pid);
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(names.iter().any(|n| n == "lc-accept"), "ready was said before the accept thread ran; threads: {}", names.join(", "));
 }
