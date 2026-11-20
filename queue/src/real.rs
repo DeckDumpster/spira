@@ -1184,8 +1184,10 @@ impl Scripts for RealScripts {
     fn own_unit_restarted_by(&self, rel: &Path) -> Option<String> {
         let cgroup = std::fs::read_to_string(format!("{}/cgroup", system_paths::PROC_SELF)).ok()?;
         let unit = unit_of_cgroup(&cgroup)?;
-        let instance = spira_config::process::cfg("SPIRA_INSTANCE").ok().filter(|i| !i.is_empty())?;
-        release::units::is_shipped_by(rel, &instance, &unit).then_some(unit)
+        match spira_config::process::cfg("SPIRA_INSTANCE").ok().filter(|i| !i.is_empty()) {
+            Some(instance) => release::units::is_shipped_by(rel, &instance, &unit).then_some(unit),
+            None => Some(unit),
+        }
     }
     fn release_detached(&self, key: &str, bin: &Path, args: &[String], db: &str, log: &Path) -> RunOut {
         use runtime::units::{Exit, UnitHandle, UnitProps, UnitSpec, UnitState, Units};
@@ -1209,7 +1211,8 @@ impl Scripts for RealScripts {
         let rc = loop {
             match units.facts(&handle) {
                 Ok(f) => match f.state {
-                    UnitState::Absent => break 0,
+                    UnitState::Absent if fs::metadata(log).is_ok_and(|m| m.len() > 0) => break 0,
+                    UnitState::Absent => return fail(format!("{} ended without a trace in {}", handle.name, log.display())),
                     UnitState::Failed | UnitState::Inactive => {
                         let _ = units.reset_failed(&handle);
                         break match f.exit {
