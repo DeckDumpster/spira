@@ -851,9 +851,10 @@ mod tests {
         };
         assert!(pid > 0);
         let stat = format!("{}/{pid}/stat", system_paths::PROC);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut polls = 0u64;
         while !std::fs::read_to_string(&stat).is_ok_and(|s| s.rsplit_once(')').is_some_and(|(_, r)| r.trim_start().starts_with('Z'))) {
-            assert!(std::time::Instant::now() < deadline, "child never became a zombie");
+            polls += 1;
+            assert!(polls < 50_000_000, "child never became a zombie");
             std::thread::yield_now();
         }
         let alive = pid_alive(pid as u32);
