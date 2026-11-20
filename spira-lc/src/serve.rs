@@ -267,6 +267,14 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
+    match crate::slow::answer_limits_from(spira_config::process::cfg) {
+        Ok(limits) => crate::slow::pin_limits(limits),
+        Err(e) => {
+            eprintln!("spira-lc serve: {e}");
+            return 2;
+        }
+    }
+
     match deadlines_from(spira_config::process::cfg) {
         Ok(d) => {
             let _ = DEADLINES.set(d);
@@ -497,6 +505,7 @@ impl Startup {
             start: self.began,
             end: SystemTime::now(),
             queue_wait: Duration::ZERO,
+            answered: None,
             phases: &us,
             commits_us: &[],
             reads: 0,
@@ -720,7 +729,7 @@ fn warm_tick<B: state_store::Backend>(store: &crate::control::store::Store<B>, n
 }
 
 fn alarm_tick() {
-    let lines = crate::slow::latency_breaches(Instant::now());
+    let lines = crate::slow::latency_transitions(Instant::now());
     if lines.is_empty() {
         return;
     }
@@ -758,9 +767,13 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     let started_work = Arc::new(std::sync::Mutex::new(None::<Instant>));
     let started = SystemTime::now();
     let mut reader = BufReader::new(stream.try_clone().expect("clone unix stream"));
+    let read_at;
     let (req, size) = match read_request(&mut reader) {
         Ok(None) => return,
-        Ok(Some(r)) => r,
+        Ok(Some(r)) => {
+            read_at = Instant::now();
+            r
+        }
         Err((size, msg)) => {
             let _ = write_response(&stream, 2, &msg, "");
             let none = state_store::phases::Snapshot::default();
@@ -773,6 +786,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
                 start: started,
                 end: SystemTime::now(),
                 queue_wait: Instant::now().saturating_duration_since(accepted),
+                answered: None,
                 phases: &none.phases,
                 commits_us: &none.commits_us,
                 reads: none.reads,
@@ -821,9 +835,17 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
         log_rss(&format!("after-first-{verb}"));
     }
     let measured = if verb == "ops-view" { method.as_str() } else { verb.as_str() };
-    crate::slow::request_done(measured, &method, &caller, task.as_deref(), received.elapsed());
-    crate::slow::sample(&method, received.elapsed());
-    reply_then_settle(&stream, &ans, &mut |id, reason| crate::reconcile_content::settle_owed(&mut crate::bd::LiveBd, id, reason));
+    let mut answered = Duration::ZERO;
+    reply_then_settle(
+        &stream,
+        &ans,
+        || {
+            answered = read_at.elapsed();
+            crate::slow::request_done(measured, &method, &caller, task.as_deref(), answered);
+            crate::slow::sample(&method, &caller, answered);
+        },
+        &mut |id, reason| crate::reconcile_content::settle_owed(&mut crate::bd::LiveBd, id, reason),
+    );
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
     let store = recorder.snapshot();
@@ -836,6 +858,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
         start: started,
         end: SystemTime::now(),
         queue_wait: waited,
+        answered: Some(answered),
         phases: &store.phases,
         commits_us: &store.commits_us,
         reads: store.reads,
@@ -965,9 +988,10 @@ pub(crate) fn answer(
     ans
 }
 
-/// The reply goes out first: an owed store write is bounded by bd's own cap, not the request's.
-fn reply_then_settle(stream: &UnixStream, ans: &Answer, settle: &mut dyn FnMut(&str, &str) -> Result<(), String>) {
+/// The reply goes out first, then `answered` runs, then the owed store write, which is bounded by bd's own cap, not the request's.
+fn reply_then_settle(stream: &UnixStream, ans: &Answer, answered: impl FnOnce(), settle: &mut dyn FnMut(&str, &str) -> Result<(), String>) {
     let _ = write_response(stream, ans.code, &ans.stdout, &ans.stderr);
+    answered();
     crate::callers::settle_owed_with(&ans.owed, settle);
 }
 
@@ -1179,6 +1203,12 @@ mod tests {
         assert_eq!(span.name, "no-such-verb");
         let body_len = reply.split_once('\n').unwrap().1.len() as i64;
         assert!(span.attributes.iter().any(|a| a.key == "spira.queue_wait_us"), "queue wait is recorded on every span");
+        let answered = span.attributes.iter().find(|a| a.key == "spira.answer_us").expect("the answer time is recorded on a served request");
+        let us = |a: &opentelemetry_proto::tonic::common::v1::KeyValue| match a.value.as_ref().and_then(|v| v.value.as_ref()) {
+            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(n)) => *n as u64,
+            other => panic!("{other:?}"),
+        };
+        assert!(us(answered) <= (span.end_time_unix_nano - span.start_time_unix_nano) / 1000, "the answer is written before the span ends");
         let size = span.attributes.iter().find(|a| a.key == "rpc.response.size").unwrap();
         assert_eq!(format!("{:?}", size.value), format!("Some(AnyValue {{ value: Some(IntValue({body_len})) }})"));
 
@@ -1204,6 +1234,7 @@ mod tests {
             start: now,
             end: now,
             queue_wait: std::time::Duration::ZERO,
+            answered: None,
             phases: &snapshot.phases,
             commits_us: &snapshot.commits_us,
             reads: snapshot.reads,
@@ -1282,6 +1313,28 @@ mod tests {
     }
 
     #[test]
+    fn the_answer_time_is_taken_before_the_owed_close_settles() {
+        let (server, _client) = std::os::unix::net::UnixStream::pair().unwrap();
+        let ans = super::Answer { owed: vec![("sp-d".into(), "why".into())].into(), ..Default::default() };
+        let (read_at, order) = (std::time::Instant::now(), std::cell::RefCell::new(Vec::new()));
+        let mut answered = std::time::Duration::ZERO;
+        super::reply_then_settle(
+            &server,
+            &ans,
+            || {
+                answered = read_at.elapsed();
+                order.borrow_mut().push("answered");
+            },
+            &mut |_, _| {
+                order.borrow_mut().push("settled");
+                Ok(())
+            },
+        );
+        assert_eq!(*order.borrow(), ["answered", "settled"]);
+        assert!(answered > std::time::Duration::ZERO, "the answer time was taken");
+    }
+
+    #[test]
     fn the_reply_is_on_the_stream_before_an_owed_store_close_finishes() {
         use std::io::Read;
         let (server, mut client) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -1289,7 +1342,7 @@ mod tests {
         let (started, started_rx) = std::sync::mpsc::channel::<()>();
         let settler = std::thread::spawn(move || {
             let ans = super::Answer { owed: vec![("sp-d".into(), "why".into())].into(), ..Default::default() };
-            super::reply_then_settle(&server, &ans, &mut |id, reason| {
+            super::reply_then_settle(&server, &ans, || {}, &mut |id, reason| {
                 assert_eq!((id, reason), ("sp-d", "why"));
                 let _ = started.send(());
                 let _ = release_rx.recv();
@@ -1418,7 +1471,7 @@ mod tests {
                 let (mut m, mut b) = (w, w);
                 let ans = super::answer(req, &mut m, &mut b, &content, &|| Err("no run dir here".to_string()));
                 flights.serve(stream.try_clone().unwrap(), |_| {
-                    super::reply_then_settle(&stream, &ans, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
+                    super::reply_then_settle(&stream, &ans, || {}, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
                 });
             });
         });
@@ -1566,7 +1619,7 @@ mod tests {
         let (req, _) = super::read_request(&mut reader).unwrap().unwrap();
         let (mut m, mut b) = (w, w);
         let ans = super::answer(req, &mut m, &mut b, content, &|| Err("no run dir here".to_string()));
-        super::reply_then_settle(&server, &ans, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
+        super::reply_then_settle(&server, &ans, || {}, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
         drop(server);
         asked.join().unwrap()
     }
@@ -1593,7 +1646,7 @@ mod tests {
         let (req, _) = super::read_request(&mut reader).unwrap().unwrap();
         let (mut m, mut b) = (&w, &w);
         let ans = super::answer(req, &mut m, &mut b, &c, &|| Err("no run dir here".to_string()));
-        super::reply_then_settle(&server, &ans, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
+        super::reply_then_settle(&server, &ans, || {}, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
         drop(server);
         let (code, _, err) = asked.join().unwrap();
         assert_eq!(code, 0, "{err}");

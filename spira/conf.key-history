@@ -799,3 +799,5 @@ cr_repo_name
 lc_request_deadline_ms
 lc_slow_verb_deadlines
 cr_findings_dir
+lc_answer_ms
+lc_waiting_verbs

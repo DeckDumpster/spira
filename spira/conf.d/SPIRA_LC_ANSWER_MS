@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lc
+DOC=Milliseconds a control-store call may take, from request read to answer written, before lc-serve alarms on its verb and caller.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_ANSWER_MS:=100}"
+SPIRA_CONF_DEFAULT_EOF

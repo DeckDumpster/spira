@@ -116,9 +116,10 @@ unit-run-dbus|log|@SPIRA_RUN@/unit-run-dbus.log
 # the unread count and cursor kept here like any other row.
 concierge-inbox|log|@SPIRA_CONCIERGE_INBOX@
 
-# LC-LATENCY is the alarm for a spira-lc method whose p95 over five minutes is past the 500 ms
-# ceiling: lc-serve appends one line per breach (re-alarmed every 15 minutes) and nothing else
-# writes the log. Brokered tool verbs (groom, queue, ...) are batch jobs and exempt.
+# LC-LATENCY is the alarm for a spira-lc verb and caller with a call over SPIRA_LC_ANSWER_MS:
+# lc-serve appends one RED line per pair when it goes over and one CLEAR line when five minutes
+# pass without a call over it, and nothing else writes the log. Brokered tool verbs and
+# SPIRA_LC_WAITING_VERBS are exempt.
 lc-latency|log|@SPIRA_RUN@/lc-latency.log
 
 # LC-SHIP is the control store's off-box age alarm: lc-serve appends a RED line when the oldest

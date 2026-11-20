@@ -305,7 +305,7 @@
       "gridPos": {
         "x": 0,
         "y": 40,
-        "w": 12,
+        "w": 8,
         "h": 8
       },
       "fieldConfig": {
@@ -335,9 +335,9 @@
         "uid": "${DS_VM}"
       },
       "gridPos": {
-        "x": 12,
+        "x": 8,
         "y": 40,
-        "w": 12,
+        "w": 8,
         "h": 8
       },
       "fieldConfig": {
@@ -354,6 +354,38 @@
           },
           "expr": "sum by (caller, task) (sum_over_time(spira_lc_request_seconds{verb=~\"$verb\"}[$__interval]))",
           "legendFormat": "{{caller}} {{task}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Calls over SPIRA_LC_ANSWER_MS by verb",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 40,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (verb) (sum_over_time(spira_lc_requests_over{verb=~\"$verb\"}[$__interval]))",
+          "legendFormat": "{{verb}}",
           "refId": "A"
         }
       ]
