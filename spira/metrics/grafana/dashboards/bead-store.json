@@ -565,6 +565,143 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "control store file: bytes and free bytes",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max_over_time(spira_state_store_file_bytes[$__interval])",
+          "legendFormat": "file bytes",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max_over_time(spira_state_store_free_bytes[$__interval])",
+          "legendFormat": "free bytes",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "control store free-page share",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "spira_state_store_free_bytes / spira_state_store_file_bytes",
+          "legendFormat": "free share",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "control store largest keyspaces",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 72,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "topk(3, max_over_time(spira_state_store_keyspace_bytes[$__interval]))",
+          "legendFormat": "{{prefix}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "control store day-file bytes by family",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 72,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max_over_time(spira_state_store_family_bytes[$__interval])",
+          "legendFormat": "{{family}}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

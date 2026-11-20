@@ -30,6 +30,7 @@ mod counting;
 mod plan;
 mod relayout;
 mod store_gc;
+mod store_gauges;
 mod client;
 mod close_on_land;
 mod cutover;

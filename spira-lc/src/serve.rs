@@ -372,6 +372,12 @@ pub fn run(args: &[String]) -> i32 {
             loop {
                 std::thread::sleep(crate::slow::METRICS_EVERY);
                 crate::slow::push_counts(&metrics, &mut pushed);
+                if let Some(Ok(store)) = crate::control::served::configured() {
+                    match crate::store_gauges::file_series(store.contract().backend(), SystemTime::now()) {
+                        Ok(series) => crate::slow::hold_gauges(series),
+                        Err(e) => eprintln!("spira-lc serve: store file gauges: {e}"),
+                    }
+                }
                 crate::slow::push_held(&metrics);
                 crate::slow::push_rss(&metrics);
             }
@@ -386,6 +392,20 @@ pub fn run(args: &[String]) -> i32 {
                 }
             });
         }
+        std::thread::spawn(|| {
+            let mut walk = crate::store_gauges::Walk::default();
+            loop {
+                std::thread::sleep(SWEEP_EVERY);
+                let Some(Ok(store)) = crate::control::served::configured() else { continue };
+                let _holder = state_store::phases::holder_scoped("keyspace-walk", "");
+                let limit = crate::control::verbs::USAGE_DEFAULT_LIMIT as usize;
+                match walk.step(store.contract().backend(), limit, Instant::now()) {
+                    Ok(Some(pass)) => crate::slow::hold_gauges(pass.series(SystemTime::now())),
+                    Ok(None) => {}
+                    Err(e) => eprintln!("spira-lc serve: keyspace walk: {e}"),
+                }
+            }
+        });
         std::thread::spawn(crate::plan::run_mirror);
         std::thread::spawn(crate::content_write::run_committer);
         std::thread::spawn(crate::settle::run);
