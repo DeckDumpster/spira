@@ -718,12 +718,16 @@ fn lifted_reds(w: &World, leg: &bl::Leg) -> Result<Vec<(Lift, batcher_cut::vm::L
     Ok(rows.into_iter().filter_map(|r| w.script.lifts.iter().find(|l| l.test == r.test && l.red).map(|l| (l.clone(), r))).collect())
 }
 
+fn names(list: &[String], test: &str) -> bool {
+    list.iter().any(|t| t == test)
+}
+
 /// The kept tests whose row has expired while still red: they block any round again.
 fn blocking_again(w: &World) -> Vec<Lift> {
     let Some(reg) = w.lc().reg.clone() else { return vec![] };
     let denied = reg.denied(w.now()).unwrap_or_default();
     let kept: Vec<String> = w.lc().kept.iter().map(|k| k.test.clone()).collect();
-    w.script.lifts.iter().filter(|l| l.red && kept.contains(&l.test) && !denied.contains(&l.test)).cloned().collect()
+    w.script.lifts.iter().filter(|l| l.red && names(&kept, &l.test) && !names(&denied, &l.test)).cloned().collect()
 }
 
 /// `batcher attribute` on a round whose lifted test is red on the tree and the base: the row is
