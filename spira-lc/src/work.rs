@@ -835,6 +835,9 @@ fn cmd_done(bead_id: &str, args: &[String]) -> (i32, String) {
         if let Some(refusal) = red_tracker_done_refusal(bead_id) {
             return refusal;
         }
+        if let Some(refusal) = skuld_draft_refusal(bead_id) {
+            return refusal;
+        }
         if flag(args, "--after-ask").is_none() && released_on_ask_history(bead_id) {
             return (
                 REFUSED,
@@ -918,6 +921,38 @@ fn red_tracker_done_refusal(bead_id: &str) -> Option<(i32, String)> {
         Ok(_) => None,
         Err(e) => Some((CANNOT_TELL, format!("cannot tell: {e}"))),
     }
+}
+
+fn skuld_draft_refusal(bead_id: &str) -> Option<(i32, String)> {
+    let label = match spira_config::process::cfg("SPIRA_SKULD_LABEL") {
+        Ok(l) => l,
+        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+    };
+    let labels = match crate::bd::labels(bead_id) {
+        Ok(l) => l,
+        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+    };
+    if label.is_empty() || !labels.contains(&label) {
+        return None;
+    }
+    match crate::bd::show(bead_id) {
+        Ok(notes) => skuld_draft_notes_refusal(bead_id, &notes),
+        Err(e) => Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+    }
+}
+
+fn skuld_draft_notes_refusal(bead_id: &str, notes: &str) -> Option<(i32, String)> {
+    let found = ::bead::draft_depends_refusals(notes);
+    if found.is_empty() {
+        return None;
+    }
+    Some((
+        REFUSED,
+        format!(
+            "refused: work done: {bead_id} holds a draft whose Depends line carries prose; a Depends line carries only bead ids, `draft N` or `none`; move the prose into Context.\n{}\nFix the note with `work note` and run `work done` again",
+            found.join("\n")
+        ),
+    ))
 }
 
 fn released_on_ask_history(bead_id: &str) -> bool {
@@ -2573,6 +2608,15 @@ mod tests {
         }
         assert!(already_finished_noop("sp-x", bead::BeadState::Working).is_none());
         assert!(already_finished_noop("sp-x", bead::BeadState::Landed).is_none());
+    }
+
+    #[test]
+    fn a_skuld_draft_with_prose_on_its_depends_line_is_refused_at_done() {
+        let prose = "### Draft: Fix it\n\nDepends: none. Related: sp-7gyqqy (rollback) and sp-0khlo0 (hotfix). Both touch `activate.rs`; sequence them, do not merge them.\n";
+        let (code, msg) = skuld_draft_notes_refusal("sp-r", prose).expect("refused");
+        assert_eq!(code, REFUSED);
+        assert!(msg.contains("Fix it") && msg.contains("work note") && msg.contains("Context"), "{msg}");
+        assert!(skuld_draft_notes_refusal("sp-r", "### Draft: Fix it\n\nDepends: sp-a, draft 1\n").is_none());
     }
 
     #[test]

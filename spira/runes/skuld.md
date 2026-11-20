@@ -63,7 +63,9 @@ code and the law, end that note with one line `Open: <the question>; default: <w
 would take>`.
 
 An item that depends on another carries one line, `Depends: <bead id or "draft N">, …` (or
-`Depends: none`). Prose alone files no edge: the Concierge files the item with one
+`Depends: none`). The line carries only bead ids, `draft N` or `none`, separated by commas;
+related work or sequencing goes in Context, and `work done` refuses a draft whose line carries
+anything else. Prose alone files no edge: the Concierge files the item with one
 `--depends-on <id>` per name on that line, and a body that says "depends on" without the line
 is refused.
 
