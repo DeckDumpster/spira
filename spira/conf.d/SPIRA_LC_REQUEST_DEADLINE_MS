@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lc
+DOC=Milliseconds lc-serve works on a store call before it answers that it ran out of time; lower it only with `spira-lc deadline lower`.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_REQUEST_DEADLINE_MS:=1000}"
+SPIRA_CONF_DEFAULT_EOF

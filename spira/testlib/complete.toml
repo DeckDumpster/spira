@@ -345,6 +345,8 @@ gate_deadline = 300
 gate_build_stall = 300
 gate_unit_max_crates = 20
 lc_request_ledger_secs = 120
+lc_request_deadline_ms = 1000
+lc_slow_verb_deadlines = "ops-view=3000@sp-7k53jt,list=3000@sp-49d6su,content=3000@sp-qygk8y,close=3000@sp-qygk8y,audits=3000@sp-d1rdwk,rc=3000@sp-te7k3s,plan=3000@sp-qygk8y,publish-section=3000@sp-qygk8y,dwell=3000@sp-hhdr20,requeue-orphans=3000@sp-0cwaud"
 lc_idempotent_retry_secs = 60
 slow_query_ms = 1000
 ops_sweep_keep_days = 1
