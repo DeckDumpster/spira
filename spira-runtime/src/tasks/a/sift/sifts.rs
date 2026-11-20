@@ -98,14 +98,6 @@ fn held_rows(q: &store_view::RowQuery) -> Option<Result<Vec<Value>, String>> {
     Some(rows.map(|r| r.value).map_err(|e| format!("could not say: {e}")))
 }
 
-/// `show <id>`'s answer, from the held row when the process keeps the store's watch.
-fn show_text(lc: &LcClient, id: &str) -> Result<String, String> {
-    match store_view::shared().and_then(|views| views.show(id)) {
-        Some(shown) => Ok(shown.map_err(|e| format!("could not say: {e}"))?.value.to_string()),
-        None => lcq_with(lc, &["show", id]), // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
-    }
-}
-
 fn parsed(text: &str, what: &str) -> Result<Value, String> {
     serde_json::from_str(text).map_err(|e| format!("{what}: unparsed reply: {e}"))
 }
@@ -535,18 +527,20 @@ pub fn observe_repo(r: &Reads, name: &str, local: bool) -> Result<RepoFacts, Str
             }
         }
     }
+    let by_id: BTreeMap<&str, &Value> = rows.iter().filter_map(|row| Some((str_of(row, "bead_id")?, row))).collect();
     for id in ids.iter().filter(|id| f.items.contains_key(*id)) {
-        let stack = show_text(r.lc, id).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).map(|v| stack_of(&v)).unwrap_or_default();
-        for k in &stack {
-            if let Some(state) = show_text(r.lc, k).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.get("bead").and_then(|b| str_of(b, "state")).map(str::to_string)) {
-                f.prereq_state.insert(k.clone(), state);
-            }
-        }
+        let stack = by_id.get(id.as_str()).map(|row| stack_of(&serde_json::json!({ "bead": row }))).unwrap_or_default();
         f.stack.insert(id.clone(), stack);
     }
+    let prereqs: Vec<String> = f.stack.values().flatten().cloned().collect::<BTreeSet<_>>().into_iter().collect();
+    let prereq_rows = rows_of_with(r.lc, &prereqs)?;
+    for row in &prereq_rows {
+        if let (Some(id), Some(state)) = (str_of(row, "bead_id"), str_of(row, "state")) {
+            f.prereq_state.insert(id.to_string(), state.to_string());
+        }
+    }
     let pooled: BTreeSet<&str> = f.rows.iter().map(|p| p.id.as_str()).collect();
-    let outside: Vec<String> = f.stack.values().flatten().filter(|k| !pooled.contains(k.as_str())).cloned().collect::<BTreeSet<_>>().into_iter().collect();
-    f.outside = rows_of_with(r.lc, &outside)?.iter().filter_map(PoolRow::of).collect();
+    f.outside = prereq_rows.iter().filter_map(PoolRow::of).filter(|p| !pooled.contains(p.id.as_str())).collect();
     f.open_round = open_round(&|repo| shown_in(r.views, repo), name)?.into_iter().map(|c| format!("{}:{}", c.id, c.tip)).collect();
     let pool = f.pool();
     if pool.is_empty() {
