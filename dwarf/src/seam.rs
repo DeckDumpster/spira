@@ -42,7 +42,7 @@ __dwarf_args=()
 while IFS= read -r -d '' __dwarf_a; do __dwarf_args+=("$__dwarf_a"); done
 case "$__dwarf_fn" in
     _dwarf_snapshot|_dwarf_rebase|\
-    _dwarf_thrash_meta|_dwarf_world_gate|_dwarf_rune_ready|_dwarf_ready_set|_dwarf_call_argv|\
+    _dwarf_thrash_meta|_dwarf_rune_ready|_dwarf_ready_set|\
     dwarf_count|rune_free|spira_event|release_own_claim|lc_claim_bead|\
     lc_bead_verified|park_unmapped|\
     spira_prune_worktrees|bead_reopen|bump_requeue|\
@@ -71,18 +71,11 @@ _dwarf_snapshot() {
     printf '__DWARF_EXCLUDE__\0'
     printf '%s\0' "$(rune_exclude "$RUNE" "${RUNE_EXCLUDE_LABELS:-}")"
 }
-_dwarf_world_gate() {
-    world_gate "$RUNE" "$1" >&2; local __rc=$?
-    return $__rc
-}
 _dwarf_rune_ready() {
     rune_ready "$RUNE"
 }
 _dwarf_ready_set() {
     _spira_claim "$@"
-}
-_dwarf_call_argv() {
-    call_argv "$RUNE"
 }
 _dwarf_rebase() {
     rebase_branch "$@" >&2; local __rc=$?

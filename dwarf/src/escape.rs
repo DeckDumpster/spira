@@ -17,10 +17,8 @@
 //! `home/runes/<rune>.rune` test every mode uses). Its partition must have ready
 //! work. The account must have API capacity. The bead must not be poisoned. The rune's
 //! own RUNE_SINGLE_FLIGHT is enforced by the called dwarf internally. All of that
-//! still applies — `world_gate` and `rune_ready`/`call_argv` are reached exactly as
-//! `call_rune` reaches them, through lib.sh (§5's seam), because a drain past its TTL
-//! being lifted and logged is family G's (not this bead's) to port. The capacity check is
-//! in-process now (`capacity::check_and_probe`, wave 4.26 — family K's home is this
+//! still applies — `world_gate` and `call_argv` are in-process here; `rune_ready` is
+//! reached through lib.sh (§5's seam). The capacity check is in-process too (`capacity::check_and_probe`, wave 4.26 — family K's home is this
 //! crate, and dwarf is its probe's one owner), so a probe that clears the pause file early
 //! happens exactly once no matter how many of this crate's own entry points ask.
 //!
@@ -30,7 +28,7 @@
 //! RETIRED RATHER THAN PORTED AS A SEPARATE SCRIPT. escape.sh's only job was to gate and
 //! then invoke the `dwarf` binary; the binary now does both.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::conf::Conf;
 use crate::ports::{Env, Exec, Seam};
@@ -111,13 +109,34 @@ pub fn build_argv(rune: &str, home: &Path, dwarf_path: &str, call_argv: &[String
     unit_call_argv(&format!("spira-dwarf-{rune}-escape-{epoch}"), home, dwarf_path, call_argv, rune, &tail)
 }
 
+/// Why a call is refused by the world's own state, `None` when calls are permitted. Halted and
+/// draining hold until the operator lifts them — no clock does — and a stopped `claims` lane
+/// on every repo refuses too.
+pub fn world_gate<S: AsRef<str>>(run: &Path, repos: &[S], rune: &str, prefix: &str) -> Option<String> {
+    if run.join("world.halted").is_file() {
+        return Some(format!("{prefix} {rune}: halted — not calling (world.sh start to lift)"));
+    }
+    if run.join("world.draining").is_file() {
+        return Some(format!("{prefix} {rune}: draining — not calling (world.sh resume to lift)"));
+    }
+    spira_config::scoped_stop::skip_if_stopped(run, repos, rune, "claims").map(|why| format!("{prefix} {why}"))
+}
+
+/// The `systemd-run` flags of a called dwarf's unit: its environment, then the properties of
+/// `units::dwarf_props` from the rune's `RUNE_TIMEOUT_SECONDS`.
+pub fn call_argv(home: &Path, rune: &str, output_append: Option<PathBuf>) -> Result<Vec<String>, String> {
+    let timeout = spira_config::runes::rune_get(home, rune, "RUNE_TIMEOUT_SECONDS", "3600");
+    let props = runtime::units::UnitProps { output_append, ..runtime::units::dwarf_props(&timeout)? };
+    crate::direct::call_flags(&spira_config::release_env::dwarf_unit_env()?, &props)
+}
+
 /// The full orchestration: gathers the facts through the seam, decides, and (unless
 /// merely deciding) spawns `systemd-run`. Returns the process exit code.
 #[allow(clippy::too_many_arguments)]
-pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, conf: &Conf, call_bin: &str, home: &Path, rune: &str, dry_run: bool, now: i64) -> i32 {
-    let wg = seam.call("_dwarf_world_gate", &["escape.sh".to_string()]);
-    for l in wg.stderr.lines() {
-        sink.out(l);
+pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, conf: &Conf, call_bin: &str, call_argv: &[String], home: &Path, rune: &str, dry_run: bool, now: i64) -> i32 {
+    let gate = world_gate(&conf.run, &conf.repos.all(), rune, "escape.sh");
+    if let Some(line) = &gate {
+        sink.out(&util::log_line(now, line));
     }
     let cv = crate::capacity::check_and_probe(conf, exec, now);
     for l in &cv.log {
@@ -136,7 +155,7 @@ pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, conf: &
     let dwarf_path = find_on_path(&path, "dwarf", is_executable);
 
     let facts = Facts {
-        world_gate_ok: wg.code == 0,
+        world_gate_ok: gate.is_none(),
         capacity_left,
         ready: if fr.code == 0 { fr.stdout.trim().parse::<i64>().map_err(|_| ()) } else { Err(()) },
         dwarf_path: dwarf_path.clone(),
@@ -145,7 +164,7 @@ pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, conf: &
     match decide(&facts) {
         Outcome::Gated => {
             if facts.world_gate_ok {
-                // world_gate passed; the capacity pause is what gated it — escape.sh's own line.
+                // the world allowed it; the capacity pause is what gated it.
                 sink.out(&util::log_line(now, &format!("escape.sh {rune}: account out of capacity for another {}s — not calling", facts.capacity_left.unwrap_or_default())));
             }
             1
@@ -165,9 +184,7 @@ pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, conf: &
         Outcome::Called(_) => {
             let ready = facts.ready.unwrap_or(0);
             sink.out(&util::log_line(now, &format!("escape.sh {rune}: {ready} ready — calling directly (pool and lane checks bypassed)")));
-            let sa = seam.call("_dwarf_call_argv", &[]);
-            let call_argv: Vec<String> = sa.stdout.lines().map(|s| s.to_string()).collect();
-            let argv = build_argv(rune, home, dwarf_path.as_deref().unwrap_or("dwarf"), &call_argv, now, dry_run);
+            let argv = build_argv(rune, home, dwarf_path.as_deref().unwrap_or("dwarf"), call_argv, now, dry_run);
             let o = exec.exec(call_bin, &argv, None, None);
             o.code
         }
@@ -251,17 +268,13 @@ mod tests {
     // ---- run(): the seam/exec-driven orchestration, with fakes -------------------------
 
     struct FakeSeam {
-        world_gate_rc: i32,
         ready: String,
         ready_rc: i32,
-        call_argv: String,
     }
     impl Seam for FakeSeam {
         fn call(&self, func: &str, _args: &[String]) -> util::Out {
             match func {
-                "_dwarf_world_gate" => util::Out { code: self.world_gate_rc, stdout: String::new(), stderr: String::new() },
                 "_dwarf_rune_ready" => util::Out { code: self.ready_rc, stdout: self.ready.clone(), stderr: String::new() },
-                "_dwarf_call_argv" => util::Out::ok(self.call_argv.clone()),
                 other => panic!("unexpected seam call: {other}"),
             }
         }
@@ -295,30 +308,74 @@ mod tests {
         Env::new(base.clone(), base)
     }
 
+    fn call(dir: &Path, seam: &FakeSeam, exec: &FakeExec, sink: &util::MemSink, argv: &[String]) -> i32 {
+        run(seam, exec, &env_with_dwarf_on_path(dir), sink, &conf_at(dir), "systemd-run", argv, Path::new("h/spira"), "stretchy", false, 1000)
+    }
+
     #[test]
     fn run_halted_does_not_call_and_exits_1() {
         let dir = testkit::TempDir::new("escape-run");
-        let env = env_with_dwarf_on_path(&dir);
-        let seam = FakeSeam { world_gate_rc: 1, ready: "4".into(), ready_rc: 0, call_argv: String::new() };
+        std::fs::write(dir.join("world.halted"), "").unwrap();
         let exec = FakeExec(std::sync::Mutex::new(None));
         let sink = util::MemSink::default();
-        let conf = conf_at(&dir);
-        let rc = run(&seam, &exec, &env, &sink, &conf, "systemd-run", Path::new("h/spira"), "stretchy", false, 1000);
+        let rc = call(&dir, &FakeSeam { ready: "4".into(), ready_rc: 0 }, &exec, &sink, &[]);
         assert_eq!(rc, 1);
         assert!(exec.0.lock().unwrap().is_none());
+        assert!(sink.all().contains("escape.sh stretchy: halted — not calling"));
+    }
+
+    #[test]
+    fn run_draining_does_not_call_and_exits_1() {
+        let dir = testkit::TempDir::new("escape-run");
+        std::fs::write(dir.join("world.draining"), "").unwrap();
+        let exec = FakeExec(std::sync::Mutex::new(None));
+        let sink = util::MemSink::default();
+        assert_eq!(call(&dir, &FakeSeam { ready: "4".into(), ready_rc: 0 }, &exec, &sink, &[]), 1);
+        assert!(exec.0.lock().unwrap().is_none());
+        assert!(sink.all().contains("draining — not calling"));
+    }
+
+    #[test]
+    fn run_ungated_calls_with_the_unit_properties_it_was_given() {
+        let dir = testkit::TempDir::new("escape-run");
+        testkit::write_exe(dir.join("dwarf"), "#!/bin/sh\n");
+        let exec = FakeExec(std::sync::Mutex::new(None));
+        let sink = util::MemSink::default();
+        let rc = call(&dir, &FakeSeam { ready: "4".into(), ready_rc: 0 }, &exec, &sink, &["--property=IOWeight=10".to_string()]);
+        assert_eq!(rc, 0);
+        let (_, argv) = exec.0.lock().unwrap().clone().expect("a call was made");
+        assert!(argv.contains(&"--property=IOWeight=10".to_string()), "{argv:?}");
+    }
+
+    #[test]
+    fn world_gate_refuses_when_the_claims_lane_is_stopped_on_every_repo() {
+        let dir = testkit::TempDir::new("escape-gate");
+        assert_eq!(world_gate(&dir, &["r1"], "stretchy", "escape.sh"), None);
+        spira_config::scoped_stop::pause_repo(&dir, "r1", &["claims".to_string()], "op", "why", "later", 1).unwrap();
+        let why = world_gate(&dir, &["r1"], "stretchy", "escape.sh").expect("stopped");
+        assert!(why.starts_with("escape.sh stretchy: skipped — the claims lane of r1"), "{why}");
+        assert_eq!(world_gate(&dir, &["r1", "r2"], "stretchy", "escape.sh"), None);
+    }
+
+    #[test]
+    fn call_argv_carries_the_dwarf_unit_properties_and_environment() {
+        let dir = testkit::TempDir::new("escape-argv");
+        let rel = dir.join("rel");
+        std::fs::create_dir_all(&rel).unwrap();
+        let _g = testkit::env(&[(spira_config::RELEASE_ENV, Some(rel.to_str().unwrap())), ("HOME", Some("h")), (spira_config::process::TOML_ENV, Some("x"))]);
+        let a = call_argv(&dir, "stretchy", None);
+        let a = a.expect("argv");
+        assert!(a.iter().any(|f| f == "--property=IOWeight=10"), "{a:?}");
+        assert!(a.iter().any(|f| f.starts_with("--setenv=SPIRA_RELEASE=")), "{a:?}");
     }
 
     #[test]
     fn run_capacity_paused_does_not_call_and_exits_1() {
         let dir = testkit::TempDir::new("escape-run");
-        let env = env_with_dwarf_on_path(&dir);
-        let seam = FakeSeam { world_gate_rc: 0, ready: "4".into(), ready_rc: 0, call_argv: String::new() };
         let exec = FakeExec(std::sync::Mutex::new(None));
         let sink = util::MemSink::default();
-        let conf = conf_at(&dir);
-        // In-process now (wave 4.26): a real pause file replaces the old FakeSeam stub.
         std::fs::write(dir.join("capacity-pause"), "1120 iso why\n").unwrap();
-        let rc = run(&seam, &exec, &env, &sink, &conf, "systemd-run", Path::new("h/spira"), "stretchy", false, 1000);
+        let rc = call(&dir, &FakeSeam { ready: "4".into(), ready_rc: 0 }, &exec, &sink, &[]);
         assert_eq!(rc, 1);
         assert!(exec.0.lock().unwrap().is_none());
         assert!(sink.all().contains("account out of capacity for another 120s"));

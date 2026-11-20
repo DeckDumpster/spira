@@ -589,11 +589,11 @@ Changed:
     `command -v bd` fails and no credential is readable") and is now a `cargo test -p dwarf`
     fact (`restrict.rs`'s own tests) instead of a bash integration fixture's.
 14. **`spira/escape.sh` is retired into this binary as `dwarf --escape <rune> [--dry-run]`.**
-    (sp-zpaq0.) `world_gate`, `capacity_paused`, `rune_ready` and `call_argv` are still
-    reached through the lib.sh seam (§5) — they carry real side effects (a capacity probe
-    can clear the pause file; an expired drain is lifted and logged) that a Rust
-    reimplementation would have to duplicate exactly or drift from; `escape.rs` is the
-    decision (`decide`, pure, unit-tested) and the `systemd-run` argv/spawn (`run`).
+    (sp-zpaq0.) `rune_ready` is reached through the lib.sh seam (§5); `world_gate`
+    (the halted/draining stamps, then the `claims` lane stop), the capacity check and
+    `call_argv` (the unit's environment and `units::dwarf_props`) are in-process.
+    `escape.rs` is the decision (`decide`, pure, unit-tested) and the `systemd-run`
+    argv/spawn (`run`).
 
 Kept, although they look wrong (flagged for the operator):
 
@@ -899,11 +899,11 @@ Changed:
     `command -v bd` fails and no credential is readable") and is now a `cargo test -p dwarf`
     fact (`restrict.rs`'s own tests) instead of a bash integration fixture's.
 14. **`spira/escape.sh` is retired into this binary as `dwarf --escape <rune> [--dry-run]`.**
-    (sp-zpaq0.) `world_gate`, `capacity_paused`, `rune_ready` and `call_argv` are still
-    reached through the lib.sh seam (§5) — they carry real side effects (a capacity probe
-    can clear the pause file; an expired drain is lifted and logged) that a Rust
-    reimplementation would have to duplicate exactly or drift from; `escape.rs` is the
-    decision (`decide`, pure, unit-tested) and the `systemd-run` argv/spawn (`run`).
+    (sp-zpaq0.) `rune_ready` is reached through the lib.sh seam (§5); `world_gate`
+    (the halted/draining stamps, then the `claims` lane stop), the capacity check and
+    `call_argv` (the unit's environment and `units::dwarf_props`) are in-process.
+    `escape.rs` is the decision (`decide`, pure, unit-tested) and the `systemd-run`
+    argv/spawn (`run`).
 
 Kept, although they look wrong (flagged for the operator):
 
