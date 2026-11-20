@@ -694,6 +694,28 @@ mod tests {
     }
 
     #[test]
+    fn a_write_cut_at_the_deadline_is_resent_through_the_socket_client_under_one_id() {
+        let dir = testkit::TempDir::new("lc-call-resend");
+        let path = dir.join("sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let heads = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = Arc::clone(&heads);
+        std::thread::spawn(move || {
+            for (n, stream) in listener.incoming().flatten().enumerate() {
+                let mut line = String::new();
+                BufReader::new(&stream).read_line(&mut line).unwrap();
+                seen.lock().unwrap().push(line);
+                let (code, body) = if n == 0 { (CANNOT_TELL, DEADLINE_ANSWER) } else { (0, "") };
+                (&stream).write_all(format!("{{\"exit_code\":{code},\"len\":{}}}\n{body}", body.len()).as_bytes()).unwrap();
+            }
+        });
+        let got = LcClient::socket(&path).call(&["hold", "sp-a", "x"]).unwrap();
+        assert_eq!(got.code, 0);
+        let ids: Vec<String> = heads.lock().unwrap().iter().map(|h| serde_json::from_str::<serde_json::Value>(h.trim()).unwrap()["request_id"].as_str().unwrap().to_string()).collect();
+        assert!(ids.len() == 2 && ids[0] == ids[1], "{ids:?}");
+    }
+
+    #[test]
     fn a_write_made_while_the_store_is_absent_is_applied_once_when_it_returns() {
         let dir = testkit::TempDir::new("lc-call-absent");
         let path = dir.join("sock");
