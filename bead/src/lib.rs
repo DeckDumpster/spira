@@ -930,9 +930,9 @@ mod tests {
     #[test]
     fn the_skuld_fence_spares_only_a_parent_named_rule() {
         assert!(!skuld_fence_binds(true, true, b"rule\0enact\0law-x\0"));
-        assert!(!skuld_fence_binds(true, true, b"/usr/bin/rule\0code\0--land\0"));
+        assert!(!skuld_fence_binds(true, true, b"bin/rule\0code\0--land\0"));
         assert!(skuld_fence_binds(true, true, b"bash\0-c\0rule\0"));
-        assert!(skuld_fence_binds(true, true, b"/x/rule-wrapper\0enact\0"));
+        assert!(skuld_fence_binds(true, true, b"x/rule-wrapper\0enact\0"));
         assert!(skuld_fence_binds(true, true, b""));
         assert!(!skuld_fence_binds(false, true, b"bash\0"));
         assert!(SKULD_NEEDS_DRAFT.starts_with("a builder bead the Concierge files needs --drafted-by <request-id>"));
