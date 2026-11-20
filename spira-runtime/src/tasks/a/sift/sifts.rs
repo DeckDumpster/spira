@@ -110,6 +110,15 @@ fn in_pool_states(r: &Value) -> bool {
     matches!(str_of(r, "state"), Some("CERTIFIED" | "SUBMITTED"))
 }
 
+fn holds_empty(r: &Value) -> bool {
+    match r.get("holds") {
+        None | Some(Value::Null) => true,
+        Some(Value::Array(a)) => a.is_empty(),
+        Some(Value::String(t)) => serde_json::from_str::<Vec<Value>>(t).map(|a| a.is_empty()).unwrap_or(false),
+        Some(_) => false,
+    }
+}
+
 /// Any hold but manual keeps a bead out of the screen; an unreadable `holds` fails closed.
 fn holds_block_screen(r: &Value) -> bool {
     let blocks = |a: &[Value]| {
@@ -188,7 +197,7 @@ pub fn select_pool(rows: &[Value], outside: &[Value], branches: &BTreeMap<String
     let (current, moved): (Vec<_>, Vec<_>) = read_pool(rows).into_iter().partition(|(id, tip)| branches.get(id) == Some(tip));
     let mut barred: BTreeSet<String> = moved.into_iter().map(|(id, _)| id).collect();
     let members: Vec<Member> = current.into_iter().filter(|(id, _)| shown.contains(id)).map(|(id, tip)| Member { stacked_on: stacks.get(&id).cloned().unwrap_or_default(), id, tip }).collect();
-    barred.extend(rows.iter().chain(outside).filter(|r| holds_block_screen(r) || ejected_at_tip(r)).filter_map(|r| str_of(r, "bead_id").map(str::to_string)));
+    barred.extend(rows.iter().chain(outside).filter(|r| !holds_empty(r) || ejected_at_tip(r)).filter_map(|r| str_of(r, "bead_id").map(str::to_string)));
     drop_stacked_on_barred(members, barred).into_iter().map(|m| Candidate { id: m.id, tip: m.tip }).collect()
 }
 
@@ -646,6 +655,18 @@ mod tests {
         assert_eq!(pool(serde_json::json!(["manual"])), 1);
         assert_eq!(pool(serde_json::json!(["wait"])), 0);
         assert_eq!(pool(serde_json::json!(["manual", "wait"])), 0);
+        assert_eq!(pool(serde_json::json!("[\"manual\"]")), 1);
+        assert_eq!(pool(serde_json::json!("[\"wait\"]")), 0);
+        assert_eq!(pool(serde_json::json!("not json")), 0);
+        assert_eq!(pool(serde_json::json!(7)), 0);
+        assert_eq!(pool(serde_json::json!(["no-such-hold"])), 0);
+
+        let dependant = serde_json::json!({"bead_id": "sp-b", "state": "SUBMITTED", "tip": "t2", "holds": []});
+        let branches = BTreeMap::from([("sp-a".to_string(), "t1".to_string()), ("sp-b".to_string(), "t2".to_string())]);
+        let shown = BTreeSet::from(["sp-a".to_string(), "sp-b".to_string()]);
+        let stacks = BTreeMap::from([("sp-b".to_string(), vec!["sp-a".to_string()])]);
+        let ids: Vec<_> = select_pool(&[row(serde_json::json!(["manual"])), dependant], &[], &branches, &shown, &stacks).into_iter().map(|c| c.id).collect();
+        assert_eq!(ids, ["sp-a"], "a member stacked on a held bead stays out");
     }
 
     struct NeverCalled;
