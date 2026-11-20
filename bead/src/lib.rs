@@ -131,16 +131,48 @@ pub fn with_contract_fix(labels: String, contract_fix: bool) -> String {
     }
 }
 
+fn depends_raw(body: &str) -> Option<&str> {
+    body.lines().find_map(|l| l.strip_prefix("Depends:"))
+}
+
+fn is_depends_token(t: &str) -> bool {
+    let lower = t.to_ascii_lowercase();
+    let draft = lower.strip_prefix("draft ").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    let id = t.strip_prefix("sp-").is_some_and(|r| !r.is_empty() && r.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.'));
+    lower == "none" || draft || id
+}
+
+/// The first token of a body's `Depends:` line that is not a bead id, `draft N` or `none`.
+pub fn depends_prose(body: &str) -> Option<String> {
+    depends_raw(body)?.split(',').map(str::trim).find(|t| !t.is_empty() && !is_depends_token(t)).map(str::to_string)
+}
+
+/// One line per `### Draft:` note whose `Depends:` line carries a token `depends_prose` rejects.
+pub fn draft_depends_refusals(notes: &str) -> Vec<String> {
+    let notes = notes.replace("\r\n", "\n");
+    notes
+        .split("### Draft:")
+        .skip(1)
+        .filter_map(|d| {
+            let (title, body) = d.split_once('\n').unwrap_or((d, ""));
+            depends_prose(body).map(|t| format!("draft \"{}\": `Depends:` carries `{t}`", title.trim()))
+        })
+        .collect()
+}
+
 /// The `Depends: <id>[, <id>…]` line of a body; `none` names no one, and `draft N` is a draft
 /// the filer has since given an id.
 fn depends_line(body: &str) -> Option<Vec<String>> {
-    let line = body.lines().find_map(|l| l.strip_prefix("Depends:"))?;
+    let line = depends_raw(body)?;
     Some(line.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty() && !t.eq_ignore_ascii_case("none")).collect())
 }
 
 /// Why a Skuld-drafted body's dependencies and the `--depends-on` set disagree, or `None`.
 /// Prose alone files no edge, so "depends on" needs the line; the line needs the flag.
 pub fn depends_refusal(body: &str, depends_on: &[String]) -> Option<String> {
+    if let Some(t) = depends_prose(body) {
+        return Some(format!("the body's `Depends:` line carries `{t}`; a Depends line carries only bead ids, `draft N` or `none`; move the prose into Context"));
+    }
     let Some(named) = depends_line(body) else {
         return body.to_ascii_lowercase().contains("depends on").then(|| {
             "the body says it \"depends on\" something but carries no `Depends: <id>[, <id>…]` line, and prose files no edge. Add the line to the draft, and pass each id as --depends-on <id>".to_string()
@@ -817,7 +849,27 @@ pub fn lint(src: &dyn LintSource, cfg: &LintCfg) -> (i32, Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::depends_refusal;
+    use super::{depends_prose, depends_refusal, draft_depends_refusals};
+
+    #[test]
+    fn prose_on_the_depends_line_is_named_not_reported_as_a_flag_mismatch() {
+        let body = "Depends: none. Related: sp-a (x). Both touch y; sequence them\n";
+        let tok = depends_prose(body).expect("prose found");
+        assert!(tok.starts_with("none."), "{tok}");
+        let why = depends_refusal(body, &[]).expect("refused");
+        assert!(why.contains(&tok) && why.contains("move the prose into Context"), "{why}");
+        for ok in ["Depends: none", "Depends: sp-a, sp-b.1", "Depends: draft 2, sp-c"] {
+            assert_eq!(depends_prose(ok), None, "{ok}");
+        }
+    }
+
+    #[test]
+    fn only_the_draft_with_prose_is_named() {
+        let notes = "### Draft: First\n\nDepends: none\n\n### Draft: Second\n\nDepends: sp-a and more\n";
+        let found = draft_depends_refusals(notes);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("Second"), "{found:?}");
+    }
 
     fn ids(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
