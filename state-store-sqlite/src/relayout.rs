@@ -4,7 +4,6 @@
 //! opened immutable and never written. Run by the operator only; no open path calls it.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -15,7 +14,7 @@ use sha2::{Digest, Sha256};
 use state_store::{events_key, Error, Result, EVENTS_PREFIX, REQUESTS_PREFIX, REQUEST_TTL_SECS};
 
 use crate::dated::{day_of, stem_of, Family, Files, EVENTS, FAMILIES, RECEIPTS};
-use crate::{db, key_of, outbox_dir, recorded_at, successor, Options, SqliteBackend, StoredRow, SCHEMA_MIGRATIONS};
+use crate::{take_opener, wal_of, db, key_of, outbox_dir, recorded_at, successor, Options, SqliteBackend, StoredRow, SCHEMA_MIGRATIONS};
 
 const PAGE: usize = 1_000;
 const FLUSH_ROWS: usize = 10_000;
@@ -112,27 +111,6 @@ pub fn relayout_probed(from: &Path, to: &Path, wall: &dyn Clock, before_certify:
 
 fn elapsed_ms(since: Instant) -> u64 {
     u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)
-}
-
-fn wal_of(path: &Path) -> PathBuf {
-    PathBuf::from(format!("{}-wal", path.display()))
-}
-
-fn take_opener(from: &Path) -> Result<File> {
-    let lock_path = PathBuf::from(format!("{}.lock", from.display()));
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&lock_path)
-        .map_err(|e| Error::Backend(format!("{}: {e}", lock_path.display())))?;
-    file.try_lock().map_err(|e| match e {
-        std::fs::TryLockError::WouldBlock => {
-            Error::Backend(format!("the store is open ({} is locked); stop lc-serve first", lock_path.display()))
-        }
-        std::fs::TryLockError::Error(e) => Error::Backend(format!("{}: {e}", lock_path.display())),
-    })?;
-    Ok(file)
 }
 
 /// The paths beside `to`, with their `-wal` and `-shm`, that are day files of its stem.

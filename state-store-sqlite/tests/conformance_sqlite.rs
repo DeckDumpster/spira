@@ -1610,6 +1610,102 @@ fn an_existing_none_mode_store_keeps_its_mode_and_still_drains() {
     assert_eq!(count(&none, "SELECT count(*) FROM versions"), 0);
 }
 
+fn none_mode_store(path: &Path) {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    conn.pragma_update(None, "auto_vacuum", 0).unwrap();
+    for sql in [
+        "CREATE TABLE meta (name TEXT PRIMARY KEY, value INTEGER NOT NULL)",
+        "CREATE TABLE versions (key BLOB NOT NULL, main INTEGER NOT NULL, sub INTEGER NOT NULL, value BLOB,
+            create_main INTEGER, create_sub INTEGER, version INTEGER NOT NULL, prev_main INTEGER, prev_sub INTEGER,
+            PRIMARY KEY (key, main))",
+        "CREATE INDEX versions_by_rev ON versions (main, sub)",
+        "CREATE TABLE jumps (from_main INTEGER PRIMARY KEY, to_main INTEGER NOT NULL)",
+        "INSERT INTO meta (name, value) VALUES ('head', 0), ('compacted', 0)",
+    ] {
+        conn.prepare(sql).unwrap().execute([]).unwrap();
+    }
+}
+
+fn none_mode_store_with_free_pages(path: &Path) {
+    none_mode_store(path);
+    seed_versions(path, 1200, &["readiness/"]);
+    let conn = rusqlite::Connection::open(path).unwrap();
+    conn.execute_batch("DELETE FROM versions").unwrap();
+    assert!(count(path, "PRAGMA freelist_count") > 0);
+}
+
+#[test]
+fn compact_converts_a_none_mode_store_so_the_commit_reclaim_returns_pages() {
+    let dir = TempDir::new("sqlite-compact");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    none_mode_store_with_free_pages(&path);
+    let report = state_store_sqlite::compact::compact(&path).unwrap();
+    assert_eq!(report.auto_vacuum, 2);
+    assert!(report.free_bytes_before > 0 && report.free_bytes_after == 0);
+    assert!(report.bytes_after < report.bytes_before);
+    assert_eq!(count(&path, "PRAGMA auto_vacuum"), 2);
+    assert_eq!(count(&path, "PRAGMA freelist_count"), 0);
+
+    let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
+    let mut mains = Vec::new();
+    for i in 0..40 {
+        let head = b.head().unwrap();
+        b.commit(head, &[put_write(&format!("live/{i}"), &[7u8; 3000], head + 1, None)]).unwrap();
+        mains.push(head + 1);
+    }
+    let before = count(&path, "PRAGMA page_count");
+    for (i, main) in mains.into_iter().enumerate() {
+        let head = b.head().unwrap();
+        b.commit(head, &[Write::Delete { key: format!("live/{i}"), prev: Rev::new(main, 0) }]).unwrap();
+    }
+    assert!(count(&path, "PRAGMA page_count") < before);
+}
+
+#[test]
+fn compact_refuses_while_the_store_is_open_and_writes_nothing() {
+    let dir = TempDir::new("sqlite-compact-open");
+    let path = dir.path().join("s.db");
+    none_mode_store_with_free_pages(&path);
+    let b = SqliteBackend::open(&path, Options::default()).unwrap();
+    let sum = std::fs::read(&path).unwrap();
+    let err = state_store_sqlite::compact::compact(&path).unwrap_err().to_string();
+    assert!(err.contains("the store is open") && err.contains("stop lc-serve first"), "{err}");
+    assert_eq!(std::fs::read(&path).unwrap(), sum);
+    drop(b);
+}
+
+#[test]
+fn compact_refuses_a_store_whose_wal_is_not_empty_and_writes_nothing() {
+    let dir = TempDir::new("sqlite-compact-wal");
+    let path = dir.path().join("s.db");
+    none_mode_store_with_free_pages(&path);
+    std::fs::write(format!("{}-wal", path.display()), b"unclean").unwrap();
+    let sum = std::fs::read(&path).unwrap();
+    let err = state_store_sqlite::compact::compact(&path).unwrap_err().to_string();
+    assert!(err.contains("-wal") && err.contains("is not empty"), "{err}");
+    assert_eq!(std::fs::read(&path).unwrap(), sum);
+}
+
+#[test]
+fn a_snapshot_of_a_none_mode_store_is_incremental_and_so_is_its_restore() {
+    let dir = TempDir::new("sqlite-snapshot-incremental");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    none_mode_store(&path);
+    let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
+    b.commit(0, &[put_write("live/a", b"1", 1, None)]).unwrap();
+    assert_eq!(count(&path, "PRAGMA auto_vacuum"), 0);
+    let snap = dir.path().join("snap.db");
+    b.snapshot_to(&snap).unwrap();
+    assert_eq!(count(&snap, "PRAGMA auto_vacuum"), 2);
+    let revlog = dir.path().join("revlog");
+    std::fs::create_dir(&revlog).unwrap();
+    let out = dir.path().join("restored.db");
+    state_store_sqlite::durability::restore::restore(&snap, &revlog, &out).unwrap();
+    assert_eq!(count(&out, "PRAGMA auto_vacuum"), 2);
+}
+
 fn mx_frame(path: &Path) -> u32 {
     use std::os::unix::fs::FileExt;
     let shm = std::fs::File::open(format!("{}-shm", path.display())).unwrap();

@@ -20,6 +20,7 @@
 //! this binary knows is refused (law-pin-by-migration-count).
 
 pub mod bench;
+pub mod compact;
 pub mod dated;
 pub mod durability;
 pub mod live;
@@ -1754,6 +1755,12 @@ impl SqliteBackend {
         })?;
         exec(&src, "VACUUM INTO ?1", [into])?;
         let copy = Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(db)?;
+        let mode: i64 = copy.pragma_query_value(None, "auto_vacuum", |r| r.get(0)).map_err(db)?;
+        if mode != 2 {
+            // The copy is private to this call, so converting it holds no lock on the live store.
+            copy.pragma_update(None, "auto_vacuum", 2).map_err(db)?;
+            copy.execute_batch("VACUUM").map_err(db)?;
+        }
         let rev = meta(&copy, "head")?.unwrap_or(0);
         for f in files {
             let mut cursor = Vec::new();
@@ -3437,4 +3444,25 @@ mod tests {
         let e = SqliteBackend::open(&path, Options::default()).err().unwrap();
         assert!(e.to_string().contains("this binary knows"), "{e}");
     }
+}
+
+pub(crate) fn wal_of(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}-wal", path.display()))
+}
+
+pub(crate) fn take_opener(from: &Path) -> Result<File> {
+    let lock_path = PathBuf::from(format!("{}.lock", from.display()));
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|e| Error::Backend(format!("{}: {e}", lock_path.display())))?;
+    file.try_lock().map_err(|e| match e {
+        std::fs::TryLockError::WouldBlock => {
+            Error::Backend(format!("the store is open ({} is locked); stop lc-serve first", lock_path.display()))
+        }
+        std::fs::TryLockError::Error(e) => Error::Backend(format!("{}: {e}", lock_path.display())),
+    })?;
+    Ok(file)
 }
