@@ -184,7 +184,7 @@ pub fn eject(
         let reopened = w.lib.bead_reopen(id, cause.as_str(), suites);
         if !reopened {
             w.err(format!(
-                "queue.sh eject: cannot reopen {id} (cause {})",
+                "queue.sh eject: bead_reopen did not complete for {id} (cause {}); deciding on the lifecycle row",
                 cause.as_str()
             ));
         }
@@ -202,11 +202,11 @@ pub fn eject(
             comment.push_str(&format!("\n\nRecertification will force these suites regardless of SPIRA_CERTIFY_SUITES: {suites}"));
         }
         w.lib.comment(id, &comment);
-        if !reopened || !returned {
+        if !returned {
             return FAIL;
         }
         w.out(format!(
-            "queue.sh eject: ejected {id} (certified, not yet batched) for {} (withdrawn)",
+            "queue.sh eject: ejected {id} (certified, not yet batched) for {} (withdrawn); lifecycle row reads REWORK",
             c.r.name
         ));
         return OK;

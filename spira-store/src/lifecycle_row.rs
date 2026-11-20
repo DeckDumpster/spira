@@ -418,8 +418,14 @@ pub fn close(id: &str, reason: &str, actor: &str, superseded_by: Option<&str>) -
 /// `Ok`; a terminal row (3) or an unreachable machine (2) is an error. Every Rust reopener
 /// calls this rather than handing bd a `reopen` (lifecycle-guard's `bd-reopen-rust`).
 pub fn reopen_with(bin: &str, id: &str, cause: &str, actor: &str) -> Result<(), String> {
-    match run_lc(bin, &["reopen", id, cause, actor])? {
+    reopen_on(&client(bin)?, bin, id, cause, actor)
+}
+
+fn reopen_on(c: &LcClient, bin: &str, id: &str, cause: &str, actor: &str) -> Result<(), String> {
+    match run_on(c, &["reopen", id, cause, actor])? {
         (0 | 1, _) => Ok(()),
+        (2, msg) => Err(format!("spira-lc could not tell whether {id} was reopened (exit 2: {msg})")),
+        (3, msg) => Err(format!("spira-lc refused the reopen of {id} (exit 3: {msg})")),
         (code, msg) => Err(format!("{bin} reopen {id} exited {code}: {msg}")),
     }
 }
@@ -532,6 +538,16 @@ mod tests {
 
     fn sent(t: &Scripted) -> usize {
         t.seen.lock().unwrap().len()
+    }
+
+    #[test]
+    fn reopen_says_could_not_tell_for_exit_2_and_refused_for_exit_3() {
+        let (c, _, _) = scripted(&[2], 5);
+        let e = reopen_on(&c, "spira-lc", "sp-x", "eject", "queue").unwrap_err();
+        assert!(e.contains("could not tell") && !e.contains("refused"), "{e}");
+        let (c, _, _) = scripted(&[3], 5);
+        let e = reopen_on(&c, "spira-lc", "sp-x", "eject", "queue").unwrap_err();
+        assert!(e.contains("refused the reopen of sp-x") && !e.contains("could not tell"), "{e}");
     }
 
     #[test]

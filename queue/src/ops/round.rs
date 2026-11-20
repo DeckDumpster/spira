@@ -4764,7 +4764,7 @@ fn eject(
     {
         if !w.lib.bead_reopen(bead, own_cause.as_str(), suites) {
             w.err(format!(
-                "queue.sh {label}: cannot reopen {bead} (cause {})",
+                "queue.sh {label}: bead_reopen did not complete for {bead} (cause {}); deciding on the lifecycle row",
                 own_cause.as_str()
             ));
         }

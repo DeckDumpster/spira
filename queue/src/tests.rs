@@ -2583,6 +2583,34 @@ fn eject_of_a_certified_unbatched_bead_reopens_with_the_cause() {
 }
 
 #[test]
+fn eject_of_a_certified_unbatched_bead_exits_0_when_the_reopen_could_not_tell_but_the_row_reads_rework() {
+    let t = T::new(LandMode::Queue);
+    t.lc_row("sp-c", "CERTIFIED", "tc", 5);
+    t.lib.reopen_fails.borrow_mut().insert("sp-c".into());
+    assert_eq!(
+        t.run(&["eject", "sp-c", "--red", "--suites", "test-x.sh", "--reason-file", "-"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(t.out().contains("ejected sp-c"), "{}", t.out());
+    assert!(t.err().contains("bead_reopen did not complete for sp-c"), "{}", t.err());
+    let calls = t.lc.calls.borrow().clone();
+    assert!(calls.iter().any(|c| c.contains("\"Deliver\"")), "{calls:?}");
+    assert!(calls.iter().any(|c| c.contains("batch-ejected-red")), "{calls:?}");
+}
+
+#[test]
+fn eject_exits_1_naming_the_state_read_when_the_reopen_failed_and_deliver_is_refused() {
+    let t = T::new(LandMode::Queue);
+    t.lc_row("sp-s", "SUBMITTED", "ts", 5);
+    t.lib.reopen_fails.borrow_mut().insert("sp-s".into());
+    t.lc.event_refused.set(Some("refused"));
+    assert_eq!(t.run(&["eject", "sp-s", "--red", "--suites", "test-x.sh", "--reason-file", "-"]), 1);
+    assert!(t.err().contains("not returned to REWORK on spira-lc"), "{}", t.err());
+}
+
+#[test]
 fn eject_of_a_submitted_unbatched_bead_withdraws_it_to_rework_at_its_red_tip() {
     let t = T::new(LandMode::Queue);
     t.lc_row("sp-s", "SUBMITTED", "ts", 5);

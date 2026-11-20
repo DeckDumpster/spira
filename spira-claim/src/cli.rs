@@ -1728,7 +1728,7 @@ fn cmd_reopen(a: &Args, env: &Env) -> Outcome {
     if rc == 0 {
         Outcome::ok(String::new())
     } else {
-        Outcome { code: rc, out: String::new(), err: format!("bead_reopen: {id} — {}: {}\n", reopen::FAILURE_REASON, failures.join("; ")) }
+        Outcome { code: rc, out: String::new(), err: format!("bead_reopen: {id} did not complete: {}\n", failures.join("; ")) }
     }
 }
 
