@@ -1197,24 +1197,40 @@ fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
     if w.lc.rounds_door().is_none() {
         return round_files::sweep(w, c, spare);
     }
-    let Ok(all) = w.lc.batches(&c.r.name) else {
+    let Ok(open) = w.lc.open_batches(&c.r.name) else {
         return;
     };
-    let held: Vec<PathBuf> = all
-        .iter()
-        .filter(|b| !b.is_terminal() || Some(b.id.as_str()) == spare)
-        .map(|b| worktree_of(&b.kv))
+    let mut kept: Vec<&BatchRecord> = open.iter().collect();
+    let spared;
+    if let Some(id) = spare.filter(|id| !open.iter().any(|b| b.id == *id)) {
+        let Ok(found) = w.lc.batch(&c.r.name, id) else {
+            return;
+        };
+        spared = found;
+        kept.extend(spared.iter());
+    }
+    let held: Vec<PathBuf> = kept.iter().map(|b| worktree_of(&b.kv)).collect();
+    let mut marked: Vec<String> = fs::read_dir(rounds_dir(c))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            name.strip_suffix(".running").map(str::to_string)
+        })
+        .filter(|id| Some(id.as_str()) != spare && !open.iter().any(|b| b.id == *id))
         .collect();
-    for b in all
-        .iter()
-        .filter(|b| b.is_terminal() && Some(b.id.as_str()) != spare)
-    {
+    marked.sort();
+    for id in &marked {
+        let Ok(found) = w.lc.batch(&c.r.name, id) else {
+            return;
+        };
+        let Some(b) = found.filter(|b| b.is_terminal()) else {
+            continue;
+        };
         let wt = worktree_of(&b.kv);
         let has_tree = !wt.as_os_str().is_empty() && wt.exists();
         let own_tree = has_tree && !held.contains(&wt);
-        if !own_tree && !running_marker(c, &b.id).exists() {
-            continue;
-        }
         if let Err(e) = w.scripts.stop_round_legs(&c.r.name, &b.id) {
             w.err(format!("queue.sh sweep: round {} ended but a leg still runs ({e}) — its tree is kept", b.id));
             continue;
@@ -1233,9 +1249,9 @@ fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
     let Some(repo) = &c.r.path else {
         return;
     };
-    for b in all
+    for b in open
         .iter()
-        .filter(|b| !b.is_terminal() && ended(&b.kv).is_none() && Some(b.id.as_str()) != spare)
+        .filter(|b| ended(&b.kv).is_none() && Some(b.id.as_str()) != spare)
     {
         let wt = worktree_of(&b.kv);
         if wt.as_os_str().is_empty() || running_marker(c, &b.id).exists() || wt.exists() {
