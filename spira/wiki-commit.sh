@@ -58,7 +58,7 @@ if [ "${#paths[@]}" -eq 0 ] || git -C "$wiki" diff --cached --quiet -- "${paths[
 fi
 
 rc=0
-git -C "$wiki" commit --only -m "$msg" -- "${paths[@]}" 2>/dev/null || rc=$?
+git -C "$wiki" commit --only -m "$msg" -- "${paths[@]}" >/dev/null || rc=$?
 if [ "$rc" -eq 0 ]; then
     committed="$(git -C "$wiki" show --name-only --format= HEAD 2>/dev/null | sort)"
     named="$(git -C "$wiki" diff --name-only HEAD~1 HEAD -- "${paths[@]}" 2>/dev/null | sort)"
