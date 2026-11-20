@@ -31,7 +31,8 @@
 //! stalled on it. A store or release
 //! record that cannot be read is `P0 BLIND`, paged once, and the period's table line says BLIND:
 //! never an all-clear (`law-absence-needs-a-positive-control`). An observe that fails or times
-//! out is BLIND the same way.
+//! out is BLIND the same way. Inside an activation's store-restart window
+//! (`SPIRA_ACTIVATION_STORE_BOUND`) an unreadable store is a non-paging `WAIT BLIND` line.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -65,6 +66,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_ROUND_MAX_OPEN",
     "SPIRA_RELEASES",
     "SPIRA_REPO_MAP",
+    "SPIRA_ACTIVATION_STORE_BOUND",
 ];
 /// The period when the key does not resolve; the handler then refuses, so this only sizes the
 /// row's declared cadence.
@@ -98,6 +100,7 @@ pub struct Config {
     pub round_max_open: u64,
     pub releases: std::path::PathBuf,
     pub repo_map: std::path::PathBuf,
+    pub activation_bound_s: u64,
 }
 
 impl Config {
@@ -121,6 +124,7 @@ impl Config {
             round_max_open: cfg_parse("SPIRA_ROUND_MAX_OPEN")?,
             releases: cfg("SPIRA_RELEASES")?.into(),
             repo_map: cfg("SPIRA_REPO_MAP")?.into(),
+            activation_bound_s: cfg_parse("SPIRA_ACTIVATION_STORE_BOUND")?,
         };
         cfg.bounds_fit_owners()?;
         Ok(cfg)
@@ -259,6 +263,9 @@ pub struct Snapshot {
     /// The newest release activation, counting the release `current` names from its publication; `None` when there is none.
     #[serde(default)]
     pub activated_at: Option<u64>,
+    /// The activation whose store restart may still be under way.
+    #[serde(default)]
+    pub activation: Option<crate::watchers::Activation>,
     /// Per repo, the oldest Delivered after `activated_at`.
     #[serde(default)]
     pub landed_after: BTreeMap<String, u64>,
@@ -606,6 +613,7 @@ pub fn snapshot_of(
         beads,
         last,
         activated_at,
+        activation: None,
         landed_after,
         open_rounds: None,
         owners: BTreeMap::new(),
@@ -772,7 +780,8 @@ pub fn observe(
         .map(|(_, e)| e.at)
         .max();
     let activated = crate::watchers::last_activation(run_dir);
-    let blind = |why: &str| Snapshot { activated_at: activated, ..blind(why) };
+    let activation = crate::watchers::current_activation(run_dir);
+    let blind = |why: &str| Snapshot { activated_at: activated, activation: activation.clone(), ..blind(why) };
     let in_effect = releases_in_effect(&releases, releases_dir);
     let window = window_s.to_string();
     let after = if current.is_some() {
@@ -857,6 +866,10 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     }
     next.halted.clear();
     if !snap.readable {
+        if let Some(a) = &snap.activation {
+            acts.push(say(now_ms, &crate::watchers::restart_wait(a, cfg.activation_bound_s, &snap.why)));
+            return (next, acts);
+        }
         if !carry.blind {
             acts.push(say(now_ms, &format!("P0 BLIND: the lifecycle control store cannot be read ({}), so no state's wait is being watched — this is not an all-clear", snap.why)));
         }

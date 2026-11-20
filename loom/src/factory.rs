@@ -1096,6 +1096,7 @@ mod tests {
             gate_timeout_s: 2700,
             deliver_bound_s: 3600,
             activate_bound_s: 3600,
+            activation_bound_s: 90,
             ask_bound_s: 3600,
             release_repo: "spira".into(),
             heartbeat_bound_s: 300,

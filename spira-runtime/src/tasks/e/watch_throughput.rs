@@ -31,7 +31,7 @@
 //!
 //! A landing is a commit naming a bead on a repo's landing ref (resolved as `spira_landref` does,
 //! never the lane name): the ref is the authority on what landed. A count that cannot be read
-//! pages BLIND on the first unreadable tick, and files nothing. A git ref read is
+//! pages BLIND on the first unreadable tick, and files nothing; inside an activation's store-restart window (`SPIRA_ACTIVATION_STORE_BOUND`) the tick writes a non-paging `WAIT BLIND` instead. A git ref read is
 //! retried once in the same pass; store reads are not.
 
 use runtime::event::*;
@@ -52,7 +52,7 @@ pub const OBSERVE: &str = "watch.throughput.observe";
 pub const FILE: &str = "watch.throughput.file";
 pub const CLEAR: &str = "watch.throughput.clear";
 pub const EFFECTS: &[&str] = &[OBSERVE, FILE, CLEAR, INBOX_APPEND];
-pub const KEYS: &[&str] = &["SPIRA_THROUGHPUT_STALL_SECS", "SPIRA_THROUGHPUT_ABANDON_COUNT", "SPIRA_THROUGHPUT_ABANDON_WINDOW", "SPIRA_THROUGHPUT_RATIO_MIN_PCT", "SPIRA_THROUGHPUT_RATIO_MIN_RUNS", "SPIRA_THROUGHPUT_PASSED_GRACE", "SPIRA_ID_PREFIX"];
+pub const KEYS: &[&str] = &["SPIRA_THROUGHPUT_STALL_SECS", "SPIRA_THROUGHPUT_ABANDON_COUNT", "SPIRA_THROUGHPUT_ABANDON_WINDOW", "SPIRA_THROUGHPUT_RATIO_MIN_PCT", "SPIRA_THROUGHPUT_RATIO_MIN_RUNS", "SPIRA_THROUGHPUT_PASSED_GRACE", "SPIRA_ACTIVATION_STORE_BOUND", "SPIRA_ID_PREFIX"];
 pub const CADENCE_MS: u64 = 60_000;
 const DEADLINE_MS: u64 = 60_000;
 
@@ -69,11 +69,12 @@ pub struct Config {
     pub ratio_min_pct: u64,
     pub ratio_min_runs: u64,
     pub passed_grace_s: u64,
+    pub activation_bound_s: u64,
 }
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config { stall_s: cfg_parse("SPIRA_THROUGHPUT_STALL_SECS")?, abandon_count: cfg_parse("SPIRA_THROUGHPUT_ABANDON_COUNT")?, abandon_window_s: cfg_parse("SPIRA_THROUGHPUT_ABANDON_WINDOW")?, ratio_min_pct: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_PCT")?, ratio_min_runs: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_RUNS")?, passed_grace_s: cfg_parse("SPIRA_THROUGHPUT_PASSED_GRACE")? })
+        Ok(Config { stall_s: cfg_parse("SPIRA_THROUGHPUT_STALL_SECS")?, abandon_count: cfg_parse("SPIRA_THROUGHPUT_ABANDON_COUNT")?, abandon_window_s: cfg_parse("SPIRA_THROUGHPUT_ABANDON_WINDOW")?, ratio_min_pct: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_PCT")?, ratio_min_runs: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_RUNS")?, passed_grace_s: cfg_parse("SPIRA_THROUGHPUT_PASSED_GRACE")?, activation_bound_s: cfg_parse("SPIRA_ACTIVATION_STORE_BOUND")? })
     }
 }
 
@@ -156,6 +157,9 @@ pub struct Snapshot {
     /// The newest release activation, epoch seconds.
     #[serde(default)]
     pub activated_at: Option<u64>,
+    /// The activation whose store restart may still be under way.
+    #[serde(default)]
+    pub activation: Option<crate::watchers::Activation>,
     /// The refusal the failing read returned; empty when the snapshot is readable.
     #[serde(default)]
     pub why: String,
@@ -250,6 +254,10 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     }
     next.halted.clear();
     if !snap.readable {
+        if let Some(a) = &snap.activation {
+            acts.push(say(now_ms, &crate::watchers::restart_wait(a, cfg.activation_bound_s, &snap.why)));
+            return Verdict { carry: next, acts };
+        }
         if !carry.blind {
             let refusal = if snap.why.is_empty() { String::new() } else { format!(" ({})", snap.why) };
             acts.push(say(now_ms, &format!("P0 BLIND: the landings cannot be read{refusal}, so landing stalls are not being checked")));

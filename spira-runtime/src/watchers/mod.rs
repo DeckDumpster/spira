@@ -36,6 +36,33 @@ pub fn last_activation(run_dir: &std::path::Path) -> Option<u64> {
     releases.iter().flat_map(|r| r.events.iter()).filter(|e| e.to == release::machine::ReleaseState::Activated).map(|e| e.at).max()
 }
 
+/// A release activation whose store restart may still be under way.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Activation {
+    pub sha: String,
+    pub since: u64,
+}
+
+/// The newest release record whose newest entry is `Published` or `Activated`, when that entry is at most `bound_s` before `now`.
+pub fn activation_window(run_dir: &std::path::Path, now: u64, bound_s: u64) -> Option<Activation> {
+    use release::machine::ReleaseState::{Activated, Published};
+    let releases = release::machine::all(&run_dir.join("release")).ok()?;
+    let (sha, last) = releases.iter().filter_map(|r| r.events.last().map(|e| (&r.sha, e))).filter(|(_, e)| matches!(e.to, Published | Activated)).max_by_key(|(_, e)| e.at)?;
+    (now.saturating_sub(last.at) <= bound_s).then(|| Activation { sha: sha.clone(), since: last.at })
+}
+
+/// `activation_window` at the present, under the configured bound; `None` when the bound does not resolve.
+pub fn current_activation(run_dir: &std::path::Path) -> Option<Activation> {
+    let bound: u64 = spira_config::process::cfg_parse("SPIRA_ACTIVATION_STORE_BOUND").ok()?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    activation_window(run_dir, now, bound)
+}
+
+/// The non-paging line a watcher writes for an unreadable store inside an activation's window.
+pub fn restart_wait(a: &Activation, bound_s: u64, why: &str) -> String {
+    format!("WAIT BLIND: store restarting for activation of {} since {} (bound {bound_s}s): {why}", a.sha.chars().take(12).collect::<String>(), iso8601(a.since))
+}
+
 /// The name of the effect that `ev` is the outcome of, when its stream requested one.
 pub fn answered_effect(view: &Projection, ev: &Event) -> Option<String> {
     let cause = ev.cause.as_ref()?;
@@ -75,7 +102,7 @@ pub fn iso8601(secs: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{iso8601, last_activation};
+    use super::{activation_window, iso8601, last_activation};
     use release::machine::{enter, ReleaseState};
 
     #[test]
@@ -87,6 +114,30 @@ mod tests {
         assert_eq!(last_activation(t.path()), None, "a published release is not an activation");
         enter(&state, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ReleaseState::Activated, "current switched").unwrap();
         assert!(last_activation(t.path()).is_some(), "the activated record is read");
+    }
+
+    fn window_with(last: ReleaseState) -> (testkit::TempDir, u64) {
+        let t = testkit::TempDir::new("activation-window");
+        let state = t.path().join("release");
+        enter(&state, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", last, "r").unwrap();
+        let at = release::machine::all(&state).unwrap()[0].events.last().unwrap().at;
+        (t, at)
+    }
+
+    #[test]
+    fn a_published_record_is_a_window_while_within_the_bound() {
+        let (t, at) = window_with(ReleaseState::Published);
+        let w = activation_window(t.path(), at + 10, 90).expect("inside the bound");
+        assert_eq!((w.sha.as_str(), w.since), ("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", at));
+        assert_eq!(activation_window(t.path(), at + 100, 90), None, "past the bound");
+    }
+
+    #[test]
+    fn an_activated_record_is_a_window_and_a_rolled_back_one_is_not() {
+        let (t, at) = window_with(ReleaseState::Activated);
+        assert!(activation_window(t.path(), at + 10, 90).is_some());
+        let (t, at) = window_with(ReleaseState::RolledBack);
+        assert_eq!(activation_window(t.path(), at + 10, 90), None);
     }
 
     #[test]

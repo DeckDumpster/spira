@@ -959,7 +959,8 @@ impl World {
         let day = 24 * 3600;
         let halt = read_halt(&self.run_dir);
         let activated_at = crate::watchers::last_activation(&self.run_dir);
-        let blind = |why: String| ThroughputSnapshot { readable: false, halt: halt.clone(), activated_at, why, ..Default::default() };
+        let activation = crate::watchers::current_activation(&self.run_dir);
+        let blind = |why: String| ThroughputSnapshot { readable: false, halt: halt.clone(), activated_at, activation: activation.clone(), why, ..Default::default() };
         let prefix = match spira_config::process::cfg("SPIRA_ID_PREFIX") {
             Ok(p) => p,
             Err(e) => return to_json(&blind(format!("SPIRA_ID_PREFIX: {e}"))),
@@ -1076,7 +1077,7 @@ impl World {
         self.push_phase_durations(&phases);
         answered.unwrap_or_else(|| {
             let why = format!("store unavailable: the {} phase of the observe had not answered in its bound of {} s", phases.current, total.as_secs());
-            let blind = crate::tasks::e::watch_transitions::Snapshot { activated_at: crate::watchers::last_activation(&self.run_dir), halt: read_halt(&self.run_dir), ..crate::tasks::e::watch_transitions::blind(&why) };
+            let blind = crate::tasks::e::watch_transitions::Snapshot { activated_at: crate::watchers::last_activation(&self.run_dir), activation: crate::watchers::current_activation(&self.run_dir), halt: read_halt(&self.run_dir), ..crate::tasks::e::watch_transitions::blind(&why) };
             serde_json::to_string(&blind).map_err(|e| e.to_string())
         })
     }

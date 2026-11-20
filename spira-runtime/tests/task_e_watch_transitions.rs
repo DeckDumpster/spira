@@ -34,6 +34,7 @@ fn config() -> Config {
         round_max_open: 1,
         releases: "rel".into(),
         repo_map: "map".into(),
+        activation_bound_s: 75,
     }
 }
 
@@ -49,6 +50,7 @@ fn last(repo: &str, kinds: &[(&str, u64)]) -> BTreeMap<String, BTreeMap<String, 
 fn healthy(now: u64) -> Snapshot {
     Snapshot {
         readable: true,
+        activation: None,
         why: String::new(),
         horizon: now - 6 * HOUR,
         beads: vec![bead("sp-r1", "spira", "READY", now - 20 * MIN), bead("sp-w1", "spira", "WORKING", now - 40 * MIN), bead("sp-w2", "spira", "WORKING", now - 10 * MIN), bead("sp-w3", "spira", "WORKING", now - 70 * MIN), bead("sp-s1", "spira", "SUBMITTED", now - 5 * MIN), bead("sp-d1", "spira", "IN_DELIVERY", now - 15 * MIN)],
@@ -1442,4 +1444,25 @@ fn a_prerequisite_absent_from_the_dwell_rows_is_not_live() {
     s.beads.retain(|b| b.id != "sp-f0cw5z");
     mark_blocked(&mut s, &BTreeMap::from([("sp-um4jw9".to_string(), "sp-f0cw5z".to_string())]));
     assert!(s.beads.iter().all(|b| b.waits_on.is_none()));
+}
+
+fn unreadable_during(activation: Option<spira_runtime::watchers::Activation>) -> Snapshot {
+    Snapshot { activation, ..blind("spira-lc dwell: cannot tell: deadline") }
+}
+
+#[test]
+fn an_unreadable_store_inside_an_activation_window_waits_and_does_not_page() {
+    let a = spira_runtime::watchers::Activation { sha: "0123456789abcdef0123".into(), since: T0 - 10 };
+    let (next, acts) = decide(&Carry::default(), &unreadable_during(Some(a)), T0 * 1000, &config());
+    let said: Vec<&str> = acts.iter().map(|a| a.input.as_str()).collect();
+    assert!(!said.iter().any(|t| t.contains("P0 BLIND")), "{said:?}");
+    assert_eq!(said.iter().filter(|t| t.contains("WAIT BLIND: store restarting") && t.contains("0123456789ab") && t.contains("bound 75s")).count(), 1, "{said:?}");
+    assert!(!next.blind);
+}
+
+#[test]
+fn an_unreadable_store_outside_any_activation_window_pages_blind() {
+    let (next, acts) = decide(&Carry::default(), &unreadable_during(None), T0 * 1000, &config());
+    assert!(acts.iter().any(|a| a.input.contains("P0 BLIND")));
+    assert!(next.blind);
 }

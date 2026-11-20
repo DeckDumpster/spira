@@ -46,6 +46,7 @@ throughput_stall_secs = 7200
 throughput_abandon_count = 5
 throughput_abandon_window = 7200
 transitions_period = 300
+activation_store_bound = 90
 transitions_working_min = 2
 transitions_submit_bound = 5400
 transitions_cut_bound = 2700

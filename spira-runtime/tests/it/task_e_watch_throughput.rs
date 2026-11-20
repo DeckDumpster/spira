@@ -10,7 +10,7 @@ use spira_runtime::tasks::e::watch_throughput::*;
 use spira_runtime::watchers::INBOX_APPEND;
 
 fn config() -> Config {
-    Config { stall_s: 600, abandon_count: 5, abandon_window_s: 7_200, ratio_min_pct: 40, ratio_min_runs: 6, passed_grace_s: 300 }
+    Config { stall_s: 600, abandon_count: 5, abandon_window_s: 7_200, ratio_min_pct: 40, ratio_min_runs: 6, passed_grace_s: 300, activation_bound_s: 75 }
 }
 
 /// When the fake host says the last landing happened, relative to the clock it is asked at.
@@ -513,7 +513,7 @@ fn the_last_landing_is_when_the_round_landed_not_when_it_was_cut() {
     stamp_landings(&mut landings, &rows);
     assert_eq!(landings[0].last_landing, cut + 2_400);
     let now_ms = (cut + 2_400 + 7_000) * 1000;
-    let cfg = Config { stall_s: 3_600, abandon_count: 3, abandon_window_s: 7_200, ratio_min_pct: 10, ratio_min_runs: 10, passed_grace_s: 3_600 };
+    let cfg = Config { stall_s: 3_600, abandon_count: 3, abandon_window_s: 7_200, ratio_min_pct: 10, ratio_min_runs: 10, passed_grace_s: 3_600, activation_bound_s: 75 };
     let snap = Snapshot { readable: true, landings: vec![RepoLanding { waiting: 2, oldest: Some(Waiting { bead: "sp-x".into(), since: Some(cut) }), ..landings[0].clone() }], ..Default::default() };
     let v = decide(&Carry::default(), &snap, now_ms, &cfg);
     let filed: Filing = serde_json::from_str(&v.acts.iter().find(|a| a.name == FILE).expect("a stall is filed").input).unwrap();
@@ -805,4 +805,25 @@ fn a_spent_observe_bound_skips_the_ref_reread_and_a_fresh_one_allows_it() {
     let _ = std::fs::remove_file(dir.join("repo/.git/flaky-fired"));
     let fresh = spira_runtime::world::World { observe_bound: Some((std::time::Instant::now(), std::time::Duration::from_secs(60))), ..w };
     fresh.landed_on_refs(now, "sp").expect("a fresh bound allows the re-read");
+}
+
+fn unreadable_during(activation: Option<spira_runtime::watchers::Activation>) -> Snapshot {
+    Snapshot { readable: false, why: "spira-lc show: cannot tell: deadline".into(), activation, ..Default::default() }
+}
+
+#[test]
+fn an_unreadable_store_inside_an_activation_window_waits_and_does_not_page() {
+    let a = spira_runtime::watchers::Activation { sha: "0123456789abcdef0123".into(), since: 1_000_000 };
+    let v = decide(&Carry::default(), &unreadable_during(Some(a)), 1_000_030_000, &config());
+    let said: Vec<&str> = v.acts.iter().map(|a| a.input.as_str()).collect();
+    assert!(!said.iter().any(|t| t.contains("P0 BLIND")), "{said:?}");
+    assert_eq!(said.iter().filter(|t| t.contains("WAIT BLIND") && t.contains("0123456789ab") && t.contains("bound 75s")).count(), 1, "{said:?}");
+    assert!(!v.carry.blind, "the first unreadable tick after the window pages");
+}
+
+#[test]
+fn an_unreadable_store_outside_any_activation_window_pages_blind() {
+    let v = decide(&Carry::default(), &unreadable_during(None), 1_000_030_000, &config());
+    assert!(v.acts.iter().any(|a| a.input.contains("P0 BLIND")));
+    assert!(v.carry.blind);
 }
