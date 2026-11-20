@@ -291,11 +291,13 @@ impl<B: Backend> Mender<'_, B> {
     fn list(&self, args: &[String]) -> Reply {
         let only = flag(args, "--batch");
         let live = args.iter().any(|a| a == "--live");
-        let mut rows: Vec<MendingRecord> = self.store.mendings().map_err(cannot)?;
-        rows.retain(|r| {
-            only.as_deref().is_none_or(|b| b == r.row.batch_id)
-                && (!live || matches!(r.row.state, MendingState::Waiting | MendingState::Mending))
-        });
+        let mut rows: Vec<MendingRecord> = if live {
+            self.store.live_mendings()
+        } else {
+            self.store.mendings()
+        }
+        .map_err(cannot)?;
+        rows.retain(|r| only.as_deref().is_none_or(|b| b == r.row.batch_id));
         rows.sort_by(|a, b| {
             let k = |r: &MendingRecord| {
                 (
