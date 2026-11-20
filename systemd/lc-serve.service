@@ -31,9 +31,13 @@ Environment=SPIRA_LC_SOCKET=%t/spira-lc/sock
 # The backup's write-only key, the file lc-backup.service loads: with SPIRA_LC_STORE_PATH set,
 # this process ships the store off-box and an s3:// SPIRA_LC_BACKUP_URL cannot sign without it.
 EnvironmentFile=-%h/.config/lc-backup.env
-Type=simple
-# serve binds the socket itself once it can answer and removes it on stop, so while the store is
-# down or starting the path is absent and a caller is told at once.
+Type=notify
+NotifyAccess=main
+# serve binds the socket once it can answer, tells systemd READY then, and removes the socket on
+# stop: a restart returns only when the store answers, and while it starts the path is absent.
+# The bound covers a migration over the production store (118 s once); a start past it is a
+# defect in the migration, not a size to raise.
+TimeoutStartSec=600
 RuntimeDirectory=spira-lc
 RuntimeDirectoryMode=0700
 ExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc serve %t/spira-lc/sock
