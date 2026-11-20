@@ -5,7 +5,7 @@
 
 use serde_json::{json, Value};
 
-use crate::control::journal::{SWEEP_STEP, SweepCursor, EffectRow, PoisonRow, ScheduleRow, StateRow, Turn};
+use crate::control::journal::{SweepCursor, EffectRow, PoisonRow, ScheduleRow, StateRow, Turn};
 
 const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
@@ -644,11 +644,11 @@ mod tests {
     #[test]
     fn a_legacy_step_reads_at_most_one_page() {
         let (s, raw) = seeded(0);
-        for n in 0..(SWEEP_STEP + 5) {
+        for n in 0..(crate::control::journal::SWEEP_STEP + 5) {
             put_raw(&raw, &crate::control::keys::runtime("event", &[&format!("e{n:05}")]), json!({}));
         }
         let (out, next) = s.journal_sweep_step(Some(&"legacy:".parse().unwrap()), false, "t").unwrap();
-        assert_eq!(out.legacy_deleted, SWEEP_STEP);
+        assert_eq!(out.legacy_deleted, crate::control::journal::SWEEP_STEP);
         assert!(next.unwrap().to_string().starts_with("legacy:runtime/event/"), "the cursor stays inside event");
         assert_eq!(all_keys(&raw).iter().filter(|k| k.starts_with("runtime/event/")).count(), 5);
     }
