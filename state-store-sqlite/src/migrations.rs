@@ -311,30 +311,60 @@ mod cost {
         for i in 0..rounds {
             let id = format!("r-{i}");
             let owner = json!({ "ownerReferences": [format!("batches/spira/{id}")] });
-            rows.push((format!("batches/spira/{id}"), next(), obj(json!({}), json!({ "batch_id": id, "state": "OPEN", "opened_at": i }))));
-            rows.push((format!("deliveries/d-{i}"), next(), obj(owner.clone(), json!({ "bead_id": format!("d-{i}"), "state": "Batched" }))));
+            rows.push((
+                format!("batches/spira/{id}"),
+                next(),
+                obj(
+                    json!({}),
+                    json!({ "batch_id": id, "state": "OPEN", "opened_at": i }),
+                ),
+            ));
+            rows.push((
+                format!("deliveries/d-{i}"),
+                next(),
+                obj(
+                    owner.clone(),
+                    json!({ "bead_id": format!("d-{i}"), "state": "Batched" }),
+                ),
+            ));
             for id in [format!("r-{i}"), format!("d-{i}")] {
-            for seq in 0..4i64 {
-                let machine = if id.starts_with('r') { "batch" } else { "delivery" };
-                let event = ["PassStarted", "PassRed", "Eject", "PassGreen"][seq as usize];
-                rows.push((
+                for seq in 0..4i64 {
+                    let machine = if id.starts_with('r') {
+                        "batch"
+                    } else {
+                        "delivery"
+                    };
+                    let event = ["PassStarted", "PassRed", "Eject", "PassGreen"][seq as usize];
+                    rows.push((
                     format!("history/{id}/0/import/{seq}"),
                     1,
                     obj(json!({}), json!({ "seq": seq + 1, "audit": audit(machine, &id, event, "BATCHED", 10 + seq) })),
                 ));
-            }
-            for k in 0..4i64 {
-                let m = next();
-                rows.push((format!("history/{id}/{m}/r{k}"), m, obj(json!({}), json!({}))));
-                let then: Vec<Value> = (0..3)
-                    .map(|a| audit(if a == 2 { "delivery" } else { "batch" }, &id, ["PassStarted", "PassRed", "Eject"][a], "QUEUED", 100 + a as i64))
-                    .collect();
-                rows.push((
+                }
+                for k in 0..4i64 {
+                    let m = next();
+                    rows.push((
+                        format!("history/{id}/{m}/r{k}"),
+                        m,
+                        obj(json!({}), json!({})),
+                    ));
+                    let then: Vec<Value> = (0..3)
+                        .map(|a| {
+                            audit(
+                                if a == 2 { "delivery" } else { "batch" },
+                                &id,
+                                ["PassStarted", "PassRed", "Eject"][a],
+                                "QUEUED",
+                                100 + a as i64,
+                            )
+                        })
+                        .collect();
+                    rows.push((
                     format!("events/{m:020}"),
                     m,
                     obj(json!({}), json!({ "refused": false, "at": 1000 + m, "evidence": { "then": then, "else": [] } })),
                 ));
-            }
+                }
             }
             for prefix in ["telemetry", "intents"] {
                 rows.push((format!("{prefix}/{id}"), next(), obj(json!({ "ttl_secs": 60, "ownerReferences": [format!("batches/spira/{id}")] }), json!({ "state": "x" }))));
@@ -345,10 +375,17 @@ mod cost {
 
     fn store_at(version: usize, rows: &[(String, i64, Vec<u8>)]) -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        for sql in SCHEMA.iter().chain(MIGRATIONS[..version].iter().flat_map(|m| m.iter())) {
+        for sql in SCHEMA
+            .iter()
+            .chain(MIGRATIONS[..version].iter().flat_map(|m| m.iter()))
+        {
             exec(&conn, sql, []).unwrap();
         }
-        let tables: &[&str] = if version >= 1 { &["versions", "latest"] } else { &["versions"] };
+        let tables: &[&str] = if version >= 1 {
+            &["versions", "latest"]
+        } else {
+            &["versions"]
+        };
         for table in tables {
             let sql = format!(
                 "INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
@@ -370,16 +407,24 @@ mod cost {
         let before = conn.total_changes();
         let steps = Arc::new(AtomicU64::new(0));
         let counter = Arc::clone(&steps);
-        conn.progress_handler(1, Some(move || {
-            counter.fetch_add(1, Ordering::Relaxed);
-            false
-        }));
+        conn.progress_handler(
+            1,
+            Some(move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                false
+            }),
+        );
         let start = Instant::now();
         for sql in migration {
             exec(&conn, sql, []).unwrap();
         }
-        let writes = migration.iter().any(|sql| sql.starts_with("INSERT") || sql.starts_with("UPDATE"));
-        assert!(!writes || conn.total_changes() > before, "the generated store gave the migration no rows to rewrite");
+        let writes = migration
+            .iter()
+            .any(|sql| sql.starts_with("INSERT") || sql.starts_with("UPDATE"));
+        assert!(
+            !writes || conn.total_changes() > before,
+            "the generated store gave the migration no rows to rewrite"
+        );
         (steps.load(Ordering::Relaxed), start.elapsed().as_millis())
     }
 
@@ -397,7 +442,9 @@ mod cost {
                     "migration {k}: {s1} -> {s4} VM steps over {GROWTH}x the rows (x{ratio:.1}, bound x{BOUND})"
                 ));
             } else if !over && SHIPPED_SUPERLINEAR.contains(&k) {
-                red.push(format!("migration {k}: within bound (x{ratio:.1}); drop it from SHIPPED_SUPERLINEAR"));
+                red.push(format!(
+                    "migration {k}: within bound (x{ratio:.1}); drop it from SHIPPED_SUPERLINEAR"
+                ));
             }
         }
         assert!(red.is_empty(), "{}", red.join("\n"));
