@@ -2427,6 +2427,9 @@ fn attribute_in(
         Some(pass) => vm::DenySnapshot::from_pass(pass).ok_or_else(|| format!("{} holds no deny list of the round's pass; refusing to attribute with another", pass.display()))?,
         None => resolve_deny(&env_, now()).map_err(|e| e.msg)?,
     };
+    if let Some(pass) = o.after_pass.as_deref().filter(|p| !p.join(vm::ROUND_COMMITS_FILE).is_file()) {
+        eprintln!("batcher {}: {} holds no {}; the round's own commits are unknown to this attribution", repo.name, pass.display(), vm::ROUND_COMMITS_FILE);
+    }
     let own_commits = o.after_pass.as_deref().map(vm::round_commits_of_pass).unwrap_or_default();
     let mut runner = vm::VmRunner::new(&env_, &repo, &wt, &start_sha, &round, changed.clone())?
         .with_round_commits(own_commits.clone())
