@@ -561,18 +561,18 @@ fn one_rename_vocabulary_leaves_the_generated_book_clean_of_retired_terms_runboo
     let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
     let repo = law_repo();
     let p = repo.path();
-    let toc_text = "[[part]]\nnumber = 1\nname = \"Alpha\"\nslug = \"alpha\"\nscope = \"First scope.\"\nslugs = [\n  \"law-one\",\n  \"law-aeon-old\",\n]\n";
+    let toc_text = "[[part]]\nnumber = 1\nname = \"Alpha\"\nslug = \"alpha\"\nscope = \"First scope.\"\nslugs = [\n  \"law-one\",\n  \"law-aeon-old\",\n]\n"; // ffx-ok
     std::fs::write(p.join("law/toc.toml"), toc_text).unwrap();
-    let pointers_text = "version = 1\n\n[[retired]]\nslug = \"law-aeon-old\"\nreason = \"gone\"\nreplaced_by = \"law-one\"\non = \"2026-01-01\"\n";
+    let pointers_text = "version = 1\n\n[[retired]]\nslug = \"law-aeon-old\"\nreason = \"gone\"\nreplaced_by = \"law-one\"\non = \"2026-01-01\"\n"; // ffx-ok
     std::fs::write(p.join("law/pointers.toml"), pointers_text).unwrap();
     std::fs::create_dir_all(p.join("spira/statutes")).unwrap();
-    std::fs::write(p.join("spira/statutes/sop-aeon-x.txt"), "SYMPTOM: an aeon stalls").unwrap();
+    std::fs::write(p.join("spira/statutes/sop-aeon-x.txt"), "SYMPTOM: an aeon stalls").unwrap(); // ffx-ok
     testkit::git(p, &["add", "-A"]);
     testkit::git(p, &["commit", "-q", "-m", "stale runbook seed"]);
 
     let toc = parse_toc(toc_text).unwrap();
     let pointers = parse_pointers(pointers_text).unwrap();
-    let mut book: BTreeMap<String, String> = [("law-one", "An aeon acts."), ("sop-aeon-x", "SYMPTOM: an aeon stalls")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let mut book: BTreeMap<String, String> = [("law-one", "An aeon acts."), ("sop-aeon-x", "SYMPTOM: an aeon stalls")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(); // ffx-ok
     let mut renamed = Vec::new();
     for e in plan(&book.clone(), &toc, &pointers) {
         match e {

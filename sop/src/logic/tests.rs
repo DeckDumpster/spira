@@ -372,17 +372,17 @@ fn rename_record(replaced_by: Option<&str>) -> String {
 fn show_of_a_renamed_runbook_prints_the_rename_line_and_the_new_text() {
     let bd = FakeBd::default();
     bd.seed("sop-dwarf-x", GOOD);
-    bd.seed("retired-sop-aeon-x", &rename_record(Some("sop-dwarf-x")));
-    let r = show(&bd, "sop-aeon-x");
+    bd.seed("retired-sop-aeon-x", &rename_record(Some("sop-dwarf-x"))); // ffx-ok
+    let r = show(&bd, "sop-aeon-x"); // ffx-ok
     assert_eq!(r.code, 0);
-    assert_eq!(r.out, vec!["sop-aeon-x was renamed to sop-dwarf-x".to_string(), GOOD.trim_end().to_string()]);
+    assert_eq!(r.out, vec!["sop-aeon-x was renamed to sop-dwarf-x".to_string(), GOOD.trim_end().to_string()]); // ffx-ok
 }
 
 #[test]
 fn show_of_a_retired_runbook_with_no_successor_still_fails() {
     let bd = FakeBd::default();
-    bd.seed("retired-sop-aeon-x", &rename_record(None));
-    let r = show(&bd, "sop-aeon-x");
+    bd.seed("retired-sop-aeon-x", &rename_record(None)); // ffx-ok
+    let r = show(&bd, "sop-aeon-x"); // ffx-ok
     assert_eq!(r.code, 1);
     assert!(r.err.join("\n").contains("is retired"));
 }

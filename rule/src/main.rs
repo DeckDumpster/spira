@@ -1010,7 +1010,6 @@ fn retirement_record(from: &str, to: &str, before: &BTreeMap<String, serde_json:
     let (epoch, at) = sop::real::RealClock { tz: "UTC".into() }.now();
     let by = std::env::var("BEADS_ACTOR")
         .ok()
-        .or_else(|| std::env::var("SPIRA_DWARF").ok().map(|a| format!("dwarf-{a}")))
         .or_else(|| std::env::var("USER").ok())
         .unwrap_or_else(|| "unknown".to_string());
     let text = before.get(from).and_then(|v| v.as_str()).unwrap_or_default().to_string();

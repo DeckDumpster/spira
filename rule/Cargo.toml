@@ -30,7 +30,7 @@ path = "tests/vocab.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["bead/integration", "spira-config/integration", "spira-store/integration", "spira-lint/integration", "spira-otel/integration", "testkit/integration"]
+integration = ["bead/integration", "spira-config/integration", "spira-store/integration", "spira-lint/integration", "sop/integration", "spira-otel/integration", "testkit/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }
