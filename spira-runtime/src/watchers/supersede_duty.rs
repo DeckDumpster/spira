@@ -142,6 +142,13 @@ pub fn request_in(history: &str) -> Result<Option<String>, String> {
     Ok(by)
 }
 
+/// The successor a record's standing manual hold names when it is a supersede-request.
+pub fn request_of(manual_hold: &serde_json::Value) -> Option<String> {
+    (manual_hold["cause"] == "supersede-request")
+        .then(|| manual_hold["detail"].as_str().unwrap_or("").to_string())
+        .filter(|d| !d.is_empty())
+}
+
 fn adjudicate(carry: &Carry, id: &str, succ: &str, own: &str, st: &str) -> Vec<Out> {
     let mut out = vec![];
     if !carry.failed.contains(id) {

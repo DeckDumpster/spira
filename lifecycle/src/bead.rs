@@ -212,6 +212,18 @@ pub struct LifecycleRow {
     /// Entries into WORKING.
     #[serde(default)]
     pub sessions: u32,
+    /// The newest applied manual `Hold`'s raise; cleared by a manual `Unhold`.
+    #[serde(default)]
+    pub manual_hold: Option<ManualHold>,
+}
+
+/// When and why the standing manual hold was raised.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ManualHold {
+    pub at: Option<i64>,
+    pub cause: HoldCause,
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 impl LifecycleRow {
@@ -241,6 +253,7 @@ impl LifecycleRow {
             claimed_from: None,
             worked_s: 0,
             sessions: 0,
+            manual_hold: None,
         }
     }
 }
@@ -630,6 +643,9 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
             }
             let mut new = row.clone();
             new.holds.insert(*kind);
+            if *kind == HoldKind::Manual {
+                new.manual_hold = Some(ManualHold { at: ev.at, cause: *cause, detail: detail.clone() });
+            }
             new.reason = Some(detail.clone().unwrap_or_else(|| cause.as_str().to_string()));
             new.version += 1;
             Outcome::applied(new)
@@ -717,6 +733,9 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
             }
             let mut new = row.clone();
             new.holds.remove(kind);
+            if *kind == HoldKind::Manual {
+                new.manual_hold = None;
+            }
             if gate_hold {
                 new.reason = Some(break_glass.stamp(&ev.actor, row.tip.as_deref().unwrap_or_default()));
             }
@@ -2670,6 +2689,22 @@ mod tests {
         assert!(matches!(old, BeadEventKind::Hold { kind: HoldKind::Manual, .. }));
         assert_eq!(HoldKind::from_str("manual"), Some(HoldKind::Manual));
         assert_eq!(HoldKind::from_str("operator"), None);
+    }
+
+    #[test]
+    fn a_manual_hold_records_its_raise_and_a_manual_unhold_clears_it() {
+        let hold = |cause, detail: &str, at: i64| BeadEvent { at: Some(at), ..ev(BeadState::Ready, at as u64 / 10 - 1, BeadEventKind::Hold { kind: HoldKind::Manual, cause, detail: Some(detail.into()) }) };
+        let first = apply(&row(BeadState::Ready), &hold(HoldCause::ManualHold, "parked by hand", 10));
+        assert_eq!(first.row.manual_hold, Some(ManualHold { at: Some(10), cause: HoldCause::ManualHold, detail: Some("parked by hand".into()) }));
+        let second = apply(&first.row, &hold(HoldCause::SupersedeRequest, "sp-9999", 20));
+        assert_eq!(second.row.manual_hold, Some(ManualHold { at: Some(20), cause: HoldCause::SupersedeRequest, detail: Some("sp-9999".into()) }));
+        let other = |kind, cause| apply(&second.row, &ev(BeadState::Ready, 2, BeadEventKind::Hold { kind, cause, detail: None }));
+        for (kind, cause) in [(HoldKind::Wait, HoldCause::UnlandedBlocker), (HoldKind::Poison, HoldCause::AttemptsExhausted), (HoldKind::Ask, HoldCause::OperatorQuestion)] {
+            assert_eq!(other(kind, cause).row.manual_hold, second.row.manual_hold, "{kind:?}");
+        }
+        let off = apply(&second.row, &ev(BeadState::Ready, 2, BeadEventKind::Unhold { kind: HoldKind::Manual, break_glass: Default::default() }));
+        assert!(off.applied);
+        assert_eq!(off.row.manual_hold, None);
     }
 
     #[test]

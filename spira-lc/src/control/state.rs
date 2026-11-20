@@ -131,6 +131,7 @@ fn column(rec: &LifecycleRecord, r: Option<&Readiness>, view: &Value, name: &str
         "repo" => text(rec.repo.as_deref()),
         "claim" => rec.claim.as_ref().map_or(Value::Null, |c| serde_json::to_value(c).unwrap_or(Value::Null)),
         "carried_by" => text(rec.carried_by.as_deref()),
+        "manual_hold" => row.manual_hold.as_ref().map_or(Value::Null, |m| serde_json::to_value(m).unwrap_or(Value::Null)),
         "claim_view" => view.clone(),
         "blocked_by" => Value::Array(
             r.map(|r| r.blocked_by.iter().cloned().map(Value::String).collect())
@@ -166,6 +167,7 @@ const SHOWN: &[&str] = &[
     "claim_view",
     "claim",
     "carried_by",
+    "manual_hold",
 ];
 
 const LISTED: &[&str] = &[
@@ -195,6 +197,7 @@ const LISTED: &[&str] = &[
     "claim_view",
     "claim",
     "carried_by",
+    "manual_hold",
 ];
 
 /// A record as `list` prints it.
