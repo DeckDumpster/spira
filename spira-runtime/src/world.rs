@@ -493,24 +493,35 @@ impl World {
         out
     }
 
-    /// Mail files naming `id` as their work bead, in mailbox order: every `new/` then every `cur/`.
-    fn mails_for(&self, id: &str) -> Vec<String> {
+    /// Per wanted bead, the mail files naming it as work bead, in mailbox order: every `new/` then
+    /// every `cur/`. Each file is read once, however many beads are wanted.
+    fn mails_by_bead(&self, ids: &BTreeSet<String>, read: &dyn Fn(&Path) -> Option<String>) -> BTreeMap<String, Vec<String>> {
         let mut boxes: Vec<PathBuf> = fs::read_dir(&self.mail).into_iter().flatten().flatten().map(|e| e.path()).collect();
         boxes.sort();
-        let want = format!("X-Spira-Work-Bead: {id}");
-        let mut hits = vec![];
+        let wanted: Vec<(&String, String)> = ids.iter().map(|id| (id, format!("X-Spira-Work-Bead: {id}"))).collect();
+        let mut hits: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for sub in ["new", "cur"] {
             for b in &boxes {
                 let mut files: Vec<PathBuf> = fs::read_dir(b.join(sub)).into_iter().flatten().flatten().map(|e| e.path()).collect();
                 files.sort();
-                hits.extend(files.into_iter().filter_map(|f| fs::read_to_string(f).ok()).filter(|text| text.lines().any(|l| l == want)));
+                for text in files.iter().filter_map(|f| read(f)) {
+                    for (id, want) in &wanted {
+                        if text.lines().any(|l| l == want) {
+                            hits.entry((*id).clone()).or_default().push(text.clone());
+                        }
+                    }
+                }
             }
         }
         hits
     }
 
-    fn hold_line(&self, id: &str) -> String {
-        if let Some(text) = self.mails_for(id).pop() {
+    fn read_mail(p: &Path) -> Option<String> {
+        fs::read_to_string(p).ok()
+    }
+
+    fn hold_line(&self, id: &str, last_mail: Option<&String>) -> String {
+        if let Some(text) = last_mail {
             let header = |k: &str| text.lines().take_while(|l| !l.is_empty()).find_map(|l| l.strip_prefix(k)).unwrap_or("").to_string();
             return format!("NEW ASK HOLD {id}: {} | default: {} | message-id: {}", header("Subject: "), header("X-Spira-Default: "), header("Message-ID: "));
         }
@@ -571,15 +582,26 @@ impl World {
         let listed = self.open_asks_json()?;
         let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("ask list unparsed: {e}"))?;
         let open = rows.iter().filter_map(|r| Some((r["id"].as_str()?.to_string(), r["title"].as_str()?.split_whitespace().collect::<Vec<_>>().join(" ")))).collect();
-        let held = self.held_asks().unwrap_or_default().into_iter().filter(|id| !seen.contains(id)).map(|id| { let line = self.hold_line(&id); (id, line) }).collect();
+        let unseen: Vec<String> = self.held_asks().unwrap_or_default().into_iter().filter(|id| !seen.contains(id)).collect();
+        let held = self.hold_lines(unseen, &Self::read_mail);
         serde_json::to_string(&asks::Snapshot { open, held }).map_err(|e| e.to_string())
+    }
+
+    fn hold_lines(&self, ids: Vec<String>, read: &dyn Fn(&Path) -> Option<String>) -> Vec<(String, String)> {
+        let mails = self.mails_by_bead(&ids.iter().cloned().collect(), read);
+        ids.into_iter().map(|id| { let line = self.hold_line(&id, mails.get(&id).and_then(|m| m.last())); (id, line) }).collect()
     }
 
     /// Every open ask's JSON, then the mail of every held ask.
     fn asks_text(&self) -> Result<String, String> {
         let listed = self.open_asks_json()?;
-        let mails = self.held_asks()?.into_iter().flat_map(|id| self.mails_for(&id));
-        Ok(std::iter::once(listed).chain(mails).collect::<Vec<_>>().join("\n"))
+        Ok(self.ask_text_from(listed, self.held_asks()?, &Self::read_mail))
+    }
+
+    fn ask_text_from(&self, listed: String, held: Vec<String>, read: &dyn Fn(&Path) -> Option<String>) -> String {
+        let mails = self.mails_by_bead(&held.iter().cloned().collect(), read);
+        let joined = held.iter().flat_map(|id| mails.get(id).cloned().unwrap_or_default());
+        std::iter::once(listed).chain(joined).collect::<Vec<_>>().join("\n")
     }
 
     pub fn design_asks_snapshot(&self) -> Result<String, String> {
@@ -1919,5 +1941,88 @@ mod cr_snapshot_tests {
         let world = World { run_dir: t.path().into(), ..World::default() };
         assert!(world.cr_snapshot(&forge_at(api), "").unwrap_err().contains("SPIRA_CR_REPO_OWNER"));
         assert!(seen.join().unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod ask_mail_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn mail(bead: &str, subject: &str, default: &str, id: &str) -> String {
+        format!("Subject: {subject}\nX-Spira-Default: {default}\nMessage-ID: {id}\nX-Spira-Work-Bead: {bead}\n\nbody\n")
+    }
+
+    fn seed(root: &Path) {
+        for b in ["a", "b", "c"] {
+            for sub in ["new", "cur"] {
+                fs::create_dir_all(root.join(b).join(sub)).unwrap();
+            }
+        }
+        let filler = |b: &str, sub: &str, n: usize| for i in 0..n {
+            fs::write(root.join(b).join(sub).join(format!("{i:03}")), "Subject: noise\n\nbody\n").unwrap();
+        };
+        filler("a", "new", 48);
+        filler("a", "cur", 50);
+        filler("b", "new", 50);
+        filler("b", "cur", 50);
+        filler("c", "new", 51);
+        filler("c", "cur", 47);
+        fs::write(root.join("a/cur/zz1"), mail("sp-one", "first", "d1", "<m1>")).unwrap();
+        fs::write(root.join("b/new/zz2"), mail("sp-one", "second", "d2", "<m2>")).unwrap();
+        fs::write(root.join("c/new/zz3"), mail("sp-two", "other", "d3", "<m3>")).unwrap();
+        fs::write(root.join("c/cur/zz4"), mail("sp-three", "third", "d4", "<m4>")).unwrap();
+    }
+
+    fn world(root: &Path) -> World {
+        World { mail: root.into(), lc_socket: root.join("absent.sock"), ..World::default() }
+    }
+
+    const PINNED: [&str; 4] = [
+        "NEW ASK HOLD sp-one: first | default: d1 | message-id: <m1>",
+        "NEW ASK HOLD sp-two: other | default: d3 | message-id: <m3>",
+        "NEW ASK HOLD sp-nomail: <no text recorded> | NO MAIL for the question; answer with spira-lc reply sp-nomail seq:?",
+        "NEW ASK HOLD sp-three: third | default: d4 | message-id: <m4>",
+    ];
+
+    #[test]
+    fn hold_lines_name_the_last_mail_and_a_held_ask_without_mail_gets_the_no_mail_line() {
+        let t = testkit::TempDir::new("ask-mail-lines");
+        seed(t.path());
+        let w = world(t.path());
+        let ids = ["sp-one", "sp-two", "sp-nomail", "sp-three"].map(String::from).to_vec();
+        let got: Vec<String> = w.hold_lines(ids, &World::read_mail).into_iter().map(|(_, l)| l).collect();
+        assert_eq!(got, PINNED);
+    }
+
+    #[test]
+    fn the_asks_text_joins_each_held_asks_mails_in_held_order_then_mailbox_order() {
+        let t = testkit::TempDir::new("ask-mail-text");
+        seed(t.path());
+        let w = world(t.path());
+        let got = w.ask_text_from("[]".into(), ["sp-three", "sp-one"].map(String::from).to_vec(), &World::read_mail);
+        let want = ["[]".to_string(), mail("sp-three", "third", "d4", "<m4>"), mail("sp-one", "second", "d2", "<m2>"), mail("sp-one", "first", "d1", "<m1>")];
+        assert_eq!(got, want.join("\n"));
+    }
+
+    #[test]
+    fn mails_by_bead_reads_each_file_once_however_many_beads_are_held() {
+        let t = testkit::TempDir::new("ask-mail-reads");
+        seed(t.path());
+        let w = world(t.path());
+        let reads = Cell::new(0usize);
+        let counting = |p: &Path| { reads.set(reads.get() + 1); fs::read_to_string(p).ok() };
+        let ids: BTreeSet<String> = ["sp-one", "sp-two", "sp-three"].map(String::from).into();
+        let got = w.mails_by_bead(&ids, &counting);
+        assert_eq!(reads.get(), 300);
+        assert_eq!(got["sp-one"], [mail("sp-one", "second", "d2", "<m2>"), mail("sp-one", "first", "d1", "<m1>")]);
+        assert_eq!(got["sp-two"], [mail("sp-two", "other", "d3", "<m3>")]);
+        assert_eq!(got["sp-three"], [mail("sp-three", "third", "d4", "<m4>")]);
+
+        reads.set(0);
+        for id in &ids {
+            w.mails_by_bead(&[id.clone()].into(), &counting);
+        }
+        assert_eq!(reads.get(), 900, "one call per bead, as the pre-fix mails_for was, rereads every file");
     }
 }
