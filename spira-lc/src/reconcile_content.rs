@@ -143,7 +143,10 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     };
     let mut closes = Vec::new();
     let terminal_ids: Vec<String> = recs.iter().filter(|(id, (st, _))| terminal(st) && in_scope(id)).map(|(id, _)| id.clone()).collect();
-    match items_of(m, &terminal_ids, &["--open"]) {
+    let by_id = scope.is_none() && !only.is_empty();
+    let named_open = if by_id { items_of(m, &only, &["--open"]) } else { Ok(Vec::new()) };
+    let work_open = if by_id { named_open.clone().map(|rows| rows.into_iter().filter(|r| terminal_ids.contains(&s(r, "id"))).collect()) } else { items_of(m, &terminal_ids, &["--open"]) };
+    match work_open {
         Ok(open) => {
             // A no-record type with a record left from before (an epic, an ask's decision bead)
             // follows its own owner below, never that record.
@@ -159,7 +162,7 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     // it never holds them back.
     let mut unread = Vec::new();
     if scope.is_none() {
-        match closed_asks(m, &only) {
+        match closed_asks(m, &only, named_open.as_deref().ok().filter(|_| by_id)) {
             Ok(c) => closes.extend(c),
             Err(e) => unread.push(e),
         }
@@ -169,7 +172,7 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
         None if !only.is_empty() => Ok(only.clone()),
         None => plan(m, &["items", "--type", "epic", "--open"]).map(|i| i.iter().map(|r| s(r, "id")).collect()),
     };
-    match epics.and_then(|e| complete_epics(m, &recs, scoped, &e)) {
+    match epics.and_then(|e| complete_epics(m, &recs, scoped, &e, named_open.as_deref().ok().filter(|_| by_id))) {
         Ok(c) => closes.extend(c),
         Err(e) => unread.push(e),
     }
@@ -179,9 +182,17 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
         }
     }
     let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
+    let mut owed = Vec::new();
+    let owe = apply && crate::settle::has_settler();
     for c in closes {
         if !apply {
             lines.push(format!("would close {} ({})", c.id, c.why));
+            done += 1;
+            continue;
+        }
+        if owe {
+            lines.push(format!("owed {} ({})", c.id, c.why));
+            owed.push((c.id, c.reason));
             done += 1;
             continue;
         }
@@ -199,8 +210,9 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     if let Some(seq) = through {
         lines.push(format!("through-seq: {seq}"));
     }
-    lines.push(format!("reconcile-content: {done} {}", if apply { "closed" } else { "would close (dry run; --apply to write)" }));
+    lines.push(format!("reconcile-content: {done} {}", if owe { "owed" } else if apply { "closed" } else { "would close (dry run; --apply to write)" }));
     let mut a = Answer::out(code, lines.join("\n"));
+    a.owed = owed.into();
     if !unread.is_empty() {
         a.code = CANNOT_TELL;
         a.stderr = unread.iter().map(|e| format!("spira-lc reconcile-content: {e}\n")).collect();
@@ -210,21 +222,40 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
 
 /// Every ask the control plane holds closed whose decision bead bd still holds open (among
 /// `only` when it names any).
-fn closed_asks(m: &mut dyn Machine, only: &[String]) -> Result<Vec<Close>, String> {
-    let (rc, out) = m.call(&["list-asks".into(), "--state".into(), "ALL".into()]);
-    if rc != 0 {
-        return Err(format!("list-asks failed: {}", out.trim()));
+fn closed_asks(m: &mut dyn Machine, only: &[String], open: Option<&[Value]>) -> Result<Vec<Close>, String> {
+    let mut closed: BTreeMap<String, (String, String)> = BTreeMap::new();
+    if only.is_empty() {
+        let (rc, out) = m.call(&["list-asks".into(), "--state".into(), "ALL".into()]);
+        if rc != 0 {
+            return Err(format!("list-asks failed: {}", out.trim()));
+        }
+        let Ok(Value::Array(asks)) = serde_json::from_str::<Value>(out.trim()) else {
+            return Err("list-asks is not a JSON array".into());
+        };
+        closed.extend(asks.iter().filter(|a| s(a, "state") != "OPEN").map(|a| (s(a, "ask_id"), (s(a, "state"), s(a, "quote")))));
+    } else {
+        for id in only {
+            let (rc, out) = m.call(&["show-ask".into(), id.clone()]);
+            match rc {
+                0 => {}
+                1 => continue,
+                _ => return Err(format!("show-ask failed: {}", out.trim())),
+            }
+            let ask: Value = serde_json::from_str(out.trim()).map_err(|e| format!("show-ask: not JSON: {e}"))?;
+            if s(&ask, "state") != "OPEN" {
+                closed.insert(id.clone(), (s(&ask, "state"), s(&ask, "quote")));
+            }
+        }
     }
-    let Ok(Value::Array(asks)) = serde_json::from_str::<Value>(out.trim()) else {
-        return Err("list-asks is not a JSON array".into());
-    };
-    let closed: BTreeMap<String, (String, String)> = asks
-        .iter()
-        .filter(|a| s(a, "state") != "OPEN" && (only.is_empty() || only.iter().any(|i| *i == s(a, "ask_id"))))
-        .map(|a| (s(a, "ask_id"), (s(a, "state"), s(a, "quote"))))
-        .collect();
     let ids: Vec<String> = closed.keys().cloned().collect();
-    let open = items_of(m, &ids, &["--open"])?;
+    let fetched;
+    let open = match open {
+        Some(rows) => rows,
+        None => {
+            fetched = items_of(m, &ids, &["--open"])?;
+            &fetched
+        }
+    };
     Ok(open
         .iter()
         .map(|r| s(r, "id"))
@@ -256,8 +287,12 @@ fn rowless_closed(row: &Value) -> bool {
 
 /// Each open epic among `ids` with at least one child and every child terminal: a child is
 /// terminal when its record is, or, with no record, when bd holds it closed.
-fn complete_epics(m: &mut dyn Machine, recs: &BTreeMap<String, (String, String)>, scoped: bool, ids: &[String]) -> Result<Vec<Close>, String> {
-    let epics: Vec<String> = items_of(m, ids, &["--open"])?.iter().filter(|r| s(r, "issue_type") == "epic").map(|r| s(r, "id")).collect();
+fn complete_epics(m: &mut dyn Machine, recs: &BTreeMap<String, (String, String)>, scoped: bool, ids: &[String], open: Option<&[Value]>) -> Result<Vec<Close>, String> {
+    let rows = match open {
+        Some(rows) => rows.to_vec(),
+        None => items_of(m, ids, &["--open"])?,
+    };
+    let epics: Vec<String> = rows.iter().filter(|r| s(r, "issue_type") == "epic").map(|r| s(r, "id")).collect();
     if epics.is_empty() {
         return Ok(Vec::new());
     }
@@ -378,7 +413,7 @@ pub fn reconcile_asks(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> 
         return usage(&format!("reconcile-asks [--apply] [<ask-id>...] (unknown flag {bad})"));
     }
     let only: Vec<String> = args.iter().filter(|a| !a.starts_with('-')).cloned().collect();
-    let closes = match closed_asks(m, &only) {
+    let closes = match closed_asks(m, &only, None) {
         Ok(c) => c,
         Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc reconcile-asks: {e}\n"), ..Default::default() },
     };
