@@ -64,10 +64,11 @@ pub struct Row {
 }
 
 /// The call scheduler's judgement of task room: since when a slot has been open, and when it last judged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Room {
     pub since_ms: Option<u64>,
     pub at_ms: u64,
+    pub limit: Option<sentinel::plan::TaskLimit>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -400,7 +401,7 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, claimed: &[
     out.into_iter().map(|(k, l)| Suspect { key: format!("SUSPECT {k}"), line: format!("SUSPECT {l}") }).collect()
 }
 
-/// The key tail and line for a claimable P0, express or REWORK bead that has waited past the threshold while the scheduler's fresh judgement shows no open slot, naming the WORKING beads that hold the pool.
+/// The key tail and line for a claimable P0, express or REWORK bead that has waited past the threshold while the scheduler's fresh judgement shows no open slot, giving the limit the scheduler judged full and the WORKING beads.
 fn pool_wait(p: &BeadSweep, snap: &Snapshot, content: &BTreeMap<&str, &Bead>, r: &Row, age: i64, room: Option<&Room>, now: f64) -> Option<(String, String)> {
     let priority = |id: &str| content.get(id).map_or("P?".to_string(), |b| format!("P{}", b.priority));
     let express = if r.express { " express" } else { "" };
@@ -411,7 +412,12 @@ fn pool_wait(p: &BeadSweep, snap: &Snapshot, content: &BTreeMap<&str, &Bead>, r:
     }
     let head = format!("{}{express} WAITING", priority(&r.id));
     let holders: Vec<String> = snap.rows.iter().filter(|h| h.state == "WORKING").map(|h| format!("{} {}", h.id, priority(&h.id))).collect();
-    Some((format!("{head} for a builder slot: pool full"), format!("{head} over {age}m for a builder slot: pool full, held by {}", holders.join(", "))))
+    let judged = room.map_or(String::new(), |x| iso8601(x.at_ms / 1000));
+    let limit = match room.and_then(|x| x.limit.as_ref()) {
+        Some(l) => format!("{} {} of {} held, judged {judged}", l.name, l.held, l.limit),
+        None => format!("limit unknown, judged {judged}"),
+    };
+    Some((format!("{head} for a builder slot: pool full"), format!("{head} over {age}m for a builder slot: pool full ({limit}), working: {}", holders.join(", "))))
 }
 
 /// The row for a REWORK bead past the threshold, or none while the claim rule or a full scheduler explains the wait.
@@ -471,7 +477,7 @@ impl BeadSweep {
     fn finish(&self, ctx: &Ctx, view: &Projection, ev: &Event, snap: &Snapshot, repaired: &Repaired) -> Vec<Command> {
         let now = ev.at as f64 / 1000.0;
         let called: crate::tasks::a::sentinel_call::Carry = crate::tasks::a::kit::carry(&crate::tasks::a::sentinel_call::SHAPE, view);
-        let room = called.room_at_ms.map(|at_ms| Room { since_ms: called.room_since_ms, at_ms });
+        let room = called.room_at_ms.map(|at_ms| Room { since_ms: called.room_since_ms, at_ms, limit: called.task_limit.clone() });
         let (next, say) = decide(self, &Self::carry(view, &ev.stream), snap, room.as_ref(), repaired, now);
         ctx.event().set("bead-sweep.said", say.len() as u64);
         let mut cmds = vec![Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default()))];
@@ -559,7 +565,9 @@ mod tests {
 
     const ROW: &str = "SUSPECT sp-r REWORK UNCLAIMED REWORK over 5m (suites-failed)";
 
-    const FULL: Option<Room> = Some(Room { since_ms: None, at_ms: 3_600_000 });
+    fn full() -> Option<Room> {
+        Some(Room { since_ms: None, at_ms: 3_600_000, limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 4, held: 4 }) })
+    }
 
     fn pool(waiting: Row, priority: i64) -> Snapshot {
         let mut rows = vec![Row { since: Some(NOW - 1200.0), claim: Some("claimable".into()), ..waiting }];
@@ -575,33 +583,48 @@ mod tests {
         Row { id: id.into(), state: "READY".into(), ..Row::default() }
     }
 
-    const HOLDERS: &str = "held by sp-w0 P1, sp-w1 P2, sp-w2 P2, sp-w3 P1, sp-w4 P2";
+    const HOLDERS: &str = "(pool 4 of 4 held, judged 1970-01-01T01:00:00Z), working: sp-w0 P1, sp-w1 P2, sp-w2 P2, sp-w3 P1, sp-w4 P2";
 
     #[test]
-    fn a_p0_ready_bead_behind_a_full_pool_is_announced_with_its_holders() {
-        assert_eq!(said(&pool(ready("sp-p"), 0), FULL), [format!("SUSPECT sp-p READY P0 WAITING over 20m for a builder slot: pool full, {HOLDERS}")]);
+    fn a_p0_ready_bead_behind_a_full_pool_is_announced_with_the_working_beads() {
+        assert_eq!(said(&pool(ready("sp-p"), 0), full()), [format!("SUSPECT sp-p READY P0 WAITING over 20m for a builder slot: pool full {HOLDERS}")]);
     }
 
     #[test]
-    fn an_express_rework_bead_behind_a_full_pool_is_announced_with_its_holders() {
+    fn an_express_rework_bead_behind_a_full_pool_is_announced_with_the_working_beads() {
         let row = Row { state: "REWORK".into(), express: true, ..ready("sp-x") };
-        assert_eq!(said(&pool(row, 2), FULL), [format!("SUSPECT sp-x REWORK P2 express WAITING over 20m for a builder slot: pool full, {HOLDERS}")]);
+        assert_eq!(said(&pool(row, 2), full()), [format!("SUSPECT sp-x REWORK P2 express WAITING over 20m for a builder slot: pool full {HOLDERS}")]);
     }
 
     #[test]
     fn a_plain_rework_bead_behind_a_full_pool_is_announced() {
         let row = Row { state: "REWORK".into(), ..ready("sp-r") };
-        assert_eq!(said(&pool(row, 1), FULL), [format!("SUSPECT sp-r REWORK P1 WAITING over 20m for a builder slot: pool full, {HOLDERS}")]);
+        assert_eq!(said(&pool(row, 1), full()), [format!("SUSPECT sp-r REWORK P1 WAITING over 20m for a builder slot: pool full {HOLDERS}")]);
+    }
+
+    #[test]
+    fn a_pool_wait_without_a_judged_limit_says_the_limit_is_unknown() {
+        let room = Some(Room { since_ms: None, at_ms: 3_600_000, limit: None });
+        let line = said(&pool(ready("sp-p"), 0), room).remove(0);
+        assert!(line.contains("limit unknown, judged 1970-01-01T01:00:00Z") && !line.contains("held by"), "{line}");
+    }
+
+    #[test]
+    fn a_pool_wait_names_the_limit_the_scheduler_judged_not_the_holders() {
+        let room = Some(Room { since_ms: None, at_ms: 3_600_000, limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 4, held: 4 }) });
+        let row = Row { state: "REWORK".into(), ..ready("sp-r") };
+        let line = said(&pool(row, 1), room).remove(0);
+        assert!(line.contains("pool 4 of 4 held") && line.contains("working: sp-w0 P1, ") && !line.contains("held by"), "{line}");
     }
 
     #[test]
     fn a_change_of_holders_does_not_announce_the_wait_again() {
         let p = sweep();
         let mut snap = pool(ready("sp-p"), 0);
-        let (c, _) = decide(&p, &Carry::default(), &snap, FULL.as_ref(), &Repaired::default(), NOW);
+        let (c, _) = decide(&p, &Carry::default(), &snap, full().as_ref(), &Repaired::default(), NOW);
         snap.rows[1].id = "sp-new".into();
         snap.content[1].id = "sp-new".into();
-        assert!(decide(&p, &c, &snap, FULL.as_ref(), &Repaired::default(), NOW).1.is_empty());
+        assert!(decide(&p, &c, &snap, full().as_ref(), &Repaired::default(), NOW).1.is_empty());
     }
 
     #[test]
@@ -609,63 +632,63 @@ mod tests {
         for verdict in [Some("cannot-tell"), Some("snoozed"), None] {
             let mut snap = pool(ready("sp-p"), 0);
             snap.rows[0].claim = verdict.map(str::to_string);
-            assert!(!said(&snap, FULL).iter().any(|l| l.contains("WAITING")), "{verdict:?}");
+            assert!(!said(&snap, full()).iter().any(|l| l.contains("WAITING")), "{verdict:?}");
         }
     }
 
     #[test]
     fn a_stale_room_judgement_is_not_read_as_a_full_pool() {
-        let stale = Some(Room { since_ms: None, at_ms: 0 });
+        let stale = Some(Room { since_ms: None, at_ms: 0, limit: None });
         let lines = said(&pool(ready("sp-p"), 0), stale);
         assert!(!lines.iter().any(|l| l.contains("WAITING")), "{lines:?}");
     }
 
     #[test]
     fn a_p1_ready_bead_behind_a_full_pool_raises_nothing() {
-        assert!(said(&pool(ready("sp-p"), 1), FULL).is_empty());
+        assert!(said(&pool(ready("sp-p"), 1), full()).is_empty());
     }
 
     #[test]
     fn the_pool_wait_is_announced_once_and_again_after_it_clears() {
         let p = sweep();
         let snap = pool(ready("sp-p"), 0);
-        let (c, say) = decide(&p, &Carry::default(), &snap, FULL.as_ref(), &Repaired::default(), NOW);
+        let (c, say) = decide(&p, &Carry::default(), &snap, full().as_ref(), &Repaired::default(), NOW);
         assert_eq!(say.len(), 1);
-        let (c, say) = decide(&p, &c, &snap, FULL.as_ref(), &Repaired::default(), NOW + 60.0);
+        let (c, say) = decide(&p, &c, &snap, full().as_ref(), &Repaired::default(), NOW + 60.0);
         assert!(say.is_empty(), "{say:?}");
-        let open = Some(Room { since_ms: Some(3_600_000), at_ms: 3_660_000 });
+        let open = Some(Room { since_ms: Some(3_600_000), at_ms: 3_660_000, limit: None });
         let (c, say) = decide(&p, &c, &snap, open.as_ref(), &Repaired::default(), NOW + 120.0);
         assert!(say.is_empty() && c.seen.is_empty(), "{say:?}");
-        let (_, say) = decide(&p, &c, &snap, Some(Room { since_ms: None, at_ms: 3_720_000 }).as_ref(), &Repaired::default(), NOW + 180.0);
+        let (_, say) = decide(&p, &c, &snap, Some(Room { since_ms: None, at_ms: 3_720_000, limit: None }).as_ref(), &Repaired::default(), NOW + 180.0);
         assert_eq!(say.len(), 1);
     }
 
     #[test]
     fn a_claimable_rework_bead_with_a_slot_free_for_the_threshold_raises_the_row() {
-        assert_eq!(said(&rework(Some("claimable")), Some(Room { since_ms: Some(0), at_ms: 3_600_000 })), [ROW]);
+        assert_eq!(said(&rework(Some("claimable")), Some(Room { since_ms: Some(0), at_ms: 3_600_000, limit: None })), [ROW]);
     }
 
     #[test]
     fn a_slot_freed_two_minutes_ago_raises_no_row() {
-        assert!(said(&rework(Some("claimable")), Some(Room { since_ms: Some(3_480_000), at_ms: 3_600_000 })).is_empty());
+        assert!(said(&rework(Some("claimable")), Some(Room { since_ms: Some(3_480_000), at_ms: 3_600_000, limit: None })).is_empty());
     }
 
     #[test]
     fn a_verdict_other_than_claimable_raises_no_row() {
-        assert!(said(&rework(Some("snoozed")), Some(Room { since_ms: Some(0), at_ms: 3_600_000 })).is_empty());
+        assert!(said(&rework(Some("snoozed")), Some(Room { since_ms: Some(0), at_ms: 3_600_000, limit: None })).is_empty());
     }
 
     #[test]
     fn an_unjudged_slot_raises_a_row_that_says_so() {
         let say = said(&rework(Some("claimable")), None);
         assert!(say.len() == 1 && say[0].contains("slot unknown: the scheduler has not judged"), "{say:?}");
-        let old = said(&rework(Some("claimable")), Some(Room { since_ms: Some(0), at_ms: 60_000 }));
+        let old = said(&rework(Some("claimable")), Some(Room { since_ms: Some(0), at_ms: 60_000, limit: None }));
         assert!(old.len() == 1 && old[0].contains("slot unknown: judged at 1970-01-01T00:01:00Z"), "{old:?}");
     }
 
     #[test]
     fn a_missing_verdict_raises_a_row_that_says_so() {
-        let say = said(&rework(None), Some(Room { since_ms: None, at_ms: 3_600_000 }));
+        let say = said(&rework(None), Some(Room { since_ms: None, at_ms: 3_600_000, limit: None }));
         assert!(say.len() == 1 && say[0].contains("claimability unknown: no verdict"), "{say:?}");
     }
 
