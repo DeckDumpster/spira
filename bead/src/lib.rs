@@ -318,15 +318,17 @@ const HARNESS_SUBMIT_NOTE: &str = "Submitted: work committed on branch";
 pub const SKULD_NEEDS_DRAFT: &str = "a builder bead the Concierge files needs --drafted-by <request-id>: the id of a Skuld request whose note holds this exact text. Get a draft or review first: bead.sh file \"<title>\" --for skuld --repo <r> --body-file <the intent, or your draft for review>, then file the note's text with --drafted-by <that id>";
 
 /// Whether the Skuld fence binds a filing: a Concierge's own, unless its parent process is
-/// `rule` (argv[0] basename, from `/proc/<ppid>/cmdline`), whose landing bead is plumbing.
+/// `rule` (argv[0] basename `rule` or `rule.sh`, from `/proc/<ppid>/cmdline`), whose landing
+/// bead is plumbing.
 pub fn skuld_fence_binds(concierge: bool, requires_skuld: bool, parent_cmdline: &[u8]) -> bool {
     concierge && requires_skuld && !parent_is_rule(parent_cmdline)
 }
 
-/// Whether NUL-separated `cmdline` bytes name a program whose basename is exactly `rule`.
+/// Whether NUL-separated `cmdline` bytes name a program whose basename is exactly `rule` or
+/// `rule.sh`: the shim runs `exec -a "$0"`, so the process's argv[0] is the shim's path.
 pub fn parent_is_rule(cmdline: &[u8]) -> bool {
     let argv0 = cmdline.split(|b| *b == 0).next().unwrap_or(&[]);
-    argv0.rsplit(|b| *b == b'/').next() == Some(b"rule".as_slice())
+    matches!(argv0.rsplit(|b| *b == b'/').next(), Some(b"rule") | Some(b"rule.sh"))
 }
 
 /// `Ok` when `notes` holds `### Draft: <title>`, a blank line, then `body` trimmed and verbatim
@@ -931,8 +933,11 @@ mod tests {
     fn the_skuld_fence_spares_only_a_parent_named_rule() {
         assert!(!skuld_fence_binds(true, true, b"rule\0enact\0law-x\0"));
         assert!(!skuld_fence_binds(true, true, b"bin/rule\0code\0--land\0"));
+        assert!(!skuld_fence_binds(true, true, b"spira-releases/4bf2391c328e783a572d4a6b50a8caa62a79e9e5/rule.sh\0code\0--land\0"));
+        assert!(!skuld_fence_binds(true, true, b"rule.sh\0enact\0law-x\0"));
         assert!(skuld_fence_binds(true, true, b"bash\0-c\0rule\0"));
         assert!(skuld_fence_binds(true, true, b"x/rule-wrapper\0enact\0"));
+        assert!(skuld_fence_binds(true, true, b"x/myrule.sh\0"));
         assert!(skuld_fence_binds(true, true, b""));
         assert!(!skuld_fence_binds(false, true, b"bash\0"));
         assert!(SKULD_NEEDS_DRAFT.starts_with("a builder bead the Concierge files needs --drafted-by <request-id>"));
