@@ -229,7 +229,7 @@ impl Handler for RoundDuty {
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let snap = match (ev.kind.tag.as_str(), serde_json::from_str::<Snapshot>(&ev.kind.body)) {
             (EFFECT_SUCCEEDED, Ok(s)) => s,
-            _ => Snapshot { certified: carry.last_certified.unwrap_or(0), lines: carry.lines.clone(), stopped: carry.last_stopped.clone(), why: ev.kind.body.clone(), activation: crate::watchers::current_activation(&self.run_dir), ..Snapshot::default() },
+            _ => Snapshot { certified: carry.last_certified.unwrap_or(0), lines: carry.lines.clone(), stopped: carry.last_stopped.clone(), why: if ev.kind.tag == EFFECT_FAILED && !ev.kind.body.is_empty() { ev.kind.body.clone() } else { "the observe returned no usable snapshot".into() }, activation: crate::watchers::current_activation(&self.run_dir), ..Snapshot::default() },
         };
         let now = ev.at / 1000;
         let snap = with_admissible(snap, &kit::carry::<batcher_local::Carry>(&batcher_local::SHAPE, view));

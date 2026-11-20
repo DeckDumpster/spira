@@ -5,7 +5,7 @@
 use std::os::unix::net::UnixListener;
 
 use runtime::RuntimeError;
-use spira_runtime::watchers::round_duty::{decide, Carry, RoundDuty, RoundState, Snapshot};
+use spira_runtime::watchers::round_duty::{decide, OBSERVE, STREAM, TICK, Carry, RoundDuty, RoundState, Snapshot};
 use spira_runtime::world::World;
 
 fn world(batches_answer: bool) -> (testkit::TempDir, World) {
@@ -164,4 +164,18 @@ fn the_throughput_snapshot_names_the_oldest_waiting_bead_certified_ones_included
     assert_eq!(t.states.get("a-old").map(String::as_str), Some("CERTIFIED"));
     let oldest = a.oldest.as_ref().expect("the snapshot stamps the oldest waiting bead");
     assert_eq!((oldest.bead.as_str(), oldest.since), ("a-old", Some(1699990000)));
+}
+
+#[test]
+fn a_failed_observe_inside_a_release_activation_window_says_wait_blind_and_never_pages() {
+    let dir = testkit::TempDir::new("round-duty-activation");
+    release::machine::enter(&dir.path().join("release"), &"c".repeat(40), release::machine::ReleaseState::Activated, "current switched").unwrap();
+    let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_ACTIVATION_STORE_BOUND", "77")]);
+    let _env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
+    let cfg = RoundDuty { activation_bound_s: 77, run_dir: dir.path().into(), interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300, halt_page_secs: 3_600 };
+    let mut r = runtime::taskrig::TaskRig::new(1, cfg.registration()).unwrap().double(OBSERVE, |_| Err("lifecycle did not answer for spira: stale past 1500ms: the watch is lost".into())).double(spira_runtime::watchers::INBOX_APPEND, |l| Ok(l.into()));
+    r.tick(STREAM, runtime::event::EventKind::new(TICK, "")).unwrap();
+    let said: Vec<_> = r.requested().iter().filter(|q| q.name == spira_runtime::watchers::INBOX_APPEND).map(|q| q.input.clone()).collect();
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("WAIT BLIND: store restarting for activation of cccccccccccc") && said[0].contains("(bound 77s)") && said[0].contains("the watch is lost") && !said[0].contains("ROUND STATE UNKNOWN"), "{said:?}");
 }
