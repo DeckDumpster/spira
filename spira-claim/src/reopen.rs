@@ -95,9 +95,6 @@ pub struct Opts {
     pub suites: String,
 }
 
-/// The prefix of `bead_reopen`'s stderr line when [`run`] returns non-zero; the failures follow it.
-pub const FAILURE_REASON: &str = "the lifecycle machine refused the reopen, or bd the note";
-
 /// `bead_reopen`. Returns the exit code (0, or 1 if a step failed) and each failure seen, in
 /// order, as `<step>: <its error>`.
 pub fn run(o: &Opts, w: &mut dyn World) -> (i32, Vec<String>) {
