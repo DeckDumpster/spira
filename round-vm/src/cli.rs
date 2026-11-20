@@ -385,6 +385,54 @@ pub fn no_panic(f: impl FnOnce() -> i32) -> i32 {
     }
 }
 
+/// `round-vm preflight-plan (--force | --tree DIR --base REF --head REF)`: prints `key=value` lines
+/// (`plan`, `npaths`, `touched`, `apt_line`) for spira/round-image-preflight.sh.
+fn preflight_plan_verb(args: &[String]) -> i32 {
+    use crate::recipe::{preflight_plan, tree_paths, PreflightPlan};
+    let (mut tree, mut base, mut head, mut force) = (None, None, None, false);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--force" => force = true,
+            "--tree" => tree = it.next(),
+            "--base" => base = it.next(),
+            "--head" => head = it.next(),
+            other => {
+                eprintln!("round-vm preflight-plan: unknown argument: {other}");
+                return 2;
+            }
+        }
+    }
+    let npaths = tree_paths().len();
+    if force {
+        println!("plan=full\nnpaths={npaths}\ntouched=\napt_line=");
+        return 0;
+    }
+    let (Some(tree), Some(base), Some(head)) = (tree, base, head) else {
+        eprintln!("round-vm preflight-plan: usage: preflight-plan (--force | --tree DIR --base REF --head REF)");
+        return 2;
+    };
+    let git = |extra: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git").args(["-C", tree, "diff"]).args(extra).arg(format!("{base}...{head}")).output().ok()?;
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let (Some(names), Some(diff)) = (git(&["--name-only"]), git(&["-U0", "--", "round-vm/ami-setup.sh"])) else {
+        eprintln!("round-image-preflight: cannot diff {base}...{head}");
+        return 2;
+    };
+    let diff: String = diff.lines().filter(|l| !l.starts_with("--- ") && !l.starts_with("+++ ")).map(|l| format!("{l}\n")).collect();
+    let touched: Vec<&str> = names.lines().collect();
+    let head_setup = std::fs::read_to_string(std::path::Path::new(tree).join("round-vm/ami-setup.sh")).unwrap_or_default();
+    let hit: Vec<&str> = touched.iter().copied().filter(|p| tree_paths().contains(p)).collect();
+    let (plan, apt_line) = match preflight_plan(&touched, &diff, &head_setup) {
+        PreflightPlan::Skip => ("skip", String::new()),
+        PreflightPlan::PackageList { apt_line } => ("package-list", apt_line),
+        PreflightPlan::FullSetup => ("full", String::new()),
+    };
+    println!("plan={plan}\nnpaths={npaths}\ntouched={}\napt_line={apt_line}", hit.join(" "));
+    0
+}
+
 pub fn main_with(args: Vec<String>) -> i32 {
     if args.as_slice() == ["recipe-sha"] {
         println!("{}", crate::recipe::sha());
@@ -403,6 +451,9 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 }
             };
         }
+    }
+    if args.first().map(String::as_str) == Some("preflight-plan") {
+        return preflight_plan_verb(&args[1..]);
     }
     if args.as_slice() == ["template-check"] {
         return template_check();

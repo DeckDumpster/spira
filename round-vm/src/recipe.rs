@@ -35,6 +35,41 @@ const TREE_PATHS: [&str; 6] = [
     "spira/testenv/Containerfile",
 ];
 
+pub fn tree_paths() -> &'static [&'static str] {
+    &TREE_PATHS
+}
+
+/// Which check the round image preflight runs for a diff.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PreflightPlan {
+    Skip,
+    PackageList { apt_line: String },
+    FullSetup,
+}
+
+const AMI_SETUP: &str = "round-vm/ami-setup.sh";
+const APT_PREFIX: &str = "apt-get install ";
+
+/// `ami_setup_diff` is a `-U0` diff of `ami-setup.sh` without its `---`/`+++` headers.
+pub fn preflight_plan(touched: &[&str], ami_setup_diff: &str, head_ami_setup: &str) -> PreflightPlan {
+    let hit: Vec<&&str> = touched.iter().filter(|p| TREE_PATHS.contains(p)).collect();
+    if hit.is_empty() {
+        return PreflightPlan::Skip;
+    }
+    if hit.len() != 1 || *hit[0] != AMI_SETUP {
+        return PreflightPlan::FullSetup;
+    }
+    let changed: Vec<&str> = ami_setup_diff.lines().filter(|l| l.starts_with('+') || l.starts_with('-')).collect();
+    if changed.is_empty() || !changed.iter().all(|l| l[1..].starts_with(APT_PREFIX)) {
+        return PreflightPlan::FullSetup;
+    }
+    let mut apt = head_ami_setup.lines().filter(|l| l.starts_with(APT_PREFIX));
+    match (apt.next(), apt.next()) {
+        (Some(line), None) => PreflightPlan::PackageList { apt_line: line.to_string() },
+        _ => PreflightPlan::FullSetup,
+    }
+}
+
 fn digest<'a>(inputs: impl Iterator<Item = (&'a str, &'a str)>) -> String {
     let mut h = Sha256::new();
     for (name, text) in inputs {
@@ -84,5 +119,73 @@ mod tests {
         assert_eq!(super::tree_channel(d).as_deref(), Some("9.8.7"));
         std::fs::write(d.join("rust-toolchain.toml"), "[toolchain]\nchannel = \"stable\"\n").unwrap();
         assert_eq!(super::tree_channel(d), None);
+    }
+
+    // covers: UC-test-infrastructure-44
+    const APT: &str = "apt-get install -y -qq podman git bubblewrap";
+    const HEAD: &str = "#!/bin/bash\napt-get update -qq\napt-get install -y -qq podman git bubblewrap\nsystemctl enable ssh\n";
+    const APT_DIFF: &str = "-apt-get install -y -qq podman git\n+apt-get install -y -qq podman git bubblewrap\n";
+    const AMI: &str = "round-vm/ami-setup.sh";
+
+    fn plan(touched: &[&str], diff: &str, head: &str) -> super::PreflightPlan {
+        super::preflight_plan(touched, diff, head)
+    }
+
+    #[test]
+    fn an_apt_line_only_change_installs_the_package_list() {
+        assert_eq!(plan(&[AMI], APT_DIFF, HEAD), super::PreflightPlan::PackageList { apt_line: APT.into() });
+    }
+
+    #[test]
+    fn an_apt_line_plus_another_line_runs_the_full_setup() {
+        let diff = format!("{APT_DIFF}-systemctl enable ssh\n+systemctl enable --now ssh\n");
+        assert_eq!(plan(&[AMI], &diff, HEAD), super::PreflightPlan::FullSetup);
+    }
+
+    #[test]
+    fn a_second_apt_line_runs_the_full_setup() {
+        let head = format!("{HEAD}apt-get install -y -qq vim\n");
+        assert_eq!(plan(&[AMI], "+apt-get install -y -qq vim\n", &head), super::PreflightPlan::FullSetup);
+    }
+
+    #[test]
+    fn a_removed_apt_line_runs_the_full_setup() {
+        let head = "#!/bin/bash\nsystemctl enable ssh\n";
+        assert_eq!(plan(&[AMI], "-apt-get install -y -qq podman git\n", head), super::PreflightPlan::FullSetup);
+    }
+
+    #[test]
+    fn another_line_only_runs_the_full_setup() {
+        let diff = "-systemctl enable ssh\n+systemctl enable --now ssh\n";
+        assert_eq!(plan(&[AMI], diff, HEAD), super::PreflightPlan::FullSetup);
+    }
+
+    #[test]
+    fn an_empty_ami_setup_diff_runs_the_full_setup() {
+        assert_eq!(plan(&[AMI], "", HEAD), super::PreflightPlan::FullSetup);
+    }
+
+    #[test]
+    fn a_touched_flake_lock_runs_the_full_setup() {
+        assert_eq!(plan(&["flake.lock"], "", HEAD), super::PreflightPlan::FullSetup);
+    }
+
+    #[test]
+    fn ami_setup_and_flake_lock_together_run_the_full_setup() {
+        assert_eq!(plan(&[AMI, "flake.lock"], APT_DIFF, HEAD), super::PreflightPlan::FullSetup);
+    }
+
+    #[test]
+    fn an_unrelated_file_skips() {
+        assert_eq!(plan(&["unrelated", "round-vm/src/other.rs"], "", ""), super::PreflightPlan::Skip);
+    }
+
+    #[test]
+    fn every_tree_path_is_a_recipe_input_and_nothing_else_is() {
+        for p in super::tree_paths() {
+            assert_ne!(plan(&[p], "", ""), super::PreflightPlan::Skip, "{p}");
+        }
+        assert_eq!(super::tree_paths().len(), super::INPUTS.len());
+        assert_eq!(plan(&["round-vm/src/recipe.rs"], "", ""), super::PreflightPlan::Skip);
     }
 }

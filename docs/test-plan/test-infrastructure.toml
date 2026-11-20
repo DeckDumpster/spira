@@ -362,6 +362,11 @@ date = "2026-09-26"
 bead = "sp-b99nj"
 
 [[use_case]]
+id = "UC-test-infrastructure-44"
+tier = "T0"
+statement = "The round image preflight skips when a diff touches no recipe input, installs only the package list when the sole touched input is ami-setup.sh and every changed line is its single `apt-get install` line, and runs the full setup otherwise. The decision is `round-vm`'s pure `preflight_plan`."
+
+[[use_case]]
 id = "UC-covers-01"
 tier = "T1"
 statement = "test-dummy.sh's own id (never a catalogued use case — a probe token the suite put on its own # covers: line to exercise suite_uc_of/suite-select header uc end to end), covering spira/test-dummy.sh's demonstration of suite_covers_of/suite_requires_of over spira/suite-covers.sh."
