@@ -308,9 +308,10 @@ _testdb_sql_reader() {
     _cred="$SPIRA_DB/.beads/sql-ro.credential"
     # batch-job: fixture setup against the suite's own throwaway server
     timeout 10 "${TESTDB_DOLT:-dolt}" --host 127.0.0.1 --port "$_port" --no-tls -u root -p "" sql -q \
-        "CREATE USER IF NOT EXISTS 'spira_lc_ro'@'%' IDENTIFIED BY 'testdb-ro'; GRANT SELECT ON \`$_db\`.* TO 'spira_lc_ro'@'%'" >/dev/null 2>&1 || return 1
+        "CREATE USER IF NOT EXISTS 'spira_lc_ro'@'%' IDENTIFIED BY 'testdb-ro'; GRANT SELECT ON \`$_db\`.* TO 'spira_lc_ro'@'%'; CREATE USER IF NOT EXISTS 'spira_lc'@'%' IDENTIFIED BY 'testdb-rw'; GRANT ALL ON \`$_db\`.* TO 'spira_lc'@'%'" >/dev/null 2>&1 || return 1
     printf 'testdb-ro\n' > "$_cred" || return 1
-    tl_config SPIRA_BEADS_SQL_HOST=127.0.0.1 SPIRA_BEADS_SQL_PORT="$_port" SPIRA_BEADS_SQL_USER=spira_lc_ro SPIRA_BEADS_SQL_PASSWORD_FILE="$_cred"
+    printf 'testdb-rw\n' > "$SPIRA_DB/.beads/sql-rw.credential" || return 1
+    tl_config SPIRA_BEADS_SQL_HOST=127.0.0.1 SPIRA_BEADS_SQL_PORT="$_port" SPIRA_BEADS_SQL_USER=spira_lc_ro SPIRA_BEADS_SQL_PASSWORD_FILE="$_cred" SPIRA_BEADS_SQL_WRITER_PASSWORD_FILE="$SPIRA_DB/.beads/sql-rw.credential"
 }
 
 # Back to an empty database. For embedded mode: a directory swap rather than a table wipe.

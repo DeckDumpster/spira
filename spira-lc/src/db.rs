@@ -94,6 +94,31 @@ impl Conn {
         })
     }
 
+    /// A read-write connection to the beads database, logging in as the writer.
+    pub fn writer(host: &str, port: u16, user: &str, password_file: &str, database: &str) -> Result<Conn, String> {
+        Conn::reader(host, port, user, password_file, database)
+    }
+
+    /// Runs `f` with this connection's one session held, so a transaction's statements cannot
+    /// interleave with another caller's. A session that failed on anything but a lost race is dropped.
+    pub fn transaction<T>(&self, f: impl FnOnce(&mut dyn crate::content_write::Tx) -> T) -> Result<T, String> {
+        let mut guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
+        let wire = match reusable {
+            Some(w) => w,
+            None => self.connect().map_err(|e| match e {
+                ScriptFailure::CannotTell(m) => m,
+                ScriptFailure::LostRace => "a connect lost a race".into(),
+            })?,
+        };
+        let mut tx = WireTx { wire, healthy: true };
+        let out = f(&mut tx);
+        if tx.healthy {
+            *guard = Some(tx.wire);
+        }
+        Ok(out)
+    }
+
     /// The administrator, with no default database: what a statement that names its own database runs as.
     pub fn administrator(host: &str, port: u16, user: &str, password: String) -> Conn {
         Conn {
@@ -272,6 +297,26 @@ impl<S: Session> Drop for Slot<'_, S> {
         }
         drop(pool);
         self.pool.released.notify_one();
+    }
+}
+
+struct WireTx {
+    wire: Wire,
+    healthy: bool,
+}
+
+impl crate::content_write::Tx for WireTx {
+    fn send(&mut self, sql: &str) -> Result<(), crate::content_write::Fail> {
+        let started = std::time::Instant::now();
+        let out = self.wire.exec(sql);
+        crate::slow::record(started.elapsed(), sql);
+        out.map(|_| ()).map_err(|e| match e {
+            ScriptFailure::LostRace => crate::content_write::Fail::Conflict,
+            ScriptFailure::CannotTell(m) => {
+                self.healthy = false;
+                crate::content_write::Fail::Other(m)
+            }
+        })
     }
 }
 

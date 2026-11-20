@@ -386,6 +386,7 @@ pub fn run(args: &[String]) -> i32 {
             });
         }
         std::thread::spawn(crate::plan::run_mirror);
+        std::thread::spawn(crate::content_write::run_committer);
         std::thread::spawn(crate::settle::run);
         std::thread::spawn(move || {
             loop {
@@ -1678,6 +1679,9 @@ mod tests {
             self.0.borrow_mut().push(format!("{}{body}", args.join(" ")));
             Ok(format!("wrote {}", args.join(" ")))
         }
+        fn mutate(&self, m: &crate::content_write::Mutation) -> Result<String, String> {
+            self.write_stdin(&m.argv, m.body.as_deref())
+        }
         fn delete(&self, _: &[String]) -> Result<(), String> {
             Ok(())
         }
@@ -2005,13 +2009,14 @@ mod tests {
     /// each write, and parks a write until released while `held`.
     struct Notes {
         wrote: Mutex<Vec<String>>,
+        mutated: Mutex<Vec<String>>,
         held: Mutex<bool>,
         released: Condvar,
     }
 
     impl Notes {
         fn new(held: bool) -> Arc<Notes> {
-            Arc::new(Notes { wrote: Mutex::new(Vec::new()), held: Mutex::new(held), released: Condvar::new() })
+            Arc::new(Notes { wrote: Mutex::new(Vec::new()), mutated: Mutex::new(Vec::new()), held: Mutex::new(held), released: Condvar::new() })
         }
         fn release(&self) {
             *self.held.lock().unwrap() = false;
@@ -2019,6 +2024,9 @@ mod tests {
         }
         fn writes(&self) -> Vec<String> {
             self.wrote.lock().unwrap().clone()
+        }
+        fn mutations(&self) -> Vec<String> {
+            self.mutated.lock().unwrap().clone()
         }
     }
 
@@ -2039,6 +2047,16 @@ mod tests {
             let body = stdin.map_or(String::new(), |b| format!(" <<{b}"));
             self.wrote.lock().unwrap().push(format!("{}{body}", args.join(" ")));
             Ok(format!("wrote {}", args.join(" ")))
+        }
+        fn mutate(&self, m: &crate::content_write::Mutation) -> Result<String, String> {
+            let mut held = self.held.lock().unwrap();
+            while *held {
+                held = self.released.wait(held).unwrap();
+            }
+            drop(held);
+            let body = m.body.as_deref().map_or(String::new(), |b| format!(" <<{b}"));
+            self.mutated.lock().unwrap().push(format!("{}{body}", m.argv.join(" ")));
+            Ok(String::new())
         }
         fn delete(&self, _: &[String]) -> Result<(), String> {
             Ok(())
@@ -2114,15 +2132,19 @@ mod tests {
 
     /// One request, `request_id` in its head, through `serve_one` over a socket pair.
     fn send(door: &Arc<super::Door>, argv: &[&str], request_id: Option<&str>) -> (i32, String) {
-        send_spanned(door, None, argv, request_id)
+        send_spanned(door, None, argv, None, request_id)
     }
 
-    fn send_spanned(door: &Arc<super::Door>, sink: Option<&spira_otel::Sink>, argv: &[&str], request_id: Option<&str>) -> (i32, String) {
+    fn send_body(door: &Arc<super::Door>, argv: &[&str], body: Option<&str>, request_id: Option<&str>) -> (i32, String) {
+        send_spanned(door, None, argv, body, request_id)
+    }
+
+    fn send_spanned(door: &Arc<super::Door>, sink: Option<&spira_otel::Sink>, argv: &[&str], body: Option<&str>, request_id: Option<&str>) -> (i32, String) {
         use std::io::{Read, Write};
         let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
-        let head = spira_store::lc_call::request_head(&argv, None, &Default::default(), None, request_id).unwrap();
+        let head = spira_store::lc_call::request_head(&argv, body.map(str::len), &Default::default(), None, request_id).unwrap();
         let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
-        (&client).write_all(format!("{head}\n").as_bytes()).unwrap();
+        (&client).write_all(format!("{head}\n{}", body.unwrap_or("")).as_bytes()).unwrap();
         let mut got = String::new();
         std::thread::scope(|scope| {
             scope.spawn(|| super::serve_one(server, sink, std::time::Instant::now(), door));
@@ -2271,7 +2293,33 @@ mod tests {
         let second = send(&r.door, &argv, Some("req-1"));
         assert_eq!(first.0, 0, "{first:?}");
         assert_eq!(second, first);
-        assert_eq!(r.notes.writes(), ["note sp-a x"]);
+        assert_eq!(r.notes.mutations(), ["note sp-a x"]);
+    }
+
+    #[test]
+    fn a_label_or_note_write_is_one_mutation_and_forks_no_bd() {
+        let r = rig(false, three_seconds());
+        send(&r.door, &["content", "update", "sp-a", "--remove-label", "branch:spira/sp-a"], None);
+        send(&r.door, &["content", "label", "add", "sp-a", "overseer"], None);
+        assert!(r.notes.writes().is_empty(), "{:?}", r.notes.writes());
+        assert_eq!(r.notes.mutations(), ["update sp-a --remove-label branch:spira/sp-a", "label add sp-a overseer"]);
+    }
+
+    #[test]
+    fn a_stdin_note_is_one_mutation_carrying_its_body() {
+        let r = rig(false, three_seconds());
+        let ans = send_body(&r.door, &["content", "note", "sp-a", "--stdin"], Some("the body"), None);
+        assert!(r.notes.writes().is_empty(), "{ans:?}");
+        assert_eq!(r.notes.mutations(), ["note sp-a --stdin <<the body"]);
+    }
+
+    #[test]
+    fn writes_that_are_not_label_or_note_verbs_still_fork_bd() {
+        let r = rig(false, three_seconds());
+        send(&r.door, &["content", "set-state", "sp-a", "branch=spira/sp-a"], None);
+        send(&r.door, &["content", "kv", "set", "k", "v"], None);
+        assert_eq!(r.notes.writes().len(), 2, "{:?}", r.notes.writes());
+        assert!(r.notes.mutations().is_empty());
     }
 
     #[test]
@@ -2280,7 +2328,7 @@ mod tests {
         let argv = ["content", "note", "sp-a", "x"];
         send(&r.door, &argv, None);
         send(&r.door, &argv, None);
-        assert_eq!(r.notes.writes().len(), 2);
+        assert_eq!(r.notes.mutations().len(), 2);
     }
 
     #[test]
@@ -2351,19 +2399,19 @@ mod tests {
         let dir = testkit::TempDir::new("lc-serve-cut");
         let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
         let r = rig(false, three_seconds());
-        let _ = send_spanned(&r.door, Some(&sink), &["show", "sp-none"], None);
+        let _ = send_spanned(&r.door, Some(&sink), &["show", "sp-none"], None, None);
         assert!(span_attr(&dir, "show", "spira.answer_us").is_some(), "an in-time call records its answer time");
         assert_eq!(span_attr(&dir, "show", "spira.deadline_cut_ms"), None, "an in-time call records no cutoff");
 
         let parked = rig(true, fifty_ms());
-        let cut = send_spanned(&parked.door, Some(&sink), &["content", "note", "sp-a", "x"], None);
+        let cut = send_spanned(&parked.door, Some(&sink), &["content", "note", "sp-a", "x"], None, None);
         assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
         assert_eq!(span_attr(&dir, "content", "spira.deadline_cut_ms"), Some(Some(50)));
         assert!(span_attr(&dir, "content", "spira.answer_us").is_some());
         parked.notes.release();
 
         let ledgered = rig(true, fifty_ms());
-        let cut = send_spanned(&ledgered.door, Some(&sink), &["content", "note", "sp-b", "y"], Some("req-cut"));
+        let cut = send_spanned(&ledgered.door, Some(&sink), &["content", "note", "sp-b", "y"], None, Some("req-cut"));
         assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
         assert_eq!(span_attr(&dir, "content", "spira.deadline_cut_ms"), Some(Some(50)), "a write under a request id is cut the same way");
         ledgered.notes.release();
@@ -2445,7 +2493,7 @@ mod tests {
         assert_eq!(second.0, 0, "{second:?}");
         let third = send(&r.door, &argv, Some("req-1"));
         assert_eq!(third.0, 0, "{third:?}");
-        assert_eq!(r.notes.writes(), ["note sp-a x"]);
+        assert_eq!(r.notes.mutations(), ["note sp-a x"]);
     }
 
     #[test]
@@ -2511,6 +2559,9 @@ mod tests {
                 }
                 _ => Ok(String::new()),
             }
+        }
+        fn mutate(&self, m: &crate::content_write::Mutation) -> Result<String, String> {
+            self.write_stdin(&m.argv, m.body.as_deref())
         }
         fn delete(&self, _: &[String]) -> Result<(), String> {
             Ok(())
@@ -2671,6 +2722,9 @@ mod tests {
                     self.0.plan.borrow_mut().get_mut(*id).unwrap().labels.push(label.to_string());
                 }
                 Ok(String::new())
+            }
+            fn mutate(&self, m: &crate::content_write::Mutation) -> Result<String, String> {
+                self.write_stdin(&m.argv, None)
             }
             fn delete(&self, _: &[String]) -> Result<(), String> {
                 Ok(())

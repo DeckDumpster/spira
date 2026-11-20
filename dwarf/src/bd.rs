@@ -15,14 +15,23 @@ pub struct BdCli<'a> {
 }
 
 /// A verb the content door serves for the dwarf: its reads, `note`, `comments add`,
-/// `update … --set-metadata`, `label add|remove` and `set-state`.
+/// `update` carrying labels or metadata, `label add|remove` and `set-state`.
 fn is_door_verb(args: &[String]) -> bool {
     match args.first().map(String::as_str) {
         Some("show" | "list" | "state" | "memories" | "comments" | "note" | "set-state") => true,
         Some("label") => matches!(args.get(1).map(String::as_str), Some("add" | "remove")),
-        Some("update") => args.iter().any(|a| a == "--set-metadata"),
+        Some("update") => args.iter().any(|a| matches!(a.as_str(), "--set-metadata" | "--add-label" | "--remove-label")),
         _ => false,
     }
+}
+
+/// The write that records `new` as a claim's branch, dropping the label of `old` when it differs.
+pub fn record_branch(id: &str, old: &str, new: &str) -> Vec<String> {
+    let mut a = args(&["update", id, "--add-label", &format!("branch:{new}")]);
+    if !old.is_empty() && old != new {
+        a.extend(args(&["--remove-label", &format!("branch:{old}")]));
+    }
+    a
 }
 
 impl Bd for BdCli<'_> {
@@ -232,6 +241,15 @@ mod tests {
         assert_eq!(seen[1], args(&["content", "update", "sp-a", "--set-metadata", "k=v"]));
         assert_eq!(seen[2], args(&["content", "set-state", "sp-a", "branch=spira/sp-a"]));
         assert_eq!(seen[3], args(&["content", "label", "add", "sp-a", "overseer"]));
+    }
+
+    #[test]
+    fn recording_a_branch_adds_its_label_and_drops_the_one_it_replaces() {
+        assert_eq!(record_branch("sp-a", "", "spira/sp-a"), args(&["update", "sp-a", "--add-label", "branch:spira/sp-a"]));
+        assert_eq!(record_branch("sp-a", "spira/sp-b", "spira/sp-a"), args(&["update", "sp-a", "--add-label", "branch:spira/sp-a", "--remove-label", "branch:spira/sp-b"]));
+        let (bd, fake) = door(vec![]);
+        assert_eq!(bd.bd(&record_branch("sp-a", "", "spira/sp-a")).code, 0);
+        assert_eq!(fake.requests()[0], args(&["content", "update", "sp-a", "--add-label", "branch:spira/sp-a"]));
     }
 
     #[test]
