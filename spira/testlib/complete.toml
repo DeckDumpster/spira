@@ -300,6 +300,7 @@ dolt_persist_interval_secs = 5
 dolt_persist_max_lag_secs = 120
 dolt_persist_compact_pct = 150
 dolt_persist_gc_interval_secs = 3600
+dolt_persist_history_keep = 10000
 dolt_tmp_pressure_pct = 85
 eviction_escalate_at = "3"
 exporter = ""

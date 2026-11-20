@@ -21,8 +21,17 @@ pub trait Dolt {
     /// `CALL dolt_backup('sync-url', 'file://<dest>')` on `data/db`: branches, tags and working
     /// sets, incremental against what `dest` already holds.
     fn sync(&self, conn: &Conn, data: &Path, db: &str, dest: &Path) -> Result<(), String>;
-    /// `CALL dolt_gc()` on `data/db`: rewrites the live store without the chunks no root reaches.
-    fn gc(&self, conn: &Conn, data: &Path, db: &str) -> Result<(), String>;
+    /// `CALL dolt_gc()` on `data/db` (`--full` when `full`): rewrites the live store without the
+    /// chunks no root reaches.
+    fn gc(&self, conn: &Conn, data: &Path, db: &str, full: bool) -> Result<(), String>;
+    /// Length of `main`'s commit log.
+    fn history_len(&self, conn: &Conn, data: &Path, db: &str) -> Result<u64, String>;
+    /// Builds a side branch holding the history bounded to `keep`; returns the tip of `main` it was cut from.
+    fn squash_history(&self, conn: &Conn, data: &Path, db: &str, keep: u64) -> Result<String, String>;
+    /// Replays what `main` gained since `tip` onto the side branch and moves `main` onto it.
+    fn graft_history(&self, conn: &Conn, data: &Path, db: &str, tip: &str) -> Result<(), String>;
+    /// Removes a side branch an interrupted rewrite left.
+    fn abandon_history(&self, conn: &Conn, data: &Path, db: &str) -> Result<(), String>;
     /// Opens the database at `db_dir` with no server and returns `dolt_hashof_db()`.
     fn verify(&self, db_dir: &Path) -> Result<String, String>;
     /// Whether `pid` is a live Dolt process.

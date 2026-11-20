@@ -5,6 +5,7 @@
 //! (`<durable>/meta`). Every write committed before a pass's recorded `start` is in the copy
 //! once that pass has finished.
 
+pub mod history;
 pub mod ports;
 
 #[cfg(test)]
@@ -23,8 +24,9 @@ pub const KEY_INTERVAL: &str = "SPIRA_DOLT_PERSIST_INTERVAL_SECS";
 pub const KEY_MAX_LAG: &str = "SPIRA_DOLT_PERSIST_MAX_LAG_SECS";
 pub const KEY_COMPACT_PCT: &str = "SPIRA_DOLT_PERSIST_COMPACT_PCT";
 pub const KEY_GC_INTERVAL: &str = "SPIRA_DOLT_PERSIST_GC_INTERVAL_SECS";
+pub const KEY_HISTORY_KEEP: &str = "SPIRA_DOLT_PERSIST_HISTORY_KEEP";
 pub const KEY_RUN: &str = "SPIRA_RUN";
-pub const KEYS: [&str; 7] = [KEY_DATA, KEY_DURABLE, KEY_INTERVAL, KEY_MAX_LAG, KEY_COMPACT_PCT, KEY_GC_INTERVAL, KEY_RUN];
+pub const KEYS: [&str; 8] = [KEY_DATA, KEY_DURABLE, KEY_INTERVAL, KEY_MAX_LAG, KEY_COMPACT_PCT, KEY_GC_INTERVAL, KEY_RUN, KEY_HISTORY_KEEP];
 
 /// Seconds between the rebuilds `run` considers for a durable copy grown past its ratio.
 pub const COMPACT_EVERY_SECS: u64 = 86_400;
@@ -46,6 +48,8 @@ pub struct Config {
     /// Seconds between online collections of the live store by `run`; 0 leaves it to the daily rebuild.
     pub gc_interval_secs: u64,
     pub run: PathBuf,
+    /// Commits `compact` leaves in a database's log, the oldest squashed into one base; 0 keeps all.
+    pub history_keep: u64,
 }
 
 impl Config {
@@ -69,7 +73,11 @@ impl Config {
             compact_pct: num(KEY_COMPACT_PCT)?,
             gc_interval_secs: num(KEY_GC_INTERVAL)?,
             run: PathBuf::from(need(KEY_RUN)?),
+            history_keep: num(KEY_HISTORY_KEEP)?,
         };
+        if cfg.history_keep == 1 {
+            return Err(format!("{KEY_HISTORY_KEEP} of 1 cannot hold the root and a base; use 0 to keep all or at least 2"));
+        }
         if cfg.max_lag_secs <= cfg.interval_secs {
             return Err(format!("{KEY_MAX_LAG} ({}) must exceed {KEY_INTERVAL} ({})", cfg.max_lag_secs, cfg.interval_secs));
         }
@@ -538,10 +546,10 @@ fn exchange(a: &Path, b: &Path) -> Result<(), String> {
 }
 
 /// Online `dolt_gc` of one live database. Returns the report line and whether it was collected.
-fn collect(cfg: &Config, dolt: &dyn Dolt, conn: &Conn, db: &str) -> Result<(String, bool), String> {
+fn collect(cfg: &Config, dolt: &dyn Dolt, conn: &Conn, db: &str, full: bool) -> Result<(String, bool), String> {
     let noms = cfg.data.join(db).join(".dolt/noms");
     let before = tree_bytes(&noms);
-    match dolt.gc(conn, &cfg.data, db) {
+    match dolt.gc(conn, &cfg.data, db, full) {
         Ok(()) => Ok((format!("{db}: collected, live {before} B -> {} B", tree_bytes(&noms)), true)),
         Err(e) => Ok((format!("{db}: collection failed: {e}"), false)),
     }
@@ -555,7 +563,7 @@ pub fn gc(cfg: &Config, dolt: &dyn Dolt) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     let mut all = true;
     for db in dbs.iter().filter(|d| tree_bytes(&cfg.data.join(d).join(".dolt/noms")) > 0) {
-        let (line, done) = collect(cfg, dolt, &conn, db)?;
+        let (line, done) = collect(cfg, dolt, &conn, db, false)?;
         all &= done;
         out.push(line);
     }
@@ -590,6 +598,38 @@ fn rebuild(l: &Layout, cfg: &Config, dolt: &dyn Dolt, conn: &Conn, db: &str, fre
     fs::remove_dir_all(fresh).map_err(|e| format!("cannot remove the superseded copy {}: {e}", fresh.display()))
 }
 
+/// Bounds one database's history to `cfg.history_keep`. The side branch is built unlocked; only the move onto it holds the
+/// persist lock, so no sync reads the ancestry mid-rewrite. A rewritten history shares no chunks
+/// with the copy's, so the caller rebuilds the copy when this returns true.
+fn squash_history(cfg: &Config, l: &Layout, dolt: &dyn Dolt, conn: &Conn, db: &str, out: &mut Compacted) -> Result<bool, String> {
+    let len = match dolt.history_len(conn, &cfg.data, db) {
+        Ok(n) => n,
+        Err(e) => {
+            out.report(format!("{db}: history not squashed: cannot read the log length: {e}"), true);
+            return Ok(false);
+        }
+    };
+    if !history::needs_squash(len, cfg.history_keep) {
+        return Ok(false);
+    }
+    let rewrite = dolt.squash_history(conn, &cfg.data, db, cfg.history_keep).and_then(|tip| {
+        let _lock = lock(l)?;
+        dolt.graft_history(conn, &cfg.data, db, &tip)
+    });
+    match rewrite {
+        Ok(()) => {
+            let now = dolt.history_len(conn, &cfg.data, db).map_or_else(|e| format!("unreadable ({e})"), |n| n.to_string());
+            out.report(format!("{db}: history squashed, {len} commits -> {now}"), false);
+            Ok(true)
+        }
+        Err(e) => {
+            let _ = dolt.abandon_history(conn, &cfg.data, db);
+            out.report(format!("{db}: history not squashed: {e}"), true);
+            Ok(false)
+        }
+    }
+}
+
 /// Collects each live database first; automatic GC alone left multi-GB table files standing.
 ///
 /// A backup never sheds a chunk the live store has collected, so each copy grows until it is
@@ -601,12 +641,13 @@ pub fn compact(cfg: &Config, dolt: &dyn Dolt) -> Result<Compacted, String> {
     let mut out = Compacted::default();
     for db in durable_dbs(&l)? {
         let noms = cfg.data.join(&db).join(".dolt/noms");
+        let squashed = squash_history(cfg, &l, dolt, &conn, &db, &mut out)?;
         if tree_bytes(&noms) > 0 {
-            let (line, done) = collect(cfg, dolt, &conn, &db)?;
+            let (line, done) = collect(cfg, dolt, &conn, &db, squashed)?;
             out.report(line, !done);
         }
         let (copy, live) = (tree_bytes(&l.db(&db)), tree_bytes(&noms));
-        if live == 0 || copy.saturating_mul(100) <= live.saturating_mul(cfg.compact_pct) {
+        if live == 0 || (!squashed && copy.saturating_mul(100) <= live.saturating_mul(cfg.compact_pct)) {
             out.report(format!("{db}: copy {copy} B, live {live} B — within {}%", cfg.compact_pct), false);
             continue;
         }

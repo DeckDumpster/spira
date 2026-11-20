@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
+use store_persist::history;
 use store_persist::ports::{Clock, Conn, Dolt};
 use store_persist::{Config, Mode};
 
@@ -58,6 +59,23 @@ impl RealDolt {
     }
 }
 
+struct Session<'a> {
+    dolt: &'a RealDolt,
+    conn: &'a Conn,
+    data: &'a Path,
+    db: &'a str,
+}
+
+impl history::Sql for Session<'_> {
+    fn run(&self, script: &str, csv: bool) -> Result<String, String> {
+        let mut cmd = RealDolt::command(self.conn, self.data, self.db);
+        if csv {
+            cmd.args(["-r", "csv"]);
+        }
+        self.dolt.sql(cmd, script)
+    }
+}
+
 impl Dolt for RealDolt {
     fn sync(&self, conn: &Conn, data: &Path, db: &str, dest: &Path) -> Result<(), String> {
         // batch-job: a sync copies whatever the copy lacks, a whole store when it starts empty
@@ -69,7 +87,11 @@ impl Dolt for RealDolt {
         self.sql(cmd, &format!("CALL DOLT_BACKUP('sync-url', '{url}');\n")).map(|_| ())
     }
 
-    fn gc(&self, _conn: &Conn, _data: &Path, db: &str) -> Result<(), String> {
+    fn gc(&self, conn: &Conn, data: &Path, db: &str, full: bool) -> Result<(), String> {
+        if full {
+            // batch-job: a full gc rewrites the whole live store
+            return self.sql(Self::command(conn, data, db), "CALL DOLT_GC('--full');\n").map(|_| ());
+        }
         let lc = spira_config::release_env::tool("spira-lc")?;
         // batch-job: a gc rewrites the whole live store
         let out = Command::new(&lc)
@@ -82,6 +104,23 @@ impl Dolt for RealDolt {
         }
         let said = [out.stderr, out.stdout].iter().map(|b| String::from_utf8_lossy(b).trim().to_string()).find(|s| !s.is_empty()).unwrap_or_default();
         Err(format!("spira-lc admin-store-gc exited {}: {said}", out.status))
+    }
+
+    fn history_len(&self, conn: &Conn, data: &Path, db: &str) -> Result<u64, String> {
+        history::len(&Session { dolt: self, conn, data, db })
+    }
+
+    fn squash_history(&self, conn: &Conn, data: &Path, db: &str, keep: u64) -> Result<String, String> {
+        // batch-job: a rebase replays every commit it squashes, about 30 ms each
+        history::squash(&Session { dolt: self, conn, data, db }, keep)
+    }
+
+    fn graft_history(&self, conn: &Conn, data: &Path, db: &str, tip: &str) -> Result<(), String> {
+        history::graft(&Session { dolt: self, conn, data, db }, tip)
+    }
+
+    fn abandon_history(&self, conn: &Conn, data: &Path, db: &str) -> Result<(), String> {
+        history::abandon(&Session { dolt: self, conn, data, db })
     }
 
     fn verify(&self, db_dir: &Path) -> Result<String, String> {
