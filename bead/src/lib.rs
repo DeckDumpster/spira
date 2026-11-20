@@ -370,8 +370,6 @@ pub fn section(text: &str, heading: &str) -> Option<String> {
     (!body.is_empty()).then_some(body)
 }
 
-/// The title and body of a design's pilgrimage bead: its Intent and its User path, and the
-/// acceptance of a clean walk. A design without a User path is refused, since the walk is built from it.
 #[derive(Debug, Default, PartialEq)]
 pub struct PilgrimageArgs {
     pub design: String,
@@ -421,6 +419,8 @@ pub fn pilgrimage_args(args: &[String]) -> Result<PilgrimageArgs, String> {
     Ok(PilgrimageArgs { design, repo, priority, after })
 }
 
+/// The title and body of a design's pilgrimage bead: its Intent and its User path, and the
+/// acceptance of a clean walk. A design without a User path is refused, since the walk is built from it.
 pub fn pilgrimage_spec(design: &str) -> Result<(String, String), String> {
     let name = design
         .lines()
