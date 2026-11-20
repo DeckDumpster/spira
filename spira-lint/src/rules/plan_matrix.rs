@@ -17,7 +17,7 @@ use test_plan::{
 };
 
 use crate::rules::covers_entries::covers_of;
-use crate::{direct_child, is_suite, Entry, Finding, LintError, Rule, Tree};
+use crate::{is_suite, Entry, Finding, LintError, Rule, Tree};
 
 const NAME: &str = "plan-matrix";
 const CATALOGUE_DIR: &str = "docs/test-plan";
