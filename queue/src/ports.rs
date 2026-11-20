@@ -310,8 +310,9 @@ pub trait Scripts {
     /// check at that exact tip, run and recorded (or, with `verify`, only read back): (rc, output).
     fn lint(&self, tip: &str, repo: &Path, verify: bool) -> (i32, String);
     /// `testenv --suites <check> <tip> <repo name>`: one named suite in a container at that tip;
-    /// a non-empty `tests` adds `--tests <names>`, so only those tests run.
-    fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool, tests: &[String]) -> (i32, String);
+    /// a non-empty `tests` adds `--tests <names>`, so only those tests run;
+    /// `deny_list` is the snapshot file testenv reads as `SPIRA_TEST_DENY_LIST`.
+    fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool, tests: &[String], deny_list: &Path) -> (i32, String);
     /// `gate.sh <branch> <repo>` with SPIRA_GATE_BEAD / SPIRA_GATE_SUITES: (rc, output).
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String);
     /// `batcher judgement-ci <repo> --suites CSV --members CSV --evidence T --home --run --db`,

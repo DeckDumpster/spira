@@ -93,7 +93,27 @@ pub fn record_run(run: &Path, bead: &str, tip: &str, check: &str, exit: i32, sum
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "bad tip or check name"));
     }
     let line: String = summary.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").chars().take(300).collect();
-    write_atomic(&bead_dir(run, bead)?.join("pass").join(tip).join(check), &format!("exit={exit}\nsummary={line}\n"))
+    let dir = bead_dir(run, bead)?.join("pass").join(tip);
+    write_atomic(&dir.join(format!("{check}.out")), summary)?;
+    write_atomic(&dir.join(check), &format!("exit={exit}\nsummary={line}\n"))
+}
+
+/// Where `record_run` keeps the whole output of a run of `check` at `tip`.
+pub fn run_output_path(run: &Path, bead: &str, tip: &str, check: &str) -> io::Result<PathBuf> {
+    if !valid_tip(tip) || !valid_check(check) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "bad tip or check name"));
+    }
+    Ok(bead_dir(run, bead)?.join("pass").join(tip).join(format!("{check}.out")))
+}
+
+/// Keeps the deny-list snapshot a run of `check` at `tip` is judged by, beside its record.
+pub fn record_deny_list(run: &Path, bead: &str, tip: &str, check: &str, text: &str) -> io::Result<PathBuf> {
+    if !valid_tip(tip) || !valid_check(check) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "bad tip or check name"));
+    }
+    let path = bead_dir(run, bead)?.join("pass").join(tip).join(format!("{check}.deny-list"));
+    write_atomic(&path, text)?;
+    Ok(path)
 }
 
 /// Proven: a run recorded at exactly this tip, exit 0.

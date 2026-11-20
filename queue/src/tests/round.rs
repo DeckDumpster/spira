@@ -6416,9 +6416,9 @@ fn a_resubmit_check_that_did_not_run_is_reported_not_verified_never_as_still_fai
         .filter(|c| c.starts_with("suite_run test-x.sh"))
         .cloned()
         .collect();
-    assert!(runs[0].ends_with("first=true"), "{runs:?}");
+    assert!(runs[0].contains("first=true "), "{runs:?}");
     assert!(
-        runs[1..].iter().all(|c| c.ends_with("first=false")),
+        runs[1..].iter().all(|c| c.contains("first=false ")),
         "{runs:?}"
     );
 }
@@ -6445,7 +6445,7 @@ fn a_resubmit_runs_each_ejected_suite_as_a_first_check_of_the_new_tip_and_admits
         .calls
         .borrow()
         .iter()
-        .any(|c| c == &format!("suite_run test-x.sh {T_FIX} spira first=true")));
+        .any(|c| c.starts_with(&format!("suite_run test-x.sh {T_FIX} spira first=true deny="))));
 }
 
 #[test]
@@ -9568,7 +9568,8 @@ fn resubmit_runs_only_the_still_active_tests_when_some_named_tests_are_disabled(
     let t = unit_red_world(&[TEST_A, TEST_B], &format!("disabled\t{TEST_A}\tsp-gm7sti\t9999999999\n"));
     assert_eq!(resubmit_unit_red(&t), 0, "{}", t.err());
     let runs: Vec<String> = t.scripts.calls.borrow().iter().filter(|c| c.starts_with("suite_run")).cloned().collect();
-    assert_eq!(runs, [format!("suite_run unit-tests {T_FIX} spira first=true tests=other_test")]);
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert!(runs[0].starts_with(&format!("suite_run unit-tests {T_FIX} spira first=true tests=other_test deny=")), "{runs:?}");
     assert!(t.out().contains(&format!("running unit-tests at {T_FIX} via testenv --tests other_test")), "{}", t.out());
 }
 
@@ -9588,7 +9589,43 @@ fn resubmit_runs_the_whole_check_when_the_eject_recorded_no_test_ids() {
     let t = unit_red_world(&[], "");
     assert_eq!(resubmit_unit_red(&t), 0, "{}", t.err());
     let runs: Vec<String> = t.scripts.calls.borrow().iter().filter(|c| c.starts_with("suite_run")).cloned().collect();
-    assert_eq!(runs, [format!("suite_run unit-tests {T_FIX} spira first=true")]);
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert!(runs[0].starts_with(&format!("suite_run unit-tests {T_FIX} spira first=true deny=")), "{runs:?}");
+}
+
+fn deny_path_of(t: &T) -> String {
+    let runs: Vec<String> = t.scripts.calls.borrow().iter().filter(|c| c.starts_with("suite_run")).cloned().collect();
+    runs[0].split(" deny=").nth(1).unwrap().to_string()
+}
+
+#[test]
+fn resubmit_hands_a_whole_run_the_deny_rows_when_the_eject_recorded_no_test_ids() {
+    let row = "disabled\tunit:queue other_test\tsp-quvpmf\t9999999999\n";
+    let t = unit_red_world(&[], row);
+    assert_eq!(resubmit_unit_red(&t), 0, "{}", t.err());
+    let text = fs::read_to_string(deny_path_of(&t)).unwrap();
+    assert!(text.contains(row), "{text}");
+}
+
+#[test]
+fn resubmit_refuses_and_runs_nothing_when_the_deny_list_cannot_be_read() {
+    let t = unit_red_world(&[], "");
+    *t.scripts.deny_list.borrow_mut() = Some(Err("registry busy".into()));
+    assert_eq!(resubmit_unit_red(&t), 1);
+    assert!(t.err().contains("the deny list could not be resolved: registry busy"), "{}", t.err());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("suite_run")));
+}
+
+#[test]
+fn resubmit_keeps_a_red_runs_whole_output_and_names_its_failing_tests() {
+    let t = unit_red_world(&[], "");
+    let text = "noise\nunit-tests: 1 failing test(s):\n  a::t\nVERDICT RED ran=1 red=1 first=unit-tests.sh: exit 101";
+    t.scripts.suite_out.borrow_mut().insert("unit-tests".into(), (1, text.into()));
+    assert_eq!(resubmit_unit_red(&t), 1);
+    let err = t.err();
+    assert!(err.contains("a::t") && err.contains("output: "), "{err}");
+    let path = err.lines().find_map(|l| l.trim().strip_prefix("output: ")).unwrap();
+    assert_eq!(fs::read_to_string(path).unwrap(), text);
 }
 
 fn round_records(t: &T) -> Vec<(String, String, String)> {
