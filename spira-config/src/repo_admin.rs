@@ -590,7 +590,14 @@ fn worktree_root_under(run: &Path) -> PathBuf {
 fn pid_alive(pid: u32) -> bool {
     // SAFETY: signal 0 only probes for the pid; nothing is delivered.
     let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
-    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    let probe = rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+    probe && !is_dead_or_zombie(pid)
+}
+
+fn is_dead_or_zombie(pid: u32) -> bool {
+    let Ok(stat) = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)) else { return false };
+    let state = stat.rsplit_once(')').and_then(|(_, r)| r.split_whitespace().next());
+    matches!(state, Some("Z" | "X"))
 }
 
 /// A killed check leaves its registration locked, and `git worktree prune` skips a locked one.
@@ -604,19 +611,28 @@ fn unlock_registration(tree: &Path) {
 /// Remove every `repo-check-<pid>-*` entry under `root` whose pid is gone; a name whose pid
 /// does not parse is kept. Returns the number removed.
 pub fn reap_dead_checks(root: &Path, pid_alive: &dyn Fn(u32) -> bool) -> usize {
+    reap_dead_checks_reporting(root, pid_alive, &mut |line| eprintln!("{line}"))
+}
+
+fn reap_dead_checks_reporting(root: &Path, pid_alive: &dyn Fn(u32) -> bool, report: &mut dyn FnMut(String)) -> usize {
     let Ok(rd) = std::fs::read_dir(root) else { return 0 };
     let mut n = 0;
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         let Some(rest) = name.strip_prefix(CHECK_PREFIX) else { continue };
         let Some(pid) = rest.split('-').next().and_then(|p| p.parse::<u32>().ok()) else { continue };
+        let path = e.path().display().to_string();
         if pid_alive(pid) {
+            report(format!("repo-check: kept {path} (pid {pid} still running)"));
             continue;
         }
         unlock_registration(&e.path());
-        if std::fs::remove_dir_all(e.path()).is_ok() {
-            eprintln!("repo-check: reaped {} (pid {pid} gone)", e.path().display());
-            n += 1;
+        match std::fs::remove_dir_all(e.path()) {
+            Ok(()) => {
+                report(format!("repo-check: reaped {path} (pid {pid} gone)"));
+                n += 1;
+            }
+            Err(err) => report(format!("repo-check: cannot reap {path}: {err}")),
         }
     }
     n
@@ -822,5 +838,41 @@ mod tests {
         let root = worktree_root_under(d.path());
         assert_eq!(root, d.path().join("worktree"));
         assert!(root.starts_with(d.path()));
+    }
+
+    #[test]
+    fn a_zombie_pid_is_not_alive() {
+        // SAFETY: the child calls only async-signal-safe `_exit`.
+        let pid = unsafe {
+            match libc::fork() {
+                0 => libc::_exit(0),
+                p => p,
+            }
+        };
+        assert!(pid > 0);
+        let stat = format!("{}/{pid}/stat", system_paths::PROC);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !std::fs::read_to_string(&stat).is_ok_and(|s| s.rsplit_once(')').is_some_and(|(_, r)| r.trim_start().starts_with('Z'))) {
+            assert!(std::time::Instant::now() < deadline, "child never became a zombie");
+            std::thread::yield_now();
+        }
+        let alive = pid_alive(pid as u32);
+        // SAFETY: collects the child forked above.
+        unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+        assert!(!alive);
+    }
+
+    #[test]
+    fn a_kept_check_tree_is_reported_with_its_reason() {
+        let d = testkit::TempDir::new("repo-check-kept");
+        std::fs::create_dir(d.path().join("repo-check-222-2")).unwrap();
+        std::fs::write(d.path().join("repo-check-1-1"), "").unwrap();
+        let mut lines = Vec::new();
+        let n = reap_dead_checks_reporting(d.path(), &|p| p == 222, &mut |l| lines.push(l));
+        assert_eq!(n, 0);
+        lines.sort();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with("repo-check: cannot reap ") && lines[0].contains("repo-check-1-1: "), "{lines:?}");
+        assert!(lines[1].starts_with("repo-check: kept ") && lines[1].ends_with("repo-check-222-2 (pid 222 still running)"), "{lines:?}");
     }
 }
