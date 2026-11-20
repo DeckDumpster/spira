@@ -332,7 +332,7 @@ fn hold_refusals_and_absences_keep_the_shell_exit_codes() {
     assert_eq!(go(&mut f, "held", &["sp-none", "poison"]).code, 1);
     let mut down = Fake { down: true, ..Default::default() };
     assert_eq!(go(&mut down, "hold", &["sp-t", "poison", "x"]).code, CANNOT_TELL);
-    assert_eq!(go(&mut down, "list-all", &[]).code, CANNOT_TELL, "an unreachable machine is cannot tell, never an empty list");
+    assert_eq!(go(&mut down, "list-state", &["READY"]).code, CANNOT_TELL, "an unreachable machine is cannot tell, never an empty list");
 }
 
 // ---- sp-cxfgj5: a read that failed is cannot tell, never an answer ---------------------
@@ -531,7 +531,17 @@ fn state_and_the_bulk_lists_keep_their_line_shapes() {
     assert_eq!(go(&mut f, "state", &["sp-9"]).code, NO_ROW);
     assert_eq!(go(&mut f, "list-held", &["poison"]).stdout, "sp-1\nsp-2");
     assert_eq!(go(&mut f, "list-state", &["WORKING"]).stdout, "sp-1\t1700000000\tpoison,wait\nsp-3\t\t");
-    assert_eq!(go(&mut f, "list-all", &[]).stdout, "sp-1\tWORKING\tdwarf-1\nsp-2\tREADY\t\nsp-3\tWORKING\t");
+}
+
+#[test]
+fn list_all_is_refused_with_the_bounded_reads_and_sends_no_list_call() {
+    let mut f = Fake::default();
+    f.bead("sp-1", BeadState::Working);
+    let mut r = Recording { inner: &mut f, sent: Vec::new() };
+    let a = run("list-all", &v(&[]), &mut r);
+    assert_eq!(a.code, REFUSED);
+    assert!(a.stderr.starts_with("refused: list-all reads every row ever filed") && a.stderr.contains("list --bare --after <id> --limit <n>"), "{}", a.stderr);
+    assert!(r.sent.is_empty(), "{:?}", r.sent);
 }
 
 #[test]
@@ -1969,10 +1979,6 @@ fn the_admin_verbs_that_read_the_table_ask_for_pages_or_the_one_state_they_act_o
     f.bead("sp-1", BeadState::Ready);
     let mut b = FakeBd::default();
     let first = |sent: &[Vec<String>]| sent[0].clone();
-
-    let mut r = Recording { inner: &mut f, sent: Vec::new() };
-    run("list-all", &v(&[]), &mut r);
-    assert_eq!(first(&r.sent), ["list", "--bare", "--limit", "1000"]);
 
     let mut r = Recording { inner: &mut f, sent: Vec::new() };
     reconcile_closed(&[], &mut r, &mut b);
