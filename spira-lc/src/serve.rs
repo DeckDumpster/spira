@@ -26,6 +26,7 @@ const SWEEP_EVERY: Duration = Duration::from_secs(5);
 
 static SPANS: std::sync::OnceLock<spira_otel::Sink> = std::sync::OnceLock::new();
 static LEDGER: std::sync::OnceLock<Ledger> = std::sync::OnceLock::new();
+static DEADLINES: std::sync::OnceLock<Deadlines> = std::sync::OnceLock::new();
 
 const LEDGER_KEY: &str = "SPIRA_LC_REQUEST_LEDGER_SECS";
 
@@ -38,6 +39,49 @@ fn ledger_ttl_from(read: impl FnOnce(&str) -> Result<String, String>) -> Result<
     spira_config::process::parse_declared::<u64>(LEDGER_KEY, &value)
         .map(Duration::from_secs)
         .map_err(|e| format!("spira.lc_request_ledger_secs: {e}"))
+}
+
+const DEADLINE_KEY: &str = "SPIRA_LC_REQUEST_DEADLINE_MS";
+const SLOW_KEY: &str = "SPIRA_LC_SLOW_VERB_DEADLINES";
+/// The receiver stops 3 s after receiving (law-calls-have-deadlines); no configured deadline may exceed it.
+const MAX_CONFIGURED_MS: u64 = 3000;
+
+/// The deadlines a store call is served under, pinned at serve start.
+#[derive(Clone, Debug)]
+pub(crate) struct Deadlines {
+    pub(crate) default: Duration,
+    /// verb -> (its deadline, the bead that fixes it)
+    pub(crate) slow: std::collections::BTreeMap<String, (Duration, String)>,
+}
+
+/// Parses `verb=ms@bead,...`; the verb, its milliseconds and its bead.
+pub(crate) fn parse_slow_entries(value: &str) -> Result<Vec<(String, u64, String)>, String> {
+    let mut out = Vec::new();
+    for entry in value.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let bad = |why: &str| format!("spira.lc_slow_verb_deadlines: entry {entry:?} {why}; the form is verb=ms@bead");
+        let (verb, rest) = entry.split_once('=').ok_or_else(|| bad("has no ="))?;
+        let (ms, bead) = rest.split_once('@').ok_or_else(|| bad("names no @bead"))?;
+        if verb.is_empty() || bead.is_empty() {
+            return Err(bad("has an empty verb or bead"));
+        }
+        let ms: u64 = ms.parse().map_err(|_| bad("has a deadline that is not a whole number of ms"))?;
+        if ms == 0 || ms > MAX_CONFIGURED_MS {
+            return Err(bad("has a deadline outside 1..=3000 ms"));
+        }
+        out.push((verb.to_string(), ms, bead.to_string()));
+    }
+    Ok(out)
+}
+
+fn deadlines_from(read: impl Fn(&str) -> Result<String, String>) -> Result<Deadlines, String> {
+    let default = read(DEADLINE_KEY).map_err(|e| format!("spira.lc_request_deadline_ms: {e}"))?;
+    let default: u64 = spira_config::process::parse_declared(DEADLINE_KEY, &default).map_err(|e| format!("spira.lc_request_deadline_ms: {e}"))?;
+    if default == 0 || default > MAX_CONFIGURED_MS {
+        return Err(format!("spira.lc_request_deadline_ms: {default} is outside 1..=3000 ms"));
+    }
+    let slow = read(SLOW_KEY).map_err(|e| format!("spira.lc_slow_verb_deadlines: {e}"))?;
+    let slow = parse_slow_entries(&slow)?.into_iter().map(|(v, ms, bead)| (v, (Duration::from_millis(ms), bead))).collect();
+    Ok(Deadlines { default: Duration::from_millis(default), slow })
 }
 
 enum Entry {
@@ -130,7 +174,7 @@ type Work = Arc<dyn Fn(Request) -> Answer + Send + Sync>;
 struct Door {
     ledger: Ledger,
     work: Work,
-    deadline: fn(&[String]) -> Duration,
+    deadlines: Deadlines,
 }
 
 fn live_work() -> Work {
@@ -214,6 +258,16 @@ pub fn run(args: &[String]) -> i32 {
     match ledger_ttl() {
         Ok(ttl) => {
             let _ = LEDGER.set(Ledger::new(ttl));
+        }
+        Err(e) => {
+            eprintln!("spira-lc serve: {e}");
+            return 2;
+        }
+    }
+
+    match deadlines_from(spira_config::process::cfg) {
+        Ok(d) => {
+            let _ = DEADLINES.set(d);
         }
         Err(e) => {
             eprintln!("spira-lc serve: {e}");
@@ -664,7 +718,7 @@ fn bind_socket(socket_path: &str) -> std::io::Result<UnixListener> {
 }
 
 fn handle(stream: UnixStream, accepted: Instant) {
-    let door = Door { ledger: LEDGER.get().expect("the ledger is set before the socket is bound").clone(), work: live_work(), deadline: request_deadline };
+    let door = Door { ledger: LEDGER.get().expect("the ledger is set before the socket is bound").clone(), work: live_work(), deadlines: DEADLINES.get().expect("the deadlines are set before the socket is bound").clone() };
     serve_one(stream, SPANS.get(), accepted, &door);
 }
 
@@ -708,7 +762,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
             let who = caller.clone();
             let holder_verb = verb.clone();
             let began = Arc::clone(&started_work);
-            let limit = (door.deadline)(&argv);
+            let limit = request_deadline(&argv, &door.deadlines);
             let ledgered = req.request_id.clone().filter(|_| !spira_store::lc_call::is_read(&argv));
             let request_id = req.request_id;
             let req = Request { argv, stdin: req.stdin, caller: req.caller, task: None, request_id: request_id.clone() };
@@ -891,17 +945,13 @@ fn record_span(spans: Option<&spira_otel::Sink>, call: &spira_otel::Call) {
     }
 }
 
-/// How long after receiving a store request this service stops working on it
-/// (law-calls-have-deadlines: the receiver stops 3 s after receiving; the client waits 5 s).
-pub const REQUEST_DEADLINE: Duration = Duration::from_secs(3);
-
 // batch-job: just under the 310 s the `work` client waits for a tool-running verb.
 pub const TOOL_DEADLINE: Duration = Duration::from_secs(305);
 
-/// The request's deadline: [`REQUEST_DEADLINE`] for every store call. `work`'s lane verbs are
+/// The request's deadline: the configured default, or the verb's declared slow entry, for every store call. `work`'s lane verbs are
 /// batch jobs this service brokers, not calls: they run a harness tool (groomer sweep, bead
 /// filing, mail) for the dwarf, and keep the bound they had.
-fn request_deadline(argv: &[String]) -> Duration {
+pub(crate) fn request_deadline(argv: &[String], deadlines: &Deadlines) -> Duration {
     match argv.first().map(String::as_str) {
         // batch-job: a work verb that runs a brokered tool waits the client's tool bound less a margin.
         Some("work") if argv.get(2).is_some_and(|v| crate::work::brokers_tool(v)) => TOOL_DEADLINE,
@@ -910,7 +960,7 @@ fn request_deadline(argv: &[String]) -> Duration {
         Some("unpublished") => crate::unpublished::DEADLINE,
         // batch-job: a repair sweep over every row, bounded at the query deadline like census's.
         Some(v) if crate::composed::SWEEPS.contains(&v) => crate::db::QUERY_DEADLINE,
-        _ => REQUEST_DEADLINE,
+        verb => verb.and_then(|v| deadlines.slow.get(v)).map_or(deadlines.default, |(d, _)| *d),
     }
 }
 
@@ -1064,7 +1114,7 @@ mod tests {
         use std::io::{Read, Write};
         let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
         (&client).write_all(request.as_bytes()).unwrap();
-        let door = super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work: super::live_work(), deadline: super::request_deadline };
+        let door = super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work: super::live_work(), deadlines: test_deadlines() };
         super::serve_one(server, sink, std::time::Instant::now(), &door);
         let mut got = String::new();
         (&client).read_to_string(&mut got).unwrap();
@@ -1078,8 +1128,8 @@ mod tests {
         assert_eq!(code, 2, "{reply}");
         assert!(reply.contains("unpublished: usage"), "the verb answered, not the store: {reply}");
         let argv = |v: &str| vec![v.to_string()];
-        assert!(super::request_deadline(&argv("unpublished")) > super::request_deadline(&argv("show")));
-        assert!(super::request_deadline(&argv("unpublished")) < std::time::Duration::from_secs(5), "the server answers before the 5 s client gives up");
+        assert!(dl(&argv("unpublished")) > dl(&argv("show")));
+        assert!(dl(&argv("unpublished")) < std::time::Duration::from_secs(5), "the server answers before the 5 s client gives up");
     }
 
     #[test]
@@ -1230,16 +1280,17 @@ mod tests {
         assert!(span.attributes.iter().any(|a| a.key == "spira.queue_wait_us"));
     }
 
-    /// law-calls-have-deadlines: a store call is abandoned 3 s after it was received; only
-    /// the brokered batch verbs keep the longer bound.
+    /// law-calls-have-deadlines: a store call is abandoned at the configured default or its declared
+    /// slow deadline; only the brokered batch verbs keep the longer bound.
     #[test]
-    fn a_store_call_is_abandoned_at_three_seconds_and_only_batch_verbs_wait_longer() {
-        let d = |v: &str| super::request_deadline(&[v.to_string(), "x".to_string()]);
+    fn a_store_call_is_abandoned_at_the_configured_default_and_only_declared_and_batch_verbs_wait_longer() {
+        let d = |v: &str| dl(&[v.to_string(), "x".to_string()]);
         for verb in ["show", "list", "event", "fact", "cut", "land", "stats", ""] {
-            assert_eq!(d(verb), std::time::Duration::from_secs(3), "{verb}");
+            assert_eq!(d(verb), std::time::Duration::from_millis(1000), "{verb}");
         }
+        assert_eq!(d("ops-view"), std::time::Duration::from_secs(3));
         assert_eq!(d("work"), crate::db::QUERY_DEADLINE);
-        let w = |v: &str| super::request_deadline(&["work".to_string(), "sp-x".to_string(), v.to_string()]);
+        let w = |v: &str| dl(&["work".to_string(), "sp-x".to_string(), v.to_string()]);
         for verb in ["show", "note", "done", "blocked", "superseded-by"] {
             assert_eq!(w(verb), crate::db::QUERY_DEADLINE, "{verb}");
         }
@@ -1716,7 +1767,7 @@ mod tests {
         door: Arc<super::Door>,
     }
 
-    fn rig(held: bool, deadline: fn(&[String]) -> Duration) -> Rig {
+    fn rig(held: bool, deadlines: super::Deadlines) -> Rig {
         let world = Arc::new(Mutex::new(World::new()));
         let notes = Notes::new(held);
         let (w, n) = (Arc::clone(&world), Arc::clone(&notes));
@@ -1725,12 +1776,49 @@ mod tests {
             let (mut m, mut b) = (&*world, &*world);
             super::answer(req, &mut m, &mut b, &*n, &|| Err("no run dir here".to_string()))
         });
-        let door = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadline });
+        let door = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadlines });
         Rig { world, notes, door }
     }
 
-    fn three_seconds(_: &[String]) -> Duration {
-        Duration::from_secs(3)
+    fn three_seconds() -> super::Deadlines {
+        super::Deadlines { default: Duration::from_secs(3), slow: Default::default() }
+    }
+
+    fn test_deadlines() -> super::Deadlines {
+        let slow = [("ops-view".to_string(), (Duration::from_secs(3), "sp-x".to_string()))].into();
+        super::Deadlines { default: Duration::from_millis(1000), slow }
+    }
+
+    fn dl(argv: &[String]) -> Duration {
+        super::request_deadline(argv, &test_deadlines())
+    }
+
+    fn config(deadline: Option<&str>, slow: &str) -> impl Fn(&str) -> Result<String, String> {
+        let (deadline, slow) = (deadline.map(str::to_string), slow.to_string());
+        move |k| match k {
+            "SPIRA_LC_REQUEST_DEADLINE_MS" => deadline.clone().ok_or_else(|| "missing".to_string()),
+            _ => Ok(slow.clone()),
+        }
+    }
+
+    #[test]
+    fn deadlines_come_from_config_and_bad_config_refuses_naming_its_key() {
+        let ok = super::deadlines_from(config(Some("1000"), "")).unwrap();
+        assert_eq!((ok.default, ok.slow.len()), (Duration::from_millis(1000), 0), "an empty slow list is accepted");
+        let ok = super::deadlines_from(config(Some("800"), "list=3000@sp-a, rc=2000@sp-b")).unwrap();
+        assert_eq!(ok.slow["rc"], (Duration::from_millis(2000), "sp-b".to_string()));
+        for (deadline, slow, names) in [
+            (None, "", "spira.lc_request_deadline_ms"),
+            (Some("4000"), "", "spira.lc_request_deadline_ms"),
+            (Some("1000"), "list=3000", "spira.lc_slow_verb_deadlines"),
+            (Some("1000"), "list=fast@sp-a", "spira.lc_slow_verb_deadlines"),
+            (Some("1000"), "list=4000@sp-a", "spira.lc_slow_verb_deadlines"),
+        ] {
+            let err = super::deadlines_from(config(deadline, slow)).unwrap_err();
+            assert!(err.contains(names), "{err}");
+        }
+        let err = super::deadlines_from(config(Some("1000"), "list=fast@sp-a")).unwrap_err();
+        assert!(err.contains("list=fast@sp-a"), "the entry is named: {err}");
     }
 
     /// One request, `request_id` in its head, through `serve_one` over a socket pair.
@@ -1804,7 +1892,7 @@ mod tests {
                 super::Answer::out(code, out)
             })
         };
-        let door = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadline: super::request_deadline });
+        let door = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadlines: test_deadlines() });
         let bound = 2 * SWEEP_STEP + 100;
         let sweep = |dry: bool| -> (u64, u64, u64) {
             let mut cursor: Option<String> = None;
@@ -1853,7 +1941,7 @@ mod tests {
 
     #[test]
     fn an_event_sent_twice_under_one_request_id_advances_the_bead_once() {
-        let r = rig(false, three_seconds);
+        let r = rig(false, three_seconds());
         filed(&r.world.lock().unwrap(), "sp-a");
         let argv = drop_argv(&r, "sp-a");
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
@@ -1867,13 +1955,13 @@ mod tests {
 
     #[test]
     fn a_store_txn_retried_under_the_clients_id_after_a_restart_applies_once() {
-        let r = rig(false, three_seconds);
+        let r = rig(false, three_seconds());
         filed(&r.world.lock().unwrap(), "sp-a");
         let argv = drop_argv(&r, "sp-a");
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
         let before = history_rows(&r, "sp-a");
         let first = send(&r.door, &argv, Some("req-1"));
-        let restarted = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work: Arc::clone(&r.door.work), deadline: three_seconds });
+        let restarted = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work: Arc::clone(&r.door.work), deadlines: three_seconds() });
         let again = send(&restarted, &argv, Some("req-1"));
         assert_eq!(first.0, 0);
         assert_eq!(again.0, 0, "{again:?}");
@@ -1882,7 +1970,7 @@ mod tests {
 
     #[test]
     fn a_content_note_sent_twice_under_one_request_id_writes_one_note() {
-        let r = rig(false, three_seconds);
+        let r = rig(false, three_seconds());
         let argv = ["content", "note", "sp-a", "x"];
         let first = send(&r.door, &argv, Some("req-1"));
         let second = send(&r.door, &argv, Some("req-1"));
@@ -1893,7 +1981,7 @@ mod tests {
 
     #[test]
     fn without_a_request_id_two_identical_notes_are_two_writes() {
-        let r = rig(false, three_seconds);
+        let r = rig(false, three_seconds());
         let argv = ["content", "note", "sp-a", "x"];
         send(&r.door, &argv, None);
         send(&r.door, &argv, None);
@@ -1902,7 +1990,7 @@ mod tests {
 
     #[test]
     fn a_read_sent_twice_under_one_request_id_is_answered_fresh_each_time() {
-        let r = rig(false, three_seconds);
+        let r = rig(false, three_seconds());
         filed(&r.world.lock().unwrap(), "sp-a");
         let argv = drop_argv(&r, "sp-a");
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
@@ -1945,13 +2033,13 @@ mod tests {
         }
     }
 
-    fn fifty_ms(_: &[String]) -> Duration {
-        Duration::from_millis(50)
+    fn fifty_ms() -> super::Deadlines {
+        super::Deadlines { default: Duration::from_millis(50), slow: Default::default() }
     }
 
     #[test]
     fn a_retry_after_a_deadline_gets_the_workers_real_answer_and_the_note_exists_once() {
-        let r = rig(true, fifty_ms);
+        let r = rig(true, fifty_ms());
         let argv = ["content", "note", "sp-a", "x"];
         let first = send(&r.door, &argv, Some("req-1"));
         assert_eq!(first, (2, "cannot tell: deadline".to_string()), "the worker is parked past the deadline");
@@ -2420,10 +2508,11 @@ mod tests {
     }
 
     #[test]
-    fn content_writes_keep_the_three_second_bound_under_the_clients_five() {
+    fn content_writes_keep_the_configured_default_under_the_clients_five() {
         for argv in [&["label", "add", "sp-a", "x"][..], &["close", "sp-a"], &["note", "sp-a", "--stdin"], &["update", "sp-a", "--set-metadata", "k=v"], &["create", "T"]] {
             let full: Vec<String> = std::iter::once("content").chain(argv.iter().copied()).map(str::to_string).collect();
-            assert_eq!(super::request_deadline(&full), std::time::Duration::from_secs(3), "{argv:?}");
+            assert_eq!(dl(&full), test_deadlines().default, "{argv:?}");
+            assert!(dl(&full) < crate::client::TIMEOUT, "{argv:?}");
         }
         assert_eq!(crate::client::TIMEOUT, std::time::Duration::from_secs(5));
     }
@@ -2507,10 +2596,10 @@ mod tests {
     }
 
     #[test]
-    fn a_composed_verb_keeps_the_three_second_bound_and_only_its_sweeps_are_batch_jobs() {
-        let d = |v: &str| super::request_deadline(&[v.to_string(), "x".to_string()]);
+    fn a_composed_verb_keeps_the_configured_default_and_only_its_sweeps_are_batch_jobs() {
+        let d = |v: &str| dl(&[v.to_string(), "x".to_string()]);
         for verb in ["close", "reopen", "reconcile-closed", "close-ask", "hold", "unhold", "drop", "disposition", "held", "reply", "content"] {
-            assert_eq!(d(verb), std::time::Duration::from_secs(3), "{verb}");
+            assert_eq!(d(verb), std::time::Duration::from_millis(1000), "{verb}");
         }
         for verb in crate::composed::SWEEPS {
             assert_eq!(d(verb), crate::db::QUERY_DEADLINE, "{verb}");

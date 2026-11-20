@@ -87,8 +87,11 @@ pub fn owe_stamp() -> bool {
     true
 }
 
+/// Owed writes after the reply are not request work; they keep the receiver's 3 s bound.
+const SETTLE_DEADLINE: Duration = Duration::from_secs(3);
+
 fn fresh_deadline() -> state_store::phases::DeadlineScope {
-    state_store::phases::deadline_scoped(Instant::now() + crate::serve::REQUEST_DEADLINE)
+    state_store::phases::deadline_scoped(Instant::now() + SETTLE_DEADLINE)
 }
 
 fn count_refused(what: &str) {
