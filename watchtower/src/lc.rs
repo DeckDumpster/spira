@@ -101,8 +101,12 @@ pub fn last_landed() -> Option<(String, i64)> {
     last_landed_on(&client()?)
 }
 
+const LANDED_LOOKBACK_SECS: u64 = 10 * 365 * 86_400;
+
 pub fn last_landed_on(client: &LcClient) -> Option<(String, i64)> {
-    beads_in_on(client, "LANDED")?.into_iter().filter_map(|b| Some((b.id, b.since?))).max_by_key(|(_, at)| *at)
+    let window = LANDED_LOOKBACK_SECS.to_string();
+    let answer: Value = serde_json::from_str(&run_on(client, &["audits", "--newest", "--to-state", "LANDED", "--window", &window])?).ok()?;
+    Some((answer["lc_key"].as_str()?.to_string(), answer["newest_at"].as_i64()?))
 }
 
 pub fn pr_open() -> Option<Vec<DeliveryRow>> {
@@ -191,6 +195,19 @@ mod tests {
         assert_eq!(content_list(&c, &["--label", "x"]).as_deref(), Some("[{\"id\":\"sp-a\"}]"));
         assert_eq!(t.seen.lock().unwrap()[0], vec!["content", "list", "--label", "x"]);
         assert_eq!(content_list(&scripted(1, "bd failed").1, &[]), None);
+    }
+
+    #[test]
+    fn last_landed_asks_the_newest_end_of_the_audit_log_once() {
+        use super::scripted::scripted_by;
+        let (t, c) = scripted_by(&[("audits", 0, r#"{"newest_at":99,"lc_key":"sp-x"}"#)]);
+        assert_eq!(last_landed_on(&c), Some(("sp-x".to_string(), 99)));
+        let seen = t.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(&seen[0][..4], ["audits", "--newest", "--to-state", "LANDED"]);
+        assert_eq!(seen[0][4], "--window");
+        assert_eq!(last_landed_on(&scripted_by(&[("audits", 0, r#"{"newest_at":null}"#)]).1), None);
+        assert_eq!(last_landed_on(&scripted_by(&[("audits", 3, "refused")]).1), None);
     }
 
     #[test]

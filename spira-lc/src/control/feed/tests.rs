@@ -385,6 +385,43 @@ fn audits_answers_the_applied_and_refused_events_after_a_revision_in_pages<B: Ba
     assert_ne!(verbs::run(s, &zero).0, 0);
 }
 
+#[test]
+fn audits_newest_reads_only_the_newest_chunk_of_a_long_log() {
+    use crate::control::audits::CHUNK_REVS;
+    use crate::journal::counting::Counting;
+    const TIP: &str = "0123456789abcdef0123456789abcdef01234567";
+    let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let s = store(Counting(MemBackend::new(), counter.clone()), &VirtualClock::new(0));
+    let now = crate::db::now_epoch();
+    let ev = |expect, version, kind, at| BeadEvent { expect, version, kind, actor: "ops".into(), at: Some(at) };
+    s.create("sp-l", Some("harness"), Some(TIP), now - 5_000, &req("c-l")).unwrap();
+    create(&s, "sp-a");
+    let gate = BeadEventKind::GatePass { tip: TIP.into(), gate_key: "k".into() };
+    s.apply("sp-l", &ev(BeadState::Submitted, 1, gate, now - 4_000), &req("g")).unwrap();
+    s.apply("sp-l", &ev(BeadState::Certified, 2, BeadEventKind::Deliver, now - 3_000), &req("d")).unwrap();
+    for n in 0..2_000 {
+        let r = s.record("sp-a").unwrap().unwrap().value.row;
+        let kind = if r.express { BeadEventKind::Unexpress } else { BeadEventKind::Express };
+        let out = s.apply("sp-a", &ev(BeadState::Ready, r.version, kind, now - 2_000), &req(&format!("t-{n}"))).unwrap();
+        assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
+    }
+    let landed = BeadEventKind::Delivered { merge_sha: TIP.into(), proof: "p".into() };
+    let out = s.apply("sp-l", &ev(BeadState::InDelivery, 3, landed, now - 10), &req("land")).unwrap();
+    assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
+
+    counter.store(0, Ordering::SeqCst);
+    assert_eq!(call(&s, &["audits", "--newest"]), serde_json::json!({ "newest_at": now - 10 }));
+    let read = counter.load(Ordering::SeqCst);
+    assert!(read as u64 <= 2 * CHUNK_REVS, "--newest read {read} keys of a 2,000-audit log");
+    assert_eq!(call(&s, &["audits", "--newest", "--window", "5"]), serde_json::json!({ "newest_at": null }), "the window narrows the floor");
+    assert_eq!(call(&s, &["audits", "--newest", "--to-state", "DROPPED"]), serde_json::json!({ "newest_at": null }), "no audit moved into that state, and the walk went on past the newest chunk");
+    for bad in [&["audits", "--to-state", "LANDED"][..], &["audits", "--window", "5"], &["audits", "--newest", "--window", "x"]] {
+        let args: Vec<String> = bad.iter().map(|a| a.to_string()).collect();
+        assert_ne!(verbs::run(&s, &args).0, 0, "{bad:?}");
+    }
+    assert_eq!(call(&s, &["audits", "--newest", "--to-state", "LANDED"]), serde_json::json!({ "newest_at": now - 10, "lc_key": "sp-l" }));
+}
+
 fn event_seq_names_only_the_beads_with_an_applied_event_after_the_revision<B: Backend>(
     s: &Store<B>,
 ) {

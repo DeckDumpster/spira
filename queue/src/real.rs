@@ -2291,10 +2291,12 @@ impl Lc for RealLc {
         }
     }
     fn probe(&self) -> Result<(), String> {
-        let out = self.stdout(&["list", "--state", "IN_DELIVERY"])?;
-        serde_json::from_str::<serde_json::Value>(&out)
-            .map(|_| ())
-            .map_err(|e| format!("spira-lc list: {e}"))
+        let out = self.stdout(&["event-seq", "--head"])?;
+        let head: serde_json::Value = serde_json::from_str(&out).map_err(|e| format!("spira-lc event-seq: {e}"))?;
+        match head.get("seq") {
+            Some(seq) if seq.is_u64() || seq.is_i64() => Ok(()),
+            _ => Err(format!("spira-lc event-seq: no integer seq in {out:?}")),
+        }
     }
     fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String> {
         let out = match state {
@@ -2636,7 +2638,8 @@ mod tests {
     impl Transport for Seen {
         fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            Ok(Reply { code: 0, out: "[]".into(), err: String::new() })
+            let out = if argv.first().is_some_and(|a| a == "event-seq") { r#"{"seq":7,"keys":[]}"# } else { "[]" };
+            Ok(Reply { code: 0, out: out.into(), err: String::new() })
         }
     }
 
@@ -2655,6 +2658,14 @@ mod tests {
             lc.bead_rows_of(&["sp-a".to_string(), "sp-b".to_string()]).unwrap();
         });
         assert_eq!(sent, [vec!["list", "--live"], vec!["list", "--ids", "sp-a,sp-b"]]);
+    }
+
+    #[test]
+    fn probe_asks_for_the_head_revision_not_a_listing() {
+        let mut result = Ok(());
+        let sent = sent_by(|lc| result = lc.probe());
+        assert_eq!(sent, [vec!["event-seq", "--head"]]);
+        assert_eq!(result, Ok(()));
     }
 
     #[test]
