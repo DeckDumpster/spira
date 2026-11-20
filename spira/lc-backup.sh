@@ -236,11 +236,21 @@ cmd_age() {
     _lcb_all_ok "$out"
 }
 
+# Phase clocks: _lcb_lap closes the phase begun at the last lap and names its seconds in _LCB_PHASES.
+_lcb_lap() {
+    local now; now="$(date +%s)"
+    _LCB_PHASES="${_LCB_PHASES:+$_LCB_PHASES, }$1 $(( now - ${_LCB_LAP:-$now} ))s"
+    _LCB_LAP="$now"
+}
+_lcb_phases_note() { [ -z "${_LCB_PHASES:-}" ] || printf ' (%s)' "$_LCB_PHASES"; }
+
 _lcb_drill_db() {
     local db="$1" manifest="${2:-}" lock left
     lock="$(_lcb_lock "$db")" || return 1
     left=$(( _LCB_DRILL_DEADLINE - $(date +%s) )); [ "$left" -ge 0 ] || left=0
-    ( flock -w "$left" 9 || { echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $db: a run holds the lock" | _lcb_record_deferral "$db" >&2; exit 1; }
+    _LCB_PHASES="${_LCB_QUIET:-}"; _LCB_LAP="$(date +%s)"
+    ( flock -w "$left" 9 || { _lcb_lap "lock wait"; echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $db: a run holds the lock$(_lcb_phases_note)" | _lcb_record_deferral "$db" >&2; exit 1; }
+      _lcb_lap "lock wait"
       _lcb_drill_db_locked "$db" "$manifest" ) 9>"$lock"
 }
 
@@ -249,7 +259,7 @@ _lcb_verdict() { printf '%s/lc-backup/%s/drill.verdict' "$SPIRA_RUN" "$1"; }
 _lcb_drill_fail() {
     local db="$1"; shift
     echo "lc-backup: drill: $*" >&2
-    printf 'lc-backup: drill: %s\n' "$*" >> "$(_lcb_verdict "$db")"
+    printf 'lc-backup: drill: %s%s\n' "$*" "$(_lcb_phases_note)" >> "$(_lcb_verdict "$db")"
     return 1
 }
 
@@ -293,7 +303,11 @@ _lcb_drill_db_locked() {
     mkdir -p "$SPIRA_LC_BACKUP_DRILL_DIR" && scratch="$(mktemp -d "$SPIRA_LC_BACKUP_DRILL_DIR/$db.XXXXXX")" \
         || { _lcb_drill_fail "$db" "$db: cannot make a scratch dir under $SPIRA_LC_BACKUP_DRILL_DIR"; return 1; }
     local which=(--state "$(_lcb_work "$db")"); [ -z "$named" ] || which=(--manifest "$named")
-    set="$(spira-lc admin-dolt-assemble "${which[@]}" --files "$(_lcb_sync_dir "$db")" --out "$scratch/snap" 2>&1)" \
+    local fails=() live_ns=0 restored_ns=0 t1 t2 t3
+    _LCB_LAP="$(date +%s)"
+    set="$(spira-lc admin-dolt-assemble "${which[@]}" --files "$(_lcb_sync_dir "$db")" --out "$scratch/snap" 2>&1)"; rc=$?
+    _lcb_lap assemble
+    [ "$rc" = 0 ] \
         || { _lcb_drill_fail "$db" "$db: cannot lay down the newest manifest's file set: ${set:-(no output)}"; rm -rf "$scratch"; return 1; }
     read -r set_head _ bytes manifest <<<"$set"
     manifest="$(basename "${manifest:-?}")"
@@ -304,10 +318,13 @@ _lcb_drill_db_locked() {
     [ "${have:-0}" -ge "$need" ] \
         || { _lcb_drill_fail "$db" "$SPIRA_LC_BACKUP_DRILL_DIR has ${have:-0}KiB free, the restore needs ~${need}KiB"; rm -rf "$scratch"; return 1; }
     # batch-job: restoring the manifest's file set into the scratch dir
-    ( cd "$scratch" && dolt backup restore "file://$scratch/snap" "$db" ) >"$scratch/restore.log" 2>&1 \
+    ( cd "$scratch" && dolt backup restore "file://$scratch/snap" "$db" ) >"$scratch/restore.log" 2>&1; rc=$?
+    _lcb_lap restore
+    [ "$rc" = 0 ] \
         || { _lcb_drill_fail "$db" "restore of $manifest failed: $(_lcb_text "$scratch/restore.log" "(no output)")"; rm -rf "$scratch"; return 1; }
     live_head="$(_lcb_restored_sql "$scratch" "$db" head "SELECT commit_hash FROM dolt_log LIMIT 1")"
     held="$(_lcb_restored_sql "$scratch" "$db" contains "SELECT COUNT(*) FROM dolt_log WHERE commit_hash = '$head'")"
+    _lcb_lap "head check"
     if [ "$(cat "$scratch/head.rc")" != 0 ] || [ -z "$live_head" ] || [ "$(cat "$scratch/contains.rc")" != 0 ] || [ "$held" != 1 ]; then
         _lcb_drill_fail "$db" "stamped head $head not shown to be in the history restored from $manifest (restored head ${live_head:-?}; contains count ${held:-?}): $(_lcb_query_report "$scratch" head contains)"
         rm -rf "$scratch"; return 1
@@ -315,17 +332,23 @@ _lcb_drill_db_locked() {
     tables="$(_lcb_sql "$db" -r csv -q "SHOW FULL TABLES AS OF '$head' WHERE Table_type='BASE TABLE'" 2>"$scratch/tables.err" | awk -F, 'NR>1{print $1}')"
     [ -n "$tables" ] || { _lcb_drill_fail "$db" "list tables as of $head: none listed: $(_lcb_text "$scratch/tables.err" "(no stderr)")"; rm -rf "$scratch"; return 1; }
     for tbl in $tables; do
+        t1="$(date +%s%N)"
         live="$(_lcb_sql "$db" -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" 2>"$scratch/live.err" | tail -n +2)"
+        t2="$(date +%s%N)"
         restored="$(_lcb_restored_sql "$scratch" "$db" restored "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'")"
+        t3="$(date +%s%N)"
+        live_ns=$(( live_ns + t2 - t1 )); restored_ns=$(( restored_ns + t3 - t2 ))
         if [ -z "$live" ] || [ "$live" != "$restored" ]; then
-            _lcb_drill_fail "$db" "count $tbl: live ${live:-?} != restored ${restored:-?}: live stderr: $(_lcb_text "$scratch/live.err" "(no stderr)"); $(_lcb_query_report "$scratch" restored)"; rc=1
+            fails+=("count $tbl: live ${live:-?} != restored ${restored:-?}: live stderr: $(_lcb_text "$scratch/live.err" "(no stderr)"); $(_lcb_query_report "$scratch" restored)"); rc=1
         fi
     done
+    _LCB_PHASES="${_LCB_PHASES:+$_LCB_PHASES, }live counts $(( live_ns / 1000000000 ))s, restored counts $(( restored_ns / 1000000000 ))s"
+    for t1 in "${fails[@]}"; do _lcb_drill_fail "$db" "$t1" >/dev/null; done
     rm -rf "$scratch"
     if [ "$rc" = 0 ]; then
         local note="identical at $head"
         [ "$live_head" = "$head" ] || note="$note; restored head $live_head is newer than the stamped head $head"
-        echo "lc-backup: drill ok — $db: $(printf '%s\n' "$tables" | wc -l) table(s) $note" | tee "$verdict"
+        echo "lc-backup: drill ok — $db: $(printf '%s\n' "$tables" | wc -l) table(s) $note$(_lcb_phases_note)" | tee "$verdict"
         [ -n "$named" ] || date +%s > "$(dirname "$verdict")/drill.ok"
     fi
     return "$rc"
@@ -351,10 +374,10 @@ _lcb_record_deferral() {
 }
 
 _lcb_drill_wait_quiet() {
-    local why
+    local why t0; t0="$(date +%s)"
     while why="$(_lcb_drill_busy)"; [ -n "$why" ]; do
         if [ "$(date +%s)" -ge "$_LCB_DRILL_DEADLINE" ]; then
-            echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $why" | _lcb_record_deferral "$@" >&2
+            echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $why ($(( $(date +%s) - t0 ))s quiet wait)" | _lcb_record_deferral "$@" >&2
             return 1
         fi
         echo "lc-backup: drill: deferring — $why"
@@ -365,19 +388,22 @@ _lcb_drill_wait_quiet() {
 # The control store's drill: restore the local copy of every uploaded object and prove it by
 # fold-and-compare. It reads no live store, so a busy one never defers it.
 _lcb_drill_control() {
-    local verdict="$SPIRA_RUN/lc-backup/control/drill.verdict" scratch out rc
+    local verdict="$SPIRA_RUN/lc-backup/control/drill.verdict" scratch out rc line t0
     mkdir -p "$(dirname "$verdict")" "$SPIRA_LC_BACKUP_DRILL_DIR" || return 1
     scratch="$(mktemp -d "$SPIRA_LC_BACKUP_DRILL_DIR/control.XXXXXX")" \
         || { echo "lc-backup: drill: control: cannot make a scratch dir under $SPIRA_LC_BACKUP_DRILL_DIR" | tee "$verdict" >&2; return 1; }
     # batch-job: a restore and a full fold of the control store's local copy
+    t0="$(date +%s)"
     out="$(spira-lc admin-drill --scratch "$scratch/restore" 2>&1)"; rc=$?
+    _LCB_LAP="$t0"; _LCB_PHASES=""; _lcb_lap admin-drill
     rm -rf "$scratch"
     printf '%s\n' "$out"
     if [ "$rc" -eq 0 ]; then
-        echo "lc-backup: drill ok — control: $(head -n1 <<<"$out")" > "$verdict"
+        line="$(grep -m1 '^drill ok:' <<<"$out")"; [ -n "$line" ] || line="$(head -n1 <<<"$out")"
+        echo "lc-backup: drill ok — control: $line$(_lcb_phases_note)" > "$verdict"
         date +%s > "$SPIRA_RUN/lc-backup/control/drill.ok"
     else
-        printf 'lc-backup: drill: control: %s\n' "$out" > "$verdict"
+        printf 'lc-backup: drill: control: %s%s\n' "$out" "$(_lcb_phases_note)" > "$verdict"
     fi
     return "$rc"
 }
@@ -401,7 +427,10 @@ cmd_drill() {
         [ "$only" = control ] && return "$rc"
     fi
     _LCB_DRILL_DEADLINE=$(( $(date +%s) + SPIRA_LC_BACKUP_DRILL_WAIT_SECS ))
+    _LCB_LAP="$(date +%s)"; _LCB_PHASES=""
     _lcb_drill_wait_quiet ${only:-$(_lcb_dbs)} || return 1
+    _lcb_lap "quiet wait"
+    _LCB_QUIET="$_LCB_PHASES"
     for db in ${only:-$(_lcb_dbs)}; do _lcb_drill_db "$db" "$manifest" || rc=1; done
     return "$rc"
 }

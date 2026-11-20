@@ -6,7 +6,7 @@ use std::process::Command;
 const SCRIPT: &str = include_str!("../../spira/lc-backup.sh");
 const FUNCTIONS: &[&str] = &[
     "_lcb_dbs", "_lcb_db_dir", "_lcb_stamp", "_lcb_require_db", "_lcb_sql", "_lcb_lock", "_lcb_work", "_lcb_sync_dir",
-    "_lcb_verdict", "_lcb_drill_fail", "_lcb_restored_sql", "_lcb_text", "_lcb_query_report", "_lcb_drill_db_locked", "_lcb_drill_db", "cmd_drill",
+    "_lcb_verdict", "_lcb_drill_fail", "_lcb_restored_sql", "_lcb_text", "_lcb_query_report", "_lcb_lap", "_lcb_phases_note", "_lcb_drill_db_locked", "_lcb_drill_db", "_lcb_drill_control", "cmd_drill",
 ];
 const STUBS: &str = r#"#!/bin/bash
 case "$(basename "$0")" in
@@ -23,6 +23,7 @@ dolt)
     esac ;;
 spira-lc)
     echo "$*" >> "$STUB_LOG"
+    [ "$1" != admin-drill ] || { printf '%s\n' "$STUB_DRILL_OUT"; exit 0; }
     m="$STUB_MANIFEST"
     while [ $# -gt 0 ]; do [ "$1" = --manifest ] && m="$2"; shift; done
     echo "$STUB_SET_HEAD 1 1024 $m" ;;
@@ -44,6 +45,7 @@ struct Run {
     verdict: String,
     assembled: String,
     drill_ok: bool,
+    control: String,
 }
 
 fn drill(args: &str, restored: &str, contains: &str, contains_err: &str, head_err: &str, restore_fail: &str) -> Run {
@@ -76,6 +78,8 @@ fn drill(args: &str, restored: &str, contains: &str, contains_err: &str, head_er
         .env("SPIRA_LC_BACKUP_SYNC_DIR", d.join("sync"))
         .env("SPIRA_LC_BACKUP_DRILL_DIR", d.join("scratch"))
         .env("SPIRA_LC_BACKUP_DRILL_WAIT_SECS", "5")
+        .env("SPIRA_LC_STORE_PATH", if args.contains("control") { "/unused" } else { "" })
+        .env("STUB_DRILL_OUT", "sqlite-checkpoint: /x/control.db: 482 passes\ndrill ok: snapshot at 0, restored through 6, 6 keys compared")
         .env("STUB_LOG", d.join("assemble.log"))
         .env("STUB_MANIFEST", &manifest)
         .env("STUB_SET_HEAD", "hhhh")
@@ -92,6 +96,7 @@ fn drill(args: &str, restored: &str, contains: &str, contains_err: &str, head_er
         out: String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr),
         verdict: std::fs::read_to_string(d.join("run/lc-backup/alpha/drill.verdict")).unwrap_or_default(),
         drill_ok: d.join("run/lc-backup/alpha/drill.ok").exists(),
+        control: std::fs::read_to_string(d.join("run/lc-backup/control/drill.verdict")).unwrap_or_default(),
         assembled: std::fs::read_to_string(d.join("assemble.log")).unwrap_or_default(),
     }
 }
@@ -151,4 +156,36 @@ fn a_silent_restore_failure_still_explains_itself() {
 fn only_a_drill_of_the_newest_backup_records_drill_ok() {
     assert!(drill("--db alpha", "hhhh", "1", "", "", "").drill_ok);
     assert!(!drill("--db alpha --manifest \"$MANIFEST\"", "hhhh", "1", "", "", "").drill_ok);
+}
+
+fn seconds_of(verdict: &str, phase: &str) -> bool {
+    let at = verdict.find(&format!("({phase} ")).or_else(|| verdict.find(&format!(", {phase} "))).unwrap_or_else(|| panic!("{phase} missing: {verdict}"));
+    let rest = &verdict[verdict[at..].find(phase).unwrap() + at + phase.len() + 1..];
+    let n: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    !n.is_empty() && rest[n.len()..].starts_with('s')
+}
+
+#[test]
+fn a_passing_dolt_drill_verdict_carries_the_seconds_of_each_phase() {
+    let r = drill("--db alpha", "hhhh", "1", "", "", "");
+    assert_eq!(r.code, Some(0), "{}", r.out);
+    for phase in ["quiet wait", "lock wait", "assemble", "restore", "head check", "live counts", "restored counts"] {
+        assert!(seconds_of(&r.verdict, phase), "{}", r.verdict);
+    }
+}
+
+#[test]
+fn a_failing_dolt_drill_carries_the_phases_that_ran_before_the_failure() {
+    let r = drill("--db alpha", "rrrr", "1", "", "", "fail");
+    assert_eq!(r.code, Some(1), "{}", r.out);
+    assert!(seconds_of(&r.verdict, "assemble") && seconds_of(&r.verdict, "restore"), "{}", r.verdict);
+    assert!(!r.verdict.contains("head check"), "{}", r.verdict);
+}
+
+#[test]
+fn the_control_verdict_keeps_the_drill_ok_line_and_its_seconds() {
+    let r = drill("--db control", "hhhh", "1", "", "", "");
+    assert_eq!(r.code, Some(0), "{}", r.out);
+    assert!(r.control.starts_with("lc-backup: drill ok — control: drill ok: snapshot at 0, restored through 6, 6 keys compared"), "{}", r.control);
+    assert!(seconds_of(&r.control, "admin-drill"), "{}", r.control);
 }
