@@ -32,6 +32,7 @@ sha2 = "0.10"
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+spira-claim = { path = "../spira-claim" }
 
 [[test]]
 name = "session_tmp_ignored"

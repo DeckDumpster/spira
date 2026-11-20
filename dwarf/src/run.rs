@@ -535,11 +535,13 @@ impl<'a> Run<'a> {
     /// The ready set, as JSON: spira-claim's `rune-ready --json`, the lifecycle machine's
     /// claimable rows in this rune's partition — the rows CHECK 7 counted when it called
     /// this dwarf; bd supplies only their content.
-    fn ready_set(&self, tries: u32, delay: Duration) -> Result<(String, Vec<String>), String> {
+    pub(crate) fn ready_set(&self, tries: u32, delay: Duration) -> Result<(String, Vec<String>), String> {
         let tries = tries.max(1);
         let mut last = Out::default();
+        let express = self.d.env.seam_var("SPIRA_REQUIRE_EXPRESS").is_some_and(|v| !v.is_empty());
+        let argv = crate::seam::ready_set_argv(self.f(), express);
         for i in 1..=tries {
-            last = self.d.seam.call("_dwarf_ready_set", &[]);
+            last = self.d.seam.call("_dwarf_ready_set", &argv);
             if last.success() {
                 return Ok(claim::split_ready(&util::json_only(&last.stdout), self.f()));
             }

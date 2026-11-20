@@ -361,6 +361,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "signal-hook",
+ "spira-claim",
  "spira-config",
  "spira-otel",
  "spira-store",

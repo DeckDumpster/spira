@@ -92,6 +92,13 @@ impl Env {
         m.extend(self.seam_path.iter().cloned());
         Ok(m)
     }
+    /// A variable as the lib.sh seam sees it: the unit's original environment under this dwarf's exports.
+    pub fn seam_var(&self, k: &str) -> Option<String> {
+        match self.exports.read().unwrap().get(k) {
+            Some(v) => v.clone(),
+            None => self.original.get(k).cloned(),
+        }
+    }
     pub fn get_export(&self, k: &str) -> Option<String> {
         self.exports.read().unwrap().get(k).cloned().flatten()
     }
