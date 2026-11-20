@@ -498,6 +498,38 @@ impl SendBack {
     }
 }
 
+/// A bead this one was blocked on, as read at the claim. `state` is `cannot tell (<why>)` when
+/// the store gave no answer, so an unreadable blocker is never rendered as absent.
+pub struct Dep {
+    pub id: String,
+    pub state: String,
+    pub since: Option<i64>,
+    pub commit: Option<String>,
+}
+
+pub fn dependencies_brief(deps: &[Dep]) -> String {
+    if deps.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("## Beads this one was blocked on, as of this claim:\n\n");
+    for d in deps {
+        if d.state.starts_with("cannot tell") {
+            out.push_str(&format!("- {} state {}\n", d.id, d.state));
+            continue;
+        }
+        out.push_str(&format!("- {} {}", d.id, d.state));
+        if let Some(at) = d.since {
+            out.push_str(&format!(" since {}", crate::util::iso_utc(at)));
+        }
+        if let Some(c) = d.commit.as_deref().filter(|c| !c.is_empty()) {
+            out.push_str(&format!(", {} on the landing ref", &c[..c.len().min(12)]));
+        }
+        out.push('\n');
+    }
+    out.push_str("\nA dependency that is LANDED or DONE is an input that changed since any earlier note on this bead.\n\n");
+    out
+}
+
 const EARLIER_SENDS_MAX: usize = 5;
 
 fn first_line(t: &str) -> &str {
@@ -834,6 +866,26 @@ mod tests {
         assert!(!sys.contains("{{") && sys.contains("`w/sp-a`") && sys.contains("work item `sp-a`"));
         assert!(sys.starts_with("You are a builder:") && !sys.contains("Warden"));
         assert!(rune.contains("{{ID}}"), "positive control: the template carries its tokens");
+    }
+
+    #[test]
+    fn dependencies_brief_is_empty_without_blockers() {
+        assert_eq!(dependencies_brief(&[]), "");
+    }
+
+    #[test]
+    fn dependencies_brief_names_a_landed_dependency_with_its_time_and_commit() {
+        let d = Dep { id: "sp-pvn16v".into(), state: "LANDED".into(), since: Some(1795123820), commit: Some("8ce75d2da5f0123456789".into()) };
+        let b = dependencies_brief(&[d]);
+        assert!(b.contains("- sp-pvn16v LANDED since 2026-11-19T21:30:20Z, 8ce75d2da5f0 on the landing ref"), "{b}");
+        assert!(b.contains("an input that changed"), "{b}");
+    }
+
+    #[test]
+    fn dependencies_brief_says_when_a_dependency_cannot_be_read() {
+        let d = Dep { id: "sp-x".into(), state: "cannot tell (rc=2: down)".into(), since: None, commit: None };
+        let b = dependencies_brief(&[d]);
+        assert!(b.contains("- sp-x state cannot tell (rc=2: down)"), "{b}");
     }
 
     #[test]
