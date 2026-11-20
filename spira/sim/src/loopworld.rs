@@ -134,6 +134,22 @@ pub struct Flip {
     pub blocks_again_after: Option<u64>,
 }
 
+/// A registry row that names `owner`, a member of the round that lands the fix. The round lifts
+/// it and runs `test` on the merged tree: green when `red` is false; red on the tree and the base
+/// when true, which keeps the row, re-pointed at `fix`, the bead the round files.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Lift {
+    pub test: String,
+    pub owner: String,
+    pub fix: String,
+    #[serde(default = "yes")]
+    pub red: bool,
+    /// From this virtual time (ms) a round must find the kept test red again.
+    #[serde(default)]
+    pub blocks_again_after: Option<u64>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LookRow {
@@ -175,6 +191,8 @@ pub struct Script {
     pub verdicts: Vec<VerdictAt>,
     #[serde(default, rename = "flip")]
     pub flips: Vec<Flip>,
+    #[serde(default, rename = "lift")]
+    pub lifts: Vec<Lift>,
     #[serde(default, rename = "look")]
     pub looks: Vec<Look>,
     /// Where the run stops, in virtual ms.
@@ -214,6 +232,11 @@ pub fn parse(text: &str) -> Result<Script, String> {
             return Err(format!("loop scenario: flip {} names a member the scenario does not file, or a follow-on it files itself", f.test));
         }
     }
+    for l in &s.lifts {
+        if !seen.contains(&l.owner.as_str()) || seen.contains(&l.fix.as_str()) {
+            return Err(format!("loop scenario: lift {} names an owner the scenario does not file, or a fix it files itself", l.test));
+        }
+    }
     Ok(s)
 }
 
@@ -239,6 +262,16 @@ pub enum Due {
 pub struct Disabled {
     pub test: String,
     pub bead: String,
+    pub since: i64,
+    pub until: i64,
+}
+
+/// A registry row a round kept after its owner lifted it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Kept {
+    pub test: String,
+    pub bead: String,
+    pub reason: String,
     pub since: i64,
     pub until: i64,
 }
@@ -293,6 +326,8 @@ pub struct Lc {
     pub published: Vec<(u64, String)>,
     pub reg: Option<Arc<Registry>>,
     pub disabled: Vec<Disabled>,
+    /// The rows a round kept: re-pointed at the fix it filed, with the reason the registry recorded.
+    pub kept: Vec<Kept>,
     pub looks: Vec<(usize, Looked)>,
     /// Corpus passes the world scripted red: when, the round, the test.
     pub reds: Vec<(u64, String, String)>,
@@ -650,17 +685,107 @@ fn attribute_flips(w: &World, leg: &bl::Leg, flips: &[Flip]) -> Result<String, S
 fn batcher_corpus(w: &World, input: &str) -> Result<String, String> {
     let leg: bl::Leg = parse_json(bl::CORPUS, input)?;
     let red = undenied(w, &leg)?;
+    let lifted = lifted_reds(w, &leg)?;
+    let blocking = blocking_again(w);
+    if leg.why == bl::ATTRIBUTE && !lifted.is_empty() {
+        return attribute_lifts(w, &leg, &lifted);
+    }
+    if leg.why == bl::ATTRIBUTE && red.is_empty() && !blocking.is_empty() {
+        let why = format!("{} reproduces on the rerun: red on the round tree and on the base", blocking[0].test);
+        let said = format!("attribution\t{}\n", serde_json::json!({ "end": "blocked", "why": why }));
+        return run_leg(w, &leg, vec!["batcher".into(), "attribute".into()], 0, CORPUS_MS, &said, true);
+    }
     if leg.why == bl::ATTRIBUTE && !red.is_empty() {
         return attribute_flips(w, &leg, &red);
     }
     note_reds(w, &leg, &red);
-    run_leg(w, &leg, vec!["round-vm".into(), "run".into(), leg.wt.clone()], i32::from(!red.is_empty()), CORPUS_MS, "", false)
+    let now = w.now();
+    w.lc().reds.extend(lifted.iter().map(|l| &l.0).chain(blocking.iter()).map(|l| (now, leg.batch.clone(), l.test.clone())));
+    let any = !red.is_empty() || !lifted.is_empty() || !blocking.is_empty();
+    run_leg(w, &leg, vec!["round-vm".into(), "run".into(), leg.wt.clone()], i32::from(any), CORPUS_MS, "", false)
+}
+
+/// The lifts whose row this round's members own, and whose test is red on the merged tree: the
+/// round lifts the row through batcher-cut's own `DenySnapshot::lifting`.
+fn lifted_reds(w: &World, leg: &bl::Leg) -> Result<Vec<(Lift, batcher_cut::vm::LiftedRow)>, String> {
+    let Some(reg) = w.lc().reg.clone() else { return Ok(vec![]) };
+    if w.script.lifts.is_empty() {
+        return Ok(vec![]);
+    }
+    let dir = reg.pass_dir(w.now(), &format!("probe-{}", leg.batch))?;
+    let ids: Vec<String> = leg.members.iter().map(|(id, _)| id.clone()).collect();
+    let (_, rows) = batcher_cut::vm::DenySnapshot::from_pass(&dir).ok_or("no deny list")?.lifting(&ids);
+    Ok(rows.into_iter().filter_map(|r| w.script.lifts.iter().find(|l| l.test == r.test && l.red).map(|l| (l.clone(), r))).collect())
+}
+
+/// The kept tests whose row has expired while still red: they block any round again.
+fn blocking_again(w: &World) -> Vec<Lift> {
+    let Some(reg) = w.lc().reg.clone() else { return vec![] };
+    let denied = reg.denied(w.now()).unwrap_or_default();
+    let kept: Vec<String> = w.lc().kept.iter().map(|k| k.test.clone()).collect();
+    w.script.lifts.iter().filter(|l| l.red && kept.contains(&l.test) && !denied.contains(&l.test)).cloned().collect()
+}
+
+/// `batcher attribute` on a round whose lifted test is red on the tree and the base: the row is
+/// kept through batcher-cut's own `keep_row_with`, and the round lands every member.
+fn attribute_lifts(w: &World, leg: &bl::Leg, lifted: &[(Lift, batcher_cut::vm::LiftedRow)]) -> Result<String, String> {
+    let now = w.now();
+    let reg = w.lc().reg.clone().ok_or("lifts without a registry")?;
+    let ids: Vec<String> = leg.members.iter().map(|(id, _)| id.clone()).collect();
+    let pass = reg.pass_dir(now, &format!("pass-{}", leg.batch))?;
+    let (lifted_deny, _) = batcher_cut::vm::DenySnapshot::from_pass(&pass).ok_or("no deny list")?.lifting(&ids);
+    std::fs::write(pass.join(batcher_cut::vm::DenySnapshot::FILE), &lifted_deny.text).map_err(|e| e.to_string())?;
+    let (head, base) = {
+        let lc = w.lc();
+        (main_after(lc.lands.len() + 1), lc.main())
+    };
+    for (lift, row) in lifted {
+        let kept = batcher_cut::io::KeptRow {
+            test: lift.test.clone(),
+            owner: lift.owner.clone(),
+            old_bead: row.bead.clone(),
+            round_branch: leg.batch.clone(),
+            head: head.clone(),
+            base: base.clone(),
+            merged_lines: vec![format!("not ok {}", lift.test)],
+            base_lines: vec![format!("not ok {}", lift.test)],
+        };
+        let mut reason = String::new();
+        let disabled = {
+            let mut lc = w.lc();
+            let mut file = |_: &batcher_cut::io::KeptRow| {
+                lc.file(now, &lift.fix);
+                lc.apply(now, &lift.fix, bl::NAME, BeadEventKind::Hold { kind: HoldKind::Manual, cause: HoldCause::ManualHold, detail: Some("a fix the scenario never lands".into()) })?;
+                Ok(lift.fix.clone())
+            };
+            batcher_cut::io::keep_row_with(
+                &mut file,
+                &mut |t, b, r| {
+                    reason = r.to_string();
+                    reg.disable(now, t, b, r)
+                },
+                &pass,
+                &kept,
+            )?
+        };
+        w.lc().kept.push(Kept { test: disabled.test, bead: disabled.bead, reason, since: registryworld::epoch_at(now), until: disabled.until });
+    }
+    let said = format!("attribution\t{}\n", serde_json::json!({ "end": "land", "members": leg.members, "attribution_secs": 60, "mended": false }));
+    run_leg(w, leg, vec!["batcher".into(), "attribute".into()], 0, CORPUS_MS, &said, true)
 }
 
 fn batcher_certify(w: &World, input: &str) -> Result<String, String> {
     let leg: bl::Leg = parse_json(bl::CERTIFY, input)?;
     let red = undenied(w, &leg)?;
     note_reds(w, &leg, &red);
+    let lifted = lifted_reds(w, &leg)?;
+    let again = blocking_again(w);
+    if let Some(l) = lifted.first().map(|(l, _)| l).or(again.first()) {
+        let now = w.now();
+        w.lc().reds.push((now, leg.batch.clone(), l.test.clone()));
+        let argv = vec!["queue".into(), "round".into(), "certify".into(), leg.batch.clone(), REPO.into()];
+        return run_leg(w, &leg, argv, 1, CERTIFY_MS, &format!("red={}\n", l.test.replace(' ', "_")), true);
+    }
     let said = if red.is_empty() { "certified\n".to_string() } else { format!("red={}\n", red[0].test.replace(' ', "_")) };
     let argv = vec!["queue".into(), "round".into(), "certify".into(), leg.batch.clone(), REPO.into()];
     run_leg(w, &leg, argv, i32::from(!red.is_empty()), CERTIFY_MS, &said, true)
@@ -902,6 +1027,7 @@ pub struct Run {
     pub prs: Vec<(u64, String)>,
     pub published: Vec<(u64, String)>,
     pub disabled: Vec<Disabled>,
+    pub kept: Vec<Kept>,
     pub looks: Vec<(usize, Looked)>,
     pub reds: Vec<(u64, String, String)>,
     pub cleared: Vec<(u64, Vec<String>)>,
@@ -941,9 +1067,13 @@ pub fn run_with(seed: u64, script: Script, extra: impl FnOnce(Doubles, &Arc<Worl
     for (i, l) in script.looks.iter().enumerate() {
         lc.due.push((l.at, Due::Look(i)));
     }
-    if !script.flips.is_empty() || !script.looks.is_empty() {
+    if !script.flips.is_empty() || !script.looks.is_empty() || !script.lifts.is_empty() {
         let hold = script.settings.get(test_registry::cli::HOLD_KEY).cloned().unwrap_or_else(|| registryworld::DEFAULT_HOLD_SECS.to_string());
-        lc.reg = Some(Arc::new(Registry::new(&hold)?));
+        let reg = Arc::new(Registry::new(&hold)?);
+        for l in &script.lifts {
+            reg.disable(0, &l.test, &l.owner, "the owner's flip, disabled until its fix lands")?;
+        }
+        lc.reg = Some(reg);
     }
     let settings = settings_for(&script)?;
     let world = Arc::new(World { clock: clock.clone(), units: units.clone(), lc: Mutex::new(lc), script, proc: CountingProc::refusing(), pass_scopes: Mutex::default() });
@@ -973,6 +1103,7 @@ pub fn run_with(seed: u64, script: Script, extra: impl FnOnce(Doubles, &Arc<Worl
         prs: lc.prs.clone(),
         published: lc.published.clone(),
         disabled: lc.disabled.clone(),
+        kept: lc.kept.clone(),
         looks: lc.looks.clone(),
         reds: lc.reds.clone(),
         cleared: lc.cleared.clone(),
@@ -1015,6 +1146,16 @@ impl Run {
             if let Some(after) = f.blocks_again_after {
                 if !self.reds.iter().any(|(at, _, t)| *t == f.test && *at >= after) {
                     return Some(format!("{} did not block a round again after {after} ms: reds {:?}", f.test, self.reds));
+                }
+            }
+        }
+        for l in script.lifts.iter().filter(|l| l.red) {
+            if !self.kept.iter().any(|k| k.test == l.test && k.bead == l.fix && k.reason.starts_with("kept:")) {
+                return Some(format!("lift {} was never kept with fix {}: kept {:?}", l.test, l.fix, self.kept));
+            }
+            if let Some(after) = l.blocks_again_after {
+                if !self.reds.iter().any(|(at, _, t)| *t == l.test && *at >= after) {
+                    return Some(format!("{} did not block a round again after {after} ms: reds {:?}", l.test, self.reds));
                 }
             }
         }
