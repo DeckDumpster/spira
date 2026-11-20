@@ -17,8 +17,8 @@ heuristics; drop down to inference when judgement is required."
 The pass has four jobs, in order of how much stalls when each is late:
 
 1. **Keep the fleet full.** When there is ready work and a free slot, call a dwarf
-   (CHECK 7). This runs every 15 s on its own path (`--call-only`) and again inside every
-   full pass.
+   (CHECK 7). This runs every minute as the `sentinel-call` task and again inside every
+   `sentinel-pass`.
 2. **Keep work moving.** Reap dead holders (CHECK 2, 2b, 2c), fix stale blocked flags
    (CHECK 3), gate queue-mode dependents (CHECK 3b/3c), and dispatch the landing worker
    (CHECK 6).
@@ -69,9 +69,6 @@ status, labels, assignee and lease as the claim record — is deleted, not kept 
 
 ```
 sentinel                 one full pass                                  (spira-sentinel.service)
-sentinel --report        STATE only: print the open plan beads, change nothing
-sentinel --call-only   CHECK 7 alone                                  (spira-call.service;
-                         every dwarf unit's ExecStopPost via lib.sh call_refill_argv)
 sentinel --open-children [--dry-run]
                          CHECK 3c alone over a fresh snapshot (the suites' entry point).
                          --dry-run prints `would add|remove <label> to|from <id>` and
@@ -84,11 +81,11 @@ other first argument, or none, means a full pass. The one second argument read i
 
 | exit | when |
 |---|---|
-| 0 | the pass ran to its end. That includes every `--call-only` pass whether it called or declined, and `--report` |
+| 0 | the pass ran to its end. That includes every pass whether it called or declined |
 | 1 | `DATABASE UNREADABLE` (the bulk store read failed), skipped under `SPIRA_SKIP_RECLAIM=1`. Also any mode when the harness itself cannot be found: the context probe failed, or lib.sh was not found (new, `FATAL` line). Also a full pass in which the lifecycle machine could not be read or written (`LIFECYCLE UNREACHABLE`); that pass still runs every other check first |
 
 Nothing is printed on stdout except log lines, the verbatim output of the scripts it calls,
-and `--report`'s listing. The units append stdout and stderr to `$SPIRA_RUN/sentinel.log`.
+The units append stdout and stderr to `$SPIRA_RUN/sentinel.log`.
 
 ### 2.2 Log lines other programs parse (byte-identical)
 
@@ -100,7 +97,6 @@ The format is `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>` (lib.sh `log`), in UTC.
 | `CHECK7 <rune>: not evaluated (pass budget exhausted)` (the seam emits it) | strand probe.rs:363, strand.sh:369 |
 | `ACT <msg>` for every act/progress (`called a <f> dwarf`, `invoked reflection`, `poisoned <id> after <n> attempts`, `reclaimed <n> stale lease(s)`, …) | cockpit-collect metrics:65,69, cockpit.sh:626 |
 | `pass complete — <a> action(s), <p> progress` | heimdall/src/judge.rs |
-| `call-only pass complete — <a> action(s)` | nothing outside tests |
 | untimestamped `RECLAIMED`, `SENT`, `HELD`, `KEEP`, `FAILED` lines passed through from strand and hel | cockpit.sh:637, cockpit-collect metrics:236 |
 
 Every other message is kept word for word as well, because the bash suites and the operator
@@ -162,11 +158,8 @@ The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASK
 
 - `spira-sentinel[-<inst>].timer` → `.service` runs `sentinel` every 2 min. Type=oneshot,
   TimeoutStartSec=900. CHECK 5 and its skip switch are gone.
-- `spira-call[-<inst>].timer` → `.service` runs `sentinel --call-only` every 15 s.
-  TimeoutStartSec=60.
-- Every dwarf unit's `ExecStopPost=<systemd-run> --user --collect --quiet <sentinel>
-  --call-only`. This is lib.sh `call_refill_argv`, and it runs **with no `--setenv`**,
-  so the binary must find its harness from its own path (§2.7).
+- The call is the `sentinel-call` task of `spira-runtime`; a dwarf unit's own `unit.ran`
+  refills its slot, so no `ExecStopPost` re-enters a binary.
 
 **Transient unit it starts.** The unit name is the mutex and `--collect` is
 mandatory.
@@ -297,7 +290,7 @@ lets the refill ExecStopPost, is handed SPIRA_TOML, SPIRA_RELEASE and PATH by it
   (drain by rename, every drain file, each line exactly once). CHECK 8 reads `progressed`,
   never `acted`.
 - **G5. One pass per call slot.** CHECK 7 only ever runs inside `ck7_call_pass`'s flock,
-  shared by the full pass and `--call-only`.
+  shared by the full pass and the call.
 - **G6. The landing worker never runs twice.** The unit name is the
   mutex, and `--collect` is always passed.
 - **G7. Positive controls.** `landing.status`, `*.dispatched` and the stale
@@ -384,7 +377,7 @@ pass writes them.
 2. Run the context probe (S0), which gives the environment, the roster and the repos.
 3. Every child process then runs with exactly that environment, plus the snapshot paths.
 
-**--call-only.**
+**The call (the `sentinel-call` task; formerly `--call-only`).**
 
 1. S1 (the world gate and capacity, with the same `call-only: …` lines).
 2. `live` summed over the runes, logged as `call-only: live=<n> runes=[…]`.
@@ -392,9 +385,9 @@ pass writes them.
    READY/REWORK rows, bucketed per rune. No `bd ready` call at all — neither the
    sentinel's nor spira-claim's (sp-v62vn); bd is read only for those beads' content.
 4. S2 (`ck7_call_pass`).
-5. Log `call-only pass complete — <a> action(s)` and exit 0.
+5. Log the pass's action count.
 
-**Full pass and --report.**
+**Full pass.**
 
 1. **Bulk read.**
    - Under `SPIRA_SKIP_RECLAIM≠1`, a failed `bd list --all` logs
@@ -404,7 +397,7 @@ pass writes them.
    - Under `SPIRA_SKIP_RECLAIM=1` a failed read is not fatal: that snapshot is simply not
      exported, as before.
 
-**STATE** (full pass and --report). Every value comes from the snapshot:
+**STATE** (full pass). Every value comes from the snapshot:
 
 - `open_plan` (`Snapshot::plan_open`): rows whose labels ⊇ {scope?, `plan`}, with
   `status ≠ closed` and type not `epic`/`event` — the whole open plan backlog, wherever a
@@ -419,7 +412,7 @@ pass writes them.
 Under SKIP_RECLAIM all four are 0 and empty.
 
 The pass then logs `state: …` and applies `roster_warnings`, ported: a WARN line per
-runes rune left out of SPIRA_RUNES, deduplicated by the stamp. `--report` then prints
+runes rune left out of SPIRA_RUNES, deduplicated by the stamp. the pass then prints
 `\nOpen plan beads:\n` and one `  <id>` line per open plan bead (§9, B3), and exits 0.
 
 **CHECK 1 — completed pilgrimages.** Runs pilgrimage.sh as §2.5.
@@ -572,7 +565,6 @@ itself takes milliseconds.
 | mode | target (p50) | alarm | hard ceiling |
 |---|---|---|---|
 | full pass | ≤ 20 s (Rust aims under 10 s: the snapshot reads are ~1.2 s + ~1 s, and the seams are ~0.2 s each plus their own work) | `WARN pass took <s>s — over the <T>s pass budget (SPIRA_SENTINEL_PASS_TARGET_SECS)`, logged when wall > T (default 60) | TimeoutStartSec=900 |
-| --call-only | ≤ 2 s | — | TimeoutStartSec=60 |
 | CHECK 7 inside a pass | — | `not evaluated (pass budget exhausted)` | `SPIRA_SENTINEL_PASS_BUDGET_SECS=90` (in the seam) |
 
 **Store reads per full pass: exactly one of each:**
@@ -674,9 +666,7 @@ Line numbers are against this branch's base, `7ce25b21b`.
 |---|---|---|---|
 | 4 | `systemd/spira-sentinel.service:16` | `ExecStart=@SPIRA_PROD@/sentinel.sh` | `ExecStart=@SPIRA_PROD_ROOT@/bin/sentinel` |
 | 5 | `systemd/spira-sentinel.service:6` | `Documentation=file://@SPIRA_HOME@/sentinel.sh` | `Documentation=file://@SPIRA_PROD_ROOT@/sentinel/DESIGN.md` |
-| 6 | `systemd/spira-call.service:11` | `ExecStart=@SPIRA_PROD@/sentinel.sh --call-only` | `ExecStart=@SPIRA_PROD_ROOT@/bin/sentinel --call-only` |
 | 7 | `systemd/spira-call.service:6` | `Documentation=file://@SPIRA_HOME@/sentinel.sh` | `Documentation=file://@SPIRA_PROD_ROOT@/sentinel/DESIGN.md` |
-| 8 | `spira/lib.sh:2570-2573` (`call_refill_argv`) | `printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --call-only' "$bin" "$SPIRA_HOME/sentinel.sh"` | `printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --call-only' "$bin" "${SPIRA_SENTINEL_BIN:-$(spira_bin sentinel 2>/dev/null)}"`. Not `${…:?}`: that would kill call_rune's shell mid-call. The binary finds its harness from its own path (§2.7), so no `--setenv` is needed. |
 | 9 | `~/.config/systemd/user/spira-sentinel-prod.service.d/skip-check5-until-lifecycle-cutover.conf` | `Environment=SPIRA_SKIP_CLOSED_CHECK=1` | unchanged, but note it **starts taking effect** with this binary (§9, B1). Today CHECK 5 runs in the audit worker regardless: 979 `CHECK5` lines in `run/audit.log`, the last at 03:58Z 2026-09-29. Since sp-jnwbn CHECK 5 is deleted and the drop-in is dead weight; remove it. |
 
 Then `systemd/install.sh` (or `unit-ensure.sh`) re-renders, and `daemon-reload`.
@@ -693,8 +683,6 @@ Then `systemd/install.sh` (or `unit-ensure.sh`) re-renders, and `daemon-reload`.
 
 | # | file:line | current | replacement |
 |---|---|---|---|
-| 13 | `spira/ready.sh:192` | `if ! _rep="$(timeout 20 "$SPIRA_HOME/sentinel.sh" --report 2>&1)"; then` | `if ! _rep="$(timeout 20 "$SPIRA_SENTINEL_BIN" --report 2>&1)"; then` |
-| 14 | `spira/ready.sh:193` | `UNKN "ready work — sentinel.sh --report failed or timed out" \` | `UNKN "ready work — sentinel --report failed or timed out" \` |
 | 15 | `spira/canary.sh:136` | `bash "$SPIRA_HOME/sentinel.sh" 2>&1 \| sed 's/^/  sentinel: /' \|\| true` | `"$SPIRA_SENTINEL_BIN" 2>&1 \| sed 's/^/  sentinel: /' \|\| true` |
 | 16 | `spira/timeout-lint.sh:41` | `files=("$HERE/dwarf.sh" "$HERE/sentinel.sh" "$HERE/landing.sh")` | `files=("$HERE/dwarf.sh" "$HERE/landing.sh")` |
 | 17 | `spira/config-fence-allow:68` | `spira/sentinel.sh` | delete the line |
@@ -714,7 +702,6 @@ named unit tests.
 | # | test | action |
 |---|---|---|
 | 21 | the retired sentinel-pass suite | repoint. The rest are `tests::*` (whole passes against the fake runner) |
-| 22 | `test-call-fast-path.sh:342` | `*"--property=ExecStopPost=$T/bin/mock-call-noop --user --collect --quiet $T/sentinel.sh --call-only"*)` → `… --quiet $SPIRA_SENTINEL_BIN --call-only"*)` |
 | 23 | `test-poison.sh` | reduce to the "stays end-to-end" rows of spira-claim/DESIGN.md §4, run against the binary |
 | 26 | `test-closed-strand.sh` | repoint |
 | 27 | `test-loop-readonly.sh` | repoint: run `$CURRENT/bin/sentinel` |
@@ -724,7 +711,6 @@ named unit tests.
 | 31 | `test-sentinel-store-reads.sh` case 8 | repoint. The bd-call counter should now see exactly 1 `list` + 1 `ready` from the sentinel itself |
 | 32 | `test-check4-unit.sh` | drives lib.sh `check4_decide`; it follows spira-claim's cutover item 7, not this one |
 | 33 | `test-check8-progressed.sh` | drives lib.sh `check8_should_judge`, which has no caller once sentinel.sh is gone; retire together with the function (row 38). Its table is `judge::tests::judgement_table` |
-| 34 | `test-ready-timers.sh:88` | mocks `sentinel.sh --report`; mock `SPIRA_SENTINEL_BIN` instead |
 | 35 | `the install-exec suite:146,207` | drop `sentinel.sh` from the executable list; the render-fallback assertion becomes `ExecStart=$(dirname "$HERE")/bin/sentinel` |
 | 36 | `test-install-conflicts.sh:57` | the fake foreign unit becomes `ExecStart=$FOREIGN_HOME/../bin/sentinel` |
 | 37 | `test-deploy.sh:140,433` | the stub moves to `current/bin/sentinel` |
@@ -751,8 +737,6 @@ About 30 suites carry `# covers: … spira/sentinel.sh`. That changes to
     - the poison and ask status re-read (`bd show`);
     - the lifecycle CAS version (`spira-lc show`).
   - CHECK 2's dependency facts come from the snapshot join instead of a batch `bd show`.
-- **B3. `--report` with no open children prints no indented line.** It used to print one
-  line of two spaces, which `ready.sh:196` counted as "1 open bead".
 - **B4. CHECK 4 counts through spira-claim.**
   - Requeues are counted from judged returns rather than raw `reopened` rows (sp-j1q6o), so
     rebase returns stop tripping REQUEUE_AT.
@@ -805,7 +789,6 @@ continuously. What the pass keeps, and what it drops:
   pass-start marker moves with it (`: state: open=`, `strand::probe::PASS_MARKER`), and the
   two Python readers of rotated logs accept one leading `<field>=<value>` so a tail that
   still holds old passes parses.
-- **Changed: `--report`.** Prints `Open plan beads:` and the backlog ids.
 - **Bounded: what judgement is shown.** reflect.sh runs one `bd show` per id it is given.
   A goal's children were a handful; the backlog is hundreds. CHECK 8 passes the first
   `REFLECT_IDS` (25) and its `STARVED — <n> open` line still carries the full count. Note

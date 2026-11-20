@@ -21,7 +21,7 @@ tool and the claim predicate cannot disagree. Kinds without a persona (`event`, 
 `proposal`, `insight`) are created closed and are deliberately unclaimable. A `--repo` not in
 the registry is refused. A bead whose description carries a `Target:` line closes only with a
 verdict (`work submit --met|--contradicted|--short`). The sentinel calls dwarves for ready
-beads; `sentinel --report` prints the open plan beads without changing anything.
+beads; the open plan beads are on the board (`work list`).
 
 ## Queue modes
 

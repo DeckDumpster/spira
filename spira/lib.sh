@@ -631,38 +631,6 @@ runes_for_labels() {    # runes_for_labels <labels> -> personas whose partition 
 # for "called" would swallow the log lines below with it, and the sentinel's stdout IS the
 # sentinel log — so the one pass that did something would be the one that explained itself
 # least.
-# world_gate <rune> <log-prefix> -> 0 if calls are permitted, 1 if halted or draining.
-# Extracted so a second caller can share the exact check rather than a second copy of it.
-# dwarf --escape calls this too (sp-uyw4n, sp-2w2wu; escape.sh before it, retired sp-zpaq0):
-# it reaches around a broken scheduler, not around a halt or drain the operator asked for.
-#
-# HALTED — world.sh stop writes this stamp; only world.sh start removes it. Checked before
-# drain: halt is indefinite and requires explicit operator action.
-#
-# DRAINING — the operator asked for an empty pool and is waiting on it. Checked ahead of
-# capacity and readiness, because it is the only condition here a person is actively
-# blocked on: a rollout that must not kill work in flight needs the pool to reach zero, and
-# it never does while calls continue.
-#
-# A DRAIN EXPIRES, AND THIS IS WHAT EXPIRES IT. A drain is a held breath: right for the
-# minutes an operation needs, never for an hour. Whoever sets one can die before lifting it
-# — 2026-09-09, an Ops sweep drained at 18:02:03, finished its SOP at 18:04:29, exited
-# without resuming, and the world sat gated for 59 minutes with 25 beads ready and no dwarves,
-# every pass logging "pass complete" with nothing called, because a drain is a MODE and
-# nothing treated the mode as a fault.
-#
-# LIFTING IT HERE IS LOUD, NEVER SILENT — a quiet lift would hide the forgotten resume,
-# which is the defect worth seeing. A STAMP WITH NO `expires` LINE expires at stamp-mtime +
-# TTL, so a drain written by the older world.sh cannot wedge the loop forever either.
-# The call path's gate and argv lived in the retired sentinel binary; `dwarf --escape` and
-# `--direct` reach them through their seam, so both refuse until they move onto the library.
-world_gate() {         # world_gate <rune> <log-prefix> -> always 1: no gate to consult, so no call
-    log "$2 $1: the call gate is not available — not calling"
-    return 1
-}
-call_argv() {         # call_argv <rune> -> nothing, rc 1: a call with no unit properties is not made
-    return 1
-}
 
 # ======================================================================================
 # API CAPACITY — the account's own five-hour window, and the second unrelated thing in this

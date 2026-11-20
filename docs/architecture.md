@@ -64,7 +64,7 @@ and the `spira-runtime serve` task that does it.
    A label places it in a persona's partition (the plan label, for builders).
 
 2. **Sentinel and call.** The `sentinel-pass` task (every 2 min) runs `sentinel`; the
-   `sentinel-call` task (every minute) runs `sentinel --call-only`. The pass counts ready
+   `sentinel-call` task (every minute) calls dwarves in-process. The pass counts ready
    beads per partition and calls dwarves: lane personas against their own caps, then task
    personas from the shared `SPIRA_MAX_DWARVES` pool, builders last as the elastic persona. The
    same pass reaps `WORKING` rows whose lease expired (`HolderDead`), applies the poison hold
@@ -88,8 +88,8 @@ and the `spira-runtime serve` task that does it.
    round ejected as red, if the stack is stale, or if a lint rule or the declared proof tier
    fails; otherwise `Submit` moves the row to `SUBMITTED`. Alternatives: `work done` closes a
    bead with nothing to land; `work blocked` holds it and files an ask. At exit the dwarf's
-   teardown decides whether the attempt is charged, and the unit's stop hook runs
-   `sentinel --call-only` to refill the slot.
+   teardown decides whether the attempt is charged, and the dwarf's `unit.ran` wakes
+   the `sentinel-call` task to refill the slot.
 
 6. **Screen.** The `sift` task (every minute) screens each queue
    repository's proto-round (all `SUBMITTED` and `CERTIFIED` rows). A pass is recorded as
