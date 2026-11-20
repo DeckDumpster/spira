@@ -1172,7 +1172,9 @@ mod beads_on_tests {
     #[test]
     fn the_open_list_asks_for_no_free_text() {
         let store = store();
-        beads_on(&LcClient::over(store.clone(), true), &["spira".to_string()], &[]).unwrap();
+        let beads = beads_on(&LcClient::over(store.clone(), true), &["spira".to_string()], &[]).unwrap();
+        let ids: Vec<&str> = beads.iter().map(|b| b.id.as_str()).collect();
+        assert!(ids.contains(&"sp-e") && ids.contains(&"sp-c1") && !ids.contains(&"sp-held"), "{ids:?}");
         assert!(store.requests().iter().all(|r| r.iter().any(|a| a == "--brief")), "{:?}", store.requests());
     }
 

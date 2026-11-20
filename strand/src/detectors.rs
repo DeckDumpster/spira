@@ -496,12 +496,22 @@ mod tests {
 
     #[test]
     fn the_invalid_closed_read_asks_for_no_free_text_and_classifies_as_before() {
-        let rows = r#"[{"id":"sp-a","title":"t","status":"closed","closed_at":"2026-11-03T00:00:00Z","close_reason":"done"}]"#;
+        let rows = r#"[{"id":"sp-a","title":"A","status":"closed","closed_at":"2026-11-03T00:00:00Z","close_reason":"done"},{"id":"sp-b","title":"B","status":"closed","closed_at":"2026-11-03T00:00:00Z","close_reason":"TODO later"},{"id":"sp-c","title":"C","status":"closed","closed_at":"2026-11-03T00:00:00Z","close_reason":"the real fix is pending"}]"#;
         let door = std::sync::Arc::new(Closes(Default::default(), rows, 0));
-        let cfg = Config::test_fixture();
-        let out = detect_invalid_closed_since(&cfg, &LcClient::over(door.clone(), true), "2026-11-01T00:00:00Z");
+        let out = detect_invalid_closed_since(&Config::test_fixture(), &LcClient::over(door.clone(), true), "2026-11-01T00:00:00Z");
         assert!(door.0.lock().unwrap()[0].iter().any(|a| a == "--brief"));
-        assert_eq!(out, classify_closed(rows, &cfg));
+        assert_eq!(
+            out,
+            "INVALID-CLOSED sp-b — close reason contains 'TODO': TODO later. title: B\nUNFILED-FOLLOW sp-c — follow-on phrase 'the real fix' without a tracking reference: the real fix is pending. title: C"
+        );
+    }
+
+    #[test]
+    fn list_beads_asks_for_no_free_text_and_parses_the_rows_as_before() {
+        let door = std::sync::Arc::new(Closes(Default::default(), r#"[{"id":"sp-a","status":"open"}]"#, 0));
+        let beads = list_beads(&LcClient::over(door.clone(), true), &[]);
+        assert_eq!(door.0.lock().unwrap()[0], ["content", "list", "--limit", "0", "--brief", "--json"]);
+        assert_eq!((beads.len(), beads[0].id.as_str(), beads[0].status.as_str()), (1, "sp-a", "open"));
     }
 
     #[test]

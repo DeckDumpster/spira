@@ -164,7 +164,7 @@ fn a_brief_list_selects_none_of_the_free_text_columns() {
     answer(&f, DB, &v(&["list", "--all", "--closed-after", "2026-11-01T00:00:00Z", "--label", "spira", "--limit", "0", "--brief", "--json"])).unwrap();
     let sql = first_sql(&f);
     for col in FREE_TEXT {
-        assert!(!sql.contains(col), "{col} in {sql}");
+        assert!(!select_list(&sql).contains(col), "{col} in {sql}");
     }
     assert!(sql.contains("close_reason") && sql.contains("closed_at"), "{sql}");
 }
@@ -175,7 +175,7 @@ fn a_list_without_brief_still_selects_the_free_text_columns() {
     answer(&f, DB, &v(&["list", "--json"])).unwrap();
     let sql = first_sql(&f);
     for col in FREE_TEXT {
-        assert!(sql.contains(col), "{col} in {sql}");
+        assert!(select_list(&sql).contains(col), "{col} in {sql}");
     }
 }
 
