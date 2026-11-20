@@ -19,7 +19,7 @@ pub const STATE: EventKindTag = "round-duty.state";
 pub const OBSERVE: &str = "round-duty.observe";
 pub const NAME: &str = "round-duty";
 
-const ROW_PARTS: &[Part] = &[Part::Field("last_due"), Part::Field("last_unknown"), Part::Field("last_c"), Part::Field("last_certified"), Part::Field("last_change"), Part::Field("last_stopped"), Part::Field("starved_since"), Part::Field("last_starved"), Part::Field("last_unadvanced"), Part::Field("held"), Part::Field("halt_paged"), Part::Map { name: "lines", drop: &[] }];
+const ROW_PARTS: &[Part] = &[Part::Field("last_due"), Part::Field("last_unknown"), Part::Field("last_c"), Part::Field("last_certified"), Part::Field("last_change"), Part::Field("last_stopped"), Part::Field("starved_since"), Part::Field("last_starved"), Part::Field("last_unadvanced"), Part::Field("held"), Part::Field("halt_paged"), Part::Field("waited_since"), Part::Map { name: "lines", drop: &[] }];
 
 const DEADLINE_MS: u64 = 10_000;
 
@@ -32,6 +32,8 @@ pub struct RoundDuty {
     pub idle_cut_secs: u64,
     pub lease_ttl_secs: u64,
     pub halt_page_secs: u64,
+    pub activation_bound_s: u64,
+    pub run_dir: std::path::PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -65,6 +67,11 @@ pub struct Snapshot {
     pub fresh: Vec<(String, String)>,
     #[serde(default)]
     pub halt: Option<Halt>,
+    /// The store's refusal when the round state is `Unknown`.
+    #[serde(default)]
+    pub why: String,
+    #[serde(default)]
+    pub activation: Option<crate::watchers::Activation>,
 }
 
 /// Carried between ticks, as the body of the latest `round-duty.state` event.
@@ -84,6 +91,8 @@ pub struct Carry {
     pub lines: BTreeMap<String, u64>,
     pub held: String,
     pub halt_paged: Option<u64>,
+    #[serde(default)]
+    pub waited_since: Option<u64>,
 }
 
 fn verdictless(line: &str) -> bool {
@@ -146,8 +155,15 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
         c.last_unadvanced = now;
     }
     if snap.state == RoundState::Unknown {
+        if let Some(a) = &snap.activation {
+            if c.waited_since != Some(a.since) {
+                say.push(crate::watchers::restart_wait(a, cfg.activation_bound_s, &snap.why));
+                c.waited_since = Some(a.since);
+            }
+            return (c, say);
+        }
         if now.saturating_sub(c.last_unknown) >= cfg.remind_secs {
-            say.push("ROUND STATE UNKNOWN: 'queue round status' gave no usable answer — cannot tell whether a round is running, so no round is called due".into());
+            say.push(format!("ROUND STATE UNKNOWN: the lifecycle store gave no usable answer ({}) — cannot tell whether a round is running, so no round is called due", snap.why));
             c.last_unknown = now;
         }
         return (c, say);
@@ -213,7 +229,7 @@ impl Handler for RoundDuty {
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let snap = match (ev.kind.tag.as_str(), serde_json::from_str::<Snapshot>(&ev.kind.body)) {
             (EFFECT_SUCCEEDED, Ok(s)) => s,
-            _ => Snapshot { certified: carry.last_certified.unwrap_or(0), lines: carry.lines.clone(), stopped: carry.last_stopped.clone(), ..Snapshot::default() },
+            _ => Snapshot { certified: carry.last_certified.unwrap_or(0), lines: carry.lines.clone(), stopped: carry.last_stopped.clone(), why: if ev.kind.tag == EFFECT_FAILED && !ev.kind.body.is_empty() { ev.kind.body.clone() } else { "the observe returned no usable snapshot".into() }, activation: crate::watchers::current_activation(&self.run_dir), ..Snapshot::default() },
         };
         let now = ev.at / 1000;
         let snap = with_admissible(snap, &kit::carry::<batcher_local::Carry>(&batcher_local::SHAPE, view));
@@ -236,7 +252,7 @@ mod tests {
     use super::*;
 
     fn cfg() -> RoundDuty {
-        RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300, halt_page_secs: 3_600 }
+        RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300, halt_page_secs: 3_600, activation_bound_s: 90, run_dir: Default::default() }
     }
 
     fn snap(state: RoundState, certified: u64) -> Snapshot {
@@ -274,6 +290,10 @@ mod tests {
     }
 
     fn outcome(tag: EventKindTag) -> Vec<String> {
+        outcome_failing(tag, "lifecycle did not answer for spira")
+    }
+
+    fn outcome_failing(tag: EventKindTag, failure: &str) -> Vec<String> {
         use runtime::ports::VirtualClock;
         use runtime::{Engine, Executor, MemJournal, Outcome};
         let clock = VirtualClock::new(1_800_000_000_000);
@@ -282,7 +302,7 @@ mod tests {
         e.submit(id, stream, kind).unwrap();
         e.run_until_idle().unwrap();
         let observe = e.pending_effects().remove(0);
-        let out = if tag == EFFECT_TIMED_OUT { Outcome::TimedOut } else { Outcome::Failed("lifecycle did not answer for spira".into()) };
+        let out = if tag == EFFECT_TIMED_OUT { Outcome::TimedOut } else { Outcome::Failed(failure.into()) };
         e.complete(&observe.key, out).unwrap();
         e.run_until_idle().unwrap();
         e.pending_effects().into_iter().filter(|p| p.spec.name == INBOX_APPEND).map(|p| p.spec.input).collect()
@@ -293,6 +313,73 @@ mod tests {
         assert_eq!(outcome(EFFECT_TIMED_OUT), Vec::<String>::new(), "a stale observe left over from a restart read nothing of the world");
         let said = outcome(EFFECT_FAILED);
         assert!(said.len() == 1 && said[0].contains("ROUND STATE UNKNOWN"), "{said:?}");
+    }
+
+    #[test]
+    fn the_stores_refusal_text_ends_the_unknown_page() {
+        let said = outcome_failing(EFFECT_FAILED, "lifecycle did not answer for spira: stale past 1500ms ... the watch is lost: cannot tell: deadline");
+        assert!(said.len() == 1 && said[0].contains("the watch is lost: cannot tell: deadline"), "{said:?}");
+    }
+
+    #[test]
+    fn three_failed_observes_fifteen_seconds_apart_page_once() {
+        use runtime::ports::VirtualClock;
+        use runtime::{Engine, Executor, MemJournal, Outcome};
+        let clock = VirtualClock::new(1_800_000_000_000);
+        let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![cfg().registration()], 0).unwrap();
+        let (id, stream, kind) = RoundDuty::boot();
+        e.submit(id, stream, kind).unwrap();
+        let mut pages = 0;
+        for _ in 0..3 {
+            e.run_until_idle().unwrap();
+            let observe = e.pending_effects().into_iter().find(|p| p.spec.name == OBSERVE).expect("an observe is pending");
+            e.complete(&observe.key, Outcome::Failed("lifecycle did not answer for spira: refused".into())).unwrap();
+            e.run_until_idle().unwrap();
+            pages += e.pending_effects().into_iter().filter(|p| p.spec.name == INBOX_APPEND && p.spec.input.contains("ROUND STATE UNKNOWN")).count();
+            clock.advance(15_000);
+        }
+        assert_eq!(pages, 1, "one page per reminder window");
+    }
+
+    #[test]
+    fn a_failed_observe_after_a_reboot_does_not_page_again_within_the_remind_window() {
+        use runtime::ports::VirtualClock;
+        use runtime::{Engine, Executor, MemJournal, Outcome};
+        let clock = VirtualClock::new(1_800_000_000_000);
+        let journal = MemJournal::new();
+        let mut pages = 0;
+        for _boot in 0..3 {
+            let mut e = Engine::open(journal.clone(), std::sync::Arc::new(clock.clone()), vec![cfg().registration()], 0).unwrap();
+            let (id, stream, kind) = RoundDuty::boot();
+            e.submit(id, stream, kind).unwrap();
+            e.run_until_idle().unwrap();
+            let observe = e.pending_effects().into_iter().find(|p| p.spec.name == OBSERVE).expect("an observe is pending");
+            e.complete(&observe.key, Outcome::Failed("lifecycle did not answer for spira: refused".into())).unwrap();
+            e.run_until_idle().unwrap();
+            pages += e.pending_effects().into_iter().filter(|p| p.spec.name == INBOX_APPEND && p.spec.input.contains("ROUND STATE UNKNOWN")).count();
+            clock.advance(15_000);
+        }
+        assert_eq!(pages, 1, "the carry survives a reboot");
+    }
+
+    fn restarting() -> Snapshot {
+        Snapshot { why: "stale past 1500ms: the watch is lost".into(), activation: Some(crate::watchers::Activation { sha: "bec37562f5aa11".into(), since: 900 }), ..snap(RoundState::Unknown, 0) }
+    }
+
+    #[test]
+    fn an_unknown_round_state_inside_an_activation_window_waits_blind_once_and_never_pages() {
+        let (c, say) = decide(&cfg(), &Carry::default(), &restarting(), 1000);
+        assert_eq!(say.len(), 1, "{say:?}");
+        assert!(say[0].starts_with("WAIT BLIND: store restarting for activation of bec37562f5aa") && say[0].contains("bound 90s") && !say[0].contains("ROUND STATE UNKNOWN"), "{say:?}");
+        assert_eq!(c.last_unknown, 0);
+        assert!(decide(&cfg(), &c, &restarting(), 1015).1.is_empty(), "said once per activation");
+    }
+
+    #[test]
+    fn an_unknown_round_state_outside_any_window_pages_with_the_stores_reason() {
+        let s = Snapshot { why: "stale past 1500ms: refused".into(), ..snap(RoundState::Unknown, 0) };
+        let (_, say) = decide(&cfg(), &Carry::default(), &s, 1000);
+        assert!(say.len() == 1 && say[0].starts_with("ROUND STATE UNKNOWN") && say[0].contains("stale past 1500ms: refused"), "{say:?}");
     }
 
     #[test]
