@@ -87,9 +87,9 @@ pub(crate) fn forward_with(socket_path: &str, args: &[String], stdin: Option<&st
 }
 
 fn forward_within(socket_path: &str, args: &[String], stdin: Option<&str>, limit: Duration, not_running_wait: Duration) -> (i32, String, String) {
-    use spira_store::lc_call::{connect, retrying, Fail};
+    use spira_store::lc_call::{connect, retrying_resent, Fail};
     let path = std::path::Path::new(socket_path);
-    let answer = retrying(args, path, limit, not_running_wait, |left| {
+    let answer = retrying_resent(args, path, limit, not_running_wait, |left| {
         let stream = connect(path)?;
         let left = left.max(Duration::from_millis(1));
         stream.set_read_timeout(Some(left)).and_then(|_| stream.set_write_timeout(Some(left))).map_err(|e| Fail::Final(down(socket_path, &e).1))?;

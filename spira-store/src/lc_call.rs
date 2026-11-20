@@ -36,6 +36,10 @@ pub const CANNOT_TELL: i32 = 2;
 /// law-calls-have-deadlines: the service stops 3 s after receiving; a client waits 5 s.
 pub const DEADLINE: Duration = Duration::from_secs(5);
 
+/// What the service says of a call it cut at its own deadline, and the text it is built on.
+pub const DEADLINE_MESSAGE: &str = "deadline";
+pub const DEADLINE_ANSWER: &str = "cannot tell: deadline";
+
 /// The repair sweeps over every row, which the service bounds at its query deadline.
 const SWEEPS: &[&str] = &["reconcile-asks", "reconcile-epics", "reconcile-content", "backfill-repo", "backfill-claim-inputs", "drop-orphans"];
 /// How long a client waits for a sweep: the service's query deadline plus the reply.
@@ -108,7 +112,7 @@ impl Socket {
         let down = |e: &dyn std::fmt::Display| Fail::Final(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", self.path.display()));
         let wait = if argv.first().is_some_and(|v| SWEEPS.contains(&v.as_str())) { SWEEP_DEADLINE } else { DEADLINE };
         let wait = if deadline == DEADLINE { wait } else { wait.min(deadline) };
-        retrying(argv, &self.path, wait, not_running_wait, |left| {
+        retrying_resent(argv, &self.path, wait, not_running_wait, |left| {
             let stream = connect(&self.path)?;
             let left = left.max(Duration::from_millis(1));
             stream.set_read_timeout(Some(left)).and_then(|_| stream.set_write_timeout(Some(left))).map_err(|e| down(&e))?;
@@ -171,6 +175,44 @@ impl Fail {
 }
 
 const RETRY_EVERY: Duration = Duration::from_millis(50);
+
+static MINTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn mint_request_id() -> String {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    format!("call:{}-{nanos}-{}", std::process::id(), MINTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
+/// [`retrying`] for a call whose answer is a [`Reply`]. A write goes out under one request id
+/// (the one in scope, else a minted one) and, when the service answers that it cut it at its
+/// deadline, is sent again under that id while `budget` can cover another attempt: the service's
+/// ledger answers the re-send with the first send's result. Reads, refusals and dropped
+/// connections are as in [`retrying`].
+pub fn retrying_resent(argv: &[String], target: &Path, budget: Duration, not_running_wait: Duration, mut once: impl FnMut(Duration) -> Result<Reply, Fail>) -> Result<Reply, Fail> {
+    if is_read(argv) {
+        return retrying(argv, target, budget, not_running_wait, once);
+    }
+    let id = current_request_id().unwrap_or_else(mint_request_id);
+    let began = Instant::now();
+    as_request(&id, || {
+        let mut resent = false;
+        loop {
+            let left = budget.saturating_sub(began.elapsed());
+            let answer = retrying(argv, target, left, not_running_wait, &mut once);
+            match &answer {
+                Ok(r) if r.code == CANNOT_TELL && r.text() == DEADLINE_ANSWER && began.elapsed() + RETRY_EVERY * 2 < budget => {
+                    resent = true;
+                    std::thread::sleep(RETRY_EVERY);
+                }
+                Ok(r) if resent && r.code == 0 => {
+                    eprintln!("spira-lc: the store cut the write at its deadline; re-sent under request {id}");
+                    return answer;
+                }
+                _ => return answer,
+            }
+        }
+    })
+}
 
 /// Runs `once` (given the time left) until it answers. A `NotRunning` attempt is tried again
 /// for any argv, within `not_running_wait` of the start; a read whose attempt was `Dropped` is tried
@@ -868,6 +910,58 @@ mod tests {
         assert_eq!(head_sent(true)["request_id"], "r-1");
         assert!(head_sent(false).get("request_id").is_none());
         assert_eq!(current_request_id(), None);
+    }
+
+    fn scripted(answers: &[(i32, &str)], argv: &[&str], scope: Option<&str>) -> (Result<Reply, Fail>, Vec<Option<String>>) {
+        let argv: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
+        let mut answers = answers.iter().map(|(c, o)| Reply { code: *c, out: o.to_string(), err: String::new() });
+        let mut sent = Vec::new();
+        let mut run = || {
+            retrying_resent(&argv, std::path::Path::new("sock"), Duration::from_secs(5), Duration::ZERO, |_| {
+                sent.push(current_request_id());
+                Ok(answers.next().expect("no more sends than answers"))
+            })
+        };
+        let got = match scope {
+            Some(id) => as_request(id, run),
+            None => run(),
+        };
+        (got, sent)
+    }
+
+    #[test]
+    fn a_write_cut_at_the_deadline_is_sent_again_under_the_same_minted_id() {
+        let (got, sent) = scripted(&[(2, DEADLINE_ANSWER), (0, "")], &["hold", "sp-a", "x"], None);
+        assert_eq!(got.unwrap().code, 0);
+        assert_eq!(sent.len(), 2);
+        assert!(sent[0].is_some() && sent[0] == sent[1], "{sent:?}");
+        assert_eq!(current_request_id(), None);
+    }
+
+    #[test]
+    fn a_write_inside_a_request_scope_is_resent_under_that_id() {
+        let (got, sent) = scripted(&[(2, DEADLINE_ANSWER), (0, "")], &["hold", "sp-a", "x"], Some("r-1"));
+        assert_eq!(got.unwrap().code, 0);
+        assert_eq!(sent, [Some("r-1".to_string()), Some("r-1".to_string())]);
+    }
+
+    #[test]
+    fn a_refused_write_is_sent_once() {
+        let (got, sent) = scripted(&[(REFUSED, "no")], &["hold", "sp-a", "x"], None);
+        assert_eq!(got.unwrap().code, REFUSED);
+        assert_eq!(sent.len(), 1);
+    }
+
+    #[test]
+    fn a_read_is_never_sent_under_a_minted_id() {
+        let (got, sent) = scripted(&[(0, "[]")], &["show", "sp-a"], None);
+        assert_eq!(got.unwrap().code, 0);
+        assert_eq!(sent, [None]);
+    }
+
+    #[test]
+    fn the_deadline_answer_is_built_on_the_deadline_message() {
+        assert!(DEADLINE_ANSWER.ends_with(DEADLINE_MESSAGE));
     }
 
     #[test]

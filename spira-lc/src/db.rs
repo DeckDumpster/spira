@@ -12,7 +12,7 @@ use crate::wire::Wire;
 /// A query's server-side deadline: a statement that has not answered in this long is
 /// abandoned and reported as [`DEADLINE_MESSAGE`], never as a partial answer.
 pub const QUERY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10); // batch-job: queries queue behind a loaded Dolt in the round VM
-pub const DEADLINE_MESSAGE: &str = "deadline";
+pub const DEADLINE_MESSAGE: &str = spira_store::lc_call::DEADLINE_MESSAGE;
 
 /// The administrator's socket limit: dropping a database on a Dolt under load outlasts a query.
 // batch-job: one-off admin statement, bounded at 120 s; not a query on any serving path.
