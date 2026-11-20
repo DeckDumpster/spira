@@ -857,6 +857,20 @@ pub fn filed_id(out: &str) -> Result<String, String> {
     v.get("id").and_then(|i| i.as_str()).map(str::to_string).ok_or_else(|| format!("rule: no id in bead.sh file's output: {out:?}"))
 }
 
+/// Writes `toc`, `pointers` and the generated tree under `law` and stages it.
+pub fn write_law(law: &Path, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<(), String> {
+    let files = generate(toc, pointers, |slug| book.get(slug).cloned());
+    write_tree(law, &render_toc(toc), &files).map_err(|e| format!("rule: writing {}: {e}", law.display()))?;
+    std::fs::write(law.join(POINTERS_FILE), render_pointers(pointers)).map_err(|e| format!("rule: writing {}: {e}", law.display()))?;
+    let root = law.parent().unwrap_or(law);
+    let add = spira_config::bounded::bounded("git").arg("-C").arg(root).args(["add", "-A", "--", "law"]).output();
+    match add {
+        Ok(o) if o.status.success() => {}
+        _ => return Err("rule: git add law failed".to_string()),
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod filed_id_tests {
     use super::filed_id;
@@ -871,18 +885,4 @@ mod filed_id_tests {
         let e = filed_id("sp-x\n").unwrap_err();
         assert!(e.contains("bead.sh file's output"), "{e}");
     }
-}
-
-/// Writes `toc`, `pointers` and the generated tree under `law` and stages it.
-pub fn write_law(law: &Path, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<(), String> {
-    let files = generate(toc, pointers, |slug| book.get(slug).cloned());
-    write_tree(law, &render_toc(toc), &files).map_err(|e| format!("rule: writing {}: {e}", law.display()))?;
-    std::fs::write(law.join(POINTERS_FILE), render_pointers(pointers)).map_err(|e| format!("rule: writing {}: {e}", law.display()))?;
-    let root = law.parent().unwrap_or(law);
-    let add = spira_config::bounded::bounded("git").arg("-C").arg(root).args(["add", "-A", "--", "law"]).output();
-    match add {
-        Ok(o) if o.status.success() => {}
-        _ => return Err("rule: git add law failed".to_string()),
-    }
-    Ok(())
 }
