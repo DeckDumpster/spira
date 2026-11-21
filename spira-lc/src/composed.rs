@@ -257,6 +257,9 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
             };
             crate::content::run(rest, stdin, &mut guard, &mut after, &|a| content.read(a), &|a, body| {
                 let cwd = guards.cwd.take();
+                if crate::plan::serving() && a.starts_with(&["gate".to_string(), "discover".to_string()]) {
+                    return recorded_write(a, body, cwd.as_deref());
+                }
                 match (crate::content_write::Mutation::of(a, body), &cwd) {
                     (Some(m), None) => content.mutate(&m),
                     _ => content.write_stdin_in(a, body, cwd.as_deref()),
@@ -267,6 +270,28 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
         "drop" => callers::drop_cmd(rest, m, bd),
         v if is_served(v) => callers::run(v, rest, m),
         v => Answer { code: callers::CANNOT_TELL, stderr: format!("cannot tell: {v} is not a composed verb\n"), ..Default::default() },
+    }
+}
+
+/// The verb a `content` write is recorded under; its argv is `[CONTENT_WRITE, <cwd or empty>, bd's argv...]`.
+pub const CONTENT_WRITE: &str = "content-write";
+
+/// A `content` write that runs bd, recorded for the scheduler: lc-serve starts no program for it.
+fn recorded_write(args: &[String], body: Option<&str>, cwd: Option<&std::path::Path>) -> Result<String, String> {
+    let mut argv = vec![CONTENT_WRITE.to_string(), cwd.map(|c| c.display().to_string()).unwrap_or_default()];
+    argv.extend(args.iter().cloned());
+    match crate::work::record_argv("-", "content", &argv, body, crate::work::exec_bound_ms("content")) {
+        (0, queued) => Ok(queued),
+        (_, e) => Err(e),
+    }
+}
+
+/// Runs a request recorded by [`recorded_write`], here in the scheduler's process.
+pub fn run_recorded(argv: &[String], body: Option<&str>) -> (i32, String) {
+    let cwd = argv.get(1).filter(|c| !c.is_empty()).map(std::path::Path::new);
+    match crate::bd::write_stdin_in(&argv[2.min(argv.len())..], body, cwd) {
+        Ok(out) => (0, out),
+        Err(e) => (1, e),
     }
 }
 

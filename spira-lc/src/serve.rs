@@ -1132,6 +1132,8 @@ const WATCH_MARGIN: Duration = Duration::from_millis(500);
 pub(crate) fn request_deadline(argv: &[String], deadlines: &Deadlines) -> Duration {
     match argv.first().map(String::as_str) {
         // batch-job: a work verb that runs a brokered tool waits the client's tool bound less a margin.
+        // A recorded verb is a plain store write; the program it names runs in the scheduler.
+        Some("work") if argv.get(2).is_some_and(|v| crate::work::exec_verb(v)) => crate::db::QUERY_DEADLINE,
         Some("work") if argv.get(2).is_some_and(|v| crate::work::brokers_tool(v)) => TOOL_DEADLINE,
         Some("work") => crate::db::QUERY_DEADLINE,
         // batch-job: a watch holds as long as its caller asked, so the cutoff is that hold plus a margin, not the request default.

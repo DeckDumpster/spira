@@ -26,6 +26,9 @@ const REPLY_WAIT: Duration = Duration::from_secs(30);
 const READ_SLICE: Duration = Duration::from_secs(2);
 // batch-job: a lane verb's broker-run tool is bounded at 300 s by the broker; wait just past it.
 const TOOL_TIMEOUT: Duration = Duration::from_secs(310);
+// batch-job: a recorded verb runs in the scheduler under the broker's 300 s bound; this adds the margin for it to be picked up.
+const RECORDED_WAIT: Duration = Duration::from_secs(330);
+const RECORDED_POLL: Duration = Duration::from_millis(500);
 
 fn main() {
     spira_otel::run::begin_with("work", || spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok());
@@ -163,7 +166,10 @@ fn main() {
     let runs_tool = work::LANE_VERBS.contains(&verb.as_str()) || matches!(verb.as_str(), "file-followup" | "split" | "submit" | "ack");
     let wait = if runs_tool { TOOL_TIMEOUT } else { REPLY_WAIT };
     let asked = std::time::Instant::now();
-    let answer = send(&req, wait);
+    let answer = send(&req, wait).and_then(|(code, out)| match spira_store::lc_call::queued_id(&out) {
+        Some(id) if code == 0 => await_recorded(id, asked),
+        _ => Ok((code, out)),
+    });
     spira_otel::run::phase("reply", asked.elapsed().as_millis() as u64);
     match answer {
         Ok((code, out)) => {
@@ -175,6 +181,26 @@ fn main() {
             spira_otel::run::finish(code);
             std::process::exit(code)
         }
+    }
+}
+
+/// The answer of the recorded request `id`: polled until the scheduler has finished it, each
+/// poll a plain read of its record, so no request is held open meanwhile.
+fn await_recorded(id: &str, began: std::time::Instant) -> Result<(i32, String), Unsent> {
+    let show = vec!["work-request".to_string(), "show".to_string(), id.to_string()];
+    loop {
+        let (code, out) = send(&show, REPLY_WAIT)?;
+        if code != 0 {
+            return Ok((code, out));
+        }
+        let record: serde_json::Value = serde_json::from_str(&out).map_err(|e| Unsent::Other(format!("request {id}: malformed record: {e}")))?;
+        if record["state"] == "done" {
+            return Ok((record["code"].as_i64().unwrap_or(i64::from(CANNOT_TELL)) as i32, record["output"].as_str().unwrap_or("").to_string()));
+        }
+        if began.elapsed() >= RECORDED_WAIT {
+            return Err(Unsent::Other(format!("cannot tell: request {id} had not finished after {}s; `spira-lc work-request show {id}` has its state", RECORDED_WAIT.as_secs())));
+        }
+        std::thread::sleep(RECORDED_POLL); // waits-on: the scheduler finishing the recorded request; cap RECORDED_WAIT
     }
 }
 

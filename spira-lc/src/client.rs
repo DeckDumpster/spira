@@ -229,3 +229,29 @@ mod tests {
         h.join().unwrap();
     }
 }
+
+/// How often a client asks whether a recorded request has finished.
+pub const REQUEST_POLL: Duration = Duration::from_millis(500);
+/// How long a client waits for a recorded request: the tool bound, a margin for the scheduler to pick it up.
+// batch-job: a recorded verb runs in the scheduler under its own bound (work::exec_bound_ms) and this adds the pick-up margin.
+pub const REQUEST_WAIT: Duration = Duration::from_secs(330);
+
+/// The answer of the recorded request `id`, polled until it is done. Every poll is a plain read.
+pub fn await_request(socket_path: &str, id: &str) -> (i32, String) {
+    let began = std::time::Instant::now();
+    loop {
+        let (code, out, err) = forward_with(socket_path, &["work-request".to_string(), "show".to_string(), id.to_string()], None);
+        if code != 0 {
+            return (code, format!("{out}{err}"));
+        }
+        match serde_json::from_str::<serde_json::Value>(&out) {
+            Ok(r) if r["state"] == "done" => return (r["code"].as_i64().unwrap_or(2) as i32, r["output"].as_str().unwrap_or("").to_string()),
+            Ok(_) => {}
+            Err(e) => return (2, format!("cannot tell: request {id}: {e}")),
+        }
+        if began.elapsed() >= REQUEST_WAIT {
+            return (2, format!("cannot tell: request {id} had not finished after {}s; `spira-lc work-request show {id}` has its state", REQUEST_WAIT.as_secs()));
+        }
+        std::thread::sleep(REQUEST_POLL); // waits-on: the scheduler finishing the request; cap REQUEST_WAIT
+    }
+}

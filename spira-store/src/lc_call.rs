@@ -532,6 +532,14 @@ impl LcClient {
     }
 }
 
+/// The request id in `out` when it is the service's answer to a verb it recorded for the
+/// scheduler (`queued wr-<n>`), which the caller then polls with `work-request show`.
+pub fn queued_id(out: &str) -> Option<&str> {
+    let id = out.trim().strip_prefix("queued ")?;
+    let n = id.strip_prefix("wr-")?;
+    (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then_some(id)
+}
+
 /// Print a service answer: a "cannot tell" refusal goes to stderr, so a caller capturing stdout
 /// as an id or a value gets nothing, never the refusal text (law-never-derive-an-id-from-output).
 pub fn print_answer(code: i32, out: &str) {
