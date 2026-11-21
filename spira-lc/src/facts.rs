@@ -44,6 +44,12 @@ fn store() -> Result<std::sync::Arc<crate::control::store::Store<crate::control:
 
 /// Appends `facts` in one txn.
 pub fn append(facts: &[Fact]) -> Result<(), String> {
+    if crate::plane::remote() {
+        return facts.iter().try_for_each(|f| match crate::plane::call(&["fact".into(), "add".into(), f.bead.clone(), "--kind".into(), f.kind.clone(), "--actor".into(), f.actor.clone(), "--cause".into(), f.cause.clone()]) {
+            (0, _) => Ok(()),
+            (_, out) => Err(out),
+        });
+    }
     append_on(&*store()?, facts)
 }
 
@@ -104,6 +110,14 @@ pub fn build_dir(bead: &str, tip: &str, dir: &str, actor: &str, at: i64) -> Fact
 /// The facts of `ids` of `kinds` after `since`, each bead's oldest first, as rows of
 /// `issue_id`, `event_type`, `new_value` (clipped as a read clips), `actor` and `at`.
 pub fn read(ids: &[String], kinds: &[String], since: Option<i64>) -> Result<Vec<Value>, String> {
+    if crate::plane::remote() {
+        let mut argv = vec!["fact".to_string(), "list".into(), "--raw".into(), "--ids".into(), ids.join(","), "--kinds".into(), kinds.join(",")];
+        argv.extend(since.into_iter().flat_map(|t| ["--since".to_string(), t.to_string()]));
+        return match crate::plane::call(&argv) {
+            (0, out) => serde_json::from_str(&out).map_err(|e| format!("fact list: {e}")),
+            (_, out) => Err(out),
+        };
+    }
     read_on(&*store()?, ids, kinds, since)
 }
 
@@ -149,6 +163,7 @@ fn cmd_facts(args: &[String], get: Get) -> (i32, String) {
         None => None,
     };
     match get(&csv(args, "--ids"), &csv(args, "--kinds"), since) {
+        Ok(r) if args.iter().any(|a| a == "--raw") => (0, serde_json::to_string(&Value::Array(r)).unwrap()),
         Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(shape(r))).unwrap()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
     }
@@ -183,6 +198,18 @@ mod tests {
         let rows: Vec<Value> = serde_json::from_str(&out).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!((rows[0]["event_type"].as_str(), rows[0]["new_value"].as_str(), rows[0]["actor"].as_str()), (Some("claimed"), Some("first"), Some("dwarf-1")));
+    }
+
+    #[test]
+    fn fact_list_raw_answers_the_rows_unshaped_so_a_process_outside_the_service_reads_what_the_service_does() {
+        let s = store();
+        put(&s, "sp-a", "claimed", "first", 1_700_000_000);
+        let get: Get = &|i, k, t| read_on(&s, i, k, t);
+        let (rc, out) = cmd_with(&argv(&["list", "--ids", "sp-a", "--raw"]), &|f| append_on(&s, f), get);
+        assert_eq!(rc, 0, "{out}");
+        let rows: Vec<Value> = serde_json::from_str(&out).unwrap();
+        assert_eq!((rows[0]["event_type"].as_str(), rows[0]["at"].as_str()), (Some("claimed"), Some("1700000000")));
+        assert!(rows[0].get("created_at").is_none(), "shaped rows carry created_at, raw ones carry at");
     }
 
     #[test]

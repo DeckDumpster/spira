@@ -6,7 +6,7 @@ autotests = false
 description = "spira-runtime — the long-running service that hosts the loop's workflows: pinned config, wide events as OTLP logs, a heartbeat schedule, a loop-kicked systemd watchdog and stall quarantine."
 
 [package.metadata.spira]
-test-bins = ["spira-config", "spira-lc", "reconciler", "tsd"]
+test-bins = ["spira-config", "spira-lc", "reconciler", "tsd", "work"]
 
 [lib]
 name = "spira_runtime"
@@ -20,6 +20,11 @@ test = false
 [[test]]
 name = "it"
 path = "tests/it/main.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "task_d_broker_exec"
+path = "tests/task_d_broker_exec.rs"
 required-features = ["integration"]
 
 [[test]]
@@ -93,7 +98,7 @@ path = "tests/world_round_snapshot.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["dep:testkit", "archivist/integration", "batcher/integration", "batcher-cut/integration", "bead/integration", "cockpit-collect/integration", "cockpit-ops/integration", "cr/integration", "czar-pass/integration", "dwarf/integration", "filings-collect/integration", "forge/integration", "gate-check/integration", "gate-worker/integration", "gh-intake/integration", "groomer/integration", "heimdall/integration", "hel/integration", "idea-prompt/integration", "inbox-rules/integration", "incident/integration", "install/integration", "kit-bump/integration", "landing-pass/integration", "mail/integration", "mimir-trigger/integration", "perf-watch/integration", "queue/integration", "reclaim/integration", "reconciler/integration", "reconciler-engine/integration", "reconciler-flow/integration", "refusal-watch/integration", "release/integration", "round-vm/integration", "runtime/integration", "runtime-watch/integration", "sentinel/integration", "sift/integration", "sim/integration", "skew/integration", "sop/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "spira-submission/integration", "spira-world/integration", "store-view/integration", "testenv/integration", "testkit/integration", "system-paths/integration", "tsd/integration", "unit-run/integration", "watchd/integration", "watchtower/integration"]
+integration = ["dep:testkit", "archivist/integration", "batcher/integration", "batcher-cut/integration", "bead/integration", "cockpit-collect/integration", "cockpit-ops/integration", "cr/integration", "czar-pass/integration", "dwarf/integration", "filings-collect/integration", "forge/integration", "gate-check/integration", "gate-worker/integration", "gh-intake/integration", "groomer/integration", "heimdall/integration", "hel/integration", "idea-prompt/integration", "inbox-rules/integration", "incident/integration", "install/integration", "kit-bump/integration", "landing-pass/integration", "mail/integration", "mimir-trigger/integration", "perf-watch/integration", "queue/integration", "reclaim/integration", "reconciler/integration", "reconciler-engine/integration", "reconciler-flow/integration", "refusal-watch/integration", "release/integration", "round-vm/integration", "runtime/integration", "runtime-watch/integration", "sentinel/integration", "sift/integration", "sim/integration", "skew/integration", "sop/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "state-store-sqlite/integration", "spira-otel/integration", "spira-submission/integration", "spira-world/integration", "store-view/integration", "testenv/integration", "testkit/integration", "system-paths/integration", "tsd/integration", "unit-run/integration", "watchd/integration", "watchtower/integration"]
 
 [dependencies]
 testkit = { path = "../testkit", optional = true }
@@ -168,6 +173,7 @@ mimir-trigger = { path = "../mimir-trigger" }
 inotify = { version = "0.11", default-features = false }
 
 [dev-dependencies]
+state-store-sqlite = { path = "../state-store-sqlite" }
 forge = { path = "../forge" }
 # dwarves.sh's live count, held to sentinel-call's on the same unit list.
 spira-world = { path = "../spira-world" }

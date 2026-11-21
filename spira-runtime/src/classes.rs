@@ -9,7 +9,7 @@
 //! everything else on this host `host`. An effect with no row is refused at registration by
 //! `every_registered_effect_names_a_class`; nothing falls through to Host by default.
 
-use runtime::pools::EffectClass::{self, Container, Forge, Git, Host, Store, Unit};
+use runtime::pools::EffectClass::{self, Broker, Container, Forge, Git, Host, Store, Unit};
 
 /// Every registered effect by name, with its class.
 pub const CLASSES: &[(&str, EffectClass)] = &[
@@ -97,6 +97,8 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("hel.sweep.close_on_land", Store),
     ("hel.sweep.content_on_base", Store),
     ("hel.sweep.free_worktree", Git),
+    ("broker.exec.observe", Store),
+    ("broker.exec.run", Broker),
     ("cr-cadence.observe", Host),
     ("cr-cadence.open", Host),
     ("cr-comments.observe", Forge),
@@ -429,6 +431,7 @@ mod tests {
             Forge => "Forge",
             Host => "Host",
             Container => "Container",
+            Broker => "Broker",
         }
     }
 

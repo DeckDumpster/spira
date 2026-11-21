@@ -13,6 +13,7 @@
 use super::Task;
 
 pub mod acceptance;
+pub mod broker_exec;
 pub mod pattern;
 pub mod watch_mend;
 pub mod watch_perf;
@@ -23,6 +24,7 @@ pub mod watch_sop_lint;
 pub mod watch_tower;
 
 pub static TASKS: &[Task] = &[
+    Task { name: broker_exec::NAME, plane: runtime::Plane::Work, signal: &[], boot: broker_exec::BrokerExec::boot, cadence_ms: |_| broker_exec::CADENCE_MS, effects: broker_exec::EFFECTS, runners: &[(broker_exec::OBSERVE, broker_exec::observe), (broker_exec::RUN, broker_exec::run)], keys: &[broker_exec::KEYS], build: |_| broker_exec::BrokerExec.registration() },
     Task { name: watch_skew::NAME, plane: runtime::Plane::Work, signal: &[], boot: watch_skew::WatchSkew::boot, cadence_ms: |_| watch_skew::CADENCE_MS, effects: watch_skew::EFFECTS, runners: &[(watch_skew::OBSERVE, watch_skew::observe), (watch_skew::ESCALATE, watch_skew::escalate), (watch_skew::LOG, watch_skew::log), (watch_skew::REFRESH, watch_skew::refresh)], keys: &[watch_skew::KEYS], build: |_| watch_skew::WatchSkew::pinned().registration() },
     Task { name: watch_perf::NAME, plane: runtime::Plane::Work, signal: &[], boot: watch_perf::WatchPerf::boot, cadence_ms: |_| watch_perf::CADENCE_MS, effects: watch_perf::EFFECTS, runners: &[(watch_perf::OBSERVE, watch_perf::observe), (watch_perf::LOG, watch_perf::log), (watch_perf::SLOW_SAMPLE, watch_perf::slow_sample), (watch_perf::METRICS, watch_perf::metrics)], keys: &[watch_perf::KEYS], build: |_| watch_perf::WatchPerf::pinned().registration() },
     Task { name: watch_sop_lint::NAME, plane: runtime::Plane::Work, signal: &[], boot: watch_sop_lint::WatchSopLint::boot, cadence_ms: |_| watch_sop_lint::CADENCE_MS, effects: watch_sop_lint::EFFECTS, runners: &[(watch_sop_lint::OBSERVE, watch_sop_lint::observe), (watch_sop_lint::FILE_INCIDENT, watch_sop_lint::file_incident)], keys: &[watch_sop_lint::KEYS], build: |_| watch_sop_lint::WatchSopLint::pinned().registration() },

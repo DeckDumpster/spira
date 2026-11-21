@@ -812,3 +812,4 @@ runtime_cr_cadence_secs
 beads_sql_writer_password_file
 cr_rewrite_days
 lc_wal_line_bytes
+runtime_broker_cap

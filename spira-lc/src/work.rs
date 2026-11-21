@@ -26,7 +26,16 @@ pub fn dispatch(args: &[String]) -> (i32, String) {
     if let Err(refusal) = gate(verb, rest) {
         return refusal;
     }
-    match verb.as_str() {
+    if crate::plan::serving() && exec_verb(verb) {
+        return record(bead_id, args);
+    }
+    run(bead_id, verb, rest)
+}
+
+/// The verb's handler, run in the calling process: `lc-serve` for a verb that starts no program,
+/// the `work-exec` process for one that does.
+fn run(bead_id: &str, verb: &str, rest: &[String]) -> (i32, String) {
+    match verb {
         "show" => cmd_show(bead_id),
         "note" => cmd_note(bead_id, rest),
         "submit" => cmd_submit(bead_id, rest),
@@ -708,10 +717,9 @@ fn red_tip_refusal(bead_id: &str, tip: &str, round: Option<&str>, gate: Option<&
 }
 
 fn gate_red_at(bead_id: &str, tip: &str) -> Option<GateRedAt> {
-    let store = crate::control::served::store().ok()?;
-    let history = store.history(bead_id, Some("bead")).ok()?;
-    let newest = history.iter().rev().find(|c| c.audit.event == "GateRed" && c.audit.evidence["GateRed"]["tip"].as_str() == Some(tip))?;
-    gate_red_from(&newest.audit.evidence["GateRed"])
+    let (0, out) = crate::plane::call(&[s("plane-gate-red"), bead_id.to_string(), tip.to_string()]) else { return None };
+    let answer: serde_json::Value = serde_json::from_str(&out).ok()?;
+    answer["red"].is_object().then(|| gate_red_from(&answer["red"])).flatten()
 }
 
 /// A step or message is present only when non-empty.
@@ -722,20 +730,8 @@ fn gate_red_from(red: &serde_json::Value) -> Option<GateRedAt> {
 
 /// The reason the newest round that ejected `bead_id` at `tip` gave.
 fn ejected_reasons(bead_id: &str, tip: &str) -> Option<String> {
-    let store = crate::control::served::store().ok()?;
-    let mut newest: Option<(u64, String)> = None;
-    for round in store.round_ids_of(bead_id).ok()? {
-        if !store.batch(&round).ok()??.1.value.members.iter().any(|m| m.bead_id == bead_id && m.tip == tip) {
-            continue;
-        }
-        for c in store.history(&round, Some("batch")).ok()? {
-            let eject = &c.audit.evidence["Eject"];
-            if c.audit.event == "Eject" && eject["bead_id"].as_str() == Some(bead_id) && newest.as_ref().is_none_or(|(rev, _)| c.rev > *rev) {
-                newest = eject["reason"].as_str().map(|r| (c.rev, r.to_string()));
-            }
-        }
-    }
-    newest.map(|(_, reason)| reason)
+    let (0, out) = crate::plane::call(&[s("plane-ejected"), bead_id.to_string(), tip.to_string()]) else { return None };
+    serde_json::from_str::<serde_json::Value>(&out).ok()?["reason"].as_str().map(str::to_string)
 }
 
 /// A mender's calls the queue already dropped ends without an event the machine would refuse.
@@ -811,6 +807,12 @@ fn cmd_done(bead_id: &str, args: &[String]) -> (i32, String) {
     if actor == "groomer" {
         match crate::bd::labels(bead_id) {
             Ok(labels) if labels.iter().any(|l| l == GROOM_TRIGGER_MARKER) => {}
+            Ok(_) if crate::plan::serving() => {
+                let call = split_reserved(args);
+                let mut argv = vec!["work".to_string(), bead_id.to_string(), "done".to_string()];
+                argv.extend(call.args);
+                return record_argv(bead_id, &actor, &argv, call.stdin.as_deref(), exec_bound_ms("done"));
+            }
             Ok(_) => return release_untriggered_groom(bead_id, &actor),
             Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
         }
@@ -953,7 +955,7 @@ fn skuld_draft_notes_refusal(bead_id: &str, notes: &str) -> Option<(i32, String)
 
 fn released_on_ask_history(bead_id: &str) -> bool {
     let argv = ["history", bead_id, "--machine", "bead"].map(String::from);
-    let (0, out) = crate::dispatch(&argv) else { return true };
+    let (0, out) = crate::plane::call(&argv) else { return true };
     let Ok(serde_json::Value::Array(found)) = serde_json::from_str::<serde_json::Value>(&out) else { return true };
     let history: Vec<(String, String)> = found
         .iter()
@@ -1068,7 +1070,7 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str) -> (i32, String) {
     let after_landing = args.iter().any(|a| a == "--after-landing");
     let actor = flag(args, "--actor").unwrap_or_default();
     let body = split_reserved(args).stdin;
-    let register = |new_id: &str| crate::dispatch(&[s("create-bead"), new_id.to_string(), s("--ready"), s("--repo"), repo.clone()]);
+    let register = |new_id: &str| crate::plane::call(&[s("create-bead"), new_id.to_string(), s("--ready"), s("--repo"), repo.clone()]);
     file_and_bind(&Filing { verb, actor: &actor, title, persona: &persona, repo: &repo, bound: bead_id, after_landing, body: body.as_deref() }, register)
 }
 
@@ -1265,6 +1267,101 @@ pub fn is_tool(verb: &str) -> bool {
 /// the client's tool bound, not the store-call deadline; `work`'s client waits the same set.
 pub fn brokers_tool(verb: &str) -> bool {
     is_tool(verb) || LANE_VERBS.contains(&verb) || matches!(verb, "file-followup" | "split" | "submit" | "ack")
+}
+
+/// The brokered verbs that start no program: a content read or a config lookup, answered in the service.
+const ANSWERED_IN_SERVICE: &[&str] = &["read", "list", "search", "fence"];
+
+/// The verbs lc-serve records as a request instead of running: every one that starts a program.
+pub fn exec_verb(verb: &str) -> bool {
+    (brokers_tool(verb) && !ANSWERED_IN_SERVICE.contains(&verb)) || matches!(verb, "blocked" | "superseded-by")
+}
+
+/// How long the scheduler lets a recorded verb run: the tool bound every program-running verb keeps.
+pub fn exec_bound_ms(verb: &str) -> u64 {
+    match verb {
+        "submit" => TOOL_SECS.max(PROOF_BUDGET_SECS + 30) * 1000,
+        _ => TOOL_SECS * 1000,
+    }
+}
+
+/// The answer to a verb recorded for the scheduler: its id, on a line the client recognises.
+pub fn queued_answer(id: &str) -> String {
+    format!("queued {id}")
+}
+
+/// Records `args` (`<bead> <verb> ...`) as a request for the scheduler and answers with its id.
+fn record(bead_id: &str, args: &[String]) -> (i32, String) {
+    let call = split_reserved(&args[2..]);
+    let mut argv = vec!["work".to_string(), bead_id.to_string(), args[1].clone()];
+    argv.extend(call.args.iter().cloned());
+    record_argv(bead_id, call.actor.as_deref().unwrap_or(""), &argv, call.stdin.as_deref(), exec_bound_ms(&args[1]))
+}
+
+/// Records an `argv` for the scheduler's `work-exec` and answers with the id the store allocated.
+pub fn record_argv(bead: &str, actor: &str, argv: &[String], stdin: Option<&str>, bound_ms: u64) -> (i32, String) {
+    let store = match crate::control::served::store() {
+        Ok(s) => s,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
+    match store.put_work_request(&crate::control::work_requests::NewRequest { bead, actor, argv, stdin, bound_ms }, crate::db::now_epoch(), &crate::control::served::call_request_id()) {
+        Ok(id) => (0, queued_answer(&id)),
+        Err(e) => (CANNOT_TELL, format!("cannot tell: recording the request: {e}")),
+    }
+}
+
+/// A world's stand-in for the scheduler's `broker.exec`: takes each queued request and runs it
+/// in a thread of this process, until the service stops answering.
+pub fn run_queue() -> (i32, String) {
+    let call = |args: &[&str]| crate::plane::call(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>());
+    loop {
+        let (code, listed) = call(&["work-request", "list", "--state", "queued"]);
+        if code != 0 {
+            return (0, String::new());
+        }
+        let queued: Vec<crate::control::work_requests::WorkRequest> = serde_json::from_str(&listed).unwrap_or_default();
+        for r in queued {
+            if call(&["work-request", "take", &r.id, "--actor", "spira-runtime"]).0 == 0 {
+                std::thread::spawn(move || exec(&r.id));
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100)); // waits-on: nothing; polls the queue while the service answers
+    }
+}
+
+/// Runs the recorded request `id` in this process and records its exit code and output. This is
+/// `spira-lc work-exec`, started by the scheduler; every store call it makes goes to lc-serve.
+pub fn exec(id: &str) -> (i32, String) {
+    let call = |args: &[&str]| crate::plane::call(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>());
+    let (code, shown) = call(&["work-request", "show", id]);
+    if code != 0 {
+        return (code, shown);
+    }
+    let request: crate::control::work_requests::WorkRequest = match serde_json::from_str(&shown) {
+        Ok(r) => r,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: work-exec {id}: {e}")),
+    };
+    let (code, out) = run_recorded(&request);
+    let code = code.to_string();
+    let (done, said) = crate::plane::call(&["work-request".into(), "finish".into(), id.into(), "--code".into(), code, "--stdin".into(), out]);
+    if done == 0 { (0, String::new()) } else { (done, said) }
+}
+
+fn run_recorded(request: &crate::control::work_requests::WorkRequest) -> (i32, String) {
+    let mut argv = request.argv.clone();
+    if request.argv.first().map(String::as_str) == Some(crate::composed::CONTENT_WRITE) {
+        return crate::composed::run_recorded(&argv, request.stdin.as_deref());
+    }
+    if let Some(body) = &request.stdin {
+        argv.extend(["--stdin".to_string(), body.clone()]);
+    }
+    if !request.actor.is_empty() {
+        argv.extend(["--actor".to_string(), request.actor.clone()]);
+    }
+    let (Some(bead), Some(verb)) = (argv.get(1).cloned(), argv.get(2).cloned()) else {
+        return (CANNOT_TELL, format!("work-exec {}: the recorded request names no verb", request.id));
+    };
+    run(&bead, &verb, &argv[3..])
 }
 
 const ANY: &[&str] = &["*"];
@@ -2203,7 +2300,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String]) -> (i32, String) {
             }
             Step::CreateRow { repo } => {
                 let new_id = out.trim().to_string();
-                match crate::dispatch(&[s("create-bead"), new_id.clone(), s("--ready"), s("--repo"), repo]) {
+                match crate::plane::call(&[s("create-bead"), new_id.clone(), s("--ready"), s("--repo"), repo]) {
                     (0, _) => (0, String::new()),
                     (_, e) => (
                         CANNOT_TELL,
@@ -2244,6 +2341,17 @@ mod store_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_verb_that_starts_a_program_is_recorded_and_the_reads_stay_in_the_service() {
+        for verb in ["submit", "ack", "file-followup", "split", "blocked", "superseded-by", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand", "hel", "mender", "forge", "file", "ask"] {
+            assert!(super::exec_verb(verb), "{verb} starts a program, so the scheduler runs it");
+        }
+        for verb in ["show", "note", "done", "logs", "cite-check", "read", "list", "search", "fence", "no-such-verb"] {
+            assert!(!super::exec_verb(verb), "{verb} starts no program in the service");
+        }
+        assert!(super::exec_bound_ms("groom") >= super::exec_bound_ms("submit") && super::exec_bound_ms("submit") == super::TOOL_SECS * 1000);
+    }
+
     fn cite_check_of(msg: &str, held: &[&str], store_down: bool) -> (i32, String) {
         let held: Vec<String> = held.iter().map(|h| h.to_string()).collect();
         let mut known = |ids: &[String]| if store_down { Err("down".to_string()) } else { Ok(ids.iter().filter(|i| held.contains(i)).cloned().collect()) };

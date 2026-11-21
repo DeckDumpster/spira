@@ -27,6 +27,7 @@ const READ_SLICE: Duration = Duration::from_secs(2);
 // batch-job: a lane verb's broker-run tool is bounded at 300 s by the broker; wait just past it.
 const TOOL_TIMEOUT: Duration = Duration::from_secs(310);
 
+
 fn main() {
     spira_otel::run::begin_with("work", || spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok());
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -163,7 +164,10 @@ fn main() {
     let runs_tool = work::LANE_VERBS.contains(&verb.as_str()) || matches!(verb.as_str(), "file-followup" | "split" | "submit" | "ack");
     let wait = if runs_tool { TOOL_TIMEOUT } else { REPLY_WAIT };
     let asked = std::time::Instant::now();
-    let answer = send(&req, wait);
+    let answer = send(&req, wait).and_then(|(code, out)| match spira_store::lc_call::queued_id(&out) {
+        Some(id) if code == 0 => await_recorded(id, asked),
+        _ => Ok((code, out)),
+    });
     spira_otel::run::phase("reply", asked.elapsed().as_millis() as u64);
     match answer {
         Ok((code, out)) => {
@@ -175,6 +179,26 @@ fn main() {
             spira_otel::run::finish(code);
             std::process::exit(code)
         }
+    }
+}
+
+/// The answer of the recorded request `id`: polled until the scheduler has finished it, each
+/// poll a plain read of its record, so no request is held open meanwhile.
+fn await_recorded(id: &str, began: std::time::Instant) -> Result<(i32, String), Unsent> {
+    use spira_store::lc_call::{record_answer, record_timeout, RECORD_POLL, RECORD_WAIT};
+    let show = vec!["work-request".to_string(), "show".to_string(), id.to_string()];
+    loop {
+        let (code, out) = send(&show, REPLY_WAIT)?;
+        if code != 0 {
+            return Ok((code, out));
+        }
+        if let Some(answer) = record_answer(&out).map_err(|e| Unsent::Other(format!("request {id}: {e}")))? {
+            return Ok(answer);
+        }
+        if began.elapsed() >= RECORD_WAIT {
+            return Err(Unsent::Other(record_timeout(id)));
+        }
+        std::thread::sleep(RECORD_POLL); // waits-on: the scheduler finishing the recorded request; cap RECORD_WAIT
     }
 }
 

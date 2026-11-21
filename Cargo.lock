@@ -2307,6 +2307,7 @@ dependencies = [
  "spira-store",
  "spira-submission",
  "spira-world",
+ "state-store-sqlite",
  "store-view",
  "system-paths",
  "testenv",

@@ -75,7 +75,10 @@ fn route_call(args: &[String], routed: Result<Route, String>) -> Option<(i32, St
 /// One request to the service on `socket_path`.
 pub(crate) fn forward(socket_path: &str, args: &[String]) -> (i32, String) {
     let (code, out, err) = forward_with(socket_path, args, None);
-    (code, format!("{out}{err}"))
+    match spira_store::lc_call::queued_id(&out) {
+        Some(id) if code == 0 => await_request(socket_path, id),
+        _ => (code, format!("{out}{err}")),
+    }
 }
 
 /// One request with `stdin` as its body; the answer's stdout and stderr apart. A refused or
@@ -108,6 +111,14 @@ pub(crate) fn exchange(stream: std::os::unix::net::UnixStream, args: &[String], 
     match spira_store::lc_call::exchange(stream, args, stdin) {
         Ok(r) => (r.code, r.out, r.err),
         Err(msg) => (2, msg, String::new()),
+    }
+}
+
+/// The answer of the recorded request `id`, polled until it is done. Every poll is a plain read.
+pub fn await_request(socket_path: &str, id: &str) -> (i32, String) {
+    match spira_store::lc_call::LcClient::socket(socket_path).await_record(id) {
+        Ok(r) => (r.code, r.out),
+        Err(e) => (2, format!("cannot tell: request {id}: {e}")),
     }
 }
 
@@ -229,3 +240,4 @@ mod tests {
         h.join().unwrap();
     }
 }
+

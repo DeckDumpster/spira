@@ -10,6 +10,12 @@ use crate::control::store::Store;
 use crate::db::DbError;
 use crate::CANNOT_TELL;
 
+/// The `event` request that applies `kind` to the bead from the state its row is in.
+fn event_argv(id: &str, actor: &str, kind: &BeadEventKind, row: &LifecycleRow) -> Vec<String> {
+    let kind_json = serde_json::to_string(kind).unwrap_or_default();
+    ["event", "bead", id, "--expect", row.state.as_str(), "--version", &row.version.to_string(), "--actor", actor, "--kind", &kind_json].iter().map(|s| s.to_string()).collect()
+}
+
 /// The control store the bead-state verbs answer from.
 pub(crate) struct Plane<'a, B: Backend>(pub(crate) &'a Store<B>);
 
@@ -37,13 +43,31 @@ impl<B: Backend> Plane<'_, B> {
             Ok(None) => return (CANNOT_TELL, format!("work: no bead row for {id}")),
             Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
         };
-        let kind_json = serde_json::to_string(kind).unwrap_or_default();
-        let argv: Vec<String> = ["event", "bead", id, "--expect", row.state.as_str(), "--version", &row.version.to_string(), "--actor", actor, "--kind", &kind_json]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        self.read(&argv)
+        self.read(&event_argv(id, actor, kind, &row))
     }
+}
+
+/// Whether this process reaches the store through the service: any process but lc-serve that is
+/// configured with a socket. Only lc-serve holds the store open.
+pub(crate) fn remote() -> bool {
+    !crate::plan::serving() && matches!(crate::client::route(), Ok(crate::client::Route::Service(_)))
+}
+
+/// A control-store verb as the caller reaches it: in-process inside lc-serve and in direct mode,
+/// through the service from any other process.
+pub(crate) fn call(argv: &[String]) -> (i32, String) {
+    if crate::plan::serving() {
+        return crate::dispatch(argv);
+    }
+    crate::client::try_socket(argv).unwrap_or_else(|| crate::dispatch(argv))
+}
+
+fn plane_bead_of(id: &str) -> Result<serde_json::Value, DbError> {
+    let (code, out) = call(&["plane-bead".to_string(), id.to_string()]);
+    if code != 0 {
+        return Err(DbError::CannotTell(out));
+    }
+    serde_json::from_str(&out).map_err(|e| DbError::CannotTell(format!("plane-bead {id}: {e}")))
 }
 
 /// Run `f` on the configured store; one that is unset or cannot be opened is cannot tell.
@@ -57,21 +81,42 @@ fn with<T>(f: impl FnOnce(&Plane<'_, crate::control::served::Served>) -> T, cann
 
 /// The bead's lifecycle row.
 pub(crate) fn bead(id: &str) -> Result<Option<LifecycleRow>, DbError> {
+    if remote() {
+        let answer = plane_bead_of(id)?;
+        return match &answer["row"] {
+            serde_json::Value::Null => Ok(None),
+            row => serde_json::from_value(row.clone()).map(Some).map_err(|e| DbError::CannotTell(format!("plane-bead {id}: {e}"))),
+        };
+    }
     with(|p| p.bead(id), |e| Err(DbError::CannotTell(e)))
 }
 
 /// The repository the bead's row names.
 pub(crate) fn repo(id: &str) -> Result<Option<String>, DbError> {
+    if remote() {
+        return Ok(plane_bead_of(id)?["repo"].as_str().map(str::to_string));
+    }
     with(|p| p.repo(id), |e| Err(DbError::CannotTell(e)))
 }
 
 /// `show <id>` or `list …`.
 pub(crate) fn read(args: &[String]) -> (i32, String) {
+    if remote() {
+        return call(args);
+    }
     with(|p| p.read(args), |e| (CANNOT_TELL, format!("cannot tell: {e}")))
 }
 
 /// One bead event.
 pub(crate) fn apply(id: &str, actor: &str, kind: BeadEventKind) -> (i32, String) {
+    if remote() {
+        let row = match bead(id) {
+            Ok(Some(r)) => r,
+            Ok(None) => return (CANNOT_TELL, format!("work: no bead row for {id}")),
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        };
+        return call(&event_argv(id, actor, &kind, &row));
+    }
     with(|p| p.apply(id, actor, &kind), |e| (CANNOT_TELL, format!("cannot tell: {e}")))
 }
 

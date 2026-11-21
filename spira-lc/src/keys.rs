@@ -21,6 +21,12 @@ pub const RUNTIME: &str = "runtime/";
 /// The attempt and poison history, `facts/<bead>/<request id>`: facts that change no bead's state.
 pub const FACTS: &str = "facts/";
 pub const HISTORY: &str = "history/";
+/// Each recorded `work` request, `work-requests/<id>`: a verb that runs a program, queued for the scheduler.
+pub const WORK_REQUESTS: &str = "work-requests/";
+/// The allocator behind `work-requests/<id>`: `{n}`, advanced in the txn that records a request.
+pub const WORK_REQUEST_SEQ: &str = "work-requests-seq";
+/// One empty row per request in a state a runner still owes it, `work-request-index/<state>/<id>`.
+pub const WORK_REQUEST_INDEX: &str = "work-request-index/";
 /// Knobs a section owner moves by applying an intent from one value to another.
 pub const KNOBS: &str = "knobs/";
 /// Each record's blocker-facing projection, under a prefix of its own so a `lifecycle/` list or
@@ -90,6 +96,14 @@ pub fn conditions(owner: &str) -> String {
 
 pub fn condition(owner: &str, key: &str) -> String {
     format!("{}{key}", conditions(owner))
+}
+
+pub fn work_request(id: &str) -> String {
+    format!("{WORK_REQUESTS}{id}")
+}
+
+pub fn work_request_index(state: &str) -> String {
+    format!("{WORK_REQUEST_INDEX}{state}/")
 }
 
 pub fn gh_closeout(id: &str) -> String {

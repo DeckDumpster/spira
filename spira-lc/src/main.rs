@@ -174,6 +174,18 @@ fn main() {
             if code == 0 { println!("{out}") } else { eprintln!("{out}") }
             std::process::exit(code)
         }
+        Some("work-run") if args.len() == 1 => std::process::exit(work::run_queue().0),
+        Some("work-exec") if args.len() == 2 => {
+            let (code, out) = work::exec(&args[1]);
+            if !out.is_empty() {
+                eprintln!("{out}");
+            }
+            std::process::exit(code)
+        }
+        Some("work-exec") => {
+            eprintln!("spira-lc work-exec: usage: work-exec <request-id>");
+            std::process::exit(2);
+        }
         Some("content-landed") if args.len() == 4 => {
             std::process::exit(if git_evidence::content_on_base(std::path::Path::new(&args[1]), &args[2], &args[3]) { 0 } else { 1 })
         }
@@ -195,6 +207,10 @@ fn main() {
             Ok(client::Route::Service(socket)) => {
                 let (argv, body) = composed::client_request(&args, &mut stdin);
                 let (code, out, err) = client::forward_with(&socket, &argv, body.as_deref());
+                let (code, out) = match spira_store::lc_call::queued_id(&out) {
+                    Some(id) if code == 0 => client::await_request(&socket, id),
+                    _ => (code, out),
+                };
                 std::process::exit(emit(&[], callers::Answer { code, stdout: out, stderr: err, ..Default::default() }));
             }
             Ok(client::Route::Direct) => {

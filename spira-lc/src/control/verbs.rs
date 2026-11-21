@@ -14,7 +14,7 @@ use super::store::Store;
 use crate::{flag, CANNOT_TELL};
 
 /// The verbs this module answers.
-pub const VERBS: &[&str] = &["watch", "history", "event-seq", "audits", "dwell", "store-usage"];
+pub const VERBS: &[&str] = &["watch", "history", "event-seq", "audits", "dwell", "store-usage", "plane-bead", "plane-ejected", "plane-gate-red"];
 
 pub fn run<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
     let rest = &args[1..];
@@ -25,6 +25,9 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
         Some("audits") => audits(store, rest),
         Some("dwell") => dwell(store, rest),
         Some("store-usage") => store_usage(store, rest),
+        Some("plane-bead") => plane_bead(store, rest),
+        Some("plane-ejected") => plane_ejected(store, rest),
+        Some("plane-gate-red") => plane_gate_red(store, rest),
         other => Err(format!("{other:?} is not a control-store verb")),
     };
     match answer {
@@ -58,6 +61,43 @@ pub fn run_with_rows<B: Backend>(store: &Store<B>, args: &[String], call: &Call)
     };
     answer.insert("rows".into(), rows);
     (0, Value::Object(answer).to_string())
+}
+
+/// `plane-bead <id>`: `{"row": <lifecycle row>|null, "repo": <name>|null}`, what a verb running
+/// outside the service reads of a bead instead of opening the store.
+fn plane_bead<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
+    let id = args.first().ok_or("plane-bead: missing <id>")?;
+    let record = store.record(id).map_err(|e| format!("the control store: {e}"))?;
+    Ok(json!({ "row": record.as_ref().map(|r| &r.value.row), "repo": record.as_ref().and_then(|r| r.value.repo.as_ref()) }).to_string())
+}
+
+/// `plane-ejected <bead> <tip>`: `{"reason": <text>|null}`, the reason the newest round that
+/// ejected the bead at that tip gave.
+fn plane_ejected<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
+    let (Some(bead), Some(tip)) = (args.first(), args.get(1)) else { return Err("plane-ejected: want <bead> <tip>".into()) };
+    let fail = |e: state_store::Error| format!("the control store: {e}");
+    let mut newest: Option<(u64, String)> = None;
+    for round in store.round_ids_of(bead).map_err(fail)? {
+        let Some((_, batch)) = store.batch(&round).map_err(fail)? else { continue };
+        if !batch.value.members.iter().any(|m| &m.bead_id == bead && &m.tip == tip) {
+            continue;
+        }
+        for c in store.history(&round, Some("batch")).map_err(fail)? {
+            let eject = &c.audit.evidence["Eject"];
+            if c.audit.event == "Eject" && eject["bead_id"].as_str() == Some(bead) && newest.as_ref().is_none_or(|(rev, _)| c.rev > *rev) {
+                newest = eject["reason"].as_str().map(|r| (c.rev, r.to_string()));
+            }
+        }
+    }
+    Ok(json!({ "reason": newest.map(|(_, r)| r) }).to_string())
+}
+
+/// `plane-gate-red <bead> <tip>`: `{"red": <the newest GateRed evidence at that tip>|null}`.
+fn plane_gate_red<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
+    let (Some(bead), Some(tip)) = (args.first(), args.get(1)) else { return Err("plane-gate-red: want <bead> <tip>".into()) };
+    let history = store.history(bead, Some("bead")).map_err(|e| format!("the control store: {e}"))?;
+    let red = history.iter().rev().find(|c| c.audit.event == "GateRed" && c.audit.evidence["GateRed"]["tip"].as_str() == Some(tip.as_str())).map(|c| c.audit.evidence["GateRed"].clone());
+    Ok(json!({ "red": red }).to_string())
 }
 
 fn number(args: &[String], name: &str, default: u64) -> Result<u64, String> {
