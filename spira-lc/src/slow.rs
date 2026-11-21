@@ -258,7 +258,7 @@ pub fn method_of(argv: &[String]) -> String {
 /// Brokered batch jobs run a harness tool; they are bounded by their own deadline, not the
 /// store-call ceiling.
 fn is_batch_method(method: &str) -> bool {
-    method.strip_prefix("work:").is_some_and(|v| crate::work::brokers_tool(v) && !crate::work::exec_verb(v))
+    method.strip_prefix("work:").is_some_and(|v| crate::work::brokers_tool(v) && !crate::work::exec_verb(v) && !matches!(v, "note-on" | "label-add" | "label-remove"))
 }
 
 pub fn sample(method: &str, caller: &str, took: Duration) {
@@ -626,6 +626,13 @@ mod tests {
         assert!(l.transitions(&lim, t0, 1).is_empty());
         feed(&mut l, &lim, "work:submit", "x", t0, &[4000]);
         assert_eq!(l.transitions(&lim, t0, 2).len(), 1, "a verb recorded for the scheduler is a store write, held to the limit");
+    }
+
+    #[test]
+    fn a_note_or_label_write_answered_in_the_service_is_held_to_the_limit() {
+        let (lim, t0, mut l) = (limits(&[]), std::time::Instant::now(), Latency::default());
+        feed(&mut l, &lim, "work:note-on", "x", t0, &[4000]);
+        assert_eq!(l.transitions(&lim, t0, 1).len(), 1);
     }
 
     #[test]
