@@ -58,13 +58,10 @@ fn unwrapped(text: &str) -> Vec<String> {
             .find(|j| is_fn_start(lines[*j]))
             .unwrap_or(lines.len());
         let body = lines[start..end].join("\n");
-        let builds_only = lines[start].contains("-> Command")
-            || lines[start].contains("-> std::process::Command");
-        let wrapped = body.contains("phases::child(")
-            || WRAPPERS
-                .iter()
-                .any(|w| body.contains(&format!(" {w}")) || body.contains(&format!("({w}")))
-            || (builds_only && text.contains("phases::child("));
+        let sites = lines[start..end].iter().filter(|l| !is_comment(l) && SPAWNS.iter().any(|s| l.contains(s))).count();
+        let wraps = body.matches("phases::child(").count() + WRAPPERS.iter().map(|w| body.matches(&format!(" {w}")).count() + body.matches(&format!("({w}")).count()).sum::<usize>();
+        let builds_only = lines[start].contains("-> Command") || lines[start].contains("-> std::process::Command");
+        let wrapped = wraps >= sites || (builds_only && text.contains("phases::child("));
         if !wrapped {
             bad.push(line.trim().to_string());
         }
@@ -117,6 +114,8 @@ fn every_spawn_site_runs_inside_a_child_phase() {
 fn the_matcher_finds_planted_spawns_and_passes_wrapped_ones() {
     let planted = "fn a() {\n    let o = Command::new(\"git\").output();\n}\nfn b() {\n    let o = bounded::bounded(\"git\").output();\n}\nfn c() {\n    let o = bounded::bounded_for(\"git\", 1).output();\n}\n";
     assert_eq!(unwrapped(planted).len(), 3);
+    let mixed = "fn a() {\n    state_store::phases::child(\"git\", || Command::new(\"git\").output());\n    Command::new(\"git\").output();\n}\n";
+    assert_eq!(unwrapped(mixed).len(), 2, "one wrapped site must not hide an unwrapped one");
     let ok = "fn a() {\n    let o = state_store::phases::child(\"git\", || Command::new(\"git\").output());\n}\nfn b(cmd: Command) {\n    let c = Command::new(\"x\");\n    spawn(c);\n}\n#[cfg(test)]\nmod t {\n    fn x() { Command::new(\"git\"); }\n}\n";
     assert!(unwrapped(ok).is_empty(), "{:?}", unwrapped(ok));
 }

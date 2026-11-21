@@ -314,6 +314,25 @@ mod tests {
     }
 
     #[test]
+    fn the_subverb_children_and_queries_are_written_only_when_present() {
+        let dir = tmp("subverb");
+        let sink = Sink::new(dir.path(), "spira-lc", 14);
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let programs = ["bd".to_string(), "git".to_string()];
+        sink.write(&Call { subverb: Some("note"), children: 2, programs: &programs, content_queries: 3, ..call(0) }, now).unwrap();
+        sink.write(&call(0), now).unwrap();
+        let text = fs::read_to_string(dir.join("spira-lc.2023-11-14.jsonl")).unwrap();
+        let spans: Vec<Span> = text.lines().map(|l| serde_json::from_str::<ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone()).collect();
+        assert_eq!(attr(&spans[0], "spira.subverb"), Some(&Value::StringValue("note".into())));
+        assert_eq!(attr(&spans[0], "spira.children.programs"), Some(&Value::StringValue("bd,git".into())));
+        assert_eq!(attr(&spans[0], "spira.children"), Some(&Value::IntValue(2)));
+        assert_eq!(attr(&spans[0], "spira.content.queries"), Some(&Value::IntValue(3)));
+        for k in ["spira.subverb", "spira.children", "spira.children.programs", "spira.content.queries"] {
+            assert_eq!(attr(&spans[1], k), None, "{k}");
+        }
+    }
+
+    #[test]
     fn the_serve_stages_and_the_cut_are_written_each_under_its_own_name() {
         let dir = tmp("serve-stages");
         let sink = Sink::new(dir.path(), "spira-lc", 14);
