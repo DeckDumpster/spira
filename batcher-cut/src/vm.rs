@@ -1359,6 +1359,7 @@ impl RoundRunner for VmRunner<'_> {
                     seen: BTreeSet::new(),
                 };
             }
+            MainKind::Seeded => {}
             MainKind::Verify => {
                 self.verify_n += 1;
                 let job = format!("v{}", self.verify_n);
@@ -1619,6 +1620,9 @@ impl RoundRunner for VmRunner<'_> {
     }
 
     fn launch(&mut self, job: &Job) -> Result<(), String> {
+        if self.child.is_none() {
+            self.start_serving()?;
+        }
         let branch = self.tree_for(job)?;
         let build = if job.removal.is_empty() {
             "artifacts"
@@ -2626,6 +2630,22 @@ mod abandon_tests {
         let err = r.request("v1", "br", &["test-a.sh".to_string()], "round").unwrap_err();
         assert!(err.contains("v1.req") && err.contains("test-a.sh") && err.contains("round"), "{err}");
         assert!(!r.spool.join("req").join("v1.req").exists());
+    }
+
+    #[test]
+    fn a_job_launch_starts_the_serving_round_vm_once_and_never_a_second() {
+        let d = testkit::TempDir::new("vm-launch-serves");
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        let job = Job { id: 1, suite: "a.sh".into(), removal: vec![], purpose: batcher::attrib::Purpose::Plain };
+        assert!(r.child.is_none());
+        let _ = r.launch(&job);
+        let first = r.child.as_ref().map(|c| c.id()).expect("launch started a round-vm");
+        assert!(r.serving);
+        let _ = r.launch(&job);
+        assert_eq!(r.child.as_ref().map(|c| c.id()), Some(first), "a running round-vm is reused");
+        let _ = r.stop_main();
     }
 
     #[test]
