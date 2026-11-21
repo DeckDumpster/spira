@@ -483,6 +483,10 @@ fn report_law_branches(home: &str) -> Result<bool, String> {
         match kind {
             code::LawBranch::Tip => {}
             code::LawBranch::CarriedBy(by) => println!("law/: {branch} carried by {by}"),
+            code::LawBranch::ReplacedBy(by) => {
+                code::git_in(path, &["branch", "-D", branch])?;
+                println!("law/: {branch} replaced by {by}; deleted");
+            }
             code::LawBranch::InBook => {
                 code::git_in(path, &["branch", "-D", branch])?;
                 println!("law/: {branch} already in the book at {base}; deleted");
