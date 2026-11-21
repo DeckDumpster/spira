@@ -6,6 +6,7 @@ use crate::ledger::{Ledger, LedgerFile, Row};
 use crate::pick;
 use crate::ports::{Ports, SeededRng, SourceTree};
 use crate::record::{self, Kind, Review, State};
+use crate::rustsrc;
 use crate::units;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -145,7 +146,7 @@ pub fn open(a: &OpenArgs, ports: &Ports) -> Outcome {
         if let Err(e) = record::save(&ports.run_dir, &r).and_then(|()| Ledger::append(&ledger_path, &row)) {
             return refuse(1, &e);
         }
-        out.push_str(&format!("{number:03} {}\nseal with: cr seal --review {number:03} < comments.json\n", unit.id));
+        out.push_str(&format!("{number:03} {}\nseal with: cr seal --review {number:03} < seal.json\n", unit.id));
     }
     done(out)
 }
@@ -209,12 +210,38 @@ fn elided(regions: &[(u32, u32)], total: u32) -> Vec<(u32, u32)> {
     out
 }
 
-fn validate(stdin: &str, files: &[(String, Vec<u8>)]) -> Result<Vec<Comment>, String> {
-    let comments: Vec<Comment> = serde_json::from_str(stdin).map_err(|e| format!("stdin is not a JSON array of {{path, line, body}}: {e}"))?;
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Cover {
+    does: String,
+    look_first: String,
+}
+
+struct SealInput {
+    cover: Cover,
+    comments: Vec<Comment>,
+}
+
+const SHAPE: &str = "stdin is one JSON object {\"does\": \"<sentences>\", \"look_first\": \"<sentences>\", \"comments\": [{path, line, body}, ...]}";
+
+fn parse_input(stdin: &str) -> Result<SealInput, String> {
+    let v: Value = serde_json::from_str(stdin).map_err(|e| format!("{SHAPE}: {e}"))?;
+    let Some(obj) = v.as_object() else {
+        return Err(format!("{SHAPE}; a bare array is refused"));
+    };
+    let prose = |key: &str| match obj.get(key).and_then(Value::as_str).map(str::trim) {
+        Some(t) if !t.is_empty() => Ok(t.to_string()),
+        _ => Err(format!("`{key}` is missing or blank; {SHAPE}")),
+    };
+    let cover = Cover { does: prose("does")?, look_first: prose("look_first")? };
+    let comments: Vec<Comment> = serde_json::from_value(obj.get("comments").cloned().unwrap_or(Value::Null)).map_err(|e| format!("`comments` is not a JSON array of {{path, line, body}}: {e}"))?;
+    Ok(SealInput { cover, comments })
+}
+
+fn validate(comments: &[Comment], files: &[(String, Vec<u8>)]) -> Result<(), String> {
     if comments.is_empty() {
         return Err("the sealed review is empty: an empty array is refused".to_string());
     }
-    for c in &comments {
+    for c in comments {
         let Some((_, bytes)) = files.iter().find(|(p, _)| *p == c.path) else {
             return Err(format!("comment path {:?} is outside the unit", c.path));
         };
@@ -223,58 +250,84 @@ fn validate(stdin: &str, files: &[(String, Vec<u8>)]) -> Result<Vec<Comment>, St
             return Err(format!("comment on {} line {} is outside the file as it appears on the review branch ({n} lines)", c.path, c.line));
         }
     }
-    Ok(comments)
-}
-
-fn first_paragraph(text: &str) -> Option<String> {
-    let mut para: Vec<String> = Vec::new();
-    for l in text.lines() {
-        let t = l.trim_start();
-        let body = if let Some(r) = t.strip_prefix("//!") {
-            r
-        } else if t.starts_with("#!") {
-            continue;
-        } else if let Some(r) = t.strip_prefix('#') {
-            r.trim_start_matches('#')
-        } else {
-            break;
-        };
-        let body = body.trim();
-        if body.is_empty() {
-            if para.is_empty() {
-                continue;
-            }
-            break;
-        }
-        para.push(body.to_string());
-    }
-    if para.is_empty() {
-        None
-    } else {
-        Some(para.join(" "))
-    }
-}
-
-fn is_test_path(p: &str) -> bool {
-    let name = p.rsplit('/').next().unwrap_or(p);
-    p.contains("/tests/") || name == "tests.rs" || name.starts_with("test-") || name.starts_with("test_") || name.ends_with("_test.rs")
+    Ok(())
 }
 
 fn age_days(from_ms: u64, to_ms: u64) -> u64 {
     to_ms.saturating_sub(from_ms) / DAY_MS
 }
 
-fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, Vec<u8>)], ports: &Ports) -> String {
+const SECTIONS: [&str; 6] = ["## What it does", "## What to look at first", "## Files", "## Who calls it", "## How often it changed", "## Tests that exercise it"];
+
+fn missing_section(body: &str) -> Option<&'static str> {
+    SECTIONS.into_iter().find(|h| {
+        let Some(at) = body.lines().position(|l| l.trim_end() == *h) else { return true };
+        !body.lines().skip(at + 1).take_while(|l| !l.starts_with("## ")).any(|l| !l.trim().is_empty())
+    })
+}
+
+/// The unit's own files, its child modules, and the files that depend on it.
+fn test_search_files(ix: &Index, u: &units::Unit, dependents: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = u.files.iter().map(|f| f.path.clone()).collect();
+    for f in &u.files {
+        let dir = format!("{}/", f.path.trim_end_matches(".rs"));
+        out.extend(ix.files.iter().filter(|p| p.starts_with(&dir)).cloned());
+    }
+    out.extend(dependents.iter().cloned());
+    out.retain(|p| p.ends_with(".rs"));
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn tests_by_call_path(ix: &Index, u: &units::Unit, dependents: &[String]) -> Vec<String> {
+    let mut callees: Vec<String> = Vec::new();
+    for f in &u.files {
+        if let Some(t) = ix.text.get(&f.path) {
+            let raw: Vec<&str> = t.lines().collect();
+            callees.extend(rustsrc::pub_names(&raw, &rustsrc::code_lines(t)));
+        }
+    }
+    callees.sort();
+    callees.dedup();
+    let mut found = Vec::new();
+    for path in test_search_files(ix, u, dependents) {
+        let Some(t) = ix.text.get(&path) else { continue };
+        let raw: Vec<&str> = t.lines().collect();
+        for (test, body) in rustsrc::test_fns(&raw, &rustsrc::code_lines(t)) {
+            for c in &callees {
+                if let Some(used) = used_callee(&body, c) {
+                    found.push(format!("- `{path}::{test}` calls `{used}`\n"));
+                    break;
+                }
+            }
+        }
+    }
+    found
+}
+
+fn used_callee(body: &str, name: &str) -> Option<String> {
+    if rustsrc::calls(body, name) {
+        return Some(name.to_string());
+    }
+    let pat = format!("{name}::");
+    body.match_indices(&pat).find(|(at, _)| !body[..*at].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_')).map(|(at, _)| {
+        let rest = &body[at + pat.len()..];
+        let tail: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+        format!("{name}::{tail}")
+    })
+}
+
+fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, Vec<u8>)], cover: &Cover, sealed_sha: &str, ports: &Ports) -> String {
     let now = ports.clock.now_ms();
     let u = &r.unit;
-    let mut m = format!("# Review {:03}: {}\n\nFacts about the unit. The review itself is not here.\n\n", r.number, u.title);
-    m.push_str(&format!("- Source: {} at {}\n- Unit: {} ({})\n\n", r.source_repo, r.source_sha, u.id, u.kind.as_str()));
-    m.push_str("## What it does\n\n");
-    match ix.text.get(&u.files[0].path).and_then(|t| first_paragraph(t)) {
-        Some(p) => m.push_str(&format!("> {p}\n\n")),
-        None => m.push_str("The primary file has no leading comment.\n\n"),
-    }
-    m.push_str("## Files\n\n");
+    let mut m = format!(
+        "Source repository: {}\nSource commit: {}\nsealed-sha256: {}\n\nThe Concierge's review of this unit is sealed and hashed above; it is posted after the operator publishes his.\nPlease comment with \"Add single comment\" rather than \"Start a review\": comments in a started review stay invisible until it is submitted.\n\n",
+        r.source_repo, r.source_sha, sealed_sha
+    );
+    m.push_str(&format!("{}\n\n{}\n\n", SECTIONS[0], cover.does));
+    m.push_str(&format!("{}\n\n{}\n\n", SECTIONS[1], cover.look_first));
+    m.push_str(&format!("{}\n\n", SECTIONS[2]));
     for ((path, bytes), f) in files.iter().zip(&u.files) {
         let source_lines = ix.lines(path);
         m.push_str(&format!("- `{path}`: {} lines on this branch", line_count(bytes)));
@@ -287,7 +340,7 @@ fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, V
     let mut dependents = pick::dependent_files(ix, u);
     dependents.sort();
     dependents.dedup();
-    m.push_str("\n## Who calls it\n\n");
+    m.push_str(&format!("\n{}\n\n", SECTIONS[3]));
     if dependents.is_empty() {
         m.push_str("No dependents found.\n");
     }
@@ -302,7 +355,7 @@ fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, V
     let mut authors: Vec<String> = u.files.iter().flat_map(|f| tree.authors(&f.path)).collect();
     authors.sort();
     authors.dedup();
-    m.push_str("\n## History\n\n");
+    m.push_str(&format!("\n{}\n\n", SECTIONS[4]));
     m.push_str(&format!("- Lines: {total_lines}\n"));
     match first {
         Some(t) => m.push_str(&format!("- First commit: {} days before this review was staged\n", age_days(t, r.staged_at))),
@@ -310,21 +363,13 @@ fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, V
     }
     m.push_str(&format!("- Commits in the last {} days: {commits}\n", ports.config.churn_days));
     m.push_str(&format!("- Authors: {}\n", if authors.is_empty() { "none recorded".to_string() } else { authors.join(", ") }));
-    let mut tests: Vec<String> = dependents.iter().filter(|d| is_test_path(d)).cloned().collect();
-    for f in &u.files {
-        let stem = f.path.trim_end_matches(".rs");
-        let sibling = format!("{stem}/tests.rs");
-        if ix.has_file(&sibling) && !tests.contains(&sibling) {
-            tests.push(sibling);
-        }
-    }
-    tests.sort();
-    m.push_str("\n## Tests that name it\n\n");
+    m.push_str(&format!("\n{}\n\n", SECTIONS[5]));
+    let tests = tests_by_call_path(ix, u, &dependents);
     if tests.is_empty() {
-        m.push_str("None found.\n");
+        m.push_str("None found by call path.\n");
     }
     for t in tests {
-        m.push_str(&format!("- `{t}`\n"));
+        m.push_str(&t);
     }
     m
 }
@@ -392,23 +437,48 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
         Err(e) => return refuse(1, &e),
     };
     let sealed_path = dir.join("sealed.json");
-    if sealed_path.exists() && !ports.stdin.trim().is_empty() {
-        let stored: Option<Vec<Comment>> = std::fs::read(&sealed_path).ok().and_then(|b| serde_json::from_slice(&b).ok());
-        if serde_json::from_str::<Vec<Comment>>(&ports.stdin).ok() != stored {
-            return refuse(2, &format!("review {number:03} is already sealed with different comments; a sealed review is not replaced"));
+    let cover_path = dir.join("cover.json");
+    let stored_cover: Option<Cover> = std::fs::read(&cover_path).ok().and_then(|b| serde_json::from_slice(&b).ok());
+    let supplied = if ports.stdin.trim().is_empty() { None } else { Some(parse_input(&ports.stdin)) };
+    if sealed_path.exists() {
+        if let Some(Ok(input)) = &supplied {
+            let stored: Option<Vec<Comment>> = std::fs::read(&sealed_path).ok().and_then(|b| serde_json::from_slice(&b).ok());
+            if Some(&input.comments) != stored.as_ref() {
+                return refuse(2, &format!("review {number:03} is already sealed with different comments; a sealed review is not replaced"));
+            }
+            if stored_cover.as_ref().is_some_and(|c| *c != input.cover) {
+                return refuse(2, &format!("review {number:03} is already sealed with a different cover; a sealed review is not replaced"));
+            }
         }
     }
     if !sealed_path.exists() {
-        let comments = match validate(&ports.stdin, &files) {
-            Ok(c) => c,
-            Err(e) => return refuse(2, &e),
+        let input = match &supplied {
+            Some(Ok(i)) => i,
+            Some(Err(e)) => return refuse(2, e),
+            None => return refuse(2, &format!("stdin is empty; {SHAPE}")),
         };
-        let bytes = serde_json::to_string_pretty(&comments).expect("comments serialise").into_bytes();
+        if let Err(e) = validate(&input.comments, &files) {
+            return refuse(2, &e);
+        }
+        let bytes = serde_json::to_string_pretty(&input.comments).expect("comments serialise").into_bytes();
+        let cover_bytes = serde_json::to_string_pretty(&input.cover).expect("cover serialises").into_bytes();
         r.sealed_sha256 = Some(sha256_hex(&bytes));
-        if let Err(e) = record::write_atomic(&sealed_path, &bytes).and_then(|()| record::save(run, &r)) {
+        if let Err(e) = record::write_atomic(&cover_path, &cover_bytes).and_then(|()| record::write_atomic(&sealed_path, &bytes)).and_then(|()| record::save(run, &r)) {
             return refuse(1, &e);
         }
     }
+    let cover = match std::fs::read(&cover_path).ok().and_then(|b| serde_json::from_slice::<Cover>(&b).ok()) {
+        Some(c) => c,
+        None => match &supplied {
+            Some(Ok(i)) => {
+                if let Err(e) = record::write_atomic(&cover_path, serde_json::to_string_pretty(&i.cover).expect("cover serialises").as_bytes()) {
+                    return refuse(1, &e);
+                }
+                i.cover.clone()
+            }
+            _ => return refuse(2, &format!("review {number:03} has no cover.json; supply the cover again. {SHAPE}")),
+        },
+    };
     let sealed = match std::fs::read(&sealed_path) {
         Ok(b) => b,
         Err(e) => return refuse(1, &format!("reading {}: {e}", sealed_path.display())),
@@ -421,11 +491,13 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
         Ok(i) => i,
         Err(e) => return refuse(1, &e),
     };
-    let mut all_files = files;
-    all_files.push(("REVIEW.md".to_string(), cover_note(&r, source.as_ref(), &ix, &all_files, ports).into_bytes()));
+    let body = cover_note(&r, source.as_ref(), &ix, &files, &cover, &sha, ports);
+    if let Some(h) = missing_section(&body) {
+        return refuse(2, &format!("the cover note has no text under {h:?}; nothing is sent to the forge"));
+    }
 
     let mut p = load_progress(&dir);
-    match push_branch(&mut p, &dir, &r, &all_files, &sha, ports) {
+    match push_branch(&mut p, &dir, &r, &files, &body, ports) {
         Ok((pr, url)) => {
             r.pr = Some(pr);
             r.pr_url = Some(url.clone());
@@ -438,7 +510,7 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
     }
 }
 
-fn push_branch(p: &mut Progress, dir: &Path, r: &Review, files: &[(String, Vec<u8>)], sealed_sha: &str, ports: &Ports) -> Result<(u64, String), String> {
+fn push_branch(p: &mut Progress, dir: &Path, r: &Review, files: &[(String, Vec<u8>)], body: &str, ports: &Ports) -> Result<(u64, String), String> {
     let repo = format!("repos/{}/{}", ports.repo_owner, ports.repo_name);
     if p.base_sha.is_none() {
         let info = gh(ports, "GET", &repo, None)?;
@@ -486,10 +558,6 @@ fn push_branch(p: &mut Progress, dir: &Path, r: &Review, files: &[(String, Vec<u
     }
     if p.pr.is_none() {
         let ep = format!("{repo}/pulls");
-        let body = format!(
-            "Source repository: {}\nSource commit: {}\nsealed-sha256: {}\n\nThe Concierge's review of this unit is sealed and hashed above; it is posted after the operator publishes his.\nPlease comment with \"Add single comment\" rather than \"Start a review\": comments in a started review stay invisible until it is submitted.\n",
-            r.source_repo, r.source_sha, sealed_sha
-        );
         let v = gh(ports, "POST", &ep, Some(&json!({"title": r.unit.title, "head": r.branch, "base": p.base_branch, "body": body})))?;
         let n = field(&v, &["number"], &ep)?.as_u64().ok_or_else(|| format!("forge call {ep}: `number` is not an integer"))?;
         p.pr = Some((n, text_field(&v, &["html_url"], &ep)?));
