@@ -44,7 +44,7 @@ impl PackageGraph {
 impl PackageGraph {
     /// Each `dir:<directory>` word as the package that lives there, and each `test:<target>` word
     /// as the sole package with a test target of that name (what a plain `cargo test` log can
-    /// name); a word no package, or more than one, owns stays as it is, and so maps to no member.
+    /// name); a word no package, or more than one, owns stays as it is (`owners` names them all).
     pub fn resolve(&self, packages: &[String]) -> Vec<String> {
         packages
             .iter()
@@ -62,9 +62,7 @@ impl PackageGraph {
             })
             .collect()
     }
-}
 
-impl PackageGraph {
     /// Like `resolve` for one word, but a `test:<target>` word shared by several packages names
     /// every one of them.
     pub fn owners(&self, word: &str) -> Vec<String> {

@@ -1129,7 +1129,13 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         let graph = ops.package_graph();
         let mut packages = unitattr::failing_packages(&f.failed);
         if let Some(g) = &graph {
-            packages = packages.iter().flat_map(|p| g.owners(p)).collect();
+            let mut owned: Vec<String> = vec![];
+            for p in packages.iter().flat_map(|p| g.owners(p)) {
+                if !owned.contains(&p) {
+                    owned.push(p);
+                }
+            }
+            packages = owned;
         }
         let tests = noted_tests(&f.failed);
         let scope = unitattr::rerun_scope(&f.failed, graph.as_ref());
