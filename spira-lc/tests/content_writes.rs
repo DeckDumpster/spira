@@ -339,7 +339,7 @@ fn without_a_writer_credential_the_same_verbs_still_write_through_bd() {
     provision(&lc);
     lc.serve();
     for (verb, children) in drive(&lc, &id) {
-        let forks = i64::from(!verb.starts_with("work ") || verb == "work note -");
+        let forks = i64::from(!verb.starts_with("work ") || matches!(verb, "work note -" | "work note-on" | "work label-add" | "work label-remove"));
         assert_eq!(children, forks, "{verb}: the service forks bd itself except for a `work` verb it records for the runner");
     }
 }
