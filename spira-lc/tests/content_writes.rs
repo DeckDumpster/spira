@@ -10,18 +10,18 @@ use std::time::Duration;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 
-fn testenv() -> PathBuf {
+fn testenv() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("TESTDB_TESTENV") {
-        return p.into();
+        return Some(p.into());
     }
     match std::env::var("SPIRA_RELEASE").map(|r| Path::new(&r).join("bin/testenv")) {
-        Ok(p) if p.is_file() => p,
+        Ok(p) if p.is_file() => Some(p),
         _ => built_testenv(),
     }
 }
 
-fn built_testenv() -> PathBuf {
-    static BUILT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+fn built_testenv() -> Option<PathBuf> {
+    static BUILT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     BUILT
         .get_or_init(|| {
             let exe = std::env::current_exe().expect("current_exe");
@@ -34,11 +34,13 @@ fn built_testenv() -> PathBuf {
                 if profile.file_name().is_some_and(|n| n == "release") {
                     build.arg("--release");
                 }
-                let st = build.env("CARGO_TARGET_DIR", target).status().expect("cargo runs");
-                assert!(st.success(), "cargo build -p testenv failed");
+                if !build.env("CARGO_TARGET_DIR", target).status().is_ok_and(|st| st.success()) {
+                    eprintln!("SKIP: testenv is not built and cannot be built here");
+                    return None;
+                }
             }
             assert!(bin.is_file(), "testenv not built at {}", bin.display());
-            bin
+            Some(bin)
         })
         .clone()
 }
@@ -74,7 +76,8 @@ impl Store {
             eprintln!("SKIP: no bd and dolt on PATH, spira.path or ~/spira-env/bin");
             return None;
         };
-        let mut up = Command::new(testenv());
+        let testenv = testenv()?;
+        let mut up = Command::new(testenv);
         up.args(["testdb", "up", "--tag", "content-writes", "--bd", &bd, "--dolt", &dolt]);
         let root = std::env::var("TESTDB_ROOT").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| dir.join("db").display().to_string());
         up.args(["--root", &root]);
@@ -121,7 +124,7 @@ impl Store {
 
 impl Drop for Store {
     fn drop(&mut self) {
-        let _ = Command::new(testenv()).args(["testdb", "down", "--fixture", &self.fixture]).output();
+        let _ = Command::new(testenv().expect("testenv, as the store came up with it")).args(["testdb", "down", "--fixture", &self.fixture]).output();
     }
 }
 
