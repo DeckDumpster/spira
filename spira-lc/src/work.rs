@@ -1310,6 +1310,25 @@ pub fn record_argv(bead: &str, actor: &str, argv: &[String], stdin: Option<&str>
     }
 }
 
+/// A world's stand-in for the scheduler's `broker.exec`: takes each queued request and runs it
+/// in a thread of this process, until the service stops answering.
+pub fn run_queue() -> (i32, String) {
+    let call = |args: &[&str]| crate::plane::call(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>());
+    loop {
+        let (code, listed) = call(&["work-request", "list", "--state", "queued"]);
+        if code != 0 {
+            return (0, String::new());
+        }
+        let queued: Vec<crate::control::work_requests::WorkRequest> = serde_json::from_str(&listed).unwrap_or_default();
+        for r in queued {
+            if call(&["work-request", "take", &r.id, "--actor", "spira-runtime"]).0 == 0 {
+                std::thread::spawn(move || exec(&r.id));
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100)); // waits-on: nothing; polls the queue while the service answers
+    }
+}
+
 /// Runs the recorded request `id` in this process and records its exit code and output. This is
 /// `spira-lc work-exec`, started by the scheduler; every store call it makes goes to lc-serve.
 pub fn exec(id: &str) -> (i32, String) {

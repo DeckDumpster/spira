@@ -174,6 +174,7 @@ fn main() {
             if code == 0 { println!("{out}") } else { eprintln!("{out}") }
             std::process::exit(code)
         }
+        Some("work-run") if args.len() == 1 => std::process::exit(work::run_queue().0),
         Some("work-exec") if args.len() == 2 => {
             let (code, out) = work::exec(&args[1]);
             if !out.is_empty() {

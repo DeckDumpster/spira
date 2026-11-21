@@ -605,7 +605,7 @@ impl Steps for ProcessSteps {
         loop {
             // `list` reads the bead table: an answer with exit 0 is a serve whose DB is reachable.
             if ask(&socket, &["list", "--live"]) == Some(0) {
-                return Ok(());
+                return start_runner(world, &argv[0], port.trim());
             }
             if let Some(st) = child.try_wait().map_err(|e| e.to_string())? {
                 let log = std::fs::read_to_string(world.join(LC_LOG)).unwrap_or_default();
@@ -620,6 +620,7 @@ impl Steps for ProcessSteps {
     }
 
     fn lc_stop(&self, world: &Path, pid: u32) -> Result<(), String> {
+        stop_runner(world);
         let cmdline = std::fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).unwrap_or_default();
         if !alive(pid) || !is_world_serve(&cmdline, world) {
             eprintln!("sim: lifecycle serve pid {pid} is gone or is no longer this world's serve; nothing signalled");
@@ -636,6 +637,38 @@ impl Steps for ProcessSteps {
             }
         }
         Err(format!("the world's spira-lc serve (pid {pid}) survived SIGTERM and SIGKILL"))
+    }
+}
+
+const RUNNER_PID: &str = "lc-run.pid";
+
+/// The world's stand-in for the scheduler's `broker.exec`: a world runs no scheduler, so this
+/// process takes each request lc-serve recorded and runs it, as the scheduler does.
+fn start_runner(world: &Path, lc: &str, port: &str) -> Result<(), String> {
+    let log = std::fs::File::create(world.join("lc-run.log")).map_err(at(world))?;
+    let child = Command::new(lc)
+        .arg("work-run")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("SPIRA_TOML", world.join("config/sim.toml"))
+        .env("SPIRA_RELEASE", world.join("release"))
+        .env("HOME", world.join(HOME))
+        .env("SPIRA_LC_HOST", "127.0.0.1")
+        .env("SPIRA_LC_PORT", port)
+        .env("SPIRA_LC_USER", "root")
+        .stdin(Stdio::null())
+        .stdout(log.try_clone().map_err(|e| e.to_string())?)
+        .stderr(log)
+        .spawn()
+        .map_err(|e| format!("{lc} work-run: {e}"))?;
+    std::fs::write(world.join(RUNNER_PID), child.id().to_string()).map_err(at(world))
+}
+
+fn stop_runner(world: &Path) {
+    let Some(pid) = std::fs::read_to_string(world.join(RUNNER_PID)).ok().and_then(|p| p.trim().parse::<u32>().ok()) else { return };
+    let cmdline = std::fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).unwrap_or_default();
+    if alive(pid) && cmdline.split(|b| *b == 0).any(|a| a == b"work-run") {
+        signal(pid, SIGKILL);
     }
 }
 
