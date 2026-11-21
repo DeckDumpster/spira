@@ -826,6 +826,29 @@ mod tests {
     }
 
     #[test]
+    fn stamp_never_mints_an_id_already_in_the_given_files() {
+        let first = id_run("mint", 7).stdout;
+        let src = format!("#[test_id({first})]\n#[test]\nfn held() {{}}\n#[test]\nfn bare() {{}}\n");
+        let (_d, p) = fixture("test-registry-stamp-collide", &src);
+        let o = id_run(&format!("stamp --path {p}"), 7);
+        assert_eq!(o.code, 0, "{}", o.stderr);
+        let minted = o.stdout.split("test:").nth(1).unwrap().split('\t').next().unwrap().to_string();
+        assert_ne!(minted, first);
+    }
+
+    #[test]
+    fn stamp_across_two_files_and_a_repeated_path_mints_distinct_ids_once_per_test() {
+        let (_d, a) = fixture("test-registry-stamp-two-a", "#[test]\nfn a() {}\n");
+        let (_e, b) = fixture("test-registry-stamp-two-b", "#[test]\nfn b() {}\n");
+        let o = id_run(&format!("stamp --path {a} --path {b} --path {a}"), 7);
+        assert_eq!(o.code, 0, "{}", o.stderr);
+        assert_eq!(o.stdout.lines().count(), 2, "{}", o.stdout);
+        for p in [&a, &b] {
+            assert_eq!(std::fs::read_to_string(p).unwrap().matches("#[test_id(").count(), 1);
+        }
+    }
+
+    #[test]
     fn help_carries_the_intent_paragraph_and_each_new_verb() {
         let o = id_run("-h", 7);
         assert_eq!(o.code, 0);
