@@ -1343,13 +1343,8 @@ impl SqliteBackend {
             last_commit: Mutex::new(CommitNote::default()),
             _lock: OpenerLock(lock_file),
         }));
-        let unfilled = ask_since::fill(&opened)?;
-        if !unfilled.is_empty() {
-            eprintln!(
-                "ask_since: {} ask-held record(s) have no applied Ask hold in their history and stay without ask_since: {}",
-                unfilled.len(),
-                unfilled.join(", ")
-            );
+        if let Some(line) = ask_since::warning(&ask_since::fill(&opened)?) {
+            eprintln!("{line}");
         }
         Ok(opened)
     }
@@ -3759,7 +3754,11 @@ mod tests {
             b.commit(0, &[ask_put("lifecycle/sp-a", held.clone(), None)]).unwrap();
         }
         let b = SqliteBackend::open(&path, opts()).unwrap();
-        assert_eq!(ask_since::fill(&b).unwrap(), vec!["sp-a".to_string()]);
+        let unfilled = ask_since::fill(&b).unwrap();
+        assert_eq!(unfilled, vec!["sp-a".to_string()]);
+        let line = ask_since::warning(&unfilled).unwrap();
+        assert!(line.starts_with("ask_since: 1 ask-held record(s)") && line.ends_with(": sp-a"), "{line}");
+        assert_eq!(ask_since::warning(&[]), None);
         let head = b.head().unwrap();
         assert_eq!(b.get("lifecycle/sp-a", head).unwrap().unwrap().value, held, "the record is untouched");
     }

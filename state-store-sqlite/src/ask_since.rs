@@ -112,3 +112,13 @@ pub(crate) fn fill(b: &SqliteBackend) -> Result<Vec<String>> {
     }
     candidates(b)
 }
+
+pub(crate) fn warning(unfilled: &[String]) -> Option<String> {
+    (!unfilled.is_empty()).then(|| {
+        format!(
+            "ask_since: {} ask-held record(s) have no applied Ask hold in their history and stay without ask_since: {}",
+            unfilled.len(),
+            unfilled.join(", ")
+        )
+    })
+}
