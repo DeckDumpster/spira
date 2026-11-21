@@ -53,7 +53,7 @@
 //! | Certifying | `unit.ran` red after both attributions, two or more members, no `red-output=`, a red suite no attribution of the round covered | Attributing, `after_certify` (its rerun reaches the flip handling; once per red suite) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
-//! | Attributing | observe: the round's open round is green on the carried head | Landing (`land`), or Certified when stacked; the attribution leg is stopped in the same tick |
+//! | Corpus, Attributing, Certifying | observe: the round's open round is green on the carried head | Landing (`land`), or Certified when stacked; the carried leg is stopped in the same tick |
 //! | Attributing | observe: the round's record no longer holds a member the leg carries (ejected by another actor) | Certifying for the record's survivors at its head, certify held until no pass runs; the attribution leg is stopped |
 //! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
@@ -1652,7 +1652,7 @@ impl Machine<'_> {
         if self.rc.leg_head.is_empty() {
             self.rc.leg_head = open.head.clone();
         }
-        if self.rc.leg_head == open.head && self.rc.state == State::Attributing && open.phase == "green" {
+        if self.rc.leg_head == open.head && open.phase == "green" {
             self.stop_carried_leg();
             return self.land_green();
         }
