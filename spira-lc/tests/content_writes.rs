@@ -43,12 +43,15 @@ fn built_testenv() -> PathBuf {
         .clone()
 }
 
-/// The tool on this process's PATH, else on the harness's declared tool path (`spira.path`),
-/// which is where a round's third-party tools live when its test environment is bare.
+/// The tool on this process's PATH, else on the harness's declared tool path (`spira.path`) or
+/// the round VM's `~/spira-env/bin`, where a round keeps its third-party tools when the test
+/// environment is bare. A tool found nowhere fails here, naming it.
 fn tool(name: &str) -> String {
     let on = |dirs: &str| dirs.split(':').filter(|d| !d.is_empty()).map(|d| Path::new(d).join(name)).find(|p| p.is_file());
     let declared = spira_config::process::cfg("SPIRA_PATH").unwrap_or_default();
-    on(&std::env::var("PATH").unwrap_or_default()).or_else(|| on(&declared)).map_or_else(|| name.to_string(), |p| p.display().to_string())
+    let env_bin = std::env::var("HOME").map(|h| format!("{h}/spira-env/bin")).unwrap_or_default();
+    let found = on(&std::env::var("PATH").unwrap_or_default()).or_else(|| on(&declared)).or_else(|| on(&env_bin));
+    found.unwrap_or_else(|| panic!("{name} is on neither PATH, spira.path ({declared:?}) nor {env_bin}")).display().to_string()
 }
 
 fn report(text: &str, key: &str) -> String {
