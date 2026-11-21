@@ -194,8 +194,15 @@ pub(crate) fn run<B: state_store::Backend>(args: &[String], store: &crate::contr
             Ok(String::new())
         }
         "state" => {
-            let rows = store.journal_state().map_err(cannot)?;
-            Ok(Value::Array(rows.iter().map(|r| json!({ "task": r.task, "skey": r.skey, "value": r.value, "at": r.at })).collect()).to_string())
+            let refused = || "journal: state takes only --after <cursor>".to_string();
+            let after = match &args[1..] {
+                [] => None,
+                [flag, cursor] if flag == "--after" => Some(cursor.as_str()),
+                _ => return Err(refused()),
+            };
+            let (rows, next) = store.journal_state_page(after, crate::control::journal::STATE_PAGE).map_err(cannot)?;
+            let rows: Vec<Value> = rows.iter().map(|r| json!({ "task": r.task, "skey": r.skey, "value": r.value, "at": r.at })).collect();
+            Ok(json!({ "rows": rows, "next": next }).to_string())
         }
         "open-effects" => {
             let rows = store.journal_open_effects().map_err(cannot)?;
@@ -419,7 +426,7 @@ mod tests {
         let s = store();
         let turn = json!({"state": [{"task": "t", "skey": "carry", "value": "v'", "at": 2}], "effects": [effect()], "schedules": [sched("r2", 5), sched("r1", 4)]});
         assert_eq!(call(&s, &["turn", &turn.to_string()]).0, 0);
-        assert_eq!(serde_json::from_str::<Value>(&call(&s, &["state"]).1).unwrap(), json!([{"task": "t", "skey": "carry", "value": "v'", "at": 2}]));
+        assert_eq!(serde_json::from_str::<Value>(&call(&s, &["state"]).1).unwrap(), json!({"rows": [{"task": "t", "skey": "carry", "value": "v'", "at": 2}], "next": null}));
         let open: Value = serde_json::from_str(&call(&s, &["open-effects"]).1).unwrap();
         assert_eq!(open[0]["ekey"], "k'1/x");
         let due: Value = serde_json::from_str(&call(&s, &["due"]).1).unwrap();
@@ -805,7 +812,58 @@ mod tests {
         let s = store();
         let rows: Vec<Value> = (0..300).map(|n| json!({"task": "t", "skey": format!("k{n}"), "value": "v", "at": n})).collect();
         assert_eq!(call(&s, &["turn", &json!({"state": rows}).to_string()]).0, 0);
-        assert_eq!(serde_json::from_str::<Value>(&call(&s, &["state"]).1).unwrap().as_array().unwrap().len(), 300);
+        assert_eq!(serde_json::from_str::<Value>(&call(&s, &["state"]).1).unwrap()["rows"].as_array().unwrap().len(), 300);
+    }
+
+    #[test]
+    fn a_state_answer_is_one_page_and_the_pages_hold_every_row_once() {
+        use crate::control::journal::STATE_PAGE;
+        let s = store();
+        let big = "b".repeat(6_365);
+        let mid = "m".repeat(120);
+        let row = |n: usize| {
+            let value = match n {
+                0 => big.clone(),
+                1..=4_010 => mid.clone(),
+                _ => String::new(),
+            };
+            json!({"task": format!("task{}", n % 57), "skey": format!("k{n}"), "value": value, "at": n})
+        };
+        let all: Vec<Value> = (0..12_116).map(row).collect();
+        for chunk in all.chunks(200) {
+            assert_eq!(call(&s, &["turn", &json!({"state": chunk}).to_string()]).0, 0);
+        }
+        let (mut seen, mut after) = (Vec::new(), None::<String>);
+        loop {
+            let argv: Vec<&str> = match &after {
+                None => vec!["state"],
+                Some(c) => vec!["state", "--after", c],
+            };
+            let (code, out) = call(&s, &argv);
+            assert_eq!(code, 0, "{out}");
+            assert!(out.len() < 256 * 1024, "a page is {} bytes", out.len());
+            let page: Value = serde_json::from_str(&out).unwrap();
+            let rows = page["rows"].as_array().unwrap();
+            assert!(rows.len() <= STATE_PAGE);
+            seen.extend(rows.iter().map(|r| (r["task"].as_str().unwrap().to_string(), r["skey"].as_str().unwrap().to_string())));
+            match page["next"].as_str() {
+                Some(n) => after = Some(n.to_string()),
+                None => break,
+            }
+        }
+        let distinct: std::collections::BTreeSet<_> = seen.iter().cloned().collect();
+        assert_eq!(seen.len(), 12_116);
+        assert_eq!(distinct.len(), 12_116, "a row answered twice");
+        let whole: std::collections::BTreeSet<_> = s.journal_state().unwrap().into_iter().map(|r| (r.task, r.skey)).collect();
+        assert_eq!(distinct, whole);
+    }
+
+    #[test]
+    fn a_state_call_takes_only_after_with_a_cursor() {
+        let s = store();
+        assert_eq!(call(&s, &["state", "--bogus"]).0, REFUSED);
+        assert_eq!(call(&s, &["state", "--after"]).0, REFUSED);
+        assert_eq!(call(&s, &["state", "--after", "a", "b"]).0, REFUSED);
     }
 
     /// The runtime checks a write against these widths before it sends it (runtime/src/socket.rs).

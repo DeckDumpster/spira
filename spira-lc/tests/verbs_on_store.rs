@@ -85,7 +85,7 @@ fn the_ported_verbs_answer_from_the_control_store() {
 
     let turn = r#"{"state":[{"task":"t","skey":"k","value":"v","at":1}],"schedules":[{"id":"r1","at":5,"stream":"s","kind":{"tag":"tick","body":""},"cause":null,"correlation":"c"}]}"#;
     ok(&["journal", "turn", turn]);
-    assert_eq!(json(&["journal", "state"])[0]["value"], "v");
+    assert_eq!(json(&["journal", "state"])["rows"][0]["value"], "v");
     assert_eq!(json(&["journal", "due", "10"])[0]["id"], "r1");
 
     assert_eq!(json(&["ops-view", "ops_live"])[0]["bead_id"], "sp-a");

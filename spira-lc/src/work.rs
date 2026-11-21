@@ -1269,8 +1269,8 @@ pub fn brokers_tool(verb: &str) -> bool {
     is_tool(verb) || LANE_VERBS.contains(&verb) || matches!(verb, "file-followup" | "split" | "submit" | "ack")
 }
 
-/// The brokered verbs that start no program: a content read or a config lookup, answered in the service.
-const ANSWERED_IN_SERVICE: &[&str] = &["read", "list", "search", "fence"];
+/// The brokered verbs that start no program in the scheduler: a content read, a config lookup, or a note or label write the service makes itself.
+const ANSWERED_IN_SERVICE: &[&str] = &["read", "list", "search", "fence", "note-on", "label-add", "label-remove"];
 
 /// The verbs lc-serve records as a request instead of running: every one that starts a program.
 pub fn exec_verb(verb: &str) -> bool {
@@ -2346,7 +2346,7 @@ mod tests {
         for verb in ["submit", "ack", "file-followup", "split", "blocked", "superseded-by", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand", "hel", "mender", "forge", "file", "ask"] {
             assert!(super::exec_verb(verb), "{verb} starts a program, so the scheduler runs it");
         }
-        for verb in ["show", "note", "done", "logs", "cite-check", "read", "list", "search", "fence", "no-such-verb"] {
+        for verb in ["show", "note", "done", "logs", "cite-check", "read", "list", "search", "fence", "note-on", "label-add", "label-remove", "no-such-verb"] {
             assert!(!super::exec_verb(verb), "{verb} starts no program in the service");
         }
         assert!(super::exec_bound_ms("groom") >= super::exec_bound_ms("submit") && super::exec_bound_ms("submit") == super::TOOL_SECS * 1000);

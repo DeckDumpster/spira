@@ -26,6 +26,8 @@ pub(crate) struct Store {
     turns: AtomicUsize,
     /// The next request is answered as spira-lc answers a store call past its deadline.
     pub(crate) deadline_next: std::sync::atomic::AtomicBool,
+    pub(crate) state_page: AtomicUsize,
+    pub(crate) state_calls: AtomicUsize,
 }
 
 fn json<T: serde::Serialize>(v: &T) -> String {
@@ -50,7 +52,19 @@ impl Store {
                 j.commit(&de::<Turn>(&argv[2])?)?;
                 String::new()
             }
-            "state" => json(&j.boot()?.state),
+            "state" => {
+                self.state_calls.fetch_add(1, Ordering::SeqCst);
+                let all = j.boot()?.state;
+                let from = match argv.get(2).map(String::as_str) {
+                    None => 0,
+                    Some("--after") => argv[3].parse::<usize>().unwrap(),
+                    Some(f) => return Err(RuntimeError::refused(format!("journal: state takes only --after, not {f}"))),
+                };
+                let size = self.state_page.load(Ordering::SeqCst);
+                let rows: Vec<_> = all.iter().skip(from).take(size).collect();
+                let next = (from + rows.len() < all.len()).then(|| (from + rows.len()).to_string());
+                json(&serde_json::json!({ "rows": rows, "next": next }))
+            }
             "open-effects" => json(&j.boot()?.effects),
             "due" => json(&j.boot()?.schedules),
             "poison" => {
@@ -68,7 +82,7 @@ pub(crate) fn serve() -> (Arc<Store>, PathBuf, TempDir) {
     let dir = TempDir::new("rkb6wl");
     let path = dir.path().join("lc.sock");
     let listener = UnixListener::bind(&path).unwrap();
-    let store = Arc::new(Store { mem: MemJournal::new(), calls: AtomicUsize::new(0), turns: AtomicUsize::new(0), deadline_next: Default::default() });
+    let store = Arc::new(Store { mem: MemJournal::new(), calls: AtomicUsize::new(0), turns: AtomicUsize::new(0), deadline_next: Default::default(), state_page: AtomicUsize::new(1_000), state_calls: AtomicUsize::new(0) });
     let s = Arc::clone(&store);
     std::thread::spawn(move || answer(&listener, &|argv| s.respond(argv)));
     (store, path, dir)
@@ -215,6 +229,24 @@ fn a_restart_settles_the_effect_a_crash_left_unanswered_as_lost_and_relaunches_n
     assert!(y.pending_effects().is_empty(), "the unanswered effect is not offered to a runner again");
     assert!(store.mem.boot().unwrap().effects.is_empty(), "and its row is resolved");
     assert_eq!(store.mem.boot().unwrap().schedules.len(), 1, "and the next tick's row is waiting");
+}
+
+#[test]
+fn a_boot_walks_every_page_of_state_and_restores_what_the_journal_holds() {
+    let (store, path, _dir) = serve();
+    store.state_page.store(2, Ordering::SeqCst);
+    let rows: Vec<StateRow> = (0..5).map(|n| StateRow { task: format!("t{}", n % 2), skey: format!("k{n}"), value: format!("v{n}"), at: n }).collect();
+    store.mem.commit(&Turn { state: rows.clone(), ..Turn::default() }).unwrap();
+    let (_logs, ship) = shipper();
+    let socket = SocketJournal::new(&path, ship);
+    let boot = socket.boot().unwrap();
+    assert_eq!(boot.state, store.mem.boot().unwrap().state);
+    assert_eq!(boot.state.len(), 5);
+    assert_eq!(store.state_calls.load(Ordering::SeqCst), 3);
+    let clock = VirtualClock::new(0);
+    let via_socket = Engine::open(Arc::new(socket), Arc::new(clock.clone()), regs(3), 1).unwrap();
+    let direct = Engine::open(store.mem.clone(), Arc::new(clock), regs(3), 1).unwrap();
+    assert_eq!(via_socket.pending_effects(), direct.pending_effects());
 }
 
 /// Every conformance scenario over the socket client, with the fake VictoriaLogs as the history.
