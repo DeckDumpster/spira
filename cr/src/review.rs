@@ -100,23 +100,19 @@ pub fn open(a: &OpenArgs, ports: &Ports) -> Outcome {
     let scored = pick::score_all(&ix, ports.tree.as_ref(), pool, &ports.config, &ports.ledger, now);
     let mut rng = SeededRng::new(seed);
     let mut ledger = ports.ledger.clone();
-    let mut chosen: Vec<(units::Unit, Vec<pick::Shaped>)> = Vec::new();
+    let mut chosen: Vec<units::Unit> = Vec::new();
     for _ in 0..a.count {
-        let left: Vec<pick::Scored> = scored.iter().filter(|s| !chosen.iter().any(|(u, _)| u.id == s.unit.id)).cloned().collect();
+        let left: Vec<pick::Scored> = scored.iter().filter(|s| !chosen.iter().any(|u| u.id == s.unit.id)).cloned().collect();
         let Some((i, _)) = pick::draw(&left, &ledger, &mut rng) else {
             return refuse(1, &format!("only {} of {} units are drawable: the rest are excluded or already reviewed at their current blobs", chosen.len(), a.count));
         };
-        let shaped = pick::shape(&ix, &left[i].unit, &ports.config, &mut rng);
-        let mut unit = left[i].unit.clone();
-        for (f, s) in unit.files.iter_mut().zip(&shaped) {
-            f.regions = s.regions.clone();
-        }
+        let unit = left[i].unit.clone();
         ledger.rows.push(Row { review: String::new(), at: now, commit: ix.commit.clone(), kind: unit.kind.as_str().to_string(), unit_id: unit.id.clone(), files: Vec::new() });
-        chosen.push((unit, shaped));
+        chosen.push(unit);
     }
     let ledger_path = record::root(&ports.run_dir).join("ledger.jsonl");
     let mut out = String::new();
-    for (unit, _) in chosen {
+    for unit in chosen {
         let number = match record::allocate(&ports.run_dir) {
             Ok(n) => n,
             Err(e) => return refuse(1, &e),
@@ -143,7 +139,7 @@ pub fn open(a: &OpenArgs, ports: &Ports) -> Outcome {
             commit: ix.commit.clone(),
             kind: unit.kind.as_str().to_string(),
             unit_id: unit.id.clone(),
-            files: unit.files.iter().map(|f| LedgerFile { path: f.path.clone(), blob: ix.blobs.get(&f.path).cloned().unwrap_or_default(), regions: f.regions.clone() }).collect(),
+            files: unit.files.iter().map(|f| LedgerFile { path: f.path.clone(), blob: ix.blobs.get(&f.path).cloned().unwrap_or_default() }).collect(),
         };
         if let Err(e) = record::save(&ports.run_dir, &r).and_then(|()| Ledger::append(&ledger_path, &row)) {
             return refuse(1, &e);
@@ -155,61 +151,15 @@ pub fn open(a: &OpenArgs, ports: &Ports) -> Outcome {
 
 // ───────────────────────────── seal ─────────────────────────────
 
-/// The branch's content for each unit file: bytes as at the source commit, or for an
-/// oversized file its regions joined by one marker line naming each elided range.
 fn branch_files(tree: &dyn SourceTree, unit: &units::Unit) -> Result<Vec<(String, Vec<u8>)>, String> {
-    let mut out = Vec::new();
-    for f in &unit.files {
-        let bytes = tree.read(&f.path).ok_or_else(|| format!("{} is not readable at the source commit", f.path))?;
-        let Some(regions) = &f.regions else {
-            out.push((f.path.clone(), bytes));
-            continue;
-        };
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        let segs: Vec<&str> = text.split_inclusive('\n').collect();
-        let total = segs.len() as u32;
-        let mut joined = String::new();
-        let mut next = 1u32;
-        let marker = |joined: &mut String, from: u32, to: u32| {
-            if from <= to {
-                if !joined.is_empty() && !joined.ends_with('\n') {
-                    joined.push('\n');
-                }
-                joined.push_str(&format!("// [cr: source lines {from}-{to} elided]\n"));
-            }
-        };
-        for &(a, b) in regions {
-            let (a, b) = (a.max(1), b.min(total));
-            if a > b {
-                continue;
-            }
-            marker(&mut joined, next, a - 1);
-            joined.push_str(&segs[(a - 1) as usize..b as usize].concat());
-            next = b + 1;
-        }
-        marker(&mut joined, next, total);
-        out.push((f.path.clone(), joined.into_bytes()));
-    }
-    Ok(out)
+    unit.files
+        .iter()
+        .map(|f| tree.read(&f.path).map(|bytes| (f.path.clone(), bytes)).ok_or_else(|| format!("{} is not readable at the source commit", f.path)))
+        .collect()
 }
 
 pub(crate) fn line_count(bytes: &[u8]) -> u32 {
     String::from_utf8_lossy(bytes).lines().count() as u32
-}
-
-fn elided(regions: &[(u32, u32)], total: u32) -> Vec<(u32, u32)> {
-    let mut out = Vec::new();
-    let mut next = 1;
-    for &(a, b) in regions {
-        if a > next {
-            out.push((next, a - 1));
-        }
-        next = next.max(b + 1);
-    }
-    if next <= total {
-        out.push((next, total));
-    }
-    out
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -332,15 +282,14 @@ fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, V
     m.push_str(&format!("{}\n\n{}\n\n", SECTIONS[0], cover.does));
     m.push_str(&format!("{}\n\n{}\n\n", SECTIONS[1], cover.look_first));
     m.push_str(&format!("{}\n\n", SECTIONS[2]));
-    for ((path, bytes), f) in files.iter().zip(&u.files) {
-        let source_lines = ix.lines(path);
-        m.push_str(&format!("- `{path}`: {} lines on this branch", line_count(bytes)));
-        if let Some(regions) = &f.regions {
-            let gaps: Vec<String> = elided(regions, source_lines).iter().map(|(a, b)| format!("{a}-{b}")).collect();
-            m.push_str(&format!("; oversized ({source_lines} lines in the source), elided source lines {}", gaps.join(", ")));
-        }
-        m.push('\n');
+    let page = ports.config.page_lines.max(1);
+    let mut total = 0;
+    for (path, bytes) in files {
+        let lines = line_count(bytes);
+        total += lines;
+        m.push_str(&format!("- `{path}`: {lines} lines (about {} pages)\n", lines.div_ceil(page)));
     }
+    m.push_str(&format!("- Total: {total} lines (about {} pages)\n", total.div_ceil(page)));
     let mut dependents = pick::dependent_files(ix, u);
     dependents.sort();
     dependents.dedup();

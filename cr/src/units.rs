@@ -31,7 +31,6 @@ impl Kind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnitFile {
     pub path: String,
-    pub regions: Option<Vec<(u32, u32)>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,7 +44,7 @@ pub struct Unit {
 
 fn unit(id: String, kind: Kind, title: String, paths: Vec<String>) -> Unit {
     let mut seen = BTreeSet::new();
-    let files = paths.into_iter().filter(|p| seen.insert(p.clone())).map(|path| UnitFile { path, regions: None }).collect();
+    let files = paths.into_iter().filter(|p| seen.insert(p.clone())).map(|path| UnitFile { path }).collect();
     Unit { id, kind, files, title }
 }
 

@@ -5,7 +5,7 @@ use super::{cfg, fixture, go, ports_with};
 use crate::cli::Outcome;
 use crate::ports::Ports;
 use crate::record;
-use crate::thread::{comments_path, source_line, Comment};
+use crate::thread::{comments_path, Comment};
 use std::rc::Rc;
 use testkit::TempDir;
 
@@ -85,13 +85,16 @@ fn thread_of_a_comment_the_watcher_never_kept_exits_two() {
 }
 
 #[test]
-fn an_oversized_files_branch_line_maps_back_to_its_source_line() {
-    let regions = [(3, 4), (10, 11)];
-    let map = |l| source_line(Some(&regions), 20, l);
-    assert_eq!((map(1), map(2), map(3)), (None, Some(3), Some(4)), "the marker for the elided head maps to nothing");
-    assert_eq!((map(4), map(5), map(6)), (None, Some(10), Some(11)), "the marker between regions maps to nothing");
-    assert_eq!(map(7), None, "the final gap's marker follows the regions");
-    assert_eq!(source_line(None, 20, 7), Some(7));
+fn a_comment_on_line_n_of_a_large_module_shows_source_line_n() {
+    let w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/big.rs", "--seed", "2"]).code, 0);
+    let mut r = record::load(w.run.path(), 1).unwrap();
+    r.pr = Some(7);
+    record::save(w.run.path(), &r).unwrap();
+    w.keep(&[Comment { path: Some("demo/src/big.rs".into()), ..comment(1, None, "reviewer", Some(27), "which filler?", 100) }]);
+    let o = w.cr(&["thread", "--review", "001", "--comment", "1"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    assert!(o.stdout.contains(">   27  fn filler_0() -> u32 {\n"), "{}", o.stdout);
 }
 
 #[test]

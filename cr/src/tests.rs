@@ -14,7 +14,7 @@ const DAY: u64 = 86_400_000;
 pub(crate) const NOW: u64 = 100 * DAY;
 
 pub(crate) fn cfg() -> Config {
-    Config { page_lines: 10, oversize_pages: 3, exclude: ["**/fixtures/**", "**/*.generated.*", "**/vendor/**", "Cargo.lock"].map(String::from).to_vec(), churn_days: 60, rewrite_days: 45, count_limit: 7 }
+    Config { page_lines: 10, exclude: ["**/fixtures/**", "**/*.generated.*", "**/vendor/**", "Cargo.lock"].map(String::from).to_vec(), churn_days: 60, rewrite_days: 45, count_limit: 7 }
 }
 
 fn big_source() -> String {
@@ -88,7 +88,7 @@ fn row(kind: &str, unit_id: &str, at: u64, files: &[(&str, &str)]) -> Row {
         commit: "old".into(),
         kind: kind.into(),
         unit_id: unit_id.into(),
-        files: files.iter().map(|(p, b)| LedgerFile { path: p.to_string(), blob: b.to_string(), regions: None }).collect(),
+        files: files.iter().map(|(p, b)| LedgerFile { path: p.to_string(), blob: b.to_string() }).collect(),
     }
 }
 
@@ -186,41 +186,17 @@ fn a_persona_unit_groups_hooks_by_prefix_with_the_prompt() {
 }
 
 #[test]
-fn an_oversized_file_goes_as_surface_plus_one_item_and_a_small_file_whole() {
+fn a_large_file_is_drawn_whole() {
     let p = ports();
     let o = go(&p, &["pick", "--aim", "demo/src/big.rs", "--seed", "3"]);
-    assert!(o.stdout.contains("oversized: public surface plus"), "{}", o.stdout);
+    let line = o.stdout.lines().find(|l| l.contains("demo/src/big.rs")).unwrap();
+    assert!(line.starts_with("  demo/src/big.rs (") && line.ends_with(" lines)"), "{}", o.stdout);
     let (_, v) = json(&p, &["pick", "--aim", "demo/src/big.rs", "--seed", "3"]);
-    let f = &v["unit"]["files"][0];
-    let regions = f["regions"].as_array().unwrap();
-    let covers = |line: u64| regions.iter().any(|r| r[0].as_u64().unwrap() <= line && line <= r[1].as_u64().unwrap());
-    assert!(covers(3) && covers(4), "doc comment and signature of the pub struct: {regions:?}");
-    assert!(covers(9) && covers(10), "doc comment and signature of the pub method: {regions:?}");
-    assert!(!covers(14), "a private method is no part of the surface: {regions:?}");
-    let (_, small) = json(&p, &["pick", "--aim", "demo/src/sink.rs"]);
-    assert!(small["unit"]["files"][0]["regions"].is_null());
-    assert!(small["unit"]["files"][0]["oversized"].is_null());
-}
-
-#[test]
-fn a_chosen_function_part_brings_the_private_helpers_it_calls() {
-    let mut text = String::from("pub struct S;\n\nfn helper() -> u32 {\n    1\n}\n\nfn driver() -> u32 {\n    helper()\n}\n");
-    for i in 0..40 {
-        text.push_str(&format!("\nimpl S {{\n    fn m{i}(&self) {{}}\n}}\n"));
+    for f in v["unit"]["files"].as_array().unwrap() {
+        let mut keys: Vec<&String> = f.as_object().unwrap().keys().collect();
+        keys.sort();
+        assert_eq!(keys, ["lines", "path"], "{f}");
     }
-    let tree = FixtureTree::new("c").with_file("Cargo.toml", "[workspace]\nmembers = [\"k\"]\n").with_file("k/Cargo.toml", "[package]\nname = \"k\"\n").with_file("k/src/lib.rs", &text);
-    let p = ports_with(tree, vec![], cfg());
-    let mut saw = false;
-    for seed in 0..60 {
-        let (_, v) = json(&p, &["pick", "--seed", &seed.to_string()]);
-        if let Some(s) = v["unit"]["files"][0]["oversized"].as_str() {
-            if s.contains("fn driver") {
-                assert!(s.contains("helper"), "{s}");
-                saw = true;
-            }
-        }
-    }
-    assert!(saw, "no seed chose the function part");
 }
 
 #[test]

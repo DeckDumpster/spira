@@ -187,31 +187,16 @@ fn an_empty_findings_directory_is_refused_by_name() {
 }
 
 #[test]
-fn branch_lines_map_to_source_lines_through_the_elision_markers() {
-    use super::super::findings::source_line;
-    let regions = Some(vec![(5, 10), (20, 22)]);
-    let at = |l| source_line(&regions, 40, l);
-    assert_eq!([at(2), at(7), at(9), at(11)], [5, 10, 20, 22]);
-    assert_eq!([at(1), at(8), at(12)], [-1, -8, -12]);
-    assert_eq!(source_line(&None, 40, 3), 3);
-}
-
-#[test]
-fn comments_either_side_of_an_elided_gap_do_not_agree_though_their_branch_lines_are_close() {
+fn comments_on_nearby_lines_of_a_large_module_agree_as_source_lines() {
     let w = world();
     assert_eq!(w.cr(&["open", "--aim", "demo/src/big.rs", "--seed", "2"]).code, 0);
-    let r = record::load(w.run.path(), 2).unwrap();
-    let (path, regions) = (r.unit.files[0].path.clone(), r.unit.files[0].regions.clone().expect("big.rs is oversized"));
-    assert!(regions.len() >= 2 && regions[1].0 > regions[0].1 + 3, "{regions:?}");
-    let last_of_first = (regions[0].1 - regions[0].0 + 1) + u32::from(regions[0].0 > 1);
-    let first_of_second = last_of_first + 2;
     let put = |n: &str, text: &str| std::fs::write(record::dir(w.run.path(), 2).join(n), text).unwrap();
-    put("sealed.json", &format!(r#"[{{"path":"{path}","line":{last_of_first},"body":"C-before"}}]"#));
-    put("comments.json", &format!(r#"[{{"path":"{path}","line":{first_of_second},"body":"H-after","user":{{"type":"User"}}}}]"#));
+    put("sealed.json", r#"[{"path":"demo/src/big.rs","line":27,"body":"C-near"},{"path":"demo/src/big.rs","line":10,"body":"C-far"}]"#);
+    put("comments.json", r#"[{"path":"demo/src/big.rs","line":29,"body":"H-near","user":{"type":"User"}}]"#);
     let o = w.cr(&["findings", "--review", "002"]);
     assert_eq!(o.code, 0, "{}", o.stderr);
     let agreed = o.stdout.split("### Agreed").nth(1).unwrap().split("### Only you").next().unwrap();
-    assert!(!agreed.contains("C-before"), "{}", o.stdout);
+    assert!(agreed.contains("C-near") && agreed.contains("H-near") && !agreed.contains("C-far"), "{}", o.stdout);
 }
 
 #[test]
