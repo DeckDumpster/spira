@@ -33,6 +33,7 @@ const CHUNK: usize = 100;
 const ATTEMPTS: usize = 8;
 /// Rows one sweep step reads: the store's page.
 pub const SWEEP_STEP: usize = 1_000;
+pub const STATE_PAGE: usize = 1_000;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SweepPhase {
@@ -283,12 +284,27 @@ impl<B: Backend> Store<B> {
         Ok(written)
     }
 
+    /// At most `limit` state rows after the store key `after`, in key order, and the key to resume
+    /// from when the page is full.
+    pub fn journal_state_page(&self, after: Option<&str>, limit: usize) -> Result<(Vec<StateRow>, Option<String>)> {
+        let contract = self.contract();
+        let head = contract.head()?;
+        let page = contract.range_at(&keys::runtime_table(STATE), after, limit, head)?;
+        let next = page.last().map(|i| i.key.clone()).filter(|_| page.len() >= limit);
+        let rows = page.iter().map(|i| StateRow { task: text(&i.value.data, "task"), skey: text(&i.value.data, "skey"), value: text(&i.value.data, "value"), at: num(&i.value.data, "at") }).collect();
+        Ok((rows, next))
+    }
+
     pub fn journal_state(&self) -> Result<Vec<StateRow>> {
-        let mut rows: Vec<StateRow> = self
-            .table(STATE)?
-            .iter()
-            .map(|(_, v)| StateRow { task: text(v, "task"), skey: text(v, "skey"), value: text(v, "value"), at: num(v, "at") })
-            .collect();
+        let (mut rows, mut after) = (Vec::new(), None);
+        loop {
+            let (page, next) = self.journal_state_page(after.as_deref(), STATE_PAGE)?;
+            rows.extend(page);
+            match next {
+                Some(n) => after = Some(n),
+                None => break,
+            }
+        }
         rows.sort_by(|a, b| (&a.task, &a.skey).cmp(&(&b.task, &b.skey)));
         Ok(rows)
     }

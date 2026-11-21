@@ -102,6 +102,10 @@ impl SocketJournal {
         serde_json::from_str(&self.send(args)?).map_err(|e| RuntimeError::new(format!("journal reply: {e}")))
     }
 
+    fn json_after<T: DeserializeOwned>(&self, verb: &str, after: &str) -> Result<T> {
+        self.json(&[verb, "--after", after]).map_err(|e| RuntimeError(format!("journal {verb}: {}", e.0), e.1))
+    }
+
     fn json_of<T: DeserializeOwned>(&self, verb: &str) -> Result<T> {
         self.json(&[verb]).map_err(|e| RuntimeError(format!("journal {verb}: {}", e.0), e.1))
     }
@@ -196,6 +200,12 @@ pub fn answer(listener: &std::os::unix::net::UnixListener, respond: &dyn Fn(&[St
     }
 }
 
+#[derive(serde::Deserialize)]
+struct StatePage {
+    rows: Vec<StateRow>,
+    next: Option<String>,
+}
+
 fn enc<T: serde::Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(|e| RuntimeError::new(e.to_string()))
 }
@@ -206,7 +216,19 @@ impl Journal for SocketJournal {
     }
 
     fn boot(&self) -> Result<Boot> {
-        let state: Vec<StateRow> = self.json_of("state")?;
+        let mut state: Vec<StateRow> = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let page: StatePage = match &after {
+                None => self.json_of("state")?,
+                Some(c) => self.json_after("state", c)?,
+            };
+            state.extend(page.rows);
+            match page.next {
+                Some(n) => after = Some(n),
+                None => break,
+            }
+        }
         let effects: Vec<EffectRow> = self.json_of("open-effects")?;
         let schedules: Vec<ScheduleRow> = self.json_of("due")?;
         Ok(Boot { state, effects, schedules })
