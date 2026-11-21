@@ -6,6 +6,11 @@ autotests = false
 description = "spira-lc — the lifecycle CLI and system service: show/list/history/event over the control store, over a local socket when the system-user service is installed, or in-process in same-user fallback. Deploys inert."
 
 [[test]]
+name = "compact_after_stop"
+path = "tests/compact_after_stop.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "e2e_goodput_20d"
 path = "tests/e2e_goodput_20d.rs"
 required-features = ["integration"]
@@ -64,6 +69,7 @@ strip = true
 [dev-dependencies]
 opentelemetry-proto = { version = "0.30", default-features = false, features = ["trace", "gen-tonic-messages", "with-serde"] }
 testkit = { path = "../testkit" }
+rusqlite = { version = "0.37", features = ["bundled"] }
 reconciler-engine = { path = "../reconciler-engine" }
 incident = { path = "../incident" }
 sentinel = { path = "../sentinel" }

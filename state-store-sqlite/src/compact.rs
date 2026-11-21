@@ -3,15 +3,16 @@
 //! Day files are not touched.
 
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 use state_store::{Error, Result};
 
-use crate::{db, take_opener, wal_of};
+use crate::{checkpoint_row, db, take_opener, wal_of};
 
 #[derive(Debug, Default, Clone)]
 pub struct Report {
+    pub wal_bytes_before: u64,
     pub bytes_before: u64,
     pub free_bytes_before: u64,
     pub bytes_after: u64,
@@ -23,7 +24,7 @@ pub struct Report {
 impl Report {
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
-            "compact": "done",
+            "compact": "done", "wal_bytes_before": self.wal_bytes_before,
             "bytes_before": self.bytes_before, "free_bytes_before": self.free_bytes_before,
             "bytes_after": self.bytes_after, "free_bytes_after": self.free_bytes_after,
             "auto_vacuum": self.auto_vacuum, "elapsed_ms": self.elapsed_ms,
@@ -45,13 +46,18 @@ pub fn compact(path: &Path) -> Result<Report> {
         return Err(Error::Backend(format!("{}: no such store", path.display())));
     }
     let _opener = take_opener(path)?;
-    if std::fs::metadata(wal_of(path)).is_ok_and(|m| m.len() > 0) {
+    let wal_bytes_before = std::fs::metadata(wal_of(path)).map_or(0, |m| m.len());
+    let conn = Connection::open(path).map_err(db)?;
+    conn.busy_timeout(Duration::ZERO).map_err(db)?;
+    let folded = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], checkpoint_row).map_err(db)?;
+    if folded.busy || folded.checkpointed < folded.wal_frames {
         return Err(Error::Backend(format!(
-            "{} is not empty: the store did not close cleanly; start and stop the store once, then run compact again",
-            wal_of(path).display()
+            "{}: could not fold the WAL into the main file ({} of {} frames): another process holds the file open",
+            wal_of(path).display(),
+            folded.checkpointed,
+            folded.wal_frames
         )));
     }
-    let conn = Connection::open(path).map_err(db)?;
     let (bytes_before, free_bytes_before) = usage(&conn, path)?;
     conn.pragma_update(None, "auto_vacuum", 2).map_err(db)?;
     conn.prepare("VACUUM").and_then(|mut s| s.execute([])).map_err(db)?;
@@ -61,6 +67,7 @@ pub fn compact(path: &Path) -> Result<Report> {
     }
     let (bytes_after, free_bytes_after) = usage(&conn, path)?;
     Ok(Report {
+        wal_bytes_before,
         bytes_before,
         free_bytes_before,
         bytes_after,

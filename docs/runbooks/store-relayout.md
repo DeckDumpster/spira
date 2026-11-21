@@ -53,7 +53,7 @@ admin-store-compact --store <main file>` rewrites the stopped main file once wit
 `auto_vacuum=INCREMENTAL`; after it the per-commit reclaim gives pages back while the store
 serves. Snapshots are written incremental, so a restore keeps the property. Day files are not
 touched. It prints one JSON report: `bytes_before`, `free_bytes_before`, `bytes_after`,
-`free_bytes_after`, `auto_vacuum` and `elapsed_ms`, or `{"compact": "refused", ...}`. Exit 0
+`free_bytes_after`, `auto_vacuum`, `wal_bytes_before` and `elapsed_ms`, or `{"compact": "refused", ...}`. Exit 0
 is done, 3 is refused, 2 is usage.
 
 Trial on a copy, with the store running:
@@ -71,30 +71,28 @@ space (`df` the directory of `$STORE`) before the stop. The downtime is the tria
 scheduled. Then, announcing the stop first:
 
 ```sh
-systemctl stop lc-serve.service spira-lc.service
-test ! -s "$STORE-wal"
-spira-lc store-usage --file
+systemctl --user stop lc-serve.service
 spira-lc admin-store-compact --store "$STORE"
-systemctl start lc-serve.service spira-lc.service
+systemctl --user start lc-serve.service
 spira-lc store-usage --file
 ```
 
 **Success:** `auto_vacuum` is 2, `free_bytes_after` is 0 and `bytes_after` is about the live size;
 on later days `free_bytes` stays near 0 while the drains run.
 **If it fails:** `the store is open` means a service is still up; stop it and run again. A
-non-empty `-wal` means the store did not close cleanly: start and stop the store once, then
-repeat. A refusal writes nothing, so the file is as it was.
+refusal naming the `-wal` means another process has the file open: find it with
+`fuser "$STORE"`, stop it, and run again. A refusal writes nothing, so the file is as it was.
 
 ## Cutover
 
 The store is down for the whole of this entry. Announce the stop first.
 
 ```sh
-systemctl stop lc-serve.service spira-lc.service
+systemctl --user stop lc-serve.service
 test ! -e "$STORE-wal"
 mv "$STORE" "${STORE%.db}-old-layout.db"
 spira-lc admin-store-relayout --from "${STORE%.db}-old-layout.db" --to "$STORE"
-systemctl start lc-serve.service spira-lc.service
+systemctl --user start lc-serve.service
 ```
 
 `SPIRA_LC_STORE_PATH` is unchanged: the new store takes the old one's name. Start the store
@@ -111,7 +109,7 @@ again. A non-empty `-wal` means the store did not close cleanly: move the old fi
 ## Rollback
 
 ```sh
-systemctl stop lc-serve.service spira-lc.service
+systemctl --user stop lc-serve.service
 ASIDE="$STORE.new-layout"; mkdir "$ASIDE"
 mv "$STORE" "$ASIDE"/
 for f in "${STORE%.db}".events-*.db "${STORE%.db}".receipts-*.db; do [ -e "$f" ] && mv "$f" "$ASIDE"/; done
