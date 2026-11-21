@@ -1087,3 +1087,59 @@ fn adopt_rejects_review_with_unit_and_an_incomplete_form_before_anything_runs() 
     assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
     assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
 }
+
+#[test]
+fn adopt_replaces_the_reviews_ledger_rows_with_one_and_keeps_the_others() {
+    let (mut w, stdin, sha) = staged_sink_world();
+    let old = |opened_at| Row { review: "001".into(), kind: "persona".into(), unit_id: "old".into(), commit: "older".into(), files: vec![LedgerFile { path: "old.md".into(), blob: "x".into() }], opened_at, closed_at: None, closed_as: None, attention: None };
+    crate::ledger::append(&w.ports, &[old(1), old(2)]).unwrap();
+    assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
+    let rows = ledger_rows(&w.gh);
+    assert_eq!(rows.iter().map(|r| r.review.as_str()).collect::<Vec<_>>(), ["900", "001"]);
+    assert_eq!(rows[0], prior_row());
+    assert_eq!(rows[1].files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), [SINK, FILE_SINK]);
+}
+
+#[test]
+fn adopt_reads_every_page_of_the_pull_requests_files() {
+    let (mut w, stdin, sha) = staged_sink_world();
+    let full: Vec<(&str, String)> = (0..100).map(|_| (SINK, blob(SINK))).collect();
+    let full: Vec<(&str, &str)> = full.iter().map(|(p, b)| (*p, b.as_str())).collect();
+    w.gh.answer("pulls/9/files?per_page=100&page=1", &pr_files(&full));
+    w.gh.answer("pulls/9/files?per_page=100&page=2", &pr_files(&[(FILE_SINK, &blob(FILE_SINK))]));
+    assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
+    let files: Vec<String> = record::load(w.run.path(), 1).unwrap().unit.files.into_iter().map(|f| f.path).collect();
+    assert_eq!(files, [SINK, FILE_SINK]);
+}
+
+#[test]
+fn adopt_names_a_pull_request_file_that_is_not_at_the_source_commit() {
+    let (mut w, stdin, sha) = staged_sink_world();
+    w.hand_pr(PR9, &[(SINK, &blob(SINK)), ("demo/src/ghost.rs", "0000000000000000")]);
+    let o = w.adopt(&stdin, &sha, &["--review", "001"]);
+    assert_eq!(o.code, 2);
+    assert!(o.stderr.contains("demo/src/ghost.rs"), "{}", o.stderr);
+    assert!(!w.sealed_path(1).exists());
+}
+
+#[test]
+fn adopt_refuses_an_empty_sealed_review() {
+    let (mut w, stdin, sha) = staged_sink_world();
+    let o = w.adopt("[]", &sha256(b"[]"), &["--review", "001"]);
+    assert_eq!(o.code, 2, "{}", o.stderr);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
+    assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
+}
+
+#[test]
+fn adopt_again_by_unit_changes_no_file() {
+    let mut w = world();
+    w.good_pr();
+    let (stdin, sha) = (comments_on(SINK), sha256(comments_on(SINK).as_bytes()));
+    let args = ["--unit", SINK_UNIT, "--commit", "c0ffee"];
+    assert_eq!(w.adopt(&stdin, &sha, &args).code, 0);
+    let (rec, led, sealed) = (w.review_json(1), w.gh.ledger_text(), std::fs::read(w.sealed_path(1)).unwrap());
+    assert_eq!(w.adopt(&stdin, &sha, &args).code, 0);
+    assert_eq!((w.review_json(1), w.gh.ledger_text(), std::fs::read(w.sealed_path(1)).unwrap()), (rec, led, sealed));
+    assert!(!record::dir(w.run.path(), 2).exists());
+}
