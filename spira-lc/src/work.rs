@@ -1314,19 +1314,47 @@ pub fn record_argv(bead: &str, actor: &str, argv: &[String], stdin: Option<&str>
 /// in a thread of this process, until the service stops answering.
 pub fn run_queue() -> (i32, String) {
     let call = |args: &[&str]| crate::plane::call(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>());
+    let mut last_failure: Option<String> = None;
     loop {
-        let (code, listed) = call(&["work-request", "list", "--state", "queued"]);
-        if code != 0 {
-            return (0, String::new());
-        }
-        let queued: Vec<crate::control::work_requests::WorkRequest> = serde_json::from_str(&listed).unwrap_or_default();
-        for r in queued {
-            if call(&["work-request", "take", &r.id, "--actor", "spira-runtime"]).0 == 0 {
-                std::thread::spawn(move || exec(&r.id));
-            }
+        let polled = poll_once(&call, |id| {
+            std::thread::spawn(move || exec(&id));
+        });
+        if let Some(line) = poll_report(&mut last_failure, &polled) {
+            eprintln!("work-run: {line}");
         }
         std::thread::sleep(std::time::Duration::from_millis(100)); // waits-on: nothing; polls the queue while the service answers
     }
+}
+
+/// The line a poll's outcome earns in the log: a failure that differs from the last one, or the
+/// first success after a failure. `last_failure` is the text last reported.
+fn poll_report(last_failure: &mut Option<String>, polled: &Result<usize, String>) -> Option<String> {
+    match polled {
+        Ok(_) => last_failure.take().map(|_| "the queue answers again".to_string()),
+        Err(failure) if last_failure.as_ref() != Some(failure) => {
+            *last_failure = Some(failure.clone());
+            Some(failure.clone())
+        }
+        Err(_) => None,
+    }
+}
+
+/// One poll of the queue: takes each queued request and hands its id to `start`. A failed list is
+/// an error, never an empty queue; a failed `take` means another runner has it, so it is skipped.
+fn poll_once(call: &dyn Fn(&[&str]) -> (i32, String), start: impl Fn(String)) -> Result<usize, String> {
+    let (code, listed) = call(&["work-request", "list", "--state", "queued"]);
+    if code != 0 {
+        return Err(format!("listing queued requests failed, code {code}: {listed}"));
+    }
+    let queued: Vec<crate::control::work_requests::WorkRequest> = serde_json::from_str(&listed).map_err(|e| format!("listing queued requests gave an answer that is not the request list ({e}): {listed}"))?;
+    let mut taken = 0;
+    for r in queued {
+        if call(&["work-request", "take", &r.id, "--actor", "spira-runtime"]).0 == 0 {
+            taken += 1;
+            start(r.id);
+        }
+    }
+    Ok(taken)
 }
 
 /// Runs the recorded request `id` in this process and records its exit code and output. This is
@@ -2341,6 +2369,57 @@ mod store_tests {
 
 #[cfg(test)]
 mod tests {
+    fn queued_json(id: &str) -> String {
+        let r = crate::control::work_requests::WorkRequest { id: id.into(), bead: "sp-x".into(), actor: "a".into(), argv: vec![], stdin: None, bound_ms: 1, state: "queued".into(), code: None, output: String::new(), truncated: false, queued_at: 0, started_at: None, finished_at: None };
+        serde_json::to_string(&vec![r]).unwrap()
+    }
+
+    #[test]
+    fn the_runner_keeps_polling_after_a_failed_list_and_takes_the_request_listed_next() {
+        let lists = std::cell::Cell::new(0);
+        let call = |args: &[&str]| -> (i32, String) {
+            match args[1] {
+                "list" => {
+                    lists.set(lists.get() + 1);
+                    if lists.get() == 1 { (2, "cannot tell: Backend(\"read ended: held past max_read_ms (100 ms)\")".into()) } else { (0, queued_json("wr-1")) }
+                }
+                _ => (0, String::new()),
+            }
+        };
+        let started = std::cell::RefCell::new(Vec::new());
+        let mut results = Vec::new();
+        for _ in 0..2 {
+            results.push(super::poll_once(&call, |id| started.borrow_mut().push(id)));
+        }
+        let err = results[0].clone().unwrap_err();
+        assert!(err.contains("code 2") && err.contains("max_read_ms"), "{err}");
+        assert_eq!(results[1], Ok(1));
+        assert_eq!(*started.borrow(), vec!["wr-1".to_string()]);
+    }
+
+    #[test]
+    fn a_failure_is_logged_once_until_it_changes_and_recovery_is_logged_once() {
+        let mut last = None;
+        let down = Err("code 2: down".to_string());
+        assert_eq!(super::poll_report(&mut last, &down).as_deref(), Some("code 2: down"));
+        assert_eq!(super::poll_report(&mut last, &down), None);
+        assert_eq!(super::poll_report(&mut last, &Err("code 3: other".to_string())).as_deref(), Some("code 3: other"));
+        assert_eq!(super::poll_report(&mut last, &Ok(0)).as_deref(), Some("the queue answers again"));
+        assert_eq!(super::poll_report(&mut last, &Ok(1)), None);
+    }
+
+    #[test]
+    fn an_unparseable_list_is_a_failed_poll_not_an_empty_queue() {
+        let call = |_: &[&str]| (0, "not json".to_string());
+        let err = super::poll_once(&call, |_| {}).unwrap_err();
+        assert!(err.contains("not the request list") && err.contains("not json"), "{err}");
+    }
+
+    #[test]
+    fn a_failed_take_is_skipped() {
+        let call = |args: &[&str]| if args[1] == "list" { (0, queued_json("wr-2")) } else { (1, "not queued".into()) };
+        assert_eq!(super::poll_once(&call, |_| panic!("not ours")), Ok(0));
+    }
     #[test]
     fn every_verb_that_starts_a_program_is_recorded_and_the_reads_stay_in_the_service() {
         for verb in ["submit", "ack", "file-followup", "split", "blocked", "superseded-by", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand", "hel", "mender", "forge", "file", "ask"] {
