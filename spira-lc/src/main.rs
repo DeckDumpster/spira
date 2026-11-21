@@ -235,16 +235,7 @@ fn main() {
     // Every store call goes through the service that owns the store's connections; when it is
     // down the call fails naming it (client.rs). Only a declared-empty socket (direct mode, a
     // fixture with no service) or a verb never forwarded reaches the connection below.
-    let args = match args.first().map(String::as_str) {
-        Some("reconcile-landed") => match control::state::landed::with_proof(&args[1..]) {
-            Ok(proved) => std::iter::once(args[0].clone()).chain(proved).collect(),
-            Err((code, out)) => {
-                spira_store::lc_call::print_answer(code, &out);
-                std::process::exit(code);
-            }
-        },
-        _ => args,
-    };
+    let args = prove_reconcile_landed(args);
     let args = cutover::inline_stdin_payload(args);
     if args.len() >= 2 && args[0] == "journal" && args[1] == "sweep" && args[2..].iter().all(|a| a == "--dry-run") && args.len() <= 3 {
         let (code, out) = journal::sweep_until_done(&mut |a| client::try_socket(a).unwrap_or_else(|| dispatch(a)), args.len() == 3);
@@ -261,6 +252,20 @@ fn main() {
         println!("{out}");
     }
     std::process::exit(code);
+}
+
+/// `reconcile-landed` is proved from git here, in the caller's process; the served verb trusts the flags.
+fn prove_reconcile_landed(args: Vec<String>) -> Vec<String> {
+    if args.first().map(String::as_str) != Some("reconcile-landed") {
+        return args;
+    }
+    match control::state::landed::with_proof(&args[1..]) {
+        Ok(proved) => std::iter::once(args[0].clone()).chain(proved).collect(),
+        Err((code, out)) => {
+            spira_store::lc_call::print_answer(code, &out);
+            std::process::exit(code);
+        }
+    }
 }
 
 /// The primitives as a caller verb reaches them: the service socket, or — only in declared
