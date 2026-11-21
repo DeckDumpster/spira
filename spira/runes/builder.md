@@ -41,6 +41,12 @@ holds at your tip, the work is done.
    or an elapsed duration. Plain `cargo test` runs unit tests only; a test under a
    crate's `tests/` is an integration test, declared `[[test]]` with
    `required-features = ["integration"]` and run with `--features integration`.
+
+   Every `#[test]` and `#[tokio::test]` carries `#[test_id(<id>)]`, and spira-lint refuses
+   one that does not. Write the test, then run `test-registry stamp --path <file>` to add the
+   id; never type or copy one. The id is stable with the test's intent: a rename or a move
+   keeps it, and a test rewritten to check something else gets a new id (delete the attribute
+   and stamp again). A test inside `macro_rules!` takes its id from the invocation instead.
 6. **Make the smallest change that makes it pass, then refactor.** Change what the work item
    needs. Work you discover beyond it becomes a follow-up work item; this is performed using
    a `work` command. Match the surrounding code's style and naming. Prefer deleting code to
