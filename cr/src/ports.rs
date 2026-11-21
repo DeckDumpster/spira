@@ -68,6 +68,8 @@ pub struct Config {
 /// The `issue_type` of each bead named, read through spira-lc; a bead the store lacks is absent.
 pub trait Beads {
     fn types(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String>;
+    /// Of the beads named, those labelled `incident`, with their titles.
+    fn incidents(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String>;
 }
 
 const BEAD_CHUNK: usize = 50;
@@ -76,23 +78,39 @@ pub struct LcBeads;
 
 impl Beads for LcBeads {
     fn types(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String> {
-        let lc = spira_store::lc_call::LcClient::configured()?;
         let mut out = BTreeMap::new();
-        for chunk in ids.chunks(BEAD_CHUNK) {
-            let argv = ["plan".to_string(), "items".into(), "--ids".into(), chunk.join(",")];
-            let reply = lc.call(&argv).map_err(String::from)?;
-            let items = serde_json::from_str::<serde_json::Value>(reply.out.trim()).ok().and_then(|mut v| v.get_mut("items").map(serde_json::Value::take));
-            let Some(serde_json::Value::Array(items)) = items.filter(|_| reply.code == 0) else {
-                return Err(format!("spira-lc plan items: {}", reply.why()));
-            };
-            for item in &items {
-                if let (Some(id), Some(kind)) = (item["id"].as_str(), item["issue_type"].as_str()) {
-                    out.insert(id.to_string(), kind.to_string());
-                }
+        for item in plan_items(ids)? {
+            if let (Some(id), Some(kind)) = (item["id"].as_str(), item["issue_type"].as_str()) {
+                out.insert(id.to_string(), kind.to_string());
             }
         }
         Ok(out)
     }
+    fn incidents(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String> {
+        let mut out = BTreeMap::new();
+        for item in plan_items(ids)? {
+            let labelled = item["labels"].as_array().is_some_and(|l| l.iter().any(|x| x == "incident"));
+            if let (true, Some(id)) = (labelled, item["id"].as_str()) {
+                out.insert(id.to_string(), item["title"].as_str().unwrap_or("").to_string());
+            }
+        }
+        Ok(out)
+    }
+}
+
+fn plan_items(ids: &[String]) -> Result<Vec<serde_json::Value>, String> {
+    let lc = spira_store::lc_call::LcClient::configured()?;
+    let mut all = Vec::new();
+    for chunk in ids.chunks(BEAD_CHUNK) {
+        let argv = ["plan".to_string(), "items".into(), "--ids".into(), chunk.join(","), "--full".into()];
+        let reply = lc.call(&argv).map_err(String::from)?;
+        let items = serde_json::from_str::<serde_json::Value>(reply.out.trim()).ok().and_then(|mut v| v.get_mut("items").map(serde_json::Value::take));
+        let Some(serde_json::Value::Array(items)) = items.filter(|_| reply.code == 0) else {
+            return Err(format!("spira-lc plan items: {}", reply.why()));
+        };
+        all.extend(items);
+    }
+    Ok(all)
 }
 
 /// Every test the registry ever disabled, with the first time (epoch seconds) it was.
@@ -115,17 +133,20 @@ impl Registry for SqliteRegistry {
 
 /// A fixed answer for tests and simulation.
 #[derive(Clone)]
-pub struct FixtureBeads(pub Result<BTreeMap<String, String>, String>);
+pub struct FixtureBeads(pub Result<BTreeMap<String, String>, String>, pub Result<BTreeMap<String, String>, String>);
 
 impl Default for FixtureBeads {
     fn default() -> Self {
-        FixtureBeads(Ok(BTreeMap::new()))
+        FixtureBeads(Ok(BTreeMap::new()), Ok(BTreeMap::new()))
     }
 }
 
 impl Beads for FixtureBeads {
     fn types(&self, _ids: &[String]) -> Result<BTreeMap<String, String>, String> {
         self.0.clone()
+    }
+    fn incidents(&self, _ids: &[String]) -> Result<BTreeMap<String, String>, String> {
+        self.1.clone()
     }
 }
 

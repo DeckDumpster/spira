@@ -13,7 +13,7 @@ use testkit::TempDir;
 
 const DOES: &str = "Opens the store and hands back a handle.";
 const LOOK: &str = "Start with how open builds the handle.";
-const HEADINGS: [&str; 6] = ["## What it does", "## What to look at first", "## Files", "## Who calls it", "## How often it changed", "## Tests that exercise it"];
+const HEADINGS: [&str; 7] = ["## What it does", "## What to look at first", "## Files", "## Who calls it", "## How often it changed", "## Incidents that touched it", "## Tests that exercise it"];
 
 struct World {
     run: TempDir,
@@ -589,7 +589,7 @@ fn the_cover_counts_every_commit_and_its_reverts_and_fixes() {
         commit("a5", "wip", false),
     ];
     w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", log));
-    w.ports.beads = Box::new(FixtureBeads(Ok([("sp-bug001", "bug"), ("sp-feat02", "feature")].map(|(a, b)| (a.to_string(), b.to_string())).into())));
+    w.ports.beads = Box::new(FixtureBeads(Ok([("sp-bug001", "bug"), ("sp-feat02", "feature")].map(|(a, b)| (a.to_string(), b.to_string())).into()), Ok(Default::default())));
     let body = sealed_body(&mut w);
     assert!(body.contains("- Commits: 5 ever, 1 reverts, 1 fixes"), "{body}");
 }
@@ -622,7 +622,7 @@ fn the_cover_names_tests_deleted_later_and_disabled_as_flaky() {
 fn an_unreadable_bead_store_or_registry_says_unknown_not_zero() {
     let mut w = world();
     w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", vec![commit("a1", "sp-bug001: fix", false)]));
-    w.ports.beads = Box::new(FixtureBeads(Err("store down".into())));
+    w.ports.beads = Box::new(FixtureBeads(Err("store down".into()), Ok(Default::default())));
     w.ports.registry = Box::new(FixtureRegistry(Err("registry locked".into())));
     let body = sealed_body(&mut w);
     assert!(body.contains("fixes: unknown (store down)"), "{body}");
@@ -884,4 +884,33 @@ fn comments_recorded_at_close_weigh_the_next_pick_in_their_area() {
     assert_eq!(o.code, 0, "{} {}", o.stdout, o.stderr);
     let v: serde_json::Value = serde_json::from_str(&o.stdout).unwrap();
     assert!(v["weight"]["attention_share"].as_f64().unwrap() > 0.0, "{v}");
+
+#[test]
+fn the_cover_lists_the_incidents_whose_commits_touched_the_unit() {
+    let mut w = world();
+    let log = vec![commit("a1", "spira: land sp-inc001 — the store lost a write", false), commit("a2", "sp-feat02: add a handle", false)];
+    w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", log));
+    w.ports.beads = Box::new(FixtureBeads(Ok(Default::default()), Ok([("sp-inc001".to_string(), "the store lost a write".to_string())].into())));
+    let body = sealed_body(&mut w);
+    let section = body.split("## Incidents that touched it").nth(1).unwrap().split("\n## ").next().unwrap();
+    assert!(section.contains("- `sp-inc001`: the store lost a write"), "{body}");
+    assert!(!section.contains("sp-feat02"), "{body}");
+}
+
+#[test]
+fn a_unit_no_incident_touched_says_none_found() {
+    let mut w = world();
+    w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", vec![commit("a2", "sp-feat02: add a handle", false)]));
+    let body = sealed_body(&mut w);
+    let section = body.split("## Incidents that touched it").nth(1).unwrap().split("\n## ").next().unwrap();
+    assert!(section.contains("None found."), "{body}");
+}
+
+#[test]
+fn an_unreadable_incident_lookup_says_unknown_not_none() {
+    let mut w = world();
+    w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", vec![commit("a2", "sp-feat02: add a handle", false)]));
+    w.ports.beads = Box::new(FixtureBeads(Ok(Default::default()), Err("store down".into())));
+    let body = sealed_body(&mut w);
+    assert!(body.contains("Incidents: unknown (store down)") && !body.contains("None found.\n\n## Tests"), "{body}");
 }
