@@ -16,6 +16,8 @@ pub(crate) struct FakeBd {
     pub(crate) lc_down: bool,
     /// `spira-lc fact` refuses every write.
     pub(crate) fact_fails: bool,
+    /// `bd create` refuses with this text.
+    pub(crate) create_error: Option<String>,
     pub(crate) created: RefCell<Vec<(String, String)>>,
     pub(crate) bodies: RefCell<HashMap<String, String>>,
     pub(crate) reopened: RefCell<Vec<String>>,
@@ -52,6 +54,9 @@ impl Bd for FakeBd {
             .collect())
     }
     fn create(&self, _db: &str, title: &str, _kind: &str, _priority: &str, labels: &str, external_ref: &str, _body: &str, _actor: Option<&str>) -> Result<String, String> {
+        if let Some(e) = &self.create_error {
+            return Err(e.clone());
+        }
         let mut n = self.next_id.borrow_mut();
         let id = format!("sp-fake{n}");
         *n += 1;

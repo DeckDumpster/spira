@@ -341,7 +341,13 @@ pub fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock,
     for l in &log {
         ilog(env, l);
     }
-    if let Some(o) = crate::attempts::of_file(&outcome) {
+    let attempt = match &outcome {
+        FileOutcome::LaneRefused(reason) => {
+            Some(tsd::alarm::Outcome::Failed { reason: format!("{reason}; {} stays spooled until the repo admits the lane", path.display()) })
+        }
+        other => crate::attempts::of_file(other),
+    };
+    if let Some(o) = attempt {
         let message = matches!(o, tsd::alarm::Outcome::Failed { .. }).then(|| note_of(&entry.title, &entry.body));
         record_attempt(env, "incident-file", "incident", &entry.reference, o, message);
     }
@@ -354,7 +360,7 @@ pub fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock,
             let _ = std::fs::remove_file(path);
             Ok(None)
         }
-        FileOutcome::Unreachable | FileOutcome::Refused => Err(()),
+        FileOutcome::Unreachable | FileOutcome::Refused | FileOutcome::LaneRefused(_) => Err(()),
     }
 }
 
@@ -663,6 +669,21 @@ mod tests {
         assert_eq!(drain_report(n, stuck), "drained 1, still spooled 0");
         assert!(!p.exists());
         assert_eq!(up.created.borrow().len(), 1);
+    }
+
+    // covers: UC-ops-detection-remediation-10
+    #[test]
+    fn a_lane_refusal_surfaces_as_a_failed_attempt_naming_the_repo_and_the_spool_file() {
+        let dir = testkit::TempDir::new("incident-drain-lane");
+        let env = env_in(&dir);
+        let p = spool(&env, "20260101T000000Z-a", &entry("incident:lane"));
+        let bd = FakeBd { create_error: Some("bead: repo:walled does not admit lane incident — refused by its admitted lanes (plan)\nbead: override".into()), ..FakeBd::new() };
+        let (n, stuck) = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000));
+        assert_eq!((n, stuck), (0, 1));
+        assert!(p.exists());
+        let attempts = tsd::alarm::read(std::path::Path::new(&env.spira_run));
+        let tsd::alarm::Outcome::Failed { reason } = &attempts.last().expect("an attempt is recorded").outcome else { panic!("{attempts:?}") };
+        assert!(reason.contains("repo:walled") && reason.contains(&p.display().to_string()), "{reason}");
     }
 
     // covers: UC-ops-detection-remediation-10

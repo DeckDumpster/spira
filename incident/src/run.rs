@@ -40,6 +40,10 @@ pub enum FileOutcome {
     /// retrying an unreachable-looking failure is safer than silently dropping the event,
     /// and the guard message is on the log for a human to fix the caller.
     Refused,
+    /// `bd create` refused the filing because the repo's admitted lanes leave out `incident`.
+    /// Holds the refusal's first line, which names the repo; the caller surfaces it with the
+    /// spool path rather than leaving the entry silently spooled.
+    LaneRefused(String),
     /// The event was activation skew on a key the running release retired: logged, nothing filed.
     Skew,
 }
@@ -328,6 +332,11 @@ fn file_new(
     };
     let id = match bd.create(cfg.db, title, cfg.kind, cfg.priority, &create_labels, reference, &body, cfg.actor) {
         Ok(id) => id,
+        Err(e) if e.contains("does not admit lane") => {
+            let reason = e.lines().next().unwrap_or_default().to_string();
+            log.push(format!("create REFUSED for {reference} — {reason} — stays spooled"));
+            return FileOutcome::LaneRefused(reason);
+        }
         Err(e) => {
             log.push(format!("create FAILED for {reference} — stays spooled ({e})"));
             return FileOutcome::Unreachable;
