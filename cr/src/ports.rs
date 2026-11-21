@@ -81,7 +81,7 @@ pub struct LcBeads {
 impl Beads for LcBeads {
     fn types(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String> {
         let mut out = BTreeMap::new();
-        for item in plan_items(ids, false)? {
+        for item in plan_items(ids)? {
             if let (Some(id), Some(kind)) = (item["id"].as_str(), item["issue_type"].as_str()) {
                 out.insert(id.to_string(), kind.to_string());
             }
@@ -92,7 +92,7 @@ impl Beads for LcBeads {
         if self.incident_label.is_empty() {
             return Err("SPIRA_INCIDENT_LABEL is empty: cannot tell which beads are incidents".into());
         }
-        Ok(incidents_in(&plan_items(ids, true)?, &self.incident_label))
+        Ok(incidents_in(&plan_items(ids)?, &self.incident_label))
     }
 }
 
@@ -101,14 +101,11 @@ fn incidents_in(items: &[serde_json::Value], label: &str) -> BTreeMap<String, St
     items.iter().filter(labelled).filter_map(|i| Some((i["id"].as_str()?.to_string(), i["title"].as_str().unwrap_or("(untitled)").to_string()))).collect()
 }
 
-fn plan_items(ids: &[String], full: bool) -> Result<Vec<serde_json::Value>, String> {
+fn plan_items(ids: &[String]) -> Result<Vec<serde_json::Value>, String> {
     let lc = spira_store::lc_call::LcClient::configured()?;
     let mut all = Vec::new();
     for chunk in ids.chunks(BEAD_CHUNK) {
-        let mut argv = vec!["plan".to_string(), "items".into(), "--ids".into(), chunk.join(",")];
-        if full {
-            argv.push("--full".into());
-        }
+        let argv = ["plan".to_string(), "items".into(), "--ids".into(), chunk.join(",")];
         let reply = lc.call(&argv).map_err(String::from)?;
         let items = serde_json::from_str::<serde_json::Value>(reply.out.trim()).ok().and_then(|mut v| v.get_mut("items").map(serde_json::Value::take));
         let Some(serde_json::Value::Array(items)) = items.filter(|_| reply.code == 0) else {
