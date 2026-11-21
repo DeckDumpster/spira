@@ -687,39 +687,66 @@ fn gate_own_left_out(
     (kept, left)
 }
 
-/// The provisional rows the landing ref's gate definition holds out of the cut. An ungated
-/// landing ref holds out nothing; a definition that does not read holds out every provisional
-/// row, because a control that cannot check refuses.
+/// The provisional rows the gate definition text holds out of the cut. No text (an ungated
+/// landing ref) holds out nothing. A definition that does not read, or a diff that cannot be
+/// read, holds the row out: a control that cannot check refuses.
+fn gate_own_apply(
+    pool: Vec<PoolRow>,
+    text: Option<&str>,
+    changed: &mut dyn FnMut(&PoolRow) -> Result<Vec<String>, String>,
+) -> (Vec<PoolRow>, Vec<LeftOut>) {
+    let Some(text) = text else {
+        return (pool, Vec::new());
+    };
+    let unjudged = |r: PoolRow, why: String| LeftOut { id: r.0, tip: r.1, cause: Cause::GateUnjudged { paths: vec![why] } };
+    let def = match gate::def::parse(text) {
+        Ok(d) => d,
+        Err(e) => {
+            let why = format!("{} on the landing ref does not read: {e}", gate::def::PATH);
+            let (provisional, certified): (Vec<_>, Vec<_>) = pool.into_iter().partition(|r| r.5);
+            return (certified, provisional.into_iter().map(|r| unjudged(r, why.clone())).collect());
+        }
+    };
+    let mut map = BTreeMap::new();
+    let mut left = Vec::new();
+    let mut readable = Vec::new();
+    for r in pool {
+        if !r.5 {
+            readable.push(r);
+            continue;
+        }
+        match changed(&r) {
+            Ok(paths) => {
+                map.insert(r.0.clone(), paths);
+                readable.push(r);
+            }
+            Err(e) => left.push(unjudged(r, format!("its changed paths could not be read: {e}"))),
+        }
+    }
+    let (kept, owned) = gate_own_left_out(readable, &def, &map);
+    left.extend(owned);
+    (kept, left)
+}
+
+/// `gate.steps` at the landing ref: None when the ref has none, Err when git cannot say.
+fn gate_def_at(repo: &Repo, rev: &str) -> Result<Option<String>, String> {
+    let listed = run(
+        Command::new("git").arg("-C").arg(&repo.path).args(["ls-tree", "--name-only", rev, gate::def::PATH]),
+        "git ls-tree gate definition",
+    )?;
+    if listed.trim().is_empty() {
+        return Ok(None);
+    }
+    file_at(repo, rev, gate::def::PATH).map(Some).ok_or_else(|| format!("{} on {rev} could not be read", gate::def::PATH))
+}
+
 fn gate_own_check(repo: &Repo, pool: Vec<PoolRow>) -> Result<(Vec<PoolRow>, Vec<LeftOut>), String> {
     if !pool.iter().any(|r| r.5) {
         return Ok((pool, Vec::new()));
     }
     let base_sha = resolve_base_sha(repo)?;
-    let Some(text) = file_at(repo, &base_sha, gate::def::PATH) else {
-        return Ok((pool, Vec::new()));
-    };
-    match gate::def::parse(&text) {
-        Ok(def) => {
-            let changed: BTreeMap<String, Vec<String>> = pool
-                .iter()
-                .filter(|r| r.5)
-                .map(|r| (r.0.clone(), changed_paths(repo, &base_sha, &r.1)))
-                .collect();
-            Ok(gate_own_left_out(pool, &def, &changed))
-        }
-        Err(e) => {
-            let (provisional, certified): (Vec<_>, Vec<_>) = pool.into_iter().partition(|r| r.5);
-            let left = provisional
-                .into_iter()
-                .map(|r| LeftOut {
-                    id: r.0,
-                    tip: r.1,
-                    cause: Cause::GateUnjudged { paths: vec![format!("{} on the landing ref does not read: {e}", gate::def::PATH)] },
-                })
-                .collect();
-            Ok((certified, left))
-        }
-    }
+    let text = gate_def_at(repo, &base_sha)?;
+    Ok(gate_own_apply(pool, text.as_deref(), &mut |r| changed_paths_checked(repo, &base_sha, &r.1)))
 }
 
 /// Beads that carry their commits into whatever stacks on them yet may not be batched
@@ -1982,6 +2009,14 @@ pub fn last_touching(repo: &Repo, at: &str, paths: &[String]) -> Option<String> 
 
 /// The paths `tip` changed since it forked from `base_sha` (`git diff base...tip`) — what
 /// attribution orders suspects by and decides a rerun's build by.
+pub fn changed_paths_checked(repo: &Repo, base_sha: &str, tip: &str) -> Result<Vec<String>, String> {
+    let out = run(
+        Command::new("git").arg("-C").arg(&repo.path).args(["diff", "--name-only", &format!("{base_sha}...{tip}")]),
+        "git diff changed paths",
+    )?;
+    Ok(out.lines().filter(|l| !l.is_empty()).map(str::to_string).collect())
+}
+
 pub fn changed_paths(repo: &Repo, base_sha: &str, tip: &str) -> Vec<String> {
     run(
         Command::new("git").arg("-C").arg(&repo.path).args([
@@ -5129,6 +5164,29 @@ mod pool_parity_tests {
         );
         assert_eq!(pool.iter().map(|p| (p.0.as_str(), p.5)).collect::<Vec<_>>(), [("sp-o", true), ("sp-x", true)]);
         assert_eq!(left.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), ["sp-y"]);
+    }
+
+    #[test]
+    fn an_unreadable_gate_definition_or_diff_leaves_out_provisional_rows_and_keeps_certified_ones() {
+        let rows = [
+            serde_json::json!({"bead_id": "sp-p", "state": "SUBMITTED", "tip": "tp", "holds": []}),
+            serde_json::json!({"bead_id": "sp-c", "state": "CERTIFIED", "tip": "tc", "holds": []}),
+        ];
+        let pool = || pool_rows(&rows, "spira").0;
+        let ids = |p: &[PoolRow]| p.iter().map(|r| r.0.clone()).collect::<Vec<_>>();
+        let (kept, left) = gate_own_apply(pool(), Some("nonsense\n"), &mut |_| Ok(vec![]));
+        assert_eq!((ids(&kept), ids_of(&left)), (vec!["sp-c".to_string()], vec!["sp-p".to_string()]));
+        let (kept, left) = gate_own_apply(pool(), Some("own gate/\nstep a\n"), &mut |_| Err("boom".into()));
+        assert_eq!((ids(&kept), ids_of(&left)), (vec!["sp-c".to_string()], vec!["sp-p".to_string()]));
+        let (kept, left) = gate_own_apply(pool(), None, &mut |_| panic!("an ungated repo reads no diff"));
+        assert_eq!((kept.len(), left.len()), (2, 0));
+        let mut asked = Vec::new();
+        gate_own_apply(pool(), Some("own gate/\nstep a\n"), &mut |r| { asked.push(r.0.clone()); Ok(vec![]) });
+        assert_eq!(asked, ["sp-p"]);
+    }
+
+    fn ids_of(left: &[LeftOut]) -> Vec<String> {
+        left.iter().map(|l| l.id.clone()).collect()
     }
 
     #[test]
