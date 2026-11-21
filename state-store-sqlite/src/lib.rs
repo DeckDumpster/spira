@@ -1644,7 +1644,8 @@ impl SqliteBackend {
         let deadline = gate_began.saturating_add(max_read_ms);
         let waiting = phases::begin_unconfirmed(Phase::GateWait);
         drop(lock(&inner.read_gate));
-        waiting.confirm_after(Duration::from_millis(inner.clock.now_ms().saturating_sub(gate_began)));
+        let began = inner.clock.now_ms();
+        waiting.confirm_after(Duration::from_millis(began.saturating_sub(gate_began)));
         let _reading = phases::begin(Phase::Read);
         reader.deadline.store(deadline, Ordering::SeqCst);
         let ended = || Error::Backend(format!("{READ_ENDED} ({max_read_ms} ms)"));
@@ -1655,7 +1656,6 @@ impl SqliteBackend {
                 Ok(())
             }
         };
-        let began = inner.clock.now_ms();
         let mut overran = false;
         let out = (|| {
             let tx = conn
