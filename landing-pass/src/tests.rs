@@ -477,10 +477,6 @@ impl crate::lifecycle::Lc for FakeLc {
         self.reds.borrow_mut().push(format!("{id} {tip} {reason} step={step} message={message}"));
         self.certify(id, tip, "red", reason)
     }
-    fn hold_wait(&self, id: &str, until: u64, why: &str) -> Result<String, String> {
-        self.holds.borrow_mut().push(format!("{id} wait {until} {why}"));
-        Ok("held".into())
-    }
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String> {
         self.resubmits.borrow_mut().push(format!("{id} {tip}"));
         if self.refuse_pass.get() {
@@ -2431,20 +2427,24 @@ fn a_tip_killed_over_cap_twice_is_gated_again_after_the_backoff_not_deferred() {
 }
 
 #[test]
-fn an_unjudged_tip_is_still_held_when_its_incident_cannot_be_filed() {
+fn an_unjudged_tip_is_not_held_and_not_gated_again_when_its_incident_cannot_be_filed() {
     let mut h = h_worker(LandMode::Queue);
     h.s.noverdict_max = 1;
     h.closed("sp-a", "t1");
+    let q = crate::gateq::GateQueue::new(&h.s.run);
     *h.lib.incident_out.borrow_mut() = Some(Err(1));
     file_verdict(&h, "sp-a", "t1", 75, "gate: VERDICT=NO_VERDICT reason=deadline branch=b repo=spira suite=- (x)\n");
     h.run();
-    let holds = h.lc.holds.borrow().clone();
-    assert!(holds.len() == 1 && holds[0].contains("incident not filed"), "{holds:?}");
+    assert!(h.lc.holds.borrow().is_empty(), "{:?}", h.lc.holds.borrow());
     assert!(h.logged("the gate-unjudged incident was not filed"));
+    assert!(h.logged("incident not filed"));
+    h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
+    h.run();
+    assert!(q.queued().is_empty());
 }
 
 #[test]
-fn past_the_bound_an_unjudged_tip_is_held_once_and_one_incident_is_filed() {
+fn past_the_bound_an_unjudged_tip_is_not_held_and_not_gated_again_and_one_incident_is_filed() {
     let mut h = h_worker(LandMode::Queue);
     h.s.noverdict_max = 2;
     h.closed("sp-a", "t1");
@@ -2457,32 +2457,44 @@ fn past_the_bound_an_unjudged_tip_is_held_once_and_one_incident_is_filed() {
         file_verdict(&h, "sp-a", "t1", 75, unjudged);
         h.run();
     }
-    let holds = h.lc.holds.borrow().clone();
-    assert_eq!(holds.len(), 1, "{holds:?}");
-    assert!(holds[0].starts_with("sp-a wait "), "{holds:?}");
-    assert!(holds[0].contains("t1") && holds[0].contains("deadline, deadline") && holds[0].contains("incident sp-inc1"), "{holds:?}");
+    assert!(h.lc.holds.borrow().is_empty(), "{:?}", h.lc.holds.borrow());
     assert_eq!(h.lib.calls.borrow().iter().filter(|c| c.starts_with("incident ")).count(), 1);
     assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("incident ") && c.contains("late gate output")));
     assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("incident gate-unjudged spira gate-unjudged:spira:deadline ")));
+    assert!(h.logged("not gated again until") && h.logged("it stays in the round pool"));
     assert!(!h.lib.has("reopen"));
     assert!(q.queued().is_empty());
 
-    let mut row = h.beads.rows.borrow().get("sp-a").unwrap().clone();
-    row.holds = vec!["wait".into()];
-    h.beads.rows.borrow_mut().insert("sp-a".into(), row.clone());
-    for _ in 0..2 {
-        h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
-        h.run();
-    }
+    h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
+    h.run();
     assert!(q.queued().is_empty());
     assert_eq!(h.lib.calls.borrow().iter().filter(|c| c.starts_with("incident ")).count(), 1);
-    assert!(h.logged("is held"));
 
-    row.holds.clear();
-    h.beads.rows.borrow_mut().insert("sp-a".into(), row);
+    h.clock.t.set(h.clock.t.get() + h.s.noverdict_class_window as u64 + 1);
     h.run();
     assert_eq!(q.queued().len(), 1, "{:?}", h.out.lines());
     assert_eq!(q.queued()[0].tip, "t1");
+}
+
+#[test]
+fn a_new_tip_lifts_the_unjudged_stop_inside_the_window() {
+    let h = h_with_unjudged_incident();
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    assert!(q.queued().is_empty());
+    h.git.refs.borrow_mut().retain(|(b, _)| b != "spira/sp-a");
+    h.git.add("spira/sp-a", "t9");
+    h.run();
+    assert!(q.queued().iter().any(|j| j.branch == "spira/sp-a" && j.tip == "t9"), "{}", q.queued().len());
+}
+
+#[test]
+fn a_verdict_elsewhere_in_the_repo_lifts_the_unjudged_stop_on_the_next_pass() {
+    let h = h_with_unjudged_incident();
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    verdict_on_sp_b(&h, 0, PASS_OUT);
+    assert!(h.lc.holds.borrow().is_empty());
+    h.run();
+    assert!(q.queued().iter().any(|j| j.branch == "spira/sp-a" && j.tip == "t1"), "{:?}", q.queued().len());
 }
 
 #[test]
@@ -2501,10 +2513,9 @@ fn unjudged_beads_with_one_reason_share_one_incident_reference() {
     let calls = h.lib.calls.borrow().clone();
     let refs: Vec<&str> = calls.iter().filter(|c| c.starts_with("incident ")).filter_map(|c| c.split(' ').nth(3)).collect();
     assert_eq!(refs, ["gate-unjudged:spira:deny-list"; 5].iter().copied().chain(["gate-unjudged:spira:deadline"]).collect::<Vec<_>>(), "{calls:?}");
-    let holds = h.lc.holds.borrow().clone();
-    assert_eq!(holds.len(), 6, "{holds:?}");
-    for (hold, id) in holds.iter().zip(["sp-a", "sp-b", "sp-c", "sp-d", "sp-e", "sp-f"]) {
-        assert!(hold.starts_with(&format!("{id} wait ")) && hold.contains("incident sp-inc"), "{hold}");
+    assert!(h.lc.holds.borrow().is_empty());
+    for id in ["sp-a", "sp-b", "sp-c", "sp-d", "sp-e", "sp-f"] {
+        assert!(h.logged(&format!("CHECK6 {id}: spira/{id} at t1 not gated again until")), "{id}");
     }
     let bodies: Vec<&String> = calls.iter().filter(|c| c.starts_with("incident ")).collect();
     for (call, id) in bodies.iter().zip(["sp-a", "sp-b", "sp-c", "sp-d", "sp-e", "sp-f"]) {

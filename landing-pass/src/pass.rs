@@ -772,7 +772,7 @@ impl<'a> Pass<'a> {
                         self.files.back_off(br, &tip, self.clock.now() + self.s.gate_backoff.max(0) as u64);
                         let seen = self.files.note_exhaust(br, &tip, &reason);
                         if seen.len() >= self.s.noverdict_max.max(1) as usize {
-                            held = self.hold_unjudged(w, br, id, &tip, &seen, &g.out);
+                            held = self.stop_regating_unjudged(w, br, id, &tip, &seen, &g.out);
                         }
                     }
                     regate.set(!moved && !held);
@@ -841,6 +841,10 @@ impl<'a> Pass<'a> {
     fn settle_unjudged(&self, repo: &str, br: &str, tip: &str, verdict: &str) {
         let at = crate::util::iso_utc(self.clock.now());
         let evidence = format!("{repo}'s gate reached a verdict ({verdict}) on {br} at {tip} at {at}: the gate can judge again");
+        for b in self.files.unjudged_branches(repo) {
+            self.files.clear_backoff(&b);
+        }
+        self.files.forget_unjudged_branches(repo);
         for inc in self.files.unjudged_incidents(repo) {
             match self.lib.close_incident(&inc, &evidence) {
                 Ok(()) => {
@@ -852,10 +856,10 @@ impl<'a> Pass<'a> {
         }
     }
 
-    /// The gate could not judge this tip `reasons.len()` times: hold the bead until the hold
-    /// lifts itself and file one incident. A harness fault, so no rework and no attempt charged.
-    /// True when the hold was placed.
-    fn hold_unjudged(&self, w: &Walk, br: &str, id: &str, tip: &str, reasons: &[String], out: &str) -> bool {
+    /// The gate could not judge this tip `reasons.len()` times: stop gating it until the window
+    /// ends, a verdict lands in the repo, or the tip moves, and file one incident. A harness
+    /// fault, so no rework, no attempt charged, and no lifecycle hold: the bead stays in the pool.
+    fn stop_regating_unjudged(&self, w: &Walk, br: &str, id: &str, tip: &str, reasons: &[String], out: &str) -> bool {
         let repo = &w.repo.name;
         let n = reasons.len();
         let joined = reasons.join(", ");
@@ -866,7 +870,7 @@ impl<'a> Pass<'a> {
             format!("Reasons, in order: {joined}"),
             format!("Each run was followed by a backoff of {}s before the tip was gated again.", self.s.gate_backoff),
             "A gate that cannot judge is a harness fault, not the bead's: the bead was not reopened and no attempt was charged.".into(),
-            "The bead is held and is not gated while the hold stands; it lifts itself at expiry.".into(),
+            format!("The tip is not gated again until the {}s window ends, the repo's gate reaches a verdict on any branch, or the branch gets a new tip. The bead is not held and stays in the round pool.", self.s.noverdict_class_window),
             String::new(),
             "--- the last run's output -------------------------------------------------------------".into(),
             tail_bytes(out, 6000),
@@ -890,19 +894,12 @@ impl<'a> Pass<'a> {
             self.files.note_unjudged_incident(repo, &inc);
         }
         let inc = if inc.is_empty() { "not filed".to_string() } else { inc };
-        let why = format!("gate could not judge {tip}: {joined} — incident {inc}; lifts at expiry, or `spira-lc unhold {id} wait` once the harness is fixed");
         let until = self.clock.now() + self.s.noverdict_class_window.max(0) as u64;
-        match self.lc.hold_wait(id, until, &why) {
-            Ok(_) => {
-                self.files.clear_exhaust(br);
-                self.log(&format!("CHECK6 {id}: {br} at {tip} held — the gate could not judge it {n} time(s): {joined}; incident {inc}"));
-                true
-            }
-            Err(e) => {
-                self.log(&format!("CHECK6 {id}: {br} at {tip} held — the gate could not judge it {n} time(s): {joined}; incident {inc}; the hold was NOT placed: {e}"));
-                false
-            }
-        }
+        self.files.back_off(br, tip, until);
+        self.files.note_unjudged_branch(repo, br);
+        self.files.clear_exhaust(br);
+        self.log(&format!("CHECK6 {id}: {br} at {tip} not gated again until {} — the gate could not judge it {n} time(s): {joined}; incident {inc}; it stays in the round pool", crate::util::iso_utc(until)));
+        true
     }
 
     fn awaiting_first_cut(&self, br: &str) -> bool {
