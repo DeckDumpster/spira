@@ -646,10 +646,8 @@ fn a_gate_check_closes_the_timer_gates_that_expired_as_bd_does_in_sql_and_starts
     assert!(out.contains("Checked 2 gates: 1 resolved, 0 escalated, 0 errors"), "{out}");
     let g2 = gate_for(&store, &a2, &["--type=timer", "--timeout=1ms"]);
     store.bd(&["gate", "check", "--type=timer"], None);
-    for (x, y, x2, y2) in [(&a, &g, &a2, &g2)] {
-        assert_eq!(without_reason(plain(&lc.shows(x), x, y)), without_reason(plain(&lc.shows(x2), x2, y2)), "the blocked bead reads differently");
-        assert_eq!(without_reason(plain(&lc.shows(y), x, y)), without_reason(plain(&lc.shows(y2), x2, y2)), "the gate reads differently");
-    }
+    assert_eq!(without_reason(plain(&lc.shows(&a), &a, &g)), without_reason(plain(&lc.shows(&a2), &a2, &g2)), "the blocked bead reads differently");
+    assert_eq!(without_reason(plain(&lc.shows(&g), &a, &g)), without_reason(plain(&lc.shows(&g2), &a2, &g2)), "the gate reads differently");
     assert!(lc.shows(&g).contains("timer expired"), "the close reason is bd's");
     let (out, children) = lc.children_of("content", &["content", "gate", "check", "--type", "gh:run"], None);
     assert_eq!((children, out.trim()), (0, "No open gates of type 'gh:run' found."));
