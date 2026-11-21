@@ -828,6 +828,7 @@ mod tests {
         assert!(take_gate_wait_series(std::time::SystemTime::now()).iter().all(|s| s.labels[0].1 != "list"), "taken once");
     }
 
+    #[test_id(tkw2p4i)]
     #[test]
     fn reads_done_accumulates_into_the_counters() {
         reads_done("reads-probe", 1, 0);

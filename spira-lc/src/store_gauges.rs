@@ -190,6 +190,7 @@ mod tests {
         assert!(exprs("control store day-file bytes by family").contains(FAMILY_BYTES_GAUGE));
     }
 
+    #[test_id(tknfgnh)]
     #[test]
     fn the_checkpointing_row_queries_each_metric_by_its_const_and_the_wal_panel_carries_its_lines() {
         use crate::slow::{GATE_WAIT_MAX_SECONDS, READS_ENDED, READS_OVERRAN};

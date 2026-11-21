@@ -362,6 +362,7 @@ fn first_line(out: &str) -> String {
     out.lines().next().unwrap_or_default().trim().to_string()
 }
 
+#[test_id(tehblp4)]
 #[test]
 fn a_create_gets_its_id_from_the_server_in_the_one_transaction_and_starts_no_process() {
     let Some(store) = Store::up() else { return };
@@ -380,6 +381,7 @@ fn a_create_gets_its_id_from_the_server_in_the_one_transaction_and_starts_no_pro
     assert!(rc == 0 && row.to_lowercase().contains("ready"), "create-bead files the lifecycle row from the create's output ({rc}): {row}");
 }
 
+#[test_id(t2itwbv)]
 #[test]
 fn two_creates_sent_at_once_get_two_ids_and_bd_reads_both() {
     let Some(store) = Store::up() else { return };
@@ -397,6 +399,7 @@ fn two_creates_sent_at_once_get_two_ids_and_bd_reads_both() {
     }
 }
 
+#[test_id(t8ftyd2)]
 #[test]
 fn a_child_takes_the_next_number_under_its_parent() {
     let Some(store) = Store::up() else { return };
@@ -495,6 +498,7 @@ fn twins(store: &Store, lc: &Lc) -> Vec<(&'static str, i64, String)> {
     children
 }
 
+#[test_id(tsnw0w7)]
 #[test]
 fn each_remaining_write_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
     let Some(store) = Store::up() else { return };
@@ -504,6 +508,7 @@ fn each_remaining_write_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
     }
 }
 
+#[test_id(t1af6b0)]
 #[test]
 fn without_a_writer_credential_those_writes_still_go_through_bd_and_make_the_same_rows() {
     let Some(store) = Store::up() else { return };
@@ -524,6 +529,7 @@ const CREATES: &[(&str, &[&str], Option<&str>)] = &[
     ("a discovered-from edge", &["found while", "--deps", "discovered-from:{B}", "-d", "by flag"], None),
 ];
 
+#[test_id(ty31y7m)]
 #[test]
 fn a_create_makes_the_row_bd_makes_for_every_filing_flag() {
     let Some(store) = Store::up() else { return };
@@ -549,6 +555,7 @@ fn a_create_makes_the_row_bd_makes_for_every_filing_flag() {
     }
 }
 
+#[test_id(tk2b8ij)]
 #[test]
 fn a_create_prints_what_bd_prints_with_json_and_with_neither_flag() {
     let Some(store) = Store::up() else { return };
@@ -571,6 +578,7 @@ fn a_create_prints_what_bd_prints_with_json_and_with_neither_flag() {
     assert_eq!(text.replace(&id, "ID").lines().take(3).collect::<Vec<_>>(), said.replace(&bd_id, "ID").lines().take(3).collect::<Vec<_>>(), "{text} vs {said}");
 }
 
+#[test_id(tpe5vdv)]
 #[test]
 fn a_blocking_edge_blocks_its_dependent_and_closing_the_blocker_unblocks_it_as_bd_reads_it() {
     let Some(store) = Store::up() else { return };

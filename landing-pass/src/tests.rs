@@ -2592,6 +2592,7 @@ fn a_new_tip_lifts_the_unjudged_stop_inside_the_window() {
     assert!(q.queued().iter().any(|j| j.branch == "spira/sp-a" && j.tip == "t9"), "{}", q.queued().len());
 }
 
+#[test_id(t8konlw)]
 #[test]
 fn a_verdict_elsewhere_in_the_repo_lifts_the_unjudged_stop_on_the_next_pass() {
     let h = h_with_unjudged_incident();
@@ -2602,6 +2603,7 @@ fn a_verdict_elsewhere_in_the_repo_lifts_the_unjudged_stop_on_the_next_pass() {
     assert!(q.queued().iter().any(|j| j.branch == "spira/sp-a" && j.tip == "t1"), "{:?}", q.queued().len());
 }
 
+#[test_id(tnkboen)]
 #[test]
 fn unjudged_beads_with_one_reason_share_one_incident_reference() {
     let mut h = h_worker(LandMode::Queue);

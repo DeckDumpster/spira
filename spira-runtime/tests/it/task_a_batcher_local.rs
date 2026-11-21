@@ -1256,6 +1256,7 @@ fn sp_7der7t_a_member_refused_held_is_cut_once_the_pool_shows_it_unheld() {
 }
 
 /// 2026-11-21: sp-7wx6ql was left out of two cuts and nobody was told why.
+#[test_id(t67la8v)]
 #[test]
 fn sp_7der7t_a_cut_names_each_member_it_left_out() {
     let mut unsifted = member("sp-c", "t3");
@@ -1280,6 +1281,7 @@ fn sp_7der7t_a_cut_names_each_member_it_left_out() {
 
 /// A feature round leaves out what is not part of it; a full round leaves out its overflow; a
 /// dependency on an unlanded bead leaves the dependant out.
+#[test_id(tbh3utn)]
 #[test]
 fn sp_fssqg1_the_selection_names_the_feature_full_and_blocked_members_it_drops() {
     let mut blocked = member("sp-e", "t5");
@@ -1294,6 +1296,7 @@ fn sp_fssqg1_the_selection_names_the_feature_full_and_blocked_members_it_drops()
 }
 
 /// A list that empties clears the records once; an idle empty list pushes nothing.
+#[test_id(t0t7eu4)]
 #[test]
 fn sp_fssqg1_a_list_that_empties_is_pushed_once_to_clear_its_records() {
     let rc = RepoCarry { left_noted: vec![("sp-d".into(), "held-manual".into(), "t4".into())], ..RepoCarry::default() };
@@ -1305,6 +1308,7 @@ fn sp_fssqg1_a_list_that_empties_is_pushed_once_to_clear_its_records() {
 }
 
 /// A note that failed leaves the list unnamed, so the next decide pushes it again.
+#[test_id(t8vx3tb)]
 #[test]
 fn sp_fssqg1_a_failed_left_out_note_is_pushed_again() {
     let mut r = repo(vec![]);

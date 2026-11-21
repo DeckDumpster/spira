@@ -5177,6 +5177,7 @@ mod pool_parity_tests {
         }
     }
 
+    #[test_id(tfd6ogn)]
     #[test]
     fn a_certified_tip_the_branch_moved_past_is_left_out_naming_the_branch_tip() {
         let row = |id: &str, tip: &str| (id.to_string(), tip.to_string(), 0, false, vec![], false);
