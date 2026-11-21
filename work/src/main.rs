@@ -1157,4 +1157,29 @@ mod tests {
         let send = recorded(0, "done it");
         assert_eq!(answered(&send, &["x".into()], Duration::from_secs(1)).unwrap(), (0, "done it".to_string()));
     }
+
+    #[test]
+    fn dispatch_is_sent_only_after_the_push_record_is_read_and_each_answer_is_the_record() {
+        use work::image::Ports;
+        let log = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let seen = log.clone();
+        let p = ports(move |req, _| {
+            seen.borrow_mut().push(req.join(" "));
+            if req.iter().any(|a| a == "show") {
+                let n = req.last().unwrap();
+                let (code, out) = if n == "wr-1" { (0, "pushed") } else if n == "wr-2" { (1, "no workflow") } else { (0, "line one\n?\nline two") };
+                Ok((0, format!(r#"{{"state":"done","code":{code},"output":{out:?}}}"#)))
+            } else {
+                let n = seen.borrow().iter().filter(|r| !r.contains("show")).count();
+                Ok((0, format!("queued wr-{n}")))
+            }
+        });
+        p.push("b").unwrap();
+        let e = p.dispatch("b").unwrap_err();
+        assert!(e.contains("the forge refused the dispatch") && e.contains("exited 1") && e.contains("no workflow"), "{e}");
+        assert_eq!(p.log_tail("9", 5), vec!["line one".to_string(), "line two".to_string()]);
+        let log = log.borrow();
+        let at = |needle: &str| log.iter().position(|r| r.contains(needle)).unwrap();
+        assert!(at("ami-push") < at("show wr-1") && at("show wr-1") < at("ami-dispatch"), "{log:?}");
+    }
 }
