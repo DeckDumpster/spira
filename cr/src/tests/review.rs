@@ -10,6 +10,10 @@ use sha2::{Digest, Sha256};
 use std::rc::Rc;
 use testkit::TempDir;
 
+const DOES: &str = "Opens the store and hands back a handle.";
+const LOOK: &str = "Start with how open builds the handle.";
+const HEADINGS: [&str; 6] = ["## What it does", "## What to look at first", "## Files", "## Who calls it", "## How often it changed", "## Tests that exercise it"];
+
 struct World {
     run: TempDir,
     gh: Rc<FakeGh>,
@@ -38,7 +42,7 @@ impl World {
     fn comments(&self, n: u32) -> String {
         let r = record::load(self.run.path(), n).unwrap();
         let path = &r.unit.files[0].path;
-        format!(r#"[{{"path":"{path}","line":1,"body":"first look"}}]"#)
+        format!(r#"{{"does":"{DOES}","look_first":"{LOOK}","comments":[{{"path":"{path}","line":1,"body":"first look"}}]}}"#)
     }
     fn sealed_path(&self, n: u32) -> std::path::PathBuf {
         record::dir(self.run.path(), n).join("sealed.json")
@@ -67,7 +71,7 @@ fn open_count_two_stages_two_distinct_reviews_and_two_ledger_rows_without_a_forg
     assert_eq!(ledger.lines().count(), 2);
     assert_eq!(w.gh.count(), 0);
     for n in ["001", "002"] {
-        assert!(o.stdout.contains(&format!("seal with: cr seal --review {n} < comments.json")), "{}", o.stdout);
+        assert!(o.stdout.contains(&format!("seal with: cr seal --review {n} < seal.json")), "{}", o.stdout);
     }
 }
 
@@ -96,7 +100,7 @@ fn open_never_hands_two_reviews_one_number() {
 }
 
 #[test]
-fn seal_stores_the_unit_bytes_and_review_md_in_blobs_tree_and_pull_request() {
+fn seal_stores_the_unit_bytes_in_blobs_tree_and_pull_request() {
     let mut w = world();
     let o = w.open_and_seal();
     assert_eq!(o.code, 0, "{}", o.stderr);
@@ -105,35 +109,94 @@ fn seal_stores_the_unit_bytes_and_review_md_in_blobs_tree_and_pull_request() {
     let blobs = w.gh.posted("git/blobs");
     let mut got: Vec<Vec<u8>> = blobs.iter().map(|b| unbase64(b["content"].as_str().unwrap())).collect();
     let mut want: Vec<Vec<u8>> = r.unit.files.iter().map(|f| crate::ports::SourceTree::read(&tree, &f.path).unwrap()).collect();
-    assert_eq!(got.len(), want.len() + 1);
-    let note = got.pop().unwrap();
-    assert!(String::from_utf8(note).unwrap().starts_with("# Review 001"));
     got.sort();
     want.sort();
     assert_eq!(got, want);
     assert!(blobs.iter().all(|b| b["encoding"] == "base64"));
+    assert_eq!(w.gh.posted("git/trees")[0]["base_tree"], "base-tree");
+    assert_eq!(w.gh.posted("git/commits")[0]["parents"][0], "base-head");
+    assert_eq!(w.gh.posted("git/refs")[0]["ref"], format!("refs/heads/{}", r.branch));
+    assert_eq!(w.gh.posted("pulls")[0]["title"], r.unit.title);
+    assert_eq!((r.state, r.pr), (State::Open, Some(7)));
+    assert!(o.stdout.contains("pull/7"), "{}", o.stdout);
+}
 
+#[test]
+fn seal_puts_the_cover_note_in_the_pull_request_description_and_only_unit_files_on_the_branch() {
+    let mut w = world();
+    assert_eq!(w.open_and_seal().code, 0);
+    let r = record::load(w.run.path(), 1).unwrap();
     let trees = w.gh.posted("git/trees");
     assert_eq!(trees.len(), 1);
     let mut paths: Vec<String> = trees[0]["tree"].as_array().unwrap().iter().map(|e| e["path"].as_str().unwrap().to_string()).collect();
     paths.sort();
     let mut expect: Vec<String> = r.unit.files.iter().map(|f| f.path.clone()).collect();
-    expect.push("REVIEW.md".into());
     expect.sort();
     assert_eq!(paths, expect);
-    assert_eq!(trees[0]["base_tree"], "base-tree");
-    assert_eq!(w.gh.posted("git/commits")[0]["parents"][0], "base-head");
-    assert_eq!(w.gh.posted("git/refs")[0]["ref"], format!("refs/heads/{}", r.branch));
-
-    let pr = &w.gh.posted("pulls")[0];
-    let body = pr["body"].as_str().unwrap();
+    let body = w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string();
+    for h in HEADINGS {
+        assert!(body.contains(h), "missing {h:?} in:\n{body}");
+    }
     let sealed = std::fs::read(w.sealed_path(1)).unwrap();
-    assert!(body.contains(&format!("sealed-sha256: {}", sha256(&sealed))), "{body}");
-    assert!(body.contains("c0ffee") && body.contains("src"), "{body}");
-    assert!(body.contains("Add single comment"), "{body}");
-    assert_eq!(pr["title"], r.unit.title);
-    assert_eq!((r.state, r.pr), (State::Open, Some(7)));
-    assert!(o.stdout.contains("pull/7"), "{}", o.stdout);
+    for want in [DOES, LOOK, "c0ffee", "Add single comment", &format!("sealed-sha256: {}", sha256(&sealed))] {
+        assert!(body.contains(want), "missing {want:?} in:\n{body}");
+    }
+}
+
+#[test]
+fn seal_refuses_a_cover_missing_does_or_look_first_before_any_forge_call() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    let c = r#"[{"path":"demo/src/store.rs","line":1,"body":"x"}]"#.to_string();
+    for (bad, field) in [
+        (c.clone(), "does"),
+        (format!(r#"{{"look_first":"{LOOK}","comments":{c}}}"#), "does"),
+        (format!(r#"{{"does":"{DOES}","look_first":"  ","comments":{c}}}"#), "look_first"),
+        (format!(r#"{{"does":"","look_first":"{LOOK}","comments":{c}}}"#), "does"),
+    ] {
+        let o = w.seal_with("001", &bad);
+        assert_eq!(o.code, 2, "{bad}: {}", o.stderr);
+        assert!(o.stderr.contains(field), "{}", o.stderr);
+    }
+    assert_eq!(w.gh.count(), 0);
+    assert!(!w.sealed_path(1).exists());
+}
+
+#[test]
+fn the_cover_lists_tests_by_call_path_not_by_name() {
+    let mut w = world();
+    let tree = fixture().with_file("demo/tests/names_only.rs", "use demo::store;\n\n#[test]\nfn unrelated() {\n    assert_eq!(1, 1);\n}\n");
+    w.ports.tree = Box::new(tree);
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "1"]).code, 0);
+    let c = w.comments(1);
+    assert_eq!(w.seal_with("001", &c).code, 0);
+    let body = w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string();
+    assert!(body.contains("`demo/src/store/tests.rs::opens` calls `Store::open`"), "{body}");
+    assert!(body.contains("`demo/tests/it.rs::it` calls `Store::open`"), "{body}");
+    let tests_section = body.split("## Tests that exercise it").nth(1).unwrap();
+    assert!(!tests_section.contains("names_only.rs"), "{body}");
+}
+
+#[test]
+fn a_test_inside_a_cfg_test_module_that_calls_a_pub_function_is_listed() {
+    let mut w = world();
+    let src = "//! Util.\n\npub fn twice(n: u32) -> u32 {\n    n * 2\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn doubles() {\n        assert_eq!(twice(2), 4);\n    }\n}\n";
+    w.ports.tree = Box::new(fixture().with_file("other/src/util.rs", src));
+    assert_eq!(w.cr(&["open", "--aim", "other/src/util.rs", "--seed", "1"]).code, 0);
+    let c = w.comments(1);
+    assert_eq!(w.seal_with("001", &c).code, 0);
+    let body = w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string();
+    assert!(body.contains("`other/src/util.rs::doubles` calls `twice`"), "{body}");
+}
+
+#[test]
+fn a_unit_with_no_calling_test_says_none_found_by_call_path() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/sink.rs", "--seed", "1"]).code, 0);
+    let c = w.comments(1);
+    assert_eq!(w.seal_with("001", &c).code, 0);
+    let body = w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string();
+    assert!(body.contains("None found by call path."), "{body}");
 }
 
 #[test]
@@ -142,9 +205,8 @@ fn seal_cover_note_carries_facts_and_no_critique() {
     assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "1"]).code, 0);
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 0);
-    let note_b64 = w.gh.posted("git/blobs").last().unwrap()["content"].as_str().unwrap().to_string();
-    let note = String::from_utf8(unbase64(&note_b64)).unwrap();
-    for want in ["> The store.", "alpha, beta", "demo/src/store/tests.rs", "demo/tests/it.rs", "Commits in the last 60 days: 2", "c0ffee"] {
+    let note = w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string();
+    for want in ["alpha, beta", "demo/src/store/tests.rs", "demo/tests/it.rs", "Commits in the last 60 days: 2", "c0ffee"] {
         assert!(note.contains(want), "missing {want:?} in:\n{note}");
     }
     assert!(!note.contains("first look"), "the sealed review must not reach the cover note");
@@ -167,7 +229,7 @@ fn seal_writes_an_oversized_file_as_regions_joined_by_a_marker_naming_the_elided
     assert!(text.len() < source.len());
     let first = source.split(|b| *b == b'\n').nth(regions[0].0 as usize - 1).unwrap();
     assert!(text.contains(&String::from_utf8_lossy(first).into_owned()));
-    let note = String::from_utf8(unbase64(blobs.last().unwrap()["content"].as_str().unwrap())).unwrap();
+    let note = w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string();
     assert!(note.contains("elided source lines"), "{note}");
 }
 
@@ -176,11 +238,12 @@ fn seal_refuses_an_empty_array_a_foreign_path_and_a_line_past_the_end_before_any
     let mut w = world();
     assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
     let path = record::load(w.run.path(), 1).unwrap().unit.files[0].path.clone();
+    let wrap = |comments: String| format!(r#"{{"does":"{DOES}","look_first":"{LOOK}","comments":{comments}}}"#);
     for bad in [
-        "[]".to_string(),
-        r#"[{"path":"nowhere/else.rs","line":1,"body":"x"}]"#.to_string(),
-        format!(r#"[{{"path":"{path}","line":9999,"body":"x"}}]"#),
-        format!(r#"[{{"path":"{path}","line":0,"body":"x"}}]"#),
+        wrap("[]".to_string()),
+        wrap(r#"[{"path":"nowhere/else.rs","line":1,"body":"x"}]"#.to_string()),
+        wrap(format!(r#"[{{"path":"{path}","line":9999,"body":"x"}}]"#)),
+        wrap(format!(r#"[{{"path":"{path}","line":0,"body":"x"}}]"#)),
         "not json".to_string(),
     ] {
         let o = w.seal_with("001", &bad);
@@ -328,6 +391,19 @@ fn seal_rerun_with_different_comments_is_refused_not_silently_dropped() {
 }
 
 #[test]
+fn seal_rerun_with_a_different_cover_is_refused() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
+    w.gh.fail("pulls");
+    let c = w.comments(1);
+    assert_eq!(w.seal_with("001", &c).code, 1);
+    w.gh.heal();
+    let o = w.seal_with("001", &c.replace(DOES, "Something else entirely."));
+    assert_eq!(o.code, 2, "{}", o.stderr);
+    assert!(o.stderr.contains("different cover"), "{}", o.stderr);
+}
+
+#[test]
 fn seal_rerun_after_a_lost_progress_file_adopts_the_ref_already_on_the_forge() {
     let mut w = world();
     assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
@@ -353,4 +429,28 @@ fn unseal_with_a_failing_review_post_leaves_it_retryable() {
     assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 1);
     w.gh.heal();
     assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 0);
+}
+
+#[test]
+fn the_section_guard_names_a_missing_heading_and_a_blank_section() {
+    use crate::review::missing_section;
+    let full: String = HEADINGS.iter().map(|h| format!("{h}\n\ntext\n\n")).collect();
+    assert_eq!(missing_section(&full), None);
+    assert_eq!(missing_section(&full.replace("## Files", "## Fils")), Some("## Files"));
+    assert_eq!(missing_section(&full.replace("## Who calls it\n\ntext", "## Who calls it\n\n")), Some("## Who calls it"));
+}
+
+#[test]
+fn seal_refuses_a_prose_field_carrying_a_heading_line_and_a_bare_array_on_a_rerun() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c.replace(DOES, "x\\n## Files\\ny"));
+    assert_eq!(o.code, 2, "{}", o.stderr);
+    assert!(o.stderr.contains("does"), "{}", o.stderr);
+    w.gh.fail("pulls");
+    assert_eq!(w.seal_with("001", &c).code, 1);
+    w.gh.heal();
+    let o = w.seal_with("001", r#"[{"path":"x","line":1,"body":"y"}]"#);
+    assert_eq!(o.code, 2, "{}", o.stderr);
 }

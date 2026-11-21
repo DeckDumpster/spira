@@ -320,9 +320,57 @@ pub fn part_ranges(code: &[String], items: &[Item], chosen: usize) -> (Vec<(u32,
     (ranges, helpers)
 }
 
-fn calls(body: &str, name: &str) -> bool {
+pub(crate) fn calls(body: &str, name: &str) -> bool {
     let pat = format!("{name}(");
     body.match_indices(&pat).any(|(at, _)| !body[..at].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_'))
+}
+
+/// Names of the non-test `pub` top-level functions, traits, structs, enums and type aliases.
+pub fn pub_names(raw: &[&str], code: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for it in items(raw, code).iter().filter(|i| i.is_pub && !i.test_only) {
+        if !it.name.is_empty() {
+            out.push(it.name.clone());
+            continue;
+        }
+        let mut toks = code[it.head].split_whitespace().skip_while(|t| *t == "pub" || t.starts_with("pub("));
+        if let (Some("struct" | "enum" | "type" | "union"), Some(n)) = (toks.next(), toks.next()) {
+            out.push(ident_after(n));
+        }
+    }
+    out
+}
+
+/// Each `#[test]` function in the file, top level or inside a module, with its body as code.
+pub fn test_fns(raw: &[&str], code: &[String]) -> Vec<(String, String)> {
+    let n = code.len().min(raw.len());
+    let mut out = Vec::new();
+    let mut pending = false;
+    let mut i = 0;
+    while i < n {
+        let attr = raw[i].replace(' ', "");
+        if attr.starts_with("#[test]") || attr.starts_with("#[tokio::test") {
+            pending = true;
+        } else if pending && !code[i].trim().is_empty() && !code[i].trim_start().starts_with('#') {
+            pending = false;
+            let (_, kind, name) = first_tokens(code[i].trim());
+            if kind == ItemKind::Fn {
+                let mut j = i;
+                let mut d = 0;
+                loop {
+                    d += delta(&code[j]);
+                    if d <= 0 && code[j].trim_end().ends_with('}') || j + 1 >= n {
+                        break;
+                    }
+                    j += 1;
+                }
+                out.push((name, code[i..=j].join("\n")));
+                i = j;
+            }
+        }
+        i += 1;
+    }
+    out
 }
 
 #[derive(Debug, Default)]
