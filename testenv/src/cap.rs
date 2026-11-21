@@ -194,6 +194,10 @@ impl Clock {
         self.excused + self.held_since.map_or(Duration::ZERO, |t| t.elapsed())
     }
 
+    fn left(&self) -> Duration {
+        self.limit.saturating_sub(self.counted())
+    }
+
     fn counted(&self) -> Duration {
         self.start.elapsed().saturating_sub(self.excused())
     }
@@ -208,7 +212,7 @@ impl Clock {
 pub fn remaining() -> Option<u64> {
     let k = CURRENT.with(|c| c.borrow().clone())?;
     let k = k.lock().unwrap();
-    Some(k.limit.saturating_sub(k.counted()).as_secs())
+    Some(k.left().as_secs())
 }
 
 /// While this lives the cap armed on this thread does not count.
@@ -509,12 +513,11 @@ mod tests {
         assert_eq!(remaining(), None);
         let armed = arm(Cap { secs: 600, source: "test" }, None);
         assert!(matches!(remaining(), Some(s) if (599..=600).contains(&s)), "{:?}", remaining());
-        let h = hold();
-        std::thread::sleep(Duration::from_millis(1_100));
-        assert!(matches!(remaining(), Some(s) if (599..=600).contains(&s)), "{:?}", remaining());
-        drop(h);
         armed.finish();
         assert_eq!(remaining(), None);
+        let ago = |s| Instant::now() - Duration::from_secs(s);
+        let queued = Clock { start: ago(1_000), limit: Duration::from_secs(1_600), held_since: Some(ago(1_000)), excused: Duration::ZERO, ledger: None };
+        assert_eq!(queued.left().as_secs(), 1_600);
     }
 
     #[test]
