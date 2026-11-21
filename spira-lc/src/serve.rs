@@ -916,7 +916,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     reply_then_settle(
         &stream,
         &ans,
-        ans.code != 0 && ended.reads_ended + ended.reads_overran > 0,
+        ans.code != 0 && cut_at.is_none() && ended.reads_ended + ended.reads_overran > 0,
         || {
             answered = read_at.elapsed();
             crate::slow::request_done(measured, &method, &caller, task.as_deref(), answered);

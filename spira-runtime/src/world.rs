@@ -1792,7 +1792,7 @@ mod bounded_store_tests {
             unreachable!("a socket client asks exchange_kind")
         }
         fn exchange_kind(&self, _: &[String], _: Option<&str>, _: Duration, _: Duration) -> Result<Reply, LcError> {
-            Err(LcError::ReadEnded("cannot tell: dwell".into()))
+            Ok(Reply { code: 2, out: "cannot tell: dwell".into(), err: String::new(), read_ended: true })
         }
     }
 
