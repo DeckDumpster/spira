@@ -84,17 +84,30 @@ impl Store {
         Some(Store { dir, fixture: report(&text, "TESTDB_FIXTURE"), db: report(&text, "TESTDB_DIR"), bd: report(&text, "TESTDB_BD"), port: report(&text, "TESTDB_SERVER_PORT") })
     }
 
-    fn create_bead(&self) -> String {
-        let out = Command::new(&self.bd)
+    /// The fixture's own bd, acting as the SQL writer acts, so a bead it writes is the twin of one
+    /// the service writes.
+    fn bd(&self, args: &[&str], stdin: Option<&str>) -> String {
+        let mut child = Command::new(&self.bd)
             .env_clear()
             .env("PATH", std::env::var("PATH").unwrap_or_default())
             .env("HOME", self.dir.join("home"))
             .env("BD_NON_INTERACTIVE", "1")
-            .args(["-C", &self.db, "create", "a bead the writes land on", "--silent"])
-            .output()
+            .env("BEADS_ACTOR", "spira-lc")
+            .args(["-C", &self.db])
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .expect("bd runs");
-        assert!(out.status.success(), "bd create: {}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
+        std::io::Write::write_all(&mut child.stdin.take().unwrap(), stdin.unwrap_or_default().as_bytes()).unwrap();
+        let out = child.wait_with_output().expect("bd finishes");
+        assert!(out.status.success(), "bd {args:?}: {}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    fn create_bead(&self) -> String {
+        self.bd(&["create", "a bead the writes land on", "--silent"], None).trim().to_string()
     }
 }
 
@@ -145,12 +158,7 @@ impl Lc {
 
     fn command(&self) -> Command {
         let mut c = Command::new(testkit::bin_exe("spira-lc"));
-        c.env_clear()
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .env("SPIRA_TOML", &self.toml)
-            .env("SPIRA_HOME", &self.home)
-            .env("SPIRA_RELEASE", self.dir.join("release"))
-            .env("HOME", self.dir.join("home"));
+        c.env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).env("SPIRA_TOML", &self.toml).env("SPIRA_HOME", &self.home).env("SPIRA_RELEASE", self.dir.join("release")).env("HOME", self.dir.join("home"));
         c
     }
 
@@ -314,5 +322,154 @@ fn without_a_writer_credential_the_same_verbs_still_write_through_bd() {
     lc.serve();
     for (verb, children) in drive(&lc, &id) {
         assert_eq!(children, 1, "{verb} should have forked bd once");
+    }
+}
+
+fn writer_lc(store: &Store, name: &str) -> Lc {
+    let writer = store.dir.join(format!("{name}.writer"));
+    let mut lc = Lc::new(store, name, &writer.display().to_string());
+    provision(store, &lc);
+    lc.admin("admin-provision-writer");
+    lc.serve();
+    lc
+}
+
+fn first_line(out: &str) -> String {
+    out.lines().next().unwrap_or_default().trim().to_string()
+}
+
+#[test]
+fn a_create_gets_its_id_from_the_server_in_the_one_transaction_and_starts_no_process() {
+    let store = Store::up();
+    let seed = store.create_bead();
+    let prefix = seed.split('-').next().unwrap().to_string();
+    let lc = writer_lc(&store, "c");
+    let (out, children) = lc.children_of("content", &["content", "create", "T", "--type", "task", "--labels", "repo:spira", "--silent", "--body-file", "-"], Some("what the bead says\n"));
+    let id = first_line(&out);
+    assert_eq!(spira_config::cite::citations(&id, &prefix), std::slice::from_ref(&id), "{out}");
+    assert_eq!(children, 0, "the create started a process: {out}");
+    let shown = lc.shows(&id);
+    assert!(shown.contains("what the bead says") && shown.contains("repo:spira"), "{shown}");
+    assert!(store.bd(&["show", &id], None).contains(&id), "bd reads the bead the server wrote");
+}
+
+#[test]
+fn two_creates_sent_at_once_get_two_ids_and_bd_reads_both() {
+    let store = Store::up();
+    let lc = writer_lc(&store, "k");
+    let args = ["content", "create", "the same title", "--type", "task", "--silent", "--body-file", "-"];
+    let (a, b) = std::thread::scope(|s| {
+        let a = s.spawn(|| lc.run(&args, Some("the same body\n")));
+        let b = s.spawn(|| lc.run(&args, Some("the same body\n")));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    let (a, b) = (first_line(&a.1), first_line(&b.1));
+    assert!(!a.is_empty() && !b.is_empty() && a != b, "{a} {b}");
+    for id in [&a, &b] {
+        assert!(store.bd(&["show", id], None).contains("the same title"), "{id}");
+    }
+}
+
+#[test]
+fn a_child_takes_the_next_number_under_its_parent() {
+    let store = Store::up();
+    let parent = store.create_bead();
+    let lc = writer_lc(&store, "p");
+    let make = || {
+        let (out, children) = lc.children_of("content", &["content", "create", "a child", "--parent", &parent, "--silent"], None);
+        assert_eq!(children, 0, "{out}");
+        first_line(&out)
+    };
+    assert_eq!([make(), make()], [format!("{parent}.1"), format!("{parent}.2")]);
+    assert!(store.bd(&["show", &format!("{parent}.2")], None).contains("a child"));
+}
+
+fn strip(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(m) => {
+            m.retain(|k, v| !k.ends_with("_at") && (k != "id" || matches!(v.as_str(), Some("A" | "B"))));
+            m.values_mut().for_each(strip);
+        }
+        serde_json::Value::Array(a) => a.iter_mut().for_each(strip),
+        _ => {}
+    }
+}
+
+/// The bead as `content show --json` prints it, without its timestamps and row ids, its own id
+/// written as `A` and its partner's as `B`.
+fn plain(shown: &str, a: &str, b: &str) -> serde_json::Value {
+    let mut v: serde_json::Value = serde_json::from_str(&shown.replace(a, "A").replace(b, "B")).unwrap_or_else(|e| panic!("{e}: {shown}"));
+    strip(&mut v);
+    v
+}
+
+struct Twin {
+    name: &'static str,
+    /// What both pairs are given through the fixture's bd first.
+    before: &'static [&'static [&'static str]],
+    /// The service request; `A` and `B` stand for the beads.
+    request: &'static [&'static str],
+    stdin: Option<&'static str>,
+    method: &'static str,
+    /// The same write through the fixture's bd.
+    bd: &'static [&'static str],
+}
+
+const TWINS: &[Twin] = &[
+    Twin { name: "reopen", before: &[&["update", "A", "--status", "blocked", "--assignee", "bob"]], request: &["reopen", "A", "operator-reopen", "groomer"], stdin: None, method: "reopen", bd: &["update", "A", "--status", "open", "--assignee", ""] },
+    Twin { name: "update --assignee", before: &[], request: &["content", "update", "A", "--assignee", "bob"], stdin: None, method: "content", bd: &["update", "A", "--assignee", "bob"] },
+    Twin { name: "update --body-file -", before: &[], request: &["content", "update", "A", "--body-file", "-"], stdin: Some("a new description\n"), method: "content", bd: &["update", "A", "--body-file", "-"] },
+    Twin { name: "close --reason", before: &[], request: &["close", "A", "--reason", "it is done"], stdin: None, method: "close", bd: &["close", "A", "--force", "--reason", "it is done"] },
+    Twin { name: "dep add --type blocks", before: &[], request: &["content", "dep", "add", "A", "B", "--type", "blocks"], stdin: None, method: "content", bd: &["dep", "add", "A", "B", "--type", "blocks"] },
+    Twin { name: "dep remove", before: &[&["dep", "add", "A", "B", "--type", "blocks"]], request: &["content", "dep", "remove", "A", "B"], stdin: None, method: "content", bd: &["dep", "remove", "A", "B"] },
+    Twin { name: "dep relate", before: &[], request: &["content", "dep", "relate", "A", "B"], stdin: None, method: "content", bd: &["dep", "relate", "A", "B"] },
+    Twin { name: "bd-supersede", before: &[], request: &["bd-supersede", "A", "B"], stdin: None, method: "bd-supersede", bd: &["supersede", "A", "--with", "B"] },
+];
+
+fn fill(words: &[&str], a: &str, b: &str) -> Vec<String> {
+    words.iter().map(|w| w.replace('A', a).replace('B', b)).collect()
+}
+
+/// Runs every twin: the service writes one pair, the fixture's bd writes the other, and the
+/// two pairs must read back the same. Returns the children each request started.
+fn twins(store: &Store, lc: &Lc) -> Vec<(&'static str, i64)> {
+    let mut children = vec![];
+    for t in TWINS {
+        let (a, b, a2, b2) = (store.create_bead(), store.create_bead(), store.create_bead(), store.create_bead());
+        for (x, y) in [(&a, &b), (&a2, &b2)] {
+            for step in t.before {
+                let argv = fill(step, x, y);
+                store.bd(&argv.iter().map(String::as_str).collect::<Vec<_>>(), None);
+            }
+        }
+        let request = fill(t.request, &a, &b);
+        let (out, n) = lc.children_of(t.method, &request.iter().map(String::as_str).collect::<Vec<_>>(), t.stdin);
+        children.push((t.name, n));
+        let argv = fill(t.bd, &a2, &b2);
+        store.bd(&argv.iter().map(String::as_str).collect::<Vec<_>>(), t.stdin);
+        for (x, y, x2, y2) in [(&a, &b, &a2, &b2), (&b, &a, &b2, &a2)] {
+            assert_eq!(plain(&lc.shows(x), x, y), plain(&lc.shows(x2), x2, y2), "{}: the service and bd wrote different rows ({out})", t.name);
+        }
+    }
+    children
+}
+
+#[test]
+fn each_remaining_write_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
+    let store = Store::up();
+    let lc = writer_lc(&store, "t");
+    for (verb, children) in twins(&store, &lc) {
+        assert_eq!(children, 0, "{verb} started a process");
+    }
+}
+
+#[test]
+fn without_a_writer_credential_those_writes_still_go_through_bd_and_make_the_same_rows() {
+    let store = Store::up();
+    let mut lc = Lc::new(&store, "n", "");
+    provision(&store, &lc);
+    lc.serve();
+    for (verb, children) in twins(&store, &lc) {
+        assert!(children > 0, "{verb} should have forked bd");
     }
 }

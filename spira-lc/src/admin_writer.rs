@@ -10,7 +10,11 @@ use crate::db::Conn;
 use crate::{CANNOT_TELL, REFUSED};
 
 /// The tables a content write changes.
-const WRITTEN: [&str; 4] = ["issues", "labels", "comments", "events"];
+const WRITTEN: [&str; 6] = ["issues", "labels", "comments", "events", "dependencies", "child_counters"];
+
+/// The tables a content write changes when the store has them: leases and the coordination
+/// cells are local state older stores do not carry.
+const WRITTEN_WHEN_PRESENT: [&str; 2] = ["leases", "local_metadata"];
 
 fn statements(db: &str, user: &str, password: &str, tables: &[&str], readable: &[String]) -> Vec<String> {
     let mut sql = vec![format!("CREATE USER IF NOT EXISTS '{user}'@'%' IDENTIFIED BY '{password}'"), format!("ALTER USER '{user}'@'%' IDENTIFIED BY '{password}'")];
@@ -27,12 +31,13 @@ fn provision(admin: &dyn Dolt, db: &str, user: &str, password: &str) -> Result<S
     if let Some(missing) = WRITTEN.iter().find(|t| !present.contains(**t)) {
         return Err(format!("the content database has no {missing} table: it is not a beads store"));
     }
+    let written: Vec<&str> = WRITTEN.iter().chain(WRITTEN_WHEN_PRESENT.iter().filter(|t| present.contains(**t))).copied().collect();
     // Dolt checks a write against the whole foreign-key graph around issues, so the writer reads every table.
-    let referencing: Vec<String> = present.iter().filter(|t| !WRITTEN.contains(&t.as_str())).cloned().collect();
-    for sql in statements(db, user, password, &WRITTEN, &referencing) {
+    let referencing: Vec<String> = present.iter().filter(|t| !written.contains(&t.as_str())).cloned().collect();
+    for sql in statements(db, user, password, &written, &referencing) {
         admin.execute(&sql).map_err(|e| e.replace(password, "<redacted>"))?;
     }
-    Ok(format!("{user} writes {} of {schema} and reads the {} others", WRITTEN.join(", "), referencing.len()))
+    Ok(format!("{user} writes {} of {schema} and reads the {} others", written.join(", "), referencing.len()))
 }
 
 pub fn run(_args: &[String]) -> (i32, String) {
@@ -102,18 +107,19 @@ mod tests {
     }
 
     #[test]
-    fn the_writer_gets_its_user_and_write_grants_on_the_four_tables_content_writes_change() {
-        let s = Server { tables: vec!["issues", "labels", "comments", "events", "dependencies", "config"], seen: RefCell::new(vec![]) };
+    fn the_writer_gets_its_user_and_write_grants_on_the_tables_content_writes_change() {
+        let s = Server { tables: vec!["issues", "labels", "comments", "events", "dependencies", "child_counters", "leases", "config", "wisps"], seen: RefCell::new(vec![]) };
         provision(&s, "`beadsdb`", "wr", "s3cret").unwrap();
         let seen = s.seen.borrow();
         assert!(seen[0].starts_with("CREATE USER IF NOT EXISTS 'wr'@'%'") && seen[1].starts_with("ALTER USER 'wr'@'%'"), "{seen:?}");
         let grants: Vec<&String> = seen.iter().filter(|q| q.starts_with("GRANT")).collect();
         assert!(grants.contains(&&"GRANT EXECUTE ON `beadsdb`.* TO 'wr'@'%'".to_string()), "the Dolt commit is a procedure: {grants:?}");
         let grants: Vec<&String> = grants.into_iter().filter(|g| !g.contains("EXECUTE")).collect();
-        assert_eq!(grants.len(), 6, "{grants:?}");
         let (write, read): (Vec<&&String>, Vec<&&String>) = grants.iter().partition(|g| g.contains("INSERT"));
-        assert!(write.len() == 4 && write.iter().all(|g| g.starts_with("GRANT SELECT, INSERT, UPDATE, DELETE ON `beadsdb`.`") && g.ends_with("TO 'wr'@'%'")), "{grants:?}");
-        assert_eq!(read.iter().map(|g| g.as_str()).collect::<Vec<_>>(), ["GRANT SELECT ON `beadsdb`.`config` TO 'wr'@'%'", "GRANT SELECT ON `beadsdb`.`dependencies` TO 'wr'@'%'"], "every other table is readable, not writable");
+        let written: Vec<&str> = write.iter().map(|g| g.split('`').nth(3).unwrap()).collect();
+        assert_eq!(written, ["issues", "labels", "comments", "events", "dependencies", "child_counters", "leases"], "a table the store lacks is not granted");
+        assert!(write.iter().all(|g| g.starts_with("GRANT SELECT, INSERT, UPDATE, DELETE ON `beadsdb`.`") && g.ends_with("TO 'wr'@'%'")), "{grants:?}");
+        assert_eq!(read.iter().map(|g| g.as_str()).collect::<Vec<_>>(), ["GRANT SELECT ON `beadsdb`.`config` TO 'wr'@'%'", "GRANT SELECT ON `beadsdb`.`wisps` TO 'wr'@'%'"], "every other table is readable, not writable");
         assert!(!seen.iter().any(|q| q.contains(" ALL")), "no blanket grant");
     }
 
