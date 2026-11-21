@@ -20,4 +20,5 @@ pub mod state;
 pub mod stays;
 pub mod store;
 pub mod verbs;
+pub mod work_requests;
 
