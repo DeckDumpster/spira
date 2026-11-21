@@ -164,10 +164,7 @@ fn main() {
     let runs_tool = work::LANE_VERBS.contains(&verb.as_str()) || matches!(verb.as_str(), "file-followup" | "split" | "submit" | "ack");
     let wait = if runs_tool { TOOL_TIMEOUT } else { REPLY_WAIT };
     let asked = std::time::Instant::now();
-    let answer = send(&req, wait).and_then(|(code, out)| match spira_store::lc_call::queued_id(&out) {
-        Some(id) if code == 0 => await_recorded(id, asked),
-        _ => Ok((code, out)),
-    });
+    let answer = answered(&send, &req, wait);
     spira_otel::run::phase("reply", asked.elapsed().as_millis() as u64);
     match answer {
         Ok((code, out)) => {
@@ -182,10 +179,19 @@ fn main() {
     }
 }
 
-/// The answer of the recorded request `id`: polled until the scheduler has finished it, each
-/// poll a plain read of its record, so no request is held open meanwhile.
-fn await_recorded(id: &str, began: std::time::Instant) -> Result<(i32, String), Unsent> {
-    use spira_store::lc_call::{record_answer, record_timeout, RECORD_POLL, RECORD_WAIT};
+type Transport<'a> = &'a dyn Fn(&[String], Duration) -> Result<(i32, String), Unsent>;
+type OwnedTransport = Box<dyn Fn(&[String], Duration) -> Result<(i32, String), Unsent>>;
+
+/// Sends `req`; a queue receipt is followed to the recorded request's own answer, each poll a plain
+/// read of its record so no request is held open meanwhile. Any other reply is returned as-is.
+fn answered(send: Transport, req: &[String], wait: Duration) -> Result<(i32, String), Unsent> {
+    use spira_store::lc_call::{queued_id, record_answer, record_timeout, RECORD_POLL, RECORD_WAIT};
+    let began = std::time::Instant::now();
+    let (code, out) = send(req, wait)?;
+    let id = match queued_id(&out) {
+        Some(id) if code == 0 => id,
+        _ => return Ok((code, out)),
+    };
     let show = vec!["work-request".to_string(), "show".to_string(), id.to_string()];
     loop {
         let (code, out) = send(&show, REPLY_WAIT)?;
@@ -558,6 +564,7 @@ struct ImagePorts {
     bound: String,
     actor: String,
     started: std::time::Instant,
+    transport: OwnedTransport,
 }
 
 impl ImagePorts {
@@ -575,7 +582,7 @@ impl ImagePorts {
         let req = work::build_request_in(&self.bound, "forge", &args, None, &self.actor, None, None)?;
         let socket = spira_config::process::cfg("SPIRA_LC_SOCKET").unwrap_or_default();
         let route = format!("`work forge {}` via the broker at {socket}", args[0]);
-        match send(&req, TOOL_TIMEOUT) {
+        match answered(&*self.transport, &req, TOOL_TIMEOUT) {
             Ok((0, out)) => Ok(out),
             Ok((code, out)) => Err(format!("{route} exited {code}: {}", out.trim())),
             Err(e) => Err(format!("{route}: {e}")),
@@ -608,7 +615,7 @@ impl work::image::Ports for ImagePorts {
     }
     fn result(&self, branch: &str) -> Result<work::image::Build, String> {
         let out = self.forge(&["ami-result", branch])?;
-        work::image::Build::parse(&out).ok_or_else(|| format!("`work forge ami-result` answered {:?}, which is not a build state", out.trim()))
+        work::image::read_result(&out)
     }
     fn log_tail(&self, run: &str, lines: usize) -> Vec<String> {
         let out = self.forge(&["ami-log", run, &lines.to_string()]).unwrap_or_default();
@@ -634,6 +641,7 @@ fn image_gate(bead: &str) -> Result<(), String> {
         bound: bead.to_string(),
         actor: std::env::var("SPIRA_RUNE").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "dwarf".to_string()),
         started: std::time::Instant::now(),
+        transport: Box::new(send),
     };
     let wait = spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_AMI_WAIT_SECS")?;
     match work::image::gate(&ports, bead, &tip, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0), wait)? {
@@ -1089,5 +1097,89 @@ mod tests {
     #[test]
     fn the_refusal_reports_the_wait() {
         assert!(refusal(R::StoreNotRunning, "", &[("secs", "30")]).contains("store not running: nothing was sent; waited 30s"));
+    }
+
+    fn ports(transport: impl Fn(&[String], Duration) -> Result<(i32, String), Unsent> + 'static) -> ImagePorts {
+        ImagePorts {
+            root: ".".into(),
+            tip: "abc".into(),
+            bound: "sp-x".into(),
+            actor: "dwarf".into(),
+            started: std::time::Instant::now(),
+            transport: Box::new(transport),
+        }
+    }
+
+    fn recorded(forge_code: i32, output: &str) -> impl Fn(&[String], Duration) -> Result<(i32, String), Unsent> + 'static {
+        let record = format!(r#"{{"state":"done","code":{forge_code},"output":{output:?}}}"#);
+        move |req, _| {
+            if req.iter().any(|a| a == "show") {
+                assert_eq!(req.last().unwrap(), "wr-7");
+                Ok((0, record.clone()))
+            } else {
+                Ok((0, "queued wr-7".into()))
+            }
+        }
+    }
+
+    #[test]
+    fn a_recorded_ami_result_is_read_from_its_record_not_its_receipt() {
+        use work::image::{Build, Ports};
+        let p = ports(recorded(0, "success 123\n"));
+        assert_eq!(p.result("b").unwrap(), Build::Success("123".into()));
+    }
+
+    #[test]
+    fn a_recorded_ami_push_that_exits_nonzero_is_refused_naming_route_and_code() {
+        use work::image::Ports;
+        let e = ports(recorded(1, "push rejected")).push("b").unwrap_err();
+        assert!(e.contains("`work forge ami-push`") && e.contains("exited 1") && e.contains("push rejected"), "{e}");
+    }
+
+    #[test]
+    fn a_reply_that_is_not_a_receipt_is_returned_without_polling() {
+        let calls = std::cell::Cell::new(0);
+        let send = |_: &[String], _: Duration| {
+            calls.set(calls.get() + 1);
+            Ok((2, "queued wr-7".to_string()))
+        };
+        assert_eq!(answered(&send, &["x".into()], Duration::from_secs(1)).unwrap(), (2, "queued wr-7".to_string()));
+        let plain = |_: &[String], _: Duration| {
+            calls.set(calls.get() + 1);
+            Ok((0, "hello".to_string()))
+        };
+        assert_eq!(answered(&plain, &["x".into()], Duration::from_secs(1)).unwrap(), (0, "hello".to_string()));
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn a_recorded_verb_prints_the_answer_of_its_record() {
+        let send = recorded(0, "done it");
+        assert_eq!(answered(&send, &["x".into()], Duration::from_secs(1)).unwrap(), (0, "done it".to_string()));
+    }
+
+    #[test]
+    fn dispatch_is_sent_only_after_the_push_record_is_read_and_each_answer_is_the_record() {
+        use work::image::Ports;
+        let log = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let seen = log.clone();
+        let p = ports(move |req, _| {
+            seen.borrow_mut().push(req.join(" "));
+            if req.iter().any(|a| a == "show") {
+                let n = req.last().unwrap();
+                let (code, out) = if n == "wr-1" { (0, "pushed") } else if n == "wr-2" { (1, "no workflow") } else { (0, "line one\n?\nline two") };
+                Ok((0, format!(r#"{{"state":"done","code":{code},"output":{out:?}}}"#)))
+            } else {
+                let n = seen.borrow().iter().filter(|r| !r.contains("show")).count();
+                Ok((0, format!("queued wr-{n}")))
+            }
+        });
+        p.push("b").unwrap();
+        let e = p.dispatch("b").unwrap_err();
+        assert!(e.contains("the forge refused the dispatch") && e.contains("exited 1") && e.contains("no workflow"), "{e}");
+        assert_eq!(p.log_tail("9", 5), vec!["line one".to_string(), "line two".to_string()]);
+        let log = log.borrow();
+        let at = |needle: &str| log.iter().position(|r| r.contains(needle)).unwrap();
+        assert!(at("ami-push") < at("show wr-1") && at("show wr-1") < at("ami-dispatch"), "{log:?}");
     }
 }
