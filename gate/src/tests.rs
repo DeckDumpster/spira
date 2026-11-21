@@ -2772,10 +2772,15 @@ fn a_deny_list_reaches_the_nextest_config_the_integration_command_and_the_suites
         assert!(f.env_of(i, "SPIRA_TEST_DENY_LIST").ends_with("target/gate-deny-list"), "step {i}: the gate string and the re-entry both name the list");
     }
 
+    let header = "# test-registry deny-list at=1 rows=0\n";
     let f = unit_fake(&["spira-config/src/lib.rs"]);
+    *f.deny.borrow_mut() = Ok(header.to_string());
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
     assert_eq!(f.run(), PASS);
-    assert_eq!(f.env_of(0, "SPIRA_TEST_DENY_LIST"), "");
+    assert!(f.env_of(0, "SPIRA_TEST_DENY_LIST").ends_with("target/gate-deny-list"), "an empty list still names its file");
+    let written = f.written.borrow();
+    assert!(written.iter().any(|(p, c)| p.ends_with("target/gate-deny-list") && c == header), "{written:?}");
+    drop(written);
     assert!(!f.cmds.borrow()[2].contains("--skip"));
     assert!(!f.unit_config.borrow()[0].1.contains("default-filter"));
 }

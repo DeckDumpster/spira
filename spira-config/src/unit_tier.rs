@@ -109,7 +109,7 @@ pub const DENY_LIST_ENV: &str = "SPIRA_TEST_DENY_LIST";
 /// `test-registry deny-list` prints them: `<state>\t<test>\t<bead>\t<until>` per row.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DenyList {
-    rows: Vec<(String, String)>,
+    rows: Vec<(String, String, String)>,
 }
 
 impl DenyList {
@@ -130,20 +130,23 @@ impl DenyList {
             let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric() || "_:.-/".contains(c));
             let well_formed = match f[1].split_once(':') {
                 Some(("suite", name)) => word(name),
+                Some(("test", id)) => {
+                    id.len() == 7 && id.starts_with('t') && id[1..].bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
+                }
                 Some(("unit" | "integration", rest)) => rest.split_once(' ').is_some_and(|(a, b)| word(a) && word(b)),
                 _ => false,
             };
             if !well_formed {
-                return Err(format!("deny list line {n}: test {:?} is not suite:<file>, unit:<binary-id> <path> or integration:<package> <path>", f[1]));
+                return Err(format!("deny list line {n}: test {:?} is not suite:<file>, test:<id>, unit:<binary-id> <path> or integration:<package> <path>", f[1]));
             }
-            rows.push((f[0].to_string(), f[1].to_string()));
+            rows.push((f[0].to_string(), f[1].to_string(), f[2].to_string()));
         }
         Ok(DenyList { rows })
     }
 
     /// The text [`Self::parse`] reads back: one row per denied test, state and test only.
     pub fn render(&self) -> String {
-        self.rows.iter().map(|(s, t)| format!("{s}\t{t}\t-\t-\n")).collect()
+        self.rows.iter().map(|(s, t, _)| format!("{s}\t{t}\t-\t-\n")).collect()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -152,12 +155,17 @@ impl DenyList {
 
     /// The tests of one kind (`suite`, `unit`, `integration`), the part after the prefix.
     pub fn tests(&self, kind: &str) -> Vec<&str> {
-        self.rows.iter().filter_map(|(_, t)| t.strip_prefix(kind)?.strip_prefix(':')).collect()
+        self.rows.iter().filter_map(|(_, t, _)| t.strip_prefix(kind)?.strip_prefix(':')).collect()
+    }
+
+    /// Each `test:` row's state, id and owning bead.
+    pub fn test_rows(&self) -> Vec<(&str, &str, &str)> {
+        self.rows.iter().filter_map(|(s, t, b)| Some((s.as_str(), t.strip_prefix("test:")?, b.as_str()))).collect()
     }
 
     /// Each `suite:` row's file and state.
     pub fn suites(&self) -> Vec<(&str, &str)> {
-        self.rows.iter().filter_map(|(s, t)| Some((t.strip_prefix("suite:")?, s.as_str()))).collect()
+        self.rows.iter().filter_map(|(s, t, _)| Some((t.strip_prefix("suite:")?, s.as_str()))).collect()
     }
 
     pub fn nextest_filter(&self) -> Option<String> {
@@ -298,6 +306,29 @@ pub fn parse(text: &str) -> Option<UnitFile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_ROW: &str = "disabled\ttest:t0aaaaa\tsp-x\t-\n";
+
+    #[test]
+    fn a_test_id_row_parses_and_test_rows_returns_its_bead() {
+        let d = DenyList::parse(TEST_ROW).unwrap();
+        assert_eq!(d.test_rows(), vec![("disabled", "t0aaaaa", "sp-x")]);
+    }
+
+    #[test]
+    fn a_malformed_test_id_row_is_refused_by_line_number() {
+        let e = DenyList::parse(&format!("{TEST_ROW}quarantined\ttest:T0\tsp-x\t-\n")).unwrap_err();
+        assert!(e.starts_with("deny list line 2:"), "{e}");
+    }
+
+    #[test]
+    fn test_id_rows_reach_no_nextest_filter_and_no_integration_skip() {
+        let d = DenyList::parse(TEST_ROW).unwrap();
+        assert_eq!(d.nextest_filter(), None);
+        assert_eq!(d.integration_skips(), "");
+        let mixed = DenyList::parse(&format!("{TEST_ROW}disabled\tunit:a b::c\tsp-1\t-\n")).unwrap();
+        assert_eq!(mixed.nextest_filter().unwrap(), "not ((binary_id(=a) & test(=b::c)))");
+    }
 
     #[test]
     fn each_macro_gives_the_words_of_its_fn() {
