@@ -2,6 +2,9 @@
 //! this binary by bare name on the release PATH, passing its own directory as `--home`
 //! (the same convention `gate.sh` established).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

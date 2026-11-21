@@ -12,6 +12,9 @@
 //! sp-xethq, and the restricted unit environment this bead only provides — see
 //! dwarf/src/restrict.rs, formerly spira/work-env.sh, retired sp-zpaq0).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use work::help::{refusal, R};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
