@@ -916,8 +916,12 @@ fn probe_filter_owners<R: RoundRunner>(
     let mut said: Vec<(Vec<Id>, String)> = vec![];
     let mut base_kept = String::new();
     let mut green_in = |runner: &mut R, m: &[Member]| {
-        let v = probes.run(m, || runner.filter_green_in(&f.name, scope, m));
-        if m.is_empty() {
+        let mut ran = false;
+        let v = probes.run(m, || {
+            ran = true;
+            runner.filter_green_in(&f.name, scope, m)
+        });
+        if ran && m.is_empty() {
             base_kept = runner.probe_kept();
         }
         if v == Some(false) {
