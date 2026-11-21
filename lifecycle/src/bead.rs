@@ -2814,6 +2814,7 @@ mod tests {
         assert_eq!(dropped.row.ask_since, None, "a terminal row keeps no raise");
     }
 
+    #[test_id(tnteyxy)]
     #[test]
     fn hold_detail_overrides_the_causes_own_name_in_the_row() {
         // work.rs's superseded-by asks the operator to confirm against a specific successor

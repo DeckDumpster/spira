@@ -3664,6 +3664,7 @@ mod tests {
 
     /// Migration 10 gives each record under an Ask hold the newest applied Ask `Hold`'s time,
     /// from imported and from txn history, in `latest` and in the version row it mirrors.
+    #[test_id(tey3y4b)]
     #[test]
     fn migration_10_fills_an_ask_held_records_ask_since_from_its_history() {
         let dir = testkit::TempDir::new("sqlite-m10");

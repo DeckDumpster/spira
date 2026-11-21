@@ -839,6 +839,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<Value>(&call(&s, &["state"]).1).unwrap()["rows"].as_array().unwrap().len(), 300);
     }
 
+    #[test_id(t9fs6nl)]
     #[test]
     fn a_state_answer_is_one_page_and_the_pages_hold_every_row_once() {
         use crate::control::journal::STATE_PAGE;
@@ -882,6 +883,7 @@ mod tests {
         assert_eq!(distinct, whole);
     }
 
+    #[test_id(ty2mz4n)]
     #[test]
     fn a_state_call_takes_only_after_with_a_cursor() {
         let s = store();

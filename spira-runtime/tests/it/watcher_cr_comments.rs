@@ -136,6 +136,7 @@ fn a_closed_change_whose_ledger_close_fails_leaves_the_review_state_unchanged() 
     assert_eq!(record::load(t.path(), 1).unwrap().state, State::Open);
 }
 
+#[test_id(t08a8sz)]
 #[test]
 fn the_row_is_registered_with_its_cadence_and_effects() {
     let t = spira_runtime::tasks::d::acceptance::row(NAME);

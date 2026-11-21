@@ -1172,6 +1172,7 @@ mod tests {
         assert!(Mutation::of(&v(&["recompute-blocked"]), Some("stdin")).is_none());
     }
 
+    #[test_id(t09dwwg)]
     #[test]
     fn a_duplicate_is_a_closed_bead_with_a_duplicates_edge_and_no_dependency_event() {
         let s = script(&["duplicate", "sp-a", "--of", "sp-b"], None);
@@ -1180,6 +1181,7 @@ mod tests {
         assert!(s.iter().any(|q| q.starts_with("UPDATE `beads`.issues SET status = 'closed'")), "{s:?}");
     }
 
+    #[test_id(tjt3rmo)]
     #[test]
     fn a_recompute_settles_every_bead_and_not_only_a_scope() {
         let s = blocked_passes("`d`", None, 2);
@@ -1188,6 +1190,7 @@ mod tests {
         assert!(blocked_passes("`d`", Some("SELECT 'x'"), 1).iter().all(|q| q.contains("i.id IN (SELECT 'x')")));
     }
 
+    #[test_id(tebprls)]
     #[test]
     fn a_create_reads_its_flags_as_bd_does() {
         let c = |args: &[&str], body| match Mutation::of(&v(&[&["create"], args].concat()), body).unwrap().ops.remove(0) {

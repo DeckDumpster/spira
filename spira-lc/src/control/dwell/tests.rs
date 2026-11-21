@@ -340,6 +340,7 @@ fn second_dwell_reads(s: &Store<Counting<MemBackend>>) -> (Value, usize, usize, 
     (serde_json::from_str(&out).unwrap(), counting.history_read(), counting.events_read(), counting.calls_made())
 }
 
+#[test_id(t1kpl9q)]
 #[test]
 fn a_warm_dwell_reads_the_same_keys_however_many_beads_are_ask_held_and_however_long_their_history() {
     let (a, a_newest) = ask_held(1, 5);
@@ -357,6 +358,7 @@ fn a_warm_dwell_reads_the_same_keys_however_many_beads_are_ask_held_and_however_
     }
 }
 
+#[test_id(t9vv4rf)]
 #[test]
 fn an_ask_held_record_with_no_ask_since_cannot_tell_and_names_the_migration() {
     use state_store::{Backend, Object, Rev, Write};

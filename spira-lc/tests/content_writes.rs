@@ -600,6 +600,7 @@ fn said(out: &str, key: &str) -> String {
     out.replace(key, "KEY")
 }
 
+#[test_id(tnmxdom)]
 #[test]
 fn the_key_value_and_memory_verbs_write_the_config_rows_bd_writes_in_sql_and_start_no_process() {
     let Some(store) = Store::up() else { return };
@@ -633,6 +634,7 @@ fn the_key_value_and_memory_verbs_write_the_config_rows_bd_writes_in_sql_and_sta
     assert!(!memories.contains("mem-a") && !memories.contains("mem-b"), "{memories}");
 }
 
+#[test_id(txxx5qs)]
 #[test]
 fn a_key_value_write_to_the_planning_watermark_is_refused_by_the_door() {
     let Some(store) = Store::up() else { return };
@@ -665,6 +667,7 @@ fn without_reason(mut shown: serde_json::Value) -> serde_json::Value {
     shown
 }
 
+#[test_id(ttfnncn)]
 #[test]
 fn a_gate_check_closes_the_timer_gates_that_expired_as_bd_does_in_sql_and_starts_no_process() {
     let Some(store) = Store::up() else { return };
@@ -685,6 +688,7 @@ fn a_gate_check_closes_the_timer_gates_that_expired_as_bd_does_in_sql_and_starts
     assert_eq!((children, out.trim()), (0, "No open gates of type 'gh:run' found."));
 }
 
+#[test_id(tozarv6)]
 #[test]
 fn a_gate_resolve_closes_the_gate_and_unblocks_what_it_blocked_as_bd_does() {
     let Some(store) = Store::up() else { return };
@@ -700,6 +704,7 @@ fn a_gate_resolve_closes_the_gate_and_unblocks_what_it_blocked_as_bd_does() {
     assert!(!store.bd(&["blocked", "--json"], None).contains(&a), "{a} is still blocked by its resolved gate");
 }
 
+#[test_id(txrm626)]
 #[test]
 fn purge_alerts_deletes_the_alerts_rows_in_sql_and_unblocks_what_they_blocked() {
     let Some(store) = Store::up() else { return };
@@ -739,6 +744,7 @@ fn stale_pair(store: &Store) -> (String, String, String) {
     (blocked, blocker, free)
 }
 
+#[test_id(t0y6hdk)]
 #[test]
 fn recompute_blocked_repairs_stale_flags_and_says_what_bd_says_in_sql_and_starts_no_process() {
     let Some(store) = Store::up() else { return };
@@ -756,6 +762,7 @@ fn recompute_blocked_repairs_stale_flags_and_says_what_bd_says_in_sql_and_starts
     assert_eq!(lc.run(&["content", "recompute-blocked"], None).1, "is_blocked already consistent — nothing to recompute.\n");
 }
 
+#[test_id(tljrx4z)]
 #[test]
 fn a_gate_check_over_a_github_gate_is_left_to_bd() {
     let Some(store) = Store::up() else { return };

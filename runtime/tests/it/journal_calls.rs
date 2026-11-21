@@ -233,6 +233,7 @@ fn a_restart_settles_the_effect_a_crash_left_unanswered_as_lost_and_relaunches_n
     assert_eq!(store.mem.boot().unwrap().schedules.len(), 1, "and the next tick's row is waiting");
 }
 
+#[test_id(tbfwioj)]
 #[test]
 fn a_boot_walks_every_page_of_state_and_restores_what_the_journal_holds() {
     let (store, path, _dir) = serve();

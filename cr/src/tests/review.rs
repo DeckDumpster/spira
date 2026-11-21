@@ -419,6 +419,7 @@ fn coverage_ports(tree: crate::ports::FixtureTree, rows: Vec<Row>, limit: usize)
     (run, p)
 }
 
+#[test_id(tagwoqt)]
 #[test]
 fn status_reports_coverage_by_area_and_kind() {
     let files = store_unit_files();
@@ -437,6 +438,7 @@ fn status_reports_coverage_by_area_and_kind() {
     assert!(text.contains("coverage at c0ffee: "), "{text}");
 }
 
+#[test_id(t59e7o4)]
 #[test]
 fn status_lists_the_oldest_never_reviewed_files_first_and_counts_the_rest() {
     let tree = fixture().with_commits("demo/src/net.rs", &[NOW - 50 * DAY, NOW - DAY]).with_commits("other/src/util.rs", &[NOW - 80 * DAY]);
@@ -451,6 +453,7 @@ fn status_lists_the_oldest_never_reviewed_files_first_and_counts_the_rest() {
     assert!(go(&p, &["status"]).stdout.contains(&format!("… {} more", total - 2)));
 }
 
+#[test_id(tuxy59c)]
 #[test]
 fn status_lists_files_changed_since_review_with_lines_changed() {
     let files = store_unit_files();
@@ -464,6 +467,7 @@ fn status_lists_files_changed_since_review_with_lines_changed() {
     assert_eq!(c["files"]["current"], files.len() - 1);
 }
 
+#[test_id(tuuha1h)]
 #[test]
 fn status_counts_a_file_reviewed_under_its_old_name() {
     let files = store_unit_files();
@@ -475,6 +479,7 @@ fn status_counts_a_file_reviewed_under_its_old_name() {
     assert_eq!(c["files"]["current"], files.len());
 }
 
+#[test_id(t155l3y)]
 #[test]
 fn a_review_closed_unpublished_adds_no_coverage() {
     let files = store_unit_files();
@@ -652,6 +657,7 @@ fn put_rows(body: &serde_json::Value) -> Vec<Row> {
     crate::ledger::Ledger::parse(&String::from_utf8(unbase64(body["content"].as_str().unwrap())).unwrap()).unwrap().rows
 }
 
+#[test_id(tzyzbjx)]
 #[test]
 fn seal_appends_one_open_row_to_the_review_repositorys_ledger() {
     let mut w = world();
@@ -685,6 +691,7 @@ fn seal_appends_one_open_row_to_the_review_repositorys_ledger() {
     assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 2);
 }
 
+#[test_id(tdux8bk)]
 #[test]
 fn a_staged_review_holds_its_unit_back_from_the_next_open() {
     let w = world();
@@ -693,6 +700,7 @@ fn a_staged_review_holds_its_unit_back_from_the_next_open() {
     assert_eq!(o.code, 1, "{}", o.stderr);
 }
 
+#[test_id(totrgvj)]
 #[test]
 fn ledger_close_writes_once_with_how_it_closed() {
     let mut w = world();
@@ -711,6 +719,7 @@ fn ledger_close_writes_once_with_how_it_closed() {
     assert_eq!(w.gh.put("contents/ledger.jsonl").len(), puts + 1, "a second close makes no PUT");
 }
 
+#[test_id(tfv5b6z)]
 #[test]
 fn ledger_close_of_an_unpublished_review_says_unpublished() {
     let mut w = world();
@@ -719,6 +728,7 @@ fn ledger_close_of_an_unpublished_review_says_unpublished() {
     assert_eq!(ledger_rows(&w.gh).last().unwrap().closed_as, Some(ClosedAs::Unpublished));
 }
 
+#[test_id(trakb3h)]
 #[test]
 fn a_missing_ledger_file_is_refused_naming_the_step() {
     let mut w = world();
@@ -732,6 +742,7 @@ fn a_missing_ledger_file_is_refused_naming_the_step() {
     assert!(w.gh.put("contents/ledger.jsonl").is_empty());
 }
 
+#[test_id(tcsl3jp)]
 #[test]
 fn a_ledger_put_conflict_rereads_and_retries() {
     let mut w = world();
@@ -748,6 +759,7 @@ fn a_ledger_put_conflict_rereads_and_retries() {
     assert_eq!(rows.iter().map(|r| r.review.as_str()).collect::<Vec<_>>(), ["900", "901", "001"]);
 }
 
+#[test_id(t1ntz02)]
 #[test]
 fn a_ledger_that_moves_under_every_write_gives_up_after_three_puts() {
     let mut w = world();
@@ -760,6 +772,7 @@ fn a_ledger_that_moves_under_every_write_gives_up_after_three_puts() {
     assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 3);
 }
 
+#[test_id(twbl49v)]
 #[test]
 fn closing_a_review_that_was_never_sealed_writes_nothing_and_succeeds() {
     let w = world();

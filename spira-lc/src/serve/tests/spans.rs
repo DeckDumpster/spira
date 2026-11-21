@@ -309,6 +309,7 @@ fn door_answering(code: i32, ended: Option<state_store::phases::ReadEnd>) -> Arc
     Arc::new(super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work, deadlines: test_deadlines() })
 }
 
+#[test_id(t8o880r)]
 #[test]
 fn a_cannot_tell_whose_store_read_was_ended_at_the_limit_says_so_in_its_head() {
     use state_store::phases::ReadEnd;

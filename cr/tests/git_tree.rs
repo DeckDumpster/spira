@@ -1,10 +1,10 @@
 //! `GitTree` against a real throwaway repository, and `cr pick` over it.
 
-#[path = "../src/tests/gh.rs"]
-mod gh;
-
 #[macro_use]
 extern crate spira_test_id;
+
+#[path = "../src/tests/gh.rs"]
+mod gh;
 use cr::cli::run;
 use cr::ports::{Config, GitTree, Ports, SourceTree, VirtualClock};
 use std::path::Path;
@@ -88,6 +88,7 @@ fn git_tree_reads_the_full_log_line_times_and_deleted_tests_of_a_real_history() 
     assert_eq!(removed.iter().map(|r| (r.name.as_str(), r.sha.as_str())).collect::<Vec<_>>(), [("gone", log[0].sha.as_str())]);
 }
 
+#[test_id(tqtoxhv)]
 #[test]
 fn renames_and_changed_lines_come_from_git() {
     let dir = repo();

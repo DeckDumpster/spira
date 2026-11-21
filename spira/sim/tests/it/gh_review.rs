@@ -23,6 +23,7 @@ fn ctl(dir: &Path, args: &[&str]) -> String {
     gh::ctl(dir, &args.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap()
 }
 
+#[test_id(tv6xu2a)]
 #[test]
 fn a_review_pull_request_is_opened_commented_on_replied_to_closed_and_read_back() {
     let t = testkit::TempDir::new("gh-review");
@@ -88,6 +89,7 @@ fn a_review_pull_request_is_opened_commented_on_replied_to_closed_and_read_back(
     assert_eq!((closed["state"].as_str(), closed["closed_at"].is_string()), (Some("closed"), true));
 }
 
+#[test_id(tknaoo1)]
 #[test]
 fn a_pull_request_whose_branch_was_never_pushed_is_refused_and_a_ref_is_made_once() {
     let t = testkit::TempDir::new("gh-review-refs");

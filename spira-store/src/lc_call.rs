@@ -1003,6 +1003,7 @@ mod tests {
 
     /// sp-iqsanu: an answer the service marks `read_ended` is a typed variant, never text to match;
     /// the same exit without the mark stays a fault.
+    #[test_id(ta2lpwr)]
     #[test]
     fn a_cannot_tell_marked_read_ended_is_its_own_error_and_unmarked_stays_a_fault() {
         let dir = testkit::TempDir::new("lc-client-read-ended");

@@ -1809,6 +1809,7 @@ mod bounded_store_tests {
         }
     }
 
+    #[test_id(tgtm0pn)]
     #[test]
     fn a_read_the_store_ended_at_its_limit_is_reported_as_that_and_not_as_an_unavailable_store() {
         let client = LcClient::over(Arc::new(Ended), true);

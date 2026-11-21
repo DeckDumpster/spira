@@ -847,6 +847,7 @@ pub(crate) mod verdict_run {
         sink.join().unwrap()
     }
 
+    #[test_id(tjylxaq)]
     #[test]
     fn a_submitted_run_pushes_how_long_its_session_and_its_teardown_held_the_slot_after_submit() {
         let pushes = pushed_after_submit(Some(T0));
@@ -859,6 +860,7 @@ pub(crate) mod verdict_run {
         }
     }
 
+    #[test_id(tqy141m)]
     #[test]
     fn a_run_that_never_submitted_pushes_no_after_submit_seconds() {
         let pushes = pushed_after_submit(None);

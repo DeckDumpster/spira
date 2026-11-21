@@ -367,6 +367,7 @@ fn a_second_commit_on_a_submitted_in_flight_item_rides_it_and_leaves_no_law_bran
     assert_eq!(testkit::git(p, &["branch", "--list", "law/*"]), "");
 }
 
+#[test_id(tw5n0fq)]
 #[test]
 fn fast_forward_onto_refuses_a_branch_that_does_not_descend_from_the_carrier() {
     let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
@@ -383,6 +384,7 @@ fn fast_forward_onto_refuses_a_branch_that_does_not_descend_from_the_carrier() {
     assert!(!testkit::git(p, &["branch", "--list", "law/*"]).is_empty(), "the law/ commit is kept");
 }
 
+#[test_id(tbymwyb)]
 #[test]
 fn the_carry_decision_names_a_submitted_spira_item_and_files_anew_otherwise() {
     let _env = testkit::env_read();
@@ -395,6 +397,7 @@ fn the_carry_decision_names_a_submitted_spira_item_and_files_anew_otherwise() {
     assert_eq!(carrier_of(Some("refs/heads/spira/sp-abc"), |_| None), None, "an unreadable bead");
 }
 
+#[test_id(tca1nmt)]
 #[test]
 fn a_show_reply_gives_the_beads_lifecycle_state() {
     let _env = testkit::env_read();
@@ -402,6 +405,7 @@ fn a_show_reply_gives_the_beads_lifecycle_state() {
     assert_eq!(rule::code::state_in_show("not json"), None);
 }
 
+#[test_id(tjo1wgd)]
 #[test]
 fn the_law_book_log_is_watched() {
     let _env = testkit::env_read();
@@ -859,6 +863,7 @@ fn a_statute_the_store_lost_with_no_record_leaves_and_the_later_sections_record_
     assert!(lint_finds(p).is_empty());
 }
 
+#[test_id(tjmedg1)]
 #[test]
 fn a_book_branch_the_base_has_moved_past_is_replaced_not_built_upon() {
     use rule::code::LawBranch;
@@ -885,6 +890,7 @@ fn a_book_branch_the_base_has_moved_past_is_replaced_not_built_upon() {
     assert_eq!(kinds.get(&a), Some(&LawBranch::ReplacedBy(new)));
 }
 
+#[test_id(t9856yg)]
 #[test]
 fn a_refiled_law_branch_replaces_the_beads_existing_branch_and_a_first_filing_takes_a_free_name() {
     let _env = author_env();
