@@ -1,5 +1,6 @@
 //! `reconcile-landed <bead> --sha SHA --ref REF (--repo-path P | --repo NAME) --actor A` on the
-//! control store: work that verifiably merged while the lifecycle missed it. The proof is
+//! control store: work that verifiably merged while the lifecycle missed it. The CLI reads git
+//! and sends the result as `--on-ref` and `--names-bead`; the service runs no git. The proof is
 //! ancestry, SHA reachable from REF, and either a message on SHA that names the bead or SHA
 //! being the row's own recorded tip (a row whose tip is itself a landing commit names another
 //! bead, and its tip on the ref is the stronger proof). A delivery still BATCHED, PR_OPEN or
@@ -24,6 +25,26 @@ pub struct Landing<'a> {
     pub names_bead: bool,
 }
 
+/// The caller's half: git is asked here, in the CLI's process, and the answer rides to the
+/// service as `--on-ref` and `--names-bead`, which `run` trusts as `deliver` trusts its proof.
+pub fn with_proof(args: &[String]) -> Result<Vec<String>, (i32, String)> {
+    let refuse = |why: String| (CANNOT_TELL, format!("reconcile-landed: {why}"));
+    let Some(id) = args.first() else { return Err(refuse("missing <bead-id>".into())) };
+    let (Some(sha), Some(base)) = (flag(args, "--sha"), flag(args, "--ref")) else {
+        return Err(refuse("--sha, --ref and --actor are required".into()));
+    };
+    let repo = match (flag(args, "--repo-path"), flag(args, "--repo")) {
+        (Some(p), _) => std::path::PathBuf::from(p),
+        (None, Some(name)) => crate::repo_config::registered_root(&name).map_err(|e| refuse(e.to_string()))?,
+        (None, None) => return Err(refuse("--repo-path or --repo is required".into())),
+    };
+    let on_ref = crate::git_evidence::is_ancestor(&repo, &sha, &base);
+    let names_bead = on_ref && crate::git_evidence::commit_names_bead(&repo, &sha, id);
+    let mut proved = args.to_vec();
+    proved.extend(["--on-ref".into(), on_ref.to_string(), "--names-bead".into(), names_bead.to_string()]);
+    Ok(proved)
+}
+
 pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "reconcile-landed: missing <bead-id>".into());
@@ -31,17 +52,10 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
     let (Some(sha), Some(base), Some(actor)) = (flag(args, "--sha"), flag(args, "--ref"), flag(args, "--actor")) else {
         return (CANNOT_TELL, "reconcile-landed: --sha, --ref and --actor are required".into());
     };
-    let repo = match (flag(args, "--repo-path"), flag(args, "--repo")) {
-        (Some(p), _) => std::path::PathBuf::from(p),
-        (None, Some(name)) => match crate::repo_config::registered_root(&name) {
-            Ok(p) => p,
-            Err(e) => return (CANNOT_TELL, format!("reconcile-landed: {e}")),
-        },
-        (None, None) => return (CANNOT_TELL, "reconcile-landed: --repo-path or --repo is required".into()),
+    let (Some(on_ref), Some(names_bead)) = (flag(args, "--on-ref"), flag(args, "--names-bead")) else {
+        return (CANNOT_TELL, "reconcile-landed: --on-ref and --names-bead are required: the caller proves the landing from git".into());
     };
-    let on_ref = crate::git_evidence::is_ancestor(&repo, &sha, &base);
-    let names_bead = on_ref && crate::git_evidence::commit_names_bead(&repo, &sha, id);
-    settle(store, id, &Landing { sha: &sha, base: &base, on_ref, names_bead }, &actor, call)
+    settle(store, id, &Landing { sha: &sha, base: &base, on_ref: on_ref == "true", names_bead: names_bead == "true" }, &actor, call)
 }
 
 pub fn settle<B: Backend>(store: &Store<B>, id: &str, landing: &Landing, actor: &str, call: &Call) -> (i32, String) {
@@ -104,9 +118,12 @@ mod tests {
     }
 
     fn lc(s: &Store<MemBackend>, argv: &[&str]) -> (i32, String) {
-        let args: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
-        let request = format!("t/{argv:?}");
-        super::super::run(s, &args, &Call { now: 100, request: &request, inputs: &crate::control::claimable::FIXED })
+        lc_args(s, &argv.iter().map(|a| a.to_string()).collect::<Vec<_>>())
+    }
+
+    fn lc_args(s: &Store<MemBackend>, args: &[String]) -> (i32, String) {
+        let request = format!("t/{args:?}");
+        super::super::run(s, args, &Call { now: 100, request: &request, inputs: &crate::control::claimable::FIXED })
     }
 
     fn state_of(s: &Store<MemBackend>, id: &str) -> String {
@@ -201,15 +218,33 @@ mod tests {
         submitted(&s, "sp-on", &on);
         submitted(&s, "sp-off", &off);
         let verb = |id: &str, sha: &str| {
-            lc(&s, &["reconcile-landed", id, "--sha", sha, "--ref", "main", "--repo-path", &repo.to_string_lossy(), "--actor", "concierge"])
+            lc_args(&s, &proved(&["reconcile-landed", id, "--sha", sha, "--ref", "main", "--repo-path", &repo.to_string_lossy(), "--actor", "concierge"]).unwrap())
         };
+        let recorder = std::sync::Arc::new(state_store::phases::Recorder::default());
         let (code, out) = verb("sp-off", &off);
         assert_eq!(code, REFUSED, "{out}");
         assert!(out.contains(&off) && out.contains("main"), "{out}");
         assert_eq!(state_of(&s, "sp-off"), "SUBMITTED");
-        let (code, out) = verb("sp-on", &on);
+        let args = proved(&["reconcile-landed", "sp-on", "--sha", &on, "--ref", "main", "--repo-path", &repo.to_string_lossy(), "--actor", "concierge"]).unwrap();
+        state_store::phases::track(recorder.clone());
+        let (code, out) = lc_args(&s, &args);
+        state_store::phases::untrack();
         assert_eq!(code, 0, "{out}");
+        assert_eq!(recorder.snapshot().children, 0, "the served verb ran no git");
         assert_eq!(state_of(&s, "sp-on"), "LANDED");
+    }
+
+    #[test]
+    fn the_service_refuses_a_request_the_caller_did_not_prove() {
+        let s = store();
+        submitted(&s, "sp-a", TIP);
+        let (code, out) = lc(&s, &["reconcile-landed", "sp-a", "--sha", TIP, "--ref", "main", "--repo-path", "/nowhere", "--actor", "concierge"]);
+        assert_eq!(code, CANNOT_TELL, "{out}");
+        assert_eq!(state_of(&s, "sp-a"), "SUBMITTED");
+    }
+
+    fn proved(argv: &[&str]) -> Result<Vec<String>, (i32, String)> {
+        with_proof(&argv.iter().map(|a| a.to_string()).collect::<Vec<_>>())
     }
 
     #[test]
@@ -226,7 +261,10 @@ mod tests {
         let _env = testkit::env(&edits);
         let s = store();
         submitted(&s, "sp-on", &on);
-        let verb = |name: &str| lc(&s, &["reconcile-landed", "sp-on", "--sha", &on, "--ref", "main", "--repo", name, "--actor", "concierge"]);
+        let verb = |name: &str| match proved(&["reconcile-landed", "sp-on", "--sha", &on, "--ref", "main", "--repo", name, "--actor", "concierge"]) {
+            Ok(args) => lc_args(&s, &args),
+            Err(refused) => refused,
+        };
         let (code, out) = verb("dumpstar");
         assert_eq!(code, 0, "{out}");
         assert_eq!(state_of(&s, "sp-on"), "LANDED");

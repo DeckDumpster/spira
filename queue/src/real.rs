@@ -1829,6 +1829,20 @@ impl RealLc {
         Ok(LcClient::for_bin(&bin.to_string_lossy())?.within(lc_timeout()?))
     }
 
+    /// Each member's commits above `base`, read here with git and recorded for the service, which
+    /// runs no git: a range it holds is how a cascade finds the members stacked on one another.
+    /// A member whose range cannot be read or recorded is simply not recorded.
+    fn record_ranges(&self, repo: &str, base: &str, members: &str) {
+        let Ok(home) = spira_config::resolve::locate_home_for_process() else { return };
+        let Some(root) = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home).root(repo) else { return };
+        for (_, tip) in members.split(',').filter_map(|m| m.split_once(':')) {
+            let Some(out) = stdout_of(git(Path::new(&root)).args(["rev-list", tip, &format!("^{base}")])) else { continue };
+            let commits: Vec<&str> = out.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+            let body = serde_json::json!({ "repo": repo, "base": base, "tip": tip, "commits": commits }).to_string();
+            let _ = self.run(&["git-fact", "put", "range", "--json", &body]);
+        }
+    }
+
     /// Any answer: its code and everything it printed.
     fn run(&self, args: &[&str]) -> (i32, String) {
         let c = match self.client() {
@@ -2045,6 +2059,7 @@ impl Lc for RealLc {
         actor: &str,
         round: Option<&Kv>,
     ) -> Result<String, (i32, String)> {
+        self.record_ranges(repo, base, members);
         let fields = round_flag(round);
         let mut argv = vec![
             "cut",
@@ -2080,6 +2095,7 @@ impl Lc for RealLc {
         parent: &str,
         actor: &str,
     ) -> Result<String, (i32, String)> {
+        self.record_ranges(repo, base, members);
         let (rc, out) = self.run(&[
             "stage",
             batch_id,

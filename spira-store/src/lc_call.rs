@@ -146,6 +146,9 @@ pub fn connect(path: &Path) -> Result<UnixStream, Fail> {
     Ok(stream)
 }
 
+/// A recorded `unpublished` measurement read this many seconds ago is answered, and read, as stale.
+pub const UNPUBLISHED_STALE_AFTER_SECS: u64 = 60;
+
 /// Whether `argv` only reads: the one kind of call that may be sent again when the service
 /// drops it, because asking twice changes nothing. A write is never in this list.
 pub fn is_read(argv: &[String]) -> bool {
@@ -154,6 +157,7 @@ pub fn is_read(argv: &[String]) -> bool {
         a.as_slice(),
         ["show" | "list" | "history" | "stats" | "claimable", ..] | ["content", "list" | "show" | "memories" | "state" | "search" | "events", ..]
             | ["content", "dep" | "label", "list", ..] | ["fact", "list", ..]
+            | ["git-fact", "get", ..]
     )
 }
 

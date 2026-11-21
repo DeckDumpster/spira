@@ -1,16 +1,6 @@
 use super::*;
 
 #[test]
-fn unpublished_is_served_without_the_store_and_waits_longer_than_a_store_call() {
-    let (reply, code) = ask(None, "[\"unpublished\"]\n");
-    assert_eq!(code, 2, "{reply}");
-    assert!(reply.contains("unpublished: usage"), "the verb answered, not the store: {reply}");
-    let argv = |v: &str| vec![v.to_string()];
-    assert!(dl(&argv("unpublished")) > dl(&argv("show")));
-    assert!(dl(&argv("unpublished")) < std::time::Duration::from_secs(5), "the server answers before the 5 s client gives up");
-}
-
-#[test]
 fn a_write_held_past_its_request_deadline_answers_cannot_tell_and_never_commits() {
     use state_store::{contract::{Config, Contract, Ports}, MemBackend, Object, Request, Txn};
     use std::{sync::Arc, time::{Duration, Instant}};

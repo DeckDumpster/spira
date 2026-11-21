@@ -146,7 +146,7 @@ impl<B: Backend> Store<B> {
                 stacks.push((id.clone(), r.row));
             }
         }
-        let contained = crate::cutover::branch_containment(&rec.row, &members);
+        let contained = crate::cutover::branch_containment(self, &rec.row, &members);
         Ok(crate::cutover::stacked_dependents_from(
             &stacks, &tips, &contained, roots,
         ))

@@ -1121,8 +1121,6 @@ pub(crate) fn request_deadline(argv: &[String], deadlines: &Deadlines) -> Durati
         // batch-job: a work verb that runs a brokered tool waits the client's tool bound less a margin.
         Some("work") if argv.get(2).is_some_and(|v| crate::work::brokers_tool(v)) => TOOL_DEADLINE,
         Some("work") => crate::db::QUERY_DEADLINE,
-        // batch-job: bounded under the client's 5 s wait; the verb owns its own shorter budget.
-        Some("unpublished") => crate::unpublished::DEADLINE,
         // batch-job: a watch holds as long as its caller asked, so the cutoff is that hold plus a margin, not the request default.
         Some("watch") => {
             let hold = crate::flag(argv, "--wait-ms").and_then(|v| v.parse::<u64>().ok()).map_or(state_store::MAX_WATCH_WAIT_MS, |ms| ms.min(state_store::MAX_WATCH_WAIT_MS));

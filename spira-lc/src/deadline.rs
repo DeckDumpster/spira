@@ -162,7 +162,7 @@ fn default_scope(slow: &str) -> Result<Scope, String> {
 }
 
 fn default_scope_without(slow_verbs: impl Iterator<Item = String>) -> Scope {
-    let mut excluded: BTreeSet<String> = ["work", "unpublished", "watch"].iter().map(|v| v.to_string()).collect();
+    let mut excluded: BTreeSet<String> = ["work", "watch"].iter().map(|v| v.to_string()).collect();
     excluded.extend(crate::composed::SWEEPS.iter().map(|v| v.to_string()));
     excluded.extend(slow_verbs);
     Scope::Default { excluded }
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn the_default_scope_leaves_out_work_sweeps_and_declared_verbs() {
         let Scope::Default { excluded } = default_scope("rc=3000@sp-b").unwrap() else { panic!() };
-        for v in ["work", "unpublished", "watch", "reconcile-content", "rc"] {
+        for v in ["work", "watch", "reconcile-content", "rc"] {
             assert!(excluded.contains(v), "{v}");
         }
         assert!(!excluded.contains("show"));

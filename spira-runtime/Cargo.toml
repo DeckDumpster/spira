@@ -53,6 +53,11 @@ path = "tests/task_e_watch_transitions.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "world_publish_backlog"
+path = "tests/world_publish_backlog.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "world_flow_export"
 path = "tests/world_flow_export.rs"
 required-features = ["integration"]

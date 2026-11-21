@@ -47,12 +47,16 @@ pub fn inline_stdin_payload(args: Vec<String>) -> Vec<String> {
 }
 
 pub(crate) fn inline_payload_from(mut args: Vec<String>, input: &mut dyn std::io::Read) -> Vec<String> {
+    if args.first().map(String::as_str) == Some("git-fact") && args.get(1).map(String::as_str) == Some("put") && args.last().map(String::as_str) == Some("--json") {
+        args.pop();
+    }
     let verb = (args.first().map(String::as_str), args.get(1).map(String::as_str));
     let reads_stdin = matches!(
         verb,
         (Some("batch-progress" | "publish-readiness"), _)
             | (Some("section"), Some("apply-spec" | "publish-status"))
             | (Some("intent"), Some("put"))
+            | (Some("git-fact"), Some("put"))
     );
     if reads_stdin && !args.iter().any(|a| a == "--json") {
         let mut body = String::new();
@@ -81,20 +85,18 @@ pub(crate) fn inline_payload_from(mut args: Vec<String>, input: &mut dyn std::io
 }
 
 /// `(dependent, prerequisite)` for every pair of members where the dependent's branch holds a
-/// commit in the prerequisite's own range above the batch's base. A repository, base or tip
-/// git cannot resolve yields no edge: the declared `stack` still applies.
-pub(crate) fn branch_containment(batch_row: &batch::BatchRow, members: &[(String, String)]) -> std::collections::BTreeSet<(String, String)> {
-    let empty = std::collections::BTreeSet::new();
-    let Some(base) = batch_row.base.as_deref() else { return empty };
-    let Ok(root) = crate::repo_config::registered_root(&batch_row.repo) else { return empty };
-    containment_in_repo(&root, base, members)
-}
-
-fn containment_in_repo(repo: &std::path::Path, base: &str, members: &[(String, String)]) -> std::collections::BTreeSet<(String, String)> {
+/// commit in the prerequisite's own range above the batch's base, read from the ranges recorded for
+/// `(repo, base, tip)`. A member with no recorded range yields no edge: the declared `stack` still applies.
+pub(crate) fn branch_containment<B: state_store::Backend>(
+    store: &crate::control::store::Store<B>,
+    batch_row: &batch::BatchRow,
+    members: &[(String, String)],
+) -> std::collections::BTreeSet<(String, String)> {
     let mut edges = std::collections::BTreeSet::new();
+    let Some(base) = batch_row.base.as_deref() else { return edges };
     let ranges: Vec<(&String, std::collections::BTreeSet<String>)> = members
         .iter()
-        .filter_map(|(id, tip)| crate::git_evidence::commits_above(repo, base, tip).map(|c| (id, c)))
+        .filter_map(|(id, tip)| store.git_fact_range(&batch_row.repo, base, tip).ok().flatten().map(|c| (id, c)))
         .collect();
     for (dependent, theirs) in &ranges {
         for (prereq, ours) in &ranges {
@@ -147,50 +149,51 @@ mod inline_tests {
 #[cfg(test)]
 mod containment_tests {
     use super::branch_containment;
+    use crate::control::store::Store;
+    use runtime::ports::VirtualClock;
+    use state_store::{Config, Contract, MemBackend, Ports, Request};
 
-    fn git(dir: &std::path::Path, args: &[&str]) -> String {
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    fn store() -> Store<MemBackend> {
+        let clock = VirtualClock::new(100_000);
+        Store::new(Contract::open(MemBackend::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap(), 1_000)
     }
 
-    fn world(dir: &testkit::TempDir) -> (testkit::EnvGuard, Vec<(String, String)>, String) {
-        let repo = dir.path().join("dumpstar");
-        std::fs::create_dir_all(&repo).unwrap();
-        git(&repo, &["init", "-q", "-b", "main"]);
-        git(&repo, &["commit", "-q", "--allow-empty", "-m", "base"]);
-        let base = git(&repo, &["rev-parse", "HEAD"]);
-        git(&repo, &["commit", "-q", "--allow-empty", "-m", "prereq"]);
-        let prereq = git(&repo, &["rev-parse", "HEAD"]);
-        git(&repo, &["commit", "-q", "--allow-empty", "-m", "dependent"]);
-        let dependent = git(&repo, &["rev-parse", "HEAD"]);
-        let run = dir.path().join("run");
-        let env: Vec<(&str, Option<String>)> = spira_config::process::fixture_world_env(dir.path(), &run, &["spira", "dumpstar"]);
-        let edits: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
-        let guard = testkit::env(&edits);
-        (guard, vec![("sp-dep".into(), dependent), ("sp-pre".into(), prereq)], base)
+    fn record(s: &Store<MemBackend>, repo: &str, tip: &str, commits: &[&str]) {
+        let commits: Vec<String> = commits.iter().map(|c| c.to_string()).collect();
+        s.put_git_fact_range(repo, "base", tip, &commits, &Request::new(&format!("t/{repo}/{tip}"), "batcher", "t")).unwrap();
+    }
+
+    fn members() -> Vec<(String, String)> {
+        vec![("sp-dep".into(), "tip-dep".into()), ("sp-pre".into(), "tip-pre".into())]
     }
 
     #[test]
-    fn a_product_repository_known_only_to_the_repo_map_gets_its_containment_edges() {
-        let dir = testkit::TempDir::new("lc-containment-registry");
-        let (_env, members, base) = world(&dir);
-        let row = lifecycle::batch::BatchRow::cut("b1", "dumpstar", "h", base);
-        let edges = branch_containment(&row, &members);
+    fn a_member_whose_range_holds_anothers_whole_range_is_its_dependent() {
+        let s = store();
+        record(&s, "dumpstar", "tip-pre", &["c1"]);
+        record(&s, "dumpstar", "tip-dep", &["c1", "c2"]);
+        let row = lifecycle::batch::BatchRow::cut("b1", "dumpstar", "h", "base");
+        let edges = branch_containment(&s, &row, &members());
         assert_eq!(edges, std::collections::BTreeSet::from([("sp-dep".to_string(), "sp-pre".to_string())]));
     }
 
     #[test]
-    fn an_unregistered_repository_yields_no_edges() {
-        let dir = testkit::TempDir::new("lc-containment-unregistered");
-        let (_env, members, base) = world(&dir);
-        let row = lifecycle::batch::BatchRow::cut("b1", "nowhere", "h", base);
-        assert!(branch_containment(&row, &members).is_empty());
+    fn with_no_range_recorded_no_edge_is_found() {
+        let s = store();
+        let row = lifecycle::batch::BatchRow::cut("b1", "dumpstar", "h", "base");
+        assert!(branch_containment(&s, &row, &members()).is_empty());
+        record(&s, "dumpstar", "tip-dep", &["c1", "c2"]);
+        assert!(branch_containment(&s, &row, &members()).is_empty(), "one range alone contains nothing");
+    }
+
+    #[test]
+    fn ranges_recorded_for_another_repo_or_base_are_not_read() {
+        let s = store();
+        record(&s, "dumpstar", "tip-pre", &["c1"]);
+        record(&s, "dumpstar", "tip-dep", &["c1", "c2"]);
+        let other_repo = lifecycle::batch::BatchRow::cut("b1", "nowhere", "h", "base");
+        assert!(branch_containment(&s, &other_repo, &members()).is_empty());
+        let other_base = lifecycle::batch::BatchRow::cut("b1", "dumpstar", "h", "base2");
+        assert!(branch_containment(&s, &other_base, &members()).is_empty());
     }
 }

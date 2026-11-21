@@ -32,6 +32,8 @@ pub const PLANNING_WATERMARK: &str = "planning/watermark";
 pub const PLANNING_CLOSED: &str = "planning-closed";
 /// Each watcher's conditions, under its own name: `conditions/<owner>/<key>`.
 pub const CONDITIONS: &str = "conditions/";
+/// What the scheduler and the round programs read from git, `git-facts/<kind>/…`; see `control::git_facts`.
+pub const GIT_FACTS: &str = "git-facts/";
 /// What the cutover import left: its baseline revision, the archive it read and its report.
 pub const IMPORT: &str = "import/";
 /// The import's baseline: every record's stored state at revision `rev`, one past the last
