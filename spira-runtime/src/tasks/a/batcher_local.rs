@@ -132,6 +132,8 @@ pub const CORPUS: &str = "batcher.local.corpus";
 pub const STAGE: &str = "batcher.local.stage";
 pub const STAGE_TEST: &str = "batcher.local.stage_test";
 const SOLE_KEY: &str = ":sole";
+/// Refusal kinds the observe's pool read (`batcher_cut::io::pool_rows`) already excludes while they hold; remembering them would only outlive the lifting.
+const POOL_READ_REFUSALS: [&str; 3] = ["held", "state", "no-row"];
 pub const EJECT: &str = "batcher.local.eject";
 pub const EJECT_GATE_RED: &str = "batcher.local.eject_red";
 pub const WITHDRAW: &str = "batcher.local.withdraw";
@@ -2337,7 +2339,7 @@ impl Machine<'_> {
     /// cut is over, nothing opened and nothing abandoned. The queue has already routed them (a
     /// base conflict back to rework, a round conflict into an integration that carries it).
     fn refused_some(&mut self, refused: &[(String, String, String)], leg: &Leg) {
-        for (id, kind, _) in refused {
+        for (id, kind, _) in refused.iter().filter(|(_, kind, _)| !POOL_READ_REFUSALS.contains(&kind.as_str())) {
             let tip = self.rc.members.iter().find(|(m, _)| m == id).map(|(_, t)| t.clone()).unwrap_or_default();
             let landing = if self.rc.landing_base.is_empty() { &self.rc.base } else { &self.rc.landing_base };
             self.rc.refused.insert(id.clone(), (tip, landing.clone(), kind.clone()));
