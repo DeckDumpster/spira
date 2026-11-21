@@ -17,15 +17,19 @@ pub struct Mail<'a> {
 
 /// Sends `m`, recording the attempt; `Err` names why it was not accepted.
 pub fn send(m: &Mail) -> Result<(), String> {
-    let mut env = mail::env::Env::load()?;
+    let env = mail::env::Env::load()?;
+    let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
+    send_with(&bd, env, m)
+}
+
+pub fn send_with(bd: &dyn mail::bead::Bd, mut env: mail::env::Env, m: &Mail) -> Result<(), String> {
     if m.own_dedup {
         env.repeat_considered = Some("sentinel-own-dedup".into());
     }
     mail::maildir::mailbox_valid(m.mailbox).map_err(|e| format!("mailbox {}: {e}", m.mailbox))?;
-    let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
     let args = mail::cmds::SendArgs { mailbox: m.mailbox, from: Some(m.from), subject: m.subject, kind: m.kind, default: m.default, class: "", bead: m.bead, urgent: false, digest: false, dry_run: false, requested_by: "" };
     let body = m.body.to_string();
-    let result = mail::cmds::send(&bd, &env, &args, body.clone());
+    let result = mail::cmds::send(bd, &env, &args, body.clone());
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     if let Some(a) = mail::cmds::attempt_of_send(&args, &body, &result, now) {
         let _ = a.write(&env.run_dir, &tsd::default_host());
