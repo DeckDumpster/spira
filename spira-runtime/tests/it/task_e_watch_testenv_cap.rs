@@ -161,3 +161,9 @@ fn a_ledgered_run_that_never_waited_is_killed_at_its_cap_plus_grace() {
     assert!(judged(dir.path(), vec![live(7, 77, 660, SUITE)]).is_empty());
     assert_eq!(judged(dir.path(), vec![live(7, 77, 661, SUITE)]), [7]);
 }
+
+#[test]
+fn the_tick_asks_observe_to_read_the_ledgers_under_the_configured_run_dir() {
+    let r = rig(1, world(vec![]), killed);
+    assert_eq!(asked(&r, OBSERVE), ["q/run"]);
+}

@@ -180,10 +180,6 @@ fn publish(k: &Clock) {
 
 /// Seconds of `p`'s age that were slot waiting, as it published them; 0 when unpublished or
 /// when the ledger belongs to an earlier process that had the same pid.
-pub fn excused_secs(run: &Path, p: &Proc) -> u64 {
-    ledgered_secs(run, p).unwrap_or(0)
-}
-
 fn ledger_fields(text: &str) -> Option<(u64, u64, u64)> {
     let f: Vec<u64> = text.split_whitespace().filter_map(|v| v.parse().ok()).collect();
     match f.as_slice() {
@@ -211,17 +207,18 @@ pub fn uncounted(run: &Path, procs: Vec<Proc>) -> Vec<Proc> {
         .collect()
 }
 
-/// Removes ledgers whose pid is gone or now belongs to another process.
+/// Removes ledgers whose pid is gone or now belongs to another process; one that does not parse
+/// may be mid-write by a run arming now, so it stays.
 fn sweep_ledgers(dir: &Path) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for e in rd.flatten() {
-        let alive = e
+        let dead = e
             .file_name()
             .to_str()
             .and_then(|n| n.parse::<u32>().ok())
             .zip(std::fs::read_to_string(e.path()).ok().and_then(|t| ledger_fields(&t)))
-            .is_some_and(|(pid, (ticks, ..))| start_ticks(pid) == Some(ticks));
-        if !alive {
+            .is_some_and(|(pid, (ticks, ..))| start_ticks(pid) != Some(ticks));
+        if dead {
             let _ = std::fs::remove_file(e.path());
         }
     }
@@ -567,14 +564,14 @@ mod tests {
         let run = dir.path().to_path_buf();
         let me = std::process::id();
         let mine = live().into_iter().find(|q| q.pid == me).unwrap();
-        assert_eq!(excused_secs(&run, &mine), 0, "nothing published");
+        assert_eq!(ledgered_secs(&run, &mine), None, "nothing published");
         let armed = arm(Cap { secs: 9_999, source: "test" }, Some(ledger_path(&run, me)));
         drop(hold());
         assert!(ledger_path(&run, me).exists());
         std::fs::write(ledger_path(&run, me), format!("{} 1212 0", mine.start_ticks)).unwrap();
-        assert_eq!(excused_secs(&run, &mine), 1212);
+        assert_eq!(ledgered_secs(&run, &mine), Some(1212));
         std::fs::write(ledger_path(&run, me), format!("{} 1212 0", mine.start_ticks + 1)).unwrap();
-        assert_eq!(excused_secs(&run, &mine), 0, "another process's ledger under a reused pid");
+        assert_eq!(ledgered_secs(&run, &mine), None, "another process's ledger under a reused pid");
         armed.finish();
         assert!(!ledger_path(&run, me).exists(), "a finished run leaves none");
     }
