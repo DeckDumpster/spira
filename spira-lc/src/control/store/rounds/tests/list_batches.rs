@@ -80,7 +80,7 @@ fn eventful_rounds<B: Backend>(r: &Rig<B>) {
         let kinds = [
             BatchEventKind::PassStarted { n: 1, head: "H1".into() },
             BatchEventKind::SuitesStarted { n: 1 },
-            BatchEventKind::PassRed { n: 1, red_suites: vec!["test-a.sh".into()], suites_s: 3, build_s: 2 },
+            BatchEventKind::PassRed { n: 1, red_suites: vec!["test-a.sh".into()], suites_s: 3, build_s: 2, runner: None },
             BatchEventKind::Eject { bead_id: format!("sp-{i:03}"), reason: format!("red {i}") },
             BatchEventKind::PassRebuilt { head: "H2".into() },
             BatchEventKind::PassStarted { n: 2, head: "H2".into() },

@@ -346,9 +346,17 @@ struct Timings {
     build_s: u64,
 }
 
+/// Where a pass ran and the decision that put it there, as the round VM recorded it beside
+/// `runner.meta`; `changed` is `prev->now` when the round's previous pass ran elsewhere.
+struct Runner {
+    place: String,
+    why: String,
+    changed: Option<String>,
+}
+
 enum Verdict<'a> {
-    Green(Timings),
-    Red(&'a [String], Timings),
+    Green(Timings, Option<&'a Runner>),
+    Red(&'a [String], Timings, Option<&'a Runner>),
     Incomplete(&'a str),
 }
 
@@ -448,10 +456,10 @@ fn pass_verdict_event_with(
     lc_cas(w, batch, |s, v| {
         if !strict && s != "CI_RUNNING" {
             return match (verdict, s) {
-                (Verdict::Green(_), "GREEN") | (Verdict::Red(..) | Verdict::Incomplete(_), _) => {
+                (Verdict::Green(..), "GREEN") | (Verdict::Red(..) | Verdict::Incomplete(_), _) => {
                     Ok(())
                 }
-                (Verdict::Green(_), other) => {
+                (Verdict::Green(..), other) => {
                     Err((1, format!("the batch is {other}, not CI_RUNNING")))
                 }
             };
@@ -460,11 +468,15 @@ fn pass_verdict_event_with(
             w.lc.batch_pass(batch)
                 .ok_or((1, format!("spira-lc cannot say which pass {batch} is on")))?;
         let kind = match verdict {
-            Verdict::Green(t) => {
-                serde_json::json!({"PassGreen": {"n": n, "suites_s": t.suites_s, "build_s": t.build_s}})
+            Verdict::Green(t, r) => {
+                let mut body = serde_json::json!({"n": n, "suites_s": t.suites_s, "build_s": t.build_s});
+                add_runner(&mut body, *r);
+                serde_json::json!({ "PassGreen": body })
             }
-            Verdict::Red(red, t) => {
-                serde_json::json!({"PassRed": {"n": n, "red_suites": red, "suites_s": t.suites_s, "build_s": t.build_s}})
+            Verdict::Red(red, t, r) => {
+                let mut body = serde_json::json!({"n": n, "red_suites": red, "suites_s": t.suites_s, "build_s": t.build_s});
+                add_runner(&mut body, *r);
+                serde_json::json!({ "PassRed": body })
             }
             Verdict::Incomplete(why) => {
                 serde_json::json!({"PassIncomplete": {"n": n, "reason": why}})
@@ -472,6 +484,14 @@ fn pass_verdict_event_with(
         };
         ride.sent(w.lc.batch_event(batch, s, v, LC_ACTOR, &kind.to_string(), ride.fields()))
     })
+}
+
+fn add_runner(body: &mut serde_json::Value, runner: Option<&Runner>) {
+    let Some(r) = runner else { return };
+    body["runner"] = serde_json::json!({"place": r.place, "why": r.why});
+    if let Some(c) = &r.changed {
+        body["runner_changed"] = serde_json::json!(c);
+    }
 }
 
 /// The pass a `LateBoundary` refusal names: a boundary for a pass that already has its verdict,
@@ -952,8 +972,8 @@ fn pass_verdict(
     }
     let bounded = bounded_text(&why);
     let v = match verdict {
-        "green" => Verdict::Green(t),
-        "red" => Verdict::Red(&red, t),
+        "green" => Verdict::Green(t, None),
+        "red" => Verdict::Red(&red, t, None),
         _ => Verdict::Incomplete(&bounded),
     };
     pass_verb(w, "round pass-verdict", batch, repo, |_, _| {
@@ -982,6 +1002,52 @@ fn pass_timings(results: &Path, wall_s: u64) -> Timings {
         build_s,
         suites_s: wall_s.saturating_sub(build_s),
     }
+}
+
+const UNRECORDED: &str = "unrecorded";
+
+/// The runner a pass's results name in `runner.place`; a results dir without it reads as
+/// `unrecorded`, never as absent.
+fn pass_runner(results: &Path) -> Runner {
+    let text = fs::read_to_string(results.join("runner.place")).unwrap_or_default();
+    let get = |k: &str| {
+        text.lines()
+            .find_map(|l| l.strip_prefix(k)?.strip_prefix('='))
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    match get("place") {
+        Some(place) => Runner {
+            place,
+            why: get("why").unwrap_or_else(|| "the pass recorded no placement decision".into()),
+            changed: None,
+        },
+        None => Runner {
+            place: UNRECORDED.into(),
+            why: "the pass left no runner.place".into(),
+            changed: None,
+        },
+    }
+}
+
+/// [`pass_runner`], naming the move when the round's previous pass ran on another runner.
+fn pass_runner_in_round(w: &World, batch: &str, results: &Path) -> Runner {
+    let mut r = pass_runner(results);
+    let now = w.lc.batch_pass(batch).map(|(n, _)| n);
+    let prev = now.and_then(|now| {
+        w.lc.batch_passes(batch)
+            .into_iter()
+            .filter(|p| p["n"].as_u64().is_some_and(|n| (n as u32) < now))
+            .max_by_key(|p| p["n"].as_u64())
+            .and_then(|p| p["runner"]["place"].as_str().map(str::to_string))
+    });
+    r.changed = prev.filter(|p| *p != r.place && p != UNRECORDED && r.place != UNRECORDED).map(|p| format!("{p}->{}", r.place));
+    r
+}
+
+fn runner_words(r: &Runner) -> String {
+    let moved = r.changed.as_ref().map(|c| format!(" runner_changed={c}")).unwrap_or_default();
+    format!(" runner={} ({}){moved}", r.place, r.why)
 }
 
 pub(super) fn local_ctx(w: &World, label: &str, repo: Option<&str>) -> Result<(Ctx, PathBuf), i32> {
@@ -2546,6 +2612,7 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
         w.out(format!("red={red}"));
     }
     w.out(format!("wall_secs={}", since(kv, "opened")));
+    runner_lines(w, kv.get("batch_id").unwrap_or(""), "");
     for (i, kv) in open.iter().enumerate().skip(1) {
         let n = i + 1;
         let phase = phase_of(w, kv.get("batch_id").unwrap_or(""));
@@ -2566,6 +2633,7 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
             w.out(format!("round{n}_red={red}"));
         }
         w.out(format!("round{n}_wall_secs={}", since(kv, "opened")));
+        runner_lines(w, kv.get("batch_id").unwrap_or(""), &format!("round{n}_"));
     }
     if let Ok(Some(st)) = records::read_kv(&c.queue_file(stage::STAGED)) {
         for (k, v) in [
@@ -2578,6 +2646,19 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
         }
     }
     OK
+}
+
+/// `pass<n>_runner` and `pass<n>_runner_why` for each pass of the round that recorded a runner.
+fn runner_lines(w: &World, batch: &str, prefix: &str) {
+    for p in w.lc.batch_passes(batch) {
+        let (Some(n), Some(place)) = (p["n"].as_u64(), p["runner"]["place"].as_str()) else {
+            continue;
+        };
+        w.out(format!("{prefix}pass{n}_runner={place}"));
+        if let Some(why) = p["runner"]["why"].as_str() {
+            w.out(format!("{prefix}pass{n}_runner_why={}", one_line(why)));
+        }
+    }
 }
 
 /// Each `<suite>.result` under `dir` (two levels deep) with its first word, the status.
@@ -3907,6 +3988,7 @@ fn certify_pass(
                 &who,
                 "re-certify of a GREEN round",
                 (ran, 0),
+                &pass_runner_in_round(w, batch, &rounds_dir(c).join(format!("{batch}.results"))),
             );
         }
         let held = ejected_still_in_tree(w, path, &wt, &kv);
@@ -4292,6 +4374,7 @@ fn certify_pass(
     }
     if !reds.is_empty() {
         raise_unreported_reds(w, c, batch, &kv, &reds);
+        let runner = pass_runner_in_round(w, batch, &rounds_dir(c).join(format!("{batch}.results")));
         let mut judged = kv.clone();
         judged.remove("over-cap");
         judged.remove(NO_OUTPUT_KEY);
@@ -4304,7 +4387,7 @@ fn certify_pass(
             Ok(())
         })
         .and_then(|()| {
-            pass_verdict_event_with(w, batch, &Verdict::Red(&reds, timings), false, &ride)
+            pass_verdict_event_with(w, batch, &Verdict::Red(&reds, timings, Some(&runner)), false, &ride)
         });
         if let Err((rc, e)) = recorded {
             w.err(format!("queue.sh {label}: REFUSED — the red pass of round {batch} was not recorded on spira-lc (rc={rc}): {e}"));
@@ -4323,9 +4406,19 @@ fn certify_pass(
             batch,
             &format!("round {batch} went red: {}", reds.join(",")),
         );
+        let mut fields = vec![
+            ("red", reds.join(",")),
+            ("runner", runner.place.clone()),
+            ("runner_why", runner.why.clone()),
+        ];
+        if let Some(ch) = &runner.changed {
+            fields.push(("runner_changed", ch.clone()));
+        }
+        round_event(&c.s.run, "red", &c.r.name, batch, by, w.clock.now(), &fields);
         let verdict = format!(
-            "queue.sh {label}: round {batch} is RED at {head}: {}",
-            reds.join(",")
+            "queue.sh {label}: round {batch} is RED at {head}: {}{}",
+            reds.join(","),
+            runner_words(&runner)
         );
         w.out(verdict.clone());
         w.err(verdict);
@@ -4353,9 +4446,10 @@ fn certify_pass(
     judged.remove(NO_OUTPUT_KEY);
     judged.remove(INFRA_KEY);
     set(&mut judged, "ran", &ran.to_string());
+    let runner = pass_runner_in_round(w, batch, &rounds_dir(c).join(format!("{batch}.results")));
     let ride = Ride::with(w, &judged);
     let greened = suites_started(w, batch, false)
-        .and_then(|()| pass_verdict_event_with(w, batch, &Verdict::Green(timings), false, &ride));
+        .and_then(|()| pass_verdict_event_with(w, batch, &Verdict::Green(timings, Some(&runner)), false, &ride));
     // A write that timed out may have applied: the batch row is the arbiter, not the reply.
     let applied = greened.is_err() && phase_of(w, batch) == "green";
     if let (Err((rc, out)), false) = (greened, applied) {
@@ -4378,6 +4472,7 @@ fn certify_pass(
         &who,
         &run_id,
         (ran, wall),
+        &runner,
     )
 }
 
@@ -4515,6 +4610,7 @@ fn finish_green(
     who: &str,
     run_id: &str,
     (ran, wall): (usize, u64),
+    runner: &Runner,
 ) -> i32 {
     let tree = match write_round_certificate(w, label, c, path, batch, head, who) {
         Ok(t) => t,
@@ -4561,10 +4657,16 @@ fn finish_green(
             ("run", run_id.to_string()),
             ("ran", ran.to_string()),
             ("wall", format!("{wall}s")),
-        ],
+            ("runner", runner.place.clone()),
+            ("runner_why", runner.why.clone()),
+        ]
+        .into_iter()
+        .chain(runner.changed.iter().map(|c| ("runner_changed", c.clone())))
+        .collect::<Vec<_>>(),
     );
     w.out(format!(
-        "queue.sh {label}: round {batch} is GREEN at {head} (tree {tree}) ran={ran} wall={wall}s"
+        "queue.sh {label}: round {batch} is GREEN at {head} (tree {tree}) ran={ran} wall={wall}s{}",
+        runner_words(runner)
     ));
     OK
 }
