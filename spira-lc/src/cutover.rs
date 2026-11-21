@@ -189,6 +189,7 @@ mod containment_tests {
         assert!(branch_containment(&s, &row, &members()).is_empty(), "one range alone contains nothing");
     }
 
+    #[test_id(t3ofcac)]
     #[test]
     fn ranges_recorded_for_another_repo_or_base_are_not_read() {
         let s = store();

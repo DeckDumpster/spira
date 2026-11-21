@@ -254,6 +254,7 @@ mod tests {
         with_proof(&argv.iter().map(|a| a.to_string()).collect::<Vec<_>>())
     }
 
+    #[test_id(tyg3ndt)]
     #[test]
     fn a_product_repository_known_only_to_the_repo_map_is_reconciled_by_name() {
         let dir = testkit::TempDir::new("lc-reconcile-landed-registry");

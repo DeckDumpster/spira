@@ -574,6 +574,7 @@ mod tests {
         (status.code().unwrap(), home.join("attr-results/j1").join(result).exists(), ran, env)
     }
 
+    #[test_id(twf96dt)]
     #[test]
     fn the_unit_and_integration_probes_run_cargo_in_the_environment_the_round_launcher_recorded() {
         let launcher = "export CARGO_HOME={d}\nexport RUSTC_WRAPPER={d}/bin/sccache\n";
@@ -588,6 +589,7 @@ mod tests {
         }
     }
 
+    #[test_id(t50qwpl)]
     #[test]
     fn the_round_and_the_attribution_probe_splice_the_same_unit_env_fragment() {
         assert!(crate::run::REMOTE_SCRIPT.contains(crate::run::UNIT_ENV_FN));

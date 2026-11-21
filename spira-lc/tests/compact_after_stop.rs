@@ -75,6 +75,7 @@ fn start_server() -> Server {
 }
 
 
+#[test_id(t1fe93r)]
 #[test]
 fn compact_folds_the_wal_a_sigterm_stopped_server_leaves_and_loses_no_row() {
     let Server { mut child, store, _dir } = start_server();

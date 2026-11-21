@@ -2726,6 +2726,7 @@ mod tests {
         assert!(sent[..verb_at("stage")].iter().filter(|a| a[0] == "git-fact").count() == 4, "and before the stage: {sent:?}");
     }
 
+    #[test_id(tu0q60g)]
     #[test]
     fn probe_asks_for_the_head_revision_not_a_listing() {
         let mut result = Ok(());

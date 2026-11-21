@@ -287,6 +287,7 @@ mod tests {
         assert!(!super::scope_is_exact(&v(&["a=x::y", "b"])));
     }
 
+    #[test_id(t5lh2ze)]
     #[test]
     fn assertion_delta_is_the_line_one_side_of_the_failed_assertion_holds_alone() {
         let out = "thread 'x' panicked at gate/src/tests.rs:2701:5:\nassertion `left == right` failed\n  left: \"[profile.default]\\nslow-timeout = { period = \\\"60s\\\", terminate-after = 2 }\\nstatus-level = \\\"skip\\\"\\n\"\n right: \"[profile.default]\\nslow-timeout = { period = \\\"60s\\\", terminate-after = 2 }\\n\"\n";
@@ -473,6 +474,7 @@ mod tests {
         );
     }
 
+    #[test_id(t0vr7up)]
     #[test]
     fn a_test_word_two_packages_share_reruns_the_test_in_each_owner() {
         let g = PackageGraph {
