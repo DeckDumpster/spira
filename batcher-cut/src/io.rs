@@ -6035,12 +6035,12 @@ mod land_exit_tests {
         let record = store_view::Record {
             id: "r2".into(),
             state: "CI_RUNNING".into(),
-            fields: [("head", "bbb"), ("members", "sp-c:tc sp-d:td"), ("worktree", "w2"), ("opened", "1000"), ("red", "test-x.sh")].map(|(k, v)| (k.to_string(), v.to_string())).to_vec(),
+            fields: [("head", "bbb"), ("members", "sp-c:tc sp-d:td"), ("worktree", "w2"), ("opened", "1000"), ("red", "test-x.sh"), ("ejected", "sp-a sp-b "), ("ejected_by", "batcher concierge ")].map(|(k, v)| (k.to_string(), v.to_string())).to_vec(),
         };
         let round = store_view::Round { phase: "certifying".into(), record };
         assert_eq!(
             open_round_of(&round, 1090),
-            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], tips: vec!["tc".into(), "td".into()], head: "bbb".into(), worktree: "w2".into(), phase: "certifying".into(), red: true, red_suites: vec!["test-x.sh".into()], ejected: vec![], ejected_by: vec![], age_secs: 90 }
+            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], tips: vec!["tc".into(), "td".into()], head: "bbb".into(), worktree: "w2".into(), phase: "certifying".into(), red: true, red_suites: vec!["test-x.sh".into()], ejected: vec!["sp-a".into(), "sp-b".into()], ejected_by: vec!["batcher".into(), "concierge".into()], age_secs: 90 }
         );
     }
 
