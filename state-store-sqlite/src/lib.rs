@@ -257,6 +257,16 @@ impl PassCounts {
     }
 }
 
+/// The gauges and the restart counts one push carries; the counts start over after it.
+fn take_points(pending: u64, wal_bytes: u64, counts: &mut PassCounts) -> Vec<spira_otel::metrics::Point<'static>> {
+    let mut points = vec![
+        spira_otel::metrics::Point::Gauge { name: UNCHECKPOINTED_GAUGE, value: pending as f64 },
+        spira_otel::metrics::Point::Gauge { name: WAL_BYTES_GAUGE, value: wal_bytes as f64 },
+    ];
+    points.extend(std::mem::take(counts).points());
+    points
+}
+
 /// What a commit hands the checkpointer thread: a count and a wake-up, no I/O.
 struct Checkpointer {
     state: Mutex<CheckpointState>,
@@ -294,15 +304,9 @@ impl Checkpointer {
         let mut owed = false;
         let push = |pending: u64, counts: &mut PassCounts, last: &mut Option<std::time::Instant>| {
             if let Some(m) = &metrics {
-                let mut points = vec![
-                    spira_otel::metrics::Point::Gauge { name: UNCHECKPOINTED_GAUGE, value: pending as f64 },
-                    spira_otel::metrics::Point::Gauge { name: WAL_BYTES_GAUGE, value: wal_bytes() as f64 },
-                ];
-                points.extend(counts.points());
-                m.push(&points, &[]);
+                m.push(&take_points(pending, wal_bytes(), counts), &[]);
                 *last = Some(std::time::Instant::now());
             }
-            *counts = PassCounts::default();
         };
         let mut wait = GAUGE_EVERY;
         loop {
@@ -2752,6 +2756,20 @@ mod tests {
         });
         held.recv_timeout(Duration::from_secs(60)).expect("the reader never opened");
         reader
+    }
+
+    #[test]
+    fn a_push_carries_the_gauges_and_the_counts_and_starts_the_counts_over() {
+        let mut counts = PassCounts::default();
+        counts.record(&Checkpoint { busy: false, wal_frames: 0, checkpointed: 0 }, true);
+        let first = take_points(3, 4096, &mut counts);
+        assert_eq!(first.len(), 6);
+        let sink = spira_otel::metrics::MetricsSink::new(None, "t", Duration::from_secs(1));
+        let sent = format!("{:?}", sink.encode(&first, &[], std::time::SystemTime::now()));
+        for name in [UNCHECKPOINTED_GAUGE, WAL_BYTES_GAUGE, WAL_FORCED_RESETS] {
+            assert!(sent.contains(name), "{name} missing from {sent}");
+        }
+        assert_eq!(counts, PassCounts::default());
     }
 
     #[test]
