@@ -1316,22 +1316,26 @@ pub fn run_queue() -> (i32, String) {
     let call = |args: &[&str]| crate::plane::call(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>());
     let mut last_failure: Option<String> = None;
     loop {
-        match poll_once(&call, |id| {
+        let polled = poll_once(&call, |id| {
             std::thread::spawn(move || exec(&id));
-        }) {
-            Ok(_) => {
-                if last_failure.take().is_some() {
-                    eprintln!("work-run: the queue answers again");
-                }
-            }
-            Err(failure) => {
-                if last_failure.as_deref() != Some(failure.as_str()) {
-                    eprintln!("work-run: {failure}");
-                    last_failure = Some(failure);
-                }
-            }
+        });
+        if let Some(line) = poll_report(&mut last_failure, &polled) {
+            eprintln!("work-run: {line}");
         }
         std::thread::sleep(std::time::Duration::from_millis(100)); // waits-on: nothing; polls the queue while the service answers
+    }
+}
+
+/// The line a poll's outcome earns in the log: a failure that differs from the last one, or the
+/// first success after a failure. `last_failure` is the text last reported.
+fn poll_report(last_failure: &mut Option<String>, polled: &Result<usize, String>) -> Option<String> {
+    match polled {
+        Ok(_) => last_failure.take().map(|_| "the queue answers again".to_string()),
+        Err(failure) if last_failure.as_ref() != Some(failure) => {
+            *last_failure = Some(failure.clone());
+            Some(failure.clone())
+        }
+        Err(_) => None,
     }
 }
 
@@ -2391,6 +2395,17 @@ mod tests {
         assert!(err.contains("code 2") && err.contains("max_read_ms"), "{err}");
         assert_eq!(results[1], Ok(1));
         assert_eq!(*started.borrow(), vec!["wr-1".to_string()]);
+    }
+
+    #[test]
+    fn a_failure_is_logged_once_until_it_changes_and_recovery_is_logged_once() {
+        let mut last = None;
+        let down = Err("code 2: down".to_string());
+        assert_eq!(super::poll_report(&mut last, &down).as_deref(), Some("code 2: down"));
+        assert_eq!(super::poll_report(&mut last, &down), None);
+        assert_eq!(super::poll_report(&mut last, &Err("code 3: other".to_string())).as_deref(), Some("code 3: other"));
+        assert_eq!(super::poll_report(&mut last, &Ok(0)).as_deref(), Some("the queue answers again"));
+        assert_eq!(super::poll_report(&mut last, &Ok(1)), None);
     }
 
     #[test]
