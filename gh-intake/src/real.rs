@@ -554,10 +554,10 @@ mod transport_tests {
             self.0.lock().unwrap().push(argv.to_vec());
             let out = match (argv[0].as_str(), argv.get(1).map(String::as_str)) {
                 ("show", Some("sp-1")) => r#"{"bead":{"state":"LANDED","tip":"tt"},"delivery":{"merge_sha":"mm"}}"#,
-                ("show", _) => return Ok(Reply { code: 1, out: "{}".into(), err: String::new() }),
+                ("show", _) => return Ok(Reply { code: 1, out: "{}".into(), err: String::new(), read_ended: false }),
                 _ => return Err("unscripted".into()),
             };
-            Ok(Reply { code: 0, out: out.into(), err: String::new() })
+            Ok(Reply { code: 0, out: out.into(), err: String::new(), read_ended: false })
         }
     }
 
@@ -575,7 +575,7 @@ mod transport_tests {
     impl Transport for Content {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            Ok(Reply { code: self.1, out: r#"[{"id":"sp-1"}]"#.into(), err: String::new() })
+            Ok(Reply { code: self.1, out: r#"[{"id":"sp-1"}]"#.into(), err: String::new(), read_ended: false })
         }
     }
 
@@ -616,10 +616,10 @@ mod transport_tests {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
             if spira_store::lc_call::reads_whole_history(argv) || self.1 != 0 {
-                return Ok(Reply { code: if self.1 != 0 { self.1 } else { 3 }, out: "refused: reads every bead ever filed".into(), err: String::new() });
+                return Ok(Reply { code: if self.1 != 0 { self.1 } else { 3 }, out: "refused: reads every bead ever filed".into(), err: String::new(), read_ended: false });
             }
             let out = r#"{"watermark":1,"items":[{"id":"sp-1","external_ref":"github:o/r#1","labels":["x"]}]}"#;
-            Ok(Reply { code: 0, out: out.into(), err: String::new() })
+            Ok(Reply { code: 0, out: out.into(), err: String::new(), read_ended: false })
         }
     }
 

@@ -281,7 +281,7 @@ pub fn ids_only(argv: &[&str]) -> Option<Vec<String>> {
 /// view is an error, never a fall back to the store.
 pub fn call_held(client: &LcClient, argv: &[&str]) -> Result<Reply, String> {
     match held_read(argv) {
-        Some(held) => held.map(|out| Reply { code: 0, out, err: String::new() }).map_err(|e| e.to_string()),
+        Some(held) => held.map(|out| Reply { code: 0, out, err: String::new(), read_ended: false }).map_err(|e| e.to_string()),
         None => client.call(argv).map_err(String::from),
     }
 }

@@ -6099,7 +6099,7 @@ mod forge_release_tests {
             lc_answer(Ok(Reply {
                 code: 0,
                 out: "[]".into(),
-                err: String::new()
+                err: String::new(), read_ended: false
             })),
             Ok("[]".into())
         );
@@ -6107,7 +6107,7 @@ mod forge_release_tests {
             lc_answer(Ok(Reply {
                 code: 3,
                 out: "x\nrefused: held\n".into(),
-                err: String::new()
+                err: String::new(), read_ended: false
             })),
             Err("spira-lc exited 3: refused: held".into())
         );
@@ -6329,7 +6329,7 @@ mod abandon_hold_tests {
         fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push((argv.to_vec(), stdin.map(str::to_string)));
             let out = if argv[0] == "show-batch" { r#"{"progress":{"passes":2}}"# } else { "" };
-            Ok(spira_store::lc_call::Reply { code: 0, out: out.into(), err: String::new() })
+            Ok(spira_store::lc_call::Reply { code: 0, out: out.into(), err: String::new(), read_ended: false })
         }
     }
 

@@ -3030,7 +3030,7 @@ mod tests {
                 false if argv[0] == "requeue-orphans" => r#"{"orphans":["sp-a","sp-b"],"repos":{"b-live":"r","b-dead":"r"}}"#.to_string(),
                 _ => format!("answered {}", argv[0]),
             };
-            Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new() })
+            Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new(), read_ended: false })
         }
     }
 
@@ -3261,7 +3261,7 @@ mod tests {
         impl spira_store::lc_call::Transport for Garbled {
             fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
                 self.0.lock().unwrap().extend(argv.iter().cloned());
-                Ok(spira_store::lc_call::Reply { code: 0, out: "not json".into(), err: String::new() })
+                Ok(spira_store::lc_call::Reply { code: 0, out: "not json".into(), err: String::new(), read_ended: false })
             }
         }
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));

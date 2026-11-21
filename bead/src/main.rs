@@ -2154,7 +2154,7 @@ mod tests {
                 first.iter().position(|(p, _, _)| line.starts_with(p)).map(|i| first.remove(i))
             };
             let (_, code, text) = once.or_else(|| self.answers.iter().find(|(p, _, _)| line.starts_with(p)).copied()).unwrap_or(("", 0, ""));
-            Ok(Reply { code, out: if code == 0 { text.into() } else { String::new() }, err: if code == 0 { String::new() } else { text.into() } })
+            Ok(Reply { code, out: if code == 0 { text.into() } else { String::new() }, err: if code == 0 { String::new() } else { text.into() }, read_ended: false })
         }
     }
 

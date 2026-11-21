@@ -725,7 +725,7 @@ mod tests {
             {"key": "batches/deck/deck-1", "create_rev": {"main": 2}, "value": {"data": {
                 "batch_id": "deck-1", "state": "OPEN", "repo": "deck",
                 "round": {"members": "sp-a:ta sp-b:tb", "forge.phase": "armed", "pr": "12"}}}}]}});
-        let ok = Ok(spira_store::lc_call::Reply { code: 0, out: listed.to_string(), err: String::new() });
+        let ok = Ok(spira_store::lc_call::Reply { code: 0, out: listed.to_string(), err: String::new(), read_ended: false });
         let v = views(vec![ok.clone(), ok.clone()], std::time::Duration::from_secs(60));
         let open = open_round(&|r| shown_in(&v, r), "deck").unwrap();
         assert_eq!(open.iter().map(|c| (c.id.as_str(), c.tip.as_str())).collect::<Vec<_>>(), [("sp-a", "ta"), ("sp-b", "tb")]);

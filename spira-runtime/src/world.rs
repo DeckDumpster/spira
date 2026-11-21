@@ -1415,6 +1415,7 @@ fn lc_bounded(client: &spira_store::lc_call::LcClient, total: std::time::Duratio
     }
     client.within(left).answer(argv).map_err(|e| match e {
         LcError::NotRunning(m) | LcError::Fault(m) => format!("store unavailable: {m}"),
+        LcError::ReadEnded(m) => format!("read ended at the store's read limit: {m}"),
         e => e.to_string(),
     })
 }
@@ -1782,6 +1783,25 @@ mod bounded_store_tests {
         let why = lc_bounded(&client, Duration::from_secs(25), Duration::from_secs(10), &["dwell"]).unwrap_err();
         assert!(why.starts_with("store unavailable:") && why.contains("waited 15 s"), "{why}");
         assert_eq!(*double.0.lock().unwrap(), [Duration::from_secs(15)], "the client was bounded by the time left");
+    }
+
+    struct Ended;
+
+    impl Transport for Ended {
+        fn exchange(&self, _: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            unreachable!("a socket client asks exchange_kind")
+        }
+        fn exchange_kind(&self, _: &[String], _: Option<&str>, _: Duration, _: Duration) -> Result<Reply, LcError> {
+            Err(LcError::ReadEnded("cannot tell: dwell".into()))
+        }
+    }
+
+    #[test]
+    fn a_read_the_store_ended_at_its_limit_is_reported_as_that_and_not_as_an_unavailable_store() {
+        let client = LcClient::over(Arc::new(Ended), true);
+        let why = lc_bounded(&client, Duration::from_secs(25), Duration::ZERO, &["dwell"]).unwrap_err();
+        assert!(why.starts_with("read ended at the store's read limit"), "{why}");
+        assert!(!why.contains("store unavailable"), "{why}");
     }
 
     #[test]

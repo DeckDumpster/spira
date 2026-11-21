@@ -345,7 +345,7 @@ mod tests {
         fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push((argv.to_vec(), stdin.map(str::to_string)));
             let (_, code, text) = self.1.iter().find(|(v, _, _)| argv[1] == *v).copied().unwrap_or(("", 0, ""));
-            Ok(spira_store::lc_call::Reply { code, out: if code == 0 { text.into() } else { String::new() }, err: if code == 0 { String::new() } else { text.into() } })
+            Ok(spira_store::lc_call::Reply { code, out: if code == 0 { text.into() } else { String::new() }, err: if code == 0 { String::new() } else { text.into() }, read_ended: false })
         }
     }
 

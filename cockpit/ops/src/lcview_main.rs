@@ -749,7 +749,7 @@ mod tests {
                 }
                 _ => "[]".to_string(),
             };
-            Ok(Reply { code: 0, out, err: String::new() })
+            Ok(Reply { code: 0, out, err: String::new(), read_ended: false })
         }
     }
 

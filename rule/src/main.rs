@@ -1449,7 +1449,7 @@ mod statute_dir_tests {
     impl spira_store::lc_call::Transport for Answers {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            Ok(spira_store::lc_call::Reply { code: self.1, out: "warning\n{\"law-a\":\"x\"}\n".into(), err: String::new() })
+            Ok(spira_store::lc_call::Reply { code: self.1, out: "warning\n{\"law-a\":\"x\"}\n".into(), err: String::new(), read_ended: false })
         }
     }
 

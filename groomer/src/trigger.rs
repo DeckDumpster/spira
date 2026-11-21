@@ -106,7 +106,7 @@ mod tests {
         fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push((argv.to_vec(), stdin.map(str::to_string)));
             let out = if argv.first().map(String::as_str) == Some("content") { "sp-new\n".to_string() } else { String::new() };
-            Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new() })
+            Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new(), read_ended: false })
         }
     }
 

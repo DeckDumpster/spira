@@ -378,6 +378,7 @@ pub fn sendmail_close_bead(bd: &dyn Bd, db_configured: bool, bead: &str, kind: &
     close(bd, bead, &reason).map_err(|e| match e {
         LcError::Refused(m) => LcError::Refused(format!("mail.sh: bead close refused for {bead}: {m}")),
         LcError::Fault(m) => LcError::Fault(format!("mail.sh: bead close failed for {bead}: {m}")),
+        LcError::ReadEnded(m) => LcError::ReadEnded(format!("mail.sh: bead close failed for {bead}: {m}")),
         LcError::NotRunning(m) => LcError::NotRunning(format!("mail.sh: bead close failed for {bead}: {m}")),
     })?;
     let mut warnings = Vec::new();
@@ -771,7 +772,7 @@ mod door_tests {
     impl Transport for Recorder {
         fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
             self.seen.lock().unwrap().push(argv.to_vec());
-            Ok(Reply { code: 0, out: self.out.clone(), err: String::new() })
+            Ok(Reply { code: 0, out: self.out.clone(), err: String::new(), read_ended: false })
         }
     }
 

@@ -475,7 +475,7 @@ mod tests {
         struct Refusing;
         impl spira_store::lc_call::Transport for Refusing {
             fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
-                Ok(spira_store::lc_call::Reply { code: spira_store::lc_call::REFUSED, out: String::new(), err: "no\n".into() })
+                Ok(spira_store::lc_call::Reply { code: spira_store::lc_call::REFUSED, out: String::new(), err: "no\n".into(), read_ended: false })
             }
         }
         let lc = LcClient::over(std::sync::Arc::new(Refusing), true);
@@ -510,7 +510,7 @@ mod tests {
         impl spira_store::lc_call::Transport for Show {
             fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
                 assert_eq!(argv, ["content", "show", "sp-x", "--json"]);
-                Ok(spira_store::lc_call::Reply { code: self.0, out: r#"[{"id":"sp-x","title":"t","status":"open"}]"#.into(), err: String::new() })
+                Ok(spira_store::lc_call::Reply { code: self.0, out: r#"[{"id":"sp-x","title":"t","status":"open"}]"#.into(), err: String::new(), read_ended: false })
             }
         }
         let ok = LcClient::over(std::sync::Arc::new(Show(0)), true);

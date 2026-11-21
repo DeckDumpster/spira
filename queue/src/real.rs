@@ -2665,7 +2665,7 @@ mod tests {
         fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
             let out = if argv.first().is_some_and(|a| a == "event-seq") { r#"{"seq":7,"keys":[]}"# } else { "[]" };
-            Ok(Reply { code: 0, out: out.into(), err: String::new() })
+            Ok(Reply { code: 0, out: out.into(), err: String::new(), read_ended: false })
         }
     }
 

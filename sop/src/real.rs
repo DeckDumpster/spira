@@ -303,7 +303,7 @@ mod door_tests {
         fn exchange(&self, argv: &[String], stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
             self.0.lock().unwrap().push((argv.to_vec(), stdin.map(String::from)));
             let out = if argv[1] == "memories" { "warning\n{\"sop-a\":\"x\"}" } else { "body" };
-            Ok(Reply { code: 0, out: out.into(), err: String::new() })
+            Ok(Reply { code: 0, out: out.into(), err: String::new(), read_ended: false })
         }
     }
 
@@ -335,7 +335,7 @@ mod door_tests {
         struct Refuses;
         impl Transport for Refuses {
             fn exchange(&self, _a: &[String], _s: Option<&str>, _d: Duration) -> Result<Reply, String> {
-                Ok(Reply { code: 3, out: String::new(), err: "refused: no\n".into() })
+                Ok(Reply { code: 3, out: String::new(), err: "refused: no\n".into(), read_ended: false })
             }
         }
         let bd = RealBd::over(LcClient::over(Arc::new(Refuses), true));

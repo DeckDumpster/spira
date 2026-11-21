@@ -103,7 +103,7 @@ impl Store {
     pub fn lc_full<S: AsRef<str>>(&self, args: &[S]) -> Result<Ran, String> {
         match self.lc.call(args) {
             Ok(r) => Ok(Ran { code: r.code, stdout: r.out, stderr: r.err }),
-            Err(LcError::Refused(m) | LcError::Fault(m) | LcError::NotRunning(m)) => Err(m),
+            Err(LcError::Refused(m) | LcError::Fault(m) | LcError::ReadEnded(m) | LcError::NotRunning(m)) => Err(m),
         }
     }
 
@@ -120,7 +120,7 @@ impl Store {
     pub fn lc_stdin<S: AsRef<str>>(&self, args: &[S], stdin: &str) -> Result<Ran, String> {
         match self.lc.call_stdin(args, stdin) {
             Ok(r) => Ok(Ran { code: r.code, stdout: r.out, stderr: r.err }),
-            Err(LcError::Refused(m) | LcError::Fault(m) | LcError::NotRunning(m)) => Err(m),
+            Err(LcError::Refused(m) | LcError::Fault(m) | LcError::ReadEnded(m) | LcError::NotRunning(m)) => Err(m),
         }
     }
 
@@ -414,9 +414,9 @@ mod tests {
     #[test]
     fn lifecycle_reads_and_writes_go_through_the_service_not_a_program() {
         let (st, t) = store_over(|argv| match argv[0].as_str() {
-            "list" => Reply { code: 0, out: r#"[{"bead_id":"sp-a","state":"WORKING","version":1,"holds":[]}]"#.into(), err: String::new() },
-            "fact" | "list-asks" => Reply { code: 0, out: "[]".into(), err: String::new() },
-            _ => Reply { code: 0, out: String::new(), err: String::new() },
+            "list" => Reply { code: 0, out: r#"[{"bead_id":"sp-a","state":"WORKING","version":1,"holds":[]}]"#.into(), err: String::new(), read_ended: false },
+            "fact" | "list-asks" => Reply { code: 0, out: "[]".into(), err: String::new(), read_ended: false },
+            _ => Reply { code: 0, out: String::new(), err: String::new(), read_ended: false },
         });
         assert!(st.lifecycle_of(&["sp-a".into()]).unwrap().contains_key("sp-a"));
         assert!(st.facts(&["sp-a".into()]).unwrap().is_empty());
@@ -434,13 +434,13 @@ mod tests {
         let held = Arc::new(Scripted {
             seen: Mutex::new(Vec::new()),
             reply: |argv| match argv[0].as_str() {
-                "rc" => Reply { code: 0, out: r#"{"ok":{"items":[],"list_rev":3}}"#.into(), err: String::new() },
-                _ => Reply { code: 0, out: r#"[{"bead_id":"sp-a","state":"READY","version":1,"holds":[],"express":"1","updated_at":4000000000},{"bead_id":"sp-b","state":"LANDED","version":1,"holds":[],"express":"0","updated_at":4000000000},{"bead_id":"sp-c","state":"REWORK","version":1,"holds":[],"express":"0","updated_at":4000000000}]"#.into(), err: String::new() },
+                "rc" => Reply { code: 0, out: r#"{"ok":{"items":[],"list_rev":3}}"#.into(), err: String::new(), read_ended: false },
+                _ => Reply { code: 0, out: r#"[{"bead_id":"sp-a","state":"READY","version":1,"holds":[],"express":"1","updated_at":4000000000},{"bead_id":"sp-b","state":"LANDED","version":1,"holds":[],"express":"0","updated_at":4000000000},{"bead_id":"sp-c","state":"REWORK","version":1,"holds":[],"express":"0","updated_at":4000000000}]"#.into(), err: String::new(), read_ended: false },
             },
         });
         let view = Arc::new(store_view::Projection::new(LcClient::over(held.clone(), true), Duration::from_secs(60), Arc::new(std::time::Instant::now)));
         view.load().unwrap();
-        let (st, t) = store_over_views(|_| Reply { code: 0, out: "[]".into(), err: String::new() }, Some(view));
+        let (st, t) = store_over_views(|_| Reply { code: 0, out: "[]".into(), err: String::new(), read_ended: false }, Some(view));
         let ready = st.lifecycle_in_states(&["READY", "REWORK"]).unwrap();
         assert_eq!(ready.keys().cloned().collect::<std::collections::BTreeSet<_>>(), ["sp-a".to_string(), "sp-c".to_string()].into());
         assert_eq!(st.express_ids().unwrap(), ["sp-a".to_string()].into());
@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn a_store_with_no_view_asks_the_socket_for_state_and_express_reads() {
-        let (st, t) = store_over(|_| Reply { code: 0, out: "[]".into(), err: String::new() });
+        let (st, t) = store_over(|_| Reply { code: 0, out: "[]".into(), err: String::new(), read_ended: false });
         st.lifecycle_in_states(&["READY", "REWORK"]).unwrap();
         st.express_ids().unwrap();
         assert_eq!(*t.seen.lock().unwrap(), [vec!["list", "--state", "READY,REWORK"], vec!["list", "--express", "--live"]]);
@@ -462,14 +462,14 @@ mod tests {
 
     #[test]
     fn a_socket_refusal_names_its_reason_from_stdout() {
-        let (st, _) = store_over(|_| Reply { code: 3, out: "refused: no such bead\n".into(), err: String::new() });
+        let (st, _) = store_over(|_| Reply { code: 3, out: "refused: no such bead\n".into(), err: String::new(), read_ended: false });
         let e = st.lc_run(&["list-asks"]).unwrap_err();
         assert_eq!(e, "exit 3: refused: no such bead");
     }
 
     #[test]
     fn bead_metadata_reads_content_through_the_service() {
-        let (st, t) = store_over(|_| Reply { code: 0, out: r#"[{"id":"sp-a","metadata":{"thrash_tip":"abc"}}]"#.into(), err: String::new() });
+        let (st, t) = store_over(|_| Reply { code: 0, out: r#"[{"id":"sp-a","metadata":{"thrash_tip":"abc"}}]"#.into(), err: String::new(), read_ended: false });
         assert_eq!(crate::counters::bead_metadata(&st, "sp-a", "thrash_tip"), "abc");
         assert_eq!(t.seen.lock().unwrap()[0], ["content", "show", "sp-a", "--long", "--json"]);
     }
@@ -480,10 +480,10 @@ mod tests {
             ("content", Some("events")) => Reply {
                 code: 0,
                 out: r#"[{"issue_id":"sp-a","event_type":"claimed","new_value":"d1","created_at":"2026-01-01 00:00:00"},{"issue_id":"sp-a","event_type":"closed","new_value":"","created_at":"2026-01-02 00:00:00"}]"#.into(),
-                err: String::new(),
+                err: String::new(), read_ended: false
             },
-            ("fact", Some("list")) => Reply { code: 0, out: r#"[{"issue_id":"sp-a","event_type":"requeued","new_value":"x","created_at":"2026-01-03 00:00:00"}]"#.into(), err: String::new() },
-            _ => Reply { code: 0, out: "[]".into(), err: String::new() },
+            ("fact", Some("list")) => Reply { code: 0, out: r#"[{"issue_id":"sp-a","event_type":"requeued","new_value":"x","created_at":"2026-01-03 00:00:00"}]"#.into(), err: String::new(), read_ended: false },
+            _ => Reply { code: 0, out: "[]".into(), err: String::new(), read_ended: false },
         });
         assert_eq!(st.events(&["sp-a".into()]).unwrap().len(), 3);
         assert_eq!(*t.seen.lock().unwrap(), vec![vec!["content", "events", "--id", "sp-a"], vec!["fact", "list", "--ids", "sp-a"]]);
@@ -497,7 +497,7 @@ mod tests {
 
     #[test]
     fn events_surface_a_failed_content_events_read_as_err() {
-        let (st, _t) = store_over(|_| Reply { code: 1, out: String::new(), err: "boom".into() });
+        let (st, _t) = store_over(|_| Reply { code: 1, out: String::new(), err: "boom".into(), read_ended: false });
         assert!(st.events(&["sp-a".into()]).is_err());
     }
 }

@@ -386,7 +386,7 @@ fn close_args(bin: &str, id: &str, reason: &str, actor: &str, extra: Vec<&str>) 
     let c = client(bin)?;
     close_on(&c, id, reason, actor, &extra).map_err(|e| match e {
         LcError::Refused(m) => format!("{bin} close {id} exited {REFUSED}: {m}"),
-        LcError::Fault(m) | LcError::NotRunning(m) => format!("{bin} close {id}: {m}"),
+        LcError::Fault(m) | LcError::ReadEnded(m) | LcError::NotRunning(m) => format!("{bin} close {id}: {m}"),
     })
 }
 
@@ -526,7 +526,7 @@ mod tests {
             *self.pace.0.lock().unwrap() += Duration::from_secs(5);
             let code = *self.script.get(seen.len() - 1).or(self.script.last()).unwrap();
             let out = if code == 2 { "cannot tell: deadline" } else { "" };
-            Ok(Reply { code, out: out.into(), err: String::new() })
+            Ok(Reply { code, out: out.into(), err: String::new(), read_ended: false })
         }
     }
 

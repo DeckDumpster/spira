@@ -52,6 +52,8 @@ pub enum LcError {
     Refused(String),
     /// No answer: unreachable, lost, past its deadline, or "cannot tell".
     Fault(String),
+    /// "Cannot tell" because the store ended a read at its read limit; the store answered.
+    ReadEnded(String),
     /// Nothing answered the socket (refused or absent), and nothing was sent.
     NotRunning(String),
 }
@@ -59,7 +61,7 @@ pub enum LcError {
 impl std::fmt::Display for LcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LcError::Refused(m) | LcError::Fault(m) | LcError::NotRunning(m) => f.write_str(m),
+            LcError::Refused(m) | LcError::Fault(m) | LcError::ReadEnded(m) | LcError::NotRunning(m) => f.write_str(m),
         }
     }
 }
@@ -76,6 +78,8 @@ pub struct Reply {
     pub code: i32,
     pub out: String,
     pub err: String,
+    /// The service ended one of the request's store reads at its read limit.
+    pub read_ended: bool,
 }
 
 impl Reply {
@@ -360,7 +364,7 @@ pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<
 
 /// One request on `stream`: the argv as one JSON line, or, with `stdin`, a `{"argv", "len"}`
 /// line followed by exactly `len` bytes of it. The answer is a `{"exit_code", "len"[,
-/// "err_len"]}` line, then `len` bytes of stdout and `err_len` of stderr.
+/// "err_len"][, "read_ended"]}` line, then `len` bytes of stdout and `err_len` of stderr.
 ///
 /// Once a request is on the wire the service may apply it whatever happens to the reply, so a
 /// lost reply is "cannot tell", never a retry.
@@ -383,7 +387,8 @@ pub fn exchange_once(stream: UnixStream, argv: &[String], stdin: Option<&str>) -
     reader.read_exact(&mut body).map_err(|_| lost("truncated reply"))?;
     let err = body.split_off(len as usize);
     let text = |b: Vec<u8>| String::from_utf8(b).map_err(|_| lost("non-utf8 reply"));
-    Ok(Reply { code: code as i32, out: text(body)?, err: text(err)? })
+    let read_ended = head["read_ended"].as_bool().unwrap_or(false);
+    Ok(Reply { code: code as i32, out: text(body)?, err: text(err)?, read_ended })
 }
 
 /// [`exchange_once`] with the failure as its text: one attempt, never repeated.
@@ -425,7 +430,7 @@ impl Transport for Program {
         if code == 124 {
             return Err(format!("{} {} timed out after {secs}s", self.bin, argv.join(" ")));
         }
-        Ok(Reply { code, out: String::from_utf8_lossy(&out.stdout).into_owned(), err: String::from_utf8_lossy(&out.stderr).into_owned() })
+        Ok(Reply { code, out: String::from_utf8_lossy(&out.stdout).into_owned(), err: String::from_utf8_lossy(&out.stderr).into_owned(), read_ended: false })
     }
 }
 
@@ -535,12 +540,12 @@ impl LcClient {
                 return Ok(r);
             }
             match record_answer(&r.out) {
-                Ok(Some((code, out))) => return Ok(Reply { code, out, err: String::new() }),
+                Ok(Some((code, out))) => return Ok(Reply { code, out, err: String::new(), read_ended: false }),
                 Ok(None) => {}
                 Err(e) => return Err(LcError::Fault(format!("request {id}: {e}"))),
             }
             if began.elapsed() >= RECORD_WAIT {
-                return Ok(Reply { code: CANNOT_TELL, out: record_timeout(id), err: String::new() });
+                return Ok(Reply { code: CANNOT_TELL, out: record_timeout(id), err: String::new(), read_ended: false });
             }
             std::thread::sleep(RECORD_POLL); // waits-on: the scheduler finishing the request; cap RECORD_WAIT
         }
@@ -552,6 +557,7 @@ impl LcClient {
         match r.code {
             0 => Ok(r.out),
             REFUSED => Err(LcError::Refused(r.text())),
+            _ if r.read_ended => Err(LcError::ReadEnded(r.text())),
             _ => Err(LcError::Fault(r.text())),
         }
     }
@@ -668,7 +674,7 @@ mod tests {
         struct Recorded(std::sync::Mutex<u32>);
         impl Transport for Recorded {
             fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
-                let ok = |out: &str| Ok(Reply { code: 0, out: out.into(), err: String::new() });
+                let ok = |out: &str| Ok(Reply { code: 0, out: out.into(), err: String::new(), read_ended: false });
                 if argv[0] != "work-request" {
                     return ok("queued wr-7\n");
                 }
@@ -913,10 +919,15 @@ mod tests {
                     reader.read_exact(&mut body).unwrap();
                     argv.push(format!("stdin={}", String::from_utf8(body).unwrap()));
                 }
+                let log_verb = argv[0].clone();
                 let (code, body) = answer(&argv);
                 log.lock().unwrap().push(argv);
                 let (out, err) = body.split_once("\x00").unwrap_or((&body, ""));
-                let _ = write!(&s, "{}\n{out}{err}", serde_json::json!({"exit_code": code, "len": out.len(), "err_len": err.len()}));
+                let mut reply = serde_json::json!({"exit_code": code, "len": out.len(), "err_len": err.len()});
+                if log_verb == "read-ended" {
+                    reply["read_ended"] = true.into();
+                }
+                let _ = write!(&s, "{reply}\n{out}{err}");
             }
         });
         (path, seen)
@@ -969,6 +980,17 @@ mod tests {
         assert!(matches!(c.answer(&["hold", "sp-a", "wait"]), Err(LcError::Refused(m)) if m == "lc: sp-a: refused"), "a refusal's stderr is its text");
         let dead = LcClient::socket(dir.join("no-such.sock"));
         assert!(matches!(dead.within(Duration::ZERO).call(&["list"]), Err(LcError::NotRunning(m)) if m.contains("store not running")));
+    }
+
+    /// sp-iqsanu: an answer the service marks `read_ended` is a typed variant, never text to match;
+    /// the same exit without the mark stays a fault.
+    #[test]
+    fn a_cannot_tell_marked_read_ended_is_its_own_error_and_unmarked_stays_a_fault() {
+        let dir = testkit::TempDir::new("lc-client-read-ended");
+        let (path, _) = serve(&dir, |_| (2, "cannot tell: dwell: read ended".into()));
+        let c = LcClient::socket(&path);
+        assert!(matches!(c.answer(&["read-ended"]), Err(LcError::ReadEnded(m)) if m == "cannot tell: dwell: read ended"));
+        assert!(matches!(c.answer(&["dwell"]), Err(LcError::Fault(m)) if m == "cannot tell: dwell: read ended"));
     }
 
     fn closer(argv: &[String]) -> (i32, String) {
@@ -1029,7 +1051,7 @@ mod tests {
 
     fn scripted(answers: &[(i32, &str)], argv: &[&str], scope: Option<&str>) -> (Result<Reply, Fail>, Vec<Option<String>>) {
         let argv: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
-        let mut answers = answers.iter().map(|(c, o)| Reply { code: *c, out: o.to_string(), err: String::new() });
+        let mut answers = answers.iter().map(|(c, o)| Reply { code: *c, out: o.to_string(), err: String::new(), read_ended: false });
         let mut sent = Vec::new();
         let mut run = || {
             retrying_resent(&argv, std::path::Path::new("sock"), Duration::from_secs(5), Duration::ZERO, |_| {
@@ -1073,7 +1095,7 @@ mod tests {
         let mut sends = 0;
         let got = retrying_resent(&argv, std::path::Path::new("sock"), Duration::from_millis(300), Duration::ZERO, |_| {
             sends += 1;
-            Ok(Reply { code: CANNOT_TELL, out: DEADLINE_ANSWER.to_string(), err: String::new() })
+            Ok(Reply { code: CANNOT_TELL, out: DEADLINE_ANSWER.to_string(), err: String::new(), read_ended: false })
         });
         assert!(sends >= 2, "re-sent at least once: {sends}");
         assert_eq!(got.unwrap().out, DEADLINE_ANSWER);
@@ -1256,27 +1278,27 @@ pub mod fake {
         fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
             self.seen.lock().unwrap().push(argv.to_vec());
             if reads_whole_history(argv) {
-                return Ok(Reply { code: REFUSED, out: String::new(), err: "refused: whole bead history\n".into() });
+                return Ok(Reply { code: REFUSED, out: String::new(), err: "refused: whole bead history\n".into(), read_ended: false });
             }
             if argv == ["list", "--live"] {
-                return Ok(Reply { code: 0, out: Value::Array(self.live.clone()).to_string(), err: String::new() });
+                return Ok(Reply { code: 0, out: Value::Array(self.live.clone()).to_string(), err: String::new(), read_ended: false });
             }
             if argv.first().map(String::as_str) == Some("show") {
                 let row = self.live.iter().find(|r| argv.get(1).map(String::as_str) == r["bead_id"].as_str());
                 return Ok(match row {
-                    Some(r) => Reply { code: 0, out: serde_json::json!({"bead": r}).to_string(), err: String::new() },
-                    None => Reply { code: 1, out: String::new(), err: "no such row\n".into() },
+                    Some(r) => Reply { code: 0, out: serde_json::json!({"bead": r}).to_string(), err: String::new(), read_ended: false },
+                    None => Reply { code: 1, out: String::new(), err: "no such row\n".into(), read_ended: false },
                 });
             }
             if argv.get(..2) == Some(&["content".to_string(), "show".to_string()][..]) {
                 let row = self.rows.iter().find(|r| argv.get(2).map(String::as_str) == r["id"].as_str());
                 return Ok(match row {
-                    Some(r) => Reply { code: 0, out: r.to_string(), err: String::new() },
-                    None => Reply { code: 1, out: String::new(), err: "not found\n".into() },
+                    Some(r) => Reply { code: 0, out: r.to_string(), err: String::new(), read_ended: false },
+                    None => Reply { code: 1, out: String::new(), err: "not found\n".into(), read_ended: false },
                 });
             }
             if argv.get(..2) != Some(&["content".to_string(), "list".to_string()][..]) {
-                return Ok(Reply { code: 0, out: "[]".into(), err: String::new() });
+                return Ok(Reply { code: 0, out: "[]".into(), err: String::new(), read_ended: false });
             }
             let a = &argv[2..];
             let all = a.iter().any(|x| x == "--all");
@@ -1297,7 +1319,7 @@ pub mod fake {
                 .filter(|r| kind.is_none_or(|k| r["issue_type"].as_str() == Some(k)))
                 .take(if limit == 0 { usize::MAX } else { limit })
                 .collect();
-            Ok(Reply { code: 0, out: serde_json::to_string(&rows).unwrap_or_default(), err: String::new() })
+            Ok(Reply { code: 0, out: serde_json::to_string(&rows).unwrap_or_default(), err: String::new(), read_ended: false })
         }
     }
 }

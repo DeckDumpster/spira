@@ -8,7 +8,7 @@ fn the_reply_is_on_the_stream_before_an_owed_store_close_finishes() {
     let (started, started_rx) = std::sync::mpsc::channel::<()>();
     let settler = std::thread::spawn(move || {
         let ans = super::Answer { owed: vec![("sp-d".into(), "why".into())].into(), ..Default::default() };
-        super::reply_then_settle(&server, &ans, || {}, &mut |id, reason| {
+        super::reply_then_settle(&server, &ans, false, || {}, &mut |id, reason| {
             assert_eq!((id, reason), ("sp-d", "why"));
             let _ = started.send(());
             let _ = release_rx.recv();

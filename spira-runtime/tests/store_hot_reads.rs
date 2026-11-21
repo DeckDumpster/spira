@@ -40,7 +40,7 @@ fn open_round() -> Value {
 
 impl Transport for Double {
     fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
-        let ok = |out: String| Ok(Reply { code: 0, out, err: String::new() });
+        let ok = |out: String| Ok(Reply { code: 0, out, err: String::new(), read_ended: false });
         match argv[0].as_str() {
             "rc" => ok(json!({ "ok": { "items": [open_round()], "list_rev": 5 } }).to_string()),
             "list" => {

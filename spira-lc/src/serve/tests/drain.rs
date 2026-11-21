@@ -89,7 +89,7 @@ fn stopped_during(w: &World, argv: &[&str], stop: &std::sync::atomic::AtomicBool
             let (mut m, mut b) = (w, w);
             let ans = super::answer(req, &mut m, &mut b, &content, &|| Err("no run dir here".to_string()));
             flights.serve(stream.try_clone().unwrap(), |_| {
-                super::reply_then_settle(&stream, &ans, || {}, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
+                super::reply_then_settle(&stream, &ans, false, || {}, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
             });
         });
     });

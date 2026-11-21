@@ -166,7 +166,7 @@ mod lc_tests {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
             self.asked.lock().unwrap().push(argv.to_vec());
             let (_, code, out) = self.answers.iter().find(|(v, _, _)| argv[0] == *v).ok_or("unexpected verb")?;
-            Ok(Reply { code: *code, out: out.to_string(), err: String::new() })
+            Ok(Reply { code: *code, out: out.to_string(), err: String::new(), read_ended: false })
         }
     }
 

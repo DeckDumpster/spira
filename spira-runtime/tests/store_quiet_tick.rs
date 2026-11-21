@@ -26,7 +26,7 @@ struct Store {
 
 impl Transport for Store {
     fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
-        let ok = |out: String| Ok(Reply { code: 0, out, err: String::new() });
+        let ok = |out: String| Ok(Reply { code: 0, out, err: String::new(), read_ended: false });
         let named = |flag: &str| argv.iter().position(|a| a == flag).map(|i| argv[i + 1].clone());
         match argv[0].as_str() {
             "rc" => ok(json!({ "ok": { "items": [], "list_rev": 5 } }).to_string()),

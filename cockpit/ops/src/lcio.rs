@@ -31,6 +31,7 @@ pub fn renamed(e: &LcError, text: String) -> LcError {
     match e {
         LcError::Refused(_) => LcError::Refused(text),
         LcError::Fault(_) => LcError::Fault(text),
+        LcError::ReadEnded(_) => LcError::ReadEnded(text),
         LcError::NotRunning(_) => LcError::NotRunning(text),
     }
 }
@@ -101,7 +102,7 @@ pub mod scripted {
     }
 
     pub fn client(code: i32, out: &str) -> (Arc<Scripted>, LcClient) {
-        let t = Arc::new(Scripted { calls: Mutex::new(Vec::new()), reply: Reply { code, out: out.into(), err: String::new() } });
+        let t = Arc::new(Scripted { calls: Mutex::new(Vec::new()), reply: Reply { code, out: out.into(), err: String::new(), read_ended: false } });
         (Arc::clone(&t), LcClient::over(t, true))
     }
 }

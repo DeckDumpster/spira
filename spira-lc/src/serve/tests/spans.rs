@@ -157,6 +157,7 @@ fn the_answer_time_is_taken_before_the_owed_close_settles() {
     super::reply_then_settle(
         &server,
         &ans,
+        false,
         || {
             answered = read_at.elapsed();
             order.borrow_mut().push("answered");
@@ -272,4 +273,39 @@ fn a_call_answered_in_time_writes_cut_false() {
     let _ = send_spanned(&r.door, Some(&sink), &["show", "sp-none"], None, None);
     let span = only_span(&dir);
     assert_eq!(serve_value(&span, "spira.serve.cut"), Value::BoolValue(false));
+}
+
+fn head_of(door: &Arc<super::Door>) -> serde_json::Value {
+    use std::io::{Read, Write};
+    let argv = vec!["list".to_string()];
+    let head = spira_store::lc_call::request_head(&argv, None, &Default::default(), None, None).unwrap();
+    let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+    (&client).write_all(format!("{head}\n").as_bytes()).unwrap();
+    let mut got = String::new();
+    std::thread::scope(|scope| {
+        scope.spawn(|| super::serve_one(server, None, std::time::Instant::now(), door));
+        (&client).read_to_string(&mut got).unwrap();
+    });
+    serde_json::from_str(got.lines().next().unwrap()).unwrap()
+}
+
+fn door_answering(code: i32, ended: Option<state_store::phases::ReadEnd>) -> Arc<super::Door> {
+    let work: super::Work = Arc::new(move |_| {
+        if let Some(end) = ended {
+            state_store::phases::record_read(std::time::Duration::from_millis(150), end);
+        }
+        crate::callers::Answer { code, stdout: "cannot tell: list".into(), ..Default::default() }
+    });
+    Arc::new(super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work, deadlines: test_deadlines() })
+}
+
+#[test]
+fn a_cannot_tell_whose_store_read_was_ended_at_the_limit_says_so_in_its_head() {
+    use state_store::phases::ReadEnd;
+    for end in [ReadEnd::Ended, ReadEnd::Overran] {
+        assert_eq!(head_of(&door_answering(2, Some(end)))["read_ended"], true, "{end:?}");
+    }
+    assert!(head_of(&door_answering(2, None)).get("read_ended").is_none(), "another failure is not marked");
+    assert!(head_of(&door_answering(2, Some(ReadEnd::Finished))).get("read_ended").is_none(), "a read that finished is not marked");
+    assert!(head_of(&door_answering(0, Some(ReadEnd::Ended))).get("read_ended").is_none(), "an answer that applied is not marked");
 }

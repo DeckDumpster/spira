@@ -137,7 +137,7 @@ pub(crate) mod scripted {
             self.seen.lock().unwrap().push(argv.to_vec());
             let line = argv.join(" ");
             let (_, code, out) = self.answers.iter().find(|(p, _, _)| line.starts_with(p.as_str())).ok_or_else(|| format!("cannot tell: no script for {line}"))?;
-            Ok(Reply { code: *code, out: out.clone(), err: String::new() })
+            Ok(Reply { code: *code, out: out.clone(), err: String::new(), read_ended: false })
         }
     }
 
