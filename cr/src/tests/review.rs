@@ -126,6 +126,7 @@ fn seal_stores_the_unit_bytes_in_blobs_tree_and_pull_request() {
     assert!(o.stdout.contains("pull/7"), "{}", o.stdout);
 }
 
+#[test_id(tz6w58i)]
 #[test]
 fn seal_puts_the_cover_note_in_the_pull_request_description_and_only_unit_files_on_the_branch() {
     let mut w = world();
@@ -148,6 +149,7 @@ fn seal_puts_the_cover_note_in_the_pull_request_description_and_only_unit_files_
     }
 }
 
+#[test_id(tvrwgc1)]
 #[test]
 fn seal_refuses_a_cover_missing_does_or_look_first_before_any_forge_call() {
     let mut w = world();
@@ -167,6 +169,7 @@ fn seal_refuses_a_cover_missing_does_or_look_first_before_any_forge_call() {
     assert!(!w.sealed_path(1).exists());
 }
 
+#[test_id(ti2r7zd)]
 #[test]
 fn the_cover_lists_tests_by_call_path_not_by_name() {
     let mut w = world();
@@ -182,6 +185,7 @@ fn the_cover_lists_tests_by_call_path_not_by_name() {
     assert!(!tests_section.contains("names_only.rs"), "{body}");
 }
 
+#[test_id(t6xo25s)]
 #[test]
 fn a_test_inside_a_cfg_test_module_that_calls_a_pub_function_is_listed() {
     let mut w = world();
@@ -194,6 +198,7 @@ fn a_test_inside_a_cfg_test_module_that_calls_a_pub_function_is_listed() {
     assert!(body.contains("`other/src/util.rs::doubles` calls `twice`"), "{body}");
 }
 
+#[test_id(tjxirsp)]
 #[test]
 fn a_unit_with_no_calling_test_says_none_found_by_call_path() {
     let mut w = world();
@@ -421,6 +426,7 @@ fn seal_rerun_with_a_different_cover_is_refused() {
     assert!(o.stderr.contains("different cover"), "{}", o.stderr);
 }
 
+#[test_id(t3pmzqn)]
 #[test]
 fn seal_rerun_after_a_lost_progress_file_adopts_the_ref_already_on_the_forge() {
     let mut w = world();
@@ -450,6 +456,7 @@ fn unseal_with_a_failing_review_post_leaves_it_retryable() {
     assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 0);
 }
 
+#[test_id(t67x1b2)]
 #[test]
 fn the_section_guard_names_a_missing_heading_and_a_blank_section() {
     use crate::review::missing_section;
@@ -459,6 +466,7 @@ fn the_section_guard_names_a_missing_heading_and_a_blank_section() {
     assert_eq!(missing_section(&full.replace("## Who calls it\n\ntext", "## Who calls it\n\n")), Some("## Who calls it"));
 }
 
+#[test_id(t0ai422)]
 #[test]
 fn seal_refuses_a_prose_field_carrying_a_heading_line_and_a_bare_array_on_a_rerun() {
     let mut w = world();
@@ -486,6 +494,7 @@ fn sealed_body(w: &mut World) -> String {
     w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string()
 }
 
+#[test_id(tgplsvo)]
 #[test]
 fn the_cover_counts_every_commit_and_its_reverts_and_fixes() {
     let mut w = world();
@@ -502,6 +511,7 @@ fn the_cover_counts_every_commit_and_its_reverts_and_fixes() {
     assert!(body.contains("- Commits: 5 ever, 1 reverts, 1 fixes"), "{body}");
 }
 
+#[test_id(tq3qvhb)]
 #[test]
 fn the_cover_gives_the_rewritten_share_and_median_line_age() {
     let mut w = world();
@@ -514,6 +524,7 @@ fn the_cover_gives_the_rewritten_share_and_median_line_age() {
     assert!(body.contains("median line age 105 days"), "{body}");
 }
 
+#[test_id(tftrmh8)]
 #[test]
 fn the_cover_names_tests_deleted_later_and_disabled_as_flaky() {
     let mut w = world();
@@ -526,6 +537,7 @@ fn the_cover_names_tests_deleted_later_and_disabled_as_flaky() {
     assert!(body.contains("`unit:demo store::tests::opens` 1970-01-01"), "{body}");
 }
 
+#[test_id(t9l5mgx)]
 #[test]
 fn an_unreadable_bead_store_or_registry_says_unknown_not_zero() {
     let mut w = world();

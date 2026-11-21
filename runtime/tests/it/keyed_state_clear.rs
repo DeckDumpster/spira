@@ -47,6 +47,7 @@ fn restored(e: &Engine) -> String {
     format!("{:?}", e.projection())
 }
 
+#[test_id(tuqb79o)]
 #[test]
 fn a_key_the_carry_drops_is_deleted_from_the_store() {
     let j = MemJournal::new();
@@ -62,6 +63,7 @@ fn a_key_the_carry_drops_is_deleted_from_the_store() {
     assert!(cleared.contains(&("task".to_string(), "k099".to_string())));
 }
 
+#[test_id(tbewbdl)]
 #[test]
 fn a_key_dropped_and_set_again_in_one_turn_is_not_deleted() {
     let j = MemJournal::new();
@@ -72,6 +74,7 @@ fn a_key_dropped_and_set_again_in_one_turn_is_not_deleted() {
     assert_eq!(task_keys(&j).len(), 3);
 }
 
+#[test_id(tbrn8nh)]
 #[test]
 fn rows_left_empty_by_an_earlier_release_are_deleted_by_the_first_turn_after_boot() {
     let j = MemJournal::new();

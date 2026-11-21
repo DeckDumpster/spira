@@ -91,6 +91,7 @@ fn date(epoch_secs: i64) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tesmj44)]
     #[test]
     fn bead_of_reads_a_landed_commit_and_a_dwarf_commit_and_nothing_else() {
         assert_eq!(bead_of("spira: land sp-ab12 — the title").as_deref(), Some("sp-ab12"));
@@ -99,6 +100,7 @@ mod tests {
         assert_eq!(bead_of("gate: cache"), None);
     }
 
+    #[test_id(ttpaafu)]
     #[test]
     fn date_is_the_utc_calendar_day() {
         assert_eq!(date(0), "1970-01-01");

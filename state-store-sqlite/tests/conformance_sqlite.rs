@@ -1438,6 +1438,7 @@ mod relayout {
         assert!(String::from_utf8_lossy(&value).contains("\"wal\""), "{value:?}");
     }
 
+    #[test_id(t87zlt7)]
     #[test]
     #[allow(clippy::disallowed_methods)]
     fn relayout_refuses_naming_the_wal_when_a_reader_keeps_it_from_folding_and_leaves_nothing() {
@@ -1457,6 +1458,7 @@ mod relayout {
         drop(conn);
     }
 
+    #[test_id(tlonagj)]
     #[test]
     fn relayout_refuses_an_old_file_newer_than_this_binary() {
         let dir = TempDir::new("relayout-newer");
@@ -2229,6 +2231,7 @@ impl Clock for PassClock {
     }
 }
 
+#[test_id(tzz1u3r)]
 #[test]
 fn the_wal_stays_under_nine_mib_while_two_readers_never_pause_and_one_is_held_open() {
     const LINE: u64 = 8 << 20;

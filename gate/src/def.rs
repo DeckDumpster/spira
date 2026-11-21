@@ -266,6 +266,7 @@ mod tests {
         }
     }
 
+    #[test_id(tb25iow)]
     #[test]
     fn parse_reads_steps_bins_comments_and_blanks() {
         let d = parse("# c\n\nbin SPIRA_LINT_BIN spira-lint\nstep  bash a.sh  \nstep \"$SPIRA_LINT_BIN\" --only x\n").unwrap();

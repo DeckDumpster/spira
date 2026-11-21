@@ -414,6 +414,7 @@ mod tests {
         assert!(err.contains("SPIRA_LC_WAL_LINE_BYTES"), "{err}");
     }
 
+    #[test_id(t8na7mc)]
     #[test]
     fn a_call_under_a_client_id_spends_it_on_its_first_txn_and_suffixes_each_further_one() {
         let _bound = client_request_scoped(Some("req-1".to_string()));

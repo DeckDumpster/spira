@@ -2647,6 +2647,7 @@ mod abandon_tests {
         assert!(RoundRunner::probe_kept(&r).is_empty());
     }
 
+    #[test_id(txksfbm)]
     #[test]
     fn a_probe_with_no_verdict_leaves_its_reason_in_probe_faults_once() {
         let d = testkit::TempDir::new("vm-probe-faults");

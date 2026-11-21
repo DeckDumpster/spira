@@ -121,6 +121,7 @@ mod noverdict_tests {
         json!({ "bead": bead, "status": status, "reason": "branch-red" })
     }
 
+    #[test_id(t08jzx8)]
     #[test]
     fn four_beads_with_one_reason_are_a_streak() {
         let rows = [nv("d", "fence-silent"), nv("c", "fence-silent"), nv("b", "fence-silent"), nv("a", "fence-silent")];
@@ -128,24 +129,28 @@ mod noverdict_tests {
         assert_eq!((s.beads.join(","), s.reason.as_str()), ("a,b,c,d".into(), "fence-silent"));
     }
 
+    #[test_id(tf56mwm)]
     #[test]
     fn a_fail_between_no_verdicts_does_not_break_it() {
         let rows = [nv("d", "x"), st("e", "FAIL"), nv("c", "x"), nv("b", "x"), st("f", "FAIL"), nv("a", "x")];
         assert!(find_noverdict(&rows, 4).is_some());
     }
 
+    #[test_id(ttm36mw)]
     #[test]
     fn a_pass_ends_it_and_older_rows_do_not_count() {
         let rows = [nv("d", "x"), nv("c", "x"), st("p", "PASS"), nv("b", "x"), nv("a", "x")];
         assert_eq!(find_noverdict(&rows, 4), None);
     }
 
+    #[test_id(to14gn6)]
     #[test]
     fn another_reason_ends_the_walk() {
         let rows = [nv("d", "x"), nv("c", "x"), nv("b", "y"), nv("a", "x")];
         assert_eq!(find_noverdict(&rows, 4), None);
     }
 
+    #[test_id(tjkqvpw)]
     #[test]
     fn three_beads_or_one_bead_four_times_is_not_a_streak() {
         assert_eq!(find_noverdict(&[nv("a", "x"), nv("b", "x"), nv("c", "x")], 4), None);
@@ -153,6 +158,7 @@ mod noverdict_tests {
         assert_eq!(find_noverdict(&[nv("", "x"), nv("", "x"), nv("", "x"), nv("", "x")], 4), None);
     }
 
+    #[test_id(tzbeyu9)]
     #[test]
     fn zero_never_fires() {
         assert_eq!(find_noverdict(&[nv("a", "x")], 0), None);

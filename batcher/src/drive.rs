@@ -7345,6 +7345,7 @@ pub(crate) mod tests {
         assert!(text.contains("base red; output: r-1/probes/b1"), "{text}");
     }
 
+    #[test_id(txg8b5o)]
     #[test]
     fn an_ejection_carries_the_probe_of_that_member_alone_and_only_the_tail_of_a_long_one() {
         let said = vec![

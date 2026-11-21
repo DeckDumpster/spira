@@ -3,6 +3,7 @@
 
 use spira_runtime::tasks::d::acceptance::pinned_settings;
 
+#[test_id(tqd0lv1)]
 #[test]
 fn pinned_settings_leaves_the_process_config_door_as_it_found_it() {
     let before = (std::env::var_os("SPIRA_TOML"), std::env::var_os("SPIRA_HOME"));

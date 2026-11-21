@@ -243,6 +243,7 @@ fn findings_rows(w: &World) -> String {
     std::fs::read_to_string(record::dir(w.run.path(), 1).join("findings.jsonl")).unwrap_or_default()
 }
 
+#[test_id(tdgu4le)]
 #[test]
 fn a_fix_finding_is_recorded_for_the_unit_and_stays_out_of_the_catalogue() {
     let mut w = world();
@@ -254,6 +255,7 @@ fn a_fix_finding_is_recorded_for_the_unit_and_stays_out_of_the_catalogue() {
     assert!(!w.page("patterns.md").contains("Fix the lock."));
 }
 
+#[test_id(tjvnoxg)]
 #[test]
 fn a_fix_finding_with_a_statute_or_a_wider_scope_is_refused() {
     let mut w = world();
@@ -265,6 +267,7 @@ fn a_fix_finding_with_a_statute_or_a_wider_scope_is_refused() {
     assert_eq!(findings_rows(&w), "");
 }
 
+#[test_id(t0migxs)]
 #[test]
 fn an_other_finding_keeps_his_words_and_generalises_only_with_his_comment() {
     let mut w = world();
