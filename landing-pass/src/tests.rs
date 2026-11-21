@@ -2477,6 +2477,17 @@ fn past_the_bound_an_unjudged_tip_is_not_held_and_not_gated_again_and_one_incide
 }
 
 #[test]
+fn a_new_tip_lifts_the_unjudged_stop_inside_the_window() {
+    let h = h_with_unjudged_incident();
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    assert!(q.queued().is_empty());
+    h.git.refs.borrow_mut().retain(|(b, _)| b != "spira/sp-a");
+    h.git.add("spira/sp-a", "t9");
+    h.run();
+    assert!(q.queued().iter().any(|j| j.branch == "spira/sp-a" && j.tip == "t9"), "{}", q.queued().len());
+}
+
+#[test]
 fn a_verdict_elsewhere_in_the_repo_lifts_the_unjudged_stop_on_the_next_pass() {
     let h = h_with_unjudged_incident();
     let q = crate::gateq::GateQueue::new(&h.s.run);
