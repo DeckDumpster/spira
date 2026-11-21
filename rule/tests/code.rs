@@ -373,6 +373,13 @@ fn the_carry_decision_names_a_submitted_spira_item_and_files_anew_otherwise() {
 }
 
 #[test]
+fn a_show_reply_gives_the_beads_lifecycle_state() {
+    let _env = testkit::env_read();
+    assert_eq!(rule::code::state_in_show(r#"{"bead":{"bead_id":"sp-a","state":"SUBMITTED"},"delivery":null}"#).as_deref(), Some("SUBMITTED"));
+    assert_eq!(rule::code::state_in_show("not json"), None);
+}
+
+#[test]
 fn the_law_book_log_is_watched() {
     let _env = testkit::env_read();
     let rows = include_str!("../../spira/watchers");

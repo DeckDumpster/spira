@@ -742,7 +742,12 @@ pub fn carrier_of(cut_from: Option<&str>, state_of: impl Fn(&str) -> Option<Stri
 fn bead_state(id: &str) -> Option<String> {
     let lc = spira_store::lc_call::LcClient::configured().ok()?;
     let r = lc.call(&["show", id]).ok().filter(|r| r.code == 0)?;
-    let v: serde_json::Value = serde_json::from_str(&r.out).ok()?;
+    state_in_show(&r.out)
+}
+
+/// The `bead.state` of a `spira-lc show` reply.
+pub fn state_in_show(out: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(out).ok()?;
     v.get("bead")?.get("state")?.as_str().map(str::to_string)
 }
 
