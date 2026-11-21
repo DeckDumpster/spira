@@ -4076,7 +4076,8 @@ fn a_staged_round_is_merged_onto_the_open_rounds_head_and_moves_no_bead() {
     assert!(
         t.scripts.calls.borrow().iter().any(|c| c.contains("gate")
             && c.contains("spira/round-staged/spira-staged")
-            && c.contains("off")),
+            && c.contains("off")
+            && c.ends_with("lock_wait=5400")),
         "the fences run on the staged head: {:?}",
         t.scripts.calls.borrow()
     );

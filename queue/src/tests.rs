@@ -4954,6 +4954,7 @@ fn submit_refuses_naming_the_key_when_the_gate_timeout_does_not_resolve() {
     assert_eq!(count_calls(&t, "gate "), 0);
 }
 
+// covers: UC-landing-merge-queue-27
 #[test]
 fn submit_green_in_a_queue_mode_certifies_on_spira_lc_and_keeps_no_record_of_its_own() {
     let mut t = T::new(LandMode::Queue);
