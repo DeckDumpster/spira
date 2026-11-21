@@ -104,7 +104,7 @@ fn hold(args: &[String]) -> Result<(), String> {
             root,
             lease.dir(),
             &std::env::var("PATH").unwrap_or_default(),
-            true,
+            true, // release
         );
     }
     let dir = lease.dir().to_path_buf();
