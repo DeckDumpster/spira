@@ -266,7 +266,9 @@ pub(crate) fn answer(r: Result<String, String>) -> (i32, String) {
 }
 
 /// Reads `journal sweep [--dry-run] [--from <cursor>]`; `None` when `args` is not a sweep.
-pub fn parse_sweep_args(args: &[String]) -> Option<Result<(bool, Option<String>), (i32, String)>> {
+pub type SweepArgs = Result<(bool, Option<String>), (i32, String)>;
+
+pub fn parse_sweep_args(args: &[String]) -> Option<SweepArgs> {
     if !matches!(args, [j, s, ..] if j == "journal" && s == "sweep") {
         return None;
     }
