@@ -74,7 +74,9 @@ pub trait Beads {
 
 const BEAD_CHUNK: usize = 50;
 
-pub struct LcBeads;
+pub struct LcBeads {
+    pub incident_label: String,
+}
 
 impl Beads for LcBeads {
     fn types(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String> {
@@ -87,12 +89,12 @@ impl Beads for LcBeads {
         Ok(out)
     }
     fn incidents(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String> {
-        Ok(incidents_in(&plan_items(ids, true)?))
+        Ok(incidents_in(&plan_items(ids, true)?, &self.incident_label))
     }
 }
 
-fn incidents_in(items: &[serde_json::Value]) -> BTreeMap<String, String> {
-    let labelled = |i: &&serde_json::Value| i["labels"].as_array().is_some_and(|l| l.iter().any(|x| x == "incident"));
+fn incidents_in(items: &[serde_json::Value], label: &str) -> BTreeMap<String, String> {
+    let labelled = |i: &&serde_json::Value| i["labels"].as_array().is_some_and(|l| l.iter().any(|x| x == label));
     items.iter().filter(labelled).filter_map(|i| Some((i["id"].as_str()?.to_string(), i["title"].as_str().unwrap_or("(untitled)").to_string()))).collect()
 }
 
@@ -615,7 +617,8 @@ mod tests {
     #[test]
     fn incidents_in_keeps_only_beads_labelled_incident_and_never_an_empty_title() {
         let items: Vec<serde_json::Value> = serde_json::from_str(r#"[{"id":"sp-a","title":"lost write","labels":["incident"]},{"id":"sp-b","title":"x","labels":["other"]},{"id":"sp-c","title":"y"},{"id":"sp-d","labels":["incident"]}]"#).unwrap();
-        let got = incidents_in(&items);
+        let got = incidents_in(&items, "incident");
+        assert!(incidents_in(&items, "alarm").is_empty());
         assert_eq!(got.into_iter().collect::<Vec<_>>(), vec![("sp-a".into(), "lost write".into()), ("sp-d".into(), "(untitled)".into())]);
     }
 }

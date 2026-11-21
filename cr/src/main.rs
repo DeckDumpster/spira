@@ -47,7 +47,7 @@ fn build_ports() -> Result<Ports, String> {
         committer: Box::new(cr::ports::GitCommitter),
         source_repo: repo.clone(),
         stdin,
-        clock, tree: Box::new(tree), beads: Box::new(cr::ports::LcBeads), registry: Box::new(cr::ports::SqliteRegistry { path: registry_path }), config,
+        clock, tree: Box::new(tree), beads: Box::new(cr::ports::LcBeads { incident_label: key("SPIRA_INCIDENT_LABEL") }), registry: Box::new(cr::ports::SqliteRegistry { path: registry_path }), config,
         env_seed: spira_config::process::cfg("SPIRA_SEED").ok().filter(|s| !s.is_empty()),
     })
 }
