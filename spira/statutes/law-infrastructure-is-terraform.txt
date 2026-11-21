@@ -1,0 +1,1 @@
+All infrastructure, AWS and Cloudflare alike, is declared in Terraform in the repository it serves and changes only through terraform apply after a reviewed plan, never console clicks, CLI calls, CDK or hand-run scripts. State lives in the shared S3 backend; the terraform-deploy role is the only writer. Hand-made or CDK-made resources are imported, never recreated.

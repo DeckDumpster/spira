@@ -1,0 +1,1 @@
+No new shell test suite: a test is written in Rust; a shell suite that exists is ported or deleted, never grown.

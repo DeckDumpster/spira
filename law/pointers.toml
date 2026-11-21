@@ -5,3 +5,45 @@ slug = "law-throughput-floor"
 reason = "Ryan ruled on sp-qlliks (2026-11-08): fire on a stall and start diagnosis and repair, not a halt on a daily rate"
 replaced_by = "law-a-landing-stall-starts-a-repair"
 on = "2026-11-08"
+
+[[retired]]
+slug = "law-a-test-that-flips-is-deleted"
+reason = "the approved test registry design (test-registry-2026-11-15) replaces same-round deletion with a seven-day disabled row on a bead"
+replaced_by = "law-a-flipping-test-is-disabled-by-a-registry-row"
+on = "2026-11-16"
+
+[[retired]]
+slug = "law-aeon-commits-name-their-bead"
+reason = "renamed in the vocabulary migration"
+replaced_by = "law-dwarf-commits-name-their-bead"
+on = "2026-11-20"
+
+[[retired]]
+slug = "law-aeons-hold-no-forge-credential"
+reason = "renamed in the vocabulary migration"
+replaced_by = "law-dwarves-hold-no-forge-credential"
+on = "2026-11-20"
+
+[[retired]]
+slug = "law-aeons-never-operate-the-queue"
+reason = "renamed in the vocabulary migration"
+replaced_by = "law-dwarves-never-operate-the-queue"
+on = "2026-11-20"
+
+[[retired]]
+slug = "law-an-aeon-touches-only-its-own-ref"
+reason = "renamed in the vocabulary migration"
+replaced_by = "law-a-dwarf-touches-only-its-own-ref"
+on = "2026-11-20"
+
+[[retired]]
+slug = "law-drain-gates-summons-not-delivery"
+reason = "renamed in the vocabulary migration"
+replaced_by = "law-drain-gates-calls-not-delivery"
+on = "2026-11-20"
+
+[[retired]]
+slug = "law-one-aeon-one-worktree"
+reason = "renamed in the vocabulary migration"
+replaced_by = "law-one-dwarf-one-worktree"
+on = "2026-11-20"

@@ -5,8 +5,8 @@ Placeholder Part until the table of contents is approved.
 - §1.1 law-absence-needs-a-positive-control — A check that finds nothing must first prove it could have found something.
 - §1.2 law-a-watcher-runs-the-sop-before-it-pages — A watcher that detects a condition runs the tool its matching SOP names, records the application, and reports the outcome; it escalates to the Concierge only what no runnable SOP covers, or what the tool could not settle.
 - §1.3 law-a-failure-that-will-not-reproduce-is-a-fidelity-gap — A failure that repeats in a round or CI but passes in a reproduction means the reproduction is wrong.
-- §1.4 law-p0-express-preempts-lanes — Maintenance lanes never hold capacity a P0 needs: while a P0 or express bead waits unclaimed, no lane dwarf is called, and a waiting P0 express preempts the youngest running lane dwarf through the stop path, which makes its bead true and loses nothing.
-- §1.5 law-a-test-that-flips-is-deleted — A test that fails then passes on an unchanged tree is deleted in the same round, not retried or quarantined, and a follow-on bead filed with the deletion adds a deterministic test restoring coverage parity for what it covered; it need not be the same test.
+- §1.4 law-p0-express-preempts-lanes — Maintenance work never holds capacity a P0 needs: while a P0 or express bead waits unclaimed, no reactive maintenance session that uses a bound resource class is called, and a waiting P0 express preempts the youngest running one through the stop path, which makes its bead true and loses nothing.
+- §1.5 law-a-test-that-flips-is-deleted — [Retired 2026-11-16] the approved test registry design (test-registry-2026-11-15) replaces same-round deletion with a seven-day disabled row on a bead
 - §1.6 law-an-event-loop-never-blocks — An event loop never blocks: every blocking call it would make, file, socket, process, lock or sleep, is dispatched through a bounded queue to a bounded thread pool, and the loop only awaits the result.
 - §1.7 law-a-reconciler-redrives-it-does-not-alarm — A reconciler redrives; it does not alarm.
 - §1.8 law-a-p0-in-spira-itself-is-built-by-hand — A P0 defect in Spira's own machinery is built by the Concierge by hand and joins the very next round, cut at once with whatever is certified: it never waits for a batch to fill, and it never lands alone while certified work waits behind it.
@@ -50,9 +50,357 @@ Placeholder Part until the table of contents is approved.
 - §1.46 law-a-round-loser-is-fixed-and-landed-by-hand — When a harness defect is losing landing rounds, the Concierge fixes it now: it traces the cause itself, hands a directed dwarf the exact change, and lands the result by hand on targeted evidence the moment it is built.
 - §1.47 law-a-page-is-looked-at-then-the-issue-or-the-detector-is-fixed — Every page is looked at when it arrives, by whoever receives it, whatever its class and however often that class has been false.
 - §1.48 law-the-lifecycle-store-serves-online-data — The lifecycle store serves online data: open work and a bounded recent window of closed work.
-- §1.49 law-only-spira-lc-talks-to-the-stores — Nothing talks to dolt or beads directly.
+- §1.49 law-only-spira-lc-talks-to-the-stores — Nothing but the store server runs bd, bd-embedded, bdq or dolt, or opens a SQL connection to the store: no crate, script, hook, test fixture, persona or session, under any path.
 - §1.50 law-gates-run-in-a-clean-environment — A gate, check or test invoked by automation must run in an explicit minimal environment, never the caller's.
 - §1.51 law-a-round-lost-without-cause-stops-the-rounds — When a round is abandoned or voided while no member was red, the round machinery stops, owned by the Concierge, only for as long as it takes to name the cause from the round record and put a builder on its fix: ten minutes.
 - §1.52 law-every-bead-is-written-or-reviewed-by-skuld — Every bead is written by Skuld or reviewed by Skuld before it is filed, whoever files it; a body no Skuld pass has seen is not filed.
 - §1.53 law-every-decision-passes-the-statute-check — Every decision by every actor passes the statute check before it is made: filing or amending a bead, writing a design into one, answering or escalating an ask, ejecting or attributing a red, changing a config value.
 - §1.54 law-check-the-law-at-the-decision — A dwarf checks the law at the decision it governs.
+- §1.55 law-a-bead-reference-carries-its-details — Any message that names a bead carries that bead's details with it — title, status, priority, and the one fact the reader needs to act.
+- §1.56 law-a-bead-title-omits-its-repo — Every bead is filed with its repository as a required, explicit field of the filing facade, on every filing path, with no default, and every surface that renders a bead shows the repository from that field.
+- §1.57 law-a-beads-priority-is-a-floor — Among work not yet started, a bead's own priority is a floor in every selector that orders or admits it: claim ranking, round selection, batching, admission.
+- §1.58 law-a-binary-resolves-the-config-it-reads — A binary or shim that needs configuration conf.sh resolves must resolve it itself, in-process through spira-config, never read it from its own environment: almost nothing conf.sh resolves is exported, and a unit starts a binary with only SPIRA_RELEASE and PATH.
+- §1.59 law-a-broken-prod-surface-is-fixed-by-hand-first — When a production surface is visibly wrong and a reversible operational action repairs it, the Concierge does that action at once (backup first, then verify on production) instead of filing a bead and waiting on a delivery cycle.
+- §1.60 law-a-budget-is-a-cutoff — A time budget is enforced, never advisory: when a stage has one, the stage stops at it.
+- §1.61 law-a-bug-with-a-fix-in-flight-depends-on-it — When a bug a person filed already has a fix in flight, neither close it nor leave it ready: make it depend on the fixing bead, so it leaves the queue and returns as the check on the fix.
+- §1.62 law-a-builder-bead-names-what-to-build — A builder is handed only a bead that names what to build: the deliverable, component or change, and where.
+- §1.63 law-a-cap-breach-is-acted-on-not-explained — A monitor line past a hard cap is a breach, not a datum: the run is killed at the cap by the machinery itself, with a named over-cap red naming the phase, and what overran is fixed.
+- §1.64 law-a-catchup-targets-a-fixed-point — A bead never aims at a moving target.
+- §1.65 law-a-check-reports-every-unit — An expensive check reports a verdict for every independent unit it ran, never only the first failure or a summary that discards the rest.
+- §1.66 law-a-component-reports-what-it-observed — A component reports what it observed, never the cause it infers: a refused or absent socket is "not running", not "restarting", and no caller branches on a lifecycle state of another component that it cannot observe.
+- §1.67 law-a-concierge-duty-is-a-missing-mechanism — Anything the Concierge does by hand to keep the loop moving is a mechanism the harness lacks: codify it as a tool, a watcher row or a persona that owns it, never as a habit of whoever is at the keyboard.
+- §1.68 law-a-concurrency-ceiling-names-its-measurement — A concurrency ceiling (live dwarves, gate slots, certify width, round size) is set only with the measurement that justifies it and the condition that retires it, recorded beside the value; when that condition is met the ceiling is re-measured, never left standing on a reason that has passed.
+- §1.69 law-a-config-value-has-no-fallback — A config value has one definition and no fallback: the registry declares it, the shipped spira.toml carries it, every reader takes it from spira-config, and a missing key is refused by name rather than defaulted.
+- §1.70 law-a-control-that-cannot-check-must-refuse — A control that cannot perform its check must refuse, not warn and proceed.
+- §1.71 law-a-cutover-is-certified-per-path — A cutover is certified only on the paths it was run on.
+- §1.72 law-a-cutover-takes-downtime — A component that replaces an existing authority is built and launched inert; then one batch cuts every caller over while the data migration runs, and the system takes downtime — stop and drain — rather than carrying two authorities, dual writes, a shrinking allowlist or a drift report to keep the old path alive.
+- §1.73 law-a-delegated-study-starts-from-the-brain — Before delegating a study, audit or review of an area, the delegating agent searches the brain wiki for what is already written on it and names those pages in the brief, with the levers they already propose; an agent that re-derives an area from the code alone ranks only what the code makes visible and misses a lever the brain already holds.
+- §1.74 law-a-deliberate-state-is-not-a-fault — A state the operator chose must never render as a fault.
+- §1.75 law-a-design-for-approval-reaches-his-phone — A design put to Ryan for approval is published where he can read and comment on it from his phone — a Claude Doc linked directly under the design page's title — and in the same act its approval ask is filed, naming the defaults, so the decision reaches him as mail.
+- §1.76 law-a-design-prices-what-it-rejects — A design that rejects an alternative states its cost in measured or explicitly estimated numbers — what it covers and misses, what must be installed and where, what config must be written, the ongoing cost — and never dismisses it with an adjective.
+- §1.77 law-a-design-time-is-a-goal-not-an-assertion — A time figure in a design or a bead's acceptance - land in under 60 s, answer in under 500 ms - is a goal the system is measured against, never an assertion a test makes.
+- §1.78 law-a-designation-is-never-derived — A scarce designation — express, urgent, exempt — is granted only by an explicit request, never inferred from another field.
+- §1.79 law-a-detector-files-a-bounded-batch — A check that files work items caps how many it files in one pass and logs what the cap held back.
+- §1.80 law-a-dismissal-names-its-cover — An actor who calls an alarm, a red or a slow reading already covered names the open bead that covers it, found with `work search` before saying so; with no open bead it files one through `work file` or tells Ryan plainly that nothing covers the condition, never calling it routine.
+- §1.81 law-a-documented-control-must-exist — Never write a document that asserts a control no program enforces.
+- §1.82 law-a-duplicate-close-moves-the-deliverable — Closing a bead as a duplicate first moves the closed bead's deliverable and acceptance onto the survivor, as a note or a child, so no fix loses its home.
+- §1.83 law-a-failure-carries-its-own-explanation — A harness that reports a failure must carry that failure's own explanation.
+- §1.84 law-a-fallback-has-a-forced-mode — Every automatic fallback ships a no-fallback mode and a cheap check of its primary path, wired to a watcher, so a broken primary is red within minutes instead of hidden behind the fallback that absorbs it.
+- §1.85 law-a-flipping-test-is-disabled-by-a-registry-row — A test that fails then passes on an unchanged tree is disabled in the same round by a test-registry row, for seven days, on a bead that fixes it or replaces it with a deterministic test; it is not retried.
+- §1.86 law-a-forked-sibling-diverges-only-by-decision — A repo forked from a sibling (dumpstar from pokedumpster) diverges from it only by decision.
+- §1.87 law-a-gate-closes-on-the-reply — A bead that exists to wait on Ryan's answer closes only when his answer is on record: his verdict on the ask, or his mail reply.
+- §1.88 law-a-guard-refuses-it-does-not-tidy — When a rule reaches rung four, the mechanism refuses at the point of violation.
+- §1.89 law-a-hand-fix-names-its-root-cause — Every repair you make by hand cuts a bead for the defect that made it necessary, in the same session, before you move on.
+- §1.90 law-a-hand-substitute-never-satisfies-the-duty — A hand substitute never satisfies the duty it stands in for: when a persona runs by hand what a mechanism owns, the mechanism's silence is an incident the same hour, and every result the hand run reports says it is a substitute.
+- §1.91 law-a-known-red-preempts-the-pass — A pass's reds are watched as they land, not read at its end.
+- §1.92 law-a-lane-runs-only-where-the-repo-admits-it — A persona may cut work only against a repository whose lanes admit that persona.
+- §1.93 law-a-lane-spills-over-the-ceiling — Reactive work never waits for planned work: when a bound resource class is at its limit and a reactive session that uses it has demand, it starts above the limit, and the class drains by attrition: no planned session starts there while its live count, reactive sessions included, exceeds the limit.
+- §1.94 law-a-learned-failure-mode-becomes-a-state — When a failure mode is understood, model it in the lifecycle: add the state, the event and the valid transitions that name it, so the machine records it, refuses what it makes illegal, and every view can show it.
+- §1.95 law-a-lesson-applies-to-every-queue-mode — A landing-path lesson learned on one queue mode is owed to every mode — VM rounds, forge batches, pr, push and local alike.
+- §1.96 law-a-load-red-waits-on-a-signal — A test red only under the full-corpus run and green at low load is repaired by waiting on a signal the code under test emits, with a generous cap, never by widening a timing window; where no signal exists, the code gains one or the case is deleted.
+- §1.97 law-a-local-green-names-what-it-missed — Before offering a round as a PR, enumerate its known divergences from the gate's environment — toolchain and lockfile, suspended or SKIPPED units, CI-only steps — close what you can, and state what the local green does not cover.
+- §1.98 law-a-lost-verified-result-is-data-loss — A completed verification that the system then discards or cannot record (a green certification, a passed gate, a finished acceptance) is a P0 data-loss incident, not a retry cost: the round or bead is landed from the existing evidence or the defect that lost it is fixed first, it pages as P0 until resolved, and re-running the verification is never reported as costless.
+- §1.99 law-a-matcher-reads-code-not-prose — A check that greps a file for a mechanism must read a comment-stripped view of it, and must fold line continuations first.
+- §1.100 law-a-money-ceiling-binds-only-in-steady-state — A money ceiling binds a system in steady state and never one in bring-up: while a capability is still being proved, spend what the task needs, report what it cost in the same message, and restore the ceiling when the operator calls it steady.
+- §1.101 law-a-pattern-match-is-not-an-identity-check — A grep is a substring match, not an identity check.
+- §1.102 law-a-pause-releases-itself — A pause, drain or hold that a session or tool sets names its owner and its release condition, and lifts only on that condition or by an explicit act.
+- §1.103 law-a-pipeline-builds-each-artifact-once — A pipeline builds each artifact once.
+- §1.104 law-a-provisional-member-leaves-on-its-gate-red — A round takes CERTIFIED beads first and adds unheld SUBMITTED ones before their gate finishes; those members are provisional and recorded as such.
+- §1.105 law-a-published-design-carries-its-ask — A design published for Ryan's review carries its approval ask in the store from the moment it is published, blocked on nothing, with the Concierge's recommended answer as its default.
+- §1.106 law-a-questioned-statute-stays-in-force — A statute in the book is in force until it is retired.
+- §1.107 law-a-rebase-loop-is-sequenced-not-split — A bead re-conflicting on rebase is a race on a hot file, not an oversized bead: never split it or escalate it.
+- §1.108 law-a-red-run-report-closes-on-its-fixes — A bead whose whole content is a report that a run was red closes as no-code-change as soon as every failure it names has its own fix bead, citing them in the close reason; it never waits for a later green run, and it never asks the operator for permission to close.
+- §1.109 law-a-refusal-is-not-an-undo — A rejected or interrupted tool call may already have run; the refusal stops the next call, not the side effects of the one in flight.
+- §1.110 law-a-refusal-names-its-exit — A check that blocks a legitimate operation must name, in its own refusal message, why it refused and the sanctioned way through: an input, a flag or a named procedure that records who claimed the precondition and on what evidence.
+- §1.111 law-a-regression-test-must-be-seen-to-fail — A regression test is not written until it has been run against the UNFIXED code and seen to fail.
+- §1.112 law-a-release-passes-acceptance-on-its-tag — Never call a release clean, or hand it to another install, until end-to-end acceptance has passed on that exact tag.
+- §1.113 law-a-remainder-is-not-a-cap — A number that already nets out what is running is a REMAINDER, not a cap.
+- §1.114 law-a-rename-repoints-no-reader — Renaming a systemd unit repoints nothing that reads its name.
+- §1.115 law-a-repo-is-defined-in-its-own-terms — A repository's code, docs and checks are written in its own domain's terms and never name another repository or product, not even to forbid it: a check that lists a sibling's vocabulary couples the two repos and defines one's correctness by the other.
+- §1.116 law-a-report-is-not-a-filing — A finding exists only where something will surface it: an open bead, an insight, or an ask in the operator's pane.
+- §1.117 law-a-restart-is-bounded-not-avoided — A service restart that an activation or deploy performs is kept, because a restart on every activation is the cheapest smoke test there is; its cost is bounded instead.
+- §1.118 law-a-retry-must-change-an-input — A retry that changes nothing is not a retry, it is a loop.
+- §1.119 law-a-reversal-is-announced-as-one — Reversing something you told Ryan you would or would not do is news in its own right: say 'I am reversing X because Y' as the lead of its own message, before acting, never as a clause inside a status line.
+- §1.120 law-a-reversal-is-written-where-the-ruling-is-quoted — When an order reverses a decision already closed, record the reversal on the closed decision bead and on every open bead whose notes quote its answer, before any builder is launched against them.
+- §1.121 law-a-review-outlives-its-session — A design review in Ryan's hunk pane outlives the session that opened it.
+- §1.122 law-a-round-is-feature-first-then-catch-all — Never let submitted beads idle without a round running.
+- §1.123 law-a-round-lands-only-on-a-green-pass — A round lands only on a pass with no red.
+- §1.124 law-a-runner-takes-a-list — A runner takes an explicit list of what to run; whatever decides which — a diff, a tag, a full-corpus flag — is a separate program printing names on stdout.
+- §1.125 law-a-second-defect-gets-its-own-bead — A hand-fix for a defect other than the bead's own defect gets its own bead, even on the release path; the rule against filing off the release path covers investigation and nice-to-haves, not a second defect found and fixed.
+- §1.126 law-a-secret-never-travels-through-the-transcript — A secret never passes through the chat or any transcript.
+- §1.127 law-a-shared-runner-image-is-general-purpose — A runner image shared across repositories carries only general-purpose substrate (OS, runner, container engine, toolchain).
+- §1.128 law-a-split-repoints-nothing — When one repository, database or path is split in two, every variable naming the old shared location goes on resolving and starts meaning the wrong thing.
+- §1.129 law-a-statute-names-its-tool — A statute that prescribes an action names the tool that performs it, or is enacted with the bead that builds it; an actor whose only legal tool cannot comply says so and files that tool at P0, never doing just what the tool allows.
+- §1.130 law-a-statutes-silence-is-not-permission — A statute's silence is silence, not permission.
+- §1.131 law-a-store-write-is-not-a-delivery — A write to the bead store is not a delivery.
+- §1.132 law-a-summary-request-gets-the-data — A request for a summary, report or 'how did X go' is answered with the data and where it lives: the source file or query, the numbers (counts, medians, before and after), and the raw rows when there are few.
+- §1.133 law-a-sweep-is-not-a-bead — A periodic check is not a unit of work.
+- §1.134 law-a-target-closes-only-met-or-contradicted — A bead that names a target closes only when the target is met, shown by the measurement it names, or contradicted, shown by evidence that it cannot be met as stated.
+- §1.135 law-a-test-never-builds-spira — There is only one way to build Spira, and builds are not tested: cargo build has no place in a test.
+- §1.136 law-a-tested-tree-is-not-retested-on-push — A push to a landing branch whose tree a pull request's CI already passed is not re-tested on push: the push run checks that the tree is the one the PR run tested and records the skip, naming the PR and run.
+- §1.137 law-a-tool-needs-a-runner — A tool only a session at the keyboard runs is still a hand.
+- §1.138 law-a-wait-names-what-it-waits-for — A wait or barrier names what it waits for — the beads, runs, processes or signal — and its duration is only a cap on that wait, never the condition.
+- §1.139 law-a-watcher-asks-the-component-that-decides — A watcher that reports work is due obtains that judgement from the component that performs the work, never re-derives it from raw state; where no such query exists, add one and have both call it.
+- §1.140 law-a-workflow-lands-on-its-own-run — A change to a CI workflow, or to a script only that workflow runs, is not done until a dispatched run on the change's branch shows the changed step executing on the runner.
+- §1.141 law-a-writable-resource-gets-full-crudl — Any resource an agent or API can write gets the full set: create, read, list, update and delete.
+- §1.142 law-a-wrong-lane-attempt-is-not-the-works — An attempt spent in the wrong lane is not the work's fault: before poisoning or escalating a bead, check its labels put it in the lane that can land it; when builder work carries incident or alarm labels, relabel it to the builder and unpoison it without asking, naming the relabel as the cause.
+- §1.143 law-address-the-store-with-spira-bd — Address a production beads store with $SPIRA_BD and name it by absolute path, bd -C "$SPIRA_DB", never by discovery from the working directory or $HOME: a stray .beads there is a shadow store that answers confidently.
+- §1.144 law-aeon-commits-name-their-bead — [Retired 2026-11-20] renamed in the vocabulary migration
+- §1.145 law-aeons-hold-no-forge-credential — [Retired 2026-11-20] renamed in the vocabulary migration
+- §1.146 law-aeons-never-operate-the-queue — [Retired 2026-11-20] renamed in the vocabulary migration
+- §1.147 law-alerts-must-be-actionable — A false alert is a real cost, not a harmless one.
+- §1.148 law-an-aeon-touches-only-its-own-ref — [Retired 2026-11-20] renamed in the vocabulary migration
+- §1.149 law-an-agent-is-the-first-production-customer — An agent is every product's first production customer.
+- §1.150 law-an-answer-that-contradicts-a-statute-amends-it — When an operator answer contradicts a statute in force, amend the statute in the same act and name the amendment on the ask; never build a mechanism from a verdict without first reading the statute that already covers it.
+- §1.151 law-an-eject-names-its-evidence — Never eject a round member on suspicion.
+- §1.152 law-an-incident-waits-on-its-fix-landing — An Ops incident parked behind a fix waits on that fix LANDING, not on its bead closing.
+- §1.153 law-anomalies-are-not-coincidences — When a run produces an anomaly that the next pass papers over — a dwarf that woke idle while work was ready, a count that came back wrong, a log line that has never appeared before — diagnose it before moving on and file what you find.
+- §1.154 law-answer-the-question-before-widening — Answer the question the operator actually asked, with the fewest reads that settle it, and report that answer before investigating anything adjacent.
+- §1.155 law-answers-arrive-only-as-mail — The operator's answers arrive as mail and by no other path.
+- §1.156 law-answers-need-a-delivery-path — An escalation has two halves — the ask and the answer — and both need a mechanism.
+- §1.157 law-archivist-does-not-file-live-work — When sweeping a session that is still running, record a defect as a note on the nearest existing bead or as an ask; do not create a work bead, since the live session holds context and will file its own.
+- §1.158 law-arm-before-you-retire — Arm the replacement before you retire the workaround, in the same turn, never after.
+- §1.159 law-ask-before-you-acquire — Ask whether the work is needed before acquiring the resource that would do it.
+- §1.160 law-attempts-count-the-harness — An attempt count measures the harness as much as the work: read the ledger before poisoning or escalating.
+- §1.161 law-bake-rules-into-tools — When a rule is discovered, the deliverable is a guard, not a note.
+- §1.162 law-batching-is-not-scheduling — Deciding what goes into a batch and deciding when it runs are separate problems.
+- §1.163 law-beads-is-never-public — A beads database is never public and never ships with the harness.
+- §1.164 law-blocking-edges-are-real-dependencies — A blocking edge asserts that one bead CANNOT be done until another is.
+- §1.165 law-bound-the-rare-path — A timeout, quota or concurrency cap is only exercised on the path that approaches it, and that is rarely the common path.
+- §1.166 law-branch-affinity-is-recorded — A branch belongs to the work, not to the bead id, so record it on the bead rather than deriving it.
+- §1.167 law-buy-capacity-rather-than-wait — Buy capacity rather than wait, and only when actually waiting: a test run (a landing round or a provisioned CI job of any registered repo) goes to a Proxmox VM first and spills to EC2 only when no local VM is available within the spill wait or the host is under I/O pressure; placement is round_vm_spill = ec2 for rounds and spill: ec2 for CI.
+- §1.168 law-chain-the-check-to-the-commit — Never join a verification to the commit it authorises with ';' — chain with '&&', so a failing check cannot scroll past and the commit simply does not happen.
+- §1.169 law-charge-only-a-named-outcome — A counter that can stop work charges only for an outcome the harness can NAME, and defaults to not charging.
+- §1.170 law-cheap-answers-first — Before an expensive step, ask whether a cheap step already decides the outcome, and run the cheap one first.
+- §1.171 law-check-it-yourself-before-asking — Never ask Ryan for something you can establish or do yourself.
+- §1.172 law-check-whether-the-precondition-already-holds — Before telling Ryan a precondition is unmet, or asking him to grant access or change a setting, read the live system and prove it is missing.
+- §1.173 law-ci-builds-what-ci-depends-on — CI artifacts (runner images, templates, published tags) are built by CI under short-lived OIDC credentials on main, never by hand with a held credential.
+- §1.174 law-cite-only-statutes-that-exist — Before you write a root cause into a commit message, a bead or a scar record, demonstrate it — run the smallest command that would fail if it were false, and paste what it printed.
+- §1.175 law-claim-before-you-work — You may not touch a bead's branch, worktree, labels or status unless you hold its claim, taken with the machinery a dwarf uses — bd update <id> --claim — and released when you stop.
+- §1.176 law-clock-reducers-go-straight-to-ci — While the next full round is still filling, a certified P0 bead that reduces the loop's clock time (test, gate, certification or landing wall time; labelled clock-reducer) does not wait for the pool.
+- §1.177 law-close-on-merge-not-submit — Close a bead when its work has LANDED, never when it was submitted.
+- §1.178 law-close-the-loop-on-confirmation — When Ryan says a task is done, or you verify it yourself, tick the checkbox in the SAME turn with the evidence beside it — never leave it for later.
+- §1.179 law-close-with-the-evidence-asked-for — Close a bead with the evidence its acceptance criteria demanded, not merely with a commit id and a green gate.
+- §1.180 law-closed-is-not-landed — CLOSED does not mean landed.
+- §1.181 law-closing-an-ask-names-what-decided-it — The Concierge may close an ask addressed to Ryan only when a statute in force or a landed fix already decides it, and the close reason names that statute or commit.
+- §1.182 law-commit-messages-via-stdin — Never pass prose through a shell argument.
+- §1.183 law-commit-only-paths-you-changed — Commit only the paths you changed.
+- §1.184 law-commit-to-a-recommendation — When asked to compare options, pick one and justify it briefly rather than surveying the space.
+- §1.185 law-components-push-metrics-directly — A component pushes its metrics to the metrics store itself, directly or to the stack's collector, fire-and-forget with a short deadline that never blocks it.
+- §1.186 law-concierge-signals-ride-watchd-rows — Any signal the Concierge must not miss is written by a watchd row or mail-deliver to the durable inbox (watchd/concierge-inbox.log), never typed into the pane: keystrokes land inside Ryan's half-written messages.
+- §1.187 law-concierge-tools-converge-with-their-rules — Every tool the Concierge uses lives in a version-controlled repository, committed and pushed on every change, never in a scratch or temporary directory, and has a bead tracking its convergence into the harness mechanism that replaces it.
+- §1.188 law-concierge-watches-every-registered-repo — The Concierge's first act in every session, and again after every /clear or compaction, is to re-arm its watchers before anything else: mail-deliver (Ryan's replies; critical), and a live watcher on the PRs and CI of every repository in the install's repo-map whatever its land mode, plus every watchd row the session-start hook lists.
+- §1.189 law-config-through-the-cli-only — Nothing in the system knows where configuration lives or how it is stored.
+- §1.190 law-conflicts-are-not-escalations — A merge conflict is not a decision: resolving it is the agent's job.
+- §1.191 law-constrain-what-can-be-claimed — To narrow what Spira works on, constrain what can be CLAIMED, not what can RUN.
+- §1.192 law-converge-by-reconciliation-not-atomicity — Every invariant the system relies on is held by a reconciliation loop, not an atomic write.
+- §1.193 law-copy-is-written-for-its-domain — A product's user-readable copy is written for its own domain, from that domain's vocabulary, never produced by searching for and banning another domain's words.
+- §1.194 law-count-things-not-log-lines — Count the things, not the lines that describe them.
+- §1.195 law-craft-knowledge-goes-in-the-wiki — Knowledge that is neither a rule nor a unit of work belongs on a wiki page, not in a closed bead.
+- §1.196 law-decisions-surface-immediately — A decision inside a bead goes to Ryan the moment it is written, never when the bead is picked up.
+- §1.197 law-declining-for-want-of-a-tool — A harness component that declines to act because a tool is missing must say so where a person reads it — a log line or a FAILURE, never a silent return and never a SKIP phrased as a fact about the machine.
+- §1.198 law-decompose-by-deliverable — Decompose work by deliverable, never by phase.
+- §1.199 law-dedup-must-be-measured — A filer that deduplicates must publish its duplicate count.
+- §1.200 law-defects-are-filed-and-features-rank-first — A defect found in the machine is filed as a bead when it is found, so builders work it rather than sit idle; an empty backlog is not the goal.
+- §1.201 law-defects-in-a-replaced-component-are-requirements — A defect found in a component slated for replacement is recorded first as a REQUIREMENT of its replacement, on that replacement's design, never as a bead that fixes the doomed code.
+- §1.202 law-dependencies-are-fulfilled-first — Dependencies are resolved and verified first: every CI job and local check verifies every dependency of the tiers it will run before any build or test, and fails within two minutes naming what is missing.
+- §1.203 law-deploy-the-tested-artifacts — Deploy the artifacts the passing run tested, never a rebuild.
+- §1.204 law-design-approval-is-ryans — Design approval stays with Ryan.
+- §1.205 law-destructive-beads-are-never-dispatchable — A bead whose procedure stops, restarts or reinstalls the harness — world.sh stop, systemd/install.sh, a schema migration, anything needing the world stopped — must be DEFERRED at the moment it is filed.
+- §1.206 law-detect-drift-never-install — A harness check may DETECT that what is installed has drifted from its source; it may not repair the drift.
+- §1.207 law-detection-outranks-rejection — Detecting an anomalous system state and feeding it back into the DAG at raised priority matters far more than refusing a bad change.
+- §1.208 law-deterministic-before-inference — Build the cheap check before the smart one.
+- §1.209 law-development-goes-to-the-loop — The brain session designs, decomposes and curates; it does not implement.
+- §1.210 law-do-not-ask-whether-to-file — Never ask Ryan whether to do a piece of work yourself or file it as a bead.
+- §1.211 law-dont-invent-his-deadlines — Never put a date, an assignment or an obligation on Ryan's list that he did not state or that a published source does not carry.
+- §1.212 law-drain-gates-summons-not-delivery — [Retired 2026-11-20] renamed in the vocabulary migration
+- §1.213 law-drop-a-bead-through-the-tool — When Ryan says to remove, drop or kill a bead, run .claude/bead.sh drop <id> --reason <text>.
+- §1.214 law-duplicate-not-a-hard-merge — A rebase that conflicts on code already present on the base branch means the bead is a DUPLICATE, not a hard merge.
+- §1.215 law-escalate-decisions-not-problems — An escalation is a decision request: the question, a default, what it blocks, what reversing costs.
+- §1.216 law-escalations-carry-their-evidence — An escalation must contain the facts it rests on, never a path to them.
+- §1.217 law-escalations-lead-with-the-bead — An escalation opens with what the work is FOR, then what went wrong.
+- §1.218 law-event-needs-a-recipient — Every event a producer emits names the persona that will discharge it, and that persona must be able to perform the fix the event admits.
+- §1.219 law-every-component-sends-otlp — A new component's metrics are part of its design and its first landing, never a later bead: the design names what it measures (invocations, durations, outcomes, plus what its own job makes worth watching), and the first implementation sends them as OTLP directly to VictoriaMetrics through spira-otel, fire-and-forget.
+- §1.220 law-every-hold-has-a-steward — A held bead is never left to sit.
+- §1.221 law-every-hold-names-who-lifts-it — Every hold is placed and lifted only through the lifecycle state machine, never as a label or field on the bead, and its kind names who lifts it: wait lifts itself at expiry, manual is lifted by a person and states a reason that is not a bead id, ask by the answer it waits on, poison by the builder who fixes what keeps failing.
+- §1.222 law-every-session-is-composed-from-a-persona — Compose every agent session from a rune persona — its brief, its statute book and its model resolved from a rune — never from a bare directory and a launcher.
+- §1.223 law-every-workflow-is-a-state-machine — Every workflow Spira runs (a bead's life, a round and its passes, the VM pool, a dwarf's session and closeout, a gate, Sift, a release) is a state machine with fine-grained states and recorded transitions, kept by the component that owns it.
+- §1.224 law-fail-closed-at-the-source — Refuse an invalid value at the first place that can recognise it, loudly, naming the value and its source; never drop, clamp or default it with a warning for a later layer to notice.
+- §1.225 law-fence-loops-on-shared-hardware — Anything that polls in a loop on this box gets a systemd CPUQuota before it is enabled.
+- §1.226 law-file-it-and-let-the-loop-fix-it — A defect you find in the harness is filed as a bead and fixed by the loop, never by hand — unless it is throttling the loop itself, in which case the session at the keyboard fixes it now, because that bead would otherwise queue behind the very throughput it restores.
+- §1.227 law-file-less-than-you-land — Reversed on 2026-11-17 and no longer a limit on filing: read law-defects-are-filed-and-features-rank-first, which governs.
+- §1.228 law-filed-bead-queued-xor-escalated — A bead you file is worked in topological order XOR escalated with a decision only Ryan can resolve.
+- §1.229 law-finish-before-you-start — Work already started outranks work not yet started, whatever the new work's priority.
+- §1.230 law-finish-the-procedure-he-is-running — When the operator is part-way through a procedure the Concierge handed him, answer inside that procedure: fix the step he is on and give him the next one.
+- §1.231 law-fix-the-worker-never-schedule-around-it — When a background worker's load forces real work to be paused or sequenced around it, fix the worker or delete it; never schedule the real work around it.
+- §1.232 law-fixed-when-a-real-test-starts — A fix to a shared execution path (a runner, an image, a template, a provisioning script) is proven immediately after the build that carries it, by driving the smallest real workload down that path until a real test has started on it; it need not finish.
+- §1.233 law-fixtures-carry-real-cadence — A test feeds the input the system actually receives — real timing, quantisation and repeats — never a tidy sequence chosen for legibility.
+- §1.234 law-forge-repos-are-public-on-a-free-org — A repository Spira builds through the shared ephemeral-ci runners in the DeckDumpster org is created public while the org is on GitHub Free, because Free org-level Actions secrets and variables reach only public repositories; a private one gets empty credentials and fails at provision.
+- §1.235 law-functional-behaviour-is-tested-not-soaked — A change to functional behaviour is proven by a functional test that passes or fails now, never by leaving it running and judging it later.
+- §1.236 law-gate-earns-its-place — A check may sit between work and its landing only while it is catching real defects.
+- §1.237 law-git-dash-c-not-cd — Always address git by repo path — 'git -C <repo> add/commit/push' — never rely on the working directory.
+- §1.238 law-green-prs-merge-themselves — A passing PR must merge without a human.
+- §1.239 law-guard-binds-the-caller — A guard must bind the actor who broke the rule, never the path or command the call travelled through.
+- §1.240 law-guard-proved-where-the-offender-runs — Prove a guard fires in the environment the offender runs in, not the one you are standing in.
+- §1.241 law-hand-land-the-unblocker — When the harness itself is what prevents a bead from landing, the brain session takes that bead and lands it by hand rather than letting the loop re-derive it.
+- §1.242 law-hand-over-in-four-stages — Hand a duty from a session to an automated actor one failure class at a time, in four stages: the session does it; the session does it AND positively confirms the actor would have done the same; the actor does it and the session confirms it was done properly; then the actor owns it, with telemetry left in place that detects whether it happened.
+- §1.243 law-hand-recovery-leaves-a-tool — A hand recovery is not finished until it is a tool the operator can run; a hand repair that has failed once becomes one before the second try, and where the tool exists, never go around it.
+- §1.244 law-harness-ships-mechanism-not-inventory — The public harness repo ships mechanism, never inventory.
+- §1.245 law-his-engagement-sets-the-queue — While the operator is engaged on one repository, every open bead of that repository is P0 and no other repository's bead sits above P1; its work takes the builder slots first, at most five builders are live in total, and builders deferred to make room are stopped with their work kept on their branches and resumed when he disengages.
+- §1.246 law-hot-reads-answer-in-500ms — A read-only data path the harness invokes often answers in under 500 ms, measured end to end from the caller's process start, not from the query.
+- §1.247 law-infrastructure-is-terraform — All infrastructure, AWS and Cloudflare alike, is declared in Terraform in the repository it serves and changes only through terraform apply after a reviewed plan, never console clicks, CLI calls, CDK or hand-run scripts.
+- §1.248 law-install-installs-every-dependency — Every dependency of a build, test, CI job or the harness is declared, version-pinned, in a package manager's manifest and installed only from it; nothing optional, nothing by hand.
+- §1.249 law-instrument-instead-of-caution — Do not buy safety with a delay or a sign-off when telemetry can buy it.
+- §1.250 law-investigate-near-misses — A near miss — real damage avoided because someone noticed or the ordering was lucky, rather than because a control caught it — is investigated immediately and without being asked.
+- §1.251 law-land-proven-work-alone — Work whose verification already passed is landed on that evidence, alone, before anything new is batched with it: the batch composer never re-tests a proven member and never mixes it with untested members, because a new member's red then holds back work that was already done.
+- §1.252 law-landed-is-content — Answer "did it land?" from the typed lifecycle record (`spira-lc show <bead-id>`), the one authority; never reconstruct it from commits, a commit subject, a SHA a dwarf reported, or any ledger file.
+- §1.253 law-landed-is-not-in-force — Landed is not in force.
+- §1.254 law-leave-scheduling-to-the-os — Never cap or deprioritise CPU as a control: no CPUQuota, no Nice.
+- §1.255 law-lifecycle-state-is-not-text — Read a bead's lifecycle state — claimed, batched, certified, landed — only from the typed record its single owning component writes, and transition it only through that component; never derive it from a commit subject, title, note or any string an agent composed, and build no new mechanism that does.
+- §1.256 law-local-drift-converges — Drift between this box and origin is allowed but must shrink.
+- §1.257 law-local-gates-buy-latency-not-coverage — A local gate buys latency; CI buys coverage.
+- §1.258 law-long-lived-processes-pin-their-config — A long-running process pins the configuration it read at startup, so after any change to what it reads — a database cutover, a conf edit, a rewrite of a module it sources — restart every long-lived watcher and verify it against its own state, never against ps.
+- §1.259 law-lossless-reclamation-needs-no-ask — Reclaiming storage on production is the Concierge's to do without asking when it is lossless: it removes no row, no history and nothing a live process holds open — dolt GC of unreferenced chunks, temp spools a dead process left, caches a build recreates, images no container uses.
+- §1.260 law-measure-inside-the-fence — Measure a timeout or budget inside the fence that will kill it, and check the fence in the same change that moves the budget.
+- §1.261 law-measure-the-outcome — Alarm on what the system exists to do, not on component health.
+- §1.262 law-measurement-is-a-grafana-panel — Every measurement ends as something Ryan can see in Grafana.
+- §1.263 law-never-derive-an-id-from-output — Never derive a bead id by grepping human-readable command output; ask for --json.
+- §1.264 law-never-disarm-a-check-to-proceed — Never disarm a safety check to make a run proceed.
+- §1.265 law-never-green-is-not-queued — A PR that has never once passed CI is not queued work, it is unfinished work, and counting it as progress is how a week disappears.
+- §1.266 law-never-read-a-cause-from-failure-path-output — A line that appears in a failing run is not its cause until it is shown absent from a passing one.
+- §1.267 law-never-remove-a-control-for-one-not-in-force — Never remove a control because another mechanism supersedes it until you have verified that mechanism is in force.
+- §1.268 law-never-repair-a-store-on-a-guessed-binary — Never run a destructive repair on a production store to reconcile it with a tool version you did not measure.
+- §1.269 law-never-spend-a-run-on-what-the-next-real-run-shows — Do not spend a dedicated verification run to learn what the next real run will show anyway: when a cheaper proof has passed and the real workload exercises the rest, flip, then watch the first real run closely with a one-line revert ready.
+- §1.270 law-never-wait-on-a-gate-that-never-opens — Never gate an action on a precondition you neither control nor can predict — an idle dwarf pool, a quiet queue, a finished run.
+- §1.271 law-new-subsystems-are-rust — Write every new subsystem in Rust, including inside codebases written in another language, and inside the Spira harness itself.
+- §1.272 law-new-subsystems-are-simulation-ready — A new Rust subsystem takes its clock, process spawning and randomness from injected traits (the spira-rt interfaces: Clock, Proc, Rng), never from std directly, and honours SPIRA_NOW and SPIRA_SEED, so it is deterministic under the simulator by construction.
+- §1.273 law-no-close-reason-admits-unfinished — Never close a bead whose own close reason says the work is unfinished.
+- §1.274 law-no-correction-history — Write documents as self-contained hardened statements.
+- §1.275 law-no-cutover-before-the-work-lands — The Concierge never proposes cutting a hand duty over to a harness mechanism until the work the hand duty serves has landed and the replacement has run in production on real work and been shipped into its convergence beads.
+- §1.276 law-no-data-lives-in-code — In every dumpster, the dataset is the product and no data lives in code.
+- §1.277 law-no-decision-work-has-a-persona-owner — Work that needs no decision from the operator must have a persona that owns it.
+- §1.278 law-no-filing-only-escalation — You may not file work.
+- §1.279 law-no-gate-runs-doctests — No repository's gate runs doctests.
+- §1.280 law-no-grep-q-under-pipefail — Never pipe into `grep -q` in a script with `set -o pipefail`.
+- §1.281 law-no-horizontal-scroll-on-mobile — No page on any site scrolls horizontally on a phone: rows of chips, tiles, titles and controls wrap, and every route is checked at phone width in each site's UI tier.
+- §1.282 law-no-path-is-fixed-at-compile-time — No absolute path makes it into compiled code: relative paths only, resolved at run time from the process's own environment through the one door (SPIRA_HOME, the testkit and spira-config doors), and a fixture gets no exception.
+- §1.283 law-no-product-service-runs-on-the-spira-host — No product service runs on the Spira host: it runs Spira alone, and every product (sites, workers, tunnels, replicas) runs on the product host beside its siblings.
+- §1.284 law-no-unsupported-language-releases — No repository runs on a language release its upstream no longer supports.
+- §1.285 law-no-wall-clock-budgets-in-the-corpus — A test in the corpus asserts what the code does, never how long it took.
+- §1.286 law-nothing-reads-the-journal — Nothing reads the journal.
+- §1.287 law-nothing-runs-on-ci-until-it-passes-locally — Nothing runs on CI until it has passed locally on the same commit: a publish PR only after a full-suite local round of that commit is green, a release cut only after acceptance-local.sh phases A-D (with --predecessor) are green on that commit.
+- §1.288 law-nothing-waits-without-progress — Nothing in Spira waits without progress for more than a few seconds unnoticed: every wait state has a heartbeat, a bound measured in seconds (minutes only for an external dependency in progress), and an automatic action its owning component takes when the bound passes — re-drive, eject, abandon, restart or release.
+- §1.289 law-off-box-backups-are-private-and-write-only — Every off-box backup of Spira's stores goes to a private bucket the operator owns, written with a key that can only upload: the writer can add a snapshot but never read, list, overwrite or delete one, so a compromised or buggy writer cannot destroy history; the bucket is versioned, encrypted and blocks public access, and restore uses the operator's own identity.
+- §1.290 law-off-path-transitions-carry-provenance — Any lifecycle transition that bypasses the normal path (break glass: a hand resubmit, a hold lifted by hand, a landing from salvaged evidence) is allowed, but the tool refuses it without provenance: who, why the normal path was bypassed, and the quality evidence run on that exact tip.
+- §1.291 law-one-aeon-one-worktree — [Retired 2026-11-20] renamed in the vocabulary migration
+- §1.292 law-one-feature-certifies-all-up — When every open change serves one feature, do not gate them one by one: finish all the work first, then run the whole certification suite once, under a hard 15-minute cap with a 12-minute target; fix each failure it names, bring the fixes back together, and run the whole suite again.
+- §1.293 law-one-language-runtime-per-repo — A repository uses one language runtime: its code, tests, fixtures and tools are written in the system's own language.
+- §1.294 law-one-supervised-pass-before-you-arm — After changing what a timer runs, never re-arm the timer to find out whether the fix worked.
+- §1.295 law-only-the-operator-closes-his-ask — Only Ryan's answer closes an ask labelled needs-ryan.
+- §1.296 law-operator-asks-carry-their-check — An ask that Ryan satisfies by running a command must carry the command that proves it done: a VERIFY line in the bead, read-only, exiting 0 once satisfied.
+- §1.297 law-operator-commands-go-in-chat — Commands the operator must run by hand, and console changes he must make, go in the chat as copy-paste blocks, never in mail: mail mangles their formatting.
+- §1.298 law-operator-mail-is-not-about-beads — Anything addressed to the operator is mail: a sender named in plain words, a subject saying what happened or what is being decided, and a body that stands on its own.
+- §1.299 law-operator-surfaces-change-on-approval-then-live — A surface the operator reads — a cockpit pane, his terminal, a page he opens — is never changed while he is still asking about it.
+- §1.300 law-operator-surfaces-change-together — The cockpit ops pane and loom's lifecycle page are one operator view in two renderings, terminal and phone.
+- §1.301 law-operator-views-are-trees-of-his-units — Build every surface the operator reads as a tree whose default state shows one line per thing he cares about.
+- §1.302 law-overlays-are-ported-not-patched — A bead whose deliverable is a file outside every repo worktree — an operator overlay, a hand-placed watcher, a unit drop-in, anything under $SPIRA_RUN or ~/.config — is re-scoped to port that file into the repo as a shipped, tested artifact carrying the fix it was asked for; the overlay is retired once the port lands.
+- §1.303 law-parallel-by-default — Run work in parallel by default.
+- §1.304 law-payloads-go-on-stdin — Pass data to a subprocess on stdin or in a file, never as an argument or environment variable.
+- §1.305 law-periodic-tool-needs-a-tested-timer — A tool meant to run periodically is not done when the script works.
+- §1.306 law-pin-by-migration-count — A binary's version string does not order against a release tag: a build from main knows MORE schema migrations than a tagged release.
+- §1.307 law-prefer-no-comment — Prefer no comment.
+- §1.308 law-prefer-the-real-dependency — Test against the real dependency on a throwaway instance, not a hand-written model of it.
+- §1.309 law-probe-a-fixture-not-production — Exercise an intake, install or dedupe path against a throwaway store, never the live one.
+- §1.310 law-prod-is-a-different-checkout — Merging does not deploy.
+- §1.311 law-producers-declare-what-they-know — A producer that can derive a fact must declare it, never escalate it.
+- §1.312 law-producers-stamp-their-own-clock — Every line a producer writes for a reader opens with the event's own UTC time in a fixed-width ISO8601 prefix, and every staleness or escalation clock reads that stamp rather than the moment a consumer first saw the line.
+- §1.313 law-product-aws-resources-live-in-the-ci-account — A product's AWS resources (its live data stores such as a lake bucket, as well as its off-box backups) are created in the CI account, through Terraform and the terraform-deploy role under a per-product name prefix, unless Ryan names another account for that product.
+- §1.314 law-product-backups-live-in-the-ci-account — Every product's off-box backups live in the CI account, never in the account that holds the product's live data, so a leaked or buggy product credential cannot reach its own backups.
+- §1.315 law-production-is-not-a-working-tree — The production checkout is a deploy artifact, never a working tree.
+- §1.316 law-publish-ci-runs-the-full-suite — A publish PR's CI runs every suite, never the selection its diff picks; what reaches main has passed the full suite on CI's VM, as every landing round has on the round VM.
+- §1.317 law-query-the-graph-before-asserting — Never report the state of a repository dwarves are working without first querying the graph for it.
+- §1.318 law-query-the-graph-before-working — Before doing work by hand or filing work to be built, query the graph for a bead that already owns it: work list filtered on the words of the deliverable (not the title you chose), and spira-lc list for what is WORKING.
+- §1.319 law-queue-back-pressure-is-an-open-pr — Under queue.forge the merge queue's only back pressure is whether a batch PR is open: cut when none is, land when that PR's own gate is green.
+- §1.320 law-raise-the-cap-before-you-optimize — When a resource cap (a VM's memory, a runner's size, an instance type, a concurrency limit) blocks a path that has never yet run end to end, raise the cap to whatever makes the path run and file the reduction as separate later work; do not make the consumer leaner first.
+- §1.321 law-read-the-manual-first — Read the manual before probing, and before theorising.
+- §1.322 law-read-the-servers-own-log-first — When a component fails, read its own log before forming any hypothesis, and state no cause to Ryan, nor ask him to act on one, until you have watched the failure with your own instrument: the failing step's log line, a trace naming the sender, or the fault reproduced and then absent.
+- §1.323 law-read-what-you-launched — Every check, probe, re-run or dispatch launched to answer a question is finished only when its output has been read and what it said reported, in the session that launched it.
+- §1.324 law-reading-his-accounts-is-a-permissions-ask — Work that gives an automation read access to the operator's personal accounts (order history, mailbox, calendar, statements, any record of what he did outside the system) is escalated as a permissions ask and built only on his answer, and what such a read finds may never relax a limit the automation enforces on itself.
+- §1.325 law-record-the-act-only-on-the-act — Never sequence the record of an act behind the act with a semicolon.
+- §1.326 law-reduce-the-count-never-throttle-the-job — When the box congests, lower the number of concurrent workers — dwarves, agents, gate slots — and let each run at full speed.
+- §1.327 law-regenerate-derived-summaries — Rewrite a derived document — a one-pager, crib sheet, exec summary or dashboard view — from scratch on every update rather than editing it in place as new findings land.
+- §1.328 law-remeasure-after-you-change-it — A measurement taken before a fix says nothing about the system after it.
+- §1.329 law-repeating-conditions-escalate-once — A condition that stays true escalates once.
+- §1.330 law-replace-running-scripts-atomically — Never rewrite a harness script in place while a process may be executing it — bash reads a script by byte offset as it runs, so an in-place write (an editor save, python open(p,'w'), sed -i) shifts the bytes under a running dwarf, sentinel or landing pass and it resumes parsing mid-text when its current command returns.
+- §1.331 law-reply-in-the-thread — Answer Ryan where he asked.
+- §1.332 law-reproduce-acceptance-locally-before-remote — Where the only real run of a path is an expensive remote attempt — acceptance, a release, a CI round — reproduce the failure locally on a throwaway instance and show the fix green there on the exact tree before spending the attempt, for every phase.
+- §1.333 law-require-the-right-value — When a wrong or missing value keeps appearing at an interface, fix it by making the right value a required, obvious field of the facade that every caller goes through, with no default, so the easy path is the correct one; do not add a refusal that pattern-matches the wrong value downstream.
+- §1.334 law-resolved-operator-mail-is-cleared — Operator mail whose question is answered, enacted or moot is cleared from his mailbox without asking him, so the mailbox count alone answers what is waiting on him; clearing archives, never deletes, so the dismissal sweep cannot read it as a default taken.
+- §1.335 law-retire-dont-suspend — A subsystem nobody wants running is deleted, not suspended.
+- §1.336 law-reversibility-outranks-coverage — Reversibility outranks test coverage.
+- §1.337 law-reversible-only-with-infrastructure-credentials — An agent holding infrastructure credentials performs only reversible operations: clone, configure, mask, start, stop, convert.
+- §1.338 law-review-reads-the-raw-transcript — A review of a session's own conduct, and any agent briefed to reconstruct what a session did or built, reads the raw transcript (the JSONL of user messages, assistant text, tool calls and tool results), never the session's compaction summaries or its own reports; where a summary and the raw events disagree the raw events win, and a summary is never cited as evidence.
+- §1.339 law-run-it-once-before-you-decompose — Before decomposing work whose premise is that something is broken, run the thing once and read the result.
+- §1.340 law-run-the-suite-in-a-container — Run every suite inside a rootless-podman container holding a real install of the candidate, by default — not only where a fake fixture already hurts.
+- §1.341 law-rust-rewrite-order — Finish the harness's move to Rust by what the loop hurts on, not by size: the gate and its fences first, then rounds, verdicts and delivery, then test infrastructure; conf.sh and lib.sh last, emptied by moving each function family into the crate that already calls it.
+- §1.342 law-rust-rewrites-start-from-intent — A rewrite into Rust starts from what the old code was FOR, never from its lines.
+- §1.343 law-rust-then-java — For new side-project code, default to Rust; Java is the fallback where JVM ecosystem integration is genuinely required.
+- §1.344 law-schema-over-code — Lean on the data substrate before writing a rule into a tool.
+- §1.345 law-scope-is-a-runtime-key — What the fleet may work on is a runtime key, never a literal in the source.
+- §1.346 law-seen-red-must-be-seen-in-ci — A test that asserts a bug REPRODUCES measures the machine as much as the code, so it is not done until CI has run it green at least once.
+- §1.347 law-self-filing-earns-its-priority — Machinery that files a bead about the machine files it at P3 unless it can name something broken for a user, and a report arriving from outside enters above it.
+- §1.348 law-settable-in-the-operators-words — A setting the operator names in plain terms must be settable in those terms.
+- §1.349 law-setup-never-outlasts-the-suite — A setup step never takes longer than the suites it serves.
+- §1.350 law-ships-for-a-colleague — Nothing Spira ships may name an operator, a machine, or one box's paths — those are config keys with defaults, and comments address the operator, never a person.
+- §1.351 law-sops-are-amended-by-the-session-that-found-the-gap — An Ops session that matched an SOP and found it incomplete amends it in that same session, before closing.
+- §1.352 law-spira-does-not-deploy — Spira builds, gates and lands work; it never deploys a product.
+- §1.353 law-spira-reaches-prod-only-through-a-release — The machine that develops Spira never runs it in production from the tree it is edited in.
+- §1.354 law-stale-red-pr — Before diagnosing a red PR, check whether it is behind master.
+- §1.355 law-state-is-never-read-from-text — Decide any object's state or status — bead, round, batch, hold, ask, unit, release, mail — only from a typed value: an in-process typed API, a command's JSON answer deserialised into a struct, or an exit code mapped to an enum.
+- §1.356 law-status-after-a-pipe-is-the-last-command — The exit status after a pipeline belongs to the LAST command in it, so reading it after piping into head, tail, grep or sed reports the pager's status and never the program's.
+- §1.357 law-stop-the-bleeding-before-fixing — When a defect is actively consuming dwarves, tokens or money, stop the world FIRST and fix it second.
+- §1.358 law-stop-the-world-for-an-unexpected-bottleneck — When a bottleneck appears that you did not expect, stop the world, fix it, and show it is fixed permanently before resuming — never work around it while the loop keeps running, and never let open beads pull attention off the goal in progress.
+- §1.359 law-take-the-simple-fix-with-a-meter — When two fixes are both correct and one is simpler, take the simpler one AND land the measurement that will say when it stops being adequate — in the same change, never as a follow-up.
+- §1.360 law-test-selection-and-plan-are-one-source — Test selection, the test plan and its coverage documentation derive from one source, so no merge can make one disagree with another.
+- §1.361 law-test-statute — A test statute text.
+- §1.362 law-tests-run-only-through-testenv — Suites run only through testenv, in a container; never on the host, whether from a worktree, the gate or by hand: a host run proves nothing about the candidate and can reach the real box.
+- §1.363 law-the-allocator-assigns-the-identifier — Never choose an identifier an authority can assign.
+- §1.364 law-the-concierge-drives-rounds-with-the-batchers-tools — The Concierge and the batcher cut, certify, eject and land a round through the same sanctioned tools, which record the round as a batch on the lifecycle machine.
+- §1.365 law-the-concierge-rotates-through-the-tool — The concierge is one conversation at a time, reachable from desk and phone: one claude process in the concierge tmux socket with Remote Control.
+- §1.366 law-the-corpus-is-not-an-authority — A red suite is a claim about a test, not a fact about the code.
+- §1.367 law-the-czar-reads-what-the-concierge-reads — An automated actor taking over a duty must decide from every input the concierge used for the same decision — the verdict's own record, the landing log, whether a pass is running now, and what the last such event cost — never from a proxy for them.
+- §1.368 law-the-harness-checkout-is-production — The harness checkout is production.
+- §1.369 law-the-lifecycle-is-the-only-authority-on-bead-state — The lifecycle state machine is the only authority on bead state.
+- §1.370 law-the-only-slot-is-not-a-timers — When the fleet ceiling leaves one slot, that slot never goes to a rune that also runs from a timer.
+- §1.371 law-the-ops-pane-is-cheap — The ops pane renders fast, almost free, and failureless: every refresh reads only the lifecycle's read model and caches anything that changes slower than the refresh, completes in under a second on an idle box, and shows no source failure while the system is healthy.
+- §1.372 law-third-party-tools-are-official-releases — A third-party tool the harness installs or runs — a database server, the beads CLI, a container engine, any dependency deps.toml names — comes only from an official tagged release of its upstream, never a mainline, branch, nightly or locally built commit.
+- §1.373 law-timers-active-is-not-running — Never assert that anything runs because systemctl says a unit is active.
+- §1.374 law-tmux-server-env-is-frozen — A tmux server hands every new pane the environment it was forked with, frozen for the server's life.
+- §1.375 law-tools-take-named-arguments — Every CLI and tool takes named arguments, never positionals: a value that can be confused with another value eventually is.
+- §1.376 law-total-blockage-announces-itself — When a condition stops ALL work — a drain nobody lifted, a stale pause, no account with capacity — escalate once, even when it heals itself: one bead keyed on the condition, with --moot-when so it withdraws the moment the condition clears; never one per pass, never announce the recovery.
+- §1.377 law-transcript-is-not-authorization — A live transcript is not an approval.
+- §1.378 law-tuning-is-not-policy — An operational setting — a concurrency, width, cap, timeout, interval or budget — is the Concierge's to change, never an escalation: change it, record the before-and-after measurement, and revert if the meter says so.
+- §1.379 law-ui-changes-need-screenshots — A change to rendered output gets before/after screenshots of the changed pages at phone and desktop width, captured automatically at batch time and attached to the PR for review.
+- §1.380 law-unexpected-image-builds-are-killed-then-fixed — An image build nobody expected is a fault, not a slow step: kill it at once, then fix why it started.
+- §1.381 law-units-build-what-they-exec — A systemd unit that execs a build artifact must build it before running it, or landing the source ships nothing.
+- §1.382 law-up-next-is-read-from-the-ops-pane — When the Concierge names what is up next, it reads it from the ops pane's own NOW and the claim order shown in STATES > READY, and gives an approved release plan's entry beads a priority that puts them there before saying so.
+- §1.383 law-upgrade-window-is-seven-days — A release is clean only when upgrade acceptance passes from the previous tag and from every tag up to seven days older; older upgrade paths are reported, never blocking.
+- §1.384 law-verified-artifacts-are-typed — An artifact the harness must verify is a typed record with a published, versioned schema that refuses unknown fields and names the file and field that failed; any readable page is generated from it, never hand-edited.
+- §1.385 law-verify-nothing-was-dropped — After resolving a merge conflict, diff every line the other side added against your result and confirm none went missing.
+- §1.386 law-verify-the-discriminating-fact — Before any recommendation that asks someone to act, name the single fact it rests on and confirm that fact was OBSERVED, not inferred.
+- §1.387 law-verify-through-the-users-path — A check against localhost, a container port or a prod checkout proves the origin is current and nothing more.
+- §1.388 law-waive-upgrade-once-when-the-fix-cannot-reach-the-predecessor — When a release fixes a defect that the published predecessor's own install carries, acceptance's upgrade phases can never pass: they run the predecessor's unfixed code.
+- §1.389 law-wake-only-for-what-must-be-decided — Send the operator only what he must decide, and wake a session only for what it must act on: a red, a failed landing, a real fault, an ask.
+- §1.390 law-when-asked-about-a-missing-mechanism-build-it — When Ryan asks whether a mechanism is missing (a timer, a watcher, a guard, a tool), the answer is to build it, not to argue it is unnecessary: build and run it in the same session, then file the beads that make it durable.
+- §1.391 law-work-enters-only-from-the-operator — Work enters Spira only from identities the operator trusts, and the platform's own access control is that trust list: on GitHub, OWNER, MEMBER or COLLABORATOR on the repository.
+- §1.392 law-workers-verify-with-container-tests — Prod is off limits; the repo's own container test tooling is not.
+- §1.393 law-worktrees-in-the-sanctioned-root — Cut a worktree for a Spira branch only under $SPIRA_RUN/worktree.
+- §1.394 law-write-only-inside-your-worktree — A branch's code writes inside its own worktree and nowhere else.
+- §1.395 law-no-new-shell-test-suites — No new shell test suite: a test is written in Rust; a shell suite that exists is ported or deleted, never grown.
+- §1.396 law-a-dwarf-touches-only-its-own-ref — A dwarf operates on its own branch and its own worktree and nothing else.
+- §1.397 law-a-store-call-answers-in-100ms — A call to the control store answers in under 100 ms, measured at the server.
+- §1.398 law-drain-gates-calls-not-delivery — world.sh drain stops new dwarves and nothing else: the loop, landing, rounds and publishing to the forge all continue, because what publishes is work that already landed and passed its round.
+- §1.399 law-dwarf-commits-name-their-bead — A dwarf's commit subject must contain the id of the bead it is working.
+- §1.400 law-dwarves-hold-no-forge-credential — Never give a dwarf a forge credential.
+- §1.401 law-dwarves-never-operate-the-queue — A dwarf never operates production: it does not run landing, batch, verdict, queue, slay, world or deploy scripts, never opens, closes or merges a pull request, never pushes, and never edits the executing checkout.
+- §1.402 law-one-dwarf-one-worktree — No two sessions share a worktree or a branch.
