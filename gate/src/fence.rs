@@ -215,6 +215,7 @@ mod tests {
         );
     }
 
+    #[test_id(tct9wfc)]
     #[test]
     fn a_fence_script_is_not_a_runner_unless_the_tool_word_is_its_own_argument() {
         assert_eq!(expected(r#"bash spira/x.sh "$SPIRA_GUARD_BIN""#), ["lifecycle-guard"]);
@@ -223,6 +224,7 @@ mod tests {
         assert_eq!(expected(r#"bash spira/a.sh "$SPIRA_LINT_BINX""#), ["a"]);
     }
 
+    #[test_id(tbcweys)]
     #[test]
     fn the_production_gate_string_runs_these_fences() {
         assert_eq!(

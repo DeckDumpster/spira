@@ -38,6 +38,7 @@ fn put_range(r: &Rig, tip: &str, commits: &[&str]) {
     r.s.put_git_fact_range("spira", "B", tip, &commits, &r.req()).unwrap();
 }
 
+#[test_id(tgnlxmt)]
 #[test]
 fn ejecting_a_member_withdraws_the_member_whose_recorded_range_contains_its_own_and_runs_no_git() {
     let r = Rig::new();
@@ -56,6 +57,7 @@ fn ejecting_a_member_withdraws_the_member_whose_recorded_range_contains_its_own_
     assert_eq!(r.state("sp-b"), BeadState::Rework, "sp-b followed sp-a out of the round");
 }
 
+#[test_id(tg29939)]
 #[test]
 fn ejecting_a_member_withdraws_nothing_by_containment_when_no_range_was_recorded() {
     let r = Rig::new();

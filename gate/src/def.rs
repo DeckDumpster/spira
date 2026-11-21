@@ -246,6 +246,7 @@ mod tests {
         assert!(composed.iter().any(|f| f == "spira-lint") && !composed.iter().any(|f| f == "lint-staged"), "{composed:?}");
     }
 
+    #[test_id(t895t7e)]
     #[test]
     fn every_fence_a_bash_step_is_expected_to_print_is_printed_by_its_script() {
         let d = checked_in();

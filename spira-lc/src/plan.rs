@@ -1087,6 +1087,7 @@ mod merge_tests {
         assert_eq!(out["rows"], serde_json::from_str::<Value>(&listed).unwrap(), "the same rows a list prints");
     }
 
+    #[test_id(tz53xs8)]
     #[test]
     fn a_watch_without_rows_or_a_failed_one_passes_through_unchanged() {
         let lookup: &TitleLookup = &|_| panic!("no lookup for an answer without rows to join");
@@ -1102,6 +1103,7 @@ mod merge_tests {
         assert_eq!(join_answer(&args(&["watch", "lifecycle", "--rows"]), garbled.clone(), lookup), garbled);
     }
 
+    #[test_id(ta1rokc)]
     #[test]
     fn a_listed_record_takes_its_title_and_priority_from_bd_in_the_dolt_listings_place() {
         let mut rows = vec![json!({"bead_id": "sp-a", "state": "READY", "repo": "harness"}), json!({"bead_id": "sp-gone", "state": "READY", "repo": "harness"})];
