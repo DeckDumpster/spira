@@ -40,7 +40,7 @@ fn reply(code: i32, out: &str) -> Result<Reply, String> {
     Ok(Reply {
         code,
         out: out.into(),
-        err: String::new(),
+        err: String::new(), read_ended: false
     })
 }
 

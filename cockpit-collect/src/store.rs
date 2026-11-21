@@ -58,7 +58,7 @@ pub fn fresh<T>(p: &Projection, read: impl Fn(&Projection) -> Result<Read<T>, Lc
             p.refresh_batches().ok()?;
             read(p).ok().map(|r| r.value)
         }
-        Err(LcError::Fault(_) | LcError::NotRunning(_)) => None,
+        Err(LcError::Fault(_) | LcError::ReadEnded(_) | LcError::NotRunning(_)) => None,
     }
 }
 
@@ -107,7 +107,7 @@ pub mod scripted {
             self.answers
                 .iter()
                 .find(|(k, _, _)| key == *k || argv.first() == Some(k))
-                .map(|(_, code, out)| Reply { code: *code, out: out.clone(), err: String::new() })
+                .map(|(_, code, out)| Reply { code: *code, out: out.clone(), err: String::new(), read_ended: false })
                 .ok_or_else(|| format!("cannot tell: unscripted {argv:?}"))
         }
     }

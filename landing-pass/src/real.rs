@@ -1380,7 +1380,7 @@ mod store_tests {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
             self.seen.lock().unwrap().push(argv.join(" "));
             let (code, out) = (self.reply)(argv);
-            Ok(Reply { code, out, err: String::new() })
+            Ok(Reply { code, out, err: String::new(), read_ended: false })
         }
     }
 

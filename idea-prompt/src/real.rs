@@ -139,7 +139,7 @@ mod real_tests {
     impl Transport for Scripted {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
             self.1.lock().unwrap().push(argv.join(" "));
-            Ok(Reply { code: 0, out: self.0.into(), err: String::new() })
+            Ok(Reply { code: 0, out: self.0.into(), err: String::new(), read_ended: false })
         }
     }
 

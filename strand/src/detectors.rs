@@ -471,7 +471,7 @@ mod tests {
     impl spira_store::lc_call::Transport for Closes {
         fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            Ok(spira_store::lc_call::Reply { code: self.2, out: self.1.into(), err: String::new() })
+            Ok(spira_store::lc_call::Reply { code: self.2, out: self.1.into(), err: String::new(), read_ended: false })
         }
     }
 

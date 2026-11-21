@@ -258,7 +258,7 @@ mod door_tests {
 
     impl spira_store::lc_call::Transport for Stderr {
         fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
-            Ok(Reply { code: 0, out: "out\n".into(), err: "⚠ zq-9k2: ESCALATE red\n".into() })
+            Ok(Reply { code: 0, out: "out\n".into(), err: "⚠ zq-9k2: ESCALATE red\n".into(), read_ended: false })
         }
     }
 

@@ -883,7 +883,7 @@ mod tests {
     /// answer shapes kept: JSON out, non-JSON as cannot_tell, no answer as -1.
     #[test]
     fn lc_json_carries_the_clients_answer_and_its_failures() {
-        let reply = |code, out: &str| Ok(spira_store::lc_call::Reply { code, out: out.into(), err: String::new() });
+        let reply = |code, out: &str| Ok(spira_store::lc_call::Reply { code, out: out.into(), err: String::new(), read_ended: false });
         let t = std::sync::Arc::new(Scripted(reply(0, "{\"rev\":\"4\"}\n"), Default::default()));
         let c = spira_store::lc_call::LcClient::over(t.clone(), true);
         assert_eq!(lc_json(&c, &argv(&["section", "snapshot"])), (0, json!({"rev": "4"})));

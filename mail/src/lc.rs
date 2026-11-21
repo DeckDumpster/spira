@@ -235,7 +235,7 @@ mod tests {
         let program = FakeLc::new(0);
         let lc = Routed { client: Ok(&down), unserved: &program };
         assert!(answer_ask(&lc, "sp-a", "y", "o", "mail", "m").unwrap().contains("exit 2"));
-        let (_, refused) = client(Ok(spira_store::lc_call::Reply { code: 3, out: "already closed".into(), err: String::new() }));
+        let (_, refused) = client(Ok(spira_store::lc_call::Reply { code: 3, out: "already closed".into(), err: String::new(), read_ended: false }));
         assert_eq!(answer_ask(&Routed { client: Ok(&refused), unserved: &program }, "sp-a", "y", "o", "mail", "m"), None);
         let unbuilt = Routed { client: Err("SPIRA_LC_SOCKET does not resolve"), unserved: &program };
         assert!(answer_ask(&unbuilt, "sp-a", "y", "o", "mail", "m").unwrap().contains("SPIRA_LC_SOCKET"));

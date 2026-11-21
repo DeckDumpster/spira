@@ -96,7 +96,7 @@ fn the_streak_metadata_is_written_through_the_content_door() {
     impl Transport for Fake {
         fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            Ok(Reply { code: 0, out: String::new(), err: String::new() })
+            Ok(Reply { code: 0, out: String::new(), err: String::new(), read_ended: false })
         }
     }
     let fake = Arc::new(Fake(Mutex::new(Vec::new())));

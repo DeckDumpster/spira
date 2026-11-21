@@ -82,7 +82,7 @@ fn over(w: &World, content: &Content, argv: &[&str], stdin: Option<&str>) -> (i3
     let (req, _) = super::read_request(&mut reader).unwrap().unwrap();
     let (mut m, mut b) = (w, w);
     let ans = super::answer(req, &mut m, &mut b, content, &|| Err("no run dir here".to_string()));
-    super::reply_then_settle(&server, &ans, || {}, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
+    super::reply_then_settle(&server, &ans, false, || {}, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
     drop(server);
     asked.join().unwrap()
 }

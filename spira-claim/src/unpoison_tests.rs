@@ -496,7 +496,7 @@ fn live_over(content: spira_store::lc_call::Reply, show: spira_store::lc_call::R
 }
 
 fn reply(code: i32, out: &str) -> spira_store::lc_call::Reply {
-    spira_store::lc_call::Reply { code, out: out.into(), err: String::new() }
+    spira_store::lc_call::Reply { code, out: out.into(), err: String::new(), read_ended: false }
 }
 
 const ROW: &str = r#"{"bead":{"bead_id":"sp-a","state":"READY","holds":[],"version":1}}"#;
@@ -529,7 +529,7 @@ fn an_unpoison_note_is_a_door_note_from_the_body() {
     impl Transport for Fake {
         fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
             self.0.lock().unwrap().push((argv.to_vec(), stdin.map(String::from)));
-            Ok(Reply { code: 0, out: String::new(), err: String::new() })
+            Ok(Reply { code: 0, out: String::new(), err: String::new(), read_ended: false })
         }
     }
     let fake = Arc::new(Fake(Mutex::new(Vec::new())));
@@ -547,7 +547,7 @@ fn a_refused_door_note_keeps_the_exit_and_first_stderr_line() {
     struct Refuse;
     impl spira_store::lc_call::Transport for Refuse {
         fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
-            Ok(spira_store::lc_call::Reply { code: 3, out: String::new(), err: "no such bead\nsecond".into() })
+            Ok(spira_store::lc_call::Reply { code: 3, out: String::new(), err: "no such bead\nsecond".into(), read_ended: false })
         }
     }
     let mut w = w;

@@ -87,7 +87,7 @@ fn a_min_rev_key_is_ignored_and_the_reply_header_names_no_revision() {
     assert_eq!(shown(b"{\"argv\":[\"show\"],\"min_rev\":\"x\"}\n"), shown(b"{\"argv\":[\"show\"]}\n"));
 
     let (a, mut b) = std::os::unix::net::UnixStream::pair().unwrap();
-    super::write_response(&a, 0, "{}\n", "").unwrap();
+    super::write_response(&a, 0, "{}\n", "", false).unwrap();
     drop(a);
     let mut got = String::new();
     b.read_to_string(&mut got).unwrap();

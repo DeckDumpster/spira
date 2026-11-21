@@ -129,7 +129,7 @@ mod tests {
                 Some("content") => r#"[{"id":"a"},{"id":"b"},{"id":"c"}]"#,
                 _ => r#"[{"bead_id":"a","state":"READY"},{"bead_id":"b","state":"DONE"},{"bead_id":"c","state":"WORKING","holds":["poison"]}]"#,
             };
-            Ok(Reply { code: 0, out: out.into(), err: String::new() })
+            Ok(Reply { code: 0, out: out.into(), err: String::new(), read_ended: false })
         }
     }
 

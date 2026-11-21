@@ -9,8 +9,9 @@
 //!
 //! The wire format: one JSON line in — an argv array, exactly what `env::args().skip(1)`
 //! would have produced, or `{"argv": [...], "len": N}` followed by exactly `N` bytes of the
-//! stdin the CLI would have read — then one `{"exit_code", "len"[, "err_len"]}` line out,
-//! followed by the stdout bytes and any stderr bytes. The composed verbs (composed.rs) are
+//! stdin the CLI would have read — then one `{"exit_code", "len"[, "err_len"][, "read_ended"]}` line out,
+//! followed by the stdout bytes and any stderr bytes. `read_ended: true` marks a non-zero answer
+//! whose request had a store read ended at the read limit; an absent field is false. The composed verbs (composed.rs) are
 //! answered here too, their bd half included; a verb neither serves is refused, never handed on.
 
 use std::io::{BufRead, BufReader, Write};
@@ -622,7 +623,7 @@ impl Flights {
             let mut answered = slot.answered.lock().unwrap();
             if !*answered {
                 let _ = slot.stream.set_write_timeout(Some(Duration::from_secs(5)));
-                let _ = write_raw(&slot.stream, 2, &stopped_for_restart(), "");
+                let _ = write_raw(&slot.stream, 2, &stopped_for_restart(), "", false);
                 *answered = true;
                 refused += 1;
             }
@@ -826,7 +827,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
             r
         }
         Err((size, msg)) => {
-            let _ = write_response(&stream, 2, &msg, "");
+            let _ = write_response(&stream, 2, &msg, "", false);
             let none = state_store::phases::Snapshot::default();
             let call = spira_otel::Call {
                 method: "-",
@@ -911,9 +912,11 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     }
     let measured = if verb == "ops-view" { method.as_str() } else { verb.as_str() };
     let mut answered = Duration::ZERO;
+    let ended = recorder.snapshot();
     reply_then_settle(
         &stream,
         &ans,
+        ans.code != 0 && cut_at.is_none() && ended.reads_ended + ended.reads_overran > 0,
         || {
             answered = read_at.elapsed();
             crate::slow::request_done(measured, &method, &caller, task.as_deref(), answered);
@@ -1082,8 +1085,8 @@ pub(crate) fn answer(
 }
 
 /// The reply goes out first, then `answered` runs; the owed store closes are queued to the settler, or settled here when none is installed.
-fn reply_then_settle(stream: &UnixStream, ans: &Answer, answered: impl FnOnce(), settle: &mut dyn FnMut(&str, &str) -> Result<(), String>) {
-    let _ = write_response(stream, ans.code, &ans.stdout, &ans.stderr);
+fn reply_then_settle(stream: &UnixStream, ans: &Answer, read_ended: bool, answered: impl FnOnce(), settle: &mut dyn FnMut(&str, &str) -> Result<(), String>) {
+    let _ = write_response(stream, ans.code, &ans.stdout, &ans.stderr, read_ended);
     answered();
     if !crate::settle::owe_closes(&ans.owed) {
         crate::callers::settle_owed_with(&ans.owed, settle);
@@ -1180,25 +1183,28 @@ fn peer_pid(stream: &UnixStream) -> Option<i32> {
 
 /// A header line, then the stdout bytes; a non-empty stderr follows them, its length in the
 /// header's `err_len` (a client that predates it reads `len` bytes and stops).
-fn write_response(stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str) -> std::io::Result<()> {
+fn write_response(stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str, read_ended: bool) -> std::io::Result<()> {
     match CURRENT.with(|c| c.borrow().clone()) {
-        None => write_raw(stream, exit_code, stdout, stderr),
+        None => write_raw(stream, exit_code, stdout, stderr, read_ended),
         Some(slot) => {
             let mut answered = slot.answered.lock().unwrap();
             if *answered {
                 return Ok(());
             }
             *answered = true;
-            write_raw(stream, exit_code, stdout, stderr)
+            write_raw(stream, exit_code, stdout, stderr, read_ended)
         }
     }
 }
 
-fn write_raw(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str) -> std::io::Result<()> {
+fn write_raw(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str, read_ended: bool) -> std::io::Result<()> {
     let mut buf = Vec::with_capacity(stdout.len() + stderr.len() + 64);
     let mut head = serde_json::json!({"exit_code": exit_code, "len": stdout.len()});
     if !stderr.is_empty() {
         head["err_len"] = stderr.len().into();
+    }
+    if read_ended {
+        head["read_ended"] = true.into();
     }
     writeln!(buf, "{head}")?;
     buf.extend_from_slice(stdout.as_bytes());

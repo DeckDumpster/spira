@@ -1026,7 +1026,7 @@ mod tests {
     impl Transport for Answers {
         fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
             let key = argv.join(" ");
-            self.0.iter().find(|(k, _, _)| *k == key).map(|(_, code, out)| Reply { code: *code, out: out.clone(), err: String::new() }).ok_or_else(|| format!("unscripted {key}"))
+            self.0.iter().find(|(k, _, _)| *k == key).map(|(_, code, out)| Reply { code: *code, out: out.clone(), err: String::new(), read_ended: false }).ok_or_else(|| format!("unscripted {key}"))
         }
     }
 
