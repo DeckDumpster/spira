@@ -167,3 +167,17 @@ fn the_tick_asks_observe_to_read_the_ledgers_under_the_configured_run_dir() {
     let r = rig(1, world(vec![]), killed);
     assert_eq!(asked(&r, OBSERVE), ["q/run"]);
 }
+
+#[test]
+fn observe_reads_the_ledger_under_the_run_dir_it_is_given() {
+    let dir = testkit::TempDir::new("cap-observe-runner");
+    let exe = dir.path().join("testenv");
+    std::fs::copy("/bin/sleep", &exe).unwrap();
+    let mut child = std::process::Command::new(&exe).arg("30").spawn().unwrap();
+    let me = testenv::cap::live().into_iter().find(|p| p.pid == child.id()).unwrap();
+    ledger(dir.path(), me.pid, &format!("{} 0 0", me.start_ticks));
+    let snap: Snapshot = serde_json::from_str(&observe(dir.path().to_str().unwrap()).unwrap()).unwrap();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert_eq!(snap.procs.iter().filter(|p| p.pid == me.pid).map(|p| p.ledgered).collect::<Vec<_>>(), [true]);
+}

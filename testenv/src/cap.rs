@@ -178,8 +178,7 @@ fn publish(k: &Clock) {
     let _ = std::fs::write(path, format!("{ticks} {} {since}", k.excused.as_secs()));
 }
 
-/// Seconds of `p`'s age that were slot waiting, as it published them; 0 when unpublished or
-/// when the ledger belongs to an earlier process that had the same pid.
+/// `<start ticks> <seconds excused> <epoch a wait began>` as parsed from a ledger.
 fn ledger_fields(text: &str) -> Option<(u64, u64, u64)> {
     let f: Vec<u64> = text.split_whitespace().filter_map(|v| v.parse().ok()).collect();
     match f.as_slice() {

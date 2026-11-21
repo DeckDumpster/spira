@@ -13,10 +13,10 @@
 //! `watch.testenv_cap.observe` (host class) returns:
 //!
 //! ```text
-//! Snapshot { procs: Vec<Proc { pid, start_ticks, argv, age_secs, ledgered }> }   // age_secs less the slot waits the run's ledger publishes   // testenv runs only
+//! Snapshot { procs: Vec<Proc { pid, start_ticks, argv, age_secs, ledgered }> }   // testenv runs only; age_secs is less the slot waits the run's ledger publishes
 //! ```
 //!
-//! - From procfs: `cap::live()` (`testenv/src/cap.rs:320-337`) reads `/proc/<pid>/cmdline`, `/proc/<pid>/stat` field 22 and `/proc/uptime`; filtered to runs by `cap::is_run` (`:267-273`, basename `testenv`, not a subcommand). The kernel is the authority on which runs exist and how old they are; testenv's in-run cap (`cap::arm`, `:192`) is the primary and this task is its backstop (`cap_main.rs:1-4`).
+//! - From procfs: `cap::live()` (`testenv/src/cap.rs:320-337`) reads `/proc/<pid>/cmdline`, `/proc/<pid>/stat` field 22 and `/proc/uptime`; filtered to runs by `cap::is_run` (`:267-273`, basename `testenv`, not a subcommand). The kernel is the authority on which runs exist and their wall age; each run's ledger under `SPIRA_RUN/testenv-slot-wait` (the observe input) says how much of it was slot waiting (`cap::uncounted`); testenv's in-run cap (`cap::arm`, `:192`) is the primary and this task is its backstop (`cap_main.rs:1-4`).
 //!
 //! ## Decide
 //!
@@ -56,7 +56,7 @@
 //! - `spira-watch-testenv-cap-prod.service`; row `spira/watchers:175`.
 //! - Children: none forked; the in-process `kill(2)` calls move from the bin into the `kill` runner.
 //! - Files retired: `run/watchd/testenv-cap.{log,restarts}`.
-//! - Config pinned: `SPIRA_TESTENV_SUITE_CAP`, `SPIRA_TESTENV_GATE_CAP`, `SPIRA_TESTENV_LOAD_WAIT`, `SPIRA_TESTENV_SLOT_WAIT` (`cap_main.rs:15-18`), `SPIRA_CONCIERGE_INBOX` (`:45`).
+//! - Config pinned: `SPIRA_TESTENV_SUITE_CAP`, `SPIRA_TESTENV_GATE_CAP`, `SPIRA_TESTENV_LOAD_WAIT`, `SPIRA_TESTENV_SLOT_WAIT` (`cap_main.rs:15-18`), `SPIRA_CONCIERGE_INBOX` (`:45`), `SPIRA_RUN` (the ledger directory).
 //!
 //! ## Reverse
 //!
