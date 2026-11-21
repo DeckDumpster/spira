@@ -5,7 +5,7 @@
 //!   mail send <mailbox> --from "<s>" --subject "<s>" [--kind K] [--urgent]
 //!                       [--default D] [--class permissions|policy|destructive|design] [--bead ID] [--requested-by "<his words>"] [--digest] [--condition KEY] [--dry-run] < body
 //!   mail template <kind>
-//!   mail list <mailbox> [--unread]
+//!   mail list <mailbox> [--unread]   (first column is the id `read` and `done` take)
 //!   mail read <mailbox> [<message>]
 //!   mail count <mailbox>
 //!   mail done <mailbox> <message> [<note>]

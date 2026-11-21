@@ -195,6 +195,11 @@ fn list_unread_shows_only_new_and_list_shows_new_then_cur() {
     let all = cmds::list(&e, "concierge", false).unwrap();
     assert_eq!(all.lines().count(), 2, "{all}");
     assert!(all.contains("[cur]") && all.contains("[new]"));
+    let id_of = |l: &str| l.split_whitespace().next().unwrap().to_string();
+    let unread_id = id_of(unread.lines().next().unwrap());
+    cmds::read_cmd(&e, "concierge", Some(&unread_id)).unwrap();
+    let read_line = all.lines().find(|l| l.contains("[cur]")).unwrap();
+    cmds::done(&e, "concierge", &id_of(read_line), None).unwrap();
 }
 
 // covers: UC-operator-channel-01
