@@ -210,31 +210,51 @@ struct Writer {
     db: String,
 }
 
-static WRITER: std::sync::OnceLock<Option<Result<Writer, String>>> = std::sync::OnceLock::new();
+/// Keeps only a value that was built: a failed build leaves nothing, so the next call builds again.
+struct Built<T> {
+    value: std::sync::OnceLock<T>,
+    building: std::sync::Mutex<()>,
+}
+
+impl<T> Built<T> {
+    const fn new() -> Self {
+        Built { value: std::sync::OnceLock::new(), building: std::sync::Mutex::new(()) }
+    }
+
+    fn get_or_build(&self, build: impl FnOnce() -> Result<T, String>) -> Result<&T, String> {
+        if let Some(v) = self.value.get() {
+            return Ok(v);
+        }
+        let _one_builder = self.building.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(v) = self.value.get() {
+            return Ok(v);
+        }
+        let built = build()?;
+        Ok(self.value.get_or_init(|| built))
+    }
+}
+
+static WRITER: Built<Writer> = Built::new();
+
+fn build_writer(file: &str) -> Result<Writer, String> {
+    let s = crate::content_sql::Settings::from_config()?;
+    let user = s.user.strip_suffix("_ro").unwrap_or(&s.user).to_string();
+    let db = crate::plan::content_db()?.to_string();
+    let conn = crate::db::Conn::writer(&s.host, s.port, &user, file, db.trim_matches('`'))?;
+    Ok(Writer { conn, db })
+}
 
 /// The writer connection, or `None` when no writer credential is configured: the door then
 /// forks bd for these verbs as it always did.
 fn writer() -> Option<Result<&'static Writer, String>> {
-    WRITER
-        .get_or_init(|| {
-            let get = |k: &str| spira_config::process::cfg(k);
-            let file = match get("SPIRA_BEADS_SQL_WRITER_PASSWORD_FILE") {
-                Ok(f) => f,
-                Err(e) => return Some(Err(e)),
-            };
-            if file.trim().is_empty() {
-                return None;
-            }
-            Some((|| {
-                let s = crate::content_sql::Settings::from_config()?;
-                let user = s.user.strip_suffix("_ro").unwrap_or(&s.user).to_string();
-                let db = crate::plan::content_db()?.to_string();
-                let conn = crate::db::Conn::writer(&s.host, s.port, &user, &file, db.trim_matches('`'))?;
-                Ok(Writer { conn, db })
-            })())
-        })
-        .as_ref()
-        .map(|r| r.as_ref().map_err(|e| e.clone()))
+    let file = match spira_config::process::cfg("SPIRA_BEADS_SQL_WRITER_PASSWORD_FILE") {
+        Ok(f) => f,
+        Err(e) => return Some(Err(e)),
+    };
+    if file.trim().is_empty() {
+        return None;
+    }
+    Some(WRITER.get_or_build(|| build_writer(&file)))
 }
 
 /// Applies `m` to the beads database in one transaction. `None` when no writer is configured.
@@ -274,6 +294,20 @@ pub fn run_committer() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_writer_build_is_tried_again_and_a_built_writer_is_kept() {
+        let cell: Built<u32> = Built::new();
+        let builds = std::cell::Cell::new(0);
+        let build = |r: Result<u32, String>| {
+            builds.set(builds.get() + 1);
+            r
+        };
+        assert_eq!(cell.get_or_build(|| build(Err("reading /x: No such file".into()))), Err("reading /x: No such file".to_string()));
+        assert_eq!(cell.get_or_build(|| build(Ok(7))), Ok(&7));
+        assert_eq!(cell.get_or_build(|| build(Ok(8))), Ok(&7));
+        assert_eq!(builds.get(), 2);
+    }
 
     fn v(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
