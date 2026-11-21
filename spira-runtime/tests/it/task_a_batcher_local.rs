@@ -1162,6 +1162,26 @@ fn sp_822b8l_a_refused_member_stays_out_until_its_tip_or_the_base_moves() {
     assert_eq!(leg.members.len(), 2, "a moved base tries it again: {leg:?}");
 }
 
+/// A refusal the pool read already shows (held, state) is not remembered: once the pool lists the
+/// member again at the same tip and base it is cut; one the pool cannot see stays out.
+#[test]
+fn sp_7der7t_a_member_refused_held_is_cut_once_the_pool_shows_it_unheld() {
+    for (kind, cut) in [("held", true), ("state", true), ("no-row", true), ("integration", false), ("text-only", false), ("batch-red", false)] {
+        let refused = Opened { refused: vec![("sp-b".into(), kind.into(), "sp-b: refused".into())], ..Opened::default() };
+        let mut carry = opening();
+        carry.repos.get_mut("spira").unwrap().members = vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())];
+        let (carry, acts) = on_outcome(&carry, ROUND_OPEN, true, &serde_json::to_string(&refused).unwrap(), &open_leg(), NOW);
+        let reopen: Leg = serde_json::from_str(&acts[0].input).unwrap();
+        assert_eq!(reopen.members, [("sp-a".to_string(), "t1".to_string())], "{kind}: the re-open is without it");
+        let mut world = busy();
+        world.repos.get_mut("spira").unwrap().base_sha = "b1".into();
+        let idle = Carry { repos: [("spira".to_string(), RepoCarry { refused: carry.repos["spira"].refused.clone(), ..RepoCarry::default() })].into() };
+        let (_, acts) = decide(&idle, &world);
+        let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ASSEMBLE).expect("a leg").input).unwrap();
+        assert_eq!(leg.members.iter().any(|(id, _)| id == "sp-b"), cut, "{kind}: {leg:?}");
+    }
+}
+
 /// Every named member refused: no round, no abandon, and the repo is idle with the members out.
 #[test]
 fn sp_822b8l_an_open_refusing_every_member_abandons_nothing() {
