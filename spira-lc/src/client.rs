@@ -55,7 +55,7 @@ fn down(socket_path: &str, e: &std::io::Error) -> (i32, String) {
 /// Otherwise the service's answer, or exit 2 naming the service when it does not answer.
 pub fn try_socket(args: &[String]) -> Option<(i32, String)> {
     // The admin verbs run with the caller's own credentials and environment, never the service's.
-    if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-create-store") | Some("admin-drop-lifecycle") | Some("admin-store")) {
+    if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-create-store") | Some("admin-drop-lifecycle") | Some("admin-store") | Some("admin-provision-reader") | Some("admin-provision-writer")) {
         return None;
     }
     // One source of config (per Ryan 2026-10-05): $SPIRA_TOML's declared socket path, never
@@ -117,7 +117,7 @@ mod tests {
     /// would run it as the service user instead (see try_socket).
     #[test]
     fn admin_verbs_never_go_through_the_socket() {
-        for verb in ["admin-create-store", "admin-drop-lifecycle", "admin-store", "serve"] {
+        for verb in ["admin-create-store", "admin-drop-lifecycle", "admin-store", "admin-provision-reader", "admin-provision-writer", "serve"] {
             assert!(super::try_socket(&[verb.to_string(), "x".to_string()]).is_none(), "{verb}");
         }
     }
