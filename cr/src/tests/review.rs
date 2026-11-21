@@ -589,7 +589,7 @@ fn the_cover_counts_every_commit_and_its_reverts_and_fixes() {
         commit("a5", "wip", false),
     ];
     w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", log));
-    w.ports.beads = Box::new(FixtureBeads(Ok([("sp-bug001", "bug"), ("sp-feat02", "feature")].map(|(a, b)| (a.to_string(), b.to_string())).into()), Ok(Default::default())));
+    w.ports.beads = Box::new(FixtureBeads { types: Ok([("sp-bug001", "bug"), ("sp-feat02", "feature")].map(|(a, b)| (a.to_string(), b.to_string())).into()), incidents: Ok(Default::default()) });
     let body = sealed_body(&mut w);
     assert!(body.contains("- Commits: 5 ever, 1 reverts, 1 fixes"), "{body}");
 }
@@ -622,7 +622,7 @@ fn the_cover_names_tests_deleted_later_and_disabled_as_flaky() {
 fn an_unreadable_bead_store_or_registry_says_unknown_not_zero() {
     let mut w = world();
     w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", vec![commit("a1", "sp-bug001: fix", false)]));
-    w.ports.beads = Box::new(FixtureBeads(Err("store down".into()), Ok(Default::default())));
+    w.ports.beads = Box::new(FixtureBeads { types: Err("store down".into()), incidents: Ok(Default::default()) });
     w.ports.registry = Box::new(FixtureRegistry(Err("registry locked".into())));
     let body = sealed_body(&mut w);
     assert!(body.contains("fixes: unknown (store down)"), "{body}");
@@ -890,7 +890,7 @@ fn the_cover_lists_the_incidents_whose_commits_touched_the_unit() {
     let mut w = world();
     let log = vec![commit("a1", "spira: land sp-inc001 — the store lost a write", false), commit("a2", "sp-feat02: add a handle", false)];
     w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", log));
-    w.ports.beads = Box::new(FixtureBeads(Ok(Default::default()), Ok([("sp-inc001".to_string(), "the store lost a write".to_string())].into())));
+    w.ports.beads = Box::new(FixtureBeads { types: Ok(Default::default()), incidents: Ok([("sp-inc001".to_string(), "the store lost a write".to_string())].into()) });
     let body = sealed_body(&mut w);
     let section = body.split("## Incidents that touched it").nth(1).unwrap().split("\n## ").next().unwrap();
     assert!(section.contains("- `sp-inc001`: the store lost a write"), "{body}");
@@ -910,7 +910,7 @@ fn a_unit_no_incident_touched_says_none_found() {
 fn an_unreadable_incident_lookup_says_unknown_not_none() {
     let mut w = world();
     w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", vec![commit("a2", "sp-feat02: add a handle", false)]));
-    w.ports.beads = Box::new(FixtureBeads(Ok(Default::default()), Err("store down".into())));
+    w.ports.beads = Box::new(FixtureBeads { types: Ok(Default::default()), incidents: Err("store down".into()) });
     let body = sealed_body(&mut w);
     assert!(body.contains("Incidents: unknown (store down)") && !body.contains("None found.\n\n## Tests"), "{body}");
 }
@@ -919,7 +919,7 @@ fn an_unreadable_incident_lookup_says_unknown_not_none() {
 fn a_unit_whose_commits_name_no_bead_says_none_found_without_asking_the_store() {
     let mut w = world();
     w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", vec![commit("a1", "tidy", false)]));
-    w.ports.beads = Box::new(FixtureBeads(Ok(Default::default()), Err("store down".into())));
+    w.ports.beads = Box::new(FixtureBeads { types: Ok(Default::default()), incidents: Err("store down".into()) });
     let body = sealed_body(&mut w);
     let section = body.split("## Incidents that touched it").nth(1).unwrap().split("\n## ").next().unwrap();
     assert!(section.contains("None found.") && !body.contains("Incidents: unknown"), "{body}");

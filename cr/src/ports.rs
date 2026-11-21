@@ -89,6 +89,9 @@ impl Beads for LcBeads {
         Ok(out)
     }
     fn incidents(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String> {
+        if self.incident_label.is_empty() {
+            return Err("SPIRA_INCIDENT_LABEL is empty: cannot tell which beads are incidents".into());
+        }
         Ok(incidents_in(&plan_items(ids, true)?, &self.incident_label))
     }
 }
@@ -136,20 +139,23 @@ impl Registry for SqliteRegistry {
 
 /// A fixed answer for tests and simulation.
 #[derive(Clone)]
-pub struct FixtureBeads(pub Result<BTreeMap<String, String>, String>, pub Result<BTreeMap<String, String>, String>);
+pub struct FixtureBeads {
+    pub types: Result<BTreeMap<String, String>, String>,
+    pub incidents: Result<BTreeMap<String, String>, String>,
+}
 
 impl Default for FixtureBeads {
     fn default() -> Self {
-        FixtureBeads(Ok(BTreeMap::new()), Ok(BTreeMap::new()))
+        FixtureBeads { types: Ok(BTreeMap::new()), incidents: Ok(BTreeMap::new()) }
     }
 }
 
 impl Beads for FixtureBeads {
     fn types(&self, _ids: &[String]) -> Result<BTreeMap<String, String>, String> {
-        self.0.clone()
+        self.types.clone()
     }
     fn incidents(&self, _ids: &[String]) -> Result<BTreeMap<String, String>, String> {
-        self.1.clone()
+        self.incidents.clone()
     }
 }
 
@@ -620,5 +626,11 @@ mod tests {
         let got = incidents_in(&items, "incident");
         assert!(incidents_in(&items, "alarm").is_empty());
         assert_eq!(got.into_iter().collect::<Vec<_>>(), vec![("sp-a".into(), "lost write".into()), ("sp-d".into(), "(untitled)".into())]);
+    }
+
+    #[test]
+    fn an_unconfigured_incident_label_is_an_error_not_none_found() {
+        let beads = LcBeads { incident_label: String::new() };
+        assert!(beads.incidents(&["sp-a".to_string()]).unwrap_err().contains("SPIRA_INCIDENT_LABEL"));
     }
 }
