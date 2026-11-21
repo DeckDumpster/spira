@@ -443,20 +443,25 @@ fn holds_of(v: Option<&Value>) -> Vec<String> {
 /// 1, or an exit-0 answer whose bead does not type-check (lc_state::bead_from: unknown state or
 /// hold, a holds column that is not an array): a row read wrong is never a row read.
 pub(crate) fn show(m: &mut dyn Machine, id: &str) -> Result<Value, i32> {
+    show_typed(m, id).map(|(v, _)| v).map_err(|(rc, _)| rc)
+}
+
+/// [`show`] keeping the machine's own answer for the refusal text.
+pub(crate) fn show_cause(m: &mut dyn Machine, id: &str) -> Result<Value, (i32, String)> {
     show_typed(m, id).map(|(v, _)| v)
 }
 
 /// [`show`] with the row typed.
 fn typed_show(m: &mut dyn Machine, id: &str) -> Result<lc_state::Bead, i32> {
-    show_typed(m, id).map(|(_, b)| b)
+    show_typed(m, id).map(|(_, b)| b).map_err(|(rc, _)| rc)
 }
 
-fn show_typed(m: &mut dyn Machine, id: &str) -> Result<(Value, lc_state::Bead), i32> {
+fn show_typed(m: &mut dyn Machine, id: &str) -> Result<(Value, lc_state::Bead), (i32, String)> {
     let (rc, out) = m.call(&["show".into(), id.into()]);
-    match lc_state::bead_from(rc, &out, "") {
-        lc_state::Lookup::Found(b) => serde_json::from_str(out.trim()).map(|v| (v, b)).map_err(|_| CANNOT_TELL),
-        lc_state::Lookup::NoRow => Err(NO_ROW),
-        lc_state::Lookup::CannotTell(_) => Err(CANNOT_TELL),
+    match lc_state::bead_from(rc, &out, out.trim()) {
+        lc_state::Lookup::Found(b) => serde_json::from_str(out.trim()).map(|v| (v, b)).map_err(|e| (CANNOT_TELL, format!("spira-lc show: not JSON: {e}"))),
+        lc_state::Lookup::NoRow => Err((NO_ROW, String::new())),
+        lc_state::Lookup::CannotTell(why) => Err((CANNOT_TELL, why)),
     }
 }
 
@@ -1132,9 +1137,9 @@ pub fn drop_bead(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answe
         return usage(USE);
     }
     let refused = |why: String| Answer { code: REFUSED, stderr: format!("spira-lc drop-bead: {id}: {why} — nothing dropped\n"), ..Default::default() };
-    match show(m, &id) {
-        Err(NO_ROW) => return refused("has no lifecycle row, so it is not a work bead".into()),
-        Err(rc) => return Answer { code: rc, stderr: format!("spira-lc drop-bead: {id}: the lifecycle row is unreadable — nothing dropped\n"), ..Default::default() },
+    match show_cause(m, &id) {
+        Err((NO_ROW, _)) => return refused("has no lifecycle row, so it is not a work bead".into()),
+        Err((rc, why)) => return Answer { code: rc, stderr: format!("spira-lc drop-bead: {id}: cannot read the lifecycle row: {why} — nothing dropped\n"), ..Default::default() },
         Ok(v) => {
             let state = bead_field(&v, "state");
             if matches!(state.as_str(), "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE") {
@@ -1181,9 +1186,9 @@ pub fn drop_bead(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answe
 pub fn drop_row(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
     let [id] = args else { return usage("drop-row <bead-id>") };
     let refused = |why: String| Answer { code: REFUSED, stderr: format!("spira-lc drop-row: {id}: {why} — nothing removed\n"), ..Default::default() };
-    match show(m, id) {
-        Err(NO_ROW) => return Answer { stdout: format!("drop-row: {id} has no lifecycle row\n"), code: APPLIED, ..Default::default() },
-        Err(rc) => return Answer { code: rc, stderr: format!("spira-lc drop-row: {id}: the lifecycle row is unreadable — nothing removed\n"), ..Default::default() },
+    match show_cause(m, id) {
+        Err((NO_ROW, _)) => return Answer { stdout: format!("drop-row: {id} has no lifecycle row\n"), code: APPLIED, ..Default::default() },
+        Err((rc, why)) => return Answer { code: rc, stderr: format!("spira-lc drop-row: {id}: cannot read the lifecycle row: {why} — nothing removed\n"), ..Default::default() },
         Ok(_) => {}
     }
     match bd.issue_type(id) {
@@ -1209,9 +1214,9 @@ pub fn reopen_cmd(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answ
     };
     let cause = args.get(1).cloned().unwrap_or_default();
     let actor = actor_or(args.get(2), "reopen");
-    let rowless = match show(m, id) {
-        Err(NO_ROW) => true,
-        Err(rc) => return Answer { code: rc, stderr: format!("spira-lc reopen: {id}: the lifecycle row is unreadable — nothing reopened\n"), ..Default::default() },
+    let rowless = match show_cause(m, id) {
+        Err((NO_ROW, _)) => true,
+        Err((rc, why)) => return Answer { code: rc, stderr: format!("spira-lc reopen: {id}: cannot read the lifecycle row: {why} — nothing reopened\n"), ..Default::default() },
         Ok(v) => {
             let a = reopen(m, id, &cause, &actor, &v);
             if a.code != APPLIED {
@@ -1522,9 +1527,9 @@ pub fn close(
     };
     let mut rowless = false;
     let mut row_terminal = false;
-    match show(m, &id) {
-        Err(NO_ROW) => rowless = true,
-        Err(rc) => return Answer { code: rc, stderr: format!("spira-lc close: {id}: the lifecycle row is unreadable — nothing closed\n"), ..Default::default() },
+    match show_cause(m, &id) {
+        Err((NO_ROW, _)) => rowless = true,
+        Err((rc, why)) => return Answer { code: rc, stderr: format!("spira-lc close: {id}: cannot read the lifecycle row: {why} — nothing closed\n"), ..Default::default() },
         Ok(v) => {
             let (mut state, mut version) = (bead_field(&v, "state"), bead_field(&v, "version"));
             if state.is_empty() || version.is_empty() {

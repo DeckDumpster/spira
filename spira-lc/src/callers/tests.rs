@@ -1668,6 +1668,35 @@ fn reopen_refuses_a_terminal_row_and_a_missing_row_and_an_unreachable_machine() 
 }
 
 #[test]
+fn a_row_the_machine_cannot_read_is_refused_with_the_machines_own_answer() {
+    let down = || Fake { down: true, ..Default::default() };
+    let mut no_file = |_: &str| Ok(String::new());
+    let answers = [
+        ("reopen", reopen_cmd(&v(&["sp-t"]), &mut down(), &mut FakeBd::default())),
+        ("close", close(&v(&["sp-t", "--reason", "r"]), &mut down(), &mut FakeBd::default(), &mut no_file)),
+        ("drop-bead", drop_bead(&v(&["sp-t", "--reason", "no"]), &mut down(), &mut FakeBd::default())),
+        ("drop-row", drop_row(&v(&["sp-t"]), &mut down(), &mut FakeBd::default())),
+    ];
+    for (verb, a) in answers {
+        assert_eq!(a.code, CANNOT_TELL, "{verb}");
+        assert!(a.stderr.contains("cannot tell: down"), "{verb}: {}", a.stderr);
+        assert!(a.stderr.contains(&format!("spira-lc {verb}: sp-t: cannot read the lifecycle row")), "{verb}: {}", a.stderr);
+    }
+}
+
+#[test]
+fn settle_owed_reopen_of_a_row_the_machine_cannot_read_carries_the_machines_answer() {
+    let e = crate::reconcile_content::settle_owed_reopen(&mut Fake { down: true, ..Default::default() }, &mut FakeBd::default(), "sp-t").unwrap_err();
+    assert!(e.contains("cannot tell: down"), "{e}");
+}
+
+#[test]
+fn record_state_of_a_row_the_machine_cannot_read_carries_the_machines_answer() {
+    let e = crate::reconcile_content::record_state(&mut Fake { down: true, ..Default::default() }, "sp-t").unwrap_err();
+    assert!(e.contains("cannot tell: down"), "{e}");
+}
+
+#[test]
 fn a_reopen_inside_lc_serve_reads_the_row_once_and_owes_the_bd_half_to_the_settler() {
     let settler = crate::settle::install_for_test();
     let mut f = Fake::default();
