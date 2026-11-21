@@ -96,6 +96,10 @@ impl<B: Backend + Clone> Backend for Scoped<B> {
         Ok(self.strip(self.inner.range_newest_opened(&self.outer(prefix), since, limit, at)?))
     }
 
+    fn range_by_seq(&self, prefix: &str, after_seq: u64, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
+        Ok(self.strip(self.inner.range_by_seq(&self.outer(prefix), after_seq, limit, at)?))
+    }
+
     fn range_kind_since(&self, prefix: &str, kind: &str, since: i64, after: Option<(i64, &str)>, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
         let after = after.map(|(a, k)| (a, self.outer(k)));
         Ok(self.strip(self.inner.range_kind_since(&self.outer(prefix), kind, since, after.as_ref().map(|(a, k)| (*a, k.as_str())), limit, at)?))
@@ -222,6 +226,7 @@ live_scenarios!(
     a_lock_renew_op_keeps_the_token_restarts_the_ttl_and_runs_only_while_held,
     a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
     a_kind_since_range_reads_the_keys_of_that_kind_after_that_time_at_the_head_and_below_it,
+    a_seq_range_reads_the_keys_above_a_seq_in_seq_order_at_the_head_and_below_it,
     gc_range_skips_the_history_prefix,
     committed_at_is_the_wall_time_of_the_first_audited_commit_at_or_after_a_main,
 );

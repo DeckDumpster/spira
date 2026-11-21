@@ -181,6 +181,9 @@ impl<B: Backend> Backend for Interpose<B> {
     fn range_newest_opened(&self, prefix: &str, since: i64, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
         self.inner.range_newest_opened(prefix, since, limit, at)
     }
+    fn range_by_seq(&self, prefix: &str, after_seq: u64, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
+        self.inner.range_by_seq(prefix, after_seq, limit, at)
+    }
     fn range_kind_since(&self, prefix: &str, kind: &str, since: i64, after: Option<(i64, &str)>, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
         self.inner.range_kind_since(prefix, kind, since, after, limit, at)
     }
@@ -1708,6 +1711,38 @@ pub fn a_kind_since_range_reads_the_keys_of_that_kind_after_that_time_at_the_hea
     }
 }
 
+/// A seq range answers exactly the keys under the prefix with an integer `data.seq` above
+/// `after_seq`, ascending by `(seq, key)`, at the head and at an older revision, as the scan
+/// default does.
+pub fn a_seq_range_reads_the_keys_above_a_seq_in_seq_order_at_the_head_and_below_it<R: Rig>(rig: &R) {
+    let clock = VirtualClock::new(T0);
+    let c = open(rig.fresh(), &clock);
+    let seq = |s: serde_json::Value| obj(json!({ "seq": s }));
+    put(&c, "history/a", seq(json!(30)), "1");
+    put(&c, "history/b", seq(json!(10)), "2");
+    put(&c, "history/c", seq(json!(30)), "3");
+    put(&c, "history/d", seq(json!("20")), "4");
+    put(&c, "history/e", obj(json!({})), "5");
+    put(&c, "other/x", seq(json!(5)), "6");
+    let then = put(&c, "history/f", seq(json!(25)), "7");
+    put(&c, "history/b", seq(json!(50)), "8");
+    c.delete("history/a", None, &req("9")).expect("delete");
+    let head = c.head().expect("head");
+    let keys = |after: u64, limit: usize, at: u64| -> Vec<String> {
+        c.range_by_seq("history/", after, limit, at).expect("range_by_seq").into_iter().map(|i| i.key).collect()
+    };
+    assert_eq!(keys(0, 10, head), ["history/f", "history/c", "history/b"]);
+    assert_eq!(keys(25, 10, head), ["history/c", "history/b"]);
+    assert_eq!(keys(0, 1, head), ["history/f"]);
+    assert!(keys(50, 10, head).is_empty());
+    assert_eq!(keys(0, 10, then), ["history/b", "history/f", "history/a", "history/c"]);
+    for (after, limit, at) in [(0, 2, head), (10, 5, then), (0, 3, then)] {
+        let by_scan = crate::backend::range_by_seq_by_scan(c.backend(), "history/", after, limit, at).expect("scan");
+        let read = c.range_by_seq("history/", after, limit, at).expect("range_by_seq");
+        assert_eq!(read.iter().map(|i| i.key.clone()).collect::<Vec<_>>(), by_scan.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>());
+    }
+}
+
 /// `gc_range` and `Contract::open` never visit `history/`, however many keys it holds: open
 /// reads exactly the rows it reads from a store without them.
 pub fn gc_range_skips_the_history_prefix<R: Rig>(rig: &R) {
@@ -1867,6 +1902,7 @@ scenarios!(
     a_lock_renew_op_keeps_the_token_restarts_the_ttl_and_runs_only_while_held,
     a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
     a_kind_since_range_reads_the_keys_of_that_kind_after_that_time_at_the_head_and_below_it,
+    a_seq_range_reads_the_keys_above_a_seq_in_seq_order_at_the_head_and_below_it,
     gc_range_skips_the_history_prefix,
     committed_at_is_the_wall_time_of_the_first_audited_commit_at_or_after_a_main,
 );

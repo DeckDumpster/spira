@@ -46,6 +46,10 @@ impl Backend for Counting {
         self.note("range_newest_opened", prefix, limit);
         self.inner.range_newest_opened(prefix, since, limit, at)
     }
+    fn range_by_seq(&self, prefix: &str, after_seq: u64, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
+        self.note("range_by_seq", prefix, limit);
+        self.inner.range_by_seq(prefix, after_seq, limit, at)
+    }
     fn range_kind_since(&self, prefix: &str, kind: &str, since: i64, after: Option<(i64, &str)>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
         self.note("range_kind_since", prefix, limit);
         self.inner.range_kind_since(prefix, kind, since, after, limit, at)

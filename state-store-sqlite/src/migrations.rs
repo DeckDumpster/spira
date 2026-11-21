@@ -286,6 +286,16 @@ pub const MIGRATIONS: &[&[&str]] = &[
             THEN json_extract(CAST(value AS TEXT), '$.data.at') END) VIRTUAL",
         "CREATE INDEX latest_by_fact ON latest (fact_kind, fact_at, key) WHERE fact_kind IS NOT NULL",
     ],
+    // 9 (sp-d1rdwk): an imported audit's `data.seq`, under `history/`, as an indexed column, so
+    // the imported history in seq order is a range of the index and never a read of every txn's.
+    &[
+        "ALTER TABLE latest ADD COLUMN history_seq INTEGER GENERATED ALWAYS AS (CASE
+            WHEN key >= CAST('history/' AS BLOB) AND key < CAST('history0' AS BLOB)
+             AND json_valid(CAST(value AS TEXT))
+             AND json_type(CAST(value AS TEXT), '$.data.seq') = 'integer'
+            THEN json_extract(CAST(value AS TEXT), '$.data.seq') END) VIRTUAL",
+        "CREATE INDEX latest_by_history_seq ON latest (history_seq, key) WHERE history_seq IS NOT NULL",
+    ],
 ];
 
 #[cfg(test)]
