@@ -9,6 +9,9 @@
 //! called directly by name in test suites and other scripts, not only from inside `bdq` —
 //! have something to exec into. The `__` prefix cannot collide with a real `bd` verb.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};

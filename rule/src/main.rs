@@ -2,6 +2,9 @@
 //! it sources `conf.sh` for its side effects and `exec`s into this binary by bare name on
 //! the release PATH.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;

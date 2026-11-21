@@ -1,5 +1,8 @@
 //! `release` — build, verify, activate, rollback and prune spira-releases/<sha>. DESIGN.md.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use release::activate::{self, Ctx};
 use release::build::{self, BuildOpts, RealCargo};
 use release::config::{self, Config, Flags};
@@ -592,7 +595,7 @@ mod tests {
     #[test_id(tgfoudh)]
     #[test]
     fn canary_is_not_a_verb() {
-        assert!(!super::USAGE.contains("canary"));
+        assert!(!super::super::USAGE.contains("canary"));
         for op in ["canary", "canary-worker"] {
             assert!(!release::telemetry::OPERATIONS.contains(&op), "{op} is not an operation");
         }

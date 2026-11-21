@@ -6,6 +6,9 @@
 //! chokepoint (the one permitted door onto `git worktree remove` / `git branch -D`), and the
 //! dwarf's own pidfiles and unit.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::env;
 use std::path::{Path, PathBuf};
 
