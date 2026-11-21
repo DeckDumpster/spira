@@ -11,7 +11,8 @@ mod ids;
 
 const ACTOR: &str = "spira-lc";
 
-const STATUSES: [&str; 7] = ["open", "in_progress", "blocked", "deferred", "closed", "pinned", "hooked"];
+/// The statuses a create or an update sets directly: a close is its own verb, with its own policy.
+const SETTABLE: [&str; 6] = ["open", "in_progress", "blocked", "deferred", "pinned", "hooked"];
 const TYPES: [&str; 11] = ["bug", "feature", "task", "epic", "chore", "decision", "message", "molecule", "gate", "spike", "story"];
 const BLOCKING: [&str; 3] = ["blocks", "conditional-blocks", "parent-child"];
 
@@ -102,23 +103,24 @@ impl Mutation {
     /// the verbs served here.
     pub fn of(args: &[String], body: Option<&str>) -> Option<Mutation> {
         let a: Vec<&str> = args.iter().map(String::as_str).collect();
-        let (id, ops) = match (a.as_slice(), body) {
-            (["label", "add", id, l], None) => (*id, vec![Op::LabelAdd((*l).into())]),
-            (["label", "remove", id, l], None) => (*id, vec![Op::LabelRemove((*l).into())]),
-            (["note", id, "--stdin"], Some(b)) => (*id, vec![Op::Note(b.trim_end_matches('\n').into())]),
-            (["note", id, t], None) if *t != "--stdin" => (*id, vec![Op::Note((*t).into())]),
-            (["comments", "add", id, t], None) => (*id, vec![Op::Comment((*t).into())]),
-            (["update", id, flags @ ..], body) if !flags.is_empty() => (*id, update_ops(flags, body)?),
-            (["create", rest @ ..], body) => ("", vec![Op::Create(Box::new(create_spec(rest, body)?))]),
-            (["close", id], None) => (*id, vec![Op::Close { reason: String::new(), force: false }]),
-            (["close", id, "--force"], None) => (*id, vec![Op::Close { reason: String::new(), force: true }]),
-            (["close", id, "--reason", r], None) if !r.is_empty() => (*id, vec![Op::Close { reason: (*r).into(), force: false }]),
-            (["close", id, "--force", "--reason", r], None) | (["close", id, "--reason", r, "--force"], None) if !r.is_empty() => (*id, vec![Op::Close { reason: (*r).into(), force: true }]),
-            (["dep", "add", id, on], None) => (*id, vec![Op::DepAdd { on: (*on).into(), kind: "blocks".into() }]),
-            (["dep", "add", id, on, "--type", t], None) if matches!(*t, "blocks" | "relates-to" | "parent-child" | "discovered-from") => (*id, vec![Op::DepAdd { on: (*on).into(), kind: (*t).into() }]),
-            (["dep", "remove", id, on], None) => (*id, vec![Op::DepRemove { on: (*on).into() }]),
-            (["dep", "relate", id, other], None) => (*id, vec![Op::DepRelate { other: (*other).into() }]),
-            (["supersede", id, "--with", with], None) => (*id, vec![Op::Supersede { with: (*with).into() }]),
+        let (id, ops) = match a.as_slice() {
+            ["label", "add", id, l] if body.is_none() => (*id, vec![Op::LabelAdd((*l).into())]),
+            ["label", "remove", id, l] if body.is_none() => (*id, vec![Op::LabelRemove((*l).into())]),
+            ["note", id, "--stdin"] => (*id, vec![Op::Note(body?.trim_end_matches('\n').into())]),
+            ["note", id, t] if body.is_none() && *t != "--stdin" => (*id, vec![Op::Note((*t).into())]),
+            ["comments", "add", id, t] if body.is_none() => (*id, vec![Op::Comment((*t).into())]),
+            ["update", id, flags @ ..] if !flags.is_empty() => (*id, update_ops(flags, body)?),
+            ["create", rest @ ..] => ("", vec![Op::Create(Box::new(create_spec(rest, body)?))]),
+            _ if body.is_some() => return None,
+            ["close", id] => (*id, vec![Op::Close { reason: String::new(), force: false }]),
+            ["close", id, "--force"] => (*id, vec![Op::Close { reason: String::new(), force: true }]),
+            ["close", id, "--reason", r] if !r.is_empty() => (*id, vec![Op::Close { reason: (*r).into(), force: false }]),
+            ["close", id, "--force", "--reason", r] | ["close", id, "--reason", r, "--force"] if !r.is_empty() => (*id, vec![Op::Close { reason: (*r).into(), force: true }]),
+            ["dep", "add", id, on] => (*id, vec![Op::DepAdd { on: (*on).into(), kind: "blocks".into() }]),
+            ["dep", "add", id, on, "--type", t] if matches!(*t, "blocks" | "relates-to" | "parent-child" | "discovered-from") => (*id, vec![Op::DepAdd { on: (*on).into(), kind: (*t).into() }]),
+            ["dep", "remove", id, on] => (*id, vec![Op::DepRemove { on: (*on).into() }]),
+            ["dep", "relate", id, other] => (*id, vec![Op::DepRelate { other: (*other).into() }]),
+            ["supersede", id, "--with", with] => (*id, vec![Op::Supersede { with: (*with).into() }]),
             _ => return None,
         };
         if id.starts_with('-') || (id.is_empty() && !matches!(ops.first(), Some(Op::Create(_)))) {
@@ -503,7 +505,7 @@ fn create_spec(args: &[&str], body: Option<&str>) -> Option<Create> {
     let bounded = c.title.len() <= 500 && c.labels.iter().all(|l| l.chars().count() <= 255) && c.assignee.chars().count() <= 255;
     let consistent = c.id.is_none() || c.parent.is_none();
     let parent_edge_free = c.parent.as_ref().is_none_or(|p| c.deps.iter().all(|(_, t)| t != p));
-    (titled && from_body == body.is_some() && !c.title.is_empty() && bounded && consistent && parent_edge_free && c.status != "closed" && STATUSES.contains(&c.status.as_str())).then(|| {
+    (titled && from_body == body.is_some() && !c.title.is_empty() && bounded && consistent && parent_edge_free && SETTABLE.contains(&c.status.as_str())).then(|| {
         c.shape = if json {
             Shape::Json
         } else if silent {
@@ -686,7 +688,7 @@ fn serve(w: &Writer, m: &Mutation) -> Result<Option<String>, String> {
     let db = &w.db;
     let mut named = vec![m.bead()];
     named.extend(m.others());
-    let found = rows(w, &format!("SELECT id, status, COALESCE(assignee, '') AS assignee, description, is_blocked FROM {db}.issues WHERE id IN ({})", in_list(&named)))?;
+    let found = rows(w, &format!("SELECT id, status, status = 'closed' AS closed, status = 'in_progress' AS claimed, COALESCE(assignee, '') AS assignee, description, is_blocked FROM {db}.issues WHERE id IN ({})", in_list(&named)))?;
     let row_of = |id: &str| found.iter().find(|r| cell(r, "id") == id);
     let Some(me) = row_of(m.bead()) else {
         return Err(format!("no issue found matching {:?}", m.bead()));
@@ -716,13 +718,13 @@ fn preflight(w: &Writer, m: &Mutation, me: &serde_json::Value) -> Result<Option<
     let mut kept = Vec::new();
     for op in &m.ops {
         match op {
-            Op::Status(v) if !STATUSES.contains(&v.as_str()) || v == "closed" => return Ok(None),
+            Op::Status(v) if !SETTABLE.contains(&v.as_str()) => return Ok(None),
             Op::Status(v) if *v == status => continue,
             Op::Assignee(v) if v.chars().count() > 255 => return Ok(None),
             Op::Assignee(v) if *v == holder => continue,
-            Op::Assignee(_) if !m.forced && !holder.is_empty() && status == "in_progress" => return Ok(None),
+            Op::Assignee(_) if !m.forced && !holder.is_empty() && cell(me, "claimed") == "1" => return Ok(None),
             Op::Description(v) if *v == cell(me, "description") => continue,
-            Op::Close { force: false, .. } if status != "closed" => {
+            Op::Close { force: false, .. } if cell(me, "closed") != "1" => {
                 let children = count(w, &format!("SELECT COUNT(DISTINCT d.issue_id) AS n FROM {db}.dependencies d JOIN {db}.issues c ON c.id = d.issue_id WHERE d.depends_on_issue_id = '{id}' AND d.type = 'parent-child' AND c.status <> 'closed'"))?;
                 if children > 0 || cell(me, "is_blocked") == "1" {
                     return Ok(None);

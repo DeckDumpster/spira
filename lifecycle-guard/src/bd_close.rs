@@ -63,14 +63,12 @@ pub(crate) fn gh_close() -> &'static Regex {
     R.get_or_init(|| Regex::new(r#""(?:pr|issue|run)""#).unwrap())
 }
 
-/// The machine, this analyser, and the doors: `bd.rs`, `content_write.rs` (the SQL half of
-/// the writes `bd.rs` routes to it), and `content.rs`, the cockpit's allowlisted passthrough,
-/// which names `close` only as a match pattern for its own check.
+/// The machine, this analyser, and the doors: `bd.rs`, and `content.rs`, the cockpit's
+/// allowlisted passthrough, which names `close` only as a match pattern for its own check.
 pub(crate) fn in_scope(rel: &str) -> bool {
     !(rel.starts_with("lifecycle/")
         || rel.starts_with("lifecycle-guard/")
         || rel == "spira-lc/src/bd.rs"
-        || rel == "spira-lc/src/content_write.rs"
         || rel == "spira-lc/src/content.rs"
         || rel == "spira-store/src/lifecycle_row.rs"
         // Acceptance seeds a PREDECESSOR install as it was before an upgrade — an aged store

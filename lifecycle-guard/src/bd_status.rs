@@ -147,9 +147,7 @@ fn in_scope(rel: &str) -> bool {
         || rel == "spira-lc/src/bd_facts.rs" || rel == "spira-config/src/nonwork.rs"
         // The machine's door to bd: the store half of close/reopen writes bd's status after
         // the row has moved (sp-3fue0j, sp-swh8b8) — a write that follows the machine.
-        || rel == "spira-lc/src/bd.rs"
-        // The SQL half of that door: the writes bd.rs routes to it, made as bd makes them.
-        || rel == "spira-lc/src/content_write.rs")
+        || rel == "spira-lc/src/bd.rs")
 }
 
 /// `code` (masked) with every short, identifier-like string literal's text put back from
@@ -379,6 +377,5 @@ mod tests {
         assert!(!in_scope("lifecycle/src/classify.rs"));
         assert!(!in_scope("spira-lc/src/bd_facts.rs"));
         assert!(in_scope("spira-lc/src/close_on_land.rs"));
-        assert!(!in_scope("spira-lc/src/content_write.rs"), "the SQL half of bd.rs's door");
     }
 }

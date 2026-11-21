@@ -101,7 +101,6 @@ mod tests {
         assert!(lines("x/src/a.rs", src).is_empty(), "{:?}", scan_text("x/src/a.rs", src));
         let door = r#"fn r(id: &str) { run(&["reopen", id, cause]) }"#;
         assert!(!in_scope("spira-store/src/lifecycle_row.rs"));
-        assert!(!in_scope("spira-lc/src/content_write.rs"), "the SQL half of bd.rs's door");
         assert_eq!(lines("spira-claim/src/store.rs", door), vec![1]);
     }
 
