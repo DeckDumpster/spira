@@ -1145,8 +1145,10 @@ pub fn select_why(repo: &Repo, max_members: usize) -> Result<(Vec<core::Member>,
     select_split(repo, max_members).0
 }
 
+pub type Selection = Result<(Vec<core::Member>, String), Vec<String>>;
+
 /// [`select_why`], with every pool member the selection kept out of the cut and why.
-pub fn select_split(repo: &Repo, max_members: usize) -> (Result<(Vec<core::Member>, String), Vec<String>>, Vec<batcher_cut::io::LeftOut>) {
+pub fn select_split(repo: &Repo, max_members: usize) -> (Selection, Vec<batcher_cut::io::LeftOut>) {
     use batcher_cut::io::{Cause, LeftOut};
     let mut why: Vec<String> = Vec::new();
     let mut left: Vec<LeftOut> = Vec::new();
@@ -2049,8 +2051,9 @@ impl Machine<'_> {
         if named == self.rc.left_noted {
             return;
         }
+        let cleared = left.is_empty() && !self.rc.left_noted.is_empty();
         self.rc.left_noted = named;
-        if left.is_empty() {
+        if left.is_empty() && !cleared {
             return;
         }
         let why = serde_json::to_string(&left).unwrap_or_default();
