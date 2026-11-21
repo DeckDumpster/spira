@@ -449,20 +449,24 @@ impl<B: Backend> Store<B> {
             if dry_run {
                 counts.retained = stamps.len();
             } else {
-                let written = (|| -> Result<usize> {
+                let mut stamped = 0;
+                let written = (|| -> Result<()> {
                     let req = || Request::new(&super::served::request_id(), actor, "journal-sweep");
                     for chunk in ops.chunks(CHUNK) {
                         contract.txn(&Txn { ops: chunk.to_vec(), ..Txn::default() }, &req())?;
                     }
-                    let mut stamped = 0;
                     for t in &stamps {
                         stamped += usize::from(contract.txn(t, &req())?.succeeded);
                     }
-                    Ok(stamped)
+                    Ok(())
                 })();
+                counts.retained = stamped;
                 match written {
-                    Ok(stamped) => counts.retained = stamped,
-                    Err(state_store::Error::Deadline) if read > page.len() => break false,
+                    Ok(()) => {}
+                    Err(state_store::Error::Deadline) if read > page.len() => {
+                        out.retained += stamped;
+                        break false;
+                    }
                     Err(e) => return Err(e),
                 }
             }

@@ -942,6 +942,22 @@ mod tests {
     }
 
     #[test]
+    fn a_first_page_whose_write_is_refused_for_the_deadline_still_answers_the_error() {
+        use crate::control::journal::SWEEP_PAGE;
+        let (s, raw, _clock, armed) = costed_store();
+        for n in 0..SWEEP_PAGE {
+            let id = format!("r{n:05}");
+            put_raw(&raw, &crate::control::keys::runtime("effect", &["t", &format!("k{id}")]), effect_n(&id));
+            put_raw(&raw, &crate::control::keys::runtime("resolved", &[&id]), json!({}));
+        }
+        armed.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (code, out) = call(&s, &["sweep", "--from", "effect:"]);
+        drop(state_store::phases::deadline_scoped(std::time::Instant::now()));
+        assert_eq!(code, CANNOT_TELL, "{out}");
+        assert!(out.contains("Deadline"), "{out}");
+    }
+
+    #[test]
     fn a_sweep_refuses_an_argument_it_does_not_know() {
         let s = store();
         for argv in [&["sweep", "--now"][..], &["sweep", "--from"][..], &["sweep", "--from", "nowhere"][..], &["sweep", "--dry-run", "--dry-run"][..]] {
