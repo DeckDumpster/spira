@@ -3486,7 +3486,6 @@ pub fn eject_args(batch: &str, repo: &str, id: &str, csv: &str) -> Vec<String> {
         repo,
         "--reason-file",
         "-",
-        "--no-rebuild",
         "--by",
         "batcher",
     ]
@@ -6503,6 +6502,12 @@ mod eject_args_tests {
         let a = eject_args("r9", "spira", "sp-a", "");
         let i = a.iter().position(|x| x == "--by").expect("--by");
         assert_eq!(a[i + 1], "batcher", "{a:?}");
+    }
+
+    #[test]
+    fn the_batchers_eject_lets_the_queue_rebuild_the_rounds_tree() {
+        let a = eject_args("r9", "spira", "sp-a", "lint");
+        assert!(!a.iter().any(|x| x == "--no-rebuild"), "{a:?}");
     }
 
     #[test]
