@@ -139,6 +139,9 @@ pub fn record_finding(number: u32, ports: &Ports) -> Outcome {
         let field = if f.scope != Scope::Unit { "scope" } else if !f.became.statutes.is_empty() { "became.statutes" } else { "became.catalogue" };
         return refuse(2, &format!("a fix finding is for this unit only: {field} must be unit with no statute or catalogue entry"));
     }
+    if f.generalised_by.as_ref().is_some_and(|g| !(g.is_number() || g.as_str().is_some_and(|s| !s.is_empty()))) {
+        return refuse(2, "generalised_by is a comment id: a number or a non-empty string");
+    }
     if f.kind == Kind::Other && widens && f.generalised_by.is_none() {
         return refuse(2, "an other finding names a statute or catalogue entry only with generalised_by, the id of the comment where the operator said to generalise it");
     }

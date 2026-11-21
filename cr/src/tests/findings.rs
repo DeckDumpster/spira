@@ -263,11 +263,15 @@ fn an_other_finding_keeps_his_words_and_generalises_only_with_his_comment() {
     let refused = w.finding(&finding_of("other", "rust", catalogue, ""));
     assert_eq!(refused.code, 2);
     assert!(refused.stderr.contains("generalised_by"), "{}", refused.stderr);
-    let ok = w.finding(&finding_of("other", "rust", catalogue, r#""generalised_by":123,"#));
+    assert_eq!(w.finding(&finding_of("other", "rust", r#"{"statutes":["law-y"]}"#, "")).code, 2);
+    assert_eq!(w.finding(&finding_of("other", "rust", catalogue, r#""generalised_by":"","#)).code, 2);
+    let with_statute = r#"{"catalogue":["x"],"statutes":["law-y"]}"#;
+    let ok = w.finding(&finding_of("other", "rust", with_statute, r#""generalised_by":123,"#));
     assert_eq!((ok.code, ok.stdout.as_str()), (0, "001-2\n"), "{}", ok.stderr);
     w.cr(&["findings", "--review", "001"]);
     let cat = w.page("patterns.md");
     assert_eq!(cat.matches("## Generalised by the operator").count(), 1, "{cat}");
     assert_eq!(cat.matches("### Fix the lock.").count(), 1, "{cat}");
+    assert!(cat.contains("law-y") && cat.contains("demo/src/store.rs:6 @ c0ffee"), "{cat}");
     assert!(w.page("cr-001.md").contains("generalised_by: 123"));
 }
