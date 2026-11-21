@@ -10,7 +10,7 @@ use spira_config::repos::{self, Registry};
 
 use crate::tasks::a::queue_step::edge::git;
 
-const GIT_DEADLINE: Duration = Duration::from_secs(10);
+const GIT_DEADLINE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, PartialEq)]
 pub enum Measurement {

@@ -238,7 +238,7 @@ mod tests {
     fn the_service_refuses_a_request_the_caller_did_not_prove() {
         let s = store();
         submitted(&s, "sp-a", TIP);
-        let (code, out) = lc(&s, &["reconcile-landed", "sp-a", "--sha", TIP, "--ref", "main", "--repo-path", "/nowhere", "--actor", "concierge"]);
+        let (code, out) = lc(&s, &["reconcile-landed", "sp-a", "--sha", TIP, "--ref", "main", "--repo-path", "nowhere", "--actor", "concierge"]);
         assert_eq!(code, CANNOT_TELL, "{out}");
         assert_eq!(state_of(&s, "sp-a"), "SUBMITTED");
     }
