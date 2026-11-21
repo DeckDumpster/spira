@@ -335,7 +335,7 @@ fn native_password_token(password: &str, scramble: &[u8]) -> Vec<u8> {
     stage1.iter().zip(mix.iter()).map(|(a, b)| a ^ b).collect()
 }
 
-fn sha1(data: &[u8]) -> [u8; 20] {
+pub(crate) fn sha1(data: &[u8]) -> [u8; 20] {
     let mut h: [u32; 5] = [0x6745_2301, 0xEFCD_AB89, 0x98BA_DCFE, 0x1032_5476, 0xC3D2_E1F0];
     let mut msg = data.to_vec();
     msg.push(0x80);
