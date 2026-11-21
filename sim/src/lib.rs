@@ -1,6 +1,9 @@
 //! Virtual-time simulation on the runtime scheduler. Every decision between actor runs
 //! (tie order, run durations, jitter) comes from one seeded PRNG.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod actors;
 pub mod doubles;
 pub mod fit;
@@ -404,6 +407,7 @@ mod tests {
         );
     }
 
+    #[test_id(t46gs1a)]
     #[test]
     fn simultaneous_ties_are_seeded() {
         let order = |seed| {
@@ -419,6 +423,7 @@ mod tests {
         assert!((0..20).any(|s| order(s) != order(7)));
     }
 
+    #[test_id(tkt4suh)]
     #[test]
     fn staged_writes_invisible_until_complete() {
         let seen = Rc::new(RefCell::new(Vec::new()));
@@ -458,6 +463,7 @@ mod vtime_tests {
 
     const VIRTUAL: u64 = 1_800_000_000;
 
+    #[test_id(tpqmefh)]
     #[test]
     fn actor_env_sets_spira_now() {
         let env = spira_config::vtime::actor_env(VIRTUAL);

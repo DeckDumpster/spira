@@ -444,6 +444,7 @@ mod tests {
 
     const SHA: &str = "0123456789abcdef0123";
 
+    #[test_id(t1ph46m)]
     #[test]
     fn args_take_a_tree_and_a_toolchain_and_refuse_a_chosen_vmid() {
         assert_eq!(
@@ -465,6 +466,7 @@ mod tests {
         assert!(parse_template_args(&s(&["t", "--toolchain"])).unwrap_err().contains("needs a value"));
     }
 
+    #[test_id(te2r0s5)]
     #[test]
     fn the_template_is_never_named_like_a_round_vm() {
         let n = template_name(SHA);
@@ -472,6 +474,7 @@ mod tests {
         assert_ne!(n, crate::provider::vm_name("9120"));
     }
 
+    #[test_id(td7vz5t)]
     #[test]
     fn a_build_clones_builds_the_image_then_converts_a_stopped_vm() {
         let p = FakeProvider::new();
@@ -497,6 +500,7 @@ mod tests {
         );
     }
 
+    #[test_id(tp4psdt)]
     #[test]
     fn no_toolchain_and_no_cargo_on_the_base_refuses_before_the_tree_is_unpacked() {
         let p = FakeProvider::new();
@@ -510,6 +514,7 @@ mod tests {
         assert_eq!(g.calls.lock().unwrap().len(), 2, "a pinned toolchain installs, so a base without cargo proceeds");
     }
 
+    #[test_id(tluohbg)]
     #[test]
     fn without_a_vmid_the_hypervisor_allocates_one() {
         let p = FakeProvider::new();
@@ -518,6 +523,7 @@ mod tests {
         assert_eq!(p.count("nextid"), 1);
     }
 
+    #[test_id(tueq2yj)]
     #[test]
     fn a_failed_image_build_destroys_the_half_built_vm_and_converts_nothing() {
         let p = FakeProvider::new();
@@ -528,6 +534,7 @@ mod tests {
         assert_eq!(p.count("template "), 0);
     }
 
+    #[test_id(tvtsimi)]
     #[test]
     fn no_reported_image_is_a_failure_even_on_exit_0() {
         let p = FakeProvider::new();
@@ -537,6 +544,7 @@ mod tests {
         assert!(p.all_vms().is_empty());
     }
 
+    #[test_id(ta3h6qp)]
     #[test]
     fn every_failure_after_the_clone_leaves_no_vm() {
         for step in [Step::Start, Step::Addr, Step::Exec, Step::Shutdown, Step::MakeTemplate] {
@@ -552,6 +560,7 @@ mod tests {
         assert!(p.all_vms().is_empty());
     }
 
+    #[test_id(tufokbx)]
     #[test]
     fn a_vmid_that_is_taken_is_refused_and_the_vm_there_is_never_touched() {
         let p = FakeProvider::new();
@@ -562,6 +571,7 @@ mod tests {
         assert_eq!(p.count("destroy"), 0);
     }
 
+    #[test_id(ttwdvcg)]
     #[test]
     fn a_vm_that_will_not_die_is_named_for_the_operator() {
         let p = FakeProvider::new();
@@ -571,12 +581,14 @@ mod tests {
         assert!(e.contains("by hand") && e.contains("9120"), "{e}");
     }
 
+    #[test_id(tbspcdd)]
     #[test]
     fn the_script_names_the_harness_home_before_testenv_runs() {
         let home = TEMPLATE_SCRIPT.find("export SPIRA_HOME=\"$work/spira\"").expect("testenv refuses without SPIRA_HOME");
         assert!(home < TEMPLATE_SCRIPT.find("-p testenv -- container image").unwrap());
     }
 
+    #[test_id(t6p4x71)]
     #[test]
     fn the_script_names_the_one_config_source_before_testenv_runs() {
         let toml = TEMPLATE_SCRIPT.find("export SPIRA_TOML=\"$work/spira/testlib/complete.toml:$work/template-config.toml\"").expect("testenv refuses without SPIRA_TOML");
@@ -584,6 +596,7 @@ mod tests {
         assert!(TEMPLATE_SCRIPT.find("cat > \"$work/template-config.toml\"").unwrap() < toml);
     }
 
+    #[test_id(t0k24zf)]
     #[test]
     fn the_rendered_template_config_declares_the_toolchain_path_nix_first() {
         let start = TEMPLATE_SCRIPT.find("nix_bin=/nix").expect("nix_bin is assigned").min(TEMPLATE_SCRIPT.find("cat > \"$work/template-config.toml\"").unwrap());
@@ -604,6 +617,7 @@ mod tests {
         assert_eq!(cfg["spira"]["path"].as_str(), Some(format!("{}nix/var/nix/profiles/default/bin:opt/cargo/bin:fixture/home/.cargo/bin", std::path::MAIN_SEPARATOR).as_str()));
     }
 
+    #[test_id(tfgxyrs)]
     #[test]
     fn the_script_builds_rather_than_loads_and_reports_the_image_last() {
         assert!(TEMPLATE_SCRIPT.contains("-p testenv -- container image"));
@@ -616,6 +630,7 @@ mod tests {
         assert_eq!(reported_image(""), None);
     }
 
+    #[test_id(txblmao)]
     #[test]
     fn the_template_installs_webdav_sccache_and_the_toolchain_before_building_the_image() {
         // sp-xjnzl: the template carries its OWN sccache (so every round VM clones a working
@@ -647,6 +662,7 @@ mod refresh_tests {
         v.iter().map(|x| x.to_string()).collect()
     }
 
+    #[test_id(tkay2n0)]
     #[test]
     fn staleness_names_both_hashes_when_the_recipe_differs() {
         let rec = |sha: Option<&str>| Record { vmid: "102".into(), image: "r:t".into(), recipe_sha: sha.map(String::from) };
@@ -657,6 +673,7 @@ mod refresh_tests {
         assert!(staleness(Some(&rec(None)), "bbb").unwrap().contains("bbb"));
     }
 
+    #[test_id(t611ajd)]
     #[test]
     fn set_env_key_replaces_in_place_and_appends_when_absent() {
         let t = "A=1\n# c\nexport PVE_TEMPLATE_VMID=101\nB=2\n";
@@ -665,6 +682,7 @@ mod refresh_tests {
         assert_eq!(set_env_key("PVE_TEMPLATE_VMID_X=1\n", "PVE_TEMPLATE_VMID", "9"), "PVE_TEMPLATE_VMID_X=1\nPVE_TEMPLATE_VMID=9\n");
     }
 
+    #[test_id(t3msdjn)]
     #[test]
     fn repoint_rewrites_the_file_keeping_its_mode() {
         use std::os::unix::fs::PermissionsExt;
@@ -677,6 +695,7 @@ mod refresh_tests {
         assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
     }
 
+    #[test_id(tqb4qor)]
     #[test]
     fn a_record_round_trips_and_names_the_tag_it_holds() {
         let d = TempDir::new();
@@ -688,6 +707,7 @@ mod refresh_tests {
         assert!(!r.holds("deadbeef0000"));
     }
 
+    #[test_id(tolgyff)]
     #[test]
     fn the_template_runs_the_ami_guest_setup_and_records_the_recipe() {
         let c = setup_command("w", "10.0.0.1", "1.99.1", "c", "abc");
@@ -697,12 +717,14 @@ mod refresh_tests {
         assert!(AMI_SETUP.contains("src/template.sh") && AMI_SETUP.contains(&format!("{}/spira-round-recipe-sha", system_paths::ETC)));
     }
 
+    #[test_id(tckrdew)]
     #[test]
     fn template_args_take_a_ref() {
         let a = parse_template_args(&["t".to_string(), "--ref".into(), "local/main".into()]).unwrap();
         assert_eq!(a.rev.as_deref(), Some("local/main"));
     }
 
+    #[test_id(t3f60rc)]
     #[test]
     fn adopt_args_take_a_vmid_and_a_tree() {
         let a = parse_template_args(&s(&["t", "--adopt", "101"])).unwrap();
@@ -710,6 +732,7 @@ mod refresh_tests {
         assert!(parse_template_args(&s(&["t", "--adopt"])).is_err());
     }
 
+    #[test_id(tkxskun)]
     #[test]
     fn adopt_writes_the_record_and_repoints_in_one_step() {
         let d = crate::testutil::TempDir::new();
@@ -726,6 +749,7 @@ mod refresh_tests {
         assert_eq!(std::fs::read_to_string(&pve).unwrap(), "PVE_TEMPLATE_VMID=101\nOTHER=1\n");
     }
 
+    #[test_id(tkqz5df)]
     #[test]
     fn adopt_refuses_a_vm_that_is_not_a_template_and_changes_nothing() {
         let d = crate::testutil::TempDir::new();
@@ -738,6 +762,7 @@ mod refresh_tests {
         assert_eq!(std::fs::read_to_string(&pve).unwrap(), "PVE_TEMPLATE_VMID=9\n");
     }
 
+    #[test_id(twrhg2e)]
     #[test]
     fn adopt_restores_the_old_record_when_the_repoint_fails() {
         let d = crate::testutil::TempDir::new();

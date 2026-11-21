@@ -30,4 +30,5 @@ codegen-units = 1
 strip = true
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

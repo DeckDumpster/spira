@@ -1,6 +1,9 @@
+#[macro_use]
+extern crate spira_test_id;
 use spira_config::build::{find_on, server_unit_args, Store};
 use std::process::Command;
 
+#[test_id(tmeglch)]
 #[test]
 fn a_session_tmpdir_removed_under_the_server_does_not_break_a_compile() {
     let Some(sccache) = find_on(&std::env::var("PATH").unwrap_or_default(), "sccache") else {

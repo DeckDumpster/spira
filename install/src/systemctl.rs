@@ -359,6 +359,7 @@ mod tests {
         n.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(tb6py11)]
     #[test]
     fn many_units_are_asked_about_in_one_call_and_keep_their_own_answers() {
         let (_d, sc, log) = stub("case \"$2\" in is-active) printf 'active\\ninactive\\n';; is-enabled) printf 'enabled\\ndisabled\\n';; esac");
@@ -368,6 +369,7 @@ mod tests {
         assert_eq!(calls(&log), 2);
     }
 
+    #[test_id(tuckxsb)]
     #[test]
     fn an_answer_with_a_line_missing_falls_back_to_one_call_per_unit() {
         let (_d, sc, log) = stub("case \"$*\" in *a.service*b.service*) printf 'enabled\\n';; *a.service) echo enabled;; esac");

@@ -401,6 +401,7 @@ mod tests {
         }
     }
 
+    #[test_id(tuu6gpz)]
     #[test]
     fn a_read_of_150_ms_is_ended_for_every_verb_on_the_store_as_served() {
         let dir = testkit::TempDir::new("lc-served-limit");
@@ -437,6 +438,7 @@ mod tests {
         }
     }
 
+    #[test_id(tpsnny7)]
     #[test]
     fn opening_a_store_holding_20000_keys_reads_no_lifecycle_row() {
         let (empty, _d, _c) = steps_to_open("lc-served-restart-empty", 0);
@@ -449,6 +451,7 @@ mod tests {
         assert!(contract.backend().take_read_steps() >= 10, "the counter sees a range read, so the low count above is real");
     }
 
+    #[test_id(ty5aq3e)]
     #[test]
     fn open_refuses_a_config_that_lacks_the_wal_line_naming_the_key() {
         let dir = testkit::TempDir::new("lc-served-wal-line");
@@ -462,6 +465,7 @@ mod tests {
         assert!(err.contains("SPIRA_LC_WAL_LINE_BYTES"), "{err}");
     }
 
+    #[test_id(t89ptjp)]
     #[test]
     fn a_call_under_a_client_id_spends_it_on_its_first_txn_and_suffixes_each_further_one() {
         let _bound = client_request_scoped(Some("req-1".to_string()));
@@ -471,6 +475,7 @@ mod tests {
         assert!(a.starts_with("lc/") && a != b, "unbound calls mint their own: {a} {b}");
     }
 
+    #[test_id(tgcirlp)]
     #[test]
     fn the_new_verbs_take_no_name_an_existing_verb_answers() {
         for v in sections::VERBS.iter().chain([&sections::lifecycle::VERB, &spira_lc::rc::VERB]) {

@@ -116,6 +116,7 @@ mod tests {
         false
     }
 
+    #[test_id(tv0e57r)]
     #[test]
     fn an_entry_older_than_the_window_is_removed() {
         let t = testkit::TempDir::new("retention-old");
@@ -124,6 +125,7 @@ mod tests {
         assert!(!t.path().join("a").exists());
     }
 
+    #[test_id(tgdog1u)]
     #[test]
     fn an_entry_inside_the_window_is_kept() {
         let t = testkit::TempDir::new("retention-young");
@@ -132,6 +134,7 @@ mod tests {
         assert!(t.path().join("a").exists());
     }
 
+    #[test_id(tfsaicg)]
     #[test]
     fn an_old_dir_with_a_fresh_child_is_kept() {
         let t = testkit::TempDir::new("retention-live");
@@ -143,6 +146,7 @@ mod tests {
         assert!(d.exists());
     }
 
+    #[test_id(tcmsun4)]
     #[test]
     fn an_old_entry_the_caller_keeps_survives() {
         let t = testkit::TempDir::new("retention-keep");
@@ -153,6 +157,7 @@ mod tests {
         assert!(t.path().join("live").exists() && !t.path().join("shut").exists());
     }
 
+    #[test_id(t1bj1fv)]
     #[test]
     fn one_call_removes_at_most_max_oldest_first() {
         let t = testkit::TempDir::new("retention-max");
@@ -164,6 +169,7 @@ mod tests {
         assert!(t.path().join("e1").exists());
     }
 
+    #[test_id(tgieqm2)]
     #[test]
     fn rounds_keep_claims_only_own_repo_results_outside_the_open_set() {
         let open = vec!["spira-open".to_string(), "spira/b2".to_string()];
@@ -173,6 +179,7 @@ mod tests {
         assert!(keep("cubby-old.results") && keep("spira-old.result") && keep("spira-old.mender-x"));
     }
 
+    #[test_id(t7ck0ar)]
     #[test]
     fn a_missing_dir_returns_zeros() {
         let t = testkit::TempDir::new("retention-missing");

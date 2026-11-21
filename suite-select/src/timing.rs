@@ -133,6 +133,7 @@ pub fn load(run: &Path, runs: usize) -> Result<P90s, Refusal> {
 mod tests {
     use super::*;
 
+    #[test_id(t2o1t3f)]
     #[test]
     fn quantile_cont_interpolates_like_duckdb() {
         assert_eq!(quantile_cont(&[5.0], 0.9), Some(5.0));
@@ -143,6 +144,7 @@ mod tests {
         assert_eq!(quantile_cont(&[], 0.9), None);
     }
 
+    #[test_id(tki2aho)]
     #[test]
     fn only_the_last_n_rows_by_ts_count_and_bad_rows_are_skipped() {
         let mut t = String::new();
@@ -157,6 +159,7 @@ mod tests {
         assert_eq!(p.skipped, 2);
     }
 
+    #[test_id(tbumicy)]
     #[test]
     fn setup_p90_reads_only_batch_rows_that_carry_it() {
         let t = "{\"suite\":\"__batch__\",\"ts\":\"2026-09-30T00:00:01Z\",\"wall_secs\":90}\n\
@@ -168,12 +171,14 @@ mod tests {
         assert_eq!(setup_p90("{\"suite\":\"__batch__\",\"ts\":\"x\",\"wall_secs\":1}", 20), None);
     }
 
+    #[test_id(t47vjek)]
     #[test]
     fn a_missing_family_is_no_timings_not_a_refusal() {
         let d = testkit::TempDir::new("suite-select-timing");
         assert_eq!(load(d.path(), 20).unwrap(), P90s::default());
     }
 
+    #[test_id(takhp21)]
     #[test]
     fn recent_reds_ignores_ok_and_skip_and_counts_only_each_suites_last_runs() {
         let row = |ts: u32, suite: &str, rc: i32| format!(r#"{{"ts":"2026-11-{ts:02}","suite":"{suite}","rc":{rc},"wall_secs":1.0}}"#);

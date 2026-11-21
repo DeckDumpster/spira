@@ -3,6 +3,7 @@ use spira_sim::probe::{merge_bd, names, parse_branches, rows, GitFacts, Lineage}
 use std::collections::BTreeMap;
 use std::path::Path;
 
+#[test_id(tdke7nd)]
 #[test]
 fn names_matches_whole_bead_ids_only() {
     assert!(names("sp-l: x", "sp-l"));
@@ -14,6 +15,7 @@ fn names_matches_whole_bead_ids_only() {
     assert!(!names("sp-l-2", "sp-l"));
 }
 
+#[test_id(tda04y2)]
 #[test]
 fn lineage_and_branch_parsing() {
     let l = Lineage::parse("aaa\0sp-a: one\n\n\x1e\nbbb\0seed\n\x1e\n");
@@ -31,6 +33,7 @@ fn rows_of(list: &str, facts: &GitFacts) -> BTreeMap<String, Value> {
     rows(list, &|_| None, facts).unwrap().into_iter().map(|r| (r["bead"].as_str().unwrap().to_string(), r)).collect()
 }
 
+#[test_id(tsqy5ku)]
 #[test]
 fn rows_refuse_unparseable_lifecycle_output() {
     let g = GitFacts::default();
@@ -40,6 +43,7 @@ fn rows_refuse_unparseable_lifecycle_output() {
     assert!(rows(r#"[{"bead_id":"sp-a","version":"x"}]"#, &|_| None, &g).is_err());
 }
 
+#[test_id(tgcz2me)]
 #[test]
 fn bd_rows_refuse_what_is_not_a_bead_list() {
     for bad in ["", "{}", "[{\"title\":\"no id\"}]"] {
@@ -47,6 +51,7 @@ fn bd_rows_refuse_what_is_not_a_bead_list() {
     }
 }
 
+#[test_id(t1dgvfh)]
 #[test]
 fn a_worlds_landing_lineage_is_its_origin_trunk_unless_its_own_repository_is_queue_local() {
     let t = testkit::TempDir::new("probe-mode");
@@ -59,6 +64,7 @@ fn a_worlds_landing_lineage_is_its_origin_trunk_unless_its_own_repository_is_que
     }
 }
 
+#[test_id(tjo3xo0)]
 #[test]
 fn a_bead_of_another_repository_is_held_against_that_repositorys_lineage() {
     let mut other = Lineage::default();
@@ -78,6 +84,7 @@ fn deliver(root: &Path, mailbox: &str, sub: &str, file: &str, text: &str) {
     std::fs::write(d.join(file), text).unwrap();
 }
 
+#[test_id(ti91hz3)]
 #[test]
 fn mail_rows_name_each_message_by_mailbox_kind_bead_read_state_and_subject() {
     let d = testkit::TempDir::new("simprobe-mail");
@@ -97,6 +104,7 @@ fn mail_rows_name_each_message_by_mailbox_kind_bead_read_state_and_subject() {
     assert!(spira_sim::probe::mail_rows(&d.join("absent")).is_empty());
 }
 
+#[test_id(tkrihpz)]
 #[test]
 fn a_worlds_mail_is_unmuted_and_rooted_inside_it() {
     let s = spira_sim::world::config_settings(Path::new("w"), &[], Path::new("w/bin/gh"));
@@ -104,6 +112,7 @@ fn a_worlds_mail_is_unmuted_and_rooted_inside_it() {
     assert_eq!(spira_sim::world::mail_root(Path::new("w")), Path::new("w").join("home").join("spira").join("run").join("mail"));
 }
 
+#[test_id(thoznmi)]
 #[test]
 fn a_dropped_row_carries_the_lifecycles_reason_and_a_row_without_one_is_null() {
     let list = r#"[{"bead_id":"sp-a","state":"DROPPED","version":"2","reason":"unwanted"},{"bead_id":"sp-b","state":"READY","version":"1"}]"#;

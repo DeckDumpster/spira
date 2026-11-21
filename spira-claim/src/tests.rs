@@ -24,6 +24,7 @@ use super::*;
 
 /// `rune_home` is the declared home: `SPIRA_HOME` wins, else `$SPIRA_RELEASE/spira`, and
 /// neither set is a refusal naming both — never a search from this executable.
+#[test_id(tmj3p2h)]
 #[test]
 fn rune_home_is_spira_home_then_the_declared_release_and_refuses_naming_both() {
     let pinned = testkit::env(&[("SPIRA_HOME", Some("some/pinned/tree"))]);
@@ -52,6 +53,7 @@ fn rune_home_is_spira_home_then_the_declared_release_and_refuses_naming_both() {
 
 // ---- one resolution path: the label keys come from the config file, never the caller's env ----
 
+#[test_id(tgxbzzb)]
 #[test]
 fn no_call_site_reads_the_unfiltered_store() {
     let src = include_str!("store.rs");
@@ -61,6 +63,7 @@ fn no_call_site_reads_the_unfiltered_store() {
 
 /// An in-process caller's environment answers every read on the dispatch path; this
 /// process's own variables are never consulted.
+#[test_id(tre8rk0)]
 #[test]
 fn dispatch_in_reads_the_callers_environment_not_the_process() {
     let mut stdin = std::io::empty();
@@ -81,6 +84,7 @@ fn dispatch_in_reads_the_callers_environment_not_the_process() {
     assert_eq!(unpoison_opts(&a, &env).unwrap().poison_at, Thresholds::default().poison_at);
 }
 
+#[test_id(tmceg7f)]
 #[test]
 fn express_is_a_bool_flag_and_never_swallows_what_follows() {
     let raw: Vec<String> = ["labels", "", "--express"].iter().map(|s| s.to_string()).collect();
@@ -91,6 +95,7 @@ fn express_is_a_bool_flag_and_never_swallows_what_follows() {
 
 /// The argv a dwarf's claim seam sends (`dwarf/src/seam.rs`): `--dropped` last, with nothing after
 /// it. Release 88977d0bc1 answered "--dropped needs a value" to every claim.
+#[test_id(th73514)]
 #[test]
 fn dropped_is_a_bool_flag_as_the_claim_seam_sends_it() {
     let raw: Vec<String> = ["builder", "--json", "--dropped"].iter().map(|s| s.to_string()).collect();
@@ -185,6 +190,7 @@ mod published {
         serde_json::from_str(call[1].strip_prefix("stdin=")?).ok()
     }
 
+    #[test_id(t4zn6zp)]
     #[test]
     fn judge_rows_publishes_readiness_for_certified_and_submitted_records_with_the_gates_it_read() {
         let (seen, _) = judged(true, true);
@@ -197,6 +203,7 @@ mod published {
         assert_eq!((entry("sp-r")["claimable"].clone(), entry("sp-r")["blocked_by"].clone(), entry("sp-r")["gates"]["sp-w"].clone()), (false.into(), serde_json::json!(["sp-w"]), working));
     }
 
+    #[test_id(tbuj560)]
     #[test]
     fn the_planning_watermark_is_read_before_the_rows_it_stamps() {
         let (seen, _) = judged(true, true);
@@ -204,6 +211,7 @@ mod published {
         assert!(at(&["plan", "watermark"]) < at(&["list", "--state", LIVE]));
     }
 
+    #[test_id(ta1ahxx)]
     #[test]
     fn a_reading_pass_publishes_nothing_and_reads_no_live_set() {
         let (seen, entries) = judged(true, false);
@@ -212,6 +220,7 @@ mod published {
         assert_eq!(entries.len(), 1);
     }
 
+    #[test_id(tkx4v4c)]
     #[test]
     fn machine_claimable_is_a_reading_pass_and_machine_judged_publishes_only_when_told_to() {
         let run = |publish: bool| {
@@ -228,6 +237,7 @@ mod published {
         assert!(published(&run(true)).is_some());
     }
 
+    #[test_id(t0vbr1x)]
     #[test]
     fn nothing_is_published_while_the_control_store_is_not_in_use() {
         let (seen, entries) = judged(false, true);
@@ -247,6 +257,7 @@ mod published {
         judge_rows(&Args::parse(&[]).unwrap(), &env, &store_over(t), None, true).unwrap();
     }
 
+    #[test_id(tm9m4uw)]
     #[test]
     fn a_refused_readiness_publish_raises_the_alert_that_pages() {
         let svc = Arc::new(Refusing(Service(Mutex::new(Vec::new()))));
@@ -259,6 +270,7 @@ mod published {
         assert!(!seen.iter().any(|c| c[0] == "condition" && c[1] == "clear"));
     }
 
+    #[test_id(ti1sbs0)]
     #[test]
     fn an_accepted_readiness_publish_clears_the_alert() {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
@@ -268,6 +280,7 @@ mod published {
         assert!(!seen.iter().any(|c| c[0] == "condition" && c[1] == "set"));
     }
 
+    #[test_id(tyw5x3f)]
     #[test]
     fn republish_dependents_judges_and_publishes_only_the_records_that_wait_on_or_descend_from_the_changed() {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
@@ -284,6 +297,7 @@ mod published {
         assert_eq!(ids, ["sp-r", "sp-s", "sp-w"], "sp-c is neither waiting on sp-w nor under it, and a related edge holds nothing back; the changed record is judged with them");
     }
 
+    #[test_id(toolfu0)]
     #[test]
     fn republish_dependents_judges_the_changed_record_itself_when_nothing_waits_on_it() {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
@@ -384,6 +398,7 @@ mod claim_view_read {
         svc.seen.lock().unwrap().iter().map(|a| a.join(" ")).collect()
     }
 
+    #[test_id(tp9uh4t)]
     #[test]
     fn every_reader_of_the_view_makes_one_claimable_call_and_nothing_else() {
         let a = Args::parse(&[]).unwrap();
@@ -401,6 +416,7 @@ mod claim_view_read {
         }
     }
 
+    #[test_id(tovngh8)]
     #[test]
     fn the_verbs_of_one_tick_share_one_claimable_call_and_the_next_tick_asks_again() {
         let (svc, st) = setup(0);
@@ -419,6 +435,7 @@ mod claim_view_read {
         assert_eq!(seen(&svc), ["claimable", "claimable"], "a view is not kept past its tick");
     }
 
+    #[test_id(t5iez9x)]
     #[test]
     fn rune_ready_lists_the_beads_the_view_says_the_rune_would_take() {
         let (_, st) = setup(0);
@@ -443,6 +460,7 @@ mod claim_view_read {
         }
     }
 
+    #[test_id(tzmgbyp)]
     #[test]
     fn rune_ready_names_a_rework_bead_a_live_process_occupies_and_the_rule_that_dropped_it() {
         let t = testkit::TempDir::new("claim-dropped-occupied");
@@ -463,6 +481,7 @@ mod claim_view_read {
         assert_eq!(json["dropped"], json!([{ "id": "sp-rw", "rule": "occupied" }]));
     }
 
+    #[test_id(t8v315w)]
     #[test]
     fn select_machine_keeps_only_the_beads_the_view_lists_as_claimable() {
         let (svc, st) = setup(0);
@@ -474,6 +493,7 @@ mod claim_view_read {
         assert!(lc.contains_key("sp-a"));
     }
 
+    #[test_id(tlpbsnm)]
     #[test]
     fn bulk_counts_come_from_the_runes_the_view_names() {
         let (_, st) = setup(0);
@@ -482,6 +502,7 @@ mod claim_view_read {
         assert_eq!(ready::bucket_taken(&view.rows, &view.runes, &parts), [("builder".to_string(), 1), ("ops".to_string(), 0)]);
     }
 
+    #[test_id(th0xr7g)]
     #[test]
     fn ready_count_counts_the_view_claimable_rows() {
         let (_, st) = setup(0);
@@ -489,6 +510,7 @@ mod claim_view_read {
         assert_eq!(n, 1);
     }
 
+    #[test_id(tlkia0o)]
     #[test]
     fn urgent_lists_the_views_rework_beads_and_reads_the_view_once() {
         let (svc, st) = setup(0);
@@ -498,6 +520,7 @@ mod claim_view_read {
         assert_eq!(calls.iter().filter(|c| *c == "claimable").count(), 1, "{calls:?}");
     }
 
+    #[test_id(t1kb4jp)]
     #[test]
     fn ready_count_express_counts_the_views_claimable_rows_that_are_express() {
         let (_, st) = setup(0);
@@ -507,6 +530,7 @@ mod claim_view_read {
         assert_eq!((n.code, n.out.as_str()), (0, "1"), "{n:?}");
     }
 
+    #[test_id(taq3dyk)]
     #[test]
     fn a_claimable_bead_with_no_plan_row_is_not_ranked_and_does_not_fail_the_read() {
         let (_, st) = setup(NO_PLAN_ROW);
@@ -515,6 +539,7 @@ mod claim_view_read {
         assert!(v.lifecycle.contains_key("sp-a"));
     }
 
+    #[test_id(thzim7n)]
     #[test]
     fn an_unreadable_view_is_the_reads_error_and_nothing_judges_in_its_place() {
         let (svc, st) = setup(2);
@@ -525,6 +550,7 @@ mod claim_view_read {
     }
 }
 
+#[test_id(tpv41kc)]
 #[test]
 fn the_verbs_a_caller_waits_on_push_no_run_metric_when_they_succeed() {
     let hot = |v: &str, code| discards_run_metric(&[v.to_string(), "builder".into()], code);
@@ -547,6 +573,7 @@ fn ready(id: &str) -> rank::ReadyRow {
     rank::ReadyRow { id: id.into(), ..Default::default() }
 }
 
+#[test_id(t2g7hkw)]
 #[test]
 fn a_bead_whose_worktree_a_live_process_holds_is_dropped_and_returns_once_it_exits() {
     let t = testkit::TempDir::new("claim-occupied");
@@ -564,6 +591,7 @@ fn a_bead_whose_worktree_a_live_process_holds_is_dropped_and_returns_once_it_exi
     assert_eq!(rows.len(), 2);
 }
 
+#[test_id(tn05sje)]
 #[test]
 fn a_worktree_sharing_only_a_name_prefix_does_not_occupy_the_bead() {
     let t = testkit::TempDir::new("claim-occupied-prefix");
@@ -585,6 +613,7 @@ fn stopped_repo_rows(t: &testkit::TempDir, owner: &str) -> (std::path::PathBuf, 
     (run, vec![fix, other])
 }
 
+#[test_id(tvekqcw)]
 #[test]
 fn the_contract_fix_label_passes_no_claims_stop() {
     let t = testkit::TempDir::new("claim-contract-fix-passes-nothing");
@@ -593,6 +622,7 @@ fn the_contract_fix_label_passes_no_claims_stop() {
     assert!(rows.is_empty());
 }
 
+#[test_id(t0mur1x)]
 #[test]
 fn claim_retry_is_no_longer_a_verb() {
     let toml = format!("{}/../spira/testlib/complete.toml", std::env::var("CARGO_MANIFEST_DIR").unwrap());

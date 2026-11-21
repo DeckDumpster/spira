@@ -161,6 +161,7 @@ mod tests {
         String::from_utf8(classify(s.as_bytes()).code_only()).unwrap()
     }
 
+    #[test_id(t75fraz)]
     #[test]
     fn comments_and_strings_are_not_code() {
         let c = code("let a = \"x::y\"; // z::w\n/* q::r /* nested */ s::t */ u::v");
@@ -169,6 +170,7 @@ mod tests {
         assert_eq!(c.matches('\n').count(), 1);
     }
 
+    #[test_id(tk2jbu6)]
     #[test]
     fn raw_strings_chars_and_lifetimes() {
         let c = code("r#\"a \" b::c\"# fn f<'a>(x: &'a str) -> char { '\\'' } br\"d::e\" b'x' g::h");
@@ -177,6 +179,7 @@ mod tests {
         assert!(c.contains("g::h"));
     }
 
+    #[test_id(tqlroo5)]
     #[test]
     fn escaped_quote_in_string() {
         let c = code("\"a \\\" toml::x\" toml::y");

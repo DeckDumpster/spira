@@ -40,6 +40,7 @@ mod tests {
     use super::*;
 
 
+    #[test_id(tn3t2xp)]
     #[test]
     fn a_bead_id_is_the_rebase_operation() {
         assert_eq!(operation(Some("sp-abc123")), "rebase");

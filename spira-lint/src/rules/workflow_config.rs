@@ -193,6 +193,7 @@ mod tests {
 
     const BARE: &str = "jobs:\n  a:\n    runs-on: x\n    steps:\n      - name: stage\n        run: |\n          \"$RUNNER_TEMP/build/release\" build\n";
 
+    #[test_id(tt3gnn9)]
     #[test]
     fn an_unconfigured_step_is_red() {
         let got = judge("w.yml", BARE, &bins());
@@ -200,6 +201,7 @@ mod tests {
         assert_eq!(got[0].line, Some(5));
     }
 
+    #[test_id(t7jydsj)]
     #[test]
     fn each_source_of_config_makes_it_green() {
         let step_env = BARE.replace("        run:", "        env:\n          SPIRA_TOML: /x\n        run:");
@@ -214,6 +216,7 @@ mod tests {
         assert_eq!(judge("w.yml", &later, &bins()).len(), 1, "config written after the step does not count");
     }
 
+    #[test_id(t8ncn8y)]
     #[test]
     fn an_inline_run_is_judged_like_a_block() {
         let wf = "jobs:\n  a:\n    steps:\n      - name: stage\n        run: printf 'PATH=%s\\n' \"$p\" >> \"$GITHUB_ENV\"\n      - name: pub\n        run: testenv container publish\n";
@@ -222,6 +225,7 @@ mod tests {
         assert!(got[0].message.contains("pub"));
     }
 
+    #[test_id(tfe07zd)]
     #[test]
     fn a_bare_tool_counts_only_after_the_path_is_staged() {
         let wf = "jobs:\n  a:\n    steps:\n      - name: before\n        run: testenv container image\n      - name: stage\n        run: printf 'PATH=%s\\n' \"$p\" >> \"$GITHUB_ENV\"\n      - name: after\n        run: |\n          testenv container publish\n      - name: locate\n        run: PATH=\"$p\" command -v testenv\n";
@@ -230,6 +234,7 @@ mod tests {
         assert!(got[0].message.contains("after"));
     }
 
+    #[test_id(ttnwn79)]
     #[test]
     fn an_action_that_restores_a_release_binary_runs_nothing() {
         let wf = "jobs:\n  a:\n    steps:\n      - name: Restore the driver\n        uses: actions/cache@v4\n        with:\n          path: target/release/testenv\n          key: k\n      - name: Run it\n        run: target/release/testenv container tag\n";
@@ -238,6 +243,7 @@ mod tests {
         assert!(got[0].message.contains("Run it"), "{got:?}");
     }
 
+    #[test_id(t72un3g)]
     #[test]
     fn comments_and_path_additions_are_not_invocations() {
         let wf = "jobs:\n  a:\n    steps:\n      - name: build\n        run: |\n          # target/release/foo is run later\n          printf '%s\\n' \"$W/target/release\" >> \"$GITHUB_PATH\"\n          find target/release -maxdepth 1\n";

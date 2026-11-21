@@ -2,6 +2,9 @@
 //! (the actionable filter, the fingerprint, the age format, the ask texts) that the scheduler's
 //! `inbox.notify` task reuses. The `watchd` binary is a face over these modules.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod commands;
 pub mod context;
 pub mod cursor;

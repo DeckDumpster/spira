@@ -132,6 +132,7 @@ mod tests {
         u.install_detail(d);
     }
 
+    #[test_id(t6eiqwj)]
     #[test]
     fn a_failed_spira_unit_and_a_failed_shared_unit_are_both_named() {
         let u = units();
@@ -142,6 +143,7 @@ mod tests {
         assert_eq!(gather(&u), Some(vec!["dolt-beads.service".to_string(), "spira-watchtower.service".to_string()]));
     }
 
+    #[test_id(thf4fbs)]
     #[test]
     fn a_failed_transient_unit_outside_the_spira_prefix_is_named() {
         let u = units();
@@ -150,6 +152,7 @@ mod tests {
         assert_eq!(gather(&u), Some(vec!["concierge-hel-catchup.service".to_string(), "dolt-beads.service".to_string()]));
     }
 
+    #[test_id(tw3f4hk)]
     #[test]
     fn a_unit_whose_file_is_gone_is_absent_not_failed() {
         let u = units();
@@ -158,6 +161,7 @@ mod tests {
         assert_eq!(gather(&u), Some(vec![]));
     }
 
+    #[test_id(tgmi6a3)]
     #[test]
     fn a_manager_that_cannot_be_asked_is_unknown_never_all_clear() {
         struct Down;
@@ -178,6 +182,7 @@ mod tests {
         assert_eq!(gather(&Down), None);
     }
 
+    #[test_id(t59bvg5)]
     #[test]
     fn first_sighting_never_escalates_immediately() {
         let (row, esc) = decide(1_000_000, "spira-x.service", "i1", None, 15);
@@ -186,6 +191,7 @@ mod tests {
         assert!(!row.escalated);
     }
 
+    #[test_id(tqcicu4)]
     #[test]
     fn escalates_once_age_crosses_the_threshold_on_a_later_pass() {
         let prev = StateRow {
@@ -204,6 +210,7 @@ mod tests {
         assert!(row2.escalated);
     }
 
+    #[test_id(to5g32p)]
     #[test]
     fn dedup_once_escalated_later_passes_do_not_refire() {
         let prev = StateRow {
@@ -217,6 +224,7 @@ mod tests {
         assert!(row.escalated);
     }
 
+    #[test_id(t8t9dyo)]
     #[test]
     fn state_file_round_trips_through_parse_and_render() {
         let rows = vec![
@@ -227,6 +235,7 @@ mod tests {
         assert_eq!(parse_state(&text), rows);
     }
 
+    #[test_id(tguibod)]
     #[test]
     fn a_new_invocation_restarts_the_age_and_clears_escalated() {
         let prev = StateRow { unit: "u".into(), first_seen: 1_000_000, escalated: true, invocation: "i1".into() };
@@ -236,6 +245,7 @@ mod tests {
         assert_eq!((row.first_seen, row.escalated, row.invocation.as_str()), (now, false, "i2"));
     }
 
+    #[test_id(t16044b)]
     #[test]
     fn one_invocation_escalates_once_at_16_minutes_and_not_again_at_46() {
         let prev = StateRow { unit: "u".into(), first_seen: 1_000_000, escalated: false, invocation: "i1".into() };
@@ -245,6 +255,7 @@ mod tests {
         assert!(!again);
     }
 
+    #[test_id(twrlyvs)]
     #[test]
     fn a_state_row_written_before_invocations_reads_as_another_invocation() {
         let rows = parse_state("u 1000000 1\n");
@@ -254,6 +265,7 @@ mod tests {
         assert_eq!(row.first_seen, 1_000_000 + 60 * 60);
     }
 
+    #[test_id(tc5kssw)]
     #[test]
     fn gather_runs_names_each_failed_units_invocation() {
         let u = units();

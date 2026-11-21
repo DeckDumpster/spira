@@ -1,6 +1,7 @@
 use super::*;
 use std::cell::RefCell;
 
+#[test_id(t39wdir)]
 #[test]
 fn deliberate_causes_list() {
     assert_eq!(deliberate_causes_text(), "work-close-converted 1\neject 0\n");
@@ -70,6 +71,7 @@ fn opts(id: &str, cause: &str) -> Opts {
     Opts { id: id.into(), cause: cause.into(), note: String::new(), suites: String::new() }
 }
 
+#[test_id(tz9skb0)]
 #[test]
 fn happy_path_every_step_in_order() {
     let mut w = Fake::default();
@@ -86,6 +88,7 @@ fn happy_path_every_step_in_order() {
     );
 }
 
+#[test_id(t01ksnk)]
 #[test]
 fn suites_write_the_sidecar() {
     let mut w = Fake::default();
@@ -95,6 +98,7 @@ fn suites_write_the_sidecar() {
     assert!(w.has("write_ejected sp-a test-x.sh"));
 }
 
+#[test_id(t6g6i61)]
 #[test]
 fn no_suites_means_no_sidecar_write() {
     let mut w = Fake::default();
@@ -102,6 +106,7 @@ fn no_suites_means_no_sidecar_write() {
     assert!(!w.calls.borrow().iter().any(|c| c.starts_with("write_ejected")));
 }
 
+#[test_id(tlw7d9m)]
 #[test]
 fn work_close_converted_is_exempt_leaves_the_row_alone() {
     let mut w = Fake::default();
@@ -110,6 +115,7 @@ fn work_close_converted_is_exempt_leaves_the_row_alone() {
     assert!(w.has("write_reopen_event sp-a work-close-converted"));
 }
 
+#[test_id(t4rpjk2)]
 #[test]
 fn eject_is_deliberate_but_not_exempt() {
     let mut w = Fake::default();
@@ -117,6 +123,7 @@ fn eject_is_deliberate_but_not_exempt() {
     assert!(w.has("lc_reopen sp-a eject"), "the row is withdrawn through the machine");
 }
 
+#[test_id(t64bzq8)]
 #[test]
 fn note_only_called_when_non_empty() {
     let mut w = Fake::default();
@@ -130,12 +137,14 @@ fn note_only_called_when_non_empty() {
     assert!(w2.has("note sp-a a human-readable note"));
 }
 
+#[test_id(tj2vel2)]
 #[test]
 fn lc_reopen_failure_sets_rc_1() {
     let mut w = Fake { reopen_fails: true, ..Default::default() };
     assert_eq!(run(&opts("sp-a", "gate-red"), &mut w).0, 1);
 }
 
+#[test_id(tyrfgz8)]
 #[test]
 fn note_failure_sets_rc_1_but_only_when_a_note_was_given() {
     let mut w = Fake { note_fails: true, ..Default::default() };
@@ -147,6 +156,7 @@ fn note_failure_sets_rc_1_but_only_when_a_note_was_given() {
     assert_eq!(run(&o, &mut w2).0, 1);
 }
 
+#[test_id(t7llqwl)]
 #[test]
 fn write_reopen_event_failure_can_never_set_rc_nonzero() {
     // write_reopen_event has no Result at all in this trait — the bash wrapper it shims
@@ -159,6 +169,7 @@ fn write_reopen_event_failure_can_never_set_rc_nonzero() {
     assert!(w.has("write_reopen_event sp-a gate-red"));
 }
 
+#[test_id(t1fsmye)]
 #[test]
 fn every_failure_together_is_still_just_rc_1() {
     let mut w = Fake { reopen_fails: true, note_fails: true, ..Default::default() };
@@ -183,6 +194,7 @@ fn fake_dwarf(run: &std::path::Path, bead: &str, lease_until: i64) {
     std::fs::write(pf.with_extension("lease"), lease_until.to_string()).unwrap();
 }
 
+#[test_id(t9dl0xs)]
 #[test]
 fn a_live_holder_gets_a_stop_request_and_is_waited_for() {
     let dir = testkit::TempDir::new("spira-claim-stop-holder");
@@ -204,6 +216,7 @@ fn a_live_holder_gets_a_stop_request_and_is_waited_for() {
     assert!(said.contains("local-tier-red"), "{said}");
 }
 
+#[test_id(teuycm4)]
 #[test]
 fn a_holder_that_will_not_exit_refuses_the_release() {
     let dir = testkit::TempDir::new("spira-claim-stop-stuck");
@@ -214,6 +227,7 @@ fn a_holder_that_will_not_exit_refuses_the_release() {
     assert!(r.unwrap_err().contains("did not exit"));
 }
 
+#[test_id(tzczze3)]
 #[test]
 fn no_live_holder_and_an_dwarves_own_call_wait_for_nothing() {
     let dir = testkit::TempDir::new("spira-claim-stop-none");
@@ -227,6 +241,7 @@ fn no_live_holder_and_an_dwarves_own_call_wait_for_nothing() {
     assert!(stop_holder_in(&run, "sp-b", "x", false, 5, &|| 100, &never).is_ok(), "an expired lease is not a live holder");
 }
 
+#[test_id(th31u5e)]
 #[test]
 fn a_refused_stop_leaves_the_bead_working() {
     struct Stuck(Fake);
@@ -246,6 +261,7 @@ fn a_refused_stop_leaves_the_bead_working() {
     assert!(w.0.calls.borrow().is_empty(), "the row moved with the dwarf still running: {:?}", w.0.calls.borrow());
 }
 
+#[test_id(t5psxrb)]
 #[test]
 fn the_stop_comes_before_the_state_leaves_working() {
     let mut w = Fake::default();
@@ -260,6 +276,7 @@ fn the_stop_comes_before_the_state_leaves_working() {
     assert!(!w.has("stop_holder sp-a work-close-converted"), "a conversion is the holder's own hand-off");
 }
 
+#[test_id(t2yqjie)]
 #[test]
 fn only_a_red_ejection_records_failing_checks() {
     let red = Opts { id: "sp-a".into(), cause: "eject-red".into(), note: String::new(), suites: "test-x.sh,test-y.sh".into() };
@@ -272,6 +289,7 @@ fn only_a_red_ejection_records_failing_checks() {
     assert!(!w.calls.borrow().iter().any(|c| c.starts_with("record_failing")), "a harness eject judges nothing");
 }
 
+#[test_id(t9rpske)]
 #[test]
 fn a_judged_reopen_records_a_rejection_and_a_harness_one_does_not() {
     let mut w = Fake::default();
@@ -285,6 +303,7 @@ fn a_judged_reopen_records_a_rejection_and_a_harness_one_does_not() {
     }
 }
 
+#[test_id(tj84d4o)]
 #[test]
 fn a_refused_lc_reopen_is_reported_with_its_step_and_the_machines_own_error() {
     let mut w = Fake { reopen_fails: true, ..Default::default() };
@@ -295,6 +314,7 @@ fn a_refused_lc_reopen_is_reported_with_its_step_and_the_machines_own_error() {
     assert!(failures[0].contains("machine refused"), "{failures:?}");
 }
 
+#[test_id(tmdmllf)]
 #[test]
 fn a_failed_note_is_reported_with_its_step_and_bds_own_error() {
     let mut w = Fake { note_fails: true, ..Default::default() };
@@ -307,6 +327,7 @@ fn a_failed_note_is_reported_with_its_step_and_bds_own_error() {
     assert!(failures[0].contains("note refused"), "{failures:?}");
 }
 
+#[test_id(tm2wwtw)]
 #[test]
 fn both_failures_are_reported_in_step_order() {
     let mut w = Fake { reopen_fails: true, note_fails: true, ..Default::default() };

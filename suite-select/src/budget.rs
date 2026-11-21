@@ -197,6 +197,7 @@ mod tests {
         }
     }
 
+    #[test_id(tk57ad6)]
     #[test]
     fn rank_is_bucket_then_specificity_then_tag_then_name() {
         let a = s("test-a.sh", Some(Tier::T2), Some(&["x"]));
@@ -209,6 +210,7 @@ mod tests {
         assert_eq!(names, ["test-e.sh", "test-d.sh", "test-c.sh", "test-b.sh", "test-a.sh"]);
     }
 
+    #[test_id(tsj34ub)]
     #[test]
     fn unmeasured_suites_cost_their_tier_cap_and_measured_their_p90() {
         let a = s("test-a.sh", Some(Tier::T3), Some(&["x"]));
@@ -222,6 +224,7 @@ mod tests {
         assert_eq!(cost["test-c.sh"], 2.5);
     }
 
+    #[test_id(thkz6on)]
     #[test]
     fn fill_keeps_walking_after_a_drop_and_divides_by_width() {
         let r: Vec<Ranked> = [("test-a.sh", 100.0), ("test-b.sh", 250.0), ("test-c.sh", 90.0)]
@@ -255,6 +258,7 @@ mod tests {
         Ranked { name: name.into(), tier: Tier::T1, cost, source: "p90", key: (0, Reverse(0), 1, 1) }
     }
 
+    #[test_id(tfbfp5w)]
     #[test]
     fn a_suite_longer_than_the_suites_budget_is_dropped_however_wide_the_gate_is() {
         let r = [ranked("test-long.sh", 92.0), ranked("test-short.sh", 10.0)];
@@ -263,6 +267,7 @@ mod tests {
         assert_eq!(cut.selected, ["test-short.sh"], "a cheaper suite after a drop is still kept");
     }
 
+    #[test_id(tmretj6)]
     #[test]
     fn lanes_fill_in_rank_order_so_the_last_suite_is_judged_on_the_lane_it_would_get() {
         // Two lanes of 60 s: 50 and 50 take one each, the 30 s one then fits neither.
@@ -272,6 +277,7 @@ mod tests {
         assert_eq!(cut.dropped, ["test-c.sh"]);
     }
 
+    #[test_id(trwml9f)]
     #[test]
     fn recent_reds_rank_a_suite_ahead_of_an_equally_tiered_more_specific_one() {
         let specific = s("test-specific.sh", Some(Tier::T1), Some(&["x"]));

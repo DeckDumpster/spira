@@ -408,6 +408,7 @@ pub fn check_binaries(rel: &Path) -> Result<Vec<String>, String> {
 mod absent_is_empty_tests {
     use super::render_from_lookup;
 
+    #[test_id(t45h5d1)]
     #[test]
     fn an_omitted_lc_password_file_renders_empty_and_an_omitted_other_key_still_refuses() {
         let ok = render_from_lookup("x.service", "Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@\n", |_| None, None, "prod").unwrap();
@@ -421,6 +422,7 @@ mod absent_is_empty_tests {
 mod exec_changed_tests {
     use super::exec_changed;
 
+    #[test_id(tq2bjv3)]
     #[test]
     fn a_release_that_moves_only_environment_lines_is_not_an_exec_change() {
         let old = "[Service]\nEnvironment=SPIRA_RELEASE=/r/aaa\nExecStart=/bin/dolt sql-server\nExecStopPost=/p/store-persist pass --offline\n";
@@ -433,6 +435,7 @@ mod exec_changed_tests {
 #[cfg(test)]
 mod units_repo_tests {
     use super::*;
+    #[test_id(t009r6s)]
     #[test]
     fn units_repo_is_the_mapped_checkout_when_it_is_git_else_the_release() {
         let rel = Path::new("r/rel");
@@ -490,6 +493,7 @@ mod own_log_tests {
     use super::own_log;
     use std::path::PathBuf;
 
+    #[test_id(t41dxjo)]
     #[test]
     fn own_log_reads_the_append_path_from_either_directive_and_none_from_the_journal() {
         let p = |s: &str| Some(PathBuf::from(s));

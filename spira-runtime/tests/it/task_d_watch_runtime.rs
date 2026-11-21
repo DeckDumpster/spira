@@ -49,6 +49,7 @@ fn carry(r: &TaskRig) -> Carry {
     r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap_or_default()
 }
 
+#[test_id(te7nt4a)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_six_hour_tick() {
     let row = acc::row(NAME);
@@ -64,6 +65,7 @@ fn t1_the_row_is_registered_and_its_boot_arms_the_six_hour_tick() {
 }
 
 /// The contract's silence: the probe and one metrics push; no state Emit, no log line.
+#[test_id(tzyylv9)]
 #[test]
 fn t2_a_supported_pin_pushes_metrics_and_nothing_else() {
     let mut r = rig(1, Arc::new(Mutex::new(pinned("1.91", "1.91.0"))));
@@ -75,6 +77,7 @@ fn t2_a_supported_pin_pushes_metrics_and_nothing_else() {
     assert!(r.journaled()[journal..].iter().all(|e| e.kind.tag != STATE));
 }
 
+#[test_id(tmf6s3i)]
 #[test]
 fn t3_a_pin_goes_stale_is_filed_once_and_files_again_after_its_bump_closes() {
     let w = Arc::new(Mutex::new(pinned("1.91", "1.93.0")));
@@ -90,6 +93,7 @@ fn t3_a_pin_goes_stale_is_filed_once_and_files_again_after_its_bump_closes() {
     assert_eq!(asked(&r, FILE_BUMP).len(), 2, "closed → stale-unfiled → filed again");
 }
 
+#[test_id(tvnc81q)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("d/watch_runtime.rs")), None);
@@ -101,6 +105,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 }
 
 /// `pass`'s title (`runtime-watch/src/lib.rs:348`) and the `cannot check` line kept in the log.
+#[test_id(tmvka3q)]
 #[test]
 fn t5_the_bump_title_and_the_cannot_check_line_are_runtime_watchs() {
     let r = rig(1, Arc::new(Mutex::new(pinned("1.91", "1.93.0"))));
@@ -118,12 +123,14 @@ fn filed_bump() -> TaskRig {
     rig(1, Arc::new(Mutex::new(pinned("1.91", "1.93.0"))))
 }
 
+#[test_id(tdrl849)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_bump(), NAME);
     assert!(rows.iter().any(|k| k.starts_with("ledger/")), "{rows:?}");
 }
 
+#[test_id(t2y2tid)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed_bump, || WatchRuntime::new(config()).registration(), STREAM, WatchRuntime::boot().2);

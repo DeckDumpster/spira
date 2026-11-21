@@ -2291,6 +2291,7 @@ mod tests {
     use super::*;
     use crate::ports::VirtualClock;
 
+    #[test_id(t0tl7ar)]
     #[test]
     fn run_flags_render_every_field_under_the_names_names_gives() {
         let p = UnitProps {
@@ -2328,6 +2329,7 @@ mod tests {
         assert!(UnitProps { io_class: Some("fast".into()), ..UnitProps::default() }.run_flags().is_err());
     }
 
+    #[test_id(tt9dl3f)]
     #[test]
     fn dwarf_props_carry_the_calls_properties_and_refuse_a_timeout_that_is_not_seconds() {
         let p = dwarf_props("3600").unwrap();
@@ -2339,6 +2341,7 @@ mod tests {
         UnitSpec { task: task.into(), key: key.into(), argv: argv.iter().map(|s| s.to_string()).collect(), env: vec![], cwd: None }
     }
 
+    #[test_id(ttkzk8s)]
     #[test]
     fn an_unreachable_manager_fails_every_read() {
         let u = unreachable("no bus");
@@ -2346,6 +2349,7 @@ mod tests {
         assert!(u.list("spira-*").is_err());
     }
 
+    #[test_id(tbud16j)]
     #[test]
     fn a_systemctl_override_outranks_the_default_backend_but_not_a_deliberate_one() {
         let clock = || -> Arc<dyn Clock> { Arc::new(VirtualClock::new(0)) };
@@ -2357,6 +2361,7 @@ mod tests {
         assert_eq!(kind(Some("cli"), None), Ok("cli"));
     }
 
+    #[test_id(tsva8j4)]
     #[test]
     fn a_unit_name_carries_its_task_and_key_and_parses_back() {
         let cases = [("czar-pass", "round/7"), ("a_b", "k"), ("x", "ünï code"), ("land.round", "2026-11-03T04:20:00Z")];
@@ -2369,6 +2374,7 @@ mod tests {
         assert_eq!(unit_name("czar-pass", "r7").unwrap(), "spira-run-czar_2dpass-r7.service");
     }
 
+    #[test_id(twjio4l)]
     #[test]
     fn a_task_glob_lists_exactly_the_units_the_task_starts() {
         let g = task_glob("sentinel-call");
@@ -2377,6 +2383,7 @@ mod tests {
         assert!(!glob_match(&g, &unit_name("sentinel-pass", "k").unwrap()));
     }
 
+    #[test_id(t2cpre0)]
     #[test]
     fn sp_li4zys_a_dwarf_names_its_rune_its_line_and_its_cgroup() {
         let own = "spira-run-sentinel_2dcall-czar_2descape_2d1794009721297_2d1.service";
@@ -2393,6 +2400,7 @@ mod tests {
         assert!(dwarf_units_in_cgroup("0::/app.slice/spira-run-sentinel_2dpass-landing.service\n").is_empty());
     }
 
+    #[test_id(tfwp8ed)]
     #[test]
     fn a_directed_dwarf_is_a_dwarf_unit_every_cap_counts() {
         let n = format!("{}.service", directed_unit_stem("builder", 1794009721));
@@ -2407,6 +2415,7 @@ mod tests {
         }
     }
 
+    #[test_id(tcb7nm6)]
     #[test]
     fn a_dwarf_is_a_unit_of_either_name_and_live_while_it_holds_a_slot() {
         let own = unit_name(DWARF_TASK, "builder-1-0").unwrap();
@@ -2420,12 +2429,14 @@ mod tests {
         assert_eq!(live, [true, true, true, true, false, false]);
     }
 
+    #[test_id(tuql7d9)]
     #[test]
     fn distinct_task_and_key_pairs_never_share_a_name() {
         assert_ne!(unit_name("a-b", "c").unwrap(), unit_name("a", "b-c").unwrap());
         assert_ne!(unit_name("a_2d", "c").unwrap(), unit_name("a-", "c").unwrap());
     }
 
+    #[test_id(thv3ixo)]
     #[test]
     fn installed_and_malformed_names_belong_to_no_task() {
         for n in ["spira-runtime.service", "spira-runtime-watch.service", "spira-run-x.service", "spira-run-a-b-c.service", "spira-run-a_zz-b.service", "spira-run-a_2Db-c.service", "spira-run-a_61-b.service", "spira-run-a-b.timer", "run-r1234.service"] {
@@ -2433,6 +2444,7 @@ mod tests {
         }
     }
 
+    #[test_id(taofoah)]
     #[test]
     fn an_empty_or_overlong_name_is_refused() {
         assert!(unit_name("", "k").unwrap_err().is_refused());
@@ -2440,6 +2452,7 @@ mod tests {
         assert!(unit_name("t", &"/".repeat(100)).unwrap_err().is_refused());
     }
 
+    #[test_id(ts4ft2j)]
     #[test]
     fn a_task_recognises_its_own_unit_ran_and_no_other() {
         let ran = UnitRan { handle: UnitHandle::of("czar-pass", "r7").unwrap(), exit: Exit::Code(0), duration_ms: 5 };
@@ -2450,6 +2463,7 @@ mod tests {
         assert_eq!(UnitRan::from_event_kind(&EventKind::new("unit.other", &ran.event_kind().body)), None);
     }
 
+    #[test_id(tiolfuv)]
     #[test]
     fn abandoning_a_round_stops_its_legs_and_scope_and_no_other_rounds() {
         let clock = VirtualClock::new(0);
@@ -2482,6 +2496,7 @@ mod tests {
         assert!(stop_round_legs(&u, "spira", "spira-A", &|_| false).unwrap().is_empty(), "nothing left to stop");
     }
 
+    #[test_id(tlkadm6)]
     #[test]
     fn a_live_round_scope_or_leg_unit_is_listed_and_a_neighbours_is_not() {
         let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
@@ -2496,6 +2511,7 @@ mod tests {
         assert_eq!(live_round_units(&u, "spira", "spira-C", &|_| false).unwrap(), vec![leg.name]);
     }
 
+    #[test_id(ti6daj0)]
     #[test]
     fn stopping_a_rounds_pass_scopes_leaves_the_legs_that_drive_it() {
         let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
@@ -2510,6 +2526,7 @@ mod tests {
         assert!(live_pass_scopes(&u, "spira", "spira-A").unwrap().is_empty());
     }
 
+    #[test_id(t26iqfv)]
     #[test]
     fn a_round_scope_is_live_for_its_own_round_only() {
         let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
@@ -2525,6 +2542,7 @@ mod tests {
         UnitProcess { pid, comm: comm.into() }
     }
 
+    #[test_id(tg5wir2)]
     #[test]
     fn a_scope_whose_pass_exited_is_ended_and_lists_what_it_still_holds() {
         let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
@@ -2546,6 +2564,7 @@ mod tests {
         assert!(stop_ended_pass_scopes(&u, "spira", "spira-A").unwrap().is_empty(), "a running pass is left alone");
     }
 
+    #[test_id(tg29c62)]
     #[test]
     fn a_round_stop_spares_the_caller_own_unit() {
         let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
@@ -2555,6 +2574,7 @@ mod tests {
         assert!(stopped.is_empty() && is_live(u.facts(&own).unwrap().state));
     }
 
+    #[test_id(tcax3no)]
     #[test]
     fn a_scripted_unit_ends_after_its_duration_on_the_virtual_clock() {
         let clock = VirtualClock::new(1_000);
@@ -2572,6 +2592,7 @@ mod tests {
         assert!(u.start(&spec("unscripted", "k", &["x"])).unwrap_err().is_refused());
     }
 
+    #[test_id(t5ayt65)]
     #[test]
     fn unit_effects_round_trip_as_json() {
         let clock = VirtualClock::new(0);
@@ -2589,6 +2610,7 @@ mod tests {
         assert_eq!(u.calls(), vec!["start spira-run-sweep-k.service", "stop spira-run-sweep-k.service", "restart spira-run-sweep-k.service"]);
     }
 
+    #[test_id(ttwe7en)]
     #[test]
     fn a_scripted_installed_unit_restarts_into_active() {
         let clock = VirtualClock::new(5);
@@ -2603,6 +2625,7 @@ mod tests {
         assert_eq!(u.calls(), vec!["restart spira-runtime.service"]);
     }
 
+    #[test_id(t2il389)]
     #[test]
     fn a_process_unit_reports_its_exit_once_and_its_facts() {
         let clock = VirtualClock::new(0);
@@ -2627,6 +2650,7 @@ mod tests {
     /// A plain child honours `RuntimeMaxSec` (killed once past it on the backend's clock),
     /// `ExecStopPost` (run after the end) and the output file; scheduling and cgroup
     /// properties refuse the start rather than run without them.
+    #[test_id(ttq5ogu)]
     #[test]
     fn a_process_unit_applies_what_a_child_can_and_refuses_the_rest() {
         let dir = testkit::TempDir::new("units-props");
@@ -2667,6 +2691,7 @@ mod tests {
 
     /// `unit.start` reads a plain `UnitSpec` or one with `props`; the scripted backend records
     /// what it was started under.
+    #[test_id(tidf6yl)]
     #[test]
     fn the_start_effect_carries_props_and_a_bare_spec_still_starts() {
         let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
@@ -2681,6 +2706,7 @@ mod tests {
         assert_eq!(serde_json::to_string(&StartSpec { unit: spec("t", "a", &["x"]), props: UnitProps::default() }).unwrap(), bare, "a start with no props is the bare spec");
     }
 
+    #[test_id(tmpykdb)]
     #[test]
     fn a_stopped_process_unit_ends_on_a_signal() {
         let u = ProcessUnits::new(Arc::new(VirtualClock::new(0)));
@@ -2697,6 +2723,7 @@ mod tests {
         assert!(u.stop(&UnitHandle::named("never.service")).unwrap_err().is_refused());
     }
 
+    #[test_id(tcrdv3v)]
     #[test]
     fn a_glob_matches_as_fnmatch_does() {
         for (p, n) in [("spira-*", "spira-runtime.service"), ("*.timer", "a.timer"), ("x?.service", "x1.service"), ("[ab]*", "b.service"), ("[!a]*", "b.service"), ("[a-c]x", "bx"), ("*", ""), ("a[", "a[")] {
@@ -2707,6 +2734,7 @@ mod tests {
         }
     }
 
+    #[test_id(t5j4rf2)]
     #[test]
     fn a_tail_is_the_last_four_kib_on_a_character_boundary() {
         assert_eq!(tail(b"short"), "short");
@@ -2722,6 +2750,7 @@ mod tests {
         assert!(t.len() <= TAIL_MAX, "replacement characters stay inside the bound: {}", t.len());
     }
 
+    #[test_id(tp5ejx5)]
     #[test]
     fn a_unit_ran_with_tails_reads_back_both_ways_and_without_is_unchanged() {
         let ran = UnitRan { handle: UnitHandle::of("t", "k").unwrap(), exit: Exit::Code(4), duration_ms: 9 };
@@ -2733,6 +2762,7 @@ mod tests {
         assert_eq!(RanOutput::from_event_kind(&ran.event_kind()), Some(RanOutput::default()));
     }
 
+    #[test_id(txzxuho)]
     #[test]
     fn a_scripted_installed_unit_answers_every_verb_and_its_detail() {
         let clock = VirtualClock::new(100);
@@ -2760,6 +2790,7 @@ mod tests {
         assert_eq!(u.calls(), ["reset-failed spira-loom.service", "enable spira-loom.service", "start spira-loom.service", "disable spira-loom.service"]);
     }
 
+    #[test_id(tiyj0fn)]
     #[test]
     fn a_scripted_list_and_timers_match_their_glob() {
         let clock = VirtualClock::new(0);
@@ -2779,6 +2810,7 @@ mod tests {
         assert_eq!((t.len(), t[0].unit.as_deref(), t[0].next_elapse_ms), (1, Some("spira-b.service"), Some(60_000)));
     }
 
+    #[test_id(teo4qmz)]
     #[test]
     fn a_scripted_scope_ends_with_its_tails_and_records_its_limits() {
         let clock = VirtualClock::new(0);
@@ -2804,6 +2836,7 @@ mod tests {
         assert_eq!(u.calls(), ["run-scope spira-run-build-k.service", "reset-failed spira-run-build-k.service"]);
     }
 
+    #[test_id(t19yki3)]
     #[test]
     fn extended_effects_round_trip_as_json() {
         let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
@@ -2825,6 +2858,7 @@ mod tests {
         assert!(EXTENDED_EFFECTS.iter().all(|e| !EFFECTS.contains(e)));
     }
 
+    #[test_id(tpftfp7)]
     #[test]
     fn a_process_unit_answers_the_honest_subset_and_refuses_the_rest() {
         let u = ProcessUnits::new(Arc::new(VirtualClock::new(7)));
@@ -2867,6 +2901,7 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test_id(te5gtc9)]
     #[test]
     fn a_process_scope_returns_its_output_tails_when_it_ends() {
         let u = ProcessUnits::new(Arc::new(VirtualClock::new(0)));
@@ -2881,6 +2916,7 @@ mod tests {
         assert_eq!((&got[0].0.handle, got[0].1.is_empty()), (&plain, true), "a plain start captures nothing");
     }
 
+    #[test_id(thtbvio)]
     #[test]
     fn the_backend_is_chosen_by_its_config_value() {
         let c: Arc<dyn Clock> = Arc::new(VirtualClock::new(0));
@@ -2908,6 +2944,7 @@ mod tests {
         use std::time::Duration;
         use unit_run::dbus::{decode, Msg, Val, METHOD_CALL};
 
+        #[test_id(tl1c36k)]
         #[test]
         fn start_transient_unit_encodes_name_mode_and_exec_start() {
             let mut sp = spec("czar-pass", "r7", &["bin/czar-pass", "--pass"]);
@@ -2937,6 +2974,7 @@ mod tests {
 
         /// The properties a dwarf call and the landing leg carried under `systemd-run`, as the
         /// transient unit's own: each set when given, and none when not.
+        #[test_id(t90ah5a)]
         #[test]
         fn start_props_encode_as_transient_unit_properties() {
             let sp = spec("sentinel-call", "k", &["bin/dwarf"]);
@@ -2977,6 +3015,7 @@ mod tests {
             pairs.iter().map(|(k, v)| (k.to_string(), Val::Var(Box::new(v.clone())))).collect()
         }
 
+        #[test_id(tcotmrg)]
         #[test]
         fn unit_and_service_properties_fold_into_facts() {
             let unit = d(&[("LoadState", Val::S("loaded".into())), ("ActiveState", Val::S("failed".into())), ("StateChangeTimestamp", Val::U(7_000_000))]);
@@ -3041,6 +3080,7 @@ mod tests {
             }
         }
 
+        #[test_id(tuj0ti4)]
         #[test]
         fn restart_and_stop_go_to_the_unit_object_and_start_to_the_manager() {
             let f = Fake::default();
@@ -3063,6 +3103,7 @@ mod tests {
             ]);
         }
 
+        #[test_id(tuo6dtt)]
         #[test]
         fn installed_unit_verbs_are_manager_methods_and_file_changes_reload() {
             let f = Fake::default();
@@ -3098,6 +3139,7 @@ mod tests {
 
         const UNIT: &str = "org.freedesktop.systemd1.Unit";
 
+        #[test_id(tlr48v3)]
         #[test]
         fn detail_reads_the_unit_and_its_type_interface() {
             let f = Fake::default();
@@ -3129,6 +3171,7 @@ mod tests {
             Val::Struct(vec![s(name), s("d"), s("loaded"), s(active), s("running"), s(""), s(path), Val::U(0), s(""), s("/")])
         }
 
+        #[test_id(tb64h0w)]
         #[test]
         fn list_joins_loaded_units_with_unit_files_and_timers_carry_their_next_elapse() {
             let f = Fake::default();
@@ -3152,6 +3195,7 @@ mod tests {
             assert_eq!(timers, [TimerFacts { name: "spira-t.timer".into(), unit: Some("spira-t.service".into()), active_state: Some("active".into()), next_elapse_ms: Some(60_000), next_elapse_monotonic_ms: None, last_trigger_ms: Some(1_000) }]);
         }
 
+        #[test_id(tol24a0)]
         #[test]
         fn scope_args_carry_limits_and_the_capture_files() {
             let mut sp = ScopeSpec::new(spec("build", "k", &["bin/cargo", "build"]));
@@ -3176,6 +3220,7 @@ mod tests {
             f.signal(changed(path, d(&[("ActiveState", Val::S(end.into())), ("InactiveEnterTimestamp", Val::U(end_us))])));
         }
 
+        #[test_id(tt4dhak)]
         #[test]
         fn a_scope_run_ends_with_the_tails_of_its_capture_files() {
             let dir = testkit::TempDir::new("units-scope");
@@ -3203,6 +3248,7 @@ mod tests {
             assert!(no_dir.run_scope(&ScopeSpec::new(spec("b", "k", &["bin/x"]))).unwrap_err().is_refused());
         }
 
+        #[test_id(t1bvyjg)]
         #[test]
         fn installed_and_task_units_both_end_as_unit_ran() {
             let f = Fake::default();
@@ -3226,6 +3272,7 @@ mod tests {
             Msg { kind: unit_run::dbus::SIGNAL, serial: 2, reply_serial: None, path: Some("/org/freedesktop/systemd1".into()), interface: Some("org.freedesktop.systemd1.Manager".into()), member: Some("JobRemoved".into()), error: None, body }
         }
 
+        #[test_id(t1bykwr)]
         #[test]
         fn a_start_job_that_never_ran_ends_once_and_a_run_that_did_is_not_doubled() {
             let f = Fake::default();
@@ -3290,6 +3337,7 @@ mod tests {
             (dir, path, peer)
         }
 
+        #[test_id(tksdpae)]
         #[test]
         fn the_connection_carries_start_transient_units_four_arguments_to_the_bus() {
             let (_dir, path, peer) = fake_bus(2);

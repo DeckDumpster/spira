@@ -259,6 +259,7 @@ mod tests {
         Snapshot { certified, by_repo: "spira=1".into(), admissible: certified, admissible_by_repo: "spira=1".into(), state, ..Snapshot::default() }
     }
 
+    #[test_id(tin3x19)]
     #[test]
     fn a_certified_bead_the_batcher_would_not_cut_pages_no_round_due() {
         let cfg = cfg();
@@ -273,6 +274,7 @@ mod tests {
         assert_eq!(say, ["ROUND DUE: 1 certified waiting [spira=1] (idle 0s), 0 of 1 rounds open — cut the next round"]);
     }
 
+    #[test_id(tan5ipc)]
     #[test]
     fn the_lifecycle_count_is_carried_apart_from_the_admissible_idle_clock() {
         let s = Snapshot { admissible: 0, ..snap(RoundState::None, 3) };
@@ -280,6 +282,7 @@ mod tests {
         assert_eq!((c.last_certified, c.last_c), (Some(3), Some(0)));
     }
 
+    #[test_id(tbhl3tr)]
     #[test]
     fn the_admissible_count_is_what_the_batcher_carries_per_repo() {
         let mut b = batcher_local::Carry::default();
@@ -308,6 +311,7 @@ mod tests {
         e.pending_effects().into_iter().filter(|p| p.spec.name == INBOX_APPEND).map(|p| p.spec.input).collect()
     }
 
+    #[test_id(txudh78)]
     #[test]
     fn a_timed_out_observe_says_nothing_and_a_failed_one_is_unknown() {
         assert_eq!(outcome(EFFECT_TIMED_OUT), Vec::<String>::new(), "a stale observe left over from a restart read nothing of the world");
@@ -315,12 +319,14 @@ mod tests {
         assert!(said.len() == 1 && said[0].contains("ROUND STATE UNKNOWN"), "{said:?}");
     }
 
+    #[test_id(twa8d2d)]
     #[test]
     fn the_stores_refusal_text_ends_the_unknown_page() {
         let said = outcome_failing(EFFECT_FAILED, "lifecycle did not answer for spira: stale past 1500ms ... the watch is lost: cannot tell: deadline");
         assert!(said.len() == 1 && said[0].contains("the watch is lost: cannot tell: deadline"), "{said:?}");
     }
 
+    #[test_id(t1g2qv6)]
     #[test]
     fn three_failed_observes_fifteen_seconds_apart_page_once() {
         use runtime::ports::VirtualClock;
@@ -341,6 +347,7 @@ mod tests {
         assert_eq!(pages, 1, "one page per reminder window");
     }
 
+    #[test_id(tjyn3dx)]
     #[test]
     fn a_failed_observe_after_a_reboot_does_not_page_again_within_the_remind_window() {
         use runtime::ports::VirtualClock;
@@ -366,6 +373,7 @@ mod tests {
         Snapshot { why: "stale past 1500ms: the watch is lost".into(), activation: Some(crate::watchers::Activation { sha: "bec37562f5aa11".into(), since: 900 }), ..snap(RoundState::Unknown, 0) }
     }
 
+    #[test_id(tmscsyk)]
     #[test]
     fn an_unknown_round_state_inside_an_activation_window_waits_blind_once_and_never_pages() {
         let (c, say) = decide(&cfg(), &Carry::default(), &restarting(), 1000);
@@ -375,6 +383,7 @@ mod tests {
         assert!(decide(&cfg(), &c, &restarting(), 1015).1.is_empty(), "said once per activation");
     }
 
+    #[test_id(t7zbodw)]
     #[test]
     fn an_unknown_round_state_outside_any_window_pages_with_the_stores_reason() {
         let s = Snapshot { why: "stale past 1500ms: refused".into(), ..snap(RoundState::Unknown, 0) };
@@ -382,6 +391,7 @@ mod tests {
         assert!(say.len() == 1 && say[0].starts_with("ROUND STATE UNKNOWN") && say[0].contains("stale past 1500ms: refused"), "{say:?}");
     }
 
+    #[test_id(t1xawmp)]
     #[test]
     fn a_free_slot_with_certified_work_is_due_once_per_reminder_window() {
         let (c, say) = decide(&cfg(), &Carry::default(), &snap(RoundState::None, 1), 1000);
@@ -395,6 +405,7 @@ mod tests {
         (c, say.into_iter().filter(|m| m.starts_with("ROUND NOT CUTTING")).collect())
     }
 
+    #[test_id(tqumwn6)]
     #[test]
     fn cuttable_beads_with_no_round_open_raise_not_cutting_once_the_wait_passes_and_then_per_reminder() {
         let s = Snapshot { admissible: 6, admissible_by_repo: "spira=6".into(), ..snap(RoundState::None, 6) };
@@ -407,6 +418,7 @@ mod tests {
         assert_eq!(not_cutting(&c, &s, 2500).1.len(), 1);
     }
 
+    #[test_id(tclj8j1)]
     #[test]
     fn submitted_beads_alone_never_raise_not_cutting() {
         let s = Snapshot { submitted: 2, submitted_by_repo: "spira=2".into(), ..snap(RoundState::None, 0) };
@@ -415,6 +427,7 @@ mod tests {
         assert!(say.iter().all(|m| !m.starts_with("ROUND NOT CUTTING")), "{say:?}");
     }
 
+    #[test_id(tejcce6)]
     #[test]
     fn a_round_opening_or_the_pool_emptying_restarts_the_not_cutting_wait() {
         let s = Snapshot { admissible: 1, ..snap(RoundState::None, 1) };
@@ -424,6 +437,7 @@ mod tests {
         assert!(not_cutting(&c, &s, 1900).1.is_empty());
     }
 
+    #[test_id(t3v8x2m)]
     #[test]
     fn a_round_left_at_opened_past_one_lease_ttl_raises_the_alarm_and_a_younger_one_does_not() {
         let open = |at| Snapshot { open: 1, unadvanced: vec![("b-1".into(), at)], ..snap(RoundState::Open, 0) };
@@ -435,6 +449,7 @@ mod tests {
         assert_eq!(decide(&cfg(), &c, &open(600), 1700).1.len(), 1);
     }
 
+    #[test_id(tokshrd)]
     #[test]
     fn an_unanswered_state_is_never_a_round_less_queue() {
         let (_, say) = decide(&cfg(), &Carry::default(), &snap(RoundState::Unknown, 5), 1000);
@@ -442,6 +457,7 @@ mod tests {
         assert!(say[0].starts_with("ROUND STATE UNKNOWN"));
     }
 
+    #[test_id(t91louy)]
     #[test]
     fn a_full_cap_suppresses_and_a_free_slot_counts_open_rounds() {
         let open = |n| Snapshot { open: n, ..snap(RoundState::Open, 1) };
@@ -450,6 +466,7 @@ mod tests {
         assert!(decide(&wide, &Carry::default(), &open(1), 1000).1[0].contains("1 of 2 rounds open"));
     }
 
+    #[test_id(tdpcri7)]
     #[test]
     fn a_verdictless_result_raises_its_own_line_and_a_stop_is_announced_on_change_only() {
         let s = Snapshot { fresh: vec![("300".into(), "round 300: no verdict from any VM".into())], stopped: "spira".into(), ..snap(RoundState::None, 0) };
@@ -459,6 +476,7 @@ mod tests {
         assert!(decide(&cfg(), &c, &Snapshot { stopped: "spira".into(), ..snap(RoundState::None, 0) }, 1100).1.is_empty());
     }
 
+    #[test_id(tjl3xyh)]
     #[test]
     fn three_fresh_result_lines_are_one_inbox_effect() {
         use runtime::ports::VirtualClock;
@@ -482,6 +500,7 @@ mod tests {
         Snapshot { halt: Some(Halt { since, why: "operator order: freeze".into() }), ..snap(RoundState::None, 2) }
     }
 
+    #[test_id(tentjvp)]
     #[test]
     fn a_halted_plane_holds_round_due_and_not_cutting_and_the_row_names_the_halt() {
         let (c, say) = decide(&cfg(), &Carry::default(), &halted(400), 1000);
@@ -491,6 +510,7 @@ mod tests {
         assert!(say.iter().all(|m| !m.starts_with("ROUND DUE") && !m.starts_with("ROUND NOT CUTTING")), "{say:?}");
     }
 
+    #[test_id(thh68pf)]
     #[test]
     fn the_same_pool_with_the_plane_running_is_due() {
         let (c, say) = decide(&cfg(), &Carry::default(), &snap(RoundState::None, 2), 1000);
@@ -498,6 +518,7 @@ mod tests {
         assert!(c.held.is_empty());
     }
 
+    #[test_id(th55q4e)]
     #[test]
     fn a_halt_older_than_the_configured_age_pages_once_naming_its_reason() {
         let (c, say) = decide(&cfg(), &Carry::default(), &halted(1000), 1000 + 3_599);
@@ -508,6 +529,7 @@ mod tests {
         assert!(decide(&cfg(), &c, &halted(1000), 1000 + 9_000).1.is_empty(), "paged once per halt");
     }
 
+    #[test_id(tfbjs6l)]
     #[test]
     fn after_a_halt_lifts_the_idle_clock_restarts() {
         let (c, _) = decide(&cfg(), &Carry::default(), &halted(0), 5000);

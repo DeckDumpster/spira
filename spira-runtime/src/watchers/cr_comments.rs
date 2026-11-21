@@ -236,6 +236,7 @@ mod tests {
         Snapshot { reviews: vec![r] }
     }
 
+    #[test_id(tpo4c4l)]
     #[test]
     fn a_new_person_comment_is_one_line_with_its_place_and_its_thread_command() {
         let (_, said, records) = decide(&Carry::default(), &snap(review(vec![person(41, "why\n  this\tway?")])), 1000);
@@ -243,12 +244,14 @@ mod tests {
         assert_eq!(records.threads.len(), 1, "the comment is kept for cr thread");
     }
 
+    #[test_id(ttktu9e)]
     #[test]
     fn a_long_body_is_cut_at_three_hundred_characters() {
         let (_, said, _) = decide(&Carry::default(), &snap(review(vec![person(1, &"é".repeat(400))])), 1000);
         assert!(said[0].contains(&format!(": {} — cr thread", "é".repeat(300))), "{}", said[0]);
     }
 
+    #[test_id(ttehvwu)]
     #[test]
     fn a_conversation_comment_has_no_place() {
         let mut r = review(vec![]);
@@ -257,6 +260,7 @@ mod tests {
         assert_eq!(said, ["CR 007 #3 comment 9 by reviewer: publish it — cr thread --review 007 --comment 9"]);
     }
 
+    #[test_id(tdqfne9)]
     #[test]
     fn a_comment_seen_again_gives_nothing() {
         let s = snap(review(vec![person(41, "why")]));
@@ -265,6 +269,7 @@ mod tests {
         assert_eq!((said, records.is_empty(), after), (vec![], true, c));
     }
 
+    #[test_id(tdppqc9)]
     #[test]
     fn a_bot_comment_gives_nothing_and_is_marked_seen() {
         let bot = Comment { bot: true, ..person(5, "automated") };
@@ -277,6 +282,7 @@ mod tests {
         ReviewEvent { id: 70, author: "reviewer".into(), bot, state: state.into(), submitted_at: 900 }
     }
 
+    #[test_id(t9su5dj)]
     #[test]
     fn a_submitted_review_publishes_the_review_once() {
         let mut r = review(vec![]);
@@ -288,6 +294,7 @@ mod tests {
         assert_eq!((said, records.changes), (vec![], vec![]));
     }
 
+    #[test_id(ty34tjm)]
     #[test]
     fn a_pending_or_bot_review_publishes_nothing() {
         for ev in [submitted(false, "PENDING"), submitted(false, "DISMISSED"), submitted(true, "COMMENTED")] {
@@ -298,6 +305,7 @@ mod tests {
         }
     }
 
+    #[test_id(t61mhqg)]
     #[test]
     fn a_review_after_the_operator_already_published_by_comment_changes_no_record() {
         let mut r = review(vec![]);
@@ -306,6 +314,7 @@ mod tests {
         assert_eq!(decide(&Carry::default(), &snap(r), 1000).2.changes, []);
     }
 
+    #[test_id(t5uhdsk)]
     #[test]
     fn a_closed_pull_request_is_closed_and_its_record_says_so() {
         let mut r = review(vec![]);
@@ -316,6 +325,7 @@ mod tests {
         assert!(decide(&c, &snap(r), 1030).1.is_empty(), "the line is said once");
     }
 
+    #[test_id(tru75t0)]
     #[test]
     fn a_review_published_and_closed_in_one_tick_is_published_before_it_is_closed() {
         let mut r = review(vec![]);
@@ -336,6 +346,7 @@ mod tests {
         assert_eq!((after, said, records.is_empty()), (c, vec![], true));
     }
 
+    #[test_id(tgdofib)]
     #[test]
     fn the_wait_is_hot_within_the_window_of_the_last_comment_and_cold_after() {
         let cfg = CrComments { hot_ms: 30_000, cold_ms: 300_000, window_secs: 900 };

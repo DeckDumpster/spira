@@ -301,6 +301,7 @@ mod tests {
         (n.into(), s.into(), c.into())
     }
 
+    #[test_id(tunrqkp)]
     #[test]
     fn checks_classify_as_red_green_or_pending() {
         assert_eq!(classify(&[]), ("pending", String::new()));
@@ -310,6 +311,7 @@ mod tests {
         assert_eq!(classify(&[check("a", "COMPLETED", "NEUTRAL")]).0, "pending");
     }
 
+    #[test_id(t73ul8g)]
     #[test]
     fn a_pr_is_reported_on_change_only() {
         let (c, say) = decide(&cfg(), &Carry::default(), &one(open(vec![pr(7, "pending", "")])), 1000);
@@ -320,12 +322,14 @@ mod tests {
         assert_eq!(decide(&cfg(), &c, &one(open(vec![pr(7, "green", "")])), 1270).1.lines, ["GREEN #7 t7 [r]: lands automatically"]);
     }
 
+    #[test_id(tr89u3c)]
     #[test]
     fn a_pr_first_seen_resolved_gets_opened_and_its_verdict() {
         let (_, say) = decide(&cfg(), &Carry::default(), &one(open(vec![pr(1, "red", "x")])), 1000);
         assert_eq!(say.lines, ["OPENED #1 t1 [r]", "FAIL RED #1 t1 [r]: x"]);
     }
 
+    #[test_id(tk9oix7)]
     #[test]
     fn a_forge_that_did_not_answer_changes_nothing() {
         let (c, _) = decide(&cfg(), &Carry::default(), &one(open(vec![pr(7, "pending", "")])), 1000);
@@ -333,6 +337,7 @@ mod tests {
         assert_eq!((after, say), (c, Said::default()));
     }
 
+    #[test_id(taz846a)]
     #[test]
     fn a_pr_that_left_the_open_list_is_tracked_until_the_forge_says_what_became_of_it() {
         let (c, _) = decide(&cfg(), &Carry::default(), &one(open(vec![pr(7, "pending", "")])), 1000);
@@ -354,6 +359,7 @@ mod tests {
         decide(&cfg(), &c, &one(gone), 1090)
     }
 
+    #[test_id(t0zx5f6)]
     #[test]
     fn a_merge_mails_the_operator_and_queues_its_deploy_once() {
         let (c, say) = merged_carry();
@@ -363,6 +369,7 @@ mod tests {
         assert_eq!(c.repos["r"].deploys.len(), 1);
     }
 
+    #[test_id(tuep6ad)]
     #[test]
     fn a_deploy_is_reported_when_its_run_completes_and_dropped_after_the_giveup() {
         let (c, _) = merged_carry();
@@ -376,6 +383,7 @@ mod tests {
         assert!(decide(&cfg(), &c, &one(open(vec![])), 1191).0.repos["r"].deploys.is_empty());
     }
 
+    #[test_id(tuoz8m2)]
     #[test]
     fn a_branch_without_a_pr_is_announced_once_while_it_stays() {
         let obs = RepoObs { strays: Some(vec!["spira/x".into()]), ..open(vec![]) };

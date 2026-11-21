@@ -51,6 +51,7 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
     r
 }
 
+#[test_id(tvejyo2)]
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING"));
@@ -62,6 +63,7 @@ fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
 }
 
+#[test_id(tssrjo7)]
 #[test]
 fn t2_every_site_locked_at_the_release_journals_nothing_and_asks_only_for_its_probe() {
     let mut r = rig(1, |_| snap(Some("1.2.0"), "1.2.0", "^1.2"));
@@ -70,6 +72,7 @@ fn t2_every_site_locked_at_the_release_journals_nothing_and_asks_only_for_its_pr
     running(&r);
 }
 
+#[test_id(tv6nylh)]
 #[test]
 fn t3_current_open_retarget_current_is_legal_and_filing_over_an_open_bump_is_refused_naming_the_state() {
     for t in TRANSITIONS {
@@ -79,6 +82,7 @@ fn t3_current_open_retarget_current_is_legal_and_filing_over_an_open_bump_is_ref
     assert!(refused.contains("BumpOpen"), "{refused}");
 }
 
+#[test_id(tbs5fa8)]
 #[test]
 fn t3_an_open_bump_at_an_older_target_is_amended_and_the_carry_reads_back_as_recorded() {
     let carry = Carry { bumps: [("deck".to_string(), ("sp-k1".to_string(), "1.3.0".to_string())), ("poke".to_string(), ("sp-k2".to_string(), "1.4.0".to_string()))].into() };
@@ -91,6 +95,7 @@ fn t3_an_open_bump_at_an_older_target_is_amended_and_the_carry_reads_back_as_rec
     assert_eq!(back, next);
 }
 
+#[test_id(t7p8q9k)]
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
@@ -102,6 +107,7 @@ fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
+#[test_id(tuqu1je)]
 #[test]
 fn t4_the_module_launches_no_process() {
     for l in LAUNCHERS {
@@ -110,6 +116,7 @@ fn t4_the_module_launches_no_process() {
     assert_eq!(launcher(MODULE), None);
 }
 
+#[test_id(t8thtyg)]
 #[test]
 fn t5_parity_a_release_the_requirement_admits_is_a_lockfile_update_and_one_it_does_not_is_breaking() {
     let (_, acts) = decide(&Carry::default(), &snap(Some("1.3.0"), "1.2.0", "^1"), &config());
@@ -119,6 +126,7 @@ fn t5_parity_a_release_the_requirement_admits_is_a_lockfile_update_and_one_it_do
     assert!(acts.iter().any(|a| a.input.contains("upgrade kit to 2.0.0 (breaking) in poke")), "{acts:?}");
 }
 
+#[test_id(tavf4mz)]
 #[test]
 fn t5_parity_an_unpublished_crate_files_nothing() {
     let (next, acts) = decide(&Carry::default(), &snap(None, "1.2.0", "^1"), &config());
@@ -131,6 +139,7 @@ fn bumped_then_released_again() -> TaskRig {
     rig(1, |n| snap(Some(if n == 0 { "1.1.0" } else { "1.2.0" }), "1.0.0", "^1.0"))
 }
 
+#[test_id(tzrca76)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&bumped_then_released_again(), NAME);
@@ -139,6 +148,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(tag3bn0)]
 #[test]
 fn a_boot_amends_the_open_bump_rather_than_filing_another() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(bumped_then_released_again, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));

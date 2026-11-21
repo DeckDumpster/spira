@@ -222,6 +222,7 @@ pub fn held_rows(kind: &str) -> Option<HashMap<String, Row>> {
 mod tests {
     use super::*;
 
+    #[test_id(tcqzon1)]
     #[test]
     fn ids_are_read_in_bounded_sorted_deduplicated_chunks() {
         let ids: Vec<String> = (0..IDS_PER_READ * 2 + 1).rev().map(|n| format!("sp-{n:04}")).chain(["sp-0000".to_string(), String::new()]).collect();
@@ -233,6 +234,7 @@ mod tests {
         assert!(id_chunks(&[]).is_empty());
     }
 
+    #[test_id(t6ud686)]
     #[test]
     fn parses_rows_with_null_reason_and_string_or_numeric_time() {
         let r = parse_rows(r#"[{"bead_id":"a","state":"REWORK","reason":null,"updated_at":"2026-09-30 00:00:00"},{"bead_id":"b","state":"X","reason":"gate","updated_at":"5"}]"#).unwrap();
@@ -240,6 +242,7 @@ mod tests {
         assert_eq!((r[1].reason.as_str(), r[1].updated_at), ("gate", Some(5)));
     }
 
+    #[test_id(t2au5vs)]
     #[test]
     fn unparseable_or_non_array_is_cannot_tell() {
         assert!(parse_rows("cannot tell: x").is_none());
@@ -247,6 +250,7 @@ mod tests {
         assert_eq!(parse_rows("[]").unwrap().len(), 0);
     }
 
+    #[test_id(te1z7b9)]
     #[test]
     fn a_failed_read_serves_the_last_good_snapshot_then_gives_up() {
         let t = testkit::TempDir::new("lc-limit");
@@ -259,6 +263,7 @@ mod tests {
         assert_eq!(last_good(&d, "k", 105, || Err(Gone::Failed)).as_deref(), Some("[2]"), "a success resets the count");
     }
 
+    #[test_id(t7oo6ul)]
     #[test]
     fn an_unchanged_snapshot_is_not_rewritten_but_keeps_its_age() {
         let t = testkit::TempDir::new("lc-nowrite");
@@ -275,6 +280,7 @@ mod tests {
         assert_eq!(io::data_writes(), before + 1, "changed content is written");
     }
 
+    #[test_id(tzxdihw)]
     #[test]
     fn failures_older_than_the_window_show_even_below_the_count() {
         let t = testkit::TempDir::new("lc-window");
@@ -284,6 +290,7 @@ mod tests {
         assert_eq!(last_good(&d, "k", 140, || Err(Gone::Failed)), None);
     }
 
+    #[test_id(tibsty5)]
     #[test]
     fn a_failure_with_nothing_remembered_is_cannot_tell_and_a_stale_serve_leaves_its_age() {
         let t = testkit::TempDir::new("lc-age");
@@ -296,6 +303,7 @@ mod tests {
         assert!(!d.join("j.stale").exists(), "a live read clears the marker");
     }
 
+    #[test_id(ty34xmf)]
     #[test]
     fn a_store_that_is_not_running_keeps_serving_the_last_good_read_past_the_failure_window() {
         let t = testkit::TempDir::new("lc-not-running");
@@ -309,6 +317,7 @@ mod tests {
         assert!(!d.join("k.stale").exists() && !d.join("k.not-running").exists(), "a success clears the age and the marker");
     }
 
+    #[test_id(t625rcz)]
     #[test]
     fn a_fault_after_not_running_gives_up_on_the_usual_rule_and_drops_the_marker() {
         let t = testkit::TempDir::new("lc-not-running-then-fault");

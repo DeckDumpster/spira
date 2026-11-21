@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(tmy5go1)]
 #[test]
 fn a_label_or_note_write_is_one_mutation_and_forks_no_bd() {
     let r = rig(false, three_seconds());
@@ -9,6 +10,7 @@ fn a_label_or_note_write_is_one_mutation_and_forks_no_bd() {
     assert_eq!(r.notes.mutations(), ["update sp-a --remove-label branch:spira/sp-a", "label add sp-a overseer"]);
 }
 
+#[test_id(tvd4k0k)]
 #[test]
 fn a_stdin_note_is_one_mutation_carrying_its_body() {
     let r = rig(false, three_seconds());
@@ -17,6 +19,7 @@ fn a_stdin_note_is_one_mutation_carrying_its_body() {
     assert_eq!(r.notes.mutations(), ["note sp-a --stdin <<the body"]);
 }
 
+#[test_id(tsueqwc)]
 #[test]
 fn the_state_and_key_value_writes_are_mutations_and_fork_no_bd() {
     let r = rig(false, three_seconds());
@@ -42,6 +45,7 @@ fn written(argv: &[&str], stdin: Option<&str>, want: &str) {
     assert_eq!(wrote, [want], "the server wrote bd once, with bd's own argv");
 }
 
+#[test_id(tfhos8f)]
 #[test]
 fn content_label_add_and_remove_are_written_by_the_server() {
     written(&["label", "add", "sp-a", "spira:x"], None, "label add sp-a spira:x");
@@ -51,6 +55,7 @@ fn content_label_add_and_remove_are_written_by_the_server() {
 
 /// A close is a state verb: refused as bdq refuses it unless the caller overrides, and an
 /// overridden close leaves the row terminal, as bdq's after_close does.
+#[test_id(tp0uuco)]
 #[test]
 fn a_content_close_is_refused_unless_overridden_and_then_its_row_is_terminal() {
     let w = World::new();
@@ -67,6 +72,7 @@ fn a_content_close_is_refused_unless_overridden_and_then_its_row_is_terminal() {
     assert!(state(&w, "sp-a").is_some_and(|r| r.terminal()), "the row follows the close: {:?}", state(&w, "sp-a"));
 }
 
+#[test_id(tgi7lqu)]
 #[test]
 fn content_note_is_written_by_the_server_with_its_text_or_the_request_body() {
     written(&["note", "sp-a", "a note"], None, "note sp-a a note");
@@ -76,17 +82,20 @@ fn content_note_is_written_by_the_server_with_its_text_or_the_request_body() {
     assert!(wrote.is_empty());
 }
 
+#[test_id(ttv60py)]
 #[test]
 fn content_update_set_metadata_is_written_by_the_server() {
     written(&["update", "sp-a", "--set-metadata", "claimdesc_hash=abc", "--set-metadata", "n=1"], None, "update sp-a --set-metadata claimdesc_hash=abc --set-metadata n=1");
 }
 
+#[test_id(t4xek3b)]
 #[test]
 fn content_create_is_written_by_the_server_with_the_request_body() {
     written(&["create", "T", "--type", "task", "--label", "spira", "--silent", "--priority", "3", "--body-file", "-"], Some("## Outcome\n"), "create T --type task --label spira --silent --priority 3 --body-file - <<## Outcome\n");
     written(&["create", "--parent", "sp-e", "--silent", "--title", "child"], None, "create --parent sp-e --silent --title child");
 }
 
+#[test_id(tgs25os)]
 #[test]
 fn content_sub_verbs_not_served_still_refuse_with_their_text_and_write_nothing() {
     for (argv, why) in [
@@ -104,6 +113,7 @@ fn content_sub_verbs_not_served_still_refuse_with_their_text_and_write_nothing()
     }
 }
 
+#[test_id(t22pime)]
 #[test]
 fn content_writes_keep_the_configured_default_under_the_clients_five() {
     for argv in [&["label", "add", "sp-a", "x"][..], &["close", "sp-a"], &["note", "sp-a", "--stdin"], &["update", "sp-a", "--set-metadata", "k=v"], &["create", "T"]] {
@@ -115,6 +125,7 @@ fn content_writes_keep_the_configured_default_under_the_clients_five() {
 }
 
 /// A primitive's stdin body is carried inline, exactly as the CLI carries its own stdin.
+#[test_id(tqsq45y)]
 #[test]
 fn a_primitives_body_is_inlined_as_its_json() {
     struct Rec(Vec<Vec<String>>);
@@ -131,6 +142,7 @@ fn a_primitives_body_is_inlined_as_its_json() {
     assert_eq!(rec.0, vec![vec!["batch-progress".to_string(), "--json".into(), "[{\"bead_id\":\"sp-a\"}]".into()]]);
 }
 
+#[test_id(tiu5tsd)]
 #[test]
 fn a_work_requests_body_becomes_its_stdin_trailer_before_actor() {
     struct Rec(Vec<Vec<String>>);

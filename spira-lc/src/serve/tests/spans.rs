@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(tq5yuhc)]
 #[test]
 fn a_served_request_writes_one_span_and_a_dead_sink_changes_nothing() {
     let dir = testkit::TempDir::new("lc-serve-otel");
@@ -71,6 +72,7 @@ fn span_of(snapshot: &state_store::phases::Snapshot) -> opentelemetry_proto::ton
     r.resource_spans[0].scope_spans[0].spans[0].clone()
 }
 
+#[test_id(t0nfoaq)]
 #[test]
 fn a_span_from_a_recorder_with_two_commits_names_both() {
     use state_store::phases::{self, Phase};
@@ -97,6 +99,7 @@ fn a_span_from_a_recorder_with_two_commits_names_both() {
     assert!(attr("spira.queue_wait_us").is_some());
 }
 
+#[test_id(tzac7dh)]
 #[test]
 fn a_span_names_its_children_and_content_queries() {
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
@@ -118,6 +121,7 @@ fn a_span_names_its_children_and_content_queries() {
     }
 }
 
+#[test_id(tkmj6qp)]
 #[test]
 fn the_subverb_is_a_plain_second_word_and_never_an_id_or_free_text() {
     let argv = |w: &[&str]| w.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -127,6 +131,7 @@ fn the_subverb_is_a_plain_second_word_and_never_an_id_or_free_text() {
     assert_eq!(super::subverb_of(&argv(&["content"])), None);
 }
 
+#[test_id(tmmn47y)]
 #[test]
 fn a_request_cut_at_its_deadline_leaves_the_phase_it_was_in_on_the_recorder() {
     use state_store::phases::{begin, track_scoped, Phase, Recorder};
@@ -148,6 +153,7 @@ fn a_request_cut_at_its_deadline_leaves_the_phase_it_was_in_on_the_recorder() {
     drop(release);
 }
 
+#[test_id(tsu4sm5)]
 #[test]
 fn the_answer_time_is_taken_before_the_owed_close_settles() {
     let (server, _client) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -171,6 +177,7 @@ fn the_answer_time_is_taken_before_the_owed_close_settles() {
     assert!(answered > std::time::Duration::ZERO, "the answer time was taken");
 }
 
+#[test_id(tupt2tz)]
 #[test]
 fn a_request_that_touched_no_store_carries_no_phase_attribute() {
     let span = span_of(&state_store::phases::Snapshot::default());
@@ -194,6 +201,7 @@ fn span_attr(dir: &testkit::TempDir, verb: &str, key: &str) -> Option<Option<i64
     })
 }
 
+#[test_id(t70wf5b)]
 #[test]
 fn a_span_records_the_cutoff_only_for_a_call_the_cutoff_abandoned() {
     let dir = testkit::TempDir::new("lc-serve-cut");
@@ -233,6 +241,7 @@ fn serve_value(span: &opentelemetry_proto::tonic::trace::v1::Span, key: &str) ->
     span.attributes.iter().find(|a| a.key == key).unwrap_or_else(|| panic!("{key} is on the span")).value.clone().unwrap().value.unwrap()
 }
 
+#[test_id(t7w6dtq)]
 #[test]
 fn a_span_cut_at_its_deadline_says_where_its_time_went() {
     let dir = testkit::TempDir::new("lc-serve-stages");
@@ -264,6 +273,7 @@ fn check_stages(span: &opentelemetry_proto::tonic::trace::v1::Span) {
     assert!(stages <= (span.end_time_unix_nano - span.start_time_unix_nano) / 1000, "the stages sit inside the span");
 }
 
+#[test_id(t0v9mng)]
 #[test]
 fn a_call_answered_in_time_writes_cut_false() {
     use opentelemetry_proto::tonic::common::v1::any_value::Value;

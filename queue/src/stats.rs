@@ -91,6 +91,7 @@ pub fn render(s: &Stats) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tqhen76)]
     #[test]
     fn empty_log_is_all_zero() {
         assert_eq!(
@@ -99,6 +100,7 @@ mod tests {
         );
     }
 
+    #[test_id(tapzoa8)]
     #[test]
     fn local_and_ci_batch_lines_are_costed_differently() {
         let log = "\
@@ -130,6 +132,7 @@ other line
         assert!(r.contains("cost:            36s avg per branch"));
     }
 
+    #[test_id(tkajja6)]
     #[test]
     fn gate_cost_seconds_key_is_not_confused_with_gate_seconds() {
         // "seconds=" also appears inside "gate_seconds="; GATE_COST lines never carry both.

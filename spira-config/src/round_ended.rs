@@ -29,6 +29,7 @@ pub fn is_ended(run: &Path, batch: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test_id(tv1k0kc)]
     #[test]
     fn a_marked_round_is_ended_until_the_mark_is_cleared() {
         let d = testkit::TempDir::new("round-ended");
@@ -40,6 +41,7 @@ mod tests {
         assert!(!is_ended(d.path(), "b1"));
     }
 
+    #[test_id(tvcmfmm)]
     #[test]
     fn a_round_with_a_result_line_is_ended() {
         let d = testkit::TempDir::new("round-ended-result");

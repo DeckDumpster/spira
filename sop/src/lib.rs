@@ -1,3 +1,6 @@
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod ledger;
 pub mod logic;
 pub mod match_sop;

@@ -1,5 +1,6 @@
 use spira_sim::proctrace::summarize;
 
+#[test_id(tb4wqvt)]
 #[test]
 fn the_summary_ranks_programs_by_cpu_and_charges_unseen_children_to_their_parent() {
     let trace = "=== queue step\n\

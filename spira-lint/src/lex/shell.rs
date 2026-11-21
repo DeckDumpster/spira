@@ -436,6 +436,7 @@ mod tests {
             .unwrap_or_else(|| panic!("no {head} command in {cs:#?}"))
     }
 
+    #[test_id(texs4p2)]
     #[test]
     fn multiline_single_quoted_script_is_one_word() {
         let cs = parse(b"python3 -c '\nimport sys\nprint(1)\n' \"$a_json\" x\necho done\n");
@@ -446,6 +447,7 @@ mod tests {
         find(&cs, "echo");
     }
 
+    #[test_id(tqaacm0)]
     #[test]
     fn env_prefix_and_reserved_words() {
         let cs = parse(b"if X_JSON=\"$y\" python3 -c 'p'; then :; fi\n");
@@ -454,6 +456,7 @@ mod tests {
         assert_eq!(env[0].assignment_name(), Some("X_JSON"));
     }
 
+    #[test_id(ty3mviw)]
     #[test]
     fn command_substitution_is_its_own_command() {
         let cs = parse(b"x_json=\"$(FOO=1 python3 -c 'p' \"$b\")\"\n");
@@ -464,18 +467,21 @@ mod tests {
         assert_eq!(py.words.last().unwrap().vars, vec!["b"]);
     }
 
+    #[test_id(t5liuh4)]
     #[test]
     fn escaped_brace_in_a_parameter_default_does_not_open_a_quote() {
         let cs = parse(b"a=\"${4:-{\\}}\"\n# `bd ready` note\nls\n");
         assert_eq!(cs.iter().filter_map(|c| argv(c).first().cloned()).collect::<Vec<_>>(), vec!["ls"]);
     }
 
+    #[test_id(tsq0wag)]
     #[test]
     fn an_array_literal_is_not_a_command() {
         let cs = parse(b"P=(podman\n   git curl)\nls\n");
         assert_eq!(cs.iter().filter_map(|c| argv(c).first().cloned()).collect::<Vec<_>>(), vec!["ls"]);
     }
 
+    #[test_id(t4huq39)]
     #[test]
     fn heredoc_bodies_are_skipped_and_lines_counted() {
         let src = b"cat <<'EOF' | python3 -c 'x'\nX_JSON=\"$a\" python3 -c 'p'\nEOF\njq . \"$z\"\n";
@@ -485,6 +491,7 @@ mod tests {
         assert_eq!(jq.words[0].line, 4);
     }
 
+    #[test_id(tiizje7)]
     #[test]
     fn heredoc_inside_command_substitution() {
         let src = b"P=\"$(cat <<'AWK'\n{ print $1 }\nAWK\n)\"\nawk \"$P\" f\n";
@@ -493,6 +500,7 @@ mod tests {
         assert_eq!(awk.words[0].line, 5);
     }
 
+    #[test_id(t9orkwe)]
     #[test]
     fn redirections_and_fds() {
         let cs = parse(b"jq . <<< \"$x_json\" 2>&1 >> \"$SPIRA_TOML\"\n");
@@ -503,6 +511,7 @@ mod tests {
         assert_eq!(jq.redirects[2].target.as_ref().unwrap().vars, vec!["SPIRA_TOML"]);
     }
 
+    #[test_id(tx05g6v)]
     #[test]
     fn comments_dropped_but_hash_inside_words_kept() {
         let cs = parse(b"# python3 -c 'x' \"$a_json\"\necho a#b ${#arr} # trailing\n");
@@ -511,6 +520,7 @@ mod tests {
         assert_eq!(cs[0].words[2].vars, vec!["arr"]);
     }
 
+    #[test_id(tv0iwbi)]
     #[test]
     fn param_default_expands_inner_vars_and_backticks_nest() {
         let cs = parse(b"f \"${a:-$b_json}\" `jq . \"$c\"`\n");
@@ -519,6 +529,7 @@ mod tests {
         find(&cs, "jq");
     }
 
+    #[test_id(tpbgdad)]
     #[test]
     fn case_patterns_inside_substitution() {
         let cs = parse(b"x=\"$(case $a in b) jq . \"$y\";; esac)\"\nawk 1\n");

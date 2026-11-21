@@ -384,6 +384,7 @@ fn strip_comment_tail(line: &str, code_line: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tfj2bwm)]
     #[test]
     fn masking_blanks_comments_and_string_contents_and_keeps_lines() {
         let src = "let a = landed(x); // landed(y)\nlet s = \"never landed (gate-red)\";\n/* land_mark(z)\n */ f(r#\"landed(\"q\")\"#);\n";
@@ -403,6 +404,7 @@ mod tests {
         assert!(!is_call(l[1], "landed"), "{m}");
     }
 
+    #[test_id(tdxhr66)]
     #[test]
     fn a_string_does_not_make_a_call_and_a_comment_does_not_make_a_read() {
         let tmp = testkit::TempDir::new("lg-mask");

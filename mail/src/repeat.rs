@@ -192,6 +192,7 @@ pub fn repeat_release(_rc: RepeatCheck) {
 mod tests {
     use super::*;
 
+    #[test_id(tufg6on)]
     #[test]
     fn same_normalised_subject_produces_the_same_fingerprint() {
         let a = normalize_subject("Spira bead sp-abc — requeued 5 times, never landed — harness cannot land it");
@@ -199,6 +200,7 @@ mod tests {
         assert_eq!(a, b);
     }
 
+    #[test_id(t9wrff1)]
     #[test]
     fn different_subject_produces_a_different_fingerprint() {
         let a = normalize_subject("Spira bead sp-xyz — poisoned after 3 attempts — change the approach or drop it?");
@@ -206,6 +208,7 @@ mod tests {
         assert_ne!(a, b);
     }
 
+    #[test_id(teki67n)]
     #[test]
     fn a_second_check_for_the_same_fingerprint_within_the_window_is_refused_after_a_stamp() {
         let d = testkit::TempDir::new("mail-repeat");
@@ -215,6 +218,7 @@ mod tests {
         assert!(err.contains("already sent"), "{err}");
     }
 
+    #[test_id(teyygfq)]
     #[test]
     fn a_released_check_does_not_block_a_later_one() {
         let d = testkit::TempDir::new("mail-repeat");
@@ -228,6 +232,7 @@ mod tests {
 mod ask_key {
     use super::*;
 
+    #[test_id(taaofcf)]
     #[test]
     fn a_re_ask_of_a_stamped_key_is_refused_and_another_bead_or_question_is_not() {
         let d = testkit::TempDir::new("mail-ask-key");
@@ -243,6 +248,7 @@ mod ask_key {
 mod considered_override {
     use super::*;
 
+    #[test_id(to54cm5)]
     #[test]
     fn considered_override_bypasses_the_guard_and_stamps_nothing() {
         let d = testkit::TempDir::new("mail-repeat-override");

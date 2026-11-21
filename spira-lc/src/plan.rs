@@ -828,6 +828,7 @@ mod tests {
         serde_json::from_str(x).unwrap()
     }
 
+    #[test_id(t3y6hiu)]
     #[test]
     fn plan_rows_are_held_under_the_watermark_and_an_absent_id_is_held_as_absent() {
         let held: HeldItems = Mutex::new((None, BTreeMap::new()));
@@ -846,6 +847,7 @@ mod tests {
         assert_eq!(asked.lock().unwrap().len(), 5, "no watermark holds nothing");
     }
 
+    #[test_id(tc1z0py)]
     #[test]
     fn a_listings_titles_are_read_from_bd_once_per_planning_watermark() {
         let asked = std::cell::RefCell::new(Vec::<Vec<String>>::new());
@@ -867,6 +869,7 @@ mod tests {
     }
 
     /// sp-jf7spl: the content database is the one the store declares, never a default.
+    #[test_id(thdseq9)]
     #[test]
     fn the_content_database_is_the_stores_own_and_an_undeclared_one_is_refused() {
         let d = testkit::TempDir::new("content-db");
@@ -882,6 +885,7 @@ mod tests {
         assert!(database_of(std::path::Path::new("")).is_err());
     }
 
+    #[test_id(tgp5goc)]
     #[test]
     fn a_row_carries_labels_blockers_and_the_parent_bd_would_report() {
         let issues = v(r#"[{"id":"sp-a","title":"t","priority":"1","issue_type":"task","status":"open","defer_until":"","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}]"#);
@@ -897,6 +901,7 @@ mod tests {
         assert_eq!(r["dependencies"][0], json!({"issue_id":"sp-a","depends_on_id":"sp-b","type":"blocks"}));
     }
 
+    #[test_id(trjjbsv)]
     #[test]
     fn a_bead_with_no_labels_or_edges_has_empty_lists() {
         let out = assemble(&v(r#"[{"id":"sp-a","priority":"2"}]"#), &[], &[]);
@@ -957,6 +962,7 @@ mod tests {
         &["repo-labels", "--valid", "x,y"],
     ];
 
+    #[test_id(tgsoh8c)]
     #[test]
     fn each_plan_form_is_queried_once_per_planning_watermark() {
         for form in FORMS {
@@ -972,6 +978,7 @@ mod tests {
         }
     }
 
+    #[test_id(t6vy1qm)]
     #[test]
     fn an_inflow_answer_is_held_for_the_hold_and_no_longer() {
         let (db, held, t0) = (Recording::new(), fresh_hold(), Instant::now());
@@ -984,6 +991,7 @@ mod tests {
         assert_eq!(db.queries(), 2 * once, "past the hold it queries again");
     }
 
+    #[test_id(t0cd46f)]
     #[test]
     fn a_failed_read_and_a_missing_watermark_are_never_held() {
         let (db, held, now) = (Recording::new(), fresh_hold(), Instant::now());
@@ -1001,6 +1009,7 @@ mod tests {
         assert!(spent > 0 && spent % 2 == 0, "with no watermark every call queries");
     }
 
+    #[test_id(tg01276)]
     #[test]
     fn a_held_answer_is_the_answer_the_readers_give() {
         let db = Recording::new();
@@ -1020,6 +1029,7 @@ mod tests {
         }
     }
 
+    #[test_id(t6asjoa)]
     #[test]
     fn plan_inflow_without_a_window_is_cannot_tell_naming_the_flag() {
         let (code, text) = cmd_plan(&a(&["inflow"]));
@@ -1027,12 +1037,14 @@ mod tests {
         assert!(text.contains("plan inflow: --window-secs"), "{text}");
     }
 
+    #[test_id(tkfvsmf)]
     #[test]
     fn the_usage_names_both_aggregate_sub_verbs() {
         let (_, text) = cmd_plan(&a(&["nonsense"]));
         assert!(text.contains("plan inflow --window-secs N") && text.contains("plan repo-labels --valid a,b"), "{text}");
     }
 
+    #[test_id(t4rp98n)]
     #[test]
     fn no_ids_is_an_empty_answer_and_a_missing_selector_is_refused() {
         let c = crate::db::Conn::unreachable();
@@ -1044,6 +1056,7 @@ mod tests {
         assert_eq!(cmd_plan(&a(&["nope"])).0, CANNOT_TELL);
     }
 
+    #[test_id(tr5m1ak)]
     #[test]
     fn the_schema_check_names_each_column_the_reader_needs_and_the_store_lacks() {
         let mut have: BTreeSet<(String, String)> = READER_COLUMNS.iter().flat_map(|(t, cs)| cs.iter().map(move |c| (t.to_string(), c.to_string()))).collect();
@@ -1057,6 +1070,7 @@ mod tests {
 mod merge_tests {
     use super::*;
 
+    #[test_id(tntl3hf)]
     #[test]
     fn a_watch_with_rows_takes_the_title_and_priority_a_list_row_does() {
         let lookup: &TitleLookup = &|ids| Ok(ids.iter().filter(|i| **i == "sp-a").map(|i| (i.to_string(), (json!("the title"), json!(1)))).collect());

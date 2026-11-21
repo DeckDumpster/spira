@@ -981,6 +981,7 @@ mod tests {
         }
     }
 
+    #[test_id(twypigu)]
     #[test]
     fn an_idle_pass_asks_the_forge_nothing() {
         let rows = [row("fa", "queue"), row("fb", "queue"), row("lo", "queue.local"), row("pr", "pr")];
@@ -995,6 +996,7 @@ mod tests {
         Ok(format!("run-id: 9\nrun-conclusion: success\nrun-completed-at: {completed_s}\n"))
     }
 
+    #[test_id(towglzx)]
     #[test]
     fn an_in_flight_forge_batch_reads_its_branch_and_the_base_only() {
         let rows = [row("fa", "queue"), row("fb", "queue"), row("lo", "queue.local")];
@@ -1006,6 +1008,7 @@ mod tests {
         assert_eq!(base_ci.keys().collect::<Vec<_>>(), ["fa"]);
     }
 
+    #[test_id(tylfbfr)]
     #[test]
     fn the_base_is_read_after_the_batch_closes_until_its_landing_run_completes() {
         let rows = [row("fa", "queue")];
@@ -1029,6 +1032,7 @@ mod tests {
         assert_eq!(calls.borrow().len(), 0);
     }
 
+    #[test_id(tk98p4j)]
     #[test]
     fn a_batch_closed_without_landing_stops_being_read_once_its_pending_entry_expires() {
         let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
@@ -1043,6 +1047,7 @@ mod tests {
         assert_eq!(calls.borrow().len(), 0);
     }
 
+    #[test_id(thakiru)]
     #[test]
     fn decide_records_an_in_flight_batch_as_pending() {
         let batch = Batch { pr: Some(12), branch: "spira/batch/x".into(), members: vec![] };
@@ -1051,6 +1056,7 @@ mod tests {
         assert_eq!(next.base_pending.get("fa"), Some(&NOW));
     }
 
+    #[test_id(tbjiufk)]
     #[test]
     fn an_unobservable_batch_view_makes_no_call_and_is_not_satisfied() {
         let rows = [row("fa", "queue")];
@@ -1070,6 +1076,7 @@ mod tests {
         assert!(matches!(judged.status, RawStatus::Unobservable { .. }));
     }
 
+    #[test_id(tjck0vz)]
     #[test]
     fn a_red_landing_run_still_files_base_red() {
         let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
@@ -1096,6 +1103,7 @@ mod tests {
         (match read { Read::Observed(b) => b, Read::Unobservable(_) => BaseCi::default() }, acts)
     }
 
+    #[test_id(tkpt9de)]
     #[test]
     fn a_base_that_never_ran_its_workflow_is_satisfied_and_files_nothing() {
         let (b, acts) = base_read_decided(Ok("runs: 0\n".into()));
@@ -1103,6 +1111,7 @@ mod tests {
         assert!(!acts.iter().any(|a| a.effect == FILE_BASE_RED), "{acts:?}");
     }
 
+    #[test_id(tttuvy8)]
     #[test]
     fn a_failed_base_read_still_files_unreadable_with_the_forge_error() {
         let (_, acts) = base_read_decided(Err("forge batch-ci-status exited 1: HTTP 403".into()));
@@ -1110,6 +1119,7 @@ mod tests {
         assert!(filed.input.contains("HTTP 403") && filed.input.contains("base CI status could not be read"), "{filed:?}");
     }
 
+    #[test_id(trl7yvh)]
     #[test]
     fn a_settled_landing_forgets_its_base_red_streak_so_the_next_red_files_again() {
         let mut pol = policy();
@@ -1144,6 +1154,7 @@ mod tests {
         acts.iter().filter(|a| a.effect == FILE_INCIDENT && a.input.contains("pool-idle-fa")).count()
     }
 
+    #[test_id(tkq6mqp)]
     #[test]
     fn an_open_round_is_not_a_pool_idle_stall() {
         let (next, a1, a2) = two_passes(idle_pool(Read::Observed(1)));
@@ -1151,6 +1162,7 @@ mod tests {
         assert!(next.keys.get("pool-idle:fa").is_none_or(|k| k.phase != Phase::Gap), "{:?}", next.keys.get("pool-idle:fa"));
     }
 
+    #[test_id(t55zmcz)]
     #[test]
     fn a_batcher_hold_is_not_a_pool_idle_stall() {
         let rc = batcher_local::RepoCarry { state: batcher_local::State::Held, skip_why: Some("the rounds lane is stopped (op: test)".into()), ..Default::default() };
@@ -1159,6 +1171,7 @@ mod tests {
         assert_eq!(pool_filings(&a1) + pool_filings(&a2), 0);
     }
 
+    #[test_id(trub7zd)]
     #[test]
     fn a_held_state_with_no_recorded_reason_still_pages() {
         let rc = batcher_local::RepoCarry { state: batcher_local::State::Held, skip_why: None, ..Default::default() };
@@ -1166,6 +1179,7 @@ mod tests {
         assert!(snap.batcher_held.is_empty());
     }
 
+    #[test_id(txdw18k)]
     #[test]
     fn an_idle_pool_with_no_round_and_no_hold_files_once_past_the_stall() {
         let (_, a1, a2) = two_passes(idle_pool(Read::Observed(0)));
@@ -1173,6 +1187,7 @@ mod tests {
         assert_eq!(pool_filings(&a2), 1);
     }
 
+    #[test_id(t70fsih)]
     #[test]
     fn an_unreadable_round_record_is_unobservable_not_satisfied() {
         let (next, a1, a2) = two_passes(idle_pool(Read::Unobservable("could not say: store down".into())));

@@ -14,12 +14,14 @@ fn check_config(declare: &[(&str, &str)]) -> (bool, String) {
     (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
 }
 
+#[test_id(tif6ezg)]
 #[test]
 fn the_complete_fixture_passes_check_config() {
     let (ok, out) = check_config(&[]);
     assert!(ok && out.starts_with("ok "), "{out}");
 }
 
+#[test_id(t6dl1ht)]
 #[test]
 fn a_pool_cap_the_service_refuses_fails_check_config_naming_the_key() {
     let (ok, out) = check_config(&[("SPIRA_POOL_CAP_STORE", "0")]);

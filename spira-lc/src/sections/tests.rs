@@ -159,6 +159,7 @@ fn intent(id: &str, token: &str, from: Value, to: Value) -> Value {
     })
 }
 
+#[test_id(td511h7)]
 #[test]
 fn knob_init_leaves_a_knob_alone_unless_the_owner_overwrites_it_with_a_new_value() {
     let r = rig();
@@ -181,6 +182,7 @@ fn knob_init_leaves_a_knob_alone_unless_the_owner_overwrites_it_with_a_new_value
     assert_eq!(r.refused(&["intent", "knob-init", "knobs/Probe/a/drain", "--actor", "intruder", "--overwrite", "--json", "6"], None), "actor");
 }
 
+#[test_id(tqn60ez)]
 #[test]
 fn only_the_owner_writes_status_and_only_compose_writes_spec() {
     let r = rig();
@@ -200,6 +202,7 @@ fn only_the_owner_writes_status_and_only_compose_writes_spec() {
     assert_eq!(got["section"]["spec"]["depth_max"]["value"], 4.0, "the owner's publish keeps compose's spec");
 }
 
+#[test_id(tq9hqxx)]
 #[test]
 fn intents_are_fenced_on_the_reconciler_lock_and_acked_and_judged_once_by_their_owners() {
     let r = rig();
@@ -238,6 +241,7 @@ fn intents_are_fenced_on_the_reconciler_lock_and_acked_and_judged_once_by_their_
     assert_eq!((code, v["refused"]["field"].as_str()), (3, Some("--token")), "a released token fences nothing: {v}");
 }
 
+#[test_id(teltbhk)]
 #[test]
 fn intent_apply_moves_a_knob_from_to_once_and_acks_in_the_same_txn() {
     let r = rig();
@@ -276,6 +280,7 @@ fn intent_apply_moves_a_knob_from_to_once_and_acks_in_the_same_txn() {
     assert_eq!(r.knob(knob), json!(7));
 }
 
+#[test_id(ti15bk6)]
 #[test]
 fn an_absent_knob_is_null_so_a_step_from_null_creates_it_once() {
     let r = rig();
@@ -300,6 +305,7 @@ fn an_absent_knob_is_null_so_a_step_from_null_creates_it_once() {
     assert_eq!(apply(&again)["ack"]["result"], "already-applied");
 }
 
+#[test_id(tki8tvh)]
 #[test]
 fn knob_init_sets_an_owners_knob_once_and_answers_an_existing_one_as_it_stands() {
     let r = rig();
@@ -322,6 +328,7 @@ fn knob_init_sets_an_owners_knob_once_and_answers_an_existing_one_as_it_stands()
     assert!(r.store.get("knobs/Probe/b/x").unwrap().is_none());
 }
 
+#[test_id(t2we50h)]
 #[test]
 fn freshness_is_age_against_max_age_and_generation_lag_reads_apart() {
     let r = rig();
@@ -401,6 +408,7 @@ impl Backend for Interleave {
     }
 }
 
+#[test_id(tnvdyss)]
 #[test]
 fn snapshot_reads_sections_intents_and_the_pass_record_at_one_list_rev() {
     let r = rig_on(Interleave { inner: MemBackend::new(), fired: AtomicBool::new(true) });
@@ -440,6 +448,7 @@ name = "a"
 depth_max = { value = 4.0, statute = "law-x" }
 "#;
 
+#[test_id(t02wnkl)]
 #[test]
 fn compose_publishes_a_section_kinds_spec_and_nothing_without_one() {
     let r = rig();
@@ -461,6 +470,7 @@ fn compose_publishes_a_section_kinds_spec_and_nothing_without_one() {
     assert_eq!(r.head(), head, "with no section kind, compose writes nothing");
 }
 
+#[test_id(t5yh80f)]
 #[test]
 fn every_answer_is_json_and_list_filters_by_kind() {
     let r = rig();
@@ -482,6 +492,7 @@ fn every_answer_is_json_and_list_filters_by_kind() {
     assert_eq!(listed["undecodable"], json!(["telemetry/sections/Probe/bad"]));
 }
 
+#[test_id(tznec9x)]
 #[test]
 fn lock_show_names_a_round_leases_token_ttl_and_the_holder_its_record_names() {
     let r = rig();

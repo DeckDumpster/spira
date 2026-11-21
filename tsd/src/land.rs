@@ -67,6 +67,7 @@ pub fn same_commit(a: &str, b: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test_id(tzslcf9)]
     #[test]
     fn a_reverts_that_is_not_a_commit_id_is_refused_and_an_abbreviation_matches() {
         let rec = LandRecord { repo: "r".into(), bead: "b".into(), commit: "abcdef0123".into(), reverts: Some("Revert x".into()) };

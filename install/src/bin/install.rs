@@ -11,6 +11,9 @@
 //!                       [--no-session-hook] [--system-user]
 //!   --system-user is standalone: root, phase 6.5 only.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use install::bootstrap::{self, nonempty_env};
 use install::checks;
 use install::install_units::{self, Ctx};
@@ -2070,6 +2073,7 @@ fn base64_no_pad(bytes: &[u8]) -> String {
 mod dependency_fetch_tests {
     use super::*;
 
+    #[test_id(tlfrwew)]
     #[test]
     fn spira_env_target_names_the_release_directory_not_the_symlink_to_it() {
         let td = testkit::TempDir::new("env-target");
@@ -2080,6 +2084,7 @@ mod dependency_fetch_tests {
         assert_eq!(spira_env_target(&td.path().join("current")), want);
     }
 
+    #[test_id(tm868ki)]
     #[test]
     fn sccache_target_maps_known_arches_to_mozillas_release_triples() {
         assert_eq!(sccache_target("x86_64").unwrap(), "x86_64-unknown-linux-musl");
@@ -2087,6 +2092,7 @@ mod dependency_fetch_tests {
         assert!(sccache_target("riscv64").is_err());
     }
 
+    #[test_id(tgr0m4q)]
     #[test]
     fn inotify_tools_arch_maps_known_arches_to_the_bare_label() {
         assert_eq!(inotify_tools_arch("x86_64").unwrap(), "x86_64");
@@ -2094,18 +2100,21 @@ mod dependency_fetch_tests {
         assert!(inotify_tools_arch("riscv64").is_err());
     }
 
+    #[test_id(tfag5yu)]
     #[test]
     fn sccache_url_names_the_pinned_version_and_asset() {
         let url = sccache_url("x86_64-unknown-linux-musl");
         assert_eq!(url, "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-x86_64-unknown-linux-musl.tar.gz");
     }
 
+    #[test_id(t3k2q6d)]
     #[test]
     fn inotify_tools_url_names_the_pinned_version_and_asset() {
         let url = inotify_tools_url("aarch64");
         assert_eq!(url, "https://github.com/inotify-tools/inotify-tools/releases/download/4.26.262/inotify-tools-4.26.262-aarch64-linux.tar.gz");
     }
 
+    #[test_id(t05rbsf)]
     #[test]
     fn sccache_tar_member_is_the_versioned_directory_the_release_asset_actually_contains() {
         // mozilla/sccache's release.yml packs the binary at <dirname>/sccache where
@@ -2119,22 +2128,26 @@ mod dependency_fetch_tests {
     /// this same text independently; kept in sync by inspection, not by sharing code.
     const REAL_SCCACHE_018_HELP_WEBDAV_TRUE: &str = "Enabled features:\n    S3:        false\n    Redis:     false\n    Memcached: false\n    GCS:       false\n    GHA:       false\n    Azure:     false\n    WebDAV:    true\n    OSS:       false\n    COS:       false\n";
 
+    #[test_id(t87tnqt)]
     #[test]
     fn sccache_help_has_webdav_true_passes() {
         assert!(sccache_help_has_webdav(REAL_SCCACHE_018_HELP_WEBDAV_TRUE));
     }
 
+    #[test_id(trptfa9)]
     #[test]
     fn sccache_help_has_webdav_false_fails() {
         let help = REAL_SCCACHE_018_HELP_WEBDAV_TRUE.replace("WebDAV:    true", "WebDAV:    false");
         assert!(!sccache_help_has_webdav(&help));
     }
 
+    #[test_id(tvsdbyy)]
     #[test]
     fn sccache_help_has_webdav_missing_line_fails() {
         assert!(!sccache_help_has_webdav("sccache: error: no such option --help\n"));
     }
 
+    #[test_id(tmrtdod)]
     #[test]
     fn aerc_outgoing_at_a_deleted_checkout_path_is_rewritten() {
         let conf = "[spira]\nsource = maildir:///m\noutgoing = /co/spira/mail.sh\nfrom = O <o@s>\n";
@@ -2143,6 +2156,7 @@ mod dependency_fetch_tests {
         assert!(rewrite_aerc_outgoing(&new, "h/.local/bin/spira-sendmail").is_none());
     }
 
+    #[test_id(t8av0v5)]
     #[test]
     fn sendmail_wrapper_names_release_and_toml_and_passes_check_through() {
         let w = render_sendmail_wrapper("r", "t.toml");
@@ -2150,6 +2164,7 @@ mod dependency_fetch_tests {
         assert!(!w.contains("--check"), "the wrapper must hand --check to mail, not answer it");
     }
 
+    #[test_id(t5un6ri)]
     #[test]
     fn aerc_reports_version_matches_the_real_dash_v_output_shape() {
         assert!(aerc_reports_version("aerc 0.22.0 (go1.27.1 amd64 linux)\n", "0.22.0"));
@@ -2160,6 +2175,7 @@ mod dependency_fetch_tests {
 
     /// sp-x6v17: the coordinator asked specifically for this case — a present-at-the-
     /// pinned-version aerc must skip install_aerc's copy entirely.
+    #[test_id(tfa4df5)]
     #[test]
     fn a_present_at_pinned_version_aerc_skips_the_install() {
         assert!(aerc_install_can_be_skipped(Some("aerc 0.22.0 (go1.27.1 amd64 linux)\n")));
@@ -2172,6 +2188,7 @@ mod dependency_fetch_tests {
 mod dovecot_dropin_tests {
     use super::*;
 
+    #[test_id(t6nh127)]
     #[test]
     fn the_dropin_orders_after_tailscaled_and_retries_and_is_written_only_where_dovecot_exists() {
         let td = testkit::TempDir::new("dovecot-dropin");
@@ -2196,6 +2213,7 @@ mod dovecot_dropin_tests {
 mod dolt_yaml_tests {
     use super::*;
 
+    #[test_id(tlrs8u5)]
     #[test]
     fn dolt_template_renders_with_the_data_dir() {
         let td = testkit::TempDir::new("dolt-yaml");
@@ -2216,6 +2234,7 @@ mod dolt_yaml_tests {
 mod dolt_metrics_tests {
     use super::*;
 
+    #[test_id(tm2v2ax)]
     #[test]
     fn bd_metrics_disabled_is_edited_in_its_block_without_running_bd() {
         assert_eq!(with_bd_metrics_disabled("").unwrap(), "metrics:\n    disabled: true\n");
@@ -2227,6 +2246,7 @@ mod dolt_metrics_tests {
         assert!(with_bd_metrics_disabled("other:\n  disabled: false\nmetrics:\n  disabled: true\n").is_none());
     }
 
+    #[test_id(tmz8fsg)]
     #[test]
     fn metrics_disabled_is_written_without_running_dolt_and_keeps_other_keys() {
         let td = testkit::TempDir::new("dolt-metrics");
@@ -2239,6 +2259,7 @@ mod dolt_metrics_tests {
         assert!(std::fs::read_to_string(&path).unwrap().contains("user.name"));
     }
 
+    #[test_id(tbsh42d)]
     #[test]
     fn unwritable_or_corrupt_config_fails() {
         let td = testkit::TempDir::new("dolt-metrics-bad");
@@ -2302,6 +2323,7 @@ mod nix_gc_tests {
         home.display().to_string()
     }
 
+    #[test_id(t6y1y9n)]
     #[test]
     fn a_switched_env_link_is_rooted_then_collected_by_one_background_unit_under_the_idle_limits() {
         let f = fixture();
@@ -2318,6 +2340,7 @@ mod nix_gc_tests {
         assert_eq!(props.output_append, Some(f.gc.log.clone()));
     }
 
+    #[test_id(thyvcek)]
     #[test]
     fn an_unchanged_env_link_still_collects() {
         let f = fixture();
@@ -2328,6 +2351,7 @@ mod nix_gc_tests {
         assert_eq!(f.units.calls().len(), 1);
     }
 
+    #[test_id(t64w7cu)]
     #[test]
     fn the_plan_takes_the_profile_bin_the_run_dir_and_the_release_name_and_refuses_what_does_not_resolve() {
         let td = testkit::TempDir::new("nix-gc-plan");
@@ -2340,6 +2364,7 @@ mod nix_gc_tests {
         assert_eq!(gc_plan(Ok(bin.display().to_string()), Err("no run".into()), &root).err().as_deref(), Some("no run"));
     }
 
+    #[test_id(tsfe9w7)]
     #[test]
     fn a_dry_run_starts_nothing() {
         let f = fixture();
@@ -2350,6 +2375,7 @@ mod nix_gc_tests {
         assert!(f.units.calls().is_empty());
     }
 
+    #[test_id(tc0iyep)]
     #[test]
     fn a_failed_previous_env_root_returns_the_error_and_starts_nothing() {
         let f = fixture();
@@ -2360,6 +2386,7 @@ mod nix_gc_tests {
         assert!(f.units.calls().is_empty());
     }
 
+    #[test_id(ts5fyab)]
     #[test]
     fn a_unit_the_manager_refuses_leaves_the_install_succeeding() {
         let f = fixture();
@@ -2370,6 +2397,7 @@ mod nix_gc_tests {
         assert!(unscripted.calls().is_empty());
     }
 
+    #[test_id(tb7tarb)]
     #[test]
     fn a_missing_binary_starts_no_unit_and_leaves_the_install_succeeding() {
         let f = fixture();

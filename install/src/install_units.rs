@@ -622,6 +622,7 @@ fn _unused(_: &BTreeMap<String, String>) {}
 #[cfg(test)]
 mod lc_serve_split_tests {
     use super::*;
+    #[test_id(tr82bzu)]
     #[test]
     fn lc_serve_not_active_is_warn_only_in_a_fixture_and_fatal_outside() {
         let na = vec!["lc-serve.service".to_string(), "spira-sentinel-prod.service".to_string()];
@@ -633,6 +634,7 @@ mod lc_serve_split_tests {
         assert_eq!(p.fatal.len(), 2);
     }
 
+    #[test_id(tjyh9jv)]
     #[test]
     fn spira_runtime_instance_is_warn_only_in_a_fixture_but_its_neighbours_are_not() {
         let na = vec!["spira-runtime-571fae10b413.service".to_string(), "spira-runtime-watch-571fae10b413.service".to_string(), "spira-runtime-e48b6112ddef-sim.service".to_string()];
@@ -649,6 +651,7 @@ mod lc_serve_split_tests {
 mod tests {
     use super::*;
 
+    #[test_id(tfiof3s)]
     #[test]
     fn the_lc_services_signal_only_serve_and_give_its_drain_time_to_finish() {
         const DRAIN_BOUND_SECS: u64 = 60;
@@ -661,6 +664,7 @@ mod tests {
     }
     use crate::manifest::{build, Inputs};
     use crate::systemctl::{FakeSystemctl, FakeUnit};
+    #[test_id(t0ch9rh)]
     #[test]
     fn the_enable_loop_asks_systemd_about_every_unit_in_two_calls_not_two_per_unit() {
         let td = tempdir();
@@ -682,6 +686,7 @@ mod tests {
         assert_eq!(sc.single_queries.get(), 0);
     }
 
+    #[test_id(tycku9p)]
     #[test]
     fn the_drain_of_a_running_oneshot_reads_the_batched_answer_then_polls_live() {
         let td = tempdir();
@@ -717,6 +722,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-37
+    #[test_id(ts2gito)]
     #[test]
     fn install_enables_each_periodic_timer_and_never_the_service_behind_it() {
         let td = tempdir();
@@ -751,6 +757,7 @@ mod tests {
         }
     }
 
+    #[test_id(t8bouvq)]
     #[test]
     fn execstart_ok_skips_system_dirs_and_refuses_a_missing_target() {
         assert!(execstart_target_ok("ExecStart=/usr/bin/true\n").is_ok());
@@ -758,6 +765,7 @@ mod tests {
         assert!(execstart_target_ok("ExecStart=/does/not/exist\n").is_err());
     }
 
+    #[test_id(t5lxoqy)]
     #[test]
     fn a_unit_a_previous_release_installed_and_this_one_drops_is_stopped_and_removed() {
         let td = tempdir();
@@ -789,6 +797,7 @@ mod tests {
         assert!(run(&ctx).retired.is_empty());
     }
 
+    #[test_id(tovo1p0)]
     #[test]
     fn an_upgrade_removes_a_retired_round_template_unit_and_its_dropin() {
         let td = tempdir();
@@ -815,6 +824,7 @@ mod tests {
         assert!(sc.disabled_now.borrow().contains(&"spira-round-template-prod.timer".to_string()));
     }
 
+    #[test_id(t7chin6)]
     #[test]
     fn a_dropped_unit_is_retired_though_the_ledger_never_listed_it() {
         let td = tempdir();
@@ -848,6 +858,7 @@ mod tests {
         assert!(unit_dir.join("spira-other-test.timer").exists() && unit_dir.join("mine.service").exists());
     }
 
+    #[test_id(toui1m7)]
     #[test]
     fn the_shared_test_dolt_unit_is_stopped_and_removed_though_no_ledger_names_it() {
         let td = tempdir();
@@ -871,6 +882,7 @@ mod tests {
         assert!(run(&ctx).retired.is_empty(), "a second run has nothing left to retire");
     }
 
+    #[test_id(tqedo1f)]
     #[test]
     fn a_fresh_install_writes_and_enables_and_a_clean_rerun_changes_nothing() {
         let td = tempdir();
@@ -900,6 +912,7 @@ mod tests {
         assert!(matches!(r2.enabled_actions.iter().find(|(u, _)| u == "spira-example-prod.timer").unwrap().1, Action::Skip));
     }
 
+    #[test_id(ty8e8jg)]
     #[test]
     fn a_hand_disabled_runtime_is_re_enabled_but_other_timers_and_suspends_hold() {
         let td = tempdir();
@@ -937,6 +950,7 @@ mod tests {
         HostValues { prod: prod.into(), watchdog_every_s: "60".into(), ..host() }
     }
 
+    #[test_id(twq9l77)]
     #[test]
     fn the_watchdog_renders_a_service_and_timer_on_linux_and_a_plist_on_macos() {
         let h = watchdog_host("rel/current/spira");
@@ -962,6 +976,7 @@ mod tests {
     /// law-periodic-tool-needs-a-tested-timer: the watchdog's timer is in the manifest, enabled,
     /// written beside the other units and enabled by the install; this fails if the
     /// registration is removed.
+    #[test_id(tavxnt9)]
     #[test]
     fn the_watchdog_timer_is_registered_written_and_enabled() {
         let m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
@@ -1013,6 +1028,7 @@ mod tests {
     /// W2 of the scheduler consolidation: rendering the manifest, with every conditional input
     /// on, the shipped watchers and the operator's one overlay row, yields no loop timer and no
     /// watcher unit outside the keep list. The loop runs in `spira-runtime serve`.
+    #[test_id(ts25ea1)]
     #[test]
     fn rendering_the_manifest_yields_no_loop_timer_and_no_watcher_outside_the_keep_list() {
         let tmpl_dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
@@ -1034,6 +1050,7 @@ mod tests {
         assert!(strays.is_empty(), "units the scheduler replaces are still rendered: {strays:?}");
     }
 
+    #[test_id(teuk8fm)]
     #[test]
     fn the_cache_service_roots_its_store_at_the_configured_path() {
         let tmpl = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/sccache-dav.service");
@@ -1044,6 +1061,7 @@ mod tests {
         assert!(!unit.contains("@SPIRA_"), "every placeholder is filled");
     }
 
+    #[test_id(tnazza7)]
     #[test]
     fn the_reconciler_has_no_timer_in_the_manifest() {
         let m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
@@ -1052,6 +1070,7 @@ mod tests {
         assert!(!m.enable("prod").iter().any(|u| u == "spira-reconciler-prod.timer"));
     }
 
+    #[test_id(tcdd41c)]
     #[test]
     fn an_installed_lc_serve_socket_is_disabled_and_removed_before_the_service_restarts() {
         let td = tempdir();
@@ -1081,6 +1100,7 @@ mod tests {
         assert!(disabled < restart, "{order:?}");
     }
 
+    #[test_id(tabql3r)]
     #[test]
     fn an_installed_reconciler_timer_and_service_are_retired_by_the_release_that_drops_them() {
         let td = tempdir();
@@ -1105,6 +1125,7 @@ mod tests {
         assert!(sc.disabled_now.borrow().contains(&"spira-reconciler-prod.timer".to_string()));
     }
 
+    #[test_id(tp7cdh5)]
     #[test]
     fn install_migrates_the_old_watcher_namespaced_units_away() {
         let td = tempdir();
@@ -1129,6 +1150,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4txhaj)]
     #[test]
     fn a_masked_unit_is_never_written_or_restarted() {
         let td = tempdir();
@@ -1150,6 +1172,7 @@ mod tests {
         assert!(!r.written.contains(&"spira-example-prod.service".to_string()));
     }
 
+    #[test_id(tllodnt)]
     #[test]
     fn a_changed_and_active_unit_restarts_rather_than_enables_fresh() {
         let td = tempdir();
@@ -1192,6 +1215,7 @@ mod tests {
     /// active inside the test container, faulting a run whose suite tests none of them.
     /// A fourth, purely local watcher (queue-watch) was never in that list — this is why
     /// the split is by name, not "every watcher, unconditionally".
+    #[test_id(tcoiujb)]
     #[test]
     fn inside_a_test_fixture_only_watchers_are_named_and_the_run_does_not_fault_for_them() {
         let not_active = vec![
@@ -1204,6 +1228,7 @@ mod tests {
         assert!(split.fatal.is_empty(), "no non-watcher unit, so nothing faults the run");
     }
 
+    #[test_id(tq1ul7t)]
     #[test]
     fn inside_a_test_fixture_a_non_watcher_unit_still_faults() {
         let not_active = vec![
@@ -1215,6 +1240,7 @@ mod tests {
         assert_eq!(split.fatal, vec!["spira-example-abc123.service".to_string()]);
     }
 
+    #[test_id(ty4sl5o)]
     #[test]
     fn outside_a_test_fixture_a_watcher_not_active_still_faults_as_it_always_did() {
         let not_active = vec!["spira-watch-pr-notify-prod.service".to_string()];
@@ -1223,6 +1249,7 @@ mod tests {
         assert_eq!(split.fatal, not_active);
     }
 
+    #[test_id(t2oo2po)]
     #[test]
     fn with_nothing_not_active_both_lists_are_empty() {
         let split = split_not_active(&[], true, "t");

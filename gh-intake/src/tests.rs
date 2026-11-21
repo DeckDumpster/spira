@@ -215,6 +215,7 @@ fn issues_url(cfg: &Config, page: u32) -> String {
     format!("{}/repos/{}/issues?state=open&per_page=100&page={page}", cfg.api, cfg.repo)
 }
 
+#[test_id(teaii4z)]
 #[test]
 fn trusted_author_creates_a_work_bead() {
     let cfg = base_cfg();
@@ -238,6 +239,7 @@ fn trusted_author_creates_a_work_bead() {
     assert_eq!(created["priority"], "1");
 }
 
+#[test_id(t3vnec5)]
 #[test]
 fn rerun_is_idempotent_and_notes_the_existing_bead() {
     let cfg = base_cfg();
@@ -262,6 +264,7 @@ fn rerun_is_idempotent_and_notes_the_existing_bead() {
     assert_eq!(bd.notes.borrow()[0].0, "sp-abc12");
 }
 
+#[test_id(tjp9ne3)]
 #[test]
 fn untrusted_author_gets_an_untrusted_record_and_a_digest() {
     let cfg = base_cfg();
@@ -287,6 +290,7 @@ fn untrusted_author_gets_an_untrusted_record_and_a_digest() {
     assert!(mail.sent.borrow()[0].0.contains("1 new untrusted"));
 }
 
+#[test_id(t2gfzml)]
 #[test]
 fn pull_requests_are_excluded() {
     let cfg = base_cfg();
@@ -310,6 +314,7 @@ fn pull_requests_are_excluded() {
     assert!(!beads.iter().any(|b| b["external_ref"] == "github:acme/widgets#1"));
 }
 
+#[test_id(tyccf02)]
 #[test]
 fn spira_accept_promotes_when_the_actor_has_access() {
     let cfg = base_cfg();
@@ -338,6 +343,7 @@ fn spira_accept_promotes_when_the_actor_has_access() {
     assert_eq!(bd.closes.borrow()[0].0, "sp-untr5");
 }
 
+#[test_id(t4du1iq)]
 #[test]
 fn spira_accept_does_not_promote_without_access() {
     let cfg = base_cfg();
@@ -367,6 +373,7 @@ fn spira_accept_does_not_promote_without_access() {
     assert!(beads.iter().any(|b| b["external_ref"] == "github-untrusted:acme/widgets#6"));
 }
 
+#[test_id(tx64tob)]
 #[test]
 fn dry_run_makes_no_bd_writes() {
     let cfg = Config { dry_run: true, ..base_cfg() };
@@ -391,6 +398,7 @@ fn dry_run_makes_no_bd_writes() {
     assert!(report.out.iter().any(|l| l.contains("would record untrusted")));
 }
 
+#[test_id(tz5j0l7)]
 #[test]
 fn pagination_follows_a_full_first_page() {
     let cfg = base_cfg();
@@ -414,6 +422,7 @@ fn pagination_follows_a_full_first_page() {
     assert_eq!(http.calls.borrow().iter().filter(|c| c.contains("page=1") || c.contains("page=2")).count(), 2);
 }
 
+#[test_id(t83phcd)]
 #[test]
 fn an_unresolvable_repo_map_entry_is_refused() {
     let cfg = base_cfg();
@@ -428,6 +437,7 @@ fn an_unresolvable_repo_map_entry_is_refused() {
     assert!(report.err.iter().any(|l| l.contains("does not resolve to a checkout")));
 }
 
+#[test_id(tunmlu8)]
 #[test]
 fn no_configured_repo_and_none_registered_is_a_real_no_op() {
     let cfg = Config { repo: String::new(), ..base_cfg() };
@@ -443,6 +453,7 @@ fn no_configured_repo_and_none_registered_is_a_real_no_op() {
     assert!(http.calls.borrow().is_empty(), "nothing was fetched");
 }
 
+#[test_id(tkgceo9)]
 #[test]
 fn the_api_refusing_a_page_is_named_not_swallowed() {
     let cfg = base_cfg();
@@ -459,6 +470,7 @@ fn the_api_refusing_a_page_is_named_not_swallowed() {
     assert!(report.err.iter().any(|l| l.contains("Not Found")));
 }
 
+#[test_id(tgbo0a5)]
 #[test]
 fn a_bead_the_store_silently_dropped_the_scope_label_from_is_caught_by_the_post_check() {
     // Simulates a labelling defect in `bd` itself (not in gh-intake's own call): the store
@@ -485,6 +497,7 @@ fn a_bead_the_store_silently_dropped_the_scope_label_from_is_caught_by_the_post_
     assert!(report.err.iter().any(|l| l.contains("github:acme/widgets#1")));
 }
 
+#[test_id(t99lzdm)]
 #[test]
 fn valid_priority_accepts_0_to_4_only() {
     for p in ["0", "1", "2", "3", "4"] {
@@ -495,6 +508,7 @@ fn valid_priority_accepts_0_to_4_only() {
     }
 }
 
+#[test_id(te7ettc)]
 #[test]
 fn model_association_trust() {
     use crate::model::association_trusted;
@@ -506,6 +520,7 @@ fn model_association_trust() {
     }
 }
 
+#[test_id(t8p176p)]
 #[test]
 fn model_accept_label_is_exact_token() {
     use crate::model::has_accept_label;
@@ -514,6 +529,7 @@ fn model_accept_label_is_exact_token() {
     assert!(!has_accept_label(&[]));
 }
 
+#[test_id(tl690q8)]
 #[test]
 fn model_last_accept_actor_takes_the_most_recent() {
     use crate::model::last_accept_actor;
@@ -525,6 +541,7 @@ fn model_last_accept_actor_takes_the_most_recent() {
     assert_eq!(last_accept_actor(events.as_bytes()), "second");
 }
 
+#[test_id(toa66cx)]
 #[test]
 fn model_permission_grants_access_rules() {
     use crate::model::permission_grants_access;
@@ -547,6 +564,7 @@ fn rate_limited_world(status: u16) -> (Config, FakeHttp, FakeBd, FakeRepo, FakeM
     (cfg, http, bd, FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] }, FakeMail::default())
 }
 
+#[test_id(t8gzhv7)]
 #[test]
 fn a_rate_limit_refusal_is_a_logged_deferral_not_a_failure() {
     for status in [403u16, 429] {
@@ -561,6 +579,7 @@ fn a_rate_limit_refusal_is_a_logged_deferral_not_a_failure() {
     }
 }
 
+#[test_id(towldhq)]
 #[test]
 fn refusals_past_the_bound_alarm_naming_the_rate_limit_and_the_last_success() {
     let (cfg, http, bd, repo, mail) = rate_limited_world(403);
@@ -573,6 +592,7 @@ fn refusals_past_the_bound_alarm_naming_the_rate_limit_and_the_last_success() {
     assert!(err.contains("rate limit") && err.contains(&last.to_string()), "{err}");
 }
 
+#[test_id(th88lkk)]
 #[test]
 fn a_first_ever_refusal_seeds_the_clock_and_does_not_alarm() {
     let (cfg, http, bd, repo, mail) = rate_limited_world(429);
@@ -582,6 +602,7 @@ fn a_first_ever_refusal_seeds_the_clock_and_does_not_alarm() {
     assert_eq!(*st.last.borrow(), Some(st.now));
 }
 
+#[test_id(t4954qv)]
 #[test]
 fn a_completed_poll_marks_success() {
     let cfg = base_cfg();
@@ -614,6 +635,7 @@ fn url_for(cfg: &Config, slug: &str) -> String {
     format!("{}/repos/{slug}/issues?state=open&per_page=100&page=1", cfg.api)
 }
 
+#[test_id(tf7jbgz)]
 #[test]
 fn an_issue_on_a_second_registered_repo_becomes_a_bead_tagged_with_that_repo() {
     let (cfg, http, bd, repo) = two_repo_world();
@@ -631,6 +653,7 @@ fn an_issue_on_a_second_registered_repo_becomes_a_bead_tagged_with_that_repo() {
     assert!(made["labels"].as_array().unwrap().iter().any(|l| l == "repo:gadgets"), "{made}");
 }
 
+#[test_id(tj7vdwo)]
 #[test]
 fn the_first_read_of_a_repo_records_its_open_issues_and_files_nothing() {
     let (cfg, http, bd, repo) = two_repo_world();
@@ -654,6 +677,7 @@ fn the_first_read_of_a_repo_records_its_open_issues_and_files_nothing() {
     assert!(!beads.iter().any(|b| b["external_ref"] == "github:acme/gadgets#3"), "a seen issue stays unfiled");
 }
 
+#[test_id(teulijb)]
 #[test]
 fn a_rate_limit_on_one_repo_defers_the_rest_of_the_pass() {
     let (cfg, http, bd, repo) = two_repo_world();
@@ -666,6 +690,7 @@ fn a_rate_limit_on_one_repo_defers_the_rest_of_the_pass() {
     assert!(!http.calls.borrow().iter().any(|u| u.contains("acme/gadgets")));
 }
 
+#[test_id(tk48vf9)]
 #[test]
 fn github_slug_reads_every_remote_shape() {
     use crate::model::github_slug;
@@ -677,6 +702,7 @@ fn github_slug_reads_every_remote_shape() {
     }
 }
 
+#[test_id(tkdjs48)]
 #[test]
 fn contributor_with_hidden_org_membership_is_named_unverifiable() {
     let cfg = base_cfg();
@@ -722,6 +748,7 @@ fn work_beads(bd: &FakeBd) -> Vec<serde_json::Value> {
     bd.beads.borrow().iter().filter(|b| b["external_ref"] == "github:acme/widgets#5").cloned().collect()
 }
 
+#[test_id(t5qfno3)]
 #[test]
 fn own_bot_on_an_acceptance_issue_becomes_a_work_bead_with_provenance() {
     let bd = run_bot_issue("github-actions[bot]", "Bot", r#"{"name":"spira:acceptance"}"#);
@@ -730,24 +757,28 @@ fn own_bot_on_an_acceptance_issue_becomes_a_work_bead_with_provenance() {
     assert!(made[0]["body"].as_str().unwrap().contains("Admitted: the repo's own github-actions[bot]"));
 }
 
+#[test_id(tsi4ddb)]
 #[test]
 fn own_bot_without_the_acceptance_label_is_not_trusted() {
     let bd = run_bot_issue("github-actions[bot]", "Bot", "");
     assert!(work_beads(&bd).is_empty());
 }
 
+#[test_id(ti070jl)]
 #[test]
 fn another_bot_with_the_acceptance_label_is_not_trusted() {
     let bd = run_bot_issue("dependabot[bot]", "Bot", r#"{"name":"spira:acceptance"}"#);
     assert!(work_beads(&bd).is_empty());
 }
 
+#[test_id(t5yxxsq)]
 #[test]
 fn a_user_named_like_the_bot_is_not_trusted() {
     let bd = run_bot_issue("github-actions[bot]", "User", r#"{"name":"spira:acceptance"}"#);
     assert!(work_beads(&bd).is_empty());
 }
 
+#[test_id(tpvxk9l)]
 #[test]
 fn a_write_access_author_shown_as_contributor_still_becomes_work() {
     let cfg = base_cfg();
@@ -773,6 +804,7 @@ fn a_write_access_author_shown_as_contributor_still_becomes_work() {
     assert!(!beads.iter().any(|b| b["external_ref"] == "github-untrusted:acme/widgets#348"));
 }
 
+#[test_id(tg6o3t0)]
 #[test]
 fn a_member_author_becomes_work_without_any_permission_call() {
     let cfg = base_cfg();
@@ -801,6 +833,7 @@ fn three_issue_world() -> (Config, FakeHttp, FakeBd, FakeRepo) {
     (cfg, http, bd, repo)
 }
 
+#[test_id(tba98wn)]
 #[test]
 fn a_run_asks_the_store_one_point_question_per_ref_and_reads_no_list() {
     let (cfg, http, bd, repo) = three_issue_world();
@@ -821,6 +854,7 @@ fn a_run_asks_the_store_one_point_question_per_ref_and_reads_no_list() {
     assert_eq!(*bd.calls.borrow(), want);
 }
 
+#[test_id(td4r3bj)]
 #[test]
 fn a_store_that_cannot_answer_a_lookup_files_nothing_and_names_the_ref() {
     let (cfg, http, bd, repo) = three_issue_world();
@@ -833,6 +867,7 @@ fn a_store_that_cannot_answer_a_lookup_files_nothing_and_names_the_ref() {
     assert!(!bd.calls.borrow().iter().any(|c| c.starts_with("create")), "{:?}", bd.calls.borrow());
 }
 
+#[test_id(t128bo8)]
 #[test]
 fn a_last_filed_line_the_store_does_not_answer_dies_before_any_create() {
     for stored in [None, Some("sp-other")] {
@@ -851,6 +886,7 @@ fn a_last_filed_line_the_store_does_not_answer_dies_before_any_create() {
     }
 }
 
+#[test_id(tha5q0u)]
 #[test]
 fn a_filed_work_bead_is_recorded_as_the_last_filed_line() {
     let (cfg, http, bd, repo) = three_issue_world();
@@ -861,6 +897,7 @@ fn a_filed_work_bead_is_recorded_as_the_last_filed_line() {
     assert_eq!(seen.last_filed(&cfg.repo), Some(("github:acme/widgets#3".to_string(), "sp-fake1".to_string())));
 }
 
+#[test_id(tcj7lpd)]
 #[test]
 fn an_unread_repo_with_a_tracked_issue_was_read_before_and_files_the_untracked_one() {
     let (cfg, http, bd, repo) = three_issue_world();
@@ -871,6 +908,7 @@ fn an_unread_repo_with_a_tracked_issue_was_read_before_and_files_the_untracked_o
     assert!(bd.calls.borrow().iter().any(|c| c == "create github:acme/widgets#3"));
 }
 
+#[test_id(tbn6rpz)]
 #[test]
 fn an_unread_repo_with_no_tracked_issue_is_a_first_read_and_files_none() {
     let (cfg, http, _, repo) = three_issue_world();
@@ -883,6 +921,7 @@ fn an_unread_repo_with_no_tracked_issue_is_a_first_read_and_files_none() {
     assert!(!bd.calls.borrow().iter().any(|c| c.starts_with("create")));
 }
 
+#[test_id(tq6yluk)]
 #[test]
 fn an_unread_repo_asks_both_refs_of_every_open_issue_before_deciding() {
     let (cfg, http, _, repo) = three_issue_world();

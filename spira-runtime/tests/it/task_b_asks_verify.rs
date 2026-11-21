@@ -21,16 +21,19 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(tgb6c5k)]
 #[test]
 fn t1_registered_boots_and_arms_a_15min_tick() {
     t::t1_registered_and_boots::<H>(SET, TICK);
 }
 
+#[test_id(tu4cvyd)]
 #[test]
 fn t2_two_open_asks_without_verify_are_the_probe_alone() {
     t::t2_silent::<H>(SET, &json(&Snapshot::default()));
 }
 
+#[test_id(tw1fo9w)]
 #[test]
 fn t3_an_ask_is_checked_satisfied_closed_withdrawn_and_a_close_without_satisfied_is_refused() {
     let h = t::handler::<H>(SET);
@@ -46,12 +49,14 @@ fn t3_an_ask_is_checked_satisfied_closed_withdrawn_and_a_close_without_satisfied
     assert!(refused.contains("checking"), "{refused}");
 }
 
+#[test_id(tu3565k)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_handler_module_spawns_nothing() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/b/asks_verify.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(tej7plz)]
 #[test]
 fn t5_a_satisfied_ask_closes_with_the_old_reason_and_a_mislabelled_epic_is_said_once() {
     let h = t::handler::<H>(SET);
@@ -69,6 +74,7 @@ fn mislabelled_epic() -> Snapshot {
     Snapshot { asks: vec![ask("sp-a", "test -f /done", &["sp-w"])], mislabelled: vec![("sp-e".into(), "epic".into(), "an epic with the ask label".into())], ..Snapshot::default() }
 }
 
+#[test_id(to1w2fo)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rig = t::rig::<H>(1, SET, &json(&mislabelled_epic()));
@@ -78,6 +84,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(ti1yi9j)]
 #[test]
 fn a_boot_repeats_no_mislabelled_note_and_misses_none() {
     let both = Snapshot { mislabelled: vec![("sp-e".into(), "epic".into(), "an epic with the ask label".into()), ("sp-f".into(), "epic".into(), "another".into())], ..mislabelled_epic() };

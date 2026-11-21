@@ -101,6 +101,7 @@ mod tests {
     /// Every registered key here goes through `cfg`/`cfg_parse`, which resolve once per
     /// process from spira-config's own cache — not something a unit test can drive per-case.
     /// What stays testable here is the pure validation below.
+    #[test_id(t65ijrh)]
     #[test]
     fn priority_above_four_is_refused_by_name() {
         assert_eq!(validate_priority(0), Ok(0));
@@ -118,6 +119,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-36
+    #[test_id(tlks1vf)]
     #[test]
     fn suite_reds_and_incidents_default_behind_a_reported_bug() {
         let reported = shipped_priority("SPIRA_GH_INTAKE_PRIORITY");

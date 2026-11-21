@@ -371,12 +371,14 @@ mod tests {
         Paths { settings: PathBuf::from("x/settings.json"), release: current.into(), path: "bin:usr/bin".into(), toml: "c/one-source.toml".into(), hook: PathBuf::from(format!("{current}/spira/hooks/session.sh")), meter: PathBuf::from(format!("{current}/spira/ctx-meter.sh")) }
     }
 
+    #[test_id(tgg2hv0)]
     #[test]
     fn hook_command_embeds_release_and_path() {
         let p = p("r/spira-releases/current");
         assert_eq!(p.hook_command(), "env SPIRA_RELEASE=r/spira-releases/current SPIRA_TOML=c/one-source.toml PATH=bin:usr/bin r/spira-releases/current/spira/hooks/session.sh");
     }
 
+    #[test_id(t32168u)]
     #[test]
     fn is_ours_matches_every_earlier_form() {
         // The bare sha-pinned path, with no env wrapper at all — the exact leftover shape
@@ -390,6 +392,7 @@ mod tests {
         assert!(!is_ours("r/spira-releases/current/spira/ctx-meter.sh", HOOK_SUFFIX));
     }
 
+    #[test_id(tcv5x0f)]
     #[test]
     fn three_activations_converge_to_one() {
         // sp-7jr34 requirement 2's own acceptance test: three sha-pinned registrations (one
@@ -414,6 +417,7 @@ mod tests {
         assert_eq!(mine[0], paths.hook_command());
     }
 
+    #[test_id(txifben)]
     #[test]
     fn install_is_idempotent() {
         let mut doc = json!({});
@@ -424,6 +428,7 @@ mod tests {
         assert_eq!(doc, first, "a second install must change nothing");
     }
 
+    #[test_id(tgkq90p)]
     #[test]
     fn install_writes_no_matcher_and_retires_post_compact() {
         let mut doc = json!({"hooks": {"PostCompact": [{"hooks": [{"type": "command", "command": "r/spira-releases/current/spira/hooks/session.sh", "timeout": 10}]}]}});
@@ -434,6 +439,7 @@ mod tests {
         assert!(doc["hooks"].get("PostCompact").is_none(), "PostCompact must be stripped, never re-added");
     }
 
+    #[test_id(tifn1x5)]
     #[test]
     fn install_leaves_a_foreign_hook_alone() {
         let mut doc = json!({"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "somebody/elses/hook.sh"}]}]}});
@@ -445,6 +451,7 @@ mod tests {
         assert!(commands.contains(&paths.hook_command()));
     }
 
+    #[test_id(tna7pbo)]
     #[test]
     fn install_sets_one_status_line_through_current() {
         let mut doc = json!({});
@@ -454,6 +461,7 @@ mod tests {
         assert_eq!(doc["statusLine"]["refreshInterval"], json!(METER_REFRESH_SECS));
     }
 
+    #[test_id(t8ibsfj)]
     #[test]
     fn uninstall_leaves_no_husk_and_keeps_unrelated_settings() {
         let mut doc = json!({
@@ -468,6 +476,7 @@ mod tests {
         assert_eq!(doc["otherSetting"], "keep-me");
     }
 
+    #[test_id(t2bpljl)]
     #[test]
     fn uninstall_never_touches_a_foreign_status_line() {
         let mut doc = json!({"statusLine": {"command": "some/other/meter.sh", "refreshInterval": 5}});
@@ -475,6 +484,7 @@ mod tests {
         assert_eq!(doc["statusLine"]["command"], "some/other/meter.sh");
     }
 
+    #[test_id(t3y2jo9)]
     #[test]
     fn prune_removes_by_substring_from_hooks_and_status_line() {
         let mut doc = json!({
@@ -487,6 +497,7 @@ mod tests {
         assert!(doc.get("statusLine").is_none());
     }
 
+    #[test_id(ttca6v8)]
     #[test]
     fn status_reports_missing_then_ok_then_dup() {
         let paths = p("r/spira-releases/current");
@@ -510,6 +521,7 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("DUP")));
     }
 
+    #[test_id(ty74bj6)]
     #[test]
     fn status_reports_a_foreign_hook_but_never_its_removal() {
         let paths = p("r/spira-releases/current");
@@ -519,6 +531,7 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("other") && l.contains("gone/hooks/old-session.sh")));
     }
 
+    #[test_id(tjf1c2s)]
     #[test]
     fn save_writes_once_and_skips_an_unchanged_rewrite() {
         let tmp = testkit::TempDir::new("session-hook-save");
@@ -561,6 +574,7 @@ mod tests {
         doc.as_object_mut().unwrap().insert("statusLine".into(), want_meter);
     }
 
+    #[test_id(txvufzp)]
     #[test]
     fn install_refuses_when_the_hook_is_missing() {
         let tmp = testkit::TempDir::new("session-hook-missing");

@@ -182,17 +182,20 @@ mod tests {
         vec!["work-close-converted".to_string(), "eject".to_string()]
     }
 
+    #[test_id(tmlgurw)]
     #[test]
     fn deliberate_causes_sql_list_escapes_an_embedded_quote() {
         let out = deliberate_causes_sql_list(&["o'brien".to_string()]);
         assert_eq!(out, "'o''brien'");
     }
 
+    #[test_id(t5ty1z7)]
     #[test]
     fn deliberate_causes_sql_list_matches_the_bash() {
         assert_eq!(deliberate_causes_sql_list(&causes()), "'work-close-converted', 'eject'");
     }
 
+    #[test_id(tmgprcn)]
     #[test]
     fn handwritten_sql_matches_the_bash() {
         assert_eq!(
@@ -201,6 +204,7 @@ mod tests {
         );
     }
 
+    #[test_id(tg9jnim)]
     #[test]
     fn deliberate_sql_with_no_watermark_matches_the_bash() {
         assert_eq!(
@@ -209,6 +213,7 @@ mod tests {
         );
     }
 
+    #[test_id(tb13fk9)]
     #[test]
     fn deliberate_sql_with_a_watermark_matches_the_bash() {
         assert_eq!(
@@ -217,6 +222,7 @@ mod tests {
         );
     }
 
+    #[test_id(tomvu9p)]
     #[test]
     fn events_sql_collapses_bursts() {
         let sql = events_sql(None, &causes());
@@ -225,12 +231,14 @@ mod tests {
         assert!(!sql.contains("created_at >"));
     }
 
+    #[test_id(t64z71v)]
     #[test]
     fn events_sql_applies_the_watermark_to_every_part() {
         let sql = events_sql(Some("2023-11-14 22:13:20"), &causes());
         assert_eq!(sql.matches("AND created_at > '2023-11-14 22:13:20'").count(), 8);
     }
 
+    #[test_id(tk9uoct)]
     #[test]
     fn a_reopen_recorded_in_the_lifecycle_log_is_not_unrecorded() {
         let plain = events_sql(None, &causes());
@@ -240,6 +248,7 @@ mod tests {
         assert!(with.contains("event_type = 'reopened'"));
     }
 
+    #[test_id(teqw1n4)]
     #[test]
     fn events_sql_excludes_every_unjudged_cause_but_the_charging_one() {
         let q = events_sql(None, &causes());
@@ -248,6 +257,7 @@ mod tests {
         assert!(!dwarf::decide::outcome_charges("operator-wait"));
     }
 
+    #[test_id(tf5ypj1)]
     #[test]
     fn event_rows_sql_is_unaggregated_and_keeps_the_exclusions_of_events_sql() {
         let rows = event_rows_sql(Some("2023-11-14 22:13:20"), &causes(), &[]);
@@ -266,6 +276,7 @@ mod tests {
         }
     }
 
+    #[test_id(t8w6l46)]
     #[test]
     fn class_fold_map_matches_the_bash() {
         assert_eq!(
@@ -286,6 +297,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-11
+    #[test_id(tgbsiq3)]
     #[test]
     fn a_merge_conflict_requeue_folds_into_the_rebase_conflict_reopen_class() {
         let q = events_sql(None, &causes());
@@ -297,6 +309,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-11
+    #[test_id(tfwmbyt)]
     #[test]
     fn a_bare_reopened_counts_unrecorded_only_when_no_reopen_or_requeue_names_its_cause() {
         for q in [events_sql(None, &causes()), event_rows_sql(None, &causes(), &[])] {
@@ -309,6 +322,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-13
+    #[test_id(tnkkzrg)]
     #[test]
     fn the_since_bound_is_a_utc_literal_and_no_watermark_adds_none() {
         for since in [None, Some("")] {

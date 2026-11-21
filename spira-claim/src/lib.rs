@@ -6,6 +6,9 @@
 //! accounting, CHECK 4 poison decision, epic-first claim selection and `unpoison` stay
 //! private behind it; see DESIGN.md.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 extern crate self as spira_claim;
 
 mod audit;

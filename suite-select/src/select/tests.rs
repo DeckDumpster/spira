@@ -46,6 +46,7 @@ fn nofallback() -> Options {
     }
 }
 
+#[test_id(t8xwkcl)]
 #[test]
 fn a_all_is_every_suite() {
     let s = all(&abcd(), &fallback());
@@ -53,6 +54,7 @@ fn a_all_is_every_suite() {
     assert_eq!(s.mode, Mode::All);
 }
 
+#[test_id(th1xogn)]
 #[test]
 fn b_a_covered_change_selects_its_suite_and_the_always_run_suites() {
     let s = run(&abcd(), &m(&["covered.sh"]), &fallback()).unwrap();
@@ -61,6 +63,7 @@ fn b_a_covered_change_selects_its_suite_and_the_always_run_suites() {
     assert_eq!(s.log, ["select: 2 suite(s) selected"]);
 }
 
+#[test_id(t3zf424)]
 #[test]
 fn c_an_unmapped_change_falls_back_to_all_unless_told_not_to() {
     let s = run(&abcd(), &m(&["no-suite-owns-this.go"]), &fallback()).unwrap();
@@ -75,6 +78,7 @@ fn c_an_unmapped_change_falls_back_to_all_unless_told_not_to() {
     assert_eq!(s.unplaced, ["no-suite-owns-this.go"]);
 }
 
+#[test_id(t4uvn3h)]
 #[test]
 fn d_an_empty_diff_selects_only_the_always_run_suites() {
     let s = run(&abcd(), &[], &fallback()).unwrap();
@@ -87,6 +91,7 @@ fn d_an_empty_diff_selects_only_the_always_run_suites() {
     assert!(run(&abcd(), &[], &o).unwrap().suites.is_empty());
 }
 
+#[test_id(tnxjcjs)]
 #[test]
 fn h_the_report_names_unplaced_and_unclaimed_files() {
     let c = corpus(&[
@@ -105,6 +110,7 @@ fn h_the_report_names_unplaced_and_unclaimed_files() {
     );
 }
 
+#[test_id(tgehfy9)]
 #[test]
 fn i_l_inert_files_select_nothing_and_never_fall_back() {
     let c = corpus(&[("test-fx-i.sh", "# covers: some.sh\n")]);
@@ -123,6 +129,7 @@ fn i_l_inert_files_select_nothing_and_never_fall_back() {
     assert_eq!(run(&c, &m(&["docs/x.md"]), &fallback()).unwrap().suites, ["test-nc.sh"]);
 }
 
+#[test_id(t1zby60)]
 #[test]
 fn j_an_unclaimed_source_file_fails_naming_it_and_a_deleted_one_does_not() {
     let c = corpus(&[("test-o.sh", "# covers: other.sh\n")]);
@@ -147,6 +154,7 @@ fn j_an_unclaimed_source_file_fails_naming_it_and_a_deleted_one_does_not() {
     assert_eq!(s.suites, ["test-n.sh"]);
 }
 
+#[test_id(t98bv1f)]
 #[test]
 fn m_function_level_covers_narrow_to_the_changed_function() {
     let c = corpus(&[
@@ -164,6 +172,7 @@ fn m_function_level_covers_narrow_to_the_changed_function() {
     assert_eq!(run(&c, &m(&["hub.sh"]), &nofallback()).unwrap().suites.len(), 2);
 }
 
+#[test_id(tlkm279)]
 #[test]
 fn m_changed_functions_maps_hunks_onto_function_blocks() {
     let head = "#!/bin/bash\nfoo() {\n  echo a\n}\nglobal=1\nbar() {\n  echo b\n}\n";
@@ -178,6 +187,7 @@ fn m_changed_functions_maps_hunks_onto_function_blocks() {
     assert!(changed_functions("@@ -4 +4 @@\n", head).is_empty());
 }
 
+#[test_id(txsyndy)]
 #[test]
 fn n_a_batch_diff_selects_the_union_and_falls_back_on_an_unmapped_member() {
     let c = corpus(&[
@@ -192,6 +202,7 @@ fn n_a_batch_diff_selects_the_union_and_falls_back_on_an_unmapped_member() {
     assert_eq!(s.suites.len(), 3);
 }
 
+#[test_id(ts5nt3q)]
 #[test]
 fn o_p_selects_on_fires_only_on_its_events() {
     let c = corpus(&[
@@ -214,6 +225,7 @@ fn o_p_selects_on_fires_only_on_its_events() {
     assert!(run(&c, &m(&["README.md"]), &nofallback()).unwrap().suites.is_empty());
 }
 
+#[test_id(tevfxl1)]
 #[test]
 fn q_a_plumbing_file_falls_back_even_when_claimed() {
     let s = run(&abcd(), &m(&["Makefile"]), &fallback()).unwrap();
@@ -231,6 +243,7 @@ fn q_a_plumbing_file_falls_back_even_when_claimed() {
     assert_eq!(s.suites, ["test-fx-d.sh", "test-fx-c.sh"]);
 }
 
+#[test_id(tswwogh)]
 #[test]
 fn a_suite_reach_selects_still_answers_to_the_tier_filter() {
     let t = testkit::TempDir::new("suite-select-reach-tier");
@@ -251,6 +264,7 @@ fn a_suite_reach_selects_still_answers_to_the_tier_filter() {
     assert!(run(&c, &m(&["a/src/lib.rs"]), &o).unwrap().suites.is_empty());
 }
 
+#[test_id(tajebx0)]
 #[test]
 fn a_covering_suite_is_selected_whatever_its_tier_when_covers_outrank_tiers() {
     let c = corpus(&[
@@ -271,6 +285,7 @@ fn a_covering_suite_is_selected_whatever_its_tier_when_covers_outrank_tiers() {
     assert_eq!(run(&c, &m(&["spira/testdb.sh"]), &o).unwrap().suites, ["test-t2.sh"]);
 }
 
+#[test_id(t6favw9)]
 #[test]
 fn tiers_keep_listed_and_untiered_suites_everywhere() {
     let c = corpus(&[
@@ -287,6 +302,7 @@ fn tiers_keep_listed_and_untiered_suites_everywhere() {
     assert_eq!(parse_tiers(""), None);
 }
 
+#[test_id(tzyr7jt)]
 #[test]
 fn name_status_and_raw_parsing() {
     let c = parse_name_status("M\ta.sh\nA\tb.sh\nD\tc.sh\nR100\told.sh\tnew.sh\nbare.sh\n\n");
@@ -300,6 +316,7 @@ fn name_status_and_raw_parsing() {
     assert_eq!(parse_mode_changes(raw), ["spira/x.sh"]);
 }
 
+#[test_id(ta0x25h)]
 #[test]
 fn buckets_read_the_environment_overrides() {
     let env = |k: &str| match k {
@@ -313,6 +330,7 @@ fn buckets_read_the_environment_overrides() {
     assert!(b.plumbing.contains(&"spira/lib.sh".to_string()));
 }
 
+#[test_id(t6u7he1)]
 #[test]
 fn a_change_to_a_crate_selects_the_suite_that_runs_a_binary_depending_on_it() {
     let t = testkit::TempDir::new("suite-select-reach-sel");
@@ -338,6 +356,7 @@ fn a_change_to_a_crate_selects_the_suite_that_runs_a_binary_depending_on_it() {
 /// Over-broad-scopes #6 (sp-ipwlic): reach selects a suite that INVOKES a reached binary, not
 /// one whose strings merely contain its name as a word. `bead`, `mail`, `queue` and `gate` are
 /// ordinary words; a change to `bead/` selected ~131 suites by word match.
+#[test_id(t2cmq9p)]
 #[test]
 fn reach_matches_invocations_not_bare_words() {
     let t = testkit::TempDir::new("suite-select-reach-inv");
@@ -365,6 +384,7 @@ fn reach_matches_invocations_not_bare_words() {
 /// only the suites that reach that function — directly, through another lib function that
 /// calls it, or through a script that calls it — not all 83 that name the file. A change to
 /// top-level code, or one the diff cannot place, still selects every suite that names it.
+#[test_id(txcbcck)]
 #[test]
 fn a_lib_sh_function_change_selects_only_the_suites_that_reach_the_function() {
     let t = testkit::TempDir::new("suite-select-libfn");
@@ -394,6 +414,7 @@ fn a_lib_sh_function_change_selects_only_the_suites_that_reach_the_function() {
     assert_eq!(s.suites.len(), 5, "an unplaceable diff narrows nothing");
 }
 
+#[test_id(tfg6odm)]
 #[test]
 fn changed_scope_names_top_level_and_deletions() {
     let head = "#!/bin/bash\nfoo() {\n  echo a\n}\nglobal=1\nbar() {\n  echo b\n}\n";

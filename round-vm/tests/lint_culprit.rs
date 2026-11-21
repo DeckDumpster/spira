@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate spira_test_id;
 use std::path::Path;
 use std::process::Command;
 
@@ -30,6 +32,7 @@ fn rule_src(name: &str, allow: &str) -> String {
     format!("const NAME: &str = \"{name}\";\nconst ALLOW_FILE: &str = \"{allow}\";\n")
 }
 
+#[test_id(tq38ers)]
 #[test]
 fn a_finding_whose_rule_arrives_in_a_members_diff_is_that_members_not_the_bases() {
     let tmp = testkit::TempDir::new("lint-culprit");

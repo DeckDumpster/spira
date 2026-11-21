@@ -121,6 +121,7 @@ mod tests {
         Spec { batch: "r-1".into(), pass: 2, suite: "test-x.sh".into(), repo: "r".into(), base: "main".into(), output: "o".into(), tree: None, members: vec![] }
     }
 
+    #[test_id(tdgievo)]
     #[test]
     fn only_the_member_touching_a_covered_file_is_pointed_at() {
         let ms = [member("sp-a", &["spira/lib.sh"]), member("sp-b", &["docs/x.md"])];
@@ -128,6 +129,7 @@ mod tests {
         assert_eq!(touching(&ms, Some(&covers)).iter().map(|m| m.bead.as_str()).collect::<Vec<_>>(), vec!["sp-a"]);
     }
 
+    #[test_id(ttsy749)]
     #[test]
     fn the_pack_names_signatures_touching_members_and_every_diff() {
         let ms = [member("sp-a", &["spira/lib.sh"]), member("sp-b", &["docs/x.md"])];
@@ -141,6 +143,7 @@ mod tests {
         assert!(text.contains("diff of sp-a") && text.contains("diff of sp-b"), "{text}");
     }
 
+    #[test_id(tor8yin)]
     #[test]
     fn nothing_touching_says_so_instead_of_staying_silent() {
         let ms = [member("sp-b", &["docs/x.md"])];
@@ -151,6 +154,7 @@ mod tests {
         assert!(text.contains("none found in the output"), "{text}");
     }
 
+    #[test_id(teabavc)]
     #[test]
     fn the_pass_tree_is_named_when_the_spec_has_one() {
         let mut s = spec();
@@ -159,6 +163,7 @@ mod tests {
         assert!(text.contains("Pass tree (run the mend's checks here): pass/tree"), "{text}");
     }
 
+    #[test_id(tahs91m)]
     #[test]
     fn the_output_is_tailed_to_its_last_lines() {
         assert_eq!(tail("1\n2\n3\n4", 2), "3\n4");

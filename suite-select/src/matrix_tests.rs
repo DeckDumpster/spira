@@ -64,6 +64,7 @@ fn names(s: Result<Selection, Fail>) -> Vec<String> {
 }
 
 // covers: UC-test-infrastructure-01
+#[test_id(te0zfyw)]
 #[test]
 fn the_header_parser_reads_every_declaration_and_nothing_from_an_undeclared_file() {
     let h = "#!/usr/bin/env bash\n# tier: T2\n# covers: spira/one.sh spira/two.sh\n# covers: spira/ignored.sh\n\
@@ -94,6 +95,7 @@ fn plan_corpus() -> Corpus {
 }
 
 // covers: UC-test-infrastructure-03
+#[test_id(the43be)]
 #[test]
 fn selection_over_a_changed_set_follows_covers_fallback_inert_and_selects_on() {
     let c = plan_corpus();
@@ -126,6 +128,7 @@ fn funcs_corpus() -> Corpus {
 }
 
 // covers: UC-test-infrastructure-04
+#[test_id(tuw0t6p)]
 #[test]
 fn a_function_cover_narrows_to_its_hunk_and_a_global_hunk_selects_every_claimant() {
     let c = funcs_corpus();
@@ -141,6 +144,7 @@ fn a_function_cover_narrows_to_its_hunk_and_a_global_hunk_selects_every_claimant
 }
 
 // covers: UC-test-infrastructure-05
+#[test_id(tepe7pc)]
 #[test]
 fn an_unclaimed_source_file_fails_selection_and_the_report_lists_unclaimed_and_unplaced() {
     let c = corpus(&[("test-b.sh", "# covers: spira/beta.sh\n")]);
@@ -158,6 +162,7 @@ fn an_unclaimed_source_file_fails_selection_and_the_report_lists_unclaimed_and_u
 }
 
 // covers: UC-test-infrastructure-06
+#[test_id(ttumduv)]
 #[test]
 fn a_branch_diff_selects_the_union_of_its_members_and_falls_back_to_all_on_an_unmapped_one() {
     let c = corpus(&[
@@ -176,6 +181,7 @@ fn a_branch_diff_selects_the_union_of_its_members_and_falls_back_to_all_on_an_un
 }
 
 // covers: UC-test-infrastructure-07
+#[test_id(tvbtyza)]
 #[test]
 fn every_consumer_links_the_suite_select_crate_and_no_private_selector_remains() {
     let root = spira_config::resolve::checkout_root_for_process().unwrap();

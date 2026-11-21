@@ -974,6 +974,7 @@ pub fn parse_iso(s: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tymwl93)]
     #[test]
     fn a_request_limit_is_retried_with_backoff_then_named_when_it_persists() {
         let err = "aws run-instances: An error occurred (RequestLimitExceeded) when calling the RunInstances operation";
@@ -985,6 +986,7 @@ mod tests {
         assert!(e.contains("RequestLimitExceeded") && e.contains("after 2 retries"), "{e}");
     }
 
+    #[test_id(tpbymhz)]
     #[test]
     fn a_request_limit_that_clears_launches_and_other_errors_are_not_retried() {
         let mut n = 0;
@@ -995,6 +997,7 @@ mod tests {
         assert_eq!((calls, r.is_err()), (1, true));
     }
 
+    #[test_id(tawrb0h)]
     #[test]
     fn a_request_limit_is_not_a_capacity_refusal_so_no_smaller_type_is_tried() {
         assert_eq!(super::throttle_code("(RequestLimitExceeded)"), Some("RequestLimitExceeded"));
@@ -1006,6 +1009,7 @@ mod tests {
 
     use super::*;
 
+    #[test_id(th4mzt4)]
     #[test]
     fn iso_times_parse_to_epoch_seconds() {
         assert_eq!(parse_iso("1970-01-01T00:00:00+00:00"), Some(0));
@@ -1013,6 +1017,7 @@ mod tests {
         assert_eq!(parse_iso("garbage"), None);
     }
 
+    #[test_id(tjqqvau)]
     #[test]
     fn end_reason_names_a_spot_interruption_and_a_shutdown() {
         let spot = r#"{"Reservations":[{"Instances":[{"State":{"Name":"terminated"},"StateReason":{"Code":"Server.SpotInstanceTermination","Message":"Server.SpotInstanceTermination: Spot instance termination"},"StateTransitionReason":"Server.SpotInstanceTermination: x"}]}]}"#;
@@ -1023,6 +1028,7 @@ mod tests {
         assert!(parse_end_reason(r#"{"Reservations":[]}"#).is_none());
     }
 
+    #[test_id(tih8hqh)]
     #[test]
     fn describe_output_keeps_tagged_live_instances_only() {
         let json = r#"{"Reservations":[{"Instances":[
@@ -1034,6 +1040,7 @@ mod tests {
         assert_eq!((v[0].id.as_str(), v[0].handle.as_str(), v[0].name.as_str(), v[0].running), ("i-1", "ec2-a", "round-ec2-a", true));
     }
 
+    #[test_id(txdi5w4)]
     #[test]
     fn tailnet_peer_is_found_by_hostname_only_when_online() {
         let json = r#"{"Peer":{"k1":{"HostName":"round-ec2-a","Online":true,"TailscaleIPs":["100.64.0.9","fd7a::9"]},
@@ -1043,6 +1050,7 @@ mod tests {
         assert_eq!(peer_addr(json, "round-ec2-c").unwrap(), None);
     }
 
+    #[test_id(t9regjq)]
     #[test]
     fn the_defaults_are_a_c7i_spot_first_and_the_market_key_turns_spot_off() {
         let none = Ec2Config::from_lookup(&|_| None);
@@ -1052,6 +1060,7 @@ mod tests {
         assert!(!od.spot_first);
     }
 
+    #[test_id(t9l9zc0)]
     #[test]
     fn missing_names_each_gap_and_a_configured_provider_starts() {
         let d = TempDir::new();
@@ -1075,12 +1084,14 @@ mod tests {
         assert!(Ec2::new(FakeEc2::default(), &good).is_ok());
     }
 
+    #[test_id(teg3oo7)]
     #[test]
     fn user_data_quotes_the_key_and_joins_as_the_instance_name() {
         let u = user_data("tskey-a'b", "round-ec2-a", LIFETIME);
         assert!(u.contains("--auth-key='tskey-a'\\''b'") && u.contains("--hostname='round-ec2-a'") && u.contains("tag:round-vm"), "{u}");
     }
 
+    #[test_id(ta3r5td)]
     #[test]
     fn user_data_waits_for_tailscaled_and_retries_tailscale_up_without_echoing_the_key() {
         let u = user_data("tskey-secret", "round-ec2-a", LIFETIME);
@@ -1093,6 +1104,7 @@ mod tests {
 
     const LIFETIME: Duration = Duration::from_secs(4 * 3600);
 
+    #[test_id(t0tgxcq)]
     #[test]
     fn a_launched_instance_powers_itself_off_at_the_configured_lifetime_and_terminates() {
         let d = TempDir::new();
@@ -1136,6 +1148,7 @@ mod tests {
         ProvisionSpec { iface: "ens18", ssh_user: "root", pubkey: "ssh-ed25519 AAAA host", timing: T }
     }
 
+    #[test_id(t0rywj6)]
     #[test]
     fn dry_run_succeeds_only_on_dryrunoperation() {
         let ok = "aws ec2: An error occurred (DryRunOperation) when calling the RunInstances operation: Request would have succeeded, but DryRun flag is set.";
@@ -1145,6 +1158,7 @@ mod tests {
         assert!(dry_run_verdict(Ok("i-1".into())).unwrap_err().contains("launched instance i-1"));
     }
 
+    #[test_id(t69jjrs)]
     #[test]
     fn ssm_retries_invalid_instance_id_until_registered_then_gives_up() {
         let d = TempDir::new();
@@ -1158,6 +1172,7 @@ mod tests {
         assert!(e.contains("never registered with SSM") && e.contains("InvalidInstanceId"), "{e}");
     }
 
+    #[test_id(tiv2ymy)]
     #[test]
     fn probe_dry_launches_nothing_and_names_the_failing_step() {
         let d = TempDir::new();
@@ -1169,6 +1184,7 @@ mod tests {
         assert!(p.probe_dry().unwrap_err().contains("dry-run launch: fake run-instances refused"));
     }
 
+    #[test_id(twj1dmg)]
     #[test]
     fn probe_launches_runs_true_terminates_and_confirms_gone() {
         let d = TempDir::new();
@@ -1181,6 +1197,7 @@ mod tests {
         assert!(p.probe(2, Duration::ZERO).unwrap_err().starts_with("launch: "));
     }
 
+    #[test_id(tf3m0w4)]
     #[test]
     fn provision_run_and_verified_destroy() {
         let d = TempDir::new();
@@ -1197,6 +1214,7 @@ mod tests {
         destroy_verified(&p, &vm.handle, T).unwrap();
     }
 
+    #[test_id(tdyauw2)]
     #[test]
     fn an_instance_that_never_reaches_the_tailnet_is_diagnosed_then_destroyed() {
         let d = TempDir::new();
@@ -1212,6 +1230,7 @@ mod tests {
         assert!(e.doomed.is_none());
     }
 
+    #[test_id(ta49xyt)]
     #[test]
     fn destroy_of_a_wrongly_named_instance_is_refused() {
         let d = TempDir::new();
@@ -1224,6 +1243,7 @@ mod tests {
         assert_eq!(fake.ids(), ["i-9"]);
     }
 
+    #[test_id(tvlzode)]
     #[test]
     fn an_untagged_instance_cannot_be_addressed_by_any_handle() {
         let d = TempDir::new();
@@ -1235,6 +1255,7 @@ mod tests {
         assert_eq!(fake.ids(), ["i-7"]);
     }
 
+    #[test_id(t866xz3)]
     #[test]
     fn the_reaper_names_stale_tagged_instances_and_never_an_untagged_one() {
         let d = TempDir::new();
@@ -1250,12 +1271,14 @@ mod tests {
         Image { id: id.into(), recipe_sha: sha.into(), created: created.into() }
     }
 
+    #[test_id(t1rh9vd)]
     #[test]
     fn auto_selects_the_newest_image_when_its_recipe_matches() {
         let imgs = [image("ami-old", "sha-old", "2026-10-01T00:00:00.000Z"), image("ami-new", "sha-now", "2026-10-09T00:00:00.000Z")];
         assert_eq!(select_image(&imgs, "sha-now").unwrap(), "ami-new");
     }
 
+    #[test_id(tpfgtla)]
     #[test]
     fn a_newer_image_of_another_recipe_does_not_hide_the_matching_one() {
         let imgs = [image("ami-old", "sha-now", "2026-10-01T00:00:00.000Z"), image("ami-cand", "sha-cand", "2026-10-09T00:00:00.000Z")];
@@ -1266,6 +1289,7 @@ mod tests {
         assert!(select_image(&[], "sha-now").unwrap_err().contains("no AMI"));
     }
 
+    #[test_id(tffy2nj)]
     #[test]
     fn a_stale_newest_image_is_reported_and_a_matching_one_clears() {
         let old = Image { id: "ami-old".into(), recipe_sha: "aaa".into(), created: "2026-10-18".into() };
@@ -1276,6 +1300,7 @@ mod tests {
         assert!(ami_staleness(&[], "bbb").unwrap().contains("no image"));
     }
 
+    #[test_id(t482ych)]
     #[test]
     fn describe_images_output_yields_id_date_and_recipe_tag() {
         let json = r#"{"Images":[{"ImageId":"ami-1","CreationDate":"2026-10-09T00:00:00.000Z","Tags":[{"Key":"recipe-sha","Value":"abc"}]},
@@ -1284,6 +1309,7 @@ mod tests {
         assert_eq!(v, [image("ami-1", "abc", "2026-10-09T00:00:00.000Z"), image("ami-2", "", "2026-10-10T00:00:00.000Z")]);
     }
 
+    #[test_id(tykbin0)]
     #[test]
     fn auto_launches_the_selected_image_and_a_stale_one_launches_nothing() {
         let d = TempDir::new();
@@ -1308,6 +1334,7 @@ mod tests {
         assert_eq!(pinned.launched_amis(), ["ami-pinned"]);
     }
 
+    #[test_id(tv038nu)]
     #[test]
     fn a_candidate_recipe_picks_its_own_image_and_with_none_launches_nothing() {
         let d = TempDir::new();
@@ -1337,6 +1364,7 @@ mod tests {
         assert_eq!(pinned.launched_amis(), ["ami-pinned"]);
     }
 
+    #[test_id(tyugv4d)]
     #[test]
     fn instance_types_prefer_the_list_then_the_single_key_then_the_default() {
         assert_eq!(instance_types("a.x, b.y,,", "c.z"), ["a.x", "b.y"]);
@@ -1346,6 +1374,7 @@ mod tests {
         assert_eq!(c.instance_types, ["c7i.8xlarge", "c7i.4xlarge"]);
     }
 
+    #[test_id(tk5yed1)]
     #[test]
     fn a_vcpu_limit_refusal_moves_to_the_next_type_and_all_refused_is_an_error() {
         let d = TempDir::new();
@@ -1365,6 +1394,7 @@ mod tests {
         assert!(all.launched_types().is_empty() && format!("{e:?}").contains("c7i.4xlarge"), "{e:?}");
     }
 
+    #[test_id(trqnw6c)]
     #[test]
     fn an_instance_ended_at_launch_names_its_aws_reason_and_the_ladder_moves_on() {
         let d = TempDir::new();
@@ -1389,6 +1419,7 @@ mod tests {
         assert!(format!("{e:?}").contains("Client.InternalError") && other.launched_types() == ["c7i.8xlarge"], "{e:?}");
     }
 
+    #[test_id(tcpyqxa)]
     #[test]
     fn only_a_capacity_refusal_tries_the_next_type() {
         let types = vec!["a".to_string(), "b".to_string()];
@@ -1400,6 +1431,7 @@ mod tests {
         assert!(r.is_err() && tried == ["a"]);
     }
 
+    #[test_id(thb9atk)]
     #[test]
     fn vcpus_follow_the_size_name() {
         assert_eq!(vcpus_of("c7i.8xlarge"), Some(32));
@@ -1410,6 +1442,7 @@ mod tests {
         assert_eq!(vcpus_of("nonsense"), None);
     }
 
+    #[test_id(tw3te5j)]
     #[test]
     fn the_provider_refuses_to_start_naming_everything_missing() {
         let d = TempDir::new();
@@ -1430,6 +1463,7 @@ mod tests {
         v.iter().map(|s| s.image.id.as_str()).collect()
     }
 
+    #[test_id(tq71os6)]
     #[test]
     fn prune_keeps_the_newest_two_the_current_recipe_and_anything_in_use() {
         let stores = [
@@ -1445,6 +1479,7 @@ mod tests {
         assert!(prune_plan(&stores[..2], &[], "a").is_empty());
     }
 
+    #[test_id(tk6do9t)]
     #[test]
     fn prune_never_selects_an_image_that_is_not_named_as_a_round_image() {
         let mut other = store("ami-ci", "x", "2026-10-01");
@@ -1453,6 +1488,7 @@ mod tests {
         assert_eq!(ids(&prune_plan(&stores, &[], "zzz")), ["ami-1"]);
     }
 
+    #[test_id(toni0c0)]
     #[test]
     fn describe_images_output_yields_name_snapshots_and_size() {
         let json = r#"{"Images":[{"ImageId":"ami-1","Name":"spira-round-x","CreationDate":"2026-10-09T00:00:00.000Z",
@@ -1461,6 +1497,7 @@ mod tests {
         assert_eq!((v[0].name.as_str(), v[0].snapshots.clone(), v[0].gib), ("spira-round-x", vec!["snap-1".to_string()], 100));
     }
 
+    #[test_id(tlvp2sr)]
     #[test]
     fn prune_images_deregisters_then_deletes_snapshots_and_reports_the_gib() {
         let d = TempDir::new();

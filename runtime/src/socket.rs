@@ -256,6 +256,7 @@ impl Journal for SocketJournal {
 mod tests {
     use super::*;
 
+    #[test_id(t4y223x)]
     #[test]
     fn a_write_sent_under_a_request_id_is_answered_with_its_argv() {
         use std::io::{Read, Write};
@@ -268,6 +269,7 @@ mod tests {
         assert_eq!(got.lines().nth(1), Some("hold sp-a"), "{got}");
     }
 
+    #[test_id(trnxatt)]
     #[test]
     fn a_closed_connection_with_no_reply_is_a_cannot_tell() {
         let dir = testkit::TempDir::new("socket-closed");
@@ -279,6 +281,7 @@ mod tests {
         assert!(err.is_cannot_tell(), "{err}");
     }
 
+    #[test_id(t10ryji)]
     #[test]
     fn a_boot_that_the_store_stops_answering_names_the_verb_it_was_waiting_on() {
         let dir = testkit::TempDir::new("socket-boot-verb");
@@ -295,12 +298,14 @@ mod tests {
         assert!(err.is_cannot_tell() && err.0.starts_with("journal open-effects:"), "{err}");
     }
 
+    #[test_id(tg71igg)]
     #[test]
     fn a_store_that_is_not_listening_is_a_cannot_tell() {
         let err = lc_call(&testkit::TempDir::new("socket-absent").path().join("s.sock"), &["cursor"]).unwrap_err();
         assert!(err.is_cannot_tell(), "{err}");
     }
 
+    #[test_id(tesespv)]
     #[test]
     fn the_stores_own_cannot_tell_exit_arrives_as_a_cannot_tell_and_a_fault_does_not() {
         let dir = testkit::TempDir::new("socket-exit2");
@@ -319,6 +324,7 @@ mod tests {
         assert!(!second.is_cannot_tell() && !second.is_refused(), "{second}");
     }
 
+    #[test_id(tgwbvtx)]
     #[test]
     fn a_turn_past_the_stores_widths_is_refused_before_any_send() {
         let j = SocketJournal::new(format!("{}/lc.sock", system_paths::NONEXISTENT), Shipper::start("http://127.0.0.1:9"));
@@ -331,6 +337,7 @@ mod tests {
         assert!(j.commit(&ok).unwrap_err().is_cannot_tell(), "an in-width turn goes to the socket, which is absent");
     }
 
+    #[test_id(t3f809p)]
     #[test]
     fn the_in_memory_journal_refuses_the_widths_the_store_refuses() {
         let j = crate::journal::MemJournal::new();

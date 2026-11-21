@@ -1,6 +1,7 @@
 use sim::fit::fit_files;
 use sim::units::parse_timer;
 use testkit::TempDir;
+#[test_id(t130s0d)]
 #[test]
 fn unsupported_or_dead_timers_are_refused() {
     assert!(parse_timer("[Timer]\nOnUnitActiveSec=5min\n").is_err());
@@ -9,6 +10,7 @@ fn unsupported_or_dead_timers_are_refused() {
     assert!(parse_timer("[Timer]\nOnCalendar=daily\n").is_ok(), "the catalogue runs daily and weekly timers");
 }
 
+#[test_id(t1zxz8i)]
 #[test]
 fn fit_refuses_missing_and_empty_logs() {
     let tmp = TempDir::new("fit");
@@ -26,6 +28,7 @@ fn fit_refuses_missing_and_empty_logs() {
 
 /// The tree's actors are sim-only, and each one's timer and the service it starts are under
 /// `sim/units`; a shipped actor (a unit the loop ran, now a task of the service) is refused.
+#[test_id(tlo3scn)]
 #[test]
 fn every_actor_is_sim_only_and_its_units_are_in_the_tree() {
     let tree = spira_config::resolve::checkout_root_for_process().unwrap();

@@ -49,6 +49,7 @@ pub fn epoch(s: &str) -> Option<i64> {
 mod tests {
     use super::*;
 
+    #[test_id(tsdi0m9)]
     #[test]
     fn a_stamp_reads_back_as_the_epoch_it_was_made_from() {
         for t in [0, 951_782_400, 1_793_398_800, 1_709_251_199] {
@@ -58,6 +59,7 @@ mod tests {
         assert_eq!(epoch("yesterday"), None);
     }
 
+    #[test_id(tt81twb)]
     #[test]
     fn a_kind_round_trips_through_the_word_the_store_keeps() {
         for k in [Kind::Claimable, Kind::Blocked, Kind::Held, Kind::Snoozed, Kind::TooDeep, Kind::StackUnchanged, Kind::Carried, Kind::Stopped, Kind::Occupied, Kind::OutOfScope] {

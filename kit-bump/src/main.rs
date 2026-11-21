@@ -5,6 +5,9 @@
 //!
 //! Exit 0 swept, 1 a site failed (retried next pass), 3 the registry's latest release could not be read.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use kit_bump::{pass, real::Real, Site};
 use spira_otel::metrics::{MetricsSink, Point};
 use std::path::PathBuf;
@@ -154,6 +157,7 @@ mod tests {
         a.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(t6u7brd)]
     #[test]
     fn a_missing_config_file_is_unconfigured_not_an_error() {
         let d = testkit::TempDir::new("kit-bump-unconfigured");
@@ -165,6 +169,7 @@ mod tests {
         assert_eq!(unconfigured(&v(&["--kit", "k"])), None);
     }
 
+    #[test_id(t0wz6hl)]
     #[test]
     fn a_config_with_an_unknown_key_is_refused_naming_the_key_and_the_file() {
         let d = testkit::TempDir::new("kit-bump-oldconf");

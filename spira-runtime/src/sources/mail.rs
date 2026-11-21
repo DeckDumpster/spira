@@ -98,12 +98,14 @@ pub fn run(mailboxes: &[(String, PathBuf)], mut watch: Box<dyn Watch>, tx: mpsc:
 mod tests {
     use super::*;
 
+    #[test_id(tvouois)]
     #[test]
     fn the_registered_readers_name_the_mailboxes_and_nothing_else() {
         let got = mailboxes("# readers\nconcierge=inbox-append.sh\n\nops = wake ops\nconcierge=again\nbroken\n", Path::new("m"));
         assert_eq!(got, vec![("concierge".to_string(), PathBuf::from("m/concierge")), ("ops".to_string(), PathBuf::from("m/ops"))]);
     }
 
+    #[test_id(txy6bdd)]
     #[test]
     fn the_kind_header_is_read_from_the_headers_only() {
         assert_eq!(kind_of("From: x\nX-Spira-Kind: event\n\nbody").as_deref(), Some("event"));
@@ -130,6 +132,7 @@ mod tests {
         }
     }
 
+    #[test_id(t8n3n4g)]
     #[test]
     fn a_delivery_after_the_catch_up_is_submitted_with_its_kind() {
         let dir = testkit::TempDir::new("mail-arrived-live");
@@ -138,7 +141,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(4);
         let boxes = vec![("ops".to_string(), dir.path().join("ops"))];
         let (waiting_tx, waiting) = std::sync::mpsc::channel();
-        let watch = Waiting { inner: super::super::watch::ListingWatch::default(), first_wait: Some(waiting_tx) };
+        let watch = Waiting { inner: super::super::super::watch::ListingWatch::default(), first_wait: Some(waiting_tx) };
         let h = std::thread::spawn(move || run(&boxes, Box::new(watch), tx));
         waiting.recv().expect("the source caught up and waits");
         let staged = dir.path().join("m1.staged");

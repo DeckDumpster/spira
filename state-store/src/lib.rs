@@ -3,6 +3,9 @@
 //! the telemetry prefix and key TTLs) above a deliberately small [`Backend`], so a backend gets
 //! them all by passing [`conformance::run_all`].
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod backend;
 pub mod clock;
 pub mod conformance;

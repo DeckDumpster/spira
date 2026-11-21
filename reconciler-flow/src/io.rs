@@ -415,6 +415,7 @@ mod backlog_tests {
     use spira_store::lc_state::Row;
 
     /// sp-mve9i: the backlog is the beads whose lifecycle row is not terminal.
+    #[test_id(tb0atxu)]
     #[test]
     fn the_backlog_is_the_non_terminal_lifecycle_rows() {
         let lc = ["READY", "WORKING", "SUBMITTED", "LANDED", "DROPPED"]
@@ -431,6 +432,7 @@ mod backlog_tests {
 mod backlog_sample_tests {
     use super::*;
 
+    #[test_id(t7cqm1z)]
     #[test]
     fn a_backlog_sample_lands_in_the_family_and_is_read_back_by_the_baseline() {
         let t = testkit::TempDir::new("flow-backlog-sample");

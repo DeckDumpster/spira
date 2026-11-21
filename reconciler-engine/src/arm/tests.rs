@@ -105,6 +105,7 @@ fn verdicts(c: &ArmCheck) -> Vec<(&'static str, bool)> {
     c.checks.iter().map(|k| (k.name, k.holds)).collect()
 }
 
+#[test_id(tvdx5z8)]
 #[test]
 fn arming_a_kind_takes_it_off_the_list_and_puts_every_old_path_it_replaces_on_in_one_list() {
     let armed = armed_list(&list(ALL), "DwarfFleet").unwrap();
@@ -114,17 +115,20 @@ fn arming_a_kind_takes_it_off_the_list_and_puts_every_old_path_it_replaces_on_in
     assert_eq!(armed_list(&list(ALL), "Lifecycle").unwrap(), list("DwarfFleet Alarms"), "Lifecycle replaces no path still running");
 }
 
+#[test_id(tci20j8)]
 #[test]
 fn arming_host_hands_the_disk_remedies_to_its_levers_in_the_same_write() {
     assert_eq!(armed_list(&list("Host DwarfFleet"), "Host").unwrap(), list("DwarfFleet disk"));
 }
 
+#[test_id(tsogzf3)]
 #[test]
 fn disarming_is_the_reverse_write() {
     let armed = armed_list(&list(ALL), "DwarfFleet").unwrap();
     assert_eq!(disarmed_list(&armed, "DwarfFleet").unwrap(), list("Lifecycle Alarms DwarfFleet"));
 }
 
+#[test_id(te1toyw)]
 #[test]
 fn a_kind_that_is_unknown_already_armed_or_hidden_behind_a_star_is_refused() {
     assert!(armed_list(&list(ALL), "Andon").unwrap_err().contains("no section kind"));
@@ -134,6 +138,7 @@ fn a_kind_that_is_unknown_already_armed_or_hidden_behind_a_star_is_refused() {
     assert!(disarmed_list(&list(ALL), "Andon").unwrap_err().contains("no section kind"));
 }
 
+#[test_id(t9glrww)]
 #[test]
 fn every_precondition_holds_on_fresh_sections_a_fresh_dead_man_and_shadow_passes() {
     let c = arm_check("DwarfFleet", &list(ALL), &healthy(), &history()).unwrap();
@@ -144,6 +149,7 @@ fn every_precondition_holds_on_fresh_sections_a_fresh_dead_man_and_shadow_passes
     assert!(c.checks[2].detail.contains("not a gate"), "{}", c.checks[2].detail);
 }
 
+#[test_id(tj4qmlp)]
 #[test]
 fn a_stale_or_absent_section_of_the_kind_fails_its_precondition() {
     let mut a = healthy();
@@ -156,6 +162,7 @@ fn a_stale_or_absent_section_of_the_kind_fails_its_precondition() {
     assert!(!c.checks[0].holds && c.checks[0].detail.contains("no Lifecycle section"), "{}", c.checks[0].detail);
 }
 
+#[test_id(tnr8b59)]
 #[test]
 fn a_dead_man_that_is_waiting_stale_or_unpublished_fails() {
     for a in [
@@ -171,6 +178,7 @@ fn a_dead_man_that_is_waiting_stale_or_unpublished_fails() {
     }
 }
 
+#[test_id(tcyc6na)]
 #[test]
 fn a_heartbeat_whose_last_ping_failed_or_that_is_unrecorded_fails_and_one_delivered_holds() {
     let with = |h: Option<&str>| {
@@ -186,6 +194,7 @@ fn a_heartbeat_whose_last_ping_failed_or_that_is_unrecorded_fails_and_one_delive
     assert!(!with(Some("fine")).checks[2].holds, "a state that is not one of the three does not decode");
 }
 
+#[test_id(tj2gifw)]
 #[test]
 fn no_pass_that_shadowed_the_kind_is_no_evidence() {
     let c = arm_check("DwarfFleet", &list(ALL), &healthy(), &[]).unwrap();
@@ -194,6 +203,7 @@ fn no_pass_that_shadowed_the_kind_is_no_evidence() {
     assert!(!c.checks[3].holds, "a pass that acted on the kind is not shadow evidence");
 }
 
+#[test_id(te7gs83)]
 #[test]
 fn the_history_answer_decodes_in_order_and_a_record_that_does_not_is_refused() {
     let v = json!({ "passes": [serde_json::to_value(record(1, ALL, vec![])).unwrap()], "list_rev": 3 });

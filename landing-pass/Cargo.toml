@@ -36,5 +36,6 @@ incident = { path = "../incident" }
 system-paths = { path = "../system-paths" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 bead = { path = "../bead" }

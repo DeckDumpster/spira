@@ -448,6 +448,7 @@ mod tests {
         }
     }
 
+    #[test_id(tu26n38)]
     #[test]
     fn maxpar_defaults_to_the_vcpu_count() {
         assert_eq!(maxpar_or_vcpus("", 32).unwrap(), 32);
@@ -456,6 +457,7 @@ mod tests {
         assert!(maxpar_or_vcpus("x", 32).is_err());
     }
 
+    #[test_id(tggn46k)]
     #[test]
     fn build_converts_every_field_without_inventing_a_value() {
         let c = Config::build(base_fields());
@@ -472,6 +474,7 @@ mod tests {
         assert!(c.cache_home.is_none());
     }
 
+    #[test_id(t4idd1a)]
     #[test]
     fn testenv_registry_passes_through_unchanged() {
         let mut f = base_fields();
@@ -480,6 +483,7 @@ mod tests {
         assert_eq!(c.testenv_registry.as_deref(), Some("registry.example/spira"));
     }
 
+    #[test_id(tzmluqy)]
     #[test]
     fn a_bad_number_on_an_unregistered_knob_names_the_key() {
         // SPIRA_ROUND_VM_BOOT_TRIES is not declared in spira/conf.d — round-vm still reads
@@ -504,6 +508,7 @@ mod tests {
         p
     }
 
+    #[test_id(tu0za0g)]
     #[test]
     fn missing_template_vmid_names_the_variable() {
         let d = TempDir::new();
@@ -512,6 +517,7 @@ mod tests {
         assert!(e.contains("PVE_TEMPLATE_VMID"), "{e}");
     }
 
+    #[test_id(tpzyqtk)]
     #[test]
     fn missing_cacert_is_refused_not_skipped() {
         let d = TempDir::new();
@@ -521,6 +527,7 @@ mod tests {
         assert!(e.contains("no/such/ca.pem"), "{e}");
     }
 
+    #[test_id(tqo06at)]
     #[test]
     fn pve_env_is_reread_so_a_fixed_file_is_picked_up() {
         let d = TempDir::new();

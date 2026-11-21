@@ -110,6 +110,7 @@ mod tests {
     use super::*;
     use std::fs;
 
+    #[test_id(tcbwpx8)]
     #[test]
     fn skips_when_instance_is_prod_or_not_split() {
         assert!(seed_prod_instance_if_split("prod", "p/spira", "h/spira").is_none());
@@ -118,6 +119,7 @@ mod tests {
         assert!(seed_prod_instance_if_split("test", "h/prod-spira", "h/spira").is_none());
     }
 
+    #[test_id(tru4asx)]
     #[test]
     fn write_target_prefers_an_existing_toml() {
         let d = testkit::TempDir::new("seed-instance-test");
@@ -129,6 +131,7 @@ mod tests {
         assert_eq!(t, toml);
     }
 
+    #[test_id(togp9c1)]
     #[test]
     fn write_target_is_the_bare_toml_path_when_neither_file_exists() {
         let d = testkit::TempDir::new("seed-instance-test");

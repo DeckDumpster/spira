@@ -118,6 +118,7 @@ mod tests {
         fs::write(d.join("cmdline"), argv.iter().map(|a| format!("{a}\0")).collect::<String>()).unwrap();
     }
 
+    #[test_id(tzxs7qb)]
     #[test]
     fn clients_are_told_from_the_server_and_flag_calls() {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -127,6 +128,7 @@ mod tests {
         assert!(!is_client(&v(&["rustc", "x"])));
     }
 
+    #[test_id(thb7vqs)]
     #[test]
     fn stuck_clients_with_no_rustc_are_wedged_and_a_running_rustc_clears_it() {
         let dir = testkit::TempDir::new("wt-sccache-scan");

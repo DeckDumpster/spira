@@ -23,6 +23,7 @@ fn rig(pending: Result<u64, String>) -> TaskRig {
     r
 }
 
+#[test_id(tf28too)]
 #[test]
 fn the_task_is_registered_and_arms_its_cadence() {
     let row = tasks::all().find(|t| t.name == NAME).expect("the row is in tasks::all()");
@@ -34,6 +35,7 @@ fn the_task_is_registered_and_arms_its_cadence() {
     assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
 }
 
+#[test_id(tnuq4kt)]
 #[test]
 fn a_tick_with_nothing_pending_asks_only_for_its_probe() {
     let mut r = rig(Ok(0));
@@ -41,12 +43,14 @@ fn a_tick_with_nothing_pending_asks_only_for_its_probe() {
     assert!(r.requested().iter().all(|q| q.name != DRAIN), "{:?}", r.requested());
 }
 
+#[test_id(t4j4pye)]
 #[test]
 fn a_tick_with_a_pending_closeout_asks_for_one_drain() {
     let r = rig(Ok(2));
     assert_eq!(r.requested().iter().filter(|q| q.name == DRAIN).count(), 1);
 }
 
+#[test_id(t2pzbek)]
 #[test]
 fn an_unreadable_or_halted_world_drains_nothing() {
     assert_eq!(decide(&Snapshot { halted: false, pending: Err("down".into()) }), Decision::Skip("unreadable".into()));
@@ -54,6 +58,7 @@ fn an_unreadable_or_halted_world_drains_nothing() {
     assert!(rig(Err("down".into())).requested().iter().all(|q| q.name != DRAIN));
 }
 
+#[test_id(to1s6zs)]
 #[test]
 fn every_effect_has_a_real_runner_and_a_sim_double() {
     let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
@@ -65,6 +70,7 @@ fn every_effect_has_a_real_runner_and_a_sim_double() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
+#[test_id(tivomex)]
 #[test]
 fn the_module_launches_no_process() {
     assert!(LAUNCHERS.iter().all(|l| !MODULE.contains(l)));

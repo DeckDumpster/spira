@@ -92,6 +92,7 @@ mod tests {
         scan_text(rel, src).into_iter().map(|f| f.line).collect()
     }
 
+    #[test_id(ti7kas4)]
     #[test]
     fn every_hold_label_shape_is_found() {
         assert_eq!(lines("spira/runes/builder.rune", "RUNE_EXCLUDE_LABELS=\"spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL\"\n"), vec![1]);
@@ -102,6 +103,7 @@ mod tests {
         assert_eq!(lines("spira/lib.sh", sh), vec![2, 3]);
     }
 
+    #[test_id(t02owc2)]
     #[test]
     fn the_non_hold_labels_comments_and_tests_are_not_findings() {
         assert!(lines("spira/runes/builder.rune", "RUNE_EXCLUDE_LABELS=\"$SPIRA_CI_LABEL,qa-proposed\"\n# RUNE_EXCLUDE_LABELS=\"spira-poison\"\n").is_empty());

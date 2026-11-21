@@ -162,6 +162,7 @@ mod tests {
         rows_from_results(&jsonl, "", round, ts, "h").iter().map(|l| serde_json::from_str(l).unwrap()).collect()
     }
 
+    #[test_id(tp7pco1)]
     #[test]
     fn a_verdict_row_is_not_a_test_and_a_case_is_keyed_by_file_and_name() {
         let jsonl = "{\"suite\":\"a.sh\",\"case\":\"(verdict)\",\"status\":\"red-red\",\"seconds\":0}\n{\"suite\":\"a.sh\",\"case\":\"x\",\"status\":\"ok\",\"seconds\":2}\n";
@@ -171,12 +172,14 @@ mod tests {
         assert_eq!((v["test"].as_str(), v["suite"].as_str(), v["family"].as_str()), (Some("a.sh::x"), Some("a.sh"), Some(FAMILY)));
     }
 
+    #[test_id(tw0yy99)]
     #[test]
     fn the_total_counts_tests_not_suites_and_two_suites_with_one_case_name_stay_two_tests() {
         let rows = rows_of("r1", "2026-11-01T00:00:00Z", &[("a.sh", "t", "pass", 1.0), ("b.sh", "t", "pass", 1.0), ("b.sh", "u", "pass", 1.0)]);
         assert_eq!(inventory(&rows, 5)["total"], 3);
     }
 
+    #[test_id(tnug82f)]
     #[test]
     fn a_day_reports_the_tests_added_and_removed_against_the_day_before() {
         let mut rows = rows_of("r1", "2026-11-01T01:00:00Z", &[("a.sh", "t", "pass", 1.0), ("a.sh", "gone", "pass", 1.0)]);
@@ -187,6 +190,7 @@ mod tests {
         assert_eq!((d["added"].as_i64(), d["removed"].as_i64(), d["day"].as_str()), (Some(2), Some(1), Some("2026-11-02")));
     }
 
+    #[test_id(tdww53n)]
     #[test]
     fn a_test_reports_its_median_red_rate_and_flips_over_its_own_runs() {
         let mut rows = rows_of("r1", "2026-11-01T00:00:00Z", &[("a.sh", "t", "pass", 1.0)]);
@@ -199,6 +203,7 @@ mod tests {
         assert_eq!(s["flip_rate"].as_f64(), Some(1.0));
     }
 
+    #[test_id(tv6fo5p)]
     #[test]
     fn a_case_row_carries_the_lines_only_that_case_executed() {
         let results = "{\"suite\":\"a.sh\",\"case\":\"x\",\"status\":\"ok\",\"seconds\":1}\n{\"suite\":\"a.sh\",\"case\":\"y\",\"status\":\"ok\",\"seconds\":1}\n";
@@ -214,6 +219,7 @@ mod tests {
         assert!(test_stats(&later, "a.sh::x").get("covered").is_none(), "an unmeasured latest run does not borrow an older run's lines");
     }
 
+    #[test_id(tqmfyz9)]
     #[test]
     fn a_missing_inventory_is_zero_tests_not_a_panic() {
         assert_eq!(inventory(&[], 5)["total"], 0);

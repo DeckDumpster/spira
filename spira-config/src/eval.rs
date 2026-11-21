@@ -270,22 +270,26 @@ mod tests {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
+    #[test_id(tege7j7)]
     #[test]
     fn literal_passes_through() {
         assert_eq!(eval_expr("28", &known(&[])).unwrap(), "28");
         assert_eq!(eval_expr("ops groomer qa", &known(&[])).unwrap(), "ops groomer qa");
     }
 
+    #[test_id(ts1kt7n)]
     #[test]
     fn bare_variable_reference() {
         assert_eq!(eval_expr("$SPIRA_DB", &known(&[("SPIRA_DB", "x/db")])).unwrap(), "x/db");
     }
 
+    #[test_id(thcvvcc)]
     #[test]
     fn unset_bare_variable_is_empty() {
         assert_eq!(eval_expr("$SPIRA_NOPE", &known(&[])).unwrap(), "");
     }
 
+    #[test_id(t2plxig)]
     #[test]
     fn braced_variable_with_literal_suffix() {
         assert_eq!(
@@ -294,6 +298,7 @@ mod tests {
         );
     }
 
+    #[test_id(t360edu)]
     #[test]
     fn fallback_default_used_when_var_is_unset_or_empty() {
         assert_eq!(eval_expr("${SPIRA_WIKI:-$SPIRA_REPO}", &known(&[("SPIRA_REPO", "r")])).unwrap(), "r");
@@ -312,6 +317,7 @@ mod tests {
         );
     }
 
+    #[test_id(t3f6ipd)]
     #[test]
     fn xdg_style_fallback_with_literal_tail() {
         assert_eq!(
@@ -332,6 +338,7 @@ mod tests {
         );
     }
 
+    #[test_id(t4bamyb)]
     #[test]
     fn dirname_command_substitution() {
         assert_eq!(
@@ -340,6 +347,7 @@ mod tests {
         );
     }
 
+    #[test_id(tkmh3vv)]
     #[test]
     fn spira_join_command_substitution() {
         assert_eq!(
@@ -352,6 +360,7 @@ mod tests {
         );
     }
 
+    #[test_id(tq9yp34)]
     #[test]
     fn arithmetic_with_fallback_operand() {
         assert_eq!(
@@ -368,12 +377,14 @@ mod tests {
         );
     }
 
+    #[test_id(ta7mg64)]
     #[test]
     fn unsupported_command_substitution_is_refused_by_name() {
         let e = eval_expr("$(whoami)", &known(&[])).unwrap_err();
         assert!(e.contains("whoami"), "{e}");
     }
 
+    #[test_id(tm2qtnc)]
     #[test]
     fn dirname_matches_coreutils_on_edge_cases() {
         let sep = std::path::MAIN_SEPARATOR;

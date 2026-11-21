@@ -14,6 +14,7 @@ spira_runtime::family_a_acceptance! {
     registration: SweepTarget::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
+    test_ids: [ #[test_id(tgep3q0)] #[test_id(t80jx44)] #[test_id(tf5yxwl)] #[test_id(tnrbg4t)] #[test_id(tabijmd)] ],
 }
 
 const GIB: u64 = 1 << 30;
@@ -41,6 +42,7 @@ fn removed(acts: &[Act]) -> Vec<&str> {
 }
 
 /// A recorded removal is not replayed: once the run is gone from the world it is asked for once.
+#[test_id(tyhim2m)]
 #[test]
 fn t3_a_recorded_removal_is_not_replayed() {
     let stale = ForeignRun { path: "run/foreign-cache/spira/runs/r1".into(), age_secs: 7_200, busy: false, bytes: GIB };
@@ -64,6 +66,7 @@ fn t3_a_recorded_removal_is_not_replayed() {
 
 /// `reap.rs:165-188` (`reap_idle`): below the floor, idle non-busy targets go oldest first until
 /// the deficit is covered; the young and the busy stay. One target of overshoot is allowed.
+#[test_id(t3jv1j6)]
 #[test]
 fn t5_below_the_floor_idle_targets_go_oldest_first() {
     let (_, acts) = decide(&Carry::default(), &busy());
@@ -73,12 +76,14 @@ fn t5_below_the_floor_idle_targets_go_oldest_first() {
 }
 
 /// `target_reap_main.rs:87-88`: at or above the floor no target is touched.
+#[test_id(tt1usad)]
 #[test]
 fn t5_above_the_floor_no_target_is_touched() {
     assert_eq!(removed(&decide(&Carry::default(), &idle()).1), Vec::<&str>::new());
 }
 
 /// `foreign.rs:275`: stale, unbusy foreign runs go every tick; a busy or young one stays.
+#[test_id(t29vtw6)]
 #[test]
 fn t5_only_stale_unbusy_foreign_runs_go() {
     let runs = vec![
@@ -91,6 +96,7 @@ fn t5_only_stale_unbusy_foreign_runs_go() {
 }
 
 /// `target_reap_main.rs:89-92`: unreadable free space reclaims nothing.
+#[test_id(tmecio0)]
 #[test]
 fn t5_unreadable_free_space_reclaims_nothing() {
     assert_eq!(removed(&decide(&Carry::default(), &Snapshot { free_bytes: None, ..busy() }).1), Vec::<&str>::new());
@@ -102,6 +108,7 @@ fn at_work() -> TaskRig {
     r
 }
 
+#[test_id(tvr40r6)]
 #[test]
 fn nothing_is_kept_because_every_tick_re_observes() {
     let r = at_work();
@@ -110,6 +117,7 @@ fn nothing_is_kept_because_every_tick_re_observes() {
     assert!(kept.is_empty(), "{kept:?}");
 }
 
+#[test_id(t82kn47)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
@@ -121,6 +129,7 @@ fn hand(path: &str, written_at: u64, busy: bool) -> HandTarget {
 
 /// A hand-built target is removed above the floor too, once, and keyed by when it was last
 /// written so a rebuild at the same path is a new removal; a held one stays.
+#[test_id(ty7gtas)]
 #[test]
 fn a_stale_hand_built_target_goes_at_any_free_space_and_a_held_one_stays() {
     let snap = Snapshot { hand_stale: vec![hand("h/a/target", 100, false), hand("h/b/target", 100, true)], ..idle() };

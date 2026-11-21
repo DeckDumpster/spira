@@ -110,6 +110,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4cvr8q)]
     #[test]
     fn a_plain_trigger_is_filed_through_the_content_door_and_forks_nothing() {
         let l = labels();
@@ -127,6 +128,7 @@ mod tests {
         vec!["spira".into(), "warden-sweep".into()]
     }
 
+    #[test_id(t0lrfgp)]
     #[test]
     fn a_plain_trigger_is_a_bdq_create_with_its_labels_and_the_body_on_stdin() {
         let l = labels();
@@ -134,6 +136,7 @@ mod tests {
         assert_eq!(argv(&f), ["create", "T", "--type", "task", "--label", "spira,warden-sweep", "--silent", "--priority", "3", "--body-file", "-"]);
     }
 
+    #[test_id(tfia8o7)]
     #[test]
     fn a_persona_trigger_is_a_bead_file_for_the_persona_and_repo() {
         let l = labels();
@@ -141,6 +144,7 @@ mod tests {
         assert_eq!(argv(&f), ["file", "T", "--for", "groomer", "--repo", "spira", "--priority", "3", "--body-file", "-"]);
     }
 
+    #[test_id(tg4hpmy)]
     #[test]
     fn the_id_is_the_last_line_printed() {
         assert_eq!(printed_id("note\nsp-ab12\n\n"), Some("sp-ab12".into()));

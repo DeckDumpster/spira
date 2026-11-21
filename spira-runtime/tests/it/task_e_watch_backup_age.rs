@@ -32,6 +32,7 @@ fn carry(r: &TaskRig) -> Carry {
     r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap_or_default()
 }
 
+#[test_id(t0i1n3k)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_fifteen_minute_tick() {
     let t = acc::row(NAME);
@@ -46,6 +47,7 @@ fn t1_the_row_is_registered_and_its_boot_arms_the_fifteen_minute_tick() {
     assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
 }
 
+#[test_id(tayj7x7)]
 #[test]
 fn t2_every_stamp_fresh_journals_nothing() {
     let mut r = rig(1, Arc::new(Mutex::new(dbs(Db::Ok { age: 60 }))));
@@ -53,6 +55,7 @@ fn t2_every_stamp_fresh_journals_nothing() {
     acc::assert_healthy(&r, STREAM);
 }
 
+#[test_id(t0pv0tz)]
 #[test]
 fn t3_ok_to_red_mails_red_red_to_ok_mails_clear_and_a_standing_state_records_nothing() {
     let w = Arc::new(Mutex::new(dbs(Db::Stale { age: 30_000 })));
@@ -72,6 +75,7 @@ fn t3_ok_to_red_mails_red_red_to_ok_mails_clear_and_a_standing_state_records_not
     }
 }
 
+#[test_id(t77kmuj)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("e/watch_backup_age.rs")), None);
@@ -83,6 +87,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 }
 
 /// `_lcb_tick` and `_lcb_report` (`spira/lc-backup.sh:328-348`): the alert's line, subject and From.
+#[test_id(tu95l8v)]
 #[test]
 fn t5_the_alerts_are_the_ones_lc_backup_mailed() {
     let w = Arc::new(Mutex::new(dbs(Db::Stale { age: 30_000 })));
@@ -105,12 +110,14 @@ fn red() -> TaskRig {
     rig(1, Arc::new(Mutex::new(dbs(Db::Stale { age: 30_000 }))))
 }
 
+#[test_id(t2tfyxp)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&red(), NAME);
     assert_eq!(rows, ["state"]);
 }
 
+#[test_id(ti7kc3e)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(red, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
@@ -134,6 +141,7 @@ fn gaps(cal: &runtime::calendar::Calendar, elapses: usize) -> Vec<u64> {
     out
 }
 
+#[test_id(tmullq1)]
 #[test]
 fn the_backup_timer_fires_every_twelve_hours_and_the_age_alarm_fits_it() {
     assert!(gaps(&timer_calendar("lc-backup.timer"), 4).iter().all(|g| *g == 43_200));
@@ -146,6 +154,7 @@ fn the_backup_timer_fires_every_twelve_hours_and_the_age_alarm_fits_it() {
     assert!(matches!(measure_db(Some(&format!("{}\n", now - 14 * h - 1)), now, default), Db::Stale { .. }));
 }
 
+#[test_id(tvo7o0u)]
 #[test]
 fn the_drill_timer_fires_weekly_and_its_alarm_tolerates_one_slot() {
     assert!(gaps(&timer_calendar("lc-backup-drill.timer"), 4).iter().all(|g| *g == 604_800));

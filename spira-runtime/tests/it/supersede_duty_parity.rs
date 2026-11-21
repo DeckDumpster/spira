@@ -5,6 +5,7 @@
 
 use std::fs;
 
+#[test_id(tv1d9mg)]
 #[test]
 fn the_watchers_manifest_no_longer_carries_the_row() {
     let manifest =

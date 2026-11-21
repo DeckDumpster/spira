@@ -159,6 +159,7 @@ mod tests {
         Read::Measured { count, arrival: (count > 0).then_some(NOW - age), forge_tip_age_secs: None }
     }
 
+    #[test_id(t1rmtv6)]
     #[test]
     fn under_both_thresholds_is_silent_and_a_crossing_is_announced_once_each_way() {
         let w = watcher();
@@ -173,6 +174,7 @@ mod tests {
         assert!(w.decide(&c, &snap(measured(3, 20)), NOW).1.is_empty());
     }
 
+    #[test_id(t0yfpio)]
     #[test]
     fn age_alone_crosses() {
         let (_, say) = watcher().decide(&Carry::default(), &snap(measured(1, 10_801)), NOW);
@@ -180,6 +182,7 @@ mod tests {
         assert!(say[0].starts_with("OVER r: 1 unpublished commit(s), oldest 10801s old"), "{say:?}");
     }
 
+    #[test_id(tc1c5to)]
     #[test]
     fn a_repo_that_cannot_be_measured_is_blind_once_and_sighted_once_and_forgets_it_was_over() {
         let w = watcher();
@@ -193,6 +196,7 @@ mod tests {
         assert!(say[1].starts_with("OVER r:"), "blindness resets the standing: {say:?}");
     }
 
+    #[test_id(ttu2rf3)]
     #[test]
     fn a_stale_forge_tip_is_named_with_its_age_in_the_line_it_qualifies() {
         let w = watcher();
@@ -205,6 +209,7 @@ mod tests {
         assert_eq!(say, ["CLEAR r: back under threshold (1 unpublished, oldest 5s; measured against a forge tip 900s old)"]);
     }
 
+    #[test_id(td2pkor)]
     #[test]
     fn a_carry_from_before_blind_since_existed_still_decodes_and_sights_without_a_duration() {
         let old: Carry = serde_json::from_str(r#"{"standing":{"r":"Blind"}}"#).unwrap();
@@ -212,6 +217,7 @@ mod tests {
         assert_eq!(say, ["SIGHTED r: the backlog watcher can measure again"]);
     }
 
+    #[test_id(t927s61)]
     #[test]
     fn a_sighted_line_says_how_long_the_watcher_was_blind() {
         let w = watcher();

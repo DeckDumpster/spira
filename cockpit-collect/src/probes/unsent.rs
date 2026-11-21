@@ -813,6 +813,7 @@ mod tests {
     }
 
     /// sp-mve9i: a branch's bead is done by its lifecycle row, never bd's status.
+    #[test_id(tk03ad1)]
     #[test]
     fn a_branch_bead_is_done_by_its_lifecycle_row() {
         assert_eq!(status_of_row(Some(&row("SUBMITTED"))), Some(BeadStatus::Closed { submitted: true }));
@@ -824,6 +825,7 @@ mod tests {
     }
 
     /// sp-mve9i: the funnel counts what the machine has past the builder, whatever bd says.
+    #[test_id(tuyuv35)]
     #[test]
     fn the_funnel_counts_lifecycle_finished_beads() {
         let b: Value = serde_json::json!({"id": "sp-a", "status": "open", "closed_at": "2026-10-01T00:00:00Z"});
@@ -835,6 +837,7 @@ mod tests {
 
     /// sp-mve9i: the unlanded/stranded funnel counts finished beads still waiting on their
     /// certification — a SUBMITTED row — never "no row", which a finished bead cannot have.
+    #[test_id(tjq72mf)]
     #[test]
     fn the_unlanded_funnel_counts_beads_awaiting_certification() {
         assert!(awaits_certification(Some(&row("SUBMITTED"))));
@@ -849,6 +852,7 @@ mod tests {
     /// (no open batch names it), never the closed-bead stranding. With bd status it was never
     /// "closed" here, so both checks ran as they should; with the lifecycle row they must be
     /// told apart explicitly.
+    #[test_id(t4wm4py)]
     #[test]
     fn a_delivering_branch_is_judged_by_its_batch_not_as_a_stranded_closed_bead() {
         assert_eq!(closed_branch_class("push", true, false, true), ClosedClass::Delivering);
@@ -860,6 +864,7 @@ mod tests {
         assert!(!batched_check_applies(&BeadStatus::Open, false));
     }
 
+    #[test_id(ttud413)]
     #[test]
     fn a_bead_between_two_rounds_is_not_stranded_until_the_grace_has_passed() {
         let now = 1_000_000;
@@ -868,6 +873,7 @@ mod tests {
         assert_eq!(stranded_for(None, now, 300), None, "no state time: cannot tell");
     }
 
+    #[test_id(t68n838)]
     #[test]
     fn a_stranded_bead_is_reported_with_its_age() {
         let no_batch: Option<ForgeBatch> = Some(ForgeBatch::default());
@@ -877,6 +883,7 @@ mod tests {
         assert_eq!(t.batched_stranded, 0, "between two rounds for 40s");
     }
 
+    #[test_id(ti5c4v7)]
     #[test]
     fn a_forge_batch_on_the_store_names_its_members_and_branch() {
         let show = |repo: &str| match repo {
@@ -892,6 +899,7 @@ mod tests {
         assert_eq!(f["lost"], None, "cannot tell is not no batch");
     }
 
+    #[test_id(t6yari0)]
     #[test]
     fn a_submitted_bead_awaits_a_round_only_under_queue_local() {
         assert!(awaits_round("queue.local", true));
@@ -924,6 +932,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-12
+    #[test_id(tdgh5as)]
     #[test]
     fn only_bead_backed_branches_count_and_a_no_bead_branch_is_orphan_work_or_unadopted() {
         let t = tally_of(
@@ -940,6 +949,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-12
+    #[test_id(tp9hjy4)]
     #[test]
     fn a_batched_bead_outside_every_batch_is_stranded_and_one_waiting_past_the_wait_is_too_long() {
         let line = "spira/sp-bat 90000\n";
@@ -956,6 +966,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-12
+    #[test_id(tpjvc39)]
     #[test]
     fn a_delivering_bead_whose_round_view_is_unreadable_is_a_probe_fault_not_stranded() {
         let line = "spira/sp-bat 90000\n";
@@ -970,6 +981,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-10
+    #[test_id(t5oyoqd)]
     #[test]
     fn a_closed_bead_is_landed_only_when_a_commit_subject_names_it() {
         let submitted = row("SUBMITTED");
@@ -984,6 +996,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-10
+    #[test_id(tvvp9ca)]
     #[test]
     fn an_unlanded_branch_is_stranded_only_past_the_certification_window_and_with_no_gate_job() {
         let submitted = row("SUBMITTED");
@@ -999,6 +1012,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-15
+    #[test_id(tjyltb1)]
     #[test]
     fn landing_status_and_progress_are_copied_verbatim_and_a_missing_status_is_unknown() {
         let d = testkit::TempDir::new("cc-landing");
@@ -1017,6 +1031,7 @@ mod tests {
         }
     }
 
+    #[test_id(t53solv)]
     #[test]
     fn gate_queue_matches_inbox_and_claimed_slots_by_branch() {
         let d = testkit::TempDir::new("cc-unsent-queue");

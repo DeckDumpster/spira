@@ -72,6 +72,7 @@ fn age(e: &Env, mailbox: &str, secs: u64) {
 const FROM: Option<&str> = Some("Gate <gate@spira>");
 
 // covers: UC-operator-channel-01
+#[test_id(tnck6cq)]
 #[test]
 fn a_sent_message_lands_whole_in_new_and_leaves_nothing_in_tmp() {
     let (_t, e) = fixture("mail-uc01-send");
@@ -84,6 +85,7 @@ fn a_sent_message_lands_whole_in_new_and_leaves_nothing_in_tmp() {
 }
 
 // covers: UC-operator-channel-01
+#[test_id(tvxiw5r)]
 #[test]
 fn read_prints_the_oldest_unread_and_moves_it_from_new_to_cur() {
     let (_t, e) = fixture("mail-uc01-read");
@@ -99,6 +101,7 @@ fn read_prints_the_oldest_unread_and_moves_it_from_new_to_cur() {
 }
 
 // covers: UC-operator-channel-01
+#[test_id(tj3imb5)]
 #[test]
 fn a_message_read_is_flagged_seen_so_count_and_tidy_agree_it_was_read() {
     let (_t, e) = fixture("mail-read-seen");
@@ -118,6 +121,7 @@ fn a_message_read_is_flagged_seen_so_count_and_tidy_agree_it_was_read() {
 }
 
 // covers: UC-operator-channel-01
+#[test_id(to99xsp)]
 #[test]
 fn archive_by_hand_moves_one_message_and_records_who_and_why() {
     let (_t, e) = fixture("mail-archive-hand");
@@ -132,6 +136,7 @@ fn archive_by_hand_moves_one_message_and_records_who_and_why() {
 }
 
 // covers: UC-operator-channel-01
+#[test_id(tjzy7sm)]
 #[test]
 fn archive_by_hand_refuses_without_a_why_and_moves_nothing() {
     let (_t, e) = fixture("mail-archive-nowhy");
@@ -146,6 +151,7 @@ fn archive_by_hand_refuses_without_a_why_and_moves_nothing() {
 }
 
 // covers: UC-operator-channel-01
+#[test_id(t6lemm1)]
 #[test]
 fn a_hand_action_is_recorded_under_the_sessions_sender_else_the_operator() {
     let (_t, mut e) = fixture("mail-actor");
@@ -155,6 +161,7 @@ fn a_hand_action_is_recorded_under_the_sessions_sender_else_the_operator() {
 }
 
 // covers: UC-operator-channel-01
+#[test_id(tyww89w)]
 #[test]
 fn a_sent_alarm_carries_its_condition_header() {
     let (_t, mut e) = fixture("mail-condition-header");
@@ -164,6 +171,7 @@ fn a_sent_alarm_carries_its_condition_header() {
 }
 
 // covers: UC-operator-channel-01
+#[test_id(t4z6q88)]
 #[test]
 fn read_with_nothing_unread_fails_naming_the_mailbox() {
     let (_t, e) = fixture("mail-uc01-read-empty");
@@ -173,6 +181,7 @@ fn read_with_nothing_unread_fails_naming_the_mailbox() {
 }
 
 // covers: UC-operator-channel-01
+#[test_id(t517ik4)]
 #[test]
 fn a_read_verb_on_a_missing_mailbox_fails_and_creates_nothing() {
     let (_t, e) = fixture("mail-uc01-missing");
@@ -182,6 +191,7 @@ fn a_read_verb_on_a_missing_mailbox_fails_and_creates_nothing() {
 }
 
 // covers: UC-operator-channel-01
+#[test_id(tu5kopt)]
 #[test]
 fn list_unread_shows_only_new_and_list_shows_new_then_cur() {
     let (_t, e) = fixture("mail-uc01-list");
@@ -203,6 +213,7 @@ fn list_unread_shows_only_new_and_list_shows_new_then_cur() {
 }
 
 // covers: UC-operator-channel-01
+#[test_id(t9lb8mf)]
 #[test]
 fn count_is_the_unread_total_and_unread_age_is_empty_when_there_is_none() {
     let (_t, e) = fixture("mail-uc01-count");
@@ -214,6 +225,7 @@ fn count_is_the_unread_total_and_unread_age_is_empty_when_there_is_none() {
 }
 
 // covers: UC-operator-channel-01
+#[test_id(trvtu37)]
 #[test]
 fn unread_age_is_the_age_of_the_oldest_unread_message() {
     let (_t, e) = fixture("mail-uc01-age");
@@ -225,6 +237,7 @@ fn unread_age_is_the_age_of_the_oldest_unread_message() {
 }
 
 // covers: UC-operator-channel-02
+#[test_id(t6rvkqj)]
 #[test]
 fn a_send_with_no_subject_is_refused_and_delivers_nothing() {
     let (_t, e) = fixture("mail-uc02-subject");
@@ -234,6 +247,7 @@ fn a_send_with_no_subject_is_refused_and_delivers_nothing() {
 }
 
 // covers: UC-operator-channel-02
+#[test_id(tqrdwl3)]
 #[test]
 fn an_omitted_from_falls_back_to_the_configured_sender_and_without_one_is_refused() {
     let (_t, mut e) = fixture("mail-uc02-from");
@@ -245,6 +259,7 @@ fn an_omitted_from_falls_back_to_the_configured_sender_and_without_one_is_refuse
 }
 
 // covers: UC-operator-channel-03
+#[test_id(tm7u53a)]
 #[test]
 fn template_prints_the_kinds_skeleton_and_an_unknown_kind_is_refused_and_named() {
     let (_t, e) = fixture("mail-uc03-template");
@@ -254,6 +269,7 @@ fn template_prints_the_kinds_skeleton_and_an_unknown_kind_is_refused_and_named()
 }
 
 // covers: UC-operator-channel-03
+#[test_id(t3akfd9)]
 #[test]
 fn a_send_of_an_unknown_kind_is_refused_naming_it_and_delivers_nothing() {
     let (_t, e) = fixture("mail-uc03-kind");
@@ -264,6 +280,7 @@ fn a_send_of_an_unknown_kind_is_refused_naming_it_and_delivers_nothing() {
 }
 
 // covers: UC-operator-channel-04
+#[test_id(tq60nhn)]
 #[test]
 fn the_lint_override_admits_an_offender_and_records_its_reason_in_a_header() {
     let (_t, mut e) = fixture("mail-uc04-override");
@@ -276,6 +293,7 @@ fn the_lint_override_admits_an_offender_and_records_its_reason_in_a_header() {
 }
 
 // covers: UC-operator-channel-06
+#[test_id(t6k1v7p)]
 #[test]
 fn a_repeat_to_the_operator_within_the_window_is_refused_naming_the_override() {
     let (t, e) = fixture("mail-uc06-repeat");
@@ -287,6 +305,7 @@ fn a_repeat_to_the_operator_within_the_window_is_refused_naming_the_override() {
 }
 
 // covers: UC-operator-channel-06
+#[test_id(to4x696)]
 #[test]
 fn a_repeat_outside_the_window_and_a_different_subject_are_delivered() {
     let (_t, mut e) = fixture("mail-uc06-window");
@@ -298,6 +317,7 @@ fn a_repeat_outside_the_window_and_a_different_subject_are_delivered() {
 }
 
 // covers: UC-operator-channel-06
+#[test_id(tvtij60)]
 #[test]
 fn the_repeat_override_lets_a_repeat_through_with_a_header() {
     let (_t, mut e) = fixture("mail-uc06-override");
@@ -308,6 +328,7 @@ fn the_repeat_override_lets_a_repeat_through_with_a_header() {
 }
 
 // covers: UC-operator-channel-06
+#[test_id(tvodja5)]
 #[test]
 fn the_repeat_guard_does_not_apply_to_other_mailboxes() {
     let (_t, e) = fixture("mail-uc06-other");
@@ -317,6 +338,7 @@ fn the_repeat_guard_does_not_apply_to_other_mailboxes() {
 }
 
 // covers: UC-operator-channel-06
+#[test_id(tkdsvy0)]
 #[test]
 fn a_lint_refused_operator_send_writes_no_stamp_so_the_corrected_send_is_not_a_repeat() {
     let (t, e) = fixture("mail-uc06-lint-order");
@@ -328,6 +350,7 @@ fn a_lint_refused_operator_send_writes_no_stamp_so_the_corrected_send_is_not_a_r
 
 // covers: UC-operator-channel-07
 // covers: UC-cockpit-observability-26
+#[test_id(t4y4y2i)]
 #[test]
 fn done_sets_the_replied_and_seen_flags_once_and_a_second_done_changes_nothing() {
     let (_t, e) = fixture("mail-uc07-done");
@@ -342,6 +365,7 @@ fn done_sets_the_replied_and_seen_flags_once_and_a_second_done_changes_nothing()
 
 // covers: UC-operator-channel-07
 // covers: UC-cockpit-observability-26
+#[test_id(tmf3f9u)]
 #[test]
 fn done_on_an_unknown_id_fails_and_flags_nothing() {
     let (_t, e) = fixture("mail-uc07-unknown");

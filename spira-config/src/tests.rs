@@ -6,6 +6,7 @@
         p.display().to_string()
     }
 
+    #[test_id(td69mcn)]
     #[test]
     fn an_override_changes_only_its_own_keys() {
         let d = testkit::TempDir::new("spira-config-layer-keys");
@@ -17,6 +18,7 @@
         assert_eq!(m.get("ID_PREFIX").map(String::as_str), Some("sp"), "the base fills the rest");
     }
 
+    #[test_id(tl2x66d)]
     #[test]
     fn nested_tables_merge_key_by_key() {
         let d = testkit::TempDir::new("spira-config-layer-nested");
@@ -28,6 +30,7 @@
         assert_eq!(rows.iter().find(|r| r.name == "alpha").map(|r| r.base.as_str()), Some("local/main"), "unset keys keep the base's value");
     }
 
+    #[test_id(tldxns4)]
     #[test]
     fn a_missing_layer_is_refused_naming_it() {
         let d = testkit::TempDir::new("spira-config-layer-missing");
@@ -38,6 +41,7 @@
     }
     use super::*;
 
+    #[test_id(triwtev)]
     #[test]
     fn the_launcher_path_is_the_release_then_the_system_dirs_and_unset_is_refused() {
         assert_eq!(
@@ -50,6 +54,7 @@
         }
     }
 
+    #[test_id(tnmxsyr)]
     #[test]
     fn release_path_with_tail_appends_after_the_system_dirs() {
         assert_eq!(
@@ -62,6 +67,7 @@
         }
     }
 
+    #[test_id(t36d98r)]
     #[test]
     fn release_path_with_tail_refuses_a_tail_entry_inside_a_release() {
         let e = release_path_with_tail("r/spira-releases/abc", "r/spira-releases/def/bin").unwrap_err();
@@ -69,6 +75,7 @@
         assert!(e.contains("r/spira-releases/def/bin"), "{e}");
     }
 
+    #[test_id(t5ta4a0)]
     #[test]
     fn release_path_with_tail_refuses_a_tail_entry_inside_a_checkout() {
         let dir = testkit::TempDir::new("spira-config-tail-checkout");
@@ -80,6 +87,7 @@
         assert!(e.contains(".git"), "{e}");
     }
 
+    #[test_id(tpzephb)]
     #[test]
     fn release_path_from_env_with_tail_composes_both_refusals() {
         assert_eq!(
@@ -90,6 +98,7 @@
         assert!(release_path_from_env_with_tail(Some("h/"), "r/spira-releases/def").unwrap_err().contains("spira-releases"));
     }
 
+    #[test_id(tgs3rwo)]
     #[test]
     fn a_retired_key_the_registry_in_force_declares_is_kept() {
         let tmp = testkit::TempDir::new("retired-kept");
@@ -109,6 +118,7 @@
         assert!(w.iter().any(|w| w.contains("unit_test_slow_secs is retired")), "{w:?}");
     }
 
+    #[test_id(tlhqai5)]
     #[test]
     fn the_retired_lifecycle_switch_refuses_off_and_warns_on() {
         assert_eq!(check_lifecycle_switch_env(None), Ok(None));
@@ -126,12 +136,14 @@
         assert!(validate("[spira]\nlifecycle_enforce = \"off\"\n").is_err());
     }
 
+    #[test_id(tw4msg8)]
     #[test]
     fn valid_minimal_document() {
         let doc = validate("[spira]\nid_prefix = \"sp\"\nmax_dwarves = 4\n").expect("valid");
         assert_eq!(doc.spira.unwrap().get_u32("SPIRA_MAX_DWARVES").unwrap(), Some(4));
     }
 
+    #[test_id(t19hdy2)]
     #[test]
     fn unknown_key_names_its_path() {
         let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbogus = 1\n").unwrap();
@@ -140,30 +152,35 @@
         assert!(err.starts_with("spira.max_dwarves"), "{err}");
     }
 
+    #[test_id(t02bxla)]
     #[test]
     fn wrong_type_names_its_path() {
         let err = validate("[spira]\nid_prefix = \"sp\"\nmax_dwarves = \"four\"\n").unwrap_err();
         assert!(err.starts_with("spira.max_dwarves"), "{err}");
     }
 
+    #[test_id(t4ufhih)]
     #[test]
     fn a_wrongly_typed_enum_names_its_path() {
         let err = validate("[spira]\nid_prefix = \"sp\"\nczar_stage_deadlock = 3\n").unwrap_err();
         assert!(err.starts_with("spira.czar_stage_deadlock"), "{err}");
     }
 
+    #[test_id(tosql4s)]
     #[test]
     fn missing_required_repo_field() {
         let err = validate("[repo.home]\nmode = \"push\"\n").unwrap_err();
         assert!(err.starts_with("repo.home"), "{err}");
     }
 
+    #[test_id(t24enir)]
     #[test]
     fn missing_required_persona_field() {
         let err = validate("[persona.builder]\ntools = [\"Bash\"]\n").unwrap_err();
         assert!(err.starts_with("persona.builder"), "{err}");
     }
 
+    #[test_id(t1ubpch)]
     #[test]
     fn the_inline_comment_scar_is_refused_unquoted() {
         // sp-upkae's own scar: an inline `#` comment after a bare, unquoted value used to
@@ -174,12 +191,14 @@
         assert!(!err.is_empty());
     }
 
+    #[test_id(t2u88fa)]
     #[test]
     fn the_inline_comment_scar_is_harmless_quoted() {
         let doc = validate("[spira]\nid_prefix = \"sp\"\ndb = \"home/x\" # a trailing comment\n").expect("valid");
         assert_eq!(doc.spira.unwrap().get_str("SPIRA_DB").unwrap(), Some("home/x".to_string()));
     }
 
+    #[test_id(tm0cv5z)]
     #[test]
     fn get_path_reads_nested_tables() {
         let doc =
@@ -188,6 +207,7 @@
         assert_eq!(get_path(&doc, "repo.home.base"), None);
     }
 
+    #[test_id(tobgn1z)]
     #[test]
     fn export_sh_quotes_and_uppercases() {
         let doc = validate("[spira]\nid_prefix = \"sp\"\nhome_repo = \"a b\"\nmax_dwarves = 4\n").unwrap();
@@ -196,6 +216,7 @@
         assert!(out.contains("MAX_DWARVES='4'\n"), "{out}");
     }
 
+    #[test_id(tg0rhrh)]
     #[test]
     fn export_sh_renders_a_toml_bool_as_the_word_true_not_1() {
         // sp-9hwim: a caller reading a bool key off export --sh (mail.sh's SPIRA_MAIL_MUTE)
@@ -206,12 +227,14 @@
         assert!(out.contains("MAIL_MUTE='true'\n"), "{out}");
     }
 
+    #[test_id(t54tst5)]
     #[test]
     fn set_path_on_empty_document_creates_the_table() {
         let doc = set_path(&SpiraToml::default(), "spira.prod", "srv/x").unwrap();
         assert_eq!(doc.spira.unwrap().get_str("SPIRA_PROD").unwrap(), Some("srv/x".to_string()));
     }
 
+    #[test_id(tkc6wwl)]
     #[test]
     fn set_path_replaces_without_disturbing_siblings() {
         let doc = validate("[spira]\nid_prefix = \"sp\"\nprod = \"/old\"\nmax_dwarves = 4\n").unwrap();
@@ -221,12 +244,14 @@
         assert_eq!(spira.get_u32("SPIRA_MAX_DWARVES").unwrap(), Some(4));
     }
 
+    #[test_id(t9m5smy)]
     #[test]
     fn set_path_refuses_an_unknown_field() {
         let err = set_path(&SpiraToml::default(), "spira.bogus", "x").unwrap_err();
         assert!(err.starts_with("spira.bogus"), "{err}");
     }
 
+    #[test_id(tditfyn)]
     #[test]
     fn a_retired_key_warns_instead_of_erroring() {
         let (doc, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_local_gate = 1\n")
@@ -238,6 +263,7 @@
         );
     }
 
+    #[test_id(t0v4ob4)]
     #[test]
     fn the_retired_repo_gate_key_warns_and_is_ignored() {
         let (doc, warnings) = validate_with_warnings(
@@ -253,6 +279,7 @@
         assert!(w.iter().any(|m| m.starts_with("repo.spira.gatee") && !m.contains("retired")), "{w:?}");
     }
 
+    #[test_id(thypnig)]
     #[test]
     fn unsetting_a_retired_key_removes_it_instead_of_refusing() {
         let text = "[repo.spira]\npath = \"/p\"\nmode = \"push\"\ngate = \"bash spira/x.sh\"\n";
@@ -265,6 +292,7 @@
         assert!(unset_path(&doc, "repo.spira.gatee").is_err());
     }
 
+    #[test_id(ttprqtw)]
     #[test]
     fn retired_cpu_quota_keys_warn_and_are_ignored() {
         // sp-b4oct: a live spira.toml still carrying the dwarf/landing CPU quota validates,
@@ -283,6 +311,7 @@
         assert!(!sh.contains("CPU_QUOTA"), "a retired key leaked into export --sh: {sh}");
     }
 
+    #[test_id(t3p40y3)]
     #[test]
     fn an_unknown_enum_value_loads_with_a_warning_and_refuses_only_its_reader() {
         let doc_text = "[spira]\nid_prefix = \"sp\"\nczar_stage_deadlock = \"someday\"\n[repo.r]\npath = \"/p\"\nmode = \"push\"\nlanes = [\"plan\", \"future-lane\"]\ngate_mode = \"some-future-mode\"\n";
@@ -298,6 +327,7 @@
         assert!(err.contains("repo.r.mode") && err.contains("teleport"), "{err}");
     }
 
+    #[test_id(t02ojxl)]
     #[test]
     fn a_rewrite_never_drops_a_value_this_release_does_not_know() {
         let text = format!("{REPO_R}gate_mode = \"some-future-mode\"\n");
@@ -310,6 +340,7 @@
         assert!(err.contains("repo.r.gate_mode") && !p.exists(), "{err}");
     }
 
+    #[test_id(tppl8dw)]
     #[test]
     fn a_misspelt_key_warns_as_unknown_but_a_bad_known_value_errors() {
         let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_local_gatee = 1\n").unwrap();
@@ -318,6 +349,7 @@
         assert!(err.starts_with("spira.max_dwarves"), "{err}");
     }
 
+    #[test_id(tsfnz5o)]
     #[test]
     fn missing_from_retirement_catches_a_dropped_key() {
         use std::collections::BTreeSet;
@@ -335,18 +367,21 @@
         );
     }
 
+    #[test_id(t48sb9y)]
     #[test]
     fn set_path_coerces_a_numeric_field() {
         let doc = set_path(&SpiraToml::default(), "spira.max_live_dwarves", "3").unwrap();
         assert_eq!(doc.spira.unwrap().get_u32("SPIRA_MAX_LIVE_DWARVES").unwrap(), Some(3));
     }
 
+    #[test_id(tutnf4s)]
     #[test]
     fn set_path_coerces_a_bool_field() {
         let doc = set_path(&SpiraToml::default(), "spira.mail_mute", "true").unwrap();
         assert_eq!(doc.spira.unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), Some(true));
     }
 
+    #[test_id(t29diep)]
     #[test]
     fn set_path_keeps_a_numeric_looking_string_field_a_string() {
         // `instance` is a string field; a value that happens to parse as JSON must not be
@@ -355,6 +390,7 @@
         assert_eq!(doc.spira.unwrap().get_str("SPIRA_INSTANCE").unwrap(), Some("123".to_string()));
     }
 
+    #[test_id(t8tynog)]
     #[test]
     fn unset_path_removes_the_key_and_keeps_siblings() {
         let doc = validate("[spira]\nid_prefix = \"sp\"\nmax_live_dwarves = 3\nmax_dwarves = 4\n").unwrap();
@@ -375,6 +411,7 @@
         testkit::TempDir::new(&format!("spira-config-lib-test-{tag}-{n}"))
     }
 
+    #[test_id(tkvmilj)]
     #[test]
     fn find_under_locates_the_file() {
         let dir = scratch_dir("find-under-present");
@@ -382,6 +419,7 @@
         assert_eq!(find_under(&dir), Some(dir.join(FILE_NAME)));
     }
 
+    #[test_id(t6r28sp)]
     #[test]
     fn find_under_is_none_when_absent() {
         // POSITIVE CONTROL for find_under_locates_the_file: an empty scratch dir must not
@@ -390,6 +428,7 @@
         assert_eq!(find_under(&dir), None);
     }
 
+    #[test_id(tqcbg1u)]
     #[test]
     fn discover_prefers_the_explicit_path_over_the_environment() {
         let _env = testkit::env(&[("SPIRA_TOML", Some("should-not-be-used/spira.toml"))]);
@@ -397,6 +436,7 @@
         assert_eq!(discover(Some(explicit.clone())), Some(explicit));
     }
 
+    #[test_id(tccoccs)]
     #[test]
     fn discover_never_falls_back_through_spira_repo() {
         // REGRESSION (sp-hconl): discover() used to offer $SPIRA_REPO/spira.toml as a
@@ -425,6 +465,7 @@
         assert_eq!(discover(None), None);
     }
 
+    #[test_id(tdnwb26)]
     #[test]
     fn load_reads_and_validates() {
         let dir = scratch_dir("load-ok");
@@ -434,6 +475,7 @@
         assert_eq!(doc.spira.unwrap().get_u32("SPIRA_MAX_DWARVES").unwrap(), Some(4));
     }
 
+    #[test_id(tpu6gar)]
     #[test]
     fn load_names_the_path_on_a_parse_error() {
         let dir = scratch_dir("load-bad");
@@ -443,6 +485,7 @@
         assert!(err.contains(&path.display().to_string()), "{err}");
     }
 
+    #[test_id(tbfh9yl)]
     #[test]
     fn set_paths_in_file_writes_both_or_neither() {
         let dir = testkit::TempDir::new("spira-config-setpaths");
@@ -462,6 +505,7 @@
 
     const REPO_R: &str = "[repo.r]\npath = \"/x\"\nmode = \"queue.local\"\n";
 
+    #[test_id(tyn10w8)]
     #[test]
     fn gate_mode_defaults_to_suites_when_absent() {
         let doc = validate(REPO_R).unwrap();
@@ -470,6 +514,7 @@
         assert_eq!(get_path(&doc, "repo.r.gate_mode"), None);
     }
 
+    #[test_id(tt1ifv9)]
     #[test]
     fn gate_mode_reads_every_value() {
         for (v, want) in [("unit", GateMode::Unit), ("suites", GateMode::Suites), ("fences", GateMode::Fences)] {
@@ -480,6 +525,7 @@
         }
     }
 
+    #[test_id(t9ir01x)]
     #[test]
     fn gate_mode_refuses_anything_else() {
         for bad in ["\"Unit\"", "\"fast\"", "\"Fences\"", "\"fence\"", "\"\""] {
@@ -493,6 +539,7 @@
         }
     }
 
+    #[test_id(t0s9u4c)]
     #[test]
     fn gate_mode_is_set_and_reverted_through_set_path() {
         let doc = validate(REPO_R).unwrap();
@@ -512,6 +559,7 @@
 
     // ---- sp-oppza: migrate_goal_to_id_prefix — the automatic one-time upgrade migration ----
 
+    #[test_id(tyewlw8)]
     #[test]
     fn id_prefix_from_goal_reads_the_prefix_and_refuses_what_is_not_bead_shaped() {
         assert_eq!(id_prefix_from_goal("sp-spira").as_deref(), Some("sp"));
@@ -521,6 +569,7 @@
         }
     }
 
+    #[test_id(tm9xja4)]
     #[test]
     fn migrate_derives_id_prefix_from_a_bead_shaped_goal_and_drops_goal() {
         let (out, msg) = migrate_goal_to_id_prefix("[spira]\ngoal = \"sp-spira\"\ndb = \"db\"\n")
@@ -534,6 +583,7 @@
         assert!(!out.contains("goal"), "{out}");
     }
 
+    #[test_id(t6ftdl1)]
     #[test]
     fn migrate_is_a_true_no_op_once_id_prefix_is_set_by_hand() {
         // Production's own state: id_prefix already set BY HAND. Checked first, so a goal
@@ -543,6 +593,7 @@
         assert_eq!(migrate_goal_to_id_prefix("[spira]\nid_prefix = \"tt\"\n").unwrap(), None);
     }
 
+    #[test_id(t8wrtwa)]
     #[test]
     fn migrate_is_a_no_op_with_nothing_to_migrate() {
         assert_eq!(migrate_goal_to_id_prefix("[spira]\ndb = \"db\"\n").unwrap(), None, "no goal at all");
@@ -551,6 +602,7 @@
         assert_eq!(migrate_goal_to_id_prefix("").unwrap(), None, "empty document");
     }
 
+    #[test_id(ta6tfs1)]
     #[test]
     fn migrate_in_file_writes_atomically_and_a_second_run_is_silent() {
         let dir = testkit::TempDir::new("spira-config-migrate");
@@ -569,6 +621,7 @@
         assert_eq!(std::fs::read_to_string(&path).unwrap(), after, "unchanged on the second run");
     }
 
+    #[test_id(taner51)]
     #[test]
     fn migrate_in_file_is_a_no_op_on_a_missing_or_empty_file() {
         let dir = testkit::TempDir::new("spira-config-migrate-missing");
@@ -578,6 +631,7 @@
         assert_eq!(migrate_goal_to_id_prefix_in_file(&empty).unwrap(), None);
     }
 
+    #[test_id(tvd0vi4)]
     #[test]
     fn set_path_repo_land_writes_the_mode_field() {
         let doc = validate("[repo.home]\npath = \"/srv/home\"\nmode = \"push\"\n").unwrap();
@@ -587,6 +641,7 @@
         assert_eq!(get_path(&doc, "repo.home.mode"), Some("queue.local".to_string()));
     }
 
+    #[test_id(tx19oln)]
     #[test]
     fn gate_string_with_quotes_dollar_and_newlines_round_trips_through_toml() {
         let gate = "echo \"hi\" && $(rm -rf /) # not really\nnext line\n\t'quoted'";
@@ -601,6 +656,7 @@
         assert_eq!(reparsed.repo["home"].base.as_deref(), Some(gate));
     }
 
+    #[test_id(tb4hcon)]
     #[test]
     fn is_secret_shaped_matches_credential_shaped_names_case_insensitively() {
         for name in ["token", "BROKER_GH_TOKEN", "db_password", "Credential", "some_dsn"] {
@@ -611,6 +667,7 @@
         }
     }
 
+    #[test_id(tkti7ro)]
     #[test]
     fn export_sh_omits_a_secret_shaped_field() {
         let doc = validate("[spira]\nhome_repo = \"a\"\nbroker_gh_token = \"ghp_x\"\n").unwrap();
@@ -620,6 +677,7 @@
         assert!(!out.to_uppercase().contains("TOKEN"), "{out}");
     }
 
+    #[test_id(tlqybrs)]
     #[test]
     fn atomic_write_start_leaves_the_destination_untouched_until_commit() {
         let tmp = testkit::TempDir::new("spira-config-test");
@@ -635,6 +693,7 @@
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    #[test_id(tc8vkto)]
     #[test]
     fn atomic_write_dropped_without_commit_leaves_no_temp_file_and_the_original_intact() {
         let tmp = testkit::TempDir::new("spira-config-test-drop");
@@ -656,6 +715,7 @@
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    #[test_id(thw9r5b)]
     #[test]
     fn backup_existing_copies_the_old_file_and_is_a_noop_when_absent() {
         let tmp = testkit::TempDir::new("spira-config-test-backup");

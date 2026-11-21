@@ -299,6 +299,7 @@ pub fn cargo_shim(args: &[String], cwd: &Path, env: &dyn Fn(&str) -> Option<Stri
 mod gate_build_tests {
     use super::*;
 
+    #[test_id(t60vh2k)]
     #[test]
     fn a_worlds_gate_build_puts_the_releases_gate_where_cargo_would() {
         let tmp = testkit::TempDir::new("sim-gate-build");

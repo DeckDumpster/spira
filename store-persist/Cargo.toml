@@ -24,6 +24,7 @@ libc = "0.2"
 spira-config = { path = "../spira-config" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [[test]]

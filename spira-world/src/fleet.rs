@@ -42,6 +42,7 @@ impl Roster {
 mod tests {
     use super::*;
 
+    #[test_id(tlulcqw)]
     #[test]
     fn live_total_systemd_counts_whatever_the_probe_returns() {
         assert_eq!(live_total_systemd(|pat| if pat == "spira-dwarf-*" { 3 } else { 0 }), 3);
@@ -51,6 +52,7 @@ mod tests {
         names.iter().map(|n| n.to_string()).collect()
     }
 
+    #[test_id(tk5b1b9)]
     #[test]
     fn a_directed_dwarf_is_named_directed_within_the_total() {
         let r = Roster::of(&units(&[
@@ -66,6 +68,7 @@ mod tests {
         assert!(lines[0].contains("5") && lines[0].contains("4 pooled + 1 directed"), "{lines:?}");
     }
 
+    #[test_id(tg7prhs)]
     #[test]
     fn six_dwarves_against_a_cap_of_four_read_as_four_pooled_and_two_directed() {
         let mut all: Vec<&str> = vec!["spira-dwarf-builder-1.service", "spira-dwarf-builder-2.service", "spira-dwarf-builder-3.service", "spira-dwarf-builder-4.service"];

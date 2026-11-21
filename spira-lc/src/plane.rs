@@ -134,6 +134,7 @@ mod tests {
 
     /// The scar: a bead that exists only on the control store (born after the cutover) is found
     /// and moved there.
+    #[test_id(txuzjzz)]
     #[test]
     fn a_bead_only_on_the_control_store_is_read_and_moved_there() {
         let s = store();
@@ -156,6 +157,7 @@ mod tests {
         assert!(listed.contains("SUBMITTED") && listed.contains("sp-a453hs"), "`work list` reads it too: {listed}");
     }
 
+    #[test_id(tnkbd9b)]
     #[test]
     fn no_record_on_the_store_is_no_row_and_an_event_on_it_is_not_applied() {
         let s = store();
@@ -164,6 +166,7 @@ mod tests {
         assert_eq!(p.apply("sp-none", "a", &BeadEventKind::Release).0, CANNOT_TELL);
     }
 
+    #[test_id(tajoj91)]
     #[test]
     fn with_no_control_store_configured_every_verb_is_cannot_tell() {
         let dir = testkit::TempDir::new("spira-lc-plane-no-store");
@@ -177,6 +180,7 @@ mod tests {
     /// The semantic verbs read and write the bead through this module, never the dolt row
     /// directly: on fc5a88428 `work submit` read `rows::fetch_bead` and answered "no bead row"
     /// for a bead that lived only on the control store.
+    #[test_id(tva89yn)]
     #[test]
     fn the_semantic_verbs_never_read_the_dolt_row_directly() {
         let code = |src: &'static str| src.split("#[cfg(test)]").next().unwrap_or(src);

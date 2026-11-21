@@ -8,6 +8,9 @@
 //! and `systemd/render.py`.
 
 #[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
+#[cfg(test)]
 mod cells;
 /// The task name of the garbage-collection unit an install starts; no scheduler task owns it, so every task
 /// ignores its `unit.ran`.

@@ -1335,6 +1335,7 @@ mod tests {
         spira_config::build_dir::lease_dir(&p.bases, &p.slot, "probe", std::time::Duration::ZERO).unwrap().is_some()
     }
 
+    #[test_id(t1jwthh)]
     #[test]
     fn a_gate_links_debug_into_the_leased_builder_directory_and_releases_it_with_the_tree() {
         let p = pool("exit 0\n");
@@ -1351,6 +1352,7 @@ mod tests {
         let _ = &p.t;
     }
 
+    #[test_id(tpf4epi)]
     #[test]
     fn a_failed_clean_or_aging_or_lease_keeps_the_gates_own_link_and_frees_the_slot() {
         let bad_clean = pool("exit 3\n");
@@ -1371,14 +1373,16 @@ mod tests {
         assert_eq!(std::fs::read_link(gone.tree.join("target/debug")).unwrap(), gone.own);
     }
 
+    #[test_id(ttbrvcg)]
     #[test]
     fn the_newest_build_dir_fact_names_the_tip_and_directory_of_the_last_submit() {
         let json = r#"[{"event_type":"build-dir","new_value":"aaa\tpool/dir.1"},{"event_type":"build-dir","new_value":"bbb\tpool/dir.2"}]"#;
-        assert_eq!(super::newest_build_dir(json), Some(("bbb".into(), "pool/dir.2".into())));
-        assert_eq!(super::newest_build_dir("[]"), None);
-        assert_eq!(super::newest_build_dir(r#"[{"new_value":"no-tab"}]"#), None);
+        assert_eq!(super::super::newest_build_dir(json), Some(("bbb".into(), "pool/dir.2".into())));
+        assert_eq!(super::super::newest_build_dir("[]"), None);
+        assert_eq!(super::super::newest_build_dir(r#"[{"new_value":"no-tab"}]"#), None);
     }
 
+    #[test_id(trf3nb0)]
     #[test]
     fn the_gate_builds_where_the_configured_target_root_says() {
         let t = testkit::TempDir::new("gate-root");
@@ -1386,20 +1390,21 @@ mod tests {
         let tree = t.path().join("trees/.gate.r.b");
         std::fs::create_dir_all(&tree).unwrap();
         let lim = crate::target::Limits { cap_mib: 1024, shed_free_mib: 0 };
-        let line = super::Real::new(t.path().to_path_buf())
+        let line = super::super::Real::new(t.path().to_path_buf())
             .target_on_tmpfs(&tree, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim, None, "r")
             .unwrap();
         assert!(line.starts_with(&format!("gate: build on {}", root.display())), "{line}");
         assert!(root.join(".gate.r.b").is_dir());
     }
 
+    #[test_id(tp68vw5)]
     #[test]
     fn the_room_report_names_the_root_and_what_the_gates_targets_hold() {
         let t = testkit::TempDir::new("gate-room");
         let root = t.path().join("r");
         std::fs::create_dir_all(root.join(".gate.x/debug")).unwrap();
         std::fs::write(root.join(".gate.x/debug/f"), vec![1u8; 3 << 20]).unwrap();
-        let line = super::Real::new(t.path().to_path_buf()).target_room(root.to_str().unwrap(), "run");
+        let line = super::super::Real::new(t.path().to_path_buf()).target_room(root.to_str().unwrap(), "run");
         assert!(line.contains(&root.display().to_string()), "{line}");
         assert!(line.contains("gate targets hold 3 MiB"), "{line}");
         assert!(line.contains("writable by this user"), "{line}");
@@ -1410,6 +1415,7 @@ mod tests {
         super::Real::new(tmp.clone()).run_watched(&tmp, &[("PATH".into(), system_paths::SYSTEM_PATH_MIN.into())], "60", Some(stall_ms), 20, cmd)
     }
 
+    #[test_id(tb3drpy)]
     #[test]
     fn a_silent_build_is_ended_as_a_stall_naming_its_last_line() {
         let (rc, out) = watched(3000, "echo Compiling last-crate; exec sleep 30");
@@ -1417,12 +1423,14 @@ mod tests {
         assert!(out.contains("last compiler output: Compiling last-crate"), "{out}");
     }
 
+    #[test_id(t8iip3t)]
     #[test]
     fn a_silent_build_that_burns_cpu_is_not_ended() {
         let (rc, out) = watched(3000, "timeout 4 sh -c 'while :; do :; done'; true");
         assert_eq!(rc, 0, "{out}");
     }
 
+    #[test_id(t3qwvgj)]
     #[test]
     fn a_finished_gate_hands_its_build_directory_to_the_next_through_the_world() {
         use crate::ports::World;
@@ -1453,7 +1461,7 @@ mod tests {
             git(tree, &["commit", "-qm", "c"]);
         }
         let lim = crate::target::Limits { cap_mib: 1 << 20, shed_free_mib: 0 };
-        let r = super::Real::new(t.path().to_path_buf());
+        let r = super::super::Real::new(t.path().to_path_buf());
         let run = t.path().to_str().unwrap();
         r.target_on_tmpfs(&a, root.to_str().unwrap(), run, &lim, None, "r").unwrap();
         fs::create_dir_all(a.join("target/debug/deps")).unwrap();
@@ -1466,6 +1474,7 @@ mod tests {
         assert!(b.join("target/debug/deps/libx.rlib").is_file());
     }
 
+    #[test_id(t9zif9w)]
     #[test]
     fn a_finished_gate_leaves_the_warm_directory_under_the_cap() {
         use crate::ports::World;
@@ -1479,7 +1488,7 @@ mod tests {
             assert!(o.status.success());
         }
         let lim = crate::target::Limits { cap_mib: 3, shed_free_mib: 0 };
-        let r = super::Real::new(t.path().to_path_buf());
+        let r = super::super::Real::new(t.path().to_path_buf());
         r.target_on_tmpfs(&a, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim, None, "r").unwrap();
         fs::create_dir_all(a.join("target/debug/deps")).unwrap();
         fs::write(a.join("target/debug/deps/libbig.rlib"), vec![7u8; 5 << 20]).unwrap();
@@ -1488,14 +1497,16 @@ mod tests {
         assert!(held <= lim.cap_mib << 20, "the warm directory holds {held} bytes over a {} MiB cap", lim.cap_mib);
     }
 
+    #[test_id(t76jkc0)]
     #[test]
     fn a_recorded_stamp_is_on_the_virtual_clock_and_a_wait_is_not() {
         use crate::ports::World;
-        let r = super::Real::new(testkit::TempDir::new("gate-real-stamp").join("nonexistent"));
+        let r = super::super::Real::new(testkit::TempDir::new("gate-real-stamp").join("nonexistent"));
         let (stamp, now) = spira_config::vtime::with_now_for_test(1_900_000_000, || (r.stamp(), r.now()));
         assert_eq!(stamp, 1_900_000_000);
         assert_ne!(now, 1_900_000_000, "now times waits and deadlines; a frozen virtual clock would hang them");
     }
+    #[test_id(t7ce5ql)]
     #[test]
     fn install_tools_copies_stamps_and_clears_every_other_tree() {
         use std::fs;
@@ -1507,7 +1518,7 @@ mod tests {
         fs::create_dir_all(root.join("B")).unwrap();
         fs::write(root.join("B/spira-lint"), "built-from-B").unwrap();
         let dir = root.join("A");
-        super::install_tools_at(tree, &["spira-lint".into()], &dir, "A").unwrap();
+        super::super::install_tools_at(tree, &["spira-lint".into()], &dir, "A").unwrap();
         assert_eq!(fs::read_to_string(dir.join("spira-lint")).unwrap(), "built-from-A");
         assert_eq!(fs::read_to_string(dir.join("TREE")).unwrap(), "A\n");
         assert!(!root.join("B").exists(), "another tree's tools survived");
@@ -1515,15 +1526,16 @@ mod tests {
         fs::write(tree.join("target/debug/spira-lint"), "built-from-C").unwrap();
         assert_eq!(fs::read_to_string(dir.join("spira-lint")).unwrap(), "built-from-A");
         // A package the build did not produce: Err, and nothing left at the keyed path.
-        let e = super::install_tools_at(tree, &["nope".into()], &root.join("D"), "D").unwrap_err();
+        let e = super::super::install_tools_at(tree, &["nope".into()], &root.join("D"), "D").unwrap_err();
         assert!(e.contains("cannot install"), "{e}");
         assert!(!root.join("D").exists() && !root.join("D.tmp").exists());
     }
 
+    #[test_id(tpbxbz1)]
     #[test]
     fn utc_of_formats_like_date() {
-        assert_eq!(super::utc_of(0), "1970-01-01T00:00:00Z");
-        assert_eq!(super::utc_of(1790700000), "2026-09-29T16:40:00Z");
-        assert_eq!(super::utc_of(951782400), "2000-02-29T00:00:00Z");
+        assert_eq!(super::super::utc_of(0), "1970-01-01T00:00:00Z");
+        assert_eq!(super::super::utc_of(1790700000), "2026-09-29T16:40:00Z");
+        assert_eq!(super::super::utc_of(951782400), "2000-02-29T00:00:00Z");
     }
 }

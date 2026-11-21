@@ -10,11 +10,13 @@ fn mem() -> Arc<dyn Journal> {
     MemJournal::new()
 }
 
+#[test_id(twohw0p)]
 #[test]
 fn in_process_emit_to_wakes_another_stream_once() {
     suite::emit_to_wakes_another_stream_once(&InProcessRig(mem));
 }
 
+#[test_id(t3zcnqm)]
 #[test]
 fn in_process_emit_to_is_shadowed_under_observe_and_runs_under_halt() {
     suite::emit_to_is_shadowed_under_observe_and_runs_under_halt(&InProcessRig(mem));

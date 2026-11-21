@@ -1,4 +1,6 @@
 // covers: unit-run/** systemd/spira-unit-run*.service
+#[macro_use]
+extern crate spira_test_id;
 use testkit::TempDir;
 use unit_run::*;
 
@@ -6,6 +8,7 @@ fn shipped(name: &str) -> String {
     std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(name)).unwrap_or_default()
 }
 
+#[test_id(t0eftw1)]
 #[test]
 fn io_accounting_dropin_is_written_once() {
     let d = TempDir::new("unit-run-acct");
@@ -14,6 +17,7 @@ fn io_accounting_dropin_is_written_once() {
     assert!(!ensure_io_accounting(d.path()).unwrap());
 }
 
+#[test_id(tmykk2e)]
 #[test]
 fn io_controller_presence_is_read_from_the_controllers_file() {
     let d = TempDir::new("unit-run-ctl");
@@ -25,6 +29,7 @@ fn io_controller_presence_is_read_from_the_controllers_file() {
     assert!(!io_controller_available(&d.path().join("absent")));
 }
 
+#[test_id(tnu8jb9)]
 #[test]
 fn the_listener_unit_turns_accounting_on() {
     let u = shipped("spira-unit-run-dbus.service");
@@ -32,12 +37,14 @@ fn the_listener_unit_turns_accounting_on() {
     assert!(u.lines().any(|l| l.starts_with("ExecStartPre=") && l.ends_with("unit-run ensure-accounting")));
 }
 
+#[test_id(tjnpjfy)]
 #[test]
 fn the_journal_follower_unit_is_not_shipped() {
     assert!(shipped("spira-unit-run-dbus.service").contains("[Service]"), "positive control: shipped() finds a unit");
     assert!(!spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/spira-unit-run.service").exists());
 }
 
+#[test_id(tweum6b)]
 #[test]
 fn a_record_carries_the_fields_its_consumers_read() {
     let r = Record {

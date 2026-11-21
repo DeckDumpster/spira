@@ -296,6 +296,7 @@ mod tests {
         }
     }
 
+    #[test_id(t7trp48)]
     #[test]
     fn a_second_run_after_one_commit_uploads_only_the_new_table_files_and_one_manifest() {
         let t = TempDir::new("dolt-ship-incremental");
@@ -338,6 +339,7 @@ mod tests {
         );
     }
 
+    #[test_id(t8jkffj)]
     #[test]
     fn a_crash_between_the_file_puts_and_the_manifest_put_leaves_the_previous_manifest_restorable()
     {
@@ -418,6 +420,7 @@ mod tests {
         );
     }
 
+    #[test_id(t8cv0ch)]
     #[test]
     fn the_drill_assembles_exactly_the_newest_manifests_file_set() {
         let t = TempDir::new("dolt-ship-drill");
@@ -476,6 +479,7 @@ mod tests {
         );
     }
 
+    #[test_id(ts2755e)]
     #[test]
     fn a_stamp_that_does_not_sort_after_the_newest_manifest_is_refused() {
         let t = TempDir::new("dolt-ship-stamp");
@@ -507,6 +511,7 @@ mod tests {
         );
     }
 
+    #[test_id(t64jcg4)]
     #[test]
     fn a_table_file_whose_size_changed_under_its_name_is_refused() {
         let t = TempDir::new("dolt-ship-changed");
@@ -541,6 +546,7 @@ mod tests {
         );
     }
 
+    #[test_id(tht3o3c)]
     #[test]
     fn a_manifest_that_is_not_dolt_v5_or_names_a_path_is_refused() {
         assert_eq!(

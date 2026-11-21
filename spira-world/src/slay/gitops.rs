@@ -56,6 +56,7 @@ mod tests {
     }
 
     // covers: UC-landed-audit-reaping-23
+    #[test_id(tq2a5e5)]
     #[test]
     fn parking_makes_a_ref_at_the_branch_sha() {
         let d = repo();
@@ -64,6 +65,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-26
+    #[test_id(tdvghb3)]
     #[test]
     fn parking_a_branch_that_is_not_there_fails() {
         let d = repo();
@@ -71,6 +73,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-26
+    #[test_id(th3dsbl)]
     #[test]
     fn a_dirty_tree_is_committed_as_the_wip_even_where_a_pre_commit_guard_refuses() {
         let d = repo();
@@ -85,6 +88,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-26
+    #[test_id(t9lx8h8)]
     #[test]
     fn a_clean_tree_has_nothing_to_commit() {
         let d = repo();
@@ -92,6 +96,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-26
+    #[test_id(tym8sm1)]
     #[test]
     fn the_bead_is_named_only_by_a_commit_of_its_own() {
         let d = repo();
@@ -101,6 +106,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-26
+    #[test_id(thmngfc)]
     #[test]
     fn the_short_tip_is_the_branch_tip_and_absent_for_no_branch() {
         let d = repo();

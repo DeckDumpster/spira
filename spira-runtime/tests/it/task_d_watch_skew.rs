@@ -57,6 +57,7 @@ fn carry(r: &TaskRig) -> Carry {
     r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap_or_default()
 }
 
+#[test_id(tka3k9b)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_hourly_tick() {
     let row = acc::row(NAME);
@@ -71,6 +72,7 @@ fn t1_the_row_is_registered_and_its_boot_arms_the_hourly_tick() {
     assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
 }
 
+#[test_id(tj89yki)]
 #[test]
 fn t2_the_tip_in_effect_journals_nothing() {
     let mut r = rig(1, Arc::new(Mutex::new(in_effect())));
@@ -78,6 +80,7 @@ fn t2_the_tip_in_effect_journals_nothing() {
     acc::assert_healthy(&r, STREAM);
 }
 
+#[test_id(tcsq5xq)]
 #[test]
 fn t3_a_condition_escalates_once_and_a_decline_streak_alarms_at_three() {
     let world = Arc::new(Mutex::new(behind()));
@@ -95,6 +98,7 @@ fn t3_a_condition_escalates_once_and_a_decline_streak_alarms_at_three() {
     assert_eq!(carry(&r).declined.get("h/spira"), Some(&3));
 }
 
+#[test_id(tgvd6ar)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("d/watch_skew.rs")), None);
@@ -106,6 +110,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 }
 
 /// `escalate`'s operator question and `decline_streak_bump`'s log line (`skew/src/lib.rs:594-597,845-848`).
+#[test_id(traxo6g)]
 #[test]
 fn t5_the_question_and_the_log_line_are_the_ones_skew_wrote() {
     let r = rig(1, Arc::new(Mutex::new(behind())));
@@ -118,6 +123,7 @@ fn t5_the_question_and_the_log_line_are_the_ones_skew_wrote() {
     assert!(logged.len() == 1 && logged[0].starts_with("skew: refresh of h/spira has declined 3 consecutive passes"), "{logged:?}");
 }
 
+#[test_id(to5kkb5)]
 #[test]
 fn t6_seven_days_with_a_tip_advance_replay_identically_inside_the_budget() {
     let r = assert_deterministic(
@@ -146,6 +152,7 @@ fn two_declined_passes() -> TaskRig {
     r
 }
 
+#[test_id(trpvl8t)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&escalated_condition(), NAME);
@@ -154,11 +161,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     assert!(rows.iter().any(|k| k.starts_with("declined/")), "{rows:?}");
 }
 
+#[test_id(tmp4lxt)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(escalated_condition, || WatchSkew::new(config()).registration(), STREAM, WatchSkew::boot().2);
 }
 
+#[test_id(teo5azd)]
 #[test]
 fn a_boot_keeps_the_decline_streak_that_the_next_pass_alarms_on() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(two_declined_passes, || WatchSkew::new(config()).registration(), STREAM, WatchSkew::boot().2);

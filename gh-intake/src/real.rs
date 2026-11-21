@@ -515,6 +515,7 @@ impl Git for RealGit {
 mod lifecycle_tests {
     use super::*;
 
+    #[test_id(teso3k8)]
     #[test]
     fn show_reads_state_and_the_deliverys_merge_sha_else_the_tip() {
         let landed = br#"{"bead":{"state":"LANDED","tip":"tt"},"delivery":{"merge_sha":"mm"}}"#;
@@ -524,6 +525,7 @@ mod lifecycle_tests {
         assert_eq!(parse_show(Some(0), certified).unwrap().unwrap().sha, "tt");
     }
 
+    #[test_id(tnfcfdj)]
     #[test]
     fn pending_rows_read_with_their_ask_and_attempts() {
         let rows = parse_pending(r#"[{"bead_id":"sp-a","external_ref":"github:o/r#7","outcome_state":"DROPPED","sha":"","ask_id":null,"attempts":2},{"bead_id":"sp-b","external_ref":"github:o/r#8","outcome_state":"LANDED","sha":"ab","ask_id":"sp-ask","attempts":0}]"#).unwrap();
@@ -532,6 +534,7 @@ mod lifecycle_tests {
         assert!(parse_pending("{}").is_err());
     }
 
+    #[test_id(tr3wnae)]
     #[test]
     fn no_row_is_none_and_no_answer_is_an_error() {
         assert_eq!(parse_show(Some(1), b"{}"), Ok(None));
@@ -561,6 +564,7 @@ mod transport_tests {
         }
     }
 
+    #[test_id(t1pw527)]
     #[test]
     fn the_lifecycle_reads_go_through_the_store_client_not_a_program() {
         let t = Arc::new(Scripted(Mutex::default()));
@@ -579,6 +583,7 @@ mod transport_tests {
         }
     }
 
+    #[test_id(t2m3sm3)]
     #[test]
     fn last_filed_lines_round_trip_per_repository_including_dotted_slugs() {
         let dir = testkit::TempDir::new("gh-intake-last");
@@ -590,6 +595,7 @@ mod transport_tests {
         assert_eq!(seen.last_filed("acme/widgets.js"), Some(("github:acme/widgets.js#9".into(), "sp-b".into())));
     }
 
+    #[test_id(tz5gkid)]
     #[test]
     fn a_reference_lookup_is_one_content_ref_read_and_a_failed_read_is_no_answer() {
         let t = Arc::new(Content(Mutex::default(), 0));
@@ -599,6 +605,7 @@ mod transport_tests {
         assert!(by_ref_on(&LcClient::over(Arc::new(Content(Mutex::default(), 1)), true), "github:o/r#1").is_err(), "a failed read is not none");
     }
 
+    #[test_id(tbwzddw)]
     #[test]
     fn closeout_dep_writes_go_through_the_door() {
         let t = Arc::new(Content(Mutex::default(), 0));
@@ -623,6 +630,7 @@ mod transport_tests {
         }
     }
 
+    #[test_id(tviit5d)]
     #[test]
     fn the_github_refs_are_a_bounded_plan_read_the_store_serves_to_a_scheduler_task() {
         let t = Arc::new(Bounded(Mutex::default(), 0));
@@ -645,6 +653,7 @@ mod transport_tests {
         (RealMail::with(None, send), sent)
     }
 
+    #[test_id(tusm33d)]
     #[test]
     fn operator_mail_is_sent_in_process_with_the_cli_flags() {
         let (m, sent) = recording(false);
@@ -690,6 +699,7 @@ mod http_tests {
         (url, h)
     }
 
+    #[test_id(tr7v2i0)]
     #[test]
     fn every_get_carries_the_minted_token_as_a_bearer() {
         let (url, h) = serve(3);
@@ -708,6 +718,7 @@ mod http_tests {
         assert_eq!(minted.get(), 1, "one mint per run");
     }
 
+    #[test_id(t1ocn5q)]
     #[test]
     fn a_failed_mint_refuses_the_poll_rather_than_going_unauthenticated() {
         let http = RealHttp::new(Box::new(|| Err("no creds".into())));

@@ -41,6 +41,7 @@ fn answer_probes(e: &mut Engine) {
     e.run_until_idle().unwrap();
 }
 
+#[test_id(tfy8bqs)]
 #[test]
 fn a_probe_and_its_outcome_a_note_and_a_timer_leave_the_journal_empty() {
     let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
@@ -57,6 +58,7 @@ fn a_probe_and_its_outcome_a_note_and_a_timer_leave_the_journal_empty() {
     assert!(journal.commits().is_empty() && journal.boot().unwrap().schedules.is_empty());
 }
 
+#[test_id(t0vcstj)]
 #[test]
 fn arming_a_timer_again_replaces_the_one_waiting_and_a_restart_forgets_it() {
     let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
@@ -91,6 +93,7 @@ impl Handler for Noter {
     }
 }
 
+#[test_id(t80h1c6)]
 #[test]
 fn a_probe_still_waiting_keeps_its_request_in_the_projection() {
     let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
@@ -126,6 +129,7 @@ impl Handler for Keeper {
     }
 }
 
+#[test_id(tmjjvsp)]
 #[test]
 fn the_newest_note_of_a_kind_outlives_any_amount_of_later_local_chatter() {
     let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
@@ -161,6 +165,7 @@ impl Handler for Emitter {
     }
 }
 
+#[test_id(t8yfwpr)]
 #[test]
 fn a_restarted_engine_shows_a_memory_only_first_event_the_state_the_last_run_journaled() {
     let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));

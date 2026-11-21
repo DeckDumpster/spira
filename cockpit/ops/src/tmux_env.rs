@@ -69,6 +69,7 @@ mod tests {
         Tmux::with_bin(bin.to_string_lossy().into_owned())
     }
 
+    #[test_id(tbep2qg)]
     #[test]
     fn scrub_unsets_only_the_identity_vars_the_server_holds_and_pins_the_spec() {
         let dir = testkit::TempDir::new("tmux-env-scrub");
@@ -89,6 +90,7 @@ mod tests {
         assert!(!calls.contains("set-environment -gu AI_AGENT"), "{calls}");
     }
 
+    #[test_id(tbdmxdl)]
     #[test]
     fn no_server_is_nothing_to_scrub() {
         let dir = testkit::TempDir::new("tmux-env-down");

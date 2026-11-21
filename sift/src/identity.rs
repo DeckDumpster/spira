@@ -137,6 +137,7 @@ mod tests {
 
     const ADD: &str = "diff --git a/web/app.ts b/web/app.ts\n--- a/web/app.ts\n+++ b/web/app.ts\n@@ -3,0 +4,2 @@\n+const a = 1;\n+const card = 'wibblet';\n";
 
+    #[test_id(tkfyxuz)]
     #[test]
     fn a_term_another_repo_owns_fails_naming_it_and_the_override() {
         let g = gap("alpha", &pages(), Path::new("brain/projects"), ADD).expect("a hit");
@@ -144,6 +145,7 @@ mod tests {
         assert!(g.contains("brain/projects/alpha/identity.md"), "{g}");
     }
 
+    #[test_id(tevswy1)]
     #[test]
     fn the_owning_repo_and_one_that_allows_the_term_pass() {
         assert_eq!(gap("beta", &pages(), Path::new("brain/projects"), ADD), None);
@@ -152,6 +154,7 @@ mod tests {
         assert!(gap("alpha", &pages(), Path::new("brain/projects"), &zorb).is_none(), "alpha owns Zorblax");
     }
 
+    #[test_id(tckztm0)]
     #[test]
     fn a_vendored_path_is_exempt_and_an_added_path_is_scanned() {
         let kit = ADD.replace("web/app.ts", "kit/app.ts");
@@ -160,12 +163,14 @@ mod tests {
         assert!(gap("alpha", &pages(), Path::new("brain/projects"), named).unwrap().contains("web/wibblet.ts: path: 'Wibblet' belongs to beta"));
     }
 
+    #[test_id(t08pxf4)]
     #[test]
     fn removed_lines_and_clean_additions_pass() {
         let d = "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-wibblet\n+fine\n";
         assert_eq!(gap("alpha", &pages(), Path::new("brain/projects"), d), None);
     }
 
+    #[test_id(tnqhlfq)]
     #[test]
     fn an_unset_wiki_is_a_refusal_naming_the_key() {
         assert!(load("", "wiki/projects", &["alpha".into()]).unwrap_err().contains("SPIRA_WIKI"));
@@ -176,6 +181,7 @@ mod tests {
         assert!(load(w, "wiki/projects", &["alpha".into()]).unwrap_err().contains("SPIRA_IDENTITY_PROJECTS"));
     }
 
+    #[test_id(tv5r6z3)]
     #[test]
     fn pages_are_read_from_the_brain_and_a_repo_without_one_declares_nothing() {
         let d = testkit::TempDir::new("sift-identity");

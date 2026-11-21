@@ -62,6 +62,7 @@ mod tests {
         }
     }
 
+    #[test_id(t3v1hmc)]
     #[test]
     fn supersede_calls_bd_with_the_successor() {
         let calls = RefCell::new(vec![]);
@@ -70,6 +71,7 @@ mod tests {
         assert_eq!(*calls.borrow(), ["supersede sp-a --with sp-b"]);
     }
 
+    #[test_id(t6qp33d)]
     #[test]
     fn supersede_refuses_bad_ids_and_self_before_calling_bd() {
         let never = |_: &[&str]| -> Result<String, String> { panic!("bd must not run") };
@@ -79,6 +81,7 @@ mod tests {
         assert_eq!(supersede(&v(&["sp-a"]), &never).code, CANNOT_TELL);
     }
 
+    #[test_id(t1lrscj)]
     #[test]
     fn note_passes_the_text_as_one_argument() {
         let calls = RefCell::new(vec![]);
@@ -87,6 +90,7 @@ mod tests {
         assert_eq!(*calls.borrow(), ["note sp-a supersede-request confirmed: sp-b is LANDED"]);
     }
 
+    #[test_id(tzg6161)]
     #[test]
     fn note_refuses_empty_text_and_option_ids_before_calling_bd() {
         let never = |_: &[&str]| -> Result<String, String> { panic!("bd must not run") };
@@ -95,6 +99,7 @@ mod tests {
         assert_eq!(note(&v(&["sp-a"]), &never).code, CANNOT_TELL);
     }
 
+    #[test_id(tmsvgo9)]
     #[test]
     fn a_failing_bd_is_exit_1_with_its_message() {
         let down = |_: &[&str]| -> Result<String, String> { Err("bd down\n".into()) };

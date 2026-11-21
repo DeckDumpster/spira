@@ -34,6 +34,7 @@ fn sends(r: &TaskRig) -> Vec<String> {
     r.requested().iter().filter(|q| q.name == SEND).map(|q| q.input.clone()).collect()
 }
 
+#[test_id(tsi4j1s)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_hourly_tick() {
     let t = acc::row(NAME);
@@ -48,6 +49,7 @@ fn t1_the_row_is_registered_and_its_boot_arms_the_hourly_tick() {
     assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
 }
 
+#[test_id(tqi2g3r)]
 #[test]
 fn t2_a_tick_sends_once_and_emits_nothing_else_and_between_ticks_nothing_happens() {
     let mut r = rig(1, none(), delivered);
@@ -59,6 +61,7 @@ fn t2_a_tick_sends_once_and_emits_nothing_else_and_between_ticks_nothing_happens
     assert_eq!(r.journaled().len(), before, "between ticks nothing");
 }
 
+#[test_id(ticd1i5)]
 #[test]
 fn t3_each_tick_sends_under_its_own_key_and_a_failure_never_falls_back() {
     let mut r = rig(1, none(), delivered);
@@ -75,6 +78,7 @@ fn t3_each_tick_sends_under_its_own_key_and_a_failure_never_falls_back() {
     assert_eq!(sends(&down).len(), 2, "a failed probe is not retried inside the hour and has no fallback");
 }
 
+#[test_id(t5dozqf)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("e/incident_probe.rs")), None);
@@ -86,6 +90,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 }
 
 /// `alarms_pass::probe` (`incident/src/alarms_pass.rs:689-699`): the mailbox, subject and body.
+#[test_id(tya27pc)]
 #[test]
 fn t5_the_probe_is_the_note_the_alarms_component_sent() {
     let r = rig(1, none(), delivered);
@@ -100,6 +105,7 @@ fn t5_the_probe_is_the_note_the_alarms_component_sent() {
 /// The contract's T6: seven virtual days with the primary down for three hours once. Each send
 /// journals its request and its outcome, and the boot tick sends too: 2 × (7 × 24 + 1) events in
 /// 168 h, two over 2/h, so the exact count is pinned and the ceiling is 3/h.
+#[test_id(tryndgs)]
 #[test]
 fn t6_seven_days_with_a_three_hour_outage_replay_identically_at_one_send_an_hour() {
     const DAYS: u64 = 7;
@@ -132,6 +138,7 @@ fn registration() -> runtime::event::Registration {
     IncidentProbe::new(config()).registration()
 }
 
+#[test_id(tvquppc)]
 #[test]
 fn a_probe_that_carries_nothing_keeps_no_row_after_running() {
     let mut r = rig(1, none(), delivered);
@@ -142,6 +149,7 @@ fn a_probe_that_carries_nothing_keeps_no_row_after_running() {
 
 /// The send is keyed by the tick event that asked, whose sequence number a restart renumbers, so the
 /// tick after a boot is compared by what it asks for with that key set aside.
+#[test_id(ts5bicz)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     let asked = |restart: bool| {

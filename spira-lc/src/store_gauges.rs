@@ -91,6 +91,7 @@ mod tests {
         b
     }
 
+    #[test_id(thzpago)]
     #[test]
     fn a_walk_totals_nothing_until_its_last_page_then_equals_the_sum_over_all_pages() {
         let keys = [("a/1", 3), ("a/2", 4), ("b/1", 5), ("b/2", 6), ("b/3", 7), ("events/1", 8), ("events/2", 9)];
@@ -122,6 +123,7 @@ mod tests {
         assert_eq!(walk.step(&b, 3, t0 + Duration::from_secs(3)).unwrap(), None, "the next call starts a new pass");
     }
 
+    #[test_id(t5ttt4n)]
     #[test]
     fn a_completed_pass_is_encoded_as_prefix_labelled_gauges_with_its_duration() {
         let pass = Pass { prefixes: BTreeMap::from([("events/".to_string(), Usage { keys: 2, bytes: 17 })]), took: Duration::from_secs(9) };
@@ -132,6 +134,7 @@ mod tests {
         }
     }
 
+    #[test_id(t93cmbd)]
     #[test]
     fn file_and_family_gauges_carry_their_names_and_the_family_label() {
         let dir = testkit::TempDir::new("store-gauges");
@@ -158,6 +161,7 @@ mod tests {
         }
     }
 
+    #[test_id(t5dzpvk)]
     #[test]
     fn a_new_pass_drops_a_prefix_that_has_gone() {
         let at = SystemTime::now();
@@ -169,6 +173,7 @@ mod tests {
         assert_eq!(prefixes, ["kept/"]);
     }
 
+    #[test_id(tk2f8c3)]
     #[test]
     fn the_dashboard_has_the_four_panels_and_queries_the_gauges_by_their_consts() {
         let board: serde_json::Value = serde_json::from_str(include_str!("../../spira/metrics/grafana/dashboards/bead-store.json")).unwrap();

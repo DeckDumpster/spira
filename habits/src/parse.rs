@@ -122,6 +122,7 @@ fn collect(space: &serde_json::Value, out: &mut Vec<Func>) {
 mod tests {
     use super::*;
 
+    #[test_id(tp026mh)]
     #[test]
     fn rustfmt_diff_anchors_on_old_lines() {
         let out = "Diff in r/src/a.rs:10:\n fn ok() {}\n-let x=1;\n+let x = 1;\n fn next() {}\n";
@@ -131,6 +132,7 @@ mod tests {
         assert!(rustfmt(out, Path::new("r/src/b.rs")).is_empty(), "another file's diff is not this file's");
     }
 
+    #[test_id(t9yfi56)]
     #[test]
     fn gcc_lines() {
         let f = gcc_findings("r/a.sh:4:9: note: Double quote to prevent globbing. [SC2086]\nnoise\n", Path::new("r/a.sh"));

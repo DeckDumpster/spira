@@ -233,6 +233,7 @@ mod tests {
         FreshHostEntry.check(&tree).unwrap().iter().map(|f| f.to_string()).collect()
     }
 
+    #[test_id(t212nqf)]
     #[test]
     fn a_bare_release_binary_before_path_is_set_up_is_refused() {
         let got = run(&[("spira/configure.sh", "#!/bin/bash\nspira-config set a b\n")]);
@@ -240,6 +241,7 @@ mod tests {
         assert!(got[0].contains("spira/configure.sh:2") && got[0].contains("bare name"));
     }
 
+    #[test_id(tzhux7k)]
     #[test]
     fn the_release_tree_path_setup_or_conf_sh_clears_it() {
         let fixed = "HERE=x\nif ! command -v spira-config; then\n    PATH=\"$HERE/../bin:$PATH\"\nfi\nspira-config set a b\n";
@@ -248,6 +250,7 @@ mod tests {
         assert!(run(&[("spira/owned.sh", sourced)]).is_empty());
     }
 
+    #[test_id(t1yda7v)]
     #[test]
     fn a_function_from_a_file_that_is_not_sourced_is_refused_and_a_sourced_one_passes() {
         let got = run(&[("spira/ready.sh", "#!/bin/bash\nx=\"$(spira_unit sentinel timer)\"\n")]);
@@ -259,6 +262,7 @@ mod tests {
         assert!(local.is_empty(), "{local:?}");
     }
 
+    #[test_id(tle9uk2)]
     #[test]
     fn a_function_reached_through_a_nested_source_passes() {
         let got = run(&[
@@ -268,6 +272,7 @@ mod tests {
         assert!(got.is_empty(), "{got:?}");
     }
 
+    #[test_id(ttdg74t)]
     #[test]
     fn an_undefaulted_read_of_the_toml_or_releases_path_is_refused() {
         let bad = ". \"$HERE/conf.sh\"\ncat \"$SPIRA_TOML\"\nls \"${SPIRA_RELEASES}\"/current\n";
@@ -277,6 +282,7 @@ mod tests {
         assert!(run(&[("spira/owned.sh", ok)]).is_empty());
     }
 
+    #[test_id(tlp3wzl)]
     #[test]
     fn a_call_inside_a_function_is_judged_by_the_script_setting_up_path_anywhere() {
         let late = "w() {\n  spira-config set a b\n}\nPATH=\"$H/../bin:$PATH\"\nw\n";
@@ -285,6 +291,7 @@ mod tests {
         assert_eq!(run(&[("spira/configure.sh", never)]).len(), 1);
     }
 
+    #[test_id(tl4ghfi)]
     #[test]
     fn a_comment_or_an_external_command_is_not_a_finding() {
         let src = "# spira-config set; spira_unit; $SPIRA_TOML\n. \"$H/conf.sh\"\ngit status\n";

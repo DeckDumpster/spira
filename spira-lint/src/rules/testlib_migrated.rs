@@ -111,6 +111,7 @@ mod tests {
         TestlibMigrated.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(t267i7g)]
     #[test]
     fn a_planted_primitive_is_caught_and_a_testlib_suite_is_not() {
         let t = TempDir::new("tlm");
@@ -125,6 +126,7 @@ mod tests {
         assert!(run(&t, &["spira/test-dummy.sh", "spira/test-planted.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(t0qiwtn)]
     #[test]
     fn every_primitive_counts() {
         for p in ["ok", "bad", "fail", "is", "want", "nowant", "notwant", "wantrc", "pass"] {
@@ -133,6 +135,7 @@ mod tests {
         assert!(!defines_primitive(b"okay() { :; }\n"));
     }
 
+    #[test_id(trcovri)]
     #[test]
     fn a_bare_counter_counts_only_without_testlib() {
         assert!(defines_primitive(b"pass=0; fail=0\n"));
@@ -141,6 +144,7 @@ mod tests {
         assert!(!defines_primitive(b"# pass=0\nbypass=1\n"));
     }
 
+    #[test_id(thna4gc)]
     #[test]
     fn a_listed_exception_passes_and_a_stale_one_is_refused() {
         let t = TempDir::new("tlm-allow");
@@ -153,6 +157,7 @@ mod tests {
         );
     }
 
+    #[test_id(tphg9kz)]
     #[test]
     fn nested_and_non_suite_files_are_out_of_scope() {
         let t = TempDir::new("tlm-scope");

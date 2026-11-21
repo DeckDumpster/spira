@@ -3,6 +3,8 @@
 //! reach (sp-bpenvh). What a binary can reach inside it is the test-sandbox suite's to prove
 //! with a probe binary; these tests read files and spawn at most the runner's own `--print-args`.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -11,6 +13,7 @@ fn workspace() -> PathBuf {
     spira_config::resolve::checkout_root_for_process().unwrap()
 }
 
+#[test_id(tx9xe9v)]
 #[test]
 fn cargo_runs_every_test_binary_through_the_sandbox_runner() {
     let ws = workspace();
@@ -70,6 +73,7 @@ fn bound_back() -> Vec<PathBuf> {
     keep
 }
 
+#[test_id(tev042r)]
 #[test]
 fn a_test_finds_no_installation_under_its_home() {
     let home = PathBuf::from(std::env::var_os("HOME").expect("the runner sets HOME"));
@@ -91,6 +95,7 @@ fn print_args(args: &[&str]) -> Vec<String> {
     String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect()
 }
 
+#[test_id(tdbmfid)]
 #[test]
 fn around_binds_each_target_link_destination_writable_and_keeps_the_environment() {
     let ws = workspace();
@@ -113,6 +118,7 @@ fn around_binds_each_target_link_destination_writable_and_keeps_the_environment(
     assert_eq!(&args[args.len() - 4..], ["--", system_paths::USR_BIN_TRUE, "nextest", "run"]);
 }
 
+#[test_id(tdlszcq)]
 #[test]
 fn the_held_decision_comes_before_any_work_a_held_call_does_not_need() {
     let text = fs::read_to_string(workspace().join("tools/test-sandbox/runner")).unwrap();
@@ -123,6 +129,7 @@ fn the_held_decision_comes_before_any_work_a_held_call_does_not_need() {
     }
 }
 
+#[test_id(t4iqnrz)]
 #[test]
 fn print_args_for_a_binary_is_what_the_landing_ref_printed() {
     let ws = workspace();
@@ -170,6 +177,7 @@ fn fixture_command(home: &Path) {
     std::os::unix::fs::symlink(&stub, home.join(".cargo/bin").join(AROUND_CMD)).unwrap();
 }
 
+#[test_id(tg6blr3)]
 #[test]
 fn around_finds_the_command_the_gate_path_names_and_binds_its_toolchain_under_a_hidden_home() {
     let tmp = testkit::TempDir::new("around-gate-env");
@@ -215,6 +223,7 @@ fn assert_config_bound_after_shadow_and_credentials_not(args: &[String], home: &
     assert!(args.windows(2).all(|w| !(w[0].ends_with("bind") && w[1] == home_cargo)), "{args:?}");
 }
 
+#[test_id(tkobgq3)]
 #[test]
 fn around_binds_the_cargo_config_back_read_only_and_never_the_credentials() {
     let (tmp, home) = cargo_config_fixture("around-cargo-config");
@@ -229,6 +238,7 @@ fn around_binds_the_cargo_config_back_read_only_and_never_the_credentials() {
     assert!(!args.iter().any(|a| a == "--unsetenv"), "{args:?}");
 }
 
+#[test_id(tc9c93q)]
 #[test]
 fn a_binary_run_binds_the_declared_cargo_homes_config_back_read_only_and_never_the_credentials() {
     let (_tmp, home) = cargo_config_fixture("binary-cargo-config");
@@ -245,6 +255,7 @@ fn a_binary_run_binds_the_declared_cargo_homes_config_back_read_only_and_never_t
     assert_config_bound_after_shadow_and_credentials_not(&args, &home);
 }
 
+#[test_id(tj4gn43)]
 #[test]
 fn around_without_the_command_on_path_is_no_verdict_and_names_the_path() {
     let tmp = testkit::TempDir::new("around-no-cargo");
@@ -258,6 +269,7 @@ fn around_without_the_command_on_path_is_no_verdict_and_names_the_path() {
     assert!(err.contains(&format!("{AROUND_CMD} is not on PATH")) && err.contains(&release.display().to_string()), "{err}");
 }
 
+#[test_id(tznf3mn)]
 #[test]
 fn a_held_run_keeps_the_identity_an_enclosing_sandbox_handed_in_when_run_is_unwritable() {
     let tmp = testkit::TempDir::new("held-identity");

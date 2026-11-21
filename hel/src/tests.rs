@@ -168,6 +168,7 @@ impl World for Fake {
     }
 }
 
+#[test_id(t73x99i)]
 #[test]
 fn flags_parse_as_the_shells_did() {
     let a = |xs: &[&str]| crate::parse(&xs.iter().map(|s| s.to_string()).collect::<Vec<_>>());
@@ -180,6 +181,7 @@ fn flags_parse_as_the_shells_did() {
     assert!(a(&["--status-from"]).is_err());
 }
 
+#[test_id(tnu3xgm)]
 #[test]
 fn harness_home_is_spira_home_then_the_declared_release_never_the_executable() {
     assert_eq!(crate::locate_home(Some("h"), Some("r")), Some(PathBuf::from("h")));
@@ -187,6 +189,7 @@ fn harness_home_is_spira_home_then_the_declared_release_never_the_executable() {
     assert_eq!(crate::locate_home(None, None), None);
 }
 
+#[test_id(tue0bhg)]
 #[test]
 fn budget_flag_parses() {
     let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -206,6 +209,7 @@ mod terminal_reaper {
     const OLD: Duration = Duration::from_secs(10_000);
     const MAX: Duration = Duration::from_secs(100);
 
+    #[test_id(te1eua0)]
     #[test]
     fn a_terminal_bead_with_nothing_unsaved_is_removed() {
         for s in ["DONE", "LANDED", "DROPPED", "SUPERSEDED"] {
@@ -213,6 +217,7 @@ mod terminal_reaper {
         }
     }
 
+    #[test_id(tvms6n4)]
     #[test]
     fn a_live_bead_is_never_removed_however_old() {
         for s in ["READY", "WORKING", "REWORK", "SUBMITTED", "CERTIFIED", "IN_DELIVERY"] {
@@ -220,6 +225,7 @@ mod terminal_reaper {
         }
     }
 
+    #[test_id(t6ft8a3)]
     #[test]
     fn unsaved_or_unreadable_commits_keep_the_worktree() {
         assert!(matches!(decide("sp-a", Some("LANDED"), true, Unsaved::Yes, OLD, MAX, None), Decision::Keep(_)));
@@ -227,12 +233,14 @@ mod terminal_reaper {
         assert!(matches!(decide("chk-1", None, true, Unsaved::Yes, OLD, MAX, None), Decision::Keep(_)));
     }
 
+    #[test_id(ttmy8e8)]
     #[test]
     fn a_row_less_entry_is_scratch_only_once_it_is_old_enough() {
         assert!(matches!(decide("chk-1", None, false, Unsaved::No, Duration::from_secs(5), MAX, None), Decision::Keep(_)));
         assert_eq!(decide("chk-1", None, false, Unsaved::No, OLD, MAX, None), Decision::Remove(Why::Scratch));
     }
 
+    #[test_id(tg4npy2)]
     #[test]
     fn a_dot_named_tree_is_never_touched() {
         assert!(matches!(decide(".harness", None, false, Unsaved::No, OLD, MAX, None), Decision::Keep(_)));
@@ -253,6 +261,7 @@ mod terminal_reaper {
         f.set_modified(old).unwrap();
     }
 
+    #[test_id(tvdqy4f)]
     #[test]
     fn a_keep_marker_outranks_age_and_a_terminal_row() {
         assert!(matches!(decide("acc", None, false, Unsaved::No, OLD, MAX, Some("keep marker")), Decision::Keep("keep marker")));
@@ -266,6 +275,7 @@ mod terminal_reaper {
         assert!(d.exists(), "{}", f.out());
     }
 
+    #[test_id(teyc9w2)]
     #[test]
     fn a_tree_with_a_fresh_file_survives_and_a_stale_one_is_reaped() {
         let (_t, f) = hold_world();
@@ -293,6 +303,7 @@ mod terminal_reaper {
 mod unreadable_store {
     use super::*;
 
+    #[test_id(t0pgblw)]
     #[test]
     fn a_stale_pass_over_a_store_that_refuses_reaps_nothing_and_says_why() {
         let t = testkit::TempDir::new("hel-refused");
@@ -305,6 +316,7 @@ mod unreadable_store {
         assert!(f.out().contains("store unreadable: store said no"), "{}", f.out());
     }
 
+    #[test_id(tu4f55z)]
     #[test]
     fn a_sweep_over_a_store_that_refuses_judges_no_branch_and_says_why() {
         let t = testkit::TempDir::new("hel-refused-sweep");
@@ -322,6 +334,7 @@ mod unreadable_store {
         assert!(!f.calls.borrow().iter().any(|c| c.starts_with("bead ")), "{:?}", f.calls.borrow());
     }
 
+    #[test_id(tct03wd)]
     #[test]
     fn a_scan_over_a_store_that_refuses_is_a_store_error_not_a_skip() {
         let t = testkit::TempDir::new("hel-refused-scan");
@@ -345,6 +358,7 @@ mod resume {
         f.calls.borrow().iter().filter_map(|c| c.strip_prefix("send ")).map(|c| c.split(' ').next().unwrap().to_string()).collect()
     }
 
+    #[test_id(txfvf6m)]
     #[test]
     fn a_pass_cut_at_its_budget_resumes_after_the_last_branch_it_handled() {
         let t = testkit::TempDir::new("hel-resume");
@@ -375,6 +389,7 @@ mod resume {
         assert_eq!(*f.resume.borrow(), None, "a finished pass clears the cursor");
     }
 
+    #[test_id(telv9ze)]
     #[test]
     fn a_dry_run_cut_at_its_budget_names_every_branch_it_did_not_reach_and_totals_them() {
         let t = testkit::TempDir::new("hel-dry-cut");
@@ -407,6 +422,7 @@ mod resume {
         assert_eq!(n, 5, "{summary}");
     }
 
+    #[test_id(tx62jjw)]
     #[test]
     fn a_dry_run_with_no_budget_ends_with_a_summary_counting_each_branch() {
         let t = testkit::TempDir::new("hel-dry-total");
@@ -427,6 +443,7 @@ mod resume {
         assert_eq!(out[2], "hel: 2 branches — 1 WOULD, 0 KEEP, 1 HELD, 0 SKIP, 0 UNJUDGED", "{out:?}");
     }
 
+    #[test_id(tohgfne)]
     #[test]
     fn a_cursor_naming_a_branch_already_sent_still_resumes_after_it() {
         let t = testkit::TempDir::new("hel-resume-gone");
@@ -449,6 +466,7 @@ mod resume {
         assert_eq!(sent(&f), ["sp-d", "sp-e"].map(String::from).to_vec());
     }
 
+    #[test_id(tzk7ezr)]
     #[test]
     fn each_branch_sent_is_followed_by_the_configured_rest() {
         let t = testkit::TempDir::new("hel-pace");
@@ -546,6 +564,7 @@ mod scan {
         }
     }
 
+    #[test_id(t7f9tlf)]
     #[test]
     fn a_scan_judges_every_disposition_as_the_live_facts_do() {
         let t = testkit::TempDir::new("hel-scan-disp");
@@ -618,6 +637,7 @@ mod scan {
         assert_eq!(needs_evidence(squash.ahead.unwrap(), || squash.has_own_commit, || squash.only_stacked_base, || squash.base_names), needs_evidence(squash.ahead.unwrap(), || g.has_own_commit("main", "spira/sp-squash", "sp-squash"), || g.only_stacked_base("main", "spira/sp-squash"), || g.base_names("main", "sp-squash", 2000)));
     }
 
+    #[test_id(t1eqxyj)]
     #[test]
     fn a_landed_beads_branch_whose_diff_is_on_the_base_is_sent_though_no_commit_names_it() {
         let t = testkit::TempDir::new("hel-terminal-evidence");
@@ -636,6 +656,7 @@ mod scan {
         assert!(out.iter().any(|l| l.starts_with("KEEP   sp-live  ")), "{out:?}");
     }
 
+    #[test_id(t698spe)]
     #[test]
     fn an_observe_slice_spent_after_k_branches_judges_k_and_the_next_scan_returns_the_rest() {
         let t = testkit::TempDir::new("hel-scan-slice");
@@ -689,6 +710,7 @@ mod closed_bead_branch {
         Git(root).branch_exists("spira/sp-x")
     }
 
+    #[test_id(tjac421)]
     #[test]
     fn a_closed_beads_branch_whose_content_is_on_the_base_is_archived_though_no_commit_names_the_bead() {
         let (root, out) = sweep(true, false);
@@ -696,6 +718,7 @@ mod closed_bead_branch {
         assert!(Git(&root).verify("refs/archive/spira/sp-x").is_some(), "{out:?}");
     }
 
+    #[test_id(trqe4ku)]
     #[test]
     fn a_dry_run_says_it_would_archive_a_closed_beads_content_landed_branch_and_touches_nothing() {
         let (root, out) = sweep(true, true);
@@ -703,6 +726,7 @@ mod closed_bead_branch {
         assert!(out.iter().any(|l| l.starts_with("WOULD  sp-x  archive")), "{out:?}");
     }
 
+    #[test_id(tfkqgen)]
     #[test]
     fn a_live_beads_content_landed_branch_with_no_naming_commit_is_still_kept() {
         let (root, out) = sweep(false, false);

@@ -13,6 +13,7 @@ impl Drop for Up<'_> {
     }
 }
 
+#[test_id(t0zjc9u)]
 #[test]
 fn the_gates_socket_is_the_socket_the_marker_sits_beside_and_the_serve_listens_on() {
     let w = Path::new("tmp/pw");
@@ -32,6 +33,7 @@ fn the_gates_socket_is_the_socket_the_marker_sits_beside_and_the_serve_listens_o
     );
 }
 
+#[test_id(t98hkgf)]
 #[test]
 fn a_marker_is_refused_beside_any_socket_that_is_not_a_sim_worlds() {
     let t = testkit::TempDir::new("pw-guard");
@@ -42,6 +44,7 @@ fn a_marker_is_refused_beside_any_socket_that_is_not_a_sim_worlds() {
     .exists());
 }
 
+#[test_id(tyi9g34)]
 #[test]
 #[ignore = "needs SPIRA_SIM_RELEASE and a Dolt fixture: run with --ignored"]
 fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow() {
@@ -154,6 +157,7 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
     );
 }
 
+#[test_id(t3o6si4)]
 #[test]
 #[ignore = "needs SPIRA_SIM_RELEASE, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
 fn a_pilgrim_session_with_no_bd_on_path_builds_a_pilgrim_world() {
@@ -230,12 +234,14 @@ fn pilgrim_up_from_non_spira_worktree(sim_release: bool, in_testenv: bool) {
     assert!(!built, "a pilgrim world builds nothing");
 }
 
+#[test_id(t3ugjt9)]
 #[test]
 #[ignore = "needs a release, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
 fn a_pilgrim_world_for_a_non_spira_worktree_is_built_from_the_release_not_the_worktree() {
     pilgrim_up_from_non_spira_worktree(true, false);
 }
 
+#[test_id(tomp7s6)]
 #[test]
 #[ignore = "needs a release, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
 fn a_pilgrim_world_in_testenv_needs_no_sim_release_of_its_own() {
@@ -253,6 +259,7 @@ fn refused_pilgrim_up(extra: &[&str], release: Option<&str>) -> (Option<i32>, St
     (out.status.code(), String::from_utf8_lossy(&out.stderr).into_owned())
 }
 
+#[test_id(t1mx03w)]
 #[test]
 fn a_pilgrim_world_with_no_active_release_is_refused_naming_the_key() {
     let (code, err) = refused_pilgrim_up(&[], None);
@@ -260,6 +267,7 @@ fn a_pilgrim_world_with_no_active_release_is_refused_naming_the_key() {
     assert!(err.contains("SPIRA_RELEASE is not set"), "{err}");
 }
 
+#[test_id(ti2vsxs)]
 #[test]
 fn a_pilgrim_world_takes_its_tree_from_the_release_so_tree_is_a_usage_error() {
     let (code, err) = refused_pilgrim_up(&["--tree", "HEAD"], Some("release"));

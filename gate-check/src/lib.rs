@@ -2,4 +2,7 @@
 //! the walk of `main.rs` over a snapshot with these functions, so the binary and the task
 //! decide alike.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod engine;

@@ -45,6 +45,7 @@ pub fn scan(output: &str) -> Vec<Hit> {
 mod tests {
     use super::*;
 
+    #[test_id(tjppisw)]
     #[test]
     fn every_signature_is_found_by_its_own_needles() {
         for s in SIGNATURES {
@@ -55,11 +56,13 @@ mod tests {
         }
     }
 
+    #[test_id(t7vatoy)]
     #[test]
     fn a_clean_output_has_no_hit() {
         assert!(scan("ok 1 - a\nnot ok 2 - expected 3, got 4\n").is_empty());
     }
 
+    #[test_id(tvp2udq)]
     #[test]
     fn matching_ignores_case_and_a_long_line_is_cut() {
         let long = format!("resource TEMPORARILY unavailable {}", "x".repeat(500));

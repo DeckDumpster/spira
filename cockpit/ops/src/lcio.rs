@@ -111,6 +111,7 @@ pub mod scripted {
 mod tests {
     use super::*;
 
+    #[test_id(t4169ik)]
     #[test]
     fn a_read_answers_in_process_and_a_failure_names_the_call() {
         let (t, ok) = scripted::client(0, "[]");
@@ -120,6 +121,7 @@ mod tests {
         assert_eq!(answer(&no, &["list", "--live"]).unwrap_err().to_string(), "spira-lc list --live: exit 2 cannot tell: down");
     }
 
+    #[test_id(tprf4zx)]
     #[test]
     fn has_row_reads_show_exit_codes() {
         assert!(has_row(&scripted::client(0, "{}").1, "sp-a").unwrap());
@@ -127,6 +129,7 @@ mod tests {
         assert!(has_row(&scripted::client(2, "cannot tell").1, "sp-a").is_err());
     }
 
+    #[test_id(t7lgntq)]
     #[test]
     fn deliver_lands_the_message_in_the_concierge_mailbox_and_removes_the_spool() {
         let dir = testkit::TempDir::new("ops-deliver");

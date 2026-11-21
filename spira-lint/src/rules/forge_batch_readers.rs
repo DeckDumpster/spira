@@ -142,6 +142,7 @@ mod tests {
         ForgeBatchReaders::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tafwkin)]
     #[test]
     fn a_planted_read_of_the_open_or_forge_state_file_is_caught_in_each_spelling() {
         let t = TempDir::new("fbr");
@@ -153,6 +154,7 @@ mod tests {
         assert_eq!(got.len(), 7, "{got:?}");
     }
 
+    #[test_id(tea0yqz)]
     #[test]
     fn the_verb_comments_owners_other_names_and_listed_files_are_silent() {
         let t = TempDir::new("fbr-ok");
@@ -166,6 +168,7 @@ mod tests {
         assert_eq!(run(&t, &files).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tbwu7an)]
     #[test]
     fn a_prepared_event_in_a_state_machine_is_not_the_file() {
         let t = TempDir::new("fbr-event");
@@ -175,6 +178,7 @@ mod tests {
         assert!(got[0].contains(":5:"), "{got:?}");
     }
 
+    #[test_id(tcrks7n)]
     #[test]
     fn a_listed_file_that_no_longer_reads_is_a_finding() {
         let t = TempDir::new("fbr-stale");
@@ -183,6 +187,7 @@ mod tests {
         assert_eq!(run(&t, &["czar-pass/src/a.rs", ALLOW_FILE]).unwrap().len(), 1);
     }
 
+    #[test_id(tusk5ms)]
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("fbr-none");

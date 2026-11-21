@@ -125,6 +125,7 @@ mod tests {
         SiftStateReaders::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tpkmxic)]
     #[test]
     fn a_planted_sift_file_read_is_caught() {
         let t = TempDir::new("ssr");
@@ -136,6 +137,7 @@ mod tests {
         assert_eq!(got.len(), 4, "{got:?}");
     }
 
+    #[test_id(tj565qo)]
     #[test]
     fn comments_other_trees_the_verb_and_listed_files_are_silent() {
         let t = TempDir::new("ssr-ok");
@@ -146,6 +148,7 @@ mod tests {
         assert_eq!(run(&t, &["cockpit/a.rs", "batcher-cut/y.rs", "spira-world/old.rs", ALLOW_FILE]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(t0oz4sk)]
     #[test]
     fn a_listed_file_that_no_longer_reads_is_a_finding() {
         let t = TempDir::new("ssr-stale");
@@ -154,6 +157,7 @@ mod tests {
         assert_eq!(run(&t, &["cockpit/a.rs", ALLOW_FILE]).unwrap().len(), 1);
     }
 
+    #[test_id(tzvagmb)]
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("ssr-none");

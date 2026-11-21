@@ -138,6 +138,7 @@ mod tests {
         s.contract().txn(&Txn::new().put(key, Object::new(v)), &Request::new(&format!("put-{key}"), "t", "t")).unwrap();
     }
 
+    #[test_id(ttnzvja)]
     #[test]
     fn a_mending_row_past_its_deadline_with_no_ask_is_overdue_and_a_waiting_or_asked_one_is_not() {
         let s = store();
@@ -158,6 +159,7 @@ mod tests {
         assert_eq!((rows[0]["suite"].as_str(), rows[0]["deadline"].as_str()), (Some("late.sh"), Some("900")));
     }
 
+    #[test_id(tlnq23q)]
     #[test]
     fn mends_are_counted_per_bead_over_the_last_day_only() {
         let s = store();
@@ -177,6 +179,7 @@ mod tests {
         assert!(collect(&[], &counts, now).iter().any(|b| b.key == "mends:sp-loop"));
     }
 
+    #[test_id(tnp3hpw)]
     #[test]
     fn mend_counts_read_the_opened_at_index_not_every_mend_ever() {
         use crate::control::store::counting::Counting;
@@ -206,6 +209,7 @@ mod tests {
         assert!(reads.iter().any(|(k, p, _)| *k == "range_newest_opened" && p.starts_with(keys::MENDS)), "{reads:?}");
     }
 
+    #[test_id(tjccnx6)]
     #[test]
     fn more_recent_mends_than_the_first_page_are_all_counted() {
         let clock = runtime::ports::VirtualClock::new(0);
@@ -223,6 +227,7 @@ mod tests {
         assert_eq!(counts.iter().find(|r| r["bead"] == "sp-many").map(|r| r["n"].as_str().unwrap().to_string()), Some("300".to_string()));
     }
 
+    #[test_id(t49peov)]
     #[test]
     fn a_read_that_fails_then_succeeds_is_retried_and_one_that_never_does_is_not_hidden() {
         let mut n = 0;
@@ -233,12 +238,14 @@ mod tests {
         assert_eq!((r, m), (Err("deadline"), 4));
     }
 
+    #[test_id(t212mol)]
     #[test]
     fn more_than_two_mends_in_a_day_breaches_and_two_does_not() {
         assert!(mends_breach("sp-x", 2).is_none());
         assert_eq!(mends_breach("sp-x", 3).unwrap().key, "mends:sp-x");
     }
 
+    #[test_id(tykrraf)]
     #[test]
     fn an_announced_breach_is_not_repeated_until_it_clears() {
         let bs = vec![overdue_breach("b", "1", "s", 10, 20), mends_breach("sp-x", 3).unwrap()];
@@ -247,6 +254,7 @@ mod tests {
         assert_eq!(fresh(&bs, &BTreeSet::new()).len(), 2);
     }
 
+    #[test_id(t6boc8r)]
     #[test]
     fn the_overdue_line_says_how_late() {
         assert!(overdue_breach("b", "1", "s", 10, 70).line.contains("60s past its deadline"));
@@ -256,11 +264,13 @@ mod tests {
         serde_json::json!({"batch_id": "batch-mend", "pass": "1", "suite": "test-f.sh", "deadline": deadline.to_string()})
     }
 
+    #[test_id(tvk3ij5)]
     #[test]
     fn a_row_inside_its_deadline_is_no_breach() {
         assert!(collect(&[overdue_row(1_100)], &[], 1_000).is_empty());
     }
 
+    #[test_id(tvwuwjy)]
     #[test]
     fn an_overdue_row_fires_the_alarm_naming_its_key() {
         let bs = collect(&[overdue_row(970)], &[], 1_000);
@@ -268,12 +278,14 @@ mod tests {
         assert!(bs[0].line.starts_with("MEND-WATCH OVERDUE batch-mend#1#test-f.sh "), "{}", bs[0].line);
     }
 
+    #[test_id(tacd8tu)]
     #[test]
     fn without_a_seen_set_every_breach_is_reported() {
         let bs = collect(&[overdue_row(970)], &[], 1_000);
         assert_eq!(fresh(&bs, &BTreeSet::new()).len(), 1);
     }
 
+    #[test_id(torbq5h)]
     #[test]
     fn a_third_mend_in_a_day_fires_the_alarm_and_two_do_not() {
         let mends = [serde_json::json!({"bead": "sp-twice", "n": "2"}), serde_json::json!({"bead": "sp-loop", "n": "3"})];

@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(tgzsqbt)]
 #[test]
 fn a_response_is_a_header_line_then_the_raw_bytes_once() {
     use std::io::Read;
@@ -12,12 +13,14 @@ fn a_response_is_a_header_line_then_the_raw_bytes_once() {
     assert_eq!(got, format!("{{\"exit_code\":3,\"len\":{}}}\n{body}", body.len()));
 }
 
+#[test_id(tx2sb1z)]
 #[test]
 fn peer_pid_reads_the_connecting_process() {
     let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
     assert_eq!(super::peer_pid(&a), Some(std::process::id() as i32));
 }
 
+#[test_id(tkahntd)]
 #[test]
 fn peer_uid_reads_the_connecting_process() {
     let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -27,6 +30,7 @@ fn peer_uid_reads_the_connecting_process() {
 
 /// sp-6n7nuv: a verb the socket does not serve is refused by the server itself — the
 /// git-proved caller verbs included — and never falls through to anything.
+#[test_id(toh434f)]
 #[test]
 fn the_real_server_answers_a_composed_verb_and_refuses_an_unserved_one() {
     let (reply, code) = ask(None, "[\"hold\"]\n");
@@ -39,6 +43,7 @@ fn the_real_server_answers_a_composed_verb_and_refuses_an_unserved_one() {
     }
 }
 
+#[test_id(to19lgr)]
 #[test]
 fn a_request_body_is_read_to_exactly_its_length() {
     let mut r = std::io::Cursor::new(b"{\"argv\":[\"close\",\"sp-a\"],\"len\":5}\nhelloEXTRA".to_vec());
@@ -50,6 +55,7 @@ fn a_request_body_is_read_to_exactly_its_length() {
     assert!(super::read_request(&mut huge).is_err(), "an oversized body is refused before it is read");
 }
 
+#[test_id(trs9zhy)]
 #[test]
 fn a_stderr_answer_rides_after_stdout_with_its_own_length() {
     use std::io::Read;

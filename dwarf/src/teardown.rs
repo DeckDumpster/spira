@@ -665,6 +665,7 @@ impl Run<'_> {
 mod tests {
     use super::*;
 
+    #[test_id(t2bdp19)]
     #[test]
     fn removing_the_session_tmpdir_leaves_a_newer_sibling_of_the_same_user_alone() {
         let dir = testkit::TempDir::new("sweep");
@@ -680,6 +681,7 @@ mod tests {
         assert!(sibling.join("conf").is_file());
     }
 
+    #[test_id(txkp39h)]
     #[test]
     fn a_read_only_staged_tree_in_the_session_tmpdir_is_removed() {
         use std::os::unix::fs::PermissionsExt;
@@ -692,6 +694,7 @@ mod tests {
         assert!(!dir.path().join("t").exists());
     }
 
+    #[test_id(tze7y6w)]
     #[test]
     fn a_symlink_in_the_session_tmpdir_is_unlinked_not_followed() {
         let dir = testkit::TempDir::new("link");
@@ -706,12 +709,14 @@ mod tests {
         assert!(outside.join("keep").is_file());
     }
 
+    #[test_id(td4vv2b)]
     #[test]
     fn the_session_tmpdir_lies_inside_the_worktree() {
         let w = Path::new("w/wt");
         assert!(Run::session_tmpdir(w).starts_with(w));
     }
 
+    #[test_id(t1vmp6x)]
     #[test]
     fn making_the_session_tmpdir_writes_a_self_ignoring_gitignore_and_keeps_an_existing_one() {
         let dir = testkit::TempDir::new("gi");
@@ -724,6 +729,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(kept.path().join(".runtime/.gitignore")).unwrap(), "other\n");
     }
 
+    #[test_id(tabf5za)]
     #[test]
     fn a_session_tmpdir_that_cannot_be_created_is_reported_with_its_path() {
         let dir = testkit::TempDir::new("blocked");

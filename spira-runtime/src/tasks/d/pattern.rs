@@ -94,6 +94,7 @@ mod tests {
         Running,
     }
 
+    #[test_id(tvtzt59)]
     #[test]
     fn a_table_move_lands_and_a_move_off_the_table_is_refused_naming_the_state() {
         static T: Table<P> = &[(P::Idle, "tick", P::Running), (P::Running, "unit.ran", P::Idle)];
@@ -101,12 +102,14 @@ mod tests {
         assert_eq!(transition(T, "t", P::Idle, "unit.ran"), Err("t: unit.ran refused in state Idle".into()));
     }
 
+    #[test_id(touumvj)]
     #[test]
     fn the_carry_is_emitted_only_when_it_changed() {
         assert!(commands("s", &1, &1, vec![]).is_empty());
         assert!(matches!(commands("s", &1, &2, vec![]).as_slice(), [Command::Emit(k)] if k.body == "2"));
     }
 
+    #[test_id(t8c4xhr)]
     #[test]
     fn the_inbox_line_is_the_house_format() {
         assert_eq!(inbox_line(1_793_166_343_000, "warm-full", "x"), "2026-10-28T05:45:43Z [watch:warm-full] x");

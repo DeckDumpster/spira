@@ -53,6 +53,7 @@ pub fn self_source() {
 mod tests {
     use super::*;
 
+    #[test_id(tjt796v)]
     #[test]
     fn self_source_is_silent_with_no_spira_release() {
         let _env = testkit::env(&[("SPIRA_RELEASE", None)]);

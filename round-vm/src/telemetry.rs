@@ -44,6 +44,7 @@ fn push_placement_to(endpoint: Option<&str>, place: &str, instance_type: &str, w
 mod tests {
     use super::*;
 
+    #[test_id(tsdrcr5)]
     #[test]
     fn a_failed_verb_pushes_its_count_duration_and_error_outcome() {
         let (addr, h) = spira_otel::metrics::run::fixture_sink();
@@ -56,6 +57,7 @@ mod tests {
         }
     }
 
+    #[test_id(to8r0kz)]
     #[test]
     fn a_placed_pass_pushes_its_place_instance_type_wait_and_boot() {
         let (addr, h) = spira_otel::metrics::run::fixture_sink();
@@ -66,6 +68,7 @@ mod tests {
         }
     }
 
+    #[test_id(tnip7if)]
     #[test]
     fn a_judged_pass_pushes_its_verdict_cause_place_and_phases() {
         use tsd::pass::{Cause, PassRecord, Place};
@@ -101,6 +104,7 @@ mod tests {
         }
     }
 
+    #[test_id(tvebkid)]
     #[test]
     fn an_unlisted_verb_is_labelled_unknown() {
         assert_eq!(operation(&["bogus".into()]), "unknown");

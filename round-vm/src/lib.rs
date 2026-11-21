@@ -1,5 +1,8 @@
 //! round-vm — a pool of one ephemeral round VM from the hypervisor. See DESIGN.md.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod alarm;
 pub mod ci_yield;
 pub mod cli;

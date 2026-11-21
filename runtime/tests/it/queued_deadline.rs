@@ -119,6 +119,7 @@ fn engine(j: &Arc<dyn Journal>) -> Engine {
     Engine::open(j.clone(), Arc::new(WallClock), vec![Registration::new("asks", Asks)], 1).unwrap()
 }
 
+#[test_id(t3xxzec)]
 #[tokio::test]
 async fn an_effect_queued_past_its_nominal_deadline_still_runs_once_it_gets_a_permit() {
     let j: Arc<dyn Journal> = MemJournal::new();
@@ -144,6 +145,7 @@ async fn an_effect_queued_past_its_nominal_deadline_still_runs_once_it_gets_a_pe
     assert!(started(&runner, "short"), "the queued effect's runner ran");
 }
 
+#[test_id(tip8aki)]
 #[tokio::test]
 async fn a_timed_out_effect_gives_its_permit_back() {
     let j: Arc<dyn Journal> = MemJournal::new();
@@ -166,6 +168,7 @@ async fn a_timed_out_effect_gives_its_permit_back() {
     );
 }
 
+#[test_id(t3o2ucm)]
 #[tokio::test]
 async fn a_turn_runs_while_every_effect_worker_is_busy() {
     let j: Arc<dyn Journal> = MemJournal::new();
@@ -187,6 +190,7 @@ async fn a_turn_runs_while_every_effect_worker_is_busy() {
     );
 }
 
+#[test_id(t99inee)]
 #[tokio::test]
 async fn one_task_fanning_out_leaves_room_in_its_class_for_the_others() {
     use std::sync::atomic::Ordering::SeqCst;

@@ -359,6 +359,7 @@ mod tests {
 
     const LIST: &str = "worktree srv/harness\nHEAD aaa\nbranch refs/heads/main\n\nworktree run/worktree/sp-x\nHEAD bbb\nbranch refs/heads/spira/sp-x\n\nworktree run/worktree/round-5\nHEAD ccc\ndetached\n";
 
+    #[test_id(ttjoiy8)]
     #[test]
     fn stale_unheld_test_scratch_is_reaped_and_the_rest_is_kept() {
         let root = testkit::TempDir::new("reap-root");
@@ -384,6 +385,7 @@ mod tests {
         assert!(root.join("sp-hh599-unit-env-nopid").exists());
     }
 
+    #[test_id(tn8uz4s)]
     #[test]
     fn the_declared_scratch_root_is_used_whatever_tmp_is() {
         let root = testkit::TempDir::new("scratch-root");
@@ -393,6 +395,7 @@ mod tests {
         }
     }
 
+    #[test_id(tn34liw)]
     #[test]
     fn an_undeclared_or_relative_scratch_root_refuses_naming_the_key() {
         for declared in ["", "   "] {
@@ -403,6 +406,7 @@ mod tests {
         assert!(e.contains("SPIRA_TESTENV_SCRATCH_ROOT") && e.contains("absolute"), "{e}");
     }
 
+    #[test_id(t9y5fjs)]
     #[test]
     fn porcelain_parses_detached_and_branches() {
         let e = parse_list(LIST);
@@ -412,6 +416,7 @@ mod tests {
         assert_eq!(e[2].head, "ccc");
     }
 
+    #[test_id(t9nwvyo)]
     #[test]
     fn cwd_worktree_wins_when_its_head_is_the_commit() {
         let e = parse_list(LIST);

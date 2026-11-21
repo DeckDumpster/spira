@@ -1,5 +1,7 @@
 //! `spira-build-dir lease` is the hand-build door onto the pool dwarves lease from.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -112,6 +114,7 @@ fn wait_released(b: &Box_) {
     );
 }
 
+#[test_id(tqvbzcp)]
 #[test]
 fn two_concurrent_hand_leases_get_different_owned_directories() {
     let b = setup("bdcli-two");
@@ -126,6 +129,7 @@ fn two_concurrent_hand_leases_get_different_owned_directories() {
     let _ = (p1.kill(), p2.kill(), p1.wait(), p2.wait());
 }
 
+#[test_id(tiw0ppl)]
 #[test]
 fn a_lease_after_the_holder_exits_reuses_the_warm_directory_with_a_selective_clean() {
     let b = setup("bdcli-warm");
@@ -159,6 +163,7 @@ fn a_lease_after_the_holder_exits_reuses_the_warm_directory_with_a_selective_cle
     let _ = (p2.kill(), p2.wait());
 }
 
+#[test_id(tvhsbzd)]
 #[test]
 fn an_unchanged_tree_cleans_nothing_and_a_release_records_a_change_without_cleaning() {
     let b = setup("bdcli-record");

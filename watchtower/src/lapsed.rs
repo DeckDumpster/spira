@@ -102,6 +102,7 @@ mod tests {
     use super::*;
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(t693xgp)]
     #[test]
     fn missing_directory_is_zero_not_unknown() {
         let d = testkit::TempDir::new("wt-lapsed-missing");
@@ -110,6 +111,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(tadrmi6)]
     #[test]
     fn a_file_where_the_directory_should_be_is_unknown() {
         let d = testkit::TempDir::new("wt-lapsed-notdir");
@@ -120,6 +122,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(trj9jqs)]
     #[test]
     fn records_newer_than_the_marker_are_counted_older_ones_are_not() {
         let d = testkit::TempDir::new("wt-lapsed-records");
@@ -133,6 +136,7 @@ mod tests {
         assert!(!l.section.contains("sp-a-20260901T000000Z"));
     }
 
+    #[test_id(tfr8hu3)]
     #[test]
     fn no_marker_counts_every_record() {
         let d = testkit::TempDir::new("wt-lapsed-nomarker");
@@ -144,6 +148,7 @@ mod tests {
         assert_eq!(l.count, Count::Known(2));
     }
 
+    #[test_id(ty3amqe)]
     #[test]
     fn a_filename_with_no_valid_timestamp_suffix_is_skipped() {
         let d = testkit::TempDir::new("wt-lapsed-badname");
@@ -155,6 +160,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(t7pzdy5)]
     #[test]
     fn two_lapses_of_one_bead_are_two_records_with_no_dedup() {
         let d = testkit::TempDir::new("wt-lapsed-nodedup");
@@ -169,6 +175,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-37
+    #[test_id(tgctqm5)]
     #[test]
     fn a_record_the_real_writer_wrote_parses_in_the_reader() {
         let d = testkit::TempDir::new("wt-lapsed-writer");

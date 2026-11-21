@@ -2,6 +2,9 @@
 //! `<slug>.txt` per statute; nothing here names a statute. A vocabulary file of synonym sets
 //! bridges the words a decision uses to the words a statute uses.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod doors;
 pub mod hook;
 

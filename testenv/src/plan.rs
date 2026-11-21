@@ -280,6 +280,7 @@ mod tests {
         }
     }
 
+    #[test_id(torlfz1)]
     #[test]
     fn a_step_cut_mid_run_is_the_unfinished_one() {
         let p = plan(vec![
@@ -297,6 +298,7 @@ mod tests {
         assert_eq!(r.unfinished.as_deref(), Some("b"));
     }
 
+    #[test_id(tk6b5tp)]
     #[test]
     fn output_that_looks_like_a_frame_cannot_forge_one() {
         let p = plan(vec![step("a", "install", &["true"], true)]);
@@ -311,6 +313,7 @@ mod tests {
         assert_eq!((r.results[0].rc, r.results[0].output.as_str()), (1, evil));
     }
 
+    #[test_id(tox57a1)]
     #[test]
     fn a_truncated_output_is_not_a_result() {
         let p = plan(vec![step("a", "install", &["true"], true)]);
@@ -324,6 +327,7 @@ mod tests {
         assert_eq!(r.unfinished.as_deref(), Some("a"));
     }
 
+    #[test_id(t4dv130)]
     #[test]
     fn noise_outside_frames_is_ignored() {
         let p = plan(vec![step("a", "install", &["true"], true)]);
@@ -335,6 +339,7 @@ mod tests {
         assert_eq!(parse(&p, &out).results.len(), 1);
     }
 
+    #[test_id(tluwd18)]
     #[test]
     fn the_plan_round_trips_through_json() {
         let p = plan(vec![step("a", "install", &["x", "y z"], true)]);
@@ -342,6 +347,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<Plan>(&j).unwrap(), p);
     }
 
+    #[test_id(tmc29gl)]
     #[test]
     fn stage_runner_links_the_exe_under_target() {
         let d = testkit::TempDir::new("plan-stage");

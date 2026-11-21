@@ -191,6 +191,7 @@ mod tests {
         RoundRecordReaders::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tv92itl)]
     #[test]
     fn a_planted_read_of_the_round_record_is_caught() {
         let t = TempDir::new("rrr");
@@ -200,6 +201,7 @@ mod tests {
         assert_eq!(run(&t, &["cockpit/a.rs", "spira/x.sh", "spira/y.rs"]).unwrap().len(), 3);
     }
 
+    #[test_id(tbpbfyo)]
     #[test]
     fn a_planted_read_inside_the_queue_crate_is_caught_in_each_spelling() {
         let t = TempDir::new("rrr-queue");
@@ -211,6 +213,7 @@ mod tests {
         assert_eq!(found.len(), 6, "{found:?}");
     }
 
+    #[test_id(tzk4uy3)]
     #[test]
     fn the_verb_comments_the_owners_and_other_names_are_silent() {
         let t = TempDir::new("rrr-ok");
@@ -224,6 +227,7 @@ mod tests {
         assert_eq!(run(&t, &files).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(t7egav0)]
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("rrr-none");
@@ -236,6 +240,7 @@ mod tests {
         LiveOnly::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(t8258fq)]
     #[test]
     fn a_planted_call_of_open_records_outside_live_records_is_caught() {
         let t = TempDir::new("rlo");
@@ -252,6 +257,7 @@ mod tests {
         assert!(found.iter().any(|f| f.contains("queue/src/ops/stage.rs:2")), "{found:?}");
     }
 
+    #[test_id(tikrciu)]
     #[test]
     fn the_definition_the_filter_and_comments_are_silent() {
         let t = TempDir::new("rlo-ok");
@@ -264,6 +270,7 @@ mod tests {
         assert_eq!(run_live_only(&t, &["queue/src/ops/round.rs", "queue/src/ops/simple.rs", "cockpit/a.rs"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(t2o3rr8)]
     #[test]
     fn no_queue_source_in_scope_refuses() {
         let t = TempDir::new("rlo-none");

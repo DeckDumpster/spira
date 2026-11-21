@@ -201,6 +201,7 @@ mod tests {
         format!("{{\"ts\":\"{}\",\"family\":\"f\",\"n\":{n}}}", crate::iso_utc(NOW - age_days * DAY))
     }
 
+    #[test_id(tg1mks0)]
     #[test]
     fn rows_older_than_the_bound_go_and_rows_inside_it_stay() {
         let t = testkit::TempDir::new("tsd-prune");
@@ -217,6 +218,7 @@ mod tests {
         assert!(!tmp_path(&p).exists());
     }
 
+    #[test_id(t3v8ui5)]
     #[test]
     fn a_prune_with_nothing_old_leaves_the_file_untouched() {
         let t = testkit::TempDir::new("tsd-prune-noop");
@@ -228,6 +230,7 @@ mod tests {
         assert_eq!(prune_file(&t.path().join("tsd/none.jsonl"), 0).unwrap(), Pruned::default());
     }
 
+    #[test_id(tr97w43)]
     #[test]
     fn only_family_files_are_pruned_and_markers_stay() {
         let t = testkit::TempDir::new("tsd-prune-root");
@@ -244,6 +247,7 @@ mod tests {
         assert!(dir.join("f.jsonl.lock").exists() && dir.join(".unit-run-checkpoint.json").exists());
     }
 
+    #[test_id(tvdczfz)]
     #[test]
     fn a_bound_is_never_shorter_than_the_readers_window() {
         let o = parse_overrides("suite-timing=3 escape=2, other=2").unwrap();

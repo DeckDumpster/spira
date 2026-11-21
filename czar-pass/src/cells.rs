@@ -36,6 +36,7 @@ fn czar_log(cfg: &Config) -> String {
 }
 
 // covers: UC-ops-detection-remediation-23
+#[test_id(ttmq14a)]
 #[test]
 fn loop_stalled_is_silent_at_its_threshold_and_fires_one_second_past_it() {
     let dir = scratch_dir("loop-threshold");
@@ -49,6 +50,7 @@ fn loop_stalled_is_silent_at_its_threshold_and_fires_one_second_past_it() {
 }
 
 // covers: UC-ops-detection-remediation-23
+#[test_id(t6qoj0v)]
 #[test]
 fn ci_stalled_and_ci_red_each_fire_only_past_their_own_threshold() {
     let dir = scratch_dir("ci-thresholds");
@@ -69,6 +71,7 @@ fn ci_stalled_and_ci_red_each_fire_only_past_their_own_threshold() {
 }
 
 // covers: UC-ops-detection-remediation-23
+#[test_id(twneqpz)]
 #[test]
 fn base_red_fires_on_a_red_base_run_at_once_and_a_green_one_is_silent() {
     let dir = scratch_dir("base-red");
@@ -85,6 +88,7 @@ fn base_red_fires_on_a_red_base_run_at_once_and_a_green_one_is_silent() {
 }
 
 // covers: UC-ops-detection-remediation-23
+#[test_id(trno6ol)]
 #[test]
 fn pool_idle_needs_a_full_pool_and_no_open_batch_and_waits_out_the_stall() {
     use czar_pass::pool_idle;
@@ -99,6 +103,7 @@ fn pool_idle_needs_a_full_pool_and_no_open_batch_and_waits_out_the_stall() {
 }
 
 // covers: UC-ops-detection-remediation-23
+#[test_id(to5zjn8)]
 #[test]
 fn every_detector_fires_in_one_pass_without_masking_another() {
     let dir = scratch_dir("coexist");
@@ -124,6 +129,7 @@ fn every_detector_fires_in_one_pass_without_masking_another() {
 }
 
 // covers: UC-ops-detection-remediation-23
+#[test_id(t7dwa2w)]
 #[test]
 fn an_unreadable_input_is_unobservable_and_never_clear() {
     let dir = scratch_dir("unobservable");
@@ -162,6 +168,7 @@ fn calls(dir: &Path, seam: &str) -> String {
 }
 
 // covers: UC-ops-detection-remediation-24
+#[test_id(tgu327s)]
 #[test]
 fn a_shadow_class_logs_would_and_files_nothing_while_act_files_and_calls_the_czar() {
     let dir = scratch_dir("stages");
@@ -211,6 +218,7 @@ impl Drop for World {
 }
 
 // covers: UC-ops-detection-remediation-24
+#[test_id(ts2jr50)]
 #[test]
 fn a_pass_runs_every_detector_to_completion_and_reports_every_class() {
     let world = pass_world();
@@ -223,6 +231,7 @@ fn a_pass_runs_every_detector_to_completion_and_reports_every_class() {
 }
 
 // covers: UC-ops-detection-remediation-24
+#[test_id(te3t85r)]
 #[test]
 fn a_concurrent_pass_is_skipped_under_flock_and_a_halted_world_exits_clean_without_acting() {
     let world = pass_world();
@@ -243,6 +252,7 @@ fn a_concurrent_pass_is_skipped_under_flock_and_a_halted_world_exits_clean_witho
 }
 
 // covers: UC-ops-detection-remediation-23
+#[test_id(tq0esrg)]
 #[test]
 fn a_red_base_files_p0_express_naming_its_failing_suites_under_one_ref_however_often_it_is_seen() {
     let dir = scratch_dir("base-red-filing");
@@ -263,6 +273,7 @@ fn a_red_base_files_p0_express_naming_its_failing_suites_under_one_ref_however_o
 }
 
 // covers: UC-ops-detection-remediation-23
+#[test_id(tif8eow)]
 #[test]
 fn a_stalled_ci_job_is_rerun_once_then_escalated_under_a_ref_that_ignores_how_long_it_has_waited() {
     let dir = scratch_dir("ci-stalled-remedy");

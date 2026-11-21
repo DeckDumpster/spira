@@ -586,12 +586,14 @@ mod tests {
         String::from_utf8(format_entry(&e)).unwrap()
     }
 
+    #[test_id(t34c4aj)]
     #[test]
     fn the_filed_answer_is_one_json_object_naming_the_bead_or_null() {
         assert_eq!(filed_answer(Some("sp-abc")), r#"{"id":"sp-abc"}"#);
         assert_eq!(filed_answer(None), r#"{"id":null}"#);
     }
 
+    #[test_id(tjtd9er)]
     #[test]
     fn a_reference_set_on_the_loaded_env_is_the_filings_dedup_reference() {
         let mut env = Env::load();
@@ -600,6 +602,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-02
+    #[test_id(tqa3ntb)]
     #[test]
     fn two_filers_of_one_ref_serialise_into_one_creation_and_one_recurrence() {
         let dir = testkit::TempDir::new("incident-lock-serialise");
@@ -638,6 +641,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-02
+    #[test_id(t3wf6yv)]
     #[test]
     fn a_filer_that_cannot_get_the_lock_in_time_leaves_its_spool_entry_in_place() {
         let dir = testkit::TempDir::new("incident-lock-held");
@@ -652,6 +656,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-10
+    #[test_id(t21puk7)]
     #[test]
     fn an_unreachable_bd_keeps_the_entry_spooled_and_a_later_drain_files_it() {
         let dir = testkit::TempDir::new("incident-drain-unreachable");
@@ -672,6 +677,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-10
+    #[test_id(tqrjzkn)]
     #[test]
     fn a_lane_refusal_surfaces_as_a_failed_attempt_naming_the_repo_and_the_spool_file() {
         let dir = testkit::TempDir::new("incident-drain-lane");
@@ -701,6 +707,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-10
+    #[test_id(tiiwyfr)]
     #[test]
     fn an_entry_spooled_before_causes_existed_drains_as_unrecorded() {
         let dir = testkit::TempDir::new("incident-drain-precause");

@@ -64,6 +64,7 @@ mod tests {
     use super::*;
     use crate::engine::{BASEFAIL, FAIL, NOVERDICT};
 
+    #[test_id(tc44di9)]
     #[test]
     fn a_fresh_red_comes_back_whole_and_a_stale_or_unattributed_one_does_not() {
         let e = render(FAIL, "branch-red", "test-x.sh", "t", 100, "me", "tip1", "gate: boom\n");
@@ -78,6 +79,7 @@ mod tests {
         assert!(fresh(&bf, "50", 120).is_some());
     }
 
+    #[test_id(tqzs86q)]
     #[test]
     fn only_a_plain_key_makes_a_path() {
         assert!(path(Path::new("v"), "abc123").is_some());

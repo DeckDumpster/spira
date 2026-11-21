@@ -139,6 +139,7 @@ mod tests {
         Cfg { comms: comms.split_whitespace().map(String::from).collect(), owner_mark: "spira".into() }
     }
 
+    #[test_id(t54gt31)]
     #[test]
     fn only_watched_comms_are_found_with_their_nice_and_owner() {
         let dir = testkit::TempDir::new("wt-load-fence-scan");
@@ -154,6 +155,7 @@ mod tests {
         assert!(!ownerless(&found[1], &c), "a process in a harness unit is owned");
     }
 
+    #[test_id(tlc0sux)]
     #[test]
     fn ancestry_follows_parents_nearest_first() {
         let dir = testkit::TempDir::new("wt-load-fence-anc");

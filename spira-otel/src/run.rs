@@ -257,6 +257,7 @@ mod tests {
         (addr, h)
     }
 
+    #[test_id(t4bmeh0)]
     #[test]
     fn a_run_pushes_its_count_duration_and_outcome_under_its_labels() {
         let (addr, h) = serve();
@@ -269,6 +270,7 @@ mod tests {
         }
     }
 
+    #[test_id(tjg3133)]
     #[test]
     fn an_unfinished_run_is_pushed_as_an_unrecorded_exit() {
         let (addr, h) = serve();
@@ -277,16 +279,19 @@ mod tests {
         assert!(body.contains("exit_unrecorded") && body.contains("error"));
     }
 
+    #[test_id(tm4s0k8)]
     #[test]
     fn the_exit_time_push_deadline_is_within_the_hot_read_budget() {
         assert!(DEADLINE <= Duration::from_millis(250));
     }
 
+    #[test_id(tj9wik5)]
     #[test]
     fn phases_render_in_the_order_they_were_recorded() {
         assert_eq!(render_phases(&[("reply".into(), 12), ("push".into(), 250)]), "reply=12,push=250");
     }
 
+    #[test_id(tfwywcq)]
     #[test]
     fn a_discarded_run_still_reports_its_recorded_phases_without_a_push_entry() {
         let _serial = PHASES_TESTS.lock().unwrap_or_else(|e| e.into_inner());
@@ -319,23 +324,27 @@ mod tests {
         String::from_utf8(out).unwrap()
     }
 
+    #[test_id(tzw59k5)]
     #[test]
     fn the_line_accounts_for_start_and_the_clients_own_time() {
         assert_eq!(line(Some((1_000_000, Some(1_100_000), 1_600_000, 1_610_000)), &[("reply", 30)], 2, 50), "PERFWATCH_PHASES=spawn=100,load=500,config=10,reply=30,client=18,push=2\nPERFWATCH_END_US=1\n");
     }
 
+    #[test_id(tv1vdu5)]
     #[test]
     fn the_pre_begin_time_is_split_into_spawn_load_and_config() {
         let got = line(Some((1_000_000, Some(1_100_000), 1_600_000, 1_610_000)), &[], 0, 10);
         assert!(got.starts_with("PERFWATCH_PHASES=spawn=100,load=500,config=10,"), "{got}");
     }
 
+    #[test_id(tse40yq)]
     #[test]
     fn without_a_kernel_start_the_pre_begin_time_is_prelaunch_and_config() {
         let got = line(Some((1_000_000, None, 1_600_000, 1_610_000)), &[], 0, 10);
         assert!(got.starts_with("PERFWATCH_PHASES=prelaunch=600,config=10,"), "{got}");
     }
 
+    #[test_id(t708j7m)]
     #[test]
     fn the_kernel_start_is_boot_time_plus_the_starttime_ticks_past_a_command_with_parens() {
         let stat = "42 (a) b (c)) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 1500 20 21";
@@ -344,16 +353,19 @@ mod tests {
         assert_eq!(proc_start_epoch_us(stat, 1, 0), None);
     }
 
+    #[test_id(t81m3xh)]
     #[test]
     fn without_a_stamp_the_line_has_no_start_and_still_has_client() {
         assert_eq!(line(None, &[("reply", 30)], 2, 50), "PERFWATCH_PHASES=reply=30,client=18,push=2\nPERFWATCH_END_US=1\n");
     }
 
+    #[test_id(t28b68b)]
     #[test]
     fn client_saturates_at_zero_when_the_phases_exceed_the_elapsed_time() {
         assert_eq!(line(None, &[("reply", 80)], 2, 50), "PERFWATCH_PHASES=reply=80,client=0,push=2\nPERFWATCH_END_US=1\n");
     }
 
+    #[test_id(t7l9xot)]
     #[test]
     fn a_discarded_run_prints_nothing_with_phases_unset() {
         let mut out = Vec::new();
@@ -361,6 +373,7 @@ mod tests {
         assert!(out.is_empty());
     }
 
+    #[test_id(t3cmerb)]
     #[test]
     fn a_discarded_run_pushes_nothing_not_even_as_an_unrecorded_exit() {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -372,6 +385,7 @@ mod tests {
         assert!(l.accept().is_err(), "no connection was made to the metrics endpoint");
     }
 
+    #[test_id(tzyo20q)]
     #[test]
     fn finish_without_a_begin_pushes_nothing_and_does_not_panic() {
         finish(0);

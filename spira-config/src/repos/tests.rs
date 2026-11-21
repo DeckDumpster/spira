@@ -1,5 +1,6 @@
     use super::*;
 
+    #[test_id(t2dryui)]
     #[test]
     fn registry_reads_repo_tables_from_spira_toml_when_no_map_file_exists() {
         let doc = crate::validate("[repo.alpha]\npath = \"tmp/alpha\"\nmode = \"queue.local\"\nbase = \"local/main\"\nlanes = [\"plan\", \"spike\"]\n").unwrap();
@@ -15,6 +16,7 @@
 
     /// The repo map is the one spira.toml declares (spira.repo_map) — never discovered from
     /// XDG, a legacy spira.conf or a shipped example (per Ryan 2026-10-05).
+    #[test_id(tngv8dy)]
     #[test]
     fn registry_env_takes_the_declared_map() {
         let t = testkit::TempDir::new("repos-registry-env");
@@ -37,6 +39,7 @@
     /// dropped and only what config resolves survives (here nothing: no SPIRA_TOML).
     /// `SPIRA_REPO` is a per-copy fact, not config, and is kept; `SPIRA_REPO_DERIVED`
     /// (sp-8bhnr) is always recomputed from `home`, never the stale "0".
+    #[test_id(trq3cmp)]
     #[test]
     fn registry_env_ignores_the_environments_copy_of_a_registered_key() {
         let mut env = std::collections::BTreeMap::new();
@@ -61,6 +64,7 @@
     /// override and hand back the release root for the home repo outright, instead of its
     /// real configured checkout. Seen red against the pre-fix code (which never backfills
     /// `SPIRA_REPO_DERIVED` at all — `resolve()` never puts it in `Resolved::values`).
+    #[test_id(t5jdhiq)]
     #[test]
     fn registry_resolves_the_configured_checkout_despite_a_forwarded_repo_without_its_derived_pair() {
         let t = testkit::TempDir::new("repos-registry-sp-8bhnr");
@@ -119,6 +123,7 @@ lanes-empty | h/lanesempty | push | origin/main | | bash x.sh |
 oldshape | h/old | pr | fmt-tool | gate --flag
 ";
 
+    #[test_id(t3h6y6e)]
     #[test]
     fn parse_skips_comments_and_short_rows_but_keeps_a_two_field_row() {
         let rows = parse(MAP);
@@ -132,6 +137,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(narrow.gate, "");
     }
 
+    #[test_id(t4p1shu)]
     #[test]
     fn six_field_row_reads_base_format_and_gate_by_name_not_position() {
         let rows = parse(MAP);
@@ -143,6 +149,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(home.gate, ".claude/gate-home.sh");
     }
 
+    #[test_id(tiwys2a)]
     #[test]
     fn gate_may_itself_contain_pipes() {
         let rows = parse(MAP);
@@ -150,6 +157,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(svc.gate, "cargo fmt --all -- --check");
     }
 
+    #[test_id(t61eb30)]
     #[test]
     fn five_field_row_predating_base_reads_format_at_column_four() {
         let rows = parse(MAP);
@@ -159,6 +167,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(old.gate, "gate --flag");
     }
 
+    #[test_id(ta5s63p)]
     #[test]
     fn a_trailing_identifier_field_is_lanes_not_gate() {
         let rows = parse(MAP);
@@ -167,6 +176,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(r.lanes, "plan,incident");
     }
 
+    #[test_id(t5dknf7)]
     #[test]
     fn an_explicit_empty_trailing_field_is_still_a_lanes_column() {
         let rows = parse(MAP);
@@ -175,18 +185,21 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(r.lanes, "");
     }
 
+    #[test_id(tsvjv29)]
     #[test]
     fn field_is_blank_for_an_unknown_name_not_an_error() {
         let rows = parse(MAP);
         assert_eq!(field(&rows, "ghost", Column::Path), "");
     }
 
+    #[test_id(txjt66j)]
     #[test]
     fn names_preserves_file_order() {
         let rows = parse(MAP);
         assert_eq!(names(&rows), vec!["home", "narrow", "service", "lanes-on", "lanes-empty", "oldshape"]);
     }
 
+    #[test_id(tapeqjx)]
     #[test]
     fn home_repo_prefers_the_explicit_key_then_falls_back_to_a_basename() {
         assert_eq!(home_repo(&env(&[("SPIRA_HOME_REPO", "brain")]), Path::new("x/y")), "brain");
@@ -195,6 +208,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(home_repo(&env(&[("SPIRA_HOME_REPO", "")]), Path::new("x/spira/")), "spira");
     }
 
+    #[test_id(trk8n61)]
     #[test]
     fn registry_root_prefers_the_map_and_refuses_an_unmapped_name() {
         let env = env(&[("SPIRA_HOME_REPO", "home")]);
@@ -204,6 +218,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(reg.root(""), Some("h/home".to_string()), "empty name defaults to the home repo");
     }
 
+    #[test_id(twmfsfb)]
     #[test]
     fn registry_root_takes_an_explicit_spira_repo_override_for_the_home_repo_only() {
         let env = env(&[("SPIRA_HOME_REPO", "home"), ("SPIRA_REPO", "override/path"), ("SPIRA_REPO_DERIVED", "derived")]);
@@ -213,6 +228,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(reg.root("service"), Some("h/service".to_string()));
     }
 
+    #[test_id(th4fri5)]
     #[test]
     fn registry_root_treats_spira_repo_equal_to_derived_as_no_override() {
         let env = env(&[("SPIRA_HOME_REPO", "home"), ("SPIRA_REPO", "derived"), ("SPIRA_REPO_DERIVED", "derived")]);
@@ -221,6 +237,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(reg.root("home"), Some("h/home".to_string()));
     }
 
+    #[test_id(tpu710u)]
     #[test]
     fn registry_land_defaults_to_push_and_normalizes_queue_forge() {
         let env = env(&[]);
@@ -239,6 +256,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert!(!reg3.land_forge_queued("ghost"));
     }
 
+    #[test_id(tl1y5yo)]
     #[test]
     fn registry_land_ignores_a_missing_map_rather_than_refusing() {
         let env = env(&[]);
@@ -247,6 +265,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert!(!reg.map_present());
     }
 
+    #[test_id(t1ytv2m)]
     #[test]
     fn registry_field_lookups_refuse_outright_when_the_map_is_absent() {
         let base_env = env(&[("SPIRA_HOME_REPO", "home")]);
@@ -263,6 +282,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(reg.root("home"), None);
     }
 
+    #[test_id(tnm9x8n)]
     #[test]
     fn registry_all_lists_the_home_repo_first_and_excludes_it_from_the_rest() {
         let env = env(&[("SPIRA_HOME_REPO", "home")]);
@@ -273,6 +293,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert!(all.contains(&"service".to_string()));
     }
 
+    #[test_id(tjfpws0)]
     #[test]
     fn registry_all_always_lists_the_home_repo_even_with_no_map_at_all() {
         let env = env(&[("SPIRA_HOME_REPO", "home")]);
@@ -280,6 +301,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(reg.all(), vec!["home".to_string()]);
     }
 
+    #[test_id(tq93a1x)]
     #[test]
     fn registry_name_at_matches_literally_and_the_override_maps_to_home() {
         let env = env(&[("SPIRA_HOME_REPO", "home"), ("SPIRA_REPO", "ov"), ("SPIRA_REPO_DERIVED", "d")]);
@@ -296,6 +318,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", home_name)]), Path::new("nonexistent"))
     }
 
+    #[test_id(tzkarbg)]
     #[test]
     fn ref_branch_strips_up_to_the_first_slash_or_passes_through() {
         assert_eq!(ref_branch("origin/master"), "master");
@@ -303,6 +326,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(ref_branch("main"), "main");
     }
 
+    #[test_id(tgf7kpw)]
     #[test]
     fn landref_refuses_an_unmapped_name_and_a_missing_git_dir() {
         let reg = registry_for("r | /nope\n", "r");
@@ -318,6 +342,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         d
     }
 
+    #[test_id(tgrilpn)]
     #[test]
     fn landref_explained_names_the_ref_tried_when_it_is_absent() {
         let d = real_repo("other");
@@ -327,6 +352,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(landref(&reg, "r"), None);
     }
 
+    #[test_id(tl8nuxk)]
     #[test]
     fn a_deadline_a_missing_ref_and_a_lock_read_differently() {
         assert_eq!(exit_words(Some(124), ""), "exit 124 (deadline)");
@@ -335,6 +361,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(exit_words(None, ""), "killed by a signal");
     }
 
+    #[test_id(t5rjpco)]
     #[test]
     fn landref_explained_equals_landref_on_a_resolvable_repo() {
         let d = real_repo("local/main");
@@ -343,6 +370,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(landref_explained(&reg, "r"), Ok("local/main".to_string()));
     }
 
+    #[test_id(td18j9q)]
     #[test]
     fn publish_mode_is_pr_unless_the_row_declares_push() {
         let mut reg = Registry::new(None, &env(&[]), Path::new("q"));
@@ -354,6 +382,7 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert!(toml::from_str::<crate::SpiraToml>("[publish.q]\nmode = \"ssh\"\n").is_err());
     }
 
+    #[test_id(tpen7z9)]
     #[test]
     fn publish_forge_refuses_when_the_land_ref_itself_does_not_resolve() {
         let reg = registry_for("q | /nope\n", "q");

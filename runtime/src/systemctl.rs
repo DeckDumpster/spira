@@ -187,6 +187,7 @@ mod tests {
 
     const SHOW: &str = "Id=spira-a.service\nLoadState=loaded\nUnitFileState=enabled\nActiveState=failed\nSubState=failed\nResult=signal\nMainPID=0\nNRestarts=3\nInvocationID=0123456789abcdef0123456789abcdef\nExecMainCode=2\nExecMainStatus=15\nEnvironment=SPIRA_RELEASE=/r/abc \"B=two words\"\n\nId=gone.service\nLoadState=not-found\nActiveState=inactive\n";
 
+    #[test_id(twn8mcp)]
     #[test]
     fn a_show_block_becomes_a_typed_detail_and_a_missing_unit_is_absent() {
         let d = parse_show(SHOW);
@@ -197,6 +198,7 @@ mod tests {
         assert_eq!(d[1].state, UnitState::Absent);
     }
 
+    #[test_id(tjjur62)]
     #[test]
     fn detail_asks_the_named_program_and_a_silent_program_means_absent() {
         let tmp = testkit::TempDir::new("sysctl-units");
@@ -207,6 +209,7 @@ mod tests {
         assert_eq!(loud.facts(&UnitHandle::named("spira-a.service")).unwrap().state, UnitState::Failed);
     }
 
+    #[test_id(tqut2ks)]
     #[test]
     fn a_program_that_fails_is_an_error_never_an_empty_answer() {
         let tmp = testkit::TempDir::new("sysctl-units");
@@ -216,6 +219,7 @@ mod tests {
         assert!(u.detail(&UnitHandle::named("x.service")).is_err());
     }
 
+    #[test_id(tvtwoxy)]
     #[test]
     fn a_program_over_its_budget_is_stopped_and_reported() {
         let tmp = testkit::TempDir::new("sysctl-units");
@@ -225,6 +229,7 @@ mod tests {
         assert!(e.0.contains("budget"), "{e}");
     }
 
+    #[test_id(twmx3m5)]
     #[test]
     fn list_joins_loaded_units_with_installed_unit_files() {
         let tmp = testkit::TempDir::new("sysctl-units");

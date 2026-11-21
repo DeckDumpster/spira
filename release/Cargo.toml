@@ -36,4 +36,5 @@ state-store = { path = "../state-store" }
 runtime = { path = "../runtime" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

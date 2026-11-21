@@ -1,6 +1,9 @@
 //! Refused bead events, grouped by (actor, event, from_state, refusal); one filing per class
 //! over its baseline, repeated at most once per repeat window.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use serde_json::Value;
 use std::collections::BTreeMap;
 

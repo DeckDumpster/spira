@@ -153,6 +153,7 @@ impl ClassPools {
 mod tests {
     use super::*;
 
+    #[test_id(t8vaz7n)]
     #[test]
     fn the_container_cap_is_held_to_the_host_run_ceiling_and_no_cap_is_zero() {
         let caps = PoolCaps { container: 9, git: 0, ..PoolCaps::uniform(5) };
@@ -162,6 +163,7 @@ mod tests {
         assert_eq!(PoolCaps::from(4).cap(EffectClass::Container), HOST_RUN_CEILING);
     }
 
+    #[test_id(tdzuppy)]
     #[test]
     fn a_full_class_refuses_without_touching_another() {
         let pools = ClassPools::new(PoolCaps { container: 1, ..PoolCaps::default() });
@@ -174,6 +176,7 @@ mod tests {
         assert!(pools.try_take(EffectClass::Container).is_ok(), "a freed permit is taken again");
     }
 
+    #[test_id(t2vd6ui)]
     #[test]
     fn class_names_round_trip() {
         for c in EffectClass::ALL {

@@ -24,6 +24,7 @@ spira-otel = { path = "../spira-otel" }
 strand = { path = "../strand" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [[bin]]

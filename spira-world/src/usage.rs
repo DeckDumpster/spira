@@ -210,6 +210,7 @@ mod tests {
         Exported { labels, samples: values.iter().enumerate().map(|(i, v)| (i as i64 * 60_000, *v)).collect() }
     }
 
+    #[test_id(tgwaaph)]
     #[test]
     fn a_beads_total_is_the_sum_of_each_sessions_last_values() {
         let got = bead_totals(&[
@@ -236,6 +237,7 @@ mod tests {
         assert_eq!(bead_totals(&[]), BeadTotals { sessions: vec![], total: Session { unit: "0 session(s)".into(), ..Session::default() } });
     }
 
+    #[test_id(tv25yhq)]
     #[test]
     fn the_selector_matches_the_bead_alone_or_in_a_hand_rows_list() {
         assert_eq!(bead_selector("sp-abc"), "{__name__=~\"spira_dwarf_.*\",bead=~\"(.*,)?sp-abc(,.*)?\"}");
@@ -245,6 +247,7 @@ mod tests {
         Sample { kind: Kind::Dwarf, cgroup: "c".into(), unit: "u".into(), cpu_usec, io: vec![DeviceIo { device: "sdc".into(), mount: "srv/ssd-b".into(), role: "ssd-b".into(), read_bytes: read, write_bytes: write }], ..Sample::default() }
     }
 
+    #[test_id(thggql6)]
     #[test]
     fn the_live_rate_is_the_movement_between_two_reads() {
         let r = rate(Some(&at(1_000_000, 0, 10_000_000)), &at(3_000_000, 5_000_000, 54_000_000), 1.0);

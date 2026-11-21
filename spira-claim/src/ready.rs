@@ -156,12 +156,14 @@ mod tests {
 
     /// NEXT's ready set takes no bd status: a LANDED bead is out however bd's row reads,
     /// and a READY bead is in however bd's row reads (the function has no bd input).
+    #[test_id(tb18go6)]
     #[test]
     fn the_ready_set_is_lifecycle_state_alone() {
         let lc: HashMap<_, _> = [lc_row("sp-landed", BeadState::Landed), lc_row("sp-ready", BeadState::Ready), lc_row("sp-rework", BeadState::Rework)].into();
         assert_eq!(lifecycle_ready_ids(&lc), vec!["sp-ready".to_string(), "sp-rework".to_string()]);
     }
 
+    #[test_id(t2pg5ky)]
     #[test]
     fn ready_args_appends_label_then_exclude_label_in_order() {
         assert_eq!(
@@ -171,6 +173,7 @@ mod tests {
         assert_eq!(ready_args("", ""), vec!["ready", "--limit", "0", "--exclude-type", "epic,event", "-u"]);
     }
 
+    #[test_id(trcl9vm)]
     #[test]
     fn ready_raw_args_never_carries_the_scope_label() {
         assert_eq!(
@@ -179,6 +182,7 @@ mod tests {
         );
     }
 
+    #[test_id(t7cod0s)]
     #[test]
     fn rune_exclude_adds_own_then_shared_then_every_other_rune() {
         let roster = vec!["builder".to_string(), "ops".to_string(), "qa".to_string()];
@@ -187,6 +191,7 @@ mod tests {
         assert_eq!(rune_exclude("ops", "", &roster, ""), "rune:builder,rune:qa");
     }
 
+    #[test_id(tgq3o45)]
     #[test]
     fn shared_exclude_drops_empty_labels() {
         assert_eq!(shared_exclude("spira-queue-waiting", "spira-open-children"), "spira-queue-waiting,spira-open-children");
@@ -202,6 +207,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-21
+    #[test_id(tb6n35c)]
     #[test]
     fn an_epic_and_a_no_loop_bead_are_outside_the_scope_the_poison_pass_examines() {
         let skip = "keep-out"; // literal-ok: test fixture
@@ -211,6 +217,7 @@ mod tests {
         assert!(!in_scope(&typed("n", "task", &["plan", skip]), "plan", skip));
     }
 
+    #[test_id(t0j3s8v)]
     #[test]
     fn bucket_counts_by_label_superset_and_disjoint_exclude() {
         let rows = vec![
@@ -224,6 +231,7 @@ mod tests {
         assert_eq!(counts, vec![("builder".to_string(), 1), ("ops".to_string(), 1)]);
     }
 
+    #[test_id(ta2udr6)]
     #[test]
     fn a_stale_submitted_label_does_not_hide_a_lifecycle_ready_bead() {
         let rows = vec![row("a", &["spira", "plan", "spira-submitted"])];
@@ -232,6 +240,7 @@ mod tests {
         assert_eq!(shared_exclude("q", "oc"), "q,oc");
     }
 
+    #[test_id(tg1owct)]
     #[test]
     fn a_base_red_incident_without_plan_is_in_no_builder_bucket() {
         let rows = vec![row("sp-incident", &["spira", "repo:spira"])];
@@ -239,6 +248,7 @@ mod tests {
         assert_eq!(bucket(&rows, &parts, ""), vec![("builder".to_string(), 0)]);
     }
 
+    #[test_id(tjb8kbf)]
     #[test]
     fn bucket_counts_an_unlabeled_bead_in_exactly_one_bucket() {
         let rows = vec![row("a", &[])];
@@ -247,6 +257,7 @@ mod tests {
         assert_eq!(counts.iter().map(|c| c.1).sum::<u64>(), 1);
     }
 
+    #[test_id(tu4yzcp)]
     #[test]
     fn bucket_lets_a_bead_count_for_every_named_preference() {
         // Two rune: preferences on one bead count for BOTH buckets — the discrepancy
@@ -257,6 +268,7 @@ mod tests {
         assert_eq!(counts, vec![("builder".to_string(), 1), ("ops".to_string(), 1)]);
     }
 
+    #[test_id(tnojdu8)]
     #[test]
     fn bucket_excludes_a_bead_with_no_matching_preference() {
         let rows = vec![row("a", &["spira", "plan", "rune:qa"])];
@@ -264,6 +276,7 @@ mod tests {
         assert_eq!(bucket(&rows, &parts, ""), vec![("builder".to_string(), 0)]);
     }
 
+    #[test_id(tvp67bp)]
     #[test]
     fn bucket_excludes_a_future_deferred_bead_but_counts_a_past_one() {
         let mut held = row("a", &["spira", "plan"]);
@@ -290,6 +303,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-09 UC-config-store-preflight-15
+    #[test_id(t6wkzl5)]
     #[test]
     fn the_shipped_czar_and_builder_partitions_each_take_their_own_bead_and_never_the_others() {
         let czar = shipped_partition("czar");

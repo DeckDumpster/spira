@@ -42,6 +42,7 @@ impl World for Fake {
     }
 }
 
+#[test_id(t4oa2rs)]
 #[test]
 fn requirements_follow_cargos_ranges() {
     let cases = [
@@ -65,6 +66,7 @@ fn requirements_follow_cargos_ranges() {
     assert_eq!(semver::admits("not a req", "1.0.0"), None);
 }
 
+#[test_id(t24ghdh)]
 #[test]
 fn the_requirement_and_lock_are_read_from_the_lines_naming_the_crate() {
     let m = "[dependencies]\nserde = \"9\"\ndumpster-kit-extra = \"7\"\ndumpster-kit = { version = \"0.3\", registry = \"r\" }\n";
@@ -76,6 +78,7 @@ fn the_requirement_and_lock_are_read_from_the_lines_naming_the_crate() {
     assert_eq!(parse_locked(lock, "absent"), None);
 }
 
+#[test_id(tpnbefn)]
 #[test]
 fn the_newest_release_ignores_yanked_and_pre_release_versions() {
     let idx = "{\"vers\":\"0.3.0\"}\n{\"vers\":\"0.10.0\"}\n{\"vers\":\"0.11.0\",\"yanked\":true}\n{\"vers\":\"0.12.0-rc.1\"}\n";
@@ -87,6 +90,7 @@ mod registry {
     use super::*;
     use crate::real::index_path;
 
+    #[test_id(tpxt7gr)]
     #[test]
     fn index_paths_follow_the_sparse_layout() {
         assert_eq!(index_path("a"), "1/a");
@@ -95,6 +99,7 @@ mod registry {
         assert_eq!(index_path("Dumpster-Kit"), "du/mp/dumpster-kit");
     }
 
+    #[test_id(tbg1nll)]
     #[test]
     fn a_404_index_is_no_release_yet_and_other_failures_are_errors() {
         use crate::real::index_body;
@@ -104,6 +109,7 @@ mod registry {
         assert!(index_body("", "u").is_err());
     }
 
+    #[test_id(tfob8f1)]
     #[test]
     fn a_pass_over_an_unpublished_crate_files_nothing_and_says_so() {
         let o = pass(&Fake::default(), &[site("dumpstar")], "dumpster-kit").unwrap();

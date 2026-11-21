@@ -1592,6 +1592,7 @@ mod pr_snapshot_tests {
         Carry { repos: BTreeMap::from([("r".to_string(), rc)]) }
     }
 
+    #[test_id(th8nekc)]
     #[test]
     fn nothing_recorded_nothing_tracked_and_no_deploy_makes_no_forge_call() {
         let (api, seen) = stub(vec![]);
@@ -1600,6 +1601,7 @@ mod pr_snapshot_tests {
         assert!(snapshot(&out).repos.iter().all(|(_, o)| o.open == Some(vec![])));
     }
 
+    #[test_id(t8r1wx7)]
     #[test]
     fn a_recorded_pr_is_asked_by_number_and_its_checks_read() {
         let pr = r#"{"number":12,"state":"open","title":"batch","head":{"sha":"abc","ref":"spira/b"}}"#;
@@ -1616,6 +1618,7 @@ mod pr_snapshot_tests {
         assert_eq!((open[0].number, open[0].status.as_str()), (12, "green"));
     }
 
+    #[test_id(tfwsbcc)]
     #[test]
     fn a_tracked_pr_no_longer_recorded_that_closed_gets_its_final_state_and_no_check_read() {
         let closed = r#"{"number":12,"state":"closed","merged":false,"head":{"sha":"abc","ref":"b"}}"#;
@@ -1628,6 +1631,7 @@ mod pr_snapshot_tests {
         assert_eq!(obs.open, Some(vec![]));
     }
 
+    #[test_id(tu6c3vs)]
     #[test]
     fn the_publish_record_names_its_pr_and_an_unreadable_one_is_an_error_not_no_pr() {
         let tmp = testkit::TempDir::new("pr-snap");
@@ -1640,6 +1644,7 @@ mod pr_snapshot_tests {
         assert!(publish_pr(&dir, "bad").is_err());
     }
 
+    #[test_id(tqgb9vp)]
     #[test]
     fn strays_are_listed_only_on_the_tick_a_tracked_pr_leaves_the_open_set() {
         let (api, seen) = stub(vec![]);
@@ -1654,6 +1659,7 @@ mod pr_snapshot_tests {
         assert_eq!(snapshot(&out).repos[0].1.strays, Some(vec![]));
     }
 
+    #[test_id(tpv3fnx)]
     #[test]
     fn a_repo_whose_records_cannot_be_read_is_unobserved_and_makes_no_call() {
         let (api, seen) = stub(vec![]);
@@ -1668,6 +1674,7 @@ mod pr_snapshot_tests {
 mod sweep_row_tests {
     use super::*;
 
+    #[test_id(thx6bje)]
     #[test]
     fn a_list_row_keeps_the_claim_views_verdict() {
         let r = sweep_row(&serde_json::json!({"bead_id": "sp-r", "state": "REWORK", "claim_view": {"verdict": "claimable", "blocker": null, "runes": ["a"]}})).unwrap();
@@ -1683,6 +1690,7 @@ mod sweep_row_tests {
         assert_eq!(why(serde_json::json!({"verdict": "claimable", "missing": []})), None);
     }
 
+    #[test_id(t10vtx3)]
     #[test]
     fn a_list_rows_express_column_reads_as_a_flag() {
         let express = |v: serde_json::Value| sweep_row(&serde_json::json!({"bead_id": "sp-r", "express": v})).unwrap().express;
@@ -1696,6 +1704,7 @@ mod sweep_row_tests {
 mod last_hold_tests {
     use super::*;
 
+    #[test_id(tefw59o)]
     #[test]
     fn the_newest_hold_gives_its_seq_and_the_detail_of_its_object_evidence() {
         let h = r#"[
@@ -1705,6 +1714,7 @@ mod last_hold_tests {
         assert_eq!(last_hold(h), Some(("916913".into(), "4 claims ended without progress inside 180m; last: x".into())));
     }
 
+    #[test_id(tq7vzhm)]
     #[test]
     fn a_history_with_no_hold_has_no_last_hold() {
         assert_eq!(last_hold(r#"[{"seq":1,"event":"Claim","evidence":{}}]"#), None);
@@ -1726,6 +1736,7 @@ mod publish_backlog_tests {
         Read::Measured { count, arrival: None, forge_tip_age_secs: None }
     }
 
+    #[test_id(tqz6yv3)]
     #[test]
     fn the_backlog_snapshot_refreshes_every_queue_local_repo_before_measuring_it() {
         let tmp = testkit::TempDir::new("backlog");
@@ -1747,6 +1758,7 @@ mod publish_backlog_tests {
         assert_eq!(measures, ["measure a", "measure b"]);
     }
 
+    #[test_id(t0c73oq)]
     #[test]
     fn a_refresh_that_hangs_or_fails_still_yields_a_measurement() {
         let tmp = testkit::TempDir::new("backlog");
@@ -1776,6 +1788,7 @@ mod bounded_store_tests {
         }
     }
 
+    #[test_id(tzv6gll)]
     #[test]
     fn a_store_absent_past_the_bound_is_unavailable_within_what_was_left_of_the_observe() {
         let double = Arc::new(Absent(Mutex::default()));
@@ -1804,6 +1817,7 @@ mod bounded_store_tests {
         assert!(!why.contains("store unavailable"), "{why}");
     }
 
+    #[test_id(txhwgjg)]
     #[test]
     fn a_store_that_accepts_and_never_replies_is_unavailable_inside_the_bound() {
         let t = testkit::TempDir::new("observe-silent");
@@ -1819,6 +1833,7 @@ mod bounded_store_tests {
         assert!(why.starts_with("store unavailable"), "{why}");
     }
 
+    #[test_id(t094c4i)]
     #[test]
     fn an_observe_with_no_time_left_is_unavailable_without_asking_the_store() {
         let double = Arc::new(Absent(Mutex::default()));
@@ -1828,13 +1843,14 @@ mod bounded_store_tests {
         assert!(double.0.lock().unwrap().is_empty());
     }
 
+    #[test_id(t4brhmz)]
     #[test]
     fn an_observe_with_the_store_absent_past_its_bound_answers_unreadable_with_the_store_unavailable() {
         let t = testkit::TempDir::new("observe-bound");
         let rel = t.path().join("releases");
         std::fs::create_dir_all(&rel).unwrap();
         release::machine::enter(&t.path().join("release"), &"a".repeat(40), release::machine::ReleaseState::Activated, "current switched").unwrap();
-        let world = super::World { run_dir: t.path().into(), repo_map: t.path().join("map"), lc_socket: t.path().join("absent.sock"), observe_bound: Some((std::time::Instant::now(), Duration::from_millis(200))), ..Default::default() };
+        let world = super::super::World { run_dir: t.path().into(), repo_map: t.path().join("map"), lc_socket: t.path().join("absent.sock"), observe_bound: Some((std::time::Instant::now(), Duration::from_millis(200))), ..Default::default() };
         let input = serde_json::json!({ "window_s": 3600, "releases": rel, "release_repo": "spira" }).to_string();
         let snap: crate::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&world.transitions_observed(&input).unwrap()).unwrap();
         assert!(!snap.readable && snap.why.contains("store unavailable"), "{}", snap.why);
@@ -1867,26 +1883,30 @@ mod bounded_store_tests {
         release.1.notify_all();
     }
 
+    #[test_id(t75yddq)]
     #[test]
     fn a_held_read_that_blocks_past_the_bound_is_blind_naming_the_dwell_phase() {
         slow_phase_is_blind("dwell");
     }
 
+    #[test_id(tnrq5te)]
     #[test]
     fn a_slow_open_rounds_read_is_blind_naming_its_phase() {
         slow_phase_is_blind("open_rounds");
     }
 
+    #[test_id(t5su0ho)]
     #[test]
     fn a_slow_landed_ancestry_is_blind_naming_mark_landed() {
         slow_phase_is_blind("mark_landed");
     }
 
+    #[test_id(t0c9uxm)]
     #[test]
     fn a_held_read_not_ready_within_what_is_left_gives_up() {
         let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
         let r2 = release.clone();
-        let got = super::run_within(Duration::from_millis(200), move || {
+        let got = super::super::run_within(Duration::from_millis(200), move || {
             let (m, c) = &*r2;
             drop(c.wait_while(m.lock().unwrap(), |open| !*open).unwrap());
         });
@@ -1935,6 +1955,7 @@ mod cr_cadence_tests {
         serde_json::from_str::<cr_cadence::Snapshot>(&w.cr_cadence_snapshot(input).unwrap()).unwrap().due_at
     }
 
+    #[test_id(tilri32)]
     #[test]
     fn a_review_closed_at_half_past_eleven_local_is_due_the_next_days_open_hour() {
         let t = testkit::TempDir::new("cr-cadence-late");
@@ -1942,6 +1963,7 @@ mod cr_cadence_tests {
         assert_eq!(due(&world(t.path(), LA, "7"), ""), SEVEN_NEXT_MORNING);
     }
 
+    #[test_id(thbagur)]
     #[test]
     fn with_no_scheduled_review_ever_the_first_is_due_the_next_open_hour_after_the_anchor() {
         let t = testkit::TempDir::new("cr-cadence-first");
@@ -1950,6 +1972,7 @@ mod cr_cadence_tests {
         assert_eq!((due(&w, &carry(LATE)), due(&w, &carry(SMALL_HOURS))), (SEVEN_NEXT_MORNING, SEVEN_NEXT_MORNING - 86_400));
     }
 
+    #[test_id(tax06qy)]
     #[test]
     fn an_unset_zone_or_a_bad_hour_fails_naming_its_key() {
         let t = testkit::TempDir::new("cr-cadence-unset");
@@ -1973,6 +1996,7 @@ mod cr_snapshot_tests {
         record::save(run, &r).unwrap();
     }
 
+    #[test_id(tzle17k)]
     #[test]
     fn with_no_review_open_the_world_makes_no_forge_request() {
         let t = testkit::TempDir::new("cr-snapshot-none");
@@ -1985,6 +2009,7 @@ mod cr_snapshot_tests {
         assert!(seen.join().unwrap().is_empty());
     }
 
+    #[test_id(tlay52j)]
     #[test]
     fn an_open_review_is_asked_four_questions_and_the_unanswered_ones_stay_none() {
         let t = testkit::TempDir::new("cr-snapshot-open");
@@ -2002,6 +2027,7 @@ mod cr_snapshot_tests {
         assert_eq!((r.conversation.clone(), r.reviews.clone(), r.pull.clone()), (None, Some(vec![]), Some(cr_comments::Pull { state: "open".into(), closed_at: None })));
     }
 
+    #[test_id(ty3xy83)]
     #[test]
     fn an_open_review_with_no_repository_named_refuses_before_any_request() {
         let t = testkit::TempDir::new("cr-snapshot-unnamed");
@@ -2054,6 +2080,7 @@ mod ask_mail_tests {
         "NEW ASK HOLD sp-three: third | default: d4 | message-id: <m4>",
     ];
 
+    #[test_id(tre2cna)]
     #[test]
     fn hold_lines_name_the_last_mail_and_a_held_ask_without_mail_gets_the_no_mail_line() {
         let t = testkit::TempDir::new("ask-mail-lines");
@@ -2064,6 +2091,7 @@ mod ask_mail_tests {
         assert_eq!(got, PINNED);
     }
 
+    #[test_id(tjewpgl)]
     #[test]
     fn the_asks_text_joins_each_held_asks_mails_in_held_order_then_mailbox_order() {
         let t = testkit::TempDir::new("ask-mail-text");
@@ -2074,6 +2102,7 @@ mod ask_mail_tests {
         assert_eq!(got, want.join("\n"));
     }
 
+    #[test_id(ttyywvh)]
     #[test]
     fn mails_by_bead_reads_each_file_once_however_many_beads_are_held() {
         let t = testkit::TempDir::new("ask-mail-reads");

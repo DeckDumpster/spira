@@ -47,6 +47,7 @@ fn gap_already_alerted() -> TaskRig {
     passes_then(&[1000, 2900], 4700)
 }
 
+#[test_id(thks9oc)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&passes_then(&[1000, 2900], 4700), NAME);
@@ -55,16 +56,19 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(tlk9lul)]
 #[test]
 fn a_boot_alerts_a_gap_whose_grace_began_before_it() {
     kit::assert_boot_matches_an_unstopped_run(gap_inside_its_grace, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(tvaadph)]
 #[test]
 fn a_boot_does_not_alert_a_gap_that_was_already_alerted() {
     kit::assert_boot_matches_an_unstopped_run(gap_already_alerted, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(tep8rdf)]
 #[test]
 fn a_full_pool_under_a_roomy_ceiling_is_satisfied_through_handle() {
     use spira_runtime::tasks::a::sentinel_call;
@@ -78,6 +82,7 @@ fn a_full_pool_under_a_roomy_ceiling_is_satisfied_through_handle() {
     assert_eq!(carry.words["flow:idle-capacity"], "satisfied");
 }
 
+#[test_id(tt5ii53)]
 #[test]
 fn room_under_the_pool_mails_through_handle_and_no_carry_is_unobservable() {
     use spira_runtime::tasks::a::sentinel_call;

@@ -29,12 +29,14 @@ fn gate_row(
     )
 }
 
+#[test_id(t3omokx)]
 #[test]
 fn gate_log_line_skips_waited_ms_as_reason() {
     let t = gate_log_line("2026-09-29T00:00:10Z spira b waited=0s ran=1s rc=0 pass waited_ms=340").unwrap();
     assert_eq!(t.reason, "pass");
 }
 
+#[test_id(twiihbp)]
 #[test]
 fn durations_and_iso_times_both_parse() {
     assert_eq!(parse_when("24h", T0), Some(T0 - 86_400));
@@ -45,6 +47,7 @@ fn durations_and_iso_times_both_parse() {
     assert_eq!(parse_when("soon", T0), None);
 }
 
+#[test_id(t9cpiur)]
 #[test]
 fn quantiles_interpolate_and_say_nothing_on_no_data() {
     assert_eq!(quantile(&[], 0.5), None);
@@ -53,6 +56,7 @@ fn quantiles_interpolate_and_say_nothing_on_no_data() {
     assert_eq!(quantile(&[1.0, 9.0], 1.0), Some(9.0));
 }
 
+#[test_id(tstt7ud)]
 #[test]
 fn gate_log_lines_backfill_status_type_and_mode() {
     let t = gate_log_line("2026-09-29T00:00:10Z spira concierge/sp-a waited=5s ran=100s rc=0 pass compose=unit phases=fences:30,build:40,test:30").unwrap();
@@ -96,6 +100,7 @@ fn gate_log_lines_backfill_status_type_and_mode() {
     assert!(gate_log_line("").is_none());
 }
 
+#[test_id(tcucdtz)]
 #[test]
 fn gate_log_is_read_only_before_the_first_gate_run_row() {
     let log = "2026-09-29T00:00:10Z spira a waited=0s ran=10s rc=0 pass\n\
@@ -120,6 +125,7 @@ fn gate_log_is_read_only_before_the_first_gate_run_row() {
     );
 }
 
+#[test_id(td7vub2)]
 #[test]
 fn the_report_prints_every_intent_measure_against_its_target() {
     let mut rows = String::new();
@@ -210,6 +216,7 @@ fn the_report_prints_every_intent_measure_against_its_target() {
     );
 }
 
+#[test_id(tn6ru52)]
 #[test]
 fn an_empty_window_says_no_data_never_zero_or_met() {
     let out = render(
@@ -237,6 +244,7 @@ fn an_empty_window_says_no_data_never_zero_or_met() {
     assert!(!out.contains("-> MET"), "{out}");
 }
 
+#[test_id(ttkm299)]
 #[test]
 fn unmetered_suite_rows_are_not_reported_as_zero_wait() {
     let st = format!(
@@ -263,6 +271,7 @@ fn unmetered_suite_rows_are_not_reported_as_zero_wait() {
     );
 }
 
+#[test_id(t8x3oel)]
 #[test]
 fn runner_trials_split_setup_from_suites_and_skip_rows_without_phases() {
     let row = |off: u64, extra: &str| {
@@ -311,6 +320,7 @@ fn runner_trials_split_setup_from_suites_and_skip_rows_without_phases() {
     );
 }
 
+#[test_id(t0ytuh9)]
 #[test]
 fn the_report_shows_the_queue_wait_inside_ran_from_rows_and_the_log() {
     let row = format!(
@@ -337,6 +347,7 @@ fn the_report_shows_the_queue_wait_inside_ran_from_rows_and_the_log() {
     );
 }
 
+#[test_id(t5ftsra)]
 #[test]
 fn corpus_wall_pairs_each_run_with_load_and_counts_round_vm_rows_apart() {
     let b = |off: u64, suites: u64, wall: u64, ls: &str, le: &str, rc: u64| {
@@ -382,6 +393,7 @@ fn corpus_wall_pairs_each_run_with_load_and_counts_round_vm_rows_apart() {
     assert!(render(&inp(""), all()).contains("under-count"));
 }
 
+#[test_id(ttpzqa0)]
 #[test]
 fn an_unreadable_landing_event_source_is_named_and_never_counted_as_zero_landings() {
     let out = render(
@@ -400,6 +412,7 @@ fn an_unreadable_landing_event_source_is_named_and_never_counted_as_zero_landing
     assert!(!out.contains("0 landings"), "{out}");
 }
 
+#[test_id(tjs9z4s)]
 #[test]
 fn landing_events_read_from_the_store_give_the_latencies_the_file_text_gave() {
     let at = ts;
@@ -427,6 +440,7 @@ fn landing_events_read_from_the_store_give_the_latencies_the_file_text_gave() {
     assert_eq!(got, want);
 }
 
+#[test_id(ta6p8y1)]
 #[test]
 fn an_empty_or_stopped_store_is_a_refusal_not_zero_landings() {
     let empty = spira_otel::fixture::FakeStore::start();

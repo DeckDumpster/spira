@@ -87,6 +87,7 @@ pub fn entry_path(spool_dir: &Path, stamp: &str, reference: &str, pid: u32) -> P
 mod tests {
     use super::*;
 
+    #[test_id(tg6t2l1)]
     #[test]
     fn format_then_parse_round_trips() {
         let e = SpoolEntry {
@@ -103,6 +104,7 @@ mod tests {
         assert_eq!(parsed, e);
     }
 
+    #[test_id(tzt6rwb)]
     #[test]
     fn repo_survives_the_spool_and_absence_stays_absent() {
         let mut e = SpoolEntry {
@@ -119,11 +121,13 @@ mod tests {
         assert_eq!(parse_entry(&format_entry(&e)).unwrap().repo, None);
     }
 
+    #[test_id(t128pb4)]
     #[test]
     fn parse_entry_with_no_ref_line_is_none() {
         assert_eq!(parse_entry(b"TITLE: x\n--\nbody\n"), None);
     }
 
+    #[test_id(t2b96yo)]
     #[test]
     fn parse_entry_backward_compatible_with_missing_fields() {
         let raw = b"REF: incident:old\nTITLE: old event\n--\npayload\n";
@@ -135,6 +139,7 @@ mod tests {
         assert_eq!(parsed.body, b"payload\n");
     }
 
+    #[test_id(tw18y08)]
     #[test]
     fn safe_ref_component_replaces_and_truncates() {
         assert_eq!(safe_ref_component("incident:a/b c"), "incident_a_b_c");
@@ -142,6 +147,7 @@ mod tests {
         assert_eq!(safe_ref_component(&long).len(), 80);
     }
 
+    #[test_id(t5jntnb)]
     #[test]
     fn body_preserves_arbitrary_bytes_after_marker() {
         let mut raw = b"REF: r\nTITLE: t\nUNIT: u\nINCIDENT_PATH: p\nCAUSE: c\n--\n".to_vec();

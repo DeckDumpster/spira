@@ -260,6 +260,7 @@ mod tests {
         }
     }
 
+    #[test_id(tlnmh0b)]
     #[test]
     fn a_run_round_trips_with_text_binary_and_deleted_values() {
         let r = run();
@@ -273,6 +274,7 @@ mod tests {
         );
     }
 
+    #[test_id(t7jfezy)]
     #[test]
     fn names_sort_as_revisions_and_parse_back() {
         assert!(run_name(9, 10) < run_name(10, 10));
@@ -283,6 +285,7 @@ mod tests {
         assert_eq!(parse_snapshot_name("7"), None);
     }
 
+    #[test_id(t8x746g)]
     #[test]
     fn a_run_whose_body_changed_or_skips_a_revision_is_refused() {
         let mut bytes = encode(&run());
@@ -304,6 +307,7 @@ mod tests {
             .contains("do not cover"));
     }
 
+    #[test_id(t9ul8eh)]
     #[test]
     fn a_declared_jump_is_the_only_gap_a_run_may_have() {
         let mut run = Run {
@@ -318,6 +322,7 @@ mod tests {
         assert!(err.contains("revision 2") || err.contains("1003.0 where 2.0"), "{err}");
     }
 
+    #[test_id(tcj31mr)]
     #[test]
     fn a_run_that_is_only_a_jump_decodes() {
         let run = Run { from: 5, to: 1_004, entries: vec![], jumps: vec![(5, 1_004)] };

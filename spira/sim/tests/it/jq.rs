@@ -1,5 +1,6 @@
 use spira_sim::jq::jq_r;
 
+#[test_id(tthzshb)]
 #[test]
 fn an_unsupported_construct_is_an_error_not_an_empty_answer() {
     for expr in [".a | frobnicate", ".a +", "$x", ".[] as $y | $y"] {

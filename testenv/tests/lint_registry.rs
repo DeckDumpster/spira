@@ -1,9 +1,12 @@
 //! `testenv lint` needs one setting, the run directory. A key the live config declares and the
 //! registry it resolves against predates must not refuse a lint that never reads that key.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::fs;
 use std::process::Command;
 
+#[test_id(tnmysc5)]
 #[test]
 fn lint_does_not_refuse_a_key_the_live_config_declares_and_an_older_registry_lacks() {
     let tmp = testkit::TempDir::new("lint-registry");

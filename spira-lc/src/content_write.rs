@@ -1054,6 +1054,7 @@ pub fn run_committer() {
 mod tests {
     use super::*;
 
+    #[test_id(tonbytt)]
     #[test]
     fn a_failed_writer_build_is_tried_again_and_a_built_writer_is_kept() {
         let cell: Built<u32> = Built::new();
@@ -1096,6 +1097,7 @@ mod tests {
         }
     }
 
+    #[test_id(tzivjd4)]
     #[test]
     fn only_the_served_verbs_are_mutations() {
         for argv in [
@@ -1126,6 +1128,7 @@ mod tests {
         assert!(Mutation::of(&v(&["update", "sp-a", "--add-label", "x", "--priority", "1"]), None).is_some());
     }
 
+    #[test_id(tfc0up5)]
     #[test]
     fn every_write_the_door_and_the_lanes_make_is_a_mutation() {
         for (argv, body) in [
@@ -1309,6 +1312,7 @@ mod tests {
         );
     }
 
+    #[test_id(t402tw9)]
     #[test]
     fn a_label_remove_and_an_update_that_carries_it_make_the_same_changes() {
         let a = script(&["label", "remove", "sp-a", "branch:spira/sp-a"], None);
@@ -1317,6 +1321,7 @@ mod tests {
         assert!(a[2].starts_with("DELETE FROM `beads`.labels WHERE issue_id = 'sp-a' AND label = 'branch:spira/sp-a'"));
     }
 
+    #[test_id(toqnqfz)]
     #[test]
     fn a_note_appends_a_comment_inserts_metadata_merges_and_priority_sets() {
         let n = script(&["note", "sp-a", "--stdin"], Some("body\n"));
@@ -1330,6 +1335,7 @@ mod tests {
         assert_eq!(p[3], "UPDATE `beads`.issues SET priority = 2 WHERE id = 'sp-a'");
     }
 
+    #[test_id(t0o2faq)]
     #[test]
     fn an_update_event_carries_the_issue_as_it_was_and_the_value_it_became() {
         for s in [script(&["note", "sp-a", "t"], None), script(&["update", "sp-a", "--set-metadata", "k=v"], None), script(&["update", "sp-a", "-p", "1"], None)] {
@@ -1341,6 +1347,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4stqo9)]
     #[test]
     fn a_metadata_number_boolean_or_null_is_stored_as_that_json_value_and_anything_else_as_text() {
         for (v, json) in [("5", true), ("-3", true), ("1.5", true), ("true", true), ("null", true), ("hi", false), ("\"q\"", false), ("[1,2]", false), ("{\"x\":1}", false), (" 5", false), ("", false)] {
@@ -1348,6 +1355,7 @@ mod tests {
         }
     }
 
+    #[test_id(ttzca40)]
     #[test]
     fn a_quote_in_a_note_cannot_end_the_string() {
         let s = script(&["note", "sp-a", "--stdin"], Some("x'; DROP TABLE issues; --"));
@@ -1355,6 +1363,7 @@ mod tests {
         assert!(!s[3].contains("x'; DROP"));
     }
 
+    #[test_id(tv5rirn)]
     #[test]
     fn a_failure_on_the_second_statement_sends_no_commit() {
         let s = script(&["label", "add", "sp-a", "x"], None);
@@ -1364,6 +1373,7 @@ mod tests {
         assert!(!tx.sent.iter().any(|q| q == "COMMIT"));
     }
 
+    #[test_id(t4upfsn)]
     #[test]
     fn writes_owed_before_the_committer_wakes_cost_one_commit() {
         let c = Committer::new();
@@ -1374,6 +1384,7 @@ mod tests {
         assert!(!*c.owed.lock().unwrap(), "one take settles every write owed so far");
     }
 
+    #[test_id(t3tedfw)]
     #[test]
     fn a_conflict_retries_once_then_gives_up() {
         let s = script(&["label", "add", "sp-a", "x"], None);

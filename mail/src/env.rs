@@ -131,12 +131,14 @@ pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    #[test_id(tcf7gcv)]
     #[test]
     fn locate_home_prefers_the_explicit_env_var() {
         let t = testkit::TempDir::new("mail-home-env");
         assert_eq!(locate_home(Some("h"), &t.path().join("bin/mail")), Some(PathBuf::from("h")));
     }
 
+    #[test_id(t2ttc3j)]
     #[test]
     fn locate_home_finds_the_release_layouts_sibling_spira_dir() {
         let t = testkit::TempDir::new("mail-home-release");
@@ -148,6 +150,7 @@ mod tests {
         assert_eq!(locate_home(None, &exe), Some(rel.join("spira").canonicalize().unwrap()));
     }
 
+    #[test_id(tcirehl)]
     #[test]
     fn locate_home_finds_nothing_with_no_lib_sh_around() {
         let t = testkit::TempDir::new("mail-home-none");
@@ -155,6 +158,7 @@ mod tests {
     }
 
     // covers: UC-operator-launchers-01
+    #[test_id(t0tm5mb)]
     #[test]
     fn sendmail_config_loads_from_the_operators_config_alone_and_refuses_without_it() {
         use std::collections::BTreeMap;

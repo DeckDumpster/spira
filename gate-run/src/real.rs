@@ -220,6 +220,7 @@ mod vtime_tests {
     use super::*;
     use crate::ports::World;
 
+    #[test_id(tmddmuf)]
     #[test]
     fn world_now_honours_spira_now() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, || Real::new(testkit::TempDir::new("gate-run-vtime").join("nonexistent")).now());

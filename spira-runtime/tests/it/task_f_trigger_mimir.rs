@@ -56,6 +56,7 @@ fn skipped(d: &Decision) -> Option<&str> {
     }
 }
 
+#[test_id(thos2dd)]
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING"));
@@ -67,6 +68,7 @@ fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
 }
 
+#[test_id(tjium39)]
 #[test]
 fn t2_an_hour_after_the_last_pass_with_no_landings_the_tick_asks_only_for_its_probe() {
     let mut r = rig(1, |_| snap(0, 3_600, 0));
@@ -75,6 +77,7 @@ fn t2_an_hour_after_the_last_pass_with_no_landings_the_tick_asks_only_for_its_pr
     running(&r);
 }
 
+#[test_id(t5aef5z)]
 #[test]
 fn t3_every_legal_step_is_taken_and_filing_with_an_open_trigger_is_refused() {
     for t in TRANSITIONS {
@@ -86,6 +89,7 @@ fn t3_every_legal_step_is_taken_and_filing_with_an_open_trigger_is_refused() {
     assert!(refused.contains("open"), "{refused}");
 }
 
+#[test_id(txuz3z5)]
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
@@ -97,6 +101,7 @@ fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
+#[test_id(tuxoc4b)]
 #[test]
 fn t4_the_module_launches_no_process() {
     for l in LAUNCHERS {
@@ -105,12 +110,14 @@ fn t4_the_module_launches_no_process() {
     assert_eq!(launcher(MODULE), None);
 }
 
+#[test_id(t667nfj)]
 #[test]
 fn t5_parity_an_open_trigger_or_no_condition_skips() {
     assert_eq!(skipped(&decide(&snap(1, 99_999, 99), &config())), Some("open"));
     assert_eq!(skipped(&decide(&snap(0, 3_600, 0), &config())), Some("no-trigger"));
 }
 
+#[test_id(trv2weh)]
 #[test]
 fn t5_parity_the_time_trigger_files_a_byte_equal_bead() {
     let Decision::File(bead) = decide(&snap(0, 10_800, 0), &config()) else { panic!("the max gap has elapsed") };
@@ -127,12 +134,14 @@ fn filed() -> TaskRig {
     rig(1, |_| snap(0, 10_800, 0))
 }
 
+#[test_id(tz0rrgm)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed(), NAME);
     assert!(rows.iter().any(|k| k == "filed_at"), "{rows:?}");
 }
 
+#[test_id(tdn7brh)]
 #[test]
 fn a_boot_does_not_file_again_inside_the_gap_a_filing_already_covers() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));

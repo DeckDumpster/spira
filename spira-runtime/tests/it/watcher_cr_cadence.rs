@@ -74,6 +74,7 @@ impl Rig {
     }
 }
 
+#[test_id(teo6l0y)]
 #[test]
 fn nothing_opens_while_the_scheduled_review_stays_open_for_three_days() {
     let mut r = rig();
@@ -81,6 +82,7 @@ fn nothing_opens_while_the_scheduled_review_stays_open_for_three_days() {
     assert_eq!(r.opened_at(), Vec::<u64>::new());
 }
 
+#[test_id(tlkvsc5)]
 #[test]
 fn a_close_at_three_in_the_afternoon_opens_the_next_review_once_at_seven_the_next_morning() {
     let mut r = rig();
@@ -93,6 +95,7 @@ fn a_close_at_three_in_the_afternoon_opens_the_next_review_once_at_seven_the_nex
     assert!(r.said()[0].ends_with("CR 002 staged (scheduled): seal with cr seal --review 002"), "{:?}", r.said());
 }
 
+#[test_id(tlyv2uc)]
 #[test]
 fn on_demand_reviews_opened_in_between_change_nothing() {
     let mut r = rig();
@@ -107,6 +110,7 @@ fn on_demand_reviews_opened_in_between_change_nothing() {
     assert_eq!(r.opened_at(), [(closed + 16 * 3600) * 1000]);
 }
 
+#[test_id(tb6m3hc)]
 #[test]
 fn a_failed_open_is_said_with_cr_stderr_and_tried_again_at_the_next_tick() {
     let reviews = Arc::new(Mutex::new(vec![review(1, Kind::Scheduled, State::Closed, Some(0))]));
@@ -127,6 +131,7 @@ fn a_failed_open_is_said_with_cr_stderr_and_tried_again_at_the_next_tick() {
     assert!(rig.requested().iter().any(|q| q.name == INBOX_APPEND && q.input.contains("only 0 of 1 units are drawable")));
 }
 
+#[test_id(t5uhtxz)]
 #[test]
 fn the_row_is_registered_with_its_cadence_and_effects() {
     let t = spira_runtime::tasks::d::acceptance::row(NAME);
@@ -136,6 +141,7 @@ fn the_row_is_registered_with_its_cadence_and_effects() {
     assert_eq!((s.cr_cadence.stale_days, s.world.cr_tz.as_str(), s.world.cr_open_hour.as_str()), (7, "Pacific/Auckland", "6"));
 }
 
+#[test_id(ticxngl)]
 #[test]
 fn an_observe_that_fails_changes_nothing() {
     let (_, stream, kind) = CrCadence::boot();

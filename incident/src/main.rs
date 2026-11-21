@@ -16,6 +16,9 @@
 //! are retired (DESIGN.md §Decisions): one-time migrations with no live caller, already
 //! believed applied everywhere the ref: label and the delivers: schema matter.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::io::Read;
 use std::process::ExitCode;
 
@@ -435,6 +438,7 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
+    #[test_id(tlo7jbk)]
     #[test]
     fn systemd_payload_carries_the_systemctl_facts_and_reads_no_journal() {
         let p = systemd_payload("spira-x.service", "h", "2026-01-01T00:00:00Z", "Result=exit-code\nExecMainStatus=3\n");
@@ -446,6 +450,7 @@ mod tests {
     /// A NON-registered name still falls back to `spira_config::resolve()` between the raw
     /// environment and the caller's own default — unchanged by the `SPIRA_WATCHER_INTERVAL_S`
     /// migration below, since `SPIRA_NO_SUCH_KEY_AT_ALL_EVER` is not in `spira/conf.d`.
+    #[test_id(tzs191s)]
     #[test]
     fn a_non_registered_name_still_falls_back_through_the_registry() {
         assert_eq!(env("SPIRA_NO_SUCH_KEY_AT_ALL_EVER"), None);

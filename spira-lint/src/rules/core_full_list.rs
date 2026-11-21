@@ -91,6 +91,7 @@ mod tests {
         CoreFullList.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(te71r7d)]
     #[test]
     fn a_planted_unfiltered_list_is_caught_in_every_form_a_core_process_can_ask_for_one() {
         let t = TempDir::new("cfl-planted");
@@ -103,6 +104,7 @@ mod tests {
         assert_eq!(got.len(), 5, "{got:?}");
     }
 
+    #[test_id(tjqntac)]
     #[test]
     fn a_filtered_list_a_batch_job_a_comment_and_a_test_are_silent() {
         let t = TempDir::new("cfl-quiet");
@@ -119,6 +121,7 @@ mod tests {
         assert_eq!(got, Vec::<String>::new());
     }
 
+    #[test_id(twwthv6)]
     #[test]
     fn a_crate_outside_the_old_core_scope_is_caught_too() {
         let t = TempDir::new("cfl-wide");
@@ -127,6 +130,7 @@ mod tests {
         assert_eq!(run(&t, &["spira-lc/src/y.rs", "census/src/z.rs"]).unwrap().len(), 2);
     }
 
+    #[test_id(t6esjbo)]
     #[test]
     fn a_tree_with_no_source_refuses() {
         let t = TempDir::new("cfl-none");

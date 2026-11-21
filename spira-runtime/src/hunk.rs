@@ -172,11 +172,13 @@ pub fn b64url_decode(text: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
+    #[test_id(t1plri0)]
     #[test]
     fn canonical_json_sorts_keys_at_every_depth() {
         assert_eq!(canonical(&json!({"b": [1, {"y": 1, "x": "a"}], "a": null})), r#"{"a":null,"b":[1,{"x":"a","y":1}]}"#);
     }
 
+    #[test_id(tgwwqks)]
     #[test]
     fn only_a_leading_uuid_counts_as_a_session_id() {
         let id = "0f2a9c1e-8b3d-4a6e-9c1f-123456789abc";
@@ -186,6 +188,7 @@ mod tests {
         assert_eq!(uuid_prefix("0f2a9c1e_8b3d-4a6e-9c1f-123456789abc"), None);
     }
 
+    #[test_id(tx0a0qp)]
     #[test]
     fn a_descriptor_that_is_not_loopback_is_not_dialled() {
         let d = testkit::TempDir::new("hunk-origins");

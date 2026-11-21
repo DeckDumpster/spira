@@ -243,6 +243,7 @@ mod tests {
         r
     }
 
+    #[test_id(t8q3is9)]
     #[test]
     fn a_recorded_restart_list_reads_back() {
         let t = testkit::TempDir::new("machine-restarted");
@@ -254,6 +255,7 @@ mod tests {
         assert!(!r.to_json()["events"][0].as_object().unwrap().contains_key("restarted"), "an empty list is not written");
     }
 
+    #[test_id(tv0drwi)]
     #[test]
     fn a_record_in_the_format_before_restart_lists_loads_with_an_empty_list() {
         let old = format!(r#"{{"sha":"{SHA}","events":[{{"to":"cut","reason":"x","at":5}}]}}"#);
@@ -261,6 +263,7 @@ mod tests {
         assert_eq!(r.events[0].restarted, Vec::<String>::new());
     }
 
+    #[test_id(tgh7esx)]
     #[test]
     fn every_legal_transition_applies_and_is_recorded() {
         for (from, to) in LEGAL {
@@ -272,6 +275,7 @@ mod tests {
         }
     }
 
+    #[test_id(ttwwe72)]
     #[test]
     fn every_illegal_transition_is_refused_naming_the_state() {
         for from in ReleaseState::ALL {
@@ -287,6 +291,7 @@ mod tests {
         }
     }
 
+    #[test_id(t23meap)]
     #[test]
     fn a_release_can_only_begin_cut() {
         let mut r = Release::new(SHA);
@@ -294,6 +299,7 @@ mod tests {
         r.record(Cut, "x", 1).unwrap();
     }
 
+    #[test_id(twcgc77)]
     #[test]
     fn the_read_returns_exactly_the_recorded_state() {
         let t = testkit::TempDir::new("rel-read");
@@ -311,6 +317,7 @@ mod tests {
         }
     }
 
+    #[test_id(tpio5rk)]
     #[test]
     fn enter_backfills_an_unrecorded_release_and_refuses_an_illegal_move() {
         let t = testkit::TempDir::new("rel-enter");
@@ -331,6 +338,7 @@ mod tests {
         enter(t.path(), SHA, Published, "again").unwrap();
     }
 
+    #[test_id(tduvd3s)]
     #[test]
     fn rollback_reentering_a_passed_release_is_not_a_move() {
         let t = testkit::TempDir::new("rel-reenter");
@@ -346,6 +354,7 @@ mod tests {
         enter(t.path(), SHA, Published, "again").unwrap();
     }
 
+    #[test_id(tzqv77q)]
     #[test]
     fn a_sha_is_one_path_component() {
         let t = testkit::TempDir::new("rel-sha");

@@ -135,6 +135,7 @@ mod tests {
 
     /// A bd close is still refused in every shape; the lifecycle machine's own doors — the
     /// lc-serve client's `call_stdin`, the content door, the spira-lc program — are not bd.
+    #[test_id(tdn7rtg)]
     #[test]
     fn a_bd_close_is_refused_and_the_lifecycle_machine_is_not() {
         let bd = r#"fn a() { bdq(seam, &["close", id, "--reason", r]); }

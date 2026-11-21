@@ -40,6 +40,7 @@ pub struct UnitRecord {
 mod tests {
     use super::*;
 
+    #[test_id(tm477n7)]
     #[test]
     fn a_record_cut_early_round_trips_with_only_the_fields_it_reached() {
         let r = UnitRecord { selection: Some("transitive".into()), crates: vec!["a".into()], rc: Some(2), ..Default::default() };

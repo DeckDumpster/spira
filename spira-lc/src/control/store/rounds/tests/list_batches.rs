@@ -6,6 +6,7 @@ const ROUNDS: usize = 60;
 
 /// law-list-reads-paginate-in-the-database: `list --batches` reads the rounds its answer shows
 /// (the newest eight, a window's, the open ones, a page's), never the `batches/` prefix.
+#[test_id(t8tvybk)]
 #[test]
 fn list_batches_reads_only_the_rounds_it_shows() {
     let r = Rig::on(Counting::default(), &clock());
@@ -48,6 +49,7 @@ fn list_batches_reads_only_the_rounds_it_shows() {
 
 /// On the real store, what `list --batches` costs does not grow with the rounds behind it: the
 /// VM steps of a bare list and of a window are the same over 40 rounds and over 240.
+#[test_id(tl3fcmi)]
 #[test]
 fn list_batches_costs_the_same_over_a_larger_history_on_the_real_store() {
     let dir = testkit::TempDir::new("lc-batches-steps");
@@ -103,6 +105,7 @@ fn eventful_rounds<B: Backend>(r: &Rig<B>) {
 
 /// `list --batches` answers each round's passes, ejections and last event from the round's own
 /// record: no history range and no `events/` read, and at most two point reads a round shown.
+#[test_id(t6lkeqe)]
 #[test]
 fn list_batches_reads_each_rounds_events_from_its_record_never_history() {
     let r = Rig::on(Counting::default(), &clock());
@@ -126,6 +129,7 @@ fn list_batches_reads_each_rounds_events_from_its_record_never_history() {
 }
 
 /// The three scopes over `eventful_rounds`, as they were answered from history.
+#[test_id(to10clf)]
 #[test]
 fn list_batches_answers_the_same_bytes_as_it_did_from_history() {
     let r = Rig::new();
@@ -146,6 +150,7 @@ fn list_batches_answers_the_same_bytes_as_it_did_from_history() {
 
 /// A round stored before migration 6 has no `batch_events`: `list --batches` says so and does
 /// not read its history, and a later event does not give it a partial field.
+#[test_id(t4hy1rr)]
 #[test]
 fn a_round_without_batch_events_makes_list_batches_name_the_migration() {
     let r = Rig::new();
@@ -169,6 +174,7 @@ fn a_round_without_batch_events_makes_list_batches_name_the_migration() {
 
 /// Migration 6 fills `batch_events` with the events `fold_batch_events` keeps: the two lists
 /// name the same events.
+#[test_id(tslzvkv)]
 #[test]
 fn migration_6_selects_the_events_the_fold_keeps() {
     let sql = state_store_sqlite::MIGRATIONS[5].join("\n");
@@ -181,6 +187,7 @@ fn migration_6_selects_the_events_the_fold_keeps() {
 
 /// Every state the round machine can be in is either listed as open or is terminal: a round in
 /// a state `list --batches --window` forgot would vanish from it.
+#[test_id(thkn81q)]
 #[test]
 fn every_batch_state_is_listed_as_open_or_is_terminal() {
     use lifecycle::batch::BatchState::*;
@@ -197,6 +204,7 @@ fn every_batch_state_is_listed_as_open_or_is_terminal() {
 }
 
 /// A round prints the largest `pr` among its members' deliveries that belong to it, else null.
+#[test_id(t12simv)]
 #[test]
 fn list_batches_prints_the_pr_of_a_members_delivery_in_the_round() {
     let r = Rig::on(Counting::default(), &clock());

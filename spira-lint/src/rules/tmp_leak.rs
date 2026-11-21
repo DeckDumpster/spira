@@ -126,6 +126,7 @@ mod tests {
     }
 
     /// The failing fixture: the leak in each place test code lives.
+    #[test_id(ti8og2l)]
     #[test]
     fn a_bare_temp_dir_in_test_code_is_caught_wherever_test_code_lives() {
         let t = TempDir::new("tmpleak-fail");
@@ -173,6 +174,7 @@ mod tests {
 
     /// The passing fixture: testkit in test code, and temp_dir() where it is not test code,
     /// is in a comment or string, or sits under cfg(not(test)).
+    #[test_id(twota57)]
     #[test]
     fn testkit_and_non_test_code_pass() {
         let t = TempDir::new("tmpleak-pass");
@@ -192,6 +194,7 @@ pub fn after() -> std::path::PathBuf {{ {CALL} }}\n"
         assert_eq!(run(&t, &["a/src/lib.rs", "a/src/real.rs", "testkit/src/lib.rs"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tcw6rww)]
     #[test]
     fn a_listed_exception_passes_and_a_stale_one_is_refused() {
         let t = TempDir::new("tmpleak-allow");
@@ -204,6 +207,7 @@ pub fn after() -> std::path::PathBuf {{ {CALL} }}\n"
         );
     }
 
+    #[test_id(ty6reut)]
     #[test]
     fn no_rust_files_is_a_refusal() {
         let t = TempDir::new("tmpleak-empty");

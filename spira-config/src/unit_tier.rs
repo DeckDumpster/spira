@@ -309,18 +309,21 @@ mod tests {
 
     const TEST_ROW: &str = "disabled\ttest:t0aaaaa\tsp-x\t-\n";
 
+    #[test_id(tq0hr1m)]
     #[test]
     fn a_test_id_row_parses_and_test_rows_returns_its_bead() {
         let d = DenyList::parse(TEST_ROW).unwrap();
         assert_eq!(d.test_rows(), vec![("disabled", "t0aaaaa", "sp-x")]);
     }
 
+    #[test_id(ty6n2di)]
     #[test]
     fn a_malformed_test_id_row_is_refused_by_line_number() {
         let e = DenyList::parse(&format!("{TEST_ROW}quarantined\ttest:T0\tsp-x\t-\n")).unwrap_err();
         assert!(e.starts_with("deny list line 2:"), "{e}");
     }
 
+    #[test_id(tv80b70)]
     #[test]
     fn test_id_rows_reach_no_nextest_filter_and_no_integration_skip() {
         let d = DenyList::parse(TEST_ROW).unwrap();
@@ -330,6 +333,7 @@ mod tests {
         assert_eq!(mixed.nextest_filter().unwrap(), "not ((binary_id(=a) & test(=b::c)))");
     }
 
+    #[test_id(t2te7i8)]
     #[test]
     fn each_macro_gives_the_words_of_its_fn() {
         assert_eq!(
@@ -346,6 +350,7 @@ mod tests {
         );
     }
 
+    #[test_id(ts5rb7x)]
     #[test]
     fn the_printf_format_prints_the_config_text() {
         let fmt = unit_tier_config_printf!()
@@ -357,6 +362,7 @@ mod tests {
 
     const TWO: &str = "# test-registry deny-list at=1 rows=2\ndisabled\tunit:a::b t::drop\tsp-1\t-\nquarantined\tunit:c d::e\tsp-2\t5\n";
 
+    #[test_id(ty3yp8p)]
     #[test]
     fn an_empty_deny_list_composes_no_filter_no_skips_and_todays_config() {
         let d = DenyList::default();
@@ -366,6 +372,7 @@ mod tests {
         assert_eq!(DenyList::parse("# test-registry deny-list at=1 rows=0\n").unwrap(), d);
     }
 
+    #[test_id(tzb1b4a)]
     #[test]
     fn two_unit_rows_of_either_state_give_the_exact_filter_expression() {
         let d = DenyList::parse(TWO).unwrap();
@@ -374,6 +381,7 @@ mod tests {
         assert_eq!(DenyList::parse(&d.render()).unwrap(), d);
     }
 
+    #[test_id(trfvnun)]
     #[test]
     fn integration_rows_become_exact_skips_and_suite_rows_reach_neither_filter() {
         let d = DenyList::parse("disabled\tintegration:p x::y\t-\t-\nquarantined\tintegration:q z\t-\t-\ndisabled\tsuite:test-a.sh\t-\t-\n").unwrap();
@@ -382,6 +390,7 @@ mod tests {
         assert_eq!(d.suites(), [("test-a.sh", "disabled")]);
     }
 
+    #[test_id(tiptmp9)]
     #[test]
     fn a_malformed_deny_list_line_is_refused_by_its_number() {
         for (text, line) in [
@@ -398,6 +407,7 @@ mod tests {
         }
     }
 
+    #[test_id(tkv2b4i)]
     #[test]
     fn the_default_profile_names_no_profile_and_no_override() {
         for w in [
@@ -410,6 +420,7 @@ mod tests {
         }
     }
 
+    #[test_id(tafjah0)]
     #[test]
     fn no_word_names_a_thread_count() {
         for w in [
@@ -438,6 +449,7 @@ mod tests {
         l
     }
 
+    #[test_id(tdso2vl)]
     #[test]
     fn timings_read_the_count_from_the_summary_and_keep_the_ten_slowest_once() {
         let t = timings(&nextest_log());
@@ -447,6 +459,7 @@ mod tests {
         assert_eq!(t.slowest[0].1, 60.0);
     }
 
+    #[test_id(tzxicbs)]
     #[test]
     fn timings_say_whether_nextest_printed_its_summary() {
         assert!(!timings("").summarized);
@@ -457,11 +470,13 @@ mod tests {
         assert_eq!(t.tests, 3);
     }
 
+    #[test_id(t1lgkfk)]
     #[test]
     fn timings_of_a_log_with_no_tests_are_empty() {
         assert_eq!(timings("error: could not compile\n"), UnitTimings::default());
     }
 
+    #[test_id(t3vj6ui)]
     #[test]
     fn the_file_form_round_trips_and_leaves_the_parse_to_timings() {
         let lines: String = nextest_log().lines().filter(|l| l.contains("] (") || l.contains("Summary [")).map(|l| format!("{l}\n")).collect();
@@ -472,6 +487,7 @@ mod tests {
         assert_eq!(parse("garbage"), None);
     }
 
+    #[test_id(tkrzhxj)]
     #[test]
     fn the_slowest_field_is_name_colon_secs_joined_by_commas() {
         let t = UnitTimings { tests: 2, summarized: true, run_secs: 0.0, slowest: vec![("a t1".into(), 1.5), ("b t2".into(), 0.25)] };

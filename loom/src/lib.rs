@@ -2,6 +2,9 @@
 //! `GET /api/ops` for the Spira ops dashboard, and `/units`, the per-unit run history. Every one reads the lifecycle read model or
 //! the collector's snapshot files; none reads `bd`.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod dwarves;
 pub mod goodput;
 pub mod factory;
@@ -988,6 +991,7 @@ mod shot_path_tests {
 
     const TIP: &str = "0123456789abcdef0123456789abcdef01234567";
 
+    #[test_id(t6igpfn)]
     #[test]
     fn only_a_bead_a_full_tip_and_a_plain_png_name_resolve() {
         let ok = shot_path("r", "sp-ab.1", TIP, "index-390.png").expect("a valid shot");
@@ -1023,6 +1027,7 @@ mod in_process_tests {
         LcClient::over(Arc::new(Scripted(answers)), true)
     }
 
+    #[test_id(tvgyzbt)]
     #[tokio::test]
     async fn a_served_read_is_answered_over_the_socket_and_a_refusal_is_an_error() {
         let c = client(vec![("ops-transitions", 0, "{\"edges\":[]}".into()), ("show-ask", 3, "no such ask".into())]);
@@ -1064,6 +1069,7 @@ mod in_process_tests {
         std::fs::write(run.join("lcview/snapshot.json"), serde_json::to_string(&s).unwrap()).unwrap();
     }
 
+    #[test_id(tvcka0x)]
     #[tokio::test]
     async fn api_ops_claimable_keys_follow_the_claim_view_and_go_unknown_when_it_is_stale() {
         let d = testkit::TempDir::new("loom-serve-ops");
@@ -1111,6 +1117,7 @@ mod in_process_tests {
         }
     }
 
+    #[test_id(tatwy8h)]
     #[tokio::test]
     async fn the_factory_is_held_for_the_cache_and_a_failed_build_is_not_held() {
         let loom = Loom::with_limits(test_config(), Arc::new(|_| Ok(std::collections::BTreeMap::from([("SPIRA_COLD_PAR".to_string(), "9".to_string())]))));
@@ -1146,6 +1153,7 @@ mod in_process_tests {
         }
     }
 
+    #[test_id(trwf4dx)]
     #[tokio::test]
     async fn a_second_factory_build_with_no_store_change_asks_the_store_for_no_list() {
         let followed = Arc::new(Followed(Default::default()));
@@ -1186,6 +1194,7 @@ mod in_process_tests {
         floor["components"].as_array().unwrap().iter().find(|c| c["id"] == "dwarf-session").unwrap()["queues"][0]["config"].clone()
     }
 
+    #[test_id(ti3lr5j)]
     #[tokio::test]
     async fn a_limit_changed_in_the_file_reaches_the_same_loom_when_the_cache_ages_out_and_a_reader_error_fails_the_build() {
         let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1208,6 +1217,7 @@ mod in_process_tests {
         assert_eq!(e, "config no longer resolves");
     }
 
+    #[test_id(tybel5k)]
     #[test]
     fn the_printed_config_is_byte_identical_for_equal_values_and_carries_no_limit_key() {
         let (a, b) = (test_config().render_pinned(), test_config().render_pinned());
@@ -1220,6 +1230,7 @@ mod in_process_tests {
         assert_ne!(a, moved);
     }
 
+    #[test_id(txzd1zc)]
     #[tokio::test]
     async fn the_factory_page_carries_the_bar_the_tabs_and_the_fetch_of_the_factory_json() {
         let loom = Arc::new(Loom::new(test_config()));
@@ -1247,6 +1258,7 @@ mod in_process_tests {
         (read(goodput_api_route(State(loom.clone())).await).await, read(goodput_page_route(State(loom)).await).await)
     }
 
+    #[test_id(txclxee)]
     #[tokio::test]
     async fn the_goodput_routes_serve_the_snapshot_and_judge_staleness_by_the_configured_deadman() {
         let at = now_s() - 500;
@@ -1261,6 +1273,7 @@ mod in_process_tests {
         assert!(page.contains("GOODPUT 3.2/day of 5"), "{page}");
     }
 
+    #[test_id(t1z734n)]
     #[tokio::test]
     async fn the_goodput_routes_say_so_when_the_snapshot_cannot_be_read() {
         let ((status, api), (page_status, _)) = goodput_routes(None, 300).await;
@@ -1268,6 +1281,7 @@ mod in_process_tests {
         assert!(api.contains("cannot read"), "{api}");
     }
 
+    #[test_id(tkpl0n6)]
     #[test]
     fn the_sentinel_timer_is_read_through_the_units_port() {
         let units = ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0)));
@@ -1279,6 +1293,7 @@ mod in_process_tests {
         assert!(units.calls().is_empty());
     }
 
+    #[test_id(tfi8iwd)]
     #[test]
     fn batch_show_ended_is_the_stores_ended_forge_batches_and_the_closed_archives_newest_first() {
         let store = json!({"ok": {"list_rev": 4, "items": [
@@ -1302,6 +1317,7 @@ mod in_process_tests {
         assert_eq!(ended_shown(&views, &t.path().join("absent"), "spira", 5).unwrap(), "batch_id=b0\nrepo=spira\nopened=800\nforge.phase=armed\npr=11\nreason=red\n\n");
     }
 
+    #[test_id(tw4l2lw)]
     #[test]
     fn batch_show_is_the_open_forge_batch_from_the_store_views() {
         let store = json!({"ok": {"list_rev": 4, "items": [

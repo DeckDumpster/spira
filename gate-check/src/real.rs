@@ -239,6 +239,7 @@ pub fn failed_runs_of(json: &str) -> Option<Vec<(String, String)>> {
 mod failed_runs_tests {
     use super::failed_runs_of;
 
+    #[test_id(tibtx8c)]
     #[test]
     fn failed_runs_are_read_from_the_json_array() {
         let got = failed_runs_of(r#"[{"databaseId":42,"headSha":"abc"},{"databaseId":7,"headSha":"def"}]"#);
@@ -262,12 +263,14 @@ mod door_tests {
         }
     }
 
+    #[test_id(tl4617v)]
     #[test]
     fn a_gate_check_answer_carries_both_streams() {
         let world = Real::new(PathBuf::new(), Ok(LcClient::over(Arc::new(Stderr), true)), None);
         assert_eq!(world.bd_gate_check(), "out\n⚠ zq-9k2: ESCALATE red\n");
     }
 
+    #[test_id(tsbo4sr)]
     #[test]
     fn the_stores_verbs_are_content_requests() {
         let door = Arc::new(Content::new(vec![]));
@@ -299,6 +302,7 @@ mod tests {
     use spira_otel::metrics::fixture;
     use std::os::unix::process::ExitStatusExt;
 
+    #[test_id(tdr4qe6)]
     #[test]
     fn a_run_list_through_a_fake_gh_is_counted_once_under_gate_check_run_list() {
         let fake = |_: &[&str]| {

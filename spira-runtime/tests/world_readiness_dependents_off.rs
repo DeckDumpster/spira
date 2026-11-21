@@ -1,9 +1,12 @@
 //! `World::readiness_dependents` with no control store configured: nothing is read, and the
 //! carried revision comes back as it went in.
 
+#[macro_use]
+extern crate spira_test_id;
 use spira_runtime::watchers::readiness_dependents::Pass;
 use spira_runtime::world::World;
 
+#[test_id(tfbucft)]
 #[test]
 fn without_a_control_store_the_pass_asks_the_store_nothing_and_keeps_the_revision() {
     let dir = testkit::TempDir::new("world-readiness-dependents-off");

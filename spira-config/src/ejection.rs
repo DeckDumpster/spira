@@ -373,6 +373,7 @@ mod tests {
 
     const OUT: &str = "running 2 tests\ntest ci_cut::ok ... ok\ntest ci_cut::finds_config ... FAILED\n\nfailures:\n\n---- ci_cut::finds_config stdout ----\nthread 'ci_cut::finds_config' panicked at spira/sim/tests/ci_cut.rs:70:9:\nno built spira-config beside <target>/dwarf or on PATH\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    ci_cut::finds_config\n\ntest result: FAILED. 1 passed; 1 failed\n";
 
+    #[test_id(t59they)]
     #[test]
     fn a_failing_test_is_named_with_its_panic_location_and_output_tail() {
         let f = failures(OUT);
@@ -383,6 +384,7 @@ mod tests {
         assert!(f[0].tail.iter().all(|l| !l.contains("RUST_BACKTRACE")));
     }
 
+    #[test_id(tbb10aq)]
     #[test]
     fn a_failed_test_with_no_block_keeps_its_name_and_unnamed_output_keeps_its_own_lines() {
         assert_eq!(failures("test a::b ... FAILED\n")[0].test, "a::b");
@@ -390,6 +392,7 @@ mod tests {
         assert!(d.contains("STEP gate") && d.contains("  lint broke") && d.contains("  one"), "{d}");
     }
 
+    #[test_id(t2rnhms)]
     #[test]
     fn a_digest_round_trips_through_parse() {
         let d = digest("abc", &["a.rs".into(), "b.rs".into()], OUT);
@@ -397,6 +400,7 @@ mod tests {
         assert_eq!((p.tip.as_str(), p.files.len(), p.tests.as_slice()), ("abc", 2, &["ci_cut::finds_config".to_string()][..]), "{d}");
     }
 
+    #[test_id(tp6u4ek)]
     #[test]
     fn the_same_test_on_a_disjoint_diff_names_the_first_bead_and_blames_the_base() {
         let first = digest("t1", &["x.rs".into()], OUT);
@@ -407,6 +411,7 @@ mod tests {
         assert!(d.contains("sp-a") && d.contains("base or in the gate"), "{d}");
     }
 
+    #[test_id(tjur4pj)]
     #[test]
     fn overlapping_diffs_the_same_bead_or_the_same_tip_are_not_a_shared_red() {
         let mine = digest("t2", &["x.rs".into()], OUT);
@@ -422,6 +427,7 @@ mod tests {
         (bead.into(), digest(tip, &[file.into()], OUT))
     }
 
+    #[test_id(tgpo9rl)]
     #[test]
     fn a_test_shared_by_two_beads_on_disjoint_diffs_is_a_flip() {
         let mine = digest("t3", &["m.rs".into()], OUT);
@@ -429,6 +435,7 @@ mod tests {
         assert_eq!(f, vec![("ci_cut::finds_config".to_string(), vec!["sp-x".to_string(), "sp-y".to_string()])]);
     }
 
+    #[test_id(t1sxors)]
     #[test]
     fn one_bead_overlapping_diffs_or_a_partly_shared_digest_is_not_a_flip() {
         let mine = digest("t3", &["m.rs".into()], OUT);
@@ -441,6 +448,7 @@ mod tests {
         assert!(flipped("sp-z", &digest("t3", &["m.rs".into()], "lint broke\n"), &[]).is_none());
     }
 
+    #[test_id(tx8jx0g)]
     #[test]
     fn a_truncated_digest_is_not_a_flip() {
         let many: String = (0..9).map(|i| format!("test t::n{i} ... FAILED\n")).collect();
@@ -449,6 +457,7 @@ mod tests {
         assert!(flipped("sp-z", &mine, &prior).is_none());
     }
 
+    #[test_id(tbxhb2l)]
     #[test]
     fn a_digest_cut_for_size_is_not_a_flip() {
         let lint: String = (0..300).map(|i| format!("some-rule: src/f{i}.rs:{i}: finding number {i} with padding to take room\n")).collect();
@@ -459,6 +468,7 @@ mod tests {
         assert!(flipped("sp-z", &mine, &prior).is_none());
     }
 
+    #[test_id(tmgshut)]
     #[test]
     fn a_failed_prior_read_is_an_error_and_record_still_writes_the_fact() {
         let calls: RefCell<Vec<String>> = RefCell::new(Vec::new());
@@ -471,6 +481,7 @@ mod tests {
         assert!(calls.borrow().iter().any(|c| c == "fact add"));
     }
 
+    #[test_id(tpzhtjo)]
     #[test]
     fn record_writes_the_fact_after_reading_prior_reds() {
         let first = digest("t1", &["x.rs".into()], OUT);
@@ -506,6 +517,7 @@ mod tests {
         o
     }
 
+    #[test_id(teaidit)]
     #[test]
     fn a_phase_red_after_passing_markers_records_its_failing_lines() {
         let files: Vec<String> = (0..40).map(|i| format!("crate/src/file{i}.rs")).collect();
@@ -514,6 +526,7 @@ mod tests {
         assert!(d.contains("FAIL t::x at state-store-sqlite/tests/conformance_sqlite.rs:626") && d.contains("assertion failed"), "{d}");
     }
 
+    #[test_id(tthurql)]
     #[test]
     fn an_oversized_file_list_is_shortened_and_the_failure_kept() {
         let files: Vec<String> = (0..40).map(|i| format!("{i:03}{}", "p".repeat(147))).collect();
@@ -527,6 +540,7 @@ mod tests {
         assert!(!d.contains(CUT_SUFFIX), "{d}");
     }
 
+    #[test_id(tcke1eh)]
     #[test]
     fn a_cut_file_list_is_never_a_shared_red() {
         let cut = format!("tip t1\nfiles x.rs\n{FILES_CUT_PREFIX}3 more\nFAIL t::x\n");
@@ -537,6 +551,7 @@ mod tests {
         assert_eq!(shared_reds("sp-b", &whole, &[("sp-a".into(), "tip t1\nfiles x.rs\nFAIL t::x\n".into())]).len(), 1);
     }
 
+    #[test_id(tvnucfa)]
     #[test]
     fn a_lint_red_records_its_finding_and_no_passing_step() {
         assert!(HINT.len() > 200);
@@ -546,6 +561,7 @@ mod tests {
         assert!(d.contains(HINT), "hint kept whole under the line bound: {d}");
     }
 
+    #[test_id(tqojax0)]
     #[test]
     fn a_round_red_and_a_gate_red_on_the_same_lint_output_record_the_same_lines() {
         let round = format!("member=the base itself (no member's diff touches spira-lint/config-key-registered-allow or its rule config-key-registered) {FINDING}\n{HINT}\n");
@@ -556,6 +572,7 @@ mod tests {
         assert_eq!(body(&r), body(&g), "{r}\n---\n{g}");
     }
 
+    #[test_id(tu19q7q)]
     #[test]
     fn a_commit_culprit_prefix_is_stripped_to_the_finding() {
         let round = format!("member=commit abc123def456 fix: tidy the thing {FINDING}\n");
@@ -563,6 +580,7 @@ mod tests {
         assert!(d.contains(&format!("  {FINDING}")), "{d}");
     }
 
+    #[test_id(tca7x9x)]
     #[test]
     fn findings_over_the_size_limit_keep_the_first_and_count_the_rest() {
         let text: String = (0..300).map(|i| format!("some-rule: src/f{i}.rs:{i}: finding number {i} with padding to take room\n")).collect();
@@ -574,6 +592,7 @@ mod tests {
         assert_eq!(last, format!("... {} more lines cut", 300 - kept), "{last}");
     }
 
+    #[test_id(t8yuoyp)]
     #[test]
     fn a_build_red_records_the_compiler_errors_with_their_locations() {
         let mut o = String::new();
@@ -587,12 +606,14 @@ mod tests {
         assert!(!d.contains("warning:") && !d.contains("could not compile"), "{d}");
     }
 
+    #[test_id(tdxja4d)]
     #[test]
     fn a_lint_text_with_an_error_line_keeps_every_finding() {
         let d = digest("t", &[], &format!("error: something the rule quotes\n{FINDING}\ngate-step RED rc=1 :: spira-lint\n"));
         assert!(d.contains("error: something the rule quotes") && d.contains(FINDING), "{d}");
     }
 
+    #[test_id(tpel3j6)]
     #[test]
     fn an_indented_marker_still_splits_the_steps_and_attribution_lines_are_recorded_as_why() {
         let steps = red_steps("one\n  gate-step ok rc=0 :: a\ntwo\ngate-step RED rc=1 :: b\n");
@@ -609,6 +630,7 @@ mod tests {
         assert!(cause.contains("why spira-lint: red\nSTEP b\n  two"), "{cause}");
     }
 
+    #[test_id(te7zkj3)]
     #[test]
     fn one_kept_entry_is_referenced_by_a_fact_on_every_bead_it_judged() {
         let run = testkit::TempDir::new("kar");

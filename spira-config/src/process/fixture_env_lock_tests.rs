@@ -2,6 +2,7 @@ use super::fixture_toml;
 use std::sync::mpsc;
 use std::time::Duration;
 
+#[test_id(tr9l7gj)]
 #[test]
 fn fixture_toml_reads_the_home_under_the_environment_lock_not_a_neighbours_swap() {
     let dir = testkit::TempDir::new("fixture-env-lock");

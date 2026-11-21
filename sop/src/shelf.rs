@@ -98,27 +98,32 @@ pub fn symptom_of(text: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(twhbv8o)]
     #[test]
     fn empty_raw_is_unreadable() {
         assert!(parse("").is_none());
         assert!(parse("   ").is_none());
     }
 
+    #[test_id(tudeh1a)]
     #[test]
     fn unparseable_raw_is_unreadable() {
         assert!(parse("not json").is_none());
     }
 
+    #[test_id(t9pl1nn)]
     #[test]
     fn a_non_object_is_unreadable() {
         assert!(parse("[1,2,3]").is_none());
     }
 
+    #[test_id(t5pgmkb)]
     #[test]
     fn an_empty_object_is_a_real_empty_shelf() {
         assert_eq!(parse("{}"), Some(BTreeMap::new()));
     }
 
+    #[test_id(tqx25ia)]
     #[test]
     fn only_sop_prefixed_string_keys_survive_and_are_stripped() {
         let raw = r#"{"sop-a": "  text  ", "law-b": "not a sop", "sop-c": 5}"#;
@@ -127,6 +132,7 @@ mod tests {
         assert_eq!(m["sop-a"], "text");
     }
 
+    #[test_id(ti37iea)]
     #[test]
     fn a_retirement_record_is_never_a_live_sop() {
         let r = Retired { by: "a".into(), at: "t".into(), epoch: 1, reason: "why".into(), text: "SYMPTOM: s".into(), replaced_by: None };
@@ -136,6 +142,7 @@ mod tests {
         assert_eq!(parse_retired(&raw).unwrap()["sop-x"], r);
     }
 
+    #[test_id(trgzwzl)]
     #[test]
     fn replaced_by_is_written_only_when_set_and_round_trips_both_ways() {
         let mut r = Retired { by: "a".into(), at: "t".into(), epoch: 1, reason: "why".into(), text: "x".into(), replaced_by: None };
@@ -146,12 +153,14 @@ mod tests {
         assert_eq!(Retired::from_json(&r.to_json()), Some(r));
     }
 
+    #[test_id(tneqaec)]
     #[test]
     fn slugify_adds_or_keeps_prefix() {
         assert_eq!(slugify("disk-full"), "sop-disk-full");
         assert_eq!(slugify("sop-disk-full"), "sop-disk-full");
     }
 
+    #[test_id(tvfwqwf)]
     #[test]
     fn symptom_of_extracts_the_line() {
         assert_eq!(symptom_of("SYMPTOM: disk is full\nCHECK: df\n"), "disk is full");

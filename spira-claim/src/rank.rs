@@ -549,6 +549,7 @@ mod tests {
         r.iter().map(|k| k.id.as_str()).collect()
     }
 
+    #[test_id(tqmptle)]
     #[test]
     fn epic_priority_ranks_first() {
         let rows = vec![row("a", 2, Some("E2"), "2026-01-01"), row("b", 3, Some("E1"), "2026-01-02")];
@@ -556,6 +557,7 @@ mod tests {
         assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["b", "a"]);
     }
 
+    #[test_id(t8a6h45)]
     #[test]
     fn a_p0_child_of_a_p1_epic_outranks_a_standalone_p1() {
         let rows = vec![row("solo", 1, None, "2026-01-01"), row("kid", 0, Some("E"), "2026-02-01")];
@@ -565,6 +567,7 @@ mod tests {
         assert_eq!(r[0].epic_priority, 0);
     }
 
+    #[test_id(tatid6i)]
     #[test]
     fn equal_effective_priority_keeps_epic_first_order() {
         let rows = vec![row("a", 1, Some("E1"), "2026-01-01"), row("b", 0, Some("E2"), "2026-01-02")];
@@ -575,6 +578,7 @@ mod tests {
         assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["a", "b"]);
     }
 
+    #[test_id(tg4o8ha)]
     #[test]
     fn started_epic_first_at_equal_priority() {
         let rows = vec![row("a", 1, Some("E1"), "2026-01-01"), row("b", 1, Some("E2"), "2026-01-02")];
@@ -582,6 +586,7 @@ mod tests {
         assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["b", "a"]);
     }
 
+    #[test_id(tfjmmkp)]
     #[test]
     fn bead_priority_within_epic_then_resumable_then_oldest() {
         let rows = vec![
@@ -595,6 +600,7 @@ mod tests {
         assert_eq!(ids(&rank(&rows, &lk, &res, &BTreeSet::new())), ["hi", "res", "old", "new"]);
     }
 
+    #[test_id(tx5xcuj)]
     #[test]
     fn unaffiliated_bead_is_its_own_epic_at_its_own_priority() {
         let rows = vec![row("solo", 1, None, "2026-01-01"), row("kid", 2, Some("E"), "2026-01-01")];
@@ -605,12 +611,14 @@ mod tests {
         assert_eq!(r[1].epic_started, 1);
     }
 
+    #[test_id(ty6mkji)]
     #[test]
     fn epic_missing_from_lookup_uses_bead_priority() {
         let rows = vec![row("a", 2, Some("Egone"), "2026-01-01"), row("b", 1, None, "2026-01-01")];
         assert_eq!(ids(&rank(&rows, &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new())), ["b", "a"]);
     }
 
+    #[test_id(t5z0pfl)]
     #[test]
     fn missing_priority_is_99_and_age_falls_back_to_updated() {
         let mut a = row("a", 0, None, "");
@@ -621,12 +629,14 @@ mod tests {
         assert_eq!((r.epic_priority, r.bead_priority, r.age.as_str()), (99, 99, "2026-05-05"));
     }
 
+    #[test_id(ty186n5)]
     #[test]
     fn ties_break_on_id_deterministically() {
         let rows = vec![row("b", 1, None, "t"), row("a", 1, None, "t")];
         assert_eq!(ids(&rank(&rows, &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new())), ["a", "b"]);
     }
 
+    #[test_id(te83y9p)]
     #[test]
     fn epics_are_never_ranked() {
         let mut e = row("E", 0, None, "t");
@@ -635,6 +645,7 @@ mod tests {
         assert!(top_tier(&[e], &EpicLookup::default(), &BTreeSet::new()).is_empty());
     }
 
+    #[test_id(tec0you)]
     #[test]
     fn express_ranks_first_whatever_its_id() {
         let mut x = row("p0-z", 0, None, "2026-03-01");
@@ -647,6 +658,7 @@ mod tests {
     /// sp-2kntz0, law-a-beads-priority-is-a-floor: the express label outranks REWORK and every
     /// priority of fresh work. An express bead filed at P1 still goes before a fresh P0 and a
     /// REWORK P2.
+    #[test_id(t578prp)]
     #[test]
     fn express_outranks_a_better_priority_and_rework() {
         let mut p1x = row("p1-x", 1, None, "2026-03-01");
@@ -660,6 +672,7 @@ mod tests {
 
     /// sp-2kntz0: an express P0 and a non-express P1 both outrank older fresh P2s, in that
     /// order, whatever their ids and ages.
+    #[test_id(t6ndfct)]
     #[test]
     fn express_p0_then_p1_ahead_of_older_p2s() {
         let mut x = row("sp-zzz", 0, None, "2026-11-07T00:41:00Z");
@@ -677,6 +690,7 @@ mod tests {
     /// sp-2kntz0: priority is the planning plane's, as filed and as amended — `plan items`
     /// rows are what the ranking reads, so a row re-read after `amend --priority 0` ranks at
     /// P0, ahead of the P1 it was filed beside.
+    #[test_id(tni5r8i)]
     #[test]
     fn a_bead_filed_p1_and_amended_to_p0_ranks_at_p0() {
         let filed = r#"[{"id":"sp-am","priority":1,"created_at":"2026-11-07T02:00:00Z","labels":["repo:spira"],"issue_type":"task","dependencies":[]},
@@ -688,6 +702,7 @@ mod tests {
         assert_eq!((ids(&r), r[0].bead_priority), (vec!["sp-am", "sp-p1"], 0));
     }
 
+    #[test_id(td4dckb)]
     #[test]
     fn equal_priority_non_express_takes_the_older_not_the_lower_id() {
         let rows = vec![row("a-new", 0, None, "2026-02-01"), row("z-old", 0, None, "2026-01-01")];
@@ -695,12 +710,14 @@ mod tests {
         assert_eq!(top_tier(&rows, &EpicLookup::default(), &BTreeSet::new()).len(), 2);
     }
 
+    #[test_id(tzcx88v)]
     #[test]
     fn tsv_matches_epic_rank_rows_columns() {
         let r = rank_one(&row("sp-a", 1, Some("sp-E"), "2026-01-01T00:00:00Z"), &EpicLookup { prio: [("sp-E".into(), 0)].into(), started: vec!["sp-E".into()] }, &BTreeSet::new(), &BTreeSet::new());
         assert_eq!(r.tsv(), "0\t0\t1\t1\t2026-01-01T00:00:00Z\tsp-a\tsp-E");
     }
 
+    #[test_id(tt2cx8d)]
     #[test]
     fn rework_outranks_fresh_ready_whatever_its_priority_and_orders_by_priority_then_age() {
         let rows = vec![
@@ -717,6 +734,7 @@ mod tests {
         assert_eq!(top_tier(&rows, &lk, &rw), ["p1rw|spira/p1rw|spira|0|0|1"]);
     }
 
+    #[test_id(tlwyx8w)]
     #[test]
     fn top_tier_lines() {
         let rows = vec![row("a", 1, Some("E"), "t"), row("b", 1, Some("E"), "t"), row("c", 2, Some("E"), "t")];
@@ -725,6 +743,7 @@ mod tests {
     }
 
     /// sp-mve9i: a child's progress is its lifecycle row, whatever bd's status says.
+    #[test_id(thv3i8m)]
     #[test]
     fn epic_started_rule() {
         let mut c = row("c", 1, None, "t");
@@ -738,6 +757,7 @@ mod tests {
         assert!(epic_started(&[c], &at(BeadState::Landed)));
     }
 
+    #[test_id(tr1x4a0)]
     #[test]
     fn parse_ready_contract() {
         assert!(parse_ready("").unwrap().is_empty());
@@ -768,6 +788,7 @@ mod tests {
         (id.into(), r)
     }
 
+    #[test_id(t8qbwhj)]
     #[test]
     fn a_member_of_an_open_integration_is_carried_and_the_integration_is_not() {
         let ints: Integrations = vec![("I".into(), vec!["A".into(), "B".into()])];
@@ -779,6 +800,7 @@ mod tests {
         assert_eq!(carrier("A", &ints, &landed), None, "a landed integration carries nothing");
     }
 
+    #[test_id(thq8cgw)]
     #[test]
     fn an_incident_never_stacks_on_a_certified_fix_but_claims_once_it_lands() {
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
@@ -792,6 +814,7 @@ mod tests {
         assert_eq!(claimable(&inc, &landed, &bd, cap), Verdict::Claimable { depth: 0 });
     }
 
+    #[test_id(t09deqo)]
     #[test]
     fn a_pilgrimage_never_stacks_on_a_certified_feature_but_claims_once_it_lands() {
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
@@ -808,6 +831,7 @@ mod tests {
         assert_eq!(claimable(&pil, &landed, &bd, cap), Verdict::Claimable { depth: 0 });
     }
 
+    #[test_id(tcy2yfe)]
     #[test]
     fn stacked_blocker_certified_is_claimable() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[HoldKind::Wait], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
@@ -815,6 +839,7 @@ mod tests {
         assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::Claimable { depth: 1 });
     }
 
+    #[test_id(tez863n)]
     #[test]
     fn a_rework_on_the_stack_the_gate_went_red_on_is_not_claimable_until_the_tip_moves() {
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
@@ -830,6 +855,7 @@ mod tests {
         assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::Claimable { depth: 1 }, "only a gate-red reason repeats");
     }
 
+    #[test_id(tpu8oy8)]
     #[test]
     fn stack_plan_names_the_stacked_prerequisites_tip() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
@@ -839,6 +865,7 @@ mod tests {
         assert_eq!(stack.get("A").map(String::as_str), Some("tip-A"));
     }
 
+    #[test_id(tjnw8ic)]
     #[test]
     fn stack_plan_omits_a_landed_blocker_it_does_not_stack_on() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Landed, &[], 0)].into();
@@ -848,6 +875,7 @@ mod tests {
         assert!(stack.is_empty(), "a landed prerequisite is satisfied, not stacked on");
     }
 
+    #[test_id(tx2ffmt)]
     #[test]
     fn stack_plan_too_deep_still_reports_the_attempted_stack() {
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
@@ -856,6 +884,7 @@ mod tests {
         assert_eq!(err, Verdict::TooDeep { depth: 5, max: 4 });
     }
 
+    #[test_id(t84srwm)]
     #[test]
     fn a_dependent_of_a_conflicting_parent_is_blocked_until_the_parent_rebases() {
         let tmp = testkit::TempDir::new("rank-sc");
@@ -873,6 +902,7 @@ mod tests {
         assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Claimable { depth: 1 }, "the parent's tip moved");
     }
 
+    #[test_id(tcw283c)]
     #[test]
     fn an_old_marker_on_an_in_delivery_parent_does_not_block_its_dependent() {
         let tmp = testkit::TempDir::new("rank-sc-old");
@@ -889,6 +919,7 @@ mod tests {
         assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Claimable { depth: 1 });
     }
 
+    #[test_id(t6779cj)]
     #[test]
     fn a_dependent_waiting_on_a_conflicting_blocker_is_released_when_the_blocker_lands() {
         let tmp = testkit::TempDir::new("rank-sc-land");
@@ -903,6 +934,7 @@ mod tests {
         assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Claimable { depth: 0 }, "landed: one rebase, no stack");
     }
 
+    #[test_id(trakf1v)]
     #[test]
     fn stacked_blocker_only_submitted_waits() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Submitted, &[], 0)].into();
@@ -910,6 +942,7 @@ mod tests {
         assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::Blocked("A".into()));
     }
 
+    #[test_id(tqjht3h)]
     #[test]
     fn a_blocker_landing_releases_its_dependent_with_no_hand_step_but_a_manual_hold_never_lifts() {
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
@@ -924,6 +957,7 @@ mod tests {
         assert_eq!(claimable(&dep, &parked, &bd, 0), Verdict::Held(HoldKind::Manual));
     }
 
+    #[test_id(truzm4x)]
     #[test]
     fn blocker_epic_waits_for_close() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0)].into();
@@ -936,6 +970,7 @@ mod tests {
         assert_eq!(claimable(&blocked_on("B", "E"), &lc2, &open, 4), Verdict::Blocked("E".into()));
     }
 
+    #[test_id(t4ccc9d)]
     #[test]
     fn a_blocks_edge_onto_the_candidates_own_open_epic_does_not_block() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0)].into();
@@ -945,6 +980,7 @@ mod tests {
         assert_eq!(claimable(&child, &lc, &open, 4), Verdict::Claimable { depth: 0 });
     }
 
+    #[test_id(t76metl)]
     #[test]
     fn cross_repo_blocker_waits_for_landed() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
@@ -954,6 +990,7 @@ mod tests {
         assert_eq!(claimable(&blocked_on("B", "A"), &lc2, &bd, 4), Verdict::Claimable { depth: 0 });
     }
 
+    #[test_id(tr6otlq)]
     #[test]
     fn depth_capped_stack() {
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
@@ -963,6 +1000,7 @@ mod tests {
         assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::TooDeep { depth: 5, max: 4 });
     }
 
+    #[test_id(t8zy4hf)]
     #[test]
     fn stack_max_depth_zero_is_todays_rule() {
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
@@ -975,6 +1013,7 @@ mod tests {
         parse_lifecycle(&format!(r#"[{{"bead_id":"B","state":"READY","holds":["{hold}"],"reason":"{reason}"}}]"#)).unwrap()
     }
 
+    #[test_id(tgs5zkg)]
     #[test]
     fn an_unexpired_wait_snooze_is_not_claimable_and_an_expired_one_is() {
         let bd = HashMap::new();
@@ -986,6 +1025,7 @@ mod tests {
         assert!(crate::ready::lifecycle_ready_ids(&snooze_snapshot(future, "wait")).is_empty());
     }
 
+    #[test_id(twmulr9)]
     #[test]
     fn own_row_rules() {
         let bd = HashMap::new();
@@ -1001,6 +1041,7 @@ mod tests {
 
     /// sp-mve9i: a rowless work blocker is not live work — bd's status is not read for it;
     /// a rowless gate is a non-work bead whose bd status is its state.
+    #[test_id(tsic55w)]
     #[test]
     fn blocker_with_no_lifecycle_row() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0)].into();
@@ -1016,6 +1057,7 @@ mod tests {
 
     /// A SUPERSEDED or DROPPED blocker is over: the machine's terminal word releases it,
     /// whatever bd's status still says.
+    #[test_id(t1nvorb)]
     #[test]
     fn terminal_blocker_is_done_by_the_machine() {
         let open: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
@@ -1025,6 +1067,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4mcysy)]
     #[test]
     fn a_split_child_and_a_followup_both_wait_for_an_unlanded_parent() {
         let (_, parent) = bdrec("P", "open", "task", "r");
@@ -1042,6 +1085,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2m6wor)]
     #[test]
     fn a_tipless_ready_parent_is_a_coordination_bead_for_a_followup_but_not_a_split_child() {
         let (_, parent) = bdrec("P", "open", "task", "r");
@@ -1057,12 +1101,14 @@ mod tests {
         assert_eq!(claimable(&follow, &lc, &bd, 0), Verdict::Blocked("P".into()));
     }
 
+    #[test_id(tanw8yh)]
     #[test]
     fn only_parented_rows_add_a_parent_to_the_blockers_to_fetch() {
         assert!(all_blockers(&[row("A", 1, None, "t"), row("B", 1, None, "t")]).is_empty());
         assert_eq!(all_blockers(&[row("A", 1, None, "t"), row("B", 1, Some("P"), "t")]), ["P"]);
     }
 
+    #[test_id(tijz9mj)]
     #[test]
     fn a_child_of_an_open_epic_is_claimable_without_a_blocks_edge() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0)].into();
@@ -1070,6 +1116,7 @@ mod tests {
         assert_eq!(claimable(&row("B", 1, Some("E"), "t"), &lc, &open, 4), Verdict::Claimable { depth: 0 });
     }
 
+    #[test_id(tw3uwnr)]
     #[test]
     fn a_child_stacks_on_a_certified_blocker_but_waits_for_a_certified_parent() {
         let bd: HashMap<_, _> = [bdrec("P", "open", "task", "spira")].into();
@@ -1083,6 +1130,7 @@ mod tests {
         }
     }
 
+    #[test_id(thb5hrs)]
     #[test]
     fn parent_child_and_relates_edges_do_not_block() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0)].into();
@@ -1092,6 +1140,7 @@ mod tests {
         assert_eq!(claimable(&b, &lc, &HashMap::new(), 4), Verdict::Claimable { depth: 0 });
     }
 
+    #[test_id(tfiolbf)]
     #[test]
     fn parse_lifecycle_string_valued_rows() {
         let m = parse_lifecycle(r#"[{"bead_id":"a","state":"CERTIFIED","holds":"[\"wait\"]","stack_depth":"2"},{"bead_id":"b","state":"READY","holds":"","version":"3"}]"#).unwrap();
@@ -1103,6 +1152,7 @@ mod tests {
         assert!(parse_lifecycle(r#"[{"bead_id":"a","state":"NOPE"}]"#).is_err());
     }
 
+    #[test_id(t8mv15i)]
     #[test]
     fn express_ids_reads_the_column_in_every_encoding_and_refuses_non_json() {
         let ids = express_ids(r#"[{"bead_id":"a","express":"1"},{"bead_id":"b","express":0},{"bead_id":"c","express":true},{"bead_id":"d"},{"bead_id":"e","express":"0"}]"#).unwrap();
@@ -1120,6 +1170,7 @@ mod tests {
         ready.iter().filter(|r| matches!(claimable(r, &lc, &bd, 0), Verdict::Claimable { .. })).count()
     }
 
+    #[test_id(ti59qr8)]
     #[test]
     fn a_candidate_blocked_on_an_open_epic_stays_blocked_and_is_admitted_once_the_epic_closes() {
         assert_eq!(epic_blocked_count("open"), 0);

@@ -332,6 +332,7 @@ mod tests {
     use spira_store::lc_call::fake::Content;
     use std::sync::Arc;
 
+    #[test_id(tw3a0pm)]
     #[test]
     fn slays_bead_writes_are_content_requests() {
         let door = Arc::new(Content::new(vec![]));

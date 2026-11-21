@@ -48,6 +48,7 @@ fn with(mut v: Value, ptr: &str, x: Value) -> Value {
     v
 }
 
+#[test_id(tml0tvh)]
 #[test]
 fn the_good_section_is_admitted_and_its_distance_evaluates() {
     let s = parse_section(&good()).unwrap();
@@ -55,6 +56,7 @@ fn the_good_section_is_admitted_and_its_distance_evaluates() {
     assert!((s.distance_value(kind).unwrap().unwrap() - 1.6).abs() < 1e-9);
 }
 
+#[test_id(t9hl9k8)]
 #[test]
 fn unknown_fields_kinds_and_api_versions_are_refused_naming_the_field() {
     let mut v = good();
@@ -77,6 +79,7 @@ fn unknown_fields_kinds_and_api_versions_are_refused_naming_the_field() {
     assert_eq!(refused(with(good(), "/apiVersion", json!("spira/v2"))).field, "apiVersion"); // not a path: JSON pointer
 }
 
+#[test_id(tymvmms)]
 #[test]
 fn andon_is_refused_by_name_until_its_design_registers_it() {
     let r = refused(with(good(), "/kind", json!("Andon"))); // not a path: JSON pointer
@@ -84,6 +87,7 @@ fn andon_is_refused_by_name_until_its_design_registers_it() {
     assert!(r.rule.contains("Andon"), "{r}");
 }
 
+#[test_id(tp2ag36)]
 #[test]
 fn a_horizon_shorter_than_the_moved_fields_window_plus_target_latency_is_refused() {
     let v = with(good(), "/actions/0/moves", json!("wedged")); // not a path: JSON pointer
@@ -93,6 +97,7 @@ fn a_horizon_shorter_than_the_moved_fields_window_plus_target_latency_is_refused
     admit(&parse_section(&ok).unwrap()).expect("1h window + 5m latency = 65m");
 }
 
+#[test_id(t0to3md)]
 #[test]
 fn only_bounded_steps_are_admitted() {
     for bad in ["set to 4", "rebuild", "+30", "+N", "26% fewer", "0% more", "one", "+1 SLOT", "−0", "one rebuild"] {
@@ -105,6 +110,7 @@ fn only_bounded_steps_are_admitted() {
     }
 }
 
+#[test_id(ty78f98)]
 #[test]
 fn stopping_an_undeclared_condition_and_a_non_numeric_moves_are_refused() {
     let r = refused(with(good(), "/actions/0/stopping", json!(true))); // not a path: JSON pointer
@@ -120,6 +126,7 @@ fn stopping_an_undeclared_condition_and_a_non_numeric_moves_are_refused() {
     assert_eq!(refused(v).field, "status.conditions[0].reason");
 }
 
+#[test_id(tp8a3yx)]
 #[test]
 fn ownership_revision_name_flow_and_time_fields_are_checked() {
     assert_eq!(refused(with(good(), "/metadata/owner", json!("intruder"))).code, "owner"); // not a path: JSON pointer
@@ -141,6 +148,7 @@ fn ownership_revision_name_flow_and_time_fields_are_checked() {
     admit(&parse_section(&v).unwrap()).expect("a ±1 knob is one declaration per class");
 }
 
+#[test_id(tcnekpq)]
 #[test]
 fn a_publish_must_declare_when_it_observed_and_for_how_long() {
     let mut v = good();
@@ -150,6 +158,7 @@ fn a_publish_must_declare_when_it_observed_and_for_how_long() {
     assert_eq!(admit_publish(&s).unwrap_err().field, "metadata.max_age");
 }
 
+#[test_id(tg90c91)]
 #[test]
 fn freshness_is_age_against_max_age_and_generation_lag_is_its_own_fact() {
     let mut s = parse_section(&good()).unwrap();
@@ -169,6 +178,7 @@ fn freshness_is_age_against_max_age_and_generation_lag_is_its_own_fact() {
     assert!(matches!(freshness(&s, observed), Freshness::Stale { age_secs: None, .. }));
 }
 
+#[test_id(tzwaho4)]
 #[test]
 fn times_and_durations_parse_in_the_one_form_this_harness_writes() {
     assert_eq!(parse_rfc3339("1970-01-01T00:00:00Z"), Some(0));
@@ -186,6 +196,7 @@ fn times_and_durations_parse_in_the_one_form_this_harness_writes() {
     assert_eq!(Window::parse("1h").map(Window::secs), Some(3600));
 }
 
+#[test_id(t1grnn4)]
 #[test]
 fn keys_and_refs_name_one_section() {
     assert_eq!(section_key("Probe", "a"), "telemetry/sections/Probe/a");

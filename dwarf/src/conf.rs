@@ -366,6 +366,7 @@ mod tests {
         kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
+    #[test_id(tdva0eu)]
     #[test]
     fn rune_defaults_match_dwarf_sh() {
         let f = Rune::from_vars("builder", &vars(&[("RUNE_LABELS", "spira,plan")]));
@@ -381,6 +382,7 @@ mod tests {
         assert_eq!(g.system_prompt, SystemPrompt::Replace);
     }
 
+    #[test_id(tws9y49)]
     #[test]
     fn fence_rules() {
         assert!(fenced("b", "", "").is_err());
@@ -395,6 +397,7 @@ mod tests {
         src.contains("${RUNE_MODEL") || src.contains("$RUNE_MODEL")
     }
 
+    #[test_id(tqnigev)]
     #[test]
     fn no_launcher_scrapes_a_model_out_of_the_rune_or_hardcodes_one() {
         assert!(reads_rune_model("--model \"${RUNE_MODEL:-x}\""), "the matcher can see its offender");
@@ -407,6 +410,7 @@ mod tests {
         assert!(reflect.contains("SPIRA_REFLECT_MODEL:-claude-opus-5"));
     }
 
+    #[test_id(t95r3w0)]
     #[test]
     fn persona_model_reads_the_declared_model_and_refuses_an_undeclared_one() {
         let dir = testkit::TempDir::new("dwarf-conf");
@@ -420,6 +424,7 @@ mod tests {
         assert!(e.contains("persona.ops.model is not declared"), "{e}");
     }
 
+    #[test_id(tecqhkr)]
     #[test]
     fn a_retired_sop_required_key_draws_a_warning_naming_the_rune_and_an_absent_one_none() {
         let set = BTreeMap::from([("RUNE_SOP_REQUIRED".to_string(), "1".to_string())]);

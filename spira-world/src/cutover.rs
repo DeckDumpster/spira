@@ -167,6 +167,7 @@ mod tests {
         }
     }
 
+    #[test_id(tt6ucv2)]
     #[test]
     fn cutover_mode_refuses_a_world_that_is_not_stopped() {
         let w = W::new("cutover-unstopped");
@@ -176,6 +177,7 @@ mod tests {
         assert!(scoped_stop::repo_stops(w.run()).is_empty() && read(w.run()).unwrap().is_none(), "a refusal writes nothing");
     }
 
+    #[test_id(tgbtas4)]
     #[test]
     fn cutover_mode_refuses_to_overwrite_a_stop_file_it_cannot_read() {
         let w = W::new("cutover-unreadable-stop");
@@ -189,6 +191,7 @@ mod tests {
         assert!(w.d.join("world.halted").is_file() && read(w.run()).unwrap().is_none(), "a refusal writes nothing");
     }
 
+    #[test_id(tzgrj7b)]
     #[test]
     fn cutover_mode_refuses_while_a_dwarf_lives() {
         let w = W::new("cutover-live-dwarf");
@@ -198,12 +201,14 @@ mod tests {
         assert!(scoped_stop::repo_stops(w.run()).is_empty());
     }
 
+    #[test_id(t46keo2)]
     #[test]
     fn cutover_lanes_are_every_scoped_stop_lane_but_rounds() {
         let want: Vec<&str> = scoped_stop::LANES.iter().copied().filter(|l| *l != "rounds").collect();
         assert_eq!(LANES.to_vec(), want);
     }
 
+    #[test_id(t92f58m)]
     #[test]
     fn cutover_mode_stops_every_non_round_lane_on_every_repo_records_why_and_lifts_the_stamp() {
         let w = W::new("cutover-enter");
@@ -222,6 +227,7 @@ mod tests {
         assert!(w.enter(&[]).unwrap_err().contains("already in cutover mode"));
     }
 
+    #[test_id(trda8dq)]
     #[test]
     fn leaving_lifts_exactly_the_stops_cutover_mode_laid() {
         let w = W::new("cutover-leave");
@@ -237,6 +243,7 @@ mod tests {
         assert_eq!(leave(w.run()).unwrap(), None, "leaving twice is a no-op");
     }
 
+    #[test_id(t9o5uma)]
     #[test]
     fn a_prior_stop_on_every_lane_gets_its_owner_back() {
         let w = W::new("cutover-full-prior");
@@ -248,6 +255,7 @@ mod tests {
         assert_eq!(scoped_stop::stop_for(w.run(), "spira", "claims"), Some(before));
     }
 
+    #[test_id(toprc5a)]
     #[test]
     fn status_names_the_revision_the_owner_and_the_way_out() {
         let w = W::new("cutover-describe");

@@ -25,16 +25,19 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(tasziqz)]
 #[test]
 fn t1_registered_boots_and_arms_a_60s_tick() {
     t::t1_registered_and_boots::<H>(SET, MIN);
 }
 
+#[test_id(tu2u3e9)]
 #[test]
 fn t2_no_pending_reply_is_the_probe_alone() {
     t::t2_silent::<H>(SET, &json(&Snapshot::default()));
 }
 
+#[test_id(tf3f86c)]
 #[test]
 fn t3_a_reply_steps_to_complete_once_and_a_second_complete_is_refused() {
     let h = t::handler::<H>(SET);
@@ -50,12 +53,14 @@ fn t3_a_reply_steps_to_complete_once_and_a_second_complete_is_refused() {
     assert_eq!(names(&acts), [task::INBOX], "an abandoned step is said once");
 }
 
+#[test_id(tted4yl)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_neither_bdq_nor_spira_lc() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/b/mail_reconcile.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(txsp87s)]
 #[test]
 fn t5_a_question_closes_and_answers_and_a_second_pass_is_silent() {
     let h = t::handler::<H>(SET);
@@ -71,6 +76,7 @@ fn marked(cfg: &spira_runtime::tasks::b::kit::Cfg, effect: &str, ok: bool, body:
     serde_json::from_str::<task::Job>(&acts[0].input).unwrap().step
 }
 
+#[test_id(t3mc0o8)]
 #[test]
 fn a_close_refusal_is_the_runners_typed_answer_not_text_in_the_failure() {
     let h = t::handler::<H>(SET);
@@ -78,6 +84,7 @@ fn a_close_refusal_is_the_runners_typed_answer_not_text_in_the_failure() {
     assert_eq!(marked(&h.cfg, task::CLOSE, false, "m1/close: spira-lc exited 3: a bead title"), "fail:close", "the words 'exited 3' decide nothing");
 }
 
+#[test_id(tqq8sxu)]
 #[test]
 fn it_keeps_no_carry_row_however_many_replies_it_has_acted_on() {
     let rig = t::rig::<H>(1, SET, &json(&Snapshot { replies: vec![reply("m1", "question", &[])] }));
@@ -86,6 +93,7 @@ fn it_keeps_no_carry_row_however_many_replies_it_has_acted_on() {
     assert!(kept.is_empty(), "{kept:?}");
 }
 
+#[test_id(tob86vu)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![json(&Snapshot { replies: vec![reply("m1", "question", &[])] })], |_| {});

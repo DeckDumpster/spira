@@ -307,6 +307,7 @@ mod tests {
         TaskRig::new(7, Registration::new("toy", Toy { every: 60_000 })).unwrap().double("look", move |_| Ok(answer.into())).double("say", |_| Ok("said".into()))
     }
 
+    #[test_id(two53il)]
     #[test]
     fn a_quiet_task_passes_the_silence_check() {
         let mut r = rig("quiet");
@@ -314,6 +315,7 @@ mod tests {
         assert_silent_tick(&mut r, S);
     }
 
+    #[test_id(t3l9f68)]
     #[test]
     #[should_panic(expected = "journaled")]
     fn a_task_that_writes_every_tick_fails_the_silence_check() {
@@ -322,6 +324,7 @@ mod tests {
         assert_silent_tick(&mut r, S);
     }
 
+    #[test_id(trs2cvk)]
     #[test]
     fn advance_fires_the_cadence_and_records_probes_as_unjournaled() {
         let mut r = rig("quiet");
@@ -333,6 +336,7 @@ mod tests {
         assert_eq!(r.journaled().iter().filter(|e| e.kind.tag == SEEN).count(), 1);
     }
 
+    #[test_id(tsvqf6r)]
     #[test]
     fn an_effect_without_a_double_is_refused_with_the_production_text() {
         let mut r = TaskRig::new(1, Registration::new("toy", Toy { every: 60_000 })).unwrap().double("look", |_| Ok("loud".into()));
@@ -342,6 +346,7 @@ mod tests {
         assert!(r.journaled().iter().any(|e| e.kind.tag == EFFECT_FAILED && e.kind.body == "no runner for effect say"));
     }
 
+    #[test_id(thlwm5b)]
     #[test]
     fn two_runs_on_one_seed_give_one_trace_and_the_budget_reads_it() {
         let a = assert_deterministic(
@@ -358,6 +363,7 @@ mod tests {
         assert_journal_budget(&a, 1000);
     }
 
+    #[test_id(teuwxkn)]
     #[test]
     fn an_observe_task_runs_its_probes_and_its_writes_are_shadowed_not_run() {
         let reg = Registration::new("toy", Toy { every: 60_000 }).with_mode(Mode::Observe);
@@ -367,6 +373,7 @@ mod tests {
         assert_eq!(r.shadowed(), [EffectSpec { name: "say".into(), input: "hi".into(), deadline_ms: 100, key: "say".into() }]);
     }
 
+    #[test_id(ttxlbun)]
     #[test]
     fn effects_runnable_refuses_the_planted_name_and_names_what_is_missing() {
         assert_eq!(effects_runnable(&["a"], &["a"], &["a"]), Ok(()));

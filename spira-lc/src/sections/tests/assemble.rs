@@ -60,6 +60,7 @@ fn rev(v: &Option<String>) -> u64 {
     v.as_deref().unwrap().parse().unwrap()
 }
 
+#[test_id(t09wvmq)]
 #[test]
 fn both_documents_the_intents_and_the_pass_record_are_read_at_one_list_rev() {
     let r = rig_on(Interleave { inner: MemBackend::new(), fired: AtomicBool::new(true) });
@@ -97,6 +98,7 @@ fn both_documents_the_intents_and_the_pass_record_are_read_at_one_list_rev() {
     assert_eq!(a.n, 5);
 }
 
+#[test_id(tcp9bpu)]
 #[test]
 fn a_section_that_stops_publishing_reads_fresh_until_max_age_then_stale_and_stays_in_both_documents() {
     let r = rig();
@@ -123,6 +125,7 @@ fn a_section_that_stops_publishing_reads_fresh_until_max_age_then_stale_and_stay
     assert_eq!(age.publish_latency, PublishLatency::Late { target_secs: 300, over_secs: 601 });
 }
 
+#[test_id(tv7ytt2)]
 #[test]
 fn a_spec_generation_ahead_of_observed_generation_reads_not_caught_up_and_fresh_at_once() {
     let r = rig();
@@ -138,6 +141,7 @@ fn a_spec_generation_ahead_of_observed_generation_reads_not_caught_up_and_fresh_
     assert!(r.assembled().ages["Probe/a"].caught_up, "once observed, it has caught up");
 }
 
+#[test_id(trjmhgx)]
 #[test]
 fn an_unacked_intent_past_its_horizon_marks_its_target_section_until_it_is_acked() {
     let r = rig();
@@ -160,6 +164,7 @@ fn an_unacked_intent_past_its_horizon_marks_its_target_section_until_it_is_acked
     assert_eq!(derived(&r, "Probe/a"), [], "an acked intent is judged, not counted");
 }
 
+#[test_id(tb46qkr)]
 #[test]
 fn a_fresh_process_assembles_what_an_uninterrupted_pass_does_at_the_same_revision() {
     let backend = MemBackend::new();

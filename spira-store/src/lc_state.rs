@@ -508,6 +508,7 @@ pub fn holds_answer_from(code: i32, stdout: &str, why: &str) -> Lookup<(BeadStat
 mod tests {
     use super::*;
 
+    #[test_id(tikte2f)]
     #[test]
     fn a_checkpoint_reason_snoozes_like_a_timed_wait_and_is_told_apart() {
         let r = checkpoint_reason(1_900_000_000);
@@ -519,6 +520,7 @@ mod tests {
         assert!(names_directive("see snooze-until:7") && !names_directive("blocker unlanded"));
     }
 
+    #[test_id(tpuuuxp)]
     #[test]
     fn a_superseded_row_carries_its_successor_as_the_reason() {
         let r = row_of(&serde_json::json!({"bead_id": "sp-a", "state": "SUPERSEDED", "reason": "sp-x"})).unwrap();
@@ -526,6 +528,7 @@ mod tests {
         assert_eq!(row_of(&serde_json::json!({"bead_id": "sp-a", "state": "READY"})).unwrap().reason, None);
     }
 
+    #[test_id(tvjs2ck)]
     #[test]
     fn predicates_name_the_old_bd_decisions() {
         for s in ["SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
@@ -539,6 +542,7 @@ mod tests {
         assert!(is_claimable("READY") && is_claimable("REWORK") && !is_claimable("WORKING"));
     }
 
+    #[test_id(t2lc7tp)]
     #[test]
     fn list_and_show_parse_holds_either_way() {
         let rows = parse_rows(
@@ -555,6 +559,7 @@ mod tests {
     }
 
     /// sp-cxfgj5: a holds column that does not parse is "cannot tell", never "not held".
+    #[test_id(tvjcki9)]
     #[test]
     fn a_holds_column_that_does_not_parse_is_an_error_never_no_holds() {
         let bad = r#"[{"bead_id":"sp-a","state":"READY","holds":"cannot tell: deadline"}]"#;
@@ -564,6 +569,7 @@ mod tests {
     }
 
     /// sp-cxfgj5: exit 0 with no bead in it is not "no row" (that is exit 1).
+    #[test_id(tqojaso)]
     #[test]
     fn a_show_answer_with_no_bead_is_an_error_never_no_row() {
         assert!(parse_show("{}").is_err());
@@ -571,6 +577,7 @@ mod tests {
     }
 
     /// sp-cxfgj5: a stack or lease that does not parse is an error, not empty.
+    #[test_id(t3w69xt)]
     #[test]
     fn a_stack_or_lease_that_does_not_parse_is_an_error() {
         assert!(parse_rows(r#"[{"bead_id":"sp-a","state":"WORKING","stack":"[oops"}]"#).is_err());
@@ -578,6 +585,7 @@ mod tests {
         assert!(parse_rows(r#"[{"bead_id":"sp-a","state":"WORKING","express":"maybe"}]"#).is_err());
     }
 
+    #[test_id(tk2wi3j)]
     #[test]
     fn the_typed_read_is_enums_and_cannot_tell_is_a_variant() {
         let ok = r#"{"bead":{"bead_id":"sp-a","state":"WORKING","holder":"d1","holds":"[\"poison\",\"wait\"]","dwarf_phase":"building","version":"7"},"delivery":null}"#;

@@ -67,6 +67,7 @@ fn dwell(s: &Store<MemBackend>, argv: &[&str]) -> Value {
     serde_json::from_str(&out).unwrap()
 }
 
+#[test_id(tg5kn6y)]
 #[test]
 fn every_waiting_record_answers_with_its_state_repo_and_entry_time_and_terminal_ones_do_not() {
     let s = fresh();
@@ -83,6 +84,7 @@ fn every_waiting_record_answers_with_its_state_repo_and_entry_time_and_terminal_
     );
 }
 
+#[test_id(tj4vop3)]
 #[test]
 fn the_newest_claim_and_submit_per_repo_come_from_the_audit_log() {
     let s = fresh();
@@ -97,6 +99,7 @@ fn the_newest_claim_and_submit_per_repo_come_from_the_audit_log() {
     assert_eq!(d["complete"], true, "{d}");
 }
 
+#[test_id(t3wkszk)]
 #[test]
 fn an_ask_held_record_carries_when_its_ask_was_raised() {
     let s = fresh();
@@ -110,6 +113,7 @@ fn an_ask_held_record_carries_when_its_ask_was_raised() {
     assert_eq!((n["ask_held"].as_bool(), n.get("ask_since")), (Some(false), None), "{d}");
 }
 
+#[test_id(tvnxvof)]
 #[test]
 fn a_scan_that_stops_short_names_its_horizon_and_is_not_complete() {
     let s = fresh();
@@ -122,9 +126,10 @@ fn a_scan_that_stops_short_names_its_horizon_and_is_not_complete() {
     assert_eq!((d["complete"].as_bool(), d["horizon"].as_i64(), d["scanned"].as_u64()), (Some(true), Some(3_940), Some(0)), "an empty log is read to its start: {d}");
 }
 
+#[test_id(t04xl69)]
 #[test]
 fn landed_after_is_every_delivery_newer_than_the_mark_oldest_first() {
-    let mut idx = super::LastIndex::default();
+    let mut idx = super::super::LastIndex::default();
     let mut repo = |_: &str| Ok(Some("harness".to_string()));
     for at in [90, 120, 150, 110] {
         idx.fold("Delivered", "sp-a", at, "", &mut repo).unwrap();
@@ -146,6 +151,7 @@ fn landed_after_is_every_delivery_newer_than_the_mark_oldest_first() {
     assert_eq!(idx.last["harness"]["Delivered"], 150);
 }
 
+#[test_id(tobo5hm)]
 #[test]
 fn a_bad_flag_cannot_tell() {
     let s = fresh();
@@ -367,6 +373,7 @@ fn an_ask_held_record_with_no_ask_since_cannot_tell_and_names_the_migration() {
 
 /// Run by hand, release as lc-serve runs:
 /// `cargo test -p spira-lc --bin spira-lc --release dwell_ -- --ignored --nocapture`
+#[test_id(tqoh3nc)]
 #[test]
 #[ignore]
 fn dwell_over_a_day_on_a_production_sized_store_answers_from_the_index_inside_200ms_and_matches_the_audits() {
@@ -418,6 +425,7 @@ fn dwell_over_a_day_on_a_production_sized_store_answers_from_the_index_inside_20
     assert!(times[2] < std::time::Duration::from_millis(200), "{times:?}");
 }
 
+#[test_id(t9gvvr0)]
 #[test]
 fn a_warm_dwell_reads_only_the_revisions_committed_since_the_last_answer() {
     let s = fresh();
@@ -432,6 +440,7 @@ fn a_warm_dwell_reads_only_the_revisions_committed_since_the_last_answer() {
     assert!(d.scanned > 0 && d.scanned < 8, "{d:?}");
 }
 
+#[test_id(tm8tswp)]
 #[test]
 fn a_narrower_window_does_not_report_what_a_wider_one_indexed() {
     let s = fresh();
@@ -444,16 +453,18 @@ fn a_narrower_window_does_not_report_what_a_wider_one_indexed() {
     assert!(narrow.complete);
 }
 
+#[test_id(t22nuqv)]
 #[test]
 fn a_refused_or_other_machines_audit_is_not_a_bead_event_but_still_dates_the_scan() {
     let a = serde_json::json!({ "machine": "bead", "lc_key": "sp-a", "event": "Submit", "applied": false, "at": 7 });
-    assert_eq!(super::bead_audit(&a), (None, Some(7)));
+    assert_eq!(super::super::bead_audit(&a), (None, Some(7)));
     let b = serde_json::json!({ "machine": "delivery", "lc_key": "sp-a", "event": "Delivered", "applied": true, "at": 8 });
-    assert_eq!(super::bead_audit(&b), (None, Some(8)));
+    assert_eq!(super::super::bead_audit(&b), (None, Some(8)));
     let c = serde_json::json!({ "machine": "bead", "lc_key": "sp-a", "event": "Submit", "applied": true, "at": 9 });
-    assert_eq!(super::bead_audit(&c), (Some(("Submit", "sp-a")), Some(9)));
+    assert_eq!(super::super::bead_audit(&c), (Some(("Submit", "sp-a")), Some(9)));
 }
 
+#[test_id(tfzq1t2)]
 #[test]
 fn a_delivery_is_reported_with_the_commit_its_audit_recorded() {
     use state_store::{events_key, Backend, Object, Rev, Write};
@@ -509,6 +520,7 @@ fn a_delivery_is_reported_with_the_commit_its_audit_recorded() {
     );
 }
 
+#[test_id(tsqanyl)]
 #[test]
 fn a_delivery_whose_audit_recorded_no_commit_is_reported_with_an_empty_one() {
     use state_store::{events_key, Backend, Object, Rev, Write};
@@ -563,6 +575,7 @@ fn a_delivery_whose_audit_recorded_no_commit_is_reported_with_an_empty_one() {
     );
 }
 
+#[test_id(t4xbg64)]
 #[test]
 fn loop_transitions_and_dwell_share_one_advance() {
     let s = fresh();
@@ -573,9 +586,10 @@ fn loop_transitions_and_dwell_share_one_advance() {
     assert_eq!((t.scanned, t.complete), (0, true), "{t:?}");
 }
 
+#[test_id(t0w0t9m)]
 #[test]
 fn the_fold_keeps_landings_and_certified_stays_by_state_whatever_the_event() {
-    let mut idx = super::LastIndex::default();
+    let mut idx = super::super::LastIndex::default();
     let mut repo = |_: &str| Ok(Some("harness".to_string()));
     for (at, from, to) in [(100, "SUBMITTED", "CERTIFIED"), (150, "CERTIFIED", "CERTIFIED"), (400, "CERTIFIED", "LANDED"), (500, "READY", "WORKING")] {
         idx.fold_states("sp-a", at, (from, to), &mut repo).unwrap();
@@ -589,6 +603,7 @@ fn the_fold_keeps_landings_and_certified_stays_by_state_whatever_the_event() {
     assert!(idx.transitions.is_empty());
 }
 
+#[test_id(t9i2x8w)]
 #[test]
 fn a_stay_ending_in_the_window_is_reported_and_one_with_no_entry_in_the_index_is_not() {
     let s = fresh();
@@ -609,6 +624,7 @@ fn landed_at(s: &Store<MemBackend>, id: &str, from: BeadState, kind: BeadEventKi
     assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
 }
 
+#[test_id(tdiqmf9)]
 #[test]
 fn a_hand_landing_counts_as_the_repos_newest_delivered() {
     let s = fresh();
@@ -618,6 +634,7 @@ fn a_hand_landing_counts_as_the_repos_newest_delivered() {
     assert_eq!(d["last"]["harness"]["Delivered"], 3_000, "{d}");
 }
 
+#[test_id(tvogh9d)]
 #[test]
 fn a_settle_landed_certified_bead_counts_as_delivered() {
     let s = fresh();
@@ -630,6 +647,7 @@ fn a_settle_landed_certified_bead_counts_as_delivered() {
     assert_eq!(d["last"]["harness"]["Delivered"], 3_100, "{d}");
 }
 
+#[test_id(tu3ems3)]
 #[test]
 fn the_newest_arrival_in_landed_wins_across_round_and_hand_landings() {
     let s = fresh();
@@ -644,9 +662,10 @@ fn the_newest_arrival_in_landed_wins_across_round_and_hand_landings() {
     assert_eq!(d["last"]["harness"]["Delivered"], 3_000, "{d}");
 }
 
+#[test_id(tm67okx)]
 #[test]
 fn a_correction_or_a_non_landing_is_not_a_delivery() {
-    let mut idx = super::LastIndex::default();
+    let mut idx = super::super::LastIndex::default();
     let mut repo = |_: &str| Ok(Some("harness".to_string()));
     idx.fold_states("sp-z", 50, ("SUBMITTED", "LANDED"), &mut repo).unwrap();
     idx.fold_states("sp-a", 100, ("DROPPED", "LANDED"), &mut repo).unwrap();
@@ -655,6 +674,7 @@ fn a_correction_or_a_non_landing_is_not_a_delivery() {
     assert_eq!(idx.last["harness"]["Delivered"], 50, "only the real arrival counts: {:?}", idx.last);
 }
 
+#[test_id(tce989z)]
 #[test]
 fn the_first_dwell_on_a_production_sized_store_reads_no_more_than_a_chunk_and_says_it_is_short_and_warming_then_completes_it() {
     let z = production_sized(80_000);
@@ -664,7 +684,7 @@ fn the_first_dwell_on_a_production_sized_store_reads_no_more_than_a_chunk_and_sa
     assert_eq!(code, 0, "{out}");
     let d: Value = serde_json::from_str(&out).unwrap();
     let read = s.contract().backend().events_read();
-    assert!(read <= super::CHUNK_REVS as usize, "a cold request read {read} events keys");
+    assert!(read <= super::super::CHUNK_REVS as usize, "a cold request read {read} events keys");
     assert_eq!(d["complete"], false, "{d}");
     assert!(d["horizon"].as_i64().unwrap() >= now - 86_400, "{d}");
     warming_in_calls(&z);
@@ -692,6 +712,7 @@ fn warming_in_calls(z: &Sized) {
     assert_eq!(got, want);
 }
 
+#[test_id(t29v6rq)]
 #[test]
 fn loop_transitions_on_a_fresh_store_reads_nothing_back_and_is_short_until_warmed() {
     let s = fresh();
@@ -703,15 +724,16 @@ fn loop_transitions_on_a_fresh_store_reads_nothing_back_and_is_short_until_warme
     assert_eq!((t.scanned, t.complete), (0, true), "{t:?}");
 }
 
+#[test_id(tntey77)]
 #[test]
 fn a_request_folds_a_bounded_tail_and_answers_short_until_the_sweep_catches_up() {
     let s = fresh();
     warm(&s, 4_000, 100);
-    for i in 0..(super::FORWARD_REVS as usize) {
+    for i in 0..(super::super::FORWARD_REVS as usize) {
         work(&s, &format!("sp-{i}"), "harness", 2_000 + i as i64, None);
     }
     let d = s.dwell(4_000, 100, None).unwrap();
-    assert!(!d.complete && d.scanned <= super::FORWARD_REVS as usize, "complete {} scanned {}", d.complete, d.scanned);
+    assert!(!d.complete && d.scanned <= super::super::FORWARD_REVS as usize, "complete {} scanned {}", d.complete, d.scanned);
     assert_eq!(d.horizon, 4_000, "an index behind the head claims no coverage");
     warm(&s, 4_000, 100);
     assert!(s.dwell(4_000, 100, None).unwrap().complete);

@@ -88,6 +88,7 @@ pub fn history_brief(history: &[Rejection], model: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(te5jupx)]
     #[test]
     fn the_second_rejection_escalates_and_the_third_on_the_stronger_model_holds() {
         let st = |rejections, stronger_rejections| Standing { rejections, stronger_rejections, history: vec![] };
@@ -97,12 +98,14 @@ mod tests {
         );
     }
 
+    #[test_id(tvml3ym)]
     #[test]
     fn a_rejection_round_trips_and_a_foreign_cause_is_dropped() {
         let r = Rejection::new("eject-red", "test-x.sh", "abc", "line one\nline \"two\"");
         assert_eq!(parse_all(&[r.encode(), "not json".into()]), vec![r]);
     }
 
+    #[test_id(ts9ldgb)]
     #[test]
     fn the_brief_names_every_rejection_with_checks_tip_and_reason() {
         let h = vec![Rejection::new("eject-red", "test-x.sh", "t1", "five tests failed"), Rejection::new("gate-red", "", "t2", "did not compile")];
@@ -113,6 +116,7 @@ mod tests {
         assert_eq!(history_brief(&[], "m"), "");
     }
 
+    #[test_id(tu00se0)]
     #[test]
     fn a_reason_is_bounded() {
         assert_eq!(Rejection::new("c", "s", "t", &"x".repeat(9000)).reason.len(), REASON_MAX);

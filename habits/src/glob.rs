@@ -29,6 +29,7 @@ fn skip_segment(s: &[u8]) -> Option<&[u8]> {
 mod tests {
     use super::matches;
 
+    #[test_id(tsph4qx)]
     #[test]
     fn globs() {
         assert!(matches("**/*.rs", "a.rs"));

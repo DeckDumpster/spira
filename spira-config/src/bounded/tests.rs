@@ -1,17 +1,20 @@
     use super::*;
     use std::io::Write;
 
+    #[test_id(ttb7fhc)]
     #[test]
     fn the_program_is_the_callers_direct_child() {
         let out = bounded("sh").args(["-c", "echo $PPID"]).output().unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), std::process::id().to_string());
     }
 
+    #[test_id(tglv5z1)]
     #[test]
     fn get_program_names_the_real_program() {
         assert_eq!(bounded("git").get_program(), "git");
     }
 
+    #[test_id(tunxd7c)]
     #[test]
     fn a_deadline_hit_reads_124() {
         let mk = || {
@@ -25,6 +28,7 @@
         assert_eq!(child.wait_with_output().unwrap().status.code(), Some(124));
     }
 
+    #[test_id(tzihn38)]
     #[test]
     fn expiry_kills_the_process_group() {
         let out = bounded_for("sh", "2").args(["-c", "sleep 30 & echo $!; wait"]).output().unwrap();
@@ -43,24 +47,28 @@
         assert!(gone, "backgrounded sleep {pid} survived the group kill");
     }
 
+    #[test_id(t1i7rzk)]
     #[test]
     fn a_child_killed_by_a_signal_reads_128_plus_n() {
         let out = bounded("sh").args(["-c", "kill -9 $$"]).output().unwrap();
         assert_eq!(out.status.code(), Some(137));
     }
 
+    #[test_id(t6d1tw1)]
     #[test]
     fn a_missing_program_reads_127() {
         let out = bounded("nonexistent/spira-no-such-program").output().unwrap();
         assert_eq!(out.status.code(), Some(127));
     }
 
+    #[test_id(t7kzokr)]
     #[test]
     fn a_program_that_cannot_execute_reads_126() {
         let out = bounded(system_paths::ETC_PASSWD).output().unwrap();
         assert_eq!(out.status.code(), Some(126));
     }
 
+    #[test_id(ta4ilqq)]
     #[test]
     fn a_blocked_stdin_write_is_released_by_the_deadline() {
         let mut child = bounded_for("sleep", "0.05").arg("5").stdin(Stdio::piped()).spawn().unwrap();
@@ -69,6 +77,7 @@
         assert_eq!(child.wait().unwrap().code(), Some(124));
     }
 
+    #[test_id(tb85lhd)]
     #[test]
     fn the_duration_grammar_is_timeouts() {
         let secs = Duration::from_secs;
@@ -115,12 +124,14 @@
         (pid, gone)
     }
 
+    #[test_id(ta8fb56)]
     #[test]
     fn kill_tree_kills_a_grandchild_that_took_its_own_session() {
         let (pid, gone) = setsid_grandchild(true);
         assert!(gone, "grandchild {pid} survived kill_tree");
     }
 
+    #[test_id(tf8e0f2)]
     #[test]
     fn without_kill_tree_a_grandchild_in_its_own_session_survives() {
         let (pid, gone) = setsid_grandchild(false);

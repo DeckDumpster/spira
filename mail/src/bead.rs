@@ -578,6 +578,7 @@ mod tests {
     use super::*;
 
 
+    #[test_id(tzh366d)]
     #[test]
     fn unresolved_when_store_not_configured() {
         let bd = FakeBd::new(vec![]);
@@ -585,12 +586,14 @@ mod tests {
         assert!(bd.calls().is_empty());
     }
 
+    #[test_id(tuysbq0)]
     #[test]
     fn unresolved_when_store_returns_nothing() {
         let bd = FakeBd::new(vec![BdOut::ok("")]);
         assert_eq!(render_bead_block(&bd, true, "sp-zzz99"), "unresolved: sp-zzz99");
     }
 
+    #[test_id(tvbh0s0)]
     #[test]
     fn renders_title_status_and_priority() {
         let json = r#"{"id":"sp-titl01","title":"a well-described feature bead with a clear title","status":"open","issue_type":"task","priority":3,"labels":["spira","repo:fixture-repo"]}"#;
@@ -602,6 +605,7 @@ mod tests {
         assert!(block.contains("Repo: fixture-repo"), "{block}");
     }
 
+    #[test_id(t9x5cij)]
     #[test]
     fn renders_close_reason_truncated_to_300_chars() {
         let long = "x".repeat(400);
@@ -613,6 +617,7 @@ mod tests {
         assert!(reason_line.ends_with('…'));
     }
 
+    #[test_id(tyhp5bo)]
     #[test]
     fn falls_back_to_the_last_note_when_no_close_reason() {
         let json = r#"{"id":"sp-a","title":"t","status":"open","notes":["first note","second note  "]}"#;
@@ -621,6 +626,7 @@ mod tests {
         assert!(block.ends_with("second note"), "{block}");
     }
 
+    #[test_id(tjyfdaj)]
     #[test]
     fn suit_reason_maps_uphold_retire_amend() {
         assert_eq!(suit_reason("suit", "Uphold the finding."), "upheld");
@@ -631,12 +637,14 @@ mod tests {
         assert_eq!(suit_reason("question", "Uphold the finding."), "Uphold the finding.");
     }
 
+    #[test_id(tdgzhfl)]
     #[test]
     fn create_tracking_bead_returns_none_when_store_unconfigured() {
         let bd = FakeBd::new(vec![]);
         assert_eq!(create_tracking_bead(&bd, false, "subj", "body", "needs-operator", ""), Ok(None)); // literal-ok: test fixture
     }
 
+    #[test_id(tunkh4c)]
     #[test]
     fn create_tracking_bead_returns_the_new_id() {
         let bd = FakeBd::new(vec![BdOut::ok("sp-newid1\n")]);
@@ -649,6 +657,7 @@ mod tests {
 
     /// The ask bead names the work bead it is about, so a path that closes the ask bead
     /// itself (the pane's verdict, `resolve`) can lift that bead's `ask` hold.
+    #[test_id(tp93r5m)]
     #[test]
     fn a_tracking_bead_for_a_work_bead_carries_its_work_bead_label() {
         let bd = FakeBd::new(vec![BdOut::ok("sp-newid1\n")]);
@@ -656,12 +665,14 @@ mod tests {
         assert!(bd.calls()[0].0.contains(&"needs-operator,overseer,work-bead:sp-work1".to_string()), "{:?}", bd.calls()); // literal-ok: test fixture
     }
 
+    #[test_id(tj7nem7)]
     #[test]
     fn sendmail_close_bead_is_a_noop_without_a_store() {
         let bd = FakeBd::new(vec![]);
         assert_eq!(sendmail_close_bead(&bd, false, "sp-a", "question", "para").unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(t531oav)]
     #[test]
     fn sendmail_close_bead_notes_every_upstream_work_bead() {
         let bd = FakeBd::new(vec![
@@ -678,6 +689,7 @@ mod tests {
         assert_eq!(calls[3].0, vec!["note", "sp-work2", "Operator verdict on decision bead sp-dec1: Approve it."]);
     }
 
+    #[test_id(trt3bys)]
     #[test]
     fn sendmail_close_bead_propagates_a_close_failure() {
         let bd = FakeBd::new(vec![BdOut::fail(1, "no such bead")]);
@@ -685,6 +697,7 @@ mod tests {
         assert!(err.to_string().contains("sp-a"), "{err}");
     }
 
+    #[test_id(tf79jcf)]
     #[test]
     fn sendmail_close_bead_keeps_a_refusal_distinct_from_a_fault() {
         let refused = FakeBd::new(vec![BdOut::fail(3, "a work bead in READY is not closed by a mail reply")]);
@@ -693,12 +706,14 @@ mod tests {
         assert!(matches!(sendmail_close_bead(&faulted, true, "sp-a", "note", "p"), Err(LcError::Fault(_))));
     }
 
+    #[test_id(t5eqyry)]
     #[test]
     fn open_ask_ids_fails_closed_on_bad_json() {
         let bd = FakeBd::new(vec![BdOut::fail(1, "boom")]);
         assert!(open_ask_ids(&bd, "needs-operator").is_err()); // literal-ok: test fixture
     }
 
+    #[test_id(tp7gnhs)]
     #[test]
     fn open_ask_ids_parses_a_real_list() {
         let bd = FakeBd::new(vec![BdOut::ok(r#"[{"id":"sp-open1"}]"#)]);
@@ -707,6 +722,7 @@ mod tests {
         assert_eq!(bd.calls()[0].0[..3], ["list", "--status", "open,in_progress,blocked,deferred"]);
     }
 
+    #[test_id(twr48y8)]
     #[test]
     fn open_ask_ids_refusal_names_bds_exit_code_and_stderr() {
         let bd = FakeBd::new(vec![BdOut::fail(2, "Error 1105: invalid connection to dolt-beads on 127.0.0.1:3307")]);
@@ -716,12 +732,14 @@ mod tests {
         assert!(err.contains("refusing to move any mail"), "{err}");
     }
 
+    #[test_id(tfy8iis)]
     #[test]
     fn bd_failure_detail_says_so_when_stderr_is_empty() {
         let out = BdOut::fail(127, "");
         assert_eq!(bd_failure_detail(&out), "(bd exit 127, no stderr)");
     }
 
+    #[test_id(te0mj89)]
     #[test]
     fn bd_failure_detail_keeps_only_the_last_300_bytes() {
         let long = "x".repeat(400);
@@ -737,6 +755,7 @@ mod tests {
 
 #[cfg(test)]
 mod after_create_not_discarded {
+    #[test_id(t08swe5)]
     #[test]
     fn no_caller_discards_after_create_failure() {
         // Every create's lifecycle-row write is the door's `after`; nothing else writes it.
@@ -782,6 +801,7 @@ mod door_tests {
         (r, lc)
     }
 
+    #[test_id(t7st3e5)]
     #[test]
     fn every_verb_mail_sends_goes_to_the_content_door() {
         let (r, lc) = recorder("[]");
@@ -799,6 +819,7 @@ mod door_tests {
         assert_eq!(r.seen.lock().unwrap().len(), 3, "an unserved verb sends nothing");
     }
 
+    #[test_id(tkhn3et)]
     #[test]
     fn the_content_door_takes_each_verb_mail_sends() {
         assert_eq!(door(&v(&["show", "sp-a", "--json"]), None), Ok(Door(v(&["show", "sp-a", "--json"]), None)));
@@ -808,6 +829,7 @@ mod door_tests {
         assert_eq!(door(&v(&["note", "sp-a", "-- a note that looks like a flag"]), None), Ok(Door(v(&["note", "sp-a", "--stdin"]), Some("-- a note that looks like a flag".into()))));
     }
 
+    #[test_id(t4umvvf)]
     #[test]
     fn bead_replied_reads_the_actor_off_the_events_answer() {
         let (_, lc) = recorder(r#"[{"actor":"ryan"},{"actor":"dwarf"}]"#);
@@ -829,6 +851,7 @@ mod door_tests {
         }
     }
 
+    #[test_id(tjxpvzk)]
     #[test]
     fn no_bdq_resolution_remains() {
         let resolve = concat!("tool(\"", "bdq\")");

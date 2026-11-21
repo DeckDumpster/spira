@@ -260,18 +260,21 @@ mod tests {
         text(&[("list", Some(40)), ("list", Some(80)), ("list", Some(1200)), ("show", Some(20))])
     }
 
+    #[test_id(tlupzmv)]
     #[test]
     fn a_covered_call_over_the_limit_refuses_naming_its_verb_max_and_count() {
         assert_eq!(check(&lists(), 1000, &default_scope_with(&[])).unwrap_err(), "list max=1200ms over=1/3");
         assert!(check(&lists(), 1500, &default_scope_with(&[])).is_ok());
     }
 
+    #[test_id(ti2nwr5)]
     #[test]
     fn a_verb_named_in_scope_is_judged_on_its_own() {
         assert!(check(&lists(), 1000, &Scope::Verb("show".into())).is_ok());
         assert_eq!(check(&lists(), 1000, &Scope::Verb("list".into())).unwrap_err(), "list max=1200ms over=1/3");
     }
 
+    #[test_id(tyib7td)]
     #[test]
     fn a_covered_span_without_a_measured_answer_refuses_and_an_uncovered_one_is_ignored() {
         let t = text(&[("show", Some(5)), ("show", None), ("show", None)]);
@@ -280,6 +283,7 @@ mod tests {
         assert!(check(&t, 1000, &default_scope_with(&["watch"])).is_ok());
     }
 
+    #[test_id(tq2hn64)]
     #[test]
     fn two_second_watch_spans_pass_the_default_scope_check_at_one_second() {
         let t = text(&[("watch", Some(2000)), ("watch", Some(2001)), ("show", Some(5))]);
@@ -287,6 +291,7 @@ mod tests {
         assert!(check(&t, 1000, &Scope::Default { excluded }).is_ok());
     }
 
+    #[test_id(tsd3qwl)]
     #[test]
     fn spans_before_the_window_are_not_counted() {
         let t = lists();
@@ -307,6 +312,7 @@ mod tests {
         UNIX_EPOCH + Duration::from_secs(1_700_000_100)
     }
 
+    #[test_id(t97rr6a)]
     #[test]
     fn lower_with_a_failing_check_runs_no_spira_config_command() {
         let dir = day_dir(&lists());
@@ -319,6 +325,7 @@ mod tests {
         assert!(calls.is_empty(), "{calls:?}");
     }
 
+    #[test_id(t0eyuu3)]
     #[test]
     fn lower_with_a_passing_check_sets_the_key_through_spira_config() {
         let dir = day_dir(&lists());
@@ -331,6 +338,7 @@ mod tests {
         assert_eq!(calls, vec![args(&["set", "spira.lc_request_deadline_ms", "1500", "f.toml"])]);
     }
 
+    #[test_id(tqaez1w)]
     #[test]
     fn lower_for_a_verb_is_refused_because_no_verb_has_its_own_deadline() {
         let dir = day_dir(&lists());
@@ -343,6 +351,7 @@ mod tests {
         assert!(calls.is_empty());
     }
 
+    #[test_id(tfhw6qg)]
     #[test]
     fn the_default_scope_leaves_out_work_sweeps_and_declared_verbs() {
         let Scope::Default { excluded } = default_scope() else { panic!() };
@@ -352,6 +361,7 @@ mod tests {
         assert!(!excluded.contains("show"));
     }
 
+    #[test_id(tc7pxau)]
     #[test]
     fn a_cut_call_is_unmeasured_even_when_its_elapsed_time_passes() {
         let t = [cut_span("watch", 1000, 1000), cut_span("watch", 1000, 1000)].join("\n");
@@ -360,6 +370,7 @@ mod tests {
         assert_eq!(check(&mixed, 1000, &Scope::Verb("watch".into())).unwrap_err(), "watch cut=1/2 at 1000ms: answer time unknown");
     }
 
+    #[test_id(tbjcd97)]
     #[test]
     fn lower_over_a_cut_call_runs_no_spira_config_command() {
         let dir = day_dir(&cut_span("show", 1000, 1000));
@@ -372,6 +383,7 @@ mod tests {
         assert!(calls.is_empty());
     }
 
+    #[test_id(txrgpk8)]
     #[test]
     fn configured_excludes_ms_and_verb_and_is_not_a_lowering() {
         let dir = day_dir("");
@@ -389,6 +401,7 @@ mod tests {
         deadline_check(&args(&["--configured"]), dir.path(), now())
     }
 
+    #[test_id(tc725xe)]
     #[test]
     fn configured_judges_every_verb_at_the_one_default() {
         let (code, out) = configured(&text(&[("list", Some(900)), ("show", Some(20))]));

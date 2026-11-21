@@ -107,6 +107,7 @@ mod tests {
         })
     }
 
+    #[test_id(tedvrfe)]
     #[test]
     fn the_kind_admits_its_section_and_its_distance_reads_utilisation_alone() {
         let v = section(json!({
@@ -124,6 +125,7 @@ mod tests {
         assert!((s.distance_value(kind).unwrap().unwrap() - 0.10).abs() < 1e-9);
     }
 
+    #[test_id(tpabu9n)]
     #[test]
     fn a_field_the_kind_does_not_declare_is_refused_by_name() {
         let v = section(json!({ "observedGeneration": 0, "idle_dwarves": { "value": 2.0, "window": "level" } }));
@@ -131,6 +133,7 @@ mod tests {
         assert!(r.rule.contains("idle_dwarves"), "{r:?}");
     }
 
+    #[test_id(t76ba16)]
     #[test]
     fn the_shipped_spec_seeds_the_utilisation_target_under_its_statute() {
         let fragment = crate::producer::parse_fragment(include_str!("../../examples/dwarf-fleet.toml")).unwrap();

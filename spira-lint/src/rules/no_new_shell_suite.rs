@@ -95,6 +95,7 @@ mod tests {
 
     const A: &str = "spira/test-a.sh\n";
 
+    #[test_id(trfj9dn)]
     #[test]
     fn an_untracked_new_suite_is_refused() {
         let t = TempDir::new("nnss");
@@ -102,6 +103,7 @@ mod tests {
         assert_eq!(paths(NoNewShellSuite::default().check(&tr).unwrap()), ["spira/test-new.sh"]);
     }
 
+    #[test_id(tobkopa)]
     #[test]
     fn a_tracked_new_suite_is_refused() {
         let t = TempDir::new("nnss");
@@ -109,6 +111,7 @@ mod tests {
         assert_eq!(paths(NoNewShellSuite::default().check(&tr).unwrap()), ["spira/test-new.sh"]);
     }
 
+    #[test_id(tr3vtsp)]
     #[test]
     fn an_edited_existing_suite_is_not_refused() {
         let t = TempDir::new("nnss");
@@ -119,6 +122,7 @@ mod tests {
         assert_eq!(rule.checked().unwrap().0, 1);
     }
 
+    #[test_id(ts8diln)]
     #[test]
     fn a_deleted_suite_is_not_refused() {
         let t = TempDir::new("nnss");
@@ -126,6 +130,7 @@ mod tests {
         assert!(NoNewShellSuite::default().check(&tr).unwrap().is_empty());
     }
 
+    #[test_id(td6n83u)]
     #[test]
     fn files_that_are_not_direct_test_sh_children_are_not_suites() {
         let t = TempDir::new("nnss");
@@ -139,6 +144,7 @@ mod tests {
         assert!(NoNewShellSuite::default().check(&tr).unwrap().is_empty());
     }
 
+    #[test_id(t2y1up1)]
     #[test]
     fn a_branch_deleting_every_suite_is_not_refused() {
         let t = TempDir::new("nnss");
@@ -146,6 +152,7 @@ mod tests {
         assert!(NoNewShellSuite::default().check(&tr).unwrap().is_empty());
     }
 
+    #[test_id(tj1bzze)]
     #[test]
     fn no_base_refuses() {
         let t = TempDir::new("nnss");
@@ -154,6 +161,7 @@ mod tests {
         assert!(matches!(NoNewShellSuite::default().check(&tr), Err(LintError::Refused(_))));
     }
 
+    #[test_id(tqaxrk7)]
     #[test]
     fn a_failing_ls_tree_refuses() {
         let t = TempDir::new("nnss");

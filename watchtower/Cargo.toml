@@ -42,6 +42,7 @@ name = "watchtower"
 path = "src/main.rs"
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 spira-claim = { path = "../spira-claim" }
 testkit = { path = "../testkit" }
 

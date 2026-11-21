@@ -357,6 +357,7 @@ impl Systemctl for FakeSystemctl {
 
 // ---------------------------------------------------------------- MANIFEST
 
+#[test_id(tzuugjt)]
 #[test]
 fn manifest_round_trips_and_keeps_the_self_test_line_shape() {
     let mut m = Manifest { commit: A.into(), built: Some("2026-09-29T00:00:00Z".into()), repo: Some("spira".into()), entries: BTreeMap::new() };
@@ -371,6 +372,7 @@ fn manifest_round_trips_and_keeps_the_self_test_line_shape() {
     assert_eq!(Manifest::parse(&text).unwrap(), m);
 }
 
+#[test_id(tqci9by)]
 #[test]
 fn manifest_without_a_commit_or_with_garbage_does_not_parse() {
     assert!(Manifest::parse("bin/x 00\n").is_err());
@@ -385,6 +387,7 @@ fn manifest_without_a_commit_or_with_garbage_does_not_parse() {
 /// tool tail appended after the system directories, exactly as `release_path_with_tail`
 /// documents — the same shape `host_values` renders into `Environment=PATH=` (sp-31gtu,
 /// sp-c7b85), reused here for a process this crate spawns directly instead of a unit.
+#[test_id(tu69lzx)]
 #[test]
 fn pre_activate_env_builds_the_release_own_path_and_release_var() {
     let mut env = Env::new();
@@ -407,6 +410,7 @@ fn pre_activate_env_builds_the_release_own_path_and_release_var() {
 /// The same refusal `host_values` gives a tail inside a release or a checkout (sp-c7b85)
 /// applies here too: `pre_activate_env` must not hand pre-activate a `PATH` that could
 /// resolve back into a release or a checked-out tree instead of the one under verification.
+#[test_id(tvxy6c6)]
 #[test]
 fn pre_activate_env_refuses_a_tail_inside_a_release_or_checkout() {
     let mut env = Env::new();
@@ -427,6 +431,7 @@ fn pre_activate_env_refuses_a_tail_inside_a_release_or_checkout() {
 
 // ---------------------------------------------------------------- render
 
+#[test_id(tv3ox10)]
 #[test]
 fn installed_units_map_back_to_their_templates() {
     let t: BTreeSet<String> = ["spira-tool.service", "spira-job.timer", "shared.service", "spira-watch@.service", "spira-notify.service"].iter().map(|s| s.to_string()).collect();
@@ -441,6 +446,7 @@ fn installed_units_map_back_to_their_templates() {
     assert_eq!(m("spira-suites-prod.service"), None);
 }
 
+#[test_id(tbqx5gk)]
 #[test]
 fn render_names_the_release_and_refuses_what_it_cannot_fill() {
     let rel = Path::new("r/spira-releases").join(A);
@@ -464,6 +470,7 @@ fn render_names_the_release_and_refuses_what_it_cannot_fill() {
     assert!(e.contains("uses SPIRA_DB but no value"), "{e}");
 }
 
+#[test_id(t04kdj8)]
 #[test]
 fn gate_open_is_true_without_a_gate_and_checks_the_host_key_when_there_is_one() {
     let mut host = BTreeMap::new();
@@ -503,6 +510,7 @@ fn current_of(w: &World) -> String {
     fs::read_link(w.cfg.releases.join("current")).unwrap().to_string_lossy().to_string()
 }
 
+#[test_id(tnnh3mo)]
 #[test]
 fn a_rollback_whose_unit_is_slow_to_start_stays_on_the_target_and_names_what_is_down() {
     let w = world_rolling_back_to_a();
@@ -517,6 +525,7 @@ fn a_rollback_whose_unit_is_slow_to_start_stays_on_the_target_and_names_what_is_
     assert_eq!(sc.restarts.borrow().len(), 2, "restarted once more under the target, and no more");
 }
 
+#[test_id(tmrwgrx)]
 #[test]
 fn a_rollback_whose_unit_cannot_be_restarted_at_all_still_stays_on_the_target_and_names_it() {
     let w = world_rolling_back_to_a();
@@ -528,6 +537,7 @@ fn a_rollback_whose_unit_cannot_be_restarted_at_all_still_stays_on_the_target_an
     assert!(!e.contains("UNDO INCOMPLETE"), "{e}");
 }
 
+#[test_id(th1m1lr)]
 #[test]
 fn a_rollback_whose_slow_unit_comes_up_on_the_second_restart_succeeds() {
     let w = world_rolling_back_to_a();
@@ -557,6 +567,7 @@ fn activate_as_the_batcher(w: &World, sc: &FakeSystemctl) -> Result<activate::Sw
     activate::activate(&ctx, A, None)
 }
 
+#[test_id(t2gtgqd)]
 #[test]
 fn a_superseded_hotfix_is_cleared_before_the_first_restart() {
     let w = world_activating_over_a_landed_hotfix();
@@ -568,6 +579,7 @@ fn a_superseded_hotfix_is_cleared_before_the_first_restart() {
     assert!(!w.cfg.state_dir().unwrap().join("hotfix").exists());
 }
 
+#[test_id(t6hl11m)]
 #[test]
 fn a_failed_restart_puts_the_superseded_hotfix_record_back() {
     let w = world_activating_over_a_landed_hotfix();
@@ -581,6 +593,7 @@ fn a_failed_restart_puts_the_superseded_hotfix_record_back() {
 
 // ---------------------------------------------------------------- config
 
+#[test_id(t8dh09w)]
 #[test]
 fn config_resolves_roots_from_flags_then_config_and_refuses_when_nothing_does() {
     let mut env = Env::new();
@@ -598,6 +611,7 @@ fn config_resolves_roots_from_flags_then_config_and_refuses_when_nothing_does() 
     assert_eq!(Config::resolve_with(&f, &env, None, &reg2).unwrap().releases, PathBuf::from("f"));
 }
 
+#[test_id(tpesolv)]
 #[test]
 fn host_values_carries_the_configured_path_tail_and_refuses_a_bad_one() {
     let mut env = Env::new();
@@ -617,6 +631,7 @@ fn host_values_carries_the_configured_path_tail_and_refuses_a_bad_one() {
     assert!(e.contains("spira-releases"), "{e}");
 }
 
+#[test_id(tbtirv8)]
 #[test]
 fn host_values_carries_the_cache_store_root_the_sccache_dav_unit_renders() {
     // The unit template reads @SPIRA_SCCACHE_DAV_ROOT@; activation refused every release
@@ -634,12 +649,14 @@ fn host_values_carries_the_cache_store_root_the_sccache_dav_unit_renders() {
     assert!(!rendered.as_ref().err().is_some_and(|e| e.contains("SPIRA_SCCACHE_DAV_ROOT")), "{rendered:?}");
 }
 
+#[test_id(t6bnbe0)]
 #[test]
 fn rfc3339_is_correct() {
     assert_eq!(fsutil::rfc3339(0), "1970-01-01T00:00:00Z");
     assert_eq!(fsutil::rfc3339(1_790_640_000), "2026-09-29T00:00:00Z");
 }
 
+#[test_id(tyltge5)]
 #[test]
 fn parse_rfc3339_round_trips_through_rfc3339() {
     for secs in [0u64, 1, 59, 60, 3599, 3600, 86_399, 86_400, 1_790_640_000, 4_102_444_799, 253_402_300_799] {
@@ -648,6 +665,7 @@ fn parse_rfc3339_round_trips_through_rfc3339() {
     }
 }
 
+#[test_id(thmpqcy)]
 #[test]
 fn parse_rfc3339_refuses_anything_it_did_not_write() {
     for bad in ["", "not a date", "2026-09-29T00:00:00", "2026-09-29 00:00:00Z", "2026-13-01T00:00:00Z", "2026-09-29T24:00:00Z", "2026-09-29T00:00:00Zx"] {
@@ -708,6 +726,7 @@ fn touch_tarball(sb: &Sandbox, name: &str) -> PathBuf {
     tb
 }
 
+#[test_id(tuu1v1x)]
 #[test]
 fn release_name_from_tarball_accepts_the_naming_convention_and_refuses_the_rest() {
     assert_eq!(install::release_name_from_tarball(Path::new("spira-20260101T000000Z.tar.gz")).unwrap(), "spira-20260101T000000Z");
@@ -717,6 +736,7 @@ fn release_name_from_tarball_accepts_the_naming_convention_and_refuses_the_rest(
     assert!(install::release_name_from_tarball(Path::new("spira-.tar.gz")).is_err());
 }
 
+#[test_id(tj8w0nb)]
 #[test]
 fn install_tarball_is_idempotent_when_the_release_already_exists() {
     let (sb, cfg) = install_world();
@@ -733,6 +753,7 @@ fn install_tarball_is_idempotent_when_the_release_already_exists() {
 }
 
 // covers: UC-instance-lifecycle-15
+#[test_id(thc2rp1)]
 #[test]
 fn install_tarball_makes_the_just_unpacked_release_live_over_a_stale_one_and_leaves_it_read_only() {
     let (sb, cfg) = install_world();
@@ -752,6 +773,7 @@ fn install_tarball_makes_the_just_unpacked_release_live_over_a_stale_one_and_lea
     assert!(meta.permissions().readonly(), "an installed release is a read-only tree");
 }
 
+#[test_id(tic9jq2)]
 #[test]
 fn install_tarball_refuses_when_the_archive_does_not_produce_the_promised_directory() {
     let (sb, cfg) = install_world();
@@ -766,6 +788,7 @@ fn install_tarball_refuses_when_the_archive_does_not_produce_the_promised_direct
     assert!(!cfg.releases.join("spira-20260101T000000Z").exists());
 }
 
+#[test_id(tgsfrx4)]
 #[test]
 fn install_tarball_refuses_a_missing_file_or_a_bad_name_before_touching_anything() {
     let (sb, cfg) = install_world();
@@ -782,6 +805,7 @@ fn install_tarball_refuses_a_missing_file_or_a_bad_name_before_touching_anything
     assert!(!cfg.releases.exists() || fs::read_dir(&cfg.releases).unwrap().next().is_none());
 }
 
+#[test_id(t8vcacx)]
 #[test]
 fn install_tarball_dry_run_reports_intent_and_changes_nothing() {
     let (sb, cfg) = install_world();
@@ -800,6 +824,7 @@ fn install_tarball_dry_run_reports_intent_and_changes_nothing() {
 
 // ---------------------------------------------------------------- stage
 
+#[test_id(tw05wxd)]
 #[test]
 fn stage_rune_names_the_canary_persona_with_one_concurrent_slot() {
     let f = crate::stage::rune_content();
@@ -808,6 +833,7 @@ fn stage_rune_names_the_canary_persona_with_one_concurrent_slot() {
     assert!(f.contains("SPIRA_SCOPE_LABEL"));
 }
 
+#[test_id(tmyzynn)]
 #[test]
 fn stage_repo_map_line_has_six_columns_named_for_the_repo_and_an_empty_gate() {
     let line = crate::stage::repo_map_line(Path::new("tmp/x/repo"));
@@ -821,6 +847,7 @@ fn stage_repo_map_line_has_six_columns_named_for_the_repo_and_an_empty_gate() {
     assert_eq!(cols[5], "");
 }
 
+#[test_id(t0melns)]
 #[test]
 fn stage_up_refuses_an_existing_root_and_down_refuses_a_non_stage_directory() {
     let sb = Sandbox::new();
@@ -844,6 +871,7 @@ fn delta_git(delta: &str) -> FakeGit {
 
 const DELTA_BOTH: &str = "removed = [\"spira.old_key\"]\n[spira]\nnew_key = 300\n";
 
+#[test_id(tln20ij)]
 #[test]
 fn a_rename_mixing_a_persona_and_a_config_key_is_refused() {
     let e = config_delta::Delta::parse("[renamed]\n\"persona.a\" = \"spira.b\"\n").unwrap_err();
@@ -852,6 +880,7 @@ fn a_rename_mixing_a_persona_and_a_config_key_is_refused() {
 
 // ---------------------------------------------------------------- activation installs new units
 
+#[test_id(tx0ef8p)]
 #[test]
 fn config_for_a_tree_has_its_delta_applied_and_a_key_without_an_entry_stays_absent() {
     let w = World::with_git(delta_git(DELTA_BOTH));
@@ -868,6 +897,7 @@ fn config_for_a_tree_has_its_delta_applied_and_a_key_without_an_entry_stays_abse
     assert!(config_delta::staged_for_tree(&spec, &bare).unwrap().is_none(), "no delta, nothing staged");
 }
 
+#[test_id(tfxagql)]
 #[test]
 fn a_key_the_delta_removes_still_resolves_under_the_registry_that_requires_it() {
     let w = World::with_git(delta_git(""));
@@ -885,6 +915,7 @@ fn a_key_the_delta_removes_still_resolves_under_the_registry_that_requires_it() 
     let _ = fs::remove_dir_all(dir);
 }
 
+#[test_id(t8pzamw)]
 #[test]
 fn activation_holds_a_retired_key_the_release_being_replaced_still_declares() {
     let w = World::with_git(delta_git(""));
@@ -914,6 +945,7 @@ fn activation_holds_a_retired_key_the_release_being_replaced_still_declares() {
     assert!(txn.deferred.is_empty());
 }
 
+#[test_id(tn5ziug)]
 #[test]
 fn systemd_timespans_parse_into_a_start_budget() {
     use crate::systemctl::parse_timespan;
@@ -925,6 +957,7 @@ fn systemd_timespans_parse_into_a_start_budget() {
     assert_eq!(crate::systemctl::budget_from_show("RestartUSec=5s\nTimeoutStartUSec=15min\n"), Some(Duration::from_secs(905)));
 }
 
+#[test_id(tme1593)]
 #[test]
 fn a_documentation_line_names_current_so_two_releases_render_one_unit() {
     let text = "[Unit]\nDocumentation=file://@SPIRA_HOME@/README.md\n[Service]\nExecStart=@SPIRA_RELEASE@/bin/x\n";
@@ -940,6 +973,7 @@ fn a_documentation_line_names_current_so_two_releases_render_one_unit() {
 
 // ---------------------------------------------------------------- restart budget
 
+#[test_id(them4wr)]
 #[test]
 fn a_delta_naming_a_placeholder_path_is_refused_and_the_shipped_one_is_clean() {
     let bad = "[spira]\nbatch_ledger = \"/placeholder/run/batch-timing.tsv\"\n";
@@ -951,6 +985,7 @@ fn a_delta_naming_a_placeholder_path_is_refused_and_the_shipped_one_is_clean() {
     let d = config_delta::Delta::parse(&shipped).unwrap();
     assert!(!d.added.contains_key("spira.batch_ledger"), "the ledger path derives from the install's run dir");
 }
+#[test_id(tjs59o8)]
 #[test]
 fn the_shipped_delta_declares_the_deleted_watch_tasks_removed() {
     let d = config_delta::load(&spira_config::resolve::checkout_root_for_process().unwrap()).unwrap().expect("the tree ships a delta");
@@ -959,6 +994,7 @@ fn the_shipped_delta_declares_the_deleted_watch_tasks_removed() {
     }
 }
 
+#[test_id(tv75ar0)]
 #[test]
 fn a_release_whose_two_changes_each_retire_a_key_in_their_own_fragment_loads_both() {
     let tmp = TempDir::new("delta-fragments");
@@ -976,6 +1012,7 @@ fn a_release_whose_two_changes_each_retire_a_key_in_their_own_fragment_loads_bot
 
 const TC: &str = "1.99.0 abc";
 
+#[test_id(tdp7d65)]
 #[test]
 fn the_manifest_round_trips_and_the_key_names_tree_and_toolchain() {
     let m = artifacts::Manifest { key: "k".into(), tree: "t".into(), toolchain: TC.into(), tarball_sha256: "s".into(), tarball_bytes: 7, files: vec![("a".into(), "h1".into()), ("b".into(), "h2".into())] };
@@ -986,6 +1023,7 @@ fn the_manifest_round_trips_and_the_key_names_tree_and_toolchain() {
     assert_eq!(artifacts::toolchain_id("rustc 1.99.0 (abc 2026)\nbinary: rustc\ncommit-hash: deadbeef\nrelease: 1.99.0\nhost: x\n"), "deadbeef 1.99.0");
 }
 
+#[test_id(talreuc)]
 #[test]
 fn a_delta_value_of_the_wrong_type_is_refused_at_load_naming_the_key_and_file() {
     let shipped = spira_config::resolve::locate_home_for_process().unwrap();
@@ -1007,6 +1045,7 @@ fn a_delta_value_of_the_wrong_type_is_refused_at_load_naming_the_key_and_file() 
 /// A box whose config and running release know none of this tree's keys still converges, so
 /// every REQUIRED key is declared (`complete` refuses one that is not), the values pass the
 /// release's own validation, every task runs in act (ruling D4) and the units run on systemd.
+#[test_id(ttui1g8)]
 #[test]
 fn the_shipped_delta_carries_every_required_key_with_every_task_in_act_on_systemd() {
     let tree = spira_config::resolve::checkout_root_for_process().unwrap();
@@ -1022,6 +1061,7 @@ fn the_shipped_delta_carries_every_required_key_with_every_task_in_act_on_system
     assert!(pairs.iter().all(|p| p.ends_with("=act")), "every task runs in act: {modes}");
 }
 
+#[test_id(txbvjzk)]
 #[test]
 fn an_undo_record_in_the_old_added_shape_still_loads_for_a_rollback() {
     let tmp = TempDir::new("legacy-undo");
@@ -1033,6 +1073,7 @@ fn an_undo_record_in_the_old_added_shape_still_loads_for_a_rollback() {
     assert_eq!(d.added.get("spira.old"), Some(&toml::Value::Integer(5)));
 }
 
+#[test_id(t11wawa)]
 #[test]
 fn a_delta_with_a_nested_table_round_trips_through_render() {
     let d = config_delta::Delta::parse("[persona.x]\nmodel = \"m\"\n[spira]\nk = 1\n").unwrap();
@@ -1048,6 +1089,7 @@ fn tree_declaring(root: &Path, names: &[&str]) -> PathBuf {
     root.to_path_buf()
 }
 
+#[test_id(t6lgheb)]
 #[test]
 fn completion_adds_a_key_the_active_registry_declares_and_the_config_lacks_at_its_default() {
     let tmp = TempDir::new("complete");
@@ -1058,6 +1100,7 @@ fn completion_adds_a_key_the_active_registry_declares_and_the_config_lacks_at_it
     assert_eq!(d.added.get("spira.orphan_secs"), Some(&toml::Value::Integer(600)));
 }
 
+#[test_id(tuijdjm)]
 #[test]
 fn completion_leaves_a_key_the_config_already_sets() {
     let tmp = TempDir::new("complete");
@@ -1073,6 +1116,7 @@ fn completion_leaves_a_key_the_config_already_sets() {
 /// wins over the default, and the new runtime refuses to start without a mode for every task.
 /// Completion adds the default's mode for each task the live value lacks and keeps the live
 /// modes for the rest.
+#[test_id(tb9zrf1)]
 #[test]
 fn completion_gives_a_task_the_live_task_modes_lacks_its_release_default_mode() {
     let tmp = TempDir::new("complete-task-modes");
@@ -1102,6 +1146,7 @@ fn shipped_unit(name: &str) -> String {
     std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(name)).unwrap()
 }
 
+#[test_id(tdfh3b9)]
 #[test]
 fn a_template_that_restarts_when_idle_gives_a_reason_and_a_bare_boolean_gives_none() {
     let t = |v: &str| format!("[Unit]\nX-Spira-RestartWhenIdle={v}\n");
@@ -1110,6 +1155,7 @@ fn a_template_that_restarts_when_idle_gives_a_reason_and_a_bare_boolean_gives_no
     assert_eq!(units::restart_when_idle("[Unit]\n"), None);
 }
 
+#[test_id(tclwmck)]
 #[test]
 fn the_unit_run_watcher_restarts_itself_when_idle() {
     assert!(units::restart_when_idle(&shipped_unit("spira-unit-run-dbus.service")).is_some());
@@ -1191,6 +1237,7 @@ fn activated_entries(w: &World) -> usize {
     crate::machine::load(&w.cfg.state_dir().unwrap(), A).unwrap().map_or(0, |r| r.events.iter().filter(|e| e.to == crate::machine::ReleaseState::Activated).count())
 }
 
+#[test_id(t9cp7f6)]
 #[test]
 fn the_activation_is_recorded_only_after_the_restarted_units_are_checked_up() {
     let w = world_activating_a_changed_unit();
@@ -1208,6 +1255,7 @@ fn the_activation_is_recorded_only_after_the_restarted_units_are_checked_up() {
     assert!(fs::read_to_string(state.join("history")).unwrap().contains(A));
 }
 
+#[test_id(tftory4)]
 #[test]
 fn a_scheduler_that_keeps_going_back_to_activating_is_rolled_back_and_never_recorded_activated() {
     let w = world_activating_a_changed_unit();
@@ -1223,6 +1271,7 @@ fn a_scheduler_that_keeps_going_back_to_activating_is_rolled_back_and_never_reco
     assert!(!fs::read_to_string(w.cfg.state_dir().unwrap().join("history")).unwrap_or_default().contains(A));
 }
 
+#[test_id(tv8kat3)]
 #[test]
 fn an_activator_stopped_right_after_the_last_restart_leaves_no_activated_entry() {
     let w = world_activating_a_changed_unit();
@@ -1235,6 +1284,7 @@ fn an_activator_stopped_right_after_the_last_restart_leaves_no_activated_entry()
     assert_eq!(recorded_state(&w).as_deref(), Some("published"));
 }
 
+#[test_id(t8sfnym)]
 #[test]
 fn an_activation_whose_record_cannot_be_written_after_the_units_are_up_is_undone_and_names_it() {
     let w = world_activating_a_changed_unit();
@@ -1254,6 +1304,7 @@ fn an_activation_whose_record_cannot_be_written_after_the_units_are_up_is_undone
     assert!(!fs::read_to_string(w.cfg.state_dir().unwrap().join("history")).unwrap_or_default().contains(A), "history is put back");
 }
 
+#[test_id(t88ns1j)]
 #[test]
 fn an_activation_whose_restart_fails_is_undone_in_the_record_as_in_the_link() {
     let w = world_activating_a_changed_unit();
@@ -1295,6 +1346,7 @@ fn world_activating_over_a_running_cache(binary_changes: bool) -> World {
 }
 
 
+#[test_id(tifkkpp)]
 #[test]
 fn an_activation_that_changes_neither_the_cache_backends_unit_nor_its_binary_leaves_it_and_the_sccache_server_alone() {
     let w = world_activating_over_a_running_cache(false);
@@ -1307,6 +1359,7 @@ fn an_activation_that_changes_neither_the_cache_backends_unit_nor_its_binary_lea
     assert_eq!(*sc.cache_server_stops.borrow(), 0);
 }
 
+#[test_id(trn0ehd)]
 #[test]
 fn an_activation_that_changes_the_cache_backends_binary_restarts_it_and_stops_the_sccache_server() {
     let w = world_activating_over_a_running_cache(true);
@@ -1319,6 +1372,7 @@ fn an_activation_that_changes_the_cache_backends_binary_restarts_it_and_stops_th
     assert_eq!(*sc.cache_server_stops.borrow(), 1);
 }
 
+#[test_id(tbkuk4i)]
 #[test]
 fn an_activation_that_changes_the_cache_backends_unit_restarts_it_and_stops_the_sccache_server() {
     let w = world_activating_over_a_running_cache(false);
@@ -1348,6 +1402,7 @@ fn activate_over_running_cache(w: &World) -> (activate::Switched, FakeSystemctl)
     (out, sc)
 }
 
+#[test_id(thc0s02)]
 #[test]
 fn a_rebuild_that_changes_the_cache_backends_bytes_but_not_its_source_leaves_it_running() {
     let w = world_activating_over_a_running_cache(true);
@@ -1357,6 +1412,7 @@ fn a_rebuild_that_changes_the_cache_backends_bytes_but_not_its_source_leaves_it_
     assert_eq!(*sc.cache_server_stops.borrow(), 0);
 }
 
+#[test_id(to8jlx4)]
 #[test]
 fn a_changed_binary_and_a_changed_dependency_source_restarts_the_cache_backend() {
     let w = world_activating_over_a_running_cache(true);
@@ -1366,6 +1422,7 @@ fn a_changed_binary_and_a_changed_dependency_source_restarts_the_cache_backend()
     assert_eq!(*sc.cache_server_stops.borrow(), 1);
 }
 
+#[test_id(tjvpvc4)]
 #[test]
 fn a_changed_binary_and_a_changed_dev_dependency_source_leaves_the_cache_backend_running() {
     let w = world_activating_over_a_running_cache(true);
@@ -1375,6 +1432,7 @@ fn a_changed_binary_and_a_changed_dev_dependency_source_leaves_the_cache_backend
     assert_eq!(*sc.cache_server_stops.borrow(), 0);
 }
 
+#[test_id(tbww3d2)]
 #[test]
 fn a_changed_launcher_restarts_the_cache_backend_though_its_binary_is_identical() {
     let w = world_activating_over_a_running_cache(false);
@@ -1383,6 +1441,7 @@ fn a_changed_launcher_restarts_the_cache_backend_though_its_binary_is_identical(
     assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
 }
 
+#[test_id(twn6z1h)]
 #[test]
 fn a_changed_binary_with_no_source_tree_to_compare_restarts_the_cache_backend() {
     let w = world_activating_over_a_running_cache(true);
@@ -1392,6 +1451,7 @@ fn a_changed_binary_with_no_source_tree_to_compare_restarts_the_cache_backend() 
     assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
 }
 
+#[test_id(t3nj26q)]
 #[test]
 fn a_changed_binary_and_a_changed_transitive_dependency_restarts_the_cache_backend() {
     let w = world_activating_over_a_running_cache(true);
@@ -1406,6 +1466,7 @@ fn a_changed_binary_and_a_changed_transitive_dependency_restarts_the_cache_backe
     assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
 }
 
+#[test_id(tuf12nn)]
 #[test]
 fn a_changed_binary_and_a_changed_toolchain_pin_restarts_the_cache_backend() {
     let w = world_activating_over_a_running_cache(true);
@@ -1440,6 +1501,7 @@ fn lc_serve_running(sc: &FakeSystemctl, from: &Path) {
     sc.exes.borrow_mut().insert("lc-serve.service".into(), from.to_path_buf());
 }
 
+#[test_id(tiz99kk)]
 #[test]
 fn an_activation_restarts_an_lc_serve_still_executing_the_superseded_releases_binary() {
     let (w, old_bin) = world_with_an_lc_serve_left_on_the_previous_release();
@@ -1452,6 +1514,7 @@ fn an_activation_restarts_an_lc_serve_still_executing_the_superseded_releases_bi
     assert!(sc.executables("lc-serve.service").iter().all(|e| e.starts_with(w.cfg.releases.join(A))));
 }
 
+#[test_id(tfe6ako)]
 #[test]
 fn an_activation_that_cannot_move_lc_serve_off_the_superseded_binary_is_rolled_back() {
     let (w, old_bin) = world_with_an_lc_serve_left_on_the_previous_release();
@@ -1463,12 +1526,14 @@ fn an_activation_that_cannot_move_lc_serve_off_the_superseded_binary_is_rolled_b
     assert!(e.contains("lc-serve.service") && e.contains("rolled back"), "{e}");
 }
 
+#[test_id(tl1tuqy)]
 #[test]
 fn a_running_process_is_found_executing_the_binary_it_was_started_from() {
     let seen = crate::systemctl::exes_of(&[std::process::id(), u32::MAX]);
     assert_eq!(seen, vec![fs::canonicalize(std::env::current_exe().unwrap()).unwrap()], "a pid that is gone is left out");
 }
 
+#[test_id(takr9p4)]
 #[test]
 fn an_activation_names_a_stale_lc_serve_that_declares_it_is_never_restarted() {
     let (w, old_bin) = world_with_an_lc_serve_left_on_the_previous_release();
@@ -1487,6 +1552,7 @@ fn an_activation_names_a_stale_lc_serve_that_declares_it_is_never_restarted() {
     assert!(out.stale.iter().any(|s| s.starts_with("lc-serve.service") && s.contains("spira-lc")), "{:?}", out.stale);
 }
 
+#[test_id(t4j3dzl)]
 #[test]
 fn an_activation_leaves_a_service_alone_whose_old_release_binary_has_the_same_bytes() {
     let (w, old_bin) = world_with_an_lc_serve_left_on_the_previous_release();
@@ -1497,6 +1563,7 @@ fn an_activation_leaves_a_service_alone_whose_old_release_binary_has_the_same_by
     assert!(sc.restarts.borrow().is_empty(), "{:?}", sc.restarts.borrow());
 }
 
+#[test_id(te1wve6)]
 #[test]
 fn an_activation_reads_the_lifecycle_and_the_first_beads_content_through_the_new_release() {
     let w = world_activating_a_changed_unit();
@@ -1506,6 +1573,7 @@ fn an_activation_reads_the_lifecycle_and_the_first_beads_content_through_the_new
     assert_eq!(*reads.asked.borrow(), vec!["list --state READY".to_string(), "content show sp-first".to_string(), "dwell".to_string(), "list --state READY".to_string()]);
 }
 
+#[test_id(t1r5ccu)]
 #[test]
 fn an_activation_waits_for_a_cold_store_server_to_answer_a_dwell_and_a_list_before_it_is_done() {
     let w = world_activating_a_changed_unit();
@@ -1518,6 +1586,7 @@ fn an_activation_waits_for_a_cold_store_server_to_answer_a_dwell_and_a_list_befo
     assert_eq!(asked.last().map(String::as_str), Some("list --state READY"), "the list read follows the warm dwell: {asked:?}");
 }
 
+#[test_id(t8fsycc)]
 #[test]
 fn an_activation_whose_store_server_stays_cold_is_done_and_not_rolled_back() {
     let w = world_activating_a_changed_unit();
@@ -1537,6 +1606,7 @@ fn store_restart_report(reads: &FakeReads, warm_wait: Duration) -> Vec<String> {
     said.into_inner()
 }
 
+#[test_id(tee48hu)]
 #[test]
 fn an_activation_that_restarts_the_store_states_how_long_it_took_to_answer() {
     let reads = FakeReads::serving();
@@ -1547,6 +1617,7 @@ fn an_activation_that_restarts_the_store_states_how_long_it_took_to_answer() {
     assert!(said.iter().any(|l| l.ends_with("(bound 60 s)")), "{said:?}");
 }
 
+#[test_id(tlietp8)]
 #[test]
 fn an_activation_whose_restarted_store_never_answers_warns_and_still_is_not_rolled_back() {
     let reads = FakeReads::serving();
@@ -1556,6 +1627,7 @@ fn an_activation_whose_restarted_store_never_answers_warns_and_still_is_not_roll
     assert!(said[0].starts_with("release: WARN: the store did not answer inside ") && said[0].ends_with(" s of its restart"), "{said:?}");
 }
 
+#[test_id(tf6wqfl)]
 #[test]
 fn an_activation_that_leaves_the_store_running_states_nothing_about_it() {
     let w = world_activating_a_changed_unit();
@@ -1565,6 +1637,7 @@ fn an_activation_that_leaves_the_store_running_states_nothing_about_it() {
     assert!(said.into_inner().is_empty());
 }
 
+#[test_id(t6va949)]
 #[test]
 fn a_release_whose_content_read_is_refused_is_rolled_back_and_the_error_names_the_read() {
     let w = world_activating_a_changed_unit();
@@ -1595,6 +1668,7 @@ fn world_dropping_a_task(delta: &str) -> World {
     w
 }
 
+#[test_id(t1h5qc3)]
 #[test]
 fn a_release_that_drops_a_task_the_host_task_modes_names_activates_with_the_entry_gone() {
     let w = world_dropping_a_task("removed_tasks = [\"repo-events\"]\n");
@@ -1605,6 +1679,7 @@ fn a_release_that_drops_a_task_the_host_task_modes_names_activates_with_the_entr
     assert_eq!(sc.state("spira-tool-prod.service").unwrap().active, "active");
 }
 
+#[test_id(tfb92mu)]
 #[test]
 fn a_release_that_drops_a_task_without_declaring_it_removed_is_refused_naming_the_entry() {
     let w = world_dropping_a_task("");
@@ -1615,6 +1690,7 @@ fn a_release_that_drops_a_task_without_declaring_it_removed_is_refused_naming_th
     assert!(!w.cfg.releases.join("current").exists(), "current did not move");
 }
 
+#[test_id(t7lgjr4)]
 #[test]
 fn a_release_whose_restarted_scheduler_comes_up_then_exits_is_rolled_back_onto_the_previous_one() {
     let w = world_activating_a_changed_unit();
@@ -1629,6 +1705,7 @@ fn a_release_whose_restarted_scheduler_comes_up_then_exits_is_rolled_back_onto_t
     assert_eq!(sc.state("spira-tool-prod.service").unwrap().active, "active", "the previous release's unit is running");
 }
 
+#[test_id(tiul5yx)]
 #[test]
 fn a_release_whose_lifecycle_read_is_refused_is_rolled_back() {
     let w = world_activating_a_changed_unit();
@@ -1638,6 +1715,7 @@ fn a_release_whose_lifecycle_read_is_refused_is_rolled_back() {
     assert!(e.contains("lifecycle read refused") && e.contains("rolled back"), "{e}");
 }
 
+#[test_id(tdfysfz)]
 #[test]
 fn the_real_reads_run_the_releases_own_spira_lc_and_carry_a_refusal_in_its_words() {
     let w = World::with_git(FakeGit::default());
@@ -1667,6 +1745,7 @@ fn lc_serve_running_old_binary_under(installed: &str, shipped: &str) -> (activat
     (out, restarts)
 }
 
+#[test_id(tomyrjb)]
 #[test]
 fn an_activation_restarts_a_watcher_whose_running_release_predates_the_idle_restart_key() {
     let with_key = format!("{LC_UNIT}X-Spira-RestartWhenIdle=ends its own pass\n");
@@ -1676,6 +1755,7 @@ fn an_activation_restarts_a_watcher_whose_running_release_predates_the_idle_rest
     assert!(out.when_idle.is_empty(), "{:?}", out.when_idle);
 }
 
+#[test_id(tb3bm85)]
 #[test]
 fn an_activation_leaves_a_watcher_to_restart_itself_when_its_installed_unit_already_carried_the_key() {
     let with_key = format!("{LC_UNIT}X-Spira-RestartWhenIdle=ends its own pass\n");
@@ -1713,6 +1793,7 @@ fn recorded_restarts(w: &World) -> Vec<String> {
     e.restarted.clone()
 }
 
+#[test_id(tp8z6ba)]
 #[test]
 fn an_activation_that_changes_spira_lc_records_that_it_restarted_lc_serve() {
     let w = world_switching_lc_serve_from_the_previous_release("spira-lc v2 with holds");
@@ -1722,6 +1803,7 @@ fn an_activation_that_changes_spira_lc_records_that_it_restarted_lc_serve() {
     assert_eq!(recorded_restarts(&w), vec!["lc-serve.service".to_string()]);
 }
 
+#[test_id(ttfr7i4)]
 #[test]
 fn an_activation_that_leaves_spira_lc_identical_records_no_lc_serve_restart() {
     let w = world_switching_lc_serve_from_the_previous_release("spira-lc v1");
@@ -1759,6 +1841,7 @@ fn world_activating_a_drill_unit(with_previous: bool, previous: (&str, &str), in
 
 const SAME: (&str, &str) = ("#!/bin/sh\nrun v1\n", "ship v1\n");
 
+#[test_id(tcre2ic)]
 #[test]
 fn an_activation_that_changes_the_backup_script_starts_the_drill_once_after_restarts_settle() {
     let w = world_activating_a_drill_unit(true, SAME, ("#!/bin/sh\nrun v2\n", SAME.1), false);
@@ -1773,6 +1856,7 @@ fn an_activation_that_changes_the_backup_script_starts_the_drill_once_after_rest
     assert!(last_restart.is_none_or(|r| r < start), "{order:?}");
 }
 
+#[test_id(txo9acr)]
 #[test]
 fn a_change_only_under_a_listed_directory_starts_the_drill() {
     let w = world_activating_a_drill_unit(true, SAME, (SAME.0, "ship v2\n"), false);
@@ -1781,6 +1865,7 @@ fn a_change_only_under_a_listed_directory_starts_the_drill() {
     assert_eq!(*sc.starts.borrow(), vec!["lc-backup-drill.service".to_string()]);
 }
 
+#[test_id(td6fubo)]
 #[test]
 fn a_change_only_in_an_unlisted_file_starts_nothing() {
     let w = world_activating_a_drill_unit(true, SAME, SAME, true);
@@ -1789,6 +1874,7 @@ fn a_change_only_in_an_unlisted_file_starts_nothing() {
     assert!(sc.starts.borrow().is_empty() && out.started.is_empty(), "{:?}", sc.starts.borrow());
 }
 
+#[test_id(ts8ysbn)]
 #[test]
 fn an_activation_with_no_previous_release_starts_the_drill() {
     let w = world_activating_a_drill_unit(false, SAME, SAME, false);
@@ -1797,6 +1883,7 @@ fn an_activation_with_no_previous_release_starts_the_drill() {
     assert_eq!(*sc.starts.borrow(), vec!["lc-backup-drill.service".to_string()]);
 }
 
+#[test_id(t7osnkj)]
 #[test]
 fn a_drill_that_cannot_be_started_is_reported_and_the_activation_stands() {
     let w = world_activating_a_drill_unit(true, SAME, ("#!/bin/sh\nrun v2\n", SAME.1), false);
@@ -1808,12 +1895,14 @@ fn a_drill_that_cannot_be_started_is_reported_and_the_activation_stands() {
     assert_eq!(activate::current(&w.cfg).as_deref(), Some(A), "the release stays active");
 }
 
+#[test_id(t76q7h5)]
 #[test]
 fn start_when_changed_lists_the_paths_of_the_key_and_nothing_else() {
     assert_eq!(units::start_when_changed(DRILL_UNIT), ["spira/lc-backup.sh", "state-store-sqlite/src/durability/"]);
     assert!(units::start_when_changed("[Unit]\nX-Spira-NoDrain=true\n").is_empty());
 }
 
+#[test_id(t8dtw9i)]
 #[test]
 fn the_drill_unit_runs_after_a_fresh_backup_and_names_live_trigger_paths() {
     let root = spira_config::resolve::checkout_root_for_process().unwrap();
@@ -1828,6 +1917,7 @@ fn the_drill_unit_runs_after_a_fresh_backup_and_names_live_trigger_paths() {
     }
 }
 
+#[test_id(t1h85k8)]
 #[test]
 fn the_trees_delta_loads_and_replaces_the_backup_age_and_database_defaults() {
     let spira = spira_config::resolve::checkout_root_for_process().unwrap().join("spira");
@@ -1837,6 +1927,7 @@ fn the_trees_delta_loads_and_replaces_the_backup_age_and_database_defaults() {
     assert_eq!(delta.replaced.get("spira.lc_backup_db").and_then(|v| v.as_str()), Some("spira"));
 }
 
+#[test_id(t26g6e6)]
 #[test]
 fn a_release_ships_the_installed_units_its_templates_make_and_no_other() {
     let w = World::with_git(FakeGit::default());
@@ -1860,6 +1951,7 @@ fn verify_symbol_problems(lc: &[u8]) -> Vec<String> {
     verify::verify(&w.cfg, A, &o).unwrap().into_iter().filter(|p| p.starts_with("bin/spira-lc")).collect()
 }
 
+#[test_id(t4nqf84)]
 #[test]
 fn verify_refuses_a_spira_lc_whose_function_names_are_stripped() {
     let p = verify_symbol_problems(&crate::symbols::tests::elf_image(&[], false));
@@ -1868,6 +1960,7 @@ fn verify_refuses_a_spira_lc_whose_function_names_are_stripped() {
     assert!(p.iter().any(|p| p.contains("spira_lc::")), "{p:?}");
 }
 
+#[test_id(tnskqvr)]
 #[test]
 fn verify_accepts_a_spira_lc_that_keeps_its_function_names() {
     let p = verify_symbol_problems(&crate::symbols::tests::elf_image(&["_RNCNvCsiVYX3EDehpB_8spira_lc4mains0_0B3_", "sqlite3_step"], false));
@@ -1894,6 +1987,7 @@ fn append_to(log: PathBuf, line: &'static str) -> Box<dyn Fn() -> String> {
     })
 }
 
+#[test_id(t9oepx2)]
 #[test]
 fn a_unit_whose_restart_fails_is_named_with_the_last_line_it_wrote_to_its_own_log() {
     let d = TempDir::new("own-log");
@@ -1908,6 +2002,7 @@ fn a_unit_whose_restart_fails_is_named_with_the_last_line_it_wrote_to_its_own_lo
     assert!(!e.contains("written before the restart") && !e.contains("boot: first"), "{e}");
 }
 
+#[test_id(tzxnylj)]
 #[test]
 fn a_unit_that_did_not_come_up_is_named_with_the_last_line_it_wrote_to_its_own_log() {
     let d = TempDir::new("own-log");
@@ -1920,6 +2015,7 @@ fn a_unit_that_did_not_come_up_is_named_with_the_last_line_it_wrote_to_its_own_l
     assert!(e.contains("did not come up") && e.contains("its own last line: \"boot: still waiting\""), "{e}");
 }
 
+#[test_id(t6yst8l)]
 #[test]
 fn a_unit_that_did_not_stay_up_is_named_with_the_last_line_it_wrote_to_its_own_log() {
     let d = TempDir::new("own-log");
@@ -1932,6 +2028,7 @@ fn a_unit_that_did_not_stay_up_is_named_with_the_last_line_it_wrote_to_its_own_l
     assert!(e.contains("did not stay up") && e.contains("its own last line: \"died: out of memory\""), "{e}");
 }
 
+#[test_id(t1tblnu)]
 #[test]
 fn a_failed_unit_whose_log_got_nothing_after_its_restart_says_so() {
     let d = TempDir::new("own-log");
@@ -1945,6 +2042,7 @@ fn a_failed_unit_whose_log_got_nothing_after_its_restart_says_so() {
     assert!(!e.contains("old line"), "{e}");
 }
 
+#[test_id(taggpux)]
 #[test]
 fn a_failed_unit_with_no_append_log_reports_the_line_it_always_did() {
     let w = world_activating_a_changed_unit();
@@ -1954,6 +2052,7 @@ fn a_failed_unit_with_no_append_log_reports_the_line_it_always_did() {
     assert!(e.contains("simulated restart failure") && !e.contains("its own"), "{e}");
 }
 
+#[test_id(t0yav2u)]
 #[test]
 fn an_over_long_last_line_is_cut_to_300_characters() {
     let d = TempDir::new("own-log");
@@ -1970,6 +2069,7 @@ fn an_over_long_last_line_is_cut_to_300_characters() {
     assert!(e.contains(&format!("last line: \"{}\"", "x".repeat(300))) && !e.contains(&"x".repeat(301)), "{e}");
 }
 
+#[test_id(t0ph2e0)]
 #[test]
 fn a_log_truncated_after_the_mark_is_read_from_its_start() {
     let d = TempDir::new("own-log");
@@ -1987,6 +2087,7 @@ fn a_log_truncated_after_the_mark_is_read_from_its_start() {
     assert!(e.contains("its own last line: \"fresh\""), "{e}");
 }
 
+#[test_id(thc4r22)]
 #[test]
 fn a_unit_with_only_a_standard_output_append_log_is_named_with_its_last_line() {
     let d = TempDir::new("own-log");
@@ -2024,6 +2125,7 @@ fn run_the_three(sc: &FakeSystemctl) {
     }
 }
 
+#[test_id(td9sikc)]
 #[test]
 fn an_activation_restarts_the_store_server_before_every_other_unit() {
     let w = world_activating_the_store_server_among_others();
@@ -2035,6 +2137,7 @@ fn an_activation_restarts_the_store_server_before_every_other_unit() {
     assert!(restarts.contains(&"a-early.service".to_string()) && restarts.contains(&"spira-runtime-prod.service".to_string()), "{restarts:?}");
 }
 
+#[test_id(tqr8s7c)]
 #[test]
 fn a_store_server_restart_that_fails_names_its_start_bound_and_is_rolled_back() {
     let w = world_activating_the_store_server_among_others();
@@ -2047,6 +2150,7 @@ fn a_store_server_restart_that_fails_names_its_start_bound_and_is_rolled_back() 
     assert!(e.contains("rolled back"), "{e}");
 }
 
+#[test_id(tvz55xh)]
 #[test]
 fn a_store_server_restart_that_fails_with_no_known_bound_gives_the_bare_error() {
     let w = world_activating_the_store_server_among_others();
@@ -2057,6 +2161,7 @@ fn a_store_server_restart_that_fails_with_no_known_bound_gives_the_bare_error() 
     assert!(e.contains("lc-serve.service: simulated restart failure") && !e.contains("TimeoutStartSec"), "{e}");
 }
 
+#[test_id(t0pih7i)]
 #[test]
 fn the_shipped_store_server_unit_is_notify_with_a_finite_start_bound() {
     let t = shipped_unit("lc-serve.service");

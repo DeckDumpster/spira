@@ -165,6 +165,7 @@ mod tests {
 
     const T: &str = "0123456789abcdef0123456789abcdef01234567";
 
+    #[test_id(tkgrmgb)]
     #[test]
     fn hostile_names_never_become_paths() {
         let v = Path::new("v");
@@ -174,6 +175,7 @@ mod tests {
         assert_eq!(path(v, "spira", T), Some(PathBuf::from(format!("v/trees/spira/{T}"))));
     }
 
+    #[test_id(t854o73)]
     #[test]
     fn a_lint_only_certificate_round_trips_and_is_not_a_round_green() {
         let c = Cert {
@@ -194,6 +196,7 @@ mod tests {
         assert!(parse(&text.replace("verdict=LINT", "verdict=GREEN")).is_none());
     }
 
+    #[test_id(t591z66)]
     #[test]
     fn the_verdicts_dir_follows_the_gate() {
         assert_eq!(verdicts_dir(None, Path::new("r")), PathBuf::from("r/verdicts"));

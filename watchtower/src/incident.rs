@@ -180,6 +180,7 @@ mod tests {
     /// The scar, reproduced: lib.sh ships non-executable in a release (`-r--r--r--`), and
     /// this must still be found — `which` is used to LOCATE the file, never to run it
     /// directly.
+    #[test_id(tksldr6)]
     #[test]
     fn which_finds_a_non_executable_regular_file_on_path() {
         let d = testkit::TempDir::new("wt-which-nonexec");
@@ -193,12 +194,14 @@ mod tests {
         assert_eq!(found, Some(target.to_string_lossy().into_owned()));
     }
 
+    #[test_id(teqi609)]
     #[test]
     fn which_returns_none_when_not_on_any_path_entry() {
         let found = which_in("definitely-not-a-real-tool-name.sh", "does/not/exist:/also/not/here");
         assert_eq!(found, None);
     }
 
+    #[test_id(ttn3rr5)]
     #[test]
     fn resolve_prefers_the_override() {
         assert_eq!(
@@ -207,6 +210,7 @@ mod tests {
         );
     }
 
+    #[test_id(tr27qsn)]
     #[test]
     fn resolve_falls_back_to_path_lookup_when_override_is_empty() {
         // An empty override (unset env var) must not short-circuit to Some("").
@@ -214,6 +218,7 @@ mod tests {
         assert_ne!(r, Some(String::new()));
     }
 
+    #[test_id(tbd2q25)]
     #[test]
     fn is_usable_true_for_a_readable_file() {
         let d = testkit::TempDir::new("wt-inc");
@@ -222,6 +227,7 @@ mod tests {
         assert!(is_usable(p.to_str().unwrap()));
     }
 
+    #[test_id(tkc543a)]
     #[test]
     fn is_usable_false_for_a_missing_path() {
         assert!(!is_usable("does/not/exist/incident.sh"));

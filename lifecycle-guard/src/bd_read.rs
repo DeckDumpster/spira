@@ -94,6 +94,7 @@ mod tests {
         scan_text(rel, src).into_iter().map(|f| f.line).collect()
     }
 
+    #[test_id(tpaquai)]
     #[test]
     fn every_argument_vector_form_of_a_bd_ready_or_events_read_is_found() {
         let src = r#"fn a() { Command::new("bd").args(["ready", "--limit", "0"]); }

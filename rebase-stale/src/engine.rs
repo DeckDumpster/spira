@@ -414,6 +414,7 @@ mod tests {
         g
     }
 
+    #[test_id(tdk4i1x)]
     #[test]
     fn a_branch_and_the_landing_ref_each_adding_a_test_at_the_end_of_a_module_rebase_mechanically() {
         let tmp = testkit::TempDir::new("rebase-stale-insert");
@@ -427,6 +428,7 @@ mod tests {
         assert_eq!(merged.matches("\n}\n").count(), 1);
     }
 
+    #[test_id(tnp6cw3)]
     #[test]
     fn a_branch_that_edits_a_base_line_while_the_landing_ref_inserts_stays_a_real_conflict() {
         let tmp = testkit::TempDir::new("rebase-stale-edit");

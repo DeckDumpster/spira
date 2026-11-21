@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate spira_test_id;
 use exec_census::{unit_of_cgroup, Probe, ProcFs, Sampler, Window, COVERAGE, EXECS, FORKS, NO_UNIT};
 use std::path::Path;
 use std::time::SystemTime;
@@ -24,6 +26,7 @@ fn proc_(root: &Path, pid: u32, comm: &str, argv: &[&str], cgroup: &str) {
 
 const SVC: &str = "/user.slice/user-1000.slice/user@1000.service/app.slice/spira-perf-watch.service"; // not a path: a cgroup v2 path
 
+#[test_id(tbkgscv)]
 #[test]
 fn a_fixture_tree_attributes_each_new_pid_to_its_unit() {
     let t = TempDir::new("exec-census");
@@ -49,6 +52,7 @@ fn a_fixture_tree_attributes_each_new_pid_to_its_unit() {
     assert_eq!(w.coverage(), 1.0);
 }
 
+#[test_id(tza0jvo)]
 #[test]
 fn coverage_reports_what_the_probes_could_not_reach() {
     let t = TempDir::new("exec-census");
@@ -71,6 +75,7 @@ fn coverage_reports_what_the_probes_could_not_reach() {
     assert_eq!((e.value, e.labels.clone()), (2.0, vec![("unit".to_string(), "spira-perf-watch.service".to_string())]));
 }
 
+#[test_id(tnz2e6k)]
 #[test]
 fn rates_are_per_minute_whatever_the_window() {
     let mut w = Window::default();
@@ -79,6 +84,7 @@ fn rates_are_per_minute_whatever_the_window() {
     assert_eq!(out.iter().find(|s| s.name == EXECS).unwrap().value, 60.0);
 }
 
+#[test_id(tlr5290)]
 #[test]
 fn a_thread_is_counted_as_a_launch_but_not_as_an_exec() {
     let t = TempDir::new("exec-census");
@@ -96,6 +102,7 @@ fn a_thread_is_counted_as_a_launch_but_not_as_an_exec() {
     assert_eq!(w.coverage(), 1.0);
 }
 
+#[test_id(tqwzkos)]
 #[test]
 fn argv_is_cut_after_two_entries_and_environ_is_never_opened() {
     let t = TempDir::new("exec-census");
@@ -109,6 +116,7 @@ fn argv_is_cut_after_two_entries_and_environ_is_never_opened() {
     assert!(named.iter().all(|l| l.starts_with("//!")), "code names the file: {named:?}");
 }
 
+#[test_id(tolkk7w)]
 #[test]
 fn a_wrapped_pid_counter_probes_both_ends_of_the_range() {
     let t = TempDir::new("exec-census");
@@ -127,6 +135,7 @@ fn a_wrapped_pid_counter_probes_both_ends_of_the_range() {
     assert_eq!((tick.procs.len(), tick.gone, tick.forks), (3, 0, 4));
 }
 
+#[test_id(t4i7006)]
 #[test]
 fn cgroup_paths_name_their_innermost_unit() {
     assert_eq!(unit_of_cgroup(&format!("0::{SVC}\n")), "spira-perf-watch.service");

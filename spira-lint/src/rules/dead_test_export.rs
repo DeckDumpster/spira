@@ -222,6 +222,7 @@ mod tests {
         t
     }
 
+    #[test_id(tb0sktd)]
     #[test]
     fn an_export_of_a_config_key_only_spira_config_reads_is_refused() {
         let t = base("dte-key");
@@ -231,6 +232,7 @@ mod tests {
         assert!(got[0].contains("spira/testlib.sh:2") && got[0].contains("SPIRA_CALL_JITTER"), "{got:?}");
     }
 
+    #[test_id(t7se5md)]
     #[test]
     fn exports_something_reads_and_tl_config_arguments_pass() {
         let t = base("dte-ok");
@@ -242,6 +244,7 @@ mod tests {
         assert!(got.is_empty(), "{got:?}");
     }
 
+    #[test_id(t9j3u1k)]
     #[test]
     fn a_self_defaulting_export_is_not_its_own_reader() {
         let t = base("dte-self");
@@ -250,6 +253,7 @@ mod tests {
         assert_eq!(got.len(), 1, "{got:?}");
     }
 
+    #[test_id(teraeuk)]
     #[test]
     fn a_stale_allow_line_is_refused() {
         let t = base("dte-allow");

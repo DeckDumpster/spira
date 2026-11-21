@@ -186,6 +186,7 @@ mod tests {
 
 
 
+    #[test_id(tm390qe)]
     #[test]
     fn probe_unit_handles_templated_and_plain_names() {
         assert_eq!(probe_unit("alert-prod@.service"), "alert-prod@probe.service");

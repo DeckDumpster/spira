@@ -251,6 +251,7 @@ mod tests {
         }
     }
 
+    #[test_id(tvvmtw8)]
     #[test]
     fn unknown_kind_is_refused() {
         let r = raw("Warp", "x", toml::Value::Table(Default::default()));
@@ -260,6 +261,7 @@ mod tests {
         ));
     }
 
+    #[test_id(tcm82hg)]
     #[test]
     fn unsupported_api_version_is_refused() {
         let mut r = raw("Fleet", "x", toml::Value::Table(Default::default()));
@@ -270,6 +272,7 @@ mod tests {
         ));
     }
 
+    #[test_id(te82frz)]
     #[test]
     fn unknown_field_in_spec_is_refused() {
         let mut spec = toml::map::Map::new();
@@ -283,6 +286,7 @@ mod tests {
         ));
     }
 
+    #[test_id(tg8dqob)]
     #[test]
     fn missing_required_field_in_spec_is_refused() {
         let mut spec = toml::map::Map::new();
@@ -294,6 +298,7 @@ mod tests {
         ));
     }
 
+    #[test_id(tujerkn)]
     #[test]
     fn valid_disk_spec_parses_with_empty_paths_defaulted() {
         let mut spec = toml::map::Map::new();
@@ -309,6 +314,7 @@ mod tests {
         }
     }
 
+    #[test_id(tx2at3b)]
     #[test]
     fn valid_fleet_spec_parses() {
         let mut spec = toml::map::Map::new();

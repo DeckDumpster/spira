@@ -54,6 +54,7 @@ fn tags(j: &dyn Journal, tag: &str) -> Vec<(String, String, u64)> {
     trace(j).into_iter().filter(|t| t.2 == tag).map(|t| (t.1, t.3, t.4)).collect()
 }
 
+#[test_id(t956z7j)]
 #[test]
 fn each_task_hears_its_own_units_end_and_not_another_tasks() {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
@@ -77,6 +78,7 @@ fn each_task_hears_its_own_units_end_and_not_another_tasks() {
     assert_eq!(done, ["alpha:a1:Code(0)@5100", "beta:b1:Code(3)@9200"], "both handlers saw both ends; each acted only on its own");
 }
 
+#[test_id(tfwdgh9)]
 #[test]
 fn a_polled_source_does_not_run_under_virtual_time() {
     let clock = VirtualClock::new(0);
@@ -88,6 +90,7 @@ fn a_polled_source_does_not_run_under_virtual_time() {
     assert!(err.0.contains("unit-ran"), "{err}");
 }
 
+#[test_id(tc3mu4c)]
 #[test]
 fn a_polled_source_on_its_own_thread_submits_each_end_once() {
     let clock = VirtualClock::new(0);
@@ -109,6 +112,7 @@ fn a_polled_source_on_its_own_thread_submits_each_end_once() {
     handles.into_iter().for_each(|h| h.join().unwrap());
 }
 
+#[test_id(tw85p70)]
 #[test]
 fn a_scope_runs_tails_ride_its_unit_ran_through_the_source() {
     let clock = VirtualClock::new(0);
@@ -164,6 +168,7 @@ impl Handler for Owned {
     }
 }
 
+#[test_id(trtn4mx)]
 #[test]
 fn a_routed_unit_ran_lands_on_its_tasks_own_stream_and_moves_only_that_task() {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));

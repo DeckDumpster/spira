@@ -473,6 +473,7 @@ pub fn harness_red_streak(lines: &[&str]) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(t9b7mqc)]
     #[test]
     fn harness_red_streak_table() {
         let done = |status: &str, wall: &str| format!("2026-11-18T09:38:46Z done pilgrim sp-a rc=1 status={status} wall_s={wall} api_s=1");
@@ -484,6 +485,7 @@ mod tests {
         assert_eq!(harness_red_streak(&[]), 0);
     }
 
+    #[test_id(tb29hhz)]
     #[test]
     fn deadline_kills_with_harness_wall_do_not_streak() {
         let line = |f: &crate::ledger::SessionFields| format!("2026-10-28T10:49:05Z done mender sp-x rc=124 status=in_progress {}", f.render());
@@ -504,6 +506,7 @@ mod tests {
         assert_eq!(f.wall_s, Some(2), "a reported wall time is never overwritten");
     }
 
+    #[test_id(tljuc5i)]
     #[test]
     fn a_restricted_submission_is_judged_by_the_close_guards() {
         let row = |st: &str| spira_store::lc_state::Row { bead_id: "sp-x".into(), state: st.into(), ..Default::default() };
@@ -518,6 +521,7 @@ mod tests {
 
     use super::*;
 
+    #[test_id(t8tz8au)]
     #[test]
     fn world_stop_table() {
         assert_eq!(world_stop(false, "dwarf-x", false), WorldStop::None);
@@ -527,6 +531,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-09
+    #[test_id(tqg5khp)]
     #[test]
     fn the_thrash_wall_trips_only_when_the_fuse_and_the_session_age_both_clear_it() {
         let now = 1_000_000;
@@ -539,6 +544,7 @@ mod tests {
         }
     }
 
+    #[test_id(t525kuq)]
     #[test]
     fn hb_tick_table() {
         let t0 = 1_000_000;
@@ -564,6 +570,7 @@ mod tests {
     }
 
     // test-dwarf-disposition.sh: one row per precedence level, and precedence itself.
+    #[test_id(tj19lhb)]
     #[test]
     fn disposition_table() {
         let mut i = base();
@@ -613,6 +620,7 @@ mod tests {
         spira_store::lc_state::Row { bead_id: "sp-a".into(), state: state.into(), ..Default::default() }
     }
 
+    #[test_id(tcj2ls5)]
     #[test]
     fn sent_back_needs_a_refused_renewal_and_a_claimable_row() {
         for s in ["REWORK", "READY"] {
@@ -628,12 +636,14 @@ mod tests {
         assert_eq!(sent_back(Some(&r), true), Some("REWORK suites-failed".to_string()));
     }
 
+    #[test_id(t6cizks)]
     #[test]
     fn a_send_back_outranks_every_other_outcome() {
         let i = DispositionIn { sent_back: true, slain: true, thrash: true, lapsed: true, capacity: true, ..base() };
         assert_eq!(disposition(&i), d("sent-back", false, None, NoteKey::SentBack));
     }
 
+    #[test_id(tdgltym)]
     #[test]
     fn disposition_unreadable_status_renders_question_mark() {
         let i = DispositionIn { status: String::new(), ..base() };
@@ -643,6 +653,7 @@ mod tests {
     }
 
     // test-dwarf-disposition.sh's open_ask_blocker table.
+    #[test_id(t1vmuj0)]
     #[test]
     fn open_ask_blocker_table() {
         // literal-ok: a test fixture's own ask label, substituted into every row below so the literal appears exactly once, here.
@@ -662,6 +673,7 @@ mod tests {
         assert!(blocks_targets(&own("relates-to")).is_empty());
     }
 
+    #[test_id(t5dmwov)]
     #[test]
     fn session_outcome_table() {
         assert_eq!(session_outcome(None), "unknown", "a missing/unreadable trace is not classified at all");
@@ -717,6 +729,7 @@ mod tests {
     }
 
     // test-rapid-recur.sh's rapid_recur_streak table.
+    #[test_id(tovy15h)]
     #[test]
     fn rapid_recur_streak_table() {
         let done = |wall_s: &str| format!("2026-09-27T00:00:00Z done f b rc=0 status=unlanded wall_s={wall_s} api_s=1 turns=1 in_tok=1 cache_read_tok=0 out_tok=1 think_tok=0 cost_usd=0.01");
@@ -731,6 +744,7 @@ mod tests {
 
     // ---- sp-1zxru: no-progress exits ----------------------------------------------------
 
+    #[test_id(tnosp3d)]
     #[test]
     fn last_assistant_text_takes_the_last_nonempty_block() {
         assert_eq!(last_assistant_text(None), None, "no trace at all");
@@ -745,6 +759,7 @@ mod tests {
         assert_eq!(last_assistant_text(Some(blank)), Some("kept".to_string()), "a later blank text block does not overwrite a real one");
     }
 
+    #[test_id(t7nhnra)]
     #[test]
     fn no_progress_backoff_minutes_doubles_from_thirty() {
         assert_eq!(no_progress_backoff_minutes(1), 30, "first no-progress exit: 30m");
@@ -759,6 +774,7 @@ mod tests {
     // advanced, with nothing added since, must answer false (sp-iku03, sp-al5ng), not
     // "cannot tell" folded into true the way a bare string-equality check would if either
     // side were simply unset.
+    #[test_id(tpppxdz)]
     #[test]
     fn tip_moved_table() {
         assert!(tip_moved("abc123", "def456"), "a real move");

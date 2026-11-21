@@ -574,6 +574,7 @@ mod tests {
     /// Inside the window it is reported; a day older it is not — and the positive control is the
     /// SAME value planted fresh, which must still be reported, so a zero here cannot be a reader
     /// that stopped working.
+    #[test_id(tt6jghf)]
     #[test]
     fn a_stale_noverdict_counter_is_not_the_worst_streak_but_the_same_value_fresh_is() {
         let d = testkit::TempDir::new("wt-nv");
@@ -602,6 +603,7 @@ mod tests {
 
     /// A class with no `SP_CZAR_*` keys set renders `?` throughout, a fired class carries who
     /// handled it, and an unrelated class is untouched by another class's keys.
+    #[test_id(tvtw5mi)]
     #[test]
     fn czar_block_renders_unset_classes_as_unknown_throughout() {
         let env = Env::new();
@@ -610,6 +612,7 @@ mod tests {
         assert_eq!(row, vec!["deadlock", "?", "?", "?"]);
     }
 
+    #[test_id(tsfy0o9)]
     #[test]
     fn czar_block_a_fired_class_carries_who_handled_it_and_leaves_others_untouched() {
         let mut env = Env::new();
@@ -625,6 +628,7 @@ mod tests {
         assert_eq!(stalled, vec!["loop-stalled", "?", "?", "?"]);
     }
 
+    #[test_id(tvgxoa3)]
     #[test]
     fn the_ready_count_is_the_claim_views_and_a_stale_or_absent_view_is_unknown() {
         let d = testkit::TempDir::new("wt-claim");
@@ -653,6 +657,7 @@ mod tests {
 
     const IDLE: &str = "2026-01-01T00:00:01Z awake builder idle";
 
+    #[test_id(tt4qpz6)]
     #[test]
     fn a_halt_stamp_reads_its_timestamp_and_its_why_line() {
         let d = testkit::TempDir::new("wt-halt");
@@ -662,6 +667,7 @@ mod tests {
         assert_eq!(h.why.as_deref(), Some("deliberate halt"));
     }
 
+    #[test_id(ts7vpku)]
     #[test]
     fn a_halt_stamp_without_a_why_line_has_none_and_no_stamp_is_no_halt() {
         let d = testkit::TempDir::new("wt-halt-nowhy");
@@ -680,6 +686,7 @@ mod tests {
         read_drain(d, now)
     }
 
+    #[test_id(ts21o18)]
     #[test]
     fn a_drain_stamp_reads_its_first_line_and_its_age_in_whole_minutes() {
         let d = testkit::TempDir::new("wt-drain");
@@ -692,12 +699,14 @@ mod tests {
         }
     }
 
+    #[test_id(t778z39)]
     #[test]
     fn no_drain_stamp_is_not_draining() {
         let d = testkit::TempDir::new("wt-nodrain");
         assert!(matches!(read_drain(&d, 1_800_000_000), Drain::NotDraining));
     }
 
+    #[test_id(tq9hvjf)]
     #[test]
     fn a_malformed_drain_stamp_still_reads_as_draining_never_as_running() {
         let d = testkit::TempDir::new("wt-drain-bad");
@@ -710,6 +719,7 @@ mod tests {
         }
     }
 
+    #[test_id(t85obbd)]
     #[test]
     fn five_idle_calls_with_ready_work_is_a_hit_naming_rune_count_and_reason() {
         let d = testkit::TempDir::new("wt-iwr-hit");
@@ -718,6 +728,7 @@ mod tests {
         assert_eq!(hits, vec![("builder".to_string(), 3, "idle".to_string())]);
     }
 
+    #[test_id(twp4i8p)]
     #[test]
     fn an_empty_ready_set_is_not_a_hit_however_idle_the_ledger() {
         let d = testkit::TempDir::new("wt-iwr-empty");
@@ -725,6 +736,7 @@ mod tests {
         assert!(idle_while_ready_hits(&l, &probe(&[("builder", 0)]), 5, &[]).is_empty());
     }
 
+    #[test_id(trr2lvo)]
     #[test]
     fn a_real_claim_among_the_last_n_calls_is_not_a_hit() {
         let d = testkit::TempDir::new("wt-iwr-mixed");
@@ -734,6 +746,7 @@ mod tests {
         assert!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 5, &[]).is_empty());
     }
 
+    #[test_id(tbrjut1)]
     #[test]
     fn too_few_calls_other_runes_and_a_missing_probe_or_ledger_are_no_hit() {
         let d = testkit::TempDir::new("wt-iwr-short");
@@ -753,6 +766,7 @@ mod tests {
         })
     }
 
+    #[test_id(tsfxqoa)]
     #[test]
     fn a_working_or_submitted_row_inside_the_idle_window_is_not_a_hit() {
         let d = testkit::TempDir::new("wt-iwr-submitted");
@@ -762,6 +776,7 @@ mod tests {
         assert_eq!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 5, &[start - 60]).len(), 1);
     }
 
+    #[test_id(th4egz5)]
     #[test]
     fn a_live_dwarf_of_the_rune_is_not_a_hit() {
         let d = testkit::TempDir::new("wt-iwr-live");
@@ -773,6 +788,7 @@ mod tests {
     use crate::lc::scripted::scripted_by;
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(tr1agj4)]
     #[test]
     fn the_landing_field_is_the_newest_landed_audit_never_a_bead_that_has_not_landed() {
         let (t, lc) = scripted_by(&[("audits --newest --to-state LANDED", 0, r#"{"newest_at":9400,"lc_key":"sp-land"}"#)]);
@@ -781,6 +797,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(t95knv4)]
     #[test]
     fn a_landing_that_cannot_be_read_is_a_question_mark_not_zero() {
         let none = |lc| landing_field(&lc, 10_000);
@@ -792,6 +809,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27
+    #[test_id(tn08wxp)]
     #[test]
     fn the_sweep_names_the_suites_and_asks_only_for_their_status() {
         let d = testkit::TempDir::new("wt-collect-suites");

@@ -3403,6 +3403,7 @@ pub mod edge {
     mod cut_hold_tests {
         use super::*;
 
+        #[test_id(thxfzr0)]
         #[test]
         fn a_cut_held_by_a_live_holder_is_refused_naming_it_and_a_lifted_one_is_not() {
             let q = testkit::TempDir::new("cut-hold");
@@ -3428,6 +3429,7 @@ pub mod edge {
             Leg { why: why.into(), bead: "lift".into(), ..Leg::on("spira") }
         }
 
+        #[test_id(tlty2j3)]
         #[test]
         fn the_batchers_own_set_and_lift_each_record_the_batcher_as_actor() {
             let d = testkit::TempDir::new("pause-effect");
@@ -3441,6 +3443,7 @@ pub mod edge {
             assert!(landing(d.path()).contains("QUEUE ROUND-PAUSE-LIFT 1090 repo=spira by=batcher held_s="), "{}", landing(d.path()));
         }
 
+        #[test_id(t7w8ce6)]
         #[test]
         fn a_lift_leaves_a_hold_in_place_and_records_nothing() {
             let d = testkit::TempDir::new("pause-effect-hold");
@@ -3462,18 +3465,21 @@ pub mod edge {
             argv.iter().position(|a| a == "--after-pass").map(|i| argv[i + 1].clone())
         }
 
+        #[test_id(t6tjdz8)]
         #[test]
         fn an_attribution_after_a_certify_reads_the_batchs_kept_results_under_the_run_dir() {
             let leg = Leg { batch: "r9".into(), after_certify: true, ..Leg::on("spira") };
             assert_eq!(after_pass(&leg).as_deref(), Some("var/spira-run/rounds/r9.results"));
         }
 
+        #[test_id(tp589mp)]
         #[test]
         fn an_attribution_after_a_relative_pass_reads_it_under_the_runs_parent() {
-            let leg = Leg { batch: "r9".into(), after_pass: super::super::kept_results_file("r9"), ..Leg::on("spira") };
+            let leg = Leg { batch: "r9".into(), after_pass: super::super::super::kept_results_file("r9"), ..Leg::on("spira") };
             assert_eq!(after_pass(&leg).as_deref(), Some("var/run/rounds/r9.results"));
         }
 
+        #[test_id(tt82x57)]
         #[test]
         fn a_confirmed_attribution_passes_confirmed_and_an_ordinary_one_does_not() {
             let argv = |confirmed| attribute_argv("batcher".into(), Path::new("rv"), Path::new("r"), &Leg { confirmed, ..Leg::on("spira") });
@@ -3481,12 +3487,14 @@ pub mod edge {
             assert!(!argv(false).contains(&"--confirmed".to_string()));
         }
 
+        #[test_id(t8dc3e4)]
         #[test]
         fn an_attribution_after_a_certify_with_no_batch_names_no_prior() {
             let leg = Leg { after_certify: true, ..Leg::on("spira") };
             assert_eq!(after_pass(&leg), None);
         }
 
+        #[test_id(ti9cksg)]
         #[test]
         fn an_attribution_after_a_corpus_pass_reads_that_passs_dir_and_a_fresh_one_reads_none() {
             let root = testkit::TempDir::new("attribute-argv-corpus-pass");
@@ -3508,12 +3516,14 @@ pub mod edge {
             u
         }
 
+        #[test_id(th0cinh)]
         #[test]
         fn a_bare_round_recert_unit_named_with_its_service_suffix_reads_driven() {
             let u = manager_with("round-recert-b1.service", UnitState::Active);
             assert!(recert_driven(Some(&u), "b1"));
         }
 
+        #[test_id(td3q7bl)]
         #[test]
         fn a_token_named_round_recert_unit_reads_driven_and_another_batchs_does_not() {
             let u = manager_with("round-recert-b1-abc.service", UnitState::Active);
@@ -3525,12 +3535,14 @@ pub mod edge {
             UnitDetail { name: "round-recert-b1.service".into(), state, ..UnitDetail::default() }
         }
 
+        #[test_id(txfb9rl)]
         #[test]
         fn a_round_whose_recert_driver_unit_is_running_reads_driven() {
             assert!(recert_live(&[unit(UnitState::Active)]));
             assert!(recert_live(&[unit(UnitState::Activating)]));
         }
 
+        #[test_id(tkgyffk)]
         #[test]
         fn a_round_whose_recert_driver_unit_is_absent_or_ended_reads_undriven() {
             assert!(!recert_live(&[]));
@@ -3551,11 +3563,13 @@ pub mod edge {
             decide(&Carry::default(), &snap).1.iter().any(|a| a.effect == LAND)
         }
 
+        #[test_id(tifs9gx)]
         #[test]
         fn a_green_round_round_recert_still_drives_is_not_landed_by_the_tick() {
             assert!(!lands(true));
         }
 
+        #[test_id(tl5sxa3)]
         #[test]
         fn a_green_round_with_no_driver_is_adopted_and_landed() {
             assert!(lands(false));
@@ -3566,6 +3580,7 @@ pub mod edge {
     mod failing_tests {
         use super::with_failing;
 
+        #[test_id(t2ykd9w)]
         #[test]
         fn a_gate_red_mark_gains_the_failing_step_and_line_only_where_the_gate_recorded_one() {
             let rows = vec![("a".to_string(), "t1".to_string(), "suites-failed".to_string()), ("b".to_string(), "t2".to_string(), "no-rebase".to_string())];
@@ -3588,11 +3603,13 @@ mod saved_state_tests {
         serde_json::from_value(saved).unwrap_or_else(|e| panic!("a saved record carrying {field} must still load: {e}"))
     }
 
+    #[test_id(tbza0vf)]
     #[test]
     fn a_saved_repo_carry_with_the_retired_preempted_field_still_loads() {
         let _: RepoCarry = with_old_field("preempted", serde_json::json!([["sp-a", "t1"]]));
     }
 
+    #[test_id(tknyajg)]
     #[test]
     fn a_saved_pool_member_with_the_retired_gate_red_flag_still_loads() {
         let _: Member = with_old_field("gate_red", serde_json::json!(true));

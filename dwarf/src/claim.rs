@@ -338,6 +338,7 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
+    #[test_id(t34hl4o)]
     #[test]
     fn split_ready_separates_rows_from_the_rework_beads_left_out() {
         let (rows, lines) = split_ready(r#"{"rows":[{"id":"sp-f"}],"dropped":[{"id":"sp-r","rule":"occupied"}]}"#, "b");
@@ -388,6 +389,7 @@ mod tests {
         Selector { exec: e, git: g, claim_bin: "spira-claim", rune: "builder", scratch: dir, pid: 7, repos }
     }
 
+    #[test_id(tc8tdx7)]
     #[test]
     fn lookup_or_rank_failure_is_claim_error_not_idle() {
         let dir = scratch("t2");
@@ -408,6 +410,7 @@ mod tests {
         }
     }
 
+    #[test_id(te9hk3y)]
     #[test]
     fn lc_claim_loop_takes_the_first_applied_and_never_steals_a_refused_one() {
         let ids = vec!["sp-held".to_string(), "sp-down".into(), "sp-ok".into(), "sp-never".into()];
@@ -428,6 +431,7 @@ mod tests {
         assert_eq!(logs[2], "builder/eitri: resuming sp-ok (P1/P2) — it already has work on its branch");
     }
 
+    #[test_id(ttk18ud)]
     #[test]
     fn a_refused_candidates_log_line_carries_the_lifecycles_reason_word_for_word() {
         let ids = vec!["sp-a".to_string()];
@@ -436,6 +440,7 @@ mod tests {
         assert!(logs[0].contains(&format!("refused ranked candidate sp-a: {said} —")), "{logs:?}");
     }
 
+    #[test_id(tbkwzey)]
     #[test]
     fn a_claim_refused_after_it_applied_is_released_before_the_next_so_exactly_one_is_held() {
         let me = "dwarf-nordri@1.2";
@@ -469,6 +474,7 @@ mod tests {
         );
     }
 
+    #[test_id(totmtq5)]
     #[test]
     fn a_refused_claim_that_cannot_be_confirmed_released_claims_nothing_else() {
         let ids = vec!["sp-a".to_string(), "sp-b".into()];
@@ -481,6 +487,7 @@ mod tests {
         assert_eq!(tried, vec!["sp-a"]);
     }
 
+    #[test_id(t6fftje)]
     #[test]
     fn lc_claim_loop_that_never_heard_the_machine_is_not_idle() {
         let ids = vec!["sp-a".to_string(), "sp-b".into()];
@@ -580,6 +587,7 @@ mod tests {
 
     fn no_sleep(_: Duration) {}
 
+    #[test_id(t6hbcf0)]
     #[test]
     fn holds_answering_cannot_tell_is_never_a_hold() {
         let st = Store { cannot_tell_holds: Mutex::new(u32::MAX), ..Store::ready(&["sp-a"]) };
@@ -588,6 +596,7 @@ mod tests {
         assert_eq!(st.calls.lock().unwrap().len(), 3, "cannot tell is retried, then given up as unknown");
     }
 
+    #[test_id(t0svj9a)]
     #[test]
     fn holds_cannot_tell_then_an_answer_is_that_answer() {
         let st = Store { cannot_tell_holds: Mutex::new(1), holds: vec!["ask".into(), "wait".into()], ..Store::ready(&["sp-a"]) };
@@ -599,6 +608,7 @@ mod tests {
         assert_eq!(read_holds(&st, "sp-a", 3, Duration::ZERO, &no_sleep), Holds::Known(vec![]));
     }
 
+    #[test_id(tb0beeh)]
     #[test]
     fn a_claim_whose_reply_is_lost_holds_exactly_that_one_bead() {
         let me = "dwarf-eitri@1.2";
@@ -613,6 +623,7 @@ mod tests {
         assert!(!unreachable);
     }
 
+    #[test_id(t2bvw8z)]
     #[test]
     fn resuming_a_rework_bead_leaves_its_row_working_under_this_holder_and_its_submit_is_accepted() {
         let me = "dwarf-eitri@1.2";
@@ -632,6 +643,7 @@ mod tests {
         assert_eq!(st.submit("sp-a", me), Ok(()));
     }
 
+    #[test_id(tlpd3ph)]
     #[test]
     fn a_claim_that_left_the_row_in_rework_is_refused_with_the_rows_state_and_version() {
         let st = Store::default();
@@ -640,6 +652,7 @@ mod tests {
         assert!(why.contains("REWORK") && why.contains("\"7\""), "{why}");
     }
 
+    #[test_id(t75rccg)]
     #[test]
     fn a_row_held_by_another_holder_is_not_verified_held() {
         let st = Store::default();
@@ -648,6 +661,7 @@ mod tests {
         assert!(why.contains("WORKING") && why.contains("dwarf-other@9.9") && why.contains("\"7\""), "{why}");
     }
 
+    #[test_id(tc6wnp3)]
     #[test]
     fn a_lost_claim_reply_that_cannot_be_read_back_claims_nothing_else() {
         let me = "dwarf-eitri@1.2";
@@ -661,6 +675,7 @@ mod tests {
         assert!(won.is_none() && unreachable, "{logs:?}");
     }
 
+    #[test_id(t5m3x35)]
     #[test]
     fn a_lost_claim_reply_that_did_not_land_tries_the_next() {
         let me = "dwarf-eitri@1.2";
@@ -675,6 +690,7 @@ mod tests {
         assert_eq!(st.held_by(me), vec!["sp-b"]);
     }
 
+    #[test_id(t051zp4)]
     #[test]
     fn holds_are_the_rows_typed_field_never_words_on_stdout() {
         // `spira-lc holds` once printed its usage text at exit 0, and the words read as holds.
@@ -684,6 +700,7 @@ mod tests {
         assert_eq!(read_holds(&st, "sp-a", 1, Duration::ZERO, &no_sleep), Holds::Known(vec!["poison".into()]));
     }
 
+    #[test_id(tacfgr8)]
     #[test]
     fn holds_whose_row_cannot_be_read_is_unknown_even_at_exit_0() {
         // The client-side `holds` answers exit 0 with empty output when its own show fails.
@@ -696,6 +713,7 @@ mod tests {
         serde_json::json!({"bead_id": id, "state": "WORKING", "holder": holder})
     }
 
+    #[test_id(tb76w75)]
     #[test]
     fn double_hold_reads_the_typed_working_rows() {
         let me = "dwarf-eitri@100.5";
@@ -707,6 +725,7 @@ mod tests {
         assert_eq!(double_hold(&st, me, &|_| true), Ok::<_, String>(None));
     }
 
+    #[test_id(tg4gbn6)]
     #[test]
     fn double_hold_that_cannot_read_the_rows_refuses() {
         let me = "dwarf-eitri@100.5";

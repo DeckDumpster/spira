@@ -363,6 +363,7 @@ fn flatten_timed(req: &ExportMetricsServiceRequest) -> Vec<Stored> {
 mod selector_tests {
     use super::parse_selector;
 
+    #[test_id(tsbxq2o)]
     #[test]
     fn a_leading_metric_name_is_a_name_condition_beside_the_labels() {
         let c = parse_selector("spira_tsd_value{tsd_family=\"bead-stage\"}");

@@ -365,6 +365,7 @@ mod tests {
     /// Over-broad-scopes #13 (sp-ipwlic): the target volumes are walked only when the
     /// filesystems they live on use more than the cap; under it, or with the cap off, nothing
     /// is walked; a filesystem that cannot be probed is walked as before.
+    #[test_id(t5rps4i)]
     #[test]
     fn target_volumes_are_measured_only_when_their_filesystem_could_exceed_the_cap() {
         let listing = format!(
@@ -389,6 +390,7 @@ mod tests {
         assert_eq!(walked.borrow().len(), 2, "an unprobed filesystem leaves no bound");
     }
 
+    #[test_id(th37pih)]
     #[test]
     fn the_unit_target_volume_and_its_keyed_variants_are_swept_and_nothing_else() {
         assert!(is_unit_target_volume(UNIT_TARGET_VOLUME));

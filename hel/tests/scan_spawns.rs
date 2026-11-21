@@ -1,5 +1,7 @@
 //! `scan_repo` over merged branches costs no git process per branch.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -87,6 +89,7 @@ fn spawns(dir: &Path, merged: usize) -> usize {
     std::fs::read_to_string(trace).unwrap().lines().filter(|l| l.contains("\"event\":\"start\"")).count()
 }
 
+#[test_id(txhdaon)]
 #[test]
 fn the_git_processes_a_scan_starts_do_not_grow_with_the_branches_merged_into_the_land_ref() {
     let t = testkit::TempDir::new("hel-scan-spawns");

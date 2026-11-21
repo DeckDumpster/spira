@@ -5,6 +5,9 @@
 // declares (law-producers-declare-what-they-know). No engine reads or writes here — this
 // crate only formats and validates the line; the IO seam (tsd-write's main.rs) appends it.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
@@ -243,6 +246,7 @@ pub fn append_line(path: &Path, line: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test_id(tac69vk)]
     #[test]
     fn valid_family_accepts_lowercase_hyphenated_names() {
         assert!(valid_family("suite-timing"));
@@ -250,6 +254,7 @@ mod tests {
         assert!(valid_family("a1"));
     }
 
+    #[test_id(tsy5yo3)]
     #[test]
     fn valid_family_refuses_anything_that_could_escape_the_directory() {
         assert!(!valid_family(""));
@@ -261,12 +266,14 @@ mod tests {
         assert!(!valid_family("a.b"));
     }
 
+    #[test_id(t96gw1c)]
     #[test]
     fn family_path_nests_under_tsd() {
         let p = family_path(Path::new("run"), "suite-timing");
         assert_eq!(p, PathBuf::from("run/tsd/suite-timing.jsonl"));
     }
 
+    #[test_id(t9e10nt)]
     #[test]
     fn parse_field_json_sniffs_scalars() {
         assert_eq!(parse_field("duration_ms=1500").unwrap().1, Value::from(1500));
@@ -277,6 +284,7 @@ mod tests {
         );
     }
 
+    #[test_id(tzcwp65)]
     #[test]
     fn parse_field_str_never_sniffs() {
         // A SHA that happens to be all digits must not silently become a number.
@@ -288,16 +296,19 @@ mod tests {
         );
     }
 
+    #[test_id(tp1a73y)]
     #[test]
     fn parse_field_refuses_missing_equals() {
         assert!(parse_field("no-equals-here").is_err());
     }
 
+    #[test_id(tvw1le1)]
     #[test]
     fn parse_field_refuses_empty_key() {
         assert!(parse_field("=value").is_err());
     }
 
+    #[test_id(tuzoyg6)]
     #[test]
     fn build_row_merges_envelope_and_fields() {
         let fields = vec![
@@ -313,6 +324,7 @@ mod tests {
         assert_eq!(v["duration_ms"], 1500);
     }
 
+    #[test_id(tked2jl)]
     #[test]
     fn build_row_refuses_field_colliding_with_envelope() {
         for key in ENVELOPE_KEYS {
@@ -324,6 +336,7 @@ mod tests {
         }
     }
 
+    #[test_id(t1r53xv)]
     #[test]
     fn parse_ts_and_iso_utc_round_trip() {
         assert_eq!(parse_ts("1970-01-01T00:00:00Z"), Some(0));

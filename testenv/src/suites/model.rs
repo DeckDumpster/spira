@@ -199,6 +199,7 @@ pub fn compact_stamp(epoch: u64) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tbl73kq)]
     #[test]
     fn gate_list_drops_comments_blanks_and_directories() {
         let g = parse_gate_list("# header\n\n  spira/test-b.sh  # why\ntest-a.sh\n   \n# spira/test-c.sh\n");
@@ -206,6 +207,7 @@ mod tests {
         assert!(parse_gate_list("").is_empty());
     }
 
+    #[test_id(tqedc3v)]
     #[test]
     fn runs_is_unknown_when_the_gate_list_is_unreadable_never_timed() {
         let g: Result<BTreeSet<String>, Unreadable> = Ok(["test-a.sh".to_string()].into());
@@ -215,6 +217,7 @@ mod tests {
         assert_eq!(Runs::Unknown.as_str(), "?");
     }
 
+    #[test_id(td0r2ub)]
     #[test]
     fn covers_folds_continuations_and_stops_at_a_directive() {
         let t = "#!/usr/bin/env bash\n# covers: spira/a.sh spira/b.sh\n#   spira/c.sh UC-x-01\n# \tspira/d.sh\n#\tspira/one-tab.sh\n# tier: T2\n#   spira/late.sh\n";
@@ -230,6 +233,7 @@ mod tests {
         assert_eq!(covers_of("# covers: a\n#   # b\n"), "a");
     }
 
+    #[test_id(tnr81z4)]
     #[test]
     fn priority_is_a_single_digit_zero_to_four_else_the_default() {
         assert_eq!(priority_of("# covers: x\n# priority: 1\n", 3), 1);
@@ -240,6 +244,7 @@ mod tests {
         assert_eq!(priority_of("", 2), 2);
     }
 
+    #[test_id(tki6kvu)]
     #[test]
     fn last_result_needs_a_status_and_a_numeric_epoch() {
         let r = LastResult::parse("red 1790000000 12 abc123 parallel diff 1\n").unwrap();
@@ -255,12 +260,14 @@ mod tests {
         assert!(LastResult::parse("skip 1 0 -").unwrap().is_skip());
     }
 
+    #[test_id(tq43ve0)]
     #[test]
     fn a_suite_name_is_a_basename() {
         assert!(valid_suite_name("test-a.sh"));
         assert!(!valid_suite_name("../x.sh") && !valid_suite_name(".hidden") && !valid_suite_name(""));
     }
 
+    #[test_id(tmdebkx)]
     #[test]
     fn iso_round_trips_and_rejects_other_shapes() {
         assert_eq!(parse_iso_utc("1970-01-01T00:00:00Z"), Some(0));
@@ -272,6 +279,7 @@ mod tests {
         assert_eq!(compact_stamp(1_790_000_000), "20260921T141320Z");
     }
 
+    #[test_id(txz4gav)]
     #[test]
     fn population_is_the_glob() {
         let d = testkit::TempDir::new("suites-pop");

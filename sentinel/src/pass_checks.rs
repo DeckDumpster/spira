@@ -299,6 +299,7 @@ mod tests {
         LcRow { bead_id: id.into(), state: state.into(), ..LcRow::default() }
     }
 
+    #[test_id(tmqyglo)]
     #[test]
     fn judgement_table_is_the_binarys() {
         assert_eq!(should_judge(Some(1), 0, 5, 0, 0, 10_000, 3600), Judge::No);
@@ -308,6 +309,7 @@ mod tests {
         assert_eq!(should_judge(None, 0, 5, 0, 0, 10_000, 3600), Judge::No);
     }
 
+    #[test_id(tunrik7)]
     #[test]
     fn recompute_runs_only_on_a_starved_plan() {
         assert!(should_recompute(false, Some(0), 0, 3));
@@ -317,6 +319,7 @@ mod tests {
         assert!(!should_recompute(false, Some(0), 0, 0));
     }
 
+    #[test_id(tufis7t)]
     #[test]
     fn a_red_trackers_fix_with_no_live_row_is_read_by_id() {
         let beads = parse_beads(r#"[{"id":"t","status":"open","labels":["rt"],"dependencies":[{"depends_on_id":"old","type":"blocks"},{"depends_on_id":"new","type":"blocks"}]},{"id":"u","status":"open","dependencies":[{"depends_on_id":"other","type":"blocks"}]}]"#).unwrap();
@@ -324,6 +327,7 @@ mod tests {
         assert_eq!(unread_blockers(&beads, "rt", &has), vec!["old".to_string()]);
     }
 
+    #[test_id(tauc5kd)]
     #[test]
     fn an_open_child_labels_its_parent_and_a_closed_one_releases_it() {
         let beads = parse_beads(r#"[{"id":"p","status":"open"},{"id":"c","status":"open","parent":"p"}]"#).unwrap();
@@ -335,6 +339,7 @@ mod tests {
         assert_eq!(open_children(&View::new(&labeled, &rows), &[], "oc"), vec![Change::Remove("p".into())]);
     }
 
+    #[test_id(tuzx0nw)]
     #[test]
     fn a_red_tracker_closes_once_every_fix_landed() {
         let beads = parse_beads(r#"[{"id":"t","status":"open","labels":["rt"],"dependencies":[{"depends_on_id":"f","type":"blocks"}]},{"id":"f","status":"open"}]"#).unwrap();
@@ -344,6 +349,7 @@ mod tests {
         assert!(landed_red_trackers(&View::new(&beads, &pending), "rt").is_empty());
     }
 
+    #[test_id(tjelhf9)]
     #[test]
     fn an_ask_hold_whose_ask_is_gone_is_withdrawn_after_the_grace() {
         let beads = parse_beads(r#"[{"id":"sp-a","status":"open","labels":[]}]"#).unwrap();
@@ -358,6 +364,7 @@ mod tests {
         assert_eq!(stale_ask_holds(&v, "needs-operator", 1_000, 100, &|_| false), vec![("sp-a".to_string(), "no open ask remains".to_string())]);
     }
 
+    #[test_id(tgibpkt)]
     #[test]
     fn a_stale_marker_names_its_ready_dependents() {
         let beads = parse_beads(r#"[{"id":"p","status":"open"},{"id":"d","status":"open","dependencies":[{"depends_on_id":"p","type":"blocks"}]}]"#).unwrap();

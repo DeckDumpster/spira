@@ -230,6 +230,7 @@ mod tests {
         testkit::TempDir::new(&format!("dwarf-ledger-{name}"))
     }
 
+    #[test_id(tk1b6g7)]
     #[test]
     fn ledger_formats_are_pinned() {
         let d = tmp("fmt");
@@ -254,6 +255,7 @@ mod tests {
         assert!(text.lines().all(|l| re.is_match(l)));
     }
 
+    #[test_id(ttl0yf5)]
     #[test]
     fn dry_run_writes_nothing() {
         let d = tmp("dry");
@@ -263,6 +265,7 @@ mod tests {
         assert!(!d.join("dwarf-ledger.log").exists());
     }
 
+    #[test_id(tst608i)]
     #[test]
     fn trim_keeps_the_last_5000_over_20000() {
         let d = tmp("trim");
@@ -281,6 +284,7 @@ mod tests {
 
     // test-session-result-fields.sh: per-turn fields sum, cumulative ones take the last,
     // a JSON true is not a number, a partial last line is ignored.
+    #[test_id(ts28w8z)]
     #[test]
     fn session_fields_sum_and_last() {
         let seg = concat!(
@@ -301,6 +305,7 @@ mod tests {
         assert_eq!(session_fields("").render(), SessionFields::default().render());
     }
 
+    #[test_id(t0suzgn)]
     #[test]
     fn attempt_trace_returns_the_last_segment() {
         let d = tmp("seg");
@@ -322,6 +327,7 @@ mod tests {
         assert!(attempt_trace(&d.join("missing"), 0, mark).is_empty());
     }
 
+    #[test_id(ttekxpk)]
     #[test]
     fn trace_segment_is_none_for_a_missing_or_absent_path() {
         let d = tmp("seg2");
@@ -332,6 +338,7 @@ mod tests {
         assert_eq!(trace_segment(Some(&p), 0, "=== spira attempt"), Some("hi\n".to_string()));
     }
 
+    #[test_id(tohpgm0)]
     #[test]
     fn trace_mark_counts_prior_attempts() {
         let d = tmp("mark");

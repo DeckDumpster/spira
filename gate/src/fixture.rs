@@ -145,12 +145,14 @@ mod tests {
         t
     }
 
+    #[test_id(typ5138)]
     #[test]
     fn the_shipped_fixture_resolves_every_key() {
         let t = copy_tree();
         assert!(check(t.path(), None).unwrap() > 0);
     }
 
+    #[test_id(t02fobo)]
     #[test]
     fn a_tip_that_retires_a_fixture_key_the_tree_still_reads_is_refused_naming_it() {
         let t = copy_tree();
@@ -163,6 +165,7 @@ mod tests {
         assert!(e.contains("SPIRA_ARCHIVIST_EVERY"), "{e}");
     }
 
+    #[test_id(tyh3k3v)]
     #[test]
     fn a_tip_that_retires_a_fixture_key_the_landing_ref_still_requires_is_refused_naming_it() {
         let t = copy_tree();
@@ -181,6 +184,7 @@ mod tests {
         assert!(e.contains("SPIRA_ARCHIVIST_EVERY") && e.contains("landing ref"), "{e}");
     }
 
+    #[test_id(tv0nmvr)]
     #[test]
     fn a_delta_with_two_removed_lines_is_refused_naming_the_landing_ref() {
         let e = merged_delta_parses("removed = [\"spira.a\"]\nremoved = [\"spira.b\"]\n[spira]\nx = \"1\"\n", "main").unwrap_err();
@@ -188,6 +192,7 @@ mod tests {
         merged_delta_parses("removed = [\"spira.a\", \"spira.b\"]\n[spira]\nx = \"1\"\n", "main").expect("one removed line parses");
     }
 
+    #[test_id(t9zjiot)]
     #[test]
     fn a_tip_whose_delta_only_breaks_once_merged_with_the_landing_ref_is_refused() {
         let t = copy_tree();
@@ -210,6 +215,7 @@ mod tests {
         assert!(e.contains(DELTA) && e.contains("merged with the landing ref main") && e.contains("duplicate key"), "{e}");
     }
 
+    #[test_id(te49bfy)]
     #[test]
     fn a_tree_that_contains_the_landing_ref_is_judged_on_its_own_delta_without_a_merge() {
         // A round's merged tree: the base is an ancestor, so nothing is merged (a slow merge
@@ -232,6 +238,7 @@ mod tests {
         assert!(e.contains("duplicate key") && e.contains(DELTA), "{e}");
     }
 
+    #[test_id(tgalwjw)]
     #[test]
     fn a_tip_that_deleted_a_key_keeps_its_fixture_line_while_the_landing_ref_requires_it() {
         let t = copy_tree();
@@ -248,6 +255,7 @@ mod tests {
         check(t.path(), Some("main")).expect("the fixture still declares the key the landing ref requires");
     }
 
+    #[test_id(tcpgztd)]
     #[test]
     fn a_retired_key_passes_the_fence_against_the_landing_ref_that_still_registers_it() {
         let t = copy_tree();
@@ -260,6 +268,7 @@ mod tests {
         check(t.path(), Some("main")).expect("the fixture line stays while the landing ref requires it");
     }
 
+    #[test_id(t9r7nnr)]
     #[test]
     fn a_key_the_tree_adds_with_its_conf_d_file_resolves_though_the_running_binary_never_registered_it() {
         let t = copy_tree();

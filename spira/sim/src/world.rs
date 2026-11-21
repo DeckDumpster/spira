@@ -1329,6 +1329,7 @@ pub fn down(dir: &Path, steps: &dyn Steps) -> Result<(), String> {
 mod locator_tests {
     use super::*;
 
+    #[test_id(twb1p8q)]
     #[test]
     fn a_worlds_sim_env_names_the_world_to_the_pilgrim_dwarf() {
         let text = sim_env_text(Path::new("w"), Path::new("w/sim"), "3306", "f");
@@ -1338,24 +1339,28 @@ mod locator_tests {
         assert_eq!(get("PILGRIM_LC_SOCKET"), Some(lc_socket(Path::new("w")).display().to_string()));
     }
 
+    #[test_id(tc0u75o)]
     #[test]
     fn a_world_is_refused_while_spira_toml_names_a_config() {
         let e = refuse_production(&|k| (k == "SPIRA_TOML").then(|| "c/one-source.toml".to_string())).unwrap_err();
         assert!(e.contains("SPIRA_TOML"), "{e}");
     }
 
+    #[test_id(titb9na)]
     #[test]
     fn a_worlds_test_registry_is_a_file_under_its_own_run_dir() {
         let s = lc_settings(Path::new("w"));
         assert!(s.contains(&("spira.test_registry_path".to_string(), "w/run/test-registry.sqlite".to_string())));
     }
 
+    #[test_id(tbczw37)]
     #[test]
     fn the_production_locator_refusal_names_its_exit() {
         let e = refuse_production(&|k| matches!(k, "SPIRA_TOML" | "SPIRA_LC_SOCKET").then(|| "x".to_string())).unwrap_err();
         assert!(e.contains("env -u SPIRA_LC_SOCKET -u SPIRA_TOML") && e.contains("--pilgrim"), "{e}");
     }
 
+    #[test_id(tyitj65)]
     #[test]
     fn a_pilgrim_session_names_its_store_tools_from_the_pinned_bd_with_no_bd_on_path() {
         let t = testkit::TempDir::new("pilgrim-tools");
@@ -1373,6 +1378,7 @@ mod locator_tests {
         assert_eq!(removes, vec!["SPIRA_LC_SOCKET", "SPIRA_TOML"]);
     }
 
+    #[test_id(tdjuyn8)]
     #[test]
     fn a_pilgrim_session_builds_its_world_from_the_active_release() {
         let env = |k: &str| (k == "SPIRA_RELEASE").then(|| "rel".to_string());
@@ -1380,6 +1386,7 @@ mod locator_tests {
         assert!(sets.contains(&(RELEASE_ENV, "rel".to_string())), "{sets:?}");
     }
 
+    #[test_id(t7yfs71)]
     #[test]
     fn a_release_repo_holds_the_releases_tree_and_none_of_its_build_output() {
         let t = testkit::TempDir::new("release-repo");
@@ -1401,6 +1408,7 @@ mod locator_tests {
         assert!(linked.starts_with("100644 blob"), "a link to a file is the file, which a world can write: {linked}");
     }
 
+    #[test_id(tmu6le3)]
     #[test]
     fn a_store_tool_missing_from_path_and_undeclared_is_refused_naming_its_key() {
         let e = store_tool("bd", None, system_paths::NONEXISTENT, BD_ENV).unwrap_err();
@@ -1412,6 +1420,7 @@ mod locator_tests {
 mod content_sql_tests {
     use super::content_sql_settings;
 
+    #[test_id(t6y1bak)]
     #[test]
     fn a_worlds_content_reads_name_its_fixtures_port_not_the_bases() {
         let s = content_sql_settings("41234");
@@ -1424,6 +1433,7 @@ mod content_sql_tests {
 mod sparse_tests {
     use super::SPARSE_PATTERNS;
 
+    #[test_id(tx5js2o)]
     #[test]
     fn a_worlds_sparse_tree_names_a_suite_the_repository_has_so_a_round_has_a_corpus() {
         let spira = testkit::manifest_dir().parent().unwrap().to_path_buf();
@@ -1438,14 +1448,15 @@ mod sparse_tests {
 
 #[cfg(test)]
 mod list_pages_tests {
+    #[test_id(tb37dmf)]
     #[test]
     fn the_probe_reads_every_row_as_pages_by_cursor_never_a_bare_list() {
-        let ids: Vec<String> = (0..super::PAGE_ROWS + 3).map(|i| format!("sp-{i:05}")).collect();
+        let ids: Vec<String> = (0..super::super::PAGE_ROWS + 3).map(|i| format!("sp-{i:05}")).collect();
         let mut sent: Vec<Vec<String>> = Vec::new();
-        let all = super::list_pages(&mut |argv| {
+        let all = super::super::list_pages(&mut |argv| {
             sent.push(argv.iter().map(|a| a.to_string()).collect());
             let after = argv.iter().position(|a| *a == "--after").map(|i| argv[i + 1]);
-            let page: Vec<_> = ids.iter().filter(|i| after.is_none_or(|a| i.as_str() > a)).take(super::PAGE_ROWS).map(|i| serde_json::json!({ "bead_id": i })).collect();
+            let page: Vec<_> = ids.iter().filter(|i| after.is_none_or(|a| i.as_str() > a)).take(super::super::PAGE_ROWS).map(|i| serde_json::json!({ "bead_id": i })).collect();
             Ok(serde_json::Value::Array(page).to_string())
         })
         .unwrap();
@@ -1456,13 +1467,14 @@ mod list_pages_tests {
 
 #[cfg(test)]
 mod seed_cache_tests {
+    #[test_id(tpts335)]
     #[test]
     fn a_seed_cache_that_cannot_be_made_is_refused_naming_its_path() {
         let t = testkit::TempDir::new("seed-cache-refused");
         let file = t.path().join("a-file");
         std::fs::write(&file, "").unwrap();
         let cache = file.join("seed-cache");
-        let err = super::ensure_seed_in(&cache, &testkit::manifest_dir(), "HEAD").err().expect("refused");
+        let err = super::super::ensure_seed_in(&cache, &testkit::manifest_dir(), "HEAD").err().expect("refused");
         assert!(err.starts_with(&format!("{}: ", cache.display())), "{err}");
     }
 }

@@ -8,6 +8,9 @@
 //! answers from [`shared`] memory and asks the store nothing (S7b). A process without one builds
 //! its own and reads the store afresh, as before.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -875,6 +878,7 @@ impl Projection {
 mod tests {
     use super::*;
 
+    #[test_id(tt3dtmn)]
     #[test]
     fn the_state_lists_name_every_spelling_of_each_batch_state_the_store_writes() {
         let words = ["STAGED", "OPEN", "CI_RUNNING", "GREEN", "LANDING", "DEPLOYING", "ATTRIBUTING", "REBUILDING", "LANDED", "SETTLED", "ABANDONED", "DISCARDED"];

@@ -54,6 +54,7 @@ fn effects(acts: &[Act]) -> Vec<&str> {
     acts.iter().map(|a| a.effect.as_str()).collect()
 }
 
+#[test_id(teq5fpk)]
 #[test]
 fn a_round_the_attribution_rebuilt_is_certified_for_the_rebuilt_head_and_its_green_lands() {
     let (held, acts) = on_ran_with(&attributing(), &ran(ATTRIBUTE, Exit::Code(0)), &land_line(REBUILT), NOW).expect("the attribution's own leg");
@@ -79,6 +80,7 @@ fn a_round_the_attribution_rebuilt_is_certified_for_the_rebuilt_head_and_its_gre
     }
 }
 
+#[test_id(tsj7jkl)]
 #[test]
 fn a_certify_for_the_rebuilt_head_is_discarded_when_the_head_moves_to_another() {
     let (held, _) = on_ran_with(&attributing(), &ran(ATTRIBUTE, Exit::Code(0)), &land_line(REBUILT), NOW).unwrap();
@@ -90,6 +92,7 @@ fn a_certify_for_the_rebuilt_head_is_discarded_when_the_head_moves_to_another() 
     assert!(on_ran_seeing(&certifying, &ran(&leg.unit, Exit::Code(0)), &RanOutput::captured(b"", b""), NOW, &head_of).is_none());
 }
 
+#[test_id(ti17gyp)]
 #[test]
 fn a_certify_leg_names_no_head_when_the_attribution_did_not_rebuild_the_tree() {
     for head in ["", OPENED] {
@@ -99,6 +102,7 @@ fn a_certify_leg_names_no_head_when_the_attribution_did_not_rebuild_the_tree() {
     }
 }
 
+#[test_id(t5rlzyz)]
 #[test]
 fn certify_argv_carries_rehead_only_for_a_leg_that_names_a_head() {
     let leg = Leg {
@@ -151,16 +155,19 @@ fn assert_stops_old_and_certifies_new(state: State, leg: &str) {
     assert!(again.is_empty(), "a head move is handled once: {again:?}");
 }
 
+#[test_id(tcj2q44)]
 #[test]
 fn a_hand_eject_that_moves_a_certifying_rounds_head_stops_the_old_pass_and_certifies_the_new_head() {
     assert_stops_old_and_certifies_new(State::Certifying, "spira.r9.certify1");
 }
 
+#[test_id(tm7il5u)]
 #[test]
 fn a_hand_eject_that_moves_a_corpus_rounds_head_stops_the_old_pass_and_certifies_the_new_head() {
     assert_stops_old_and_certifies_new(State::Corpus, "spira.r9.corpus1");
 }
 
+#[test_id(tvadm72)]
 #[test]
 fn an_abandon_after_a_head_move_names_the_move_and_the_ejected_bead() {
     let (moved, _) = decide(&running(State::Certifying, "spira.r9.certify1"), &ejected_snapshot(REBUILT, NOW));

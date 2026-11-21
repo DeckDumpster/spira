@@ -31,6 +31,7 @@ pub fn clear_noverdict(run: &Path, branch: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    #[test_id(tgqxoww)]
     #[test]
     fn clearing_a_branch_keeps_the_counters_of_a_branch_that_extends_its_name() {
         let t = testkit::TempDir::new("branch-key");
@@ -45,6 +46,7 @@ mod tests {
         assert!(dir.join("spira-sp-ab-conflict").exists());
     }
 
+    #[test_id(te6r4zo)]
     #[test]
     fn key_replaces_path_separators() {
         assert_eq!(branch_key("spira/sp-a.1"), "spira-sp-a.1");

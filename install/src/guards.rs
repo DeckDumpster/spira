@@ -282,12 +282,14 @@ pub fn require_declared(spira_toml: Option<&str>, spira_release: Option<&str>) -
 mod tests {
     use super::*;
 
+    #[test_id(tms2e4o)]
     #[test]
     fn install_without_spira_toml_refuses_naming_it() {
         let e = require_declared(None, Some("r")).unwrap_err();
         assert!(e.contains("SPIRA_TOML is not set"), "{e}");
     }
 
+    #[test_id(tst6xco)]
     #[test]
     fn install_without_spira_release_refuses_naming_it() {
         let e = require_declared(Some("c/one-source.toml"), None).unwrap_err();
@@ -295,6 +297,7 @@ mod tests {
         assert_eq!(require_declared(Some("c/one-source.toml"), Some("r/")).unwrap(), std::path::PathBuf::from("r"));
     }
 
+    #[test_id(ttigdrv)]
     #[test]
     fn conf_key_parsing_strips_quotes_and_expands_home() {
         let c = parse_conf_keys("other.conf", "# comment\nSPIRA_INSTANCE=test\nSPIRA_RUN=\"~/run\"\nSPIRA_DB='$HOME/db'\nIGNORED=1\n", "opt/fixture");
@@ -304,6 +307,7 @@ mod tests {
         assert!(!c.values.contains_key("IGNORED"));
     }
 
+    #[test_id(tocorbe)]
     #[test]
     fn a_shared_run_dir_across_instances_collides() {
         let this: BTreeMap<&str, &str> = BTreeMap::from([("SPIRA_RUN", "run/prod")]);
@@ -311,6 +315,7 @@ mod tests {
         assert!(check_path_collisions("prod", &this, &[other]).is_err());
     }
 
+    #[test_id(tjho64i)]
     #[test]
     fn the_same_instance_never_collides_with_itself() {
         let this: BTreeMap<&str, &str> = BTreeMap::from([("SPIRA_RUN", "run/prod")]);
@@ -318,6 +323,7 @@ mod tests {
         assert!(check_path_collisions("prod", &this, &[other]).is_ok());
     }
 
+    #[test_id(t9r7pbz)]
     #[test]
     fn conflict_foreign_is_clear_when_no_unit_is_installed_or_it_matches() {
         assert!(conflict_foreign("prod", None, "home").is_ok());
@@ -325,6 +331,7 @@ mod tests {
         assert!(conflict_foreign("prod", Some("other"), "home").is_err());
     }
 
+    #[test_id(thhl649)]
     #[test]
     fn conflict_dwarf_matches_the_full_argv_entry_only() {
         assert!(conflict_dwarf("home", [("123", "bash\0home/dwarf.sh\0--foo")]).is_err());
@@ -333,6 +340,7 @@ mod tests {
         assert!(conflict_dwarf("home", [("999", "grep\0-alFf\0/dev/stdin\0looking for home/dwarf.sh")]).is_ok());
     }
 
+    #[test_id(tisn0z8)]
     #[test]
     fn conflict_dolt_is_clear_unless_a_different_data_dir_is_being_served() {
         assert!(conflict_dolt("dolt", 3307, false, []).is_ok());
@@ -340,12 +348,14 @@ mod tests {
         assert!(conflict_dolt("dolt", 3307, true, [("sql-server", "other")]).is_err());
     }
 
+    #[test_id(ta8o2mh)]
     #[test]
     fn bootstrap_decision_requires_prods_parent_under_releases() {
         assert!(bootstrap_decision("releases/bootstrap", "releases").is_ok());
         assert!(bootstrap_decision("elsewhere/spira", "releases").is_err());
     }
 
+    #[test_id(t2aqdc8)]
     #[test]
     fn conflict_lock_is_clear_unless_the_gate_tree_lock_is_held() {
         assert!(conflict_lock("run/.gate.lock", false).is_ok());
@@ -353,6 +363,7 @@ mod tests {
         assert!(e.message.contains("landing pass in flight"), "{}", e.message);
     }
 
+    #[test_id(tgscalc)]
     #[test]
     fn conflict_instance_arg_is_clear_unless_it_disagrees_with_the_existing_config() {
         assert!(conflict_instance_arg("prod", None, "spira.conf").is_ok());
@@ -361,6 +372,7 @@ mod tests {
         assert!(e.message.contains("disagrees"), "{}", e.message);
     }
 
+    #[test_id(towb8ty)]
     #[test]
     fn settle_instance_follows_the_config_and_refuses_a_disagreeing_request() {
         assert_eq!(settle_instance(None, Some("lab")).unwrap(), "lab");
@@ -371,6 +383,7 @@ mod tests {
         assert!(e.message.contains("disagrees"), "{}", e.message);
     }
 
+    #[test_id(tfwjou4)]
     #[test]
     fn conflict_instance_run_is_clear_unless_another_instance_shares_the_run_dir() {
         assert!(conflict_instance_run("run/prod", "spira-sentinel-prod.service", []).is_ok());
@@ -380,6 +393,7 @@ mod tests {
         assert!(e.message.contains("instance 'test'"), "{}", e.message);
     }
 
+    #[test_id(tq5gcwb)]
     #[test]
     fn prod_guard_refuses_a_git_checkout_unless_overridden() {
         assert!(prod_guard("prod", false, false, "releases").is_ok());
@@ -388,6 +402,7 @@ mod tests {
         assert!(e.contains("git checkout"), "{e}");
     }
 
+    #[test_id(t3w4nbi)]
     #[test]
     fn configure_prod_guard_requires_conf_sh_at_the_named_path() {
         assert!(configure_prod_guard("", false).is_ok(), "unset is not this guard's concern");
@@ -396,6 +411,7 @@ mod tests {
         assert!(e.contains("does not contain conf.sh"), "{e}");
     }
 
+    #[test_id(t6gi4u0)]
     #[test]
     fn db_git_guard_refuses_a_remote_before_an_ancestor_checkout() {
         assert!(db_git_guard("db", &["origin".to_string()], Some("checkout")).unwrap_err().contains("remote"));
@@ -403,6 +419,7 @@ mod tests {
         assert!(db_git_guard("db", &[], None).is_ok());
     }
 
+    #[test_id(t3xr4jb)]
     #[test]
     fn seed_when_defers_only_for_a_down_server_mode_database() {
         assert_eq!(seed_when(true, true, false), SeedWhen::Now); // fresh always seeds now
@@ -435,6 +452,7 @@ mod traverse_tests {
         d
     }
 
+    #[test_id(tkl4krf)]
     #[test]
     fn a_closed_ancestor_is_named_and_an_open_one_is_not() {
         let closed = dir_with(0o750);

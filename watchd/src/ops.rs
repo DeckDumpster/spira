@@ -503,6 +503,7 @@ pub mod fake {
         }
     }
 
+    #[test_id(tlo7jgx)]
     #[test]
     fn fake_records_restarts() {
         let f = Fake::default();
@@ -515,6 +516,7 @@ pub mod fake {
 mod real_tests {
     use super::*;
 
+    #[test_id(t2xxdls)]
     #[test]
     fn pids_with_arg_reads_proc_argv_exactly_and_skips_the_excluded_pid() {
         let tmp = testkit::TempDir::new("watchd-proc");
@@ -526,6 +528,7 @@ mod real_tests {
         assert_eq!(pids_with_arg(&root, "usr/bin/foo", 13), vec![10, 11]);
     }
 
+    #[test_id(tugonnx)]
     #[test]
     fn inbox_pushes_only_with_a_wake_and_a_matching_pattern() {
         let pat = r"\bP0\b|RED on|PAUSED";
@@ -535,11 +538,13 @@ mod real_tests {
         assert!(!inbox_pushes("watchd: P0 down", "a-wake-command", "("));
     }
 
+    #[test_id(tb07wa5)]
     #[test]
     fn inbox_line_is_the_scripts_utc_stamp_then_the_text() {
         assert_eq!(inbox_line(0, "hello there"), "1970-01-01T00:00:00Z hello there");
     }
 
+    #[test_id(thv5sf8)]
     #[test]
     fn match_output_reads_the_run_column_and_treats_a_legacy_line_as_runnable() {
         let m = |slug: &str, runs| SopMatch { slug: slug.into(), runs };
@@ -559,6 +564,7 @@ mod real_tests {
         runtime::units::UnitDetail { active_state: Some(active.into()), n_restarts: Some(restarts), load_state: Some("loaded".into()), state: runtime::units::state_of_word(active), ..runtime::units::UnitDetail::absent(name) }
     }
 
+    #[test_id(tgpdueo)]
     #[test]
     fn is_active_reads_each_units_state_from_the_port_in_order() {
         let u = scripted();
@@ -568,6 +574,7 @@ mod real_tests {
         assert_eq!(r.is_active(&["b.service".into(), "a.service".into(), "gone.service".into()]), ["failed", "active", "inactive"]);
     }
 
+    #[test_id(tcezzu0)]
     #[test]
     fn show_keys_state_and_restarts_by_unit_name() {
         let u = scripted();
@@ -576,6 +583,7 @@ mod real_tests {
         assert_eq!(m.get("a.service"), Some(&("active".to_string(), "3".to_string())));
     }
 
+    #[test_id(t32dnsr)]
     #[test]
     fn list_watch_units_names_loaded_and_installed_units_of_the_instance() {
         let u = scripted();
@@ -584,6 +592,7 @@ mod real_tests {
         assert_eq!(real_over(u).list_watch_units("prod"), ["spira-watch-x-prod.service"]);
     }
 
+    #[test_id(txfqpy3)]
     #[test]
     fn an_unreachable_manager_reads_as_unknown_not_inactive() {
         let r = Real { systemctl: "x".into(), units: runtime::units::unreachable("down"), systemd_run: "x".into() };
@@ -592,6 +601,7 @@ mod real_tests {
         assert!(r.list_watch_units("prod").is_empty());
     }
 
+    #[test_id(t3hw5ch)]
     #[test]
     fn a_systemctl_override_decides_what_status_reads_instead_of_the_live_manager() {
         let tmp = testkit::TempDir::new("watchd-stub");

@@ -1071,6 +1071,7 @@ fn unresolved_programs() -> Vec<String> {
 mod tests {
     use super::*;
 
+    #[test_id(t8iwu51)]
     #[test]
     fn an_absent_store_socket_is_not_running_after_the_wait_and_nothing_was_sent() {
         let dir = testkit::TempDir::new("work-not-running");
@@ -1078,6 +1079,7 @@ mod tests {
         assert!(matches!(e, Unsent::NotRunning { .. }), "{e:?}");
     }
 
+    #[test_id(taeb2w3)]
     #[test]
     fn a_socket_that_cannot_be_a_store_stays_a_fault_not_a_wait() {
         let dir = testkit::TempDir::new("work-not-a-store");
@@ -1086,6 +1088,7 @@ mod tests {
         assert!(matches!(e, Unsent::Other(_)), "{e:?}");
     }
 
+    #[test_id(t3czz4v)]
     #[test]
     fn the_refusal_reports_the_wait() {
         assert!(refusal(R::StoreNotRunning, "", &[("secs", "30")]).contains("store not running: nothing was sent; waited 30s"));

@@ -247,6 +247,7 @@ pub fn pid_alive(pid: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test_id(t8d12ei)]
     #[test]
     fn iso_utc_matches_date() {
         assert_eq!(iso_utc(0), "1970-01-01T00:00:00Z");
@@ -254,6 +255,7 @@ mod tests {
         assert_eq!(iso_utc(951_782_400), "2000-02-29T00:00:00Z");
     }
 
+    #[test_id(tci2q9z)]
     #[test]
     fn round_half_even_is_pythons() {
         assert_eq!(round_half_even(2.5), 2);
@@ -264,12 +266,14 @@ mod tests {
         assert_eq!(round_half_even(-2.5), -2);
     }
 
+    #[test_id(tcwe4lk)]
     #[test]
     fn json_only_strips_warnings_before_payload() {
         assert_eq!(json_only("warning: x\n[{\"id\":1}]\n"), "[{\"id\":1}]\n");
         assert_eq!(json_only("nothing here\n"), "");
     }
 
+    #[test_id(tgnhdwk)]
     #[test]
     fn strip_bd_hints_drops_hint_lines() {
         let t = "sp-a · title\n💡 tip\nwarning: w\n  Fix: x\n  Or: y\nNOTES";

@@ -165,6 +165,7 @@ mod tests {
     }
 
     // covers: UC-test-infrastructure-02
+    #[test_id(tiqzni0)]
     #[test]
     fn a_planted_unresolvable_token_is_caught_then_clears() {
         let t = TempDir::new("cov");
@@ -184,6 +185,7 @@ mod tests {
         assert!(run(&t, &["spira/lib.sh", "spira/test-pc.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(tc4gq1s)]
     #[test]
     fn continuation_lines_fold_and_directives_end_the_block() {
         let text = "#!/bin/bash\n# covers: a.sh\n#   b.sh c/*\n# tier: T1\n#   d.sh\n";
@@ -194,6 +196,7 @@ mod tests {
         assert!(covers_of("# tier: T1\n").is_none());
     }
 
+    #[test_id(t1ghf97)]
     #[test]
     fn globs_follow_the_shell_not_git() {
         assert!(glob_match("spira/*.sh", "spira/a.sh"));
@@ -208,6 +211,7 @@ mod tests {
         assert!(!is_catalogue_token("spira/UC-a-01.sh"));
     }
 
+    #[test_id(tu6j25s)]
     #[test]
     fn a_directory_token_resolves_through_its_files() {
         let t = TempDir::new("cov-dir");
@@ -219,6 +223,7 @@ mod tests {
         );
     }
 
+    #[test_id(t95fowd)]
     #[test]
     fn no_declaration_anywhere_is_a_refusal() {
         let t = TempDir::new("cov-none");

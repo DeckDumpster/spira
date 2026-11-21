@@ -76,6 +76,7 @@ pub fn probe_from(roster: &str, count: &dyn Fn(&str) -> u32, ready: Option<&str>
 mod tests {
     use super::*;
 
+    #[test_id(tp3pfac)]
     #[test]
     fn the_roster_is_counted_in_order_and_ready_lines_are_parsed() {
         let p = probe_from(" builder ops", &|f| if f == "builder" { 2 } else { 0 }, Some("builder 5\nops 0\n"));
@@ -83,6 +84,7 @@ mod tests {
         assert_eq!(p.ready_by_rune, vec![("builder".to_string(), 5), ("ops".to_string(), 0)]);
     }
 
+    #[test_id(tpqcmnt)]
     #[test]
     fn no_ready_answer_is_no_ready_rows() {
         assert!(probe_from("builder", &|_| 1, None).ready_by_rune.is_empty());

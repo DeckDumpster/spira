@@ -159,6 +159,7 @@ mod tests {
     use super::scripted::scripted;
     use super::*;
 
+    #[test_id(t4tdmim)]
     #[test]
     fn rows_are_read_through_the_client_not_a_program() {
         let (t, c) = scripted(0, r#"[{"bead_id":"sp-a","tip":"abc","since":7}]"#);
@@ -167,6 +168,7 @@ mod tests {
         assert_eq!(t.seen.lock().unwrap().as_slice(), &[vec!["list".to_string(), "--state".into(), "CERTIFIED".into()]]);
     }
 
+    #[test_id(tikbgte)]
     #[test]
     fn content_list_is_the_content_door_with_warnings_skipped() {
         let (t, c) = scripted(0, "warning: stale\n[{\"id\":\"sp-a\"}]\n");
@@ -175,6 +177,7 @@ mod tests {
         assert_eq!(content_list(&scripted(1, "bd failed").1, &[]), None);
     }
 
+    #[test_id(ttjdq4o)]
     #[test]
     fn last_landed_asks_the_newest_end_of_the_audit_log_once() {
         use super::scripted::scripted_by;
@@ -188,6 +191,7 @@ mod tests {
         assert_eq!(last_landed_on(&scripted_by(&[("audits", 3, "refused")]).1), None);
     }
 
+    #[test_id(t6a2i93)]
     #[test]
     fn a_refused_or_failed_answer_is_cannot_tell_never_empty() {
         assert!(rows_on(&scripted(3, "refused").1, &["list"]).is_none());

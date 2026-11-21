@@ -188,6 +188,7 @@ mod tests {
         a.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(tu4o8uy)]
     #[test]
     fn fact_add_then_fact_list_round_trips_one_row() {
         let s = store();
@@ -200,6 +201,7 @@ mod tests {
         assert_eq!((rows[0]["event_type"].as_str(), rows[0]["new_value"].as_str(), rows[0]["actor"].as_str()), (Some("claimed"), Some("first"), Some("dwarf-1")));
     }
 
+    #[test_id(tuzviow)]
     #[test]
     fn fact_list_raw_answers_the_rows_unshaped_so_a_process_outside_the_service_reads_what_the_service_does() {
         let s = store();
@@ -221,17 +223,20 @@ mod tests {
         }
     }
 
+    #[test_id(tgzg9le)]
     #[test]
     fn the_send_back_kind_is_accepted_and_is_a_long_kind() {
         assert!(KINDS.contains(&spira_config::send_back::KIND));
         assert!(LONG_KINDS.contains(&spira_config::send_back::KIND));
     }
 
+    #[test_id(t13x1m6)]
     #[test]
     fn the_gate_start_kind_the_gate_sends_is_one_the_fact_verb_accepts() {
         assert!(KINDS.contains(&"gate-start"));
     }
 
+    #[test_id(tmbemi9)]
     #[test]
     fn a_build_dir_fact_keeps_the_tab_between_the_tip_and_the_directory() {
         assert!(KINDS.contains(&"build-dir"));
@@ -240,12 +245,14 @@ mod tests {
         assert_eq!(build_dir("sp-a", "abc", "b/dir.3", "builder", 7).cause, "abc\tb/dir.3");
     }
 
+    #[test_id(tz4jwa1)]
     #[test]
     fn a_cause_is_bounded_and_single_line() {
         assert_eq!(bounded(&format!("a\nb{}", "x".repeat(300))).len(), CAUSE_MAX);
         assert!(!bounded("a\nb").contains('\n'));
     }
 
+    #[test_id(toyhnf2)]
     #[test]
     fn a_fast_tier_red_keeps_its_lines_and_reads_back_whole() {
         assert!(KINDS.contains(&"fast-tier-red"));
@@ -272,6 +279,7 @@ mod tests {
         crate::control::store::Store::new(c, 1_000)
     }
 
+    #[test_id(t7ws7ut)]
     #[test]
     fn listing_a_kind_since_a_floor_reads_the_index_and_never_pages_the_facts_prefix() {
         let s = counting_store();
@@ -306,6 +314,7 @@ mod tests {
         );
     }
 
+    #[test_id(tykszo8)]
     #[test]
     fn listing_kinds_answers_what_filtering_every_fact_answers_carried_facts_included() {
         let s = store();
@@ -353,6 +362,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-12
+    #[test_id(t337c93)]
     #[test]
     fn facts_read_back_per_bead_in_the_order_they_were_written_and_scope_to_ids_kinds_and_since() {
         let s = store();
@@ -370,6 +380,7 @@ mod tests {
         assert_eq!(shape(all)[0]["created_at"], "1970-01-01T00:00:20Z");
     }
 
+    #[test_id(tg46f96)]
     #[test]
     fn a_later_fact_with_an_earlier_time_still_reads_after_the_earlier_write() {
         let s = store();

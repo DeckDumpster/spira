@@ -442,6 +442,7 @@ pub fn alarm(was_red: bool, oldest_ms: Option<u64>, max_ms: u64, snapshot_ms: Re
 mod tests {
     use super::*;
 
+    #[test_id(tycnva0)]
     #[test]
     fn the_alarm_speaks_on_each_crossing_and_is_silent_between() {
         assert_eq!(alarm(false, Some(5_000), 10_000, Ok(None)), (false, None));

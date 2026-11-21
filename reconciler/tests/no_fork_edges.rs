@@ -1,6 +1,8 @@
 //! No Spira→Spira subprocess edge survives in this crate's source except a site marked
 //! `FORK-EDGE:` (on its line or the two above), each naming what it still needs.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::Path;
 
 const BANNED: &[&str] = &["spira-lc", "bd", "bdq", "bash", "systemctl", "systemd-run", "tsd-write", "mail", "queue", "pgrep"];
@@ -53,6 +55,7 @@ fn walk(dir: &Path, out: &mut Vec<String>) {
     }
 }
 
+#[test_id(tqjypb4)]
 #[test]
 fn no_unmarked_spira_subprocess_edge_remains() {
     let mut found = Vec::new();
@@ -60,6 +63,7 @@ fn no_unmarked_spira_subprocess_edge_remains() {
     assert!(found.is_empty(), "unmarked fork edges:\n{}", found.join("\n"));
 }
 
+#[test_id(tcj7wzs)]
 #[test]
 fn a_planted_site_is_caught_and_a_marked_one_is_not() {
     let planted = concat!("let o = Command::new(", "\"spira-lc\").arg(\"show\");\n");

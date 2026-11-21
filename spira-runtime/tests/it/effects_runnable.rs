@@ -5,6 +5,7 @@
 use runtime::taskrig::{effects_runnable, PLANTED_UNKNOWN};
 use spira_runtime::tasks;
 
+#[test_id(t2z7g08)]
 #[test]
 fn every_declared_effect_has_a_real_runner_and_a_sim_double() {
     let declared: Vec<&str> = tasks::all().flat_map(|t| t.effects.iter().copied()).collect();
@@ -16,21 +17,25 @@ fn every_declared_effect_has_a_real_runner_and_a_sim_double() {
     assert_eq!(effects_runnable(&declared, &real, &sim), Ok(()));
 }
 
+#[test_id(tcfolgp)]
 #[test]
 fn no_task_named_sweep_repo_contract_is_registered() {
     assert!(!tasks::all().any(|t| t.name == "sweep.repo_contract"));
 }
 
+#[test_id(tft1a70)]
 #[test]
 fn no_task_named_watch_warm_full_is_registered() {
     assert!(!tasks::all().chain(tasks::pending()).any(|t| t.name == "watch.warm_full"));
 }
 
+#[test_id(tji9hsn)]
 #[test]
 fn no_task_named_sweep_nix_gc_is_registered() {
     assert!(!tasks::all().chain(tasks::pending()).any(|t| t.name == "sweep.nix_gc"));
 }
 
+#[test_id(tji0dwq)]
 #[test]
 fn the_unit_install_starts_to_collect_nix_garbage_belongs_to_no_task() {
     let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(install::NIX_GC_UNIT_TASK, "rel1").unwrap(), exit: runtime::units::Exit::Code(0), duration_ms: 1 };

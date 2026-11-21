@@ -71,6 +71,7 @@ mod tests {
         Edge { issue_id: issue.into(), depends_on_id: to.into(), kind: kind.into() }
     }
 
+    #[test_id(tfzd4jw)]
     #[test]
     fn only_the_beads_own_blocking_edges_other_than_its_parent_are_blocks() {
         let read = ClaimRead {

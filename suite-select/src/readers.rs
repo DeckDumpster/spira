@@ -38,12 +38,14 @@ pub fn readers_of(path: &str) -> Vec<&'static str> {
 mod tests {
     use super::*;
 
+    #[test_id(t2usiy1)]
     #[test]
     fn a_shipped_rune_is_read_by_spira_config_and_dwarf() {
         let r = readers_of("spira/runes/disabled/qa.rune");
         assert!(r.contains(&"spira-config") && r.contains(&"dwarf"), "{r:?}");
     }
 
+    #[test_id(taaz8i7)]
     #[test]
     fn a_registry_key_and_a_delta_file_are_read_by_release_and_an_ordinary_source_file_by_none() {
         for p in ["spira/conf.d/SPIRA_TASK_MODES", "spira/config-delta.toml", "spira/config-delta.d/x.toml", "spira/conf.toml.d/y"] {
@@ -53,6 +55,7 @@ mod tests {
         assert!(readers_of("spira/config-delta.toml.bak").is_empty());
     }
 
+    #[test_id(tjw3jxx)]
     #[test]
     fn the_bd_pin_and_the_units_keep_their_readers() {
         assert_eq!(readers_of("spira/bd-pin.sh"), ["spira-lc"]);

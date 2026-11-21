@@ -131,6 +131,7 @@ mod tests {
         }
     }
 
+    #[test_id(tik9i1q)]
     #[test]
     fn the_code_is_returned_and_the_log_line_carries_the_bead_but_never_the_code() {
         let r = req();
@@ -141,6 +142,7 @@ mod tests {
         assert!(!l.contains(CODE));
     }
 
+    #[test_id(tflfi2r)]
     #[test]
     fn the_remote_is_asked_for_the_pinned_account_and_ttl_only() {
         let r = req();
@@ -149,6 +151,7 @@ mod tests {
         assert_eq!(seen, "mint-code acct-x 600");
     }
 
+    #[test_id(t2oxu7y)]
     #[test]
     fn a_reply_that_is_not_one_token_is_refused_without_echoing_it() {
         for bad in ["", "two words", "a\nb"] {
@@ -157,11 +160,13 @@ mod tests {
         }
     }
 
+    #[test_id(tky73wv)]
     #[test]
     fn a_failed_host_surfaces_as_an_error() {
         assert!(mint(&req(), |_| Err("down".into())).is_err());
     }
 
+    #[test_id(tsmjlt1)]
     #[test]
     fn every_rune_but_pilgrim_is_refused_before_config_is_read() {
         for f in ["builder", "groomer", "concierge", "czar", "ops", "mender", "batcher", "warden", "spike", "mimir", "archivist", "", "Pilgrim", "pilgrim "] {
@@ -170,12 +175,14 @@ mod tests {
         }
     }
 
+    #[test_id(t48pqmc)]
     #[test]
     fn pilgrim_without_a_bead_id_is_refused() {
         let e = request("pilgrim", "").err().unwrap();
         assert!(e.contains("SPIRA_WORK_BEAD_ID"), "{e}");
     }
 
+    #[test_id(thjf4o1)]
     #[test]
     fn the_log_file_is_appended_per_use() {
         let dir = testkit::TempDir::new("broker-login-log");

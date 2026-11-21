@@ -52,6 +52,7 @@ fn retry(slept: &Arc<Mutex<Vec<u64>>>, bound_ms: u64) -> BootRetry {
     BootRetry { first_ms: 100, ceiling_ms: u64::MAX, bound_ms, store: "spira-lc".into(), sleep: Arc::new(move |ms| slept.lock().unwrap().push(ms)) }
 }
 
+#[test_id(to7umh7)]
 #[test]
 fn a_journal_that_cannot_tell_three_times_then_answers_opens_the_engine() {
     let slept = Arc::new(Mutex::new(vec![]));
@@ -60,6 +61,7 @@ fn a_journal_that_cannot_tell_three_times_then_answers_opens_the_engine() {
     assert_eq!(*slept.lock().unwrap(), vec![100, 200, 400], "exponential backoff between the asks");
 }
 
+#[test_id(tneok74)]
 #[test]
 fn a_journal_that_never_answers_fails_the_open_after_the_bound_naming_the_store() {
     let slept = Arc::new(Mutex::new(vec![]));
@@ -70,6 +72,7 @@ fn a_journal_that_never_answers_fails_the_open_after_the_bound_naming_the_store(
     assert!(slept.lock().unwrap().iter().sum::<u64>() <= 1_000, "never waits past the bound");
 }
 
+#[test_id(tphvvx9)]
 #[test]
 fn a_refusal_is_not_retried() {
     let slept = Arc::new(Mutex::new(vec![]));
@@ -78,6 +81,7 @@ fn a_refusal_is_not_retried() {
     assert!(slept.lock().unwrap().is_empty());
 }
 
+#[test_id(tawwdro)]
 #[test]
 fn open_without_a_retry_policy_asks_once() {
     let j = Unsure::new(1);
@@ -85,6 +89,7 @@ fn open_without_a_retry_policy_asks_once() {
     assert_eq!(j.asked.load(Ordering::SeqCst), 1);
 }
 
+#[test_id(th19k34)]
 #[test]
 fn the_waits_spend_the_whole_bound_with_a_shortened_last_wait() {
     let slept = Arc::new(Mutex::new(Vec::new()));
@@ -94,6 +99,7 @@ fn the_waits_spend_the_whole_bound_with_a_shortened_last_wait() {
     assert_eq!(v.iter().sum::<u64>(), 1_000, "{v:?}");
 }
 
+#[test_id(tzzd1d1)]
 #[test]
 fn the_wait_stops_doubling_at_the_ceiling_so_a_store_that_arrives_late_is_found_soon() {
     let slept = Arc::new(Mutex::new(Vec::new()));

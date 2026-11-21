@@ -106,6 +106,7 @@ mod tests {
         [id.to_string()].into()
     }
 
+    #[test_id(t8muo5x)]
     #[test]
     fn a_ready_bead_for_an_unrostered_persona_is_reported_naming_it() {
         let s = store(r#"[{"id":"sp-a","status":"open","labels":["warden-sweep"]}]"#);
@@ -115,6 +116,7 @@ mod tests {
         assert!(r[0].detail.contains("warden (not in spira.runes)"), "{}", r[0].detail);
     }
 
+    #[test_id(tkemaup)]
     #[test]
     fn a_rostered_match_is_not_reported() {
         let s = store(r#"[{"id":"sp-a","status":"open","labels":["warden-sweep"]}]"#);
@@ -122,6 +124,7 @@ mod tests {
         assert!(rows(&one("sp-a"), &s, &ps, &[]).is_empty());
     }
 
+    #[test_id(te43113)]
     #[test]
     fn a_non_auto_call_persona_is_named() {
         let s = store(r#"[{"id":"sp-b","status":"open","labels":["y"]}]"#);
@@ -131,6 +134,7 @@ mod tests {
         assert!(r[0].detail.contains("RUNE_CALL=manual"), "{}", r[0].detail);
     }
 
+    #[test_id(tpa1or0)]
     #[test]
     fn a_bead_no_persona_matches_is_reported_and_a_blocked_one_is_not() {
         let s = store(

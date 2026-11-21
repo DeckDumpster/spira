@@ -211,6 +211,7 @@ mod tests {
     use super::*;
 
     // covers: UC-landing-merge-queue-55
+    #[test_id(ty4ww2r)]
     #[test]
     fn a_verb_outside_the_read_table_is_refused_before_any_repo_lookup_or_gh_call() {
         for verb in ["run-rerun", "run-cancel", "submit", "execute", "pr-merge", ""] {
@@ -220,12 +221,14 @@ mod tests {
     }
 
     // covers: UC-landing-merge-queue-55
+    #[test_id(tzbu2vk)]
     #[test]
     fn run_view_asks_for_safe_fields_only() {
         let args = run_view_args("12345");
         assert_eq!(args, vec!["run", "view", "12345", "--json", RUN_VIEW_FIELDS]);
     }
 
+    #[test_id(trucawf)]
     #[test]
     fn run_view_never_requests_log_output() {
         // gh run view --log returns whatever the run printed; secrets leak there. The field
@@ -234,6 +237,7 @@ mod tests {
         assert!(!RUN_VIEW_FIELDS.contains("log"));
     }
 
+    #[test_id(tt106jy)]
     #[test]
     fn jobs_summary_names_the_failing_step_and_its_first_error_lines_only_for_failed_jobs() {
         let run = serde_json::json!({"id": 7, "html_url": "https://github.com/o/r/actions/runs/7", "status": "completed", "conclusion": "failure", "head_sha": "abc"});
@@ -256,6 +260,7 @@ mod tests {
     }
 
     // covers: UC-landing-merge-queue-55
+    #[test_id(t6cvwgr)]
     #[test]
     fn artifact_download_names_the_artifact_and_output_dir() {
         let args = artifact_download_args("12345", "batch-results", "tmp/out");

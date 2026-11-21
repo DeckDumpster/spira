@@ -430,6 +430,7 @@ mod tests {
         crate::tier::Tier { name: name.into(), status }
     }
 
+    #[test_id(t9daavf)]
     #[test]
     fn a_recorded_tier_is_a_ran_suite_and_a_red_one_when_red() {
         use crate::tier::Status;
@@ -441,6 +442,7 @@ mod tests {
         assert!(super::red_suites("", &ok).is_empty());
     }
 
+    #[test_id(t39c9o9)]
     #[test]
     fn a_printed_tier_row_names_nothing_without_the_record() {
         for l in ["  gate                             RED     after 12s", "  gate ok 3s", "  build FAULT x after 3s"] {
@@ -449,12 +451,14 @@ mod tests {
         }
     }
 
+    #[test_id(t5ljzu4)]
     #[test]
     fn cargo_reruns_returns_each_distinct_argument_once() {
         let o = "error: test failed, to rerun pass `-p a --lib`\nnoise\nerror: test failed, to rerun pass `-p b --test t`\nerror: test failed, to rerun pass `-p a --lib`\n";
         assert_eq!(super::cargo_reruns(o), ["-p a --lib", "-p b --test t"]);
     }
 
+    #[test_id(t2i7apo)]
     #[test]
     fn covered_deferred_is_the_sorted_set_of_suites_not_the_lines() {
         let out = "suite-select budget: dropped test-x.sh (tier=T1 predicted=92.000s from p90 — over budget)\n  test-y.sh        DEFERRED deadline after 61s\nsuite-select budget: dropped test-x.sh (tier=T1 predicted=1s from cap — over budget)\n  test-y.sh        DEFERRED deadline\n  test-a.sh   ok      3s\nsuite-select budget: selected 1, dropped 1, predicted 3s (budget 70s, width 4)";
@@ -462,6 +466,7 @@ mod tests {
         assert!(super::covered_deferred("  test-a.sh   ok      3s").is_empty());
     }
 
+    #[test_id(ti6jc8a)]
     #[test]
     fn the_covered_phase_is_a_red_unit_only_when_it_named_no_suite() {
         assert_eq!(super::red_units("  test-b.sh   RED     rc=1 after 4s\ngate: phase 'covered' failed (exit 1): x", &[]), ["test-b.sh"]);
@@ -471,6 +476,7 @@ mod tests {
     const NONE: &[String] = &[];
     const STEPS_BASE: &str = "gate-step RED rc=1 :: spira-lint\ngate-step ok rc=0 :: build-fence\n  test-s1.sh RED rc=1";
 
+    #[test_id(tsb06ud)]
     #[test]
     fn a_unit_red_on_both_is_inherited_and_the_branchs_own_is_named() {
         let branch = "gate-step RED rc=1 :: spira-lint\ngate-step RED rc=1 :: lifecycle-guard\n  test-s1.sh RED rc=1\n  test-s2.sh RED rc=1";
@@ -480,6 +486,7 @@ mod tests {
         assert_eq!(attribute(inherited, true, 1, STEPS_BASE, NONE), Attribution::BaseRed("test-s1.sh".into()));
     }
 
+    #[test_id(tc8uddx)]
     #[test]
     fn a_fence_red_does_not_hide_the_suites_that_ran() {
         let out = "gate-step RED rc=1 :: lifecycle-guard\n  test-s2.sh RED rc=1\ngate-step RED rc=1 :: suites";
@@ -488,6 +495,7 @@ mod tests {
 
     use super::*;
 
+    #[test_id(ttv919p)]
     #[test]
     fn a_cache_transport_error_is_found_and_a_compile_error_is_not() {
         let wedged = "error: could not compile `x`\nsccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)\n";
@@ -503,6 +511,7 @@ mod tests {
         assert_eq!(cache_failure_line("SCCACHE: Error: Failed to create temp dir\n"), Some("SCCACHE: Error: Failed to create temp dir"));
     }
 
+    #[test_id(tkkxi4j)]
     #[test]
     fn failed_tests_reads_cargo_failure_lines_only() {
         let out = "test a::ok ... ok\ntest a::bad ... FAILED\ntest a::bad ... FAILED\ntest result: FAILED. 1 passed\n";
@@ -514,6 +523,7 @@ mod tests {
         assert_eq!(failed_tests(padded), vec!["t::padded".to_string(), "t::crashed".to_string()]);
     }
 
+    #[test_id(tcccka8)]
     #[test]
     fn fence_refusal_names_the_fence() {
         let out = "x\nlifecycle-guard: REFUSED ... bead/src/main.rs:717\n";
@@ -525,6 +535,7 @@ mod tests {
         assert_eq!(fence_refusal("error: boom\ngate: x\nsome-text here: y\n"), None);
     }
 
+    #[test_id(t6hn493)]
     #[test]
     fn red_suites_reads_every_red_form_once_in_order() {
         let out = "test-a.sh ok\ntest-b.sh RED\n  test-c.sh TIMEOUT\ntest-d.sh was killed\ntest-b.sh RED\nx test-e.sh FAILED";
@@ -534,6 +545,7 @@ mod tests {
         );
     }
 
+    #[test_id(te54m10)]
     #[test]
     fn ran_suites_includes_passes_and_skips() {
         let out = "test-a.sh ok\ntest-b.sh SKIPPED\ntest-c.sh QUARANTINED-RED\ntest-d.sh RED\nnoise.sh words";
@@ -543,6 +555,7 @@ mod tests {
         );
     }
 
+    #[test_id(tiektu9)]
     #[test]
     fn verdict_ran_reads_the_runners_count() {
         assert_eq!(verdict_ran("  a.sh ok\nVERDICT GREEN ran=66 skipped=2"), Some(66));
@@ -551,11 +564,13 @@ mod tests {
         assert_eq!(verdict_ran("a.sh ok\nran=5 but no verdict"), None);
     }
 
+    #[test_id(tv1y66k)]
     #[test]
     fn a_fault_line_counts_as_ran() {
         assert_eq!(ran_suites("  test-f.sh   FAULT   podman lost the exit status", &[]), ["test-f.sh"]);
     }
 
+    #[test_id(tapg7o4)]
     #[test]
     fn timed_out_is_only_the_watchdogs() {
         let out = "test-a.sh TIMEOUT\ntest-b.sh RED\ntest-c.sh was killed";
@@ -567,6 +582,7 @@ mod tests {
     /// after it (`RED     undeclared skip — <requirement>`), never a new status word. This
     /// proves the gate's own suite-line reader (unchanged) still catches it as red and as ran,
     /// exactly like any other red, so the new contract propagates without a gate code change.
+    #[test_id(tklr78r)]
     #[test]
     fn an_undeclared_skip_reclassified_by_testenv_still_reads_as_a_red_suite() {
         let out = "  test-f.sh                        RED     undeclared skip — skip:server testdb not available\nVERDICT RED ran=1 red=1";
@@ -576,11 +592,13 @@ mod tests {
         assert_eq!(red_suites(out_req, &[]), ["test-e.sh"]);
     }
 
+    #[test_id(tp8tr5d)]
     #[test]
     fn a_word_not_ending_in_sh_is_not_a_suite() {
         assert!(red_suites("cargo RED\nfoo.shx RED", &[]).is_empty());
     }
 
+    #[test_id(tinkyw1)]
     #[test]
     fn a_missing_cargo_bin_exe_path_is_found_and_other_failures_are_not() {
         assert!(missing_built_binary("assertion failed: Path::new(env!(\"CARGO_BIN_EXE_spira-claim\")).is_file()"));
@@ -588,6 +606,7 @@ mod tests {
         assert!(!missing_built_binary("error[E0308]: mismatched types"));
     }
 
+    #[test_id(tt923v4)]
     #[test]
     fn tree_key_is_filesystem_safe() {
         assert_eq!(tree_key("spira/sp-a1"), "spira-sp-a1");
@@ -595,6 +614,7 @@ mod tests {
         assert_eq!(tree_key("a.b-c"), "a.b-c");
     }
 
+    #[test_id(t8jiglh)]
     #[test]
     fn bash_paths_takes_only_relative_paths_after_a_word_boundary() {
         let cmd = r#"bash spira/a.sh && bash /abs/b.sh && bash -c 'x' && mybash spira/c.sh && { bash spira/d.sh; } && "$X" --only y && bash "$Q" && bash spira/e.sh|cat"#;
@@ -603,6 +623,7 @@ mod tests {
         assert!(bash_paths("cargo test").is_empty());
     }
 
+    #[test_id(t8lt032)]
     #[test]
     fn fault_detail_keeps_the_runners_refusal_and_drops_the_passing_steps() {
         let msg = "gate: g's own gate reported a harness fault (exit 75)\ngate: command: x && y\nfence: lint checked 3 files\ngate-step ok rc=0 :: lint\nbatch: KEY is not declared; refusing\nVERDICT FAULT rc=2 ran=0 reason=settings-refused\ngate: phase 'reentry' failed (exit 75): _b=0\ngate: VERDICT=NO_VERDICT reason=harness-fault";
@@ -612,6 +633,7 @@ mod tests {
         assert_eq!(fault_detail("gate: command: x"), "");
     }
 
+    #[test_id(t3guv0c)]
     #[test]
     fn harness_fault_detail_takes_the_last() {
         let out = "x\nbatch: harness fault — container died mid-batch (one)\nbatch: harness fault — container died mid-batch (two)  \n";
@@ -621,6 +643,7 @@ mod tests {
 
 
 
+    #[test_id(tuamak1)]
     #[test]
     fn attribution_base_untestable_when_the_base_did_not_run() {
         assert_eq!(
@@ -629,6 +652,7 @@ mod tests {
         );
     }
 
+    #[test_id(t3fp839)]
     #[test]
     fn attribution_branch_red_when_the_base_ran_the_suite_green() {
         assert_eq!(
@@ -641,6 +665,7 @@ mod tests {
         );
     }
 
+    #[test_id(tworxzs)]
     #[test]
     fn attribution_branch_red_on_a_suite_red_only_on_the_branch() {
         let a = attribute(
@@ -653,6 +678,7 @@ mod tests {
         assert_eq!(a, Attribution::BranchRed("test-b.sh".into()));
     }
 
+    #[test_id(tw5ca5p)]
     #[test]
     fn attribution_base_red_when_the_base_has_the_same_reds() {
         let a = attribute(
@@ -671,6 +697,7 @@ mod tests {
 
     /// sp-hh5h0: the branch and the base are both red on the same suite. Base-red, whatever
     /// else the base did — never branch-red.
+    #[test_id(t355di8)]
     #[test]
     fn attribution_the_same_suite_red_on_both_is_the_bases() {
         let a = attribute(
@@ -685,6 +712,7 @@ mod tests {
 
     /// sp-hh5h0: a base that exited 0 without running the branch's red suite (a different
     /// selection, or --deadline deferred it) proves nothing about that suite.
+    #[test_id(tqv9jpl)]
     #[test]
     fn attribution_a_red_the_base_never_ran_is_untestable_not_branch_red() {
         for base in [
@@ -711,6 +739,7 @@ mod tests {
         );
     }
 
+    #[test_id(t95qksc)]
     #[test]
     fn attribution_a_red_suite_the_base_lacks_is_the_branchs() {
         assert_eq!(
@@ -719,6 +748,7 @@ mod tests {
         );
     }
 
+    #[test_id(tgmw3x3)]
     #[test]
     fn attribution_base_timeout_when_every_base_red_was_killed() {
         let a = attribute(
@@ -739,6 +769,7 @@ mod tests {
         assert_eq!(mixed, Attribution::BaseRed("test-a.sh".into()));
     }
 
+    #[test_id(tl3dn2f)]
     #[test]
     fn tail_bytes_keeps_the_end_and_whole_characters() {
         assert_eq!(tail_bytes("abcdef", 4), "def");
@@ -777,11 +808,13 @@ pub fn longest(steps: Vec<(String, u64)>) -> Option<(String, u64)> {
 mod step_tests {
     use super::*;
 
+    #[test_id(tz9xswa)]
     #[test]
     fn an_empty_steps_file_names_no_step() {
         assert_eq!(slowest_step("", 100), None);
     }
 
+    #[test_id(td2ilf1)]
     #[test]
     fn a_malformed_line_is_skipped_and_counted() {
         let (steps, skipped) = step_secs("fences\t10\nno tab here\nsuites\tsoon\n\tbare\nsuites\t14\n", 20);
@@ -789,11 +822,13 @@ mod step_tests {
         assert_eq!(skipped, 3);
     }
 
+    #[test_id(t214890)]
     #[test]
     fn a_single_step_lasts_until_the_phase_end() {
         assert_eq!(slowest_step("build\t10\n", 25), Some(("build".to_string(), 15)));
     }
 
+    #[test_id(t63be1w)]
     #[test]
     fn the_longest_step_wins_and_a_tie_keeps_the_first() {
         assert_eq!(slowest_step("a\t0\nb\t5\nc\t10\n", 15), Some(("a".to_string(), 5)));
@@ -891,6 +926,7 @@ pub fn recompiled_secs<'a>(phases: impl IntoIterator<Item = (&'a str, u64)>) -> 
 mod test_split_tests {
     use super::*;
 
+    #[test_id(t39wvdf)]
     #[test]
     fn a_short_compile_or_a_gate_that_never_built_is_not_a_recompile() {
         assert_eq!(recompiled_secs([("build", 1), ("test-build", 30)]), None);
@@ -904,6 +940,7 @@ mod test_split_tests {
         p.iter().map(|x| x.1).sum()
     }
 
+    #[test_id(tj2kpvr)]
     #[test]
     fn a_minutes_and_seconds_duration_is_read_as_seconds() {
         let out = format!("{FIN} 3m 27s\ngate-substep unit secs=210\n     Summary [   1.000s] 1 test run: 1 passed, 0 skipped\n");
@@ -913,11 +950,13 @@ mod test_split_tests {
         assert_eq!(finished_secs(&format!("{FIN} 1.39s")), Some(1.39));
     }
 
+    #[test_id(t7bqqm1)]
     #[test]
     fn an_output_with_no_marker_is_not_split() {
         assert_eq!(test_split(&format!("{FIN} 3.00s\n"), 7), None);
     }
 
+    #[test_id(tmq6vy2)]
     #[test]
     fn the_parts_name_the_five_and_sum_to_the_wall_even_when_the_markers_exceed_it() {
         let out = format!("{FIN} 3.00s\ngate-substep unit secs=50\n{FIN} 3.00s\ngate-substep integration secs=40\n");

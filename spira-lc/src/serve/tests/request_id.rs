@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(t8tubc5)]
 #[test]
 fn an_event_sent_twice_under_one_request_id_advances_the_bead_once() {
     let r = rig(false, three_seconds());
@@ -14,6 +15,7 @@ fn an_event_sent_twice_under_one_request_id_advances_the_bead_once() {
     assert_eq!(history_rows(&r, "sp-a"), before + 1, "one transition");
 }
 
+#[test_id(tet9v2i)]
 #[test]
 fn a_store_txn_retried_under_the_clients_id_after_a_restart_applies_once() {
     let r = rig(false, three_seconds());
@@ -29,6 +31,7 @@ fn a_store_txn_retried_under_the_clients_id_after_a_restart_applies_once() {
     assert_eq!(history_rows(&r, "sp-a"), before + 1);
 }
 
+#[test_id(tv17p33)]
 #[test]
 fn a_content_note_sent_twice_under_one_request_id_writes_one_note() {
     let r = rig(false, three_seconds());
@@ -40,6 +43,7 @@ fn a_content_note_sent_twice_under_one_request_id_writes_one_note() {
     assert_eq!(r.notes.mutations(), ["note sp-a x"]);
 }
 
+#[test_id(tqlozt4)]
 #[test]
 fn without_a_request_id_two_identical_notes_are_two_writes() {
     let r = rig(false, three_seconds());
@@ -49,6 +53,7 @@ fn without_a_request_id_two_identical_notes_are_two_writes() {
     assert_eq!(r.notes.mutations().len(), 2);
 }
 
+#[test_id(thh7wmu)]
 #[test]
 fn a_read_sent_twice_under_one_request_id_is_answered_fresh_each_time() {
     let r = rig(false, three_seconds());
@@ -61,6 +66,7 @@ fn a_read_sent_twice_under_one_request_id_is_answered_fresh_each_time() {
     assert_ne!(before.1, after.1, "the second read ran, not the first one's answer");
 }
 
+#[test_id(t47oupb)]
 #[test]
 fn a_second_arrival_waits_only_to_its_own_deadline_and_the_worker_still_records_its_answer() {
     let ledger = super::Ledger::new(Duration::from_secs(60));
@@ -84,6 +90,7 @@ fn a_second_arrival_waits_only_to_its_own_deadline_and_the_worker_still_records_
     assert_eq!(replay.stdout, "real");
 }
 
+#[test_id(tpeuxp7)]
 #[test]
 fn an_empty_or_non_string_request_id_is_a_bad_request() {
     for head in [r#"{"argv":["list"],"request_id":""}"#, r#"{"argv":["list"],"request_id":7}"#] {
@@ -93,6 +100,7 @@ fn an_empty_or_non_string_request_id_is_a_bad_request() {
     }
 }
 
+#[test_id(tysvjej)]
 #[test]
 fn a_retry_after_a_deadline_gets_the_workers_real_answer_and_the_note_exists_once() {
     let r = rig(true, fifty_ms());

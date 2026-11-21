@@ -367,6 +367,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-15
+    #[test_id(tqdl0nl)]
     #[test]
     fn a_reply_to_an_ask_closes_it_lifts_the_hold_and_records_the_answer() {
         let fx = Fx::new();
@@ -382,6 +383,7 @@ mod tests {
         assert_eq!(calls[1][..2], ["close-ask", "sp-ask1"]);
     }
 
+    #[test_id(tpx5phy)]
     #[test]
     fn a_second_pass_applies_nothing_again() {
         let fx = Fx::new();
@@ -396,6 +398,7 @@ mod tests {
         assert_eq!((bd.calls().len(), lc.calls().len()), (b1, l1));
     }
 
+    #[test_id(tx83f30)]
     #[test]
     fn the_same_message_id_delivered_twice_applies_once() {
         let fx = Fx::new();
@@ -411,6 +414,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-19
+    #[test_id(t2sz5ue)]
     #[test]
     fn a_store_that_is_down_leaves_the_step_for_the_next_pass() {
         let fx = Fx::new();
@@ -426,6 +430,7 @@ mod tests {
         assert_eq!(up.calls()[0].0[..2], ["close".to_string(), "sp-ask1".to_string()]);
     }
 
+    #[test_id(trw1g64)]
     #[test]
     fn a_refused_close_leaves_a_note_and_exactly_one_inbox_row() {
         let fx = Fx::new();
@@ -445,6 +450,7 @@ mod tests {
         assert_eq!(fx.inbox(), 1, "the refusal is reported once");
     }
 
+    #[test_id(tgwtc1f)]
     #[test]
     fn a_reply_to_a_routed_question_notes_the_work_bead_and_closes_nothing() {
         let fx = Fx::new();
@@ -461,6 +467,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-15
+    #[test_id(tt872w3)]
     #[test]
     fn a_reply_to_a_notice_notes_its_bead_and_closes_nothing() {
         let fx = Fx::new();
@@ -480,6 +487,7 @@ mod tests {
         assert!(lc.calls().is_empty());
     }
 
+    #[test_id(tt97xww)]
     #[test]
     fn an_empty_reply_body_closes_with_a_traceable_reason() {
         let fx = Fx::new();
@@ -496,6 +504,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-15
+    #[test_id(tf1oz5h)]
     #[test]
     fn a_reply_closes_the_decision_bead_and_writes_the_verdict_into_the_work_beads_notes_without_closing_it() {
         let fx = Fx::new();
@@ -511,6 +520,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-16
+    #[test_id(t8hcl3s)]
     #[test]
     fn taking_the_messages_own_default_as_the_reply_closes_the_decision_with_that_default_as_the_verdict() {
         let fx = Fx::new();
@@ -525,6 +535,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-18
+    #[test_id(teificv)]
     #[test]
     fn each_suit_verdict_word_closes_the_suit_bead_with_its_own_reason() {
         for (word, reason) in [("uphold", "upheld"), ("retire", "retired"), ("amend", "amended")] {
@@ -538,6 +549,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-19
+    #[test_id(taxbkq3)]
     #[test]
     fn a_bead_the_store_cannot_close_still_delivers_the_reply_and_marks_the_original_answered() {
         let fx = Fx::new();

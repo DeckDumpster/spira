@@ -125,6 +125,7 @@ mod tests {
         GateStateReaders::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tc1tdii)]
     #[test]
     fn a_planted_gate_file_read_or_process_match_is_caught() {
         let t = TempDir::new("gsr");
@@ -137,6 +138,7 @@ mod tests {
         assert_eq!(got.len(), 5, "{got:?}");
     }
 
+    #[test_id(tn8gkie)]
     #[test]
     fn comments_other_trees_and_listed_files_are_silent() {
         let t = TempDir::new("gsr-ok");
@@ -147,6 +149,7 @@ mod tests {
         assert_eq!(run(&t, &["cockpit/a.rs", "watchtower/y.rs", "spira-world/old.rs", ALLOW_FILE]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tespvhf)]
     #[test]
     fn a_listed_file_that_no_longer_reads_is_a_finding() {
         let t = TempDir::new("gsr-stale");
@@ -155,6 +158,7 @@ mod tests {
         assert_eq!(run(&t, &["cockpit/a.rs", ALLOW_FILE]).unwrap().len(), 1);
     }
 
+    #[test_id(tqn01ov)]
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("gsr-none");

@@ -90,23 +90,27 @@ mod tests {
         parse("# c\ndex | Pokédex, Pokémon, pd-\nstar | dumpstar\nkit-less |\n")
     }
 
+    #[test_id(tl2vmfr)]
     #[test]
     fn foreign_term_is_named_with_its_owner() {
         let h = foreign_terms(&reg(), "star", "extend tests with Pokédex terms");
         assert_eq!(h, vec![("pokédex".to_string(), "dex".to_string())]);
     }
 
+    #[test_id(thv2fo5)]
     #[test]
     fn own_terms_and_unregistered_names_pass() {
         assert!(foreign_terms(&reg(), "dex", "Pokémon page").is_empty());
         assert!(foreign_terms(&reg(), "star", "route through dumpster-kit").is_empty());
     }
 
+    #[test_id(t6ze6r2)]
     #[test]
     fn substring_inside_a_word_is_not_a_hit() {
         assert!(foreign_terms(&reg(), "star", "repokémonic").is_empty());
     }
 
+    #[test_id(tnonrf5)]
     #[test]
     fn shared_term_is_not_foreign() {
         let r = parse("a | shared, only-a\nb | shared\n");
@@ -114,6 +118,7 @@ mod tests {
         assert_eq!(foreign_terms(&r, "b", "only-a").len(), 1);
     }
 
+    #[test_id(tm42k42)]
     #[test]
     fn blank_override_is_no_override() {
         assert_eq!(override_reason(Some("  ".into())), None);

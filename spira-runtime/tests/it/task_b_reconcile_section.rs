@@ -19,16 +19,19 @@ fn sim() -> Vec<String> {
     sim::doubles::service().names()
 }
 
+#[test_id(tpc8f12)]
 #[test]
 fn t1_registered_boots_and_arms_a_60s_tick() {
     t::t1_registered_and_boots::<H>(SET, MIN);
 }
 
+#[test_id(ttkrsng)]
 #[test]
 fn t2_a_published_false_answer_journals_nothing() {
     t::t2_silent::<H>(SET, &json(&snap(false)));
 }
 
+#[test_id(t78o94c)]
 #[test]
 fn t3_idle_to_published_is_recorded_once_and_reads_back() {
     let h = t::handler::<H>(SET);
@@ -43,12 +46,14 @@ fn t3_idle_to_published_is_recorded_once_and_reads_back() {
     assert_eq!(t::recorded::<H>(&rig), Some(next));
 }
 
+#[test_id(tqalc6f)]
 #[test]
 fn t4_its_one_effect_is_runnable_and_the_module_spawns_nothing() {
     let sim = sim();
     t::t4_runnable::<H>(include_str!("../../src/tasks/b/reconcile_section.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(t65iuqu)]
 #[test]
 fn t5_one_publish_per_tick_as_the_old_unit_made() {
     let h = t::handler::<H>(SET);
@@ -62,6 +67,7 @@ fn t5_one_publish_per_tick_as_the_old_unit_made() {
     assert_eq!(t::fired_at::<H>(&rig), (0..=10).map(|i| i * MIN).collect::<Vec<_>>());
 }
 
+#[test_id(t0zesci)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rig = t::rig::<H>(1, SET, &json(&snap(true)));
@@ -69,11 +75,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     assert!(rows.iter().any(|k| k == "phase"), "{rows:?}");
 }
 
+#[test_id(t0qqlxu)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![json(&snap(true))], |_| {});
 }
 
+#[test_id(tgf1lb0)]
 #[test]
 fn a_boot_does_not_record_the_publish_a_second_time() {
     let mut rig = t::rig::<H>(1, SET, &json(&snap(true)));

@@ -1,6 +1,8 @@
 //! The SQLite backend's one end-to-end suite: every conformance scenario on a fresh file, and
 //! the backend's own primitives.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -41,69 +43,70 @@ impl Rig for Sqlite {
 }
 
 macro_rules! scenarios {
-    ($($name:ident),* $(,)?) => {
-        $( #[test] fn $name() { suite::$name(&Sqlite::new()); } )*
+    ($( #[test_id($id:ident)] $name:ident ),* $(,)?) => {
+        $( #[test_id($id)] #[test] fn $name() { suite::$name(&Sqlite::new()); } )*
         const COVERED: &[&str] = &[$(stringify!($name)),*];
     };
 }
 
 scenarios!(
-    cas_conflict_on_a_stale_mod_rev,
-    a_refused_txn_writes_nothing_but_its_events_key_carrying_the_refusal,
-    one_main_per_txn_with_main_sub_per_key,
-    the_next_main_stays_greater_after_deleting_the_newest_keys_and_reopening,
-    create_with_an_equal_value_succeeds_and_a_different_value_conflicts,
-    list_pages_and_list_rev_come_from_one_snapshot_while_a_commit_lands_between_pages,
-    watch_resumes_from_a_revision,
-    a_watch_on_a_quiet_prefix_returns_progress_rev,
-    watch_returns_too_old_after_compaction,
-    a_value_overwritten_or_deleted_inside_the_ring_reads_as_of_a_revision_between_the_writes,
-    get_many_answers_what_get_answers_per_key_at_the_head_and_below_it,
-    a_lock_expires_on_the_virtual_clock,
-    a_paused_holders_fenced_write_is_refused_after_expiry_and_reacquisition,
-    reopen_extends_every_lock,
-    a_lock_ttl_below_the_minimum_is_refused,
-    a_finalizer_blocks_delete_until_the_write_clearing_it_removes_the_key,
-    an_owner_reference_orphan_is_collected,
-    an_owner_deleted_with_more_dependents_than_a_pass_is_drained_over_passes,
-    a_put_naming_an_owner_the_batch_writes_or_one_that_lives_queues_no_marker,
-    an_owner_recreated_before_collection_keeps_its_dependents,
-    owned_by_names_a_keys_dependents_until_they_drop_the_reference,
-    a_request_retry_after_an_ambiguous_commit_reports_already_applied,
-    retries_of_lock_create_delete_and_a_refusal_report_the_original_outcome,
-    the_gc_never_expires_a_receipt,
-    a_txn_touching_only_telemetry_writes_no_events_key_and_its_refusal_stores_nothing,
-    a_txn_touching_telemetry_and_intents_writes_one_events_key_with_both_sub_events,
-    a_put_under_intents_alone_writes_one_events_key,
-    a_put_under_telemetry_or_intents_without_ttl_secs_is_refused,
-    ttl_keys_are_gone_after_their_ttl_and_present_one_tick_before,
-    a_rewrite_restarts_a_keys_ttl,
-    a_reopen_renews_no_lifetime,
-    a_gc_expiry_writes_no_events_key,
-    a_retained_prefix_put_may_carry_a_ttl_and_expires_only_with_one,
-    a_multi_prefix_list_reads_one_snapshot_while_a_commit_lands_between_prefixes,
-    txn_ops_at_the_limit_pass_and_one_over_is_refused,
-    txn_compares_at_the_limit_pass_and_one_over_is_refused,
-    a_cut_at_the_member_cap_passes_the_limits_and_one_more_is_refused,
-    a_key_twice_in_one_txn_is_refused,
-    caller_writes_to_the_contracts_own_prefixes_are_refused,
-    a_txn_that_acquires_a_lock_and_writes_a_fenced_key_applies_whole_or_not_at_all,
-    a_txn_acquiring_a_lock_held_by_another_holder_fails_whole,
-    lock_check_fails_the_txn_after_the_lock_expired_or_was_retaken,
-    get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
-    a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
-    a_lock_renew_op_keeps_the_token_restarts_the_ttl_and_runs_only_while_held,
-    a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
-    a_kind_since_range_reads_the_keys_of_that_kind_after_that_time_at_the_head_and_below_it,
-    a_seq_range_reads_the_keys_above_a_seq_in_seq_order_at_the_head_and_below_it,
-    gc_range_skips_the_history_prefix,
-    committed_at_is_the_wall_time_of_the_first_audited_commit_at_or_after_a_main,
+    #[test_id(tv8lizc)] cas_conflict_on_a_stale_mod_rev,
+    #[test_id(tdzzxyu)] a_refused_txn_writes_nothing_but_its_events_key_carrying_the_refusal,
+    #[test_id(t4weasp)] one_main_per_txn_with_main_sub_per_key,
+    #[test_id(tdufkjx)] the_next_main_stays_greater_after_deleting_the_newest_keys_and_reopening,
+    #[test_id(twkmk0v)] create_with_an_equal_value_succeeds_and_a_different_value_conflicts,
+    #[test_id(tpfgxxf)] list_pages_and_list_rev_come_from_one_snapshot_while_a_commit_lands_between_pages,
+    #[test_id(t7q157v)] watch_resumes_from_a_revision,
+    #[test_id(tlw1c9s)] a_watch_on_a_quiet_prefix_returns_progress_rev,
+    #[test_id(tzvuojn)] watch_returns_too_old_after_compaction,
+    #[test_id(th8xogq)] a_value_overwritten_or_deleted_inside_the_ring_reads_as_of_a_revision_between_the_writes,
+    #[test_id(txodxgp)] get_many_answers_what_get_answers_per_key_at_the_head_and_below_it,
+    #[test_id(t3r67uj)] a_lock_expires_on_the_virtual_clock,
+    #[test_id(t90ml94)] a_paused_holders_fenced_write_is_refused_after_expiry_and_reacquisition,
+    #[test_id(tgctsbf)] reopen_extends_every_lock,
+    #[test_id(tnw7a5t)] a_lock_ttl_below_the_minimum_is_refused,
+    #[test_id(tp2ajh1)] a_finalizer_blocks_delete_until_the_write_clearing_it_removes_the_key,
+    #[test_id(tjg3ou4)] an_owner_reference_orphan_is_collected,
+    #[test_id(t3wcipb)] an_owner_deleted_with_more_dependents_than_a_pass_is_drained_over_passes,
+    #[test_id(toexjdy)] a_put_naming_an_owner_the_batch_writes_or_one_that_lives_queues_no_marker,
+    #[test_id(typnmkc)] an_owner_recreated_before_collection_keeps_its_dependents,
+    #[test_id(tgndzh1)] owned_by_names_a_keys_dependents_until_they_drop_the_reference,
+    #[test_id(tgjw3a7)] a_request_retry_after_an_ambiguous_commit_reports_already_applied,
+    #[test_id(trqeas4)] retries_of_lock_create_delete_and_a_refusal_report_the_original_outcome,
+    #[test_id(to4kdjp)] the_gc_never_expires_a_receipt,
+    #[test_id(t5syc95)] a_txn_touching_only_telemetry_writes_no_events_key_and_its_refusal_stores_nothing,
+    #[test_id(t8hbe1c)] a_txn_touching_telemetry_and_intents_writes_one_events_key_with_both_sub_events,
+    #[test_id(t2m1yrw)] a_put_under_intents_alone_writes_one_events_key,
+    #[test_id(tmczog4)] a_put_under_telemetry_or_intents_without_ttl_secs_is_refused,
+    #[test_id(t82syw1)] ttl_keys_are_gone_after_their_ttl_and_present_one_tick_before,
+    #[test_id(t9bxsqg)] a_rewrite_restarts_a_keys_ttl,
+    #[test_id(ttzkmk4)] a_reopen_renews_no_lifetime,
+    #[test_id(t8zh4mk)] a_gc_expiry_writes_no_events_key,
+    #[test_id(ty2zkdb)] a_retained_prefix_put_may_carry_a_ttl_and_expires_only_with_one,
+    #[test_id(t9lokqr)] a_multi_prefix_list_reads_one_snapshot_while_a_commit_lands_between_prefixes,
+    #[test_id(t636zsk)] txn_ops_at_the_limit_pass_and_one_over_is_refused,
+    #[test_id(txra1dn)] txn_compares_at_the_limit_pass_and_one_over_is_refused,
+    #[test_id(t1143tq)] a_cut_at_the_member_cap_passes_the_limits_and_one_more_is_refused,
+    #[test_id(tau1pjo)] a_key_twice_in_one_txn_is_refused,
+    #[test_id(t6tg85d)] caller_writes_to_the_contracts_own_prefixes_are_refused,
+    #[test_id(t1sa7z1)] a_txn_that_acquires_a_lock_and_writes_a_fenced_key_applies_whole_or_not_at_all,
+    #[test_id(teiulle)] a_txn_acquiring_a_lock_held_by_another_holder_fails_whole,
+    #[test_id(txzd8wt)] lock_check_fails_the_txn_after_the_lock_expired_or_was_retaken,
+    #[test_id(tdvkft7)] get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
+    #[test_id(thpv0k5)] a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
+    #[test_id(t4fw2hl)] a_lock_renew_op_keeps_the_token_restarts_the_ttl_and_runs_only_while_held,
+    #[test_id(t0ko33c)] a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
+    #[test_id(tpi7j20)] a_kind_since_range_reads_the_keys_of_that_kind_after_that_time_at_the_head_and_below_it,
+    #[test_id(tdw6bp9)] a_seq_range_reads_the_keys_above_a_seq_in_seq_order_at_the_head_and_below_it,
+    #[test_id(tohf4df)] gc_range_skips_the_history_prefix,
+    #[test_id(t8c6rne)] committed_at_is_the_wall_time_of_the_first_audited_commit_at_or_after_a_main,
 );
 
 /// Scenarios with no unit test here: each runs over 100 ms (sp-bym7j8) and stays in the suite
 /// for the live run alone.
 const OVER_BUDGET: &[&str] = &["request_bytes_at_the_limit_pass_and_one_over_is_refused"];
 
+#[test_id(tl61bap)]
 #[test]
 fn every_scenario_of_the_suite_is_its_own_test_here() {
     let want: Vec<&str> = SCENARIOS.iter().copied().filter(|s| !OVER_BUDGET.contains(s)).collect();
@@ -140,6 +143,7 @@ fn keys_at(b: &SqliteBackend, prefix: &str, at: u64) -> Vec<(String, Vec<u8>)> {
 
 /// Puts at 1 and 2, then the delete at 3: no row is left at the head, so a counter derived from
 /// the keys or a rowid would read back 1.
+#[test_id(tpvodlc)]
 #[test]
 fn after_deleting_the_highest_revision_keys_and_reopening_the_next_main_is_greater() {
     let dir = TempDir::new("sqlite-reopen");
@@ -173,6 +177,7 @@ fn after_deleting_the_highest_revision_keys_and_reopening_the_next_main_is_great
 
 /// The ring is empty after a restart and its floor is the head the file held at close: a read
 /// below it is `TooOld`, a watch from it sees only the jump, and the head is served.
+#[test_id(tyvu37n)]
 #[test]
 fn straight_after_a_restart_history_below_the_close_head_is_too_old_and_the_head_is_served() {
     let dir = TempDir::new("sqlite-restart-history");
@@ -198,6 +203,7 @@ fn straight_after_a_restart_history_below_the_close_head_is_too_old_and_the_head
 }
 
 /// A ring that has turned past a revision answers `TooOld` for the read and the watch.
+#[test_id(t3wuq2d)]
 #[test]
 fn a_revision_the_ring_has_turned_past_is_too_old_to_read_or_watch() {
     let dir = TempDir::new("sqlite-ring-turns");
@@ -220,6 +226,7 @@ fn a_revision_the_ring_has_turned_past_is_too_old_to_read_or_watch() {
     assert!(c.get_at("t/a", floor).is_ok());
 }
 
+#[test_id(ttwrueg)]
 #[test]
 fn journal_mode_and_synchronous_read_back_as_wal_and_normal() {
     let dir = TempDir::new("sqlite-pragmas");
@@ -228,6 +235,7 @@ fn journal_mode_and_synchronous_read_back_as_wal_and_normal() {
     assert_eq!(b.pragmas().unwrap(), ("wal".to_string(), 1));
 }
 
+#[test_id(t426ubx)]
 #[test]
 fn a_second_open_of_the_same_file_is_refused() {
     let dir = TempDir::new("sqlite-exclusive");
@@ -251,6 +259,7 @@ fn put_write(key: &str, value: &[u8], main: u64, prev: Option<Rev>) -> Write {
     }
 }
 
+#[test_id(tz64bz9)]
 #[test]
 fn a_reader_held_past_max_read_ms_is_ended_and_the_next_checkpoint_truncates_the_wal() {
     let dir = TempDir::new("sqlite-reader");
@@ -317,6 +326,7 @@ fn a_reader_held_past_max_read_ms_is_ended_and_the_next_checkpoint_truncates_the
     *slot.lock().unwrap() = None;
 }
 
+#[test_id(t0l71bl)]
 #[test]
 fn bulk_load_reads_back_every_key_at_one_revision_and_the_next_txn_is_the_one_after() {
     let dir = TempDir::new("sqlite-bulk");
@@ -344,6 +354,7 @@ fn bulk_load_reads_back_every_key_at_one_revision_and_the_next_txn_is_the_one_af
     assert_eq!(put(&c, "lifecycle/new", json!(1), "after-import"), r + 1);
 }
 
+#[test_id(t9f3fxk)]
 #[test]
 fn a_snapshot_copy_matches_the_live_keys_at_its_revision_and_refuses_an_existing_file() {
     let dir = TempDir::new("sqlite-backup");
@@ -379,6 +390,7 @@ fn a_snapshot_copy_matches_the_live_keys_at_its_revision_and_refuses_an_existing
     assert_eq!(keys_at(&copy, "", rev), keys_at(&live, "", rev));
 }
 
+#[test_id(tpfswhj)]
 #[test]
 fn a_snapshot_copy_taken_while_another_thread_commits_holds_one_revision() {
     let dir = TempDir::new("sqlite-backup-live");
@@ -409,6 +421,7 @@ fn a_snapshot_copy_taken_while_another_thread_commits_holds_one_revision() {
     assert_eq!(keys_at(&copy, "", rev), keys_at(&live, "", rev));
 }
 
+#[test_id(tdv19aj)]
 #[test]
 fn gc_range_skips_events_and_history_and_pages_across_them() {
     let dir = TempDir::new("sqlite-gc-range");
@@ -434,6 +447,7 @@ fn gc_range_skips_events_and_history_and_pages_across_them() {
     assert_eq!(got, ["a", "f", "g", "i"]);
 }
 
+#[test_id(tmz0y2k)]
 #[test]
 fn a_snapshot_copy_does_not_carry_the_pages_deleted_rows_left_free_in_the_live_file() {
     let dir = TempDir::new("sqlite-snapshot-vacuum");
@@ -454,6 +468,7 @@ fn a_snapshot_copy_does_not_carry_the_pages_deleted_rows_left_free_in_the_live_f
     assert!(snap * 4 < live, "snapshot {snap} bytes beside a live file of {live}");
 }
 
+#[test_id(tmrteqf)]
 #[test]
 fn a_snapshot_is_compacted_straight_to_its_destination_in_rollback_mode() {
     let dir = TempDir::new("sqlite-snapshot-direct");
@@ -515,6 +530,7 @@ fn receipt(id: &str, value: &[u8], main: u64) -> Write {
     put_write(&state_store::request_key(id), value, main, None)
 }
 
+#[test_id(t02wxyg)]
 #[test]
 fn a_receipt_lands_in_the_day_file_of_its_commit_and_answers_a_retry_through_the_next_day() {
     let dir = TempDir::new("sqlite-receipt-day");
@@ -532,6 +548,7 @@ fn a_receipt_lands_in_the_day_file_of_its_commit_and_answers_a_retry_through_the
     assert_eq!((again.rev, again.already_applied), (first.rev, true));
 }
 
+#[test_id(tzpnvj1)]
 #[test]
 fn a_failure_between_the_side_commit_and_the_main_commit_leaves_no_row_above_the_head() {
     let dir = TempDir::new("sqlite-side-fail");
@@ -562,6 +579,7 @@ fn a_failure_between_the_side_commit_and_the_main_commit_leaves_no_row_above_the
     assert_eq!(got.value, b"second");
 }
 
+#[test_id(tvdn366)]
 #[test]
 fn a_side_row_above_the_head_is_gone_when_the_store_reopens() {
     let dir = TempDir::new("sqlite-side-reopen");
@@ -594,6 +612,7 @@ fn open_fds_naming(prefix: &str) -> Vec<String> {
         .collect()
 }
 
+#[test_id(tkenwus)]
 #[test]
 fn a_retired_day_file_waits_for_the_read_in_flight_and_then_leaves_nothing_behind() {
     let dir = TempDir::new("sqlite-retire-wait");
@@ -636,6 +655,7 @@ fn a_retired_day_file_waits_for_the_read_in_flight_and_then_leaves_nothing_behin
     assert_eq!(open_fds_naming(&own), Vec::<String>::new());
 }
 
+#[test_id(t73xvu7)]
 #[test]
 fn thirty_days_of_commits_never_leave_more_than_two_day_files_and_today_is_one() {
     let dir = TempDir::new("sqlite-thirty-days");
@@ -655,6 +675,7 @@ fn thirty_days_of_commits_never_leave_more_than_two_day_files_and_today_is_one()
     }
 }
 
+#[test_id(try91ig)]
 #[test]
 fn main_file_receipts_drain_five_hundred_a_commit_once_they_are_a_day_old() {
     let dir = TempDir::new("sqlite-drain");
@@ -720,6 +741,7 @@ fn failing_once() -> (Arc<AtomicBool>, state_store_sqlite::CommitProbe) {
     (fail, probe)
 }
 
+#[test_id(tbbvtx4)]
 #[test]
 fn an_event_lands_in_the_day_file_of_its_commit_and_not_in_the_main_file() {
     let dir = TempDir::new("sqlite-event-day");
@@ -734,6 +756,7 @@ fn an_event_lands_in_the_day_file_of_its_commit_and_not_in_the_main_file() {
     assert!(c.backend().get(&key, rev).unwrap().is_some());
 }
 
+#[test_id(tmf7arr)]
 #[test]
 fn thirty_days_of_audited_commits_keep_fifteen_event_files_and_an_event_reads_back_for_fourteen_days() {
     let dir = TempDir::new("sqlite-event-thirty");
@@ -753,6 +776,7 @@ fn thirty_days_of_audited_commits_keep_fifteen_event_files_and_an_event_reads_ba
     }
 }
 
+#[test_id(tgi8ujd)]
 #[test]
 fn a_failed_main_commit_leaves_neither_an_event_nor_a_receipt_above_the_head_in_process_or_after_a_reopen() {
     let dir = TempDir::new("sqlite-event-fail");
@@ -790,6 +814,7 @@ fn open_day(path: &Path, wall: &VirtualClock) -> SqliteBackend {
     SqliteBackend::open(path, day_opts(wall)).unwrap()
 }
 
+#[test_id(tt7z0i6)]
 #[test]
 fn a_retired_events_file_waits_for_the_range_in_flight_and_then_leaves_nothing_behind() {
     let dir = TempDir::new("sqlite-event-retire-wait");
@@ -876,6 +901,7 @@ fn live_commit(b: &SqliteBackend, i: u64) {
     b.commit(head, &[put_write(&format!("live/{i}"), b"1", head + 1, None)]).unwrap();
 }
 
+#[test_id(tu7a0oy)]
 #[test]
 fn main_file_events_older_than_fourteen_days_drain_five_hundred_a_commit_and_the_rest_stay() {
     let dir = TempDir::new("sqlite-event-drain");
@@ -892,6 +918,7 @@ fn main_file_events_older_than_fourteen_days_drain_five_hundred_a_commit_and_the
     assert_eq!(count(&path, "SELECT count(*) FROM versions"), 0, "the legacy rows drain whatever their age");
 }
 
+#[test_id(twq2pa9)]
 #[test]
 fn unstamped_main_file_events_are_as_old_as_the_first_stamped_one_after_them() {
     let dir = TempDir::new("sqlite-event-unstamped");
@@ -907,6 +934,7 @@ fn unstamped_main_file_events_are_as_old_as_the_first_stamped_one_after_them() {
     assert_eq!(events_left(&path), 2, "nothing older than the window is stamped");
 }
 
+#[test_id(tjvrvmh)]
 #[test]
 fn a_reopen_over_many_unstamped_main_file_events_drains_a_bounded_page_a_commit() {
     let dir = TempDir::new("sqlite-event-unstamped-bounded");
@@ -920,6 +948,7 @@ fn a_reopen_over_many_unstamped_main_file_events_drains_a_bounded_page_a_commit(
     assert_eq!(events_left(&path), 20_001, "nothing in the window is older");
 }
 
+#[test_id(tipj3sx)]
 #[test]
 fn a_reopen_whose_event_drain_is_waiting_examines_no_event_rows_on_its_first_commit() {
     let dir = TempDir::new("sqlite-event-waiting-reopen");
@@ -934,6 +963,7 @@ fn a_reopen_whose_event_drain_is_waiting_examines_no_event_rows_on_its_first_com
     assert_eq!(b.take_drain_rows(), 0, "a waiting drain survives a restart");
 }
 
+#[test_id(toowyuf)]
 #[test]
 fn a_scan_resumes_from_its_persisted_cursor_and_drains_once_the_stamped_event_ages_out() {
     let dir = TempDir::new("sqlite-event-scan-resume");
@@ -969,6 +999,7 @@ fn a_scan_resumes_from_its_persisted_cursor_and_drains_once_the_stamped_event_ag
     assert_eq!(events_left(&path), 0, "the unstamped events drain once the stamped one is out of the window");
 }
 
+#[test_id(t0907pl)]
 #[test]
 fn a_reopen_mid_deletion_does_not_rescan_the_unstamped_events_it_already_passed() {
     let dir = TempDir::new("sqlite-event-reopen-mid-deletion");
@@ -990,6 +1021,7 @@ fn a_reopen_mid_deletion_does_not_rescan_the_unstamped_events_it_already_passed(
     assert_eq!(events_left(&path), before - DRAIN_PER_COMMIT as i64, "the reopen did not go on deleting");
 }
 
+#[test_id(t8kd08q)]
 #[test]
 fn a_commit_that_drains_records_a_drain_phase() {
     let dir = TempDir::new("sqlite-drain-phase");
@@ -1003,6 +1035,7 @@ fn a_commit_that_drains_records_a_drain_phase() {
     state_store::phases::untrack();
 }
 
+#[test_id(tdov7ps)]
 #[test]
 fn log_over_a_mixed_batch_sequence_is_the_same_on_the_memory_and_the_sqlite_backends() {
     let dir = TempDir::new("sqlite-log-same");
@@ -1026,6 +1059,7 @@ fn log_over_a_mixed_batch_sequence_is_the_same_on_the_memory_and_the_sqlite_back
     assert_eq!(s.log(2, 2).unwrap(), m.log(2, 2).unwrap());
 }
 
+#[test_id(tzm7l66)]
 #[test]
 fn a_receipt_is_written_once_and_a_failed_cleanup_refuses_every_commit_until_a_reopen_trims_it() {
     let dir = TempDir::new("sqlite-receipt-refusals");
@@ -1060,6 +1094,7 @@ fn a_receipt_is_written_once_and_a_failed_cleanup_refuses_every_commit_until_a_r
     b.commit(head, &[put_write("live/a", b"1", head + 1, None)]).unwrap();
 }
 
+#[test_id(tmzpx0b)]
 #[test]
 fn deleting_a_receipt_removes_it_from_a_day_file_or_the_main_file_and_the_log_names_what_it_was() {
     let dir = TempDir::new("sqlite-receipt-delete");
@@ -1087,6 +1122,7 @@ fn deleting_a_receipt_removes_it_from_a_day_file_or_the_main_file_and_the_log_na
     assert!(log.iter().all(|e| e.value.is_none()));
 }
 
+#[test_id(tfq5h8b)]
 #[test]
 fn a_store_opened_without_day_receipts_keeps_them_in_its_one_file_and_never_drains_them() {
     let dir = TempDir::new("sqlite-receipt-main");
@@ -1102,6 +1138,7 @@ fn a_store_opened_without_day_receipts_keeps_them_in_its_one_file_and_never_drai
     assert_eq!(b.get("requests/a", 2).unwrap().unwrap().value, b"1");
 }
 
+#[test_id(taw968l)]
 #[test]
 fn a_range_lays_receipts_among_the_main_files_keys_at_the_head_and_below_it() {
     let dir = TempDir::new("sqlite-receipt-range");
@@ -1122,6 +1159,7 @@ fn a_range_lays_receipts_among_the_main_files_keys_at_the_head_and_below_it() {
     assert!(b.gc_range(None, 100, 2).unwrap().iter().all(|(k, _)| !k.starts_with("requests/")));
 }
 
+#[test_id(t7esvcz)]
 #[test]
 fn a_snapshot_copy_carries_the_receipts_up_to_its_revision_in_one_file() {
     let dir = TempDir::new("sqlite-receipt-snapshot");
@@ -1138,6 +1176,7 @@ fn a_snapshot_copy_carries_the_receipts_up_to_its_revision_in_one_file() {
     assert!(copy.range_in_state("requests/", "none", None, 10, rev).unwrap().is_empty());
 }
 
+#[test_id(trdx3d6)]
 #[test]
 fn a_day_file_behind_the_mark_is_retired_when_the_store_opens() {
     let dir = TempDir::new("sqlite-receipt-open-retire");
@@ -1152,6 +1191,7 @@ fn a_day_file_behind_the_mark_is_retired_when_the_store_opens() {
     assert!(b.get("requests/old", b.head().unwrap()).unwrap().is_none());
 }
 
+#[test_id(t6mbnhh)]
 #[test]
 fn a_store_opened_without_day_receipts_starts_no_drain_clock() {
     let dir = TempDir::new("sqlite-receipt-clock");
@@ -1163,6 +1203,7 @@ fn a_store_opened_without_day_receipts_starts_no_drain_clock() {
     assert_eq!(count(&path, "SELECT count(*) FROM meta WHERE name = 'receipts_from_at'"), 1);
 }
 
+#[test_id(tssggju)]
 #[test]
 fn a_failed_main_commit_leaves_a_receipt_the_batch_deleted() {
     let dir = TempDir::new("sqlite-receipt-undeleted");
@@ -1183,6 +1224,7 @@ fn a_failed_main_commit_leaves_a_receipt_the_batch_deleted() {
     assert_eq!(count(&day_file(dir.path(), "2024-10-04"), "SELECT count(*) FROM rows"), 1);
 }
 
+#[test_id(t430082)]
 #[test]
 fn an_open_whose_trim_of_rows_above_the_head_cannot_complete_fails() {
     let dir = TempDir::new("sqlite-receipt-open-trim");
@@ -1300,6 +1342,7 @@ mod relayout {
         state_store_sqlite::dated::date_of(state_store_sqlite::dated::day_of(ms))
     }
 
+    #[test_id(tujduj9)]
     #[test]
     fn relayout_builds_the_live_keys_exactly_and_files_the_young_audit_rows_by_their_own_day() {
         let dir = TempDir::new("relayout");
@@ -1346,6 +1389,7 @@ mod relayout {
         assert_eq!(report.events.read, EVENT_HOURS + 1);
     }
 
+    #[test_id(tupd8pa)]
     #[test]
     fn relayout_refuses_and_leaves_nothing_when_the_old_store_is_open_or_the_target_exists() {
         let dir = TempDir::new("relayout-refuse");
@@ -1372,6 +1416,7 @@ mod relayout {
         assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")), "{:?}", files_beside(dir.path()));
     }
 
+    #[test_id(tdqsh0y)]
     #[test]
     #[allow(clippy::disallowed_methods)]
     fn relayout_folds_a_crash_image_wal_in_and_the_wal_only_rows_reach_the_new_store() {
@@ -1427,6 +1472,7 @@ mod relayout {
         assert!(!new.exists());
     }
 
+    #[test_id(tkcazyz)]
     #[test]
     fn certification_refuses_a_copy_that_differs_and_removes_every_new_file() {
         let dir = TempDir::new("relayout-certify");
@@ -1458,6 +1504,7 @@ mod relayout {
         assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")));
     }
 
+    #[test_id(tv71zon)]
     #[test]
     fn relayout_builds_into_a_target_directory_that_does_not_exist_yet() {
         let dir = TempDir::new("relayout-parent");
@@ -1489,6 +1536,7 @@ fn put_next(b: &SqliteBackend) {
     panic!("commit still busy after {BUSY_RETRIES} attempts");
 }
 
+#[test_id(tnomt7f)]
 #[test]
 fn no_commit_runs_a_wal_checkpoint() {
     let dir = TempDir::new("sqlite-no-commit-checkpoint");
@@ -1506,6 +1554,7 @@ fn no_commit_runs_a_wal_checkpoint() {
     assert!(moved.is_empty(), "commits {moved:?} moved the WAL backfill mark");
 }
 
+#[test_id(tbxg0mt)]
 #[test]
 fn a_checkpoint_completes_after_checkpoint_every_commits() {
     let dir = TempDir::new("sqlite-background-checkpoint");
@@ -1536,6 +1585,7 @@ fn commit_live(b: &SqliteBackend, i: u64) {
     b.commit(head, &[put_write(&format!("live/{i}"), b"1", head + 1, None)]).unwrap();
 }
 
+#[test_id(tn6whuo)]
 #[test]
 fn legacy_version_rows_drain_five_hundred_a_commit_and_the_live_rows_stay() {
     let dir = TempDir::new("sqlite-drain-versions");
@@ -1559,6 +1609,7 @@ fn legacy_version_rows_drain_five_hundred_a_commit_and_the_live_rows_stay() {
     assert!(got.is_some());
 }
 
+#[test_id(t0hnvs7)]
 #[test]
 fn a_store_opened_without_day_receipts_never_drains_its_version_rows() {
     let dir = TempDir::new("sqlite-keep-versions");
@@ -1576,6 +1627,7 @@ fn a_store_opened_without_day_receipts_never_drains_its_version_rows() {
     assert!(count(&path, "PRAGMA freelist_count") == 0 && count(&path, "PRAGMA auto_vacuum") == 2);
 }
 
+#[test_id(ttgpump)]
 #[test]
 fn a_new_store_is_incremental_and_gives_back_at_most_the_step_a_commit() {
     let dir = TempDir::new("sqlite-incremental");
@@ -1620,6 +1672,7 @@ fn a_new_store_is_incremental_and_gives_back_at_most_the_step_a_commit() {
     assert_eq!(count(&path, "PRAGMA freelist_count"), 0);
 }
 
+#[test_id(tcvastm)]
 #[test]
 fn an_existing_none_mode_store_keeps_its_mode_and_still_drains() {
     let dir = TempDir::new("sqlite-none-mode");
@@ -1674,6 +1727,7 @@ fn none_mode_store_with_free_pages(path: &Path) {
     assert!(count(path, "PRAGMA freelist_count") > 0);
 }
 
+#[test_id(tp9b9q3)]
 #[test]
 fn compact_converts_a_none_mode_store_so_the_commit_reclaim_returns_pages() {
     let dir = TempDir::new("sqlite-compact");
@@ -1702,6 +1756,7 @@ fn compact_converts_a_none_mode_store_so_the_commit_reclaim_returns_pages() {
     assert!(count(&path, "PRAGMA page_count") < before);
 }
 
+#[test_id(tveocgj)]
 #[test]
 fn compact_refuses_while_the_store_is_open_and_writes_nothing() {
     let dir = TempDir::new("sqlite-compact-open");
@@ -1722,6 +1777,7 @@ fn wal_conn(path: &Path) -> rusqlite::Connection {
     conn
 }
 
+#[test_id(tef0b8g)]
 #[test]
 #[allow(clippy::disallowed_methods)]
 fn compact_folds_a_crash_image_wal_into_the_main_file_before_it_rewrites() {
@@ -1742,6 +1798,7 @@ fn compact_folds_a_crash_image_wal_into_the_main_file_before_it_rewrites() {
     assert_eq!(count(&image, "SELECT count(*) FROM crash_rows"), 3);
 }
 
+#[test_id(t9kve0v)]
 #[test]
 #[allow(clippy::disallowed_methods)]
 fn compact_refuses_naming_the_wal_when_a_reader_keeps_it_from_folding_and_writes_nothing() {
@@ -1762,6 +1819,7 @@ fn compact_refuses_naming_the_wal_when_a_reader_keeps_it_from_folding_and_writes
     drop(conn);
 }
 
+#[test_id(t0f175i)]
 #[test]
 fn a_snapshot_of_a_none_mode_store_is_incremental_and_so_is_its_restore() {
     let dir = TempDir::new("sqlite-snapshot-incremental");
@@ -1834,6 +1892,7 @@ fn frames_per_commit() -> u32 {
     (mx_frame(&p) - before).div_ceil(10)
 }
 
+#[test_id(th7zetr)]
 #[test]
 fn the_wal_stays_within_three_checkpoint_intervals_while_reads_never_stop() {
     let dir = TempDir::new("sqlite-bounded-wal");
@@ -1845,6 +1904,7 @@ fn the_wal_stays_within_three_checkpoint_intervals_while_reads_never_stop() {
     drop(b);
 }
 
+#[test_id(taaic6o)]
 #[test]
 fn a_checkpoint_pass_on_an_idle_store_restarts_the_wal() {
     let dir = TempDir::new("sqlite-checkpoint-pass-idle");
@@ -1857,6 +1917,7 @@ fn a_checkpoint_pass_on_an_idle_store_restarts_the_wal() {
     assert_eq!(std::fs::metadata(format!("{}-wal", path.display())).unwrap().len(), 0);
 }
 
+#[test_id(tjpiwcb)]
 #[test]
 #[should_panic(expected = "exceeds")]
 fn the_wal_bound_fails_when_no_checkpoint_pass_runs() {
@@ -1884,6 +1945,7 @@ fn fill_main_file(b: &SqliteBackend, n: u64) {
 /// The work a re-executed copy of this binary does for [`run_child`]: `leave:<path>` is an
 /// unclean stop (a backlog of the bounded-WAL workload, handle leaked, exit with no drop);
 /// `fail:<path>` commits under a file-size limit the main file is already past.
+#[test_id(t2p98h7)]
 #[test]
 fn child_work_when_asked() {
     let Ok(spec) = std::env::var(CHILD_ENV) else { return };
@@ -1929,6 +1991,7 @@ fn run_child(spec: String, file_limit_blocks: Option<u64>) -> std::process::Outp
     out
 }
 
+#[test_id(t8l9936)]
 #[test]
 fn a_checkpoint_failure_is_logged_once_with_sqlites_error() {
     let dir = TempDir::new("sqlite-checkpoint-failure");
@@ -1946,6 +2009,7 @@ fn a_checkpoint_failure_is_logged_once_with_sqlites_error() {
     assert!(lines[0].contains(&path.display().to_string()), "{err}");
 }
 
+#[test_id(ts1tdbi)]
 #[test]
 fn a_large_store_left_by_an_unclean_stop_has_only_a_bounded_wal_to_recover() {
     let dir = TempDir::new("sqlite-bounded-recovery");
@@ -1964,6 +2028,7 @@ fn a_large_store_left_by_an_unclean_stop_has_only_a_bounded_wal_to_recover() {
     SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, outbox: false, ..Options::default() }).unwrap();
 }
 
+#[test_id(tj9drpq)]
 #[test]
 fn a_commit_is_not_held_by_a_wal_restart_that_is_waiting_on_a_reader() {
     use std::sync::mpsc::channel;
@@ -2101,6 +2166,7 @@ impl HeldRead {
     }
 }
 
+#[test_id(t0bbulp)]
 #[test]
 fn a_restart_past_the_wal_line_waits_out_a_read_in_flight() {
     let dir = TempDir::new("sqlite-restart-past-cap");
@@ -2113,6 +2179,7 @@ fn a_restart_past_the_wal_line_waits_out_a_read_in_flight() {
     assert_eq!(std::fs::metadata(&h.wal).unwrap().len(), 0);
 }
 
+#[test_id(tdqny6p)]
 #[test]
 fn a_read_queued_on_a_reader_does_not_start_while_a_restart_holds_the_gate() {
     let dir = TempDir::new("sqlite-restart-queued-read");
@@ -2135,6 +2202,7 @@ fn a_read_queued_on_a_reader_does_not_start_while_a_restart_holds_the_gate() {
     assert_eq!(seen, 0, "the queued read opened its transaction before the restart finished: the WAL held {seen} B");
 }
 
+#[test_id(tpy2lrz)]
 #[test]
 fn a_restart_below_the_wal_line_still_gives_up_while_a_read_is_held() {
     let dir = TempDir::new("sqlite-restart-below-cap");

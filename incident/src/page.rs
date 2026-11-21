@@ -237,6 +237,7 @@ mod tests {
         c
     }
 
+    #[test_id(tk2lxoa)]
     #[test]
     fn identity_is_section_conditions_and_decision_never_the_steps() {
         let a = nolever(&["B", "A"], &["hold-member: refused"]);
@@ -249,6 +250,7 @@ mod tests {
         assert_ne!(a.identity(), c.identity());
     }
 
+    #[test_id(tk1ug0x)]
     #[test]
     fn rows_round_trip_and_a_malformed_row_is_dropped() {
         let c = nolever(&["A"], &[]);
@@ -257,6 +259,7 @@ mod tests {
         assert!(parse("junk\nx|y\t5\na|b|c|d|e\tnot-a-number\n").is_empty());
     }
 
+    #[test_id(t2n425d)]
     #[test]
     fn a_page_is_capped_per_condition_type_and_a_changed_one_is_a_note() {
         let c = nolever(&["A"], &["s1"]);
@@ -272,6 +275,7 @@ mod tests {
         assert_eq!(decide(&rows, &c, 1000 + REMINDER_S), Verdict::Send, "the window ends");
     }
 
+    #[test_id(t99d9vs)]
     #[test]
     fn a_raise_pages_once_whatever_the_cap_and_a_new_raise_pages_again() {
         let raise = |since: &str| Candidate::new("DwarfFleet/r", Source::Raised { since: since.into() }, vec!["LaneBlocked".into()], Decision { question: "q".into(), default: "d".into() });
@@ -283,6 +287,7 @@ mod tests {
         assert!(sent(&rows, &raise("t3"), "", 1000 + KEEP_S).len() == 2, "rows past KEEP_S are dropped");
     }
 
+    #[test_id(t1cwwhp)]
     #[test]
     fn a_raise_and_a_pass_record_entry_on_one_section_keep_their_own_rows() {
         let raise = Candidate::new("DwarfFleet/repo-b", Source::Raised { since: "t1".into() }, vec!["A".into()], Decision { question: "r".into(), default: "d".into() });
@@ -302,6 +307,7 @@ mod tests {
         }
     }
 
+    #[test_id(tr9l08g)]
     #[test]
     fn the_body_carries_the_evidence_one_decision_and_the_runbook() {
         let mut c = nolever(&["StackedOnUndrivenParent"], &["hold-member: refused (no-hold-target)"]);

@@ -1,4 +1,7 @@
+#[macro_use]
+extern crate spira_test_id;
 use spira_submission::Config;
+#[test_id(txp3jju)]
 #[test]
 fn an_unconfigured_or_wildcard_address_never_listens() {
     let vals = |addr: &'static str| move |k: &str| -> Result<String, String> {

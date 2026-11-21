@@ -136,6 +136,7 @@ fn opts(apply: bool) -> Opts {
     Opts { apply, actor: "groomer".into() }
 }
 
+#[test_id(tm1tj2d)]
 #[test]
 fn not_poisoned_is_silent_and_uncounted() {
     let mut w = Fake::default().bead("sp-a", "open", None, &[]);
@@ -148,6 +149,7 @@ fn not_poisoned_is_silent_and_uncounted() {
     assert!(w.notes.is_empty());
 }
 
+#[test_id(tu7h0y4)]
 #[test]
 fn keeps_a_bead_whose_work_never_merges() {
     let mut w = Fake::default().bead("sp-k", "open", None, &[]).poisoned("sp-k");
@@ -173,6 +175,7 @@ fn keeps_a_bead_whose_work_never_merges() {
     assert!(w.removed_labels.is_empty());
 }
 
+#[test_id(tfsqvzh)]
 #[test]
 fn dry_run_would_and_writes_nothing() {
     let mut w = Fake::default().bead("sp-s", "open", None, &[]).poisoned("sp-s");
@@ -187,6 +190,7 @@ fn dry_run_would_and_writes_nothing() {
     assert!(w.notes.is_empty());
 }
 
+#[test_id(tt1h4gm)]
 #[test]
 fn apply_restores_and_leaves_the_attempt_record_standing() {
     // Carries the legacy label too: removed best-effort, but the hold is the poison.
@@ -221,6 +225,7 @@ fn apply_restores_and_leaves_the_attempt_record_standing() {
     assert_eq!(w.lifted.get("sp-s"), Some(&3));
 }
 
+#[test_id(tzwf41u)]
 #[test]
 fn apply_unholds_and_never_touches_an_absent_label() {
     use lifecycle::bead::{BeadState, HoldKind};
@@ -241,6 +246,7 @@ fn apply_unholds_and_never_touches_an_absent_label() {
 }
 
 /// sp-mve9i: bd's in_progress is not the claim — only the lifecycle row's holder is.
+#[test_id(tgva7ou)]
 #[test]
 fn bd_in_progress_without_a_working_row_is_not_held() {
     use lifecycle::bead::{BeadState, HoldKind};
@@ -250,6 +256,7 @@ fn bd_in_progress_without_a_working_row_is_not_held() {
     assert!(out.contains("WOULD    sp-s"), "{out}");
 }
 
+#[test_id(tmx4omg)]
 #[test]
 fn a_lifecycle_working_holder_refuses_and_touches_nothing() {
     use lifecycle::bead::{BeadState, HoldKind};
@@ -266,6 +273,7 @@ fn a_lifecycle_working_holder_refuses_and_touches_nothing() {
     assert!(w.removed_labels.is_empty());
 }
 
+#[test_id(t3w2jo0)]
 #[test]
 fn unhold_refused_once_then_retried_from_a_fresh_read() {
     use lifecycle::bead::{BeadState, HoldKind};
@@ -282,6 +290,7 @@ fn unhold_refused_once_then_retried_from_a_fresh_read() {
     assert!(!w.lc["sp-s"].holds.contains(&HoldKind::Poison));
 }
 
+#[test_id(t8fz6f4)]
 #[test]
 fn still_poisoned_after_apply_is_refused() {
     // lc_unhold_poison reports Applied but the hold stays — verify re-reads the row, finds it,
@@ -334,6 +343,7 @@ fn still_poisoned_after_apply_is_refused() {
     );
 }
 
+#[test_id(tnwabj5)]
 #[test]
 fn several_candidates_one_kept_one_restored_summary_counts_both() {
     let mut w = Fake::default()
@@ -352,6 +362,7 @@ fn several_candidates_one_kept_one_restored_summary_counts_both() {
     );
 }
 
+#[test_id(t7mqzvs)]
 #[test]
 fn parse_candidates_reads_a_json_array() {
     let v = parse_candidates(

@@ -231,17 +231,20 @@ mod tests {
         Ledger::suites().check(&forked_tree(&t)).unwrap().into_iter().map(|f| f.message).collect()
     }
 
+    #[test_id(txtgqtl)]
     #[test]
     fn an_entry_main_deleted_after_the_fork_is_not_a_new_entry() {
         assert!(check("test-x.sh\t3\n").is_empty());
     }
 
+    #[test_id(tmvjrm7)]
     #[test]
     fn a_key_added_on_the_branch_is_still_a_new_entry() {
         let m = check("test-x.sh\t3\ntest-y.sh\t1\n");
         assert_eq!(m, ["new entry test-y.sh — the allowlist may only shrink"]);
     }
 
+    #[test_id(tji6ffk)]
     #[test]
     fn a_value_raised_over_the_fork_is_still_raised() {
         let m = check("test-x.sh\t5\n");
@@ -249,6 +252,7 @@ mod tests {
     }
 
 
+    #[test_id(tivknrh)]
     #[test]
     fn area_of_reads_the_uc_shape() {
         assert_eq!(area_of("UC-operator-channel-14"), Some("operator-channel"));

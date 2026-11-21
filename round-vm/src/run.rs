@@ -3434,6 +3434,7 @@ fn after_batch(
 #[cfg(test)]
 mod tests {
 
+    #[test_id(td3syxh)]
     #[test]
     fn a_progress_refusal_carries_the_reason_spira_lc_wrote_to_stdout() {
         let m = progress_refusal("b1", Some(2), b"cannot tell: no such column\n", b"");
@@ -3442,6 +3443,7 @@ mod tests {
     }
     use super::*;
 
+    #[test_id(toxc5q0)]
     #[test]
     fn a_request_limit_refusal_is_recorded_as_an_aws_refusal_with_the_spill_decision() {
         let e = "round-vm: acquire: EC2 launch failed (no local VM within 30s), placement ec2-only has no local fallback: aws run-instances: An error occurred (RequestLimitExceeded) when calling the RunInstances operation (still refused after 4 retries with backoff)";
@@ -3451,6 +3453,7 @@ mod tests {
         assert!(placement_record(None, None, None, &[], Some("clone refused")).get("aws_refusal").is_some_and(|v| v.is_null()));
     }
 
+    #[test_id(tp4ithk)]
     #[test]
     fn a_pass_is_placed_on_ec2_exactly_when_its_handle_is_an_ec2_one() {
         assert_eq!(place_of(&format!("{}i-0abc", crate::ec2::HANDLE_PREFIX)), "ec2");
@@ -3468,6 +3471,7 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(tj0hzwr)]
     #[test]
     fn a_spilled_vm_runs_one_slot_per_vcpu_unless_a_number_was_named() {
         assert_eq!(spilled_maxpar(None, Some("c7i.4xlarge"), false), Some(16));
@@ -3477,6 +3481,7 @@ mod tests {
         assert_eq!(spilled_maxpar(None, None, false), None);
     }
 
+    #[test_id(t0ksp8v)]
     #[test]
     fn log_tail_keeps_the_last_lines_and_none_when_empty() {
         assert_eq!(log_tail("a\nb\nc\n", 2).as_deref(), Some("b\nc"));
@@ -3484,6 +3489,7 @@ mod tests {
         assert_eq!(log_tail("", 60), None);
     }
 
+    #[test_id(tb783cl)]
     #[test]
     fn a_red_pass_runs_no_coverage_step_and_a_green_pass_runs_one() {
         let t = TempDir::new();
@@ -3496,6 +3502,7 @@ mod tests {
         assert!(t.path().join("ran").exists(), "a green pass still reports");
     }
 
+    #[test_id(thfkoq1)]
     #[test]
     fn a_failed_build_with_no_results_is_a_verdict_not_a_pull_fault() {
         assert!(build_failed_without_results(4, false));
@@ -3504,6 +3511,7 @@ mod tests {
         assert!(!build_failed_without_results(0, false));
     }
 
+    #[test_id(tjgq485)]
     #[test]
     fn run_args_accept_both_spellings() {
         let r = parse_run_args(&args(&["t", "--suites", "a,b", "--maxpar=24", "--toolchain", "1.82.0", "--results-dir=r"])).unwrap();
@@ -3514,6 +3522,7 @@ mod tests {
         assert_eq!(r.results_dir, Some(PathBuf::from("r")));
     }
 
+    #[test_id(tzjnlra)]
     #[test]
     fn run_args_errors_name_the_problem() {
         assert_eq!(parse_run_args(&[]).unwrap_err(), RUN_USAGE);
@@ -3522,6 +3531,7 @@ mod tests {
         assert!(parse_run_args(&args(&["t", "--suites"])).unwrap_err().contains("needs a value"));
     }
 
+    #[test_id(tvt7pon)]
     #[test]
     fn the_round_installs_bubblewrap_before_any_test_binary_runs() {
         // sp-bt6ep3: a tree's test-binary sandbox (tools/test-sandbox/runner) refuses without bwrap,
@@ -3533,6 +3543,7 @@ mod tests {
         assert!(install < REMOTE_SCRIPT.find("phase unit-tests").unwrap(), "before the unit stage");
     }
 
+    #[test_id(txsd7m4)]
     #[test]
     fn the_round_lets_bwrap_run_in_the_rootful_test_container_and_proves_it_before_any_suite() {
         // sp-7dmcls: Ubuntu's restrict_unprivileged_userns strips mount from a bwrap the
@@ -3551,6 +3562,7 @@ mod tests {
         assert!(after.contains("BWRAP-PROBE-FAILED") && after.contains("$bwrap_probe") && after.contains("exit 3"), "a refused probe fails the round naming bwrap's words: {after}");
     }
 
+    #[test_id(tqkexm3)]
     #[test]
     fn the_round_runs_the_bare_host_suites_on_the_vm_after_the_corpus() {
         let corpus = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
@@ -3568,6 +3580,7 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("--selected \"$suites\"") && REMOTE_SCRIPT.contains("--suites all"));
     }
 
+    #[test_id(tu9kyt2)]
     #[test]
     fn the_remote_script_reports_bytes_used_per_directory_at_start_build_and_suites() {
         let nix = format!("{}nix", std::path::MAIN_SEPARATOR);
@@ -3617,6 +3630,7 @@ mod tests {
         (String::from_utf8(out.stdout).unwrap(), std::fs::read_to_string(d.path().join("unit.json")).unwrap())
     }
 
+    #[test_id(tba3wga)]
     #[test]
     fn a_test_binary_killed_by_a_signal_yields_a_red_naming_the_binary_and_the_signal() {
         let log = "     Running unittests src/lib.rs (target/debug/deps/crashy-0123456789abcdef)\nerror: test failed, to rerun pass `-p crashy --lib`\n\nCaused by:\n  process didn't exit successfully: `/w/target/debug/deps/crashy-0123456789abcdef` (signal: 11, SIGSEGV: invalid memory reference)\n";
@@ -3624,6 +3638,7 @@ mod tests {
         assert_eq!(out.lines().next().unwrap(), "UNIT-TESTS-RED: SIGNAL binary=crashy signal: 11, SIGSEGV: invalid memory reference", "{out}");
     }
 
+    #[test_id(tszil2o)]
     #[test]
     fn a_unit_phase_the_guard_killed_is_a_timeout_naming_the_binary_it_was_running() {
         let log = "     Running unittests src/lib.rs (target/debug/deps/slow-0123456789abcdef)\n";
@@ -3636,6 +3651,7 @@ mod tests {
                  FAIL [   0.010s] ( 3/3) fx t::bad\n------------\n     Summary [   4.005s] 3 tests run: 1 passed, 1 failed, 1 timed out\n\
               TIMEOUT [   4.002s] ( 2/3) fx t::sleeper\n        FAIL [   0.010s] ( 3/3) fx t::bad\n";
 
+    #[test_id(t2yfgcn)]
     #[test]
     fn a_unit_test_past_its_deadline_is_streamed_by_name_and_the_summary_is_not_counted_again() {
         let d = TempDir::new();
@@ -3647,6 +3663,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(d.path().join("prog")).unwrap().trim(), "3 3 t::sleeper t::bad");
     }
 
+    #[test_id(t2uzsml)]
     #[test]
     fn a_unit_test_terminated_at_its_deadline_is_the_named_cause_and_a_failed_test_of_the_red() {
         let (out, json) = red_phase_files(NEXTEST_LOG, "");
@@ -3656,18 +3673,21 @@ mod tests {
         assert!(json.contains(r#""failed":["t::bad","t::sleeper"]"#), "{json}");
     }
 
+    #[test_id(t41q1di)]
     #[test]
     fn a_unit_phase_cargo_could_not_compile_is_a_build_red_naming_the_target() {
         let out = red_phase_out("error: could not compile `widget` (lib test) due to 1 previous error\n", "");
         assert_eq!(out.lines().next().unwrap(), "UNIT-TESTS-RED: BUILD binary=widget", "{out}");
     }
 
+    #[test_id(t82cj7d)]
     #[test]
     fn a_unit_phase_with_an_ordinary_failed_test_carries_no_class_line() {
         let out = red_phase_out("test a::b ... FAILED\n", "");
         assert!(out.starts_with("UNIT-TESTS-CAUSE:"), "{out}");
     }
 
+    #[test_id(tqvii6v)]
     #[test]
     fn pruning_the_release_intermediates_keeps_the_executables_the_suites_and_fences_read() {
         let d = TempDir::new();
@@ -3690,6 +3710,7 @@ mod tests {
         assert!(prune < REMOTE_SCRIPT.find("testenv --mode parallel").unwrap());
     }
 
+    #[test_id(tykuu6t)]
     #[test]
     fn two_passes_at_different_heads_leave_one_release_and_the_log_names_the_removed() {
         let d = TempDir::new();
@@ -3718,6 +3739,7 @@ mod tests {
         assert!(verify < prune && prune < REMOTE_SCRIPT.find("export SPIRA_RELEASE=\"$HOME").unwrap());
     }
 
+    #[test_id(tqqstol)]
     #[test]
     fn the_hosts_disk_peak_is_the_largest_total_or_peak_and_unread_is_none() {
         let text = "round-vm: DISK start total 100 -\nround-vm: DISK build cargo-target 9999 /t\nround-vm: DISK build total 700+unread -\nround-vm: DISK suites peak 500 -\nround-vm: DISK suites total unread -\n";
@@ -3730,6 +3752,7 @@ mod tests {
         assert_eq!(disk_peak(d.path(), u64::MAX / 4), None, "a file older than the pass is a previous pass's");
     }
 
+    #[test_id(tls2820)]
     #[test]
     fn the_sampler_appends_each_reading_as_a_disk_line_and_keeps_no_peak() {
         let sampler = script_fn("disk_sampler");
@@ -3745,6 +3768,7 @@ mod tests {
         assert!(!last.contains("peak") && !last.contains("growth"), "{last}");
     }
 
+    #[test_id(tsosahm)]
     #[test]
     fn a_directory_du_cannot_read_is_never_a_zero_and_never_ends_the_pass() {
         let func = &REMOTE_SCRIPT[REMOTE_SCRIPT.find("fs_line() {").unwrap()..REMOTE_SCRIPT.find("disk_report start").unwrap()];
@@ -3755,6 +3779,7 @@ mod tests {
         assert!(!func.contains("bytes=0 ;;"), "no fallback to zero");
     }
 
+    #[test_id(tsyzgvk)]
     #[test]
     fn the_round_writes_its_temporary_files_under_its_scratch_and_still_reports_the_shared_tmp() {
         let export = REMOTE_SCRIPT.find("export TMPDIR=\"$HOME/round-scratch/tmp\"").expect("the script points TMPDIR at the round's scratch");
@@ -3763,6 +3788,7 @@ mod tests {
         assert!(script_fn("disk_report").contains("fs_line \"$phase\" fs-shared-tmp /tmp"), "the shared /tmp keeps its own line");
     }
 
+    #[test_id(t55ikol)]
     #[test]
     fn the_disk_report_never_walks_nix_the_container_store_or_tmp() {
         let nix = format!("{}nix", std::path::MAIN_SEPARATOR);
@@ -3782,6 +3808,7 @@ mod tests {
         assert!(script_fn("disk_report_last").contains("wait \"${disk_walks[@]}\""), "the last report waits for the background walks");
     }
 
+    #[test_id(togzlzt)]
     #[test]
     fn the_remote_script_says_whether_the_template_holds_the_rounds_image() {
         let clone = REMOTE_SCRIPT.find("git clone").unwrap();
@@ -3797,12 +3824,14 @@ mod tests {
         assert!(REMOTE_SCRIPT[absent..batch].contains("exit 3"), "an absent image exits 3 before any batch runs");
     }
 
+    #[test_id(tpbyh6h)]
     #[test]
     fn the_round_builds_once_in_a_clean_tree_with_testenvs_own_flags() {
         assert!(!REMOTE_SCRIPT.contains("ln -sfn"), "a target symlink dirties the tree and dangles in the container");
         assert!(REMOTE_SCRIPT.contains(&format!("cargo build -q --profile release --workspace {}", spira_config::build::one_shot_words("release"))));
     }
 
+    #[test_id(tnbgq6o)]
     #[test]
     fn conf_gen_is_warmed_once_before_the_workspace_build_and_the_suite_batch() {
         // sp-xjnzl-2: a fresh clone never carries conf.sh's gitignored generated fragments,
@@ -3819,6 +3848,7 @@ mod tests {
     /// Before the launcher declares SPIRA_RELEASE (the release the round just built), the
     /// script runs only the steps that need no declared release: staging config, validating
     /// it, and building and verifying the release itself, whose children run from the stage.
+    #[test_id(t1898rt)]
     #[test]
     fn nothing_before_the_built_release_is_declared_needs_spira_release() {
         let declared = REMOTE_SCRIPT.find("export SPIRA_RELEASE=\"$HOME/round-releases/$rel_sha\"").expect("the launcher declares the built release");
@@ -3830,12 +3860,14 @@ mod tests {
         }
     }
 
+    #[test_id(tl3wm54)]
     #[test]
     fn a_config_delta_that_does_not_apply_ends_the_pass_red_not_as_a_harness_fault() {
         let stage = REMOTE_SCRIPT.lines().find(|l| l.contains("release config-stage")).expect("the stage line");
         assert!(stage.contains("CONFIG-DELTA: RED") && stage.ends_with("exit 4; }"), "{stage}");
     }
 
+    #[test_id(t8bs28x)]
     #[test]
     fn the_heads_config_delta_is_staged_before_the_release_build_reads_config() {
         let export = REMOTE_SCRIPT.find("export SPIRA_TOML=\"$HOME/round-work/spira/testlib/complete.toml:").unwrap();
@@ -3844,6 +3876,7 @@ mod tests {
         assert!(export < stage && stage < build);
     }
 
+    #[test_id(tebetuq)]
     #[test]
     fn the_round_validates_the_staged_config_then_builds_and_verifies_the_release_before_any_suite() {
         let stage = REMOTE_SCRIPT.find("release config-stage \"$HOME/round-work\"").unwrap();
@@ -3863,6 +3896,7 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("grep -v '^ *$' ~/round-release.err | head -20 >&2\n    exit 4"));
     }
 
+    #[test_id(t4544na)]
     #[test]
     fn the_staged_release_is_the_registry_home_before_the_first_command_that_reads_config() {
         let home = REMOTE_SCRIPT.find("export SPIRA_HOME=\"$SPIRA_RELEASE/spira\"").expect("the launcher exports the staged release's registry home");
@@ -3871,6 +3905,7 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("export SPIRA_HOME=%q"), "the attribution reruns source it from the launcher env");
     }
 
+    #[test_id(tn59tbc)]
     #[test]
     fn a_host_round_computes_its_image_tag_without_the_schedulers_registry_home() {
         let unset = REMOTE_SCRIPT.lines().position(|l| l == "unset SPIRA_HOME").expect("the script starts without an inherited registry home");
@@ -3885,6 +3920,7 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stdout), "unset", "positive control: the caller's value is gone");
     }
 
+    #[test_id(tqj0cgk)]
     #[test]
     fn the_vm_is_a_launcher_release_path_set_outright_before_any_harness_script() {
         let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
@@ -3927,6 +3963,7 @@ mod tests {
         (o.status.code().unwrap_or(-1), err, out)
     }
 
+    #[test_id(tju7gyt)]
     #[test]
     fn host_preflight_finds_cargo_under_the_configured_cache_home_not_home() {
         let home = testkit::TempDir::new("round-vm-pf-home");
@@ -3938,6 +3975,7 @@ mod tests {
         assert!(!err.contains("cargo not found"), "{err}");
     }
 
+    #[test_id(t6dt95o)]
     #[test]
     fn preflight_refuses_an_absent_image_before_any_checkout_or_build() {
         let home = testkit::TempDir::new("round-vm-pf-home-img");
@@ -3951,6 +3989,7 @@ mod tests {
         assert!(!err.contains("PHASE checkout"), "{err}");
     }
 
+    #[test_id(tmmxq1s)]
     #[test]
     fn preflight_passes_a_present_image_on_to_the_checkout() {
         let home = testkit::TempDir::new("round-vm-pf-home-img-ok");
@@ -3962,6 +4001,7 @@ mod tests {
         assert!(err.contains("PHASE checkout"), "{err}");
     }
 
+    #[test_id(tdtblci)]
     #[test]
     fn an_early_preflight_exit_leaves_a_runner_output_to_pull() {
         let home = testkit::TempDir::new("round-vm-pf-home-early");
@@ -3971,12 +4011,14 @@ mod tests {
         assert!(home.path().join("round-runner.out").exists(), "the host's pull must find a runner output for any early exit");
     }
 
+    #[test_id(txskxax)]
     #[test]
     fn a_missing_toolchain_is_one_named_line_and_exit_127() {
         assert!(REMOTE_SCRIPT.contains("cargo not found on PATH ($PATH)"));
         assert!(REMOTE_SCRIPT.contains("is missing a Rust toolchain\" >&2\n    exit 127"));
     }
 
+    #[test_id(trhyi9s)]
     #[test]
     fn the_spira_env_flake_ref_never_names_the_work_tree_so_the_store_gains_no_copy_of_it() {
         let line = REMOTE_SCRIPT.lines().find(|l| l.starts_with("flake_ref=")).expect("flake_ref is set");
@@ -3987,6 +4029,7 @@ mod tests {
         assert!(REMOTE_SCRIPT[stage..].contains("cannot stage flake.nix") && REMOTE_SCRIPT[stage..].find("cannot stage").unwrap() < REMOTE_SCRIPT[stage..].find("build_env()").unwrap(), "a failed staging stops the round");
     }
 
+    #[test_id(t4j5c45)]
     #[test]
     fn the_round_runs_with_spira_env_from_its_own_tree_first_in_path() {
         let build = REMOTE_SCRIPT.find("flake_ref=\"path:$env_flake#spira-env\"").expect("spira-env is built from the round's own flake files");
@@ -3998,6 +4041,7 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("$SPIRA_RELEASE/spira:$HOME/spira-env/bin:"), "the launcher PATH keeps it");
     }
 
+    #[test_id(tdoa5ht)]
     #[test]
     fn the_round_s_build_shares_the_hosts_own_cache_not_a_vm_local_one() {
         // sp-xjnzl: CARGO_HOME, RUSTC_WRAPPER and the webdav endpoint must all be set
@@ -4015,6 +4059,7 @@ mod tests {
         assert!(!REMOTE_SCRIPT.contains("/home/"), "no literal home directory — cache_home is an operator-supplied argument, not a hardcoded path");
     }
 
+    #[test_id(t2vgqwv)]
     #[test]
     fn an_ec2_vm_never_gets_the_templates_cache_home() {
         assert_eq!(job_cache_home(true, false, Some("tmpl/.cargo"), Some("vol/cargo")), None);
@@ -4022,6 +4067,7 @@ mod tests {
         assert_eq!(job_cache_home(false, true, Some("tmpl/.cargo"), None), Some("tmpl/.cargo".to_string()));
     }
 
+    #[test_id(tsvz6nz)]
     #[test]
     fn a_host_round_gets_the_configured_cargo_home() {
         assert_eq!(job_cache_home(false, true, Some("tmpl/.cargo"), Some("vol/cargo")), Some("vol/cargo".to_string()));
@@ -4031,6 +4077,7 @@ mod tests {
         assert!(export < mkdir);
     }
 
+    #[test_id(t3ceaq8)]
     #[test]
     fn an_ec2_round_reads_its_cache_home_from_the_image_before_building() {
         let at = REMOTE_SCRIPT.find(&format!("{}/spira-round-ami.env", system_paths::ETC)).expect("the script reads the image's own record");
@@ -4039,6 +4086,7 @@ mod tests {
         assert!(at < guard && guard < build);
     }
 
+    #[test_id(tcws0c5)]
     #[test]
     fn the_build_is_skipped_on_a_hit_and_a_miss_stores_what_it_builds() {
         let fetch = REMOTE_SCRIPT.find("if art_fetch \"$art_id\"").expect("fetched before building");
@@ -4048,6 +4096,7 @@ mod tests {
         assert!(REMOTE_SCRIPT[fetch..build].contains("\nelse\n"), "cargo runs only in the miss branch");
     }
 
+    #[test_id(txeb0qy)]
     #[test]
     fn the_warm_target_is_cleared_when_the_rustc_that_built_it_differs() {
         let install = REMOTE_SCRIPT.find("rustup toolchain install \"$toolchain\"").unwrap();
@@ -4058,6 +4107,7 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("target/.rustc-id"));
     }
 
+    #[test_id(ti483fr)]
     #[test]
     fn a_round_installs_its_trees_toolchain_when_the_image_differs() {
         let home = REMOTE_SCRIPT.find("export CARGO_HOME=\"$cache_home\"").unwrap();
@@ -4067,6 +4117,7 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("installed at round time; the image has"));
     }
 
+    #[test_id(tosn1w4)]
     #[test]
     fn the_round_tree_is_fetched_into_a_kept_tree_and_only_cloned_when_that_fails() {
         let fetch = REMOTE_SCRIPT.find("fetch --quiet --prune origin").expect("fetches into the kept tree");
@@ -4079,6 +4130,7 @@ mod tests {
         assert!(!REMOTE_SCRIPT.contains("rm -rf ~/round-work ~/round-bins"), "the tree, and its target, is not deleted up front");
     }
 
+    #[test_id(tb17apa)]
     #[test]
     fn the_unit_test_binaries_compile_in_the_build_phase_and_the_run_is_the_same_command() {
         let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
@@ -4094,6 +4146,7 @@ mod tests {
         assert_eq!(REMOTE_SCRIPT.matches("        cargo \"$@\"\n").count(), 1, "one definition of the cargo environment, shared by compile and both runs");
     }
 
+    #[test_id(t7qpg7i)]
     #[test]
     fn a_killed_unit_run_saves_its_cause_and_its_last_output() {
         let f = REMOTE_SCRIPT.find("cause=\"killed by signal").expect("the cause");
@@ -4103,12 +4156,14 @@ mod tests {
         assert!(!REMOTE_SCRIPT.contains("^test result:' ~/round-unit-tests.log | head"), "passing binaries no longer fill the head");
     }
 
+    #[test_id(t0naa0l)]
     #[test]
     fn a_unit_run_the_cap_guard_killed_still_makes_the_round_red() {
         assert!(REMOTE_SCRIPT.contains("[ ! -s \"$unit_hung\" ] || [ \"$unit_rc\" -ne 0 ] || unit_rc=1"));
         assert!(REMOTE_SCRIPT.contains("binary=${running:-none-started}; killed"), "the post-guard kill names the binary running");
     }
 
+    #[test_id(tokqkia)]
     #[test]
     fn the_unit_tier_alone_runs_under_a_per_test_deadline_read_from_config_and_the_rest_is_unchanged() {
         let cfg = REMOTE_SCRIPT.find("spira-config get spira.unit_test_deadline_secs").unwrap();
@@ -4139,6 +4194,7 @@ mod tests {
         (dir, started)
     }
 
+    #[test_id(tc72857)]
     #[test]
     fn a_fresh_unit_timings_file_fills_the_passs_four_unit_fields() {
         let (dir, started) = results_with_unit_timings(0);
@@ -4149,6 +4205,7 @@ mod tests {
         assert_eq!((r.unit_build_secs, r.unit_run_secs, r.unit_tests, r.unit_slowest.as_str()), (41, 73, 2, "queue/b::u:9.5,gate/a::t:2"));
     }
 
+    #[test_id(todgqvh)]
     #[test]
     fn a_unit_timings_file_older_than_the_pass_is_not_counted() {
         let (dir, started) = results_with_unit_timings(10_000);
@@ -4159,6 +4216,7 @@ mod tests {
         assert_eq!(unit_timings(&dir.path().join("none"), started), Default::default());
     }
 
+    #[test_id(tqupoiw)]
     #[test]
     fn the_script_writes_unit_timings_after_the_unit_tier_on_the_green_and_the_red_path() {
         let write = REMOTE_SCRIPT.find("write_unit_timings\n").expect("the unit tier's timings are written by a call");
@@ -4171,6 +4229,7 @@ mod tests {
         assert!(body.contains(&format!("grep -E '{}'", spira_config::unit_tier_timing_lines!())), "{body}");
     }
 
+    #[test_id(tcplfb7)]
     #[test]
     fn the_registry_skips_are_reported_after_the_timings_before_either_verdict_line() {
         let call = REMOTE_SCRIPT.find("\nunit_registry_skips ~/round-deny-list ~/round-unit-tests.log\n").expect("the call");
@@ -4180,6 +4239,7 @@ mod tests {
         assert!(write < call && call < green && call < fail, "one call ahead of the PASS and FAIL branches");
     }
 
+    #[test_id(tqbdekl)]
     #[test]
     fn the_unit_timings_file_is_pulled_beside_the_fence_times() {
         let pulled = TempDir::new();
@@ -4189,6 +4249,7 @@ mod tests {
         assert!(kept.path().join(UNIT_TIMINGS).is_file());
     }
 
+    #[test_id(t5og7pn)]
     #[test]
     fn the_fences_finish_before_the_unit_tier_starts() {
         let fences = REMOTE_SCRIPT.find("fence_run \"$fname\" \"$fcmd\"").expect("the fence loop");
@@ -4198,6 +4259,7 @@ mod tests {
         assert!(!REMOTE_SCRIPT[fences..fences + 80].contains('&'), "the fence loop is not backgrounded");
     }
 
+    #[test_id(tn1me3y)]
     #[test]
     fn the_unit_tier_is_waited_for_before_the_bare_lane_or_any_suite_starts() {
         let launch = REMOTE_SCRIPT.find("unit_nextest > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
@@ -4214,6 +4276,7 @@ mod tests {
         assert!(early < integ && integ < corpus && stop < integ_wait, "the integration phase starts once the unit phase passed and runs beside the suites");
     }
 
+    #[test_id(tmq9lr3)]
     #[test]
     fn the_unit_phase_runs_only_the_tests_inside_src_and_the_integration_phase_the_rest() {
         let f = REMOTE_SCRIPT.find("integ_cargo() {").unwrap();
@@ -4225,6 +4288,7 @@ mod tests {
         }
     }
 
+    #[test_id(tzdtf2x)]
     #[test]
     fn a_plain_cargo_test_log_yields_one_fail_line_per_failed_test_naming_its_crate_directory() {
         let log = "     Running tests/it/main.rs (target/unittest/deps/it-0123456789abcdef)\ntest a::b ... FAILED\n     Running spira-runtime/tests/it/x.rs (target/y)\ntest c ... ok\ntest d::e ... FAILED\n     Running unittests src/lib.rs (t)\ntest z ... FAILED\n";
@@ -4239,6 +4303,7 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stdout), "FAIL test:it a::b\nFAIL dir:spira-runtime d::e\n");
     }
 
+    #[test_id(tidridf)]
     #[test]
     fn base_is_parsed_and_asks_the_job_to_lint() {
         let a = parse_run_args(&["t".into(), "--base".into(), "local/main".into()]).unwrap();
@@ -4272,6 +4337,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4zo14p)]
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
         let cmd = remote_command(&sample_job());
@@ -4279,6 +4345,7 @@ mod tests {
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
+    #[test_id(t0p6ycb)]
     #[test]
     fn a_deny_list_file_is_read_at_parse_time_and_a_bad_or_missing_one_is_refused() {
         let d = crate::testutil::TempDir::new();
@@ -4293,6 +4360,7 @@ mod tests {
         assert!(parse_run_args(&["t".into(), "--deny-list".into(), d.path().join("nonexistent").display().to_string()]).is_err());
     }
 
+    #[test_id(t10nz32)]
     #[test]
     fn remote_command_carries_the_deny_list_and_its_composed_words_last() {
         let text = "disabled\tunit:a::b t::drop\tsp-1\t-\ndisabled\tintegration:p x::y\tsp-2\t-\n";
@@ -4305,6 +4373,7 @@ mod tests {
         assert!(remote_command(&job).ends_with(" '' '' ''"));
     }
 
+    #[test_id(t30t2bt)]
     #[test]
     fn the_script_exports_the_deny_list_before_the_first_testenv_and_into_the_launcher_env() {
         let export = REMOTE_SCRIPT.find("export SPIRA_TEST_DENY_LIST=\"$HOME/round-deny-list\"").unwrap();
@@ -4316,6 +4385,7 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("\"$HOME/round-nextest.toml\" \"$deny_filter_line\""));
     }
 
+    #[test_id(tlprmgr)]
     #[test]
     fn the_rounds_integration_command_is_the_gates_words_plus_the_skips() {
         let deny = spira_config::unit_tier::DenyList::parse("disabled\tintegration:p x::y\t-\t-\n").unwrap();
@@ -4329,6 +4399,7 @@ mod tests {
         assert_eq!(first, format!("{words}{}", deny.integration_skips()));
     }
 
+    #[test_id(tjqo63r)]
     #[test]
     fn the_config_the_script_writes_is_the_one_the_gate_writes() {
         let deny = spira_config::unit_tier::DenyList::parse("disabled\tunit:a b::c\t-\t-\n").unwrap();
@@ -4346,6 +4417,7 @@ mod tests {
 
     /// A rerun checks the survivors' tree out over `round-work`, so layers that name files
     /// inside it would change under every later leg; the legs must read a copy.
+    #[test_id(tazaxh0)]
     #[test]
     fn the_rounds_config_layers_survive_a_later_checkout_of_the_survivors_tree() {
         let from = REMOTE_SCRIPT.find("export SPIRA_TOML=\"$HOME/round-work/spira/testlib/complete.toml:").unwrap();
@@ -4374,6 +4446,7 @@ mod tests {
         assert_eq!(declared, Some(3), "the legs' config still declares the key after the checkout; spec {spec}");
     }
 
+    #[test_id(tyhrkou)]
     #[test]
     fn the_round_config_carries_the_hosts_testenv_limits_not_the_fixtures() {
         let cfg = REMOTE_SCRIPT.find("cat > \"$HOME/round-config.toml\"").unwrap();
@@ -4382,6 +4455,7 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("[ -n \"$testenv_limits\" ] ||"), "no limits sent is a refusal");
     }
 
+    #[test_id(tpumj7v)]
     #[test]
     fn the_round_config_declares_testenvs_scratch_root_outside_the_checkout() {
         let cfg = REMOTE_SCRIPT.find("cat > \"$HOME/round-config.toml\"").unwrap();
@@ -4392,6 +4466,7 @@ mod tests {
         );
     }
 
+    #[test_id(tb8m9c6)]
     #[test]
     fn the_round_config_declares_the_preflights_cache_root_beside_the_scratch_root() {
         let cfg = REMOTE_SCRIPT.find("cat > \"$HOME/round-config.toml\"").unwrap();
@@ -4402,6 +4477,7 @@ mod tests {
         );
     }
 
+    #[test_id(tndmqyg)]
     #[test]
     fn an_early_lint_red_exit_stops_the_sampler_that_holds_the_ssh_channel_open() {
         let red = REMOTE_SCRIPT.find("LINT/FENCE RED before the suites").expect("the early exit");
@@ -4409,6 +4485,7 @@ mod tests {
         assert!(REMOTE_SCRIPT[red..exit].contains("kill \"$sampler_pid\""), "a live background sampler keeps ssh waiting after the script exits");
     }
 
+    #[test_id(t63ylop)]
     #[test]
     fn the_round_config_places_the_home_repo_at_the_vm_checkout_with_its_base() {
         let start = REMOTE_SCRIPT.find("<<ROUNDCFG").unwrap();
@@ -4422,6 +4499,7 @@ mod tests {
     /// The VM's own tool directories, declared: every child PATH a tree's binary builds is
     /// the declared release plus `spira.path`, never the script's inherited PATH, and the
     /// VM's dolt, bd and cargo live outside the release. The scratch root is declared with it.
+    #[test_id(tclbqrc)]
     #[test]
     fn the_round_config_declares_the_vms_toolchain_and_scratch_root() {
         let start = REMOTE_SCRIPT.find("<<ROUNDCFG").unwrap();
@@ -4436,6 +4514,7 @@ mod tests {
 
     /// The rendered round config parses as strict TOML: release config-stage on the VM refuses
     /// a duplicate key, so two writers landing the same line kill every round before its suites.
+    #[test_id(twaoxth)]
     #[test]
     fn the_rendered_round_config_parses_as_strict_toml_with_each_key_once() {
         let start = REMOTE_SCRIPT.find("<<ROUNDCFG\n").unwrap() + "<<ROUNDCFG\n".len();
@@ -4450,6 +4529,7 @@ mod tests {
         assert_eq!(cfg["spira"]["testenv_scratch_root"].as_str(), Some(format!("{}/round-scratch", system_paths::ROOT_HOME).as_str()));
     }
 
+    #[test_id(txrvaak)]
     #[test]
     fn the_round_config_names_the_home_repo_not_its_path() {
         let scripts = [("run.rs", REMOTE_SCRIPT, "ROUNDCFG\nexport"), ("template.sh", include_str!("template.sh"), "TEMPLATECFG\nexport")];
@@ -4461,6 +4541,7 @@ mod tests {
         }
     }
 
+    #[test_id(tkefv03)]
     #[test]
     fn a_host_round_resumes_from_a_local_directory_and_makes_no_s3_call() {
         let home = Path::new("round/home");
@@ -4473,6 +4554,7 @@ mod tests {
         assert!(dir_branch < probe, "the dir: branch precedes the S3 probe");
     }
 
+    #[test_id(tcwugs4)]
     #[test]
     fn resume_credentials_reach_only_a_proxmox_vm_and_never_the_command_line() {
         let job = BatchJob {
@@ -4488,6 +4570,7 @@ mod tests {
         assert_eq!(*remote.pushes.lock().unwrap(), vec![(PathBuf::from("creds"), REMOTE_RESUME_CREDENTIALS.to_string())]);
     }
 
+    #[test_id(t1144ma)]
     #[test]
     fn remote_script_checks_cargo_before_paying_for_the_clone() {
         let check = REMOTE_SCRIPT.find("command -v cargo").expect("checks for cargo");
@@ -4497,6 +4580,7 @@ mod tests {
         assert!(path_export < check, "PATH must be widened before the check that reads it");
     }
 
+    #[test_id(t6uqvyw)]
     #[test]
     fn measurement_reads_flat_nested_and_empty_results() {
         let d = TempDir::new();
@@ -4534,6 +4618,7 @@ mod tests {
         f.write_all(body.as_bytes()).unwrap();
     }
 
+    #[test_id(tfphs7n)]
     #[test]
     fn a_full_filesystem_failure_is_reported_with_its_five_largest_entries() {
         let d = testkit::TempDir::new("hostdisk");
@@ -4547,6 +4632,7 @@ mod tests {
         assert_eq!(host_disk_report("Permission denied", d.path()), None);
     }
 
+    #[test_id(twgl663)]
     #[test]
     fn binaries_of_another_tree_are_refused_and_nothing_installed() {
         let d = TempDir::new();
@@ -4562,6 +4648,7 @@ mod tests {
         assert!(!target.exists());
     }
 
+    #[test_id(t9806u1)]
     #[test]
     fn the_batch_cause_is_its_last_verdict_and_the_phase_it_died_in() {
         let d = TempDir::new();
@@ -4572,6 +4659,7 @@ mod tests {
         assert_eq!(batch_cause(d.path()).as_deref(), Some("FAULT install (last phase up)"));
     }
 
+    #[test_id(tz745mr)]
     #[test]
     fn binaries_of_this_tree_land_where_land_local_reads_them() {
         let d = TempDir::new();
@@ -4584,6 +4672,7 @@ mod tests {
         install_bins(&d.path().join("absent"), "expectedsha", None, None, &target).unwrap();
     }
 
+    #[test_id(t8a1353)]
     #[test]
     fn tsd_rows_are_tagged_and_deduplicated() {
         let d = TempDir::new();
@@ -4601,6 +4690,7 @@ mod tests {
         assert_eq!(rows[0]["secs"], 3);
     }
 
+    #[test_id(ttbvtys)]
     #[test]
     fn vm_signals_go_to_the_store_and_a_re_merge_adds_no_second_row() {
         let d = TempDir::new();
@@ -4621,6 +4711,7 @@ mod tests {
 
     // ── run end to end against fakes ────────────────────────────────────────────────
 
+    #[test_id(tcaamz0)]
     #[test]
     fn host_addresses_reads_ip_br_addr() {
         let out = "lo UNKNOWN 127.0.0.1/8 ::1/128\neth0 UP 192.168.15.174/22 fe80::1/64\n";
@@ -4660,6 +4751,7 @@ mod tests {
 
     const FAKE_FENCES: &str = "lifecycle-guard\texport SPIRA_GUARD_BIN=target/release/lifecycle-guard; \"$SPIRA_GUARD_BIN\" --gate .\nboundary\tbash spira/boundary.sh check\n";
 
+    #[test_id(td5hu5w)]
     #[test]
     fn a_tree_whose_fences_cannot_be_listed_is_refused_before_a_vm_is_taken() {
         let fx = fixture();
@@ -4964,6 +5056,7 @@ mod tests {
         }
     }
 
+    #[test_id(tlk1tpj)]
     #[test]
     fn the_round_flags_are_parsed() {
         let a = parse_run_args(&args(&["t", "--round-batch", "r-1", "--round-repo=sp"])).unwrap();
@@ -4974,6 +5067,7 @@ mod tests {
         RunArgs { tree_dir: fx.d.path().join("tree"), maxpar: Some(24), ..Default::default() }
     }
 
+    #[test_id(tyt8z9o)]
     #[test]
     fn the_remote_script_builds_a_declared_image_in_setup_and_still_refuses_an_undeclared_one() {
         let declared = REMOTE_SCRIPT.find("elif [ -n \"$build_image\" ]").expect("a declared branch");
@@ -4984,6 +5078,7 @@ mod tests {
         assert!(REMOTE_SCRIPT[declared..refuse].contains("exit 3"), "a failed build gives no verdict");
     }
 
+    #[test_id(telzkwp)]
     #[test]
     fn the_remote_script_reports_setup_against_suites_and_alarms_over_the_limit() {
         let setup = REMOTE_SCRIPT.find("setup_secs=$(( $(date +%s) - t_start - unit_build_secs ))").expect("setup is measured");
@@ -4994,6 +5089,7 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("[ \"$setup_secs\" -gt \"$setup_alarm\" ]"));
     }
 
+    #[test_id(toqzrqf)]
     #[test]
     fn the_cap_clock_covers_the_suites_and_the_bare_lane_only() {
         let start = REMOTE_SCRIPT.find("t_suites=$(date +%s)").expect("the clock starts");
@@ -5015,6 +5111,7 @@ mod tests {
         assert_eq!(exit_for_remote(124), 124, "over-cap reaches the caller as itself");
     }
 
+    #[test_id(toqhf2k)]
     #[test]
     fn a_round_clears_the_earlier_rounds_results_before_its_batch_starts() {
         let fx = fixture();
@@ -5026,6 +5123,7 @@ mod tests {
         assert_eq!(jobs.len(), 2, "{jobs:?}");
     }
 
+    #[test_id(tfupc5z)]
     #[test]
     fn the_vms_runner_output_is_kept_with_the_results() {
         let fx = fixture();
@@ -5049,6 +5147,7 @@ mod tests {
         remote
     }
 
+    #[test_id(thf6icn)]
     #[test]
     fn a_session_that_ends_after_the_build_phase_is_a_named_fault_carrying_its_logs_tail() {
         let fx = fixture();
@@ -5067,6 +5166,7 @@ mod tests {
         assert!(kept.contains("round-vm: built the round in 12s"), "{kept}");
     }
 
+    #[test_id(tyjaeh9)]
     #[test]
     fn an_over_cap_kind_the_vm_left_reaches_the_results_and_a_stale_one_does_not_survive_the_next_pull() {
         let fx = fixture();
@@ -5085,6 +5185,7 @@ mod tests {
         assert!(!results.join(crate::vm_fault::FAULT_KIND_FILE).exists());
     }
 
+    #[test_id(tcnycbd)]
     #[test]
     fn a_pass_with_a_verdict_or_a_build_red_names_no_fault() {
         let fx = fixture();
@@ -5098,6 +5199,7 @@ mod tests {
         assert!(!verdict_missing(&empty, 1), "a unit red is its own record");
     }
 
+    #[test_id(tyilxpn)]
     #[test]
     fn every_exit_of_the_remote_script_leaves_its_phase_and_its_log_in_the_results() {
         let s = REMOTE_SCRIPT;
@@ -5118,6 +5220,7 @@ mod tests {
         }
     }
 
+    #[test_id(ty1qlil)]
     #[test]
     fn a_command_killed_by_set_e_is_named_in_the_phase_marker_without_the_tee() {
         let home = TempDir::new();
@@ -5129,6 +5232,7 @@ mod tests {
         assert!(marker.starts_with("phase=start rc=1 line=") && marker.trim_end().ends_with("cmd=false"), "{marker}");
     }
 
+    #[test_id(tc7jsbs)]
     #[test]
     fn a_named_failed_phase_leaves_a_marker_without_a_command() {
         let home = TempDir::new();
@@ -5141,6 +5245,7 @@ mod tests {
         assert_eq!(marker, "phase=suites rc=2\n");
     }
 
+    #[test_id(thzgu9u)]
     #[test]
     fn a_signalled_run_salvages_the_verdicts_its_vm_already_produced() {
         let fx = fixture();
@@ -5156,6 +5261,7 @@ mod tests {
         assert_eq!(salvage_results(&none, "addr", &dest, &scratch, Duration::from_secs(5)), None, "an unreachable VM salvages nothing and says the pull failed");
     }
 
+    #[test_id(t2pn393)]
     #[test]
     fn the_remote_script_records_vm_wide_signals_beside_the_suite_times() {
         let sampler = REMOTE_SCRIPT.find("sampler_pid=$!").expect("a sampler is started");
@@ -5169,6 +5275,7 @@ mod tests {
 
     /// sp-dp872: testenv has two binaries (testenv, bd-meter); an unqualified `cargo run -p
     /// testenv` cannot choose and exits 101 before a suite runs.
+    #[test_id(t3euuo0)]
     #[test]
     fn every_remote_cargo_run_names_the_testenv_binary() {
         for script in [REMOTE_SCRIPT, crate::spool::REMOTE_ATTR_SCRIPT] {
@@ -5178,6 +5285,7 @@ mod tests {
         }
     }
 
+    #[test_id(tygs167)]
     #[test]
     fn preflight_errors_exit_2_before_any_vm_is_cloned() {
         let fx = fixture();
@@ -5234,6 +5342,7 @@ mod tests {
 
     const CALM: crate::spill::HostLoad = crate::spill::HostLoad { io_full: Some(crate::spill::Pressure { value: 1.0 }), cpu_some: Some(crate::spill::Pressure { value: 1.0 }) };
 
+    #[test_id(ta6d8d0)]
     #[test]
     fn a_round_with_the_host_slot_free_runs_on_the_host_and_leases_no_vm() {
         let fx = fixture();
@@ -5259,6 +5368,7 @@ mod tests {
         fn clear_results(&self, a: &str) -> Result<(), String> { self.0.clear_results(a) }
     }
 
+    #[test_id(tjjxn75)]
     #[test]
     fn a_host_round_is_handed_a_local_resume_directory_and_its_credentials_are_not_pushed() {
         let mut fx = fixture();
@@ -5275,6 +5385,7 @@ mod tests {
         assert!(host_remote.pushes.lock().unwrap().is_empty(), "no S3 credentials go to the host");
     }
 
+    #[test_id(tn6o02l)]
     #[test]
     fn a_host_placed_pass_with_a_candidate_recipe_runs_without_any_image_lookup() {
         let fx = fixture();
@@ -5287,6 +5398,7 @@ mod tests {
         assert_eq!(fx.fp.count("clone"), 0);
     }
 
+    #[test_id(tzvfe4r)]
     #[test]
     fn an_ec2_placed_pass_whose_candidate_image_is_baking_exits_pending_before_any_launch() {
         let fx = fixture();
@@ -5315,6 +5427,7 @@ mod tests {
         assert_eq!(fx.fp.count("clone"), 0);
     }
 
+    #[test_id(tz2ip3o)]
     #[test]
     fn candidate_recipe_is_parsed_and_an_empty_one_is_refused() {
         let a = parse_run_args(&args(&["t", "--candidate-recipe", "abc"])).unwrap();
@@ -5324,6 +5437,7 @@ mod tests {
         assert!(parse_run_args(&args(&["t", "--candidate-recipe="])).unwrap_err().contains("--candidate-recipe"));
     }
 
+    #[test_id(t0tyvzb)]
     #[test]
     fn a_round_cut_while_the_host_slot_is_busy_does_not_run_on_the_host() {
         let fx = fixture();
@@ -5336,6 +5450,7 @@ mod tests {
         assert_ne!(recorded_where(&fx), "host");
     }
 
+    #[test_id(tip293a)]
     #[test]
     fn an_aws_request_limit_on_a_spilled_round_ends_infra_refused_with_the_setting_and_decision_recorded() {
         let fx = fixture();
@@ -5367,6 +5482,7 @@ mod tests {
         assert!(v["placement"]["pool_history"].as_array().unwrap().iter().any(|h| h.as_str().unwrap().contains("spilled to ec2: placement ec2-always")), "{v}");
     }
 
+    #[test_id(tbkqcdu)]
     #[test]
     fn a_round_cut_under_host_pressure_does_not_run_on_the_host() {
         let fx = fixture();
@@ -5378,6 +5494,7 @@ mod tests {
         assert_ne!(recorded_where(&fx), "host");
     }
 
+    #[test_id(t86o93j)]
     #[test]
     fn a_foreign_repos_ci_round_is_never_offered_to_the_host() {
         let fx = fixture();
@@ -5392,6 +5509,7 @@ mod tests {
         fs::read_dir(format!("{}/fd", system_paths::PROC_SELF)).unwrap().flatten().any(|e| fs::read_link(e.path()).is_ok_and(|t| t == want))
     }
 
+    #[test_id(ta844fh)]
     #[test]
     fn the_host_slot_is_free_again_once_a_host_round_ends() {
         let fx = fixture();
@@ -5400,6 +5518,7 @@ mod tests {
         assert!(!holds_open(&fx.cfg.state_dir.join(crate::host::SLOT_FILE)), "this process still holds the host slot after the round ended");
     }
 
+    #[test_id(tdle9bg)]
     #[test]
     fn a_held_host_slot_is_seen_as_held_by_this_process() {
         let fx = fixture();
@@ -5410,6 +5529,7 @@ mod tests {
         assert!(!holds_open(&fx.cfg.state_dir.join(crate::host::SLOT_FILE)));
     }
 
+    #[test_id(twrzgfj)]
     #[test]
     fn a_vm_that_answers_ssh_and_never_starts_the_round_is_the_named_no_output_fault() {
         let fx = fixture();
@@ -5434,6 +5554,7 @@ mod tests {
         assert_eq!(fx.fp.live_vms().len(), 0, "the VM is destroyed, so the re-drive gets a fresh one");
     }
 
+    #[test_id(t8rc4bv)]
     #[test]
     fn the_probe_looks_where_the_round_script_writes_its_log() {
         let probe = round_started_command();
@@ -5442,12 +5563,14 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains(&format!("tee -a {path}")), "the script must write {path}");
     }
 
+    #[test_id(tt8s3hm)]
     #[test]
     fn a_vm_whose_round_script_has_begun_is_not_a_no_output_fault() {
         let fx = fixture();
         assert_ne!(go(&fx, &FakeRemote::green(), &round_args(&fx)), VM_NO_OUTPUT_EXIT);
     }
 
+    #[test_id(tj2xr2z)]
     #[test]
     fn an_acquire_that_gives_up_is_exit_2_and_never_runs_the_batch() {
         let fx = fixture();
@@ -5459,12 +5582,14 @@ mod tests {
 
     // ── --attr-spool (DESIGN.md §2.2a) ───────────────────────────────────────────────
 
+    #[test_id(tvfwybn)]
     #[test]
     fn every_ssh_and_rsync_to_a_round_vm_carries_keepalives() {
         let opts = SshRemote { user: "u".into(), port: 22, key: "k".into() }.ssh_opts().join(" ");
         assert!(opts.contains("-o ServerAliveInterval=10 -o ServerAliveCountMax=3"), "{opts}");
     }
 
+    #[test_id(tjc9w4g)]
     #[test]
     fn an_empty_ssh_log_says_ssh_wrote_no_diagnostic() {
         let fx = fixture();
@@ -5474,6 +5599,7 @@ mod tests {
         assert_eq!(ssh_cause(&log), "ssh wrote no diagnostic");
     }
 
+    #[test_id(t5j97d1)]
     #[test]
     fn a_dropped_pass_reports_one_count_and_never_promises_a_re_pull() {
         assert_eq!(incomplete_count_line(2, 2, 0), "round-vm run: INCOMPLETE: 2 of 2 suite results present (0 new in the final pull)");
@@ -5481,6 +5607,7 @@ mod tests {
         assert!(held.contains("round-vm release h-1") && !held.contains("re-pull"), "{held}");
     }
 
+    #[test_id(tytq5lf)]
     #[test]
     fn a_salvage_whose_pull_fails_is_none_not_zero() {
         let fx = fixture();
@@ -5496,6 +5623,7 @@ mod tests {
         remote.pull_paths.lock().unwrap().iter().filter(|p| *p == path).count()
     }
 
+    #[test_id(t9098cz)]
     #[test]
     fn a_round_whose_vm_made_no_bins_or_tsd_folder_pulls_each_once() {
         let fx = fixture();
@@ -5508,6 +5636,7 @@ mod tests {
         assert_eq!(pulls_of(&remote, TSD_DIR), 1);
     }
 
+    #[test_id(t3d0lep)]
     #[test]
     fn a_failed_results_pull_is_retried_up_to_ssh_tries() {
         let fx = fixture();
@@ -5518,6 +5647,7 @@ mod tests {
         assert_eq!(remote.result_pulls.load(std::sync::atomic::Ordering::SeqCst), fx.cfg.ssh_tries.max(3) as usize);
     }
 
+    #[test_id(tcz4qdz)]
     #[test]
     fn a_missing_remote_folder_is_pulled_once_not_retried() {
         let fx = fixture();
@@ -5531,6 +5661,7 @@ mod tests {
         assert_eq!(pulls_of(&remote, TSD_DIR), 1);
     }
 
+    #[test_id(tgmq5ut)]
     #[test]
     fn rsync_stderr_for_a_missing_source_is_missing_and_an_ssh_drop_is_failed() {
         let said = b"rsync: [sender] change_dir \"/root/round-bins\" failed: No such file or directory (2)\nrsync error: some files/attrs were not transferred (code 23)\n";
@@ -5540,6 +5671,7 @@ mod tests {
         assert!(matches!(classify_pull_failure("round-bins/", 255, said), PullError::Failed(_)), "only exit 23 settles it");
     }
 
+    #[test_id(tud9jb0)]
     #[test]
     fn a_missing_local_file_mid_stream_does_not_abort_the_rest() {
         let d = TempDir::new();
@@ -5557,6 +5689,7 @@ mod tests {
         assert!(out.join("test-c.sh.result").is_file());
     }
 
+    #[test_id(t41whn4)]
     #[test]
     fn no_corpus_without_an_attr_spool_is_a_usage_error_naming_both_flags() {
         let e = parse_run_args(&["t".into(), "--no-corpus".into()]).unwrap_err();
@@ -5564,6 +5697,7 @@ mod tests {
         assert!(parse_run_args(&["t".into(), "--no-corpus".into(), "--attr-spool".into(), "s".into()]).unwrap().no_corpus);
     }
 
+    #[test_id(tvpkj2v)]
     #[test]
     fn a_no_corpus_run_skips_the_batch_and_writes_corpus_done_rc_0() {
         let fx = fixture();
@@ -5612,6 +5746,7 @@ mod tests {
         remote
     }
 
+    #[test_id(terqtgv)]
     #[test]
     fn attribution_jobs_for_one_tree_run_one_after_another() {
         let remote = serve_all(&[("j1", "m1@c1"), ("j2", "m1@c2"), ("j3", "m1@c3")]);
@@ -5619,6 +5754,7 @@ mod tests {
         assert!(!remote.attr_overlap.load(std::sync::atomic::Ordering::SeqCst), "two runs of one tree were live at once");
     }
 
+    #[test_id(t5uipo8)]
     #[test]
     fn attribution_jobs_for_different_trees_still_run_together() {
         let mut paired = FakeRemote::green();
@@ -5627,6 +5763,7 @@ mod tests {
         assert!(remote.attr_overlap.load(std::sync::atomic::Ordering::SeqCst), "distinct trees were queued behind each other");
     }
 
+    #[test_id(tpzavdl)]
     #[test]
     fn every_attribution_run_of_testenv_carries_a_repeat_reason() {
         let runs: Vec<&str> = crate::spool::REMOTE_ATTR_SCRIPT.lines().filter(|l| l.contains("\"$tenv\"")).collect();
@@ -5638,6 +5775,7 @@ mod tests {
         assert!(reason.trim_end_matches('"').chars().count() >= 10);
     }
 
+    #[test_id(t13pnsq)]
     #[test]
     fn an_ssh_that_exits_before_reading_the_script_is_reported_by_its_exit_not_as_a_stdin_error() {
         let child = command("sh").args(["-c", "exit 255"]).stdin(Stdio::piped()).spawn().unwrap();

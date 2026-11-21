@@ -151,6 +151,7 @@ mod tests {
         PartRow { part: part.into(), row: Row::new(kind, id, Disposition::Escalate, "d".into(), "a".into()) }
     }
 
+    #[test_id(tnngtnk)]
     #[test]
     fn ages_prunes_and_keys_by_partition() {
         let mut st = State::new();
@@ -165,6 +166,7 @@ mod tests {
         assert_eq!(keep.len(), 2);
     }
 
+    #[test_id(taxdxdf)]
     #[test]
     fn save_load_mark_and_lock() {
         let dir = testkit::TempDir::new("strand-state");

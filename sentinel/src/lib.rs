@@ -2,6 +2,9 @@
 //! `sentinel-pass` tasks: what the binary decides, without the binary's IO, and the
 //! in-process doors its reads go through.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod ask;
 pub mod checks;
 pub mod edge;

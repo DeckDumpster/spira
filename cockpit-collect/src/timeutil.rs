@@ -98,6 +98,7 @@ pub fn now_secs() -> i64 {
 mod tests {
     use super::*;
 
+    #[test_id(tf63sks)]
     #[test]
     fn strict_known_epoch() {
         assert_eq!(parse_strict("2026-09-10T00:00:00Z"), Some(1788998400));
@@ -105,6 +106,7 @@ mod tests {
         assert_eq!(parse_strict("garbage"), None);
     }
 
+    #[test_id(twytjyz)]
     #[test]
     fn iso_variants_agree() {
         let a = parse_iso("2026-09-10T00:00:00Z").unwrap();

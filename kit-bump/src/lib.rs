@@ -2,6 +2,9 @@
 //! than a site's locked version, exactly one bead per site carries it: filed when none is open,
 //! amended (its target moved) when one is. Kit commits that publish nothing file nothing.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod real;
 pub mod semver;
 #[cfg(test)]

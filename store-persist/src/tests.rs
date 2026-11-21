@@ -167,6 +167,7 @@ fn values(root: &Path, drop: Option<&str>) -> BTreeMap<String, String> {
     m
 }
 
+#[test_id(tmau3c6)]
 #[test]
 fn config_reads_every_key_and_refuses_a_missing_one_by_name() {
     let root = TempDir::new("store-persist-config");
@@ -179,6 +180,7 @@ fn config_reads_every_key_and_refuses_a_missing_one_by_name() {
     }
 }
 
+#[test_id(td3op5g)]
 #[test]
 fn config_declared_empty_durable_means_no_copy_and_bad_values_are_refused() {
     let root = TempDir::new("store-persist-config-bad");
@@ -195,6 +197,7 @@ fn config_declared_empty_durable_means_no_copy_and_bad_values_are_refused() {
     }
 }
 
+#[test_id(t7k5hf1)]
 #[test]
 fn seed_copies_every_database_and_its_meta_offline_without_the_old_server_yaml() {
     let w = seeded();
@@ -210,6 +213,7 @@ fn seed_copies_every_database_and_its_meta_offline_without_the_old_server_yaml()
     assert!(again.contains("already holds"), "{again}");
 }
 
+#[test_id(tpg6qgi)]
 #[test]
 fn seed_refuses_a_directory_a_live_server_holds() {
     let w = world();
@@ -220,6 +224,7 @@ fn seed_refuses_a_directory_a_live_server_holds() {
     assert!(!layout(&w).marker().exists());
 }
 
+#[test_id(tity8sa)]
 #[test]
 fn restore_fills_an_empty_ram_directory_from_the_copy() {
     let w = seeded();
@@ -235,6 +240,7 @@ fn restore_fills_an_empty_ram_directory_from_the_copy() {
     assert_eq!(data_dbs(&w.cfg.data).unwrap().len(), 2);
 }
 
+#[test_id(tgelq96)]
 #[test]
 fn restore_keeps_a_database_already_in_ram_because_it_is_newer() {
     let w = seeded();
@@ -246,6 +252,7 @@ fn restore_keeps_a_database_already_in_ram_because_it_is_newer() {
     assert_eq!(fs::read_to_string(w.cfg.data.join("spira/.dolt/noms/payload")).unwrap(), "beads-v2");
 }
 
+#[test_id(t0jag5i)]
 #[test]
 fn restore_refuses_an_unseeded_copy_a_live_server_and_a_yaml_naming_another_directory() {
     let w = world();
@@ -260,6 +267,7 @@ fn restore_refuses_an_unseeded_copy_a_live_server_and_a_yaml_naming_another_dire
     assert!(data_dbs(&w.cfg.data).unwrap().is_empty());
 }
 
+#[test_id(tyhf4bb)]
 #[test]
 fn without_a_durable_copy_a_ram_backed_directory_is_refused() {
     let mut w = world();
@@ -271,6 +279,7 @@ fn without_a_durable_copy_a_ram_backed_directory_is_refused() {
     }
 }
 
+#[test_id(t4zw5f5)]
 #[test]
 fn is_tmpfs_tells_a_ram_filesystem_from_a_disk_one() {
     let proc_is_tmpfs = is_tmpfs(Path::new(system_paths::PROC)).unwrap();
@@ -281,6 +290,7 @@ fn is_tmpfs_tells_a_ram_filesystem_from_a_disk_one() {
     }
 }
 
+#[test_id(tnozbc2)]
 #[test]
 fn an_online_pass_goes_through_the_server_and_records_its_start() {
     let w = seeded();
@@ -297,6 +307,7 @@ fn an_online_pass_goes_through_the_server_and_records_its_start() {
     assert!(layout(&w).meta_root().join("dolt-server.yaml").is_file(), "the live yaml is kept for the next reboot");
 }
 
+#[test_id(t7qhm6r)]
 #[test]
 fn a_pass_never_leaves_a_durable_database_behind() {
     let w = seeded();
@@ -308,6 +319,7 @@ fn a_pass_never_leaves_a_durable_database_behind() {
     assert_eq!(read_state(&layout(&w)).unwrap(), before, "a refused pass records nothing");
 }
 
+#[test_id(ts7wv9q)]
 #[test]
 fn the_daemon_reports_a_recovery_once() {
     let w = seeded();
@@ -335,6 +347,7 @@ fn serving() -> World {
     w
 }
 
+#[test_id(tudo6r1)]
 #[test]
 fn the_daemon_collects_the_live_store_once_per_gc_interval_between_passes() {
     let w = serving();
@@ -345,6 +358,7 @@ fn the_daemon_collects_the_live_store_once_per_gc_interval_between_passes() {
     assert!(log.iter().any(|l| l.contains("collected, live")), "{log:?}");
 }
 
+#[test_id(tg6glyp)]
 #[test]
 fn a_gc_interval_of_zero_leaves_collection_to_the_daily_rebuild() {
     let mut w = serving();
@@ -354,6 +368,7 @@ fn a_gc_interval_of_zero_leaves_collection_to_the_daily_rebuild() {
     assert!(w.dolt.gcs.borrow().is_empty());
 }
 
+#[test_id(t920l6q)]
 #[test]
 fn the_daemon_collects_whatever_the_free_space_and_never_says_not_collected() {
     let w = serving();
@@ -364,6 +379,7 @@ fn the_daemon_collects_whatever_the_free_space_and_never_says_not_collected() {
     assert!(!log.iter().any(|l| l.contains("not collected")), "{log:?}");
 }
 
+#[test_id(th6nqjn)]
 #[test]
 fn a_restarted_daemon_with_overdue_times_collects_and_rebuilds_on_its_first_loop() {
     let w = serving();
@@ -375,6 +391,7 @@ fn a_restarted_daemon_with_overdue_times_collects_and_rebuilds_on_its_first_loop
     assert_eq!(kept.last_gc_ms, kept.last_compact_ms);
 }
 
+#[test_id(t42hf89)]
 #[test]
 fn a_restarted_daemon_within_its_intervals_neither_collects_nor_checks() {
     let w = serving();
@@ -384,6 +401,7 @@ fn a_restarted_daemon_within_its_intervals_neither_collects_nor_checks() {
     assert_eq!(read_upkeep(&layout(&w)).last_compact_ms, w.clock.now_ms() - 3600 * 1000 - 7000, "untouched");
 }
 
+#[test_id(t4s0u9y)]
 #[test]
 fn the_daemon_rebuilds_a_copy_past_its_ratio_once_a_day_without_a_compact_verb() {
     let w = serving();
@@ -396,6 +414,7 @@ fn the_daemon_rebuilds_a_copy_past_its_ratio_once_a_day_without_a_compact_verb()
     assert_eq!(log.iter().filter(|l| l.contains("rebuilt, copy")).count(), 1, "only the bloated copy, once: {log:?}");
 }
 
+#[test_id(tm4ownd)]
 #[test]
 fn a_failed_daily_collection_writes_one_line_naming_the_database_and_dolts_error() {
     let w = serving();
@@ -411,6 +430,7 @@ fn a_failed_daily_collection_writes_one_line_naming_the_database_and_dolts_error
     assert_eq!(fs::read_to_string(w.cfg.run.join(COLLECT_LOG)).unwrap(), text, "a later hourly failure on the same day adds nothing");
 }
 
+#[test_id(tfe30s4)]
 #[test]
 fn a_rebuild_that_fails_is_a_failure_line_naming_the_database() {
     let w = serving();
@@ -422,6 +442,7 @@ fn a_rebuild_that_fails_is_a_failure_line_naming_the_database() {
     assert!(text.contains("store-persist: spira: rebuild failed: planted sync failure"), "{text}");
 }
 
+#[test_id(trtxvmo)]
 #[test]
 fn a_quiet_daily_check_writes_no_failure_log() {
     let w = serving();
@@ -430,12 +451,14 @@ fn a_quiet_daily_check_writes_no_failure_log() {
     assert!(!w.cfg.run.join(COLLECT_LOG).exists());
 }
 
+#[test_id(tnko430)]
 #[test]
 fn iso8601_renders_a_known_instant() {
     assert_eq!(iso8601(1_795_000_000_000), "2026-11-18T11:06:40Z");
     assert_eq!(iso8601(0), "1970-01-01T00:00:00Z");
 }
 
+#[test_id(ttu132n)]
 #[test]
 fn the_watchers_file_reads_the_log_run_writes() {
     let rows = include_str!("../../spira/watchers");
@@ -447,6 +470,7 @@ fn the_watchers_file_reads_the_log_run_writes() {
     assert_eq!(target, format!("run/{COLLECT_LOG}"));
 }
 
+#[test_id(ts9hpwn)]
 #[test]
 fn state_round_trips() {
     let st = State { start_ms: 10, finish_ms: 12, dbs: vec!["a".into(), "b".into()] };
@@ -454,6 +478,7 @@ fn state_round_trips() {
     assert!(State::parse("finish_ms=1\ndbs=\n").unwrap_err().contains("start_ms"));
 }
 
+#[test_id(trui3x0)]
 #[test]
 fn put_durable_leaves_identical_bytes_alone() {
     let t = TempDir::new("store-persist-put");
@@ -464,6 +489,7 @@ fn put_durable_leaves_identical_bytes_alone() {
     assert_eq!(fs::read(&p).unwrap(), b"y");
 }
 
+#[test_id(tbvzv68)]
 #[test]
 fn compaction_rebuilds_only_a_copy_past_its_ratio_and_swaps_it_whole() {
     let w = seeded();
@@ -483,6 +509,7 @@ fn compaction_rebuilds_only_a_copy_past_its_ratio_and_swaps_it_whole() {
     assert!(!l.compact_dir().join("spira").exists(), "the superseded copy is removed");
 }
 
+#[test_id(tj8ma88)]
 #[test]
 fn compaction_collects_the_live_store_whatever_the_free_space() {
     let w = seeded();
@@ -494,6 +521,7 @@ fn compaction_collects_the_live_store_whatever_the_free_space() {
     assert!(!out.iter().any(|o| o.contains("not collected")), "{out:?}");
 }
 
+#[test_id(tuar6ix)]
 #[test]
 fn gc_collects_each_live_database_without_touching_the_durable_copy() {
     let w = seeded();
@@ -508,6 +536,7 @@ fn gc_collects_each_live_database_without_touching_the_durable_copy() {
     assert_eq!(tree_bytes(&l.db("spira")), copy);
 }
 
+#[test_id(t1eyctf)]
 #[test]
 fn gc_still_collects_the_other_database_when_one_fails_and_reports_the_failure() {
     let w = seeded();
@@ -520,6 +549,7 @@ fn gc_still_collects_the_other_database_when_one_fails_and_reports_the_failure()
     assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_aux"]);
 }
 
+#[test_id(t87d084)]
 #[test]
 fn a_stop_time_pass_syncs_only_a_database_written_since_the_last_pass() {
     let w = seeded();
@@ -553,6 +583,7 @@ fn compactable() -> World {
     w
 }
 
+#[test_id(tew4oaa)]
 #[test]
 fn compaction_squashes_a_log_past_the_keep_depth_under_the_lock_then_collects_in_full() {
     let w = compactable();
@@ -565,6 +596,7 @@ fn compaction_squashes_a_log_past_the_keep_depth_under_the_lock_then_collects_in
     assert_eq!(*w.dolt.full_gcs.borrow(), ["spira"], "only the rewritten database is collected in full");
 }
 
+#[test_id(tc9i7se)]
 #[test]
 fn compaction_rebuilds_the_copy_after_a_squash_though_it_is_within_its_ratio() {
     let w = compactable();
@@ -576,6 +608,7 @@ fn compaction_rebuilds_the_copy_after_a_squash_though_it_is_within_its_ratio() {
     assert!(out.lines.iter().any(|o| o.starts_with("spira: copy") && o.contains("within")), "{out:?}");
 }
 
+#[test_id(t4xipli)]
 #[test]
 fn compaction_leaves_a_log_at_the_bound_alone_and_a_zero_keep_disables_the_bound() {
     let w = compactable();
@@ -590,6 +623,7 @@ fn compaction_leaves_a_log_at_the_bound_alone_and_a_zero_keep_disables_the_bound
     assert!(w.dolt.full_gcs.borrow().is_empty(), "a full collection is the squash's, not every compact's");
 }
 
+#[test_id(t4g2gq3)]
 #[test]
 fn a_failed_graft_abandons_the_side_branch_keeps_the_log_and_does_not_rebuild_the_copy() {
     let w = compactable();

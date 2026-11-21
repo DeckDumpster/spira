@@ -185,6 +185,7 @@ impl Seam for LibSeam {
 #[cfg(test)]
 mod door_tests {
     /// A note reaches the store's content door, never a forked bdq through lib.sh (sp-ipwlic).
+    #[test_id(taere0o)]
     #[test]
     fn a_note_goes_through_the_content_door() {
         let src = include_str!("seam.rs");

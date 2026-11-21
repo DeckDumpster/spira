@@ -622,6 +622,7 @@ impl H {
 
 /// sp-mve9i: a bd row is content. Neither bd's status nor the retired submitted label makes
 /// a bead handed on; its state is `-` until the lifecycle row is joined onto it.
+#[test_id(t8ausyr)]
 #[test]
 fn a_bd_row_is_content_and_carries_no_state() {
     let v = serde_json::json!({"id":"sp-a","status":"closed","labels":["spira-submitted","repo:spira"],"priority":1});
@@ -634,6 +635,7 @@ fn a_bd_row_is_content_and_carries_no_state() {
     assert_eq!((b.repo.as_str(), b.closed_at.as_str(), b.priority), ("home", "9999-99-99", 9999));
 }
 
+#[test_id(tshdeb6)]
 #[test]
 // covers: UC-gate-diag-01
 fn a_red_gate_reopens_with_the_gates_own_words_and_marks_red() {
@@ -652,6 +654,7 @@ fn a_red_gate_reopens_with_the_gates_own_words_and_marks_red() {
     assert_eq!(h.mailbox(), "reopened sp-a — failed the certification gate\n");
 }
 
+#[test_id(tayzuj9)]
 #[test]
 fn a_bead_reopened_while_its_gate_ran_is_not_reopened_or_certified() {
     let h = H::new(LandMode::Queue);
@@ -666,6 +669,7 @@ fn a_bead_reopened_while_its_gate_ran_is_not_reopened_or_certified() {
     assert!(h.logged("CHECK6 sp-b: bead is now READY (was closed at scan time) — not certifying spira/sp-b"));
 }
 
+#[test_id(t34y8t1)]
 #[test]
 fn a_base_red_incident_that_cannot_be_filed_is_logged_and_the_pass_goes_on() {
     let h = H::new(LandMode::QueueLocal);
@@ -678,6 +682,7 @@ fn a_base_red_incident_that_cannot_be_filed_is_logged_and_the_pass_goes_on() {
     assert!(!h.lib.has("reopen"));
 }
 
+#[test_id(tgnn64b)]
 #[test]
 fn a_base_red_with_no_suite_name_is_keyed_by_the_base_sha() {
     let h = H::new(LandMode::QueueLocal);
@@ -692,6 +697,7 @@ fn a_base_red_with_no_suite_name_is_keyed_by_the_base_sha() {
 }
 
 // covers: UC-landing-merge-queue-10
+#[test_id(tuivg1j)]
 #[test]
 fn a_red_base_files_one_incident_per_repository_per_pass_and_charges_nobody() {
     let h = H::new(LandMode::QueueLocal);
@@ -711,6 +717,7 @@ fn a_red_base_files_one_incident_per_repository_per_pass_and_charges_nobody() {
 }
 
 // covers: UC-landing-merge-queue-10
+#[test_id(t300pf2)]
 #[test]
 fn a_branch_held_behind_a_red_base_is_certified_on_the_pass_after_the_base_is_green() {
     let h = H::new(LandMode::QueueLocal);
@@ -725,6 +732,7 @@ fn a_branch_held_behind_a_red_base_is_certified_on_the_pass_after_the_base_is_gr
     assert!(h.mailbox().contains("certified spira/sp-a"), "{}", h.mailbox());
 }
 
+#[test_id(tmeryp0)]
 #[test]
 fn a_refused_base_fix_gatepass_is_not_offered_again_for_the_same_tip() {
     let h = H::new(LandMode::QueueLocal);
@@ -741,6 +749,7 @@ fn a_refused_base_fix_gatepass_is_not_offered_again_for_the_same_tip() {
     assert!(h.logged("lifecycle already refused GatePass"));
 }
 
+#[test_id(t03rnax)]
 #[test]
 fn a_base_fix_green_on_its_suite_is_certified_first_and_despite_the_budget() {
     let mut h = H::new(LandMode::QueueLocal);
@@ -763,6 +772,7 @@ fn a_base_fix_green_on_its_suite_is_certified_first_and_despite_the_budget() {
     assert!(!h.lib.has("incident"));
 }
 
+#[test_id(t2x55ql)]
 #[test]
 fn a_branch_that_no_longer_merges_is_red_no_rebase_and_returned() {
     let h = H::new(LandMode::Queue);
@@ -775,6 +785,7 @@ fn a_branch_that_no_longer_merges_is_red_no_rebase_and_returned() {
     assert!(!h.lib.has("noverdict"), "a conflict is never NO_VERDICT");
 }
 
+#[test_id(tahbpqx)]
 #[test]
 fn a_base_fix_for_a_fence_red_base_certifies_on_a_fully_green_branch() {
     let mut h = H::new(LandMode::QueueLocal);
@@ -795,6 +806,7 @@ fn a_base_fix_for_a_fence_red_base_certifies_on_a_fully_green_branch() {
     assert!(!h.lib.has("incident"));
 }
 
+#[test_id(t4ydqbp)]
 #[test]
 fn an_over_cap_gate_is_counted_as_a_no_verdict_and_gated_again_once_the_backoff_passes() {
     let h = H::new(LandMode::Queue);
@@ -810,6 +822,7 @@ fn an_over_cap_gate_is_counted_as_a_no_verdict_and_gated_again_once_the_backoff_
     assert!(h.mailbox().contains("certified spira/sp-a"), "the same tip was gated again");
 }
 
+#[test_id(thk3tsr)]
 #[test]
 fn no_verdict_is_counted_by_the_seam_and_never_reopens() {
     let h = H::new(LandMode::Queue);
@@ -821,6 +834,7 @@ fn no_verdict_is_counted_by_the_seam_and_never_reopens() {
     assert!(h.tools.rebased.borrow().is_empty(), "only a conflict goes to rebase-stale");
 }
 
+#[test_id(tt3908f)]
 #[test]
 fn a_submitted_bead_in_a_round_with_no_gate_is_not_escalated_as_unjudgeable() {
     let h = H::new(LandMode::Queue);
@@ -835,6 +849,7 @@ fn a_submitted_bead_in_a_round_with_no_gate_is_not_escalated_as_unjudgeable() {
     assert!(h.logged("is in a round — the round judges it, no per-bead gate"));
 }
 
+#[test_id(tbrj9to)]
 #[test]
 fn a_submitted_bead_in_no_round_with_no_gate_is_escalated_only_after_the_grace() {
     let mut h = H::new(LandMode::Queue);
@@ -850,6 +865,7 @@ fn a_submitted_bead_in_no_round_with_no_gate_is_escalated_only_after_the_grace()
     assert!(h.lib.has("noverdict sp-a spira gate-not-found NO_VERDICT"));
 }
 
+#[test_id(t7ukhni)]
 #[test]
 fn a_missing_gate_is_the_only_no_verdict_the_unrounded_grace_quiets() {
     let h = H::new(LandMode::Queue);
@@ -859,6 +875,7 @@ fn a_missing_gate_is_the_only_no_verdict_the_unrounded_grace_quiets() {
     assert!(h.lib.has("noverdict sp-a spira lock-timeout NO_VERDICT"));
 }
 
+#[test_id(t62yccg)]
 #[test]
 fn a_bead_that_was_in_a_round_starts_its_unrounded_wait_again() {
     let mut h = H::new(LandMode::Queue);
@@ -881,6 +898,7 @@ fn retip(h: &H, br: &str, tip: &str) {
 
 const DIED: &str = "build:68-129,test:77-215\ngate: VERDICT=NO_VERDICT reason=died branch=b repo=spira suite=- ran=300s\n";
 
+#[test_id(tx6pabm)]
 #[test]
 fn a_gate_that_dies_twice_on_one_bead_is_that_beads_red_with_the_gates_output() {
     let h = H::new(LandMode::Queue);
@@ -897,6 +915,7 @@ fn a_gate_that_dies_twice_on_one_bead_is_that_beads_red_with_the_gates_output() 
     assert!(reopen.contains("could not finish") && reopen.contains("2 times"), "{reopen}");
 }
 
+#[test_id(t5x2p8q)]
 #[test]
 fn a_red_fence_is_recorded_on_the_lifecycle_and_quoted_on_the_bead_by_name_and_message() {
     let h = H::new(LandMode::Queue);
@@ -910,6 +929,7 @@ fn a_red_fence_is_recorded_on_the_lifecycle_and_quoted_on_the_bead_by_name_and_m
     assert!(note.contains("Failed step: fixture-config") && note.contains(&format!("Message: {msg}")), "{note}");
 }
 
+#[test_id(tlges2z)]
 #[test]
 fn a_gate_the_worker_saw_die_twice_is_the_beads_red_on_the_first_filing() {
     let h = H::new(LandMode::Queue);
@@ -922,6 +942,7 @@ fn a_gate_the_worker_saw_die_twice_is_the_beads_red_on_the_first_filing() {
     assert!(h.lib.count("event gate.died-twice sp-a") == 1, "the second death pages once");
 }
 
+#[test_id(t2e55q1)]
 #[test]
 fn a_dead_gate_between_other_beads_dead_gates_is_not_one_beads_red() {
     let h = H::new(LandMode::Queue);
@@ -936,6 +957,7 @@ fn a_dead_gate_between_other_beads_dead_gates_is_not_one_beads_red() {
     assert!(h.lc.certified.borrow().iter().all(|c| c.ends_with("infra")));
 }
 
+#[test_id(t0x8z80)]
 #[test]
 fn a_dead_gate_with_a_pass_for_another_bead_between_is_that_beads_red() {
     let h = H::new(LandMode::Queue);
@@ -950,6 +972,7 @@ fn a_dead_gate_with_a_pass_for_another_bead_between_is_that_beads_red() {
     assert!(h.lc.certified.borrow().iter().any(|c| c == "sp-a t3 red"));
 }
 
+#[test_id(tat00fz)]
 #[test]
 fn another_beads_death_voids_the_count_even_after_that_bead_passes() {
     let h = H::new(LandMode::Queue);
@@ -969,6 +992,7 @@ fn another_beads_death_voids_the_count_even_after_that_bead_passes() {
     assert!(!h.lc.certified.borrow().iter().any(|c| c.ends_with("red")), "{:?}", h.lc.certified.borrow());
 }
 
+#[test_id(trg52nt)]
 #[test]
 fn a_pass_between_two_dead_gates_makes_the_second_a_first_again() {
     let h = H::new(LandMode::Queue);
@@ -984,6 +1008,7 @@ fn a_pass_between_two_dead_gates_makes_the_second_a_first_again() {
     assert!(!h.lc.certified.borrow().iter().any(|c| c.ends_with("red")));
 }
 
+#[test_id(t8wt7lt)]
 #[test]
 fn a_pass_clears_the_branchs_noverdict_counters() {
     let h = H::new(LandMode::Queue);
@@ -998,6 +1023,7 @@ fn a_pass_clears_the_branchs_noverdict_counters() {
     assert!(nv.join("spira-harness-fault").exists());
 }
 
+#[test_id(tvho030)]
 #[test]
 fn the_budget_cut_defers_the_rest_writes_the_cursor_and_escalates_at_the_threshold() {
     let mut h = H::new(LandMode::QueueLocal);
@@ -1023,6 +1049,7 @@ fn the_budget_cut_defers_the_rest_writes_the_cursor_and_escalates_at_the_thresho
     assert!(!files.deferred_dir().join("spira_sp-a").exists());
 }
 
+#[test_id(tuhahih)]
 #[test]
 fn a_waiting_row_whose_tip_is_on_the_landing_ref_is_settled_with_no_branch_to_walk() {
     let h = H::new(LandMode::QueueLocal);
@@ -1045,6 +1072,7 @@ fn empty_submit(h: &H) {
     h.git.subjects.borrow_mut().insert("spira/sp-empty".into(), "sp-empty: record the decision (store-only)".into());
 }
 
+#[test_id(tqdn2va)]
 #[test]
 fn a_submitted_branch_with_no_tree_diff_is_closed_landed_once_and_said_once() {
     let h = H::new(LandMode::Queue);
@@ -1058,6 +1086,7 @@ fn a_submitted_branch_with_no_tree_diff_is_closed_landed_once_and_said_once() {
     assert!(h.tools.gate_calls.borrow().is_empty(), "no gate for a branch with no tree diff");
 }
 
+#[test_id(twlr6w6)]
 #[test]
 fn a_refused_content_on_base_is_tried_again_next_pass() {
     let h = H::new(LandMode::Queue);
@@ -1071,6 +1100,7 @@ fn a_refused_content_on_base_is_tried_again_next_pass() {
     assert!(!h.mailbox().contains("closed LANDED"));
 }
 
+#[test_id(tu5bu43)]
 #[test]
 fn a_new_tip_with_no_tree_diff_is_settled_again() {
     let h = H::new(LandMode::Queue);
@@ -1083,6 +1113,7 @@ fn a_new_tip_with_no_tree_diff_is_settled_again() {
     assert_eq!(h.out.lines().iter().filter(|l| l.contains(NOTHING_TO_LAND)).count(), 2);
 }
 
+#[test_id(tl82ayt)]
 #[test]
 fn a_stacked_base_only_branch_passes_the_evidence_guard_as_hel_does() {
     let h = H::new(LandMode::Queue);
@@ -1092,6 +1123,7 @@ fn a_stacked_base_only_branch_passes_the_evidence_guard_as_hel_does() {
     assert_eq!(h.lib.count("content_on_base sp-empty"), 1, "stacked-base commits carry no work of their own, so the guard passes it as hel does");
 }
 
+#[test_id(thb4fks)]
 #[test]
 fn a_squash_merged_bead_named_on_the_base_is_closed() {
     let h = H::new(LandMode::Queue);
@@ -1102,6 +1134,7 @@ fn a_squash_merged_bead_named_on_the_base_is_closed() {
     assert_eq!(h.lib.count("content_on_base sp-empty"), 1);
 }
 
+#[test_id(tw5mtia)]
 #[test]
 fn commits_that_name_no_bead_are_kept_not_closed() {
     let h = H::new(LandMode::Queue);
@@ -1112,6 +1145,7 @@ fn commits_that_name_no_bead_are_kept_not_closed() {
     assert!(h.logged("none naming the bead"));
 }
 
+#[test_id(trpb8mk)]
 #[test]
 fn every_early_exit_says_why() {
     let h = H::new(LandMode::Queue);
@@ -1143,6 +1177,7 @@ fn every_early_exit_says_why() {
     assert!(h.tools.gate_calls.borrow().is_empty());
 }
 
+#[test_id(t17zfif)]
 #[test]
 fn a_live_holder_defers_the_land_of_a_submitted_bead_in_a_push_repository() {
     let h = H::new(LandMode::Push);
@@ -1154,6 +1189,7 @@ fn a_live_holder_defers_the_land_of_a_submitted_bead_in_a_push_repository() {
     assert!(!h.lib.has("push"), "{:?}", h.lib.calls.borrow());
 }
 
+#[test_id(tpxizin)]
 #[test]
 fn a_branch_gone_mid_pass_is_never_evidence_of_unlanded_work() {
     let h = H::new(LandMode::Queue);
@@ -1228,6 +1264,7 @@ fn a_branch_gone_mid_pass_is_never_evidence_of_unlanded_work() {
     assert!(!h.lib.has("reopen"));
 }
 
+#[test_id(tag2s4q)]
 #[test]
 fn the_sole_repository_not_being_a_git_checkout_is_an_alert() {
     let mut h = H::new(LandMode::QueueLocal);
@@ -1239,6 +1276,7 @@ fn the_sole_repository_not_being_a_git_checkout_is_an_alert() {
     assert!(h.lib.has(&format!("ask_repo_unreadable spira {}", release.display())));
 }
 
+#[test_id(ty2h58c)]
 #[test]
 fn a_checkout_among_several_repositories_skipped_is_not_an_alert() {
     let mut h = H::new(LandMode::QueueLocal);
@@ -1252,6 +1290,7 @@ fn a_checkout_among_several_repositories_skipped_is_not_an_alert() {
     assert!(!h.lib.has("ask_repo_unreadable"));
 }
 
+#[test_id(txp4dij)]
 #[test]
 fn the_pass_runs_no_queue_step_and_the_skew_refresh_stays() {
     let h = H::new(LandMode::QueueLocal);
@@ -1266,6 +1305,7 @@ fn the_pass_runs_no_queue_step_and_the_skew_refresh_stays() {
     assert_eq!(h.tools.skews.borrow().len(), 1, "queue(forge) refreshes the checkout");
 }
 
+#[test_id(tc1accu)]
 #[test]
 fn a_settled_branch_costs_no_git_call_and_the_walk_line_counts_it() {
     let h = H::new(LandMode::Queue);
@@ -1279,6 +1319,7 @@ fn a_settled_branch_costs_no_git_call_and_the_walk_line_counts_it() {
     assert!(h.logged("landing: walk complete — 1 branch(es), 1 settled from memory"), "{:?}", h.out.lines());
 }
 
+#[test_id(ta6knos)]
 #[test]
 fn a_merged_unsettled_branch_of_a_terminal_bead_settles_from_the_merged_read() {
     let h = H::new(LandMode::Queue);
@@ -1291,6 +1332,7 @@ fn a_merged_unsettled_branch_of_a_terminal_bead_settles_from_the_merged_read() {
     assert!(!h.git.called("content_on_base", "spira/sp-l") && !h.git.called("rev_parse", "spira/sp-l"), "{:?}", h.git.calls.borrow());
 }
 
+#[test_id(tvcyfft)]
 #[test]
 fn a_terminal_bead_off_the_base_costs_no_content_read_in_a_queued_repository() {
     let h = H::new(LandMode::Queue);
@@ -1301,6 +1343,7 @@ fn a_terminal_bead_off_the_base_costs_no_content_read_in_a_queued_repository() {
     assert!(!h.git.called("content_on_base", "spira/sp-d"), "{:?}", h.git.calls.borrow());
 }
 
+#[test_id(tjukq5l)]
 #[test]
 fn one_pass_makes_one_lifecycle_list_read_for_reachability_and_the_settle_sweep() {
     let h = H::new(LandMode::QueueLocal);
@@ -1312,6 +1355,7 @@ fn one_pass_makes_one_lifecycle_list_read_for_reachability_and_the_settle_sweep(
     assert_eq!(h.lc.probes.get(), 1, "the pass reads the waiting rows once");
 }
 
+#[test_id(ti5e1gh)]
 #[test]
 fn a_waiting_row_at_a_merged_branch_tip_is_settled_without_an_ancestry_fork() {
     let h = H::new(LandMode::QueueLocal);
@@ -1324,6 +1368,7 @@ fn a_waiting_row_at_a_merged_branch_tip_is_settled_without_an_ancestry_fork() {
     assert!(!h.git.called("is_ancestor", "tw"), "{:?}", h.git.calls.borrow());
 }
 
+#[test_id(t70kr8z)]
 #[test]
 fn the_walk_starts_at_the_cursor() {
     let mut h = H::new(LandMode::Queue);
@@ -1338,6 +1383,7 @@ fn the_walk_starts_at_the_cursor() {
     assert_eq!(names, vec!["spira", "alpha", "beta"]);
 }
 
+#[test_id(twsljsj)]
 #[test]
 fn express_branches_are_announced_and_certified_before_the_rest() {
     let h = H::new(LandMode::Queue);
@@ -1353,6 +1399,7 @@ fn express_branches_are_announced_and_certified_before_the_rest() {
     assert_eq!(gated, vec!["spira/sp-x", "spira/sp-a"]);
 }
 
+#[test_id(tlqmhq5)]
 #[test]
 fn a_pr_repository_is_counted_and_left_to_the_pr_pass() {
     let h = H::new(LandMode::Pr);
@@ -1370,6 +1417,7 @@ fn a_pr_repository_is_counted_and_left_to_the_pr_pass() {
 // push and hold (§4.3, §4.5)
 // ──────────────────────────────────────────────────────────────────────────────
 
+#[test_id(thrrkx5)]
 #[test]
 fn a_clean_sweep_rebase_carries_a_certified_verdict_to_the_new_tip() {
     let h = H::new(LandMode::Push);
@@ -1386,6 +1434,7 @@ fn a_clean_sweep_rebase_carries_a_certified_verdict_to_the_new_tip() {
     h.run();
 }
 
+#[test_id(tn643v5)]
 #[test]
 fn a_maintenance_freeze_holds_the_push_walk() {
     let mut h = H::new(LandMode::Push);
@@ -1399,6 +1448,7 @@ fn a_maintenance_freeze_holds_the_push_walk() {
     assert!(h.out.lines().join("\n").contains("SPIRA_BATCHER_ENABLE=0"), "{:?}", h.out.lines());
 }
 
+#[test_id(t8fhsjw)]
 #[test]
 fn push_lands_records_first_and_closes_and_rebases_survivors_once_per_pass() {
     let h = H::new(LandMode::Push);
@@ -1423,6 +1473,7 @@ fn push_lands_records_first_and_closes_and_rebases_survivors_once_per_pass() {
     assert_eq!(h.tools.skews.borrow().len(), 1);
 }
 
+#[test_id(tj6xfxl)]
 #[test]
 fn a_push_landing_makes_no_closeout_call_and_the_pass_scans_no_github_issues() {
     let h = H::new(LandMode::Push);
@@ -1433,6 +1484,7 @@ fn a_push_landing_makes_no_closeout_call_and_the_pass_scans_no_github_issues() {
     assert!(!h.lib.has("closeout"), "the store enqueues the closeout in the landing's own transition");
 }
 
+#[test_id(tlzvycg)]
 #[test]
 fn escalation_at_the_threshold_still_reopens_and_asks() {
     let h = H::new(LandMode::Push);
@@ -1446,6 +1498,7 @@ fn escalation_at_the_threshold_still_reopens_and_asks() {
     assert!(h.mailbox().contains("escalated sp-a — rebase conflict x3 on spira/sp-a"));
 }
 
+#[test_id(tu42img)]
 #[test]
 fn a_rebase_that_could_not_be_attempted_charges_nobody() {
     let h = H::new(LandMode::Push);
@@ -1456,6 +1509,7 @@ fn a_rebase_that_could_not_be_attempted_charges_nobody() {
     assert!(!h.lib.has("reopen") && !h.lib.has("bump_requeue"));
 }
 
+#[test_id(t2xbq0d)]
 #[test]
 fn confinement_is_asked_before_the_gate() {
     let h = H::new(LandMode::Push);
@@ -1470,6 +1524,7 @@ fn confinement_is_asked_before_the_gate() {
     assert!(h.tools.gate_calls.borrow().is_empty());
 }
 
+#[test_id(twuu1k2)]
 #[test]
 fn a_push_blocked_for_a_reason_other_than_a_race_leaves_the_bead_closed() {
     let h = H::new(LandMode::Push);
@@ -1481,6 +1536,7 @@ fn a_push_blocked_for_a_reason_other_than_a_race_leaves_the_bead_closed() {
     assert!(h.logged("landing: spira/sp-a merges clean but push failed — leaving closed"));
 }
 
+#[test_id(t4gyjq2)]
 #[test]
 fn a_merge_conflict_on_already_landed_work_does_not_reopen() {
     let h = H::new(LandMode::Push);
@@ -1501,6 +1557,7 @@ fn a_merge_conflict_on_already_landed_work_does_not_reopen() {
     assert!(h.lib.has("reopen sp-a rebase-conflict Reopened by sentinel: branch spira/sp-a conflicts with origin/main. The branch carries 2 commit(s)"));
 }
 
+#[test_id(tkd244o)]
 #[test]
 fn hold_gates_notes_and_does_not_advance_the_base() {
     let h = H::new(LandMode::Hold);
@@ -1568,6 +1625,7 @@ fn halt_setup(ignores_term: bool) -> (crate::testutil::TmpDir, FakeHalt) {
 }
 
 // covers: UC-landing-merge-queue-24
+#[test_id(tzm6fn8)]
 #[test]
 fn halt_dry_run_reports_and_touches_nothing() {
     let (dir, ports) = halt_setup(false);
@@ -1584,6 +1642,7 @@ fn halt_dry_run_reports_and_touches_nothing() {
 }
 
 // covers: UC-landing-merge-queue-24
+#[test_id(toiq9kd)]
 #[test]
 fn halt_terms_then_kills_records_why_and_tears_down_only_live_containers() {
     let (dir, mut ports) = halt_setup(true);
@@ -1608,6 +1667,7 @@ fn halt_terms_then_kills_records_why_and_tears_down_only_live_containers() {
 }
 
 // covers: UC-landing-merge-queue-24
+#[test_id(tii6gt9)]
 #[test]
 fn halt_keeps_every_batch_branch_of_a_repo_whose_open_batch_the_queue_cannot_show() {
     let (dir, mut ports) = halt_setup(false);
@@ -1625,6 +1685,7 @@ fn halt_keeps_every_batch_branch_of_a_repo_whose_open_batch_the_queue_cannot_sho
 }
 
 // covers: UC-landing-merge-queue-24
+#[test_id(twrhc19)]
 #[test]
 fn halt_refuses_when_no_pass_is_running_or_the_record_is_our_own_pid() {
     let (dir, ports) = halt_setup(false);
@@ -1652,6 +1713,7 @@ impl PrTools for FakePr {
     }
 }
 
+#[test_id(txr2z0d)]
 #[test]
 fn the_pr_pass_hands_done_branches_to_pr_branch_and_proves_content_landings() {
     let h = H::new(LandMode::Pr);
@@ -1691,6 +1753,7 @@ fn the_pr_pass_hands_done_branches_to_pr_branch_and_proves_content_landings() {
     assert!(h.logged("landing-pass spira: sp-wip not landed — its bead is WORKING"));
 }
 
+#[test_id(tfu9qr6)]
 #[test]
 fn the_pr_pass_records_a_merged_pr_whose_bead_never_left_the_builder() {
     let h = H::new(LandMode::Pr);
@@ -1718,6 +1781,7 @@ fn the_pr_pass_records_a_merged_pr_whose_bead_never_left_the_builder() {
     assert!(!h.lib.has("rebase"), "a merged PR is recorded, never rebased");
 }
 
+#[test_id(to6njl5)]
 #[test]
 fn the_forge_switch_holds_the_pr_walk_and_the_local_switch_does_not() {
     let mut h = H::new(LandMode::Pr);
@@ -1751,6 +1815,7 @@ fn the_forge_switch_holds_the_pr_walk_and_the_local_switch_does_not() {
     assert!(h.lib.has("rebase spira/sp-done"));
 }
 
+#[test_id(t3nx68b)]
 #[test]
 fn delivery_rows_accept_a_numeric_version() {
     assert_eq!(crate::pr::delivery_of(br#"{"delivery":{"state":"PR_OPEN","version":3}}"#), Some(("PR_OPEN".into(), "3".into())));
@@ -1776,6 +1841,7 @@ fn starts(h: &H) -> Vec<String> {
     h.tools.trace().into_iter().filter_map(|t| t.strip_prefix("start spira/").map(String::from)).collect()
 }
 
+#[test_id(t8ydqlc)]
 #[test]
 fn par_n_starts_n_gates_before_any_finishes() {
     let h = h_par(3);
@@ -1793,6 +1859,7 @@ fn par_n_starts_n_gates_before_any_finishes() {
     assert!(!h.s.run.join("landing.run").exists() || Files::new(&h.s.run).read_run().map(|r| r.phase != "gate").unwrap_or(true));
 }
 
+#[test_id(txug2uw)]
 #[test]
 fn a_base_fix_runs_alone_before_anything_else_starts() {
     let h = h_par(4);
@@ -1809,6 +1876,7 @@ fn a_base_fix_runs_alone_before_anything_else_starts() {
     assert_eq!(starts(&h), vec!["sp-fix", "sp-a", "sp-b"]);
 }
 
+#[test_id(tqd2c99)]
 #[test]
 fn a_base_fix_that_becomes_ready_mid_pass_waits_for_the_walk_to_drain_then_runs_alone() {
     let h = h_par(3);
@@ -1895,6 +1963,7 @@ impl Tools for Injecting<'_> {
     }
 }
 
+#[test_id(tzoijc7)]
 #[test]
 fn a_p0_submitted_mid_pass_takes_the_next_free_slot() {
     let h = h_par(2);
@@ -1920,6 +1989,7 @@ fn a_p0_submitted_mid_pass_takes_the_next_free_slot() {
     assert!(h.logged("landing: pass complete — 6 branch(es) seen, 6 movement(s)"));
 }
 
+#[test_id(tptiyyq)]
 #[test]
 fn a_full_admission_pool_holds_the_second_gate_back() {
     let h = h_par(3);
@@ -1933,6 +2003,7 @@ fn a_full_admission_pool_holds_the_second_gate_back() {
     assert_eq!(h.tools.probes.get(), 2, "asked only while a gate of this pass is already in flight");
 }
 
+#[test_id(t5tc0is)]
 #[test]
 fn a_budget_cut_waits_for_the_gates_in_flight_then_defers_the_rest() {
     let mut h = h_par(2);
@@ -1961,6 +2032,7 @@ fn a_budget_cut_waits_for_the_gates_in_flight_then_defers_the_rest() {
     assert!(!files.deferred_dir().join("spira_sp-a").exists());
 }
 
+#[test_id(t9sqeei)]
 #[test]
 fn par_one_is_the_serial_walk_unchanged() {
     // The same scenario at PAR=1 through the concurrent-capable binary: serial gates only,
@@ -1987,6 +2059,7 @@ fn par_one_is_the_serial_walk_unchanged() {
     assert_eq!(mail2, mail);
 }
 
+#[test_id(tt36kc1)]
 #[test]
 fn the_admission_probe_counts_free_slots_and_releases_them() {
     use std::os::unix::io::AsRawFd;
@@ -2006,6 +2079,7 @@ fn the_admission_probe_counts_free_slots_and_releases_them() {
     assert_eq!(crate::real::admission_free(&d, 3), 3);
 }
 
+#[test_id(tbcbe3r)]
 #[test]
 fn push_mode_stays_serial_at_any_par() {
     let mut h = H::new(LandMode::Hold);
@@ -2048,6 +2122,7 @@ fn push_fixture() -> H {
     h
 }
 
+#[test_id(tol0799)]
 #[test]
 fn push_mode_records_deliveries_through_the_machine() {
     let h = push_fixture();
@@ -2060,6 +2135,7 @@ fn push_mode_records_deliveries_through_the_machine() {
 /// The sim scenario `repo-modes` (sp-gqrlv6), ported: a push repository whose trunk is `master`
 /// lands its branch on `master` and never pushes a `main` (`main` is never assumed:
 /// `spira_config::repos::ref_branch`). The hold half is `hold_gates_notes_and_does_not_advance_the_base`.
+#[test_id(typ4vp3)]
 #[test]
 fn a_push_repo_with_a_master_trunk_lands_on_its_master_and_never_on_a_main() {
     let mut h = push_fixture();
@@ -2071,6 +2147,7 @@ fn a_push_repo_with_a_master_trunk_lands_on_its_master_and_never_on_a_main() {
     assert!(h.lib.has("deliver_delivered sp-a head1"), "the landing is delivered through the machine");
 }
 
+#[test_id(t9c29qo)]
 #[test]
 fn with_the_machine_unreachable_a_push_landing_is_refused_loudly() {
     let h = push_fixture();
@@ -2079,6 +2156,7 @@ fn with_the_machine_unreachable_a_push_landing_is_refused_loudly() {
     assert!(h.logged("landing: spira-lc is unreachable (Access denied) — not landing spira/sp-a this pass"));
 }
 
+#[test_id(tnfblpb)]
 #[test]
 fn a_lifecycle_submitted_bead_without_the_label_is_certified_and_recorded() {
     let h = H::new(LandMode::QueueLocal);
@@ -2088,6 +2166,7 @@ fn a_lifecycle_submitted_bead_without_the_label_is_certified_and_recorded() {
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
 }
 
+#[test_id(tmjvzgx)]
 #[test]
 fn a_refused_gatepass_leaves_the_bead_uncertified() {
     let h = H::new(LandMode::QueueLocal);
@@ -2098,6 +2177,7 @@ fn a_refused_gatepass_leaves_the_bead_uncertified() {
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
 }
 
+#[test_id(t1g8y9o)]
 #[test]
 fn a_gatepass_refused_for_a_held_tip_resubmits_the_branch_tip_and_certifies() {
     let h = H::new(LandMode::QueueLocal);
@@ -2112,6 +2192,7 @@ fn a_gatepass_refused_for_a_held_tip_resubmits_the_branch_tip_and_certifies() {
     assert_eq!(h.lc.resubmits.borrow().len(), 1);
 }
 
+#[test_id(twrl6d9)]
 #[test]
 fn a_beadless_branch_already_on_the_base_is_not_reported_as_not_landed() {
     let h = H::new(LandMode::Queue);
@@ -2122,6 +2203,7 @@ fn a_beadless_branch_already_on_the_base_is_not_reported_as_not_landed() {
     assert!(h.lc.certified.borrow().is_empty());
 }
 
+#[test_id(t7rgbkx)]
 #[test]
 fn an_unsettled_bead_whose_branch_is_already_on_the_base_is_not_reported_as_not_landed() {
     let h = H::new(LandMode::Queue);
@@ -2133,6 +2215,7 @@ fn an_unsettled_bead_whose_branch_is_already_on_the_base_is_not_reported_as_not_
     assert!(h.lc.certified.borrow().is_empty());
 }
 
+#[test_id(tl5s4e7)]
 #[test]
 fn a_beadless_branch_off_the_base_is_still_reported_as_not_landed() {
     let h = H::new(LandMode::Queue);
@@ -2141,6 +2224,7 @@ fn a_beadless_branch_off_the_base_is_still_reported_as_not_landed() {
     assert!(h.logged("CHECK6 hand-built: spira/hand-built not landed — its bead is - and no dwarf holds it"));
 }
 
+#[test_id(tvrii3u)]
 #[test]
 fn a_refused_gatepass_is_not_offered_again_for_the_same_tip() {
     let h = H::new(LandMode::QueueLocal);
@@ -2160,6 +2244,7 @@ fn a_refused_gatepass_is_not_offered_again_for_the_same_tip() {
 /// finishes with `work submit`, never a bd close, and the push gate's own GatePass moves the
 /// row SUBMITTED -> CERTIFIED before the land. CERTIFIED is past the builder (handed on), so
 /// the pass lands it rather than refusing it as "now open (was closed at scan time)".
+#[test_id(twnpaow)]
 #[test]
 fn on_push_mode_lands_a_lifecycle_certified_bead_without_a_close() {
     let h = H::new(LandMode::Push);
@@ -2173,6 +2258,7 @@ fn on_push_mode_lands_a_lifecycle_certified_bead_without_a_close() {
 
 /// sp-vn19s: a queued repository's CERTIFIED beads belong to the batcher: the pass must not
 /// certify them again (that would re-gate a certified tip every pass).
+#[test_id(t3pg8fv)]
 #[test]
 fn on_queue_mode_a_certified_bead_is_not_walked_again() {
     let h = H::new(LandMode::QueueLocal);
@@ -2185,6 +2271,7 @@ fn on_queue_mode_a_certified_bead_is_not_walked_again() {
 /// A SUBMITTED row whose branch moved on is offered for certification at the branch's live
 /// tip only: the machine's own tip check (TipMismatch) is the judge, never a tip remembered
 /// here.
+#[test_id(tlskgrx)]
 #[test]
 fn a_submitted_bead_is_certified_only_at_its_live_tip() {
     let h = H::new(LandMode::QueueLocal);
@@ -2202,6 +2289,7 @@ fn held_submitted(h: &H, holds: &[&str]) {
     h.git.add("spira/sp-a", "t1");
 }
 
+#[test_id(tvgj0to)]
 #[test]
 fn a_submitted_bead_held_only_manual_is_gated_inline() {
     let h = H::new(LandMode::QueueLocal);
@@ -2211,6 +2299,7 @@ fn a_submitted_bead_held_only_manual_is_gated_inline() {
     assert!(h.logged("gated; the hold keeps it out of the cut"));
 }
 
+#[test_id(tu012hc)]
 #[test]
 fn a_submitted_bead_held_only_manual_is_queued_for_gate_worker() {
     let h = h_worker(LandMode::QueueLocal);
@@ -2222,6 +2311,7 @@ fn a_submitted_bead_held_only_manual_is_queued_for_gate_worker() {
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
 }
 
+#[test_id(t065vio)]
 #[test]
 fn a_submitted_bead_held_by_the_legacy_operator_alias_is_gated_like_manual() {
     let h = H::new(LandMode::QueueLocal);
@@ -2230,6 +2320,7 @@ fn a_submitted_bead_held_by_the_legacy_operator_alias_is_gated_like_manual() {
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
 }
 
+#[test_id(t00j3sd)]
 #[test]
 fn a_submitted_bead_held_manual_and_wait_is_not_gated() {
     let h = H::new(LandMode::QueueLocal);
@@ -2242,6 +2333,7 @@ fn a_submitted_bead_held_manual_and_wait_is_not_gated() {
 
 /// sp-mve9i: a bead still with its builder (READY, WORKING, REWORK) is never certified,
 /// whatever bd or a label says.
+#[test_id(tr5pk71)]
 #[test]
 fn a_bead_the_builder_still_holds_is_never_certified() {
     for st in ["READY", "WORKING", "REWORK"] {
@@ -2253,6 +2345,7 @@ fn a_bead_the_builder_still_holds_is_never_certified() {
     }
 }
 
+#[test_id(t3lso5k)]
 #[test]
 fn the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails() {
     let h = H::new(LandMode::Pr);
@@ -2277,6 +2370,7 @@ fn the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails() {
     assert!(pr_run(&h, &tools).len() == 1, "a refused delivery is tried again next pass");
 }
 
+#[test_id(tduvaqp)]
 #[test]
 fn the_pr_pass_reads_the_settled_marker_before_asking_git() {
     let h = H::new(LandMode::Pr);
@@ -2286,6 +2380,7 @@ fn the_pr_pass_reads_the_settled_marker_before_asking_git() {
     assert!(!h.git.called("content_on_base", "spira/sp-merged"), "{:?}", h.git.calls.borrow());
 }
 
+#[test_id(trjx8nj)]
 #[test]
 fn the_pr_pass_proves_a_content_delivery_once_per_tip() {
     let h = H::new(LandMode::Pr);
@@ -2298,6 +2393,7 @@ fn the_pr_pass_proves_a_content_delivery_once_per_tip() {
     assert_eq!(*tools.delivered.borrow(), vec!["sp-merged M"]);
 }
 
+#[test_id(tdwludf)]
 #[test]
 fn halt_children_run_under_conf_path_then_spira_path_then_inherit() {
     use crate::halt::child_path;
@@ -2329,6 +2425,7 @@ fn file_verdict(h: &H, id: &str, tip: &str, rc: i32, out: &str) {
     q.complete(0, &crate::gateq::Done { job, run: GateRun::parse(rc, out.into()), started_ms: 1, finished_ms: 2, gate: String::new() }).unwrap();
 }
 
+#[test_id(ti668qc)]
 #[test]
 fn a_pass_with_a_gate_worker_queues_every_branch_and_no_budget_can_cut_it() {
     let mut h = h_worker(LandMode::QueueLocal);
@@ -2345,6 +2442,7 @@ fn a_pass_with_a_gate_worker_queues_every_branch_and_no_budget_can_cut_it() {
     assert!(!h.lib.has("CERTIFIED"));
 }
 
+#[test_id(t4ugows)]
 #[test]
 fn a_submitted_bead_is_gated_while_its_builder_is_still_alive() {
     for mode in [LandMode::Queue, LandMode::QueueLocal] {
@@ -2367,6 +2465,7 @@ fn a_submitted_bead_is_gated_while_its_builder_is_still_alive() {
     assert!(!h.logged("deferring the land"));
 }
 
+#[test_id(t891w8z)]
 #[test]
 fn a_branch_already_queued_is_not_queued_twice() {
     let h = h_worker(LandMode::Queue);
@@ -2377,6 +2476,7 @@ fn a_branch_already_queued_is_not_queued_twice() {
     assert!(h.logged("CHECK6 sp-a: spira/sp-a is already with gate-worker at t1"));
 }
 
+#[test_id(tiiygyk)]
 #[test]
 fn an_over_cap_verdict_from_gate_worker_is_gated_again_after_the_backoff() {
     let h = h_worker(LandMode::Queue);
@@ -2392,6 +2492,7 @@ fn an_over_cap_verdict_from_gate_worker_is_gated_again_after_the_backoff() {
     assert!(!h.logged("not gated again"));
 }
 
+#[test_id(t8b2cwj)]
 #[test]
 fn an_unjudged_tip_is_gated_again_after_the_backoff_and_never_deferred() {
     let h = h_worker(LandMode::Queue);
@@ -2406,6 +2507,7 @@ fn an_unjudged_tip_is_gated_again_after_the_backoff_and_never_deferred() {
     assert_eq!(q.queued()[0].tip, "t1");
 }
 
+#[test_id(tbb76t3)]
 #[test]
 fn a_tip_killed_over_cap_twice_is_gated_again_after_the_backoff_not_deferred() {
     let h = h_worker(LandMode::Queue);
@@ -2426,6 +2528,7 @@ fn a_tip_killed_over_cap_twice_is_gated_again_after_the_backoff_not_deferred() {
     assert!(!h.lib.has("event gate.exhausted"));
 }
 
+#[test_id(tpj64g0)]
 #[test]
 fn an_unjudged_tip_is_not_held_and_not_gated_again_when_its_incident_cannot_be_filed() {
     let mut h = h_worker(LandMode::Queue);
@@ -2443,6 +2546,7 @@ fn an_unjudged_tip_is_not_held_and_not_gated_again_when_its_incident_cannot_be_f
     assert!(q.queued().is_empty());
 }
 
+#[test_id(tay35nr)]
 #[test]
 fn past_the_bound_an_unjudged_tip_is_not_held_and_not_gated_again_and_one_incident_is_filed() {
     let mut h = h_worker(LandMode::Queue);
@@ -2476,6 +2580,7 @@ fn past_the_bound_an_unjudged_tip_is_not_held_and_not_gated_again_and_one_incide
     assert_eq!(q.queued()[0].tip, "t1");
 }
 
+#[test_id(tqfvhys)]
 #[test]
 fn a_new_tip_lifts_the_unjudged_stop_inside_the_window() {
     let h = h_with_unjudged_incident();
@@ -2523,6 +2628,7 @@ fn unjudged_beads_with_one_reason_share_one_incident_reference() {
     }
 }
 
+#[test_id(tafh2md)]
 #[test]
 fn an_inline_gate_is_not_run_while_the_tip_is_backing_off() {
     let mut h = H::new(LandMode::Queue);
@@ -2538,6 +2644,7 @@ fn an_inline_gate_is_not_run_while_the_tip_is_backing_off() {
     assert_eq!(h.tools.gate_calls.borrow().len(), 2);
 }
 
+#[test_id(t1rlrs7)]
 #[test]
 fn a_filed_pass_certifies() {
     let h = h_worker(LandMode::Queue);
@@ -2547,6 +2654,7 @@ fn a_filed_pass_certifies() {
     assert!(h.tools.gate_calls.borrow().is_empty());
 }
 
+#[test_id(td80qm1)]
 #[test]
 fn a_filed_fail_is_the_branchs_and_reopens_it() {
     let h = h_worker(LandMode::Queue);
@@ -2556,6 +2664,7 @@ fn a_filed_fail_is_the_branchs_and_reopens_it() {
     assert!(h.lib.has("reopen sp-a cert-gate-red"));
 }
 
+#[test_id(t7kodua)]
 #[test]
 fn a_filed_no_verdict_is_nobodys_and_charges_nothing() {
     let h = h_worker(LandMode::Queue);
@@ -2567,6 +2676,7 @@ fn a_filed_no_verdict_is_nobodys_and_charges_nothing() {
     assert!(!h.lib.has("RED"));
 }
 
+#[test_id(tyfnb8d)]
 #[test]
 fn a_filed_base_fail_holds_the_branch_and_files_the_bases_own_red() {
     let h = h_worker(LandMode::Queue);
@@ -2578,6 +2688,7 @@ fn a_filed_base_fail_holds_the_branch_and_files_the_bases_own_red() {
     assert!(!h.lib.has("RED"));
 }
 
+#[test_id(te1zixj)]
 #[test]
 fn a_verdict_for_a_tree_the_branch_no_longer_has_is_not_applied() {
     let h = h_worker(LandMode::Queue);
@@ -2587,6 +2698,7 @@ fn a_verdict_for_a_tree_the_branch_no_longer_has_is_not_applied() {
     assert!(!h.lib.has("CERTIFIED"));
 }
 
+#[test_id(tdn5gir)]
 #[test]
 fn a_claimed_gate_worker_row_leaves_a_submitted_bead_untouched() {
     let h = h_worker(LandMode::Queue);
@@ -2599,6 +2711,7 @@ fn a_claimed_gate_worker_row_leaves_a_submitted_bead_untouched() {
     assert!(q.queued().is_empty(), "the claimed gate is still the worker's");
 }
 
+#[test_id(tl0isib)]
 #[test]
 fn a_gate_worker_row_with_no_outcome_is_not_a_verdict() {
     let h = h_worker(LandMode::Queue);
@@ -2611,6 +2724,7 @@ fn a_gate_worker_row_with_no_outcome_is_not_a_verdict() {
     assert_eq!(crate::gateq::GateQueue::new(&h.s.run).queued().len(), 1, "the tip is gated again");
 }
 
+#[test_id(tscl58l)]
 #[test]
 fn a_gate_worker_row_with_pass_certifies_and_one_with_fail_and_a_reason_reworks() {
     let h = h_worker(LandMode::Queue);
@@ -2623,6 +2737,7 @@ fn a_gate_worker_row_with_pass_certifies_and_one_with_fail_and_a_reason_reworks(
     assert!(h.lib.has("reopen sp-b cert-gate-red"), "{:?}", h.lib.calls.borrow());
 }
 
+#[test_id(tagwuqy)]
 #[test]
 fn a_provisional_member_cut_into_a_round_before_its_gate_has_its_gate_queued_beside_the_round() {
     let h = h_worker(LandMode::Queue);
@@ -2637,6 +2752,7 @@ fn a_provisional_member_cut_into_a_round_before_its_gate_has_its_gate_queued_bes
     assert!(!h.lib.has("CERTIFIED") && !h.lib.has("reopen"));
 }
 
+#[test_id(tbc6g36)]
 #[test]
 fn an_express_provisional_member_is_queued_as_an_express_job() {
     let h = h_worker(LandMode::Queue);
@@ -2648,6 +2764,7 @@ fn an_express_provisional_member_is_queued_as_an_express_job() {
     assert!(queued.len() == 1 && queued[0].express, "{:?}", h.out.lines());
 }
 
+#[test_id(tbaqu9n)]
 #[test]
 fn a_provisional_member_whose_gate_went_green_keeps_its_verdict_for_the_round() {
     let h = h_worker(LandMode::Queue);
@@ -2661,6 +2778,7 @@ fn a_provisional_member_whose_gate_went_green_keeps_its_verdict_for_the_round() 
     assert!(q.peek_done("spira", "spira/sp-a", "t1").is_some(), "the verdict stays on file");
 }
 
+#[test_id(tunluia)]
 #[test]
 fn a_provisional_member_whose_gate_went_red_is_marked_on_its_row_once_with_the_failing_step_and_line() {
     let h = h_worker(LandMode::Queue);
@@ -2678,6 +2796,7 @@ fn a_provisional_member_whose_gate_went_red_is_marked_on_its_row_once_with_the_f
     assert!(crate::gateq::GateQueue::new(&h.s.run).queued().is_empty(), "not gated again");
 }
 
+#[test_id(tmbut36)]
 #[test]
 fn a_member_gated_before_its_cut_is_not_gated_again_in_the_round() {
     let h = h_worker(LandMode::Queue);
@@ -2711,6 +2830,7 @@ fn verdict_on_sp_b(h: &H, rc: i32, out: &str) {
     h.run();
 }
 
+#[test_id(tphc3yi)]
 #[test]
 fn a_passing_verdict_closes_the_repos_gate_unjudged_incident_once() {
     let h = h_with_unjudged_incident();
@@ -2722,6 +2842,7 @@ fn a_passing_verdict_closes_the_repos_gate_unjudged_incident_once() {
     assert_eq!(h.lib.count("close_incident"), 1);
 }
 
+#[test_id(tbssj5s)]
 #[test]
 fn a_failing_verdict_closes_the_repos_gate_unjudged_incident_once() {
     let h = h_with_unjudged_incident();
@@ -2733,6 +2854,7 @@ fn a_failing_verdict_closes_the_repos_gate_unjudged_incident_once() {
     assert_eq!(h.lib.count("close_incident"), 1);
 }
 
+#[test_id(ty48xwl)]
 #[test]
 fn a_verdict_in_another_repo_leaves_the_incident_open() {
     let mut h = h_with_unjudged_incident();
@@ -2751,6 +2873,7 @@ fn a_verdict_in_another_repo_leaves_the_incident_open() {
     assert_eq!(h.lib.count("close_incident"), 0, "{:?}", h.lib.calls.borrow());
 }
 
+#[test_id(ts7010h)]
 #[test]
 fn a_base_fail_verdict_closes_the_repos_gate_unjudged_incident_once() {
     let h = h_with_unjudged_incident();
@@ -2760,6 +2883,7 @@ fn a_base_fail_verdict_closes_the_repos_gate_unjudged_incident_once() {
     assert!(c.contains("spira/sp-b") && c.contains("t2") && c.contains("base-fail"), "{c}");
 }
 
+#[test_id(t2bpqcn)]
 #[test]
 fn a_no_verdict_run_never_closes_the_incident() {
     let h = h_with_unjudged_incident();
@@ -2768,6 +2892,7 @@ fn a_no_verdict_run_never_closes_the_incident() {
     assert_eq!(h.lib.count("close_incident"), 0, "{:?}", h.lib.calls.borrow());
 }
 
+#[test_id(t8gzh5g)]
 #[test]
 fn a_close_that_fails_keeps_the_incident_for_the_next_verdict() {
     let h = h_with_unjudged_incident();
@@ -2784,6 +2909,7 @@ fn a_close_that_fails_keeps_the_incident_for_the_next_verdict() {
     assert_eq!(h.lib.count("close_incident"), 2);
 }
 
+#[test_id(tk4p892)]
 #[test]
 fn an_express_bead_is_queued_for_gate_worker_as_an_express_job() {
     let h = h_worker(LandMode::QueueLocal);

@@ -23,6 +23,7 @@ mod tests {
     use super::*;
     use spira_otel::metrics::fixture;
 
+    #[test_id(tw2a5v2)]
     #[test]
     fn a_run_pushes_its_count_and_seconds_labelled_by_component_operation_and_outcome() {
         let (code, got) = fixture::capture(|s| run(s, Some("start"), || 1));
@@ -32,6 +33,7 @@ mod tests {
         assert!(got.iter().any(|c| c.name == metrics::RUN_DURATION), "run seconds pushed");
     }
 
+    #[test_id(t3bqyaw)]
     #[test]
     fn an_argument_that_is_no_operation_is_other() {
         assert_eq!(operation(Some("sp-abc123")), "other");

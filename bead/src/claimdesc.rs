@@ -309,6 +309,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-12
+    #[test_id(ttuhjhg)]
     #[test]
     fn a_live_dwarf_with_an_open_mailbox_is_mailed() {
         let (_t, run, mail) = fixture(true, true);
@@ -316,6 +317,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-12
+    #[test_id(tmu1udz)]
     #[test]
     fn no_live_dwarf_means_no_mail_and_no_mailbox_made() {
         let (_t, run, mail) = fixture(false, false);
@@ -324,6 +326,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-12
+    #[test_id(tbj6o57)]
     #[test]
     fn an_expired_lease_is_not_a_live_dwarf() {
         let (_t, run, mail) = fixture(true, true);
@@ -332,6 +335,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-12
+    #[test_id(t8itqt7)]
     #[test]
     fn a_live_dwarf_without_a_mailbox_is_not_mailed() {
         let (_t, run, mail) = fixture(true, false);
@@ -339,6 +343,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-12
+    #[test_id(t9r8pva)]
     #[test]
     fn the_amend_message_carries_the_note_text() {
         let mut m = String::new();
@@ -347,6 +352,7 @@ mod tests {
         assert_eq!(m, "Marked express.\n\nScope expanded: add acceptance tests");
     }
 
+    #[test_id(tncu9q7)]
     #[test]
     fn amending_an_unheld_bead_says_no_live_holder() {
         let (_t, run, mail) = fixture(false, false);
@@ -355,6 +361,7 @@ mod tests {
         assert!(n.report("sp-amend2").unwrap().contains("no live holder on sp-amend2"));
     }
 
+    #[test_id(tkdg5p6)]
     #[test]
     fn amend_report_names_each_change_and_the_holder_line() {
         let applied = vec!["priority P1 → P0".to_string(), "marked express".to_string()];
@@ -371,6 +378,7 @@ mod tests {
         }
     }
 
+    #[test_id(tcy08o9)]
     #[test]
     fn a_mailed_holder_is_reported_with_its_mailbox_and_message_id() {
         let n = Notified::Mailed { mailbox: "dwarf-sp-amend2".into(), msg_id: "<42@spira>".into() };
@@ -378,6 +386,7 @@ mod tests {
         assert!(line.contains("dwarf-sp-amend2") && line.contains("<42@spira>"), "{line}");
     }
 
+    #[test_id(tgt6kso)]
     #[test]
     fn an_amend_with_nothing_to_say_prints_nothing() {
         let (_t, run, mail) = fixture(true, true);
@@ -389,6 +398,7 @@ mod tests {
     }
 
 
+    #[test_id(t9q7jsm)]
     #[test]
     fn hash_follows_the_description_only() {
         let h1 = desc_hash(r#"[{"description":"one"}]"#).unwrap();
@@ -398,12 +408,14 @@ mod tests {
         assert_eq!(desc_hash(r#"[{"id":"x"}]"#).unwrap(), desc_hash(r#"[{"description":""}]"#).unwrap());
     }
 
+    #[test_id(taqafbj)]
     #[test]
     fn metadata_reads_a_key_or_empty() {
         assert_eq!(metadata_value(r#"[{"metadata":{"claim_desc_hash":"abc"}}]"#, HASH_KEY), "abc");
         assert_eq!(metadata_value(r#"[{"id":"x"}]"#, HASH_KEY), "");
     }
 
+    #[test_id(td0e9xr)]
     #[test]
     fn force_pair_is_stripped_and_description_edits_detected() {
         let u = parse_update_args(&a(&["sp-1", "--body-file", "f", "--force-claimed", "why", "--priority", "1"]));
@@ -418,6 +430,7 @@ mod tests {
 
     /// sp-mve9i: the claim is the lifecycle row's — WORKING, its holder, its lease — and bd's
     /// status and assignee play no part.
+    #[test_id(tljkbex)]
     #[test]
     fn live_claim_is_the_lifecycle_rows_working_holder_and_lease() {
         use spira_store::lc_state::Row;
@@ -440,6 +453,7 @@ mod tests {
         assert!(live_claim(None, now).is_none());
     }
 
+    #[test_id(tu18h0g)]
     #[test]
     fn iso_parses_offsets_and_fractions() {
         assert_eq!(iso_of(951_868_800), "2000-03-01T00:00:00Z");

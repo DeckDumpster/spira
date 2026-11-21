@@ -60,6 +60,7 @@ fn dep_adds(bd: &FakeBd) -> Vec<Vec<String>> {
 }
 
 // covers: UC-operator-channel-14
+#[test_id(tbimaal)]
 #[test]
 fn a_question_about_a_work_bead_files_a_separate_decision_bead_and_names_it_in_x_spira_bead() {
     let (bd, sent) = ask_about_work_bead("mail-uc14-decision", false);
@@ -69,6 +70,7 @@ fn a_question_about_a_work_bead_files_a_separate_decision_bead_and_names_it_in_x
 }
 
 // covers: UC-operator-channel-14
+#[test_id(tsh6a96)]
 #[test]
 fn the_decision_bead_is_linked_to_the_work_bead_as_relates_to_never_blocking() {
     let (bd, _) = ask_about_work_bead("mail-uc14-link", false);
@@ -78,6 +80,7 @@ fn the_decision_bead_is_linked_to_the_work_bead_as_relates_to_never_blocking() {
 }
 
 // covers: UC-operator-channel-14
+#[test_id(tpwjf29)]
 #[test]
 fn only_the_explicit_override_makes_the_decision_block_the_work_bead() {
     let (bd, _) = ask_about_work_bead("mail-uc14-override", true);

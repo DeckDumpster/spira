@@ -106,6 +106,7 @@ mod store_client_tests {
         (LcClient::over(t.clone(), true), t)
     }
 
+    #[test_id(trthm2f)]
     #[test]
     fn whether_a_filing_is_open_is_read_through_the_store_client() {
         let (lc, t) = client();
@@ -120,6 +121,7 @@ mod store_client_tests {
 
 #[cfg(test)]
 mod no_bead_fork {
+    #[test_id(tk5khq4)]
     #[test]
     fn this_crate_files_through_the_content_door_and_forks_no_bead_tool() {
         let found = bead::door::forks_a_bead_tool_under(&testkit::manifest_dir().join("src"));

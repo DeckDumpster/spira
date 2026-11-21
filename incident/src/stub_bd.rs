@@ -219,6 +219,7 @@ mod tests {
         run(&v, &mut std::io::empty()).unwrap()
     }
 
+    #[test_id(takkdh5)]
     #[test]
     fn a_second_call_sees_the_first_calls_writes() {
         let d = testkit::TempDir::new("stub-bd");

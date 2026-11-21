@@ -1,5 +1,8 @@
+#[macro_use]
+extern crate spira_test_id;
 use std::process::Command;
 
+#[test_id(tz24dkq)]
 #[test]
 fn git_add_all_in_a_worktree_with_a_session_tmpdir_stages_nothing_under_runtime() {
     let d = testkit::TempDir::new("ignored");

@@ -46,6 +46,7 @@ cockpit-collect = { path = "../../cockpit-collect" }
 cockpit-ops = { path = "../../cockpit/ops" }
 
 [dev-dependencies]
+spira-test-id = { path = "../../spira-test-id" }
 testkit = { path = "../../testkit" }
 queue = { path = "../../queue" }
 dwarf = { path = "../../dwarf" }

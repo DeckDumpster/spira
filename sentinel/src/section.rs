@@ -370,6 +370,7 @@ mod tests {
         format_rfc3339(NOW - ago)
     }
 
+    #[test_id(t5txmru)]
     #[test]
     fn a_done_without_wall_time_starts_where_the_dead_born_it_closes_did() {
         let text = format!(
@@ -391,6 +392,7 @@ mod tests {
         );
     }
 
+    #[test_id(tv4ylx3)]
     #[test]
     fn a_done_with_no_born_and_no_wall_time_is_no_run_and_with_wall_time_is() {
         let text = format!("{} done builder sp-a rc=0 status=open wall_s=?\n{} done builder sp-b rc=0 status=open wall_s=60\n", at(100), at(50));
@@ -399,6 +401,7 @@ mod tests {
         assert_eq!((runs[0].bead.as_str(), runs[0].start), ("sp-b", NOW - 110));
     }
 
+    #[test_id(tjnqwyj)]
     #[test]
     fn the_ceiling_the_config_holds_decides_set_already_applied_or_stale() {
         let i = parse_intent(&json!({
@@ -421,6 +424,7 @@ mod tests {
         }})
     }
 
+    #[test_id(t54lhar)]
     #[test]
     fn a_shedding_host_section_raises_host_shedding_and_a_calm_or_absent_one_does_not() {
         assert!(host_shedding(&json!({ "sections": [host_section(true)] })));
@@ -432,6 +436,7 @@ mod tests {
         assert_eq!(shedding["status"], "True");
     }
 
+    #[test_id(tm985fk)]
     #[test]
     fn the_mirror_reads_the_condition_the_watchtower_publishes() {
         use watchtower::host_section::{status_of, Host, Sample};
@@ -454,6 +459,7 @@ mod tests {
         assert!(!host_shedding(&json!({ "sections": [published(None)] })));
     }
 
+    #[test_id(tni1916)]
     #[test]
     fn only_unacknowledged_dwarf_fleet_intents_are_open() {
         let intent = |action: &str, ack: Value| {
@@ -478,6 +484,7 @@ mod tests {
         assert_eq!(open_intents(&snap).iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["intents/DwarfFleet/fleet/1"]);
     }
 
+    #[test_id(t08yjmj)]
     #[test]
     fn the_dwarf_ledgers_own_writer_is_what_the_reader_reads() {
         let dir = testkit::TempDir::new("fleet-ledger");

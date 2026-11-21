@@ -1,6 +1,8 @@
 //! `cr open` then `cr seal` over a real git repository: the staged files are the source
 //! commit's bytes, even after the landing ref has moved on.
 
+#[macro_use]
+extern crate spira_test_id;
 #[path = "../src/tests/gh.rs"]
 mod gh;
 
@@ -26,6 +28,7 @@ fn git(dir: &Path, args: &[&str]) -> Vec<u8> {
     out.stdout
 }
 
+#[test_id(tz9b937)]
 #[test]
 fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
     let repo = testkit::TempDir::new("cr-flow-repo");

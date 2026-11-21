@@ -408,6 +408,7 @@ mod tests {
         EventRow::new(B, kind, "", &format!("2026-09-28T10:{ts}Z"))
     }
 
+    #[test_id(tmfss1a)]
     #[test]
     fn a_stack_conflict_refusal_is_not_an_attempt() {
         assert_eq!(classify("stack-conflict"), ReturnClass::RebaseReturn);
@@ -420,6 +421,7 @@ mod tests {
         assert_eq!(fold(B, &r).attempts, 0);
     }
 
+    #[test_id(tf0fd1g)]
     #[test]
     fn a_blocker_conflict_wait_is_not_an_attempt() {
         assert_eq!(classify("blocker-conflict"), ReturnClass::RebaseReturn);
@@ -433,6 +435,7 @@ mod tests {
         assert_eq!(fold(B, &r).attempts, 0);
     }
 
+    #[test_id(tkl8v9o)]
     #[test]
     fn a_no_rebase_after_a_clean_submit_is_not_an_attempt() {
         assert_eq!(classify("no-rebase"), ReturnClass::RebaseReturn);
@@ -453,18 +456,21 @@ mod tests {
         assert_eq!(fold(B, &red).attempts, 1, "planted control: a real red is still charged");
     }
 
+    #[test_id(t3lik4r)]
     #[test]
     fn a_double_claim_a_second_apart_is_one_attempt() {
         let r = vec![at("claimed", "00:00"), at("claimed", "00:01")];
         assert_eq!(fold(B, &r).attempts, 1);
     }
 
+    #[test_id(t5376je)]
     #[test]
     fn three_claims_released_without_submit_are_three_attempts() {
         let r = vec![at("claimed", "00:00"), at("claimed", "10:00"), at("claimed", "20:00")];
         assert_eq!(fold(B, &r).attempts, 3);
     }
 
+    #[test_id(tatu2pi)]
     #[test]
     fn the_old_count_charged_a_double_claim_twice() {
         // Planted control: counting every claim row, as the fold used to, reaches 3 here.
@@ -477,6 +483,7 @@ mod tests {
         assert_eq!(fold(B, &two).attempts, 2, "new count: not poisoned");
     }
 
+    #[test_id(tsoe5qu)]
     #[test]
     fn a_collateral_ejection_is_free_and_an_owners_is_charged() {
         let free = fold(B, &rows(&[("claimed", ""), ("reopen", "queue-eject-collateral")]));
@@ -485,6 +492,7 @@ mod tests {
         assert_eq!((owned.attempts, owned.requeues), (1, 1));
     }
 
+    #[test_id(tn38a96)]
     #[test]
     fn the_counts_are_the_same_whichever_log_a_row_lives_in() {
         let all = rows(&[
@@ -512,6 +520,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-19
+    #[test_id(tca5k20)]
     #[test]
     fn attempts_come_from_the_events_trail_and_no_label_or_other_event_counts() {
         let noise = [
@@ -528,6 +537,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-19
+    #[test_id(tjxyqqs)]
     #[test]
     fn a_thrash_or_unjudged_death_is_no_attempt_but_a_real_failure_after_them_is() {
         let r = rows(&[("claimed", ""), ("requeued", "thrash"), ("claimed", ""), ("requeued", "unjudged-killed"), ("claimed", "")]);
@@ -535,6 +545,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-19
+    #[test_id(t2hbqib)]
     #[test]
     fn nothing_since_a_poison_clear_is_zero_attempts_and_a_claim_after_it_is_one() {
         let cleared = rows(&[("claimed", ""), ("claimed", ""), ("claimed", ""), ("poison.cleared", "op")]);
@@ -543,6 +554,7 @@ mod tests {
         assert_eq!(fold(B, &again).attempts, 1);
     }
 
+    #[test_id(t8kjodn)]
     #[test]
     fn null_safe_no_events() {
         let l = fold(B, &[]);
@@ -550,6 +562,7 @@ mod tests {
         assert_eq!(l.floor, None);
     }
 
+    #[test_id(tb8g8x3)]
     #[test]
     fn null_safe_nothing_after_floor() {
         // sp-r66qd: three failures, then a clear (unpoison.sh, now spira-claim unpoison), then nothing: 0, not <nil>.
@@ -559,12 +572,14 @@ mod tests {
         assert!(l.floor.is_some());
     }
 
+    #[test_id(txuqxq0)]
     #[test]
     fn poison_cleared_floor() {
         let r = rows(&[("claimed", ""), ("claimed", ""), ("claimed", ""), ("poison.cleared", "x"), ("claimed", "")]);
         assert_eq!(fold(B, &r).attempts, 1);
     }
 
+    #[test_id(tsouck8)]
     #[test]
     fn fresh_run_after_clear_counts_from_zero() {
         let r = rows(&[
@@ -579,6 +594,7 @@ mod tests {
         assert_eq!(fold(B, &r).attempts, 3);
     }
 
+    #[test_id(ttqvyua)]
     #[test]
     fn same_second_as_floor_is_excluded() {
         let r = vec![
@@ -588,6 +604,7 @@ mod tests {
         assert_eq!(fold(B, &r).attempts, 0);
     }
 
+    #[test_id(tri8lx0)]
     #[test]
     fn status_changed_in_progress_is_a_claim_other_status_is_not() {
         let r = rows(&[
@@ -598,23 +615,27 @@ mod tests {
         assert_eq!(fold(B, &r).attempts, 1);
     }
 
+    #[test_id(ts1rufn)]
     #[test]
     fn claim_then_close_is_zero() {
         assert_eq!(fold(B, &rows(&[("claimed", ""), ("closed", "OUTCOME: submitted")])).attempts, 0);
     }
 
+    #[test_id(tk1kbrq)]
     #[test]
     fn thrash_is_net_zero() {
         let r = rows(&[("claimed", ""), ("requeued", "thrash"), ("claimed", ""), ("requeued", "thrash")]);
         assert_eq!(fold(B, &r).attempts, 0);
     }
 
+    #[test_id(tp17dd5)]
     #[test]
     fn unjudged_is_net_zero() {
         let r = rows(&[("claimed", ""), ("requeued", "unjudged-killed"), ("claimed", ""), ("closed", "")]);
         assert_eq!(fold(B, &r).attempts, 0);
     }
 
+    #[test_id(td6zfx4)]
     #[test]
     fn backfill_credit_with_no_open_attempt_still_forgives() {
         // An operator's hand-written unjudged-backfill offset row after the fact.
@@ -625,12 +646,14 @@ mod tests {
         assert_eq!(fold(B, &r).attempts, 0);
     }
 
+    #[test_id(th6gi68)]
     #[test]
     fn hand_close_is_a_credit() {
         let r = rows(&[("claimed", ""), ("claimed", ""), ("closed", ""), ("closed", "")]);
         assert_eq!(fold(B, &r).attempts, 0);
     }
 
+    #[test_id(t3kduk7)]
     #[test]
     fn rebase_returns_do_not_count_as_attempts() {
         // A session that claimed, could not rebase, and was sent back: not a failure.
@@ -647,6 +670,7 @@ mod tests {
         assert_eq!(l.attempts, 0, "{l:#?}");
     }
 
+    #[test_id(t0r3r2q)]
     #[test]
     fn rebase_return_of_closed_work_does_not_forgive_an_earlier_failure() {
         // Two charged failures, then a success, then a rebase return of the closed work.
@@ -660,12 +684,14 @@ mod tests {
         assert_eq!(fold(B, &r).attempts, 2);
     }
 
+    #[test_id(tpap3hk)]
     #[test]
     fn a_fast_tier_tool_failure_is_the_harnesss_and_a_fast_tier_red_is_judged() {
         assert_eq!(classify("fast-tier-harness"), ReturnClass::HarnessReturn);
         assert_eq!(classify("fast-tier-red"), ReturnClass::Judged);
     }
 
+    #[test_id(tcxkte3)]
     #[test]
     fn three_no_verdict_runs_charge_nothing() {
         let nv = NO_VERDICT_CAUSE;
@@ -684,6 +710,7 @@ mod tests {
         assert_eq!(fold(B, &one_session).attempts, 0);
     }
 
+    #[test_id(tarl4u0)]
     #[test]
     fn three_base_red_gate_exits_charge_nothing() {
         let br = BASE_RED_CAUSE;
@@ -704,12 +731,14 @@ mod tests {
         assert_eq!(classify("gate-red"), ReturnClass::Judged);
     }
 
+    #[test_id(t1jd36u)]
     #[test]
     fn a_base_red_run_then_its_close_forgives_nothing_earlier() {
         let r = rows(&[("claimed", ""), ("claimed", ""), ("requeued", BASE_RED_CAUSE), ("closed", "")]);
         assert_eq!(fold(B, &r).attempts, 1);
     }
 
+    #[test_id(tlifgxn)]
     #[test]
     fn three_branch_red_runs_still_charge() {
         let r = rows(&[
@@ -723,6 +752,7 @@ mod tests {
         assert_eq!(fold(B, &r).attempts, 3);
     }
 
+    #[test_id(tha64t2)]
     #[test]
     fn a_no_verdict_run_then_its_close_forgives_nothing_earlier() {
         let r = rows(&[
@@ -734,6 +764,7 @@ mod tests {
         assert_eq!(fold(B, &r).attempts, 1);
     }
 
+    #[test_id(tzcsa3l)]
     #[test]
     fn no_verdict_causes_are_harness_returns() {
         assert_eq!(classify("gate-no-verdict"), ReturnClass::HarnessReturn);
@@ -741,6 +772,7 @@ mod tests {
         assert_eq!(classify("gate-red"), ReturnClass::Judged);
     }
 
+    #[test_id(tivv1yo)]
     #[test]
     fn a_gate_unfinished_release_nets_its_claim_to_zero() {
         assert_eq!(fold(B, &rows(&[("claimed", "")])).attempts, 1, "planted control: a claim with no release event is charged");
@@ -748,12 +780,14 @@ mod tests {
         assert_eq!(fold(B, &r).attempts, 0);
     }
 
+    #[test_id(trg9mn6)]
     #[test]
     fn judged_reopen_does_not_forgive() {
         let r = rows(&[("claimed", ""), ("reopen", "gate-red"), ("claimed", ""), ("reopen", "gate-red")]);
         assert_eq!(fold(B, &r).attempts, 2);
     }
 
+    #[test_id(tjz92fu)]
     #[test]
     fn rebase_returns_do_not_count_as_requeues() {
         // sp-j1q6o's regression: returned three times for rebase, then submitted.
@@ -784,6 +818,7 @@ mod tests {
         assert_eq!(l.attempts, 0);
     }
 
+    #[test_id(thv0s9r)]
     #[test]
     fn three_red_returns_count() {
         let r = rows(&[
@@ -805,6 +840,7 @@ mod tests {
         assert_eq!(fold(B, &r).requeues, 3);
     }
 
+    #[test_id(t1jistq)]
     #[test]
     fn unpaired_reopened_counts() {
         // G13: five bare bd reopens with no cause row (a hand `bd reopen`) still count.
@@ -812,6 +848,7 @@ mod tests {
         assert_eq!(fold(B, &r).requeues, 5);
     }
 
+    #[test_id(t02wysu)]
     #[test]
     fn reopened_paired_only_within_window() {
         let r = vec![
@@ -824,12 +861,14 @@ mod tests {
         assert_eq!(fold(B, &r).requeues, 1);
     }
 
+    #[test_id(t8qv2v2)]
     #[test]
     fn requeues_ignore_the_poison_floor() {
         let r = rows(&[("reopen", "gate-red"), ("poison.cleared", "x"), ("reopen", "gate-red")]);
         assert_eq!(fold(B, &r).requeues, 2);
     }
 
+    #[test_id(t8id8g9)]
     #[test]
     fn sp_vd9dn_real_stream_is_zero() {
         // Verbatim shape of sp-vd9dn's events on 2026-09-27/28 (the false ask).
@@ -864,12 +903,14 @@ mod tests {
         assert_eq!(l.attempts, 1);
     }
 
+    #[test_id(tvrrska)]
     #[test]
     fn counts_reclaims() {
         let r = rows(&[("reclaimed", ""), ("reclaimed", "lease"), ("reclaimed", "")]);
         assert_eq!(fold(B, &r).reclaims, 3);
     }
 
+    #[test_id(tsa4ukq)]
     #[test]
     fn other_beads_rows_are_ignored() {
         let mut r = rows(&[("claimed", "")]);
@@ -878,6 +919,7 @@ mod tests {
         assert_eq!(fold("sp-other", &r).attempts, 1);
     }
 
+    #[test_id(t42rmua)]
     #[test]
     fn an_unlisted_cause_charges_nothing_and_each_code_fault_cause_charges() {
         for cause in ["sccache-connection-reset", "sift-bounced-deadlocked-parent", "some-future-cause"] {
@@ -890,6 +932,7 @@ mod tests {
         }
     }
 
+    #[test_id(tslvx95)]
     #[test]
     fn classification_table() {
         use ReturnClass::*;
@@ -938,6 +981,7 @@ mod tests {
         }
     }
 
+    #[test_id(t5bo3wn)]
     #[test]
     fn parse_rows_contract() {
         assert!(parse_rows("").is_err());
@@ -950,6 +994,7 @@ mod tests {
         assert!(parse_rows(r#"[{"event_type":"claimed","created_at":"x"}]"#).is_err());
     }
 
+    #[test_id(tiqmhl2)]
     #[test]
     fn timestamps_normalize_and_parse() {
         assert_eq!(norm_ts("2026-09-27 14:14:38 +0000 UTC"), "2026-09-27T14:14:38");

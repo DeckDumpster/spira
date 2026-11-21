@@ -48,6 +48,7 @@ mod tests {
         matches!(n, "test-a.sh" | "test-b.sh")
     }
 
+    #[test_id(thtg7t9)]
     #[test]
     fn list_trims_dedups_and_keeps_order() {
         assert_eq!(
@@ -56,6 +57,7 @@ mod tests {
         );
     }
 
+    #[test_id(tg90p0r)]
     #[test]
     fn unknown_name_is_named() {
         assert_eq!(
@@ -64,6 +66,7 @@ mod tests {
         );
     }
 
+    #[test_id(tz5hqts)]
     #[test]
     fn stdin_ignores_blank_lines_and_empty_means_nothing() {
         assert_eq!(
@@ -74,6 +77,7 @@ mod tests {
         assert!(from_lines("\n\n", &known).unwrap().is_empty());
     }
 
+    #[test_id(t0qijlk)]
     #[test]
     fn path_like_names_are_not_suites() {
         assert!(plausible_name("test-a.sh"));

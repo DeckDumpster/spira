@@ -2,6 +2,8 @@
 //! work and no exit transition happens inside its bound, and BLIND when the store cannot be read.
 //! Each runs on the task rig's virtual clock against a fake store answer.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -107,6 +109,7 @@ fn rig_at(make: impl Fn(u64) -> Snapshot) -> (TaskRig, Arc<Mutex<Snapshot>>) {
     (r, w)
 }
 
+#[test_id(tw15iqe)]
 #[test]
 fn six_working_and_no_submit_for_three_hours_raises_a_stall_naming_working_to_submitted_in_one_period() {
     let (r, _) = rig_at(todays_case);
@@ -121,6 +124,7 @@ fn six_working_and_no_submit_for_three_hours_raises_a_stall_naming_working_to_su
     assert!(lines(&r).iter().any(|l| l.contains("WAIT ") && l.contains("WORKING 6")), "the period's table line is written too");
 }
 
+#[test_id(t9cns03)]
 #[test]
 fn a_stall_pages_once_while_it_stands_and_says_when_it_clears() {
     let (mut r, w) = rig_at(todays_case);
@@ -132,6 +136,7 @@ fn a_stall_pages_once_while_it_stands_and_says_when_it_clears() {
     assert!(lines(&r).iter().any(|l| l.contains("STALL CLEARED WORKING→SUBMITTED spira")), "{:?}", lines(&r));
 }
 
+#[test_id(t6oww7a)]
 #[test]
 fn a_healthy_flow_raises_no_stall() {
     let (mut r, _) = rig_at(healthy);
@@ -141,6 +146,7 @@ fn a_healthy_flow_raises_no_stall() {
     assert_eq!(tables, 13, "one table line per period");
 }
 
+#[test_id(t2uo0z1)]
 #[test]
 fn an_unreadable_store_reports_blind_and_pages_never_clear() {
     let w = Arc::new(Mutex::new(blind("spira-lc dwell: cannot tell: the control store: locked")));
@@ -154,6 +160,7 @@ fn an_unreadable_store_reports_blind_and_pages_never_clear() {
     assert_eq!(stalls(&r), Vec::<String>::new());
 }
 
+#[test_id(tz6ku5k)]
 #[test]
 fn an_observe_that_fails_is_blind_too() {
     let (_, stream, kind) = WatchTransitions::boot();
@@ -163,6 +170,7 @@ fn an_observe_that_fails_is_blind_too() {
     assert!(all.iter().any(|l| l.contains("P0 BLIND") && l.contains("connection refused")), "{all:?}");
 }
 
+#[test_id(to85zk2)]
 #[test]
 fn each_bound_is_judged_on_its_own_edge() {
     let now = T0;
@@ -187,6 +195,7 @@ fn stalls_of(s: &Snapshot, now: u64) -> Vec<Stall> {
     spira_runtime::tasks::e::watch_transitions::stalls(s, now, &config())
 }
 
+#[test_id(t367cda)]
 #[test]
 fn a_kind_never_seen_back_to_the_horizon_counts_as_at_least_the_horizons_age() {
     let now = T0;
@@ -199,6 +208,7 @@ fn a_kind_never_seen_back_to_the_horizon_counts_as_at_least_the_horizons_age() {
     assert!(stalls_of(&s, now).iter().all(|x| x.edge != "WORKING→SUBMITTED"), "a short horizon proves nothing");
 }
 
+#[test_id(tz6w9wb)]
 #[test]
 fn the_table_has_count_oldest_and_percentiles_per_state() {
     let now = T0;
@@ -210,6 +220,7 @@ fn the_table_has_count_oldest_and_percentiles_per_state() {
     assert!(line.contains("spira: claim 10m submit 5m cut 15m delivered 20m activated 10m"), "{line}");
 }
 
+#[test_id(tojplot)]
 #[test]
 fn a_dwell_answer_becomes_the_snapshot_with_deliver_tabled_as_cut() {
     let dwell = serde_json::json!({
@@ -234,6 +245,7 @@ fn a_dwell_answer_becomes_the_snapshot_with_deliver_tabled_as_cut() {
     );
 }
 
+#[test_id(trte069)]
 #[test]
 fn the_row_is_registered_and_its_boot_arms_the_configured_period() {
     let t = acc::row(NAME);
@@ -243,6 +255,7 @@ fn the_row_is_registered_and_its_boot_arms_the_configured_period() {
     assert_eq!(Config::pinned().map(|c| c.period_s), Ok(300), "every key resolves through the config door");
 }
 
+#[test_id(tk4to0u)]
 #[test]
 fn every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("e/watch_transitions.rs")), None);
@@ -252,12 +265,14 @@ fn every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
+#[test_id(tjo9rll)]
 #[test]
 fn two_days_replay_identically() {
     let r = assert_deterministic(|_| rig(Arc::new(Mutex::new(healthy(T0)))), 7, 2);
     acc::assert_healthy(&r, STREAM);
 }
 
+#[test_id(tne8maw)]
 #[test]
 fn work_spread_thinly_across_repos_stalls_as_all_repos() {
     let now = T0;
@@ -272,6 +287,7 @@ fn edges(s: &Snapshot, now: u64) -> Vec<String> {
     stalls_of(s, now).into_iter().map(|x| x.key()).collect()
 }
 
+#[test_id(tz66i4o)]
 #[test]
 fn work_that_entered_delivery_minutes_ago_after_a_long_quiet_spell_raises_no_stall() {
     let now = T0;
@@ -281,6 +297,7 @@ fn work_that_entered_delivery_minutes_ago_after_a_long_quiet_spell_raises_no_sta
     assert!(!edges(&s, now).iter().any(|k| k.starts_with("IN_DELIVERY→LANDED")), "{:?}", edges(&s, now));
 }
 
+#[test_id(tj6wuml)]
 #[test]
 fn work_in_delivery_past_the_bound_with_no_delivered_raises_the_stall() {
     let now = T0;
@@ -290,6 +307,7 @@ fn work_in_delivery_past_the_bound_with_no_delivered_raises_the_stall() {
     assert!(edges(&s, now).contains(&"IN_DELIVERY→LANDED spira".to_string()));
 }
 
+#[test_id(tsme0in)]
 #[test]
 fn submitted_work_behind_a_full_set_of_open_rounds_is_queued_not_stalled() {
     let now = T0;
@@ -304,6 +322,7 @@ fn submitted_work_behind_a_full_set_of_open_rounds_is_queued_not_stalled() {
     assert!(edges(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()), "rounds that cannot be counted do not excuse the wait");
 }
 
+#[test_id(tiltasx)]
 #[test]
 fn a_bead_that_leaves_delivery_for_landed_refreshes_the_last_delivered_time() {
     let now = T0;
@@ -321,6 +340,7 @@ fn a_bead_that_leaves_delivery_for_landed_refreshes_the_last_delivered_time() {
     assert!(carry.stalled.is_empty());
 }
 
+#[test_id(t6uf5oe)]
 #[test]
 fn a_bead_returned_to_rework_is_not_a_landing_and_a_blind_period_keeps_what_was_seen() {
     let now = T0;
@@ -356,6 +376,7 @@ fn delivery_pages(s: &Snapshot, now: u64) -> usize {
     stalls_of(s, now).iter().filter(|x| x.edge == DELIVERY_EDGE).count()
 }
 
+#[test_id(t6lf3hl)]
 #[test]
 fn a_delivery_stall_with_the_round_beating_and_nothing_failed_is_not_paged() {
     let now = T0;
@@ -363,18 +384,21 @@ fn a_delivery_stall_with_the_round_beating_and_nothing_failed_is_not_paged() {
     assert_eq!(delivery_pages(&owned(stuck_delivery(now), now, 30, None), now), 0, "a fresh heartbeat means the owner is handling it");
 }
 
+#[test_id(t7r5ys5)]
 #[test]
 fn a_delivery_stall_pages_when_the_round_heartbeat_has_gone_silent() {
     let now = T0;
     assert_eq!(delivery_pages(&owned(stuck_delivery(now), now, 121, None), now), 1);
 }
 
+#[test_id(t179p1b)]
 #[test]
 fn a_delivery_stall_pages_when_the_round_reports_a_failed_action_despite_a_fresh_beat() {
     let now = T0;
     assert_eq!(delivery_pages(&owned(stuck_delivery(now), now, 5, Some("stalled: no progress in 300s")), now), 1);
 }
 
+#[test_id(txmsr05)]
 #[test]
 fn a_round_progress_file_becomes_the_owner_and_a_stalled_detail_is_its_failure() {
     let ok = round_owner(r#"{"phase":"vm","detail":"VM 109 ready","updated_at":1700}"#).unwrap();
@@ -403,24 +427,28 @@ fn submitted_ago(mins: u64, open: u64, cut_ago: u64) -> (Snapshot, u64) {
     (s, now)
 }
 
+#[test_id(tvj7s5t)]
 #[test]
 fn a_bead_submitted_two_minutes_ago_is_not_stalled_by_a_cut_six_minutes_ago() {
     let (s, now) = submitted_ago(2, 0, 6);
     assert!(!five_minute_cut_bound(&s, now).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")));
 }
 
+#[test_id(tik1fcn)]
 #[test]
 fn a_bead_submitted_ten_minutes_ago_behind_the_full_open_rounds_is_not_stalled() {
     let (s, now) = submitted_ago(10, 1, 6);
     assert!(!five_minute_cut_bound(&s, now).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")));
 }
 
+#[test_id(tigjzkr)]
 #[test]
 fn a_bead_submitted_ten_minutes_ago_with_no_round_open_is_stalled() {
     let (s, now) = submitted_ago(10, 0, 6);
     assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
 }
 
+#[test_id(twz520g)]
 #[test]
 fn a_certified_bead_past_the_bound_with_a_free_slot_is_stalled_even_after_a_recent_cut() {
     let now = T0;
@@ -431,6 +459,7 @@ fn a_certified_bead_past_the_bound_with_a_free_slot_is_stalled_even_after_a_rece
     assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
 }
 
+#[test_id(t7i28vl)]
 #[test]
 fn an_old_bead_is_not_stalled_just_after_the_round_ahead_of_it_closed() {
     let now = T0;
@@ -443,6 +472,7 @@ fn an_old_bead_is_not_stalled_just_after_the_round_ahead_of_it_closed() {
     assert!(edges(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()), "the slot has been free past the bound");
 }
 
+#[test_id(tntn7t0)]
 #[test]
 fn a_certified_bead_past_a_non_default_bound_is_quiet_for_that_bound_after_a_delivered() {
     let now = T0;
@@ -455,6 +485,7 @@ fn a_certified_bead_past_a_non_default_bound_is_quiet_for_that_bound_after_a_del
     assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
 }
 
+#[test_id(t619gre)]
 #[test]
 fn a_submitted_bead_waiting_twenty_minutes_behind_an_open_round_is_queued_not_stalled() {
     let now = T0;
@@ -469,6 +500,7 @@ fn a_submitted_bead_waiting_twenty_minutes_behind_an_open_round_is_queued_not_st
     assert!(keys(&s).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()), "no round open and the wait past the bound pages");
 }
 
+#[test_id(tppemdy)]
 #[test]
 fn submitted_beads_with_no_recorded_repo_wait_behind_a_full_round_in_a_named_repo() {
     let now = T0;
@@ -555,6 +587,7 @@ fn stalls_for_landing(at: u64, commit: &'static str, contained: bool, now: u64) 
         .collect()
 }
 
+#[test_id(tz7gbub)]
 #[test]
 fn a_landing_contained_in_the_release_in_effect_raises_no_stall_however_old_the_recorded_activation(
 ) {
@@ -565,6 +598,7 @@ fn a_landing_contained_in_the_release_in_effect_raises_no_stall_however_old_the_
     );
 }
 
+#[test_id(tf4jsbj)]
 #[test]
 fn a_landing_missing_from_the_release_in_effect_raises_the_stall_past_the_bound_whatever_the_recorded_activation(
 ) {
@@ -595,18 +629,21 @@ fn stalls_with_current_published_only(at: u64, commit: &'static str, contained: 
     spira_runtime::tasks::e::watch_transitions::stalls(&snap, now, &config()).into_iter().map(|s| s.key()).collect()
 }
 
+#[test_id(tjyprod)]
 #[test]
 fn a_landing_before_the_current_release_was_published_is_no_stall_though_no_activation_was_recorded_for_it() {
     let found = stalls_with_current_published_only(110, "", false, 110 + 30 * MIN);
     assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
 }
 
+#[test_id(theq8sp)]
 #[test]
 fn a_landing_the_current_release_contains_is_no_stall_when_only_its_publication_was_recorded() {
     let found = stalls_with_current_published_only(130, LANDED, true, 130 + 30 * MIN);
     assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
 }
 
+#[test_id(tkcmdm5)]
 #[test]
 fn a_landing_after_the_current_release_was_published_and_not_in_it_stalls_past_the_bound() {
     let found = stalls_with_current_published_only(130, "", false, 130 + 30 * MIN);
@@ -615,6 +652,7 @@ fn a_landing_after_the_current_release_was_published_and_not_in_it_stalls_past_t
     assert!(found.contains(&"LANDED→ACTIVATED spira".to_string()), "{found:?}");
 }
 
+#[test_id(tfj1r1g)]
 #[test]
 fn a_landing_that_recorded_no_commit_is_judged_by_time_against_the_recorded_activation() {
     let after = stalls_for_landing(1_000, "", false, 1_000 + 16 * MIN);
@@ -629,6 +667,7 @@ fn a_landing_that_recorded_no_commit_is_judged_by_time_against_the_recorded_acti
     );
 }
 
+#[test_id(tkllbzw)]
 #[test]
 fn the_stall_ages_from_the_oldest_landing_the_release_lacks_not_from_a_contained_older_one() {
     let (run, rel) = stale_record_other_release_in_effect();
@@ -647,6 +686,7 @@ fn the_stall_ages_from_the_oldest_landing_the_release_lacks_not_from_a_contained
     assert!(keys(new + 16 * MIN).contains(&"LANDED→ACTIVATED spira".to_string()));
 }
 
+#[test_id(tzd56em)]
 #[test]
 fn a_release_containing_the_newest_landing_clears_every_landing_without_testing_the_older_ones() {
     let (run, rel) = stale_record_other_release_in_effect();
@@ -662,6 +702,7 @@ fn a_release_containing_the_newest_landing_clears_every_landing_without_testing_
     assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
 }
 
+#[test_id(tk3ctmm)]
 #[test]
 fn an_old_landing_without_a_commit_is_judged_by_time_while_a_newer_one_is_tested_by_ancestry() {
     let (run, rel) = stale_record_other_release_in_effect();
@@ -677,6 +718,7 @@ fn an_old_landing_without_a_commit_is_judged_by_time_while_a_newer_one_is_tested
     assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
 }
 
+#[test_id(tqlzib3)]
 #[test]
 fn with_no_current_link_a_landing_is_tested_against_the_newest_activated_release() {
     let (run, rel) = stale_record_other_release_in_effect();
@@ -688,6 +730,7 @@ fn with_no_current_link_a_landing_is_tested_against_the_newest_activated_release
     assert!(found.contains(&"LANDED→ACTIVATED spira".to_string()), "{found:?}");
 }
 
+#[test_id(t23e8ap)]
 #[test]
 fn a_landing_whose_ancestry_cannot_be_tested_pages_its_edge_and_leaves_the_rest_watched() {
     let (run, rel) = stale_record_other_release_in_effect();
@@ -697,6 +740,7 @@ fn a_landing_whose_ancestry_cannot_be_tested_pages_its_edge_and_leaves_the_rest_
     assert!(found.contains(&"LANDED→ACTIVATED spira".to_string()), "{found:?}");
 }
 
+#[test_id(tzmhtay)]
 #[test]
 fn the_repo_map_ancestry_test_tells_contained_from_not_contained_and_from_unknown() {
     let dir = testkit::TempDir::new("wt-git");
@@ -739,6 +783,7 @@ fn the_repo_map_ancestry_test_tells_contained_from_not_contained_and_from_unknow
     );
 }
 
+#[test_id(truq5ep)]
 #[test]
 fn a_round_open_in_another_repo_does_not_suppress_this_repos_stall() {
     let (mut s, now) = submitted_ago(20, 0, 24);
@@ -746,6 +791,7 @@ fn a_round_open_in_another_repo_does_not_suppress_this_repos_stall() {
     assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
 }
 
+#[test_id(t3si34t)]
 #[test]
 fn every_non_terminal_batch_state_counts_as_an_open_round_for_its_repo() {
     let row = |repo: &str, state: &str| serde_json::json!({"repo": repo, "state": state});
@@ -755,6 +801,7 @@ fn every_non_terminal_batch_state_counts_as_an_open_round_for_its_repo() {
     assert_eq!(open, BTreeMap::from([("spira".to_string(), 7), ("other".to_string(), 1)]));
 }
 
+#[test_id(t3xvpj2)]
 #[test]
 fn the_all_repos_row_waits_on_work_behind_no_round_only() {
     let (mut s, now) = submitted_ago(20, 1, 24);
@@ -763,6 +810,7 @@ fn the_all_repos_row_waits_on_work_behind_no_round_only() {
     assert!(!keys.iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "the covered repo's old bead and the other repo's young one: {keys:?}");
 }
 
+#[test_id(t3rzuhv)]
 #[test]
 fn the_all_repos_row_still_pages_when_no_round_is_open_and_work_waits_past_the_bound() {
     let (s, now) = submitted_ago(20, 0, 24);
@@ -777,6 +825,7 @@ fn the_all_repos_row_still_pages_when_no_round_is_open_and_work_waits_past_the_b
     assert!(!one.contains(&"SUBMITTED→IN_DELIVERY spira".to_string()) && one.contains(&"SUBMITTED→IN_DELIVERY other".to_string()), "{one:?}");
 }
 
+#[test_id(ttk547c)]
 #[test]
 fn a_round_in_any_phase_suppresses_the_stall_of_its_repo_and_the_all_repos_row() {
     for phase in ["OPEN", "CI_RUNNING", "ATTRIBUTING", "REBUILDING", "GREEN"] {
@@ -787,6 +836,7 @@ fn a_round_in_any_phase_suppresses_the_stall_of_its_repo_and_the_all_repos_row()
     }
 }
 
+#[test_id(tm8jw1r)]
 #[test]
 fn rounds_that_could_not_be_counted_leave_the_stall_standing() {
     let (mut s, now) = submitted_ago(20, 0, 24);
@@ -798,12 +848,14 @@ fn registration() -> runtime::event::Registration {
     WatchTransitions::new(config()).registration()
 }
 
+#[test_id(tcon92c)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig_at(todays_case).0, NAME);
     assert!(rows.iter().any(|k| k == "stalled"), "{rows:?}");
 }
 
+#[test_id(tozbumb)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(|| rig_at(todays_case).0, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
@@ -866,6 +918,7 @@ fn landing_stalls(l: &Lineage, at: u64, commit: &str, now: u64) -> Vec<String> {
     spira_runtime::tasks::e::watch_transitions::stalls(&snap, now, &config()).into_iter().map(|s| s.key()).collect()
 }
 
+#[test_id(t3jljmm)]
 #[test]
 fn a_hand_landing_with_no_lifecycle_member_delivered_after_its_release_activated_is_no_stall_once_a_descendant_is_active() {
     let l = lineage();
@@ -874,6 +927,7 @@ fn a_hand_landing_with_no_lifecycle_member_delivered_after_its_release_activated
     assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
 }
 
+#[test_id(tzisgos)]
 #[test]
 fn a_landing_the_active_release_does_not_contain_stalls_once_past_the_bound() {
     let l = lineage();
@@ -881,6 +935,7 @@ fn a_landing_the_active_release_does_not_contain_stalls_once_past_the_bound() {
     assert_eq!(found.iter().filter(|k| k.starts_with("LANDED→ACTIVATED")).count(), 1, "{found:?}");
 }
 
+#[test_id(tf20pi9)]
 #[test]
 fn a_landing_the_newest_activated_release_contains_is_no_stall_while_the_current_link_names_another() {
     let l = lineage();
@@ -889,6 +944,7 @@ fn a_landing_the_newest_activated_release_contains_is_no_stall_while_the_current
     assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
 }
 
+#[test_id(txnsyl6)]
 #[test]
 fn with_no_current_link_a_landing_whose_ancestry_cannot_be_tested_stalls() {
     let l = lineage();
@@ -897,6 +953,7 @@ fn with_no_current_link_a_landing_whose_ancestry_cannot_be_tested_stalls() {
     assert_eq!(found.iter().filter(|k| k.starts_with("LANDED→ACTIVATED")).count(), 1, "{found:?}");
 }
 
+#[test_id(t0ldbt0)]
 #[test]
 fn a_landing_an_activated_ancestor_of_the_active_release_is_no_stall() {
     let l = lineage();
@@ -912,6 +969,7 @@ fn pages(acts: &[runtime::event::EffectSpec]) -> Vec<String> {
     acts.iter().map(|a| a.input.clone()).filter(|l| l.contains("P0 ")).collect()
 }
 
+#[test_id(tbh0jqg)]
 #[test]
 fn a_stall_while_the_work_plane_is_halted_pages_nothing_and_the_row_names_the_halt() {
     let now = T0;
@@ -920,6 +978,7 @@ fn a_stall_while_the_work_plane_is_halted_pages_nothing_and_the_row_names_the_ha
     assert!(carry.halted.contains("operator order: freeze") && carry.halted.contains("600s"), "{}", carry.halted);
 }
 
+#[test_id(t8nwlnk)]
 #[test]
 fn the_same_stall_with_the_plane_running_pages() {
     let now = T0;
@@ -928,6 +987,7 @@ fn the_same_stall_with_the_plane_running_pages() {
     assert!(carry.halted.is_empty());
 }
 
+#[test_id(tpmv193)]
 #[test]
 fn after_a_halt_lifts_each_edge_waits_its_bound_again_before_paging() {
     let now = T0;
@@ -939,6 +999,7 @@ fn after_a_halt_lifts_each_edge_waits_its_bound_again_before_paging() {
     assert_eq!(pages(&acts).len(), 1, "{:?}", pages(&acts));
 }
 
+#[test_id(tts3vl1)]
 #[test]
 fn a_stall_already_paged_neither_repages_nor_clears_across_a_halt() {
     let now = T0;
@@ -955,6 +1016,7 @@ fn waiting_keys(s: &Snapshot, now: u64, round_max_open: u64) -> Vec<String> {
     spira_runtime::tasks::e::watch_transitions::stalls(s, now, &cfg).into_iter().map(|x| x.key()).collect()
 }
 
+#[test_id(tmlqthg)]
 #[test]
 fn a_round_open_at_the_limit_silences_the_cut_stall_and_a_free_slot_below_the_limit_does_not() {
     let (mut s, now) = submitted_ago(10, 1, 6);
@@ -968,6 +1030,7 @@ fn certified_tipped(id: &str, now: u64) -> Bead {
     Bead { tip: Some("t".into()), ..bead(id, "-", "CERTIFIED", now - 9 * HOUR) }
 }
 
+#[test_id(tf31c7h)]
 #[test]
 fn a_held_bead_or_one_whose_tip_is_on_the_landing_ref_is_not_counted_as_waiting() {
     let now = T0;
@@ -982,6 +1045,7 @@ fn a_held_bead_or_one_whose_tip_is_on_the_landing_ref_is_not_counted_as_waiting(
     assert!(!waiting_keys(&s, now, 1).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "{:?}", waiting_keys(&s, now, 1));
 }
 
+#[test_id(ts686m4)]
 #[test]
 fn mark_landed_flags_the_tip_the_ref_contains_and_leaves_an_untestable_tip_waiting() {
     let now = T0;
@@ -1011,6 +1075,7 @@ fn paced(mut s: Snapshot, repo: &str, owner: Owner) -> Snapshot {
     s
 }
 
+#[test_id(tcmlbhi)]
 #[test]
 fn a_cut_stall_with_the_repos_batcher_passing_and_no_pause_is_not_paged() {
     let now = T0;
@@ -1018,6 +1083,7 @@ fn a_cut_stall_with_the_repos_batcher_passing_and_no_pause_is_not_paged() {
     assert_eq!(cut_pages(&paced(stuck_cut(now), "spira", pace_owner(Some(now - 30), None)), now), 0);
 }
 
+#[test_id(tlroybh)]
 #[test]
 fn a_cut_stall_pages_when_the_repos_batcher_is_silent_paused_or_only_another_repos_beats() {
     let now = T0;
@@ -1027,6 +1093,7 @@ fn a_cut_stall_pages_when_the_repos_batcher_is_silent_paused_or_only_another_rep
     assert_eq!(pace_owner(None, None), Owner::default());
 }
 
+#[test_id(txqhiwy)]
 #[test]
 fn a_cut_stall_is_excused_per_repo_and_never_by_another_repos_batcher() {
     let now = T0;
@@ -1045,6 +1112,7 @@ fn blind_after_activation(now: u64, ago: u64) -> Snapshot {
     Snapshot { activated_at: Some(now - ago), ..blind("store unavailable: tried for 25 s") }
 }
 
+#[test_id(tci4l5j)]
 #[test]
 fn the_first_unreadable_tick_just_after_an_activation_pages_blind_with_the_stores_reason() {
     let (r, _) = rig_at(|now| blind_after_activation(now, 5));
@@ -1055,6 +1123,7 @@ fn the_first_unreadable_tick_just_after_an_activation_pages_blind_with_the_store
     assert!(!pages[0].contains("activation"), "the page does not reason about releases: {pages:?}");
 }
 
+#[test_id(t0gmccg)]
 #[test]
 fn a_second_unreadable_tick_does_not_page_again_and_a_readable_one_clears_blind() {
     let (mut r, w) = rig_at(|now| blind_after_activation(now, 5));
@@ -1067,6 +1136,7 @@ fn a_second_unreadable_tick_does_not_page_again_and_a_readable_one_clears_blind(
     assert_eq!(lines(&r).iter().filter(|l| l.contains("P0 BLIND")).count(), 2, "a read in between re-arms the page: {:?}", lines(&r));
 }
 
+#[test_id(t60xow0)]
 #[test]
 fn a_timed_out_observe_pages_blind_once_and_the_next_timed_out_one_does_not() {
     let (_, stream, kind) = WatchTransitions::boot();
@@ -1108,6 +1178,7 @@ fn edge_pages(s: &Snapshot, edge: &str, now: u64) -> usize {
     stalls_of(s, now).iter().filter(|x| x.edge == edge).count()
 }
 
+#[test_id(tqx7lzt)]
 #[test]
 fn each_task_owned_edge_pages_unowned_is_quiet_while_its_task_pulses_and_pages_when_it_is_silent() {
     let now = T0;
@@ -1121,6 +1192,7 @@ fn each_task_owned_edge_pages_unowned_is_quiet_while_its_task_pulses_and_pages_w
     }
 }
 
+#[test_id(tyyrbxl)]
 #[test]
 fn the_task_pulse_window_is_the_task_bound_not_the_round_heartbeat_bound() {
     let now = T0;
@@ -1129,6 +1201,7 @@ fn the_task_pulse_window_is_the_task_bound_not_the_round_heartbeat_bound() {
     assert!(spira_runtime::tasks::e::watch_transitions::stalls(&s, now, &cfg).iter().all(|x| x.edge != "ASK→ANSWERED"));
 }
 
+#[test_id(to62pyd)]
 #[test]
 fn an_observe_reads_each_owner_task_pulse_from_the_run_dir() {
     let lc = |_: &[&str]| Ok(serde_json::json!({ "beads": [], "horizon": 0, "last": {}, "landed_after": {} }));
@@ -1148,6 +1221,7 @@ fn an_observe_reads_each_owner_task_pulse_from_the_run_dir() {
     }
 }
 
+#[test_id(t1ogry6)]
 #[test]
 fn a_bound_over_two_hours_or_inside_its_owners_window_is_refused() {
     assert!(config().bounds_fit_owners().is_ok());
@@ -1164,6 +1238,7 @@ fn pace_file(run: &testkit::TempDir, repo: &str, name: &str, body: &str, mtime: 
     f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(mtime)).unwrap();
 }
 
+#[test_id(tpb4jm9)]
 #[test]
 fn each_repos_rounds_pace_state_is_its_cut_owner_and_a_standing_pause_is_its_failure() {
     let run = testkit::TempDir::new("wt-pace");
@@ -1178,6 +1253,7 @@ fn each_repos_rounds_pace_state_is_its_cut_owner_and_a_standing_pause_is_its_fai
     assert!(pace_owners(&run.path().join("absent")).is_empty(), "no rounds-pace directory is no owner");
 }
 
+#[test_id(tqzzpw9)]
 #[test]
 fn a_scoped_delivery_owner_outranks_the_edges_and_the_edges_covers_a_repo_without_one() {
     let now = T0;
@@ -1187,6 +1263,7 @@ fn a_scoped_delivery_owner_outranks_the_edges_and_the_edges_covers_a_repo_withou
     assert_eq!(delivery_pages(&s, now), 1, "a silent record for the repo outranks the edge's fresh one");
 }
 
+#[test_id(t9q41k6)]
 #[test]
 fn every_edge_reads_its_bound_from_the_config_and_an_unknown_edge_has_none() {
     let cfg = Config { submit_bound_s: 11, cut_bound_s: 22, deliver_bound_s: 33, activate_bound_s: 44, ask_bound_s: 55, ..config() };
@@ -1198,6 +1275,7 @@ fn every_edge_reads_its_bound_from_the_config_and_an_unknown_edge_has_none() {
     assert_eq!(asks_longest.window_s(), 44 + 600, "an ask's age comes from the store, so it does not widen the audit read");
 }
 
+#[test_id(t6c3hsz)]
 #[test]
 fn a_stall_is_judged_on_the_bound_the_config_names_for_its_edge() {
     let now = T0;
@@ -1209,6 +1287,7 @@ fn a_stall_is_judged_on_the_bound_the_config_names_for_its_edge() {
     assert!(page.evidence.contains("bound 1h00m"), "{}", page.evidence);
 }
 
+#[test_id(tike2zm)]
 #[test]
 fn a_stall_is_held_back_until_its_own_edges_bound_has_passed_since_the_plane_resumed() {
     let now = T0;
@@ -1241,18 +1320,21 @@ fn cut_stalls(s: &Snapshot, now: u64) -> Vec<Stall> {
     spira_runtime::tasks::e::watch_transitions::stalls(s, now, &gate_cfg()).into_iter().filter(|x| x.edge == CUT_EDGE).collect()
 }
 
+#[test_id(t6t6zek)]
 #[test]
 fn a_submitted_bead_whose_gate_is_running_inside_the_gate_timeout_does_not_page() {
     let (s, now) = gating_fixture(6, Some(Gating::Running { since: T0 - 387 }), "SUBMITTED");
     assert_eq!(cut_stalls(&s, now), vec![]);
 }
 
+#[test_id(tglcpqd)]
 #[test]
 fn a_submitted_bead_whose_gate_is_queued_does_not_page() {
     let (s, now) = gating_fixture(6, Some(Gating::Queued), "SUBMITTED");
     assert_eq!(cut_stalls(&s, now), vec![]);
 }
 
+#[test_id(tu6oilw)]
 #[test]
 fn a_submitted_bead_with_no_gate_pages_and_the_page_says_so() {
     let (s, now) = gating_fixture(6, None, "SUBMITTED");
@@ -1261,6 +1343,7 @@ fn a_submitted_bead_with_no_gate_pages_and_the_page_says_so() {
     assert!(found[0].evidence.contains("sp-0m57dx") && found[0].evidence.contains("no gate queued or running"), "{}", found[0].evidence);
 }
 
+#[test_id(trzmbab)]
 #[test]
 fn a_submitted_bead_whose_gate_ran_past_the_gate_timeout_pages_and_the_page_says_so() {
     let (s, now) = gating_fixture(50, Some(Gating::Running { since: T0 - 46 * MIN }), "SUBMITTED");
@@ -1269,6 +1352,7 @@ fn a_submitted_bead_whose_gate_ran_past_the_gate_timeout_pages_and_the_page_says
     assert!(found[0].evidence.contains("past SPIRA_GATE_TIMEOUT"), "{}", found[0].evidence);
 }
 
+#[test_id(t76rj7b)]
 #[test]
 fn a_certified_bead_pages_whatever_its_gate_holds() {
     for gate in [None, Some(Gating::Queued), Some(Gating::Running { since: T0 - 60 })] {
@@ -1279,6 +1363,7 @@ fn a_certified_bead_pages_whatever_its_gate_holds() {
     }
 }
 
+#[test_id(t6vqa7a)]
 #[test]
 fn a_gate_is_read_from_the_queue_and_the_admission_leases() {
     use landing_pass::gateq::{Job, Where};
@@ -1293,6 +1378,7 @@ fn a_gate_is_read_from_the_queue_and_the_admission_leases() {
     assert_eq!(got.get("sp-none"), None);
 }
 
+#[test_id(t2u5ogm)]
 #[test]
 fn mark_gated_sets_a_gate_on_submitted_beads_only_and_clears_a_stale_one() {
     let now = T0;
@@ -1354,6 +1440,7 @@ fn dependency_rig(make: impl Fn(u64) -> Snapshot, carry: Option<&str>) -> TaskRi
 
 const BLOCKED_CARRY: &str = r#"{"repos":{"spira":{"state":"Idle","blocked":{"sp-um4jw9":"sp-f0cw5z"}}}}"#;
 
+#[test_id(thke1xw)]
 #[test]
 fn the_2026_11_17_page_does_not_fire_for_a_certified_bead_waiting_on_an_unlanded_dependency() {
     let r = dependency_rig(dependency_page_world, Some(BLOCKED_CARRY));
@@ -1361,6 +1448,7 @@ fn the_2026_11_17_page_does_not_fire_for_a_certified_bead_waiting_on_an_unlanded
     assert!(lines(&r).iter().any(|l| l.contains("WAIT ") && l.contains("sp-um4jw9 waiting on sp-f0cw5z")), "{:?}", lines(&r));
 }
 
+#[test_id(tqph3vl)]
 #[test]
 fn a_certified_bead_the_batcher_refused_for_a_dependency_is_not_a_cut_stall_and_an_unblocked_one_still_is() {
     let now = T0;
@@ -1375,6 +1463,7 @@ fn a_certified_bead_the_batcher_refused_for_a_dependency_is_not_a_cut_stall_and_
     assert!(found[0].evidence.contains("oldest uncovered waited 10m") && !found[0].evidence.contains("no Cut for"), "{}", found[0].evidence);
 }
 
+#[test_id(tyjltk2)]
 #[test]
 fn a_submitted_bead_is_never_marked_as_waiting_on_a_dependency() {
     let now = T0;
@@ -1383,6 +1472,7 @@ fn a_submitted_bead_is_never_marked_as_waiting_on_a_dependency() {
     assert!(s.beads.iter().all(|b| b.waits_on.is_none()));
 }
 
+#[test_id(tarm9xi)]
 #[test]
 fn a_real_cut_stall_still_pages_once() {
     let mut r = dependency_rig(
@@ -1401,6 +1491,7 @@ fn a_real_cut_stall_still_pages_once() {
     assert!(pages[0].contains("sp-um4jw9 CERTIFIED") && pages[0].contains("(certified, not cut)"), "{}", pages[0]);
 }
 
+#[test_id(tekj2vz)]
 #[test]
 fn the_forge_batchers_carry_is_read_too() {
     let mut r = dependency_rig(dependency_page_world, None);
@@ -1412,6 +1503,7 @@ fn the_forge_batchers_carry_is_read_too() {
     assert!(last_wait.contains("sp-um4jw9 waiting on sp-f0cw5z"), "{last_wait}");
 }
 
+#[test_id(twpqwyt)]
 #[test]
 fn mark_blocked_clears_a_stale_dependency_the_batcher_no_longer_carries() {
     let mut s = dependency_page_world(T0);
@@ -1420,6 +1512,7 @@ fn mark_blocked_clears_a_stale_dependency_the_batcher_no_longer_carries() {
     assert!(s.beads.iter().all(|b| b.waits_on.is_none()));
 }
 
+#[test_id(tcyfmbz)]
 #[test]
 fn a_certified_bead_blocked_by_an_idle_ready_bead_still_pages_the_cut_edge() {
     let mut r = dependency_rig(
@@ -1438,6 +1531,7 @@ fn a_certified_bead_blocked_by_an_idle_ready_bead_still_pages_the_cut_edge() {
     assert!(pages[0].contains("sp-um4jw9"), "{}", pages[0]);
 }
 
+#[test_id(to5v5y6)]
 #[test]
 fn a_prerequisite_absent_from_the_dwell_rows_is_not_live() {
     let mut s = dependency_page_world(T0);
@@ -1450,6 +1544,7 @@ fn unreadable_during(activation: Option<spira_runtime::watchers::Activation>) ->
     Snapshot { activation, ..blind("spira-lc dwell: cannot tell: deadline") }
 }
 
+#[test_id(t95ap23)]
 #[test]
 fn an_unreadable_store_inside_an_activation_window_waits_and_does_not_page() {
     let a = spira_runtime::watchers::Activation { sha: "0123456789abcdef0123".into(), since: T0 - 10 };
@@ -1460,6 +1555,7 @@ fn an_unreadable_store_inside_an_activation_window_waits_and_does_not_page() {
     assert!(!next.blind);
 }
 
+#[test_id(teqoifn)]
 #[test]
 fn an_unreadable_store_outside_any_activation_window_pages_blind() {
     let (next, acts) = decide(&Carry::default(), &unreadable_during(None), T0 * 1000, &config());

@@ -156,6 +156,7 @@ pub fn parse_firing_lines(text: &str) -> Vec<Firing> {
 mod tests {
     use super::*;
 
+    #[test_id(tj2yn2h)]
     #[test]
     fn observation_json_shape_matches_the_classifier_contract() {
         let obs = Observation { now: 1000, heimdall_first: 500, thresholds: Thresholds { pass_stale: 600, starve_passes: 5, mirror_stale: 90000, ghost_stale: 1800, restart_threshold: 5, restart_window: 3600, red_streak: 4, noverdict_streak: 4 }, ..Default::default() };
@@ -168,6 +169,7 @@ mod tests {
         assert_eq!(v["restart_alerts"], serde_json::json!([]));
     }
 
+    #[test_id(t5mdrt7)]
     #[test]
     fn parses_multiple_firing_lines() {
         let text = "{\"key\":\"a\",\"title\":\"A\",\"evidence\":\"e1\"}\n{\"key\":\"b\",\"title\":\"B\",\"evidence\":\"e2\"}\n";
@@ -175,17 +177,20 @@ mod tests {
         assert_eq!(f, vec![Firing { key: "a".into(), title: "A".into(), evidence: "e1".into() }, Firing { key: "b".into(), title: "B".into(), evidence: "e2".into() }]);
     }
 
+    #[test_id(twsphng)]
     #[test]
     fn a_malformed_line_is_skipped_not_fatal() {
         let text = "not json at all\n{\"key\":\"a\",\"title\":\"A\",\"evidence\":\"e\"}\n";
         assert_eq!(parse_firing_lines(text), vec![Firing { key: "a".into(), title: "A".into(), evidence: "e".into() }]);
     }
 
+    #[test_id(tkni1fp)]
     #[test]
     fn empty_output_is_nothing_firing() {
         assert_eq!(parse_firing_lines(""), Vec::<Firing>::new());
     }
 
+    #[test_id(t2xfswe)]
     #[test]
     fn classify_stdin_emits_sorted_key_json_lines() {
         let out = classify_stdin("{\"now\": 1, \"sentinel_log_readable\": false}").unwrap();

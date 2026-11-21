@@ -2,6 +2,7 @@ use super::*;
 
 /// A filing as a crate sends it: refused by the server for a missing build spec, written and
 /// given its row with one; a description replacement from the request body is a served verb.
+#[test_id(txdywgs)]
 #[test]
 fn a_work_filing_over_the_door_meets_the_contract_and_is_written_with_its_row() {
     let w = World::new();

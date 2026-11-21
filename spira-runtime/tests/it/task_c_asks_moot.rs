@@ -25,11 +25,13 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(t0r1rk3)]
 #[test]
 fn t1_registered_boots_and_arms_a_15min_tick() {
     t::t1_registered_and_boots::<H>(SET, TICK);
 }
 
+#[test_id(tuin0ul)]
 #[test]
 fn t2_a_live_predicate_resolves_nothing_and_journals_no_emit() {
     let h = t::handler::<H>(SET);
@@ -38,6 +40,7 @@ fn t2_a_live_predicate_resolves_nothing_and_journals_no_emit() {
     t::t2_silent::<H>(SET, &json(&Snapshot::default()));
 }
 
+#[test_id(t5sriyo)]
 #[test]
 fn t3_an_ask_is_checked_cleared_resolved_withdrawn_and_a_resolve_from_timed_out_is_refused() {
     let h = t::handler::<H>(SET);
@@ -53,12 +56,14 @@ fn t3_an_ask_is_checked_cleared_resolved_withdrawn_and_a_resolve_from_timed_out_
     assert!(refused.contains("timed_out"), "{refused}");
 }
 
+#[test_id(t5ewavg)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_handler_module_spawns_nothing() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/c/asks_moot.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(ttme0dh)]
 #[test]
 fn t5_a_cleared_predicate_resolves_with_the_old_reason_and_rc_124_never_reads_as_cleared() {
     let h = t::handler::<H>(SET);
@@ -89,6 +94,7 @@ fn cleared_and_unresolved() -> TaskRig {
     r
 }
 
+#[test_id(tb44z0r)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&cleared_and_unresolved(), task::NAME);
@@ -97,6 +103,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(te0e1hz)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(cleared_and_unresolved, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));

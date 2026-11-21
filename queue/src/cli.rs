@@ -1180,12 +1180,14 @@ mod tests {
         parse(&v)
     }
 
+    #[test_id(tomw608)]
     #[test]
     fn unknown_subcommand_is_usage() {
         assert_eq!(p(&["nope"]), Err(Usage(USAGE.into())));
         assert_eq!(p(&[]), Err(Usage(USAGE.into())));
     }
 
+    #[test_id(td82qoh)]
     #[test]
     fn submit_needs_a_branch() {
         assert_eq!(
@@ -1201,6 +1203,7 @@ mod tests {
         );
     }
 
+    #[test_id(tm50z8g)]
     #[test]
     fn eject_reason_in_both_spellings_and_red() {
         let c = p(&["eject", "sp-a", "--reason=r1", "--red", "spira"]).unwrap();
@@ -1230,6 +1233,7 @@ mod tests {
         );
     }
 
+    #[test_id(tsywpj9)]
     #[test]
     fn land_local_requires_head_and_members() {
         assert_eq!(
@@ -1262,6 +1266,7 @@ mod tests {
         );
     }
 
+    #[test_id(tne5xi3)]
     #[test]
     fn round_verbs_parse_their_positionals_and_options() {
         let c = p(&[
@@ -1405,6 +1410,7 @@ mod tests {
         .is_err());
     }
 
+    #[test_id(tk724k5)]
     #[test]
     fn staged_round_verbs_parse() {
         let c = p(&[
@@ -1455,6 +1461,7 @@ mod tests {
         );
     }
 
+    #[test_id(tqs6jhk)]
     #[test]
     fn a_round_verb_that_writes_events_needs_a_known_actor() {
         let want = "queue.sh round eject: --by batcher|concierge|operator is required — who is acting on the round";
@@ -1464,6 +1471,7 @@ mod tests {
         assert!(bare(&[&eject[..], &["--by", "operator"]].concat()).is_ok());
     }
 
+    #[test_id(tooocgf)]
     #[test]
     fn round_verbs_refuse_what_they_need() {
         assert_eq!(
@@ -1486,12 +1494,14 @@ mod tests {
         assert_eq!(p(&["round"]), Err(Usage(USAGE.into())));
     }
 
+    #[test_id(tba448x)]
     #[test]
     fn churn_is_not_a_subcommand() {
         assert!(matches!(p(&["churn"]), Err(Usage(_))));
         assert!(!USAGE.contains("churn"));
     }
 
+    #[test_id(tyg4y24)]
     #[test]
     fn repo_only_commands_refuse_options() {
         assert_eq!(

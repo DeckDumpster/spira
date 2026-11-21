@@ -15,6 +15,7 @@ fn snap(sections: Vec<Value>, intents: Vec<Value>, pass: Value) -> Snapshot {
     Snapshot::parse(&json!({ "list_rev": 9, "sections": sections, "intents": intents, "pass": pass, "knobs": {}, "undecodable": [] })).unwrap()
 }
 
+#[test_id(tz4ceqf)]
 #[test]
 fn the_pass_numbers_from_one_and_follows_the_previous_record() {
     let none = assemble(&snap(vec![], vec![], Value::Null), T0);
@@ -45,6 +46,7 @@ mod verb {
         (Verb::new(LcClient::over(Arc::clone(&s) as Arc<dyn Transport>, true)), s)
     }
 
+    #[test_id(t8unwka)]
     #[test]
     fn the_snapshot_is_asked_of_the_store_in_process() {
         let doc = json!({ "list_rev": 7, "sections": [], "intents": [], "pass": null, "knobs": {}, "undecodable": [] }).to_string();
@@ -53,6 +55,7 @@ mod verb {
         assert_eq!(store.0.lock().unwrap().as_slice(), &[vec!["section".to_string(), "snapshot".into()]]);
     }
 
+    #[test_id(tig7ld3)]
     #[test]
     fn a_store_that_cannot_tell_is_an_error() {
         let (v, _) = verb(2, "cannot tell: down");

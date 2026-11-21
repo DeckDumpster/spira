@@ -384,6 +384,7 @@ mod tests {
         Pinned::read(&|k| if k.ends_with("_GIB") || k.ends_with("_DAYS") || k.ends_with("_HOURS") { Ok("1".into()) } else { get(k) }).unwrap()
     }
 
+    #[test_id(tm1twfc)]
     #[test]
     fn the_cache_cap_follows_the_stores_configured_root() {
         let root = testkit::TempDir::new("sweep-reclaim-store-root");
@@ -392,6 +393,7 @@ mod tests {
         assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new(&store)));
     }
 
+    #[test_id(tbkd4iq)]
     #[test]
     fn an_empty_store_root_means_the_run_dirs_sccache_dav() {
         let root = testkit::TempDir::new("sweep-reclaim-run-dir");
@@ -399,6 +401,7 @@ mod tests {
         assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new(&format!("{}/r/sccache-dav", root.display()))));
     }
 
+    #[test_id(ta9slcb)]
     #[test]
     fn an_explicit_reclaim_cache_dir_still_wins() {
         let root = testkit::TempDir::new("sweep-reclaim-explicit");
@@ -407,6 +410,7 @@ mod tests {
         assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new(&x)));
     }
 
+    #[test_id(tfm57q4)]
     #[test]
     fn explicit_dir_wins_over_root_and_run_when_all_three_are_set() {
         let root = testkit::TempDir::new("sweep-reclaim-all-three");
@@ -415,12 +419,14 @@ mod tests {
         assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new(&x)));
     }
 
+    #[test_id(tx58dpb)]
     #[test]
     fn a_relative_store_root_is_refused_not_silently_untrimmed() {
         let err = Pinned::read(&|k| Ok(match k { "SPIRA_SCCACHE_DAV_ROOT" => "store".into(), k if k.ends_with("_GIB") || k.ends_with("_DAYS") || k.ends_with("_HOURS") => "1".into(), _ => String::new() })).err().unwrap();
         assert!(err.contains("SPIRA_SCCACHE_DAV_ROOT"), "{err}");
     }
 
+    #[test_id(tgs0mbd)]
     #[test]
     fn no_root_and_no_run_dir_trims_nothing() {
         assert_eq!(read(&[]).cache_dir, None);
@@ -441,6 +447,7 @@ mod tests {
         d
     }
 
+    #[test_id(thcxpb1)]
     #[test]
     fn observe_reports_tmp_dirs_with_a_socket_dir_as_special_and_remove_tmp_refuses_what_is_not_reclaimable() {
         let t = testkit::TempDir::new("sweep-reclaim-tmp");

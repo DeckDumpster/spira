@@ -26,6 +26,7 @@ pub fn update(prior: Option<&RestartBaseline>, current: i64, now: i64, window_s:
 mod tests {
     use super::*;
 
+    #[test_id(to28sbq)]
     #[test]
     fn a_unit_seen_for_the_first_time_has_zero_delta() {
         let (base, delta) = update(None, 7, 1000, 3600);
@@ -34,6 +35,7 @@ mod tests {
         assert_eq!(base.last, 7);
     }
 
+    #[test_id(tzmvfxc)]
     #[test]
     fn restart_count_below_threshold_produces_a_small_delta() {
         let prior = RestartBaseline { baseline: 2, baseline_at: 1000, last: 2 };
@@ -41,6 +43,7 @@ mod tests {
         assert_eq!(delta, 2);
     }
 
+    #[test_id(tsaa5k8)]
     #[test]
     fn restart_count_above_threshold_produces_a_large_delta() {
         let prior = RestartBaseline { baseline: 2, baseline_at: 1000, last: 2 };
@@ -48,6 +51,7 @@ mod tests {
         assert_eq!(delta, 8);
     }
 
+    #[test_id(taio7a4)]
     #[test]
     fn a_count_that_went_down_resets_the_baseline_not_an_alert() {
         let prior = RestartBaseline { baseline: 2, baseline_at: 1000, last: 9 };
@@ -57,6 +61,7 @@ mod tests {
         assert_eq!(base.baseline_at, 1100);
     }
 
+    #[test_id(ti87o9x)]
     #[test]
     fn an_expired_window_slides_the_baseline_forward() {
         let prior = RestartBaseline { baseline: 2, baseline_at: 1000, last: 8 };
@@ -68,6 +73,7 @@ mod tests {
         assert_eq!(base.baseline_at, 1000 + 3600);
     }
 
+    #[test_id(ti7d2ew)]
     #[test]
     fn a_window_not_yet_expired_keeps_the_old_baseline() {
         let prior = RestartBaseline { baseline: 2, baseline_at: 1000, last: 8 };
@@ -76,6 +82,7 @@ mod tests {
         assert_eq!(base.baseline, 2);
     }
 
+    #[test_id(txfssa6)]
     #[test]
     fn a_second_pass_on_the_same_standing_burst_reports_the_same_delta() {
         // "restart: a second pass on the same standing loop does not raise a duplicate" —
@@ -89,6 +96,7 @@ mod tests {
         assert_eq!(base1, base2);
     }
 
+    #[test_id(tpfaxsp)]
     #[test]
     fn count_rising_again_after_a_reset_produces_a_fresh_delta() {
         let prior = RestartBaseline { baseline: 0, baseline_at: 1100, last: 0 };

@@ -79,6 +79,7 @@ mod tests {
     }
 
     // covers: UC-test-infrastructure-41
+    #[test_id(tkladzt)]
     #[test]
     fn a_planted_non_executable_script_is_caught_then_clears_with_x() {
         let t = TempDir::new("sx");
@@ -89,6 +90,7 @@ mod tests {
         assert!(run(&t, &["spira/canary-operator.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(t55z6cb)]
     #[test]
     fn a_sourced_only_header_and_suites_are_exempt() {
         let t = TempDir::new("sx-src");
@@ -105,6 +107,7 @@ mod tests {
         );
     }
 
+    #[test_id(tfigd1u)]
     #[test]
     fn an_empty_scope_is_refused() {
         let t = TempDir::new("sx-empty");

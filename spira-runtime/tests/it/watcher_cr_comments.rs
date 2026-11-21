@@ -56,6 +56,7 @@ fn ticks_at(r: &TaskRig) -> Vec<u64> {
     r.requested().iter().filter(|q| q.name == OBSERVE).map(|q| q.at).collect()
 }
 
+#[test_id(t80ofbg)]
 #[test]
 fn the_next_tick_is_thirty_seconds_after_a_tick_that_saw_a_new_comment() {
     let forge = Arc::new(Mutex::new(Forge { comments: vec![comment(1)], asked: 0 }));
@@ -64,6 +65,7 @@ fn the_next_tick_is_thirty_seconds_after_a_tick_that_saw_a_new_comment() {
     assert_eq!(r.engine().next_timer_at(), Some(HOT));
 }
 
+#[test_id(tq6u906)]
 #[test]
 fn it_stays_thirty_seconds_at_fourteen_minutes_and_is_five_minutes_at_sixteen() {
     let forge = Arc::new(Mutex::new(Forge { comments: vec![comment(1)], asked: 0 }));
@@ -75,6 +77,7 @@ fn it_stays_thirty_seconds_at_fourteen_minutes_and_is_five_minutes_at_sixteen() 
     assert_eq!(wait_after_last_tick(&r), COLD);
 }
 
+#[test_id(t0xygzr)]
 #[test]
 fn a_repeated_comment_is_said_once() {
     let forge = Arc::new(Mutex::new(Forge { comments: vec![comment(1)], asked: 0 }));
@@ -83,6 +86,7 @@ fn a_repeated_comment_is_said_once() {
     assert_eq!(said(&r).len(), 1);
 }
 
+#[test_id(tjkhxo8)]
 #[test]
 fn with_no_review_open_the_forge_is_never_asked_and_the_wait_is_cold() {
     let forge = Arc::new(Mutex::new(Forge { comments: vec![comment(1)], asked: 0 }));
@@ -94,6 +98,7 @@ fn with_no_review_open_the_forge_is_never_asked_and_the_wait_is_cold() {
     assert!(said(&r).is_empty());
 }
 
+#[test_id(t7cno30)]
 #[test]
 fn an_open_review_without_a_pull_request_is_not_asked_about() {
     let forge = Arc::new(Mutex::new(Forge { comments: vec![], asked: 0 }));
@@ -101,6 +106,7 @@ fn an_open_review_without_a_pull_request_is_not_asked_about() {
     assert_eq!(forge.lock().unwrap().asked, 0);
 }
 
+#[test_id(tny099u)]
 #[test]
 fn the_record_effect_keeps_the_comments_for_cr_thread_and_moves_the_review_state() {
     let t = testkit::TempDir::new("cr-comments-record");
@@ -115,6 +121,7 @@ fn the_record_effect_keeps_the_comments_for_cr_thread_and_moves_the_review_state
     assert_eq!(kept, [comment(4)]);
 }
 
+#[test_id(teugnxc)]
 #[test]
 fn a_closed_change_whose_ledger_close_fails_leaves_the_review_state_unchanged() {
     let t = testkit::TempDir::new("cr-comments-close-fails");

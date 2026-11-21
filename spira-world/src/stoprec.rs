@@ -30,6 +30,7 @@ mod tests {
         a.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(tu2zfy2)]
     #[test]
     fn a_cause_is_one_of_the_closed_set_or_the_verbs_default() {
         assert_eq!(cause(&v(&["--why", "x"]), Reason::Operator), Ok(Reason::Operator));
@@ -38,6 +39,7 @@ mod tests {
         assert!(cause(&v(&["--cause"]), Reason::Operator).is_err());
     }
 
+    #[test_id(tbxulh2)]
     #[test]
     fn a_halt_and_its_release_are_two_rows_the_lifecycle_section_reads_as_one_interval() {
         let tmp = testkit::TempDir::new("halt-release-rows");

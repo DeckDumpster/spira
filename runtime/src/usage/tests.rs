@@ -127,6 +127,7 @@ fn allocated(paths: &[&Path]) -> u64 {
     paths.iter().map(|p| walk(p)).sum()
 }
 
+#[test_id(tf96wfb)]
 #[test]
 fn cgroup_files_parse_to_their_counters() {
     assert_eq!(cpu_usage_usec("usage_usec 609769044\nuser_usec 414257398\nsystem_usec 195511646\n"), Some(609_769_044));
@@ -140,6 +141,7 @@ fn cgroup_files_parse_to_their_counters() {
     assert_eq!(scalar("max\n"), None);
 }
 
+#[test_id(tkzmoz6)]
 #[test]
 fn a_disk_is_named_by_the_mount_of_its_filesystem_root() {
     let f = fixture();
@@ -152,6 +154,7 @@ fn a_disk_is_named_by_the_mount_of_its_filesystem_root() {
     assert_eq!(got, [("252:0", "dm-0", std::path::MAIN_SEPARATOR_STR, "root"), ("8:16", "sdb", "srv/ssd-a", "ssd-a"), ("8:32", "sdc", "srv/ssd-b", "ssd-b")], "bind mounts of a subtree do not name the disk");
 }
 
+#[test_id(tr2unbj)]
 #[test]
 fn only_the_identity_keys_leave_an_environ() {
     let e = env_of(environ(&[("LC_PASSWORD", "hunter2"), ("BEAD_ID", "sp-1"), ("CARGO_TARGET_DIR", "t"), ("GH_TOKEN", "x"), ("NOEQUALS", "")]).as_bytes());
@@ -159,6 +162,7 @@ fn only_the_identity_keys_leave_an_environ() {
     assert!(env_of(b"").is_empty());
 }
 
+#[test_id(t89wz8y)]
 #[test]
 fn a_directory_is_the_bytes_allocated_under_it() {
     let f = fixture();
@@ -167,6 +171,7 @@ fn a_directory_is_the_bytes_allocated_under_it() {
     assert_eq!(dir_bytes(&f.roots.run_dir.join("no-such")), 0);
 }
 
+#[test_id(t20ycgc)]
 #[test]
 fn each_live_dwarf_and_each_hand_scope_is_one_sample() {
     let f = fixture();
@@ -201,6 +206,7 @@ fn each_live_dwarf_and_each_hand_scope_is_one_sample() {
     assert_eq!(h.started_ms, None);
 }
 
+#[test_id(tzrxr4x)]
 #[test]
 fn no_dwarf_and_no_hand_build_is_no_sample() {
     let f = fixture();
@@ -224,6 +230,7 @@ fn plant_container(f: &Fixture, parent: &str, conmon: Option<&str>) -> String {
     format!("{MANAGER}/{parent}/{scope}")
 }
 
+#[test_id(ty9f5lw)]
 #[test]
 fn a_libpod_scope_is_one_container_sample_named_by_its_conmon() {
     let f = fixture();
@@ -236,6 +243,7 @@ fn a_libpod_scope_is_one_container_sample_named_by_its_conmon() {
     assert_eq!((c[0].worktree_bytes, c[0].build_dir_bytes), (None, None));
 }
 
+#[test_id(tx5iryz)]
 #[test]
 fn a_libpod_scope_with_no_conmon_is_named_by_its_id_prefix() {
     let f = fixture();
@@ -245,6 +253,7 @@ fn a_libpod_scope_with_no_conmon_is_named_by_its_id_prefix() {
     assert_eq!(c.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["fa3f63aaaaaa"]);
 }
 
+#[test_id(tdd4me7)]
 #[test]
 fn a_libpod_scope_under_a_dwarf_is_not_sampled_twice() {
     let f = fixture();
@@ -252,6 +261,7 @@ fn a_libpod_scope_under_a_dwarf_is_not_sampled_twice() {
     assert!(sample(&f.roots).iter().all(|s| s.kind != Kind::Container));
 }
 
+#[test_id(twe7zdu)]
 #[test]
 fn nested_scopes_each_take_their_own_conmons_name_and_hand_scopes_own_theirs() {
     let f = fixture();

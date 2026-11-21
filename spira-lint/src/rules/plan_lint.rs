@@ -170,6 +170,7 @@ mod tests {
         PlanLint::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tcfjkzk)]
     #[test]
     fn missing_headers_are_named_and_clearing_them_passes() {
         let t = TempDir::new("pl-missing");
@@ -185,6 +186,7 @@ mod tests {
         );
     }
 
+    #[test_id(txv0sea)]
     #[test]
     fn an_unknown_uc_id_is_refused_and_a_known_one_passes() {
         let t = TempDir::new("pl-uc");
@@ -203,6 +205,7 @@ mod tests {
         assert!(run(&t, &["docs/test-plan/demo.toml", "spira/test-planted.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(ti5g1fy)]
     #[test]
     fn a_malformed_catalogue_is_a_finding_not_a_refusal() {
         let t = TempDir::new("pl-bad-cat");
@@ -213,6 +216,7 @@ mod tests {
         assert!(got[0].contains("bogus"), "{}", got[0]);
     }
 
+    #[test_id(teqz90y)]
     #[test]
     fn no_catalogue_directory_still_checks_headers() {
         let t = TempDir::new("pl-no-cat");
@@ -221,6 +225,7 @@ mod tests {
         assert_eq!(got.len(), 2, "{got:?}");
     }
 
+    #[test_id(tfkvcj6)]
     #[test]
     fn no_suites_matched_refuses() {
         let t = TempDir::new("pl-none");
@@ -228,6 +233,7 @@ mod tests {
         assert_eq!(run(&t, &["spira/lib.sh"]), Err(LintError::EmptyScope));
     }
 
+    #[test_id(ts6901q)]
     #[test]
     fn a_listed_offender_is_silenced_and_a_stale_entry_is_refused() {
         let t = TempDir::new("pl-allow");
@@ -248,6 +254,7 @@ mod tests {
         );
     }
 
+    #[test_id(tgptjmd)]
     #[test]
     fn a_clean_tree_reports_checked() {
         let t = TempDir::new("pl-clean");
