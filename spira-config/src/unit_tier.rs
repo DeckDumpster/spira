@@ -133,11 +133,10 @@ impl DenyList {
                 Some(("test", id)) => {
                     id.len() == 7 && id.starts_with('t') && id[1..].bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
                 }
-                Some(("unit" | "integration", rest)) => rest.split_once(' ').is_some_and(|(a, b)| word(a) && word(b)),
                 _ => false,
             };
             if !well_formed {
-                return Err(format!("deny list line {n}: test {:?} is not suite:<file>, test:<id>, unit:<binary-id> <path> or integration:<package> <path>", f[1]));
+                return Err(format!("deny list line {n}: test {:?} is not suite:<file> or test:<id>", f[1]));
             }
             rows.push((f[0].to_string(), f[1].to_string(), f[2].to_string()));
         }
@@ -153,11 +152,6 @@ impl DenyList {
         self.rows.is_empty()
     }
 
-    /// The tests of one kind (`suite`, `unit`, `integration`), the part after the prefix.
-    pub fn tests(&self, kind: &str) -> Vec<&str> {
-        self.rows.iter().filter_map(|(_, t, _)| t.strip_prefix(kind)?.strip_prefix(':')).collect()
-    }
-
     /// Each `test:` row's state, id and owning bead.
     pub fn test_rows(&self) -> Vec<(&str, &str, &str)> {
         self.rows.iter().filter_map(|(s, t, b)| Some((s.as_str(), t.strip_prefix("test:")?, b.as_str()))).collect()
@@ -169,23 +163,17 @@ impl DenyList {
     }
 
     pub fn nextest_filter(&self) -> Option<String> {
-        let terms: Vec<String> = self
-            .tests("unit")
-            .into_iter()
-            .filter_map(|t| t.split_once(' '))
-            .map(|(bin, path)| format!("(binary_id(={bin}) & test(={path}))"))
-            .collect();
+        let terms: Vec<String> = self.test_rows().into_iter().map(|(_, id, _)| format!("test(/::{id}$/)")).collect();
         (!terms.is_empty()).then(|| format!("not ({})", terms.join(" | ")))
     }
 
-    /// ` -- --exact --skip <path> …` for the `--test '*'` invocation; empty for no `integration:` row.
+    /// ` -- --skip ::<id> …` for the `--test '*'` invocation; empty for no `test:` row.
     pub fn integration_skips(&self) -> String {
-        let paths: Vec<&str> = self.tests("integration").into_iter().filter_map(|t| t.split_once(' ').map(|x| x.1)).collect();
-        if paths.is_empty() {
+        let skips: Vec<String> = self.test_rows().into_iter().map(|(_, id, _)| format!("--skip ::{id}")).collect();
+        if skips.is_empty() {
             return String::new();
         }
-        let skips: Vec<String> = paths.iter().map(|p| format!("--skip {p}")).collect();
-        format!(" -- --exact {}", skips.join(" "))
+        format!(" -- {}", skips.join(" "))
     }
 
     /// The config line that applies [`Self::nextest_filter`]; empty for none.
@@ -325,12 +313,12 @@ mod tests {
 
     #[test_id(tv80b70)]
     #[test]
-    fn test_id_rows_reach_no_nextest_filter_and_no_integration_skip() {
+    fn a_test_id_row_reaches_the_filter_and_the_skip_and_a_unit_row_is_refused() {
         let d = DenyList::parse(TEST_ROW).unwrap();
-        assert_eq!(d.nextest_filter(), None);
-        assert_eq!(d.integration_skips(), "");
-        let mixed = DenyList::parse(&format!("{TEST_ROW}disabled\tunit:a b::c\tsp-1\t-\n")).unwrap();
-        assert_eq!(mixed.nextest_filter().unwrap(), "not ((binary_id(=a) & test(=b::c)))");
+        assert_eq!(d.nextest_filter().unwrap(), "not (test(/::t0aaaaa$/))");
+        assert_eq!(d.integration_skips(), " -- --skip ::t0aaaaa");
+        let e = DenyList::parse(&format!("{TEST_ROW}disabled\tunit:a b::c\tsp-1\t-\n")).unwrap_err();
+        assert!(e.starts_with("deny list line 2:"), "{e}");
     }
 
     #[test_id(t2te7i8)]
@@ -360,7 +348,7 @@ mod tests {
         assert_eq!(fmt, nextest_config(7, 3, &DenyList::default()));
     }
 
-    const TWO: &str = "# test-registry deny-list at=1 rows=2\ndisabled\tunit:a::b t::drop\tsp-1\t-\nquarantined\tunit:c d::e\tsp-2\t5\n";
+    const TWO: &str = "# test-registry deny-list at=1 rows=2\ndisabled\ttest:t0aaaaa\tsp-1\t-\nquarantined\ttest:t0bbbbb\tsp-2\t5\n";
 
     #[test_id(ty3yp8p)]
     #[test]
@@ -374,19 +362,18 @@ mod tests {
 
     #[test_id(tzb1b4a)]
     #[test]
-    fn two_unit_rows_of_either_state_give_the_exact_filter_expression() {
+    fn two_test_rows_of_either_state_give_the_exact_filter_expression() {
         let d = DenyList::parse(TWO).unwrap();
-        assert_eq!(d.nextest_filter().unwrap(), "not ((binary_id(=a::b) & test(=t::drop)) | (binary_id(=c) & test(=d::e)))");
-        assert!(nextest_config(7, 3, &d).ends_with("default-filter = \"not ((binary_id(=a::b) & test(=t::drop)) | (binary_id(=c) & test(=d::e)))\"\n"));
+        assert_eq!(d.nextest_filter().unwrap(), "not (test(/::t0aaaaa$/) | test(/::t0bbbbb$/))");
+        assert!(nextest_config(7, 3, &d).ends_with("default-filter = \"not (test(/::t0aaaaa$/) | test(/::t0bbbbb$/))\"\n"));
         assert_eq!(DenyList::parse(&d.render()).unwrap().render(), d.render(), "render keeps state and test, not the bead");
     }
 
     #[test_id(trfvnun)]
     #[test]
-    fn integration_rows_become_exact_skips_and_suite_rows_reach_neither_filter() {
-        let d = DenyList::parse("disabled\tintegration:p x::y\t-\t-\nquarantined\tintegration:q z\t-\t-\ndisabled\tsuite:test-a.sh\t-\t-\n").unwrap();
-        assert_eq!(d.integration_skips(), " -- --exact --skip x::y --skip z");
-        assert_eq!(d.nextest_filter(), None);
+    fn test_rows_become_skips_and_suite_rows_reach_neither_filter() {
+        let d = DenyList::parse("disabled\ttest:t0ccccc\t-\t-\ndisabled\tsuite:test-a.sh\t-\t-\n").unwrap();
+        assert_eq!(d.integration_skips(), " -- --skip ::t0ccccc");
         assert_eq!(d.suites(), [("test-a.sh", "disabled")]);
     }
 
@@ -397,9 +384,10 @@ mod tests {
             ("disabled\tsuite:a\t-\t-\nbroken\n", "line 2"),
             ("\n\nfrozen\tsuite:a\t-\t-\n", "line 3"),
             ("disabled\tunit:nopath\t-\t-\n", "line 1"),
+            ("disabled\ttest:T0\t-\t-\n", "line 1"),
             ("disabled\tfoo:a b\t-\t-\n", "line 1"),
             ("disabled\tintegration:p x;touch$IFS/tmp/y\t-\t-\n", "line 1"),
-            ("disabled\tunit:a b\t-\t-\nquarantined\tunit:a t::x)|(y\t-\t-\n", "line 2"),
+            ("disabled\ttest:t0aaaaa\t-\t-\nquarantined\tunit:a t::x)|(y\t-\t-\n", "line 2"),
             ("disabled\tsuite:a$(id)\t-\t-\n", "line 1"),
         ] {
             let e = DenyList::parse(text).unwrap_err();

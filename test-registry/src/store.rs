@@ -3,9 +3,9 @@
 use rusqlite::{params, Connection, Transaction, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
-use crate::id::{check_test_id, valid_bead_id};
+use crate::id::{check_test_id, valid_bead_id, valid_test_id};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const COLUMNS: &str = "test, state, since, until, bead, reason, actor";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,11 +90,43 @@ pub fn init(conn: &Connection) -> Result<(), String> {
             seq INTEGER PRIMARY KEY, at INTEGER NOT NULL, verb TEXT NOT NULL, test TEXT NOT NULL,
             state TEXT NOT NULL, since INTEGER, until INTEGER, bead TEXT,
             reason TEXT NOT NULL, actor TEXT NOT NULL)",
-        "PRAGMA user_version = 1",
     ] {
         exec(&tx, ddl, [])?;
     }
+    migrate_name_keys(&tx)?;
+    exec(&tx, "PRAGMA user_version = 2", [])?;
     tx.commit().map_err(sql)
+}
+
+/// Rewrites each `unit:`/`integration:` row to `test:<id>` by its path's last segment; a row whose
+/// last segment is no id names a path the stamp retired and is activated, with the reason recorded.
+fn migrate_name_keys(conn: &Connection) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let old: Vec<String> = {
+        let mut st = conn
+            .prepare("SELECT test FROM test_state WHERE test LIKE 'unit:%' OR test LIKE 'integration:%'")
+            .map_err(sql)?;
+        let rows = st.query_map([], |r| r.get(0)).map_err(sql)?;
+        rows.collect::<Result<_, _>>().map_err(sql)?
+    };
+    for name in old {
+        let id = name.rsplit("::").next().filter(|l| valid_test_id(l));
+        match id {
+            Some(id) => {
+                let new = format!("test:{id}");
+                exec(conn, "DELETE FROM test_state WHERE test = ?1 AND EXISTS (SELECT 1 FROM test_state WHERE test = ?2)", params![name, new])?;
+                exec(conn, "UPDATE test_state SET test = ?2 WHERE test = ?1", params![name, new])?;
+                exec(conn, "UPDATE test_state_history SET test = ?2 WHERE test = ?1", params![name, new])?;
+            }
+            None => {
+                exec(conn, "DELETE FROM test_state WHERE test = ?1", [&name])?;
+                exec(conn, "INSERT INTO test_state_history(at, verb, test, state, reason, actor) VALUES (?1,'activate',?2,'active',?3,'test-registry')", params![now, name, format!("retired by the test-id migration: named {name}")])?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn set(
@@ -404,14 +436,40 @@ mod tests {
     #[test]
     fn three_rows_print_sorted_with_tabs() {
         let c = db();
-        disable(&c, 10, 600, &s("unit:loom b::t", Some(900))).unwrap();
-        quarantine(&c, 10, 600, &s("integration:gate x::y", Some(800))).unwrap();
+        disable(&c, 10, 600, &s("test:t0aaaaa", Some(900))).unwrap();
+        quarantine(&c, 10, 600, &s("test:t0bbbbb", Some(800))).unwrap();
         disable(&c, 10, 600, &s("suite:test-a.sh", Some(700))).unwrap();
         let want = "# test-registry deny-list at=50 rows=3\n\
-                    quarantined\tintegration:gate x::y\tsp-abc123\t800\n\
                     disabled\tsuite:test-a.sh\tsp-abc123\t700\n\
-                    disabled\tunit:loom b::t\tsp-abc123\t900\n";
+                    disabled\ttest:t0aaaaa\tsp-abc123\t900\n\
+                    quarantined\ttest:t0bbbbb\tsp-abc123\t800\n";
         assert_eq!(deny_list(&c, 50), want);
+    }
+
+    #[test_id(tm1g4t2)]
+    #[test]
+    fn a_v1_file_opens_as_v2_with_ids_rewritten_and_retired_paths_activated() {
+        let c = Connection::open_in_memory().unwrap();
+        for ddl in [
+            "CREATE TABLE test_state(test TEXT PRIMARY KEY, state TEXT NOT NULL CHECK (state IN ('disabled','quarantined')), since INTEGER NOT NULL, until INTEGER NOT NULL, bead TEXT NOT NULL, reason TEXT NOT NULL, actor TEXT NOT NULL)",
+            "CREATE TABLE test_state_history(seq INTEGER PRIMARY KEY, at INTEGER NOT NULL, verb TEXT NOT NULL, test TEXT NOT NULL, state TEXT NOT NULL, since INTEGER, until INTEGER, bead TEXT, reason TEXT NOT NULL, actor TEXT NOT NULL)",
+            "INSERT INTO test_state VALUES ('unit:loom a::b::t0aaaaa','disabled',1,9999999999,'sp-x','flaky','a')",
+            "INSERT INTO test_state VALUES ('unit:loom a::old','disabled',1,9999999999,'sp-y','flaky','a')",
+            "INSERT INTO test_state VALUES ('suite:x.sh','disabled',1,9999999999,'sp-z','flaky','a')",
+            "INSERT INTO test_state_history(at,verb,test,state,reason,actor) VALUES (1,'disable','unit:loom a::b::t0aaaaa','disabled','flaky','a')",
+            "PRAGMA user_version = 1",
+        ] {
+            c.execute_batch(ddl).unwrap();
+        }
+        init(&c).unwrap();
+        assert_eq!(scalar(&c, "PRAGMA user_version").unwrap(), 2);
+        let rows: Vec<(String, String)> = list(&c).unwrap().into_iter().map(|r| (r.test, r.state)).collect();
+        assert_eq!(rows, [("suite:x.sh".into(), "disabled".into()), ("test:t0aaaaa".into(), "disabled".into())]);
+        assert_eq!(history(&c, "test:t0aaaaa").unwrap().len(), 1, "history follows the rename");
+        let old = history(&c, "unit:loom a::old").unwrap();
+        assert_eq!(old.len(), 1);
+        assert_eq!(old[0]["verb"], "activate");
+        assert_eq!(old[0]["reason"], "retired by the test-id migration: named unit:loom a::old");
     }
 
     #[test_id(tcwkruk)]
@@ -494,15 +552,15 @@ mod tests {
         disable(&c, 10, 600, &s("suite:test-a.sh", Some(100))).unwrap();
         init(&c).unwrap();
         assert_eq!(list(&c).unwrap().len(), 1);
-        exec(&c, "PRAGMA user_version = 2", []).unwrap();
+        exec(&c, "PRAGMA user_version = 3", []).unwrap();
         assert!(init(&c).unwrap_err().contains("newer"));
     }
 
     #[test_id(tb4b2cp)]
     #[test]
-    fn the_schema_is_version_one() {
+    fn the_schema_is_version_two() {
         let v = scalar(&db(), "PRAGMA user_version").unwrap();
-        assert_eq!(v, 1);
+        assert_eq!(v, 2);
     }
 
     #[test_id(t87dto4)]
