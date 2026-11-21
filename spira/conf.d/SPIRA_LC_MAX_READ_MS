@@ -1,0 +1,6 @@
+TYPE=u64
+GROUP=lc
+DOC=The longest, in milliseconds, the control store lets one read hold before it ends the read.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_MAX_READ_MS:=100}"
+SPIRA_CONF_DEFAULT_EOF
