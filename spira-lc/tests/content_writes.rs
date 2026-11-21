@@ -43,6 +43,14 @@ fn built_testenv() -> PathBuf {
         .clone()
 }
 
+/// The tool on this process's PATH, else on the harness's declared tool path (`spira.path`),
+/// which is where a round's third-party tools live when its test environment is bare.
+fn tool(name: &str) -> String {
+    let on = |dirs: &str| dirs.split(':').filter(|d| !d.is_empty()).map(|d| Path::new(d).join(name)).find(|p| p.is_file());
+    let declared = spira_config::process::cfg("SPIRA_PATH").unwrap_or_default();
+    on(&std::env::var("PATH").unwrap_or_default()).or_else(|| on(&declared)).map_or_else(|| name.to_string(), |p| p.display().to_string())
+}
+
 fn report(text: &str, key: &str) -> String {
     text.lines().find_map(|l| l.strip_prefix(&format!("{key}="))).unwrap_or_default().to_string()
 }
@@ -58,8 +66,8 @@ struct Store {
 impl Store {
     fn up() -> Store {
         let dir = testkit::TempDir::new("lcw");
-        let bd = std::env::var("SPIRA_BD").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "bd".into());
-        let dolt = std::env::var("TESTDB_DOLT").unwrap_or_else(|_| "dolt".into());
+        let bd = std::env::var("SPIRA_BD").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| tool("bd"));
+        let dolt = std::env::var("TESTDB_DOLT").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| tool("dolt"));
         let mut up = Command::new(testenv());
         up.args(["testdb", "up", "--tag", "content-writes", "--bd", &bd, "--dolt", &dolt]);
         let root = std::env::var("TESTDB_ROOT").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| dir.join("db").display().to_string());
