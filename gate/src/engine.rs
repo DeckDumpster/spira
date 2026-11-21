@@ -1711,9 +1711,13 @@ impl<'w, W: World> Trial<'w, W> {
         let failures = ejection::failures(out);
         for (test, beads) in flips {
             let at = failures.iter().find(|f| &f.test == test).and_then(|f| f.location.clone()).unwrap_or_else(|| "an unknown location".into());
-            let title = format!("test {test} flips: red on {} beads with disjoint diffs", beads.len() + 1);
+            let named = match crate::ports::flip_test_id(test) {
+                Some(id) => format!("{test} [{id}]"),
+                None => test.clone(),
+            };
+            let title = format!("test {named} flips: red on {} beads with disjoint diffs", beads.len() + 1);
             let body = format!(
-                "{test} fails at {at} on {} (tip {}) and on {} with disjoint diffs: a test that fails on unrelated diffs flips.\n\nDelete it in the same round (law-a-test-that-flips-is-deleted) and file a follow-on bead that restores the coverage it gave.\n",
+                "{named} fails at {at} on {} (tip {}) and on {} with disjoint diffs: a test that fails on unrelated diffs flips.\n\nDelete it in the same round (law-a-test-that-flips-is-deleted) and file a follow-on bead that restores the coverage it gave.\n",
                 self.s.bead, self.s.branch_tip, beads.join(", "));
             if let Err(e) = self.w.file_flip(&self.s.repo_name, test, &title, &body) {
                 self.w.eprint(&format!("gate: could not file the deletion of flipping test {test}: {e}"));

@@ -551,8 +551,7 @@ impl drive::RoundOps for LiveOps<'_> {
             None,
         )?;
         if owner && filter == "unit-tests" {
-            let graph = self.package_graph();
-            if let Some(ids) = drive::flip_ids(failed, graph.as_ref()) {
+            if let Some(ids) = drive::flip_ids(failed) {
                 if let Err(e) = spira_config::proof::record_failing_tests(&self.env.run, &member.id, filter, &ids) {
                     eprintln!("batcher: failing tests of {} not recorded: {e}", member.id);
                 }
@@ -3366,10 +3365,10 @@ mod cut_tests {
         let d = testkit::TempDir::new("batcher-cut-deny-row");
         let mut env = io::lifecycle_tests_env(&d);
         let bin = d.join("test-registry");
-        testkit::write_exe(&bin, "#!/bin/sh\nprintf '# test-registry deny-list at=%s rows=1\\ndisabled\\tunit:tiny t::drop\\tsp-x\\t-\\n' \"$3\"\n");
+        testkit::write_exe(&bin, "#!/bin/sh\nprintf '# test-registry deny-list at=%s rows=1\\ndisabled\\ttest:t0aaaaa\\tsp-x\\t-\\n' \"$3\"\n");
         let deny = snapshot_from(io::deny_list_from(bin.to_str().unwrap(), &env, 77), 77).unwrap();
         assert_eq!(deny.at, 77);
-        assert_eq!(deny.text, "# test-registry deny-list at=77 rows=1\ndisabled\tunit:tiny t::drop\tsp-x\t-\n");
+        assert_eq!(deny.text, "# test-registry deny-list at=77 rows=1\ndisabled\ttest:t0aaaaa\tsp-x\t-\n");
         let log = d.join("tsd.log");
         env.tsd_bin = Some(d.join("tsd-write"));
         testkit::write_exe(env.tsd_bin.as_ref().unwrap(), &format!("#!/bin/sh\necho \"$@\" >> {}\n", log.display()));
@@ -3384,7 +3383,7 @@ mod cut_tests {
         let env = io::lifecycle_tests_env(d);
         let results = d.join("results");
         std::fs::create_dir_all(&results).unwrap();
-        std::fs::write(results.join("deny-list"), "# test-registry deny-list at=77 rows=1\ndisabled\tunit:tiny t::old\tsp-x\t900\n").unwrap();
+        std::fs::write(results.join("deny-list"), "# test-registry deny-list at=77 rows=1\ndisabled\ttest:t0old00\tsp-x\t900\n").unwrap();
         let calls = d.join("registry-calls");
         let bin = d.join("test-registry");
         testkit::write_exe(&bin, &format!("#!/bin/sh\necho \"$@\" >> {}\nprintf '{{\"ok\":true,\"row\":{{\"test\":\"%s\",\"state\":\"disabled\",\"bead\":\"%s\",\"until\":5000}}}}' \"$4\" \"$6\"\n", calls.display()));
@@ -3412,21 +3411,21 @@ mod cut_tests {
             &mut io::through_registry(bin.to_str().unwrap(), &env),
             &results,
             "spira/batcher-attr/fx-1",
-            &["unit:tiny t::drop".to_string(), "suite:test-x.sh".to_string()],
+            &["test:t0aaaaa".to_string(), "suite:test-x.sh".to_string()],
         )
         .unwrap();
-        assert_eq!(filed, ["unit:tiny t::drop", "suite:test-x.sh"]);
+        assert_eq!(filed, ["test:t0aaaaa", "suite:test-x.sh"]);
         let calls = std::fs::read_to_string(&calls).unwrap();
         let lines: Vec<&str> = calls.lines().collect();
         assert_eq!(lines.len(), 2, "{calls}");
-        assert!(lines[0].starts_with("disable --json --test unit:tiny t::drop --bead sp-new1 --reason unit:tiny t::drop flipped in spira/batcher-attr/fx-1 ("), "{}", lines[0]);
+        assert!(lines[0].starts_with("disable --json --test test:t0aaaaa --bead sp-new1 --reason test:t0aaaaa flipped in spira/batcher-attr/fx-1 ("), "{}", lines[0]);
         assert!(lines[0].ends_with("--actor batcher") && !lines[0].contains("--until"), "{}", lines[0]);
         assert!(lines[1].contains("--bead sp-new2"), "{}", lines[1]);
         assert_eq!(rows.iter().map(|r| r.bead.as_str()).collect::<Vec<_>>(), ["sp-new1", "sp-new2"]);
         let list = vm::DenySnapshot::from_pass(&results).unwrap();
         assert_eq!(
             list.text,
-            "# test-registry deny-list at=77 rows=3\ndisabled\tunit:tiny t::old\tsp-x\t900\ndisabled\tunit:tiny t::drop\tsp-new1\t5000\ndisabled\tsuite:test-x.sh\tsp-new2\t5000\n"
+            "# test-registry deny-list at=77 rows=3\ndisabled\ttest:t0old00\tsp-x\t900\ndisabled\ttest:t0aaaaa\tsp-new1\t5000\ndisabled\tsuite:test-x.sh\tsp-new2\t5000\n"
         );
         assert_eq!(io::head_of(&wt).unwrap(), head, "no commit is made in the round tree");
     }
@@ -3437,9 +3436,9 @@ mod cut_tests {
         let d = testkit::TempDir::new("batcher-cut-flip-fail");
         let (env, results, bin, calls) = flip_fixture(&d);
         let before = std::fs::read_to_string(results.join("deny-list")).unwrap();
-        let ids = ["unit:tiny t::drop".to_string()];
+        let ids = ["test:t0aaaaa".to_string()];
         let err = io::disable_flips_with(&mut |_| Err("bead store down".into()), &mut io::through_registry(bin.to_str().unwrap(), &env), &results, "b", &ids).unwrap_err();
-        assert!(err.contains("bead store down") && err.contains("unit:tiny t::drop"), "{err}");
+        assert!(err.contains("bead store down") && err.contains("test:t0aaaaa"), "{err}");
         assert!(!calls.exists());
         testkit::write_exe(d.join("refuse"), "#!/bin/sh\necho locked\nexit 3\n");
         let err = io::disable_flips_with(&mut |_| Ok("sp-n".into()), &mut io::through_registry(d.join("refuse").to_str().unwrap(), &env), &results, "b", &ids).unwrap_err();
@@ -3484,7 +3483,7 @@ mod cut_tests {
         );
         assert_eq!(
             vm::DenySnapshot::from_pass(&results).unwrap().text,
-            "# test-registry deny-list at=77 rows=2\ndisabled\tunit:tiny t::old\tsp-x\t900\ndisabled\tsuite:test-x.sh\tsp-fix\t5000\n"
+            "# test-registry deny-list at=77 rows=2\ndisabled\ttest:t0old00\tsp-x\t900\ndisabled\tsuite:test-x.sh\tsp-fix\t5000\n"
         );
     }
 
@@ -3509,13 +3508,13 @@ mod cut_tests {
         io::add_row_to_pass(&results, &row).unwrap();
         assert_eq!(
             vm::DenySnapshot::from_pass(&results).unwrap().text,
-            "# test-registry deny-list at=77 rows=2\ndisabled\tunit:tiny t::old\tsp-x\t900\ndisabled\tsuite:test-y.sh\tsp-own\t-\n"
+            "# test-registry deny-list at=77 rows=2\ndisabled\ttest:t0old00\tsp-x\t900\ndisabled\tsuite:test-y.sh\tsp-own\t-\n"
         );
     }
 
     fn lifted_pair() -> io::LiftedRows {
         let row = |t: &str, b: &str| vm::LiftedRow { state: "disabled".into(), test: t.into(), bead: b.into(), until: 900 };
-        io::LiftedRows::new(vec![row("suite:test-x.sh", "sp-own"), row("unit:tiny t::y", "sp-own"), row("suite:test-z.sh", "sp-other")])
+        io::LiftedRows::new(vec![row("suite:test-x.sh", "sp-own"), row("test:t0yyyyy", "sp-own"), row("suite:test-z.sh", "sp-other")])
     }
 
     #[test_id(tc0uo4u)]
@@ -3534,7 +3533,7 @@ mod cut_tests {
         assert_eq!((first, second), (Ok("sp-fix".to_string()), Ok("sp-fix".to_string())));
         assert_eq!(filed, ["sp-own"], "the old bead is the row's, and only one filing");
         assert!(rows.keep("suite:nope.sh", |_| Ok("x".into())).is_err());
-        assert_eq!(rows.standing().iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["unit:tiny t::y", "suite:test-z.sh"]);
+        assert_eq!(rows.standing().iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["test:t0yyyyy", "suite:test-z.sh"]);
         let mut failing = lifted_pair();
         assert!(failing.keep("suite:test-x.sh", |_| Err("down".into())).is_err());
         assert_eq!(failing.standing().len(), 3, "a failed keep leaves the row standing and retryable");
@@ -3551,7 +3550,7 @@ mod cut_tests {
         rows.restore_rows_of("sp-own", &results).unwrap();
         assert_eq!(
             vm::DenySnapshot::from_pass(&results).unwrap().text,
-            "# test-registry deny-list at=77 rows=2\ndisabled\tunit:tiny t::old\tsp-x\t900\ndisabled\tunit:tiny t::y\tsp-own\t900\n"
+            "# test-registry deny-list at=77 rows=2\ndisabled\ttest:t0old00\tsp-x\t900\ndisabled\ttest:t0yyyyy\tsp-own\t900\n"
         );
         assert_eq!(rows.standing().iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["suite:test-z.sh"]);
     }

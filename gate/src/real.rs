@@ -841,7 +841,7 @@ impl World for Real {
     }
     fn file_flip(&self, repo: &str, test: &str, title: &str, body: &str) -> Result<(), String> {
         incident::intake::file_payload_with(title, body.as_bytes(), |e| {
-            e.reference = Some(format!("test-flip:{repo}:{test}"));
+            e.reference = Some(crate::ports::flip_reference(repo, test));
             e.cause = "test-flip".into();
             e.repo = Some(repo.into());
             e.actor = Some("gate".into());

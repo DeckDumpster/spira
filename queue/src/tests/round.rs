@@ -10019,8 +10019,8 @@ fn resubmit_drops_a_forced_suite_the_landing_ref_deleted_and_records_why() {
     assert!(spira_config::proof::failing(&run, "sp-a").is_empty() && !run.join("ejected/sp-a").exists());
 }
 
-const TEST_A: &str = "integration:state-store-sqlite wal_stays_bounded";
-const TEST_B: &str = "unit:queue other_test";
+const TEST_A: &str = "test:t0wal00";
+const TEST_B: &str = "test:t0other";
 
 fn unit_red_world(ids: &[&str], deny: &str) -> T {
     let t = rework_world(&["manual"]);
@@ -10093,7 +10093,7 @@ fn deny_path_of(t: &T) -> String {
 #[test_id(tux2f78)]
 #[test]
 fn resubmit_hands_a_whole_run_the_deny_rows_when_the_eject_recorded_no_test_ids() {
-    let row = "disabled\tunit:queue other_test\tsp-quvpmf\t9999999999\n";
+    let row = "disabled\ttest:t0other\tsp-quvpmf\t9999999999\n";
     let t = unit_red_world(&[], row);
     assert_eq!(resubmit_unit_red(&t), 0, "{}", t.err());
     let text = fs::read_to_string(deny_path_of(&t)).unwrap();
