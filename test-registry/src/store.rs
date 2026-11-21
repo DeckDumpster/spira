@@ -236,6 +236,15 @@ fn row_of(r: &rusqlite::Row) -> rusqlite::Result<Row> {
     })
 }
 
+/// Every test ever disabled, with the first time it was: `activate` and a later re-disable do not move it.
+pub fn ever_disabled(conn: &Connection) -> Result<Vec<(String, i64)>, String> {
+    let mut stmt = conn
+        .prepare("SELECT test, MIN(at) FROM test_state_history WHERE verb = 'disable' GROUP BY test ORDER BY test")
+        .map_err(sql)?;
+    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map_err(sql)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(sql)
+}
+
 pub fn show(conn: &Connection, test: &str) -> Result<Option<Row>, String> {
     let mut st = conn
         .prepare(&format!("SELECT {COLUMNS} FROM test_state WHERE test = ?1"))
@@ -339,6 +348,17 @@ mod tests {
             actor: "ryan",
             until,
         }
+    }
+
+    #[test]
+    fn ever_disabled_gives_each_test_once_at_its_first_disable_and_ignores_activate() {
+        let c = db();
+        disable(&c, 100, 50, &s("unit:a x::one", None)).unwrap();
+        disable(&c, 200, 50, &s("unit:a x::two", None)).unwrap();
+        activate(&c, 300, "unit:a x::one", "fixed", "ryan").unwrap();
+        disable(&c, 400, 50, &s("unit:a x::one", None)).unwrap();
+        activate(&c, 500, "unit:a x::two", "fixed", "ryan").unwrap();
+        assert_eq!(ever_disabled(&c).unwrap(), vec![("unit:a x::one".to_string(), 100), ("unit:a x::two".to_string(), 200)]);
     }
 
     #[test]

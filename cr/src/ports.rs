@@ -16,6 +16,23 @@ pub struct History {
     pub oldest_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitInfo {
+    pub sha: String,
+    pub at_ms: u64,
+    pub subject: String,
+    pub reverts: bool,
+}
+
+/// A `#[test]` fn a commit deleted from `path` and that no file of the unit holds today.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemovedTest {
+    pub path: String,
+    pub name: String,
+    pub sha: String,
+    pub at_ms: u64,
+}
+
 pub trait SourceTree {
     fn commit(&self) -> Result<String, String>;
     fn files(&self) -> Result<Vec<String>, String>;
@@ -25,6 +42,12 @@ pub trait SourceTree {
     fn history(&self, path: &str, since_ms: u64) -> History;
     /// The names that committed `path`, sorted and distinct.
     fn authors(&self, path: &str) -> Vec<String>;
+    /// Every commit touching `path`, all time, newest first.
+    fn log(&self, path: &str) -> Vec<CommitInfo>;
+    /// The author time of each line of `path` at this commit, in milliseconds.
+    fn line_times(&self, path: &str) -> Vec<u64>;
+    /// `#[test]` fns removed from `paths` in their history and absent from them today.
+    fn removed_tests(&self, paths: &[String]) -> Vec<RemovedTest>;
     /// The same repository at another commit.
     fn at(&self, commit: &str) -> Result<Box<dyn SourceTree>, String>;
 }
@@ -35,12 +58,92 @@ pub struct Config {
     pub oversize_pages: u32,
     pub exclude: Vec<String>,
     pub churn_days: u32,
+    pub rewrite_days: u32,
     pub count_limit: usize,
 }
 
 impl Config {
     pub fn oversize_lines(&self) -> u32 {
         self.page_lines.saturating_mul(self.oversize_pages)
+    }
+}
+
+/// The `issue_type` of each bead named, read through spira-lc; a bead the store lacks is absent.
+pub trait Beads {
+    fn types(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String>;
+}
+
+const BEAD_CHUNK: usize = 50;
+
+pub struct LcBeads;
+
+impl Beads for LcBeads {
+    fn types(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String> {
+        let lc = spira_store::lc_call::LcClient::configured()?;
+        let mut out = BTreeMap::new();
+        for chunk in ids.chunks(BEAD_CHUNK) {
+            let argv = ["plan".to_string(), "items".into(), "--ids".into(), chunk.join(",")];
+            let reply = lc.call(&argv).map_err(String::from)?;
+            let items = serde_json::from_str::<serde_json::Value>(reply.out.trim()).ok().and_then(|mut v| v.get_mut("items").map(serde_json::Value::take));
+            let Some(serde_json::Value::Array(items)) = items.filter(|_| reply.code == 0) else {
+                return Err(format!("spira-lc plan items: {}", reply.why()));
+            };
+            for item in &items {
+                if let (Some(id), Some(kind)) = (item["id"].as_str(), item["issue_type"].as_str()) {
+                    out.insert(id.to_string(), kind.to_string());
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Every test the registry ever disabled, with the first time (epoch seconds) it was.
+pub trait Registry {
+    fn disabled(&self) -> Result<Vec<(String, i64)>, String>;
+}
+
+pub struct SqliteRegistry {
+    pub path: String,
+}
+
+impl Registry for SqliteRegistry {
+    fn disabled(&self) -> Result<Vec<(String, i64)>, String> {
+        if !Path::new(&self.path).exists() {
+            return Err(format!("no registry file at {}", self.path));
+        }
+        test_registry::store::ever_disabled(&test_registry::open(&self.path)?)
+    }
+}
+
+/// A fixed answer for tests and simulation.
+#[derive(Clone)]
+pub struct FixtureBeads(pub Result<BTreeMap<String, String>, String>);
+
+impl Default for FixtureBeads {
+    fn default() -> Self {
+        FixtureBeads(Ok(BTreeMap::new()))
+    }
+}
+
+impl Beads for FixtureBeads {
+    fn types(&self, _ids: &[String]) -> Result<BTreeMap<String, String>, String> {
+        self.0.clone()
+    }
+}
+
+#[derive(Clone)]
+pub struct FixtureRegistry(pub Result<Vec<(String, i64)>, String>);
+
+impl Default for FixtureRegistry {
+    fn default() -> Self {
+        FixtureRegistry(Ok(Vec::new()))
+    }
+}
+
+impl Registry for FixtureRegistry {
+    fn disabled(&self) -> Result<Vec<(String, i64)>, String> {
+        self.0.clone()
     }
 }
 
@@ -91,6 +194,8 @@ pub struct Ports {
     pub stdin: String,
     pub clock: Box<dyn Clock>,
     pub tree: Box<dyn SourceTree>,
+    pub beads: Box<dyn Beads>,
+    pub registry: Box<dyn Registry>,
     pub ledger: Ledger,
     pub config: Config,
     pub env_seed: Option<String>,
@@ -103,6 +208,9 @@ pub struct FixtureTree {
     files: BTreeMap<String, String>,
     commits: HashMap<String, Vec<u64>>,
     authors: HashMap<String, Vec<String>>,
+    logs: HashMap<String, Vec<CommitInfo>>,
+    line_ages: HashMap<String, Vec<u64>>,
+    removed: Vec<RemovedTest>,
 }
 
 impl FixtureTree {
@@ -117,6 +225,21 @@ impl FixtureTree {
 
     pub fn with_authors(mut self, path: &str, names: &[&str]) -> Self {
         self.authors.insert(path.to_string(), names.iter().map(|n| n.to_string()).collect());
+        self
+    }
+
+    pub fn with_log(mut self, path: &str, commits: Vec<CommitInfo>) -> Self {
+        self.logs.insert(path.to_string(), commits);
+        self
+    }
+
+    pub fn with_line_times(mut self, path: &str, times_ms: &[u64]) -> Self {
+        self.line_ages.insert(path.to_string(), times_ms.to_vec());
+        self
+    }
+
+    pub fn with_removed_test(mut self, path: &str, name: &str, sha: &str, at_ms: u64) -> Self {
+        self.removed.push(RemovedTest { path: path.to_string(), name: name.to_string(), sha: sha.to_string(), at_ms });
         self
     }
 
@@ -158,6 +281,15 @@ impl SourceTree for FixtureTree {
         v.dedup();
         v
     }
+    fn log(&self, path: &str) -> Vec<CommitInfo> {
+        self.logs.get(path).cloned().unwrap_or_default()
+    }
+    fn line_times(&self, path: &str) -> Vec<u64> {
+        self.line_ages.get(path).cloned().unwrap_or_default()
+    }
+    fn removed_tests(&self, paths: &[String]) -> Vec<RemovedTest> {
+        self.removed.iter().filter(|r| paths.contains(&r.path)).cloned().collect()
+    }
     fn at(&self, commit: &str) -> Result<Box<dyn SourceTree>, String> {
         if commit == self.commit_id {
             Ok(Box::new(self.clone()))
@@ -174,7 +306,11 @@ pub struct GitTree {
     listing: RefCell<Option<BTreeMap<String, String>>>,
     contents: RefCell<Option<HashMap<String, Vec<u8>>>>,
     log: RefCell<Option<HashMap<String, Vec<u64>>>>,
+    full_log: RefCell<Option<FullLog>>,
 }
+
+/// Every commit, and for each path the indexes of the commits touching it.
+type FullLog = (Vec<CommitInfo>, HashMap<String, Vec<usize>>);
 
 const BATCH_EXTENSIONS: [&str; 4] = ["rs", "sh", "md", "toml"];
 
@@ -184,7 +320,7 @@ impl GitTree {
         let spec = format!("{base}^{{commit}}");
         let out = git(&root, &["rev-parse", "--verify", &spec])?;
         let commit = String::from_utf8_lossy(&out).trim().to_string();
-        Ok(GitTree { root, commit, listing: RefCell::new(None), contents: RefCell::new(None), log: RefCell::new(None) })
+        Ok(GitTree { root, commit, listing: RefCell::new(None), contents: RefCell::new(None), log: RefCell::new(None), full_log: RefCell::new(None) })
     }
 
     fn listing(&self) -> Result<std::cell::Ref<'_, BTreeMap<String, String>>, String> {
@@ -251,6 +387,36 @@ impl GitTree {
         }
         *self.log.borrow_mut() = Some(map);
     }
+
+    fn load_full_log(&self) {
+        if self.full_log.borrow().is_some() {
+            return;
+        }
+        let mut commits = Vec::new();
+        let mut by_path: HashMap<String, Vec<usize>> = HashMap::new();
+        if let Ok(out) = git(&self.root, &["-c", "core.quotepath=off", "log", "--format=%H%x00%ct%x00%s%x00%b%x1e", "--name-only", &self.commit]) {
+            let text = String::from_utf8_lossy(&out);
+            let mut pending: Option<usize> = None;
+            for chunk in text.split('\x1e') {
+                let header_at = match chunk.find('\0') {
+                    Some(nul) => chunk[..nul].rfind('\n').map_or(0, |n| n + 1),
+                    None => chunk.len(),
+                };
+                if let Some(i) = pending {
+                    for file in chunk[..header_at].lines().filter(|l| !l.is_empty()) {
+                        by_path.entry(file.to_string()).or_default().push(i);
+                    }
+                }
+                pending = None;
+                let mut f = chunk[header_at..].splitn(4, '\0');
+                if let (Some(sha), Some(ct), Some(subject), Some(body)) = (f.next(), f.next(), f.next(), f.next()) {
+                    commits.push(CommitInfo { sha: sha.to_string(), at_ms: ct.parse::<u64>().unwrap_or(0).saturating_mul(1000), subject: subject.to_string(), reverts: body.lines().any(|l| l.starts_with("This reverts commit ")) });
+                    pending = Some(commits.len() - 1);
+                }
+            }
+        }
+        *self.full_log.borrow_mut() = Some((commits, by_path));
+    }
 }
 
 fn git(root: &std::path::Path, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -314,6 +480,66 @@ impl SourceTree for GitTree {
         names.sort();
         names.dedup();
         names
+    }
+    fn log(&self, path: &str) -> Vec<CommitInfo> {
+        self.load_full_log();
+        let cache = self.full_log.borrow();
+        let Some((commits, by_path)) = cache.as_ref() else { return Vec::new() };
+        by_path.get(path).into_iter().flatten().map(|i| commits[*i].clone()).collect()
+    }
+    fn line_times(&self, path: &str) -> Vec<u64> {
+        let Ok(out) = git(&self.root, &["-c", "core.quotepath=off", "blame", "--porcelain", &self.commit, "--", path]) else { return Vec::new() };
+        let mut time_of: HashMap<String, u64> = HashMap::new();
+        let mut current = String::new();
+        let mut times = Vec::new();
+        for line in String::from_utf8_lossy(&out).lines() {
+            if line.starts_with('\t') {
+                times.push(time_of.get(&current).copied().unwrap_or(0));
+            } else if let Some(t) = line.strip_prefix("author-time ") {
+                time_of.insert(current.clone(), t.trim().parse::<u64>().unwrap_or(0).saturating_mul(1000));
+            } else if let Some(sha) = line.split(' ').next().filter(|w| w.len() == 40 && w.bytes().all(|b| b.is_ascii_hexdigit())) {
+                current = sha.to_string();
+            }
+        }
+        times
+    }
+    fn removed_tests(&self, paths: &[String]) -> Vec<RemovedTest> {
+        if paths.is_empty() {
+            return Vec::new();
+        }
+        let mut args = vec!["-c", "core.quotepath=off", "log", "-p", "-U1", "--format=%x01%H %ct", self.commit.as_str(), "--"];
+        args.extend(paths.iter().map(String::as_str));
+        let Ok(out) = git(&self.root, &args) else { return Vec::new() };
+        let today: String = paths.iter().filter_map(|p| self.read(p)).map(|b| String::from_utf8_lossy(&b).into_owned()).collect::<Vec<_>>().join("\n");
+        let (mut sha, mut at_ms, mut file) = (String::new(), 0u64, String::new());
+        let mut after_attr = false;
+        let mut found: Vec<RemovedTest> = Vec::new();
+        for line in String::from_utf8_lossy(&out).lines() {
+            if let Some(h) = line.strip_prefix('\x01') {
+                let mut w = h.split(' ');
+                sha = w.next().unwrap_or_default().to_string();
+                at_ms = w.next().and_then(|t| t.parse::<u64>().ok()).unwrap_or(0).saturating_mul(1000);
+                after_attr = false;
+            } else if let Some(p) = line.strip_prefix("--- a/") {
+                file = p.to_string();
+            } else if line.starts_with("+++ ") || line.starts_with("--- ") {
+            } else if let Some(removed) = line.strip_prefix('-') {
+                let t = removed.trim();
+                if after_attr {
+                    let decl = t.strip_prefix("pub ").unwrap_or(t);
+                    if let Some(name) = decl.strip_prefix("fn ").map(|r| r.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect::<String>()).filter(|n| !n.is_empty()) {
+                        let held = today.contains(&format!("fn {name}("));
+                        if !held && !found.iter().any(|f| f.path == file && f.name == name) {
+                            found.push(RemovedTest { path: file.clone(), name, sha: sha.clone(), at_ms });
+                        }
+                    }
+                }
+                after_attr = t == "#[test]";
+            } else {
+                after_attr = false;
+            }
+        }
+        found
     }
     fn at(&self, commit: &str) -> Result<Box<dyn SourceTree>, String> {
         Ok(Box::new(GitTree::new(&self.root.to_string_lossy(), commit)?))

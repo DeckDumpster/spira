@@ -53,8 +53,10 @@ fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
         stdin: String::new(),
         clock: Box::new(VirtualClock::new(1_700_000_000_000)),
         tree: Box::new(GitTree::new(p.to_str().unwrap(), "main").unwrap()),
+        beads: Box::new(cr::ports::FixtureBeads::default()),
+        registry: Box::new(cr::ports::FixtureRegistry::default()),
         ledger: Ledger::default(),
-        config: Config { page_lines: 60, oversize_pages: 6, exclude: vec![], churn_days: 60, count_limit: 50 },
+        config: Config { page_lines: 60, oversize_pages: 6, exclude: vec![], churn_days: 60, rewrite_days: 90, count_limit: 50 },
         env_seed: None,
     };
     let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();

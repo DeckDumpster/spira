@@ -291,6 +291,8 @@ dependencies = [
  "sha2",
  "spira-config",
  "spira-otel",
+ "spira-store",
+ "test-registry",
  "testkit",
  "toml",
 ]
