@@ -504,6 +504,7 @@ pub fn amend_text(args: &mut [String], body: &mut Option<String>, repo: &dyn Fn(
 
 #[cfg(test)]
 mod tests {
+    #[test_id(td1v8rf)]
     #[test]
     fn depends_on_edges_are_written_before_the_row_is_promoted() {
         let calls = std::cell::RefCell::new(Vec::<String>::new());
@@ -521,6 +522,7 @@ mod tests {
         assert_eq!(*calls.borrow(), ["dep add sp-new sp-a --type blocks", "dep add sp-new sp-b --type blocks", "promote-filed sp-new"]);
     }
 
+    #[test_id(tjmbsr7)]
     #[test]
     fn a_failed_edge_leaves_the_row_unpromoted_and_stack_and_depends_share_one_edge() {
         let promoted = std::cell::Cell::new(false);
@@ -540,6 +542,7 @@ mod tests {
         s.iter().map(|x| x.to_string()).collect()
     }
 
+    #[test_id(tp150q9)]
     #[test]
     fn the_most_specific_persona_whose_whole_predicate_the_labels_carry_is_the_one_filed_for() {
         let p = Policy { personas: vec![persona("a", &["x"], false), persona("b", &["x", "y"], true)], ..Policy::none() };
@@ -548,12 +551,14 @@ mod tests {
         assert!(p.persona_of(&a(&["z"])).is_none());
     }
 
+    #[test_id(tpbl656)]
     #[test]
     fn an_empty_predicate_names_no_filing() {
         let p = Policy { personas: vec![persona("a", &[], false)], ..Policy::none() };
         assert!(p.persona_of(&a(&["x"])).is_none());
     }
 
+    #[test_id(tmdmvb9)]
     #[test]
     fn a_partition_label_is_refused_and_an_ordinary_one_is_not() {
         let parts = vec!["builder-lane".to_string()];
@@ -579,6 +584,7 @@ mod tests {
         create(&mut args, &mut Some("body".into()), policy, &|k| env.get(k).cloned())
     }
 
+    #[test_id(tkj2u08)]
     #[test]
     fn a_work_filing_for_a_repo_missing_a_contract_file_is_refused_naming_the_clause() {
         let r = file(&deck_policy(checker(Some(1), NOT_MET, "")), "builder-lane,repo:deck", &[]).expect_err("filing admitted");
@@ -588,18 +594,21 @@ mod tests {
         assert!(r.text.contains("--contract-fix") && r.text.contains(CONTRACT_OVERRIDE_ENV), "{}", r.text);
     }
 
+    #[test_id(t3eulz0)]
     #[test]
     fn a_contract_fix_filing_for_that_repo_is_admitted() {
         let p = deck_policy(checker(Some(1), NOT_MET, ""));
         assert!(file(&p, "builder-lane,repo:deck,repo-contract-fix", &[]).is_ok());
     }
 
+    #[test_id(tqpu03i)]
     #[test]
     fn the_home_repo_is_admitted_without_running_the_check() {
         let p = deck_policy(Contract::new("spira", |_| panic!("the home repo is not checked")));
         assert!(file(&p, "builder-lane,repo:spira", &[]).is_ok());
     }
 
+    #[test_id(tbcic7o)]
     #[test]
     fn a_check_that_cannot_tell_refuses_with_what_it_said() {
         for run in [checker(Some(2), "out-text", "err-text"), checker(None, "out-text", "err-text")] {
@@ -611,6 +620,7 @@ mod tests {
         assert!(r.text.contains("cannot tell") && r.text.contains("no such tool"), "{}", r.text);
     }
 
+    #[test_id(t0sewfl)]
     #[test]
     fn a_checker_fault_is_refused_as_cannot_tell_never_as_a_failed_contract() {
         let fault = checker(Some(2), "cannot tell environment: cannot cut a worktree from local/main: boom\n", "");
@@ -618,6 +628,7 @@ mod tests {
         assert!(r.text.contains("cannot tell whether deck meets the landing contract") && !r.text.contains("does not meet"), "{}", r.text);
     }
 
+    #[test_id(trt3s60)]
     #[test]
     fn a_met_contract_admits_and_records_nothing() {
         let p = deck_policy(checker(Some(0), "met environment: ok\n", ""));
@@ -626,6 +637,7 @@ mod tests {
         assert_eq!(args.last().unwrap(), "d");
     }
 
+    #[test_id(t02t5y2)]
     #[test]
     fn a_named_override_admits_a_broken_repo_and_records_why_and_what_was_not_met() {
         let p = deck_policy(checker(Some(1), NOT_MET, ""));
@@ -636,6 +648,7 @@ mod tests {
         assert!(file(&p, "builder-lane,repo:deck", &[(CONTRACT_OVERRIDE_ENV, "  ")]).is_err());
     }
 
+    #[test_id(tk0dos0)]
     #[test]
     fn a_named_override_admits_a_check_that_cannot_tell_and_records_that_it_could_not() {
         let p = deck_policy(checker(Some(2), "out-text", "err-text"));
@@ -674,6 +687,7 @@ mod tests {
         (code, out, said, sent)
     }
 
+    #[test_id(tpvabbr)]
     #[test]
     fn a_create_that_commits_after_the_deadline_is_found_by_the_second_listing_and_reported_filed() {
         let (code, out, said, _) = run(vec![(CANNOT_TELL, "")], vec![Readback::Absent, Readback::Absent, Readback::Found("sp-late".into())], 3);
@@ -681,6 +695,7 @@ mod tests {
         assert!(said.iter().all(|t| !t.contains("nothing was recorded")), "{said:?}");
     }
 
+    #[test_id(tk5xraq)]
     #[test]
     fn found_paths_print_an_object_with_the_id_when_json_was_asked_for() {
         for (creates, listings, want) in [
@@ -695,6 +710,7 @@ mod tests {
         }
     }
 
+    #[test_id(tb3p8gp)]
     #[test]
     fn a_create_never_found_says_it_may_still_be_written_and_exits_non_zero() {
         let (code, _, said, _) = run(vec![(CANNOT_TELL, "")], vec![Readback::Absent], 2);
@@ -703,12 +719,14 @@ mod tests {
         assert!(text.contains("may still be written") && text.contains("2026-11-19T20:12:30Z") && !text.contains("nothing was recorded"), "{text}");
     }
 
+    #[test_id(ttpe8iy)]
     #[test]
     fn a_retry_of_a_title_the_store_holds_sends_no_second_create_and_prints_the_existing_id() {
         let (code, out, _, sent) = run(vec![], vec![Readback::Found("sp-old".into())], 0);
         assert_eq!((code, out.as_str(), sent), (0, "sp-old\n", 0));
     }
 
+    #[test_id(tnc3krc)]
     #[test]
     fn a_create_that_answers_normally_is_not_read_back() {
         let (code, out, said, sent) = run(vec![(0, "sp-new\n")], vec![Readback::Absent], 0);
@@ -716,6 +734,7 @@ mod tests {
         assert!(said.is_empty());
     }
 
+    #[test_id(t4snjvy)]
     #[test]
     fn the_request_id_follows_the_actor_argv_and_body() {
         let a = |t: &str| vec!["create".to_string(), t.to_string()];
@@ -727,6 +746,7 @@ mod tests {
         assert_ne!(id, create_request_id("other", &a("T"), Some("b")));
     }
 
+    #[test_id(tkgcvkh)]
     #[test]
     fn each_blocker_is_an_edge_from_the_new_bead_to_it_and_all_precede_the_promotion() {
         let log = std::cell::RefCell::new(Vec::new());

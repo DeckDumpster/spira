@@ -726,6 +726,7 @@ mod tests {
     use super::*;
     use crate::model::Row;
 
+    #[test_id(tn4crgz)]
     #[test]
     fn an_unrostered_row_escalates_inside_the_grace_and_a_stuck_row_does_not() {
         let mut r = aged("unrostered", Disposition::Escalate, 0, 0, 0);
@@ -736,6 +737,7 @@ mod tests {
         assert_eq!(decide(&r, false, 900), Step::Skip, "once");
     }
 
+    #[test_id(t576zgl)]
     #[test]
     fn the_inbox_line_names_the_row_and_its_action() {
         let l = inbox_line("Spira: sp-x is stranded (unrostered)", "no persona", "roster it");
@@ -747,6 +749,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-21
+    #[test_id(t4hdcof)]
     #[test]
     fn a_stale_blocked_act_sends_recompute_blocked_to_the_door() {
         use spira_store::lc_call::{fake::Content, LcClient};
@@ -766,6 +769,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-21
+    #[test_id(t24lwwi)]
     #[test]
     fn a_runner_that_cannot_take_the_lock_declines_and_the_episode_is_escalated_once() {
         let run = testkit::TempDir::new("strand-check-lock");
@@ -788,6 +792,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-21
+    #[test_id(tesv4t1)]
     #[test]
     fn an_info_row_never_raises_an_escalation() {
         let run = testkit::TempDir::new("strand-check-info");
@@ -806,6 +811,7 @@ mod tests {
         }
     }
 
+    #[test_id(twmcflu)]
     #[test]
     fn a_stranded_alert_is_a_note_to_the_operator_with_the_bypass_and_no_question() {
         let a = operator_send_args("t", "strand:p:k:i");
@@ -818,6 +824,7 @@ mod tests {
         assert!(b.starts_with("## Note\n") && b.contains("do x"), "{b}");
     }
 
+    #[test_id(txfb4en)]
     #[test]
     fn a_stranded_alarms_condition_stands_while_its_episode_is_in_the_state_and_ends_when_it_leaves() {
         let run = testkit::TempDir::new("strand-condition");
@@ -834,6 +841,7 @@ mod tests {
         assert_eq!(condition_exit(&cfg, &key), 1, "a corrupt state is not an ended episode");
     }
 
+    #[test_id(t2rlx7r)]
     #[test]
     fn titles() {
         assert_eq!(title_for("spira,plan", "stuck", "sp-1"), "Spira: sp-1 is stranded (stuck)");
@@ -842,6 +850,7 @@ mod tests {
         assert_eq!(title_for("p", "reclaim-ceiling", "sp-1"), "Spira: sp-1 keeps losing its dwarf — the host, not the bead");
     }
 
+    #[test_id(t1lxolo)]
     #[test]
     fn the_raise_time_lane_count_reads_units_whatever_the_call_mode_and_none_when_unreadable() {
         let t = testkit::TempDir::new("strand-lane-live");
@@ -854,6 +863,7 @@ mod tests {
         assert_eq!(lane_live_now(&cfg, Ok(spec())), None);
     }
 
+    #[test_id(twy1nfa)]
     #[test]
     fn report_shapes() {
         let rows = vec![aged("stuck", Disposition::Escalate, 180, 0, 0)];
@@ -882,6 +892,7 @@ mod tests {
 mod ungated_submitted_tests {
     use super::*;
 
+    #[test_id(tqqki7j)]
     #[test]
     fn a_held_submitted_bead_is_not_ungated() {
         let run = testkit::TempDir::new("strand-ungated");
@@ -894,6 +905,7 @@ mod ungated_submitted_tests {
         assert_eq!(ungated_submitted(&run, &rows, 1000), ["sp-a".to_string()].into_iter().collect());
     }
 
+    #[test_id(tzevssy)]
     #[test]
     fn a_submitted_bead_whose_gate_is_backing_off_is_not_ungated() {
         let run = testkit::TempDir::new("strand-backoff");
@@ -909,6 +921,7 @@ mod ungated_submitted_tests {
         assert_eq!(ungated_submitted(&run, &rows, now).len(), 2, "an ended backoff is a stranding again");
     }
 
+    #[test_id(tx1f0ud)]
     #[test]
     fn work_waiting_on_a_task_that_has_not_ticked_is_reported_and_a_fresh_tick_is_not() {
         let run = testkit::TempDir::new("strand-task-silent");
@@ -924,6 +937,7 @@ mod ungated_submitted_tests {
         }
     }
 
+    #[test_id(tupi8yf)]
     #[test]
     fn a_scheduler_whose_transitions_tick_went_stale_is_reported_whether_or_not_work_waits() {
         let run = testkit::TempDir::new("strand-scheduler-silent");

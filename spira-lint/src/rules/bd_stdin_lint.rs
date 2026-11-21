@@ -103,6 +103,7 @@ mod tests {
         BdStdinLint::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tgvkcn7)]
     #[test]
     fn both_bad_shapes_are_caught_in_spira_and_runes() {
         let t = TempDir::new("bds");
@@ -118,6 +119,7 @@ mod tests {
         );
     }
 
+    #[test_id(trmsz0w)]
     #[test]
     fn the_stdin_forms_are_silent_beside_the_plants() {
         let t = TempDir::new("bds-ok");
@@ -128,6 +130,7 @@ mod tests {
         assert!(run(&t, &["spira/x.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(t9rawex)]
     #[test]
     fn a_commented_out_example_is_not_a_live_invocation() {
         let t = TempDir::new("bds-comment");
@@ -135,6 +138,7 @@ mod tests {
         assert!(run(&t, &["spira/doc.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(tk7tzun)]
     #[test]
     fn nested_paths_under_spira_and_runes_are_in_scope() {
         let t = TempDir::new("bds-nested");
@@ -142,6 +146,7 @@ mod tests {
         assert_eq!(run(&t, &["spira/sub/x.sh"]).unwrap().len(), 1);
     }
 
+    #[test_id(tyacika)]
     #[test]
     fn a_clean_tree_reports_checked_and_an_empty_tree_refuses() {
         let t = TempDir::new("bds-clean");

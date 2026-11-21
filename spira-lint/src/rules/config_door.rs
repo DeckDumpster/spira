@@ -124,6 +124,7 @@ mod tests {
         ConfigDoor.check(&tree).unwrap().iter().map(|f| f.to_string()).collect()
     }
 
+    #[test_id(tyzrcf4)]
     #[test]
     fn a_planted_env_read_of_spira_toml_names_file_line_and_entry_point() {
         let got = run(&[
@@ -135,6 +136,7 @@ mod tests {
         assert!(got[0].contains("spira_config::process::spec()") && got[0].contains("spira_config::load"), "{got:?}");
     }
 
+    #[test_id(tfm0i9i)]
     #[test]
     fn a_planted_second_parser_and_path_join_are_found() {
         let got = run(&[(
@@ -145,6 +147,7 @@ mod tests {
         assert!(got[0].contains(":2:") && got[1].contains(":3: calls toml::from_str"), "{got:?}");
     }
 
+    #[test_id(tgc52n5)]
     #[test]
     fn exempt_documents_comments_and_test_code_are_clean() {
         let got = run(&[
@@ -156,6 +159,7 @@ mod tests {
         assert!(got.is_empty(), "{got:?}");
     }
 
+    #[test_id(tdfgq34)]
     #[test]
     fn an_exempt_file_still_may_not_resolve_the_path() {
         let got = run(&[("sim/src/actors.rs", "fn f() { let _ = p.join(\"spira@toml\"); }\n")]);
@@ -166,6 +170,7 @@ mod tests {
         spira_config::resolve::checkout_root_for_process().unwrap()
     }
 
+    #[test_id(txziyui)]
     #[test]
     fn their_own_document_parse_is_clean_only_by_its_exemption() {
         let ws = workspace();

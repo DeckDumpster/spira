@@ -51,6 +51,7 @@ mod tests {
     use super::*;
 
     // covers: UC-ops-detection-remediation-35
+    #[test_id(t91r0vg)]
     #[test]
     fn would_archive_requires_drift_at_or_above_the_threshold() {
         assert!(!would_archive(4, 5, None, None, 0));
@@ -58,34 +59,40 @@ mod tests {
         assert!(would_archive(6, 5, None, None, 0));
     }
 
+    #[test_id(ttepqi5)]
     #[test]
     fn a_failed_session_is_selected_once_its_backoff_has_elapsed() {
         assert!(!would_archive(100, 5, Some("failed"), Some(1000), 999));
         assert!(would_archive(100, 5, Some("failed"), Some(1000), 1000));
     }
 
+    #[test_id(t0venco)]
     #[test]
     fn a_failed_session_still_needs_qualifying_drift_after_the_backoff() {
         assert!(!would_archive(4, 5, Some("failed"), Some(1000), 2000));
     }
 
     // covers: UC-ops-detection-remediation-35
+    #[test_id(tc7715d)]
     #[test]
     fn a_terminal_failure_is_never_refired_by_drift_alone() {
         assert!(!would_archive(100, 5, Some("failed"), None, i64::MAX));
     }
 
+    #[test_id(tns7jx7)]
     #[test]
     fn a_retry_state_waits_for_its_retry_at() {
         assert!(!would_archive(100, 5, Some("retry"), Some(1000), 999));
         assert!(would_archive(100, 5, Some("retry"), Some(1000), 1000));
     }
 
+    #[test_id(tx1podd)]
     #[test]
     fn backoff_doubles_per_consecutive_failure() {
         assert_eq!([1, 2, 3, 4].map(|n| backoff_secs(600, n)), [600, 1200, 2400, 4800]);
     }
 
+    #[test_id(tw2mrin)]
     #[test]
     fn a_timed_out_session_is_still_a_candidate() {
         assert!(would_archive(100, 5, Some("timeout"), None, 0));
@@ -107,6 +114,7 @@ mod tests {
         }
     }
 
+    #[test_id(tg2owyl)]
     #[test]
     fn sort_orders_most_drifted_first_and_keeps_ties_in_discovery_order() {
         let mut v = vec![c("a", 3), c("b", 9), c("c", 9), c("d", 1)];

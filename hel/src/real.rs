@@ -399,6 +399,7 @@ pub fn run_dir() -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
+    #[test_id(tkw983j)]
     #[test]
     fn a_pr_view_through_a_fake_gh_is_counted_once_under_hel_pr_view() {
         use std::os::unix::process::ExitStatusExt;
@@ -414,6 +415,7 @@ mod tests {
         assert_eq!((series[0].label("caller"), series[0].label("outcome"), series[0].value as u64), (Some("hel:pr-view"), Some("fresh"), 1));
     }
 
+    #[test_id(tsqwuc8)]
     #[test]
     fn the_resume_cursor_round_trips_per_repository_and_clears() {
         let dir = testkit::TempDir::new("hel-real-resume");
@@ -427,6 +429,7 @@ mod tests {
         assert_eq!(r.resume_after("spira"), None);
     }
 
+    #[test_id(tkgyod1)]
     #[test]
     fn base_is_none_for_a_path_that_is_not_a_git_checkout() {
         let dir = testkit::TempDir::new("hel-real-base-not-a-repo");
@@ -455,6 +458,7 @@ mod tests {
         (store, r, dir)
     }
 
+    #[test_id(tloqyft)]
     #[test]
     fn the_bead_record_is_the_stores_content_verb_not_a_lib_sh_seam() {
         let (store, r, _d) = over(|a| match a.join(" ").as_str() {
@@ -465,6 +469,7 @@ mod tests {
         assert_eq!(*store.seen.lock().unwrap(), vec!["content show sp-a --json"]);
     }
 
+    #[test_id(t6mv1r1)]
     #[test]
     fn the_writes_and_the_landed_read_go_to_the_store_in_process() {
         let (store, r, _d) = over(|a| match a[0].as_str() {
@@ -484,6 +489,7 @@ mod tests {
 
     const SUBMITTED_V3: &str = r#"{"bead":{"state":"SUBMITTED","version":3}}"#;
 
+    #[test_id(tc4s24m)]
     #[test]
     fn a_refused_content_on_base_sends_no_event_and_does_not_panic() {
         let (store, r, _d) = over(|_| (1, "refused".into()));
@@ -491,6 +497,7 @@ mod tests {
         assert_eq!(*store.seen.lock().unwrap(), vec!["show sp-a".to_string()]);
     }
 
+    #[test_id(t29w33i)]
     #[test]
     fn content_on_base_is_sent_as_a_bead_event_because_the_socket_refuses_the_caller_verb() {
         let (store, r, _d) = over(|a| match a[0].as_str() {
@@ -508,6 +515,7 @@ mod tests {
         );
     }
 
+    #[test_id(t8rfz7q)]
     #[test]
     fn a_store_that_does_not_say_landed_is_not_landed() {
         let (_s, r, _d) = over(|_| (2, "cannot tell".into()));
@@ -529,6 +537,7 @@ mod tests {
         }
     }
 
+    #[test_id(t20n0xi)]
     #[test]
     fn a_prefetch_of_the_judged_ids_reads_no_whole_history_and_no_per_bead_show() {
         let (store, r, _d) = over(bounded_store);
@@ -544,6 +553,7 @@ mod tests {
         assert!(!seen.iter().any(|s| s.starts_with("show ") || s.starts_with("content show")), "{seen:?}");
     }
 
+    #[test_id(t86rtgh)]
     #[test]
     fn a_refused_or_faulted_branch_read_is_an_error_with_the_stores_text_and_caches_nothing() {
         let (_s, r, _d) = over(|a| if a[0] == "content" { (2, "store deadline passed".into()) } else { bounded_store(a) });
@@ -552,6 +562,7 @@ mod tests {
         assert!(r.beads.borrow().is_none() && r.claims.borrow().is_none());
     }
 
+    #[test_id(tdaasl9)]
     #[test]
     fn a_faulted_lifecycle_read_is_an_error_with_the_stores_text_and_caches_nothing() {
         let (_s, r, _d) = over(|a| if a[0] == "list" { (2, "lifecycle deadline passed".into()) } else { bounded_store(a) });
@@ -560,6 +571,7 @@ mod tests {
         assert!(r.beads.borrow().is_none() && r.claims.borrow().is_none());
     }
 
+    #[test_id(to8eucv)]
     #[test]
     fn an_empty_id_list_makes_no_store_call() {
         let (store, r, _d) = over(bounded_store);
@@ -567,6 +579,7 @@ mod tests {
         assert!(store.seen.lock().unwrap().is_empty());
     }
 
+    #[test_id(tsoh2mg)]
     #[test]
     fn the_context_settings_are_the_environment_lib_sh_saw() {
         let m = context_settings(&|k| (k == "SPIRA_REAPLOG").then(|| "r/reap.log".to_string()));

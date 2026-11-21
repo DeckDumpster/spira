@@ -137,6 +137,7 @@ pub fn reconcile(now: i64, ctx: &Ctx, probe: &str, reading: Reading) {
 mod tests {
     use super::*;
 
+    #[test_id(tvzw48m)]
     #[test]
     fn beads_by_reference_come_through_the_content_door() {
         let d = testkit::TempDir::new("wt-cond-lc");

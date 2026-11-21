@@ -743,6 +743,7 @@ mod tests {
         d
     }
 
+    #[test_id(tfj3k10)]
     #[test]
     fn the_reaper_takes_an_aged_unreferenced_run_dir_and_keeps_a_referenced_or_fresh_one() {
         let tmp = testkit::TempDir::new("foreign-reap");
@@ -767,6 +768,7 @@ mod tests {
         assert!(held.exists(), "a referenced dir stays");
     }
 
+    #[test_id(tuli1gn)]
     #[test]
     fn concurrent_tiers_split_the_cores_and_none_gets_fewer_than_one() {
         assert_eq!(thread_share(4, 3), 1);
@@ -776,6 +778,7 @@ mod tests {
         assert_eq!(thread_share(4, 0), 4);
     }
 
+    #[test_id(tz25f4l)]
     #[test]
     fn the_run_dir_guard_removes_the_dir_on_drop() {
         let tmp = testkit::TempDir::new("foreign-guard");
@@ -785,6 +788,7 @@ mod tests {
         assert!(!d.exists());
     }
 
+    #[test_id(tr94knk)]
     #[test]
     fn lint_names_only_declared_tiers() {
         let d = Decl::parse("image = \"i\"\nlint = [\"a\"]\n[tier.a]\nargv=[\"x\"]\n").unwrap();
@@ -793,6 +797,7 @@ mod tests {
         assert!(e.contains("undeclared tier z"), "{e}");
     }
 
+    #[test_id(t2g6otv)]
     #[test]
     fn the_first_error_names_file_and_line() {
         let log = "   Compiling x\nerror: this argument is a mutable reference\n  --> src/binder.rs:222:9\n   |\nerror: could not compile `x`\n";
@@ -807,6 +812,7 @@ mod tests {
         assert_eq!(tail("a\nb\nc\n", 2), "b\nc");
     }
 
+    #[test_id(te7y10e)]
     #[test]
     fn another_repositorys_target_unused_past_the_idle_window_is_removed_and_a_fresh_one_kept() {
         let root = testkit::TempDir::new("foreign-idle");
@@ -824,6 +830,7 @@ mod tests {
         assert!(!stale.dir.join("target").exists() && fresh.dir.join("target").is_dir() && me.dir.join("target").is_dir());
     }
 
+    #[test_id(txhxhg4)]
     #[test]
     fn a_held_target_is_never_reaped_however_old() {
         let root = testkit::TempDir::new("foreign-idle-held");
@@ -837,6 +844,7 @@ mod tests {
         assert!(busy.dir.join("target").is_dir());
     }
 
+    #[test_id(ta4jmpa)]
     #[test]
     fn a_tier_image_overrides_the_repo_image_for_that_tier_only() {
         let d = Decl::parse("image = \"r\"\n[tier.a]\nargv=[\"x\"]\n[tier.b]\nargv=[\"x\"]\nimage = \"n\"\n").unwrap();
@@ -846,6 +854,7 @@ mod tests {
         assert!(e.contains("tier a: image is empty"), "{e}");
     }
 
+    #[test_id(t866a9b)]
     #[test]
     fn a_foreign_tier_runs_under_the_configured_pids_limit() {
         let root = testkit::TempDir::new("foreign-pids");
@@ -884,6 +893,7 @@ mod tests {
         Some(Share { key: key.into(), keep })
     }
 
+    #[test_id(t69w7ti)]
     #[test]
     fn two_calls_in_one_share_use_one_upper_and_only_the_last_publishes_it() {
         let root = testkit::TempDir::new("foreign-share");
@@ -907,6 +917,7 @@ mod tests {
         assert!(!last_cache.share_dir("g").exists(), "the finished share is gone");
     }
 
+    #[test_id(tit8ka6)]
     #[test]
     fn a_publish_never_waits_for_a_held_lock() {
         use std::os::fd::AsRawFd;
@@ -928,6 +939,7 @@ mod tests {
         assert!(!cache.share_dir("g").exists());
     }
 
+    #[test_id(tjidpjv)]
     #[test]
     fn a_share_whose_run_is_red_leaves_no_directory_whether_kept_or_finished() {
         for keep in [true, false] {
@@ -945,6 +957,7 @@ mod tests {
         }
     }
 
+    #[test_id(tswrvu8)]
     #[test]
     fn a_share_checks_out_in_its_own_tree_and_no_share_in_a_slot() {
         let tmp = testkit::TempDir::new("foreign-share-path");
@@ -954,12 +967,14 @@ mod tests {
         assert_eq!(share_tree(root, "r", None), None);
     }
 
+    #[test_id(tz6atbw)]
     #[test]
     fn no_default_means_every_tier() {
         let d = Decl::parse("image = \"i\"\n[tier.b]\nargv=[\"x\"]\n[tier.a]\nargv=[\"x\"]\n").unwrap();
         assert_eq!(d.default_tiers(), vec!["a", "b"]);
     }
 
+    #[test_id(t9whlg4)]
     #[test]
     fn bad_declarations_are_refused_by_name() {
         for (text, needle) in [

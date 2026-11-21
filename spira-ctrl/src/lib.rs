@@ -13,6 +13,9 @@
 //! keys serialize in sorted order without depending on serde_json's `preserve_order`
 //! feature — matching Python's `json.dumps(..., sort_keys=True)` byte for byte.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -268,6 +271,7 @@ mod tests {
     use super::*;
 
     // covers: UC-instance-lifecycle-45
+    #[test_id(t1i4nsy)]
     #[test]
     fn a_suspension_needs_reason_and_owner_and_divergence_names_running_suspended_and_undeclared_masked_units() {
         assert_eq!(missing_suspension_field(None, Some("sp-1")), Some("--reason"));
@@ -296,6 +300,7 @@ mod tests {
         assert!(found[0].contains("masked but has no control-plane entry") && found[0].contains("spira-groom-prod.timer"), "{found:?}");
     }
 
+    #[test_id(t8jneao)]
     #[test]
     fn suspend_then_resume_round_trips() {
         let mut d = CtrlData::new();
@@ -307,6 +312,7 @@ mod tests {
         assert!(d.is_empty(), "the subject is dropped once it carries no ops");
     }
 
+    #[test_id(tbdu2z8)]
     #[test]
     fn unit_suspended_resolves_instance_and_extension() {
         let mut d = CtrlData::new();
@@ -316,6 +322,7 @@ mod tests {
         assert!(!unit_suspended(&d, "spira-other-prod.service", "prod"));
     }
 
+    #[test_id(t4r7uc4)]
     #[test]
     fn until_is_declared_on_an_existing_suspension_only() {
         let mut d = CtrlData::new();
@@ -326,6 +333,7 @@ mod tests {
         assert!(is_date("2026-10-09") && !is_date("tomorrow") && !is_date("2026-1-9"));
     }
 
+    #[test_id(tlz5pnj)]
     #[test]
     fn resume_of_unsuspended_subject_is_false_and_noop() {
         let mut d = CtrlData::new();
@@ -333,6 +341,7 @@ mod tests {
         assert!(d.is_empty());
     }
 
+    #[test_id(tr3w9os)]
     #[test]
     fn suspend_leaves_other_ops_and_other_subjects_untouched() {
         let mut d = CtrlData::new();
@@ -348,6 +357,7 @@ mod tests {
         assert_eq!(d["s2"]["suspend"]["reason"], "r2");
     }
 
+    #[test_id(tb6eg7j)]
     #[test]
     fn read_of_missing_file_is_empty_not_an_error() {
         let d = testkit::TempDir::new("ctrl-lib");
@@ -355,6 +365,7 @@ mod tests {
         assert_eq!(read(&p).unwrap(), CtrlData::new());
     }
 
+    #[test_id(trwanql)]
     #[test]
     fn write_then_read_round_trips_through_disk() {
         let d = testkit::TempDir::new("ctrl-lib");
@@ -366,11 +377,13 @@ mod tests {
         assert_eq!(back, data);
     }
 
+    #[test_id(tb5yz9c)]
     #[test]
     fn render_list_empty_matches_bash() {
         assert_eq!(render_list(&CtrlData::new()), "ctrl: no entries\n");
     }
 
+    #[test_id(tkswd2c)]
     #[test]
     fn render_list_formats_like_do_list() {
         let mut d = CtrlData::new();
@@ -382,6 +395,7 @@ mod tests {
         );
     }
 
+    #[test_id(t4u7ga4)]
     #[test]
     fn unit_forms_are_instance_qualified_first() {
         assert_eq!(
@@ -395,6 +409,7 @@ mod tests {
         );
     }
 
+    #[test_id(tbtv6wj)]
     #[test]
     fn subject_of_masked_unit_strips_extension_then_instance() {
         assert_eq!(subject_of_masked_unit("spira-groom-prod.timer", "prod"), "spira-groom");

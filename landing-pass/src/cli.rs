@@ -115,6 +115,7 @@ mod tests {
         xs.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(tbuoj3f)]
     #[test]
     fn verbs_and_halt_options() {
         assert_eq!(parse(&v(&["--pass"])), Ok(Cmd::Pr));
@@ -148,6 +149,7 @@ mod tests {
         assert_eq!(parse(&v(&["ask-rebase-loop", "sp-a"])).unwrap_err().0, 2);
     }
 
+    #[test_id(tgnjyuj)]
     #[test]
     fn the_landstate_and_landed_oracle_verbs_are_gone() {
         // sp-2c1n0: the landstate ledger and the subject/notes oracles are deleted; the
@@ -158,6 +160,7 @@ mod tests {
         }
     }
 
+    #[test_id(thiyuff)]
     #[test]
     fn family_r_verbs() {
         assert_eq!(parse(&v(&["land-subject", "sp-a"])), Ok(Cmd::LandSubject { id: "sp-a".into() }));

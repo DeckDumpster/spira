@@ -641,6 +641,7 @@ mod tests {
         s.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(t56iuez)]
     #[test]
     fn a_stall_is_blamed_on_a_checkpoint_before_the_device() {
         let stall = |service_ms, checkpointed| Stall {
@@ -659,6 +660,7 @@ mod tests {
         assert_eq!(queued.cause(&[]), "queued");
     }
 
+    #[test_id(tgm77ld)]
     #[test]
     fn backfill_reads_the_ckpt_info_field_and_refuses_a_short_index() {
         let mut shm = vec![0u8; 136];
@@ -667,6 +669,7 @@ mod tests {
         assert_eq!(backfill(&shm[..99]), None);
     }
 
+    #[test_id(thutxxt)]
     #[test]
     fn the_report_carries_the_commits_own_p99_beside_the_lateness_quantiles() {
         let a = CasArgs {
@@ -701,6 +704,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2hjwza)]
     #[test]
     fn a_run_whose_store_cannot_be_opened_is_refused_naming_the_path() {
         let path = std::path::PathBuf::from("nonexistent-bench-dir/b.db");
@@ -708,18 +712,21 @@ mod tests {
         assert!(e.contains("nonexistent-bench-dir"), "{e}");
     }
 
+    #[test_id(tcihc7l)]
     #[test]
     fn inline_checkpoint_is_an_unknown_argument() {
         let got = parse(&args(&["--path", "p", "--rate", "5", "--duration-secs", "1", "--inline-checkpoint"]));
         assert!(got.is_err());
     }
 
+    #[test_id(tm85s6q)]
     #[test]
     fn too_few_samples_settle_nothing_however_slow() {
         assert_eq!(decide(500, 500), None);
         assert_eq!(decide(0, 0), None);
     }
 
+    #[test_id(t5ybccf)]
     #[test]
     fn the_settled_thresholds_match_a_poisson_tail_at_one_in_a_thousand() {
         // lambda = 15: P(X <= 6) ~ 0.0076 (pass), P(X <= 7) ~ 0.018 (not yet);
@@ -730,6 +737,7 @@ mod tests {
         assert_eq!(decide(15_000, 25), None);
     }
 
+    #[test_id(t7gnwc3)]
     #[test]
     fn a_limit_is_parsed_with_its_minimum_window_and_a_window_alone_is_refused() {
         let got = parse(&args(&["--path", "p", "--rate", "50", "--duration-secs", "1800", "--limit-ms", "20", "--min-secs", "120"])).unwrap();
@@ -737,6 +745,7 @@ mod tests {
         assert!(parse(&args(&["--path", "p", "--rate", "50", "--duration-secs", "9", "--min-secs", "5"])).is_err());
     }
 
+    #[test_id(ti1iq2f)]
     #[test]
     fn the_cas_mode_takes_named_arguments_and_the_load_needs_both_halves() {
         let got = parse(&args(&[
@@ -809,6 +818,7 @@ mod tests {
         assert!(parse(&args(&["p"])).is_err());
     }
 
+    #[test_id(txqjv93)]
     #[test]
     fn the_mix_defaults_to_the_reconcilers_and_refuses_an_unknown_name() {
         let with = |mix: &str| {
@@ -855,6 +865,7 @@ mod tests {
         assert!(parse(&args(&["conformance", "--path", "p", "--mix", "audited"])).is_err());
     }
 
+    #[test_id(t75azp3)]
     #[test]
     fn the_reconciler_mix_writes_the_designs_daily_proportions() {
         let count = |mix: Mix, kind: Commit| (0..120).filter(|i| mix.commit(*i) == kind).count();
@@ -865,6 +876,7 @@ mod tests {
         assert_eq!(count(Mix::Audited, Commit::Audited), 120);
     }
 
+    #[test_id(tp524j6)]
     #[test]
     fn a_reconciler_mix_run_audits_only_its_audited_writes() {
         let clock = runtime::ports::VirtualClock::new(1_000);
@@ -904,6 +916,7 @@ mod tests {
         assert_eq!(keys("bench/").len(), 10);
     }
 
+    #[test_id(tc22d86)]
     #[test]
     fn the_conformance_mode_takes_only_a_path() {
         assert_eq!(
@@ -915,6 +928,7 @@ mod tests {
         assert!(parse(&args(&["conformance", "--path", "p", "--rate", "5"])).is_err());
     }
 
+    #[test_id(tclujrf)]
     #[test]
     fn quantiles_are_nearest_rank_and_empty_is_zero() {
         let mut ms: Vec<f64> = (1..=1_000).map(f64::from).collect();

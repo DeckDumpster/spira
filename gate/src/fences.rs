@@ -220,6 +220,7 @@ mod tests {
         spira_config::resolve::checkout_root_for_process().unwrap()
     }
 
+    #[test_id(t7o6qb1)]
     #[test]
     fn this_trees_fences_are_its_suites_off_steps_less_the_lint() {
         let text = std::fs::read_to_string(root().join(crate::def::PATH)).unwrap();
@@ -239,6 +240,7 @@ mod tests {
         }
     }
 
+    #[test_id(t1ktzk5)]
     #[test]
     fn names_are_the_bin_package_or_the_script_stem() {
         let d = crate::def::parse(
@@ -258,6 +260,7 @@ mod tests {
         assert!(list(&dup, None).is_err(), "two fences named x would overwrite one result");
     }
 
+    #[test_id(ty0ji61)]
     #[test]
     fn a_tree_without_a_readable_definition_is_refused() {
         let t = testkit::TempDir::new("gate-fences");
@@ -290,6 +293,7 @@ mod tests {
         run_with(&[name.into(), "--repo".into(), root.into(), "--tip".into(), tip.into(), "--base".into(), "main".into()], &[("PATH".to_string(), std::env::var("PATH").unwrap_or_default())])
     }
 
+    #[test_id(tfysag0)]
     #[test]
     fn one_named_fence_runs_at_the_tip_and_its_exit_is_the_answer() {
         let (_t, root, tip) = repo_with_fences("fence-run", "step bash spira/ok.sh\nstep bash spira/bad.sh\n");

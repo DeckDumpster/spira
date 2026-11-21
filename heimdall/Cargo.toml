@@ -36,4 +36,5 @@ runtime = { path = "../runtime" }
 inbox-rules = { path = "../inbox-rules" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

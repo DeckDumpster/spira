@@ -163,6 +163,7 @@ mod unit_double_tests {
     use runtime::units::{Exit, UnitFacts, UnitHandle, UnitState, UnitCompletions};
     use runtime::EffectSpec;
 
+    #[test_id(t5xnr43)]
     #[test]
     fn unit_effects_reach_the_scripted_units_by_name() {
         let clock = VirtualClock::new(0);

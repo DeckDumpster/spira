@@ -235,6 +235,7 @@ mod tests {
     use super::*;
 
 
+    #[test_id(t71auuu)]
     #[test]
     fn literal_ok_never_excuses_an_ask_label_fallback() {
         let names = vec!["needs-operator".to_string()];
@@ -246,6 +247,7 @@ mod tests {
         assert!(fine.is_empty());
     }
 
+    #[test_id(tqx7mrm)]
     #[test]
     fn escape_hatch_on_the_line_or_the_line_above() {
         let names = vec!["needs-operator".to_string()];
@@ -257,6 +259,7 @@ mod tests {
         assert_eq!(neither.len(), 1);
     }
 
+    #[test_id(t2ve9gl)]
     #[test]
     fn pure_comment_lines_in_shell_and_rust_are_not_flagged() {
         let names = vec!["needs-operator".to_string()];
@@ -264,6 +267,7 @@ mod tests {
         assert!(scan(b"// default label is needs-operator\n", &names).is_empty());
     }
 
+    #[test_id(t57if9d)]
     #[test]
     fn statute_seed_prose_is_not_judged_but_other_text_files_are() {
         let t = crate::testutil::TempDir::new("ll-seed");
@@ -279,6 +283,7 @@ mod tests {
         assert_eq!(paths, ["spira/other.txt"], "{got:?}");
     }
 
+    #[test_id(tppne10)]
     #[test]
     fn is_compound_excludes_short_single_words() {
         assert!(is_compound("needs-operator"));
@@ -287,6 +292,7 @@ mod tests {
         assert!(!is_compound(""));
     }
 
+    #[test_id(tf96bgo)]
     #[test]
     fn configured_names_falls_back_when_schema_is_missing() {
         let (names, warning) = configured_names(std::path::Path::new("nonexistent/schema.sh"));

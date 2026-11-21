@@ -326,6 +326,7 @@ mod tests {
         rows.into_iter().find(|r| r["bead_id"] == id)
     }
 
+    #[test_id(trxgrvy)]
     #[test]
     fn a_claim_sync_owed_past_the_requests_deadline_is_written_by_the_settler_under_its_own() {
         let w = World::new();
@@ -341,6 +342,7 @@ mod tests {
         assert!(!settler.owes());
     }
 
+    #[test_id(tw80uci)]
     #[test]
     fn a_content_writes_claim_sync_owed_past_the_requests_deadline_is_written_by_the_settler() {
         let w = World::new();
@@ -357,6 +359,7 @@ mod tests {
         assert_eq!(claim_of(&w, "sp-a")["labels"], serde_json::json!(["x"]));
     }
 
+    #[test_id(trc1ia5)]
     #[test]
     fn a_dep_add_through_the_content_door_has_written_the_claim_inputs_when_it_answers() {
         let w = World::new();
@@ -371,6 +374,7 @@ mod tests {
         assert!(!settler.owes());
     }
 
+    #[test_id(tgb8q2y)]
     #[test]
     fn a_create_bead_has_written_its_claim_inputs_when_it_answers() {
         let w = World::new();
@@ -383,6 +387,7 @@ mod tests {
         assert!(!settler.owes());
     }
 
+    #[test_id(tuswbvc)]
     #[test]
     fn a_refused_claim_sync_stays_owed_and_the_next_pass_writes_it() {
         let w = World::new();
@@ -409,6 +414,7 @@ mod tests {
         assert_eq!(claim_of(&w, "sp-a")["parent"], "sp-e");
     }
 
+    #[test_id(thah0mn)]
     #[test]
     fn a_create_rows_owed_past_the_requests_deadline_is_written_by_the_settler() {
         let w = World::new();
@@ -425,6 +431,7 @@ mod tests {
         assert!(!settler.owes());
     }
 
+    #[test_id(tv4m3w8)]
     #[test]
     fn a_refused_create_row_stays_owed_and_the_next_pass_writes_it() {
         let w = World::new();
@@ -449,6 +456,7 @@ mod tests {
         assert_eq!(claim_of(&w, "sp-new")["parent"], "sp-e");
     }
 
+    #[test_id(tchpbr7)]
     #[test]
     fn stamps_owed_together_advance_the_watermark_once_and_a_refused_one_stays_owed() {
         let settler = installed();
@@ -469,6 +477,7 @@ mod tests {
         assert_eq!(stamps, 2);
     }
 
+    #[test_id(tb4bxep)]
     #[test]
     fn a_watermark_owed_past_the_requests_deadline_advances_the_control_stores_seq_in_the_settler() {
         use state_store::{Config, Contract, MemBackend, Object, Ports};
@@ -531,6 +540,7 @@ mod tests {
         }
     }
 
+    #[test_id(tedqrdz)]
     #[test]
     fn an_owed_reopen_whose_bd_write_fails_stays_owed_and_the_next_pass_writes_it() {
         let w = World::new();
@@ -546,6 +556,7 @@ mod tests {
         assert_eq!(bd.reopened, ["sp-a"]);
     }
 
+    #[test_id(t1tkaoi)]
     #[test]
     fn an_owed_reopen_whose_row_has_been_claimed_again_is_dropped_without_a_bd_write() {
         let w = World::new();
@@ -560,6 +571,7 @@ mod tests {
         assert!(!settler.owes() && bd.reopened.is_empty());
     }
 
+    #[test_id(t346tmg)]
     #[test]
     fn an_owed_reopen_whose_row_has_gone_terminal_is_dropped_without_a_bd_write() {
         let w = World::new();

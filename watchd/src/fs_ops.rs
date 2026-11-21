@@ -95,6 +95,7 @@ mod tests {
     use super::*;
     use testkit::TempDir;
 
+    #[test_id(tpxk9q0)]
     #[test]
     fn total_lines_counts_newlines_and_is_zero_for_a_missing_file() {
         let d = TempDir::new("watchd-fs");
@@ -104,6 +105,7 @@ mod tests {
         assert_eq!(total_lines(&p), 3);
     }
 
+    #[test_id(tt56886)]
     #[test]
     fn total_lines_undercounts_an_unterminated_final_line() {
         let d = TempDir::new("watchd-fs");
@@ -112,12 +114,14 @@ mod tests {
         assert_eq!(total_lines(&p), 2);
     }
 
+    #[test_id(tnmme9g)]
     #[test]
     fn a_missing_cursor_file_reads_as_zero() {
         let d = TempDir::new("watchd-fs");
         assert_eq!(read_pos(&d.join("nope.cursor"), 10), 0);
     }
 
+    #[test_id(tbdrvea)]
     #[test]
     fn cursor_round_trips_and_clamps() {
         let d = TempDir::new("watchd-fs");
@@ -127,6 +131,7 @@ mod tests {
         assert_eq!(read_pos(&p, 3), 3, "a cursor past the (shrunk) total clamps to it");
     }
 
+    #[test_id(txpfeth)]
     #[test]
     fn read_range_is_the_exact_half_open_window() {
         let d = TempDir::new("watchd-fs");
@@ -137,6 +142,7 @@ mod tests {
         assert_eq!(read_range(&p, 5, 5), Vec::<String>::new());
     }
 
+    #[test_id(tvc2knn)]
     #[test]
     fn pending_round_trips() {
         let d = TempDir::new("watchd-fs");
@@ -146,6 +152,7 @@ mod tests {
         assert_eq!(read_pending(&p), Some((12, 1000)));
     }
 
+    #[test_id(ta7zlu8)]
     #[test]
     fn last_line_of_an_empty_or_missing_file_is_none() {
         let d = TempDir::new("watchd-fs");

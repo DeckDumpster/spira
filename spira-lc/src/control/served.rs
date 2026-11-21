@@ -387,6 +387,7 @@ mod tests {
         (contract.backend().take_read_steps(), dir, contract)
     }
 
+    #[test_id(tujq118)]
     #[test]
     fn opening_a_store_holding_20000_keys_reads_no_lifecycle_row() {
         let (empty, _d, _c) = steps_to_open("lc-served-restart-empty", 0);
@@ -399,6 +400,7 @@ mod tests {
         assert!(contract.backend().take_read_steps() >= 10, "the counter sees a range read, so the low count above is real");
     }
 
+    #[test_id(ty5aq3e)]
     #[test]
     fn open_refuses_a_config_that_lacks_the_wal_line_naming_the_key() {
         let dir = testkit::TempDir::new("lc-served-wal-line");
@@ -421,6 +423,7 @@ mod tests {
         assert!(a.starts_with("lc/") && a != b, "unbound calls mint their own: {a} {b}");
     }
 
+    #[test_id(tgcirlp)]
     #[test]
     fn the_new_verbs_take_no_name_an_existing_verb_answers() {
         for v in sections::VERBS.iter().chain([&sections::lifecycle::VERB, &spira_lc::rc::VERB]) {

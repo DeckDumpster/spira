@@ -87,6 +87,7 @@ mod tests {
     use crate::util::Out;
     use std::path::PathBuf;
 
+    #[test_id(ttmnja7)]
     #[test]
     fn parse_proposal_reads_claimable_and_stack() {
         let p = parse_proposal(r#"{"claimable":true,"stack":{"sp-a":"tipA"},"stack_depth":1,"stack_max_depth":4}"#).unwrap();
@@ -95,6 +96,7 @@ mod tests {
         assert_eq!((p.stack_depth, p.stack_max_depth), (1, 4));
     }
 
+    #[test_id(tniboip)]
     #[test]
     fn parse_proposal_too_deep_still_carries_the_depth() {
         let p = parse_proposal(r#"{"claimable":false,"reason":"TooDeep","stack":{},"stack_depth":5,"stack_max_depth":4}"#).unwrap();
@@ -103,6 +105,7 @@ mod tests {
         assert_eq!((p.stack_depth, p.stack_max_depth), (5, 4));
     }
 
+    #[test_id(teb2ghh)]
     #[test]
     fn parse_proposal_garbage_is_none() {
         assert!(parse_proposal("not json").is_none());
@@ -124,6 +127,7 @@ mod tests {
         FakeGit { calls: std::sync::Mutex::new(vec![]), answers: std::sync::Mutex::new(answers) }
     }
 
+    #[test_id(tnjhe2n)]
     #[test]
     fn empty_stack_is_the_base_unchanged() {
         let git = fg(vec![]);
@@ -131,6 +135,7 @@ mod tests {
         assert!(git.calls.lock().unwrap().is_empty());
     }
 
+    #[test_id(td47v7d)]
     #[test]
     fn one_stacked_tip_merges_cleanly() {
         let git = fg(vec![Out::ok("treeoid\n"), Out::ok("mergesha\n")]);
@@ -142,6 +147,7 @@ mod tests {
         assert_eq!(calls[1], vec!["commit-tree", "treeoid", "-p", "origin/main", "-p", "tipA", "-m", "stacked base: merge sp-a (tipA) onto origin/main"]);
     }
 
+    #[test_id(tmbi21l)]
     #[test]
     fn a_conflicting_second_tip_names_the_first_stacked_prereq_and_itself() {
         let git = fg(vec![Out::ok("tree1\n"), Out::ok("merge1\n"), Out::fail(1, "CONFLICT")]);
@@ -153,6 +159,7 @@ mod tests {
         assert_eq!(err.note(), "stack conflict: sp-a x sp-b");
     }
 
+    #[test_id(tf5tdv7)]
     #[test]
     fn the_first_tip_conflicting_with_base_names_the_landing_ref() {
         let git = fg(vec![Out::fail(1, "CONFLICT")]);

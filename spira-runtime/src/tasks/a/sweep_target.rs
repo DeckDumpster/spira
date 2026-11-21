@@ -405,6 +405,7 @@ mod tests {
         vec![t.join("scratch"), t.join("direct")]
     }
 
+    #[test_id(terl6ti)]
     #[test]
     fn a_stale_target_under_each_root_goes_through_observe_and_remove_and_its_siblings_stay() {
         let t = testkit::TempDir::new("sweep-hand");
@@ -424,6 +425,7 @@ mod tests {
         }
     }
 
+    #[test_id(ts3m3lx)]
     #[test]
     fn a_target_a_live_process_holds_is_reported_busy_and_refused_at_removal() {
         let t = testkit::TempDir::new("sweep-hand-held");
@@ -440,6 +442,7 @@ mod tests {
         assert_eq!(removed(t.path(), &snap, &[]).len(), 2);
     }
 
+    #[test_id(tf06pat)]
     #[test]
     fn a_removal_is_refused_for_a_path_under_no_root_or_written_within_the_threshold() {
         let t = testkit::TempDir::new("sweep-hand-refuse");

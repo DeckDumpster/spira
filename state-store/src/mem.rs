@@ -254,6 +254,7 @@ mod tests {
         }
     }
 
+    #[test_id(ttosisa)]
     #[test]
     fn the_log_returns_whole_txns_and_stops_at_the_page() {
         let b = MemBackend::new();
@@ -268,6 +269,7 @@ mod tests {
         assert!(b.log(0, 0).unwrap().is_empty());
     }
 
+    #[test_id(tqv9ru7)]
     #[test]
     fn forgetting_history_twice_never_lowers_the_floor() {
         let b = MemBackend::new();
@@ -287,6 +289,7 @@ mod tests {
         assert_eq!(b.get("a", 3), Err(Error::FutureRev { rev: 3, head: 2 }));
     }
 
+    #[test_id(tez7ol7)]
     #[test]
     fn a_revision_the_ring_has_turned_past_is_too_old_to_read_or_watch() {
         use crate::contract::{Config, Ports, Request, Txn};

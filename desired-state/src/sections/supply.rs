@@ -92,6 +92,7 @@ mod tests {
         })
     }
 
+    #[test_id(tbjk2tm)]
     #[test]
     fn the_distance_is_the_shortfall_against_the_target_and_zero_above_it() {
         for (landable, want) in [(75.0, 0.5), (0.0, 1.0), (150.0, 0.0), (300.0, 0.0)] {
@@ -101,6 +102,7 @@ mod tests {
         }
     }
 
+    #[test_id(tfyca9k)]
     #[test]
     fn a_field_the_kind_does_not_declare_is_refused_by_name() {
         let mut v = section(10.0);
@@ -109,6 +111,7 @@ mod tests {
         assert!(r.rule.contains("quota"), "{r:?}");
     }
 
+    #[test_id(tgx7ktz)]
     #[test]
     fn the_shipped_spec_seeds_the_target_and_the_distance_follows_it() {
         let fragment = crate::producer::parse_fragment(include_str!("../../examples/supply.toml")).unwrap();

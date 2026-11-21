@@ -45,6 +45,7 @@ state-store = { path = "../state-store" }
 reconciler-engine = { path = "../reconciler-engine" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 spira-runtime = { path = "../spira-runtime" }
 lifecycle = { path = "../lifecycle" }
 testkit = { path = "../testkit" }

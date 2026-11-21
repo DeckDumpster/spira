@@ -2,6 +2,9 @@
 //! library: `spira-lc` serves them, and an in-process caller (the simulator's replay) reaches
 //! the same dispatch on its own store instead of a hand-written copy of it.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod goodput;
 pub mod keys;
 pub mod rc;
@@ -61,6 +64,7 @@ pub fn page(args: &[String]) -> Result<Option<Page>, String> {
 mod list_pages_tests {
     use super::*;
 
+    #[test_id(tyircxm)]
     #[test]
     fn a_whole_table_read_is_pages_by_cursor_until_a_short_page() {
         let ids: Vec<String> = (0..PAGE_ROWS + 5).map(|i| format!("sp-{i:05}")).collect();

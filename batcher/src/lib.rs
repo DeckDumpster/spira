@@ -2,6 +2,9 @@
 //! the forge and the bead store, and wires it into the queue in place of batch.sh's cut, is
 //! a separate crate (sp-jzfog).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod attrib;
 pub mod buildattr;
 pub mod core;
@@ -13,6 +16,7 @@ pub mod unitattr;
 
 #[cfg(test)]
 mod fork_fence {
+    #[test_id(t16n7pc)]
     #[test]
     fn batcher_starts_no_spira_child_that_is_not_a_named_fork_edge() {
         let got =

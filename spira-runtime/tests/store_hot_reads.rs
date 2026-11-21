@@ -3,6 +3,8 @@
 //! none of it touches the store's socket. One test: the projection is installed once per process.
 //! The watch is driven by `poll()` on the test's own thread, so each step has applied when it returns.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::os::unix::net::UnixListener;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::collections::VecDeque;
@@ -56,6 +58,7 @@ impl Transport for Double {
     }
 }
 
+#[test_id(tdif1cu)]
 #[test]
 fn hot_reads_follow_the_watch_refuse_when_it_is_cut_and_never_ask_the_store() {
     let dir = testkit::TempDir::new("store-hot-reads");

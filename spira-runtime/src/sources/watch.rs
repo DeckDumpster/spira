@@ -163,12 +163,14 @@ mod tests {
         assert_eq!(w.wait(Duration::ZERO).unwrap(), vec![], "each arrival is reported once");
     }
 
+    #[test_id(t0x01hn)]
     #[test]
     fn the_listing_watch_reports_each_new_file_once_by_directory() {
         exercise(Box::new(ListingWatch::default()));
     }
 
     #[cfg(target_os = "linux")]
+    #[test_id(t53q3zm)]
     #[test]
     fn the_inotify_watch_reports_each_new_file_once_by_directory() {
         exercise(Box::new(InotifyWatch::new().unwrap()));

@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(t27u9d7)]
 #[test]
 fn a_stack_whose_member_moved_after_the_plan_writes_nothing_and_none_past_the_cap_is_taken() {
     let r = Rig::new();
@@ -27,6 +28,7 @@ fn a_stack_whose_member_moved_after_the_plan_writes_nothing_and_none_past_the_ca
     assert_eq!(r.s.batch("b-1").unwrap().unwrap().1.value.members.len(), 2);
 }
 
+#[test_id(tp50r18)]
 #[test]
 fn a_promotion_whose_member_moved_after_the_plan_leaves_the_round_staged() {
     let r = Rig::new();

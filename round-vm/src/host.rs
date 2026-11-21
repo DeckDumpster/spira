@@ -284,6 +284,7 @@ mod tests {
         testkit::TempDir::new(&format!("round-vm-host-{tag}"))
     }
 
+    #[test_id(th4dmfh)]
     #[test]
     fn the_round_keeps_the_operators_container_store_not_the_one_under_its_own_home() {
         let env = |k: &str| match k {
@@ -300,6 +301,7 @@ mod tests {
         assert!(operator_dirs(&|_| None).is_empty());
     }
 
+    #[test_id(t3i1auf)]
     #[test]
     fn a_host_round_starts_with_a_login_environment_not_the_callers() {
         let caller = |k: &str| match k {
@@ -324,6 +326,7 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stdout), format!("unset|{LOGIN_PATH}|{}", home.path().display()));
     }
 
+    #[test_id(tzk2yvj)]
     #[test]
     fn a_second_host_round_finds_the_slot_taken_until_the_first_ends() {
         let d = dir("slot");
@@ -337,6 +340,7 @@ mod tests {
         assert!(freed, "the slot stayed taken after its holder dropped it");
     }
 
+    #[test_id(tptyiig)]
     #[test]
     fn the_host_is_on_unless_the_operator_says_off_and_a_stray_word_is_refused() {
         let run = Path::new("r");
@@ -347,6 +351,7 @@ mod tests {
         assert!(HostPlan::from_config(run, &get(Some("yes"))).err().is_some_and(|e| e.contains("SPIRA_ROUND_VM_HOST")));
     }
 
+    #[test_id(trspk5q)]
     #[test]
     fn the_thresholds_and_the_round_home_come_from_config_not_from_the_defaults() {
         let get = |k: &str| match k {
@@ -361,6 +366,7 @@ mod tests {
         assert!(HostPlan::from_config(Path::new("r"), &bad).err().is_some());
     }
 
+    #[test_id(tkp2k71)]
     #[test]
     fn a_local_remote_drops_the_earlier_rounds_results_before_the_next_pull() {
         let d = dir("clear");
@@ -378,6 +384,7 @@ mod tests {
         assert!(!got.join("test-old.sh.result").exists());
     }
 
+    #[test_id(tjqgmil)]
     #[test]
     fn a_local_remote_pulls_and_pushes_paths_relative_to_its_home_and_reads_the_exit_file() {
         let d = dir("remote");
@@ -397,6 +404,7 @@ mod tests {
         assert!(r.round_started("x"));
     }
 
+    #[test_id(t0zfyai)]
     #[test]
     fn an_attribution_job_runs_under_the_round_home() {
         let d = dir("attr");
@@ -411,6 +419,7 @@ mod tests {
         fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).is_ok_and(|s| s.rsplit_once(')').is_some_and(|x| !x.1.trim_start().starts_with('Z')))
     }
 
+    #[test_id(tpghpq1)]
     #[test]
     fn starting_a_pass_kills_what_the_earlier_pass_left_running_in_the_home() {
         let home = dir("stop-pass");
@@ -432,6 +441,7 @@ mod tests {
         assert!(gone, "the earlier pass's job outlived the start of the next pass");
     }
 
+    #[test_id(tpj36ml)]
     #[test]
     fn a_round_that_ends_stops_its_own_pass_and_leaves_another_round_vms_running() {
         let home = dir("owner");
@@ -447,6 +457,7 @@ mod tests {
         assert!(!alive(id));
     }
 
+    #[test_id(t6yqag9)]
     #[test]
     fn a_group_file_naming_a_recycled_pid_kills_nothing() {
         let home = dir("recycled");
@@ -464,6 +475,7 @@ mod tests {
         crate::spool::AttrJob { host_addr: "h".into(), mirror_port: 1, job: "j".into(), mirror_ref: "r".into(), suites: String::new(), build: crate::spool::Build::Artifacts, toolchain: None }
     }
 
+    #[test_id(thmkj07)]
     #[test]
     fn a_host_script_that_refuses_before_reading_itself_is_reported_by_its_exit_not_as_a_stdin_error() {
         let home = dir("attr-refuses");
@@ -472,6 +484,7 @@ mod tests {
         assert_ne!(rc, 0);
     }
 
+    #[test_id(t8saj9s)]
     #[test]
     fn the_plans_load_ignores_a_samples_file_and_reads_the_kernels_five_minute_average() {
         let tmp = testkit::TempDir::new("host-plan-load");

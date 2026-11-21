@@ -799,12 +799,14 @@ mod failed_listing_tests {
     use super::{loaded_failed_units, Real};
     use crate::World;
 
+    #[test_id(t51vuv0)]
     #[test]
     fn a_retired_unit_listed_not_found_is_not_a_failed_unit() {
         let listing = "spira-vm-pool-section-prod.service not-found failed failed spira vm pool\nspira-sentinel-prod.service loaded failed failed Sentinel\n";
         assert_eq!(loaded_failed_units(listing), vec!["spira-sentinel-prod.service".to_string()]);
     }
 
+    #[test_id(tc0f0z1)]
     #[test]
     fn the_failed_unit_probe_drops_a_retired_unit_systemd_still_lists() {
         let tmp = testkit::TempDir::new("doctor-failed-probe");
@@ -824,6 +826,7 @@ mod door_tests {
     use super::*;
     use crate::ports::World;
 
+    #[test_id(ton0gzy)]
     #[test]
     fn the_store_reads_and_the_version_go_through_spira_lc_and_nothing_else() {
         let tmp = testkit::TempDir::new("doctor-door");

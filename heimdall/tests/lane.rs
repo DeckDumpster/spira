@@ -1,6 +1,8 @@
 //! The heimdall lane, through the real binary: a pass whose lane is stopped on every registered
 //! repo says so and stops before it reads or writes any state.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::process::Command;
 
 fn pass(d: &testkit::TempDir, run: &std::path::Path, args: &[&str]) -> (i32, String) {
@@ -22,6 +24,7 @@ fn stop(run: &std::path::Path, repo: &str) {
     spira_config::scoped_stop::pause_repo(run, repo, &["heimdall".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
 }
 
+#[test_id(t7ve3u9)]
 #[test]
 fn a_pass_with_the_heimdall_lane_stopped_on_every_repo_skips_and_writes_no_state() {
     let d = testkit::TempDir::new("heimdall-lane");
@@ -35,6 +38,7 @@ fn a_pass_with_the_heimdall_lane_stopped_on_every_repo_skips_and_writes_no_state
     assert!(!run.join("heimdall.state").exists() && !run.join("heimdall.status").exists(), "a stopped pass wrote state");
 }
 
+#[test_id(tznib40)]
 #[test]
 fn a_pass_goes_on_while_one_repo_still_takes_the_heimdall_lane() {
     let d = testkit::TempDir::new("heimdall-lane-partial");
@@ -46,6 +50,7 @@ fn a_pass_goes_on_while_one_repo_still_takes_the_heimdall_lane() {
     assert!(run.join("heimdall.state").exists() || run.join("heimdall.status").exists(), "the pass never got past its lane check: {out}");
 }
 
+#[test_id(tek3f5i)]
 #[test]
 fn a_report_reads_through_a_stopped_lane() {
     let d = testkit::TempDir::new("heimdall-lane-report");

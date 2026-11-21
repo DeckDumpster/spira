@@ -341,6 +341,7 @@ mod test_sites_tests {
         test_sites(src.as_bytes())
     }
 
+    #[test_id(thrax24)]
     #[test]
     fn a_test_attribute_in_a_string_literal_or_a_comment_is_no_site() {
         let src = "const S: &str = \"#[test] fn a() {}\";\n// #[test]\n// fn b() {}\n/* #[test] fn c() {} */\n";
@@ -349,6 +350,7 @@ mod test_sites_tests {
         assert_eq!(real.len(), 1, "the matcher must find a real one");
     }
 
+    #[test_id(tzwfy6s)]
     #[test]
     fn a_stamped_and_an_unstamped_test_carry_some_and_none() {
         let s = sites("#[test_id(t7k3m9q)]\n#[test]\nfn a() {}\n\n    #[test]\n    fn b() {}\n");
@@ -357,6 +359,7 @@ mod test_sites_tests {
         assert_eq!((s[1].id.clone(), s[1].fn_name.as_str(), s[1].line, s[1].indent.as_str()), (None, "b", 5, "    "));
     }
 
+    #[test_id(tim2whe)]
     #[test]
     fn a_tokio_test_with_arguments_on_an_async_fn_is_a_site() {
         let s = sites("#[tokio::test(flavor = \"multi_thread\")]\nasync fn a() {}\n");
@@ -364,6 +367,7 @@ mod test_sites_tests {
         assert_eq!(s[0].fn_name, "a");
     }
 
+    #[test_id(te8fd9a)]
     #[test]
     fn a_test_in_a_macro_rules_body_is_marked_and_one_after_it_is_not() {
         let s = sites("macro_rules! m {\n    ($n:ident) => {\n        #[test]\n        fn $n() {}\n    };\n}\n#[test]\nfn after() {}\n");
@@ -372,6 +376,7 @@ mod test_sites_tests {
         assert!(!s[1].in_macro_rules);
     }
 
+    #[test_id(t36pw7m)]
     #[test]
     fn a_test_in_a_proptest_block_is_a_site_outside_macro_rules() {
         let s = sites("proptest! {\n    #[test]\n    fn p(x in 0u8..3) {}\n}\n");
@@ -379,6 +384,7 @@ mod test_sites_tests {
         assert!(!s[0].in_macro_rules);
     }
 
+    #[test_id(t270g8v)]
     #[test]
     fn other_attributes_around_the_test_do_not_hide_it() {
         let s = sites("/// doc\n#[allow(unused)]\n#[test]\n#[should_panic(expected = \"x\")]\n#[cfg(unix)]\npub async fn a() -> Result<(), String> {}\n");

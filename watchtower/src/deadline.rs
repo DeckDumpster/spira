@@ -97,6 +97,7 @@ pub fn output_within(label: &str, cmd: &mut Command, within: Duration) -> io::Re
 mod tests {
     use super::*;
 
+    #[test_id(tv0kia8)]
     #[test]
     fn a_probe_past_its_deadline_takes_its_whole_group_with_it() {
         let d = testkit::TempDir::new("wt-deadline");

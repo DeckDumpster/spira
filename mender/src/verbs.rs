@@ -360,6 +360,7 @@ mod tests {
         }
     }
 
+    #[test_id(tjneeca)]
     #[test]
     fn the_pack_points_at_the_touching_member_and_gives_its_whole_bead() {
         let mut w = Fake::new();
@@ -374,6 +375,7 @@ mod tests {
         assert!(text.contains("+changed doc"), "every diff is in the pack");
     }
 
+    #[test_id(tpe6m5t)]
     #[test]
     fn an_unreadable_design_says_so() {
         let mut w = Fake::new();
@@ -381,11 +383,13 @@ mod tests {
         assert!(pack(&w, "spec").unwrap().contains("(unreadable: no file wiki/gone.md)"));
     }
 
+    #[test_id(tp9fsk9)]
     #[test]
     fn design_paths_are_found_once_and_prose_is_ignored() {
         assert_eq!(design_paths("brain wiki/a/b.md, and (wiki/a/b.md) and wiki/c"), vec!["a/b.md"]);
     }
 
+    #[test_id(twpgjud)]
     #[test]
     fn a_bead_that_cannot_be_read_fails_the_pack_rather_than_hiding() {
         let mut w = Fake::new();
@@ -393,6 +397,7 @@ mod tests {
         assert!(pack(&w, "spec").unwrap_err().contains("refused"));
     }
 
+    #[test_id(tk80j1x)]
     #[test]
     fn start_sends_the_configured_deadline_and_a_missing_one_refuses() {
         let mut w = Fake::new();
@@ -402,6 +407,7 @@ mod tests {
         assert!(start(&w, "spec").is_err());
     }
 
+    #[test_id(tbm6t9h)]
     #[test]
     fn an_outcome_stamps_triage_then_the_diagnosis_then_the_terminal_event() {
         let w = Fake::new();
@@ -412,6 +418,7 @@ mod tests {
         assert!(calls.iter().all(|c| c.contains("--pass 3 --suite test-x.sh") && c.ends_with("--actor mender")));
     }
 
+    #[test_id(t15krdi)]
     #[test]
     fn a_return_naming_no_member_or_a_non_member_is_refused_naming_the_specs_members() {
         let w = Fake::new();
@@ -436,6 +443,7 @@ mod tests {
         w
     }
 
+    #[test_id(tzojqr4)]
     #[test]
     fn a_mended_outcome_goes_through_mending_mend_with_the_branch_head_as_the_tip() {
         let w = mend_world();
@@ -448,6 +456,7 @@ mod tests {
         assert!(mend.contains(r#"--fences ["spira/gate-suites"] --actor mender"#), "{mend}");
     }
 
+    #[test_id(t4e74m5)]
     #[test]
     fn a_kept_mend_carries_its_ask_to_the_machine_so_a_mend_needing_one_is_taken() {
         let w = mend_world();
@@ -457,6 +466,7 @@ mod tests {
         assert!(mend.contains(r#""ask":"sp-ask1""#), "{mend}");
     }
 
+    #[test_id(tq4z4gi)]
     #[test]
     fn a_mended_outcome_with_no_moved_branch_sends_no_mend() {
         let mut w = mend_world();
@@ -465,6 +475,7 @@ mod tests {
         assert!(!w.lc_calls().iter().any(|c| c.starts_with("lc mending mend ")));
     }
 
+    #[test_id(t3nyp1q)]
     #[test]
     fn triage_is_stamped_once_and_not_again_at_the_outcome() {
         let mut w = Fake::new();
@@ -478,6 +489,7 @@ mod tests {
         assert!(!events.iter().any(|c| c.contains("TriageEnded")), "{events:?}");
     }
 
+    #[test_id(teoup3e)]
     #[test]
     fn an_already_terminal_row_is_a_no_op_and_sends_no_event() {
         let mut w = Fake::new();
@@ -490,6 +502,7 @@ mod tests {
         assert!(!w.lc_calls().iter().any(|c| c.contains("mending event")), "{:?}", w.lc_calls());
     }
 
+    #[test_id(tnb5r8d)]
     #[test]
     fn a_refused_outcome_sends_nothing() {
         let w = Fake::new();
@@ -499,6 +512,7 @@ mod tests {
         assert!(w.lc_calls().is_empty());
     }
 
+    #[test_id(t6hoiby)]
     #[test]
     fn a_machine_refusal_of_the_terminal_event_is_the_answer() {
         let mut w = Fake::new();
@@ -508,6 +522,7 @@ mod tests {
         assert!(err.contains("DeadlinePassed"), "{err}");
     }
 
+    #[test_id(tt7g6fe)]
     #[test]
     fn the_read_verbs_ask_the_machine_for_the_rounds_own_facts() {
         let w = Fake::new();
@@ -520,6 +535,7 @@ mod tests {
         );
     }
 
+    #[test_id(t6s602l)]
     #[test]
     fn diff_gives_one_members_whole_diff_and_refuses_a_stranger() {
         let w = Fake::new();
@@ -527,6 +543,7 @@ mod tests {
         assert!(diff(&w, "spec", "sp-zz").is_err());
     }
 
+    #[test_id(t0ozkgy)]
     #[test]
     fn a_malformed_spec_is_refused() {
         let mut w = Fake::new();

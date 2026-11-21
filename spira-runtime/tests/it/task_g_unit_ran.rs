@@ -57,6 +57,7 @@ fn scripted(clock: &VirtualClock, script: Vec<(u64, Submit)>) -> Sources {
     s
 }
 
+#[test_id(tvubefe)]
 #[test]
 fn the_declared_event_reaches_the_task_that_started_the_unit_and_only_it() {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
@@ -67,6 +68,7 @@ fn the_declared_event_reaches_the_task_that_started_the_unit_and_only_it() {
     assert_eq!(consumed, ["units|persona.ops:r1:Code(0)@100", "units|persona.archivist:r2-s1:Code(124)@200"]);
 }
 
+#[test_id(t2swyc6)]
 #[test]
 fn the_real_source_is_refused_under_virtual_time_naming_it() {
     let clock = VirtualClock::new(0);
@@ -77,6 +79,7 @@ fn the_real_source_is_refused_under_virtual_time_naming_it() {
     assert_eq!(BACKEND, "systemd-dbus");
 }
 
+#[test_id(tmv46t9)]
 #[test]
 fn the_real_source_returns_once_its_channel_is_closed() {
     let (tx, rx) = mpsc::channel(1);

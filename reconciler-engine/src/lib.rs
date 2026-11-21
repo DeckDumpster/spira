@@ -5,6 +5,9 @@
 //! Callers (czar-pass and its successors) own observation — reading units, /proc, the
 //! store, the forge — and feed the result in as a [`core::RawStatus`].
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod alert;
 pub mod arm;
 pub mod assemble;

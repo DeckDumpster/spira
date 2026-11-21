@@ -58,6 +58,7 @@ fn lc(answers: Vec<Result<Reply, String>>) -> (RealLc, Arc<Scripted>) {
     )
 }
 
+#[test_id(t4m32zs)]
 #[test]
 fn a_store_read_goes_through_the_door_with_no_program_and_no_stdin() {
     let (lc, t) = lc(vec![reply(0, "[\"sp-a\",\"sp-b\"]")]);
@@ -71,6 +72,7 @@ fn a_store_read_goes_through_the_door_with_no_program_and_no_stdin() {
     assert_eq!(seen[0].1, None);
 }
 
+#[test_id(tagllto)]
 #[test]
 fn a_door_read_carries_its_body_on_argv_because_the_socket_takes_no_stdin() {
     let (lc, t) = lc(vec![reply(0, "{\"ok\":{\"value\":null}}")]);
@@ -84,6 +86,7 @@ fn a_door_read_carries_its_body_on_argv_because_the_socket_takes_no_stdin() {
     assert_eq!(seen[0].1, None, "no body on stdin");
 }
 
+#[test_id(tl9iuoq)]
 #[test]
 fn a_failed_read_is_asked_twice_and_says_why() {
     let (lc, t) = lc(vec![
@@ -95,6 +98,7 @@ fn a_failed_read_is_asked_twice_and_says_why() {
     assert!(err.contains("cannot tell: lost"), "{err}");
 }
 
+#[test_id(tinzvix)]
 #[test]
 fn the_round_lease_reads_held_absent_and_unanswered_apart() {
     let (lc, _) = lc(vec![
@@ -117,6 +121,7 @@ fn the_round_lease_reads_held_absent_and_unanswered_apart() {
     assert!(lc.round_lease("r", "b").is_err());
 }
 
+#[test_id(t90yapv)]
 #[test]
 fn the_context_reads_every_key_from_the_config_and_a_repos_own_ci_limits() {
     let values = |k: &str| -> Option<String> {
@@ -139,6 +144,7 @@ fn the_context_reads_every_key_from_the_config_and_a_repos_own_ci_limits() {
     assert_eq!(kv.len(), 22);
 }
 
+#[test_id(thu2a8e)]
 #[test]
 fn a_context_key_the_config_does_not_declare_is_refused_by_name() {
     let values = |k: &str| (k != "SPIRA_QUEUE_LOCK_WAIT").then(|| "1".to_string());
@@ -146,6 +152,7 @@ fn a_context_key_the_config_does_not_declare_is_refused_by_name() {
     assert!(err.contains("SPIRA_QUEUE_LOCK_WAIT"), "{err}");
 }
 
+#[test_id(t906ejw)]
 #[test]
 fn the_toml_path_is_the_spec_only_when_every_layer_exists() {
     let d = crate::testutil::tmpdir("toml-path");
@@ -162,6 +169,7 @@ fn the_toml_path_is_the_spec_only_when_every_layer_exists() {
 }
 
 // covers: UC-safety-fences-31
+#[test_id(tw5b7ir)]
 #[test]
 fn the_czar_fence_passes_only_an_act_stage_and_shadow_is_the_unset_stage() {
     let env = |k: &str| match k {
@@ -183,6 +191,7 @@ fn the_czar_fence_passes_only_an_act_stage_and_shadow_is_the_unset_stage() {
         .contains("class required"));
 }
 
+#[test_id(tpoo6yc)]
 #[test]
 fn unit_facts_read_as_the_active_state_word() {
     use runtime::units::{UnitFacts, UnitState};
@@ -200,6 +209,7 @@ fn unit_facts_read_as_the_active_state_word() {
     assert_eq!(real::active_state_of(None), "");
 }
 
+#[test_id(tzybqbr)]
 #[test]
 fn the_forges_answers_map_as_its_childs_did() {
     use forge::client::Reply as F;

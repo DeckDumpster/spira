@@ -400,6 +400,7 @@ impl Tmux {
 mod tests {
     use super::*;
 
+    #[test_id(tjxzray)]
     #[test]
     fn classify_server_stderr_absent_variants() {
         assert_eq!(classify_server_stderr("no server running on ..."), ServerState::Absent);
@@ -410,6 +411,7 @@ mod tests {
         assert_eq!(classify_server_stderr("Connection refused"), ServerState::Absent);
     }
 
+    #[test_id(tp4fwpl)]
     #[test]
     fn classify_server_stderr_unusable_is_named_not_wedged() {
         assert_eq!(
@@ -418,12 +420,14 @@ mod tests {
         );
     }
 
+    #[test_id(t8gkzp8)]
     #[test]
     fn classify_server_stderr_wedged_is_the_catchall() {
         assert_eq!(classify_server_stderr("server exited unexpectedly"), ServerState::Wedged);
         assert_eq!(classify_server_stderr(""), ServerState::Wedged);
     }
 
+    #[test_id(tg8cqn8)]
     #[test]
     fn classify_argv_health_by_exe_or_script() {
         assert_eq!(
@@ -436,6 +440,7 @@ mod tests {
         );
     }
 
+    #[test_id(txf3yet)]
     #[test]
     fn classify_argv_mail_by_basename_only() {
         assert_eq!(
@@ -445,6 +450,7 @@ mod tests {
         assert_eq!(classify_argv("usr/local/bin/other", "", Some("mailclient")), None);
     }
 
+    #[test_id(t9v5vzc)]
     #[test]
     fn classify_argv_never_matches_substring_of_whole_command_line() {
         // The named scar: a system prompt merely mentioning "cockpit/health.sh" must not
@@ -459,6 +465,7 @@ mod tests {
         );
     }
 
+    #[test_id(tfvtb3d)]
     #[test]
     fn pane_role_checks_pid_then_children_in_order() {
         let child_argv = vec!["usr/bin/bash".to_string(), "opt/spira/cockpit/health.sh".to_string()];
@@ -467,6 +474,7 @@ mod tests {
         assert_eq!(pane_role(argvs, None), Some(Role::Health));
     }
 
+    #[test_id(ts3f3k0)]
     #[test]
     fn pane_role_shell_dash_arg_is_not_treated_as_script() {
         let argv = vec!["usr/bin/bash".to_string(), "-c".to_string()];
@@ -474,6 +482,7 @@ mod tests {
         assert_eq!(pane_role(argvs, None), None);
     }
 
+    #[test_id(t0hglya)]
     #[test]
     fn find_listening_inode_matches_flag_and_path() {
         let table = "\
@@ -486,6 +495,7 @@ Num       RefCount Protocol Flags    Type St Inode Path
         );
     }
 
+    #[test_id(tzsi2b8)]
     #[test]
     fn find_listening_inode_ignores_non_listening_flag() {
         let table = "\
@@ -493,6 +503,7 @@ Num       RefCount Protocol Flags    Type St Inode Path
         assert_eq!(find_listening_inode(table, "tmp/tmux-1000/default"), None);
     }
 
+    #[test_id(tvoyutj)]
     #[test]
     fn descendants_of_counts_transitive_children() {
         // root=100; 200 is a direct child; 300 is a grandchild; 400 is unrelated.
@@ -501,6 +512,7 @@ Num       RefCount Protocol Flags    Type St Inode Path
         assert_eq!(descendants_of(400, &pairs), 0);
     }
 
+    #[test_id(t4e51n4)]
     #[test]
     fn descendants_of_survives_a_cycle() {
         let pairs = [(10, 20), (20, 10)];
@@ -508,6 +520,7 @@ Num       RefCount Protocol Flags    Type St Inode Path
         assert_eq!(descendants_of(999, &pairs), 0);
     }
 
+    #[test_id(t1vgwof)]
     #[test]
     fn stale_clients_only_past_threshold() {
         let lines = "dev/pts/0 1000\ndev/pts/1 1900\n";
@@ -515,21 +528,25 @@ Num       RefCount Protocol Flags    Type St Inode Path
         assert_eq!(out, vec![("dev/pts/0".to_string(), 1000)]);
     }
 
+    #[test_id(t05i84i)]
     #[test]
     fn heal_ready_true_when_no_stamp() {
         assert!(heal_ready(None, 1000, 60));
     }
 
+    #[test_id(t8ddnk0)]
     #[test]
     fn heal_ready_false_within_cooldown() {
         assert!(!heal_ready(Some(950), 1000, 60));
     }
 
+    #[test_id(tz2s6mb)]
     #[test]
     fn heal_ready_true_after_cooldown() {
         assert!(heal_ready(Some(900), 1000, 60));
     }
 
+    #[test_id(tyyztlw)]
     #[test]
     fn is_stale_strictly_greater() {
         assert!(is_stale(100, 50));
@@ -537,6 +554,7 @@ Num       RefCount Protocol Flags    Type St Inode Path
         assert!(!is_stale(50, 100));
     }
 
+    #[test_id(tw8jvsx)]
     #[test]
     fn needs_full_height_rebuild_strictly_less() {
         assert!(needs_full_height_rebuild(10, 40));

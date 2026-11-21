@@ -1,6 +1,8 @@
 //! The persona.ops brief edits the process environment (`SPIRA_HOME`, `SPIRA_TOML`, …) for the
 //! whole run of `run_brief`: its own test binary, so no test in `tests/it` reads a swapped home.
 
+#[macro_use]
+extern crate spira_test_id;
 use spira_runtime::tasks::f::persona_ops::*;
 
 fn brief_spec(cache: &std::path::Path) -> runtime::EffectSpec {
@@ -37,6 +39,7 @@ fn brief_with_spec(toml: Option<&std::path::Path>) -> Result<String, String> {
     run_brief(&e, "k", &brief_spec(&cache))
 }
 
+#[test_id(tcm3kxw)]
 #[test]
 fn the_brief_takes_the_persona_model_from_the_spec_the_runtime_was_started_with() {
     let dir = testkit::TempDir::new("persona-ops-spec");
@@ -48,6 +51,7 @@ fn the_brief_takes_the_persona_model_from_the_spec_the_runtime_was_started_with(
     assert_eq!(b.argv[at + 1], "m-test", "{:?}", b.argv);
 }
 
+#[test_id(t8y1moj)]
 #[test]
 fn the_brief_with_no_spec_is_refused_by_spira_configs_own_message() {
     let e = brief_with_spec(None).expect_err("no spec, no brief");

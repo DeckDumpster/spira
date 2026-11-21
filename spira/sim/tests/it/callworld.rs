@@ -17,12 +17,14 @@ fn play(text: &str) -> (callworld::Script, Vec<callworld::Outcome>) {
     (script, out)
 }
 
+#[test_id(txmavzh)]
 #[test]
 fn bound_classes_scenario_meets_every_expectation_on_the_shipped_runes() {
     let (script, out) = play(&shipped());
     assert_eq!(callworld::missed(&script, &out), None, "{out:#?}");
 }
 
+#[test_id(tjy3ps9)]
 #[test]
 fn bound_classes_scenario_reads_the_cockpit_bound_at_the_spill() {
     let (_, out) = play(&shipped());
@@ -34,6 +36,7 @@ fn bound_classes_scenario_reads_the_cockpit_bound_at_the_spill() {
 
 /// The control: the same walk on a world where a reactive session is held like a planned one
 /// (mender not reactive) must miss, so a pass that spills is what the scenario proves.
+#[test_id(t1wlymf)]
 #[test]
 fn bound_classes_scenario_fails_when_the_reactive_spill_is_gone() {
     let text = format!("{}\n[rune.mender]\nreactive = false\n", shipped());
@@ -46,6 +49,7 @@ fn bound_classes_scenario_fails_when_the_reactive_spill_is_gone() {
     }
 }
 
+#[test_id(trsysa7)]
 #[test]
 fn a_scenario_naming_a_rune_the_home_lacks_is_refused() {
     let text = "driver = \"calls\"\nmax_dwarves = 7\nmax_live = 40\n[[pass]]\nname = \"p\"\nstarts = { nobody = 1 }\nexpect_calls = []\n";
@@ -57,6 +61,7 @@ fn sim_run(scenario: &std::path::Path) -> std::process::Output {
     std::process::Command::new(testkit::bin_exe("sim")).arg("run").arg(scenario).current_dir(root()).output().expect("sim runs")
 }
 
+#[test_id(tyaeklr)]
 #[test]
 fn sim_run_walks_bound_classes_and_fails_on_a_missed_expectation() {
     let ok = sim_run(&testkit::manifest_dir().join("scenarios/bound-classes.toml"));

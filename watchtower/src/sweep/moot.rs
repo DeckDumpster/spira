@@ -133,6 +133,7 @@ mod tests {
         serde_json::json!({"id": id, "status": status, "labels": labels, "description": desc})
     }
 
+    #[test_id(tao5a5x)]
     #[test]
     fn only_open_labelled_asks_with_a_predicate_are_checked() {
         let rows = serde_json::Value::Array(vec![
@@ -151,6 +152,7 @@ mod tests {
         assert!(asks_of("not json", "needs-ryan").is_empty());
     }
 
+    #[test_id(tq6a3fe)]
     #[test]
     fn a_cleared_predicate_is_resolved_a_live_one_kept_and_a_timeout_counted() {
         let d = testkit::TempDir::new("wt-moot");
@@ -180,6 +182,7 @@ mod tests {
         assert_eq!(t.seen.lock().unwrap()[0], vec!["content", "list", "--all", "--limit", "0", "--label-any", "insight,needs-ryan,overseer", "--json"]);
     }
 
+    #[test_id(t7swceo)]
     #[test]
     fn no_database_checks_nothing() {
         let cfg = MootCfg { db: Some("does/not/exist".into()), lc: crate::lc::scripted::scripted(0, "[]").1, ask_label: "a".into(), timeout_s: 1, resolve: system_paths::BIN_FALSE.into() };

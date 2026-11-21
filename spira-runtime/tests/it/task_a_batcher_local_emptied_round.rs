@@ -26,6 +26,7 @@ fn carried(state: State) -> Carry {
     }
 }
 
+#[test_id(toa0hmw)]
 #[test]
 fn the_eject_the_batcher_asks_is_one_the_queue_cli_parses_as_the_batchers_with_its_reason_on_stdin()
 {
@@ -65,6 +66,7 @@ fn names(acts: &[Act]) -> Vec<&str> {
     acts.iter().map(|a| a.effect.as_str()).collect()
 }
 
+#[test_id(tl43zqp)]
 #[test]
 fn a_corpus_leg_ending_red_on_a_round_with_no_member_left_neither_attributes_nor_pauses() {
     let mut carry = one_member(State::Corpus);
@@ -85,6 +87,7 @@ fn a_corpus_leg_ending_red_on_a_round_with_no_member_left_neither_attributes_nor
     assert_eq!((rc.state, rc.pace.infra), (State::Idle, 0));
 }
 
+#[test_id(tw87rcu)]
 #[test]
 fn an_emptied_round_ends_quietly_from_every_state_a_pass_runs_in() {
     for (state, leg) in [

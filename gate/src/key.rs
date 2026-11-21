@@ -111,6 +111,7 @@ mod tests {
         }
     }
 
+    #[test_id(txdh0xj)]
     #[test]
     fn the_key_matches_the_bash_formula() {
         // printf '%s\n' "spira t1 $(printf a\\nb|sha256sum) $(printf 'bash x'|sha256sum) h suites=on bead=sp-a ejected=" | sha256sum
@@ -126,6 +127,7 @@ mod tests {
         );
     }
 
+    #[test_id(tbcfafm)]
     #[test]
     fn every_input_moves_the_key() {
         let k0 = gate_key(&base());
@@ -172,6 +174,7 @@ mod tests {
         }
     }
 
+    #[test_id(to60ji8)]
     #[test]
     fn a_fresh_entry_names_when_and_by() {
         let e = render_entry(
@@ -188,6 +191,7 @@ mod tests {
         );
     }
 
+    #[test_id(t1106q2)]
     #[test]
     fn an_old_or_unreadable_entry_is_stale() {
         let e = render_entry("w", 1000, "b", "r", "br", "-");
@@ -199,6 +203,7 @@ mod tests {
         assert_eq!(cache_fresh("when=w\n", "60", 1), None);
     }
 
+    #[test_id(t4wl4zf)]
     #[test]
     fn the_same_entry_is_reused_under_a_longer_ttl() {
         let e = render_entry("w", 1000, "b", "r", "br", "-");
@@ -206,6 +211,7 @@ mod tests {
         assert!(cache_fresh(&e, "3660", 1100).is_some());
     }
 
+    #[test_id(th02rmd)]
     #[test]
     fn a_hostile_when_is_only_text() {
         let e = "when=$(touch /tmp/pwned)\nat=10\nby=\n";
@@ -215,6 +221,7 @@ mod tests {
         );
     }
 
+    #[test_id(t97eyby)]
     #[test]
     fn cached_suites_reads_the_last_line() {
         assert_eq!(cached_suites("suites=a\nsuites=b,c\n"), "b,c");

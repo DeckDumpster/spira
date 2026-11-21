@@ -305,18 +305,21 @@ mod tests {
 
     // ── backlog trend ──────────────────────────────────────────────────────────────────
 
+    #[test_id(tr6pesr)]
     #[test]
     fn backlog_trend_satisfied_with_no_baseline_history() {
         let s = backlog_trend_raw(&BacklogObserved { current: 500, baseline: 0.0 });
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(t0wdjzd)]
     #[test]
     fn backlog_trend_satisfied_within_growth_tolerance() {
         let s = backlog_trend_raw(&BacklogObserved { current: 120, baseline: 100.0 });
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(tpt8962)]
     #[test]
     fn backlog_trend_gap_when_growth_exceeds_tolerance() {
         // Positive control: a backlog well past the ratio must be caught, not waved through.
@@ -326,6 +329,7 @@ mod tests {
 
     // ── velocity ────────────────────────────────────────────────────────────────────────
 
+    #[test_id(t3m3k0q)]
     #[test]
     fn velocity_satisfied_with_nothing_waiting() {
         // The literal non-goal: a zero rate is fine when there is nothing to do.
@@ -336,6 +340,7 @@ mod tests {
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(t4izat0)]
     #[test]
     fn velocity_gap_zero_rate_with_certified_work_waiting() {
         // The design's own test case, verbatim: "a land rate of zero for 30 minutes with
@@ -347,6 +352,7 @@ mod tests {
         assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
     }
 
+    #[test_id(tv5n1vf)]
     #[test]
     fn velocity_satisfied_at_healthy_rate_with_work_waiting() {
         let s = velocity_raw(
@@ -356,6 +362,7 @@ mod tests {
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(txi7chs)]
     #[test]
     fn velocity_gap_below_configured_floor_even_with_healthy_baseline_ratio() {
         // Baseline is tiny (so BASELINE_RATIO alone would not fire) but an explicit floor
@@ -367,6 +374,7 @@ mod tests {
         assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
     }
 
+    #[test_id(tykrw5f)]
     #[test]
     fn velocity_satisfied_with_no_floor_and_no_baseline_yet() {
         let s = velocity_raw(
@@ -378,30 +386,35 @@ mod tests {
 
     // ── dwell ───────────────────────────────────────────────────────────────────────────
 
+    #[test_id(tlw10ax)]
     #[test]
     fn dwell_satisfied_with_no_transitions() {
         let s = dwell_raw(&DwellObserved { p95_seconds: 99999.0, n: 0 }, Some(3600), None);
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(te8ktzr)]
     #[test]
     fn dwell_gap_over_configured_limit() {
         let s = dwell_raw(&DwellObserved { p95_seconds: 4000.0, n: 10 }, Some(3600), None);
         assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
     }
 
+    #[test_id(t76lbad)]
     #[test]
     fn dwell_satisfied_under_configured_limit() {
         let s = dwell_raw(&DwellObserved { p95_seconds: 1000.0, n: 10 }, Some(3600), None);
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(tuhfapy)]
     #[test]
     fn dwell_gap_over_baseline_ratio_with_no_limit_configured() {
         let s = dwell_raw(&DwellObserved { p95_seconds: 500.0, n: 10 }, None, Some(200.0));
         assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
     }
 
+    #[test_id(tczrxtm)]
     #[test]
     fn dwell_satisfied_with_nothing_configured_and_no_baseline() {
         let s = dwell_raw(&DwellObserved { p95_seconds: 999999.0, n: 10 }, None, None);
@@ -410,12 +423,14 @@ mod tests {
 
     // ── round health ────────────────────────────────────────────────────────────────────
 
+    #[test_id(t1xigjy)]
     #[test]
     fn round_health_satisfied_with_no_transitions() {
         let s = round_health_raw(&RoundHealthObserved { flips: 0, transitions: 0, baseline_flip_rate: 0.05 });
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(tk5mds4)]
     #[test]
     fn round_health_satisfied_below_min_flips_regardless_of_rate() {
         // 1 flip of 1 transition is a 100% rate but too small a sample to mean anything.
@@ -423,18 +438,21 @@ mod tests {
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(tcti15f)]
     #[test]
     fn round_health_gap_when_thrashing_well_above_baseline() {
         let s = round_health_raw(&RoundHealthObserved { flips: 10, transitions: 20, baseline_flip_rate: 0.05 });
         assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
     }
 
+    #[test_id(t2m3iab)]
     #[test]
     fn round_health_satisfied_near_its_own_baseline() {
         let s = round_health_raw(&RoundHealthObserved { flips: 2, transitions: 40, baseline_flip_rate: 0.05 });
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(t5l48m0)]
     #[test]
     fn round_health_gap_on_absolute_floor_with_a_near_zero_baseline() {
         // A near-zero baseline scaled by the ratio is still near zero, so without an
@@ -458,12 +476,14 @@ mod tests {
         SlotsSample { live: 3, ceiling: 8, ready: 12, capacity_paused: false }
     }
 
+    #[test_id(twpoitb)]
     #[test]
     fn idle_capacity_satisfied_when_full() {
         let s = idle_capacity_raw(&busy(), &busy(), &room(8));
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(tjanyvc)]
     #[test]
     fn idle_capacity_satisfied_on_a_single_idle_sample() {
         // A blip: work waiting on the most recent sample only must not fire.
@@ -472,6 +492,7 @@ mod tests {
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(tyt0cay)]
     #[test]
     fn idle_capacity_gap_when_idle_across_two_samples() {
         // Positive control: the literal case the invariant exists to catch.
@@ -479,6 +500,7 @@ mod tests {
         assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
     }
 
+    #[test_id(tv6ul3j)]
     #[test]
     fn idle_capacity_satisfied_with_nothing_ready() {
         let empty_queue = SlotsSample { ready: 0, ..idle() };
@@ -486,6 +508,7 @@ mod tests {
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(tzv0de7)]
     #[test]
     fn idle_capacity_satisfied_while_capacity_is_deliberately_paused() {
         let paused = SlotsSample { capacity_paused: true, ..idle() };
@@ -495,6 +518,7 @@ mod tests {
 
     // ── sentinel overrun ────────────────────────────────────────────────────────────────
 
+    #[test_id(ti6zw4h)]
     #[test]
     fn sentinel_overrun_satisfied_at_the_median_recon_finding() {
         // The literal recon number (213s against a 2-minute/120s timer) is over one period
@@ -503,12 +527,14 @@ mod tests {
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(tvxfqns)]
     #[test]
     fn sentinel_overrun_gap_past_twice_the_period() {
         let s = sentinel_overrun_raw(241, 120);
         assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
     }
 
+    #[test_id(tot8fpa)]
     #[test]
     fn sentinel_overrun_satisfied_at_exactly_twice_the_period() {
         let s = sentinel_overrun_raw(240, 120);
@@ -517,18 +543,21 @@ mod tests {
 
     // ── rework ──────────────────────────────────────────────────────────────────────────
 
+    #[test_id(tg22g65)]
     #[test]
     fn rework_satisfied_with_no_reopens() {
         let s = rework_raw(&ReworkObserved { reopens: 0, landed: 0 });
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(t11iyzl)]
     #[test]
     fn rework_satisfied_at_or_under_one_reopen_per_landed() {
         let s = rework_raw(&ReworkObserved { reopens: 4, landed: 4 });
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(t9ivrbr)]
     #[test]
     fn rework_gap_over_one_reopen_per_landed() {
         // Positive control: the design's own default threshold, crossed.
@@ -536,6 +565,7 @@ mod tests {
         assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
     }
 
+    #[test_id(t0zuiqj)]
     #[test]
     fn rework_gap_when_reopens_exist_and_nothing_landed() {
         let s = rework_raw(&ReworkObserved { reopens: 2, landed: 0 });
@@ -544,6 +574,7 @@ mod tests {
 
     // ── stage dwell regression ──────────────────────────────────────────────────────────
 
+    #[test_id(tgstwhb)]
     #[test]
     fn dwell_regression_satisfied_with_no_baseline_yet() {
         let s = dwell_regression_raw(&DwellRegressionObserved {
@@ -555,6 +586,7 @@ mod tests {
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(t24h5h7)]
     #[test]
     fn dwell_regression_satisfied_with_no_transitions_this_window() {
         let s = dwell_regression_raw(&DwellRegressionObserved {
@@ -566,6 +598,7 @@ mod tests {
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(tduh9dd)]
     #[test]
     fn dwell_regression_satisfied_within_three_times_baseline() {
         let s = dwell_regression_raw(&DwellRegressionObserved {
@@ -577,6 +610,7 @@ mod tests {
         assert_eq!(s, RawStatus::Satisfied);
     }
 
+    #[test_id(t0xy162)]
     #[test]
     fn dwell_regression_gap_past_three_times_baseline() {
         // Positive control: the design's own ratio, crossed.

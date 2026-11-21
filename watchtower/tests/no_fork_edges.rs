@@ -1,6 +1,8 @@
 //! No Spira→Spira subprocess edge survives in watchtower's source unless it is marked
 //! `FORK-EDGE:` (on the site's line or one of the two above it), naming why it stays.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::{Path, PathBuf};
 
 const BANNED: &[&str] = &["spira-lc", "bd", "bdq", "bash", "systemctl", "systemd-run", "tsd-write", "mail", "queue", "pgrep"];
@@ -63,6 +65,7 @@ fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+#[test_id(txwov9r)]
 #[test]
 fn no_unmarked_fork_edge_remains_in_src() {
     let mut files = Vec::new();
@@ -76,6 +79,7 @@ fn no_unmarked_fork_edge_remains_in_src() {
     assert!(found.is_empty(), "unmarked Spira→Spira fork sites:\n{}", found.join("\n"));
 }
 
+#[test_id(ttys66u)]
 #[test]
 fn the_scan_catches_a_planted_site_and_passes_a_marked_one() {
     let planted = "fn f() {\n    let _ = std::process::Command::new(\"spira-lc\").arg(\"list\");\n}\n";

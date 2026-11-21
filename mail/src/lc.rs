@@ -168,6 +168,7 @@ mod tests {
     use super::fake::FakeLc;
     use super::*;
 
+    #[test_id(tohh1ix)]
     #[test]
     fn a_reply_names_the_work_bead_and_the_answers_message_id() {
         let lc = FakeLc::new(0);
@@ -175,6 +176,7 @@ mod tests {
         assert_eq!(lc.calls(), vec![vec!["reply", "sp-w1", "m-1@spira", "operator"]]);
     }
 
+    #[test_id(tw7qyx7)]
     #[test]
     fn no_hold_or_no_row_is_quiet_but_cannot_tell_warns() {
         for quiet in [1, 3] {
@@ -187,6 +189,7 @@ mod tests {
         assert!(lc.calls().is_empty(), "no work bead, no call");
     }
 
+    #[test_id(tbwenot)]
     #[test]
     fn an_answer_is_recorded_with_who_his_words_and_the_channel() {
         let lc = FakeLc::new(0);
@@ -218,6 +221,7 @@ mod tests {
 
     /// sp-ipwlic: an answer's close-ask goes through the store client, never a program of its
     /// own; only the verbs the socket does not serve reach the program.
+    #[test_id(tykvthc)]
     #[test]
     fn close_ask_goes_through_the_client_and_unserved_verbs_through_the_program() {
         let (t, c) = client(Ok(spira_store::lc_call::Reply { code: 0, ..Default::default() }));
@@ -229,6 +233,7 @@ mod tests {
         assert_eq!(program.calls(), vec![vec!["withdraw-ask", "sp-w1", "operator"]]);
     }
 
+    #[test_id(tary972)]
     #[test]
     fn a_client_with_no_answer_is_cannot_tell_and_a_refusal_keeps_its_code() {
         let (_, down) = client(Err("cannot tell: not answering".into()));
@@ -241,6 +246,7 @@ mod tests {
         assert!(answer_ask(&unbuilt, "sp-a", "y", "o", "mail", "m").unwrap().contains("SPIRA_LC_SOCKET"));
     }
 
+    #[test_id(t7re3rd)]
     #[test]
     fn actor_of_reads_the_local_part() {
         assert_eq!(actor_of("Operator <operator@spira>", "x"), "operator");

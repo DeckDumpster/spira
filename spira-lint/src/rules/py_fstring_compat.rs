@@ -116,6 +116,7 @@ mod tests {
         offences(s.as_bytes()).len()
     }
 
+    #[test_id(tssst2g)]
     #[test]
     fn planted_offenders_are_caught() {
         assert_eq!(n(r#"print(f"{'\n'.join(xs)}")"#), 1);
@@ -123,6 +124,7 @@ mod tests {
         assert_eq!(n(r#"x = rf'{a}{b!r:{w}}{"\t".join(c)}'"#), 1);
     }
 
+    #[test_id(t96rwmh)]
     #[test]
     fn pre_3_12_safe_forms_are_silent() {
         assert_eq!(n(r#"print(f"{d['k']} {{literal}} \n done {x:>{w}}")"#), 0);
@@ -131,6 +133,7 @@ mod tests {
         assert_eq!(n(r#"[ -f "$f" ] && { printf 'x\n' > "$f"; }"#), 0);
     }
 
+    #[test_id(tva7qw8)]
     #[test]
     fn an_empty_scope_is_refused() {
         let t = crate::testutil::TempDir::new("pyf-empty");

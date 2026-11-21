@@ -364,6 +364,7 @@ mod tests {
 
     // The expected tables are what the retired SQL verb answered for the `sql.rs` builders'
     // text over this fixture, captured before that verb was deleted.
+    #[test_id(tymge1s)]
     #[test]
     fn events_equal_what_the_sql_answered() {
         assert_eq!(
@@ -386,6 +387,7 @@ mod tests {
         );
     }
 
+    #[test_id(t6n4toj)]
     #[test]
     fn event_rows_equal_what_the_sql_answered() {
         assert_eq!(
@@ -419,6 +421,7 @@ mod tests {
         );
     }
 
+    #[test_id(thtmy4h)]
     #[test]
     fn handwritten_equals_what_the_sql_answered() {
         assert_eq!(
@@ -435,6 +438,7 @@ mod tests {
         );
     }
 
+    #[test_id(ta0agvt)]
     #[test]
     fn deliberate_equals_what_the_sql_answered() {
         assert_eq!(

@@ -148,12 +148,14 @@ mod tests {
     use super::*;
 
 
+    #[test_id(tcxrkow)]
     #[test]
     fn l_scoping_and_file_wide_tmux_tmpdir_both_clear_it() {
         assert!(scan(b"#!/usr/bin/env bash\nSOCK=\"x-$$\"\ntmux -L \"$SOCK\" kill-server 2>/dev/null || true\n").is_empty());
         assert!(scan(b"#!/usr/bin/env bash\nexport TMUX_TMPDIR=\"$(mktemp -d)\"\ntmux start-server\ntmux new-session -d -s cockpit\ntmux kill-server 2>/dev/null || true\n").is_empty());
     }
 
+    #[test_id(tnr5pxq)]
     #[test]
     fn unscoped_concierge_start_is_caught_and_socket_clears_it() {
         let broken = scan(b"#!/usr/bin/env bash\nHARNESS=\"$(cd \"$(dirname \"$0\")/..\" && pwd)\"\nbash \"$HARNESS/concierge.sh\" start\n");
@@ -164,6 +166,7 @@ mod tests {
         assert!(scoped.is_empty());
     }
 
+    #[test_id(tw1xrs8)]
     #[test]
     fn comment_lines_are_not_flagged() {
         let hits = scan(b"#!/usr/bin/env bash\n# do not call: tmux kill-server\n# and never: bash \"$HARNESS/concierge.sh\" start\nprintf 'ok\\n'\n");

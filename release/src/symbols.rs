@@ -169,6 +169,7 @@ pub(crate) mod tests {
         out
     }
 
+    #[test_id(t3qs4um)]
     #[test]
     fn a_symtab_with_both_names_reads_back_and_a_main_closure_is_under_the_crate() {
         let names = symtab_names(&elf_image(&[MAIN, "sqlite3_step"], false)).unwrap();
@@ -179,6 +180,7 @@ pub(crate) mod tests {
         assert_eq!(run(&elf_image(&[MAIN, "sqlite3_step"], false)), Vec::<String>::new());
     }
 
+    #[test_id(tr60zbl)]
     #[test]
     fn an_image_with_only_a_dynsym_is_reported_as_carrying_no_symbol_table() {
         let p = run(&elf_image(&["sqlite3_step"], true));
@@ -186,6 +188,7 @@ pub(crate) mod tests {
         assert!(p[0].contains("bin/spira-lc") && p[0].contains("no symbol table"), "{p:?}");
     }
 
+    #[test_id(tloewxz)]
     #[test]
     fn a_symtab_lacking_sqlite3_step_names_the_binary_and_the_missing_symbol() {
         let p = run(&elf_image(&[MAIN], false));
@@ -193,6 +196,7 @@ pub(crate) mod tests {
         assert!(p[0].contains("bin/spira-lc") && p[0].contains("sqlite3_step"), "{p:?}");
     }
 
+    #[test_id(twzg6w1)]
     #[test]
     fn truncated_bytes_and_non_elf64_le_headers_are_errors_not_panics() {
         let good = elf_image(&[MAIN], false);
@@ -214,11 +218,13 @@ pub(crate) mod tests {
         v.get("profile")?.get("release")?.get("strip").cloned()
     }
 
+    #[test_id(tj1xqo1)]
     #[test]
     fn the_workspace_release_profile_keeps_function_names() {
         assert_eq!(release_strip(include_str!("../../Cargo.toml")), Some(toml::Value::String("debuginfo".into())));
     }
 
+    #[test_id(tc4xw0u)]
     #[test]
     fn the_profile_reader_reads_the_release_table_and_not_another() {
         let v = release_strip("[profile.release]\nstrip = true\n[profile.dev]\nstrip = \"debuginfo\"\n");

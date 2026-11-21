@@ -81,6 +81,7 @@ impl Notifier {
 mod tests {
     use super::*;
 
+    #[test_id(tdd3b3j)]
     #[test]
     fn kicks_arrive_on_the_socket_and_are_rate_limited() {
         let d = testkit::TempDir::new("notify");
@@ -109,6 +110,7 @@ mod tests {
         assert_eq!(n.max_sleep(), Some(Duration::from_secs(1)));
     }
 
+    #[test_id(ttivtq1)]
     #[test]
     fn no_socket_means_no_send_and_no_watchdog_means_no_kick() {
         let n = Notifier::new(None, None).unwrap();

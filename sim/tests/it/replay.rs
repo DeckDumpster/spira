@@ -8,7 +8,8 @@
 use sim::replay::checks;
 
 macro_rules! slice_sized {
-    ($($name:ident),* $(,)?) => {$(
+    ($( #[test_id($id:ident)] $name:ident ),* $(,)?) => {$(
+        #[test_id($id)]
         #[test]
         #[ignore = "slice-sized: run by sim-replay"]
         fn $name() {
@@ -18,9 +19,10 @@ macro_rules! slice_sized {
 }
 
 slice_sized!(
-    the_lifecycle_sections_one_hour_rate_falls_below_its_day_rate_while_the_stacked_pointer_stands,
+    #[test_id(tmf6jxj)] the_lifecycle_sections_one_hour_rate_falls_below_its_day_rate_while_the_stacked_pointer_stands,
 );
 
+#[test_id(tm12f9u)]
 #[test]
 fn every_slice_check_is_named_for_its_test() {
     let names: Vec<_> = checks::CHECKS.iter().map(|(n, _)| *n).collect();

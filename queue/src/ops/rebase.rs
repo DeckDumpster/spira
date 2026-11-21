@@ -386,6 +386,7 @@ mod tests {
     /// law-lifecycle-state-is-not-text (sp-mijstw): a REWORK row waits for a rebase only when its
     /// reason is the GateRed reason NoRebase, read as the typed enum — never because free text
     /// happens to contain the word, which moved an unrelated REWORK bead back to SUBMITTED.
+    #[test_id(tuc2w2l)]
     #[test]
     fn only_a_no_rebase_gate_red_reason_waits_for_a_rebase() {
         assert!(waiting(&row("REWORK", Some("no-rebase"))));

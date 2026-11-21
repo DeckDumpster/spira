@@ -31,24 +31,28 @@ fn classes(findings: &[Value]) -> Vec<&str> {
     findings.iter().map(|f| f["class"].as_str().unwrap()).collect()
 }
 
+#[test_id(t9qkdm3)]
 #[test]
 fn lifecycle_read_in_a_conditional_is_reported() {
     let findings = run("lifecycle_read", None);
     assert_eq!(classes(&findings), vec!["lifecycle-read"]);
 }
 
+#[test_id(t1vr35c)]
 #[test]
 fn credential_reference_is_reported() {
     let findings = run("credential", None);
     assert_eq!(classes(&findings), vec!["credential"]);
 }
 
+#[test_id(tl8sa9m)]
 #[test]
 fn retired_label_is_reported_when_configured() {
     let findings = run("retired_label", Some("rules.json"));
     assert_eq!(classes(&findings), vec!["retired-label"]);
 }
 
+#[test_id(tudeg08)]
 #[test]
 fn landstate_direct_path_read_is_reported_in_shell() {
     let findings = run("landstate_path", None);
@@ -56,6 +60,7 @@ fn landstate_direct_path_read_is_reported_in_shell() {
     assert_eq!(cs, vec!["landstate-path", "landstate-path", "landstate-path"], "{findings:#?}");
 }
 
+#[test_id(tfwbdk8)]
 #[test]
 fn the_reader_fence_sees_a_landstate_read_in_a_scoped_shape() {
     let findings = run("landstate_rust_path", None);
@@ -71,6 +76,7 @@ fn gate(dir: &std::path::Path) -> (u8, usize, Vec<Value>) {
 }
 
 /// A fence that checked nothing refuses instead of passing silent.
+#[test_id(tyz3a20)]
 #[test]
 fn gate_mode_refuses_a_tree_with_nothing_to_check() {
     let tmp = testkit::TempDir::new("lg-gate-empty");
@@ -83,6 +89,7 @@ fn gate_mode_refuses_a_tree_with_nothing_to_check() {
 }
 
 /// No crate is exempt: a ledger-backed answer inside spira-lc is a finding like any other.
+#[test_id(tp9pnvs)]
 #[test]
 fn spira_lc_is_held_to_the_rule() {
     let findings = run("spira_lc_beyond_classifier", None);
@@ -93,6 +100,7 @@ fn spira_lc_is_held_to_the_rule() {
 /// sp-voip5: the verb follows bd's leading global flags. `bd -C x close y` was read as verb
 /// `-C` and went unseen; `-C`/`--db`/`--actor` take a value word, `--json`/`--actor=…` do
 /// not, an array of flags is looked through, and `ready --claim` is a claim.
+#[test_id(tmh10zl)]
 #[test]
 fn verbs_after_leading_global_flags_are_judged() {
     let findings = run("global_flags", None);
@@ -118,6 +126,7 @@ fn verbs_after_leading_global_flags_are_judged() {
 
 /// sp-voip5: the gate refuses a planted `bd -C x close y` — the shape the old analyser,
 /// reading argv[1] as the verb, let through.
+#[test_id(to6guxa)]
 #[test]
 fn gate_mode_refuses_a_close_behind_a_directory_flag() {
     let tmp = testkit::TempDir::new("lg-voip5");

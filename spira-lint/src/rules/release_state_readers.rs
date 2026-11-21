@@ -125,6 +125,7 @@ mod tests {
         ReleaseStateReaders::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(ttl0ipy)]
     #[test]
     fn a_planted_release_file_read_is_caught() {
         let t = TempDir::new("rsr");
@@ -137,6 +138,7 @@ mod tests {
         assert_eq!(got.len(), 5, "{got:?}");
     }
 
+    #[test_id(tjt9y13)]
     #[test]
     fn comments_other_trees_the_verb_and_listed_files_are_silent() {
         let t = TempDir::new("rsr-ok");
@@ -147,6 +149,7 @@ mod tests {
         assert_eq!(run(&t, &["cockpit/a.rs", "queue/y.rs", "spira-world/old.rs", ALLOW_FILE]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tp3i94d)]
     #[test]
     fn a_listed_file_that_no_longer_reads_is_a_finding() {
         let t = TempDir::new("rsr-stale");
@@ -155,6 +158,7 @@ mod tests {
         assert_eq!(run(&t, &["cockpit/a.rs", ALLOW_FILE]).unwrap().len(), 1);
     }
 
+    #[test_id(td659yh)]
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("rsr-none");

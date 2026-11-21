@@ -1,6 +1,9 @@
 //! landing-pass — the one landing pass for every land mode. See DESIGN.md for the contract
 //! this implements.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod telemetry;
 pub mod ask;
 pub mod budget;

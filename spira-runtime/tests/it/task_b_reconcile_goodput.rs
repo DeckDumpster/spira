@@ -20,11 +20,13 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(tgfmtmr)]
 #[test]
 fn t1_registered_boots_and_arms_a_60s_tick() {
     t::t1_registered_and_boots::<H>(SET, MIN);
 }
 
+#[test_id(ta94w8m)]
 #[test]
 fn t2_fresh_sections_and_nothing_due_is_the_probe_alone() {
     let h = t::handler::<H>(SET);
@@ -33,6 +35,7 @@ fn t2_fresh_sections_and_nothing_due_is_the_probe_alone() {
     t::t2_silent::<H>(SET, &json(&quiet()));
 }
 
+#[test_id(t8ics4m)]
 #[test]
 fn t3_the_pass_walks_lock_judge_step_record_release_and_refuses_a_step_past_its_deadline() {
     let h = t::handler::<H>(SET);
@@ -48,12 +51,14 @@ fn t3_the_pass_walks_lock_judge_step_record_release_and_refuses_a_step_past_its_
     assert!(refused.contains("deadline"), "a step after the pass deadline is refused naming it: {refused}");
 }
 
+#[test_id(t9nmrss)]
 #[test]
 fn t4_its_seven_effects_are_runnable_and_the_module_spawns_nothing() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/b/reconcile_goodput.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(tzfk1es)]
 #[test]
 fn t5_a_due_intent_takes_the_lock_and_a_halted_world_records_without_judging() {
     let h = t::handler::<H>(SET);
@@ -83,6 +88,7 @@ fn registration() -> runtime::event::Registration {
     t::handler::<H>(SET).registration()
 }
 
+#[test_id(tdlgyhj)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&judging(), task::NAME);
@@ -91,6 +97,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(tkx5zbt)]
 #[test]
 fn a_boot_does_not_take_the_lock_again_for_a_pass_in_flight() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(judging, registration, task::STREAM, runtime::event::EventKind::new(task::TICK, ""));

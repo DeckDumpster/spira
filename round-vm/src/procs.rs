@@ -155,6 +155,7 @@ mod tests {
         (c, said)
     }
 
+    #[test_id(t2mfanb)]
     #[test]
     fn a_script_fed_to_a_shell_that_already_exited_reports_the_shells_status_and_stderr() {
         let (mut c, said) = exited_early_shell();
@@ -163,6 +164,7 @@ mod tests {
         assert_eq!(said.trim(), "refused");
     }
 
+    #[test_id(t7jdo95)]
     #[test]
     fn a_stdin_write_error_other_than_broken_pipe_is_still_returned() {
         let mut c = command("sh").args(["-c", "exit 0"]).stdin(std::process::Stdio::null()).spawn().unwrap();
@@ -171,6 +173,7 @@ mod tests {
         let _ = c.wait();
     }
 
+    #[test_id(tyizzhr)]
     #[test]
     fn current_process_is_alive_and_a_different_start_time_is_not() {
         let me = ProcId::current();

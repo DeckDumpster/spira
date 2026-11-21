@@ -5,6 +5,9 @@
 //! detectors (`strand::detectors`) that this crate does not own and must not re-derive.
 //! [`cmds`] and [`unpoison`] compose the two.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod bd;
 pub mod cmds;
 pub mod deadlocked;

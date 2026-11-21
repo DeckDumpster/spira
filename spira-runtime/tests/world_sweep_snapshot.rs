@@ -2,12 +2,15 @@
 //! never a list of every terminal row: the content beads with no live row and the blockers of
 //! the live rows are the ids it asks for.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
 
 use runtime::RuntimeError;
 use spira_runtime::world::World;
 
+#[test_id(t61np4p)]
 #[test]
 fn the_sweep_asks_for_the_terminal_rows_of_the_ids_it_looks_up_and_no_others() {
     let dir = testkit::TempDir::new("world-sweep-snapshot");
@@ -34,6 +37,7 @@ fn the_sweep_asks_for_the_terminal_rows_of_the_ids_it_looks_up_and_no_others() {
     assert!(sent.iter().all(|a| !a.contains("LANDED,DONE")), "no whole-terminal list: {sent:?}");
 }
 
+#[test_id(t6ryf8k)]
 #[test]
 fn the_sweep_reads_each_manual_holds_raise_from_its_row_and_sends_no_history() {
     let dir = testkit::TempDir::new("world-sweep-holds");
@@ -74,6 +78,7 @@ fn the_sweep_reads_each_manual_holds_raise_from_its_row_and_sends_no_history() {
     }
 }
 
+#[test_id(taqgrno)]
 #[test]
 fn a_manual_held_row_without_a_manual_hold_fails_the_sweep_naming_the_migration() {
     let dir = testkit::TempDir::new("world-sweep-no-raise");

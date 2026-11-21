@@ -66,6 +66,7 @@ mod tests {
     use super::*;
     use testkit::TempDir;
 
+    #[test_id(tiebk6j)]
     #[test]
     fn a_free_lock_is_taken() {
         let d = TempDir::new("watchd-lock");
@@ -73,6 +74,7 @@ mod tests {
         assert!(try_lock(&p).unwrap().is_ok());
     }
 
+    #[test_id(ttyiaxd)]
     #[test]
     fn a_held_lock_refuses_a_second_reader() {
         let d = TempDir::new("watchd-lock");
@@ -81,6 +83,7 @@ mod tests {
         assert!(try_lock(&p).unwrap().is_err());
     }
 
+    #[test_id(tbt4k5l)]
     #[test]
     fn holder_pid_is_recorded_and_read_back() {
         let d = TempDir::new("watchd-lock");
@@ -90,6 +93,7 @@ mod tests {
         assert_eq!(read_holder_pid(&p), std::process::id().to_string());
     }
 
+    #[test_id(tvhc18m)]
     #[test]
     fn an_unreadable_or_garbage_pid_reads_as_unknown() {
         let d = TempDir::new("watchd-lock");

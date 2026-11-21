@@ -156,6 +156,7 @@ mod tests {
         }
     }
 
+    #[test_id(tg488n2)]
     #[test]
     fn why_is_whitespace_normalised_and_capped() {
         let mut r = rec("sop-x", Some("sp-1"), None, 1, "pass", "yes");
@@ -170,6 +171,7 @@ mod tests {
         assert_eq!(v["why"].as_str().unwrap().chars().count(), 10);
     }
 
+    #[test_id(t8invmv)]
     #[test]
     fn log_filters_by_bead_and_since() {
         let lines = [
@@ -194,6 +196,7 @@ mod tests {
         assert!(matches!(log_lines(&text, &f3), LogOutcome::Empty));
     }
 
+    #[test_id(ttcc295)]
     #[test]
     fn a_ledger_of_unparseable_lines_is_corrupt_not_empty() {
         let text = "not json\nalso not json\n";
@@ -201,6 +204,7 @@ mod tests {
         assert!(matches!(log_lines(text, &f), LogOutcome::Corrupt(2)));
     }
 
+    #[test_id(tazft4t)]
     #[test]
     fn digest_is_stable_and_sorted() {
         let mut shelf = std::collections::BTreeMap::new();

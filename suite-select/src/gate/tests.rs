@@ -83,6 +83,7 @@ fn diff_git() -> FakeGit {
     }
 }
 
+#[test_id(ttuebsl)]
 #[test]
 fn uc_gate_verdict_08_covers_selection_on_the_branch_tree() {
     let d = fixture("a");
@@ -91,6 +92,7 @@ fn uc_gate_verdict_08_covers_selection_on_the_branch_tree() {
     assert!(!o.suites.contains(&"test-b.sh".to_string()));
 }
 
+#[test_id(tbdqwbz)]
 #[test]
 fn uc_gate_verdict_08_a_file_list_selects_from_the_base_corpus() {
     let d = fixture("c");
@@ -112,6 +114,7 @@ fn uc_gate_verdict_08_a_file_list_selects_from_the_base_corpus() {
     assert_eq!(*g.calls.borrow(), ["ls-tree main"], "the file list, not a diff");
 }
 
+#[test_id(t9i22bi)]
 #[test]
 fn uc_gate_verdict_09_ejected_suites_are_always_added_once_and_only_if_present() {
     let d = fixture("d");
@@ -126,6 +129,7 @@ fn uc_gate_verdict_09_ejected_suites_are_always_added_once_and_only_if_present()
     assert!(with("test-b.sh test-c.sh").contains(&"test-b.sh".to_string()), "blanks separate too");
 }
 
+#[test_id(tb21ue7)]
 #[test]
 fn gate_all_is_the_whole_corpus() {
     let d = fixture("e");
@@ -156,6 +160,7 @@ fn git_changing(path: &str) -> FakeGit {
     }
 }
 
+#[test_id(txibp40)]
 #[test]
 fn suites_off_runs_only_what_covers_the_critical_file() {
     let d = crit_fixture("off");
@@ -179,6 +184,7 @@ fn suites_off_runs_only_what_covers_the_critical_file() {
     assert!(o.suites.is_empty());
 }
 
+#[test_id(tb8qaht)]
 #[test]
 fn covered_certification_with_suites_off_selects_what_covers_any_changed_file() {
     let d = crit_fixture("covered");
@@ -190,6 +196,7 @@ fn covered_certification_with_suites_off_selects_what_covers_any_changed_file() 
     assert_eq!(o.suites, ["test-other.sh"], "{o:?}");
 }
 
+#[test_id(tee9ycx)]
 #[test]
 fn the_budget_cuts_most_specific_first_and_never_cuts_an_ejected_suite() {
     // 5 suites at 1s each (T1 caps, no timings); budget 6, half reserved for setup (no
@@ -220,6 +227,7 @@ fn the_budget_cuts_most_specific_first_and_never_cuts_an_ejected_suite() {
 /// sp-ipwlic): a covering suite that does not fit the budget is never silently cut — the
 /// selection refuses and names every suite it would have dropped, so a green gate never stands
 /// for suites it did not run.
+#[test_id(t94i1qp)]
 #[test]
 fn law_a_budget_is_a_cutoff_and_law_a_local_green_names_what_it_missed_the_gate_refuses_rather_than_dropping_a_covering_suite() {
     let mut suites: Vec<(String, String)> = Vec::new();
@@ -240,6 +248,7 @@ fn law_a_budget_is_a_cutoff_and_law_a_local_green_names_what_it_missed_the_gate_
     assert!(matches!(e, Fail::Refused(_)), "{e:?}");
 }
 
+#[test_id(t5x1m0v)]
 #[test]
 fn a_covered_certification_defers_what_does_not_fit_and_names_it_instead_of_refusing() {
     let mut suites: Vec<(String, String)> = Vec::new();
@@ -258,6 +267,7 @@ fn a_covered_certification_defers_what_does_not_fit_and_names_it_instead_of_refu
 
 // ------------------------------------------------------------------ failing closed
 
+#[test_id(tvhigfs)]
 #[test]
 fn what_it_cannot_read_is_a_refusal_never_an_empty_selection() {
     let d = fixture("refuse");
@@ -286,6 +296,7 @@ fn what_it_cannot_read_is_a_refusal_never_an_empty_selection() {
     assert!(GateEnv::from_env(&e).is_err());
 }
 
+#[test_id(tp3pf82)]
 #[test]
 fn an_unclaimed_source_file_fails_the_gate_instead_of_emptying_it() {
     let d = fixture("unclaimed");
@@ -296,6 +307,7 @@ fn an_unclaimed_source_file_fails_the_gate_instead_of_emptying_it() {
     }
 }
 
+#[test_id(t8nx6gj)]
 #[test]
 fn width_and_defaults_read_like_the_bash() {
     let e = GateEnv::from_env(&env_from_pairs(&[("SPIRA_BATCH_MAXPAR", "8")])).unwrap();
@@ -311,6 +323,7 @@ fn width_and_defaults_read_like_the_bash() {
 
 /// Part F of the retired test-gate-touched.sh: the real corpus's declaration — a
 /// root-installer-only diff is never unselected.
+#[test_id(tyef4yn)]
 #[test]
 fn the_real_corpus_claims_the_root_installer() {
     let dir = spira_config::resolve::locate_home_for_process().unwrap();
@@ -329,6 +342,7 @@ fn the_real_corpus_claims_the_root_installer() {
     assert_eq!(s.suites, ["test-install-rehearsal-stray.sh"]);
 }
 
+#[test_id(tz07wk3)]
 #[test]
 fn the_selector_plans_against_the_suites_share_not_the_whole_budget() {
     let d = dir("setup", &[("test-m.sh", "# covers: spira/lib.sh\n")]);

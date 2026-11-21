@@ -552,6 +552,7 @@ pub fn capture_bounded(mut cmd: Command, deadline: Option<Instant>) -> ExecOutco
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tlxs0hc)]
     #[test]
     fn an_overlay_volume_names_its_own_layers() {
         let req = RunRequest {
@@ -584,6 +585,7 @@ mod tests {
     /// `install_signal_handlers` must cover HUP, not just INT/TERM (sp-tcarr: testenv was
     /// missing it — gate's own real.rs already caught all three). `raise()` delivers to the
     /// calling thread synchronously, so the flag is visible the instant it returns.
+    #[test_id(tygrifw)]
     #[test]
     fn install_signal_handlers_catches_hup() {
         let _lock = CANCEL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -596,6 +598,7 @@ mod tests {
         assert!(caught, "SIGHUP should set the cancellation flag");
     }
 
+    #[test_id(tlmmga1)]
     #[test]
     fn tail_keeps_only_the_last_lines_of_the_output() {
         let o = ExecOutcome { rc: 5, output: "a\nb\nc\nd".into() };
@@ -604,6 +607,7 @@ mod tests {
         assert_eq!(ExecOutcome { rc: 1, output: String::new() }.tail(3), "");
     }
 
+    #[test_id(ti8jcgt)]
     #[test]
     fn exec_args_put_user_and_env_before_the_container() {
         let req = ExecRequest::new("c1", &["bash", "workspace/spira/test-a.sh"])
@@ -629,6 +633,7 @@ mod tests {
 
     // ---- sp-3azqi: recovering a podman exec-wait-timeout's lost exit status ----------
 
+    #[test_id(t7j29pm)]
     #[test]
     fn exec_wait_timeout_file_names_the_exact_path_podman_gave_up_on() {
         let out = "TAP version 14\nok 1 - a\nError: timed out waiting for file var/lib/containers/storage/overlay-containers/deadbeef/userdata/abc/exit/deadbeef\n";
@@ -641,6 +646,7 @@ mod tests {
         assert_eq!(exec_wait_timeout_file("ok 1 - a\nFAIL something\n"), None);
     }
 
+    #[test_id(ty5nulm)]
     #[test]
     fn recover_lost_exit_is_a_no_op_at_zero_grace() {
         let dir = testkit::TempDir::new("testenv-runtime-recover-zero");

@@ -292,6 +292,7 @@ pub fn from_args(args: &[String]) -> Result<PassRecord, String> {
 mod tests {
     use super::*;
 
+    #[test_id(tau6rtk)]
     #[test]
     fn a_cause_outside_the_closed_set_is_refused() {
         assert!(Cause::parse("flaky").is_err());
@@ -300,6 +301,7 @@ mod tests {
         }
     }
 
+    #[test_id(teku1h3)]
     #[test]
     fn a_host_round_is_a_place_a_row_can_carry() {
         assert_eq!(Place::parse("host"), Ok(Place::Host));
@@ -308,6 +310,7 @@ mod tests {
         assert_eq!(from_args(&a).unwrap().place, Place::Host);
     }
 
+    #[test_id(tszwihb)]
     #[test]
     fn a_pass_carries_its_attribution_seconds_and_an_older_row_reads_as_zero() {
         let a: Vec<String> = "--repo r --batch b --pass 1 --where host --cause green --attribution-s 42".split(' ').map(String::from).collect();
@@ -319,6 +322,7 @@ mod tests {
         assert_eq!(PassRecord::from_row(&Value::Object(row)).unwrap().attribution_s, 0);
     }
 
+    #[test_id(tvuu4zb)]
     #[test]
     fn exit_codes_map_to_their_causes() {
         assert_eq!(Cause::from_exit(0, false), Cause::Green);
@@ -328,6 +332,7 @@ mod tests {
         assert_eq!(Cause::from_exit(3, false), Cause::Infra);
     }
 
+    #[test_id(txgjudi)]
     #[test]
     fn from_args_builds_a_forge_batch_record() {
         let a: Vec<String> = "--repo r --batch b --pass 1 --where ec2 --cause vm-lost --vcpus 8 --members a,b".split(' ').map(String::from).collect();
@@ -336,6 +341,7 @@ mod tests {
         assert!(from_args(&["--repo".into(), "r".into()]).is_err());
     }
 
+    #[test_id(tl5iecn)]
     #[test]
     fn a_pass_carries_its_unit_timings_through_its_row_and_an_older_row_reads_them_as_empty() {
         let a: Vec<String> = "--repo r --batch b --pass 1 --where ec2 --cause green".split(' ').map(String::from).collect();
@@ -350,6 +356,7 @@ mod tests {
         assert_eq!((old.unit_build_secs, old.unit_run_secs, old.unit_tests, old.unit_slowest.as_str()), (0, 0, 0, ""));
     }
 
+    #[test_id(td1hoqy)]
     #[test]
     fn a_pass_records_its_disk_peak_through_its_row_and_an_unread_one_stays_null() {
         let a: Vec<String> = "--repo r --batch b --pass 1 --where ec2 --cause green".split(' ').map(String::from).collect();
@@ -363,6 +370,7 @@ mod tests {
         assert_eq!(row["disk_peak_b"], Value::Null);
     }
 
+    #[test_id(til9a85)]
     #[test]
     fn the_disk_peak_is_the_largest_total_or_peak_and_unread_is_none() {
         let text = "round-vm: DISK start total 100 -\nround-vm: DISK build cargo-target 9999 /t\nround-vm: DISK build total 700+unread -\nround-vm: DISK suites peak 500 -\nround-vm: DISK suites total unread -\n";
@@ -370,6 +378,7 @@ mod tests {
         assert_eq!(disk_peak_bytes("round-vm: DISK suites peak unread -\n"), None);
     }
 
+    #[test_id(t021e8j)]
     #[test]
     fn the_peak_is_the_largest_sample_and_stays_after_usage_falls_back() {
         let lines = "round-vm: DISK start total 1000 -\nround-vm: DISK sample total 1500 -\nround-vm: DISK sample total 9000 -\nround-vm: DISK sample total 2000 -\nround-vm: DISK sample total unread -\nround-vm: DISK suites total 2000 -\n";

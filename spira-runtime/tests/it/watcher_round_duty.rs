@@ -24,6 +24,7 @@ fn round_due_said() -> TaskRig {
     r
 }
 
+#[test_id(t7w3xil)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&round_due_said(), NAME);
@@ -32,6 +33,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(tdhpaz7)]
 #[test]
 fn a_boot_does_not_call_a_round_due_again_inside_the_reminder_window() {
     kit::assert_boot_matches_an_unstopped_run(round_due_said, registration, STREAM, EventKind::new(TICK, ""));

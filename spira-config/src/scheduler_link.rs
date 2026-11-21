@@ -196,6 +196,7 @@ mod tests {
     use serde_json::json;
     use std::time::Duration;
 
+    #[test_id(tf6t0j3)]
     #[test]
     fn a_scheduler_that_accepts_and_never_replies_is_reported_as_still_holding_the_old_value() {
         let dir = testkit::TempDir::new("told-silent");
@@ -213,6 +214,7 @@ mod tests {
         held.join().unwrap().unwrap();
     }
 
+    #[test_id(tyx56jb)]
     #[test]
     fn a_socket_that_cannot_be_opened_for_want_of_permission_is_not_called_not_running() {
         let dir = testkit::TempDir::new("told-denied");
@@ -223,6 +225,7 @@ mod tests {
         assert!(!line.contains("is not running"), "{line}");
     }
 
+    #[test_id(txif1oh)]
     #[test]
     fn no_listener_on_the_socket_is_a_scheduler_not_running_and_taken() {
         let dir = testkit::TempDir::new("told-absent");
@@ -235,12 +238,14 @@ mod tests {
         json!({"repin": {"pending": {key: {"held": "7", "wanted": wanted}}, "waits": "the batcher to finish the round it is driving"}})
     }
 
+    #[test_id(t84vsa7)]
     #[test]
     fn a_limit_the_scheduler_holds_as_the_file_says_renders_bare() {
         let l = Limit::from_parts("SPIRA_MAX_DWARVES", Some("8"), Ok("8".into()), Some(&json!({"repin": {"pending": {}}})));
         assert_eq!((l.held(), l.pending(), l.render().as_str()), (Some("8"), None, "8"));
     }
 
+    #[test_id(tkaabxx)]
     #[test]
     fn a_limit_held_below_the_file_shows_both_and_what_the_change_waits_for() {
         let l = Limit::from_parts("SPIRA_MAX_DWARVES", Some("9"), Ok("7".into()), Some(&status("SPIRA_MAX_DWARVES", "9")));
@@ -249,12 +254,14 @@ mod tests {
         assert_eq!(l.render(), "7 held; config says 9, taken when the batcher to finish the round it is driving");
     }
 
+    #[test_id(tilb17t)]
     #[test]
     fn a_file_that_differs_with_no_recorded_re_pin_is_not_given_a_wait() {
         let l = Limit::from_parts("SPIRA_MAX_DWARVES", Some("9"), Ok("7".into()), Some(&json!({"repin": {"pending": {}}})));
         assert_eq!((l.pending(), l.render().as_str()), (None, "7 held; config file says 9, no re-pin pending"));
     }
 
+    #[test_id(t3mpt5h)]
     #[test]
     fn a_silent_scheduler_shows_the_file_value_labelled_never_as_held() {
         let l = Limit::from_parts("SPIRA_MAX_DWARVES", Some("9"), Err("the scheduler is not answering on /s: refused".into()), None);
@@ -262,6 +269,7 @@ mod tests {
         assert!(l.render().starts_with("9 per the config file, NOT confirmed held"), "{}", l.render());
     }
 
+    #[test_id(t4ht5lk)]
     #[test]
     fn a_spira_path_names_the_registry_key_the_scheduler_pins() {
         assert_eq!(key_of_path("spira.max_dwarves").as_deref(), Some("SPIRA_MAX_DWARVES"));

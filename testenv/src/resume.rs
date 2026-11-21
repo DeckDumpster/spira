@@ -363,6 +363,7 @@ mod tests {
         }
     }
 
+    #[test_id(tp9ftf9)]
     #[test]
     fn a_dir_backend_that_cannot_create_its_root_records_nothing() {
         let d = testkit::TempDir::new("resume-unwritable");
@@ -393,6 +394,7 @@ mod tests {
         }
     }
 
+    #[test_id(t5m00y8)]
     #[test]
     fn a_record_that_is_unreadable_or_misfiled_runs_the_suite() {
         let b = Shipped::dir("doubt");
@@ -414,6 +416,7 @@ mod tests {
     /// Over-broad-scopes #1 (sp-ipwlic): a suite's pass on one tree resumes it on another tree
     /// whose input closure for it is identical — even on a first attempt — and never on one
     /// whose closure differs; a suite with no inputs key resumes only for its own tree.
+    #[test_id(tn4p1w0)]
     #[test]
     fn a_pass_resumes_on_another_tree_only_when_the_suites_input_closure_is_identical() {
         let b = Shipped::dir("inputs");
@@ -443,6 +446,7 @@ mod tests {
         assert_eq!(s.passed("a"), None, "another image is another environment");
     }
 
+    #[test_id(t8c7bzz)]
     #[test]
     fn the_backend_is_chosen_by_its_spec_and_an_unset_one_is_none() {
         let aws = Path::new("aws");
@@ -457,6 +461,7 @@ mod tests {
         }
     }
 
+    #[test_id(ter3rcx)]
     #[test]
     fn the_attempt_label_names_run_and_attempt() {
         assert_eq!(attempt_label(Some("77"), Some("2")), "77/2");

@@ -127,6 +127,7 @@ mod tests {
         (days * DAY_S + h * 3600 + mi * 60 + s) * 1000
     }
 
+    #[test_id(tghw7km)]
     #[test]
     fn the_date_helper_agrees_with_the_epoch() {
         assert_eq!(at(1970, 1, 1, 0, 0, 0), 0);
@@ -134,6 +135,7 @@ mod tests {
         assert_eq!(weekday_of(at(2026, 11, 3, 0, 0, 0) / 1000 / DAY_S), 1, "2026-11-03 is a Tuesday");
     }
 
+    #[test_id(t9s65rw)]
     #[test]
     fn every_catalogue_spec_parses_and_elapses_next_where_systemd_would() {
         let now = at(2026, 11, 3, 10, 7, 0);
@@ -156,6 +158,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2043n8)]
     #[test]
     fn next_after_is_strict_and_steps_through_milliseconds() {
         let c = Calendar::parse("*-*-* *:07:00").unwrap();
@@ -168,6 +171,7 @@ mod tests {
         assert_eq!(weekly.next_after(at(2026, 11, 9, 0, 0, 0)), at(2026, 11, 16, 0, 0, 0));
     }
 
+    #[test_id(tiyn0cn)]
     #[test]
     fn a_step_field_lists_every_step_from_its_start() {
         assert_eq!(Calendar::parse("*-*-* *:0/5:00").unwrap().minutes, (0..60).step_by(5).collect::<Vec<_>>());
@@ -175,6 +179,7 @@ mod tests {
         assert_eq!(Calendar::parse("*-*-* *:07,37:00").unwrap(), Calendar::parse("*-*-* *:7/30:00").unwrap());
     }
 
+    #[test_id(tggifql)]
     #[test]
     fn specs_outside_the_subset_are_refused() {
         for spec in ["", "monthly", "*-*-* 25:00:00", "*-*-* *:60:00", "*-*-* *:0/0:00", "Fun *-*-* 01:00:00", "2026-*-* 01:00:00", "*-*-* 01", "*-*-* 1:2:3:4", "*-*-* *:a:00"] {

@@ -885,6 +885,7 @@ mod tests {
         )
     }
 
+    #[test_id(tstpo3n)]
     #[test]
     fn verdicts_and_attention_order_for_each_case() {
         let rs = fixture();
@@ -908,6 +909,7 @@ mod tests {
         l
     }
 
+    #[test_id(t2t080q)]
     #[test]
     fn each_noise_category_maps_to_its_verdict() {
         let mut runs = vec![ex("old-script.service", 2 * DAY, "exit-code")];
@@ -944,12 +946,14 @@ mod tests {
         assert!(page.contains("1 fixed, awaiting their next run") && page.contains("2 disabled by config or masked"), "{page}");
     }
 
+    #[test_id(tg6k1kj)]
     #[test]
     fn a_failure_newer_than_the_fix_still_fails() {
         let rs = rows(&["x.service"], &[("x.service", lv("failed", "failed", |l| l.fixed_at = Some(NOW - 3 * DAY)))], vec![ex("x.service", DAY, "exit-code")]);
         assert_eq!(by(&rs, "x.service").verdict, Verdict::Failing);
     }
 
+    #[test_id(tkjovuq)]
     #[test]
     fn show_parses_description_restarts_and_script_paths() {
         let root = testkit::TempDir::new("units-show");
@@ -960,6 +964,7 @@ mod tests {
         assert_eq!(l.exec_paths, vec![system_paths::BIN_BASH.to_string(), script.display().to_string()]);
     }
 
+    #[test_id(t4ljm5v)]
     #[test]
     fn failing_rows_say_since_when_and_timing_is_plain() {
         let rs = fixture();
@@ -982,6 +987,7 @@ mod tests {
         l.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
     }
 
+    #[test_id(trv7ifz)]
     #[test]
     fn a_unit_outside_the_declared_set_is_not_on_the_page() {
         let snap = "app-snap\\x2duserd\\x2dautostart@gnome.service";
@@ -995,6 +1001,7 @@ mod tests {
         assert_eq!((foreign, by(&rs, "spira-a.service").verdict), (1, Verdict::NeverRan));
     }
 
+    #[test_id(teufjtz)]
     #[test]
     fn a_service_that_ran_for_days_and_stopped_reads_as_one_long_run() {
         let mut run = ex("concierge-rounds-loop.service", 3600, "exit-code");
@@ -1007,6 +1014,7 @@ mod tests {
         assert!(t.starts_with("stopped (exit 1) after 3 d"), "{t}");
     }
 
+    #[test_id(tabu6ur)]
     #[test]
     fn a_pass_in_progress_is_running_not_late() {
         let mut runs = every_5_min("pass.service", 1500, 20);
@@ -1021,6 +1029,7 @@ mod tests {
         assert_eq!(by(&rs, "pass.service").verdict, Verdict::Late, "idle and overdue is still late");
     }
 
+    #[test_id(tusz5oq)]
     #[test]
     fn next_is_read_for_monotonic_and_calendar_timers_alike() {
         let json = r#"[{"next":1800000060000000,"left":1,"unit":"a.timer","activates":"a.service"},{"next":0,"unit":"b.timer"},{"unit":"c.timer"}]"#;

@@ -283,6 +283,7 @@ mod tests {
     /// before this bead — reversing that is the whole point of part (a), so this must fail
     /// against the old manifest.rs and pass only once the `if inputs.sccache_dav_addr_set`
     /// branch exists.
+    #[test_id(t8sxgvw)]
     #[test]
     fn sccache_dav_is_installed_and_enabled_only_when_its_address_is_set() {
         let m = build(&inputs()).unwrap();
@@ -299,6 +300,7 @@ mod tests {
     }
 
     /// The flow pass runs inside spira-runtime; a timer that still fired the binary would run it twice.
+    #[test_id(t1tde5s)]
     #[test]
     fn the_reconciler_flow_timer_and_service_are_not_shipped() {
         let m = build(&inputs()).unwrap();
@@ -320,6 +322,7 @@ mod tests {
         "submission-provision", "target-reap", "tsd-prune", "verdict", "verify-asks", "warden", "watchtower", "worktree-reaper",
     ];
 
+    #[test_id(t94k0vx)]
     #[test]
     fn no_unit_the_scheduler_replaces_is_shipped() {
         let dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
@@ -335,6 +338,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2tnfw5)]
     #[test]
     fn the_vm_pool_section_publisher_is_a_timer_the_manifest_enables() {
         let m = build(&inputs()).unwrap();
@@ -348,6 +352,7 @@ mod tests {
         assert!(service.contains("bin/round-vm section") && service.contains("Plane=observability"), "{service}");
     }
 
+    #[test_id(tdqd55u)]
     #[test]
     fn no_pressure_sampler_unit_is_shipped() {
         let m = build(&inputs()).unwrap();
@@ -357,6 +362,7 @@ mod tests {
         assert!(!dir.join("spira-psi-sample.service").exists());
     }
 
+    #[test_id(tknl7gm)]
     #[test]
     fn no_retired_upkeep_unit_is_shipped() {
         let mut i = inputs();
@@ -373,6 +379,7 @@ mod tests {
         assert!(m.units.iter().any(|u| u.name == "lc-backup-drill.timer" && u.enable));
     }
 
+    #[test_id(typyah6)]
     #[test]
     fn no_round_template_unit_is_shipped() {
         let m = build(&inputs()).unwrap();
@@ -382,6 +389,7 @@ mod tests {
 
     /// sp-xfqnr: same-user mode (no --system-user) installs and enables the operator's own
     /// serve unit, shared across instances (no suffix); system mode declines it.
+    #[test_id(t9tvbj1)]
     #[test]
     fn lc_serve_is_installed_and_enabled_only_in_same_user_mode() {
         let m = build(&inputs()).unwrap();
@@ -401,6 +409,7 @@ mod tests {
     }
 
     /// sp-pk9tyi: nothing holds the store's socket while no store is behind it.
+    #[test_id(trrkc9q)]
     #[test]
     fn no_socket_unit_ships_and_the_serve_units_own_their_runtime_directory() {
         let systemd = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
@@ -418,6 +427,7 @@ mod tests {
         assert!(!e.iter().any(|u| u.ends_with(".socket")), "{e:?}");
     }
 
+    #[test_id(t7ndz0n)]
     #[test]
     fn a_malformed_watcher_manifest_stops_before_any_unit_is_built() {
         let mut i = inputs();
@@ -425,6 +435,7 @@ mod tests {
         assert!(build(&i).is_err());
     }
 
+    #[test_id(tk4fh7n)]
     #[test]
     fn dolt_beads_is_included_and_enabled_only_when_dolt_data_is_set() {
         let m = build(&inputs()).unwrap();
@@ -446,6 +457,7 @@ mod tests {
         assert!(m.optional.contains(&"dolt-store-gc.service".to_string()));
     }
 
+    #[test_id(tb5ztr8)]
     #[test]
     fn the_persist_units_come_with_a_durable_copy_and_only_then() {
         let m = build(&inputs()).unwrap();
@@ -459,6 +471,7 @@ mod tests {
         assert!(union_template_names().contains(&"dolt-persist.service".to_string()), "uninstall knows the unit");
     }
 
+    #[test_id(te07pcd)]
     #[test]
     fn mail_delivery_ships_no_unit() {
         let m = build(&inputs()).unwrap();
@@ -467,6 +480,7 @@ mod tests {
         assert!(!union_template_names().iter().any(|n| n.starts_with("spira-mail-deliver")), "no box's manifest ships it");
     }
 
+    #[test_id(tsm7f4h)]
     #[test]
     fn only_watchers_live_in_the_watcher_namespace() {
         let mut i = inputs();
@@ -477,6 +491,7 @@ mod tests {
         assert!(m.template_names().contains(&"spira-runtime.service"), "positive control: the manifest still ships spira-* units");
     }
 
+    #[test_id(tn5t20z)]
     #[test]
     fn enable_lists_per_instance_names_then_watchers_in_manifest_order() {
         let m = build(&inputs()).unwrap();
@@ -487,6 +502,7 @@ mod tests {
         assert!(!en.iter().any(|u| u == "spira-watchdog.timer")); // never the un-suffixed name
     }
 
+    #[test_id(tzbeant)]
     #[test]
     fn inst_name_leaves_shared_and_watcher_template_names_alone() {
         assert_eq!(inst_name("spira-sentinel.timer", "test"), "spira-sentinel-test.timer");
@@ -495,6 +511,7 @@ mod tests {
         assert_eq!(inst_watch_name("testview", "test"), "spira-watch-testview-test.service");
     }
 
+    #[test_id(t1jipyy)]
     #[test]
     fn unlisted_finds_a_forgotten_unit_file_but_not_a_declined_one() {
         let m = build(&inputs()).unwrap();
@@ -503,6 +520,7 @@ mod tests {
         assert_eq!(u, vec!["spira-forgotten-new.service".to_string()]);
     }
 
+    #[test_id(tx85ytp)]
     #[test]
     fn unlisted_never_flags_the_watcher_template_itself() {
         // spira-watch@.service is in `self.units` (enable: false) but excluded from
@@ -516,6 +534,7 @@ mod tests {
     /// sp-da4y0: the dolt, mail-deliver, sccache and lc-serve units are declined under SOME
     /// resolutions of the inputs — exactly the shape a removal pass must not miss. The union
     /// must carry them regardless, and resolve them to this instance's installed names.
+    #[test_id(t10l2lp)]
     #[test]
     fn union_template_names_carries_a_conditionally_declined_template() {
         let names = union_template_names();
@@ -533,6 +552,7 @@ mod tests {
     /// retired template) must never appear — the union is bounded to real templates, not
     /// every unit file a disk scan might turn up (an actually-unknown stray from an older
     /// harness version must stay a reported STRAY, never get swept into a silent removal).
+    #[test_id(tn7t5cm)]
     #[test]
     fn union_template_names_never_invents_an_unknown_template() {
         let names = union_template_names();

@@ -58,6 +58,7 @@ pub fn changed_files(root: &Path) -> Vec<String> {
 mod tests {
     use super::parse_hunks;
 
+    #[test_id(t7sm29s)]
     #[test]
     fn hunks() {
         assert_eq!(parse_hunks("@@ -1,0 +2,27 @@ fn x

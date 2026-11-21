@@ -235,6 +235,7 @@ fn file_bead(title: &str, body: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test_id(tourm54)]
     #[test]
     fn the_answer_reads_the_first_check_and_escalate_lines() {
         let a = answer("why\nCHECK: holds.rs | a hold with no ask\nESCALATE: ship it? default no\nCHECK: other");
@@ -243,6 +244,7 @@ mod tests {
         assert_eq!(escalation_default(&Answer::default()), "read the diagnosis and decide");
     }
 
+    #[test_id(ty9mtfl)]
     #[test]
     fn the_recur_key_is_the_scripts() {
         assert_eq!(recur_key("Holds.rs stale_ask_holds | a hold whose ask is gone"), "holds-rs-stale-ask-holds");
@@ -250,6 +252,7 @@ mod tests {
         assert_eq!(recur_key(&"a".repeat(100)).len(), 80);
     }
 
+    #[test_id(tovylc4)]
     #[test]
     fn a_proposal_is_filed_once_it_recurs_and_never_twice() {
         let r = Recur { days: 7, hits: 3, weekly_cap: 2 };
@@ -261,6 +264,7 @@ mod tests {
         assert_eq!(ledger_rows("100\tk\t1\ttext\nbad\n"), vec![row(100, "k", true)]);
     }
 
+    #[test_id(tm9acoj)]
     #[test]
     fn the_prompt_carries_the_state_and_the_operator() {
         let p = prompt("sp-a open", "[sp-b] blocked", "", "Ryan");
@@ -268,6 +272,7 @@ mod tests {
         assert_eq!(clean_show("sp-a\n💡 hint\nwarning: x\n  Fix it\nbody"), "sp-a\nbody");
     }
 
+    #[test_id(tkulboh)]
     #[test]
     fn the_blocked_list_is_the_machines_held_rows() {
         use spira_store::lc_state::Row as Lc;

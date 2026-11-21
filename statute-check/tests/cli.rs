@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate spira_test_id;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -33,6 +35,7 @@ fn hook(state: &std::path::Path, env: &[(&str, &str)], command: &str) -> String 
     String::from_utf8_lossy(&ch.wait_with_output().unwrap().stdout).into_owned()
 }
 
+#[test_id(tmoxq08)]
 #[test]
 fn an_unattributed_suite_red_in_two_rounds_is_governed_by_the_flipping_test_statute() {
     let (code, out) = check(&["suite red unattributed in two rounds with different members"]);
@@ -41,12 +44,14 @@ fn an_unattributed_suite_red_in_two_rounds_is_governed_by_the_flipping_test_stat
     assert!(out.contains("A test that fails then passes on an unchanged tree is disabled"), "full text follows the slug");
 }
 
+#[test_id(tejf6m0)]
 #[test]
 fn text_no_statute_governs_exits_one_and_prints_nothing() {
     let (code, out) = check(&["zzqx wibble"]);
     assert_eq!((code, out.as_str()), (1, ""));
 }
 
+#[test_id(triy07f)]
 #[test]
 fn an_empty_shelf_is_refused_not_passed() {
     let d = testkit::TempDir::new("statute-check-empty");
@@ -54,6 +59,7 @@ fn an_empty_shelf_is_refused_not_passed() {
     assert_eq!(o.status.code(), Some(2));
 }
 
+#[test_id(t7x2o4y)]
 #[test]
 fn the_first_queue_rework_is_refused_with_the_law_and_the_retry_passes_with_it_attached() {
     let d = testkit::TempDir::new("statute-check-hook");
@@ -72,6 +78,7 @@ fn the_first_queue_rework_is_refused_with_the_law_and_the_retry_passes_with_it_a
     assert!(retry["hookSpecificOutput"]["additionalContext"].as_str().unwrap().contains("law-"));
 }
 
+#[test_id(te5259l)]
 #[test]
 fn another_verb_class_is_refused_on_its_own_first_call() {
     let d = testkit::TempDir::new("statute-check-classes");
@@ -80,6 +87,7 @@ fn another_verb_class_is_refused_on_its_own_first_call() {
     assert!(hook(&d, &env, "queue round eject r1").contains("\"block\""));
 }
 
+#[test_id(tudu2qw)]
 #[test]
 fn the_override_passes_and_is_logged_with_its_reason() {
     let d = testkit::TempDir::new("statute-check-override");
@@ -89,12 +97,14 @@ fn the_override_passes_and_is_logged_with_its_reason() {
     assert!(log.contains("red on both runs") && log.contains("queue rework"), "{log}");
 }
 
+#[test_id(to0zh1l)]
 #[test]
 fn a_command_that_is_not_a_decision_is_untouched() {
     let d = testkit::TempDir::new("statute-check-nondecision");
     assert_eq!(hook(&d, &[], "queue status"), "");
 }
 
+#[test_id(t1oubao)]
 #[test]
 fn touching_a_rounds_pace_pause_file_is_refused_with_law_on_first_call() {
     let d = testkit::TempDir::new("statute-check-pause");
@@ -103,6 +113,7 @@ fn touching_a_rounds_pace_pause_file_is_refused_with_law_on_first_call() {
     assert_eq!(hook(&d, &[], "cat /run/x/rounds-pace/repo/pause"), "");
 }
 
+#[test_id(tg1mbqq)]
 #[test]
 fn a_hand_move_of_the_landing_ref_is_stopped_once_and_shown_the_tool_and_logged_without_arguments() {
     let d = testkit::TempDir::new("statute-check-door");

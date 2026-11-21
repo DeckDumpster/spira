@@ -416,6 +416,7 @@ mod tests {
         (vec!["b-1".into()], [("b-1".to_string(), "spira".to_string()), ("b-2".to_string(), "other".to_string())].into())
     }
 
+    #[test_id(ttdf41k)]
     #[test]
     fn sp_pi2ojm_a_round_the_sweep_abandons_is_logged_as_a_round_abandon() {
         let dir = testkit::TempDir::new("lc-sweep-abandon-log");
@@ -431,6 +432,7 @@ mod tests {
         assert!(log.contains("120s"), "{log}");
     }
 
+    #[test_id(tm15upo)]
     #[test]
     fn sp_pi2ojm_a_sweep_that_abandons_nothing_writes_no_log() {
         let dir = testkit::TempDir::new("lc-sweep-abandon-none");
@@ -438,6 +440,7 @@ mod tests {
         assert!(!dir.path().join("landing.log").exists());
     }
 
+    #[test_id(t4cy1yh)]
     #[test]
     fn sp_pi2ojm_an_unreadable_run_dir_is_said_not_swallowed() {
         let (ids, repos) = abandoned();

@@ -1,3 +1,6 @@
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod agent;
 pub mod ci;
 pub mod drive;

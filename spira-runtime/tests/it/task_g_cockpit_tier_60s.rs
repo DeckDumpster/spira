@@ -68,6 +68,7 @@ fn dispatched_probes() -> Vec<&'static str> {
     body.lines().filter_map(|l| l.trim().strip_prefix('"')).filter(|l| l.contains("\" =>")).filter_map(|l| l.split('"').next()).collect()
 }
 
+#[test_id(t118la9)]
 #[test]
 fn every_registry_probe_runs_in_exactly_one_tier() {
     use spira_runtime::tasks::g::cockpit::registry_name;
@@ -87,6 +88,7 @@ fn every_registry_probe_runs_in_exactly_one_tier() {
     }
 }
 
+#[test_id(t6nzhdo)]
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_twelve_probes() {
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::PENDING"));
@@ -99,6 +101,7 @@ fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_twelve_probes()
     assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
 }
 
+#[test_id(t553l03)]
 #[test]
 fn t2_zero_dwarves_no_holds_and_unchanged_reachability_publish_nothing_and_journal_nothing() {
     let mut r = rig(1, |_| snap(0));
@@ -107,6 +110,7 @@ fn t2_zero_dwarves_no_holds_and_unchanged_reachability_publish_nothing_and_journ
     running(&r);
 }
 
+#[test_id(tgvi8nf)]
 #[test]
 fn t3_fragment_states_move_as_the_5s_tier_and_stale_before_ok_is_refused_naming_the_state() {
     for t in TRANSITIONS {
@@ -116,6 +120,7 @@ fn t3_fragment_states_move_as_the_5s_tier_and_stale_before_ok_is_refused_naming_
     assert!(refused.contains("Never"), "{refused}");
 }
 
+#[test_id(t16rjkt)]
 #[test]
 fn t3_an_overrunning_reachable_probe_is_recorded_as_skipped_not_stacked() {
     let mut s = snap(0);
@@ -126,6 +131,7 @@ fn t3_an_overrunning_reachable_probe_is_recorded_as_skipped_not_stacked() {
     assert_eq!(back, next, "the carry read is the carry recorded");
 }
 
+#[test_id(tciv5o6)]
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     let row = tasks::all().find(|t| t.name == NAME).expect("the row is ported");
@@ -137,6 +143,7 @@ fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
+#[test_id(tiscure)]
 #[test]
 fn t4_the_module_launches_no_process() {
     for l in LAUNCHERS {
@@ -145,6 +152,7 @@ fn t4_the_module_launches_no_process() {
     assert_eq!(launcher(MODULE), None);
 }
 
+#[test_id(tcevy1j)]
 #[test]
 fn t5_parity_the_slots_reachable_and_tsd_keys_reach_the_merged_kv() {
     let (_, acts) = decide(&Carry::default(), &snap(2)).unwrap();
@@ -154,6 +162,7 @@ fn t5_parity_the_slots_reachable_and_tsd_keys_reach_the_merged_kv() {
     }
 }
 
+#[test_id(txq02y8)]
 #[test]
 fn t5_parity_an_ok_slots_fragment_samples_live_and_ceiling() {
     let (_, acts) = decide(&Carry::default(), &snap(3)).unwrap();
@@ -173,6 +182,7 @@ fn boot_matches(make: impl Fn() -> TaskRig) {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(make, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
 }
 
+#[test_id(tajsnbo)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig(1, |_| with_clock(snap(0))), NAME);
@@ -181,11 +191,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(txcdn6j)]
 #[test]
 fn a_boot_does_not_republish_a_snapshot_whose_digest_it_published() {
     boot_matches(|| rig(1, |_| snap(0)));
 }
 
+#[test_id(twl50mv)]
 #[test]
 fn a_boot_does_not_refresh_a_snapshot_no_newer_than_the_last_read() {
     boot_matches(|| rig(1, |_| with_clock(snap(0))));

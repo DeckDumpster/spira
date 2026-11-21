@@ -615,12 +615,14 @@ mod tests {
         scan_shell(src.as_bytes()).into_iter().map(|h| (h.line, h.message)).collect()
     }
 
+    #[test_id(trkhjym)]
     #[test]
     fn a_bare_subprocess_call_is_caught() {
         let got = rs("fn f() {\n    let _ = Command::new(\"bd\").output();\n}\n");
         assert_eq!(got, vec![(2, "subprocess call without a timeout".to_string())]);
     }
 
+    #[test_id(t49qunw)]
     #[test]
     fn a_duration_above_the_cap_on_a_call_is_caught() {
         let got = rs("fn f(c: Command) {\n    run(c, Duration::from_secs(60));\n}\nconst T: Duration = Duration::from_millis(5001); // timeout\n");
@@ -630,6 +632,7 @@ mod tests {
         assert_eq!(got.len(), 1, "{got:?}");
     }
 
+    #[test_id(t8e5htb)]
     #[test]
     fn bounded_calls_and_non_call_durations_pass() {
         assert!(rs("fn f() {\n    let t = Duration::from_secs(5);\n    let _ = Command::new(\"bd\").output();\n    wait_timeout(t);\n}\n").is_empty());
@@ -639,12 +642,14 @@ mod tests {
         assert_eq!(rs("fn f() {\n    let _ = Command::new(\"timeout\").arg(\"60\").arg(\"bd\").output();\n}\n").len(), 1);
     }
 
+    #[test_id(tim8ibl)]
     #[test]
     fn a_socket_without_a_read_timeout_is_caught() {
         assert_eq!(rs("fn f() {\n    let _s = UnixStream::connect(p);\n}\n").len(), 1);
         assert!(rs("fn f() {\n    let s = UnixStream::connect(p);\n    s.set_read_timeout(t);\n}\n").is_empty());
     }
 
+    #[test_id(t25o6bo)]
     #[test]
     fn a_rust_batch_marker_exempts_the_call_only_when_it_is_a_comment() {
         assert!(rs("fn f() {\n    // batch-job: the suite runs for minutes\n    let _ = Command::new(\"cargo\").status();\n}\n").is_empty());
@@ -655,12 +660,14 @@ mod tests {
         assert_eq!(rs("fn f() {\n    // batch-job: x\n\n    let _ = Command::new(\"cargo\").status();\n}\n").len(), 1);
     }
 
+    #[test_id(thrnpyq)]
     #[test]
     fn test_code_is_exempt() {
         let src = "fn f() {\n    let _ = Command::new(\"bd\").output();\n}\n";
         assert!(scan_rust(src.as_bytes(), &|_| true).is_empty());
     }
 
+    #[test_id(tj81mdi)]
     #[test]
     fn shell_network_calls_need_a_short_timeout() {
         assert_eq!(sh("#!/bin/sh\nbd list\n").len(), 1);
@@ -672,6 +679,7 @@ mod tests {
         assert_eq!(sh("curl --max-time 30 http://x\n"), vec![(1, over(30.0))]);
     }
 
+    #[test_id(tyr833l)]
     #[test]
     fn a_short_podman_timeout_is_caught_and_a_hang_guard_passes() {
         let got = |s: &str| scan_short_podman(s.as_bytes()).into_iter().map(|h| h.line).collect::<Vec<_>>();
@@ -681,6 +689,7 @@ mod tests {
         assert!(is_suite("spira/test-a.sh") && !is_suite("spira/testlib/x.sh") && !is_suite("spira/a.sh"));
     }
 
+    #[test_id(tkvdf95)]
     #[test]
     fn shell_bounded_and_unrelated_commands_pass() {
         assert!(sh("timeout 5 bd list\ntimeout -k 1 3 \"$BD\" show a\ntimeout \"$T\" bd list\n").is_empty());
@@ -688,6 +697,7 @@ mod tests {
         assert!(sh("git status\ngit -C d log\ncommand -v bd\necho bd list\n# bd list\ncat <<'E'\nbd list\nE\n").is_empty());
     }
 
+    #[test_id(tjwjv46)]
     #[test]
     fn a_shell_batch_marker_exempts_the_call() {
         assert!(sh("# batch-job: gate step\ntimeout 600 bash suite.sh\n").is_empty());
@@ -704,6 +714,7 @@ mod tests {
 
     const BARE: &str = "fn f() {\n    let _ = Command::new(\"bd\").output();\n}\n";
 
+    #[test_id(trk0zyn)]
     #[test]
     fn a_new_violation_fails_and_a_listed_one_passes() {
         let t = TempDir::new("cd-new");
@@ -719,6 +730,7 @@ mod tests {
         assert!(got[0].ends_with("(1 allowed, 2 found)"), "{got:?}");
     }
 
+    #[test_id(tp3yb2d)]
     #[test]
     fn the_list_only_shrinks() {
         let t = TempDir::new("cd-shrink");
@@ -734,6 +746,7 @@ mod tests {
         );
     }
 
+    #[test_id(tcttaam)]
     #[test]
     fn a_marked_fixture_passes_and_a_malformed_allow_line_is_refused() {
         let t = TempDir::new("cd-marked");
@@ -744,6 +757,7 @@ mod tests {
         assert!(matches!(run(&t, &["a/src/lib.rs"]), Err(LintError::BadAllow { .. })));
     }
 
+    #[test_id(tixgw3v)]
     #[test]
     fn render_allow_round_trips() {
         let t = TempDir::new("cd-render");
@@ -756,6 +770,7 @@ mod tests {
         assert_eq!(run(&t, &["a/src/lib.rs", "spira/x.sh"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(t2lpxae)]
     #[test]
     fn nothing_in_scope_is_a_refusal() {
         let t = TempDir::new("cd-empty");

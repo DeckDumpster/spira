@@ -116,6 +116,7 @@ mod tests {
         vec![scratch, var_tmp, wt]
     }
 
+    #[test_id(t1kwpyj)]
     #[test]
     fn only_a_target_unwritten_past_the_threshold_is_stale() {
         let t = testkit::TempDir::new("hand-stale");
@@ -133,6 +134,7 @@ mod tests {
         assert_eq!(candidates(&roots).len(), 3);
     }
 
+    #[test_id(tx2v38u)]
     #[test]
     fn a_target_or_its_checkout_a_process_holds_is_held() {
         let t = testkit::TempDir::new("hand-held");
@@ -146,6 +148,7 @@ mod tests {
         assert!(held(&quiet), "a file open in the checkout that builds into it");
     }
 
+    #[test_id(tmo7oi1)]
     #[test]
     fn a_bead_worktree_and_a_linked_target_are_never_candidates() {
         let t = testkit::TempDir::new("hand-links");

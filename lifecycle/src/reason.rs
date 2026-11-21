@@ -222,6 +222,7 @@ mod tests {
         HoldCause::ManualHold,
     ];
 
+    #[test_id(ttr5vtl)]
     #[test]
     fn every_returned_reason_round_trips_through_its_own_string() {
         for r in ALL_RETURNED {
@@ -229,6 +230,7 @@ mod tests {
         }
     }
 
+    #[test_id(tezn43c)]
     #[test]
     fn every_gate_red_reason_round_trips_through_its_own_string() {
         for r in ALL_GATE_RED {
@@ -236,6 +238,7 @@ mod tests {
         }
     }
 
+    #[test_id(tvc89nz)]
     #[test]
     fn every_drop_reason_round_trips_through_its_own_string() {
         for r in ALL_DROP {
@@ -243,6 +246,7 @@ mod tests {
         }
     }
 
+    #[test_id(ti0r68x)]
     #[test]
     fn every_hold_cause_round_trips_through_its_own_string() {
         for r in ALL_HOLD_CAUSE {
@@ -250,11 +254,13 @@ mod tests {
         }
     }
 
+    #[test_id(tkqk32v)]
     #[test]
     fn an_unrecognized_returned_reason_is_refused_by_from_str() {
         assert_eq!(ReturnedReason::from_str("flaky"), None);
     }
 
+    #[test_id(tiak3wh)]
     #[test]
     fn an_unrecognized_reason_is_refused_as_evidence_at_deserialization() {
         // The boundary a producer's raw string crosses to become an event's evidence

@@ -48,6 +48,7 @@ pub fn fresh(entry: &str, harness: &str, cmd: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[test_id(t3nh7tp)]
     #[test]
     fn an_entry_is_reused_only_under_the_same_harness_and_command() {
         let e = render("h", "c1", "fence: x checked 3 files");
@@ -58,6 +59,7 @@ mod tests {
         assert_eq!(fresh("garbage", "h", "c1"), None);
     }
 
+    #[test_id(tndk6uh)]
     #[test]
     fn only_a_resolved_tree_and_a_safe_repo_make_a_path() {
         let v = Path::new("v");

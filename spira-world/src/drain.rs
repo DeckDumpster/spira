@@ -155,11 +155,13 @@ mod tests {
         }
     }
 
+    #[test_id(tma32yf)]
     #[test]
     fn a_stamp_round_trips_through_render_and_parse() {
         assert_eq!(Drain::parse(&drain().render()), drain());
     }
 
+    #[test_id(t7ulopb)]
     #[test]
     fn no_stamp_is_not_draining() {
         assert_eq!(check(Path::new("nonexistent/world.draining"), 5, |_| None, &[], |_, _| true), Outcome::NotDraining);

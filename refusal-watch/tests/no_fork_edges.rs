@@ -4,6 +4,8 @@
 //! children, or carries the mark on its line or the two above; a program resolved at run time
 //! (`lc_bin()`, `tool("bdq")`) is never assumed external.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::Path;
 
 /// The programs that stay children (design §2: not in scope).
@@ -51,6 +53,7 @@ fn walk(dir: &Path, out: &mut Vec<String>) {
     }
 }
 
+#[test_id(tnkn3cx)]
 #[test]
 fn no_unmarked_fork_edge_remains_in_src() {
     let mut hits = Vec::new();
@@ -58,6 +61,7 @@ fn no_unmarked_fork_edge_remains_in_src() {
     assert!(hits.is_empty(), "unmarked fork edges: {hits:?}");
 }
 
+#[test_id(t84hstp)]
 #[test]
 fn positive_control_a_planted_site_is_caught_and_a_marked_one_is_not() {
     let n = concat!("Command::", "new");

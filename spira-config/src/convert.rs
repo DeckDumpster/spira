@@ -632,6 +632,7 @@ pub fn convert_legacy_dir(
 mod tests {
     use super::*;
 
+    #[test_id(td5yo07)]
     #[test]
     fn a_rune_carries_reactive_uses_and_single_flight_into_its_persona_section() {
         let text = "RUNE_MODEL=m\nRUNE_REACTIVE=1\nRUNE_SINGLE_FLIGHT=1\nRUNE_USES=\"build-disk cpu\"\n";
@@ -647,6 +648,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-12
+    #[test_id(tkbgqhc)]
     #[test]
     fn repo_map_rows_parse_exactly_whatever_the_gate_or_the_lanes_column_hold() {
         let map = "\
@@ -667,6 +669,7 @@ eps   | srv/eps   | queue | origin/main | | bash a.sh || bash b.sh
     }
 
     // covers: UC-config-store-preflight-12
+    #[test_id(tlbnpjx)]
     #[test]
     fn the_lanes_parser_rejects_an_unknown_mode_or_lane_naming_every_offending_row() {
         assert!(sections("ok | /srv/ok | push | origin/main | | true | develop\n").is_ok(), "positive control");

@@ -87,11 +87,13 @@ pub fn fmt_compact(epoch_secs: i64) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tc7u5bn)]
     #[test]
     fn fmt_compact_strips_punctuation_but_keeps_order() {
         assert_eq!(fmt_compact(1_700_000_000), "20231114T221320Z");
     }
 
+    #[test_id(tmdbb41)]
     #[test]
     fn fmt_iso_matches_known_epochs() {
         assert_eq!(fmt_iso(0), "1970-01-01T00:00:00Z");
@@ -99,6 +101,7 @@ mod tests {
         assert_eq!(fmt_iso(1_900_000_000), "2030-03-17T17:46:40Z");
     }
 
+    #[test_id(tfuzbl8)]
     #[test]
     fn parse_iso_utc_is_the_inverse_of_fmt_iso() {
         for secs in [0i64, 1_700_000_000, 1_900_000_000, 1_759_276_800] {
@@ -107,6 +110,7 @@ mod tests {
         }
     }
 
+    #[test_id(tnkstk8)]
     #[test]
     fn parse_iso_utc_rejects_garbage() {
         assert_eq!(parse_iso_utc(""), None);

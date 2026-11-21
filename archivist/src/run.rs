@@ -766,6 +766,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-35
+    #[test_id(tmg5hsw)]
     #[test]
     fn sweep_skips_entirely_while_capacity_is_paused() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -794,6 +795,7 @@ mod tests {
     );
     const OPEN_KIT: &str = r#"[{"id":"sp-e1k1gt","title":"Approve kit-catalog v2 rollout","description":"the v2 catalog"}]"#;
 
+    #[test_id(thm3r53)]
     #[test]
     fn claim_ask_leaves_an_unrelated_open_ask_from_blocking_a_new_question() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -801,6 +803,7 @@ mod tests {
         assert_eq!(got.exit_code(), 0);
     }
 
+    #[test_id(tex7bpg)]
     #[test]
     fn claim_ask_holds_a_question_already_open_in_the_store_exit_4() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -809,6 +812,7 @@ mod tests {
         assert_eq!(got.exit_code(), 4);
     }
 
+    #[test_id(tei2c4f)]
     #[test]
     fn claim_ask_holds_a_question_the_transcript_shows_filed_with_an_id_exit_4() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -818,6 +822,7 @@ mod tests {
         assert_eq!(got.exit_code(), 4);
     }
 
+    #[test_id(ttube46)]
     #[test]
     fn claim_ask_files_an_unrecorded_question_then_refuses_the_same_key_exit_3() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -828,6 +833,7 @@ mod tests {
         assert_eq!(claim_ask_for(&dir, "s", "t3", q, "[]", Some(&tp)).exit_code(), 3);
     }
 
+    #[test_id(tvmknqp)]
     #[test]
     fn claim_ask_records_the_key_even_when_the_question_is_held() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -836,6 +842,7 @@ mod tests {
         assert_eq!(claim_ask_for(&dir, "s", "t4", q, OPEN_KIT, None).exit_code(), 3, "a rerun does not ask again");
     }
 
+    #[test_id(t4u8new)]
     #[test]
     fn mark_requires_a_run_in_progress() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -843,6 +850,7 @@ mod tests {
         assert!(err.contains("nothing to mark"));
     }
 
+    #[test_id(t8z5wnb)]
     #[test]
     fn mark_rejects_an_unknown_state() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -851,6 +859,7 @@ mod tests {
         assert!(err.contains("unknown archivist state"));
     }
 
+    #[test_id(t004tag)]
     #[test]
     fn mark_updates_state_and_items_keeping_at_turn() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -861,12 +870,14 @@ mod tests {
         assert_eq!(state::read_state_key(&dir, "sess-1", "items_filed"), Some("3".into()));
     }
 
+    #[test_id(toovc92)]
     #[test]
     fn state_cmd_with_no_sessions_says_so() {
         let dir = testkit::TempDir::new("archivist-run");
         assert_eq!(state_cmd(&dir, None), "no session has been archived\n");
     }
 
+    #[test_id(tnjqp4m)]
     #[test]
     fn state_cmd_lists_every_session_but_the_sweep_pseudo_session() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -877,6 +888,7 @@ mod tests {
         assert!(!out.contains("sweep\t"));
     }
 
+    #[test_id(tgxdqcg)]
     #[test]
     fn a_run_killed_after_two_of_five_items_refiles_only_the_other_three() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -896,6 +908,7 @@ mod tests {
         assert!(claim(&dir, "sess-2", "t3-5:a").unwrap(), "keys are per session");
     }
 
+    #[test_id(t2snig8)]
     #[test]
     fn claim_refuses_an_empty_or_multiline_key() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -903,6 +916,7 @@ mod tests {
         assert!(claim(&dir, "s", "a\nb").is_err());
     }
 
+    #[test_id(tiwvzzr)]
     #[test]
     fn progress_only_moves_the_covered_mark_forward_and_not_past_the_turn_read() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -916,6 +930,7 @@ mod tests {
         assert_eq!(covered_raw(&dir, "s"), Some("20".into()));
     }
 
+    #[test_id(tv2au10)]
     #[test]
     fn a_failed_run_keeps_its_ledger_and_the_next_prompt_lists_it() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -933,6 +948,7 @@ mod tests {
         assert!(!claim(&dir, "sess-1", "t3-5:a").unwrap());
     }
 
+    #[test_id(tnpwm0f)]
     #[test]
     fn digest_record_appends_a_line() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -942,6 +958,7 @@ mod tests {
         assert_eq!(text, "sp-1: a finding\nsp-2: another\n");
     }
 
+    #[test_id(tpxafy5)]
     #[test]
     fn digest_send_with_nothing_pending_does_not_mail() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -950,6 +967,7 @@ mod tests {
         assert!(seam.digests_sent.borrow().is_empty());
     }
 
+    #[test_id(t41fpb8)]
     #[test]
     fn digest_send_mails_once_and_then_holds_for_the_same_day() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -966,6 +984,7 @@ mod tests {
         assert_eq!(seam.digests_sent.borrow().len(), 1, "same-day digest must not be sent twice");
     }
 
+    #[test_id(teo4gye)]
     #[test]
     fn digest_send_on_a_new_day_sends_again() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -980,6 +999,7 @@ mod tests {
         assert_eq!(seam.digests_sent.borrow().len(), 2);
     }
 
+    #[test_id(t75jjlc)]
     #[test]
     fn archive_refuses_a_second_concurrent_run_of_the_same_session() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -998,6 +1018,7 @@ mod tests {
         assert!(seam.agent_calls.borrow().is_empty(), "the agent must never run while the session lock is held elsewhere");
     }
 
+    #[test_id(tprs9i5)]
     #[test]
     fn archive_writes_safe_state_and_advances_the_cursor_on_success() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -1032,6 +1053,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-35
+    #[test_id(tsacyiv)]
     #[test]
     fn archive_on_timeout_retries_until_the_budget_then_fails() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -1054,6 +1076,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-35
+    #[test_id(tgk59u6)]
     #[test]
     fn archive_on_capacity_refusal_pauses_and_returns_the_capacity_code() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -1073,6 +1096,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-35
+    #[test_id(tk87qbf)]
     #[test]
     fn sweep_defers_past_the_per_pass_budget() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -1130,6 +1154,7 @@ mod tests {
         (dir, projects, runes, c, seam)
     }
 
+    #[test_id(tu1wjpa)]
     #[test]
     fn a_failed_session_is_swept_again_once_its_backoff_has_elapsed() {
         let (dir, _p, _r, c, seam) = one_session_fixture("50");
@@ -1143,6 +1168,7 @@ mod tests {
         assert_eq!(state::read_state_key(&dir, "sess-a", "state"), Some("safe".into()));
     }
 
+    #[test_id(tr1p55c)]
     #[test]
     fn a_terminal_failure_is_not_swept_but_now_forces_it() {
         let (dir, _p, _r, c, seam) = one_session_fixture("50");
@@ -1155,6 +1181,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-35
+    #[test_id(tm3jqua)]
     #[test]
     fn consecutive_failures_back_off_and_the_last_is_terminal() {
         let (dir, _p, _r, mut c, seam) = one_session_fixture("50");
@@ -1188,6 +1215,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-35
+    #[test_id(t4u7txk)]
     #[test]
     fn a_sweep_archives_sessions_drifted_to_every_most_drifted_first_and_defers_the_rest() {
         let (dir, _p, _r, mut c, seam) = sessions_fixture(&[("s-low", "39"), ("s-edge", "40"), ("s-mid", "45"), ("s-top", "50")]);
@@ -1202,6 +1230,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-35
+    #[test_id(tfox3w8)]
     #[test]
     fn an_account_refusal_mid_sweep_records_capacity_raises_a_pause_and_stops_the_pass() {
         let (dir, _p, _r, mut c, seam) = sessions_fixture(&[("s-one", "50"), ("s-two", "45")]);
@@ -1217,6 +1246,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-35
+    #[test_id(tc7d38s)]
     #[test]
     fn a_bad_cursor_is_coerced_to_zero_and_logged_and_the_session_is_still_swept() {
         let (_n, note) = numeric_noted(Some("-"), "session s-bad cursor");
@@ -1233,6 +1263,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-35
+    #[test_id(tq4flup)]
     #[test]
     fn a_crashed_session_is_failed_and_excluded_from_the_next_sweep() {
         let (dir, _p, _r, mut c, seam) = sessions_fixture(&[("s-crash", "50")]);
@@ -1244,6 +1275,7 @@ mod tests {
         assert_eq!(seam.agent_calls.borrow().len(), 1, "a terminal failure is not re-fired by drift");
     }
 
+    #[test_id(t0d2rfb)]
     #[test]
     fn list_shows_a_dash_for_an_unreadable_meter_never_a_zero() {
         let dir = testkit::TempDir::new("archivist-run");

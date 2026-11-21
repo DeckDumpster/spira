@@ -56,6 +56,7 @@ fn skipped(d: &Decision) -> Option<&str> {
     }
 }
 
+#[test_id(tprvvdn)]
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING"));
@@ -67,6 +68,7 @@ fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
 }
 
+#[test_id(tenmqaf)]
 #[test]
 fn t2_with_a_sweep_open_the_tick_asks_only_for_its_probe() {
     let mut r = rig(1, |_| snap(Ok(1)));
@@ -75,6 +77,7 @@ fn t2_with_a_sweep_open_the_tick_asks_only_for_its_probe() {
     running(&r);
 }
 
+#[test_id(tgu7ar3)]
 #[test]
 fn t3_every_legal_step_is_taken_and_filing_over_an_open_sweep_is_refused() {
     for t in TRANSITIONS {
@@ -86,6 +89,7 @@ fn t3_every_legal_step_is_taken_and_filing_over_an_open_sweep_is_refused() {
     assert!(refused.contains("open"), "{refused}");
 }
 
+#[test_id(tip1oax)]
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
@@ -97,6 +101,7 @@ fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
+#[test_id(tx1r8v0)]
 #[test]
 fn t4_the_module_launches_no_process() {
     for l in LAUNCHERS {
@@ -105,12 +110,14 @@ fn t4_the_module_launches_no_process() {
     assert_eq!(launcher(MODULE), None);
 }
 
+#[test_id(tuo0rgc)]
 #[test]
 fn t5_parity_the_scripts_skip_exits() {
     assert_eq!(skipped(&decide(&snap(Err("count timed out".into())), &config())), Some("unreadable"));
     assert_eq!(skipped(&decide(&snap(Ok(1)), &config())), Some("open"));
 }
 
+#[test_id(t6542ru)]
 #[test]
 fn t5_parity_the_filed_sweep_is_byte_equal() {
     let Decision::File(bead) = decide(&snap(Ok(0)), &config()) else { panic!("no sweep open files one") };
@@ -124,6 +131,7 @@ fn filed() -> TaskRig {
     rig(1, |_| snap(Ok(0)))
 }
 
+#[test_id(ta47ycm)]
 #[test]
 fn the_task_keeps_no_carry_row_because_it_has_no_carry() {
     let r = filed();
@@ -132,6 +140,7 @@ fn the_task_keeps_no_carry_row_because_it_has_no_carry() {
     assert!(rows.is_empty(), "{rows:?}");
 }
 
+#[test_id(tpwl9ro)]
 #[test]
 fn a_boot_asks_what_a_process_that_never_stopped_asks() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));

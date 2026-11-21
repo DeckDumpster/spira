@@ -224,6 +224,7 @@ mod tests {
         testkit::TempDir::new(&format!("testenv-wait-test-{name}"))
     }
 
+    #[test_id(tgmeu7h)]
     #[test]
     fn a_clean_green_exit_is_reported_and_exits_0() {
         let d = tmp("green");
@@ -235,6 +236,7 @@ mod tests {
         assert_eq!(o.rc, 0);
     }
 
+    #[test_id(thziskf)]
     #[test]
     fn red_exits_1() {
         let d = tmp("red");
@@ -245,6 +247,7 @@ mod tests {
         assert_eq!(o.rc, 1);
     }
 
+    #[test_id(tm7z6js)]
     #[test]
     fn a_caught_signal_s_own_fault_line_is_passed_through() {
         let d = tmp("term");
@@ -256,6 +259,7 @@ mod tests {
         assert_eq!(o.rc, 2);
     }
 
+    #[test_id(t4fe3gs)]
     #[test]
     fn a_process_gone_without_any_verdict_line_is_fault_reason_gone() {
         // the SIGKILL case: the output has whatever it had when the kill landed, and
@@ -269,6 +273,7 @@ mod tests {
         assert_eq!(o.rc, 2);
     }
 
+    #[test_id(to2rie8)]
     #[test]
     fn a_gone_process_still_reports_the_parent_s_rc_hint_when_present() {
         let d = tmp("kill9-rc");
@@ -280,6 +285,7 @@ mod tests {
         assert_eq!(o.line, "VERDICT FAULT rc=2 ran=0 reason=gone exit=137");
     }
 
+    #[test_id(t8u1e8k)]
     #[test]
     fn no_pid_file_ever_appearing_is_a_named_fault_not_a_hang() {
         let d = tmp("nopid");
@@ -291,6 +297,7 @@ mod tests {
         assert_eq!(o.rc, 2);
     }
 
+    #[test_id(tctjnin)]
     #[test]
     fn a_pid_file_that_appears_within_the_grace_window_is_still_honored() {
         let d = tmp("late-pid");
@@ -304,6 +311,7 @@ mod tests {
         assert_eq!(o.rc, 0);
     }
 
+    #[test_id(tv7kn0h)]
     #[test]
     fn fault_rc_is_clamped_and_defaults_sanely() {
         assert_eq!(fault_rc("VERDICT FAULT rc=4 ran=0 reason=build"), 4);

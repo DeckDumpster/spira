@@ -172,6 +172,7 @@ mod tests {
     }
 
     /// sp-0c1wz: a log that cannot be opened is an error, not a silent Ok.
+    #[test_id(t0zpg4x)]
     #[test]
     fn an_unwritable_log_is_an_error_not_a_silent_ok() {
         let d = tmp("unwritable");
@@ -179,6 +180,7 @@ mod tests {
         assert!(emit(d.path(), 0, 1, "k", "sp-x", "title", "").is_err());
     }
 
+    #[test_id(tnonihs)]
     #[test]
     fn a_first_outcome_is_recorded_whole() {
         let d = tmp("first");
@@ -192,6 +194,7 @@ mod tests {
         assert!(!log.contains("mail"));
     }
 
+    #[test_id(tmbmms9)]
     #[test]
     fn a_plan_level_outcome_carries_a_dash_for_target() {
         let d = tmp("plan");
@@ -199,6 +202,7 @@ mod tests {
         assert!(events_log(&d).contains("target: -"));
     }
 
+    #[test_id(tmg6dwq)]
     #[test]
     fn a_repeat_inside_the_window_is_not_a_second_row() {
         let d = tmp("repeat");
@@ -208,6 +212,7 @@ mod tests {
         assert_eq!(rows(&d), 1);
     }
 
+    #[test_id(tvtx9n3)]
     #[test]
     fn a_storm_is_one_row_but_distinct_beads_are_not_suppressed() {
         let d = tmp("storm");
@@ -223,6 +228,7 @@ mod tests {
         assert_eq!(rows(&d2), 6, "six different beads reclaiming is six rows");
     }
 
+    #[test_id(tmut0zz)]
     #[test]
     fn a_second_kind_on_the_same_bead_is_not_a_repeat() {
         let d = tmp("second-kind");
@@ -231,6 +237,7 @@ mod tests {
         assert_eq!(rows(&d), 2);
     }
 
+    #[test_id(t8xf8ip)]
     #[test]
     fn suppressed_rides_out_on_the_next_emission_with_a_count() {
         let d = tmp("suppressed");
@@ -244,6 +251,7 @@ mod tests {
         assert!(events_log(&d).contains("+3 more since"), "carrying what it held back");
     }
 
+    #[test_id(t92b7p5)]
     #[test]
     fn the_window_belongs_to_the_first_emission_not_the_last_suppression() {
         let d = tmp("hot");
@@ -254,6 +262,7 @@ mod tests {
         assert!(rows(&d) >= 2, "a loop faster than the window still surfaces");
     }
 
+    #[test_id(t18a85g)]
     #[test]
     fn an_empty_kind_or_title_is_refused_and_nothing_is_written() {
         let d = tmp("refused");
@@ -263,6 +272,7 @@ mod tests {
         assert_eq!(rows(&d), 0);
     }
 
+    #[test_id(te7i1nm)]
     #[test]
     fn key_sanitization_matches_the_tr_complement_class() {
         assert_eq!(sanitize_key("bead.landed", "sp-x"), "bead.landed@sp-x");
@@ -270,6 +280,7 @@ mod tests {
         assert_eq!(sanitize_key("a b", "x/y"), "a_b@x_y");
     }
 
+    #[test_id(t5838dy)]
     #[test]
     fn utc_formatting_matches_strands_copy() {
         // 2026-09-29T01:02:03Z, cross-checked against strand/src/timefmt.rs's own test.

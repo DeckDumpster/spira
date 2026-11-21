@@ -102,6 +102,7 @@ pub fn check(t: &Txn, bookkeeping: usize) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[test_id(tmo57kz)]
     #[test]
     fn the_member_cap_is_the_largest_cut_within_the_op_limit_and_leaves_room_for_gates() {
         assert!(cut_fits(MAX_CUT_MEMBERS, MAX_CUT_GATES));

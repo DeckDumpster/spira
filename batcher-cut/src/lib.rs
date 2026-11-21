@@ -4,6 +4,9 @@
 //! (`src/main.rs`) is the old one-shot driver over this library; the pure decisions stay in the
 //! `batcher` crate.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod attribute;
 #[allow(dead_code)]
 pub mod endpass;
@@ -241,6 +244,7 @@ mod poll_tests {
     use super::poll_interval;
     use std::time::Duration;
 
+    #[test_id(tnkx1ab)]
     #[test]
     fn the_poll_gap_takes_fractions_and_bounds_what_it_is_given() {
         assert_eq!(poll_interval(None), Duration::from_secs(2));

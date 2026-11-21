@@ -220,6 +220,7 @@ mod tests {
         }
     }
 
+    #[test_id(tqlnf7g)]
     #[test]
     fn an_epic_is_open_never_ready_and_done_once_closed() {
         let mut f = base_facts();
@@ -235,6 +236,7 @@ mod tests {
         assert_eq!(classify(&f).state, BeadState::Ready, "the same facts on a task are READY");
     }
 
+    #[test_id(t66vniw)]
     #[test]
     fn ready_open_no_branch() {
         let c = classify(&base_facts());
@@ -243,6 +245,7 @@ mod tests {
         assert!(c.contradictions.is_empty(), "{:?}", c.contradictions);
     }
 
+    #[test_id(tqrlm48)]
     #[test]
     fn ready_open_with_prior_branch_is_still_legal() {
         let mut f = base_facts();
@@ -252,6 +255,7 @@ mod tests {
         assert!(c.contradictions.is_empty());
     }
 
+    #[test_id(tx1d06i)]
     #[test]
     fn held_is_a_hold_on_top_of_ready_not_a_state_of_its_own() {
         let mut f = base_facts();
@@ -262,6 +266,7 @@ mod tests {
         assert!(c.contradictions.is_empty());
     }
 
+    #[test_id(tuz0euk)]
     #[test]
     fn stale_submitted_label_on_a_landed_closed_bead() {
         let mut f = base_facts();
@@ -274,6 +279,7 @@ mod tests {
         assert!(c.contradictions[0].contains("spira-submitted"));
     }
 
+    #[test_id(tiswn1z)]
     #[test]
     fn closed_never_landed_branch_alive_is_a_dropped_residue_guess() {
         let mut f = base_facts();
@@ -285,6 +291,7 @@ mod tests {
         assert_eq!(c.contradictions.len(), 1);
     }
 
+    #[test_id(tbtgq3y)]
     #[test]
     fn a_landing_line_on_base_lands_a_closed_bead_whose_branch_is_gone() {
         let mut f = base_facts();
@@ -296,6 +303,7 @@ mod tests {
         assert!(c.contradictions.is_empty(), "{:?}", c.contradictions);
     }
 
+    #[test_id(tej5p66)]
     #[test]
     fn a_landing_line_outranks_an_open_batch() {
         let mut f = base_facts();
@@ -304,6 +312,7 @@ mod tests {
         assert_eq!(classify(&f).rule, "terminal-landing-line");
     }
 
+    #[test_id(t8og4y3)]
     #[test]
     fn being_worked_with_a_live_holder_is_working() {
         let mut f = base_facts();
@@ -312,6 +321,7 @@ mod tests {
         assert_eq!(classify(&f).state, BeadState::Working);
     }
 
+    #[test_id(teqj7lo)]
     #[test]
     fn landed_open_and_poisoned() {
         let mut f = base_facts();
@@ -324,6 +334,7 @@ mod tests {
 
     // Content on base is never commit-subject matching: the only evidence is the independent
     // ancestry/merge-tree proof the producer computed.
+    #[test_id(tf8olag)]
     #[test]
     fn content_on_base_lands_regardless_of_labels() {
         let mut f = base_facts();
@@ -334,6 +345,7 @@ mod tests {
         assert_eq!(c.rule, "terminal-content-on-base");
     }
 
+    #[test_id(tkndagh)]
     #[test]
     fn supersede_outranks_every_other_terminal_signal() {
         let mut f = base_facts();
@@ -345,6 +357,7 @@ mod tests {
         assert_eq!(c.rule, "terminal-supersede");
     }
 
+    #[test_id(twns6u5)]
     #[test]
     fn dropped_label_outranks_content_on_base() {
         let mut f = base_facts();
@@ -356,6 +369,7 @@ mod tests {
         assert!(c.contradictions.iter().any(|s| s.contains("content-on-base-proof")));
     }
 
+    #[test_id(tkr9sqo)]
     #[test]
     fn batch_membership_outranks_bd_status() {
         let mut f = base_facts();
@@ -366,6 +380,7 @@ mod tests {
         assert_eq!(c.rule, "batch-membership");
     }
 
+    #[test_id(tyn2gzf)]
     #[test]
     fn classifying_the_same_facts_twice_agrees() {
         let f = base_facts();

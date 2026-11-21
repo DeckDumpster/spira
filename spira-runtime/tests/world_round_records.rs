@@ -1,6 +1,8 @@
 //! `World::clear_round_records`: the queue's round record files cleared against a spira-lc double
 //! on a socket, over a real queue directory. What the store holds open, or cannot answer for, stays.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
@@ -88,6 +90,7 @@ fn paths(v: &[&Path]) -> String {
     serde_json::to_string(&v.iter().map(|p| p.display().to_string()).collect::<Vec<_>>()).unwrap()
 }
 
+#[test_id(tyf8yff)]
 #[test]
 fn a_record_naming_an_ended_or_unknown_round_is_removed_and_one_naming_an_open_round_stays() {
     let r = rig(true, &[("b-done", "LANDED"), ("b-live", "CI_RUNNING")]);
@@ -99,6 +102,7 @@ fn a_record_naming_an_ended_or_unknown_round_is_removed_and_one_naming_an_open_r
     assert_eq!(out, "cleared 2 of 3; 1 refused");
 }
 
+#[test_id(twqsreh)]
 #[test]
 fn a_round_that_opened_after_the_observation_is_not_cleared() {
     let r = rig(true, &[]);
@@ -108,6 +112,7 @@ fn a_round_that_opened_after_the_observation_is_not_cleared() {
     assert!(f.exists());
 }
 
+#[test_id(t7z5e7s)]
 #[test]
 fn a_path_nobody_observed_as_clearable_is_never_removed() {
     let r = rig(true, &[]);
@@ -118,6 +123,7 @@ fn a_path_nobody_observed_as_clearable_is_never_removed() {
     assert!(f.exists() && other.exists());
 }
 
+#[test_id(t1dfihz)]
 #[test]
 fn a_store_that_cannot_answer_and_a_record_naming_no_round_are_refused_by_name() {
     let r = rig(true, &[]);
@@ -134,6 +140,7 @@ fn a_store_that_cannot_answer_and_a_record_naming_no_round_are_refused_by_name()
     assert!(unread.exists() && bare.exists() && pr_only.exists());
 }
 
+#[test_id(t6vegm3)]
 #[test]
 fn nothing_is_cleared_while_the_batch_machine_is_not_on_the_store() {
     let r = rig(false, &[]);
@@ -151,6 +158,7 @@ fn forge_state_rig(repo: &str, open: &[&str]) -> (Rig, PathBuf) {
     (r, f)
 }
 
+#[test_id(th500yn)]
 #[test]
 fn a_pending_forge_state_is_live_while_its_repo_has_an_open_batch() {
     let (r, f) = forge_state_rig("alpha", &["alpha-20261115T130339Z"]);
@@ -160,6 +168,7 @@ fn a_pending_forge_state_is_live_while_its_repo_has_an_open_batch() {
     assert!(f.exists());
 }
 
+#[test_id(t9vpzz2)]
 #[test]
 fn a_pending_forge_state_is_refused_by_name_when_its_repo_has_no_open_batch() {
     let (r, f) = forge_state_rig("alpha", &[]);
@@ -170,6 +179,7 @@ fn a_pending_forge_state_is_refused_by_name_when_its_repo_has_no_open_batch() {
     assert!(p.held[0].contains(&f.display().to_string()) && p.held[0].contains("no open batch for alpha"), "{}", p.held[0]);
 }
 
+#[test_id(tks5kn8)]
 #[test]
 fn a_pending_forge_state_is_refused_when_the_store_cannot_say_whether_its_repo_has_an_open_batch() {
     let (r, f) = forge_state_rig(REFUSING_REPO, &[]);

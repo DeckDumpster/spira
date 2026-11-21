@@ -1,4 +1,6 @@
 // covers: systemd/*.service systemd/*.timer install/src/values.rs
+#[macro_use]
+extern crate spira_test_id;
 use std::path::PathBuf;
 fn dir() -> PathBuf {
     spira_config::resolve::checkout_root_for_process().unwrap().join("systemd")
@@ -12,6 +14,7 @@ fn lone_pct(text: &str) -> usize {
     text.lines().filter(|l| l.starts_with("Exec")).filter(|l| l.replace("%%", "").contains('%') && l.replace("%%", "").split('%').skip(1).any(|r| r.starts_with(|c: char| c.is_ascii_alphabetic()))).count()
 }
 
+#[test_id(tfyk96f)]
 #[test]
 fn exec_lines_carry_no_unescaped_percent_specifier() {
     assert!(lone_pct("ExecCondition=/bin/bash -c 'printf \"%s\"'") > 0, "positive control");

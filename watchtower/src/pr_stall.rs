@@ -324,6 +324,7 @@ fn arm_auto_merge(cfg: &Cfg, repo_path: &str, bead_id: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test_id(tuzt8ww)]
     #[test]
     fn a_certified_bead_with_no_pull_request_is_a_stall_only_in_a_pr_repo() {
         let row = |id: &str, since| lc::BeadRow { id: id.into(), tip: "t".into(), since: Some(since) };
@@ -335,30 +336,35 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-28
+    #[test_id(tk6ncfn)]
     #[test]
     fn red_outranks_everything_else() {
         assert_eq!(decide(true, true, true), Action::EscalateRed);
     }
 
     // covers: UC-ops-detection-remediation-28
+    #[test_id(taexdwx)]
     #[test]
     fn auto_merge_off_outranks_conflicting() {
         assert_eq!(decide(false, true, true), Action::EscalateAutoMergeOff);
     }
 
     // covers: UC-ops-detection-remediation-28
+    #[test_id(ttqfaul)]
     #[test]
     fn conflicting_requeues_when_neither_red_nor_auto_merge_off() {
         assert_eq!(decide(false, false, true), Action::RequeueConflicting);
     }
 
     // covers: UC-ops-detection-remediation-28
+    #[test_id(tae81w7)]
     #[test]
     fn otherwise_arms_auto_merge() {
         assert_eq!(decide(false, false, false), Action::ArmAutoMerge);
     }
 
     // covers: UC-ops-detection-remediation-28
+    #[test_id(tczgebd)]
     #[test]
     fn is_red_matches_exact_tokens_not_substrings() {
         assert!(is_red("FAILURE"));
@@ -410,6 +416,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27 UC-ops-detection-remediation-28
+    #[test_id(tjhexvl)]
     #[test]
     fn a_stalled_pr_in_a_repo_with_auto_merge_off_files_one_stall_scoped_to_the_repo() {
         let d = testkit::TempDir::new("wt-prs-aam-off");
@@ -426,6 +433,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27 UC-ops-detection-remediation-28
+    #[test_id(tgl8y0c)]
     #[test]
     fn a_failing_check_is_filed_per_bead_and_arming_is_not_attempted() {
         let d = testkit::TempDir::new("wt-prs-red");
@@ -439,6 +447,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-28
+    #[test_id(trczogt)]
     #[test]
     fn a_stalled_pr_in_a_repo_with_auto_merge_on_is_armed_and_nothing_is_filed() {
         let d = testkit::TempDir::new("wt-prs-arm");
@@ -449,6 +458,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-28
+    #[test_id(tx64uv4)]
     #[test]
     fn a_conflicting_pr_is_requeued_as_the_harness_with_its_version_and_not_armed_or_filed() {
         let d = testkit::TempDir::new("wt-prs-conflict");
@@ -465,6 +475,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-28
+    #[test_id(to7jyaa)]
     #[test]
     fn a_read_gh_could_not_make_is_unknown_and_is_never_taken_for_auto_merge_off() {
         let d = testkit::TempDir::new("wt-prs-unknown");
@@ -478,6 +489,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27 UC-ops-detection-remediation-28
+    #[test_id(tmiwk7x)]
     #[test]
     fn only_stale_pr_mode_deliveries_whose_branch_some_repo_carries_are_stalled() {
         let row = |id: &str, mode: &str, at: i64| lc::DeliveryRow { id: id.into(), mode: mode.into(), entered_at: Some(at), version: "3".into() };
@@ -488,6 +500,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-28
+    #[test_id(tgv3o2a)]
     #[test]
     fn the_stall_scan_asks_the_store_for_pr_open_deliveries_only() {
         let (t, lc) = scripted_by(&[("list", 0, r#"[{"bead_id":"sp-a","mode":"pr","entered_at":5,"version":"3"}]"#)]);
@@ -518,6 +531,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-28
+    #[test_id(t5zn0r6)]
     #[test]
     fn a_pass_over_a_stale_pr_in_an_auto_merge_off_repo_files_the_repo_scoped_stall() {
         let d = testkit::TempDir::new("wt-prs-pass");
@@ -533,6 +547,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-28
+    #[test_id(txvmh8z)]
     #[test]
     fn a_pass_with_an_unreachable_store_files_nothing_arms_nothing_and_requeues_nothing() {
         let d = testkit::TempDir::new("wt-prs-pass-down");
@@ -545,6 +560,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-28
+    #[test_id(tv5na49)]
     #[test]
     fn the_configured_stall_minutes_are_what_decides_a_stall() {
         let d = testkit::TempDir::new("wt-prs-mins");

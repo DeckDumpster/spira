@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -150,6 +152,7 @@ impl World {
     }
 }
 
+#[test_id(t7ra3eh)]
 #[test]
 fn the_batch_view_answers_what_batch_show_prints_for_the_store_record() {
     within(|| {
@@ -187,6 +190,7 @@ fn the_batch_view_answers_what_batch_show_prints_for_the_store_record() {
     });
 }
 
+#[test_id(tssxdmo)]
 #[test]
 fn a_view_refuses_before_its_first_load_and_once_its_revision_is_stale_until_the_store_confirms_it() {
     within(|| {
@@ -207,6 +211,7 @@ fn a_view_refuses_before_its_first_load_and_once_its_revision_is_stale_until_the
     });
 }
 
+#[test_id(t8e4dr1)]
 #[test]
 fn a_watch_delivery_moves_the_batch_and_rereads_only_the_beads_it_names() {
     within(|| {
@@ -252,6 +257,7 @@ fn a_watch_delivery_moves_the_batch_and_rereads_only_the_beads_it_names() {
     });
 }
 
+#[test_id(to0sjha)]
 #[test]
 fn a_blocker_that_closes_rereads_the_held_beads_waiting_on_it_however_deep() {
     within(|| {
@@ -280,6 +286,7 @@ fn a_blocker_that_closes_rereads_the_held_beads_waiting_on_it_however_deep() {
     });
 }
 
+#[test_id(ts5qtzu)]
 #[test]
 fn a_batches_refresh_rereads_only_the_batch_records_and_the_ready_counts_refuse_until_a_full_load() {
     within(|| {
@@ -315,6 +322,7 @@ fn a_batches_refresh_rereads_only_the_batch_records_and_the_ready_counts_refuse_
     });
 }
 
+#[test_id(tr7ldig)]
 #[test]
 fn load_and_refresh_ask_the_store_for_the_open_states_only_and_hold_only_the_open_rounds() {
     within(|| {
@@ -338,6 +346,7 @@ fn load_and_refresh_ask_the_store_for_the_open_states_only_and_hold_only_the_ope
     });
 }
 
+#[test_id(twpleh0)]
 #[test]
 fn the_ended_view_is_each_forge_batch_the_machine_or_the_queue_ended_newest_first() {
     within(|| {
@@ -373,6 +382,7 @@ fn the_ended_view_is_each_forge_batch_the_machine_or_the_queue_ended_newest_firs
 /// Over-broad-scopes #10 (sp-ipwlic): the view applies three prefixes, so it watches exactly
 /// those three, not `""` — a watch of the whole keyspace woke every holder on every event,
 /// telemetry and lock write.
+#[test_id(t8icp24)]
 #[test]
 fn the_watch_names_only_the_prefixes_the_view_applies() {
     within(|| {
@@ -386,6 +396,7 @@ fn the_watch_names_only_the_prefixes_the_view_applies() {
     });
 }
 
+#[test_id(tdrgdpz)]
 #[test]
 fn a_state_change_the_watch_delivers_is_served_as_a_row_and_a_pool_with_no_further_read() {
     within(|| {
@@ -415,6 +426,7 @@ fn a_state_change_the_watch_delivers_is_served_as_a_row_and_a_pool_with_no_furth
     });
 }
 
+#[test_id(temktvi)]
 #[test]
 fn a_cut_watch_makes_every_reader_refuse_and_says_the_watch_is_lost() {
     within(|| {
@@ -432,6 +444,7 @@ fn a_cut_watch_makes_every_reader_refuse_and_says_the_watch_is_lost() {
     });
 }
 
+#[test_id(t5fgrp6)]
 #[test]
 fn an_installed_projection_is_what_hot_serves_and_a_watched_one_reads_no_batch_records() {
     within(|| {
@@ -493,6 +506,7 @@ fn deliver(w: &World, keys: &[&str], through: u64) {
     }
 }
 
+#[test_id(tf379qx)]
 #[test]
 fn a_held_answer_lasts_until_a_change_that_could_alter_it_and_a_bead_history_alters_none() {
     within(|| {
@@ -532,6 +546,7 @@ fn a_held_answer_lasts_until_a_change_that_could_alter_it_and_a_bead_history_alt
     });
 }
 
+#[test_id(tyf6s2n)]
 #[test]
 fn an_unwatched_view_holds_no_answer_and_a_verb_that_is_not_a_held_read_is_refused() {
     within(|| {
@@ -544,6 +559,7 @@ fn an_unwatched_view_holds_no_answer_and_a_verb_that_is_not_a_held_read_is_refus
     });
 }
 
+#[test_id(tz6fyyt)]
 #[test]
 fn a_list_read_is_answered_from_the_held_rows_and_a_stale_view_refuses_it() {
     within(|| {
@@ -577,6 +593,7 @@ fn a_list_read_is_answered_from_the_held_rows_and_a_stale_view_refuses_it() {
     });
 }
 
+#[test_id(tdg2fep)]
 #[test]
 fn a_fresh_projection_reads_the_live_set_and_holds_no_terminal_row() {
     within(|| {
@@ -594,6 +611,7 @@ fn a_fresh_projection_reads_the_live_set_and_holds_no_terminal_row() {
     });
 }
 
+#[test_id(t6730w2)]
 #[test]
 fn a_rounds_list_is_the_stores_answer_at_the_same_revision_held_until_a_round_changes() {
     within(|| {
@@ -639,6 +657,7 @@ fn a_rounds_list_is_the_stores_answer_at_the_same_revision_held_until_a_round_ch
     });
 }
 
+#[test_id(t26mc89)]
 #[test]
 fn a_wake_that_carries_its_rows_is_one_store_call_whatever_the_number_of_keys() {
     within(|| {
@@ -661,6 +680,7 @@ fn a_wake_that_carries_its_rows_is_one_store_call_whatever_the_number_of_keys() 
     });
 }
 
+#[test_id(tg8qu06)]
 #[test]
 fn a_wake_that_carries_rows_asks_only_for_the_waiters_it_did_not_carry() {
     within(|| {
@@ -681,6 +701,7 @@ fn a_wake_that_carries_rows_asks_only_for_the_waiters_it_did_not_carry() {
     });
 }
 
+#[test_id(tlt8iv3)]
 #[test]
 fn a_terminal_row_is_asked_of_the_store_once_and_forgotten_when_a_change_names_it() {
     within(|| {
@@ -705,6 +726,7 @@ fn a_terminal_row_is_asked_of_the_store_once_and_forgotten_when_a_change_names_i
     });
 }
 
+#[test_id(ty7nfix)]
 #[test]
 fn the_remembered_terminal_rows_are_bounded() {
     within(|| {

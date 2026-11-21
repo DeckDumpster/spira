@@ -852,6 +852,7 @@ fn build_template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool
 mod tests {
     use super::*;
 
+    #[test_id(tnwchdx)]
     #[test]
     fn no_pressure_sampler_verb_is_served() {
         assert!(!USAGE.contains("psi-sample"));

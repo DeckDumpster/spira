@@ -33,6 +33,7 @@ libc = "0.2"
 system-paths = { path = "../system-paths" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [profile.release]

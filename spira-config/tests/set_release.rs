@@ -1,6 +1,8 @@
 //! `spira-config set|unset --release <home>` types a write against a staged release's registry
 //! while an older release is the one in force.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -49,6 +51,7 @@ fn text(b: &Box_) -> String {
     std::fs::read_to_string(&b.toml).unwrap()
 }
 
+#[test_id(t55xmdp)]
 #[test]
 fn a_key_only_the_staged_release_declares_is_written_through_set_release() {
     let b = setup("set-release-new");
@@ -68,6 +71,7 @@ fn a_key_only_the_staged_release_declares_is_written_through_set_release() {
     assert!(text(&b).contains("new_box_path = \"box/p\"") && text(&b).contains("new_count = 7"), "{}", text(&b));
 }
 
+#[test_id(t38eqz4)]
 #[test]
 fn set_release_types_the_value_against_the_staged_registry() {
     let b = setup("set-release-type");
@@ -76,6 +80,7 @@ fn set_release_types_the_value_against_the_staged_registry() {
     assert!(!text(&b).contains("new_count"));
 }
 
+#[test_id(ty9nnvm)]
 #[test]
 fn set_release_refuses_a_key_the_staged_release_does_not_declare() {
     let b = setup("set-release-undeclared");
@@ -89,6 +94,7 @@ fn set_release_refuses_a_key_the_staged_release_does_not_declare() {
     assert_eq!(text(&b), before);
 }
 
+#[test_id(twml049)]
 #[test]
 fn a_key_the_staged_release_retires_is_unset_by_the_installed_registry_that_still_declares_it() {
     let b = setup("unset-retired");
@@ -98,6 +104,7 @@ fn a_key_the_staged_release_retires_is_unset_by_the_installed_registry_that_stil
     assert!(!text(&b).contains("retiring_key") && text(&b).contains("old_key"), "{}", text(&b));
 }
 
+#[test_id(tozws1o)]
 #[test]
 fn unset_release_removes_a_key_only_the_staged_release_declares() {
     let b = setup("unset-release");
@@ -108,6 +115,7 @@ fn unset_release_removes_a_key_only_the_staged_release_declares() {
     assert!(!text(&b).contains("new_box_path"), "{}", text(&b));
 }
 
+#[test_id(t9zhwxr)]
 #[test]
 fn a_plain_set_keeps_a_staged_key_already_written_to_the_file() {
     let b = setup("plain-set-after-staged");
@@ -118,6 +126,7 @@ fn a_plain_set_keeps_a_staged_key_already_written_to_the_file() {
     assert!(text(&b).contains("old_key = \"z\"") && text(&b).contains("new_box_path = \"box/p\""), "{}", text(&b));
 }
 
+#[test_id(tbotvrp)]
 #[test]
 fn unset_release_leaves_a_key_the_staged_release_drops_for_the_installed_registry() {
     let b = setup("unset-release-dropped");

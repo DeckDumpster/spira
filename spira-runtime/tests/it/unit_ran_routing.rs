@@ -51,6 +51,7 @@ impl EffectRunner for UnitRunner {
     }
 }
 
+#[test_id(tbjvc5w)]
 #[test]
 fn a_booted_tasks_unit_ran_lands_on_its_own_stream_and_moves_only_it() {
     let mut booted = spira_runtime::tasks::all().filter(|t| t.name != "heartbeat");

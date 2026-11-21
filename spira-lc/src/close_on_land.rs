@@ -137,6 +137,7 @@ mod tests {
 
     /// sp-mve9i: whether to close is the lifecycle row's call, never bd's status or the
     /// retired submitted label.
+    #[test_id(tdqdpeo)]
     #[test]
     fn only_a_handed_on_bead_that_did_not_end_otherwise_is_closed() {
         for s in ["SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"] {
@@ -155,6 +156,7 @@ mod tests {
 
     /// The state is read before bd is: a bead the machine says is still WORKING is never
     /// treated as landed, whatever bd shows.
+    #[test_id(t37i6un)]
     #[test]
     fn a_working_bead_is_left_alone_and_its_labels_are_not_read() {
         let (mut recorded, mut read) = (false, false);
@@ -169,6 +171,7 @@ mod tests {
         assert!(!recorded && !read, "a WORKING bead was treated as landed");
     }
 
+    #[test_id(tu1hebz)]
     #[test]
     fn close_on_land_of_a_landed_record_writes_no_bd_status_and_reconcile_content_closes_it() {
         use crate::callers::{self, world::World, Machine};
@@ -192,6 +195,7 @@ mod tests {
         assert_eq!(*w.writes.borrow(), ["close sp-l"]);
     }
 
+    #[test_id(temip14)]
     #[test]
     fn a_submitted_bead_whose_work_landed_has_the_landing_recorded_and_bd_left_alone() {
         let mut seen = Vec::new();
@@ -203,6 +207,7 @@ mod tests {
         assert_eq!(seen, vec![("sp-s".to_string(), "landed:abc".to_string())]);
     }
 
+    #[test_id(tz60tkx)]
     #[test]
     fn parses_bd_json_after_a_warning_line() {
         let r = parse_row("warning: x\n[{\"id\":\"sp-a\",\"status\":\"open\",\"labels\":[\"a\",\"repo:r\"]}]").unwrap();
@@ -210,12 +215,14 @@ mod tests {
         assert!(parse_row("no json").is_none());
     }
 
+    #[test_id(tufdy7l)]
     #[test]
     fn a_refused_landing_record_is_reported_back() {
         assert_eq!(record_landing("sp-x", "abc", &mut |_, _| 3), 3, "a refusal is reported back, not swallowed");
         assert_eq!(proof(""), "landed:unknown");
     }
 
+    #[test_id(tg6qc18)]
     #[test]
     fn the_retired_landstate_writer_is_not_called() {
         // Guard (sp-2c1n0): the ledger and `landing-pass mark` are deleted; this verb records

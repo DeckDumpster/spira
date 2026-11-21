@@ -21,11 +21,13 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(tsh3dp7)]
 #[test]
 fn t1_registered_boots_and_arms_next_monday_0615() {
     t::t1_registered_and_boots::<H>(SET, FIRST);
 }
 
+#[test_id(trjzeqa)]
 #[test]
 fn t2_six_days_without_a_tick_journal_nothing() {
     let mut rig = t::rig::<H>(1, SET, &json(&counts(&[])));
@@ -35,6 +37,7 @@ fn t2_six_days_without_a_tick_journal_nothing() {
     t::assert_ported(&rig, task::STREAM);
 }
 
+#[test_id(t7cst5b)]
 #[test]
 fn t3_idle_reports_its_week_and_a_second_report_that_week_is_refused() {
     let h = t::handler::<H>(SET);
@@ -45,12 +48,14 @@ fn t3_idle_reports_its_week_and_a_second_report_that_week_is_refused() {
     assert!(refused.contains("reported"), "{refused}");
 }
 
+#[test_id(tna6b5k)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_neither_duckdb_nor_tsd_query() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/c/sweep_escape_census.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(t0tqinm)]
 #[test]
 fn t5_the_line_matches_escape_classify_census_for_empty_flake_only_and_all_four() {
     let h = t::handler::<H>(SET);
@@ -79,6 +84,7 @@ fn reported_this_week() -> TaskRig {
     r
 }
 
+#[test_id(twwr7ge)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&reported_this_week(), task::NAME);
@@ -87,6 +93,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(tt12jx6)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(reported_this_week, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));

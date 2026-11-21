@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(tfwk0i3)]
 #[test]
 fn the_reply_is_on_the_stream_before_an_owed_store_close_finishes() {
     use std::io::Read;
@@ -23,6 +24,7 @@ fn the_reply_is_on_the_stream_before_an_owed_store_close_finishes() {
     settler.join().unwrap();
 }
 
+#[test_id(tdaevhv)]
 #[test]
 fn close_reads_its_reason_from_the_request_body_and_writes_bd_on_the_server() {
     let (w, c) = (World::new(), Content::default());
@@ -37,6 +39,7 @@ fn close_reads_its_reason_from_the_request_body_and_writes_bd_on_the_server() {
     assert!(w.lc(&["show", "sp-a"]).1.contains("DROPPED"));
 }
 
+#[test_id(t6327cx)]
 #[test]
 fn close_ask_closes_the_ask_and_settles_its_decision_bead() {
     let (w, c) = (World::new(), Content::default());
@@ -51,6 +54,7 @@ fn settle_pass(settler: &crate::settle::Settler, w: &World) {
     settler.pass(&mut &*w, &mut &*w, &mut || Ok(1));
 }
 
+#[test_id(th3m6x7)]
 #[test]
 fn a_delivered_close_is_owed_to_the_settler_and_not_forked_in_the_request() {
     let (w, c) = (World::new(), Content::default());
@@ -63,6 +67,7 @@ fn a_delivered_close_is_owed_to_the_settler_and_not_forked_in_the_request() {
     assert_eq!(*w.writes.borrow(), ["close sp-d"]);
 }
 
+#[test_id(th4f4dd)]
 #[test]
 fn a_reopen_that_races_an_owed_close_wins() {
     let w = World::new();
@@ -75,6 +80,7 @@ fn a_reopen_that_races_an_owed_close_wins() {
     assert!(!settler.owes());
 }
 
+#[test_id(tsyqpi0)]
 #[test]
 fn an_owed_close_of_a_bead_nothing_records_is_dropped() {
     let w = World::new();
@@ -85,6 +91,7 @@ fn an_owed_close_of_a_bead_nothing_records_is_dropped() {
     assert!(!settler.owes());
 }
 
+#[test_id(tqxskjx)]
 #[test]
 fn an_ask_close_owes_its_decision_beads_close_to_the_settler() {
     let (w, c) = (World::new(), Content::default());
@@ -98,6 +105,7 @@ fn an_ask_close_owes_its_decision_beads_close_to_the_settler() {
     assert_eq!(*w.writes.borrow(), ["close sp-q"]);
 }
 
+#[test_id(tkpt2yo)]
 #[test]
 fn a_failing_store_close_is_retried_three_passes_then_given_up() {
     struct Fails<'w>(&'w World, std::cell::Cell<u32>);
@@ -156,6 +164,7 @@ fn a_failing_store_close_is_retried_three_passes_then_given_up() {
     assert!(!settler.owes(), "given up to reconcile-content");
 }
 
+#[test_id(tr1tyci)]
 #[test]
 fn closes_that_owe_nothing_stay_in_the_request() {
     let (w, c) = (World::new(), Content::default());

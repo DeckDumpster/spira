@@ -1681,6 +1681,7 @@ impl RoundRunner for VmRunner<'_> {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tvidyfk)]
     #[test]
     fn a_fence_red_is_rerun_as_that_fence_on_a_member_subset() {
         assert_eq!(super::probe_of("fence-fixture-config"), Some(super::Probe::Fence("fixture-config")));
@@ -1690,6 +1691,7 @@ mod tests {
     }
 
 
+    #[test_id(teb5q71)]
     #[test]
     fn a_tree_mismatch_after_the_base_moved_says_where_it_moved_and_is_not_a_harness_fault() {
         let stderr = "round-vm run: refusing binaries: tree sha 3033 does not match expected cdc7 — nothing installed";
@@ -1704,6 +1706,7 @@ mod tests {
     }
     use super::*;
 
+    #[test_id(tmnojk1)]
     #[test]
     fn a_rerun_reuses_the_round_binaries_only_when_the_removed_members_changed_no_source() {
         let mut changed = BTreeMap::new();
@@ -1724,6 +1727,7 @@ mod tests {
         );
     }
 
+    #[test_id(thecwvf)]
     #[test]
     fn a_unit_probe_reads_rc_5_as_red_and_a_fault_as_no_answer() {
         assert_eq!(unit_probe_result(0), Some(true));
@@ -1733,6 +1737,7 @@ mod tests {
         }
     }
 
+    #[test_id(tg21gu0)]
     #[test]
     fn a_suite_probe_reads_exit_0_as_green_1_as_red_and_anything_else_as_a_fault() {
         assert_eq!(suite_probe_result(0), Some(true));
@@ -1742,6 +1747,7 @@ mod tests {
         }
     }
 
+    #[test_id(tv2xrk0)]
     #[test]
     fn a_survival_probe_reads_a_signal_death_as_the_runner_dying_and_a_verdict_as_surviving() {
         assert_eq!(survival_probe_result(134), Some(false));
@@ -1753,6 +1759,7 @@ mod tests {
         }
     }
 
+    #[test_id(tan6te5)]
     #[test]
     fn a_build_probe_reads_rc_4_as_not_building_and_a_fault_as_no_answer() {
         assert_eq!(build_probe_result(0), Some(true));
@@ -1762,6 +1769,7 @@ mod tests {
         }
     }
 
+    #[test_id(tq0wn0u)]
     #[test]
     fn filter_red_reads_the_lint_result_and_names_each_blamed_member_once() {
         let d = testkit::TempDir::new("vm-filter-red");
@@ -1833,6 +1841,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4w4lqo)]
     #[test]
     fn a_suite_probe_that_exits_green_with_no_result_file_says_cannot_tell_and_why() {
         assert_eq!(suite_verdict(true, None, "test-x.sh"), Err("no test-x.sh.result".to_string()));
@@ -1858,6 +1867,7 @@ mod tests {
         assert_eq!(body["attribution"]["last"]["members"], serde_json::json!(["m1"]));
     }
 
+    #[test_id(taimjo3)]
     #[test]
     fn a_red_probe_names_its_members_as_suspects_and_a_smaller_red_replaces_them() {
         let mut t = AttributionTrace::default();
@@ -1878,6 +1888,7 @@ mod tests {
             .collect()
     }
 
+    #[test_id(tf8ovnq)]
     #[test]
     fn a_base_blamed_lint_finding_is_the_member_whose_diff_touches_the_path_it_names() {
         let ms = [member("sp-owner1"), member("sp-other2")];
@@ -1902,6 +1913,7 @@ mod tests {
         assert_eq!(named_path_owner("member=sp-owner1 r: f.rs:1: x", &ms, &one), None);
     }
 
+    #[test_id(tma4xaj)]
     #[test]
     fn filter_red_carries_the_lines_a_red_unit_phases_failed_assertion_differs_by() {
         let d = testkit::TempDir::new("vm-filter-red-assertion");
@@ -1916,6 +1928,7 @@ mod tests {
         assert_eq!(red.assertion_lines, ["status-level = \"skip\""]);
     }
 
+    #[test_id(tqwgh5v)]
     #[test]
     fn filter_red_sets_aside_a_culprit_the_round_made_by_its_recorded_sha_alone() {
         let d = testkit::TempDir::new("vm-filter-red-harness");
@@ -1937,6 +1950,7 @@ mod tests {
         assert_eq!(red.named.len(), 1);
     }
 
+    #[test_id(tblv808)]
     #[test]
     fn filter_red_ejects_the_member_a_base_blamed_lint_finding_names() {
         let d = testkit::TempDir::new("vm-filter-red-path");
@@ -1962,6 +1976,7 @@ mod tests {
         assert!(filter_red_in(d.path(), &ms, &changed, &[]).unwrap().named.is_empty());
     }
 
+    #[test_id(tex7451)]
     #[test]
     fn a_red_integration_phase_lists_its_failing_tests_by_the_crate_directory_that_holds_them() {
         let d = testkit::TempDir::new("vm-integration-red");
@@ -1980,6 +1995,7 @@ mod tests {
         assert_eq!(red.failed, ["FAIL dir:spira-runtime leg_lost::a", "FAIL dir:spira-runtime leg_lost::b"]);
     }
 
+    #[test_id(t9g9ez4)]
     #[test]
     fn a_probe_scoped_to_failing_tests_names_them_and_a_name_a_filter_cannot_take_widens_it() {
         let scope = |t: &[&str]| subset_scope("integration", &t.iter().map(|s| s.to_string()).collect::<Vec<_>>());
@@ -1988,12 +2004,14 @@ mod tests {
         assert_eq!(scope(&["p=m::t"]), "p=m::t");
     }
 
+    #[test_id(t9rzlyu)]
     #[test]
     fn an_integration_probe_scopes_to_the_failing_packages() {
         assert_eq!(subset_scope("integration", &["loom".into(), "gate".into()]), "loom,gate");
         assert_eq!(subset_scope("integration", &[]), "integration");
     }
 
+    #[test_id(tsa87vj)]
     #[test]
     fn a_red_unit_phase_is_a_filter_red_naming_the_member_whose_paths_its_panic_names() {
         let d = testkit::TempDir::new("vm-unit-red");
@@ -2101,6 +2119,7 @@ mod tests {
         );
     }
 
+    #[test_id(tytpt7y)]
     #[test]
     fn a_red_integration_phase_naming_a_test_file_names_the_one_member_that_touches_its_crate() {
         let d = testkit::TempDir::new("vm-integration-red");
@@ -2140,6 +2159,7 @@ mod tests {
         );
     }
 
+    #[test_id(tbmqskg)]
     #[test]
     fn a_lint_line_blames_the_member_whose_land_commit_it_names_and_nobody_else() {
         let ms: Vec<Member> = ["sp-8mbnup", "sp-other"]
@@ -2178,6 +2198,7 @@ mod tests {
         assert_eq!(blamed_member("lint noise without the prefix", &ms), None);
     }
 
+    #[test_id(t1h4m8v)]
     #[test]
     fn an_install_that_hit_a_full_filesystem_is_a_host_disk_fault_naming_it() {
         let err = "tar: spira-install: Cannot write: Disk quota exceeded\nround-vm run: host-disk: filesystem /tmp is full (x); largest: /tmp/k5 6020 MiB\n";
@@ -2190,6 +2211,7 @@ mod tests {
     /// sp-dp872: two walkthrough rounds ended "round-vm: unexpected exit 101" and the round
     /// log never said why — the reason sat in round-vm.stderr, unread. Every exit is a typed
     /// outcome, and every fault carries round-vm's own words.
+    #[test_id(t2j87ih)]
     #[test]
     fn every_corpus_exit_is_typed_and_a_fault_carries_round_vm_s_stderr() {
         let err = "round-vm run: 103 192.168.1.194 warm\nerror: `cargo run` could not determine which binary to run.\n";
@@ -2225,6 +2247,7 @@ mod tests {
         );
     }
 
+    #[test_id(t0yvi7i)]
     #[test]
     fn a_testenv_abort_in_the_vm_reaches_the_attribution_as_a_signal_death() {
         let err = "root/round-script.sh: line 742: 37305 Aborted (core dumped) testenv --mode parallel\nround-vm: PHASE-FAILED phase=suites rc=134\nround-vm run: the remote runner exited 134, outside testenv's contract (0-4) — no verdict\n";
@@ -2232,6 +2255,7 @@ mod tests {
         assert!(batcher::buildattr::is_signal_death(&e), "{e}");
     }
 
+    #[test_id(tg2hu4q)]
     #[test]
     fn a_pass_that_lost_its_vm_before_any_suite_reported_is_an_infrastructure_fault_not_a_cap_breach(
     ) {
@@ -2261,6 +2285,7 @@ mod tests {
         );
     }
 
+    #[test_id(tlxix6k)]
     #[test]
     fn only_rc_3_reads_as_a_broken_install_and_an_unknown_exit_never_reads_as_either() {
         assert_eq!(install_probe_result(3), JobResult::Red);
@@ -2272,6 +2297,7 @@ mod tests {
         }
     }
 
+    #[test_id(teo5lr1)]
     #[test]
     fn the_stderr_tail_is_bounded() {
         let mut long = String::new();
@@ -2283,6 +2309,7 @@ mod tests {
         assert_eq!(stderr_tail(""), "\n  (round-vm wrote nothing to stderr)");
     }
 
+    #[test_id(twxugbd)]
     #[test]
     fn a_done_file_carries_the_exit_code() {
         let d = testkit::TempDir::new("batcher-vm-rc");
@@ -2308,6 +2335,7 @@ pub fn scope_args(quota: Option<&str>, unit: Option<&str>) -> Vec<String> {
 #[cfg(test)]
 mod scope_tests {
     use super::scope_args;
+    #[test_id(tv2qq0u)]
     #[test]
     fn default_and_override_quota() {
         assert!(scope_args(None, None).contains(&"CPUQuota=1600%".to_string()));
@@ -2315,6 +2343,7 @@ mod scope_tests {
         assert!(scope_args(None, None).contains(&"--scope".to_string()));
     }
 
+    #[test_id(tosfo9e)]
     #[test]
     fn a_round_scope_is_named_so_its_abandon_can_find_it() {
         let unit = runtime::units::round_scope_unit("spira", "spira-20261108T183608Z", "9-1");
@@ -2334,6 +2363,7 @@ mod scope_tests {
 mod vtime_tests {
     use super::*;
 
+    #[test_id(t1du33p)]
     #[test]
     fn epoch_honours_spira_now() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, epoch);
@@ -2346,6 +2376,7 @@ mod clear_results_tests {
     use super::clear_results;
     use std::fs;
 
+    #[test_id(t0gtez5)]
     #[test]
     fn a_suite_about_to_rerun_loses_its_old_verdict_and_the_others_keep_theirs() {
         let tmp = testkit::TempDir::new("clear-results");
@@ -2375,6 +2406,7 @@ mod abandon_tests {
         Repo { name: "fx".into(), path: d.join("repo"), base: "main".into(), forge: PathBuf::new(), land: Land::Local }
     }
 
+    #[test_id(tp3axt3)]
     #[test]
     fn two_members_whose_clean_merge_duplicates_the_removed_key_fail_the_delta_together_and_pass_it_alone() {
         let d = testkit::TempDir::new("vm-config-applies");
@@ -2409,6 +2441,7 @@ mod abandon_tests {
         assert_eq!(run.config_applies(&[ma, mb]), Some(false));
     }
 
+    #[test_id(tbxq0w1)]
     #[test]
     fn two_members_that_each_retire_a_key_in_their_own_fragment_pass_the_delta_together() {
         let d = testkit::TempDir::new("vm-config-fragments");
@@ -2443,6 +2476,7 @@ mod abandon_tests {
         assert!(merged.contains("spira.x") && merged.contains("spira.y"), "{merged}");
     }
 
+    #[test_id(tpxfba7)]
     #[test]
     fn an_attribution_runner_given_the_pass_s_round_commits_sets_a_lint_red_on_them_aside() {
         let d = testkit::TempDir::new("vm-prior-red-round-commits");
@@ -2463,6 +2497,7 @@ mod abandon_tests {
         assert!(round_commits_of_pass(&d.path().join("missing")).borrow().is_empty());
     }
 
+    #[test_id(t5h06q1)]
     #[test]
     fn an_attribution_after_a_red_pass_reads_that_pass_s_red_from_its_results_and_none_without_them() {
         let d = testkit::TempDir::new("vm-prior-red");
@@ -2477,6 +2512,7 @@ mod abandon_tests {
         assert_eq!((red.name.as_str(), red.failed), ("integration-tests", vec!["FAIL dir:testenv lint_x".to_string()]));
     }
 
+    #[test_id(t6mzw3v)]
     #[test]
     fn a_new_attribution_root_prunes_old_batch_results_and_keeps_fresh_ones() {
         let d = testkit::TempDir::new("vm-prune-batch-results");
@@ -2493,6 +2529,7 @@ mod abandon_tests {
         assert!(r.results.starts_with(&results) && r.results.is_dir());
     }
 
+    #[test_id(tn9iiaa)]
     #[test]
     fn an_attribution_after_a_pass_reads_which_suites_that_pass_ran_red() {
         let d = testkit::TempDir::new("vm-prior-red-suites");
@@ -2507,6 +2544,7 @@ mod abandon_tests {
         assert_eq!(r.prior_red_suites(), vec!["b.sh".to_string(), "c.sh".to_string()]);
     }
 
+    #[test_id(tmcdq4v)]
     #[test]
     fn a_suites_tap_json_names_the_deadline_its_first_failing_case_passed() {
         let d = testkit::TempDir::new("vm-deadline-red");
@@ -2522,6 +2560,7 @@ mod abandon_tests {
         assert_eq!(r.deadline_red("c.sh"), None, "no file");
     }
 
+    #[test_id(tn45jjc)]
     #[test]
     fn an_attribution_after_a_build_red_pass_reads_the_compiler_output_that_pass_kept() {
         let d = testkit::TempDir::new("vm-prior-build");
@@ -2535,6 +2574,7 @@ mod abandon_tests {
         assert_eq!(r.prior_build_output().as_deref(), Some("error[E0004]: x\n"));
     }
 
+    #[test_id(tnprduv)]
     #[test]
     fn a_runner_answers_the_configured_stall_bound_and_counts_a_writing_results_dir_as_progress() {
         let d = testkit::TempDir::new("vm-progress");
@@ -2550,6 +2590,7 @@ mod abandon_tests {
         assert_ne!(r.progress(), before, "a file written under the results dir is progress");
     }
 
+    #[test_id(te9jzk2)]
     #[test]
     fn an_attribution_runner_accepts_a_corpus_list_that_is_a_subset_of_the_tree_and_a_plain_one_refuses() {
         let d = testkit::TempDir::new("vm-corpus-list");
@@ -2568,6 +2609,7 @@ mod abandon_tests {
         assert!(err.contains("suite list omits 41 of 43"), "{err}");
     }
 
+    #[test_id(ttqx8jj)]
     #[test]
     fn the_round_vm_run_words_name_the_corpus_or_no_corpus_never_both() {
         let d = testkit::TempDir::new("vm-run-args");
@@ -2583,6 +2625,7 @@ mod abandon_tests {
         assert!(some.windows(2).any(|w| w[0] == "--suites" && w[1] == "a.sh") && !some.contains(&"--no-corpus".to_string()), "{some:?}");
     }
 
+    #[test_id(t5j34ni)]
     #[test]
     fn an_integration_probes_output_is_kept_under_the_round_and_survives_the_spool() {
         let d = testkit::TempDir::new("vm-probe-kept");
@@ -2617,6 +2660,7 @@ mod abandon_tests {
         assert!(RoundRunner::probe_faults(&mut r).is_empty());
     }
 
+    #[test_id(tshtsrj)]
     #[test]
     fn a_request_with_no_round_vm_to_answer_it_fails_naming_the_request() {
         let d = testkit::TempDir::new("vm-request-no-child");
@@ -2628,6 +2672,7 @@ mod abandon_tests {
         assert!(!r.spool.join("req").join("v1.req").exists());
     }
 
+    #[test_id(twz0ph4)]
     #[test]
     fn a_runner_reads_its_rounds_abandon_from_the_record_the_queue_writes() {
         let d = testkit::TempDir::new("vm-abandoned");
@@ -2643,6 +2688,7 @@ mod abandon_tests {
         assert!(r.abandoned());
     }
 
+    #[test_id(ttjgx7h)]
     #[test]
     fn a_driver_finding_its_round_ended_calls_queue_for_no_second_abandon() {
         let d = testkit::TempDir::new("vm-no-second-abandon");
@@ -2658,6 +2704,7 @@ mod abandon_tests {
         crate::io::round_abandon(&env, &repo, "b1", "x", "error");
         assert!(!calls.exists(), "an ended round is never abandoned again");
     }
+    #[test_id(t5g4kfz)]
     #[test]
     fn a_later_corpus_run_of_a_batch_records_its_pass_start() {
         let d = testkit::TempDir::new("vm-pass-start");
@@ -2679,6 +2726,7 @@ mod abandon_tests {
         );
     }
 
+    #[test_id(t7995qo)]
     #[test]
     fn an_attribution_corpus_rerun_that_ends_records_an_incomplete_verdict_before_any_probe() {
         let d = testkit::TempDir::new("vm-rerun-verdict");
@@ -2714,6 +2762,7 @@ mod abandon_tests {
         }
     }
 
+    #[test_id(t3fahxe)]
     #[test]
     fn a_red_unit_phase_carries_its_failing_test_lines_and_a_probe_names_the_packages_it_judges() {
         let d = testkit::TempDir::new("vm-unit-failed");
@@ -2726,6 +2775,7 @@ mod abandon_tests {
         assert_eq!(subset_scope("workspace", &["loom".into()]), "workspace");
     }
 
+    #[test_id(tjxrkhv)]
     #[test]
     fn a_tree_mark_changes_when_a_file_appears_or_grows_and_not_otherwise() {
         let d = testkit::TempDir::new("vm-tree-mark");
@@ -2759,6 +2809,7 @@ mod deny_snapshot_tests {
         Repo { name: "fx".into(), path: d.join("repo"), base: "main".into(), forge: PathBuf::new(), land: Land::Local }
     }
 
+    #[test_id(tqskz1p)]
     #[test]
     fn a_round_writes_the_registry_text_unchanged_and_names_that_file_to_every_round_vm() {
         let d = testkit::TempDir::new("vm-deny-args");
@@ -2773,6 +2824,7 @@ mod deny_snapshot_tests {
         assert!(file.exists(), "a re-pass keeps the round's list");
     }
 
+    #[test_id(ty6aax0)]
     #[test]
     fn a_row_added_to_a_snapshot_keeps_the_registry_shape_counts_itself_and_changes_the_digest() {
         let s = DenySnapshot { text: LIST.into(), at: 2000, lifted: vec![] };
@@ -2785,6 +2837,7 @@ mod deny_snapshot_tests {
         assert_ne!(t.digest(), s.digest());
     }
 
+    #[test_id(t20xk3w)]
     #[test]
     fn lifting_drops_exactly_the_members_rows_fixes_the_count_and_names_them() {
         let s = DenySnapshot {
@@ -2802,6 +2855,7 @@ mod deny_snapshot_tests {
         assert_eq!(same.fields().len(), 2);
     }
 
+    #[test_id(tcy96pi)]
     #[test]
     fn a_snapshot_names_its_instant_digest_and_rows_and_is_read_back_from_a_pass() {
         let s = DenySnapshot { text: LIST.into(), at: 2000, lifted: vec![] };

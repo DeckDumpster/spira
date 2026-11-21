@@ -14,6 +14,7 @@ spira_runtime::family_a_acceptance! {
     registration: QueueStep::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
+    test_ids: [ #[test_id(t9yc0vd)] #[test_id(t4o5nj9)] #[test_id(t0teobg)] #[test_id(t1fqr6r)] #[test_id(tepm8q0)] ],
 }
 
 fn local() -> Repo {
@@ -42,11 +43,13 @@ fn effects(acts: &[Act]) -> Vec<&str> {
     acts.iter().map(|a| a.effect.as_str()).collect()
 }
 
+#[test_id(tda4ox0)]
 #[test]
 fn queue_step_declares_no_flake_effect() {
     assert!(EFFECTS.iter().all(|e| !e.contains("flake")), "{EFFECTS:?}");
 }
 
+#[test_id(ts5o087)]
 #[test]
 fn t3_every_row_of_the_state_table_is_taken() {
     for (from, on, to) in TABLE {
@@ -54,12 +57,14 @@ fn t3_every_row_of_the_state_table_is_taken() {
     }
 }
 
+#[test_id(tj5fcuv)]
 #[test]
 fn t3_landing_x_unit_ran_is_refused_naming_landing() {
     let refused = step(State::Landing, Trigger::UnitRan).expect_err("landing × unit.ran is illegal");
     assert!(refused.contains("Landing"), "{refused}");
 }
 
+#[test_id(tcvw4q7)]
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
     let mut r = rig(1, busy());
@@ -69,6 +74,7 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 }
 
 /// `tests.rs` step cases: green at the sealed head on an unmoved base fast-forwards.
+#[test_id(t2exzfd)]
 #[test]
 fn t5_green_pushes_the_sealed_head() {
     let (carry, acts) = decide(&Carry::default(), &busy());
@@ -77,6 +83,7 @@ fn t5_green_pushes_the_sealed_head() {
 }
 
 /// Red on a batcher-owned batch goes to judgement, a unit leg.
+#[test_id(tuzo6r4)]
 #[test]
 fn t5_red_goes_to_judgement() {
     let red = with(Repo { check: Check::Red, ..busy().repos["spira"].clone() });
@@ -86,6 +93,7 @@ fn t5_red_goes_to_judgement() {
 }
 
 /// `classify_fault_rerun`: a harness fault reruns once.
+#[test_id(tjp6f18)]
 #[test]
 fn t5_a_harness_fault_reruns() {
     let fault = with(Repo { check: Check::HarnessFault, ..busy().repos["spira"].clone() });
@@ -94,6 +102,7 @@ fn t5_a_harness_fault_reruns() {
 }
 
 /// `ops/reconcile.rs:22`: a closed or merged PR is reconciled.
+#[test_id(t68v4uw)]
 #[test]
 fn t5_a_closed_pr_is_reconciled() {
     let closed = with(Repo { pr_state: PrState::Closed, check: Check::None, ..busy().repos["spira"].clone() });
@@ -104,6 +113,7 @@ fn t5_a_closed_pr_is_reconciled() {
 /// The contract's States table sends `Observing × no batch, no publish rec` to `Cutting` with a
 /// `cut_wanted` Emit, while its T2 makes that same snapshot silent. Silence wins (the soak
 /// lesson): the idle repo settles once and then asks for nothing, so a cut is wanted only on a change.
+#[test_id(t2fsscz)]
 #[test]
 fn t5_an_idle_repo_settles_once_then_wants_nothing() {
     let (carry, _) = decide(&Carry::default(), &idle());
@@ -112,6 +122,7 @@ fn t5_an_idle_repo_settles_once_then_wants_nothing() {
 
 /// The forge's view of an open batch is the batch record's: a pending check writes no
 /// `forge-state` file, on the first pass or the next.
+#[test_id(tk6dalr)]
 #[test]
 fn t5_a_pending_check_records_no_forge_state_file() {
     let pending = with(Repo { check: Check::Pending, ..busy().repos["spira"].clone() });
@@ -124,6 +135,7 @@ fn t5_a_pending_check_records_no_forge_state_file() {
 /// The judgement leg's `unit.ran`, on this task's own stream, moves the judging repo at once: a
 /// green one is recorded and wants the cut on the base it was judged on; another task's run, or
 /// a leg this repo is not judging, changes nothing.
+#[test_id(tb2h82a)]
 #[test]
 fn t3_the_judgement_unit_ran_moves_the_machine_at_once() {
     use runtime::units::{Exit, UnitHandle, UnitRan};
@@ -141,6 +153,7 @@ fn t3_the_judgement_unit_ran_moves_the_machine_at_once() {
     assert!(on_ran(&carry, &ran(NAME, "spira.other", Exit::Code(0)), 1).is_none(), "a leg not being judged");
 }
 
+#[test_id(t6arui9)]
 #[test]
 fn the_carry_stays_under_the_journal_column_for_the_longest_repo_names_and_the_rest_wait() {
     let one = busy().repos["spira"].clone();
@@ -160,11 +173,13 @@ fn at_work() -> TaskRig {
     r
 }
 
+#[test_id(tbwtwol)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     kit::assert_kept_as_rows(&at_work(), NAME);
 }
 
+#[test_id(t4r5kwh)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
@@ -172,6 +187,7 @@ fn a_boot_repeats_no_side_effect_and_misses_none() {
 
 /// The judgement leg ended while the runtime was down, so its `unit.ran` was never heard: the
 /// next tick reads the unit through `unit.facts` and the machine moves on what it says.
+#[test_id(tvxbbky)]
 #[test]
 fn t3_a_judgement_whose_unit_ran_was_lost_is_read_through_unit_facts() {
     use runtime::units::{Exit, UnitFacts, UnitState, UNIT_FACTS};
@@ -195,11 +211,13 @@ fn wakes(snap: Snapshot) -> usize {
     acts.iter().filter(|a| a.effect == PUBLISH_WANTED).count()
 }
 
+#[test_id(tn8vn5p)]
 #[test]
 fn a_green_standing_publish_record_wakes_publish_once() {
     assert_eq!(wakes(with(green_publish())), 1);
 }
 
+#[test_id(tv5m2ev)]
 #[test]
 fn a_publish_record_that_is_not_green_wakes_nothing() {
     for check in [Check::Pending, Check::None, Check::Red] {
@@ -207,6 +225,7 @@ fn a_publish_record_that_is_not_green_wakes_nothing() {
     }
 }
 
+#[test_id(tuak86d)]
 #[test]
 fn no_publish_record_a_queue_mode_repo_or_a_dead_lc_wakes_nothing() {
     assert_eq!(wakes(with(Repo { publish_rec: None, ..green_publish() })), 0);
@@ -214,6 +233,7 @@ fn no_publish_record_a_queue_mode_repo_or_a_dead_lc_wakes_nothing() {
     assert_eq!(wakes(with(Repo { lc_ok: false, ..green_publish() })), 0);
 }
 
+#[test_id(tkjg7qf)]
 #[test]
 fn a_repo_judging_a_batch_still_wakes_publish_on_a_green_record() {
     let rc = RepoCarry { state: State::Judging, leg: Some("spira.j1".into()), base: "b2".into(), mode: "queue.local".into(), batch: Some("b-1:3".into()), leg_at_ms: 5, ..RepoCarry::default() };

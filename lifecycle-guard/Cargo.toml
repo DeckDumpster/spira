@@ -19,6 +19,7 @@ walkdir = "2"
 regex = "1"
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [[bin]]

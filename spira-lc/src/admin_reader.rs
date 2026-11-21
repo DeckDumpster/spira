@@ -141,6 +141,7 @@ mod tests {
 
     const ALL: [&str; 7] = ["issues", "labels", "dependencies", "comments", "config", "events", "wisps"];
 
+    #[test_id(tq3fjbj)]
     #[test]
     fn a_reader_that_cannot_yet_read_gets_its_user_and_a_select_grant_per_table_it_reads() {
         let s = server(&ALL);
@@ -153,6 +154,7 @@ mod tests {
         assert!(!seen.iter().any(|q| q.contains("wisps")), "a table the reader does not read is not granted");
     }
 
+    #[test_id(txpbdlz)]
     #[test]
     fn a_reader_that_already_reads_every_table_changes_nothing() {
         let s = server(&ALL);
@@ -161,6 +163,7 @@ mod tests {
         assert!(msg.contains("nothing changed"), "{msg}");
     }
 
+    #[test_id(tohbzge)]
     #[test]
     fn a_store_without_events_is_granted_what_it_has_and_one_without_a_core_table_is_refused() {
         let s = server(&["issues", "labels", "dependencies", "comments", "config"]);
@@ -171,6 +174,7 @@ mod tests {
         assert!(bare.seen.borrow().is_empty(), "nothing is created on a database that is not a beads store");
     }
 
+    #[test_id(th5br35)]
     #[test]
     fn a_secret_that_could_leave_its_literal_is_unsafe() {
         for bad in ["a'b", "a\\b", "a\"b", "a b", "", "a\nb"] {
@@ -179,6 +183,7 @@ mod tests {
         assert!(literal_safe("AbC+/09=") && literal_safe(&"f".repeat(64)));
     }
 
+    #[test_id(tlbziaq)]
     #[test]
     fn the_secret_file_is_written_once_at_0600_and_kept_afterwards() {
         use std::os::unix::fs::PermissionsExt;

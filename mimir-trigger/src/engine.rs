@@ -213,11 +213,13 @@ pub fn description(
 mod tests {
     use super::*;
 
+    #[test_id(tci1nj8)]
     #[test]
     fn landing_id_spira_land_form() {
         assert_eq!(landing_id("spira: land sp-herv0"), Some("sp-herv0".to_string()));
     }
 
+    #[test_id(tsssu7d)]
     #[test]
     fn landing_id_merge_branch_form() {
         assert_eq!(
@@ -226,6 +228,7 @@ mod tests {
         );
     }
 
+    #[test_id(tl68w69)]
     #[test]
     fn landing_id_merge_pr_form() {
         assert_eq!(
@@ -234,6 +237,7 @@ mod tests {
         );
     }
 
+    #[test_id(th60z8y)]
     #[test]
     fn landing_id_dwarf_prefix_form() {
         assert_eq!(
@@ -242,6 +246,7 @@ mod tests {
         );
     }
 
+    #[test_id(tex9o5k)]
     #[test]
     fn landing_id_prefix_form_requires_leading_position() {
         // A commit whose subject does not start with an id: no match, even though the
@@ -249,11 +254,13 @@ mod tests {
         assert_eq!(landing_id("merge local/main (sp-htrqk)"), None);
     }
 
+    #[test_id(t9idkeq)]
     #[test]
     fn landing_id_non_landing_commit_is_none() {
         assert_eq!(landing_id("update README"), None);
     }
 
+    #[test_id(t8umeo1)]
     #[test]
     fn landing_id_spira_land_precedence_over_prefix() {
         // A subject matching both the "spira: land " prefix and looking prefix-colon-shaped
@@ -261,12 +268,14 @@ mod tests {
         assert_eq!(landing_id("spira: land sp-abcde"), Some("sp-abcde".to_string()));
     }
 
+    #[test_id(trryynt)]
     #[test]
     fn parse_landing_ids_dedupes_merge_and_landing_commit() {
         let subjects = "spira: land sp-herv0\nsp-herv0: mark the four use cases it uncovers\nspira: land sp-k6m1m\n";
         assert_eq!(parse_landing_ids(subjects), vec!["sp-herv0", "sp-k6m1m"]);
     }
 
+    #[test_id(trcf75k)]
     #[test]
     fn parse_landing_ids_real_fixture_window() {
         // Captured verbatim from `git log --format=%s` on this repository's own history.
@@ -295,6 +304,7 @@ spira: land sp-s0e1k
         );
     }
 
+    #[test_id(ta9suci)]
     #[test]
     fn parse_repo_map_skips_comments_and_blanks() {
         let text = "# comment\n\nbrain | r/spira/brain | push\nspira | r/spira/harness | hold\n";
@@ -307,24 +317,28 @@ spira: land sp-s0e1k
         );
     }
 
+    #[test_id(tqxdx35)]
     #[test]
     fn parse_repo_map_trims_whitespace() {
         let text = "  brain   |   path/to/brain   | push\n";
         assert_eq!(parse_repo_map(text), vec![("brain".to_string(), "path/to/brain".to_string())]);
     }
 
+    #[test_id(t9ybzkk)]
     #[test]
     fn time_trigger_fires_at_threshold() {
         assert!(time_trigger(10800, 10800));
         assert!(!time_trigger(10799, 10800));
     }
 
+    #[test_id(t9ei669)]
     #[test]
     fn landing_trigger_fires_at_threshold() {
         assert!(landing_trigger(25, 25));
         assert!(!landing_trigger(24, 25));
     }
 
+    #[test_id(tiw5863)]
     #[test]
     fn invalid_closed_rows_filters_and_dedupes() {
         let raw = "ALLOWED-IC sp-aaa — quoted\nINVALID-CLOSED sp-bbb — close reason contains 'maybe': title\nUNFILED-FOLLOW sp-ccc — follow-on phrase: title\nINVALID-CLOSED sp-bbb — repeated\n";
@@ -337,12 +351,14 @@ spira: land sp-s0e1k
         );
     }
 
+    #[test_id(telf1y0)]
     #[test]
     fn invalid_closed_rows_empty_on_no_rows() {
         assert_eq!(invalid_closed_rows(""), Vec::<String>::new());
         assert_eq!(invalid_closed_rows("ALLOWED-IC sp-aaa — quoted\n"), Vec::<String>::new());
     }
 
+    #[test_id(t4dgobt)]
     #[test]
     fn trigger_labels_with_and_without_scope() {
         // literal-ok: test fixture values, not a config default read at runtime.
@@ -350,24 +366,28 @@ spira: land sp-s0e1k
         assert_eq!(trigger_labels("spira", "mimir-sweep"), "spira,mimir-sweep"); // literal-ok: test fixture value, not a config default read at runtime.
     }
 
+    #[test_id(thxub30)]
     #[test]
     fn reason_text_orders_time_landing_invalid_closed() {
         let r = TriggerReason { time: true, landing: true, invalid_closed: true };
         assert_eq!(reason_text(&r, 11000, 30, 2), "11000s elapsed, 30 landings, 2 invalid-closed row(s)");
     }
 
+    #[test_id(tr309o1)]
     #[test]
     fn reason_text_only_landing() {
         let r = TriggerReason { time: false, landing: true, invalid_closed: false };
         assert_eq!(reason_text(&r, 0, 30, 0), "30 landings");
     }
 
+    #[test_id(tb46plj)]
     #[test]
     fn trigger_reason_any() {
         assert!(!TriggerReason { time: false, landing: false, invalid_closed: false }.any());
         assert!(TriggerReason { time: true, landing: false, invalid_closed: false }.any());
     }
 
+    #[test_id(tzuv8u4)]
     #[test]
     fn description_without_invalid_closed() {
         let d = description(3, "30 landings", 100, 50, None);
@@ -377,6 +397,7 @@ spira: land sp-s0e1k
         assert!(!d.contains("Closed-record rows"));
     }
 
+    #[test_id(tfpsrfy)]
     #[test]
     fn description_with_invalid_closed_rows() {
         let d = description(3, "2 invalid-closed row(s)", 100, 50, Some("INVALID-CLOSED sp-bbb — x"));

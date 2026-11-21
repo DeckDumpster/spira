@@ -61,6 +61,7 @@ pub fn epoch(t: &str) -> u64 {
 mod tests {
     use super::*;
 
+    #[test_id(tw95a3y)]
     #[test]
     fn parses_github_timestamps() {
         assert_eq!(epoch("2026-09-29T00:00:00Z"), 1_790_640_000);

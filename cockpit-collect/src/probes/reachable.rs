@@ -215,6 +215,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-09
+    #[test_id(tpsdlx4)]
     #[test]
     fn ready_open_bead_with_no_blockers_is_reachable() {
         let beads = vec![bead("sp-1", "open", &["plan"], &[])];
@@ -223,6 +224,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-09
+    #[test_id(tu8jasb)]
     #[test]
     fn bead_behind_an_unresolved_blocker_is_stranded_until_it_resolves() {
         let beads = vec![
@@ -236,6 +238,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-09
+    #[test_id(t5sb9kg)]
     #[test]
     fn ask_labelled_bead_is_excluded_from_the_universe_entirely() {
         let beads = vec![bead("sp-1", "open", &["plan", "needs-ryan"], &[])]; // literal-ok: fixture/fallback
@@ -244,6 +247,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-09
+    #[test_id(tqxqzp9)]
     #[test]
     fn poisoned_bead_counts_as_stuck_work_not_reachable() {
         let mut b = bead("sp-1", "open", &["plan"], &[]);
@@ -255,6 +259,7 @@ mod tests {
         assert_eq!(reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]), (1, 1)); // literal-ok: fixture/fallback
     }
 
+    #[test_id(t5uenuu)]
     #[test]
     fn bead_matching_no_live_partition_is_stranded() {
         let live = vec![["rune:builder".to_string()].into_iter().collect::<LabelSet>()];
@@ -264,6 +269,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-09
+    #[test_id(twqy063)]
     #[test]
     fn scope_label_is_required_to_enter_the_universe() {
         let beads = vec![bead("sp-1", "open", &["other-scope"], &[])];
@@ -271,6 +277,7 @@ mod tests {
         assert_eq!((reach, total), (0, 0));
     }
 
+    #[test_id(tvqmdwh)]
     #[test]
     fn in_progress_bead_is_always_a_seed_even_with_open_blockers() {
         let beads = vec![
@@ -285,6 +292,7 @@ mod tests {
     /// sp-mve9i: the universe and the seeds are the lifecycle row's, not bd's status: a bd
     /// "closed" bead the machine sent back to REWORK is reachable work, a bd "open" bead the
     /// machine has LANDED is not work at all, and a poison hold stops a bead.
+    #[test_id(tfojmac)]
     #[test]
     fn the_universe_and_seeds_come_from_the_lifecycle_rows() {
         let rows: Vec<Value> = serde_json::from_str(
@@ -308,6 +316,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-09
+    #[test_id(taqwaz6)]
     #[test]
     fn work_behind_an_ask_or_a_poisoned_blocker_is_stranded() {
         let ask_behind = vec![bead("sp-1", "open", &["plan", "needs-ryan"], &[]), bead("sp-2", "open", &["plan"], &["sp-1"])]; // literal-ok: fixture/fallback
@@ -319,6 +328,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-09
+    #[test_id(tqpov13)]
     #[test]
     fn a_relates_to_edge_does_not_block() {
         let rows: Vec<Value> = serde_json::from_str(
@@ -337,6 +347,7 @@ mod tests {
         assert_eq!(reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]), (3, 3)); // literal-ok: fixture/fallback
     }
 
+    #[test_id(tn7jycj)]
     #[test]
     fn suspended_partition_stops_a_bead_even_when_seeded() {
         let suspended = vec![["rune:ops".to_string()].into_iter().collect::<LabelSet>()];

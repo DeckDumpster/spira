@@ -21,3 +21,6 @@ integration = ["spira-config/integration", "spira-store/integration"]
 spira-config = { path = "../spira-config" }
 spira-store = { path = "../spira-store" }
 serde_json = "1"
+
+[dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }

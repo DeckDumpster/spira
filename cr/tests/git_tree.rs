@@ -1,5 +1,7 @@
 //! `GitTree` against a real throwaway repository, and `cr pick` over it.
 
+#[macro_use]
+extern crate spira_test_id;
 use cr::cli::run;
 use cr::ledger::Ledger;
 use cr::ports::{Config, GitTree, Ports, SourceTree, VirtualClock};
@@ -46,6 +48,7 @@ fn repo() -> testkit::TempDir {
     dir
 }
 
+#[test_id(tj1lnr3)]
 #[test]
 fn git_tree_reads_the_resolved_commit_not_the_working_tree() {
     let dir = repo();
@@ -59,6 +62,7 @@ fn git_tree_reads_the_resolved_commit_not_the_working_tree() {
     assert!(GitTree::new(dir.path().to_str().unwrap(), "no-such-ref").is_err());
 }
 
+#[test_id(tdd7mwv)]
 #[test]
 fn cr_pick_runs_over_a_real_git_tree() {
     let dir = repo();

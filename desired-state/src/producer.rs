@@ -45,6 +45,7 @@ pub fn parse_fragment(text: &str) -> Result<Fragment, String> {
 mod tests {
     use super::*;
 
+    #[test_id(t6yykun)]
     #[test]
     fn parses_a_minimal_fragment() {
         let text = r#"
@@ -67,6 +68,7 @@ mod tests {
         assert_eq!(frag.resources.len(), 1);
     }
 
+    #[test_id(tbbro8j)]
     #[test]
     fn unknown_top_level_field_names_its_path() {
         let text = r#"

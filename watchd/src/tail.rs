@@ -213,6 +213,7 @@ mod tests {
     use testkit::TempDir;
 
     // covers: UC-operator-channel-27
+    #[test_id(thr9h00)]
     #[test]
     fn poll_once_shows_every_complete_line_and_leaves_a_partial_one_for_next_time() {
         let d = TempDir::new("watchd-tail");
@@ -233,6 +234,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-27
+    #[test_id(tpc8gw0)]
     #[test]
     fn the_cursor_advances_for_a_filtered_out_line_too() {
         let d = TempDir::new("watchd-tail");
@@ -246,6 +248,7 @@ mod tests {
         assert_eq!(String::from_utf8(out).unwrap(), "FAIL something\n");
     }
 
+    #[test_id(ta6n2nd)]
     #[test]
     fn all_mode_shows_everything() {
         let d = TempDir::new("watchd-tail");
@@ -257,6 +260,7 @@ mod tests {
         assert_eq!(String::from_utf8(out).unwrap(), "plain progress\n");
     }
 
+    #[test_id(taq7y8s)]
     #[test]
     fn a_truncated_file_is_re_read_from_the_start() {
         let d = TempDir::new("watchd-tail");
@@ -272,6 +276,7 @@ mod tests {
         assert_eq!(off2, 0, "truncation resets the offset so the next poll re-reads from 0");
     }
 
+    #[test_id(tjeiihe)]
     #[test]
     fn byte_offset_of_line_resumes_past_exactly_n_lines() {
         let d = TempDir::new("watchd-tail");
@@ -283,6 +288,7 @@ mod tests {
         assert_eq!(byte_offset_of_line(&mut f, 2).unwrap(), 8);
     }
 
+    #[test_id(t1u8jiy)]
     #[test]
     fn an_off_row_is_refused() {
         let rows = vec![Row { name: "view".into(), kind: Kind::Off, target: "@SPIRA_VIEW@".into(), health: String::new() }];
@@ -290,6 +296,7 @@ mod tests {
         assert_eq!(rc, 2);
     }
 
+    #[test_id(tnni1v3)]
     #[test]
     fn an_unknown_name_is_refused() {
         let rows: Vec<Row> = vec![];
@@ -298,6 +305,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-27
+    #[test_id(t9tz458)]
     #[test]
     fn a_second_reader_is_refused_at_once_naming_the_holder_and_the_takeover_flag() {
         let d = TempDir::new("watchd-tail-second");

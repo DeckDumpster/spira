@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate spira_test_id;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -10,6 +12,7 @@ fn admit(run: &Path, inner: Option<&str>, args: &[&str]) -> Output {
     c.output().unwrap()
 }
 
+#[test_id(t5mltfu)]
 #[test]
 fn a_retired_wrapper_call_execs_the_inner_compiler_and_writes_no_pool_file() {
     let run = testkit::TempDir::new("admit-cli-wrapper");
@@ -19,6 +22,7 @@ fn a_retired_wrapper_call_execs_the_inner_compiler_and_writes_no_pool_file() {
     assert_eq!(std::fs::read_dir(run.path()).unwrap().count(), 0, "a pass-through writes no pool file");
 }
 
+#[test_id(t10x9nm)]
 #[test]
 fn without_an_inner_compiler_the_wrapper_execs_the_compiler_it_was_handed() {
     let run = testkit::TempDir::new("admit-cli-bare");
@@ -27,6 +31,7 @@ fn without_an_inner_compiler_the_wrapper_execs_the_compiler_it_was_handed() {
     assert_eq!(std::fs::read_dir(run.path()).unwrap().count(), 0);
 }
 
+#[test_id(twjd2oc)]
 #[test]
 fn help_and_no_argument_print_usage_and_exit_2() {
     let run = testkit::TempDir::new("admit-cli-usage");

@@ -244,6 +244,7 @@ mod tests {
 
     // covers: UC-safety-fences-31
     // covers: UC-ops-detection-remediation-24
+    #[test_id(tuw03yr)]
     #[test]
     fn every_czar_class_the_conf_declares_defaults_to_shadow_and_names_its_key() {
         let dir = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
@@ -264,6 +265,7 @@ mod tests {
 
     // covers: UC-safety-fences-31
     // covers: UC-ops-detection-remediation-24
+    #[test_id(t27bmxn)]
     #[test]
     fn the_stage_answers_with_the_scripts_codes_and_text() {
         let e = env(&[("SPIRA_CZAR_STAGE_LOOP_STALLED", "act"), ("SPIRA_CZAR_STAGE_DEADLOCK", "loud")]);
@@ -278,6 +280,7 @@ mod tests {
     }
 
     // covers: UC-safety-fences-31
+    #[test_id(t4873zi)]
     #[test]
     fn the_czar_fence_refuses_a_shadow_class_mutation_with_exit_1() {
         let e = env(CZAR);
@@ -297,6 +300,7 @@ mod tests {
         assert_eq!(czar(&a(&["reopen", "sp-x"]), &|k| builder.get(k).cloned()), Ok(()));
     }
 
+    #[test_id(tnqmoag)]
     #[test]
     fn the_claim_check_refuses_a_description_edit_on_a_live_claim_unless_forced() {
         let now = 1_000_000;
@@ -314,6 +318,7 @@ mod tests {
         assert_eq!(claim(&a(&["update", "sp-a", "--title", "T"]), &|_| None, now), Ok(Claim::Free), "an unreadable row refuses nothing");
     }
 
+    #[test_id(tjknlpq)]
     #[test]
     fn write_runs_the_czar_fence_before_the_claim_check() {
         let e = env(CZAR);
@@ -333,6 +338,7 @@ mod tests {
         Ctx { who: "bdq", vars, rows: &|_| None, now: 0, ask_label: ask, registry: &registry }
     }
 
+    #[test_id(t0tt01k)]
     #[test]
     fn the_create_fences_refuse_in_bdqs_order_with_bdqs_text() {
         let none = |_: &str| None;
@@ -358,6 +364,7 @@ mod tests {
         assert_eq!(create(&a(&["create", "T"]), None, &c), Err(Refusal { code: 1, text: "bdq: SPIRA_ASK_LABEL is not declared\n".into() }));
     }
 
+    #[test_id(t018yg7)]
     #[test]
     fn the_ask_label_is_never_written_onto_an_existing_bead() {
         let none = |_: &str| None;
@@ -376,6 +383,7 @@ mod tests {
         }
     }
 
+    #[test_id(t7t8h1a)]
     #[test]
     fn a_state_verb_is_refused_unless_overridden_and_the_override_is_logged() {
         let none = |_: &str| None;
@@ -389,6 +397,7 @@ mod tests {
         assert_eq!(state_verb(&a(&["update", "sp-a", "--add-label", "x"]), &none, "bdq"), Ok(None));
     }
 
+    #[test_id(tkadh7q)]
     #[test]
     fn a_create_owes_rows_and_a_close_a_terminal_row() {
         assert_eq!(after(&a(&["create", "T", "--silent"])), After::Rows);

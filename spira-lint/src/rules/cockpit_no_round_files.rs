@@ -89,6 +89,7 @@ mod tests {
         CockpitNoRoundFiles::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(t937uyb)]
     #[test]
     fn a_planted_read_of_a_round_file_is_caught() {
         let t = TempDir::new("cnrf");
@@ -99,6 +100,7 @@ mod tests {
         assert_eq!(got.len(), 3, "{got:?}");
     }
 
+    #[test_id(tfg3btb)]
     #[test]
     fn comments_and_other_trees_are_silent() {
         let t = TempDir::new("cnrf-ok");
@@ -107,6 +109,7 @@ mod tests {
         assert_eq!(run(&t, &["cockpit/a.rs", "round-vm/y.rs"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(t93g57q)]
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("cnrf-none");

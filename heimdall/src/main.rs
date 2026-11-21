@@ -1,6 +1,9 @@
 //! heimdall — `heimdall [--home DIR] [--report]` | `heimdall classify` (observations on stdin). See DESIGN.md and each module's own doc
 //! comment for the design this ports from (spira/heimdall.sh, retired in the same change).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -293,6 +296,7 @@ fn host_units() -> Option<std::sync::Arc<dyn runtime::units::Units>> {
 mod tests {
     use super::*;
 
+    #[test_id(tkdqv6g)]
     #[test]
     fn resolve_home_prefers_the_flag() {
         let dir = testkit::TempDir::new("heimdall-main");
@@ -301,6 +305,7 @@ mod tests {
         assert_eq!(home, Some(dir.path().to_path_buf()));
     }
 
+    #[test_id(twmxg86)]
     #[test]
     fn resolve_home_falls_back_to_spira_home_env() {
         let dir = testkit::TempDir::new("heimdall-main");
@@ -310,6 +315,7 @@ mod tests {
         assert_eq!(resolve_home(None, &env), Some(dir.path().to_path_buf()));
     }
 
+    #[test_id(t3gzjae)]
     #[test]
     fn resolve_home_falls_back_to_spira_release_spira() {
         let dir = testkit::TempDir::new("heimdall-main");
@@ -320,6 +326,7 @@ mod tests {
         assert_eq!(resolve_home(None, &env), Some(dir.join("spira")));
     }
 
+    #[test_id(tetkqc3)]
     #[test]
     fn resolve_home_none_when_nothing_resolves() {
         assert_eq!(resolve_home(None, &BTreeMap::new()), None);

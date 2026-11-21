@@ -346,6 +346,7 @@ fn strip_case_prefix(line: &str, word: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[test_id(tiki6pd)]
     #[test]
     fn counts_and_names_failures() {
         let out = "1..5\nok 1 - a\nnot ok 2 - b\n  ---\nok 3 - c # SKIP no dolt\nnot ok 4 - d # TODO later\nnot ok 5 - launcher's --model came from persona.modeltest.model\n";
@@ -361,6 +362,7 @@ mod tests {
         );
     }
 
+    #[test_id(t96q9eu)]
     #[test]
     fn bail_out_and_non_tap_noise() {
         let t = parse("okay then\nnot okay\nBail out! requires: testenv\n");
@@ -368,6 +370,7 @@ mod tests {
         assert_eq!((t.passed, t.failed), (0, 0));
     }
 
+    #[test_id(t2iix83)]
     #[test]
     fn skip_all_reason_reads_testlibs_skip_all_form() {
         assert_eq!(
@@ -381,6 +384,7 @@ mod tests {
         );
     }
 
+    #[test_id(t9vb00x)]
     #[test]
     fn skip_all_reason_is_none_without_the_convention() {
         assert_eq!(skip_all_reason("1..3\nok 1 - a\n"), None);
@@ -389,6 +393,7 @@ mod tests {
         assert_eq!(skip_all_reason("1..1\nok 1 - a # SKIP not applicable\n"), None);
     }
 
+    #[test_id(tz9uv96)]
     #[test]
     fn every_case_carries_its_duration_and_a_failure_its_location() {
         let out = "TAP version 14\nok 1 - first\n#ms=12\nok 2 - slow # SKIP no dolt\n#ms=0\nnot ok 3 - broke\n# wanted x\n# at spira/test-x.sh:41\n#ms=2503\nBail out! case 3 failed: broke\n1..3\n";
@@ -405,17 +410,20 @@ mod tests {
         assert_eq!(t.bail_out.as_deref(), Some("case 3 failed: broke"));
     }
 
+    #[test_id(tz7jqbo)]
     #[test]
     fn a_green_suite_names_no_failing_case() {
         assert_eq!(parse("ok 1 - a\n#ms=1\nok 2 - b\n#ms=1\n").first_failure(), None);
     }
 
+    #[test_id(tu2xbdm)]
     #[test]
     fn a_hung_case_is_the_first_failure() {
         let t = parse("ok 1 - a\nok 2 - b\nnot ok 3 - case 3 exceeded its 30s deadline\n# at s.sh:9\nBail out! case 3 exceeded its 30s deadline\n");
         assert_eq!(t.first_failure().as_deref(), Some("case 3 case 3 exceeded its 30s deadline at s.sh:9"));
     }
 
+    #[test_id(txmyrbk)]
     #[test]
     fn an_old_tap_json_without_cases_still_reads() {
         let t: TapSummary = serde_json::from_str(r#"{"plan":1,"passed":1,"failed":0,"skipped":0,"todo":0,"bail_out":null,"not_ok":[]}"#).unwrap();
@@ -424,6 +432,7 @@ mod tests {
         assert_eq!(t.cases[0].deadline, None);
     }
 
+    #[test_id(t8is58j)]
     #[test]
     fn a_deadline_line_attaches_its_load_to_the_case() {
         let t = parse("not ok 1 - case 1 exceeded its 45s deadline\n# at s.sh:9\n# deadline secs=45 load1=80.10 cpus=32 cpu_some_avg10=41.20 io_some_avg10=60.00\n#ms=45012\nBail out! case 1 exceeded its 45s deadline\n");
@@ -437,6 +446,7 @@ mod tests {
 
     // --------------------------------------------------------------- jsonl_rows
 
+    #[test_id(tvelr5c)]
     #[test]
     fn jsonl_rows_a_bail_out_after_a_failing_case_is_not_a_second_row() {
         let out = "TAP version 14\nok 1 - a\n#ms=1\nnot ok 2 - b\n# at s.sh:3\n#ms=1\nBail out! case 2 failed: b\n";
@@ -445,6 +455,7 @@ mod tests {
         assert!(!rows.contains("\"status\":\"bail\""), "{rows}");
     }
 
+    #[test_id(twgnu7o)]
     #[test]
     fn jsonl_rows_one_row_per_tap_case_with_a_failure_detail() {
         let src = "#!/usr/bin/env bash\n# covers: a.sh UC-gate-01\n# tier: T1\nset -u\n";
@@ -462,6 +473,7 @@ mod tests {
         );
     }
 
+    #[test_id(tvvkwg4)]
     #[test]
     fn jsonl_rows_skip_all_and_bail_out_are_suite_level() {
         let skip = jsonl_rows("test-s.sh", "", Some("TAP version 14\n1..0 # SKIP no dolt on this host\n"), "red", "1");
@@ -476,6 +488,7 @@ mod tests {
         assert!(lines[1].contains(r#""detail":"requires: testenv""#));
     }
 
+    #[test_id(tqysodl)]
     #[test]
     fn jsonl_rows_falls_back_to_one_suite_row_when_not_migrated() {
         assert_eq!(
@@ -501,6 +514,7 @@ mod tests {
         }
     }
 
+    #[test_id(the803r)]
     #[test]
     fn jsonl_rows_escapes_full_for_suite_and_tier_but_minimal_for_case_and_detail() {
         // Suite/tier: backslash, quote, newline and tab all escaped.
@@ -515,6 +529,7 @@ mod tests {
         assert!(rows.contains("\"detail\":\"detail\twith a tab\""), "{rows}");
     }
 
+    #[test_id(tg9gjwv)]
     #[test]
     fn jsonl_rows_reads_tier_and_uc_from_the_suite_source_never_the_output() {
         let src = "# covers: a.sh UC-x-01 b/* UC-y-02\n# tier: T3\nset -u\n";
@@ -527,6 +542,7 @@ mod tests {
         assert!(row.contains(r#""uc":[]"#));
     }
 
+    #[test_id(tprn2fl)]
     #[test]
     fn uc_token_matches_the_bash_glob_exactly() {
         assert!(is_uc_token("UC-x-01"));

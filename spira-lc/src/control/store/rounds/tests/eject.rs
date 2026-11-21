@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(tvm4vt4)]
 #[test]
 fn eject_member_of_a_round_whose_pass_is_running_refuses_with_its_exit_and_changes_nothing() {
     let r = Rig::new();

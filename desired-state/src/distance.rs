@@ -268,6 +268,7 @@ mod tests {
         move |f| pairs.iter().find(|(k, _)| *k == f).map(|(_, v)| *v)
     }
 
+    #[test_id(thn4uhz)]
     #[test]
     fn the_designs_example_parses_and_evaluates_with_precedence() {
         let e = parse("max(0, green_unlanded_minutes) / 5 + repeat_identity_open").unwrap();
@@ -281,6 +282,7 @@ mod tests {
         assert_eq!(v, 3.0);
     }
 
+    #[test_id(tsn9g2b)]
     #[test]
     fn unicode_and_ascii_operators_mean_the_same() {
         let f = fields(&[("a", 6.0), ("b", 2.0)]);
@@ -291,6 +293,7 @@ mod tests {
         assert_eq!(parse("(a - b) / b").unwrap().eval(&f).unwrap(), 2.0);
     }
 
+    #[test_id(t540yvq)]
     #[test]
     fn nothing_outside_the_grammar_parses() {
         for bad in [
@@ -313,6 +316,7 @@ mod tests {
         }
     }
 
+    #[test_id(tdm554m)]
     #[test]
     fn a_missing_field_or_a_zero_divisor_is_an_error() {
         let f = fields(&[("a", 1.0), ("z", 0.0)]);

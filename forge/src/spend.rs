@@ -111,6 +111,7 @@ mod tests {
             .map(|s| s.value as u64)
     }
 
+    #[test_id(tspb8eb)]
     #[test]
     fn a_named_caller_is_pushed_under_its_own_label_whatever_verb_the_thread_is_in() {
         set_caller("pr-state");
@@ -130,6 +131,7 @@ mod tests {
         assert_eq!(got.iter().filter(|s| s.name == CALLS).count(), 2, "{got:?}");
     }
 
+    #[test_id(tyojy2t)]
     #[test]
     fn a_verbs_gh_calls_are_pushed_under_its_name_and_a_rate_limit_read_is_not_counted() {
         set_caller("pr-state");

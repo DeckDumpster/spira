@@ -38,6 +38,7 @@ fn filed(r: &TaskRig) -> Vec<String> {
     r.requested().iter().filter(|q| q.name == FILE_INCIDENT).map(|q| q.input.clone()).collect()
 }
 
+#[test_id(tr1imdg)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_hourly_tick() {
     let row = acc::row(NAME);
@@ -52,6 +53,7 @@ fn t1_the_row_is_registered_and_its_boot_arms_the_hourly_tick() {
     assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
 }
 
+#[test_id(twj7o1u)]
 #[test]
 fn t2_a_valid_shelf_journals_nothing() {
     let mut r = rig(1, Arc::new(Mutex::new(shelf(&[]))));
@@ -60,6 +62,7 @@ fn t2_a_valid_shelf_journals_nothing() {
 }
 
 /// Stateless: the outcomes are none, file(blind) and file(finding); halted files nothing.
+#[test_id(t0wu7dk)]
 #[test]
 fn t3_each_outcome_is_one_filing_or_none_and_a_halted_world_files_nothing() {
     assert!(filed(&rig(1, Arc::new(Mutex::new(shelf(&[]))))).is_empty());
@@ -72,6 +75,7 @@ fn t3_each_outcome_is_one_filing_or_none_and_a_halted_world_files_nothing() {
     assert!(filed(&r).is_empty(), "a filing while halted is refused");
 }
 
+#[test_id(t393op2)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("d/watch_sop_lint.rs")), None);
@@ -83,6 +87,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 }
 
 /// The selftest's find and blind cases (`spira/sop-lint-watch.sh:10-33`): the titles it filed.
+#[test_id(ts37kgr)]
 #[test]
 fn t5_the_titles_are_the_ones_sop_lint_watch_filed() {
     let f = filed(&rig(1, Arc::new(Mutex::new(shelf(&[("sop-bad", "SYMPTOM: only this\n")])))));
@@ -91,6 +96,7 @@ fn t5_the_titles_are_the_ones_sop_lint_watch_filed() {
     assert!(f.len() == 1 && f[0].contains("sop lint could not read the shelf (control cannot check)"), "{f:?}");
 }
 
+#[test_id(t3poka7)]
 #[test]
 fn t6_a_finding_standing_two_days_replays_identically_at_one_filing_an_hour() {
     let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(shelf(&[("sop-bad", "SYMPTOM: only this\n")])))), 7, 2);
@@ -105,6 +111,7 @@ fn standing_finding() -> TaskRig {
     rig(1, Arc::new(Mutex::new(shelf(&[("sop-bad", "SYMPTOM: only this\n")]))))
 }
 
+#[test_id(txajj1p)]
 #[test]
 fn a_stateless_task_journals_no_carry_row() {
     let r = standing_finding();
@@ -112,6 +119,7 @@ fn a_stateless_task_journals_no_carry_row() {
     assert!(r.journal.state().into_iter().all(|((t, _), v)| t != NAME || v.is_empty()), "{NAME} kept a row");
 }
 
+#[test_id(tr3e71h)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(standing_finding, || WatchSopLint::new(config()).registration(), STREAM, WatchSopLint::boot().2);

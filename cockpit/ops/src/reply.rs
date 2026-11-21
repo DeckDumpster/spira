@@ -221,6 +221,7 @@ mod tests {
         }
     }
 
+    #[test_id(tl25dto)]
     #[test]
     fn an_answer_lifts_the_hold_and_reaches_the_holder_in_one_call() {
         let c = Fake { success: true, combined: "" };
@@ -229,6 +230,7 @@ mod tests {
         assert_eq!(*f.calls.borrow(), vec!["lift sp-abc answer-sp-abc", "deliver sp-abc use A"]);
     }
 
+    #[test_id(t6qytp7)]
     #[test]
     fn an_answer_to_an_open_ask_is_the_mail_reply_and_is_copied_to_the_operator() {
         let c = Fake { success: true, combined: "" };
@@ -237,6 +239,7 @@ mod tests {
         assert_eq!(*f.calls.borrow(), vec!["answer", "copy None", "deliver sp-abc use A"]);
     }
 
+    #[test_id(tzniqt8)]
     #[test]
     fn a_revised_default_is_mailed_to_the_operator_without_answering_the_ask() {
         let c = Fake { success: true, combined: "" };
@@ -246,6 +249,7 @@ mod tests {
         assert_eq!(*f.calls.borrow(), vec!["copy Some(\"B\")", "deliver sp-abc use A"]);
     }
 
+    #[test_id(tnjskpz)]
     #[test]
     fn a_failed_mail_delivery_fails_the_reply_after_the_store_write() {
         let c = Fake { success: true, combined: "" };
@@ -256,6 +260,7 @@ mod tests {
         }
     }
 
+    #[test_id(t54qwsa)]
     #[test]
     fn a_default_with_no_open_ask_is_refused_before_anything_is_written() {
         let c = Fake { success: true, combined: "" };
@@ -264,6 +269,7 @@ mod tests {
         assert!(f.calls.borrow().is_empty());
     }
 
+    #[test_id(t45c1hu)]
     #[test]
     fn the_operator_copy_is_threaded_revised_and_states_the_default() {
         let ask = AskMail { message_id: "m-ask@spira".into(), subject: "Re: which way?".into(), bead: "sp-ask".into() };
@@ -279,6 +285,7 @@ mod tests {
         fs::write(dir.join(name), format!("{headers}\nbody\n")).unwrap();
     }
 
+    #[test_id(tegy93b)]
     #[test]
     fn the_ask_found_is_the_question_about_that_bead_and_the_reply_threads_to_it() {
         let d = testkit::TempDir::new("reply-ask");
@@ -294,6 +301,7 @@ mod tests {
         assert!(msg.ends_with("\n\nuse A\n"), "{msg}");
     }
 
+    #[test_id(t2wzx0j)]
     #[test]
     fn a_failed_comment_neither_lifts_nor_delivers() {
         let c = Fake { success: false, combined: "no" };
@@ -302,6 +310,7 @@ mod tests {
         assert!(f.calls.borrow().is_empty());
     }
 
+    #[test_id(taq38dd)]
     #[test]
     fn usage_error_when_id_or_text_missing() {
         assert!(usage_error("", "hi"));
@@ -309,6 +318,7 @@ mod tests {
         assert!(!usage_error("sp-1", "hi"));
     }
 
+    #[test_id(tmp3zsp)]
     #[test]
     fn success_message_names_id_and_db_basename() {
         let c = Fake { success: true, combined: "" };
@@ -319,6 +329,7 @@ mod tests {
         }
     }
 
+    #[test_id(t0j5n5i)]
     #[test]
     fn failure_message_includes_bds_combined_output() {
         let c = Fake {

@@ -2,6 +2,8 @@
 //! 10-12..10-31 the beads the lifecycle landed, counted by `spira_lc::goodput`, agree with
 //! git's land commits to within the manifest's `tolerance_per_day`. Run only in rounds.
 
+#[macro_use]
+extern crate spira_test_id;
 use spira_desired_state::section::parse_rfc3339;
 use spira_lc::goodput::{goodput, LoopEvent, Measure, Scope, Window, DAY_SECS};
 
@@ -72,6 +74,7 @@ fn goodput_landed(events: &[LoopEvent], d: &Day) -> i64 {
     }
 }
 
+#[test_id(tay1wdq)]
 #[test]
 fn the_tolerance_is_the_manifests_and_covers_twenty_days() {
     let days = days();
@@ -79,6 +82,7 @@ fn the_tolerance_is_the_manifests_and_covers_twenty_days() {
     assert_eq!(tolerance_per_day(&days), TOLERANCE_PER_DAY);
 }
 
+#[test_id(tmldt85)]
 #[test]
 fn the_agreement_check_names_a_day_that_disagrees_by_more_than_the_tolerance() {
     let days = days();
@@ -86,6 +90,7 @@ fn the_agreement_check_names_a_day_that_disagrees_by_more_than_the_tolerance() {
     assert!(outside(&days, TOLERANCE_PER_DAY, |d| d.git_land + TOLERANCE_PER_DAY).is_empty());
 }
 
+#[test_id(tsqjuy9)]
 #[test]
 fn every_days_goodput_landed_is_within_the_tolerance_of_git() {
     let days = days();

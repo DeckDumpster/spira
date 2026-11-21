@@ -340,6 +340,7 @@ mod tests {
       {"seq":4,"event":"Hold","applied":1,"actor":"concierge","at":300,"evidence":"{\"Hold\":{\"kind\":\"Operator\",\"cause\":\"manual-hold\",\"detail\":\"until publishing resumes\"}}"}
     ]"#;
 
+    #[test_id(tmwy005)]
     #[test]
     fn the_live_hold_is_read_from_its_own_event() {
         let p = live_hold_from_history(HISTORY, Kind::Poison).unwrap().unwrap();
@@ -348,12 +349,14 @@ mod tests {
         assert_eq!((m.since, m.actor.as_deref(), m.detail.as_deref()), (Some(300), Some("concierge"), Some("until publishing resumes")));
     }
 
+    #[test_id(tocnorx)]
     #[test]
     fn a_refused_hold_event_is_not_a_hold_and_a_kind_never_placed_is_none() {
         assert_eq!(live_hold_from_history(HISTORY, Kind::Wait).unwrap(), None);
         assert_eq!(live_hold_from_history(HISTORY, Kind::Ask).unwrap(), None);
     }
 
+    #[test_id(tix1ctp)]
     #[test]
     fn a_dropped_bead_still_holding_wait_is_terminal_and_a_live_one_is_not() {
         let dropped = r#"[
@@ -366,6 +369,7 @@ mod tests {
         assert!(!ends_terminal(r#"[{"seq":1,"event":"Hold","applied":1,"to_state":"READY","evidence":{}}]"#).unwrap());
     }
 
+    #[test_id(tgui1z3)]
     #[test]
     fn an_unhold_or_a_reply_ends_the_hold() {
         let h = r#"[
@@ -378,6 +382,7 @@ mod tests {
         assert_eq!(live_hold_from_history(h, Kind::Ask).unwrap(), None);
     }
 
+    #[test_id(tqwz7h1)]
     #[test]
     fn a_wait_on_a_finished_bead_is_not_a_failure_to_lift() {
         let refused = Err("spira-lc unhold sp-a wait reconciler: exit 3: refused: Terminal".to_string());
@@ -387,6 +392,7 @@ mod tests {
         assert!(other.contains("StaleVersion") && other.contains("snooze expired at 5"));
     }
 
+    #[test_id(tkglkt6)]
     #[test]
     fn unparseable_history_is_an_error_not_no_hold() {
         assert!(live_hold_from_history("garbage", Kind::Poison).is_err());
@@ -400,6 +406,7 @@ mod tests {
         fs::write(dir.join(name), format!("{headers}\nBody\n")).unwrap();
     }
 
+    #[test_id(tzxh8qb)]
     #[test]
     fn a_note_about_a_bead_is_not_a_delivered_question() {
         let dir = testkit::TempDir::new("hold-sweep-notes");
@@ -408,6 +415,7 @@ mod tests {
         assert!(scan_asks(&dir, &ASK_MAILBOXES).unwrap().is_empty());
     }
 
+    #[test_id(tn87dm0)]
     #[test]
     fn no_readable_mailbox_is_cannot_tell() {
         let dir = testkit::TempDir::new("hold-sweep-nomail");
@@ -437,6 +445,7 @@ mod tests {
         breaker().tripped(&exits_from_history(&history).unwrap()).is_some()
     }
 
+    #[test_id(tbdyhbf)]
     #[test]
     fn replaying_a_history_of_no_progress_claims_trips_on_the_fourth_and_not_before() {
         let mut events = Vec::new();
@@ -450,6 +459,7 @@ mod tests {
         assert_eq!(first_trip, Some(4));
     }
 
+    #[test_id(t3pibzo)]
     #[test]
     fn once_the_ask_is_placed_the_same_history_trips_no_more() {
         let mut events = Vec::new();
@@ -463,6 +473,7 @@ mod tests {
         assert!(!trips(&events), "an answer clears the count it answered");
     }
 
+    #[test_id(t8i80gs)]
     #[test]
     fn a_harness_fault_exit_is_not_a_no_progress_claim() {
         let mut events = Vec::new();
@@ -477,6 +488,7 @@ mod tests {
         assert!(trips(&events), "positive control: a fourth no-progress exit does trip");
     }
 
+    #[test_id(ta37whj)]
     #[test]
     fn four_claims_spread_over_more_than_the_window_do_not_trip() {
         let mut events = Vec::new();
@@ -486,6 +498,7 @@ mod tests {
         assert!(!trips(&events));
     }
 
+    #[test_id(tskkxvi)]
     #[test]
     fn a_submit_ends_the_count() {
         let mut events = Vec::new();
@@ -511,6 +524,7 @@ mod tests {
         Hold { bead: bead.into(), kind: Kind::Ask, since: Some(500), detail: Some("a question about sp-k1qi8v".into()), actor: Some("reconciler".into()) }
     }
 
+    #[test_id(tkq6xx2)]
     #[test]
     fn every_hold_sweep_mail_passes_the_mail_lint() {
         let kinds = spira_config::resolve::locate_home_for_process().unwrap().join("mail/kinds");
@@ -539,6 +553,7 @@ mod tests {
         }
     }
 
+    #[test_id(tmqxm4u)]
     #[test]
     fn a_refused_breaker_question_places_no_ask_hold() {
         let calls = std::cell::RefCell::new(Vec::<String>::new());
@@ -553,6 +568,7 @@ mod tests {
         assert!(calls.borrow().iter().all(|c| !c.starts_with("hold ")), "{:?}", calls.borrow());
     }
 
+    #[test_id(tbd8ni0)]
     #[test]
     fn a_breaker_hold_that_fails_after_the_question_was_delivered_says_so() {
         let lc = |_: &[&str]| -> Result<String, String> { Err("store down".into()) };

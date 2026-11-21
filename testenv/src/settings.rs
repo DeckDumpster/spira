@@ -291,6 +291,7 @@ mod tests {
     /// sp-tj8k3: unset must stay unset (no refusal, no override) — only a *given* bad value
     /// refuses. Zero and a non-numeric value both refuse, by name; a positive value never
     /// does.
+    #[test_id(t21v8cv)]
     #[test]
     fn maxpar_unset_is_silent_zero_and_garbage_refuse() {
         assert_eq!(resolve_maxpar(""), (None, None));
@@ -308,6 +309,7 @@ mod tests {
         assert_eq!(resolve_maxpar("-3").0, None);
     }
 
+    #[test_id(t3youjh)]
     #[test]
     fn optional_num_is_absent_on_empty_and_refuses_a_given_bad_value() {
         assert_eq!(optional_num::<u32>("SPIRA_BATCH_MAXPAR_CEILING", ""), Ok(None));
@@ -317,6 +319,7 @@ mod tests {
 
     /// A round VM's testenv reads `spira/testlib/complete.toml` as its base layer, so a required
     /// key the fixture leaves empty refuses every round before any suite runs.
+    #[test_id(t2ffvl6)]
     #[test]
     fn the_complete_fixture_declares_every_required_path() {
         let fixture = spira_config::resolve::locate_home_for_process().unwrap().join("testlib/complete.toml");
@@ -328,6 +331,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4mr1rn)]
     #[test]
     fn a_required_path_refuses_empty_and_relative_naming_its_key() {
         for v in ["", "  ", "rel/dir"] {
@@ -336,6 +340,7 @@ mod tests {
         }
     }
 
+    #[test_id(tbxx0v0)]
     #[test]
     fn run_id_prefers_github_then_explicit() {
         let src = Source { env: &env(&[("GITHUB_RUN_ID", "77"), ("SPIRA_BATCH_RUN_ID", "x")]) };
@@ -353,6 +358,7 @@ mod tests {
         assert_eq!(run_id, "x");
     }
 
+    #[test_id(t6njqyd)]
     #[test]
     fn skip_install_needs_a_non_empty_value() {
         let src = Source { env: &env(&[("SPIRA_BATCH_SKIP_INSTALL", "1")]) };

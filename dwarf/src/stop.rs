@@ -89,6 +89,7 @@ mod tests {
         strand::probe::write_lease(&pf, deadline);
     }
 
+    #[test_id(tdh3pxz)]
     #[test]
     fn a_running_lease_accepts_a_stop_and_records_it() {
         let t = testkit::TempDir::new("dwarf-stop-ok");
@@ -101,6 +102,7 @@ mod tests {
         assert!(!requested(&t, "sp-a"));
     }
 
+    #[test_id(tf5ho4a)]
     #[test]
     fn an_expired_or_absent_lease_refuses_naming_the_state() {
         let t = testkit::TempDir::new("dwarf-stop-refuse");
@@ -111,6 +113,7 @@ mod tests {
         assert!(!requested(&t, "sp-a"), "a refusal records nothing");
     }
 
+    #[test_id(t9gperc)]
     #[test]
     fn the_stop_is_for_that_bead_only() {
         let t = testkit::TempDir::new("dwarf-stop-scope");
@@ -120,6 +123,7 @@ mod tests {
         assert!(!requested(&t, "sp-ab"));
     }
 
+    #[test_id(tbf9wym)]
     #[test]
     fn usage_is_exit_2() {
         let t = testkit::TempDir::new("dwarf-stop-usage");

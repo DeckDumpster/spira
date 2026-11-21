@@ -68,23 +68,27 @@ pub fn run(bin: &str, o: &Opts) -> (i32, String) {
 mod unpoison_tests {
     use super::*;
 
+    #[test_id(tcjwap9)]
     #[test]
     fn refuses_without_cause() {
         let err = parse("sp-1", None, Some("evidence")).unwrap_err();
         assert!(err.contains("--cause"));
     }
 
+    #[test_id(t8tbw7m)]
     #[test]
     fn refuses_without_evidence() {
         let err = parse("sp-1", Some("branch-collision"), None).unwrap_err();
         assert!(err.contains("--evidence"));
     }
 
+    #[test_id(tmj1sx0)]
     #[test]
     fn refuses_without_an_id() {
         assert!(parse("", Some("c"), Some("e")).is_err());
     }
 
+    #[test_id(tfj7hcd)]
     #[test]
     fn builds_the_expected_spira_claim_invocation() {
         let o = parse("sp-1", Some("branch-collision"), Some("worktree collided with sp-2")).unwrap();

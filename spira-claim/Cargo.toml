@@ -40,4 +40,5 @@ name = "spira-claim"
 path = "src/main.rs"
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

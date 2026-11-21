@@ -3,6 +3,9 @@
 //! written from the script's intent (bd sp-yyk47). The SQL itself is unchanged (DESIGN.md §2);
 //! the classification pipeline is [`pipeline`].
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod facts;
 pub mod pipeline;
 pub mod ports;

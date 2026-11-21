@@ -2,6 +2,9 @@
 //! destruction in Rust") lives here so other binaries in this crate — and, in follow-up
 //! beads, other crates — can call it in-process instead of shelling back into lib.sh.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::path::PathBuf;
 
 pub mod telemetry;

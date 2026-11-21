@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(tdav8ge)]
 #[test]
 fn a_stopping_server_answers_what_is_queued_and_removes_its_path() {
     use super::accept_until_stopped;
@@ -50,6 +51,7 @@ fn a_stopping_server_answers_what_is_queued_and_removes_its_path() {
     assert_eq!(UnixStream::connect(&path).unwrap_err().kind(), std::io::ErrorKind::NotFound);
 }
 
+#[test_id(thcqxxx)]
 #[test]
 fn the_drain_bound_leaves_the_unit_its_stop_timeout() {
     assert_eq!(super::DRAIN_BOUND, std::time::Duration::from_secs(60));
@@ -96,6 +98,7 @@ fn stopped_during(w: &World, argv: &[&str], stop: &std::sync::atomic::AtomicBool
     asked.join().unwrap()
 }
 
+#[test_id(tcynfo3)]
 #[test]
 fn a_hold_taken_before_the_stop_is_answered_and_durable() {
     let w = World::new();
@@ -106,6 +109,7 @@ fn a_hold_taken_before_the_stop_is_answered_and_durable() {
     assert_eq!(over(&w, &Content::default(), &["held", "sp-a", "wait"], None).0, 0);
 }
 
+#[test_id(tl1081l)]
 #[test]
 fn a_handler_that_never_finishes_is_answered_by_name_at_the_drain_bound() {
     use std::os::unix::net::{UnixListener, UnixStream};
@@ -155,6 +159,7 @@ fn a_handler_that_never_finishes_is_answered_by_name_at_the_drain_bound() {
     drained.join().unwrap();
 }
 
+#[test_id(txsus4t)]
 #[test]
 fn sigterm_sets_the_stop_flag_instead_of_ending_the_process() {
     extern "C" {

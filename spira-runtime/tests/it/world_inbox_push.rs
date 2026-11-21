@@ -41,6 +41,7 @@ fn wait_for(path: &Path) -> String {
     String::new()
 }
 
+#[test_id(te52kip)]
 #[test]
 fn a_watchers_p0_line_is_spooled_and_handed_to_the_flusher() {
     let d = testkit::TempDir::new("world-inbox-push");
@@ -54,6 +55,7 @@ fn a_watchers_p0_line_is_spooled_and_handed_to_the_flusher() {
     assert_eq!(wait_for(&calls).trim(), "flush", "the flusher is started once, with its flush verb");
 }
 
+#[test_id(tiof3pn)]
 #[test]
 fn a_line_that_does_not_match_is_recorded_and_not_pushed() {
     let d = testkit::TempDir::new("world-inbox-nopush");
@@ -65,6 +67,7 @@ fn a_line_that_does_not_match_is_recorded_and_not_pushed() {
     assert!(!calls.exists(), "no flusher for a plain line");
 }
 
+#[test_id(trzj3z2)]
 #[test]
 fn with_no_wake_configured_nothing_is_pushed() {
     let d = testkit::TempDir::new("world-inbox-nowake");
@@ -74,6 +77,7 @@ fn with_no_wake_configured_nothing_is_pushed() {
     assert!(!d.join("inbox.log.push").exists());
 }
 
+#[test_id(t3e4n9r)]
 #[test]
 fn several_lines_in_one_input_are_each_recorded_and_any_push_answers_pushed() {
     let d = testkit::TempDir::new("world-inbox-many");

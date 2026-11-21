@@ -193,6 +193,7 @@ mod tests {
     /// port edits that file, not this fixture.
     const PROD: &str = r#"bash spira/inventory.sh && bash spira/literal-lint.sh && bash spira/scratch-fence.sh && "$SPIRA_LINT_BIN" && bash spira/testdb-mode-lint.sh && bash spira/bd-stdin-lint.sh && bash spira/gh-intake-lint.sh && bash spira/incident-cause-lint.sh && bash spira/tmux-scope-fence.sh && bash spira/wiki-add-fence.sh && bash spira/build-fence.sh && { _s="$("$SPIRA_SELECT_BIN" gate "$SPIRA_GATE_BASE" "${SPIRA_GATE_SELECT_HEAD:-$SPIRA_GATE_BRANCH}")" || { _r=$?; [ "$_r" = 1 ] && exit 1; exit 75; }; [ -n "$_s" ] || exit 0; _b=0; "$SPIRA_TESTENV_BIN" --deadline "${SPIRA_GATE_BUDGET:-300}" --suites "${_s//$'\n'/,}" "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }"#;
 
+    #[test_id(t1roirg)]
     #[test]
     fn a_script_wrapping_spira_lint_is_a_runner_not_a_fence() {
         let all = [
@@ -247,11 +248,13 @@ mod tests {
         );
     }
 
+    #[test_id(tkbiuuq)]
     #[test]
     fn the_fixture_config_word_is_a_fence() {
         assert_eq!(expected(r#""$SPIRA_FIXTURE_BIN" fixture-config --tree . && x"#), ["fixture-config"]);
     }
 
+    #[test_id(te4cmkm)]
     #[test]
     fn spira_lint_with_only_expects_that_rule_alone() {
         assert_eq!(
@@ -272,6 +275,7 @@ mod tests {
 
     /// The lifecycle analyser is a fence by its variable, quoted or braced, in string order;
     /// a longer variable that merely starts with the name is not it.
+    #[test_id(tum2lrk)]
     #[test]
     fn the_lifecycle_guard_word_is_a_fence() {
         assert_eq!(
@@ -287,6 +291,7 @@ mod tests {
         );
     }
 
+    #[test_id(tumxqlk)]
     #[test]
     fn a_string_with_no_fence_expects_none() {
         assert!(expected("").is_empty());
@@ -294,6 +299,7 @@ mod tests {
         assert_eq!(expected("bash spira/fence.sh && bash spira/fence.sh"), ["fence"]);
     }
 
+    #[test_id(tnuzqkj)]
     #[test]
     fn lines_read_the_positive_control_and_its_count() {
         let out = "noise\nfence: inventory checked 5321 files\n  fence: plan-matrix checked 212 use-cases (40 at base)\nfence: bad checked many things\nfence: z checked 0 files\n";
@@ -304,6 +310,7 @@ mod tests {
         assert!(!m.contains_key("bad"));
     }
 
+    #[test_id(t7obuw1)]
     #[test]
     fn a_fence_with_no_line_or_a_zero_count_is_silent() {
         let want: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();

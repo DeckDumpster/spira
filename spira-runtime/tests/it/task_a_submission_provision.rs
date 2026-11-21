@@ -14,6 +14,7 @@ spira_runtime::family_a_acceptance! {
     registration: SubmissionProvision::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: BOOT_DELAY_MS,
+    test_ids: [ #[test_id(tzjv8or)] #[test_id(tic3l73)] #[test_id(tt5kx4y)] #[test_id(tjp8g22)] #[test_id(tamxnrj)] ],
 }
 
 fn plan() -> Plan {
@@ -45,6 +46,7 @@ fn effects(acts: &[Act]) -> Vec<&str> {
     acts.iter().map(|a| a.effect.as_str()).collect()
 }
 
+#[test_id(tkl4m6l)]
 #[test]
 fn t3_every_row_of_the_state_table_is_taken() {
     for (from, on, to) in TABLE {
@@ -52,12 +54,14 @@ fn t3_every_row_of_the_state_table_is_taken() {
     }
 }
 
+#[test_id(ti28jx7)]
 #[test]
 fn t3_a_config_set_before_the_renewal_outcome_is_refused_naming_renewing() {
     let refused = step(State::Renewing, Trigger::ConfigSet).expect_err("config_set waits on cert_renew");
     assert!(refused.to_lowercase().contains("renewing"), "{refused}");
 }
 
+#[test_id(tmj201i)]
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
     let mut r = rig(1, busy());
@@ -67,6 +71,7 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 }
 
 /// `provision.rs:254-256`: no tailnet ip is a note and nothing else.
+#[test_id(t01n9x9)]
 #[test]
 fn t5_no_tailnet_ip_is_a_note_only() {
     let (_, acts) = decide(&Carry::default(), &Snapshot { tailnet_ip: None, ..idle() });
@@ -74,6 +79,7 @@ fn t5_no_tailnet_ip_is_a_note_only() {
 }
 
 /// `provision.rs:282`, `:355-360`: a cert under `RENEW_DAYS` renews, keyed by name and day.
+#[test_id(t03gu85)]
 #[test]
 fn t5_a_cert_due_renews() {
     let (carry, acts) = decide(&Carry::default(), &busy());
@@ -82,6 +88,7 @@ fn t5_a_cert_due_renews() {
 }
 
 /// `provision.rs:307-318`: after a renewal, each empty value is set; a set value is left.
+#[test_id(tvyiqa7)]
 #[test]
 fn t5_after_renewal_only_the_empty_values_are_set() {
     let snap = Snapshot { plan: Plan { cert: String::new(), key: String::new(), ..plan() }, ..idle() };
@@ -93,6 +100,7 @@ fn t5_after_renewal_only_the_empty_values_are_set() {
 }
 
 /// `provision.rs:339-345`: a closed firewall opens; an absent ufw is left.
+#[test_id(t81fkce)]
 #[test]
 fn t5_a_closed_firewall_opens_and_an_absent_one_is_left() {
     assert!(effects(&decide(&Carry::default(), &Snapshot { firewall: Firewall::Closed, ..idle() }).1).contains(&FIREWALL_OPEN));
@@ -100,6 +108,7 @@ fn t5_a_closed_firewall_opens_and_an_absent_one_is_left() {
 }
 
 /// `provision.rs:323-336`: a drifted password is rewritten; no users file is refused, not written.
+#[test_id(tz2fu38)]
 #[test]
 fn t5_a_drifted_password_is_rewritten() {
     assert!(effects(&decide(&Carry::default(), &Snapshot { password: Password::Drifted, ..idle() }).1).contains(&PASSWORD_WRITE));
@@ -107,6 +116,7 @@ fn t5_a_drifted_password_is_rewritten() {
 }
 
 /// The contract's T6: thirty days, the certificate due on day 10 → one renewal and one restart.
+#[test_id(tz78bud)]
 #[test]
 fn t6_thirty_days_renew_once_and_restart_once() {
     let days_left = Arc::new(Mutex::new(39u32));
@@ -140,12 +150,14 @@ fn at_work() -> TaskRig {
     r
 }
 
+#[test_id(t3ogjb8)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&at_work(), NAME);
     assert!(rows.iter().any(|k| k == "last_note"), "{rows:?}");
 }
 
+#[test_id(t719wb9)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));

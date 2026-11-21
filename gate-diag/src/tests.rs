@@ -4,18 +4,21 @@ use super::*;
 
 // ------------------------------------------------------------------------------ fail_lines()
 
+#[test_id(teh22rq)]
 #[test]
 fn tier1_matches_testlib_fail_shape() {
     let out = "setup\n  FAIL  something broke\nmore\n";
     assert_eq!(fail_lines(out), vec!["  FAIL  something broke".to_string()]);
 }
 
+#[test_id(tyqllno)]
 #[test]
 fn tier1_matches_fail_colon_and_not_ok() {
     assert_eq!(fail_lines("FAIL: boom\n"), vec!["FAIL: boom".to_string()]);
     assert_eq!(fail_lines("not ok 3 - thing\n"), vec!["not ok 3 - thing".to_string()]);
 }
 
+#[test_id(tvj4nr4)]
 #[test]
 fn tier2_falls_back_when_tier1_matches_nothing() {
     // "FAIL" appears mid-line, not in any of the tight tier-1 shapes.
@@ -23,6 +26,7 @@ fn tier2_falls_back_when_tier1_matches_nothing() {
     assert_eq!(fail_lines(out), vec!["assertion FAILed unexpectedly".to_string()]);
 }
 
+#[test_id(tws91di)]
 #[test]
 fn no_fail_lines_when_neither_tier_matches() {
     assert!(fail_lines("nothing interesting here\n").is_empty());
@@ -30,17 +34,20 @@ fn no_fail_lines_when_neither_tier_matches() {
 
 // -------------------------------------------------------------------------------- first_fail()
 
+#[test_id(tz1zzah)]
 #[test]
 fn first_fail_uses_first_matching_line_trimmed() {
     let lines = vec!["   FAIL: boom".to_string(), "FAIL: other".to_string()];
     assert_eq!(first_fail("whatever", &lines, "1", "5", 600), "FAIL: boom");
 }
 
+#[test_id(tmqqfcg)]
 #[test]
 fn first_fail_reports_no_output_when_empty() {
     assert_eq!(first_fail("", &[], "137", "600", 600), "(died rc=137 at 600s/600s — no output)");
 }
 
+#[test_id(tl4qpnp)]
 #[test]
 fn first_fail_reports_last_line_when_no_fail_line_found() {
     let out = "starting up\nstill going\n";
@@ -49,24 +56,28 @@ fn first_fail_reports_last_line_when_no_fail_line_found() {
 
 // -------------------------------------------------------------------------- declared_timeout()
 
+#[test_id(trvg7an)]
 #[test]
 fn declared_timeout_reads_the_suites_own_comment() {
     let src = "#!/usr/bin/env bash\n# timeout: 120\necho hi\n";
     assert_eq!(declared_timeout(Some(src), 600), 120);
 }
 
+#[test_id(typ9pet)]
 #[test]
 fn declared_timeout_falls_back_when_absent() {
     let src = "#!/usr/bin/env bash\necho hi\n";
     assert_eq!(declared_timeout(Some(src), 600), 600);
 }
 
+#[test_id(tl4xlfx)]
 #[test]
 fn declared_timeout_falls_back_when_not_a_plain_integer() {
     let src = "# timeout: soon\n";
     assert_eq!(declared_timeout(Some(src), 600), 600);
 }
 
+#[test_id(t3dqn3x)]
 #[test]
 fn declared_timeout_falls_back_when_source_unreadable() {
     assert_eq!(declared_timeout(None, 600), 600);
@@ -74,17 +85,20 @@ fn declared_timeout_falls_back_when_source_unreadable() {
 
 // -------------------------------------------------------------------------- classify_retry()
 
+#[test_id(t53u4ug)]
 #[test]
 fn retry_ok_is_flaky() {
     assert_eq!(classify_retry(Some("ok")), (RetryClass::Flaky, "red-green (flake)"));
 }
 
+#[test_id(thtwadn)]
 #[test]
 fn retry_red_or_timeout_is_red_red() {
     assert_eq!(classify_retry(Some("red")), (RetryClass::RedRed, "red-red"));
     assert_eq!(classify_retry(Some("timeout")), (RetryClass::RedRed, "red-red"));
 }
 
+#[test_id(ti6tn7x)]
 #[test]
 fn retry_missing_or_other_is_uncertain_red() {
     assert_eq!(classify_retry(None), (RetryClass::Uncertain, "red"));
@@ -93,6 +107,7 @@ fn retry_missing_or_other_is_uncertain_red() {
 
 // ------------------------------------------------------------------------------ summary_row()
 
+#[test_id(tczp4za)]
 #[test]
 fn summary_row_folds_pipes_and_truncates() {
     let fail = "a".repeat(90) + "|end";
@@ -103,6 +118,7 @@ fn summary_row_folds_pipes_and_truncates() {
     assert_eq!(row.matches('|').count(), 5); // 4 cell delimiters; no stray '|' leaked from the fail text
 }
 
+#[test_id(tx2ppe3)]
 #[test]
 fn annotation_text_strips_newlines_and_caps_length() {
     let fail = format!("line1\nline2{}", "x".repeat(300));
@@ -113,6 +129,7 @@ fn annotation_text_strips_newlines_and_caps_length() {
 
 // -------------------------------------------------------------------------------- tail_n()
 
+#[test_id(tw23fn0)]
 #[test]
 fn tail_n_keeps_last_lines_only() {
     assert_eq!(tail_n("a\nb\nc\nd\n", 2), "c\nd");
@@ -120,6 +137,7 @@ fn tail_n_keeps_last_lines_only() {
 
 // ---------------------------------------------------------------------------- JSON builders
 
+#[test_id(tlsmoq8)]
 #[test]
 fn red_suites_json_shape() {
     let j = red_suites_json(&["a.sh".into(), "b.sh".into()], &["c.sh".into()], &[]);
@@ -129,6 +147,7 @@ fn red_suites_json_shape() {
     );
 }
 
+#[test_id(tux9aml)]
 #[test]
 fn red_suites_json_escapes_quotes_and_backslashes() {
     let j = red_suites_json(&["weird\"suite\\.sh".into()], &[], &[]);
@@ -138,6 +157,7 @@ fn red_suites_json_escapes_quotes_and_backslashes() {
 /// sp-3azqi: a fault-only batch (no genuine red) still names the faulted suite in
 /// red-suites.json, distinctly from `red` — nothing reading this file may treat it as a
 /// clean pass just because `red` is empty.
+#[test_id(tmyx6kt)]
 #[test]
 fn red_suites_json_names_faults_distinctly_from_red() {
     let j = red_suites_json(&[], &[], &["test-strand-reclaim-n.sh".into()]);
@@ -147,6 +167,7 @@ fn red_suites_json_names_faults_distinctly_from_red() {
     );
 }
 
+#[test_id(tysq74w)]
 #[test]
 fn is_fault_matches_only_the_fault_status() {
     assert!(is_fault("fault"));
@@ -156,6 +177,7 @@ fn is_fault_matches_only_the_fault_status() {
     assert!(!is_fault(""));
 }
 
+#[test_id(t9kwbzf)]
 #[test]
 fn verdict_rows_one_line_per_suite() {
     let rows = verdict_rows(&["a.sh".into()], &["b.sh".into()]);
@@ -173,6 +195,7 @@ fn row(suite: &str, case: &str, status: &str, secs: i64, detail: &str) -> TapRow
     TapRow { suite: suite.into(), case: case.into(), status: status.into(), seconds: serde_json::Value::from(secs), detail: detail.into() }
 }
 
+#[test_id(tgcqn1n)]
 #[test]
 fn junit_counts_failures_and_skips_per_suite() {
     let rows = vec![
@@ -187,6 +210,7 @@ fn junit_counts_failures_and_skips_per_suite() {
     assert!(xml.contains("<skipped message=\"not applicable\"></skipped>"));
 }
 
+#[test_id(tklycxp)]
 #[test]
 fn junit_escapes_xml_special_characters_including_quotes() {
     let rows = vec![row("a.sh", "case \"with\" quotes & <tags>", "fail", 0, "it said \"no\"")];
@@ -195,12 +219,14 @@ fn junit_escapes_xml_special_characters_including_quotes() {
     assert!(xml.contains("it said &quot;no&quot;"));
 }
 
+#[test_id(tifbyy1)]
 #[test]
 fn junit_suites_sorted_and_empty_input_is_still_valid_shape() {
     let xml = junit_xml(&[]);
     assert_eq!(xml, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites>\n</testsuites>\n");
 }
 
+#[test_id(tlgkq9o)]
 #[test]
 fn parse_tap_rows_skips_unparseable_lines() {
     let jsonl = "{\"suite\":\"a.sh\",\"tier\":\"\",\"case\":\"c\",\"status\":\"pass\",\"seconds\":1,\"uc\":[],\"detail\":\"\"}\nnot json\n";
@@ -211,6 +237,7 @@ fn parse_tap_rows_skips_unparseable_lines() {
 
 // ------------------------------------------------------------------------------ is_red()
 
+#[test_id(tp6b3eu)]
 #[test]
 fn is_red_matches_red_and_timeout_only() {
     assert!(is_red("red"));

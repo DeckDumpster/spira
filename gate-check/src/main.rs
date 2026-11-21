@@ -1,5 +1,8 @@
 //! `gate-check [--home <spira-dir>]` — see DESIGN.md.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use gate_check::engine;
 mod ports;
 mod real;

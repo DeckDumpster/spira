@@ -2,6 +2,9 @@
 //! `.spira/habits.toml` checks and answers with the findings on the lines the edit touched.
 //! Feedback only: every failure path returns `None` and the binary exits 0.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod config;
 mod diff;
 mod exec;

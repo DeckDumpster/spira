@@ -41,6 +41,7 @@ mod bead_sweep {
         start(r);
     }
 
+    #[test_id(t9s0iuc)]
     #[test]
     fn each_seen_mark_is_its_own_row() {
         let mut r = rig(Arc::new(Mutex::new(vec![poisoned("sp-a"), poisoned("sp-b")])));
@@ -48,6 +49,7 @@ mod bead_sweep {
         assert_eq!(rows_of(&r, NAME), ["seen/SUSPECT sp-a READY POISONED ()", "seen/SUSPECT sp-b READY POISONED ()"]);
     }
 
+    #[test_id(tf7hcbr)]
     #[test]
     fn a_boot_rebuild_repeats_no_suspect_and_misses_a_new_one() {
         let world = Arc::new(Mutex::new(vec![poisoned("sp-a")]));
@@ -59,6 +61,7 @@ mod bead_sweep {
         assert_eq!(asked(&r, INBOX_APPEND), 2, "sp-a said again, or sp-b missed");
     }
 
+    #[test_id(toee2h3)]
     #[test]
     fn a_mark_that_cleared_before_the_boot_announces_again_when_it_returns() {
         let world = Arc::new(Mutex::new(vec![poisoned("sp-a")]));

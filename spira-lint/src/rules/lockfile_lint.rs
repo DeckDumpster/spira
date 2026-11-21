@@ -129,6 +129,7 @@ mod tests {
     use super::*;
 
 
+    #[test_id(tvr9qsx)]
     #[test]
     fn version_tuple_reads_three_integer_parts() {
         assert_eq!(version_tuple("1.2.3"), Some(vec![1, 2, 3]));

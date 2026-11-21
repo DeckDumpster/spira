@@ -99,6 +99,7 @@ pub fn listening_socket_holder(path: &str) -> Option<i32> {
 mod tests {
     use super::*;
 
+    #[test_id(t0wfsoy)]
     #[test]
     fn cmdline_of_pid_1_is_readable_or_permission_denied_not_a_panic() {
         // pid 1 always exists on a real kernel; this just proves the function does not
@@ -106,6 +107,7 @@ mod tests {
         let _ = cmdline(1);
     }
 
+    #[test_id(t642fw2)]
     #[test]
     fn ppid_of_pid_1_is_zero_or_none() {
         // pid 1's parent is PID 0 (not a real process) or unreadable — either way, never a

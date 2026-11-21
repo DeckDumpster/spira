@@ -82,6 +82,7 @@ pub fn lookup(kind: &str) -> Option<&'static SectionKind> {
 mod tests {
     use super::*;
 
+    #[test_id(txoym32)]
     #[test]
     fn andon_is_not_registered_and_names_are_unique() {
         assert!(lookup(ANDON).is_none());

@@ -57,6 +57,7 @@ fn m(p: &[u8], s: &[u8]) -> bool {
 mod tests {
     use super::case_match as g;
 
+    #[test_id(t3yf40v)]
     #[test]
     fn star_crosses_slashes_like_case_does() {
         assert!(g("spira/*.sh", "spira/lib.sh"));
@@ -69,6 +70,7 @@ mod tests {
         assert!(g("**", ""));
     }
 
+    #[test_id(tdo86ql)]
     #[test]
     fn question_brackets_and_escapes() {
         assert!(g("a?c", "abc"));
@@ -81,6 +83,7 @@ mod tests {
         assert!(g("a[b", "a[b"));
     }
 
+    #[test_id(tjy2obh)]
     #[test]
     fn literal_patterns_are_whole_matches() {
         assert!(g("Makefile", "Makefile"));

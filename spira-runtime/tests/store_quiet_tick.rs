@@ -4,6 +4,8 @@
 //! it is asked; the socket the tasks are handed is a listener that counts connections. One test:
 //! the projection is installed once per process.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::os::unix::net::UnixListener;
 use std::path::Path;
@@ -119,6 +121,7 @@ fn env(dir: &Path) -> Env {
     }
 }
 
+#[test_id(tso1ief)]
 #[test]
 fn a_quiet_tick_of_each_task_that_read_the_store_every_tick_never_reaches_its_socket() {
     let dir = testkit::TempDir::new("store-quiet-tick");

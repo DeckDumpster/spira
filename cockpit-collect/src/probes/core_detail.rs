@@ -341,6 +341,7 @@ mod tests {
     use super::*;
 
     // covers: UC-cockpit-observability-08
+    #[test_id(tkic9uq)]
     #[test]
     fn the_server_inflow_reply_parses_to_the_same_shape_as_the_row_aggregate() {
         let f = inflow_from_server(r#"{"n":3,"defect":1,"kinds":[["task",2],["bug",1]],"rows":[{"id":"sp-a"}]}"#).unwrap();
@@ -351,6 +352,7 @@ mod tests {
         assert_eq!((f.n, f.defect, f.rows.len()), (1, 1, 2));
     }
 
+    #[test_id(t43k321)]
     #[test]
     fn the_inflow_probe_asks_plan_for_the_window_in_seconds() {
         assert_eq!(inflow_argv(60), ["plan", "inflow", "--window-secs", "3600"]);
@@ -358,6 +360,7 @@ mod tests {
         assert_eq!((f.n, f.defect, f.kinds), (3, 1, vec![("task".to_string(), 2), ("bug".to_string(), 1)]));
     }
 
+    #[test_id(tn2xprv)]
     #[test]
     fn inflow_defect_counts_bugs_and_incidents() {
         let rows = [serde_json::json!({"id":"sp-1","issue_type":"bug","created_at":"2026-09-30T00:00:00Z","labels":[]}),

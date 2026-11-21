@@ -46,6 +46,7 @@ pub fn process_dirs(with_tail: bool) -> Vec<PathBuf> {
 mod tests {
     use super::*;
 
+    #[test_id(tfhaqr2)]
     #[test]
     fn the_release_comes_from_the_environment_never_the_executable() {
         assert_eq!(release_root(Some("r/env-rel/")), Some(PathBuf::from("r/env-rel")));
@@ -53,12 +54,14 @@ mod tests {
         assert_eq!(release_root(None), None);
     }
 
+    #[test_id(tagcnl0)]
     #[test]
     fn the_release_bin_precedes_the_inherited_path() {
         let d = search_dirs(Some(Path::new("r")), "t", "usr/bin::bin");
         assert_eq!(join_path(&d), "r/bin:r/spira:t:usr/bin:bin");
     }
 
+    #[test_id(tqae2a8)]
     #[test]
     fn a_missing_program_does_not_resolve() {
         assert_eq!(resolve("no-such-program-sp-nqmjx7", &[PathBuf::from("usr/bin")]), None);

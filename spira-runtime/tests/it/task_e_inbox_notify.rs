@@ -67,6 +67,7 @@ fn carry(r: &TaskRig) -> Carry {
     r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap_or_default()
 }
 
+#[test_id(t9jbbol)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_five_minute_tick() {
     let t = acc::row(NAME);
@@ -81,6 +82,7 @@ fn t1_the_row_is_registered_and_its_boot_arms_the_five_minute_tick() {
     assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
 }
 
+#[test_id(tc2flz8)]
 #[test]
 fn t2_every_row_caught_up_and_healthy_journals_nothing() {
     let mut r = rig(1, Arc::new(Mutex::new(caught_up())));
@@ -88,6 +90,7 @@ fn t2_every_row_caught_up_and_healthy_journals_nothing() {
     acc::assert_healthy(&r, STREAM);
 }
 
+#[test_id(tq4rf9s)]
 #[test]
 fn t3_the_pending_and_unhealthy_clocks_set_ask_once_and_clear_and_a_halted_world_asks_no_health() {
     let w = Arc::new(Mutex::new(stale()));
@@ -112,6 +115,7 @@ fn t3_the_pending_and_unhealthy_clocks_set_ask_once_and_clear_and_a_halted_world
     assert!(carry(&r).unhealthy.is_empty(), "a halted world clears the unhealthy clock");
 }
 
+#[test_id(tl5voox)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("e/inbox_notify.rs")), None);
@@ -123,6 +127,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 }
 
 /// The two asks `watchd notify` mailed (`notify.rs:146,286`, `ops.rs:252-259`).
+#[test_id(te7n585)]
 #[test]
 fn t5_the_asks_are_the_ones_watchd_notify_mailed() {
     let mut r = rig(1, Arc::new(Mutex::new(stale())));
@@ -148,12 +153,14 @@ fn asked_once() -> TaskRig {
     r
 }
 
+#[test_id(t0vsqgv)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&asked_once(), NAME);
     assert!(rows.iter().any(|k| k == "pending/gate") && rows.iter().any(|k| k == "stamp_backlog"), "{rows:?}");
 }
 
+#[test_id(to6ce8f)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(asked_once, registration, STREAM, runtime::event::EventKind::new(TICK, ""));

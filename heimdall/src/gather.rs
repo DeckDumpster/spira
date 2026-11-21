@@ -240,6 +240,7 @@ pub fn world_state(run_dir: &Path) -> WorldState {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tphugyk)]
     #[test]
     fn the_gate_section_status_yields_each_repos_rows() {
         let text = r#"{"section":{"status":{"recent_runs":[{"repo":"spira","rows":[{"bead":"a"}]}]}}}"#;
@@ -250,6 +251,7 @@ mod tests {
 
     use super::*;
 
+    #[test_id(ttz2xpp)]
     #[test]
     fn active_text_is_the_ports_state_word() {
         use runtime::units::{ScriptedUnits, UnitFacts, UnitState, Units};
@@ -268,6 +270,7 @@ mod tests {
         assert_eq!(blind.active_text("spira-sentinel-prod.timer"), "");
     }
 
+    #[test_id(ta4oq08)]
     #[test]
     fn log_tail_missing_file_is_unreadable_not_empty_text() {
         let t = read_log_tail(Path::new("no/such/path/ever"), 1000);
@@ -275,6 +278,7 @@ mod tests {
         assert_eq!(t.error, "no such file");
     }
 
+    #[test_id(td0c7t8)]
     #[test]
     fn log_tail_reads_only_the_last_n_bytes() {
         let dir = testkit::TempDir::new("heimdall-gather");
@@ -285,6 +289,7 @@ mod tests {
         assert_eq!(t.text, "6789");
     }
 
+    #[test_id(tsj30z1)]
     #[test]
     fn log_tail_of_a_short_file_is_the_whole_file() {
         let dir = testkit::TempDir::new("heimdall-gather");
@@ -294,6 +299,7 @@ mod tests {
         assert_eq!(t.text, "hi");
     }
 
+    #[test_id(tr7tdxh)]
     #[test]
     fn mirror_unconfigured_when_no_exporter() {
         let m = check_mirror("", Path::new("does/not/matter"));
@@ -301,6 +307,7 @@ mod tests {
         assert!(!m.exists);
     }
 
+    #[test_id(tgr15tv)]
     #[test]
     fn mirror_configured_but_missing() {
         let m = check_mirror("dolt", Path::new("no/such/mirror/ever.jsonl"));
@@ -308,6 +315,7 @@ mod tests {
         assert!(!m.exists);
     }
 
+    #[test_id(trwzp0l)]
     #[test]
     fn mirror_configured_and_present() {
         let dir = testkit::TempDir::new("heimdall-gather");
@@ -317,6 +325,7 @@ mod tests {
         assert!(m.configured && m.exists);
     }
 
+    #[test_id(tszqmdd)]
     #[test]
     fn no_halt_or_drain_files_is_a_clean_world() {
         let dir = testkit::TempDir::new("heimdall-gather");
@@ -353,42 +362,49 @@ mod tests {
         }
     }
 
+    #[test_id(tmclnz5)]
     #[test]
     fn spira_unit_prefers_the_instance_qualified_form() {
         let sc = FakeSc { enabled: vec!["spira-sentinel-prod.timer"], ..Default::default() };
         assert_eq!(spira_unit(&sc, "sentinel", "timer", "prod"), "spira-sentinel-prod.timer");
     }
 
+    #[test_id(tct2b4l)]
     #[test]
     fn spira_unit_falls_back_to_the_plain_form() {
         let sc = FakeSc { enabled: vec!["spira-sentinel.timer"], ..Default::default() };
         assert_eq!(spira_unit(&sc, "sentinel", "timer", "prod"), "spira-sentinel.timer");
     }
 
+    #[test_id(tl5n2yj)]
     #[test]
     fn spira_unit_is_question_mark_when_neither_form_is_known() {
         let sc = FakeSc::default();
         assert_eq!(spira_unit(&sc, "sentinel", "timer", "prod"), "?");
     }
 
+    #[test_id(tycxvpm)]
     #[test]
     fn sentinel_timer_status_unknown_when_unresolvable() {
         let sc = FakeSc::default();
         assert_eq!(sentinel_timer_status(&sc, "prod"), "unknown");
     }
 
+    #[test_id(trikry6)]
     #[test]
     fn sentinel_timer_status_active() {
         let sc = FakeSc { enabled: vec!["spira-sentinel-prod.timer"], text: vec![("spira-sentinel-prod.timer", "active")], ..Default::default() };
         assert_eq!(sentinel_timer_status(&sc, "prod"), "active");
     }
 
+    #[test_id(t83cmq1)]
     #[test]
     fn sentinel_timer_status_inactive_when_resolved_but_not_active() {
         let sc = FakeSc { enabled: vec!["spira-sentinel-prod.timer"], text: vec![("spira-sentinel-prod.timer", "inactive")], ..Default::default() };
         assert_eq!(sentinel_timer_status(&sc, "prod"), "inactive");
     }
 
+    #[test_id(t9nj6dq)]
     #[test]
     fn sentinel_timer_status_unknown_when_resolved_but_is_active_prints_nothing() {
         // A systemctl on which every call succeeds (so is-enabled resolves the unit) but prints nothing — heimdall.sh's own
@@ -397,6 +413,7 @@ mod tests {
         assert_eq!(sentinel_timer_status(&sc, "prod"), "unknown");
     }
 
+    #[test_id(tr9czqz)]
     #[test]
     fn parse_show_id_nrestarts_pairs_ids_with_counts() {
         let text = "Id=spira-sentinel.service\nNRestarts=3\n\nId=spira-heimdall.service\nNRestarts=0\n";

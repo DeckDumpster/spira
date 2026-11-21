@@ -78,6 +78,7 @@ mod tests {
         (found, rule.checked())
     }
 
+    #[test_id(tnq2kkk)]
     #[test]
     fn two_sites_with_one_id_are_two_findings_each_naming_the_other() {
         let (got, checked) = run(&[
@@ -90,6 +91,7 @@ mod tests {
         assert_eq!(checked, Some((2, "ids".into())));
     }
 
+    #[test_id(tsupvv6)]
     #[test]
     fn distinct_ids_and_macro_fragments_are_no_finding() {
         let (got, checked) = run(&[(

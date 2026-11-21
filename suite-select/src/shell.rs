@@ -148,6 +148,7 @@ impl ShellGraph {
 mod tests {
     use super::*;
 
+    #[test_id(td07x8m)]
     #[test]
     fn a_change_reaches_its_callers_across_scripts() {
         let mut g = ShellGraph::default();

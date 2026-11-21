@@ -11,3 +11,6 @@ integration = ["system-paths/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 libc = "0.2"
+
+[dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }

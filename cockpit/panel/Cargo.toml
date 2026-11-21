@@ -41,3 +41,6 @@ path = "../../system-paths"
 
 [dev-dependencies.testkit]
 path = "../../testkit"
+
+[dev-dependencies]
+spira-test-id = { path = "../../spira-test-id" }

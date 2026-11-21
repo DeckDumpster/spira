@@ -62,6 +62,7 @@ const MUTATIONS: &[&str] = &[
 ];
 
 // covers: UC-safety-fences-30 UC-dispatch-24
+#[test_id(tu1rplq)]
 #[test]
 fn ops_runs_diagnostics_and_nothing_that_mutates_and_has_no_bare_bash() {
     check(
@@ -81,6 +82,7 @@ fn ops_runs_diagnostics_and_nothing_that_mutates_and_has_no_bare_bash() {
 }
 
 // covers: UC-safety-fences-30 UC-dispatch-24
+#[test_id(txbdix1)]
 #[test]
 fn czar_runs_its_fence_and_diagnostics_and_nothing_that_mutates_and_has_no_bare_bash() {
     check(
@@ -98,6 +100,7 @@ fn czar_runs_its_fence_and_diagnostics_and_nothing_that_mutates_and_has_no_bare_
     );
 }
 
+#[test_id(tz18vju)]
 #[test]
 fn the_matcher_refuses_what_no_pattern_names_so_a_pass_means_something() {
     let t = vec!["Bash(git log*)".to_string(), "Read".to_string()];

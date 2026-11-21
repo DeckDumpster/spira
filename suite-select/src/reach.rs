@@ -331,6 +331,7 @@ mod tests {
         t
     }
 
+    #[test_id(t8qmy6d)]
     #[test]
     fn a_change_to_a_library_reaches_the_binaries_that_depend_on_it() {
         let t = ws();
@@ -345,6 +346,7 @@ mod tests {
     /// Over-broad-scopes #7 (sp-ipwlic): a change to a library checks it and everything that
     /// depends on it — tests included — not the workspace; a manifest, lockfile or toolchain
     /// change still means the whole workspace.
+    #[test_id(t7j8kzj)]
     #[test]
     fn a_change_checks_its_crate_and_its_dependents_and_a_build_input_checks_everything() {
         let t = ws();
@@ -357,6 +359,7 @@ mod tests {
         }
     }
 
+    #[test_id(t724vqi)]
     #[test]
     fn no_workspace_is_none_and_an_unreadable_member_is_a_refusal() {
         let t = testkit::TempDir::new("suite-select-reach-none");
@@ -365,6 +368,7 @@ mod tests {
         assert!(Reach::load(t.path()).is_err());
     }
 
+    #[test_id(t36wdbk)]
     #[test]
     fn words_skip_comments() {
         let w = words_of("# mail is prose\n\"$BIN/mail-x\" send\n");

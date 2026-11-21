@@ -1,5 +1,8 @@
 //! testenv — the harness's test runner (sp-5odic). See DESIGN.md for the contract.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod base;
 pub mod batch;
 pub mod bdmeter;

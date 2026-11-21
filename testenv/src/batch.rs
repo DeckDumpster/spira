@@ -697,6 +697,7 @@ mod tests {
         s
     }
 
+    #[test_id(tal286u)]
     #[test]
     // covers: UC-test-infrastructure-30
     fn parallel_records_every_outcome_and_writes_out_before_result() {
@@ -775,6 +776,7 @@ mod tests {
     /// conmon exit-file-wait message, full passing TAP output ahead of it — exactly the
     /// shape the VM certification run hit for test-strand-reclaim-n.sh) records as Fault,
     /// never Red, and never blocks or quarantines like an ordinary suite defect would.
+    #[test_id(tuvinxg)]
     #[test]
     fn podman_exec_wait_timeout_records_fault_not_red() {
         let rt = FakeRuntime::new();
@@ -809,6 +811,7 @@ mod tests {
         assert!(res.trim_end().ends_with(" parallel explicit 255"));
     }
 
+    #[test_id(ttvgdah)]
     #[test]
     fn quarantined_reds_do_not_block() {
         let rt = FakeRuntime::new();
@@ -823,6 +826,7 @@ mod tests {
         assert_eq!(out.quarantined_reds(), vec!["test-q.sh"]);
     }
 
+    #[test_id(t89ldp6)]
     #[test]
     fn exclusive_suite_runs_alone() {
         let rt = FakeRuntime::new();
@@ -868,6 +872,7 @@ mod tests {
         assert_eq!(excl_saw.load(Ordering::SeqCst), 1);
     }
 
+    #[test_id(tt5nwap)]
     #[test]
     fn a_suite_red_on_enospc_is_a_harness_fault_not_a_red() {
         let rt = FakeRuntime::new();
@@ -890,6 +895,7 @@ mod tests {
         assert_eq!(out.blocking_reds(), vec!["test-b.sh"]);
     }
 
+    #[test_id(tjmil5q)]
     #[test]
     fn lost_user_account_stops_serial_before_recording_the_suite() {
         let rt = FakeRuntime::new();
@@ -916,6 +922,7 @@ mod tests {
         assert_eq!(rt.suite_execs().len(), 2);
     }
 
+    #[test_id(tceyouw)]
     #[test]
     fn serial_death_check_after_each_suite() {
         let rt = FakeRuntime::new();
@@ -943,6 +950,7 @@ mod tests {
         assert_eq!(e[0].env_value("SPIRA_RUN"), Some(format!("{}/spira-batch-i1", system_paths::TMP).as_str()));
     }
 
+    #[test_id(t70m6zb)]
     #[test]
     // covers: UC-test-infrastructure-30
     fn timeout_is_passed_to_every_suite_exec() {
@@ -1002,6 +1010,7 @@ mod tests {
         );
     }
 
+    #[test_id(te6ykvk)]
     #[test]
     fn without_a_deadline_nothing_is_deferred_and_no_exec_carries_one() {
         let rt = FakeRuntime::new();
@@ -1022,6 +1031,7 @@ mod vtime_tests {
     use super::*;
 
 
+    #[test_id(ttl2uvx)]
     #[test]
     fn now_epoch_honours_spira_now() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, now_epoch);

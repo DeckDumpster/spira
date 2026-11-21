@@ -240,6 +240,7 @@ mod tests {
         }
     }
 
+    #[test_id(thzxgbt)]
     #[test]
     fn home_resolves_from_the_release_when_spira_home_is_absent() {
         struct UnitEnv(Vec<(&'static str, &'static str)>);

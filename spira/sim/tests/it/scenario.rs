@@ -12,6 +12,7 @@ fn shell(step: &str) -> Result<String, String> {
     s.steps[0].shell()
 }
 
+#[test_id(t0bmttu)]
 #[test]
 fn a_file_step_creates_the_bead_in_both_stores_under_the_given_id() {
     let cmd = shell("file = \"sp-hp01\"").unwrap();
@@ -20,6 +21,7 @@ fn a_file_step_creates_the_bead_in_both_stores_under_the_given_id() {
     assert!(cmd.contains("&& spira-lc create-bead sp-hp01 --ready") && cmd.ends_with("sync-claim-inputs sp-hp01"), "{cmd}");
 }
 
+#[test_id(t780bze)]
 #[test]
 fn a_step_must_be_exactly_one_kind_and_a_bead_id_is_not_shell() {
     for bad in [
@@ -35,6 +37,7 @@ fn a_step_must_be_exactly_one_kind_and_a_bead_id_is_not_shell() {
     }
 }
 
+#[test_id(txb173r)]
 #[test]
 fn a_goal_tag_needs_a_goal_and_real_actors_are_read_by_name() {
     assert!(sc("goal_tag = \"v\"\n").unwrap_err().contains("goal_tag needs a goal"));
@@ -42,6 +45,7 @@ fn a_goal_tag_needs_a_goal_and_real_actors_are_read_by_name() {
     assert_eq!((s.goal_tag.as_deref(), s.real_actors.as_slice()), (Some("v"), &["rounds".to_string()][..]));
 }
 
+#[test_id(t6542vn)]
 #[test]
 fn the_seam_takes_the_rune_from_the_dwarf_argument_of_a_systemd_run_argv_and_ranks_by_the_sixth_field() {
     let argv: Vec<String> = ["--user", "--setenv=A=dwarf", "w/release/bin/dwarf", "--home", "h", "builder"].iter().map(|s| s.to_string()).collect();
@@ -50,6 +54,7 @@ fn the_seam_takes_the_rune_from_the_dwarf_argument_of_a_systemd_run_argv_and_ran
     assert_eq!(ranked_ids("2\t1\t2\t1\tt\tsp-b\t\n2\t1\t2\t1\tt\tsp-a\t\nshort\n"), vec!["sp-b", "sp-a"]);
 }
 
+#[test_id(tntdebb)]
 #[test]
 fn the_seam_runs_only_beads_the_scenario_scripts() {
     let scenario = "sp-b submit\nsp-a commit x\n";
@@ -57,6 +62,7 @@ fn the_seam_runs_only_beads_the_scenario_scripts() {
     assert!(!scripted(scenario, "sp-c") && !scripted("", "sp-a") && !scripted("sp-ab submit\n", "sp-a"));
 }
 
+#[test_id(t92x201)]
 #[test]
 fn a_worlds_config_moves_every_fixture_path_inside_it_and_registers_only_its_repository() {
     let home = Path::new("w/hm");
@@ -68,6 +74,7 @@ fn a_worlds_config_moves_every_fixture_path_inside_it_and_registers_only_its_rep
     assert!(cfg.contains("w/release/spira/runes"), "the release paths follow the world's release link");
 }
 
+#[test_id(t79czrh)]
 #[test]
 fn a_world_registers_one_queue_local_row_and_names_its_tools_absolutely() {
     assert_eq!(registry_rows(Path::new("w"), &repo_set(&[]).unwrap()), format!("{REPO_NAME}|w/work|queue.local|local/main|||plan\n"));
@@ -79,12 +86,14 @@ fn a_world_registers_one_queue_local_row_and_names_its_tools_absolutely() {
     assert_eq!(get("spira.prod"), Some("w/release/spira"));
 }
 
+#[test_id(ttlbchi)]
 #[test]
 fn the_worlds_gate_is_the_stub_runner_alone_and_host_touching_tools_are_inert() {
     assert_eq!(stub_gate_steps(Path::new("w/config/suite-runner")), "step \"w/config/suite-runner\"\n");
     assert!(INERT_TOOLS.contains(&"unit-ensure") && INERT_TOOLS.contains(&"target-reap"));
 }
 
+#[test_id(tzqfc26)]
 #[test]
 fn a_file_step_carries_its_priority_into_the_bead_and_no_other_step_may() {
     assert!(shell("file = \"sp-a\"\npriority = 0").unwrap().contains("-t task -p 0 "));
@@ -94,6 +103,7 @@ fn a_file_step_carries_its_priority_into_the_bead_and_no_other_step_may() {
     }
 }
 
+#[test_id(tphbhyn)]
 #[test]
 fn a_scenarios_own_sql_is_one_select_under_a_plain_name() {
     let own = |kind: &str, name: &str, sql: &str| sc(&format!("[[{kind}]]\nname = \"{name}\"\nsql = \"{sql}\"\n")).map(|_| ());
@@ -108,6 +118,7 @@ fn seeded(extra: &str) -> Result<Scenario, String> {
     sc(&format!("{extra}\n"))
 }
 
+#[test_id(twl9409)]
 #[test]
 fn a_seed_files_through_bead_sh_with_its_priority_labels_body_and_deps() {
     let s = seeded("[[seed]]\nhandle = \"a\"\ntitle = \"it's a\"\nfor = \"builder\"\npriority = 1\nlabels = [\"x\"]\nbody = \"b\"\n[[seed]]\nhandle = \"b\"\ntitle = \"b\"\nkind = \"event\"\ndeps = [\"a\"]\n").unwrap();
@@ -121,6 +132,7 @@ fn a_seed_files_through_bead_sh_with_its_priority_labels_body_and_deps() {
     assert!(s.reads_bead_rows());
 }
 
+#[test_id(tlnus02)]
 #[test]
 fn a_repo_spec_names_a_mode_and_a_trunk_and_the_ref_its_branches_land_on() {
     let spec = |s: &str| RepoSpec::parse(s).unwrap();
@@ -135,6 +147,7 @@ fn a_repo_spec_names_a_mode_and_a_trunk_and_the_ref_its_branches_land_on() {
     }
 }
 
+#[test_id(t94dg94)]
 #[test]
 fn a_world_always_has_its_own_repository_first_and_registers_every_repository_it_was_given() {
     let spec = |s: &str| RepoSpec::parse(s).unwrap();
@@ -152,6 +165,7 @@ fn a_world_always_has_its_own_repository_first_and_registers_every_repository_it
     assert_eq!(section("repo.sim").unwrap()["mode"], "queue.local");
 }
 
+#[test_id(tbt9eiy)]
 #[test]
 fn a_scenario_declares_repositories_and_routes_its_beads_to_them() {
     let text = |extra: &str| format!("epoch = 1\nhorizon = 2\nrepos = [\"docs:push:master\"]\n{extra}");
@@ -168,6 +182,7 @@ fn a_scenario_declares_repositories_and_routes_its_beads_to_them() {
     assert_eq!(over.iter().map(|r| (r.name.as_str(), r.mode.as_str(), r.trunk.as_str())).collect::<Vec<_>>(), [(REPO_NAME, "queue.local", "main"), ("docs", "hold", "main"), ("other", "pr", "main")]);
 }
 
+#[test_id(tosl96n)]
 #[test]
 fn the_call_works_a_bead_in_the_repository_the_scenario_routes_it_to() {
     let scenario = "sp-a repo docs\nsp-a submit\nsp-b submit\n";
@@ -176,12 +191,14 @@ fn the_call_works_a_bead_in_the_repository_the_scenario_routes_it_to() {
     assert!(spira_sim::agent::parse(scenario, "sp-a").is_ok());
 }
 
+#[test_id(tjub9uw)]
 #[test]
 fn the_real_dwarf_is_asked_for_by_one_marker_line_and_not_by_a_bead_named_like_it() {
     assert!(real_dwarf("sp-a submit\n@real-dwarf\n"));
     assert!(!real_dwarf("sp-a submit\n") && !scripted("@real-dwarf\n", "sp-a"));
 }
 
+#[test_id(t9t7axq)]
 #[test]
 fn a_systemd_run_argv_becomes_the_dwarf_command_with_its_setenv_pairs_and_another_home() {
     let argv: Vec<String> = ["--property=X=1", "--setenv=PATH=r/bin:bin", "--setenv=HOME=h", "r/bin/dwarf", "--home", "r/spira", "builder"].iter().map(|s| s.to_string()).collect();
@@ -191,6 +208,7 @@ fn a_systemd_run_argv_becomes_the_dwarf_command_with_its_setenv_pairs_and_anothe
     assert!(dwarf_command(&argv[..2]).is_err());
 }
 
+#[test_id(tud4hw9)]
 #[test]
 fn a_file_step_carries_a_body_and_only_a_file_step_may() {
     let cmd = shell("file = \"sp-b\"\nbody = \"## Build\\n\\nx\"").unwrap();
@@ -199,6 +217,7 @@ fn a_file_step_carries_a_body_and_only_a_file_step_may() {
     assert!(sc("real_dwarf = true\n").unwrap().real_dwarf);
 }
 
+#[test_id(t6o8c0k)]
 #[test]
 fn a_world_names_the_stub_agent_launcher_as_its_agent_and_the_launcher_carries_the_paths_the_dwarf_drops() {
     let s = home_settings(Path::new("w"), "fx/f1\n", Path::new("usr/bin/bd"));

@@ -219,6 +219,7 @@ mod tests {
     use std::cell::RefCell;
 
     // covers: UC-instance-lifecycle-44
+    #[test_id(ttm2hnt)]
     #[test]
     fn a_kept_timer_whose_service_failed_shows_the_result() {
         assert_eq!(keep_row("spira-watchdog-prod.timer", "active", "timeout"), format!("  {:<30} active (svc: timeout)", "spira-watchdog-prod.timer"));
@@ -229,6 +230,7 @@ mod tests {
         assert_eq!(timer_service("lc-serve.service"), None);
     }
 
+    #[test_id(tpo6tu5)]
     #[test]
     fn the_headline_names_a_config_change_the_scheduler_has_not_taken_and_what_it_waits_for() {
         let doc = |repin: &str| format!(r#"{{"at":1,"halted":false,"tasks":[],"repin":{repin}}}"#);
@@ -257,6 +259,7 @@ mod tests {
         }
     }
 
+    #[test_id(tor1eyq)]
     #[test]
     fn halt_sends_the_reason_as_one_argument() {
         let f = Fake::ok("scheduler.halted x");
@@ -264,6 +267,7 @@ mod tests {
         assert_eq!(*f.calls.borrow(), vec![vec!["scheduler".to_string(), "halt".into(), "planted reason".into()]]);
     }
 
+    #[test_id(tghxn8j)]
     #[test]
     fn an_empty_reason_halts_as_unstated() {
         let f = Fake::ok("ok");
@@ -271,6 +275,7 @@ mod tests {
         assert_eq!(f.calls.borrow()[0][2], "unstated");
     }
 
+    #[test_id(tsoj81g)]
     #[test]
     fn resume_sends_scheduler_resume() {
         let f = Fake::ok("ok");
@@ -278,12 +283,14 @@ mod tests {
         assert_eq!(*f.calls.borrow(), vec![vec!["scheduler".to_string(), "resume".into()]]);
     }
 
+    #[test_id(tkpxefd)]
     #[test]
     fn a_refused_call_is_the_error() {
         let f = Fake { calls: RefCell::new(Vec::new()), reply: Err("down".into()) };
         assert_eq!(halt(&f, "x"), Err("down".into()));
     }
 
+    #[test_id(tmsgzb5)]
     #[test]
     fn the_keep_list_holds_the_scheduler_the_store_dolt_and_the_watchdog() {
         for u in ["spira-runtime-prod.service", "spira-runtime.service", "lc-serve.service", "dolt-beads.service", "spira-watchdog-prod.timer", "spira-watchdog-prod.service"] {
@@ -300,6 +307,7 @@ mod tests {
         {"name":"watch.tower","mode":"observe","state":null,"last_fired_at":null,"last_due_at":null,"lag_ms":null,"next_due_at":900000,"last_outcome":null,"in_flight":true}
     ],"classes":[]}"#;
 
+    #[test_id(t921p0f)]
     #[test]
     fn status_parses_the_halt_and_each_task() {
         let s = parse_status(DOC).unwrap();
@@ -311,12 +319,14 @@ mod tests {
         assert!(s.tasks[1].in_flight);
     }
 
+    #[test_id(tnkmsll)]
     #[test]
     fn a_document_without_halted_is_refused_named() {
         assert!(parse_status(r#"{"at":1}"#).unwrap_err().contains("halted"));
         assert!(parse_status("not json").unwrap_err().contains("not JSON"));
     }
 
+    #[test_id(t48dsod)]
     #[test]
     fn task_lines_read_last_fired_next_due_and_lag_against_the_documents_time() {
         let s = parse_status(DOC).unwrap();
@@ -326,6 +336,7 @@ mod tests {
         assert!(b.contains("fired never") && b.contains("100s overdue") && b.contains("(in flight)"), "{b}");
     }
 
+    #[test_id(tl2nblx)]
     #[test]
     fn the_headline_says_halted_and_what_it_holds() {
         let s = parse_status(DOC).unwrap();
@@ -334,6 +345,7 @@ mod tests {
         assert!(headline(&r).contains("RUNNING") && headline(&r).contains("2 task(s)"));
     }
 
+    #[test_id(t08sa7d)]
     #[test]
     fn a_stamp_and_a_scheduler_that_disagree_are_named() {
         let s = parse_status(DOC).unwrap();
@@ -344,6 +356,7 @@ mod tests {
         assert_eq!(mismatch(false, &r), None);
     }
 
+    #[test_id(tvhmxay)]
     #[test]
     fn report_says_running_halted_or_unanswered_by_exit_code() {
         let (rc, lines) = report(&Fake::ok(DOC));
@@ -359,6 +372,7 @@ mod tests {
         assert_eq!(report(&Fake::ok("garbage")).0, RC_UNANSWERED);
     }
 
+    #[test_id(t9o614y)]
     #[test]
     fn raw_hands_back_the_document_with_reports_exit_codes() {
         assert_eq!(raw(&Fake::ok(DOC)), (RC_HALTED, DOC.to_string()));
@@ -369,6 +383,7 @@ mod tests {
         assert_eq!(raw(&Fake::ok("garbage")).0, RC_UNANSWERED);
     }
 
+    #[test_id(tjuwng9)]
     #[test]
     fn the_socket_speaks_the_control_wire() {
         let dir = testkit::TempDir::new("world-sched");

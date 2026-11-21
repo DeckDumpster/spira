@@ -203,6 +203,7 @@ mod tests {
         Store::new(dir.path().join("systemd/user"), "test")
     }
 
+    #[test_id(tkaq67y)]
     #[test]
     fn the_freeze_dropin_is_a_condition_no_path_meets_on_the_service() {
         let d = TempDir::new("freeze-dropin");
@@ -215,6 +216,7 @@ mod tests {
         assert_eq!(runtime_unit_dir(1000), PathBuf::from(format!("{}/1000/systemd/user", system_paths::RUN_USER)));
     }
 
+    #[test_id(taysoie)]
     #[test]
     fn a_frozen_service_is_not_restarted_when_the_runtime_that_wants_it_starts() {
         let d = TempDir::new("freeze-holds");
@@ -229,6 +231,7 @@ mod tests {
         assert_eq!(u.active_state(SERVICE), "inactive");
     }
 
+    #[test_id(t7759mf)]
     #[test]
     fn without_the_freeze_a_stopped_service_comes_back_with_the_runtime() {
         let d = TempDir::new("freeze-control");
@@ -241,6 +244,7 @@ mod tests {
         assert_eq!(u.active_state(SERVICE), "active");
     }
 
+    #[test_id(tp1nfdf)]
     #[test]
     fn a_freeze_refuses_naming_the_unit_still_active_after_the_stop() {
         let d = TempDir::new("freeze-stuck");
@@ -251,6 +255,7 @@ mod tests {
         assert!(e.starts_with("lc-serve.service is \"active\" after the stop: not frozen"), "{e}");
     }
 
+    #[test_id(tchox89)]
     #[test]
     fn a_thaw_removes_the_dropins_and_starts_the_service_then_the_runtime() {
         let d = TempDir::new("freeze-thaw");

@@ -398,6 +398,7 @@ pub fn red_cause(judged: &str, reason: &str) -> String {
 mod red_cause_tests {
     use super::red_cause;
 
+    #[test_id(tbcsk47)]
     #[test]
     fn a_no_rebase_red_is_not_a_judged_cause() {
         assert_eq!(red_cause("cert-gate-red", "no-rebase"), "no-rebase");
@@ -498,6 +499,7 @@ pub struct Recut {
 mod gate_run_tests {
     use super::*;
 
+    #[test_id(tx7frax)]
     #[test]
     fn the_hard_cap_kill_is_no_verdict_not_red() {
         let g = GateRun::parse(1, "gate: VERDICT=FAIL reason=over-cap branch=b repo=r suite=- (killed)\n".into());
@@ -506,6 +508,7 @@ mod gate_run_tests {
         assert_eq!(g.reason_or("x"), "over-cap");
     }
 
+    #[test_id(t2vbao7)]
     #[test]
     fn a_red_fence_is_named_with_the_line_it_printed() {
         let msg = "gate fixture-config: spira/testlib/complete.toml does not resolve against the landing ref";
@@ -515,6 +518,7 @@ mod gate_run_tests {
         assert_eq!(GateRun::parse(1, unnamed.into()).red_at(), ("spira-lint".to_string(), "boom".to_string()));
     }
 
+    #[test_id(twz9rzj)]
     #[test]
     fn a_branch_red_stays_red() {
         let g = GateRun::parse(1, "gate: VERDICT=FAIL reason=branch-red branch=b repo=r suite=s\n".into());

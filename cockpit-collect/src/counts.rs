@@ -45,6 +45,7 @@ mod tests {
         logs
     }
 
+    #[test_id(tgp5a3z)]
     #[test]
     fn the_closed_in_24h_is_a_logsql_count_of_bead_transitions_into_a_terminal_state() {
         let logs = answering(&[("to:in(", 41), ("event:\"Claim\"", 50), ("event:\"Submit\"", 44), ("event:\"Deliver\"", 40)]);
@@ -55,6 +56,7 @@ mod tests {
         assert!(asked.iter().any(|q| q.contains("to:in(\"LANDED\"")), "{asked:?}");
     }
 
+    #[test_id(t7ilmaw)]
     #[test]
     fn an_unreadable_store_is_an_error_not_a_zero() {
         let logs = FakeLogs::start();

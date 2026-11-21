@@ -1,5 +1,8 @@
 /// A line for the caller's stderr: the binary prints it, an in-process caller reads it from
 /// [`client::Reply::err`]. Kept per thread, because one verb runs on one thread.
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 macro_rules! warn {
     ($($t:tt)*) => {
         $crate::diag::push(format!($($t)*))

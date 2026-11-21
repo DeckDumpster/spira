@@ -20,6 +20,7 @@ fn refused(a: &[&str]) -> ArgError {
 // ---- argument parsing: no store is in reach, every refusal is exit 2 --------------------
 
 // covers: UC-dwarf-execution-26
+#[test_id(tg7pkjg)]
 #[test]
 fn an_unknown_flag_is_refused_by_name() {
     let e = refused(&["--bogus-flag"]);
@@ -28,6 +29,7 @@ fn an_unknown_flag_is_refused_by_name() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tg3x9az)]
 #[test]
 fn a_positional_beside_the_bead_is_refused_and_points_at_the_named_flags() {
     let e = refused(&["--bead", "sp-x", "a positional sentence"]);
@@ -37,6 +39,7 @@ fn a_positional_beside_the_bead_is_refused_and_points_at_the_named_flags() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tr3ktbv)]
 #[test]
 fn two_bead_values_are_refused_naming_both() {
     let e = refused(&["--bead", "sp-x", "--bead", "sp-y"]);
@@ -44,12 +47,14 @@ fn two_bead_values_are_refused_naming_both() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(ta2d2zu)]
 #[test]
 fn no_bead_at_all_is_refused_as_required() {
     assert!(refused(&[]).message().contains("--bead is required"));
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(toog7v8)]
 #[test]
 fn every_flag_that_takes_a_value_refuses_to_run_without_one() {
     for (flag, said) in [("--close", "--close needs a reason"), ("--why", "--why needs text")] {
@@ -60,6 +65,7 @@ fn every_flag_that_takes_a_value_refuses_to_run_without_one() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tg0xqdc)]
 #[test]
 fn help_is_not_a_refusal_and_documents_every_flag_and_the_exit_codes() {
     assert_eq!(parse_args(&argv(&["-h"])), Ok(Parsed::Help));
@@ -70,6 +76,7 @@ fn help_is_not_a_refusal_and_documents_every_flag_and_the_exit_codes() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(twg5pd2)]
 #[test]
 fn the_default_mode_reopens_with_the_default_reason_and_removes_the_work() {
     let a = parsed(&["--bead", "sp-s1"]);
@@ -77,6 +84,7 @@ fn the_default_mode_reopens_with_the_default_reason_and_removes_the_work() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tqgrabw)]
 #[test]
 fn close_keep_work_and_why_are_each_read() {
     let a = parsed(&["--bead", "sp-s2", "--close", "drop it", "--keep-work", "--why", "halted"]);
@@ -84,6 +92,7 @@ fn close_keep_work_and_why_are_each_read() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(t46qesg)]
 #[test]
 fn a_later_reopen_overrides_an_earlier_close() {
     assert_eq!(parsed(&["--bead", "sp-s2", "--close", "r", "--reopen"]).mode, Mode::Reopen);
@@ -314,6 +323,7 @@ fn said(r: &Report, needle: &str) -> bool {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tu9jy38)]
 #[test]
 fn the_slain_disposition_is_the_first_action_and_precedes_the_stop() {
     let f = Fake::new();
@@ -327,6 +337,7 @@ fn the_slain_disposition_is_the_first_action_and_precedes_the_stop() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(trd6ga3)]
 #[test]
 fn the_why_is_what_the_disposition_records() {
     let f = Fake::new();
@@ -335,6 +346,7 @@ fn the_why_is_what_the_disposition_records() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(t24uiwj)]
 #[test]
 fn default_slay_releases_the_claim_unassigns_and_removes_the_worktree() {
     let f = Fake::new();
@@ -351,6 +363,7 @@ fn default_slay_releases_the_claim_unassigns_and_removes_the_worktree() {
 }
 
 // covers: UC-dwarf-execution-26 UC-landed-audit-reaping-23
+#[test_id(ttq6x1o)]
 #[test]
 fn default_slay_keeps_a_branch_with_unlanded_commits_and_does_not_park_or_delete_it() {
     let f = Fake::new();
@@ -362,6 +375,7 @@ fn default_slay_keeps_a_branch_with_unlanded_commits_and_does_not_park_or_delete
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tee8wsp)]
 #[test]
 fn slay_with_no_base_to_compare_keeps_the_branch_on_reopen() {
     let mut f = Fake::new();
@@ -373,6 +387,7 @@ fn slay_with_no_base_to_compare_keeps_the_branch_on_reopen() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(t4wd7ra)]
 #[test]
 fn close_drops_the_bead_with_the_reason_and_the_note() {
     let f = Fake::new();
@@ -385,6 +400,7 @@ fn close_drops_the_bead_with_the_reason_and_the_note() {
 }
 
 // covers: UC-dwarf-execution-26 UC-landed-audit-reaping-23
+#[test_id(tfw3pbx)]
 #[test]
 fn close_parks_unlanded_work_at_refs_slain_then_deletes_the_branch_and_its_label() {
     let f = Fake::new();
@@ -400,6 +416,7 @@ fn close_parks_unlanded_work_at_refs_slain_then_deletes_the_branch_and_its_label
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tip83sh)]
 #[test]
 fn close_refuses_to_delete_a_branch_it_could_not_park() {
     let mut f = Fake::new();
@@ -412,6 +429,7 @@ fn close_refuses_to_delete_a_branch_it_could_not_park() {
 }
 
 // covers: UC-dwarf-execution-26 UC-landed-audit-reaping-23
+#[test_id(tih3u49)]
 #[test]
 fn a_landed_branch_is_deleted_without_being_parked() {
     let mut f = Fake::new();
@@ -423,6 +441,7 @@ fn a_landed_branch_is_deleted_without_being_parked() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tqmvlfh)]
 #[test]
 fn a_branch_with_nothing_the_base_lacks_is_deleted_not_parked_even_on_reopen() {
     let mut f = Fake::new();
@@ -435,6 +454,7 @@ fn a_branch_with_nothing_the_base_lacks_is_deleted_not_parked_even_on_reopen() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(t81ux1w)]
 #[test]
 fn keep_work_touches_neither_branch_nor_worktree_but_still_releases_the_claim() {
     let f = Fake::new();
@@ -448,6 +468,7 @@ fn keep_work_touches_neither_branch_nor_worktree_but_still_releases_the_claim() 
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(t3e3e9t)]
 #[test]
 fn a_kept_branch_carrying_the_beads_commit_reopens_as_submitted_with_the_configured_label() {
     let f = Fake::new();
@@ -457,6 +478,7 @@ fn a_kept_branch_carrying_the_beads_commit_reopens_as_submitted_with_the_configu
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(txb21y5)]
 #[test]
 fn a_kept_branch_with_no_commit_of_its_own_gets_no_submitted_label() {
     let mut f = Fake::new();
@@ -466,6 +488,7 @@ fn a_kept_branch_with_no_commit_of_its_own_gets_no_submitted_label() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(to73p5b)]
 #[test]
 fn the_submitted_label_is_only_for_a_kept_reopen() {
     let f = Fake::new();
@@ -477,6 +500,7 @@ fn the_submitted_label_is_only_for_a_kept_reopen() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tcgis8b)]
 #[test]
 fn a_dirty_worktree_is_salvaged_wip_committed_and_the_branch_stays_in_refs_heads() {
     let mut f = Fake::new();
@@ -492,6 +516,7 @@ fn a_dirty_worktree_is_salvaged_wip_committed_and_the_branch_stays_in_refs_heads
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tptd6bw)]
 #[test]
 fn salvage_runs_before_the_worktree_is_destroyed() {
     let mut f = Fake::new();
@@ -503,6 +528,7 @@ fn salvage_runs_before_the_worktree_is_destroyed() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tjtkuwa)]
 #[test]
 fn a_clean_worktree_makes_no_wip_commit() {
     let f = Fake::new();
@@ -511,6 +537,7 @@ fn a_clean_worktree_makes_no_wip_commit() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(t9i20zc)]
 #[test]
 fn a_failed_wip_commit_says_the_patch_is_the_only_copy_and_carries_on() {
     let mut f = Fake::new();
@@ -522,6 +549,7 @@ fn a_failed_wip_commit_says_the_patch_is_the_only_copy_and_carries_on() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tgat5gu)]
 #[test]
 fn a_failed_salvage_leaves_the_worktree_and_branch_alone_and_fails() {
     let mut f = Fake::new();
@@ -534,6 +562,7 @@ fn a_failed_salvage_leaves_the_worktree_and_branch_alone_and_fails() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tzbagsa)]
 #[test]
 fn a_worktree_that_will_not_go_fails_and_keeps_the_branch() {
     let mut f = Fake::new();
@@ -545,6 +574,7 @@ fn a_worktree_that_will_not_go_fails_and_keeps_the_branch() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(t2cbfjw)]
 #[test]
 fn a_branch_whose_deletion_is_refused_names_the_refusal_and_fails() {
     let mut f = Fake::new();
@@ -557,6 +587,7 @@ fn a_branch_whose_deletion_is_refused_names_the_refusal_and_fails() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tketzmz)]
 #[test]
 fn a_branch_that_survives_its_deletion_is_reported_and_fails() {
     let mut f = Fake::new();
@@ -568,6 +599,7 @@ fn a_branch_that_survives_its_deletion_is_reported_and_fails() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(t348p1m)]
 #[test]
 fn a_bead_that_names_no_repository_has_no_work_to_remove_but_is_still_released() {
     let mut f = Fake::new();
@@ -580,6 +612,7 @@ fn a_bead_that_names_no_repository_has_no_work_to_remove_but_is_still_released()
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(t81ijhy)]
 #[test]
 fn closing_an_already_closed_bead_adds_a_note_and_releases_no_holder() {
     let f = Fake::new();
@@ -592,6 +625,7 @@ fn closing_an_already_closed_bead_adds_a_note_and_releases_no_holder() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tn3ep3f)]
 #[test]
 fn the_note_names_the_dwarf_its_pid_and_unit_and_says_no_attempt_was_charged() {
     let f = Fake::new();
@@ -602,6 +636,7 @@ fn the_note_names_the_dwarf_its_pid_and_unit_and_says_no_attempt_was_charged() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tq6yb34)]
 #[test]
 fn the_note_says_so_when_no_dwarf_was_running() {
     let mut f = Fake::new();
@@ -613,6 +648,7 @@ fn the_note_says_so_when_no_dwarf_was_running() {
 // ---- refusals: a destructive tool fails closed on a target it never found ---------------
 
 // covers: UC-dwarf-execution-26
+#[test_id(tib3852)]
 #[test]
 fn a_bead_id_no_bead_carries_exits_2_and_touches_nothing() {
     let mut f = Fake::new();
@@ -625,6 +661,7 @@ fn a_bead_id_no_bead_carries_exits_2_and_touches_nothing() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tukmysh)]
 #[test]
 fn a_store_that_answers_with_a_prefix_matched_child_is_refused_and_says_so() {
     let mut f = Fake::new();
@@ -636,6 +673,7 @@ fn a_store_that_answers_with_a_prefix_matched_child_is_refused_and_says_so() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tj34ivt)]
 #[test]
 fn positive_control_a_real_id_with_a_why_still_slays() {
     let f = Fake::new();
@@ -647,6 +685,7 @@ fn positive_control_a_real_id_with_a_why_still_slays() {
 // ---- the process side --------------------------------------------------------------------
 
 // covers: UC-dwarf-execution-26
+#[test_id(t2r6exu)]
 #[test]
 fn a_dwarf_that_will_not_stop_fails_the_slaying_but_the_bead_is_still_made_true() {
     let mut f = Fake::new();
@@ -658,6 +697,7 @@ fn a_dwarf_that_will_not_stop_fails_the_slaying_but_the_bead_is_still_made_true(
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tzdbu3i)]
 #[test]
 fn a_pid_still_alive_after_the_finish_fails_the_slaying() {
     let mut f = Fake::new();
@@ -666,6 +706,7 @@ fn a_pid_still_alive_after_the_finish_fails_the_slaying() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(ti6tc80)]
 #[test]
 fn a_remaining_pidfile_is_reported_and_fails() {
     let mut f = Fake::new();
@@ -676,6 +717,7 @@ fn a_remaining_pidfile_is_reported_and_fails() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(t9o0hci)]
 #[test]
 fn a_holder_with_no_pid_file_is_stopped_by_its_session_before_the_claim_is_released() {
     let f = holder_only(&[(7, 99)]);
@@ -686,6 +728,7 @@ fn a_holder_with_no_pid_file_is_stopped_by_its_session_before_the_claim_is_relea
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tpj4bmk)]
 #[test]
 fn a_holder_that_survives_the_stop_keeps_its_claim_and_is_named() {
     let mut f = holder_only(&[(7, 99)]);
@@ -697,6 +740,7 @@ fn a_holder_that_survives_the_stop_keeps_its_claim_and_is_named() {
 }
 
 // covers: UC-dwarf-execution-26
+#[test_id(tq34noc)]
 #[test]
 fn a_reused_pid_with_another_start_time_is_not_signalled() {
     let f = holder_only(&[(7, 12345)]);

@@ -171,6 +171,7 @@ pub fn read_repo_map(path: &Path) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[test_id(tmsjk1u)]
     #[test]
     fn prod_or_unset_instance_is_always_allowed() {
         let r = testkit::TempDir::new("spira-config-containment-prod").display().to_string();
@@ -184,6 +185,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-16
+    #[test_id(twznfrx)]
     #[test]
     fn a_confined_instance_refuses_a_repo_outside_its_workspace_and_names_it() {
         let root = testkit::TempDir::new("spira-config-containment-outside");
@@ -197,6 +199,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-16
+    #[test_id(tvj8c3n)]
     #[test]
     fn a_confined_instance_refuses_a_repo_with_a_network_remote_but_not_a_local_one() {
         let root = testkit::TempDir::new("spira-config-containment-remotes");
@@ -217,6 +220,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-16
+    #[test_id(ttfunxc)]
     #[test]
     fn a_symlink_inside_the_workspace_is_judged_by_where_it_points() {
         let d = testkit::TempDir::new("spira-config-containment-links");
@@ -234,6 +238,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-16
+    #[test_id(tnkovtc)]
     #[test]
     fn a_workspace_of_slash_confines_nothing_and_a_sibling_prefix_is_not_inside() {
         let r = testkit::TempDir::new("spira-config-containment-under").display().to_string();
@@ -243,6 +248,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-16
+    #[test_id(t4a2pyy)]
     #[test]
     fn prod_is_not_confined_even_with_an_outside_path_and_a_network_remote() {
         let remotes = |_: &str| vec!["https://example.invalid/x.git".to_string()];
@@ -250,11 +256,13 @@ mod tests {
         assert_eq!(check_with("prod", &format!("{r}/ws"), Some(&format!("x|{r}/elsewhere\n")), &remotes), Ok(()));
     }
 
+    #[test_id(tus3ouf)]
     #[test]
     fn no_map_is_not_a_violation() {
         assert_eq!(check("test", "ws", None), Ok(()));
     }
 
+    #[test_id(tzyx1sj)]
     #[test]
     fn remote_is_real_matches_lib_sh() {
         assert!(!remote_is_real(""));

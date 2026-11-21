@@ -7,6 +7,9 @@
 //! concurrent drains"). Each worker files each verdict it gates; the pass applies it:
 //! attribution of the four outcomes stays in `landing_pass::pass::certify_judge`.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use landing_pass::gateq::{Done, GateQueue, Job, Settled};
 use landing_pass::model::{GateOutcome, GateRun, GATE_NOVERDICT};
 use std::fs::OpenOptions;

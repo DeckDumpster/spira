@@ -106,6 +106,7 @@ mod tests {
     use crate::sweep::collect::{Drain, Halt};
     use crate::sweep::Cfg;
 
+    #[test_id(tsn7njj)]
     #[test]
     fn the_sweep_line_names_the_probes_that_timed_out() {
         assert_eq!(slow_suffix(&[]), "");
@@ -133,6 +134,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27
+    #[test_id(txaql9r)]
     #[test]
     fn nominal_is_written_only_when_every_field_is_green_and_asks_for_no_escalation() {
         let (_d, cfg) = world("wt-sweep-nominal");
@@ -145,6 +147,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27
+    #[test_id(tww40gl)]
     #[test]
     fn a_halted_world_writes_nothing_and_asks_for_nothing() {
         let (_d, cfg) = world("wt-sweep-halted");
@@ -155,6 +158,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27
+    #[test_id(tnv13gd)]
     #[test]
     fn a_draining_world_still_writes_the_prompt() {
         let (_d, cfg) = world("wt-sweep-draining");
@@ -165,6 +169,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27
+    #[test_id(tss73ro)]
     #[test]
     fn the_lapse_marker_advances_with_a_write_that_landed_and_not_with_one_that_failed() {
         let (_d, cfg) = world("wt-sweep-marker");

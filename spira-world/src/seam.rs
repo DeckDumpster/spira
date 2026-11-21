@@ -86,18 +86,21 @@ pub fn parse_reactive_caps(out: &str) -> Vec<(String, bool)> {
 mod tests {
     use super::*;
 
+    #[test_id(t1ierue)]
     #[test]
     fn parse_reactive_caps_reads_nul_separated_records() {
         let out = "groomer\tsingle-flight\0ops\t\0";
         assert_eq!(parse_reactive_caps(out), vec![("groomer".to_string(), true), ("ops".to_string(), false)]);
     }
 
+    #[test_id(twh4z66)]
     #[test]
     fn parse_reactive_caps_reads_anything_but_single_flight_as_not() {
         let out = "x\tnotanumber\0";
         assert_eq!(parse_reactive_caps(out), vec![("x".to_string(), false)]);
     }
 
+    #[test_id(tbppgkm)]
     #[test]
     fn parse_reactive_caps_of_empty_output_is_empty() {
         assert!(parse_reactive_caps("").is_empty());

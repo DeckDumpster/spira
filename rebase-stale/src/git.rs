@@ -230,6 +230,7 @@ pub fn path_is_under(p: &Path, root: &Path) -> bool {
 mod tests {
     use super::*;
 
+    #[test_id(tbz978b)]
     #[test]
     fn parses_porcelain_worktree_list() {
         let s = "worktree r\nHEAD abc\nbranch refs/heads/main\n\nworktree w/x\nHEAD def\ndetached\n\nworktree w/y\nHEAD 123\nbranch refs/heads/spira/sp-1\n";

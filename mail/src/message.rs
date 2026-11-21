@@ -77,6 +77,7 @@ pub fn header_ci_before_blank(text: &str, name_lower: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tpcueml)]
     #[test]
     fn split_headers_body_handles_crlf_mail() {
         let raw = "From: A\r\nSubject: S\r\n\r\nAnswer line.\r\n";
@@ -89,6 +90,7 @@ mod tests {
 
     const MSG: &str = "From: A <a@a>\nSubject: Hello\nX-Spira-Bead: sp-a\n\nBody text here.\nSubject: not a header, just text\n";
 
+    #[test_id(tcu9zz8)]
     #[test]
     fn split_finds_the_first_blank_line() {
         let (h, b) = split_headers_body(MSG);
@@ -96,6 +98,7 @@ mod tests {
         assert!(b.starts_with("Body text here."));
     }
 
+    #[test_id(taxcl9d)]
     #[test]
     fn header_line_sed_scans_the_whole_file() {
         // Matches mail.sh's own sed behaviour: it is not scoped to the header block, so a
@@ -104,17 +107,20 @@ mod tests {
         assert_eq!(header_line_sed(MSG, "Subject"), "Hello");
     }
 
+    #[test_id(tqb4qdh)]
     #[test]
     fn header_ci_before_blank_stops_at_the_blank_line() {
         assert_eq!(header_ci_before_blank(MSG, "x-spira-bead"), "sp-a");
         assert_eq!(header_ci_before_blank(MSG, "subject"), "Hello");
     }
 
+    #[test_id(tt6ulrd)]
     #[test]
     fn header_ci_before_blank_is_case_insensitive_on_the_name() {
         assert_eq!(header_ci_before_blank("In-Reply-To: <abc@spira>\n\nbody\n", "in-reply-to"), "<abc@spira>");
     }
 
+    #[test_id(ttep0lk)]
     #[test]
     fn a_folded_header_is_written_legal_and_reads_back_with_newlines_as_spaces() {
         let written = header("X-Spira-Default", "one\n\ntwo\r\nthree").unwrap();
@@ -124,12 +130,14 @@ mod tests {
         assert_eq!(header_line_sed(&msg, "X-Spira-Default"), "one  two three");
     }
 
+    #[test_id(tq3mfzl)]
     #[test]
     fn a_bare_cr_or_nul_is_refused_naming_the_header() {
         assert!(header("Subject", "a\rb").unwrap_err().contains("Subject"));
         assert!(header("X-Spira-Bead", "a\0b").unwrap_err().contains("X-Spira-Bead"));
     }
 
+    #[test_id(tk35llt)]
     #[test]
     fn missing_header_is_empty() {
         assert_eq!(header_line_sed(MSG, "X-Nope"), "");

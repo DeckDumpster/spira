@@ -56,6 +56,7 @@ fn first_sql(f: &Fake) -> String {
     f.seen.lock().unwrap()[0].clone()
 }
 
+#[test_id(t3lkwya)]
 #[test]
 fn a_label_any_list_is_one_where_clause_over_the_labels_table() {
     let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
@@ -65,6 +66,7 @@ fn a_label_any_list_is_one_where_clause_over_the_labels_table() {
     assert!(sql.contains("status <> 'closed'") && !sql.contains("LIMIT"), "open beads, unlimited: {sql}");
 }
 
+#[test_id(tlqx0f1)]
 #[test]
 fn an_id_list_selects_exactly_those_ids_whatever_their_status() {
     let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
@@ -74,6 +76,7 @@ fn an_id_list_selects_exactly_those_ids_whatever_their_status() {
     assert!(!sql.contains("status <> 'closed'") && !sql.contains("issue_type NOT IN"), "--all and --id hide nothing: {sql}");
 }
 
+#[test_id(tbmny87)]
 #[test]
 fn a_filter_is_never_applied_in_process() {
     // The store answers every bead whatever the filter; the reader returns what the query
@@ -83,6 +86,7 @@ fn a_filter_is_never_applied_in_process() {
     assert_eq!(out.len(), 2);
 }
 
+#[test_id(thp4g90)]
 #[test]
 fn every_list_filter_the_call_sites_use_becomes_a_where_clause() {
     let l = parsed_list(&["list", "--all", "--limit", "0", "--brief", "--json", "--parent", "sp-e", "--label", "a,b", "--external-ref", "incident:x", "--status", "open,blocked", "--closed-after", "2026-11-01", "--updated-after", "2026-11-02T10:11:12Z"]);
@@ -100,6 +104,7 @@ fn every_list_filter_the_call_sites_use_becomes_a_where_clause() {
     }
 }
 
+#[test_id(tcnsbnt)]
 #[test]
 fn the_default_list_is_the_first_fifty_open_beads() {
     let l = parsed_list(&["list", "--json"]);
@@ -107,12 +112,14 @@ fn the_default_list_is_the_first_fifty_open_beads() {
     assert!(sql.ends_with("LIMIT 50") && sql.contains("status <> 'closed'"), "{sql}");
 }
 
+#[test_id(t0qj39m)]
 #[test]
 fn a_quote_in_a_value_cannot_end_the_string() {
     let l = parsed_list(&["list", "--label-any", "x') OR 1=1 --"]);
     assert!(l.where_clause(DB).contains(r"'x\') OR 1=1 --'"), "{}", l.where_clause(DB));
 }
 
+#[test_id(t1r6mks)]
 #[test]
 fn a_flag_the_door_does_not_serve_is_refused_by_name() {
     let e = parse(&v(&["list", "--metadata-field", "a=b"])).unwrap_err();
@@ -121,6 +128,7 @@ fn a_flag_the_door_does_not_serve_is_refused_by_name() {
     assert!(parse(&v(&["list", "--limit"])).is_err());
 }
 
+#[test_id(tcpipek)]
 #[test]
 fn a_row_carries_labels_edges_and_the_parent_as_typed_fields() {
     let f = Fake {
@@ -137,6 +145,7 @@ fn a_row_carries_labels_edges_and_the_parent_as_typed_fields() {
     assert_eq!((r["priority"].clone(), r["description"].clone()), (json!(1), json!("the body")));
 }
 
+#[test_id(tjmo7qi)]
 #[test]
 fn a_bead_with_no_labels_or_edges_has_empty_arrays() {
     let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
@@ -144,6 +153,7 @@ fn a_bead_with_no_labels_or_edges_has_empty_arrays() {
     assert_eq!((rows[0]["labels"].clone(), rows[0]["dependencies"].clone(), rows[0]["parent"].clone()), (json!([]), json!([]), Value::Null));
 }
 
+#[test_id(t079axn)]
 #[test]
 fn brief_leaves_out_the_free_text_and_the_metadata() {
     let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
@@ -158,6 +168,7 @@ fn select_list(sql: &str) -> &str {
     sql.split(" FROM ").next().unwrap()
 }
 
+#[test_id(tpnasq5)]
 #[test]
 fn a_brief_list_selects_none_of_the_free_text_columns() {
     let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
@@ -169,6 +180,7 @@ fn a_brief_list_selects_none_of_the_free_text_columns() {
     assert!(sql.contains("close_reason") && sql.contains("closed_at"), "{sql}");
 }
 
+#[test_id(tw0wd11)]
 #[test]
 fn a_list_without_brief_still_selects_the_free_text_columns() {
     let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
@@ -179,6 +191,7 @@ fn a_list_without_brief_still_selects_the_free_text_columns() {
     }
 }
 
+#[test_id(tyil60b)]
 #[test]
 fn a_search_selects_no_free_text_column_but_still_matches_on_them() {
     let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
@@ -191,6 +204,7 @@ fn a_search_selects_no_free_text_column_but_still_matches_on_them() {
     assert!(sql.contains("LOWER(description)"), "{sql}");
 }
 
+#[test_id(tun3o15)]
 #[test]
 fn show_names_the_bead_it_cannot_find() {
     let f = Fake::default();
@@ -198,6 +212,7 @@ fn show_names_the_bead_it_cannot_find() {
     assert!(matches!(&e, Failure::Request(t) if t.contains("no issue found matching") && t.contains("sp-nope")), "{e:?}");
 }
 
+#[test_id(tm408rp)]
 #[test]
 fn show_of_several_ids_answers_the_ones_it_finds_and_refuses_only_when_it_finds_none() {
     let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
@@ -206,6 +221,7 @@ fn show_of_several_ids_answers_the_ones_it_finds_and_refuses_only_when_it_finds_
     assert!(matches!(answer(&Fake::default(), DB, &v(&["show", "sp-a", "sp-gone"])), Err(Failure::Request(t)) if t.contains("sp-gone")));
 }
 
+#[test_id(tb42wff)]
 #[test]
 fn a_row_carries_how_many_comments_its_bead_has() {
     let f = Fake { issues: vec![issue("sp-a", "A"), issue("sp-b", "B")], counts: vec![json!({ "issue_id": "sp-b", "n": "3" })], ..Fake::default() };
@@ -213,6 +229,7 @@ fn a_row_carries_how_many_comments_its_bead_has() {
     assert_eq!((rows[0]["comment_count"].clone(), rows[1]["comment_count"].clone()), (json!(0), json!(3)));
 }
 
+#[test_id(txtn7ah)]
 #[test]
 fn show_answers_the_bead_with_its_text() {
     let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
@@ -220,6 +237,7 @@ fn show_answers_the_bead_with_its_text() {
     assert_eq!(rows[0]["description"], "the body");
 }
 
+#[test_id(tf102ra)]
 #[test]
 fn gate_list_is_the_open_gates() {
     let f = Fake { issues: vec![issue("sp-g", "G")], ..Fake::default() };
@@ -228,6 +246,7 @@ fn gate_list_is_the_open_gates() {
     assert!(sql.contains("issue_type IN ('gate')") && sql.contains("status <> 'closed'"), "{sql}");
 }
 
+#[test_id(tux1pgh)]
 #[test]
 fn memories_are_the_config_rows_under_the_memory_prefix_keyed_by_name() {
     let f = Fake { reply: Mutex::new(vec![json!({ "key": "kv.memory.sop-a", "value": "do a" })]), ..Fake::default() };
@@ -236,6 +255,7 @@ fn memories_are_the_config_rows_under_the_memory_prefix_keyed_by_name() {
     assert!(first_sql(&f).contains("LEFT(`key`, 10) = 'kv.memory.'"));
 }
 
+#[test_id(tk50ni2)]
 #[test]
 fn state_is_the_value_of_the_dimension_label() {
     let f = Fake { reply: Mutex::new(vec![json!({ "label": "repo:spira" })]), ..Fake::default() };
@@ -244,6 +264,7 @@ fn state_is_the_value_of_the_dimension_label() {
     assert_eq!(answer(&none, DB, &v(&["state", "sp-a", "repo"])).unwrap(), "(no repo state set)\n");
 }
 
+#[test_id(t4kucln)]
 #[test]
 fn comments_are_the_comment_rows_in_order() {
     let f = Fake { reply: Mutex::new(vec![json!({ "id": "c1", "issue_id": "sp-a", "author": "me", "text": "hi", "created_at": "2026-11-01T00:00:00Z" })]), ..Fake::default() };
@@ -255,6 +276,7 @@ fn full_layout() -> Vec<(String, String)> {
     crate::plan::READER_COLUMNS.iter().flat_map(|(t, cs)| cs.iter().map(move |c| (t.to_string(), c.to_string()))).collect()
 }
 
+#[test_id(t19bmgi)]
 #[test]
 fn a_renamed_column_refuses_every_read_naming_it_and_the_exit_and_asks_no_bead_query() {
     let mut columns = full_layout();
@@ -279,6 +301,7 @@ fn without_events() -> Reader {
     Reader::new(Box::new(Fake { columns: Mutex::new(columns), issues: vec![issue("sp-a", "A")], ..Fake::default() }), DB.into())
 }
 
+#[test_id(tauk1s4)]
 #[test]
 fn a_store_without_the_events_columns_still_serves_show_list_and_label_list() {
     let reader = without_events();
@@ -288,12 +311,14 @@ fn a_store_without_the_events_columns_still_serves_show_list_and_label_list() {
     reader.layout().unwrap();
 }
 
+#[test_id(tywto10)]
 #[test]
 fn a_store_without_the_events_columns_refuses_events_alone_naming_them() {
     let e = without_events().read(&v(&["events", "--id", "sp-a"])).unwrap_err();
     assert!(matches!(&e, Failure::Store(t) if ["events.issue_id", "events.event_type", "events.new_value", "events.created_at"].iter().all(|c| t.contains(c)) && t.contains("exit 2")), "{e:?}");
 }
 
+#[test_id(txygxjz)]
 #[test]
 fn events_is_served_by_a_layout_that_has_its_columns_and_a_gap_elsewhere_costs_it_no_reprobe() {
     let mut columns = full_layout();
@@ -305,6 +330,7 @@ fn events_is_served_by_a_layout_that_has_its_columns_and_a_gap_elsewhere_costs_i
     assert_eq!(f.seen.lock().unwrap().iter().filter(|q| q.contains("information_schema")).count(), 1);
 }
 
+#[test_id(txin8mm)]
 #[test]
 fn the_events_columns_are_the_ones_the_production_probe_reported() {
     let production = ["issue_id", "event_type", "actor", "old_value", "new_value", "comment", "created_at", "id"];
@@ -312,6 +338,7 @@ fn the_events_columns_are_the_ones_the_production_probe_reported() {
     assert!(named.iter().all(|c| production.contains(c)), "{named:?}");
 }
 
+#[test_id(t5txon9)]
 #[test]
 fn a_gap_outside_a_reads_tables_does_not_refuse_it() {
     let mut columns = full_layout();
@@ -321,6 +348,7 @@ fn a_gap_outside_a_reads_tables_does_not_refuse_it() {
     assert!(matches!(reader.read(&v(&["comments", "sp-a"])), Err(Failure::Store(t)) if t.contains("comments.text")));
 }
 
+#[test_id(t1bvbys)]
 #[test]
 fn every_reads_tables_are_in_the_readers_columns() {
     let known: Vec<&str> = crate::plan::READER_COLUMNS.iter().map(|(t, _)| *t).collect();
@@ -331,6 +359,7 @@ fn every_reads_tables_are_in_the_readers_columns() {
     }
 }
 
+#[test_id(txj952b)]
 #[test]
 fn a_known_layout_is_checked_once_and_serves_reads() {
     let f = Arc::new(Fake { columns: Mutex::new(full_layout()), issues: vec![issue("sp-a", "A")], ..Fake::default() });
@@ -341,6 +370,7 @@ fn a_known_layout_is_checked_once_and_serves_reads() {
     assert_eq!(checks, 1);
 }
 
+#[test_id(t748rhp)]
 #[test]
 fn the_readers_columns_include_every_column_the_queries_name() {
     let l = parsed_list(&["list"]);
@@ -351,6 +381,7 @@ fn the_readers_columns_include_every_column_the_queries_name() {
     }
 }
 
+#[test_id(tf3149n)]
 #[test]
 fn a_refused_layout_is_asked_again_and_a_repaired_store_is_served_without_a_restart() {
     let mut broken = full_layout();
@@ -362,6 +393,7 @@ fn a_refused_layout_is_asked_again_and_a_repaired_store_is_served_without_a_rest
     assert!(reader.read(&v(&["list"])).is_ok());
 }
 
+#[test_id(td30ta0)]
 #[test]
 fn a_refusal_stands_until_the_recheck_interval_has_passed() {
     let mut broken = full_layout();
@@ -373,6 +405,7 @@ fn a_refusal_stands_until_the_recheck_interval_has_passed() {
     assert!(reader.read(&v(&["list"])).is_err(), "inside the interval the refusal is not re-asked");
 }
 
+#[test_id(th4pqzc)]
 #[test]
 fn kv_is_the_config_row_under_the_kv_prefix() {
     let f = Fake { reply: Mutex::new(vec![json!({ "value": "41" })]), ..Fake::default() };
@@ -381,6 +414,7 @@ fn kv_is_the_config_row_under_the_kv_prefix() {
     assert_eq!(kv(&Fake::default(), DB, "spira.planning_watermark"), Ok(None));
 }
 
+#[test_id(tr95xv8)]
 #[test]
 fn statuses_are_the_rows_of_the_ids_in_any_status_without_labels() {
     let mut closed = issue("sp-a", "A");
@@ -395,6 +429,7 @@ fn statuses_are_the_rows_of_the_ids_in_any_status_without_labels() {
     assert!(statuses(&f, DB, &[]).unwrap().is_empty());
 }
 
+#[test_id(tdha5e4)]
 #[test]
 fn blockers_are_the_blocks_edges_onto_the_bead() {
     let f = Fake { reply: Mutex::new(vec![json!({ "issue_id": "sp-d" })]), ..Fake::default() };
@@ -403,6 +438,7 @@ fn blockers_are_the_blocks_edges_onto_the_bead() {
     assert!(sql.contains("type = 'blocks'") && sql.contains("depends_on_issue_id = 'sp-a'"), "{sql}");
 }
 
+#[test_id(tgrvg5w)]
 #[test]
 fn show_text_leads_with_the_head_line_work_show_rewrites_and_carries_the_description() {
     let f = Fake {
@@ -417,6 +453,7 @@ fn show_text_leads_with_the_head_line_work_show_rewrites_and_carries_the_descrip
     assert_eq!(show_text(&Fake::default(), DB, "sp-none").unwrap(), None);
 }
 
+#[test_id(tgc4ptj)]
 #[test]
 fn search_is_one_issues_query_locating_the_text_in_four_columns_and_a_quote_cannot_end_the_string() {
     let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
@@ -434,6 +471,7 @@ fn search_is_one_issues_query_locating_the_text_in_four_columns_and_a_quote_cann
     assert!(q.contains("LOWER('x\\')')") && q.contains("LOWER('OR')") && q.contains("LOWER('1=1')") && !q.contains("status <> 'closed'") && !q.contains("LIMIT"), "{q}");
 }
 
+#[test_id(toz9767)]
 #[test]
 fn search_requires_every_word_in_any_order() {
     let f = Fake::default();
@@ -443,6 +481,7 @@ fn search_requires_every_word_in_any_order() {
     assert!(q.contains(") AND (LOCATE(LOWER('stranded')") && !q.contains("LOWER('hel stranded')"), "{q}");
 }
 
+#[test_id(tjwzm24)]
 #[test]
 fn dep_list_up_with_a_type_is_one_dependencies_query_answering_the_other_end() {
     let f = Fake { reply: Mutex::new(vec![json!({ "issue_id": "sp-b", "depends_on_issue_id": "sp-a", "type": "blocks" })]), ..Fake::default() };
@@ -453,6 +492,7 @@ fn dep_list_up_with_a_type_is_one_dependencies_query_answering_the_other_end() {
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap(), json!([{ "id": "sp-b", "type": "blocks" }]));
 }
 
+#[test_id(tf51ms2)]
 #[test]
 fn dep_list_down_reads_the_beads_own_edges_and_accepts_the_equals_form() {
     let f = Fake { reply: Mutex::new(vec![json!({ "issue_id": "sp-a", "depends_on_issue_id": "sp-z", "type": "parent-child" })]), ..Fake::default() };
@@ -465,6 +505,7 @@ fn dep_list_down_reads_the_beads_own_edges_and_accepts_the_equals_form() {
     assert!(parse(&v(&["dep", "list", "sp-a", "--direction", "sideways"])).is_err());
 }
 
+#[test_id(th13qv5)]
 #[test]
 fn label_list_answers_the_labels_sorted_as_a_json_array() {
     let f = Fake { reply: Mutex::new(vec![json!({ "label": "rune:x" }), json!({ "label": "a" })]), ..Fake::default() };
@@ -473,6 +514,7 @@ fn label_list_answers_the_labels_sorted_as_a_json_array() {
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap(), json!(["a", "rune:x"]));
 }
 
+#[test_id(tcy10qx)]
 #[test]
 fn events_is_one_typed_query_over_the_ids_and_chunks_by_id_chunk() {
     let f = Fake { reply: Mutex::new(vec![json!({ "issue_id": "sp-a", "event_type": "claimed", "new_value": "", "created_at": "2026-11-01T00:00:00Z" })]), ..Fake::default() };
@@ -493,6 +535,7 @@ fn events_is_one_typed_query_over_the_ids_and_chunks_by_id_chunk() {
     answer(&f, DB, &v(&["events", "--json", "--id", "sp-a"])).unwrap();
 }
 
+#[test_id(twp7znf)]
 #[test]
 fn events_carry_the_actor() {
     let f = Fake { reply: Mutex::new(vec![json!({ "issue_id": "sp-a", "event_type": "claimed", "new_value": "", "actor": "dwarf-1", "created_at": "2026-11-01T00:00:00Z" })]), ..Fake::default() };
@@ -501,6 +544,7 @@ fn events_carry_the_actor() {
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap()[0]["actor"], "dwarf-1");
 }
 
+#[test_id(t9alko6)]
 #[test]
 fn a_kv_get_is_one_exact_read_of_the_kv_key_in_bds_json_shape() {
     let f = Fake { reply: Mutex::new(vec![json!({ "value": "a@b" })]), ..Fake::default() };
@@ -512,6 +556,7 @@ fn a_kv_get_is_one_exact_read_of_the_kv_key_in_bds_json_shape() {
     assert_eq!(out["found"], false);
 }
 
+#[test_id(tuu7ihv)]
 #[test]
 fn a_plain_kv_get_and_a_recall_answer_the_value_and_name_what_is_unset() {
     let f = Fake { reply: Mutex::new(vec![json!({ "value": "text" })]), ..Fake::default() };
@@ -523,11 +568,13 @@ fn a_plain_kv_get_and_a_recall_answer_the_value_and_name_what_is_unset() {
     assert!(matches!(answer(&none, DB, &v(&["recall", "sop-x"])), Err(Failure::Request(t)) if t.contains("sop-x")));
 }
 
+#[test_id(t67geao)]
 #[test]
 fn events_with_no_id_is_a_request_failure() {
     assert!(matches!(answer(&Fake::default(), DB, &v(&["events"])), Err(Failure::Request(_))));
 }
 
+#[test_id(tdgbhja)]
 #[test]
 fn the_readers_columns_include_the_events_columns() {
     let named = crate::plan::READER_COLUMNS.iter().find(|(t, _)| *t == "events").expect("events table").1;
@@ -536,6 +583,7 @@ fn the_readers_columns_include_the_events_columns() {
     }
 }
 
+#[test_id(tufz86e)]
 #[test]
 fn a_ref_read_is_one_exact_match_on_external_ref_and_never_a_scan() {
     let f = Fake { issues: vec![json!({ "id": "sp-a", "status": "open", "external_ref": "github:o/r#1" })], labels: vec![json!({ "label": "x" })], ..Fake::default() };

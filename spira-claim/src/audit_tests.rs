@@ -12,6 +12,7 @@ fn row(id: &str, labels: &[&str]) -> ReadyRow {
     }
 }
 
+#[test_id(ts2lnpr)]
 #[test]
 fn zero_is_a_claim_and_the_denominator_proves_it() {
     let out = run(
@@ -25,6 +26,7 @@ fn zero_is_a_claim_and_the_denominator_proves_it() {
     );
 }
 
+#[test_id(towim1b)]
 #[test]
 fn reclaim_causes_come_from_the_raw_reclaimed_rows() {
     let mut ev: HashMap<String, Vec<EventRow>> = HashMap::new();

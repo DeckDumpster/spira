@@ -57,6 +57,7 @@ mod tests {
         }
     }
 
+    #[test_id(tomdy7i)]
     #[test]
     fn a_holder_round_trips_and_names_its_session() {
         let t = Table(HashMap::from([(7, 99)]));
@@ -66,6 +67,7 @@ mod tests {
         assert_eq!(parse("dwarf-austri"), None);
     }
 
+    #[test_id(t9bhun9)]
     #[test]
     fn a_dead_session_is_gone_even_when_its_name_is_live_in_another_session() {
         let t = Table(HashMap::from([(8, 120)]));
@@ -75,6 +77,7 @@ mod tests {
         assert!(!session_gone("dwarf-austri", &t), "a bare name proves nothing");
     }
 
+    #[test_id(tsy11zw)]
     #[test]
     fn the_same_name_under_another_session_is_another_session() {
         assert!(same_name_other_session("dwarf-austri@7.99", "dwarf-austri@8.120"));

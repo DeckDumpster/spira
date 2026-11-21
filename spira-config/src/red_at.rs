@@ -25,12 +25,14 @@ pub fn red_at(suite: &str, out: &str) -> (String, String) {
 mod tests {
     use super::red_at;
 
+    #[test_id(th5glw7)]
     #[test]
     fn a_named_suite_wins_and_bookkeeping_lines_are_skipped() {
         let out = "boom\ngate-step RED rc=1 :: fence\ngate: VERDICT=FAIL reason=branch-red suite=s\n";
         assert_eq!(red_at("s", out), ("s".into(), "boom".into()));
     }
 
+    #[test_id(t49byp2)]
     #[test]
     fn an_unnamed_suite_falls_back_to_the_first_red_step() {
         let out = "boom\ngate-step RED rc=1 :: fence\n";

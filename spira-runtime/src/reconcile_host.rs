@@ -425,6 +425,7 @@ impl Host for RuntimeHost {
 mod tests {
     use super::*;
 
+    #[test_id(tn4efjk)]
     #[test]
     fn a_start_already_live_is_not_counted_twice_as_a_start_in_flight() {
         let unit = |rune: &str, n: u32| runtime::units::unit_name("sentinel-call", &format!("{rune}-1000-{n}")).unwrap();
@@ -433,6 +434,7 @@ mod tests {
         assert_eq!(not_yet_live(&in_flight, &active), BTreeMap::from([("builder".to_string(), 1), ("ops".to_string(), 1)]));
     }
 
+    #[test_id(t8g45l8)]
     #[test]
     fn a_unit_listing_that_cannot_reach_the_bus_is_an_error_from_the_one_cached_read() {
         let d = testkit::TempDir::new("host-listing");
@@ -442,6 +444,7 @@ mod tests {
         assert_eq!(host.unit_state("is-enabled", "spira-x.timer").unwrap_err(), listing);
     }
 
+    #[test_id(tq1e7rd)]
     #[test]
     fn spira_branches_are_read_from_loose_and_packed_refs_and_through_a_worktrees_gitdir() {
         let d = testkit::TempDir::new("host-branches");
@@ -463,6 +466,7 @@ mod tests {
         assert_eq!(spira_branches(&d.join("absent")), None, "no checkout is not an empty one");
     }
 
+    #[test_id(tc6clhu)]
     #[test]
     fn a_ref_is_its_loose_file_else_its_packed_line_and_a_loose_tag_is_not_trusted() {
         let d = testkit::TempDir::new("host-refs");
@@ -485,6 +489,7 @@ mod tests {
         assert_eq!(RuntimeHost::new(World::default(), Forge::default(), None, d.join("elsewhere"), String::new(), 0, 0, String::new(), Default::default()).ref_sha(&d.join("elsewhere"), "x"), Ref::Unknown);
     }
 
+    #[test_id(tvvo0lj)]
     #[test]
     fn a_loose_tag_is_an_object_to_peel_and_a_symbolic_ref_is_followed() {
         let d = testkit::TempDir::new("host-symref");
@@ -502,6 +507,7 @@ mod tests {
         assert_eq!(read_ref(&git, "loop"), Ref::Unknown, "a symbolic cycle is git's to name");
     }
 
+    #[test_id(trn44bc)]
     #[test]
     fn dwarves_of_a_rune_are_the_live_units_of_that_name_a_directed_one_included() {
         let units = |l: &[(&str, &str)]| l.iter().map(|(n, s)| (n.to_string(), s.to_string())).collect::<BTreeMap<_, _>>();
@@ -520,6 +526,7 @@ mod tests {
         assert_eq!(live_dwarves(&active, "nobody"), 0);
     }
 
+    #[test_id(timw746)]
     #[test]
     fn a_tmux_socket_has_an_identity_and_a_missing_or_plain_file_has_none() {
         let d = testkit::TempDir::new("host-tmux");
@@ -532,6 +539,7 @@ mod tests {
         assert!(tmux_socket_identity(&d.join("tmux-1")).is_some());
     }
 
+    #[test_id(t1k657y)]
     #[test]
     fn head_names_its_branch_and_a_detached_head_is_head() {
         let d = testkit::TempDir::new("host-head");

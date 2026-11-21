@@ -2,6 +2,7 @@ use super::*;
 
 /// law-list-reads-run-on-indexed-tables: `batches-of` over a store of hundreds of rounds reads the
 /// bead's own membership range and the rounds it names, never the `batches/` prefix.
+#[test_id(tovqyvx)]
 #[test]
 fn batches_of_reads_the_beads_own_rounds_not_every_round() {
     let r = Rig::on(Counting::default(), &clock());
@@ -25,6 +26,7 @@ fn batches_of_reads_the_beads_own_rounds_not_every_round() {
 }
 
 /// A member added by `stack` is found by `batches-of` as one named at the cut is.
+#[test_id(t3g5yps)]
 #[test]
 fn batches_of_finds_a_member_stacked_into_an_open_round() {
     let r = Rig::new();

@@ -140,6 +140,7 @@ impl Corpus {
 mod tests {
     use super::*;
 
+    #[test_id(t3u6q04)]
     #[test]
     fn a_bad_tier_is_a_refusal_and_an_empty_covers_is_always_run() {
         assert!(Suite::parse("test-a.sh", "# tier: T9\n").is_err());
@@ -150,6 +151,7 @@ mod tests {
         assert_eq!(Suite::parse("test-a.sh", "# tier:\n").unwrap().tier, None);
     }
 
+    #[test_id(t7kna69)]
     #[test]
     fn loading_refuses_what_it_cannot_read() {
         let t = testkit::TempDir::new("suite-select-corpus");

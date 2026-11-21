@@ -585,23 +585,27 @@ mod tests {
 
     const HOLDERS: &str = "(pool 4 of 4 held, judged 1970-01-01T01:00:00Z), working: sp-w0 P1, sp-w1 P2, sp-w2 P2, sp-w3 P1, sp-w4 P2";
 
+    #[test_id(t657b46)]
     #[test]
     fn a_p0_ready_bead_behind_a_full_pool_is_announced_with_the_working_beads() {
         assert_eq!(said(&pool(ready("sp-p"), 0), full()), [format!("SUSPECT sp-p READY P0 WAITING over 20m for a builder slot: pool full {HOLDERS}")]);
     }
 
+    #[test_id(tzjm3hm)]
     #[test]
     fn an_express_rework_bead_behind_a_full_pool_is_announced_with_the_working_beads() {
         let row = Row { state: "REWORK".into(), express: true, ..ready("sp-x") };
         assert_eq!(said(&pool(row, 2), full()), [format!("SUSPECT sp-x REWORK P2 express WAITING over 20m for a builder slot: pool full {HOLDERS}")]);
     }
 
+    #[test_id(tbbzz3v)]
     #[test]
     fn a_plain_rework_bead_behind_a_full_pool_is_announced() {
         let row = Row { state: "REWORK".into(), ..ready("sp-r") };
         assert_eq!(said(&pool(row, 1), full()), [format!("SUSPECT sp-r REWORK P1 WAITING over 20m for a builder slot: pool full {HOLDERS}")]);
     }
 
+    #[test_id(t94podl)]
     #[test]
     fn a_pool_wait_without_a_judged_limit_says_the_limit_is_unknown() {
         let room = Some(Room { since_ms: None, at_ms: 3_600_000, limit: None });
@@ -609,6 +613,7 @@ mod tests {
         assert!(line.contains("limit unknown, judged 1970-01-01T01:00:00Z") && !line.contains("held by"), "{line}");
     }
 
+    #[test_id(te0s42a)]
     #[test]
     fn a_pool_wait_names_the_limit_the_scheduler_judged_not_the_holders() {
         let room = Some(Room { since_ms: None, at_ms: 3_600_000, limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 4, held: 4 }) });
@@ -617,6 +622,7 @@ mod tests {
         assert!(line.contains("pool 4 of 4 held") && line.contains("working: sp-w0 P1, ") && !line.contains("held by"), "{line}");
     }
 
+    #[test_id(t66x1ef)]
     #[test]
     fn a_change_of_holders_does_not_announce_the_wait_again() {
         let p = sweep();
@@ -627,6 +633,7 @@ mod tests {
         assert!(decide(&p, &c, &snap, full().as_ref(), &Repaired::default(), NOW).1.is_empty());
     }
 
+    #[test_id(trf382k)]
     #[test]
     fn a_p0_bead_whose_claim_is_not_claimable_is_not_announced_behind_a_full_pool() {
         for verdict in [Some("cannot-tell"), Some("snoozed"), None] {
@@ -636,6 +643,7 @@ mod tests {
         }
     }
 
+    #[test_id(tb133d1)]
     #[test]
     fn a_stale_room_judgement_is_not_read_as_a_full_pool() {
         let stale = Some(Room { since_ms: None, at_ms: 0, limit: None });
@@ -643,11 +651,13 @@ mod tests {
         assert!(!lines.iter().any(|l| l.contains("WAITING")), "{lines:?}");
     }
 
+    #[test_id(tzikrvf)]
     #[test]
     fn a_p1_ready_bead_behind_a_full_pool_raises_nothing() {
         assert!(said(&pool(ready("sp-p"), 1), full()).is_empty());
     }
 
+    #[test_id(txru7ig)]
     #[test]
     fn the_pool_wait_is_announced_once_and_again_after_it_clears() {
         let p = sweep();
@@ -663,21 +673,25 @@ mod tests {
         assert_eq!(say.len(), 1);
     }
 
+    #[test_id(tpglsch)]
     #[test]
     fn a_claimable_rework_bead_with_a_slot_free_for_the_threshold_raises_the_row() {
         assert_eq!(said(&rework(Some("claimable")), Some(Room { since_ms: Some(0), at_ms: 3_600_000, limit: None })), [ROW]);
     }
 
+    #[test_id(ticqj85)]
     #[test]
     fn a_slot_freed_two_minutes_ago_raises_no_row() {
         assert!(said(&rework(Some("claimable")), Some(Room { since_ms: Some(3_480_000), at_ms: 3_600_000, limit: None })).is_empty());
     }
 
+    #[test_id(tdjssma)]
     #[test]
     fn a_verdict_other_than_claimable_raises_no_row() {
         assert!(said(&rework(Some("snoozed")), Some(Room { since_ms: Some(0), at_ms: 3_600_000, limit: None })).is_empty());
     }
 
+    #[test_id(tik5mef)]
     #[test]
     fn an_unjudged_slot_raises_a_row_that_says_so() {
         let say = said(&rework(Some("claimable")), None);
@@ -686,12 +700,14 @@ mod tests {
         assert!(old.len() == 1 && old[0].contains("slot unknown: judged at 1970-01-01T00:01:00Z"), "{old:?}");
     }
 
+    #[test_id(twlwgtb)]
     #[test]
     fn a_missing_verdict_raises_a_row_that_says_so() {
         let say = said(&rework(None), Some(Room { since_ms: None, at_ms: 3_600_000, limit: None }));
         assert!(say.len() == 1 && say[0].contains("claimability unknown: no verdict"), "{say:?}");
     }
 
+    #[test_id(tsiecnl)]
     #[test]
     fn finish_reads_the_scheduler_room_from_the_sentinel_call_stream() {
         use crate::tasks::a::sentinel_call;
@@ -717,11 +733,13 @@ mod tests {
         Snapshot { rows: vec![row], ..Snapshot::default() }
     }
 
+    #[test_id(ts18roo)]
     #[test]
     fn a_fresh_hold_on_an_old_ready_bead_is_not_stale() {
         assert!(said(&held(Some(NOW - 600.0)), None).is_empty());
     }
 
+    #[test_id(tqw9020)]
     #[test]
     fn an_old_hold_states_its_own_age_and_is_said_once() {
         let p = sweep();
@@ -732,12 +750,14 @@ mod tests {
         assert!(decide(&p, &c, &snap, None, &Repaired::default(), NOW + 1800.0).1.is_empty());
     }
 
+    #[test_id(t1jf0sa)]
     #[test]
     fn a_hold_with_no_hold_event_is_said_without_an_age() {
         let say = said(&held(None), None);
         assert_eq!(say, ["SUSPECT sp-h READY MANUAL HOLD with no Hold event in its history ()"]);
     }
 
+    #[test_id(tevq4ae)]
     #[test]
     fn the_hold_a_bead_is_under_is_the_newest_manual_hold_not_since_unheld() {
         let ev = |event: &str, at: u64, detail: &str| serde_json::json!({"event": event, "applied": true, "at": at, "evidence": {event: {"kind": "Manual", "detail": detail}}});
@@ -748,6 +768,7 @@ mod tests {
         assert_eq!(hold_in_history(&serde_json::Value::Array(a)), None);
     }
 
+    #[test_id(ti6jg6h)]
     #[test]
     fn an_unapplied_or_non_manual_event_does_not_change_the_hold_a_bead_is_under() {
         let ev = |event: &str, at: u64, applied: bool, kind: &str| serde_json::json!({"event": event, "applied": applied, "at": at, "evidence": {event: {"kind": kind}}});
@@ -755,6 +776,7 @@ mod tests {
         assert_eq!(hold_in_history(&h), Some((100.0, None)));
     }
 
+    #[test_id(t954ff1)]
     #[test]
     fn a_line_the_carry_already_holds_for_another_class_is_not_said_again() {
         let p = sweep();
@@ -769,6 +791,7 @@ mod tests {
         Snapshot { rows: vec![row], ..Snapshot::default() }
     }
 
+    #[test_id(t12poc0)]
     #[test]
     fn a_hold_is_overdue_only_once_its_review_by_instant_has_passed() {
         assert!(said(&held_for_review("1970-01-01T03:00:00Z"), None).is_empty());
@@ -776,6 +799,7 @@ mod tests {
         assert_eq!(said(&held_for_review("1970-01-01T00:59:00Z"), None), vec!["SUSPECT sp-r READY HOLD REVIEW OVERDUE since 1970-01-01T00:59:00Z (x)".to_string()]);
     }
 
+    #[test_id(twzmizh)]
     #[test]
     fn a_review_by_reason_gives_its_date_and_its_text() {
         let (due, text) = review("review-by:2026-10-29 waits on tenancy").unwrap();
@@ -786,6 +810,7 @@ mod tests {
         assert!(review("reviewed-by:2026-10-29 x").is_none() && review("review-by:2026-13-01 x").is_none() && review("review-by:26-10-29 x").is_none());
     }
 
+    #[test_id(t64hrli)]
     #[test]
     fn a_suspect_is_said_when_it_appears_not_while_it_stays_and_again_after_it_clears() {
         let p = sweep();
@@ -798,6 +823,7 @@ mod tests {
         assert_eq!(decide(&p, &c, &snap, None, &Repaired::default(), 0.0).1.len(), 1);
     }
 
+    #[test_id(thxx2hy)]
     #[test]
     fn the_repaired_line_names_the_edges_it_mirrored() {
         let snap = Snapshot { content: vec![Bead { id: "sp-o".into(), status: "open".into(), priority: 2, ..Bead::default() }], ..Snapshot::default() };
@@ -806,6 +832,7 @@ mod tests {
         assert_eq!(say, ["REPAIRED sp-o open bead had no lifecycle row; created it (priority 2, repo none); mirrored blocks edges sp-b"]);
     }
 
+    #[test_id(tff4x7h)]
     #[test]
     fn only_an_open_row_is_completed_again_and_a_ready_one_is_left_alone() {
         let content = |id: &str| Bead { id: id.into(), status: "open".into(), ..Bead::default() };
@@ -815,6 +842,7 @@ mod tests {
         assert_eq!(ids, ["sp-none", "sp-open"]);
     }
 
+    #[test_id(t3rr6jl)]
     #[test]
     fn a_repaired_rowless_bead_is_reported_repaired_and_not_suspect() {
         let p = sweep();
@@ -830,6 +858,7 @@ mod tests {
         ev
     }
 
+    #[test_id(tvj812j)]
     #[test]
     fn a_repair_of_the_longest_ids_is_cut_by_bytes_and_still_names_one_bead() {
         let p = sweep();
@@ -845,6 +874,7 @@ mod tests {
         assert!(repair.input.len() <= REPAIR_BYTES && !ids.is_empty() && ids.len() < REPAIR_BATCH, "{} ids, {} bytes", ids.len(), repair.input.len());
     }
 
+    #[test_id(t07sdfa)]
     #[test]
     fn a_pass_over_thirteen_thousand_beads_requests_effects_that_fit_a_journal_record() {
         let p = sweep();
@@ -880,6 +910,7 @@ mod tests {
         assert!(said.iter().all(|m| m.len() < 8 * 1024));
     }
 
+    #[test_id(t69xhfk)]
     #[test]
     fn a_repair_asks_for_ids_and_no_more_than_a_batch_of_them() {
         let p = sweep();
@@ -892,6 +923,7 @@ mod tests {
         Snapshot { rows: vec![Row { id: "sp-r".into(), state: state.into(), claim: claim.map(str::to_string), claim_unset: unset, ..Row::default() }], ..Snapshot::default() }
     }
 
+    #[test_id(t7r11qy)]
     #[test]
     fn a_ready_row_with_no_claim_inputs_asks_for_a_repair_naming_it() {
         let p = sweep();
@@ -907,6 +939,7 @@ mod tests {
         assert_eq!((asked.ids, asked.claims), (vec![], vec!["sp-r".to_string()]));
     }
 
+    #[test_id(t9fafo1)]
     #[test]
     fn a_claim_repair_is_announced_once_per_record() {
         let snap = claim_row("READY", Some("claimable"), false);
@@ -914,6 +947,7 @@ mod tests {
         assert_eq!(say, ["REPAIRED sp-r READY bead had no claim inputs; wrote them"]);
     }
 
+    #[test_id(tv5zhkr)]
     #[test]
     fn a_ready_row_the_claim_view_cannot_judge_is_announced_on_the_first_pass_only() {
         let snap = claim_row("READY", Some("cannot-tell"), false);
@@ -922,6 +956,7 @@ mod tests {
         assert!(decide(&sweep(), &carry, &snap, None, &Repaired::default(), NOW).1.is_empty());
     }
 
+    #[test_id(txj2lkf)]
     #[test]
     fn an_unjudged_claim_line_names_why_the_view_cannot_tell() {
         let mut snap = claim_row("READY", Some("cannot-tell"), false);
@@ -931,6 +966,7 @@ mod tests {
         assert!(decide(&sweep(), &carry, &snap, None, &Repaired::default(), NOW).1.is_empty());
     }
 
+    #[test_id(ttqjfpf)]
     #[test]
     fn an_unjudged_claim_adds_to_a_poisoned_rows_own_line() {
         let mut snap = claim_row("READY", Some("cannot-tell"), false);
@@ -939,6 +975,7 @@ mod tests {
         assert!(say.iter().any(|l| l.contains("POISONED")) && say.iter().any(|l| l.contains("CLAIM UNJUDGED")), "{say:?}");
     }
 
+    #[test_id(t1h4uca)]
     #[test]
     fn a_row_repaired_this_pass_is_not_called_unjudged() {
         let snap = claim_row("READY", Some("cannot-tell"), false);

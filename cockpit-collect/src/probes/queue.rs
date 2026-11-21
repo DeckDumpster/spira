@@ -284,6 +284,7 @@ fn row_pri_title(row: &Value) -> (String, String) {
 mod tests {
     use super::*;
 
+    #[test_id(t13zk2r)]
     #[test]
     fn the_express_count_is_zero_on_a_refusal_or_a_non_number() {
         assert_eq!(express_count(0, "4\n"), 4);
@@ -299,6 +300,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-11
+    #[test_id(txt7dna)]
     #[test]
     fn funnel_counts_stages_red_breakdown_and_oldest_ages() {
         let now = 100_000;
@@ -328,6 +330,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4pp5kj)]
     #[test]
     fn funnel_from_an_unanswering_store_is_question_marks_not_zero() {
         let kv = funnel_keys(None, 100_000);
@@ -335,6 +338,7 @@ mod tests {
         assert!(kv.iter().all(|(_, v)| v == "?"));
     }
     // covers: UC-cockpit-observability-11
+    #[test_id(ta7kyui)]
     #[test]
     fn next_rows_leave_out_the_open_batch() {
         let batch: HashSet<&str> = ["sp-b1", "sp-bopen"].into();
@@ -345,6 +349,7 @@ mod tests {
         assert_eq!(next_row_ids(&sorted, 15).len(), NEXT_ROW_CAP - 15, "a later repo only fills what is left");
     }
 
+    #[test_id(tcia3g7)]
     #[test]
     fn the_registry_rows_still_held_are_emitted_soonest_first_and_a_failed_call_is_unread() {
         let list = r#"{"ok":true,"at":100,"rows":[
@@ -368,6 +373,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-11
+    #[test_id(t9jmykf)]
     #[test]
     fn the_active_batch_is_the_store_record_the_queue_shows() {
         let now = 10_000;

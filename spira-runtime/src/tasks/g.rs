@@ -374,6 +374,7 @@ pub mod cockpit {
             Snapshot { supervised: true, fragments: [("cockpit.now".to_string(), frag(FragmentState::Ok, at, &[("SP_AT", &at.to_string())])), ("cockpit.round".to_string(), frag(FragmentState::Ok, at, &[("SP_ROUND", round)]))].into() }
         }
 
+        #[test_id(teop35r)]
         #[test]
         fn the_slots_sample_counts_ready_from_the_claim_view_and_leaves_it_unknown_without_one() {
             let claim = cockpit_ops::lcview::Snapshot { claimable: Some(vec!["sp-a".into(), "sp-b".into()]), rows: ["sp-a", "sp-b"].iter().map(|id| cockpit_ops::lcview::Row { id: id.to_string(), state: "READY".into(), claim: Some(cockpit_ops::lcview::ClaimView { verdict: cockpit_ops::lcview::Kind::Claimable, blocker: None, runes: vec!["builder".into()] }), ..Default::default() }).collect(), ..Default::default() };
@@ -381,6 +382,7 @@ pub mod cockpit {
             assert_eq!(with_ready("live=1\n", None), "live=1\n");
         }
 
+        #[test_id(tnx3py5)]
         #[test]
         fn the_digest_ignores_clock_only_keys_and_sees_every_other() {
             let kv = |extra: &[(&str, &str)]| -> Vec<(String, String)> { extra.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect() };
@@ -392,6 +394,7 @@ pub mod cockpit {
         }
 
         // covers: UC-cockpit-observability-01
+        #[test_id(twee3q0)]
         #[test]
         fn an_instance_that_is_not_the_supervised_writer_refuses_to_publish() {
             let mut unsupervised = snap(10, "r1");
@@ -401,6 +404,7 @@ pub mod cockpit {
             assert!(decide_tier(&Carry::default(), &snap(10, "r1"), "t.publish").is_ok());
         }
 
+        #[test_id(ttng1sv)]
         #[test]
         fn a_newer_pass_with_the_same_values_refreshes_off_the_journal_and_moves_no_carry() {
             let (first, acts) = decide_tier(&Carry::default(), &snap(10, "r1"), "t.publish").unwrap();
@@ -414,6 +418,7 @@ pub mod cockpit {
             assert!(!is_probe(&acts[0], true), "a moved digest is a journaled publish");
         }
 
+        #[test_id(tdmjsl2)]
         #[test]
         fn a_status_moves_only_along_the_table_and_its_at_is_the_move() {
             let c = Carry { fragments: [("p".to_string(), FragmentCarry { at: 5, status: FragmentState::Error, killed: true })].into(), digest: None };
@@ -424,6 +429,7 @@ pub mod cockpit {
             assert_eq!(merged(&Snapshot { supervised: true, fragments: [("cockpit.x".to_string(), frag(FragmentState::Error, 0, &[("SP_X", "0")]))].into() }).last(), Some(&("SP_X".to_string(), "?".to_string())));
         }
 
+        #[test_id(txfnl3s)]
         #[test]
         fn the_observe_input_names_every_probe_and_the_writer_key() {
             let cfg: BTreeMap<String, String> = [(WRITE_KEY.to_string(), "1".to_string())].into();

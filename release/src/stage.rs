@@ -376,6 +376,7 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
 mod init_tests {
     use super::*;
 
+    #[test_id(t63cxl2)]
     #[test]
     fn the_stage_initialises_its_store_through_spira_lc_admin_store() {
         let env = vec![("SPIRA_BD".to_string(), "bd-embedded".to_string()), ("SPIRA_DB".to_string(), "stage/db".to_string())];
@@ -392,6 +393,7 @@ mod init_tests {
 mod git_env_tests {
     use super::*;
 
+    #[test_id(tzgfu37)]
     #[test]
     fn git_command_strips_every_location_var() {
         let c = git();

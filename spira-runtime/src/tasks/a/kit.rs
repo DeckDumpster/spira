@@ -256,7 +256,8 @@ pub fn real_names() -> Vec<&'static str> {
 ///   next one; `idle`/`busy`: the contract's idle fixture and a world with work in it.
 #[macro_export]
 macro_rules! family_a_acceptance {
-    (module: $m:ident, registration: $reg:expr, tick: $tick:expr, first_timer_ms: $first:expr $(,)?) => {
+    (module: $m:ident, registration: $reg:expr, tick: $tick:expr, first_timer_ms: $first:expr,
+        test_ids: [ #[test_id($id1:ident)] #[test_id($id2:ident)] #[test_id($id3:ident)] #[test_id($id4:ident)] #[test_id($id5:ident)] ] $(,)?) => {
         #[allow(unused_imports)]
         use $crate::tasks::a::$m::*;
         #[allow(unused_imports)]
@@ -286,6 +287,7 @@ macro_rules! family_a_acceptance {
             rig_with(seed, move |_| Ok(::serde_json::to_string(&*world.lock().unwrap()).unwrap()))
         }
 
+        #[test_id($id1)]
         #[test]
         fn t1_registered_boots_and_arms_its_tick() {
             let row = kit::registered(NAME).unwrap_or_else(|| panic!("{} is not in tasks::all(): its row waits in tasks::a::PENDING until the port lands", NAME));
@@ -296,6 +298,7 @@ macro_rules! family_a_acceptance {
             assert_eq!(r.engine().next_timer_at(), Some($first), "the boot tick arms the next");
         }
 
+        #[test_id($id2)]
         #[test]
         fn t1_the_pending_row_is_this_contract() {
             let row = kit::pending(NAME);
@@ -310,6 +313,7 @@ macro_rules! family_a_acceptance {
             assert!(ACTS.iter().all(|(n, _)| EFFECTS.contains(n) || $crate::tasks::SHARED.iter().any(|(s, _)| s == n)), "every act is a declared effect");
         }
 
+        #[test_id($id3)]
         #[test]
         fn t2_an_idle_tick_is_the_probe_only() {
             let mut r = rig(1, idle());
@@ -318,6 +322,7 @@ macro_rules! family_a_acceptance {
             kit::assert_unpoisoned(&r, STREAM);
         }
 
+        #[test_id($id4)]
         #[test]
         fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
             let sim = ::sim::doubles::service().names();
@@ -327,6 +332,7 @@ macro_rules! family_a_acceptance {
             assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
         }
 
+        #[test_id($id5)]
         #[test]
         fn t4_a_planted_bogus_effect_is_refused_and_the_module_spawns_nothing() {
             let sim = ::sim::doubles::service().names();
@@ -342,17 +348,20 @@ macro_rules! family_a_acceptance {
 mod tests {
     use super::*;
 
+    #[test_id(tlygunb)]
     #[test]
     fn the_spawn_scan_sees_a_planted_command_and_passes_a_clean_line() {
         assert_eq!(spawns("let x = 1;\nstd::process::Command::new(\"git\")"), ["std::process::Command::new(\"git\")"]);
         assert!(spawns("let x = 1;").is_empty());
     }
 
+    #[test_id(t8pofqw)]
     #[test]
     fn the_registration_scan_finds_a_registered_key_and_refuses_a_planted_one() {
         assert_eq!(unregistered(&["SPIRA_RUN", "SPIRA_PLANTED_NOT_A_KEY"]), ["SPIRA_PLANTED_NOT_A_KEY"]);
     }
 
+    #[test_id(tfybcxt)]
     #[test]
     fn pinned_refuses_naming_the_first_key_that_does_not_resolve() {
         let get = |k: &str| if k == "A" { Ok("1".to_string()) } else { Err(format!("{k} unknown")) };
@@ -362,23 +371,25 @@ mod tests {
 
     /// Every family-A row builds from the `Settings` it is handed: a planted value there is the
     /// value pinned, with no config door resolved, and a key the settings lack refuses the build.
+    #[test_id(t7pi9pe)]
     #[test]
     fn pin_reads_the_settings_it_is_given_not_the_process_config() {
         let mut s = crate::settings::fixture();
         s.task_config.insert("SPIRA_RECLAIM_GRACE_SECS".into(), "4242".into());
         assert_eq!(pin(&s, "t", &["SPIRA_RECLAIM_GRACE_SECS"])["SPIRA_RECLAIM_GRACE_SECS"], "4242");
-        let built = super::super::sentinel_pass::SentinelPass::from_settings(&s);
+        let built = super::super::super::sentinel_pass::SentinelPass::from_settings(&s);
         assert_eq!(built.pinned["SPIRA_RECLAIM_GRACE_SECS"], "4242", "the row pins what the settings hold");
-        for t in super::super::TASKS {
+        for t in super::super::super::TASKS {
             let _ = (t.build)(&s);
         }
         assert!(std::panic::catch_unwind(|| pin(&s, "t", &["SPIRA_PLANTED_NOT_A_KEY"])).is_err(), "a key the settings lack refuses");
     }
 
     /// A hand-off lands on each target's own stream; one with no target stays on the emitter's.
+    #[test_id(thll668)]
     #[test]
     fn a_hand_off_is_delivered_to_the_streams_it_wakes() {
-        use super::super::{batcher_forge, batcher_local, czar, queue_step, sentinel_call};
+        use super::super::super::{batcher_forge, batcher_local, czar, queue_step, sentinel_call};
         let shape = Shape { name: "t", stream: "s", tick: "t.tick", state: "t.state", observe: "t.observe", observe_deadline_ms: 1 };
         let to = |tag: &'static str| -> Vec<String> {
             commands(&shape, &[], &[tag], &0, &0, vec![Act::new(tag, "k")])
@@ -396,12 +407,13 @@ mod tests {
         assert_eq!(to(queue_step::CUT_WANTED), [batcher_local::STREAM, batcher_forge::STREAM]);
         assert_eq!(to(batcher_forge::SETTLE_WANTED), [queue_step::STREAM]);
         assert_eq!(to("t.planted_local"), ["<own>"], "a hand-off with no target stays on the emitter's stream");
-        for (tag, wakes) in [(WORK_SUBMITTED, batcher_local::WAKES), (WORK_SUBMITTED, batcher_forge::WAKES), (batcher_forge::SETTLE_WANTED, queue_step::WAKES), (queue_step::PUBLISH_WANTED, super::super::publish::WAKES)] {
+        for (tag, wakes) in [(WORK_SUBMITTED, batcher_local::WAKES), (WORK_SUBMITTED, batcher_forge::WAKES), (batcher_forge::SETTLE_WANTED, queue_step::WAKES), (queue_step::PUBLISH_WANTED, super::super::super::publish::WAKES)] {
             assert!(wakes.contains(&tag), "{tag} is delivered where nobody listens");
         }
     }
 
     /// The key `decide` gives an act is the key its effect is requested under.
+    #[test_id(tq06e9j)]
     #[test]
     fn commands_passes_an_acts_key_through_to_its_effect() {
         let shape = Shape { name: "t", stream: "s", tick: "t.tick", state: "t.state", observe: "t.observe", observe_deadline_ms: 1 };
@@ -410,6 +422,7 @@ mod tests {
         assert_eq!(e.key, "t.do/sp-a", "the act's key is the effect's");
     }
 
+    #[test_id(t3wtplm)]
     #[test]
     fn an_act_outside_the_table_is_a_decide_bug_not_a_default_deadline() {
         let shape = Shape { name: "t", stream: "s", tick: "t.tick", state: "t.state", observe: "t.observe", observe_deadline_ms: 1 };

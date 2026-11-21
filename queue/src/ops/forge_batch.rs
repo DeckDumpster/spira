@@ -281,6 +281,7 @@ mod tests {
         (dir, file)
     }
 
+    #[test_id(t28reti)]
     #[test]
     fn a_bare_pending_forge_state_is_removed() {
         let (dir, file) = planted("pending\n");
@@ -288,6 +289,7 @@ mod tests {
         assert!(!file.exists());
     }
 
+    #[test_id(tvqze3a)]
     #[test]
     fn a_verdict_forge_state_naming_a_batch_is_left() {
         let (dir, file) = planted("batch_id=x\nci=red\n");
@@ -295,6 +297,7 @@ mod tests {
         assert!(file.exists());
     }
 
+    #[test_id(tcmf279)]
     #[test]
     fn no_forge_state_is_no_error() {
         let dir = testkit::TempDir::new("clear-pending-absent");

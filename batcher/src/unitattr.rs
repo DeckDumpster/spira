@@ -276,6 +276,7 @@ pub fn assertion_owner(
 
 #[cfg(test)]
 mod tests {
+    #[test_id(ta5s1v0)]
     #[test]
     fn a_scope_is_exact_only_when_every_token_is_a_package_and_a_test() {
         let v = |t: &[&str]| t.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -292,6 +293,7 @@ mod tests {
         assert_eq!(assertion_delta(out), ["status-level = \"skip\""]);
     }
 
+    #[test_id(totvqof)]
     #[test]
     fn assertion_delta_is_empty_without_an_assertion_block_or_a_difference_in_lines() {
         assert!(assertion_delta("FAIL x y\nplain output\n").is_empty());
@@ -299,6 +301,7 @@ mod tests {
         assert!(assertion_delta(same).is_empty());
     }
 
+    #[test_id(tca1klv)]
     #[test]
     fn assertion_owner_wants_exactly_one_reaching_member_with_the_whole_line() {
         let add = |id: &str, a: &str| MemberDiff { id: id.into(), paths: vec![], added: a.into() };
@@ -340,6 +343,7 @@ mod tests {
         }
     }
 
+    #[test_id(tvq8fvv)]
     #[test]
     fn a_red_naming_one_integration_test_reruns_that_test_alone() {
         let g = PackageGraph {
@@ -351,12 +355,14 @@ mod tests {
         assert_eq!(rerun_scope(&failed, Some(&g)), vec!["testenv=lint_does_not_refuse_a_key"]);
     }
 
+    #[test_id(tzsqs4h)]
     #[test]
     fn a_failure_whose_name_a_test_filter_cannot_take_reruns_its_whole_package() {
         let failed = vec!["FAIL runtime::bin odd$name".to_string(), "FAIL runtime::bin ok::t".to_string()];
         assert_eq!(rerun_scope(&failed, None), vec!["runtime"]);
     }
 
+    #[test_id(t3eea3l)]
     #[test]
     fn failing_lines_are_read_once_each_and_a_log_tail_is_not_mistaken_for_them() {
         let out = "FAIL loom factory::tests::a\nFAIL loom factory::tests::a\nTIMEOUT loom::bin/x t::b\ntest result: FAILED. 1 passed\nFAIL [ 0.1s] ( 1/2) loom t::c\n";
@@ -367,6 +373,7 @@ mod tests {
         assert_eq!(failing_packages(&failing_lines(out)), ["loom"]);
     }
 
+    #[test_id(taxozov)]
     #[test]
     fn a_member_reaches_a_failing_package_through_its_own_dir_or_a_dependency_and_no_other() {
         let diffs = [
@@ -383,6 +390,7 @@ mod tests {
         assert!(got[0].1.contains("dependency of loom"), "{got:?}");
     }
 
+    #[test_id(txb39co)]
     #[test]
     fn a_member_reaches_the_package_whose_tests_read_a_file_it_touches_and_no_other() {
         let g = PackageGraph {
@@ -398,6 +406,7 @@ mod tests {
         assert!(reaching(&g, &["spira-world".to_string()], &d).is_empty());
     }
 
+    #[test_id(t8h223d)]
     #[test]
     fn a_dir_word_resolves_to_the_package_in_that_directory_and_an_unowned_one_stays() {
         assert_eq!(
@@ -416,6 +425,7 @@ mod tests {
         assert_eq!(root.resolve(&["dir:.".into()]), ["root"]);
     }
 
+    #[test_id(tbs0ney)]
     #[test]
     fn a_package_the_graph_does_not_know_reaches_no_member_even_beside_one_it_does() {
         let d = [diff("a", "gate/src/x.rs"), diff("b", "loom/src/y.rs")];
@@ -423,6 +433,7 @@ mod tests {
         assert!(reaching(&graph(), &["loom".to_string(), "ghost".to_string()], &d).is_empty());
     }
 
+    #[test_id(t1lrlq4)]
     #[test]
     fn a_root_package_owns_only_the_paths_no_other_package_directory_holds() {
         let g = PackageGraph {
@@ -443,6 +454,7 @@ mod tests {
         );
     }
 
+    #[test_id(tj3hg6g)]
     #[test]
     fn a_test_word_resolves_to_its_sole_owner_and_stays_unresolved_otherwise() {
         let g = PackageGraph {

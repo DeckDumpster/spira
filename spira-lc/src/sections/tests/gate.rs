@@ -53,6 +53,7 @@ fn snapshot(r: &Rig<MemBackend>) -> reconciler_engine::assemble::Assembled {
     assemble(&Snapshot::parse(&snap).unwrap(), r.clock.now_ms())
 }
 
+#[test_id(t2cxhls)]
 #[test]
 fn the_hours_share_and_cause_counts_are_the_manifests() {
     let m = manifest();
@@ -71,6 +72,7 @@ fn the_hours_share_and_cause_counts_are_the_manifests() {
     assert_eq!(s["metadata"]["owner"], kind::OWNER);
 }
 
+#[test_id(tnh6zt3)]
 #[test]
 fn a_row_that_is_no_gate_or_outside_the_hour_counts_for_nothing_and_a_blank_reason_is_unspecified() {
     let r = at_five();
@@ -87,6 +89,7 @@ fn a_row_that_is_no_gate_or_outside_the_hour_counts_for_nothing_and_a_blank_reas
     assert_eq!(reading.by_cause, [("unspecified".to_string(), 2)]);
 }
 
+#[test_id(tgixgqi)]
 #[test]
 fn the_newest_rows_of_each_repo_are_published_with_their_red_unit_and_line() {
     let r = at_five();
@@ -102,6 +105,7 @@ fn the_newest_rows_of_each_repo_are_published_with_their_red_unit_and_line() {
     assert_eq!(recent[1]["rows"][0]["red_line"], "boom");
 }
 
+#[test_id(t2xqfgy)]
 #[test]
 fn an_hour_with_no_gate_or_no_run_time_publishes_zero_so_its_distance_is_defined() {
     let r = at_five();
@@ -112,6 +116,7 @@ fn an_hour_with_no_gate_or_no_run_time_publishes_zero_so_its_distance_is_defined
     assert_eq!((reading.no_verdict_share, reading.no_verdict_hours_share), (1.0, 0.0));
 }
 
+#[test_id(tjx7j60)]
 #[test]
 fn a_scratch_short_no_verdict_traces_to_the_host_section_over_its_spec() {
     let r = at_five();
@@ -129,6 +134,7 @@ fn a_scratch_short_no_verdict_traces_to_the_host_section_over_its_spec() {
     assert_eq!(flow.upstream("gate/verdicts"), ["Gate/gate"]);
 }
 
+#[test_id(tc3gqwj)]
 #[test]
 fn the_publisher_declares_no_action_and_the_selector_records_the_section_as_a_term() {
     let r = at_five();
@@ -149,6 +155,7 @@ fn the_publisher_declares_no_action_and_the_selector_records_the_section_as_a_te
     assert!(plan.steps.is_empty() && plan.would_step.is_empty() && plan.exhausted.is_empty() && plan.no_lever.is_empty(), "{plan:?}");
 }
 
+#[test_id(tw8bom5)]
 #[test]
 fn the_section_turns_stale_when_the_publisher_stops_for_longer_than_its_max_age() {
     let r = at_five();
@@ -165,6 +172,7 @@ fn the_section_turns_stale_when_the_publisher_stops_for_longer_than_its_max_age(
     assert_eq!(cannot_see(&r), None, "the next publish makes it fresh");
 }
 
+#[test_id(tz26dgr)]
 #[test]
 fn a_store_that_refuses_the_write_is_an_error_naming_the_verb() {
     struct Refuses;
@@ -181,6 +189,7 @@ fn a_store_that_refuses_the_write_is_an_error_naming_the_verb() {
     assert!(e.contains("publish Gate/gate") && e.contains("exit 3"), "{e}");
 }
 
+#[test_id(tya4gfc)]
 #[test]
 fn a_store_that_cannot_answer_the_read_stops_the_publish_before_any_write() {
     struct Down;
@@ -193,6 +202,7 @@ fn a_store_that_cannot_answer_the_read_stops_the_publish_before_any_write() {
     assert!(section::run(&Down, FIVE, &[]).unwrap_err().contains("section get Gate/gate"));
 }
 
+#[test_id(tdkb2a6)]
 #[test]
 fn a_family_with_no_file_reads_as_no_gates_and_any_other_failure_stops_the_publish() {
     use tsd::query::{Failure, ERR_NO_FAMILY};
@@ -201,6 +211,7 @@ fn a_family_with_no_file_reads_as_no_gates_and_any_other_failure_stops_the_publi
     assert_eq!(section::gate_rows(Err(Failure { code: 1, message: "unreadable".into() })).unwrap_err(), "unreadable");
 }
 
+#[test_id(tfuhw98)]
 #[test]
 fn a_tick_that_gated_nothing_still_publishes_from_a_run_directory_with_no_gate_run_family() {
     let r = at_five();
@@ -214,6 +225,7 @@ fn a_tick_that_gated_nothing_still_publishes_from_a_run_directory_with_no_gate_r
     assert_eq!(section::publish(&Dispatch(&r), dir.path(), FIVE).unwrap().gates, 20);
 }
 
+#[test_id(tpzg5lg)]
 #[test]
 fn a_stored_section_the_schema_rejects_stops_the_publish_and_names_it() {
     struct Garbled;
@@ -226,6 +238,7 @@ fn a_stored_section_the_schema_rejects_stops_the_publish_and_names_it() {
     assert!(section::run(&Garbled, FIVE, &[]).unwrap_err().contains("Gate/gate is unreadable"));
 }
 
+#[test_id(tltwx0k)]
 #[test]
 fn a_publish_that_lost_the_race_on_the_revision_is_an_error_and_the_winner_stands() {
     struct Raced<'a>(&'a Rig<MemBackend>);

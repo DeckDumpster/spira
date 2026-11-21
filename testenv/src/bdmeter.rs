@@ -113,6 +113,7 @@ mod tests {
         testkit::TempDir::new(&format!("bdmeter-{tag}"))
     }
 
+    #[test_id(tbk6gse)]
     #[test]
     fn the_log_line_is_what_bd_totals_sums() {
         let args: Vec<String> = ["-C", "db", "--json", "list"]
@@ -131,6 +132,7 @@ mod tests {
         assert_eq!(log_line(5, 0, &[]), "5 0 -\n");
     }
 
+    #[test_id(trqwlo1)]
     #[test]
     fn a_non_executable_is_not_the_real_bd() {
         let d = tmp("noexec");

@@ -253,6 +253,7 @@ mod tests {
         }
     }
 
+    #[test_id(tkdiwm6)]
     #[test]
     fn only_returned_rows_that_name_a_member_are_returns() {
         let mut named = row("test-a.sh", "RETURNED", None);
@@ -263,6 +264,7 @@ mod tests {
         assert_eq!((got[0].suite.as_str(), got[0].members.clone()), ("test-a.sh", vec!["m2".to_string()]));
     }
 
+    #[test_id(tfdxcfk)]
     #[test]
     fn settled_rows_return_without_waiting() {
         let mut f = fake(vec![(
@@ -277,6 +279,7 @@ mod tests {
         );
     }
 
+    #[test_id(tzoqe7b)]
     #[test]
     fn the_wait_ends_when_the_last_mender_settles_not_at_its_deadline() {
         let mut f = fake(vec![
@@ -288,6 +291,7 @@ mod tests {
         assert_eq!(out[0].outcome, Outcome::Environment);
     }
 
+    #[test_id(t9n2tjf)]
     #[test]
     fn an_overdue_row_is_swept_at_the_deadline_and_the_wait_never_passes_it() {
         let mut f = fake(vec![(
@@ -303,6 +307,7 @@ mod tests {
         assert!(out.iter().all(|x| x.outcome == Outcome::Returned));
     }
 
+    #[test_id(t7qel2f)]
     #[test]
     fn a_row_the_machine_does_not_settle_is_unsure_and_the_wait_still_ends() {
         let mut f = fake(vec![(0, vec![row("a", "MENDING", Some(1100))])]);
@@ -313,6 +318,7 @@ mod tests {
         assert!(out[0].diagnosis.contains("MENDING"));
     }
 
+    #[test_id(tuo65b4)]
     #[test]
     fn a_waiting_row_is_bounded_by_a_full_deadline_from_now() {
         let mut f = fake(vec![(0, vec![row("a", "WAITING", None)])]);
@@ -322,6 +328,7 @@ mod tests {
         assert_eq!(out[0].outcome, Outcome::Unsure);
     }
 
+    #[test_id(th69p27)]
     #[test]
     fn a_waiting_row_picked_up_late_never_extends_the_wait_past_a_deadline_from_when_the_wait_began(
     ) {
@@ -334,6 +341,7 @@ mod tests {
         assert!(f.t <= 1400);
     }
 
+    #[test_id(tydfjq1)]
     #[test]
     fn a_mend_waiting_on_an_open_ask_is_not_returned_at_its_deadline() {
         let waiting = Row {
@@ -350,6 +358,7 @@ mod tests {
         assert_eq!(out[0].outcome, Outcome::Mended);
     }
 
+    #[test_id(tbuoqwt)]
     #[test]
     fn the_listing_is_filtered_to_the_pass() {
         let json = r#"[{"pass":1,"suite":"a","state":"MENDED","deadline":5,"diagnosis":null},{"pass":2,"suite":"b","state":"MENDING","deadline":9,"diagnosis":"x"}]"#;
@@ -367,6 +376,7 @@ mod tests {
         assert!(parse_rows("nope", 1).is_err());
     }
 
+    #[test_id(toyrasd)]
     #[test]
     fn a_returned_row_names_its_members_and_the_owners_fill_only_a_row_that_named_none() {
         let json = r#"[{"pass":2,"suite":"s","state":"RETURNED","deadline":9,"diagnosis":"x","returned":["sp-b"]}]"#;

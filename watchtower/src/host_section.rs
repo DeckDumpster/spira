@@ -406,6 +406,7 @@ mod tests {
         .unwrap()
     }
 
+    #[test_id(t0kcq3z)]
     #[test]
     fn a_free_share_is_a_fraction_of_the_size_and_a_zero_size_has_none() {
         assert_eq!(free_share(1500, 10_000), Some(0.15));
@@ -414,6 +415,7 @@ mod tests {
         assert_eq!(free_share(5, 0), None);
     }
 
+    #[test_id(t7dsix3)]
     #[test]
     fn an_action_the_kind_does_not_declare_or_with_no_whole_count_is_refused() {
         assert!(matches!(decide(&intent("drain", json!(2), json!(1)), 2, None), Step::Refuse(m) if m.contains("drain")));
@@ -423,6 +425,7 @@ mod tests {
         assert_eq!(decide(&intent(host::SHED_SLOT, json!(3), json!(2)), 3, None), Step::Set(2));
     }
 
+    #[test_id(tmq8zby)]
     #[test]
     fn only_unacknowledged_host_intents_are_open() {
         let item = |key: &str, action: &str, acked: bool| {
@@ -447,6 +450,7 @@ mod tests {
         assert!(previous(&json!({})).is_none());
     }
 
+    #[test_id(tpctmax)]
     #[test]
     fn the_unreadable_terms_are_exactly_the_ones_the_distance_names() {
         let s = Sample { scratch: None, worktrees: Some(0.5), root: None, io: None };
@@ -454,6 +458,7 @@ mod tests {
         assert!(unreadable(&Sample { scratch: Some(0.5), worktrees: Some(0.5), root: None, io: Some(1.0) }).is_empty());
     }
 
+    #[test_id(txs75p9)]
     #[test]
     fn with_no_spec_seeded_no_condition_is_raised() {
         let h = Host { sample: Sample { scratch: Some(0.0), worktrees: Some(0.0), root: Some(0.0), io: Some(99.0) }, certify_par: 2, shed_from: None, stale_scratch: 0, stale_targets: 0 };

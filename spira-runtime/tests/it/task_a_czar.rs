@@ -10,6 +10,7 @@ spira_runtime::family_a_acceptance! {
     registration: Czar::new(policy(Stage::Shadow)).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: 30_000,
+    test_ids: [ #[test_id(t53b4ab)] #[test_id(tiq40zc)] #[test_id(tbu57i3)] #[test_id(tjtsx3i)] #[test_id(tnrwnsk)] ],
 }
 
 const NOW: u64 = 1_793_000_000_000;
@@ -54,6 +55,7 @@ fn busy() -> Snapshot {
     }
 }
 
+#[test_id(to9ay33)]
 #[test]
 fn t3_every_rung_of_the_ladder_is_taken() {
     for (from, to) in LADDER {
@@ -61,12 +63,14 @@ fn t3_every_rung_of_the_ladder_is_taken() {
     }
 }
 
+#[test_id(tx13oy0)]
 #[test]
 fn t3_inferred_without_a_gap_is_refused_naming_the_key() {
     let refused = advance("ci-red:spira", Phase::Satisfied, Phase::Inferred).expect_err("inferred needs a gap first");
     assert!(refused.contains("ci-red:spira"), "{refused}");
 }
 
+#[test_id(tmb16zx)]
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
     let mut r = rig(1, busy());
@@ -76,6 +80,7 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 }
 
 /// `cp:312-320`: in shadow a deadlock is a `CZAR-WOULD` line, never an incident.
+#[test_id(t39hxdm)]
 #[test]
 fn t5_a_shadow_deadlock_is_a_would_line_and_files_nothing() {
     let (carry, acts) = decide(&policy(Stage::Shadow), &Carry::default(), &busy());
@@ -85,6 +90,7 @@ fn t5_a_shadow_deadlock_is_a_would_line_and_files_nothing() {
 }
 
 /// `cp:332-343`: in act a deadlock files one incident keyed `incident:queue-<ref>`.
+#[test_id(txbknif)]
 #[test]
 fn t5_an_act_deadlock_files_one_incident_by_its_ref() {
     let (_, acts) = decide(&policy(Stage::Act), &Carry::default(), &busy());
@@ -94,6 +100,7 @@ fn t5_an_act_deadlock_files_one_incident_by_its_ref() {
 }
 
 /// `cp:369-395`: a red base files P0 against the red repo, keyed `incident:base-red:<repo>:<suites>`.
+#[test_id(tbge2hl)]
 #[test]
 fn t5_a_red_base_files_base_red_against_the_repo() {
     let red = Snapshot { base_ci: [("spira".to_string(), Read::Observed(BaseCi { conclusion: Some("failure".into()), head_sha: "b2".into(), run_url: Some("u".into()), red_suites: vec!["lint".into()], ..BaseCi::default() }))].into(), ..idle() };
@@ -102,6 +109,7 @@ fn t5_a_red_base_files_base_red_against_the_repo() {
 }
 
 /// sp-pu7v6: an unreadable field is never satisfied.
+#[test_id(t8iccjd)]
 #[test]
 fn t5_an_unobservable_ci_is_not_satisfied() {
     let blind = Snapshot { ci: [("spira".to_string(), Read::Unobservable("forge timed out".into()))].into(), ..idle() };
@@ -111,6 +119,7 @@ fn t5_an_unobservable_ci_is_not_satisfied() {
 
 /// law-lifecycle-state-is-not-text (sp-mijstw): the certified pool counts only unheld rows, and a
 /// hold written as the JSON-encoded string spira-lc may emit is still a hold.
+#[test_id(t27h598)]
 #[test]
 fn t7_a_hold_in_string_form_keeps_its_row_out_of_the_certified_pool() {
     let list = r#"[{"bead_id":"sp-a","state":"CERTIFIED","holds":[]},{"bead_id":"sp-b","state":"CERTIFIED","holds":"[\"poison\"]"},{"bead_id":"sp-c","state":"CERTIFIED","holds":["ask"]},{"bead_id":"sp-d","state":"CERTIFIED","holds":"[]"}]"#;
@@ -124,6 +133,7 @@ fn at_work() -> TaskRig {
     r
 }
 
+#[test_id(tapo3mb)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&at_work(), NAME);
@@ -131,12 +141,14 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     assert!(rows.iter().any(|k| k == "cursor_ms"), "{rows:?}");
 }
 
+#[test_id(tgxe5sh)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
 
 /// A spent GitHub budget is one page with its reset and the top spender, not one per repository.
+#[test_id(thh57vh)]
 #[test]
 fn a_spent_budget_files_one_page_naming_the_reset_and_the_top_spender() {
     let blind = |repo: &str| (repo.to_string(), Read::Unobservable("forge exited 1".into()));

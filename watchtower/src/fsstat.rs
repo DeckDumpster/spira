@@ -36,6 +36,7 @@ pub fn usage(path: &str) -> Option<Usage> {
 mod tests {
     use super::*;
 
+    #[test_id(tpl8ebh)]
     #[test]
     fn use_is_rounded_up_against_used_plus_available_as_df_does() {
         // 1000 blocks of 1 MiB, 400 free of which 300 available to users: used 600 of 900.
@@ -45,6 +46,7 @@ mod tests {
         assert_eq!(from_counts(3, 3, 3, 4096).avail_mib, 1, "a partial MiB rounds up");
     }
 
+    #[test_id(th507cf)]
     #[test]
     fn the_root_filesystem_reads_and_a_missing_path_does_not() {
         let u = usage("/").expect("statvfs /");

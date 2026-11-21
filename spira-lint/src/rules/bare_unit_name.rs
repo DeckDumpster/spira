@@ -113,6 +113,7 @@ mod tests {
         BareUnitName.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(t9oe8z0)]
     #[test]
     fn a_bare_unit_literal_in_code_is_caught_and_the_instance_form_is_not() {
         let t = TempDir::new("bareunit");
@@ -124,6 +125,7 @@ mod tests {
         assert!(got[0].starts_with("bare-unit-name: s/src/p.rs:1:"), "{got:?}");
     }
 
+    #[test_id(tzjts0u)]
     #[test]
     fn an_allow_line_with_no_offender_is_itself_a_finding() {
         let t = TempDir::new("bareunit-stale");

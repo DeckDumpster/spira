@@ -105,6 +105,7 @@ mod tests {
 
     const PARTS: &[Part] = &[Part::Field("n"), Part::Map { name: "repos", drop: &["cache"] }];
 
+    #[test_id(tr91pkk)]
     #[test]
     fn a_split_carry_joins_back_without_what_was_dropped() {
         let body = r#"{"n":3,"repos":{"o/r":{"a":1,"cache":"x"},"p":{"a":2,"cache":"y"}}}"#;
@@ -113,6 +114,7 @@ mod tests {
         assert_eq!(join(&rows, PARTS), r#"{"n":3,"repos":{"o/r":{"a":1},"p":{"a":2}}}"#);
     }
 
+    #[test_id(tyq319q)]
     #[test]
     fn a_bare_value_carry_round_trips_as_one_row() {
         let rows = split_whole("\"Over\"");
@@ -120,6 +122,7 @@ mod tests {
         assert_eq!(join_whole(&rows), "\"Over\"");
     }
 
+    #[test_id(ttxx8zh)]
     #[test]
     fn a_long_entry_key_is_digested_and_still_joins() {
         let long = "k".repeat(300);
@@ -129,6 +132,7 @@ mod tests {
         assert_eq!(join(&rows, PARTS), body);
     }
 
+    #[test_id(t9gxy76)]
     #[test]
     fn a_wide_effect_key_is_stored_as_its_digest_and_a_narrow_one_as_itself() {
         assert_eq!(bounded_key("sp-a:1"), "sp-a:1");

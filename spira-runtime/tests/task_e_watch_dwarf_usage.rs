@@ -2,6 +2,8 @@
 //! and pushes the samples to the metrics store. The sampler's parse is tested in
 //! `runtime::usage`; here the row's registration, its tick, and what it pushes.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::cell::RefCell;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -61,6 +63,7 @@ fn label<'a>(s: &'a Series, k: &str) -> &'a str {
     s.labels.iter().find(|(n, _)| n == k).map_or("", |(_, v)| v.as_str())
 }
 
+#[test_id(t39ppgi)]
 #[test]
 fn the_row_is_registered_with_its_class_its_mode_and_its_cadence_key() {
     let t = acc::row(NAME);
@@ -77,6 +80,7 @@ fn the_row_is_registered_with_its_class_its_mode_and_its_cadence_key() {
     assert_eq!(r.requested().iter().map(|q| (q.name.as_str(), q.journaled)).collect::<Vec<_>>(), [(SAMPLE, false)], "a tick is one unjournaled probe");
 }
 
+#[test_id(tfrm8mf)]
 #[test]
 fn every_tick_samples_and_journals_nothing() {
     let mut r = rig(1);
@@ -84,6 +88,7 @@ fn every_tick_samples_and_journals_nothing() {
     acc::assert_healthy(&r, STREAM);
 }
 
+#[test_id(tvvogoq)]
 #[test]
 fn the_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("e/watch_dwarf_usage.rs")), None);
@@ -93,6 +98,7 @@ fn the_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
+#[test_id(ta895f2)]
 #[test]
 fn a_dwarf_sample_is_one_series_per_counter_each_labelled_with_who_and_where() {
     let at = UNIX_EPOCH + Duration::from_millis(1_762_500_090_000);
@@ -125,6 +131,7 @@ fn a_dwarf_sample_is_one_series_per_counter_each_labelled_with_who_and_where() {
     assert_eq!(label(c, "device"), "", "only the IO series carry the disk");
 }
 
+#[test_id(tpe7xhi)]
 #[test]
 fn the_series_encode_as_otlp_gauges_for_the_metrics_store() {
     let at = UNIX_EPOCH + Duration::from_secs(1_762_500_090);
@@ -133,6 +140,7 @@ fn the_series_encode_as_otlp_gauges_for_the_metrics_store() {
     assert_eq!(names, [CPU_SECONDS, IO_READ_BYTES, IO_WRITE_BYTES, MEMORY_BYTES, MEMORY_PEAK_BYTES, WORKTREE_BYTES, BUILD_DIR_BYTES, WALL_SECONDS]);
 }
 
+#[test_id(tatsl11)]
 #[test]
 fn nothing_live_pushes_nothing_and_a_refused_push_is_an_error() {
     let rec = Recorder::default();
@@ -150,6 +158,7 @@ fn nothing_live_pushes_nothing_and_a_refused_push_is_an_error() {
     assert!(push(&[dwarf()], &unconfigured, SystemTime::now()).is_err(), "no store configured is said, not swallowed");
 }
 
+#[test_id(tjtuou0)]
 #[test]
 fn two_days_of_minute_ticks_replay_identically_inside_the_budget() {
     let r = assert_deterministic(rig, 7, 2);
@@ -157,6 +166,7 @@ fn two_days_of_minute_ticks_replay_identically_inside_the_budget() {
     assert_journal_budget(&r, 1);
 }
 
+#[test_id(tdntdu0)]
 #[test]
 fn a_sampler_that_carries_nothing_keeps_no_row_after_running() {
     let mut r = rig(1);
@@ -165,11 +175,13 @@ fn a_sampler_that_carries_nothing_keeps_no_row_after_running() {
     assert!(kept.is_empty(), "{kept:?}");
 }
 
+#[test_id(t3dur31)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(|| rig(1), || WatchDwarfUsage { interval_ms: 60_000 }.registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
 }
 
+#[test_id(t087tqh)]
 #[test]
 fn a_container_sample_is_pushed_with_its_name_on_the_io_series() {
     let mut c = dwarf();

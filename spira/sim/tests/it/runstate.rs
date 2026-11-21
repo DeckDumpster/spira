@@ -12,6 +12,7 @@ fn rows<'a>(all: &'a [(&'static str, Value)], t: &str) -> Vec<&'a Value> {
     all.iter().filter(|(n, _)| *n == t).map(|(_, v)| v).collect()
 }
 
+#[test_id(t2o0x89)]
 #[test]
 fn a_verdict_file_is_a_row_keyed_by_its_name() {
     let r = verdict_row("abc", "when=2026-10-24T13:55:20Z\nat=1792850120\nby=spira/sp-x\nrepo=spira\nbranch=spira/sp-x\nsuites=-\ncompose=unit\n");
@@ -19,12 +20,14 @@ fn a_verdict_file_is_a_row_keyed_by_its_name() {
     assert!(verdict_row("k", "garbage")["branch"].is_null());
 }
 
+#[test_id(t4wpug1)]
 #[test]
 fn flocked_inodes_reads_only_flock_rows() {
     let locks = "1: FLOCK  ADVISORY  WRITE 4242 08:01:131077 0 EOF\n2: POSIX  ADVISORY  WRITE 4243 08:01:999 0 EOF\n3: FLOCK  ADVISORY  READ 1 00:2c:7 0 EOF\n";
     assert_eq!(flocked_inodes(locks).into_iter().collect::<Vec<_>>(), vec![7, 131077]);
 }
 
+#[test_id(t134tc1)]
 #[test]
 fn the_run_directory_reads_as_one_row_set_per_family() {
     let w = testkit::TempDir::new("sim-runstate");
@@ -57,12 +60,14 @@ fn the_run_directory_reads_as_one_row_set_per_family() {
     assert!(unit_row("u", "active\n")["exit"].is_null());
 }
 
+#[test_id(tolg7iw)]
 #[test]
 fn an_absent_run_directory_reads_as_nothing() {
     let w = testkit::TempDir::new("sim-runstate-empty");
     assert!(read(&w.join("no-such-run"), "").is_empty());
 }
 
+#[test_id(toisopy)]
 #[test]
 fn every_table_is_declared_once() {
     let mut names: Vec<_> = TABLES.iter().map(|t| t.name).collect();

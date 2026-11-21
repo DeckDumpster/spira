@@ -466,6 +466,7 @@ mod tests {
         refusal(&payload, Some((Path::new(&run_dir()), Path::new(&wt_dir()))), &root())
     }
 
+    #[test_id(t5gp4zg)]
     #[test]
     fn the_hook_prints_block_json_on_a_refusal_and_nothing_otherwise() {
         let (run, wt) = (run_dir(), wt_dir());
@@ -483,6 +484,7 @@ mod tests {
         assert_eq!(hook_output("not json", Some((run, wt)), &root(), false), None, "unparseable passes");
     }
 
+    #[test_id(t1cdot6)]
     #[test]
     fn rg_on_one_run_file_is_refused_and_the_reason_points_at_grep() {
         let r = bash("rg foo @R/spira/run/sp-x.log").expect("rg always recurses");
@@ -507,6 +509,7 @@ mod tests {
         assert!(r.contains("spira-lc") && r.contains("work"), "{r}");
     }
 
+    #[test_id(thyrstj)]
     #[test]
     fn every_way_of_reaching_a_store_binary_is_refused() {
         for c in ["bd show sp-a", "@R/bin/bdq list", "env A=1 bd create x", "timeout 5 bd-embedded", "bash -c 'bd dep add a b'", "sh <<'EOF'\nbdq ready\nEOF", "echo sp-a | xargs bd show", "echo sp-a | xargs -n 1 bd show", "echo sp-a | xargs --max-args 1 bd show", "echo sp-a | xargs -I{} bd show {}", "eval env A=1 bd show", "nice -n 5 bd list", "command bd list", "exec bd list", "nohup bd list", "eval \"bd close sp-a\"", "dolt sql", "cd /tmp && ./bd list"] {
@@ -514,6 +517,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4vtg21)]
     #[test]
     fn commands_that_only_mention_a_store_binary_run() {
         for c in ["work show", "spira-lc show sp-a", "grep bd file.rs", "git grep bdq", "echo bd", "cat bead/src/bin/bdq.rs"] {
@@ -521,6 +525,7 @@ mod tests {
         }
     }
 
+    #[test_id(t0uup3r)]
     #[test]
     fn a_recursive_search_with_no_operand_searches_the_cwd_and_is_refused_in_the_run_dir() {
         refused("cd @R/spira/run && rg foo");
@@ -528,11 +533,13 @@ mod tests {
         allowed("cd @R/spira/run/worktree/sp-a/dwarf && rg foo");
     }
 
+    #[test_id(t821oq9)]
     #[test]
     fn the_scar_command_is_refused_through_its_cd() {
         refused(r#"cd @R/spira/run; ls -dt */ 2>/dev/null | head -5; grep -rl "spira-20261114T055931Z" . 2>/dev/null | head"#);
     }
 
+    #[test_id(tafwkqv)]
     #[test]
     fn recursive_searches_of_the_run_dir_or_above_are_refused() {
         refused("grep -rn foo @R/spira/run");
@@ -550,6 +557,7 @@ mod tests {
         refused("rg --files @R/spira/run");
     }
 
+    #[test_id(tivnbja)]
     #[test]
     fn the_grep_tool_and_a_recursive_glob_are_refused() {
         let r = verdict(json!({"tool_name": "Grep", "tool_input": {"pattern": "x", "path": run_dir()}})).unwrap();
@@ -561,6 +569,7 @@ mod tests {
         refused("find @R/spira/run/* -name x");
     }
 
+    #[test_id(ttiqqhe)]
     #[test]
     fn searches_inside_the_worktree_and_single_files_run() {
         allowed("grep -rn foo .");
@@ -574,6 +583,7 @@ mod tests {
         allowed("grep -rn foo . 2>/dev/null | head");
     }
 
+    #[test_id(tydmnxp)]
     #[test]
     fn prose_and_heredoc_bodies_are_inert() {
         allowed(r#"echo "grep -r x @R/spira/run""#);
@@ -583,6 +593,7 @@ mod tests {
         refused("cat <<EOF >/dev/null\nx\nEOF\ngrep -r x @R/spira");
     }
 
+    #[test_id(tsm26j2)]
     #[test]
     fn the_grep_tool_without_a_path_and_other_tools_pass() {
         assert_eq!(verdict(json!({"tool_name": "Grep", "tool_input": {"pattern": "x"}})), None);
@@ -590,12 +601,14 @@ mod tests {
         assert_eq!(verdict(json!({"tool_name": "Glob", "tool_input": {"pattern": "*.log", "path": run_dir()}})), None);
     }
 
+    #[test_id(txw8wws)]
     #[test]
     fn an_unreadable_payload_passes() {
         assert_eq!(verdict(json!({})), None);
         assert_eq!(verdict(json!({"tool_name": "Bash"})), None);
     }
 
+    #[test_id(tk3y95n)]
     #[test]
     fn cd_forms_and_command_wrappers_are_followed() {
         refused("cd && grep -r x spira");
@@ -609,6 +622,7 @@ mod tests {
         allowed("cd dwarf && cd .. && grep -r x .");
     }
 
+    #[test_id(tqdudo8)]
     #[test]
     fn a_subshell_cd_is_taken_to_change_the_directory() {
         refused("(cd @R/spira/run && ls); grep -rn x .");

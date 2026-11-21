@@ -66,6 +66,7 @@ mod tests {
     use super::*;
 
 
+    #[test_id(t591x7n)]
     #[test]
     fn two_different_lock_files_do_not_contend() {
         let dir = testkit::TempDir::new("archivist-lock");

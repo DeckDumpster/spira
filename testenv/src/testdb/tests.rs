@@ -10,6 +10,7 @@ fn tmpdir(tag: &str) -> testkit::TempDir {
 
 // ---- pure ----------------------------------------------------------------------------
 
+#[test_id(t172a2k)]
 #[test]
 fn template_key_changes_with_either_binary() {
     let k = template_key("bd\u{0}/a\u{0}1\u{0}2", "dolt\u{0}/b\u{0}1\u{0}2");
@@ -19,6 +20,7 @@ fn template_key_changes_with_either_binary() {
     assert_ne!(k, template_key("bd\u{0}/a\u{0}1\u{0}2", "dolt\u{0}/c\u{0}1\u{0}2"));
 }
 
+#[test_id(tp6ex1x)]
 #[test]
 fn exe_identity_names_path_size_and_mtime() {
     let d = tmpdir("ident");
@@ -29,6 +31,7 @@ fn exe_identity_names_path_size_and_mtime() {
     assert!(exe_identity(&d.join("missing")).is_err());
 }
 
+#[test_id(txmezz0)]
 #[test]
 fn config_carries_port_and_absolute_data_dir() {
     let root = testkit::TempDir::new("testdb-config");
@@ -40,6 +43,7 @@ fn config_carries_port_and_absolute_data_dir() {
     assert!(c.contains("dolt_transaction_commit: false"));
 }
 
+#[test_id(tyrac3m)]
 #[test]
 fn beads_pointed_at_new_port_in_both_files() {
     let d = tmpdir("point");
@@ -67,6 +71,7 @@ fn beads_pointed_at_new_port_in_both_files() {
     );
 }
 
+#[test_id(t5yst6d)]
 #[test]
 fn cmdline_identity_is_sql_server_for_this_config() {
     let root = testkit::TempDir::new("testdb-cmdline");
@@ -89,6 +94,7 @@ fn cmdline_identity_is_sql_server_for_this_config() {
     assert!(!cmdline_is_server(b"", cfg), "gone");
 }
 
+#[test_id(tcg4u3f)]
 #[test]
 fn zombie_and_missing_state_read_as_dead() {
     assert!(!status_is_dead("Name:\tdolt\nState:\tS (sleeping)\n"));
@@ -98,6 +104,7 @@ fn zombie_and_missing_state_read_as_dead() {
     assert!(status_is_dead(""));
 }
 
+#[test_id(terd30x)]
 #[test]
 fn cpu_ticks_read_past_a_comm_with_spaces() {
     let stat =
@@ -106,6 +113,7 @@ fn cpu_ticks_read_past_a_comm_with_spaces() {
     assert_eq!(stat_cpu_ticks("garbage"), None);
 }
 
+#[test_id(t42ekqz)]
 #[test]
 fn report_is_key_value_lines() {
     assert_eq!(
@@ -118,6 +126,7 @@ fn s(v: &[&str]) -> Vec<String> {
     v.iter().map(|x| x.to_string()).collect()
 }
 
+#[test_id(t77d3yv)]
 #[test]
 fn parse_requires_what_each_command_needs() {
     let a = parse(&s(&[
@@ -157,6 +166,7 @@ fn parse_requires_what_each_command_needs() {
 
 // ---- orchestration against stand-ins -------------------------------------------------
 
+#[test_id(t0k8ddl)]
 #[test]
 fn the_template_command_takes_its_cache_from_the_flag_or_else_the_batch_variable() {
     let parsed = |v: &[&str]| parse(&s(v)).unwrap();
@@ -187,6 +197,7 @@ fn cached_names(cache: &Path) -> Vec<String> {
     v
 }
 
+#[test_id(tm5hzip)]
 #[test]
 fn the_template_cache_is_bounded_and_evicts_the_least_recently_used_key() {
     let d = tmpdir("cachebound");
@@ -230,6 +241,7 @@ fn the_template_cache_is_bounded_and_evicts_the_least_recently_used_key() {
     let _ = fs::remove_dir_all(&d);
 }
 
+#[test_id(tsrfxqc)]
 #[test]
 fn a_failed_fetch_stores_nothing() {
     let d = tmpdir("cachefail");
@@ -249,6 +261,7 @@ fn a_failed_fetch_stores_nothing() {
     let _ = fs::remove_dir_all(&d);
 }
 
+#[test_id(tmgepmk)]
 #[test]
 fn the_template_report_round_trips() {
     let out = report(&[
@@ -272,6 +285,7 @@ fn the_template_report_round_trips() {
 // `assert!(!pid_alive(pid2))` with a member that touches only round-vm/src/pool.rs —
 // red once in the last 34 unit runs.
 
+#[test_id(tv2w7sp)]
 #[test]
 fn reaper_exits_when_the_fixture_was_dropped_normally() {
     let d = tmpdir("reap-gone");
@@ -301,6 +315,7 @@ fn bd_in(ws: &Path, bd: &Path, args: &[&str]) -> (bool, String) {
     )
 }
 
+#[test_id(thbnx5j)]
 #[test]
 #[ignore = "needs real bd + dolt on PATH; ~6 s (template build)"]
 fn real_bd_and_dolt_isolated_fixtures() {
@@ -341,6 +356,7 @@ fn plant_foreign_workspace(d: &Path) {
     .unwrap();
 }
 
+#[test_id(tilkqp8)]
 #[test]
 #[ignore = "needs real bd + dolt on PATH; ~6 s (template build)"]
 fn a_template_builds_below_a_foreign_beads_workspace() {
@@ -362,6 +378,7 @@ fn a_template_builds_below_a_foreign_beads_workspace() {
 
 // ---- readiness and the tmpfs root (sp-t26yx) -----------------------------------------------
 
+#[test_id(tr88bs6)]
 #[test]
 fn a_greeting_is_protocol_10_at_sequence_0() {
     assert!(is_greeting(&[0x4a, 0, 0, 0, 0x0a]));
@@ -370,6 +387,7 @@ fn a_greeting_is_protocol_10_at_sequence_0() {
     assert!(!is_greeting(&[0, 0, 0, 0, 0x0a]), "an empty payload");
 }
 
+#[test_id(tuzavhf)]
 #[test]
 fn a_greeting_socket_is_ready() {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -382,12 +400,14 @@ fn a_greeting_socket_is_ready() {
     srv.join().unwrap();
 }
 
+#[test_id(t7vapim)]
 #[test]
 fn nothing_listening_is_not_ready() {
     let port = free_port().unwrap();
     assert!(!greets(&([127, 0, 0, 1], port).into()));
 }
 
+#[test_id(tqnl46y)]
 #[test]
 fn tmpfs_is_read_from_the_nearest_existing_ancestor() {
     assert!(!on_tmpfs(Path::new(system_paths::PROC)), "procfs is not a tmpfs");
@@ -407,6 +427,7 @@ fn write_beads(dir: &Path, marker: &str) {
     fs::write(beads.join("metadata.json"), marker).unwrap();
 }
 
+#[test_id(talg2yc)]
 #[test]
 fn unique_dir_never_repeats_within_a_process() {
     let a = unique_dir("u");
@@ -414,6 +435,7 @@ fn unique_dir_never_repeats_within_a_process() {
     assert_ne!(a, b);
 }
 
+#[test_id(tuyt4zz)]
 #[test]
 fn embedded_reset_restores_the_baseline_and_drops_extra_state() {
     let d = tmpdir("er");
@@ -439,6 +461,7 @@ fn embedded_reset_restores_the_baseline_and_drops_extra_state() {
     let _ = fs::remove_dir_all(&d);
 }
 
+#[test_id(tvhrr9q)]
 #[test]
 fn embedded_reset_is_a_swap_even_when_beads_is_absent() {
     // A fixture whose .beads was already removed (e.g. a prior interrupted reset) still
@@ -457,6 +480,7 @@ fn embedded_reset_is_a_swap_even_when_beads_is_absent() {
     let _ = fs::remove_dir_all(&d);
 }
 
+#[test_id(tgnggku)]
 #[test]
 fn embedded_borrow_gets_its_own_copy_never_the_baseline_itself() {
     let d = tmpdir("bor");
@@ -484,6 +508,7 @@ fn embedded_borrow_gets_its_own_copy_never_the_baseline_itself() {
     let _ = fs::remove_dir_all(&d);
 }
 
+#[test_id(txix3pm)]
 #[test]
 fn embedded_borrow_refuses_a_gone_baseline() {
     let d = tmpdir("bor-gone");
@@ -491,6 +516,7 @@ fn embedded_borrow_refuses_a_gone_baseline() {
     assert!(err.contains("could not copy baseline"), "{err}");
 }
 
+#[test_id(tpaiiry)]
 #[test]
 fn embedded_borrow_refuses_a_baseline_with_no_beads() {
     let d = tmpdir("bor-empty");
@@ -501,6 +527,7 @@ fn embedded_borrow_refuses_a_baseline_with_no_beads() {
     let _ = fs::remove_dir_all(&d);
 }
 
+#[test_id(tam6d2p)]
 #[test]
 fn embedded_down_tolerates_empty_and_missing_paths() {
     // Server mode zeroes these vars before calling drop's shared cleanup path; embedded-down
@@ -508,6 +535,7 @@ fn embedded_down_tolerates_empty_and_missing_paths() {
     embedded_down(&[PathBuf::new(), testkit::TempDir::new("testdb-gone").join("nonexistent")]);
 }
 
+#[test_id(t0aq1do)]
 #[test]
 #[ignore = "needs real bd (embedded engine) on PATH"]
 fn real_bd_embedded_up_check_reset_and_down() {

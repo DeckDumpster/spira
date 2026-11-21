@@ -18,6 +18,7 @@ pub fn finished(o: &std::process::Output, pr_state: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tbt9xd3)]
     #[test]
     fn fixture_rows_may_name_bd_status() {
         assert!(super::row().status == "closed");

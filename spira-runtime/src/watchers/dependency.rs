@@ -43,6 +43,7 @@ mod tests {
         live_blocker("b", &blocked(), &|id| (id == "d").then(|| state.to_string()))
     }
 
+    #[test_id(tt2uvds)]
     #[test]
     fn a_prerequisite_in_each_live_state_is_a_live_blocker() {
         for s in LIVE {
@@ -50,6 +51,7 @@ mod tests {
         }
     }
 
+    #[test_id(tgkoh7i)]
     #[test]
     fn an_idle_or_unknown_prerequisite_is_not_a_live_blocker() {
         assert_eq!(live_with("READY"), None);
@@ -57,11 +59,13 @@ mod tests {
         assert_eq!(live_blocker("b", &blocked(), &|_| None), None);
     }
 
+    #[test_id(t1ucom7)]
     #[test]
     fn a_bead_the_batcher_did_not_refuse_has_no_blocker() {
         assert_eq!(live_blocker("other", &blocked(), &|_| Some("WORKING".into())), None);
     }
 
+    #[test_id(tyx62gj)]
     #[test]
     fn the_clause_names_each_wait_with_the_blockers_state_and_is_none_when_empty() {
         let w = vec![("a".to_string(), "x".to_string(), "WORKING".to_string()), ("b".to_string(), "y".to_string(), "CERTIFIED".to_string())];

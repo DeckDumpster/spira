@@ -47,6 +47,7 @@ fn value(m: &Measure) -> f64 {
     }
 }
 
+#[test_id(tqqkup1)]
 #[test]
 fn a_landing_stop_naming_a_bead_charges_its_whole_stop_window_until_its_revert_lands() {
     let end = DAY0 + DAY_SECS;
@@ -66,6 +67,7 @@ fn a_landing_stop_naming_a_bead_charges_its_whole_stop_window_until_its_revert_l
     assert!(fell >= 647.0 / 1440.0, "the day's ratio fell by {fell}, less than its stop window");
 }
 
+#[test_id(tqf5i8c)]
 #[test]
 fn one_innocent_eject_alone_moves_the_ratio_by_less_than_a_hundredth() {
     let end = DAY0 + DAY_SECS;
@@ -83,6 +85,7 @@ fn one_innocent_eject_alone_moves_the_ratio_by_less_than_a_hundredth() {
     assert!(moved > 0.0 && moved < 0.01, "moved {moved}");
 }
 
+#[test_id(tsb9pjl)]
 #[test]
 fn a_bead_landed_and_reverted_with_no_stop_counts_once_at_zero_cost() {
     let end = DAY0 + DAY_SECS;
@@ -97,6 +100,7 @@ fn a_bead_landed_and_reverted_with_no_stop_counts_once_at_zero_cost() {
     assert!((value(&g.rate) - 11.0 * 10.0 / 11.0).abs() < 1e-9, "{:?}", g.rate);
 }
 
+#[test_id(twpnzxs)]
 #[test]
 fn an_eject_of_an_innocent_member_charges_the_guilty_bead() {
     let end = DAY0 + DAY_SECS;
@@ -111,6 +115,7 @@ fn an_eject_of_an_innocent_member_charges_the_guilty_bead() {
     assert!((value(&g.ratio) - (1.0 - 30.0 / 1440.0)).abs() < 1e-9, "a guilty bead that never landed costs only its minutes");
 }
 
+#[test_id(tnneu2k)]
 #[test]
 fn a_second_eject_charges_its_round_and_a_first_does_not() {
     let end = DAY0 + DAY_SECS;
@@ -125,6 +130,7 @@ fn a_second_eject_charges_its_round_and_a_first_does_not() {
     assert_eq!((h.evidence.len(), h.evidence[0].signal), (1, Signal::RepeatEject));
 }
 
+#[test_id(tp9fehg)]
 #[test]
 fn over_cap_passes_between_a_landing_and_its_revert_are_charged_and_unreverted_ones_to_no_one() {
     let end = DAY0 + DAY_SECS;
@@ -146,6 +152,7 @@ fn over_cap_passes_between_a_landing_and_its_revert_are_charged_and_unreverted_o
     assert_eq!(h.cost_secs, 25 * MIN);
 }
 
+#[test_id(tx683qz)]
 #[test]
 fn a_cost_is_clipped_to_the_window_and_the_ratio_to_zero() {
     let end = DAY0 + DAY_SECS;
@@ -157,6 +164,7 @@ fn a_cost_is_clipped_to_the_window_and_the_ratio_to_zero() {
     assert_eq!(value(&g.rate), 0.0);
 }
 
+#[test_id(tr3uzlm)]
 #[test]
 fn a_warm_window_with_no_landings_is_unobservable_never_one_or_zero() {
     let g = day(&[], DAY0);
@@ -165,6 +173,7 @@ fn a_warm_window_with_no_landings_is_unobservable_never_one_or_zero() {
     assert_eq!(g.warming_until, None);
 }
 
+#[test_id(t9v014h)]
 #[test]
 fn a_halt_in_the_window_is_skipped_so_the_rate_is_the_rate_of_running_time() {
     let end = DAY0 + 30 * H;
@@ -187,6 +196,7 @@ fn a_halt_in_the_window_is_skipped_so_the_rate_is_the_rate_of_running_time() {
     assert!(!Window::new(&halted, end, DAY_SECS).contains(halt.0 + H), "halted time is outside the window");
 }
 
+#[test_id(t0qat5p)]
 #[test]
 fn after_a_release_from_a_halt_as_long_as_the_window_every_field_warms_up_for_one_window() {
     let released = DAY0 + 30 * H;
@@ -204,6 +214,7 @@ fn after_a_release_from_a_halt_as_long_as_the_window_every_field_warms_up_for_on
     assert_eq!(warm.ratio, Measure::Unobservable(NO_LANDINGS));
 }
 
+#[test_id(tvffnri)]
 #[test]
 fn a_halt_still_open_reaches_the_window_back_past_it() {
     let events = vec![landing("a", "harness", DAY0 + H), world(StopKind::Halt, DAY0 + 2 * H)];
@@ -215,12 +226,14 @@ fn a_halt_still_open_reaches_the_window_back_past_it() {
     assert_eq!(halts(&events, now), vec![(DAY0 + 2 * H, now, false)]);
 }
 
+#[test_id(t2cvbyi)]
 #[test]
 fn a_release_with_no_halt_and_a_second_halt_while_halted_are_ignored() {
     let events = vec![world(StopKind::Release, DAY0), world(StopKind::Halt, DAY0 + H), world(StopKind::Halt, DAY0 + 2 * H), world(StopKind::Release, DAY0 + 3 * H), world(StopKind::Halt, DAY0 + 9 * H)];
     assert_eq!(halts(&events, DAY0 + 5 * H), vec![(DAY0 + H, DAY0 + 3 * H, true)], "a halt after now is not yet");
 }
 
+#[test_id(t7l34ps)]
 #[test]
 fn prose_is_not_a_signal() {
     let end = DAY0 + DAY_SECS;
@@ -232,6 +245,7 @@ fn prose_is_not_a_signal() {
     assert_eq!(value(&g.ratio), 1.0);
 }
 
+#[test_id(t6hwkdf)]
 #[test]
 fn a_repo_scope_counts_only_that_repos_landings_and_harm() {
     let end = DAY0 + DAY_SECS;
@@ -248,6 +262,7 @@ fn a_repo_scope_counts_only_that_repos_landings_and_harm() {
     assert_eq!(goodput(&events, &w, Scope::Repo("none"), &repo_of).ratio, Measure::Unobservable(NO_LANDINGS));
 }
 
+#[test_id(trmwtip)]
 #[test]
 fn an_hour_window_reports_a_daily_rate() {
     let end = DAY0 + DAY_SECS;
@@ -257,6 +272,7 @@ fn an_hour_window_reports_a_daily_rate() {
     assert_eq!(value(&g.rate), 6.0 * 24.0);
 }
 
+#[test_id(t1t2x8e)]
 #[test]
 fn the_dwell_p95_reads_stays_that_ended_in_the_window() {
     let end = DAY0 + DAY_SECS;
@@ -266,6 +282,7 @@ fn the_dwell_p95_reads_stays_that_ended_in_the_window() {
     assert_eq!(dwell_p95(&[(DAY0 - H, 5)], &w), Measure::Unobservable(NO_CERTIFIED_EXITS));
 }
 
+#[test_id(t032rdh)]
 #[test]
 fn a_stop_after_its_beads_revert_landed_runs_to_now() {
     let end = DAY0 + DAY_SECS;

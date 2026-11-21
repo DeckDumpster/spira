@@ -185,6 +185,7 @@ impl RoundOps for ProofOps {
     }
 }
 
+#[test_id(tciadv3)]
 #[test]
 #[ignore]
 fn e2e_three_members_one_breaks_a_fast_suite() {
@@ -393,6 +394,7 @@ impl CloneMembers for RoundEnd {
     }
 }
 
+#[test_id(ttdgwc0)]
 #[test]
 #[ignore]
 fn e2e_an_attribution_leg_with_no_corpus_gets_its_control_probe_answered() {

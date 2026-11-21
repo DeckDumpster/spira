@@ -110,6 +110,7 @@ mod tests {
     use super::*;
     use crate::core::step;
 
+    #[test_id(t8p8cqg)]
     #[test]
     fn round_trips_through_a_file() {
         let dir = testkit::TempDir::new("reconciler-engine-io-test");
@@ -136,6 +137,7 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
+    #[test_id(tv3idn6)]
     #[test]
     fn alerted_since_round_trips_through_a_file() {
         let dir = testkit::TempDir::new("reconciler-engine-io-alerted-test");

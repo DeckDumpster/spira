@@ -213,6 +213,7 @@ mod tests {
         (n.to_string(), t.to_string())
     }
 
+    #[test_id(tpj32rc)]
     #[test]
     fn two_fragments_each_with_a_removed_list_yield_the_union() {
         let text = merge_delta_texts(&[part("config-delta.toml", "[spira]\nk = 1\n"), part("config-delta.d/a.toml", "removed = [\"spira.x\"]\n"), part("config-delta.d/b.toml", "removed = [\"spira.y\"]\nremoved_tasks = [\"t\"]\n")]).unwrap().unwrap();
@@ -224,6 +225,7 @@ mod tests {
         assert!(crate::delta_added(&text).is_ok());
     }
 
+    #[test_id(t732p1y)]
     #[test]
     fn a_lone_file_is_returned_as_written() {
         let t = "# kept\nremoved = [\"a\"] # ffx-ok\n";
@@ -231,6 +233,7 @@ mod tests {
         assert_eq!(merge_delta_texts(&[]).unwrap(), None);
     }
 
+    #[test_id(ts5kbeb)]
     #[test]
     fn one_key_set_to_two_values_names_both_files_and_equal_values_agree() {
         let e = merge_delta_texts(&[part("config-delta.d/a.toml", "[spira]\nk = 1\n"), part("config-delta.d/b.toml", "[spira]\nk = 2\n")]).unwrap_err();
@@ -238,6 +241,7 @@ mod tests {
         assert!(merge_delta_texts(&[part("a", "[spira]\nk = 1\n"), part("b", "[spira]\nk = 1\n")]).is_ok());
     }
 
+    #[test_id(tazklwe)]
     #[test]
     fn renamed_tables_merge_and_a_conflicting_rename_is_refused() {
         let ok = merge_delta_texts(&[part("a", "[renamed]\n\"spira.a\" = \"spira.b\"\n"), part("b", "[renamed]\n\"spira.c\" = \"spira.d\"\n")]).unwrap().unwrap();
@@ -245,6 +249,7 @@ mod tests {
         assert!(merge_delta_texts(&[part("a", "[renamed]\n\"spira.a\" = \"spira.b\"\n"), part("b", "[renamed]\n\"spira.a\" = \"spira.z\"\n")]).is_err());
     }
 
+    #[test_id(t6czwoj)]
     #[test]
     fn the_directory_reader_reads_base_and_fragments_and_ignores_other_files() {
         let d = testkit::TempDir::new("delta-dir");
@@ -259,6 +264,7 @@ mod tests {
         assert_eq!(v["removed"].as_array().unwrap().len(), 2);
     }
 
+    #[test_id(t473gy2)]
     #[test]
     fn folding_drops_a_pinned_key_a_fragment_retires() {
         let d = testkit::TempDir::new("delta-fold-retired");
@@ -271,6 +277,7 @@ mod tests {
         assert!(text.contains("keep = 1") && !text.contains("gone = 2") && text.contains("spira.gone"), "{text}");
     }
 
+    #[test_id(tv9brti)]
     #[test]
     fn the_loaded_delta_drops_a_pinned_key_a_fragment_retires() {
         let d = testkit::TempDir::new("delta-load-retired");
@@ -282,6 +289,7 @@ mod tests {
         assert!(text.contains("keep = 1") && !text.contains("gone = 2") && text.contains("spira.gone"), "{text}");
     }
 
+    #[test_id(tdmx7w2)]
     #[test]
     fn folding_moves_fragments_into_the_base_keeping_its_comments_and_removes_them() {
         let d = testkit::TempDir::new("delta-fold");

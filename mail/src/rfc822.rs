@@ -62,11 +62,13 @@ pub fn now() -> String {
 mod tests {
     use super::*;
 
+    #[test_id(t6ail22)]
     #[test]
     fn epoch_is_thursday_jan_1_1970() {
         assert_eq!(format_unix(0), "Thu, 01 Jan 1970 00:00:00 +0000");
     }
 
+    #[test_id(tq83sgd)]
     #[test]
     fn a_known_recent_timestamp_renders_correctly() {
         // 2026-09-30T10:40:26Z — matches the git log timestamp seen this session.

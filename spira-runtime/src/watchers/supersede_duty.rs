@@ -242,6 +242,7 @@ fn stored(body: &str) -> Option<Carry> {
 mod stored_tests {
     use super::*;
 
+    #[test_id(tyhcpuz)]
     #[test]
     fn a_state_row_written_as_a_bare_map_still_reads() {
         let carry = stored(r#"{"sp-old":"3"}"#).expect("bare map reads");
@@ -249,6 +250,7 @@ mod stored_tests {
         assert!(carry.failed.is_empty());
     }
 
+    #[test_id(t4imqt1)]
     #[test]
     fn a_whole_state_row_reads_as_written() {
         let whole = Carry { not_a_request: BTreeMap::from([("a".into(), "1".into())]), failed: BTreeSet::from(["b".into()]) };
@@ -391,6 +393,7 @@ mod tests {
         }
     }
 
+    #[test_id(t5w3qzr)]
     #[test]
     fn a_landed_successor_supersedes_and_any_other_state_lifts_the_hold() {
         let go = |succ: &str, st: &str| {
@@ -425,6 +428,7 @@ mod tests {
         assert_eq!(only_act(&go("sp-a", "WORKING")).verb, Verb::Unhold);
     }
 
+    #[test_id(towcnli)]
     #[test]
     fn the_latest_operator_hold_decides_whether_a_request_stands() {
         let hold = |kind: &str, cause: &str, detail: &str, applied: &str| {
@@ -469,6 +473,7 @@ mod tests {
         assert!(request_in("not json").is_err());
     }
 
+    #[test_id(t6tj3kx)]
     #[test]
     fn a_bead_already_terminal_or_without_a_row_is_left_alone() {
         for own in ["", "LANDED", "SUPERSEDED x", "DROPPED"] {
@@ -490,6 +495,7 @@ mod tests {
         );
     }
 
+    #[test_id(tnm9fsy)]
     #[test]
     fn a_hold_read_as_something_else_is_not_read_again_until_its_version_moves() {
         let other = |v: &str| Snapshot {
@@ -520,6 +526,7 @@ mod tests {
         );
     }
 
+    #[test_id(t5atliq)]
     #[test]
     fn an_unreadable_hold_says_nothing_and_is_read_again_next_tick() {
         let held = |id: &str, reading| Held {
@@ -537,6 +544,7 @@ mod tests {
         assert!(out.is_empty() && c == Carry::default(), "{c:?} {out:?}");
     }
 
+    #[test_id(tx9y2im)]
     #[test]
     fn a_failed_write_is_reported_once_and_silences_the_successor_line_after() {
         let snap = Snapshot {
@@ -558,6 +566,7 @@ mod tests {
         assert!(matches!(retry.as_slice(), [Out::Act(_)]), "{retry:?}");
     }
 
+    #[test_id(t6i6dmx)]
     #[test]
     fn a_bead_that_went_terminal_under_a_failing_write_says_nothing() {
         let (_, out) = decide(
@@ -577,6 +586,7 @@ mod tests {
         );
     }
 
+    #[test_id(t0wrt0i)]
     #[test]
     fn a_failed_bd_supersede_is_reported_once_and_not_retried() {
         let (_, out) = decide(

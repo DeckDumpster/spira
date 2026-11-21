@@ -67,6 +67,7 @@ mod tests {
 
     const SRC: &str = "[spira]\nrunes = [\"ops\", \"maechen\"]\n\n[persona.maechen]\nmodel = \"m\"\n\n[persona.maechen.lease]\nttl = 5\n\n[persona.ops]\nmodel = \"m\"\n"; // ffx-ok
 
+    #[test_id(tm5y2py)]
     #[test]
     fn renames_table_lease_and_roster() {
         let out = rename_persona_text(SRC, "maechen", "mimir").unwrap(); // ffx-ok
@@ -76,6 +77,7 @@ mod tests {
         assert_eq!(v["spira"]["runes"][1].as_str(), Some("mimir"));
     }
 
+    #[test_id(t63t0qm)]
     #[test]
     fn refuses_a_missing_source_and_an_existing_target() {
         assert!(rename_persona_text(SRC, "nope", "x").is_err());

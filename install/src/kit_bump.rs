@@ -77,12 +77,14 @@ mod tests {
         Spec { registry: "http://reg/api/packages/o/cargo", krate: "kit-core", sites }
     }
 
+    #[test_id(t54rmc8)]
     #[test]
     fn renders_the_kit_the_crate_and_each_site_with_its_own_path_and_ref() {
         let t = render(&spec("app:Cargo.toml web:sub/Cargo.toml"), &parse(MAP)).unwrap();
         assert_eq!(t, "registry http://reg/api/packages/o/cargo\ncrate kit-core\nsite app:/a:origin/master:Cargo.toml\nsite web:/w:origin/trunk:sub/Cargo.toml\n");
     }
 
+    #[test_id(tjdwav1)]
     #[test]
     fn the_written_file_is_one_name_value_flag_per_line_with_every_required_flag() {
         let d = testkit::TempDir::new("kit-bump-conf");
@@ -95,6 +97,7 @@ mod tests {
         assert_eq!(flags.iter().filter(|f| **f == "site").count(), 2);
     }
 
+    #[test_id(td094fk)]
     #[test]
     fn install_writes_nothing_without_a_kit() {
         let d = testkit::TempDir::new("kit-bump-install");
@@ -103,6 +106,7 @@ mod tests {
         assert!(!d.path().join(FILE).exists());
     }
 
+    #[test_id(tp39vkx)]
     #[test]
     fn install_removes_a_stale_conf_when_no_registry_is_configured() {
         let d = testkit::TempDir::new("kit-bump-stale");
@@ -112,6 +116,7 @@ mod tests {
         assert!(!d.path().join(FILE).exists());
     }
 
+    #[test_id(t2iekpx)]
     #[test]
     fn install_renders_an_absent_or_stale_conf_from_the_current_keys() {
         let d = testkit::TempDir::new("kit-bump-refresh");

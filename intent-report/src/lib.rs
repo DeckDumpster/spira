@@ -1,6 +1,9 @@
 //! intent-report — pure core (DESIGN.md). Parses the producers' rows, windows them, and
 //! renders the epic's Intent measures. No IO here; main.rs reads the files.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;

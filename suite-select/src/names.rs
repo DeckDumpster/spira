@@ -28,6 +28,7 @@ pub fn split_list(list: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    #[test_id(twcn7wr)]
     #[test]
     fn names_are_one_safe_component() {
         assert!(is_suite_name("test-gate-touched.sh"));
@@ -38,6 +39,7 @@ mod tests {
         assert!(!is_suite_name("a.sh"));
     }
 
+    #[test_id(t1kdaxv)]
     #[test]
     fn lists_split_on_commas_and_blanks_once_each() {
         assert_eq!(split_list("a.sh,b.sh c.sh\n,a.sh"), ["a.sh", "b.sh", "c.sh"]);

@@ -185,6 +185,7 @@ mod tests {
         })
     }
 
+    #[test_id(tqwfaau)]
     #[test]
     fn a_lifecycle_section_with_a_24h_distance_is_a_term_and_is_admitted() {
         admitted(warm()).unwrap();
@@ -193,6 +194,7 @@ mod tests {
         assert!((v - (1.0 - 40.0 / 150.0)).abs() < 1e-9, "{v}");
     }
 
+    #[test_id(tz2vtrh)]
     #[test]
     fn a_warming_field_is_admitted_but_is_never_a_term() {
         let mut st = warm();
@@ -206,6 +208,7 @@ mod tests {
         assert!(err.contains("distance.fn"), "a distance cannot read a warming field: {err}");
     }
 
+    #[test_id(tyzhpbw)]
     #[test]
     fn a_malformed_windowed_field_or_an_unknown_field_is_refused() {
         for bad in [json!("warming"), json!({ "unobservable": " ", "window": "24h" }), json!({ "unobservable": "x", "window": "soon" }), json!(3)] {
@@ -225,6 +228,7 @@ mod tests {
         assert!(admitted(st).unwrap_err().contains("conditions"));
     }
 
+    #[test_id(t6ocu5c)]
     #[test]
     fn the_shipped_lifecycle_spec_seeds_the_floor_and_the_dwell_target() {
         let fragment = crate::producer::parse_fragment(include_str!("../../examples/lifecycle.toml")).unwrap();
@@ -236,6 +240,7 @@ mod tests {
         assert_eq!(lc["spec"]["certified_dwell_p95_secs"]["value"], 1800);
     }
 
+    #[test_id(twjjrqr)]
     #[test]
     fn the_spec_names_the_floor_and_the_dwell_target_and_nothing_else() {
         let ok = json!({ "goodput_rate_floor": { "value": 150.0, "statute": "law-throughput-floor" },

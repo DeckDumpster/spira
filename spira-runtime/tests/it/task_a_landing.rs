@@ -12,6 +12,7 @@ spira_runtime::family_a_acceptance! {
     registration: Landing::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
+    test_ids: [ #[test_id(tmwgzzj)] #[test_id(tw01ecd)] #[test_id(tk9b3tu)] #[test_id(tvd18zt)] #[test_id(tumnbn7)] ],
 }
 
 fn bead(id: &str, handed_on: bool) -> BeadRow {
@@ -40,6 +41,7 @@ fn effects(acts: &[Act]) -> Vec<&str> {
     acts.iter().map(|a| a.effect.as_str()).collect()
 }
 
+#[test_id(tka9jbe)]
 #[test]
 fn t3_every_row_of_the_branch_machine_is_taken_and_keeps_its_exit_code() {
     for (from, on, to) in TABLE {
@@ -50,12 +52,14 @@ fn t3_every_row_of_the_branch_machine_is_taken_and_keeps_its_exit_code() {
     }
 }
 
+#[test_id(tf35zpx)]
 #[test]
 fn t3_pushing_x_pr_merged_is_refused_naming_pushing() {
     let refused = step(State::Pushing, Trigger::PrMerged).expect_err("pushing × pr_state=merged is illegal");
     assert!(refused.to_lowercase().contains("pushing"), "{refused}");
 }
 
+#[test_id(tw0zqt1)]
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
     let mut r = rig(1, busy());
@@ -65,6 +69,7 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 }
 
 /// `pr.rs:111-170`: a branch handed on with no PR is rebased; one not handed on is skipped.
+#[test_id(tg373ml)]
 #[test]
 fn t5_a_handed_on_branch_is_rebased_and_the_rest_skipped() {
     let (carry, acts) = decide(&Carry::default(), &busy());
@@ -74,6 +79,7 @@ fn t5_a_handed_on_branch_is_rebased_and_the_rest_skipped() {
 }
 
 /// `pr_branch.rs:38-56`: a PR merged while not handed on is delivered.
+#[test_id(tol2f0g)]
 #[test]
 fn t5_a_pr_merged_while_not_handed_on_is_delivered() {
     let merged = Branch { pr_state: PrState::Merged, merge_sha: Some("m1".into()), ..branch("pd-a", false) };
@@ -82,6 +88,7 @@ fn t5_a_pr_merged_while_not_handed_on_is_delivered() {
 }
 
 /// `pr.rs:181-213`: content already on base is delivered by content, not pushed.
+#[test_id(t2btbfe)]
 #[test]
 fn t5_content_already_on_base_is_delivered_by_content() {
     let landed = Branch { content_on_base: true, ..branch("pd-a", true) };
@@ -90,6 +97,7 @@ fn t5_content_already_on_base_is_delivered_by_content() {
 }
 
 /// A live holder defers the branch: nothing is done to it.
+#[test_id(t7gkgcw)]
 #[test]
 fn t5_a_live_holder_defers() {
     let held = Branch { holder_alive: true, ..branch("pd-a", true) };
@@ -97,6 +105,7 @@ fn t5_a_live_holder_defers() {
 }
 
 /// `pr.rs:56-59`: forge disabled is idle.
+#[test_id(tia17zt)]
 #[test]
 fn t5_forge_disabled_does_nothing() {
     assert_eq!(decide(&Carry::default(), &Snapshot { forge_enabled: false, ..busy() }).1, Vec::<Act>::new());
@@ -113,6 +122,7 @@ fn rebasing(id: &str) -> (Carry, String) {
     (carry, leg.to_string())
 }
 
+#[test_id(ta4ywgb)]
 #[test]
 fn t7_a_rebase_that_could_not_run_is_not_a_conflict() {
     let (carry, leg) = rebasing("pd-a");
@@ -121,6 +131,7 @@ fn t7_a_rebase_that_could_not_run_is_not_a_conflict() {
     assert_eq!(next.branches["spira/pd-a"].state, State::Done);
 }
 
+#[test_id(tg4ymac)]
 #[test]
 fn t7_rebase_outcomes_are_read_from_the_typed_body() {
     let (carry, leg) = rebasing("pd-a");
@@ -133,6 +144,7 @@ fn t7_rebase_outcomes_are_read_from_the_typed_body() {
     assert!(!effects(&acts).contains(&REOPEN), "an unreadable body is no verdict: {acts:?}");
 }
 
+#[test_id(ta23g9q)]
 #[test]
 fn t7_confine_outcomes_are_read_from_the_typed_body() {
     let (mut carry, leg) = rebasing("pd-a");
@@ -153,12 +165,14 @@ fn at_work() -> TaskRig {
     r
 }
 
+#[test_id(tlqi35j)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&at_work(), NAME);
     assert!(rows.iter().any(|k| k.starts_with("branches/")), "{rows:?}");
 }
 
+#[test_id(ttgmu4c)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));

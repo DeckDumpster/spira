@@ -144,6 +144,7 @@ mod tests {
 
     const SHOW: &str = "Id=spira-dwarf-builder-1.service\nEnvironment=SPIRA_RELEASE=/r/aaa PATH=/r/aaa/bin\n\nId=spira-dwarf-ops-2.service\nEnvironment=\"SPIRA_RELEASE=/r/bbb\" PATH=/x\n\nId=spira-dwarf-ops-3.service\nEnvironment=SPIRA_RELEASE=/r/bbb\n\nId=spira-x.service\nEnvironment=\n";
 
+    #[test_id(telfkiu)]
     #[test]
     fn counts_live_units_by_release_and_ignores_units_without_one() {
         let c = count_by_release(SHOW, |_| None, &NO_GRACE);
@@ -151,6 +152,7 @@ mod tests {
         assert!(count_by_release("Id=x\nEnvironment=FOO=1\n", |_| None, &NO_GRACE).is_empty());
     }
 
+    #[test_id(t2aytvr)]
     #[test]
     fn a_current_symlink_and_its_sha_path_are_one_release() {
         let show = "Id=a\nEnvironment=SPIRA_RELEASE=r/current\n\nId=b\nEnvironment=SPIRA_RELEASE=r/abc123\n";
@@ -160,6 +162,7 @@ mod tests {
         assert_eq!(count_by_release(show, |_| None, &NO_GRACE).len(), 2);
     }
 
+    #[test_id(tambus3)]
     #[test]
     fn a_symlink_and_the_release_it_resolves_to_are_one_release() {
         let d = testkit::TempDir::new("wt-skew-link");
@@ -173,6 +176,7 @@ mod tests {
         assert_eq!((c.get("abc123"), c.len()), (Some(&2), 1));
     }
 
+    #[test_id(tbrdqui)]
     #[test]
     fn skew_is_an_anomaly_only_after_longer_than_one_lifetime() {
         assert_eq!(decide(1, Some(0), 9999, 3600), Verdict::Clear);
@@ -190,12 +194,14 @@ mod tests {
         count_by_release(show, |_| None, &grace).len()
     }
 
+    #[test_id(tclca2n)]
     #[test]
     fn an_dwarf_started_before_the_activation_is_not_skew() {
         let show = unit("spira-dwarf-a-1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
         assert_eq!(releases_of(&show), 1);
     }
 
+    #[test_id(t8qywkv)]
     #[test]
     fn sp_li4zys_a_scheduler_started_dwarf_before_the_activation_is_not_skew() {
         let show = unit("spira-run-sentinel_2dcall-builder_2d1794009721297_2d1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
@@ -204,18 +210,21 @@ mod tests {
         assert_eq!(releases_of(&show), 2, "a landing pass is not a dwarf and has no grace");
     }
 
+    #[test_id(t0qedkf)]
     #[test]
     fn an_dwarf_started_after_the_activation_is_skew() {
         let show = unit("spira-dwarf-a-1.service", "A", 1100) + &unit("spira-watchd.service", "B", 1000);
         assert_eq!(releases_of(&show), 2);
     }
 
+    #[test_id(tne33kq)]
     #[test]
     fn a_long_lived_unit_on_the_old_release_is_skew_whenever_it_started() {
         let show = unit("spira-watchd.service", "A", 900) + &unit("spira-dwarf-a-1.service", "B", 1200);
         assert_eq!(releases_of(&show), 2);
     }
 
+    #[test_id(tbwwln0)]
     #[test]
     fn an_dwarf_past_its_deadline_is_skew() {
         let show = unit("spira-dwarf-a-1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
@@ -223,6 +232,7 @@ mod tests {
         assert_eq!(count_by_release(&show, |_| None, &grace).len(), 2);
     }
 
+    #[test_id(tffex5v)]
     #[test]
     fn a_dwarf_older_than_the_skew_window_but_within_the_dwarf_maximum_is_not_skew() {
         let show = unit("spira-dwarf-builder-1.service", "A", 1000 - 100) + &unit("spira-watchd.service", "B", 1000);
@@ -230,6 +240,7 @@ mod tests {
         assert_eq!(count_by_release(&show, |_| None, &grace).len(), 1);
     }
 
+    #[test_id(trf0mgi)]
     #[test]
     fn the_configured_dwarf_bound_not_the_skew_window_excuses_a_dwarf() {
         let show = unit("spira-dwarf-builder-1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
@@ -238,12 +249,14 @@ mod tests {
         assert_eq!(count_by_release(&show, |_| None, &cfg.grace(Some(1000), 900 + 9001)).len(), 2);
     }
 
+    #[test_id(tyiivyc)]
     #[test]
     fn a_service_on_an_older_release_is_skew_however_young() {
         let show = unit("spira-watchd.service", "A", 990) + &unit("spira-sentinel.timer", "B", 1000);
         assert_eq!(releases_of(&show), 2);
     }
 
+    #[test_id(tcx193o)]
     #[test]
     fn activation_is_the_mtime_of_current_beside_the_release_root() {
         let d = testkit::TempDir::new("wt-skew-act");

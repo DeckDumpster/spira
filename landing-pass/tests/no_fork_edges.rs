@@ -3,12 +3,15 @@
 //! what it still needs.
 
 
+#[macro_use]
+extern crate spira_test_id;
 fn banned() -> Vec<&'static str> {
     let mut b = hel::fork_scan::BANNED.to_vec();
     b.push("hel");
     b
 }
 
+#[test_id(to9uij9)]
 #[test]
 fn no_landing_pass_source_starts_a_spira_program_as_a_child() {
     let dir = testkit::manifest_dir().join("src");
@@ -16,6 +19,7 @@ fn no_landing_pass_source_starts_a_spira_program_as_a_child() {
     assert!(hits.is_empty(), "Spira children left in landing-pass (in-process them, or mark FORK-EDGE):\n{}", hits.join("\n"));
 }
 
+#[test_id(tf7i38t)]
 #[test]
 fn a_planted_mail_or_hel_child_is_caught() {
     let planted = "let mut c = command(\"mail\");\nlet c = spira_config::bounded::bounded(\"hel\");\n";

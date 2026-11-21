@@ -109,6 +109,7 @@ mod tests {
         })
     }
 
+    #[test_id(tkl9vff)]
     #[test]
     fn the_distance_is_the_share_over_its_target_and_zero_under_it() {
         for (share, want) in [(0.20, 0.15), (0.03, 0.0)] {
@@ -119,6 +120,7 @@ mod tests {
         }
     }
 
+    #[test_id(tvsczez)]
     #[test]
     fn a_field_the_kind_does_not_declare_is_refused_by_name() {
         let mut v = section(0.1);
@@ -127,6 +129,7 @@ mod tests {
         assert!(r.rule.contains("queue_depth"), "{r:?}");
     }
 
+    #[test_id(tixpy6x)]
     #[test]
     fn a_malformed_cause_count_is_refused_by_its_path() {
         let mut v = section(0.1);
@@ -135,6 +138,7 @@ mod tests {
         assert!(r.field.contains("no_verdict_by_cause[0].count"), "{r:?}");
     }
 
+    #[test_id(t52hd58)]
     #[test]
     fn the_shipped_spec_seeds_the_target_and_the_distance_follows_it() {
         let fragment = crate::producer::parse_fragment(include_str!("../../examples/gate.toml")).unwrap();

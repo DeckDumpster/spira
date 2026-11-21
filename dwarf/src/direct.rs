@@ -250,6 +250,7 @@ mod tests {
         Request { rune: "builder".into(), bead: "sp-x".into(), by: "concierge".into(), reason: "loop fix".into() }
     }
 
+    #[test_id(tmxzld0)]
     #[test]
     fn the_request_names_rune_bead_requester_and_reason() {
         assert_eq!(parse_request(&a(&["builder", "sp-x", "--by", "concierge", "--reason", "loop fix"])), Ok(req()));
@@ -258,6 +259,7 @@ mod tests {
         }
     }
 
+    #[test_id(tif0iug)]
     #[test]
     fn the_unit_tail_round_trips_what_the_caller_built() {
         let argv = build_argv(&req(), Some("dwarf-old"), Path::new("h"), "rel/bin/dwarf", &a(&["--setenv=HOME=/h"]), 1000);
@@ -269,6 +271,7 @@ mod tests {
         assert!(runtime::units::is_directed(&format!("{}.service", &argv[3]["--unit=".len()..])));
     }
 
+    #[test_id(th1kidm)]
     #[test]
     fn call_flags_carry_the_environment_and_the_dwarf_calls_properties_before_the_dwarf() {
         let env: Vec<(String, String)> = [("SPIRA_RELEASE", "r"), ("PATH", "r/bin"), ("HOME", "h"), ("SPIRA_TOML", "c.toml")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
@@ -282,6 +285,7 @@ mod tests {
         assert!(flags.iter().all(|f| argv.iter().position(|x| x == f).is_some_and(|i| i < dwarf)), "{argv:?}");
     }
 
+    #[test_id(tjfapyb)]
     #[test]
     fn the_claim_record_names_requester_reason_and_previous_holder() {
         let s = Direct { bead: "sp-x".into(), by: "concierge".into(), reason: "a \"quoted\" why".into(), replaced: None };
@@ -354,6 +358,7 @@ mod tests {
         p
     }
 
+    #[test_id(t8hdypo)]
     #[test]
     fn a_ready_bead_is_called_without_a_takeover() {
         let f = { let mut f = fake(row("READY", None), 0); f.after_launch = Some(row("WORKING", Some("dwarf-new"))); f };
@@ -361,6 +366,7 @@ mod tests {
         assert_eq!((rc, progs(&f)), (0, a(&["spira-lc", "systemd-run", "spira-lc"])));
     }
 
+    #[test_id(tkaniys)]
     #[test]
     fn a_direct_past_a_full_fleet_still_builds_its_unit_call_and_asks_no_cap() {
         let f = { let mut f = fake(row("READY", None), 0); f.after_launch = Some(row("WORKING", Some("dwarf-new"))); f };
@@ -373,6 +379,7 @@ mod tests {
         assert!(unit.1.iter().any(|x| x.starts_with("--unit=spira-dwarf-builder-directed-")), "{unit:?}");
     }
 
+    #[test_id(toyf53a)]
     #[test]
     fn a_held_bead_is_taken_over_with_its_work_kept_and_the_requester_in_the_why() {
         let f = { let mut f = fake(row("WORKING", Some("dwarf-old")), 0); f.after_launch = Some(row("WORKING", Some("dwarf-new"))); f };
@@ -387,6 +394,7 @@ mod tests {
         assert!(sink.all().contains("stopped dwarf-old"));
     }
 
+    #[test_id(t4oo6av)]
     #[test]
     fn a_slay_that_fails_on_stdout_alone_still_gives_its_reason() {
         let mut f = fake(row("WORKING", Some("dwarf-old")), 1);
@@ -396,6 +404,7 @@ mod tests {
         assert!(sink.all().contains("a pid file for sp-x remains"), "{}", sink.all());
     }
 
+    #[test_id(toezrjl)]
     #[test]
     fn a_dwarf_that_will_not_stop_means_nothing_is_directed() {
         let f = fake(row("WORKING", Some("dwarf-old")), 1);
@@ -404,6 +413,7 @@ mod tests {
         assert!(sink.all().contains("slay said no"), "{}", sink.all());
     }
 
+    #[test_id(ttjva7f)]
     #[test]
     fn a_bead_past_the_builder_or_an_unreadable_row_is_refused_before_anything_runs() {
         let f = fake(row("SUBMITTED", None), 0);
@@ -414,6 +424,7 @@ mod tests {
         assert_eq!((go(&f).0, progs(&f)), (0, a(&["spira-lc", "systemd-run", "spira-lc"])), "no row yet: the claim creates it");
     }
 
+    #[test_id(txzw2fr)]
     #[test]
     fn a_dwarf_that_refuses_the_bead_fails_the_direct_call_with_its_reason() {
         let dir = testkit::TempDir::new("dwarf-direct-refused");
@@ -425,6 +436,7 @@ mod tests {
         assert!(sink.all().contains("ERR") && sink.all().contains("Blocked by parent sp-p") && sink.all().contains("state=READY"), "{}", sink.all());
     }
 
+    #[test_id(t4o64d5)]
     #[test]
     fn a_takeover_waits_for_the_stopped_dwarfs_row_before_calling_the_next() {
         let mut f = fake(row("WORKING", Some("dwarf-old")), 0);
@@ -439,6 +451,7 @@ mod tests {
         assert_eq!(shows, 4, "three reads still saw the old holder, the fourth saw READY");
     }
 
+    #[test_id(tcn5x9q)]
     #[test]
     fn a_row_that_never_leaves_working_after_the_stop_means_nothing_is_directed() {
         let mut f = fake(row("WORKING", Some("dwarf-old")), 0);
@@ -448,6 +461,7 @@ mod tests {
         assert!(sink.all().contains("never left WORKING"), "{}", sink.all());
     }
 
+    #[test_id(tuaxv4x)]
     #[test]
     fn the_refusal_names_the_row_it_saw_and_what_the_claim_said() {
         let r = spira_store::lc_state::parse_show(&row("READY", None).stdout);
@@ -456,6 +470,7 @@ mod tests {
         assert!(refusal_reason("sp-x", "c", &Ok(None), &[]).contains("no lifecycle row"));
     }
 
+    #[test_id(tb21ls8)]
     #[test]
     fn a_dwarf_that_neither_claims_nor_refuses_fails_the_call() {
         let dir = testkit::TempDir::new("dwarf-direct-silent");
@@ -470,6 +485,7 @@ mod tests {
         assert!(!all.contains("journal"), "{all}");
     }
 
+    #[test_id(tetwyc8)]
     #[test]
     fn the_last_thing_a_silent_dwarf_said_is_its_last_fatal_else_its_last_line_else_nothing() {
         assert_eq!(last_said("a\nFATAL one\nlater\n\n"), "FATAL one");
@@ -479,6 +495,7 @@ mod tests {
         assert_eq!(last_said(""), "the dwarf printed nothing");
     }
 
+    #[test_id(tzldjek)]
     #[test]
     fn a_stale_output_log_is_not_quoted_for_a_dwarf_that_printed_nothing() {
         let dir = testkit::TempDir::new("dwarf-direct-stale");
@@ -491,6 +508,7 @@ mod tests {
         assert!(all.contains("the dwarf printed nothing") && !all.contains("an earlier dwarf"), "{all}");
     }
 
+    #[test_id(ti8zrev)]
     #[test]
     fn a_refusal_is_left_where_the_launcher_looks_for_that_bead() {
         let dir = testkit::TempDir::new("dwarf-direct-refusal-path");

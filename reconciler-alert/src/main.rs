@@ -10,6 +10,9 @@
 // diff-plus-hysteresis logic; this binary is the IO seam a caller invokes once per verdict,
 // and what the end-to-end suite drives.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 mod io;
 
 use reconciler_engine::alert::{classify_escalation, compose_alert, should_alert};
@@ -255,6 +258,7 @@ fn run_escalate(wake: &dyn Wake, args: &Args, input: &mut dyn std::io::Read) -> 
 mod tests {
     use super::*;
 
+    #[test_id(tm7caib)]
     #[test]
     fn args_parse_reads_valued_flags() {
         let a = Args::parse(&["--invariant".to_string(), "fleet".to_string(), "--now".to_string(), "5".to_string()]);
@@ -262,6 +266,7 @@ mod tests {
         assert_eq!(a.get("now"), Some("5"));
     }
 
+    #[test_id(ta373h9)]
     #[test]
     fn args_parse_reads_boolean_flags_without_consuming_the_next_value() {
         let a = Args::parse(&["--is-gap".to_string(), "--invariant".to_string(), "x".to_string()]);
@@ -269,6 +274,7 @@ mod tests {
         assert_eq!(a.get("invariant"), Some("x"));
     }
 
+    #[test_id(tqc8p5h)]
     #[test]
     fn parse_status_gap_requires_desired_and_observed() {
         let a = Args::parse(&["--status".to_string(), "gap".to_string()]);
@@ -281,6 +287,7 @@ mod tests {
         assert_eq!(parse_status(&a), Ok(RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None }));
     }
 
+    #[test_id(to619q2)]
     #[test]
     fn parse_status_rejects_unknown_values() {
         let a = Args::parse(&["--status".to_string(), "wat".to_string()]);
@@ -370,6 +377,7 @@ mod tests {
         v.iter().map(String::as_str).collect()
     }
 
+    #[test_id(tymzktx)]
     #[test]
     fn one_streak_alerts_once_and_a_new_streak_after_it_closes_alerts_again() {
         let w = World::new(true, false);
@@ -390,6 +398,7 @@ mod tests {
         assert!(sent[1].body.contains("observed:  2 dwarves"), "{}", sent[1].body);
     }
 
+    #[test_id(tuom1cm)]
     #[test]
     fn a_gap_still_inside_its_grace_sends_nothing() {
         let w = World::new(true, false);
@@ -401,6 +410,7 @@ mod tests {
         assert!(w.sent().is_empty());
     }
 
+    #[test_id(t0yz1tn)]
     #[test]
     fn an_unobservable_input_past_grace_alerts_as_unobservable_never_as_satisfied() {
         let w = World::new(true, false);
@@ -415,6 +425,7 @@ mod tests {
         mail_lint(m).unwrap();
     }
 
+    #[test_id(tanj2ji)]
     #[test]
     fn a_remedy_that_did_not_close_the_gap_is_named_as_failed() {
         let w = World::new(true, false);
@@ -425,6 +436,7 @@ mod tests {
         assert!(m.body.contains("last remedy tried: restart the landing unit — did not close the gap"), "{}", m.body);
     }
 
+    #[test_id(tvwc270)]
     #[test]
     fn with_the_concierge_not_running_the_alert_still_waits_in_its_mailbox_not_the_operators() {
         let w = World::new(false, false);
@@ -436,6 +448,7 @@ mod tests {
         assert!(sent[0].body.contains("invariant: fleet-size"), "{}", sent[0].body);
     }
 
+    #[test_id(t087cpa)]
     #[test]
     fn a_mail_refusal_is_an_error_never_a_delivered_wake() {
         let w = World::new(true, true);
@@ -443,6 +456,7 @@ mod tests {
         assert!(err.contains("send concierge: exit 1"), "{err}");
     }
 
+    #[test_id(teyiy93)]
     #[test]
     fn an_escalation_without_a_default_is_refused_and_sends_nothing() {
         let w = World::new(true, false);
@@ -451,6 +465,7 @@ mod tests {
         assert!(w.sent().is_empty());
     }
 
+    #[test_id(ttrjk71)]
     #[test]
     fn an_escalation_in_any_other_class_is_refused_and_routed_back_to_the_concierge_as_an_alert() {
         let w = World::new(true, false);

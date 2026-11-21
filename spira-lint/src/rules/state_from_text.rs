@@ -752,6 +752,7 @@ mod tests {
     // ---- (a) process output read as state -------------------------------------------------
 
     /// The production scar (sp-druc64): holds read from `spira-lc holds` stdout, line by line.
+    #[test_id(txrxrez)]
     #[test]
     fn holds_read_from_lc_lines_are_refused() {
         refused(
@@ -760,6 +761,7 @@ mod tests {
         );
     }
 
+    #[test_id(tq4pbry)]
     #[test]
     fn stdout_contains_in_a_branch_is_refused() {
         refused(
@@ -768,6 +770,7 @@ mod tests {
         );
     }
 
+    #[test_id(t1j8mt8)]
     #[test]
     fn starts_with_and_ends_with_on_output_are_refused() {
         refused(
@@ -780,6 +783,7 @@ mod tests {
         );
     }
 
+    #[test_id(tfself5)]
     #[test]
     fn equality_against_a_word_from_output_is_refused() {
         refused(
@@ -788,6 +792,7 @@ mod tests {
         );
     }
 
+    #[test_id(to26o0q)]
     #[test]
     fn a_match_on_output_text_is_refused() {
         refused(
@@ -796,6 +801,7 @@ mod tests {
         );
     }
 
+    #[test_id(tqhvybm)]
     #[test]
     fn a_regex_over_output_is_refused() {
         refused(
@@ -804,6 +810,7 @@ mod tests {
         );
     }
 
+    #[test_id(tq47ww7)]
     #[test]
     fn split_of_output_in_a_branch_header_is_refused() {
         refused(
@@ -813,6 +820,7 @@ mod tests {
     }
 
     /// A same-file helper that returns a command's text taints its callers.
+    #[test_id(tmaknh8)]
     #[test]
     fn a_text_runner_helper_taints_its_callers() {
         refused(
@@ -823,6 +831,7 @@ mod tests {
 
     // ---- (b) "cannot tell" and state words as substrings ----------------------------------
 
+    #[test_id(tflgcvb)]
     #[test]
     fn cannot_tell_as_a_substring_is_refused_anywhere() {
         refused("fn f(e: &str) -> bool {\n    e.contains(\"cannot tell\")\n}\n", Class::CannotTell);
@@ -830,6 +839,7 @@ mod tests {
         refused("fn f(e: &str) -> bool {\n    Regex::new(\"(?i)cannot tell\").unwrap().is_match(e)\n}\n", Class::CannotTell);
     }
 
+    #[test_id(tsznoxt)]
     #[test]
     fn a_state_word_substring_in_a_command_fn_is_refused() {
         refused(
@@ -844,6 +854,7 @@ mod tests {
 
     // ---- (c) identity parsed out of a unit name ------------------------------------------
 
+    #[test_id(tlypdtg)]
     #[test]
     fn identity_from_a_unit_name_is_refused() {
         refused("fn f(u: &str) -> Option<&str> {\n    u.strip_prefix(\"spira-dwarf-\")\n}\n", Class::UnitName);
@@ -854,33 +865,39 @@ mod tests {
 
     // ---- what passes ---------------------------------------------------------------------
 
+    #[test_id(tpa1i6d)]
     #[test]
     fn a_typed_lc_read_passes() {
         passes("fn f(c: &LcClient, id: &str) -> bool {\n    match spira_store::lc_state::row_on(c, id) {\n        Ok(Some(r)) => r.state == \"READY\",\n        _ => false,\n    }\n}\n");
     }
 
+    #[test_id(t6rvqha)]
     #[test]
     fn json_deserialised_into_a_struct_passes() {
         passes("fn f(id: &str) -> bool {\n    let o = Command::new(\"spira-lc\").args([\"show\", id, \"--json\"]).output().unwrap();\n    let text = String::from_utf8_lossy(&o.stdout);\n    let row: Row = serde_json::from_str(&text).unwrap();\n    if row.state == \"WORKING\" {\n        return true;\n    }\n    false\n}\n");
         passes("fn f(id: &str) -> Option<Row> {\n    let o = Command::new(\"spira-lc\").args([\"show\", id]).output().ok()?;\n    let rows = spira_store::lc_state::parse_show(&String::from_utf8_lossy(&o.stdout)).ok()?;\n    rows.filter(|r| r.state == \"READY\")\n}\n");
     }
 
+    #[test_id(t7ztrev)]
     #[test]
     fn an_exit_code_enum_passes() {
         passes("fn f(id: &str) -> Answer {\n    let o = Command::new(\"spira-lc\").args([\"holds\", id]).output().unwrap();\n    let code = o.status.code();\n    if code == Some(0) {\n        Answer::Held\n    } else if !o.status.success() {\n        Answer::Unknown\n    } else {\n        Answer::Free\n    }\n}\n");
     }
 
+    #[test_id(t8azkz4)]
     #[test]
     fn display_only_formatting_passes() {
         passes("fn f() {\n    let o = Command::new(\"gh\").args([\"pr\", \"list\"]).output().unwrap();\n    let s = String::from_utf8_lossy(&o.stdout);\n    for l in s.lines() {\n        println!(\"  {}\", l.trim());\n    }\n    let joined: Vec<String> = s.lines().map(|l| format!(\"> {l}\")).collect();\n    eprintln!(\"{}\", joined.join(\"\\n\"));\n}\n");
     }
 
+    #[test_id(t2rjm07)]
     #[test]
     fn text_ops_on_values_that_are_not_output_pass() {
         passes("fn f(args: &[String]) {\n    let o = Command::new(\"spira-lc\").args([\"list\"]).status();\n    for a in args {\n        if a.starts_with(\"--\") {\n            flag(a);\n        }\n    }\n    let dir = run.join(\"queue\");\n    if dir.to_string_lossy().contains(\"x\") { go(); }\n}\n");
         passes("fn f(name: &str) -> bool {\n    name.contains(\"READY\")\n}\n");
     }
 
+    #[test_id(tq3g2h1)]
     #[test]
     fn building_a_unit_name_passes() {
         passes("fn f(id: &str) -> String {\n    format!(\"spira-dwarf-{id}.service\")\n}\n");
@@ -888,11 +905,13 @@ mod tests {
         passes("fn f(file: &str) -> bool {\n    file.ends_with(\".service\") && file.starts_with(\"spira-\")\n}\n");
     }
 
+    #[test_id(tzxs4aj)]
     #[test]
     fn prose_and_literals_are_not_code() {
         passes("// if out.contains(\"cannot tell\") { u.strip_prefix(\"spira-dwarf-\") }\nfn f() -> &'static str {\n    \"text.contains(\\\"cannot tell\\\")\"\n}\n");
     }
 
+    #[test_id(t5ume33)]
     #[test]
     fn test_code_is_exempt() {
         let src = "fn f(e: &str) -> bool {\n    e.contains(\"cannot tell\")\n}\n";
@@ -908,6 +927,7 @@ mod tests {
 
     const OFFENDER: &str = "fn f(e: &str) -> bool {\n    e.contains(\"cannot tell\")\n}\n";
 
+    #[test_id(t794vu2)]
     #[test]
     fn the_allow_list_only_shrinks() {
         let t = TempDir::new("state-from-text-allow");
@@ -930,6 +950,7 @@ mod tests {
         assert!(run(&t, &["a/src/lib.rs"])[0].contains("remove the line"));
     }
 
+    #[test_id(tk0lq78)]
     #[test]
     fn a_malformed_allow_line_refuses() {
         assert!(parse_allow("x 1 output a.rs\n").is_err());

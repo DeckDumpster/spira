@@ -6,6 +6,9 @@
 //! push pattern is spooled and handed to `inbox-triage flush`. It needs no store and no
 //! scheduler, so a writer that runs while the scheduler is down can call it (sp-nasmjd).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
@@ -178,12 +181,14 @@ pub fn wake_text(lines: &[String]) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tw8n49t)]
     #[test]
     fn strips_the_leading_timestamp_token() {
         assert_eq!(strip_timestamp("2026-09-30T00:00:00Z the rest of it"), "the rest of it");
         assert_eq!(strip_timestamp("no-space-at-all"), "");
     }
 
+    #[test_id(th464bb)]
     #[test]
     fn drops_the_three_known_noise_patterns() {
         assert!(should_drop("pool: ROUND RESULT green"));
@@ -196,6 +201,7 @@ mod tests {
         sizes.into_iter().map(|s| f.tick(s)).collect()
     }
 
+    #[test_id(tbmw1xt)]
     #[test]
     fn a_line_pushes_only_with_a_wake_and_a_matching_pattern() {
         assert_eq!(pushes("x P0 down", "wake", r"\bP0\b"), Ok(true), "positive control");
@@ -204,6 +210,7 @@ mod tests {
         assert!(pushes("x P0 down", "wake", "(").is_err(), "a bad pattern is named, not a silent no");
     }
 
+    #[test_id(tuv8yw4)]
     #[test]
     fn append_creates_the_inbox_and_a_second_call_does_not_truncate() {
         let d = testkit::TempDir::new("inbox-append");
@@ -215,6 +222,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&inbox).unwrap().lines().count(), 2);
     }
 
+    #[test_id(tciwwma)]
     #[test]
     fn record_spools_only_a_line_that_pushes() {
         let d = testkit::TempDir::new("inbox-record");
@@ -229,6 +237,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&inbox).unwrap().lines().count(), 4, "every line is recorded first");
     }
 
+    #[test_id(t55qpc9)]
     #[test]
     fn a_non_urgent_line_is_not_urgent() {
         let pat = regex::Regex::new("URGENT-[0-9]+").unwrap();
@@ -236,6 +245,7 @@ mod tests {
         assert!(!is_urgent("plain event, not urgent", &pat));
     }
 
+    #[test_id(txsp0lu)]
     #[test]
     fn one_urgent_line_then_quiet_ticks_is_due_once() {
         let mut f = Flush::new(30, 2);
@@ -244,6 +254,7 @@ mod tests {
         assert_eq!(due_after(&mut again, [10, 10, 10]).iter().filter(|d| **d).count(), 1);
     }
 
+    #[test_id(tzs2av5)]
     #[test]
     fn ten_appends_one_tick_apart_inside_the_window_are_one_batch() {
         let mut f = Flush::new(30, 2);
@@ -263,12 +274,14 @@ mod tests {
         }
     }
 
+    #[test_id(tirj47p)]
     #[test]
     fn a_spool_that_keeps_growing_is_due_at_the_window() {
         let mut f = Flush::new(5, 2);
         assert_eq!(due_after(&mut f, [1, 2, 3, 4, 5]), [false, false, false, false, true]);
     }
 
+    #[test_id(topczwl)]
     #[test]
     fn a_line_carries_an_iso_z_prefix_and_the_text() {
         assert_eq!(line("2026-11-06T01:02:03Z", "hello world"), "2026-11-06T01:02:03Z hello world");

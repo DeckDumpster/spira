@@ -102,11 +102,13 @@ mod tests {
         format!("MATCH: x\nSYMPTOM: s\nCHECK: c\nFIX: f\n{extra}\n")
     }
 
+    #[test_id(t0yt27x)]
     #[test]
     fn a_sop_without_run_declares_no_tool() {
         assert_eq!(parse(&sop("")), Ok(None));
     }
 
+    #[test_id(tve9w97)]
     #[test]
     fn a_bare_program_with_fields_and_a_deadline_parses() {
         let s = parse(&sop("RUN: round-recert --batch {batch} --repo {repo}\nDEADLINE: 120")).unwrap().unwrap();
@@ -117,6 +119,7 @@ mod tests {
         assert!(s.argv(&BTreeMap::new()).unwrap_err().contains("batch"));
     }
 
+    #[test_id(t7dxy3n)]
     #[test]
     fn a_program_outside_the_release_bin_is_refused() {
         for bad in [system_paths::USR_BIN_TRUE, "../bin/x", "./x", "bin/x", "-x", "x;y"] {
@@ -125,6 +128,7 @@ mod tests {
         }
     }
 
+    #[test_id(tc5bkas)]
     #[test]
     fn a_run_with_no_deadline_or_a_bad_one_is_refused() {
         assert!(parse(&sop("RUN: tool")).unwrap_err().contains("DEADLINE"));
@@ -133,6 +137,7 @@ mod tests {
         }
     }
 
+    #[test_id(t773el0)]
     #[test]
     fn shell_syntax_and_unknown_fields_in_arguments_are_refused() {
         assert!(parse(&sop("RUN: tool a;b\nDEADLINE: 5")).unwrap_err().contains("not shell"));
@@ -140,11 +145,13 @@ mod tests {
         assert!(parse(&sop("RUN: tool {bead\nDEADLINE: 5")).unwrap_err().contains("unknown field"));
     }
 
+    #[test_id(togsxdu)]
     #[test]
     fn a_run_without_a_match_line_is_refused() {
         assert!(parse("SYMPTOM: s\nCHECK: c\nFIX: f\nRUN: tool\nDEADLINE: 5\n").unwrap_err().contains("MATCH"));
     }
 
+    #[test_id(td45i2u)]
     #[test]
     fn a_deadline_without_a_run_is_refused() {
         assert!(parse(&sop("DEADLINE: 5")).unwrap_err().contains("without RUN"));

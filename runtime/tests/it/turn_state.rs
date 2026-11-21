@@ -34,6 +34,7 @@ fn look(e: &mut Engine, id: &str, body: &str) {
     e.run_until_idle().unwrap();
 }
 
+#[test_id(ty5e86a)]
 #[test]
 fn a_turn_writes_only_the_state_keys_that_changed() {
     let j = MemJournal::new();
@@ -51,6 +52,7 @@ fn a_turn_writes_only_the_state_keys_that_changed() {
     assert_eq!(j.state().len(), 1, "one row, overwritten in place");
 }
 
+#[test_id(tv3dsvt)]
 #[test]
 fn a_second_request_on_an_unresolved_effect_key_is_refused_and_a_resolved_one_is_not() {
     let j = MemJournal::new();
@@ -71,6 +73,7 @@ fn a_second_request_on_an_unresolved_effect_key_is_refused_and_a_resolved_one_is
     assert!(e.pending_effects().iter().any(|p| p.spec.key == "do/k"), "once resolved, the key is free again");
 }
 
+#[test_id(t95nwlm)]
 #[test]
 fn an_effect_is_offered_to_an_executor_only_after_its_row_commits_and_resolved_with_its_outcome() {
     let j = MemJournal::new();
@@ -90,6 +93,7 @@ fn an_effect_is_offered_to_an_executor_only_after_its_row_commits_and_resolved_w
     assert!(open(&j).pending_effects().is_empty());
 }
 
+#[test_id(tbn1kij)]
 #[test]
 fn a_restart_finds_the_carry_and_the_halt() {
     let j = MemJournal::new();

@@ -30,6 +30,7 @@ fn names(acts: &[Act]) -> Vec<&str> {
     acts.iter().map(|a| a.effect.as_str()).collect()
 }
 
+#[test_id(ti12m55)]
 #[test]
 fn a_refused_eject_ends_the_round_red_with_the_refusal_and_runs_nothing_else() {
     let carry = certifying("w");
@@ -62,6 +63,7 @@ fn a_refused_eject_ends_the_round_red_with_the_refusal_and_runs_nothing_else() {
     );
 }
 
+#[test_id(t67vk7u)]
 #[test]
 fn a_certify_killed_inside_a_red_fence_attributes_after_the_certify_pass_not_a_fresh_one() {
     let dir = testkit::TempDir::new("eject-refused");
@@ -87,6 +89,7 @@ fn a_certify_killed_inside_a_red_fence_attributes_after_the_certify_pass_not_a_f
     assert!(leg.after_certify && leg.after_pass.is_empty(), "the certify pass's own kept results are the prior: {leg:?}");
 }
 
+#[test_id(tiku04q)]
 #[test]
 fn a_certify_that_printed_a_refused_eject_ends_the_round_red_and_runs_nothing_else() {
     let carry = certifying("w");

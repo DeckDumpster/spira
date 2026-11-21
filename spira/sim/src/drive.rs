@@ -870,6 +870,7 @@ fn check_resumed(seed: u64, resume: &[Value], events: &[Value]) -> Result<(), St
 mod scenario_path_tests {
     use super::*;
 
+    #[test_id(t23yrch)]
     #[test]
     fn a_bare_name_is_found_under_the_home_and_a_path_is_returned_as_given() {
         let h = testkit::TempDir::new("scenario-home");

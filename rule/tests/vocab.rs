@@ -1,5 +1,7 @@
 //! `rename-vocabulary`'s plan over a statute store.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 
 use rule::code::{parse_toc, Pointers, Retired};
@@ -11,6 +13,7 @@ fn store(rows: &[(&str, &str)]) -> BTreeMap<String, String> {
     rows.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
 
+#[test_id(t60jb0i)]
 #[test]
 fn an_unnumbered_slug_renames_a_text_term_amends_and_clean_keys_are_left() {
     let book = store(&[("law-one-aeon-one-worktree", "One worktree."), ("law-x", "summon it"), ("law-y", "Clean."), ("sop-z", "aeon")]); // ffx-ok
@@ -25,6 +28,7 @@ fn an_unnumbered_slug_renames_a_text_term_amends_and_clean_keys_are_left() {
     );
 }
 
+#[test_id(t3gv3t5)]
 #[test]
 fn a_runbook_renames_unnumbered_and_a_target_with_a_retirement_record_is_a_collision() {
     let book = store(&[("sop-aeon-x", "SYMPTOM: x"), ("sop-aeon-y", "SYMPTOM: y"), ("retired-sop-dwarf-y", "{}")]); // ffx-ok
@@ -38,6 +42,7 @@ fn a_runbook_renames_unnumbered_and_a_target_with_a_retirement_record_is_a_colli
     );
 }
 
+#[test_id(tfsjwmw)]
 #[test]
 fn the_dry_run_lists_a_runbook_rename_and_its_changed_sentence() {
     let before = store(&[("sop-aeon-x", "SYMPTOM: an aeon stalls")]); // ffx-ok
@@ -45,6 +50,7 @@ fn the_dry_run_lists_a_runbook_rename_and_its_changed_sentence() {
     assert_eq!(report, "sop-aeon-x → sop-dwarf-x\n- SYMPTOM: an aeon stalls\n+ SYMPTOM: a dwarf stalls\n\n"); // ffx-ok
 }
 
+#[test_id(txzigm6)]
 #[test]
 fn a_renamed_slug_in_the_toc_or_a_pointer_is_numbered() {
     let book = store(&[("law-aeon-a", "A."), ("law-aeon-b", "B.")]); // ffx-ok
@@ -55,6 +61,7 @@ fn a_renamed_slug_in_the_toc_or_a_pointer_is_numbered() {
     assert_eq!(got.len(), 2);
 }
 
+#[test_id(twibt1o)]
 #[test]
 fn a_term_without_replacement_is_unresolved_and_a_taken_target_is_a_collision() {
     let book = store(&[("law-m", "A magus."), ("law-aeon-q", "Q."), ("law-dwarf-q", "Other.")]); // ffx-ok
@@ -68,6 +75,7 @@ fn a_term_without_replacement_is_unresolved_and_a_taken_target_is_a_collision() 
     );
 }
 
+#[test_id(t6w1tez)]
 #[test]
 fn an_em_dash_before_an_article_does_not_stop_the_plan() {
     let book = store(&[("law-e", "One rule—an aeon per worktree.")]); // ffx-ok
@@ -75,6 +83,7 @@ fn an_em_dash_before_an_article_does_not_stop_the_plan() {
     assert_eq!(got, vec![Entry::Amend { key: "law-e".into(), text: "One rule—a dwarf per worktree.".into() }]); // ffx-ok
 }
 
+#[test_id(trz56eb)]
 #[test]
 fn a_slug_article_and_a_bare_summons_are_planned_by_grammar() { // ffx-ok
     let book = store(&[("law-an-aeon-x", "A summons."), ("law-w", "summons reopened")]); // ffx-ok
@@ -88,6 +97,7 @@ fn a_slug_article_and_a_bare_summons_are_planned_by_grammar() { // ffx-ok
     );
 }
 
+#[test_id(t6r7rsz)]
 #[test]
 fn the_dry_run_prints_only_the_changed_sentences_old_then_new_and_a_rename_as_from_to() {
     let before = store(&[("law-a", "Keep this. An aeon acts."), ("law-aeon-b", "Same.")]); // ffx-ok
@@ -96,6 +106,7 @@ fn the_dry_run_prints_only_the_changed_sentences_old_then_new_and_a_rename_as_fr
     assert_eq!(report, "law-a\n- An aeon acts.\n+ A dwarf acts.\n\nlaw-aeon-b → law-dwarf-b\n\n"); // ffx-ok
 }
 
+#[test_id(tuv4ip9)]
 #[test]
 fn every_rename_leaves_a_pointer_and_an_unnumbered_old_slug_is_never_numbered() {
     use rule::code::{catch_up, check_pointers, resolve};
@@ -120,6 +131,7 @@ fn every_rename_leaves_a_pointer_and_an_unnumbered_old_slug_is_never_numbered() 
     assert_eq!(resolve(&toc2, &p2, "law-y").unwrap().hops.len(), 1);
 }
 
+#[test_id(tx1lp1s)]
 #[test]
 fn a_rename_of_a_slug_a_pointer_already_names_adds_no_second_pointer() {
     let ptr = Pointers { retired: vec![Retired { slug: "law-an-aeon-x".into(), reason: "r".into(), replaced_by: Some("law-z".into()), on: "d".into() }], ..Pointers::default() }; // ffx-ok

@@ -113,6 +113,7 @@ impl Conditions for LcConditions {
 mod tests {
     use super::*;
 
+    #[test_id(te76waz)]
     #[test]
     fn a_list_answer_is_read_past_a_notice_line() {
         let out = "notice\n{\"rev\":3,\"conditions\":[{\"key\":\"db-down\",\"owner\":\"heimdall\",\"type\":\"Alert\",\"status\":\"True\",\"flaps\":2}]}\n";
@@ -122,6 +123,7 @@ mod tests {
         assert!(parse_list("no json").is_none());
     }
 
+    #[test_id(tc78wfs)]
     #[test]
     fn a_timeout_is_saturation() {
         assert_eq!(fail_of(124), Failure::Saturated);
@@ -142,6 +144,7 @@ mod tests {
         (LcConditions { client: LcClient::over(s.clone() as std::sync::Arc<dyn spira_store::lc_call::Transport>, true) }, s)
     }
 
+    #[test_id(t3tihgc)]
     #[test]
     fn conditions_are_read_and_set_over_the_store_client() {
         let (o, s) = ops(Ok((0, r#"{"rev":1,"conditions":[]}"#)));
@@ -152,6 +155,7 @@ mod tests {
         assert_eq!(asked[1], ["condition", "clear", "db-down", "--reason", "ok", "--message", "cleared", "--owner", "heimdall"]);
     }
 
+    #[test_id(tt8ur9g)]
     #[test]
     fn a_store_past_its_deadline_is_saturated_and_one_not_listening_is_not() {
         assert_eq!(ops(Ok((2, "cannot tell: the request passed its deadline"))).0.list(), Err(Failure::Saturated));

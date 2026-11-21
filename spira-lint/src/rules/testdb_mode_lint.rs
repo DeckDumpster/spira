@@ -117,6 +117,7 @@ mod tests {
         TestdbModeLint::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tz0xsoi)]
     #[test]
     fn an_unexplained_request_is_caught_and_named_by_line() {
         let t = TempDir::new("tdm");
@@ -128,6 +129,7 @@ mod tests {
         );
     }
 
+    #[test_id(tkrxgyt)]
     #[test]
     fn a_stated_reason_silences_it_while_the_request_stays() {
         let t = TempDir::new("tdm-ok");
@@ -138,6 +140,7 @@ mod tests {
         assert!(run(&t, &["spira/test-explained.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(tzywoao)]
     #[test]
     fn an_empty_reason_does_not_count() {
         let t = TempDir::new("tdm-empty");
@@ -148,6 +151,7 @@ mod tests {
         assert_eq!(run(&t, &["spira/test-x.sh"]).unwrap().len(), 1);
     }
 
+    #[test_id(t4eaelz)]
     #[test]
     fn a_commented_out_request_is_not_a_live_request() {
         let t = TempDir::new("tdm-comment");
@@ -155,6 +159,7 @@ mod tests {
         assert!(run(&t, &["spira/test-x.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(thvmnfy)]
     #[test]
     fn an_inline_request_without_export_is_still_caught() {
         let t = TempDir::new("tdm-inline");
@@ -162,6 +167,7 @@ mod tests {
         assert_eq!(run(&t, &["spira/test-x.sh"]).unwrap().len(), 1);
     }
 
+    #[test_id(tdi2jqf)]
     #[test]
     fn an_embedded_only_suite_is_unaffected_and_reports_checked() {
         let t = TempDir::new("tdm-clean");
@@ -172,6 +178,7 @@ mod tests {
         assert_eq!(r.checked(), Some((1, "suites".to_string())));
     }
 
+    #[test_id(t4ibrkc)]
     #[test]
     fn no_suites_in_scope_refuses() {
         let t = TempDir::new("tdm-none");

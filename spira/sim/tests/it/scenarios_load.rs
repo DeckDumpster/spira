@@ -47,6 +47,7 @@ fn shipped() -> Vec<(String, Scenario)> {
     out
 }
 
+#[test_id(trqac6f)]
 #[test]
 fn every_shipped_scenario_names_only_sim_only_actors_or_is_listed_as_blocked() {
     let actors = sim::actors::parse_specs(&std::fs::read_to_string(root().join("sim/actors.toml")).expect("sim/actors.toml")).expect("the tree's actors parse");
@@ -72,6 +73,7 @@ const CUTOVER_WAIT_GUARD: &str = r#"[ "$(cat "$SIM_WORLD/cutover.phase" 2>/dev/n
 /// `SPIRA_CALL` seam given the argv sentinel-call's `unit_start` effect starts, `dwarf --home
 /// <home> builder` under `call_argv`'s properties and environment. Every scenario's call is the
 /// same command, and the seam reads it as a builder call of the release's dwarf.
+#[test_id(txi5odv)]
 #[test]
 fn the_ported_scenarios_call_through_the_seam_with_the_call_effects_argv() {
     let calls: Vec<(String, String)> = shipped().into_iter().flat_map(|(n, sc)| sc.actors.into_iter().filter(|a| a.name == "call").map(move |a| (n.clone(), a.command))).collect();
@@ -102,6 +104,7 @@ fn the_ported_scenarios_call_through_the_seam_with_the_call_effects_argv() {
 }
 
 /// The loop worlds shipped beside the world scenarios: each parses as one (`driver = "loop"`).
+#[test_id(thpe8tt)]
 #[test]
 fn the_shipped_loop_worlds_parse() {
     let dir = root().join(SCENARIOS_DIR);
@@ -133,6 +136,7 @@ const MIGRATED_COMMANDS: &[&str] = &["sentinel --call-only", "landing-pass land"
 /// own cutover-lane refusal, which no task of the serve loop reaches.
 const CUTOVER_LANE_SCENARIOS: &[&str] = &["rc-cutover-mode"];
 
+#[test_id(tag6bce)]
 #[test]
 fn no_shipped_scenario_runs_a_migrated_unit_as_an_inline_actor() {
     let found: Vec<(String, String)> = shipped()

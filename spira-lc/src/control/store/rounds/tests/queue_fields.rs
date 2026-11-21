@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(t9ewbj6)]
 #[test]
 fn the_queues_fields_of_a_round_survive_every_machine_step_and_the_landing() {
     let r = Rig::new();
@@ -28,6 +29,7 @@ fn the_queues_fields_of_a_round_survive_every_machine_step_and_the_landing() {
     );
 }
 
+#[test_id(tc9jv2a)]
 #[test]
 fn the_queues_fields_given_to_a_cut_or_a_batch_event_commit_in_that_steps_own_txn() {
     let r = Rig::new();
@@ -60,6 +62,7 @@ fn the_queues_fields_given_to_a_cut_or_a_batch_event_commit_in_that_steps_own_tx
     assert_eq!(r.s.batch("b-1").unwrap().unwrap().1.value.row.state, BatchState::CiRunning);
 }
 
+#[test_id(tqip1m0)]
 #[test]
 fn fields_with_no_write_of_their_round_to_ride_in_are_an_error_not_dropped() {
     let r = Rig::new();
