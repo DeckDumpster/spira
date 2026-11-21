@@ -13,7 +13,9 @@
 //! - **Warm start.** A new lease takes the most recently idled directory that holds anything
 //!   (the lock file's mtime is the idle time: a release stamps it), and the shared selective clean
 //!   ([`CLEAN_SCRIPT`]) then cleans only the workspace crates whose bytes differ from the tree that
-//!   directory was last made consistent with. An empty one is a new directory.
+//!   directory was last made consistent with. A release cleans every crate changed since that
+//!   record before writing the new one, so the record never names bytes the artifacts were not
+//!   built from. An empty directory is a new one.
 //! - **Idle-only eviction.** Over the disk budget (`SPIRA_DWARF_BUILD_BUDGET_GIB`), idle
 //!   directories go least recently used first, until the total is under; live ones are counted
 //!   but never removed.
@@ -504,17 +506,27 @@ pub fn owned(var: Option<std::ffi::OsString>, bases: &[PathBuf]) -> Option<PathB
     ours.then_some(p)
 }
 
+const BUILT_RECORD: &str = ".unit-tests-built-manifest";
+
 /// Run the shared selective clean (`script`, [`CLEAN_SCRIPT`]) for the tree at `root` against
 /// the build directory `dir`: only the workspace crates whose bytes differ from the tree the
 /// directory was last made consistent with are cleaned, and `root`'s manifest is recorded.
-/// `record_only` records without cleaning (the release path). `path` is the PATH cargo is
+/// `release` (a lease's end) also cleans every crate with a file modified since the record. `path` is the PATH cargo is
 /// found on. Ok(the script's output) or Err(why).
-pub fn clean(script: &Path, root: &Path, dir: &Path, path: &str, record_only: bool) -> Result<String, String> {
+pub fn clean(script: &Path, root: &Path, dir: &Path, path: &str, release: bool) -> Result<String, String> {
+    let r = run_clean(script, root, dir, path, release);
+    if release && r.is_err() {
+        let _ = std::fs::remove_file(dir.join(BUILT_RECORD));
+    }
+    r
+}
+
+fn run_clean(script: &Path, root: &Path, dir: &Path, path: &str, release: bool) -> Result<String, String> {
     // A whole-workspace `cargo clean` of a large target is slow: bounded by a deadline of its own.
     let mut cmd = crate::bounded::bounded_for("bash", CLEAN_DEADLINE_SECS);
     cmd.arg(script);
-    if record_only {
-        cmd.arg("--record");
+    if release {
+        cmd.arg("--release");
     }
     let out = cmd
         .arg(root)
