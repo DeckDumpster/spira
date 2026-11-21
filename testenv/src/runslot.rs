@@ -42,7 +42,7 @@ mod tests {
 
     #[test]
     fn the_run_slot_request_carries_the_cap_armed_on_this_thread() {
-        let run = Path::new("/run");
+        let run = Path::new("run");
         assert_eq!(request(run, 1, "x").bound_secs, None);
         let armed = crate::cap::arm(crate::cap::Cap { secs: 600, source: "test" }, None);
         assert!(matches!(request(run, 1, "x").bound_secs, Some(s) if (599..=600).contains(&s)));
