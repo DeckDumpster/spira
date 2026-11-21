@@ -36,7 +36,7 @@ rule [--home <spira-dir>] render-memories [prefix-csv] [char-budget] [core-csv]
 rule system-prompt-split <sysfile> <taskfile> <statutes> <prompt>
 ```
 
-`enact` finds the home repository through the repo map, never the caller's directory. It refuses text the `inventory` fence of spira-lint would refuse, then writes the statute to the store, regenerates the wiki page and files no bead of its own. It then lands the whole statute book: `code::catch_up` appends every store slug the landing-ref toc and `law/pointers.toml` do not name (`code::behind`) under Part 1 in store key order, the enacted slug under its `--part`, and `law/` is committed and submitted under one bead exactly as `retire` does it (`retire` catches up the same way). `commit_law` cuts from the newest unlanded `law/*` or `spira/*` branch whose change against the landing ref stays within `law/` and `spira/statutes/`, so two writes made before either lands do not conflict: the second fast-forwards. `rule code --land` is the same landing with no store write, for catch-up and retry, and says `law/: book is up to date with the store.` when nothing is behind or drifted. A landing failure appends one line to `<SPIRA_RUN>/law-book.log` (a `law-book` row in `spira/watchers`, so it reaches the Concierge inbox) and exits 1; the statute stays in force. `rule code --check` reports the gap as `law/: behind the store by N: <slugs>` and exits 1. `rule.sh code` writes the seed texts under `spira/statutes/` along with law/, and removes any seed that is not a numbered statute (a runbook copy or a retired slug). The book holds `law-` keys only: a store key of another family is neither counted behind nor carried from an in-flight toc, and a dated `(per <Name>, YYYY-MM-DD…)` provenance mark is dropped wherever it sits in a text, a trailing one keeping its full stop.
+`enact` finds the home repository through the repo map, never the caller's directory. It refuses text the `inventory` fence of spira-lint would refuse, then writes the statute to the store, regenerates the wiki page and files no bead of its own. It then lands the whole statute book: `code::catch_up` first drops every toc slug the store lacks (`code::without_missing`; `code::in_force` is the same step plus the moves, for `rule code`), then appends every store slug the landing-ref toc and `law/pointers.toml` do not name (`code::behind`) under Part 1 in store key order, the enacted slug under its `--part`, and `law/` is committed and submitted under one bead exactly as `retire` does it (`retire` catches up the same way, after leaving a `retired-law-*` record in the store). `commit_law` cuts from the newest unlanded `law/*` or `spira/*` branch whose change against the landing ref stays within `law/` and `spira/statutes/`, so two writes made before either lands do not conflict: the second fast-forwards. `rule code --land` is the same landing with no store write, for catch-up and retry, and says `law/: book is up to date with the store.` when nothing is behind or drifted. A landing failure appends one line to `<SPIRA_RUN>/law-book.log` (a `law-book` row in `spira/watchers`, so it reaches the Concierge inbox) and exits 1; the statute stays in force. `rule code --check` reports the gap as `law/: behind the store by N: <slugs>` and exits 1. `rule.sh code` writes the seed texts under `spira/statutes/` along with law/, and removes any seed that is not a numbered statute (a runbook copy or a retired slug). The book holds `law-` keys only: a store key of another family is neither counted behind nor carried from an in-flight toc, and a dated `(per <Name>, YYYY-MM-DD…)` provenance mark is dropped wherever it sits in a text, a trailing one keeping its full stop.
 
 `<slug>` is written without the `law-` prefix; it is added for you (stripped once if
 already present, so `rule enact law-foo ...` and `rule enact foo ...` enact the same key).
@@ -132,8 +132,8 @@ lint fires. `retire` writes no text and is not checked.
 `rename-vocabulary` migrates the statutes and `sop-*` runbooks that predate that refusal, using the same table
 (`ffx_vocabulary::rewrite`). A statute whose text alone holds a term is amended in place; one whose
 slug holds a term is enacted under the renamed slug and the old key forgotten. Every rename leaves a
-`[[retired]]` pointer to the new slug: an old slug not yet numbered is numbered first
-(`vocab::record_renames`), so `check_pointers` keeps holding. The rewrite is grammatical: a
+`[[retired]]` pointer to the new slug: a numbered old slug's section passes to the new one
+(`vocab::record_renames`) and the rename leaves a `retired-law-*` record in the store. The rewrite is grammatical: a
 singular determiner before "summons" or "chamber" gives "call" or "rune", and the article fix <!-- ffx-ok -->
 reaches slugs. A bare "summons" (no determiner, no count before it) is unreadable as singular or <!-- ffx-ok -->
 plural and is listed as unresolved. A rename onto a key in force, and a term with no replacement,
@@ -154,16 +154,20 @@ landed only when a statute was written; otherwise `law/: no statute rewritten; n
 A statute's slug is its identity; its `§Part.Section` is presentation, derived from
 `law/toc.toml`, and may be renumbered by editing the toc and running `rule code`. Whatever
 moved, merged or retired leaves a record in `law/pointers.toml`, an input like `toc.toml`
-(`write_tree` never deletes it; `drift` validates that every slug it names is in the toc).
-It carries `version = 1` and refuses unknown fields. Three entry kinds:
+(`write_tree` never deletes it). It carries `version = 1` and refuses unknown fields. The book is
+exactly the statutes in force: a slug the store no longer holds leaves `toc.toml` and its section
+file, and its pointer stays so the old name still resolves. Three entry kinds:
 
-- `[[moved]]` `section`, `slug`, `on` — appended by `rule code` for every slug whose section
-  differs from the generated file names on disk. A toc that drops a slug that held a number
-  is refused by name: it stays in the toc until retired.
+- `[[moved]]` `section`, `slug`, `on` — appended by `rule code` for every landed slug whose
+  section changed. A toc that drops a slug the store still holds is refused by name.
 - `[[merged]]` `from`, `into`, `reason`, `on` — written by `retire --merged-into`.
-- `[[retired]]` `slug`, `reason`, optional `replaced_by`, `on` — written by `retire`. The slug
-  keeps its number and renders `[Retired <on>] <reason>` (plus `Replaced by §N.M <slug>.`).
-  `[Reserved]` remains only for a slug with neither record.
+- `[[retired]]` `slug`, `reason`, optional `replaced_by`, `on` — written by `retire` and
+  `rename-vocabulary`, and read back from the store's `retired-law-*` records
+  (`code::store_pointers`), so a rename or retirement survives the loss of the branch that
+  carried it. A successor the store holds and the toc does not yet list takes the old slug's
+  section (`code::in_force`); otherwise the section is gone and the later ones renumber.
+  `check_pointers` requires what a pointer leads to (`replaced_by`, `into`, `moved.slug`) to be
+  in the toc, not the slug it leaves.
 
 `code::resolve` takes `law-x`, `x`, `N.M` or `§N.M` (a current section wins over a moved
 entry), follows moved → merged → retired-with-replacement for as many hops as there are, one

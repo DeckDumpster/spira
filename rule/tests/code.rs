@@ -119,6 +119,22 @@ fn a_retired_slug_keeps_its_number() {
 }
 
 #[test]
+fn a_retired_slug_leaves_the_toc_and_its_pointer_stays_and_the_later_sections_move() {
+    let _env = testkit::env_read();
+    let toc = parse_toc(TOC).unwrap();
+    let p = Pointers { retired: vec![Retired { slug: "law-one".into(), reason: "Gone.".into(), replaced_by: Some("law-three".into()), on: "2026-10-28".into() }], ..Pointers::default() };
+    let held = store(&["law-two", "law-three"]);
+    let landed = BTreeMap::from([("law-one".to_string(), "1.1".to_string()), ("law-two".to_string(), "1.2".to_string()), ("law-three".to_string(), "2.1".to_string())]);
+    let (toc, p) = rule::code::in_force(&toc, &p, &held, &landed, "2026-11-20").unwrap();
+    assert_eq!(toc[0].slugs, ["law-two"]);
+    assert_eq!(p.moved, [Moved { section: "1.2".into(), slug: "law-two".into(), on: "2026-11-20".into() }]);
+    assert!(rule::code::check_pointers(&toc, &p).is_empty());
+    let r = resolve(&toc, &p, "1.1").unwrap();
+    assert_eq!(r.slug, "law-two", "a current section wins over a pointer");
+    assert_eq!(resolve(&toc, &p, "law-one").unwrap().slug, "law-three");
+}
+
+#[test]
 fn a_merged_slug_renders_where_it_went() {
     let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
@@ -161,7 +177,9 @@ fn a_toc_that_drops_a_numbered_slug_is_refused_by_name() {
     let _env = testkit::env_read();
     let old = BTreeMap::from([("law-one".to_string(), "1.1".to_string())]);
     let toc = parse_toc(&TOC.replace("  \"law-one\",\n", "")).unwrap();
-    assert!(record_moves(&old, &toc, &Pointers::default(), "d").unwrap_err().contains("law-one"));
+    let held = BTreeMap::from([("law-one".to_string(), "Do one.".to_string())]);
+    assert!(record_moves(&old, &toc, &Pointers::default(), "d", &held).unwrap_err().contains("law-one"));
+    assert!(record_moves(&old, &toc, &Pointers::default(), "d", &BTreeMap::new()).unwrap().moved.is_empty(), "a slug the store lacks may leave");
 }
 
 #[test]
@@ -169,9 +187,9 @@ fn a_move_records_the_old_number_once() {
     let _env = testkit::env_read();
     let old = BTreeMap::from([("law-one".to_string(), "1.1".to_string()), ("law-two".to_string(), "1.2".to_string())]);
     let toc = parse_toc(&TOC.replace("  \"law-two\",\n", "").replace("  \"law-three\",", "  \"law-three\",\n  \"law-two\",")).unwrap();
-    let p = record_moves(&old, &toc, &Pointers::default(), "2026-10-28").unwrap();
+    let p = record_moves(&old, &toc, &Pointers::default(), "2026-10-28", &store(&["law-one", "law-two"])).unwrap();
     assert_eq!(p.moved, [Moved { section: "1.2".into(), slug: "law-two".into(), on: "2026-10-28".into() }]);
-    assert_eq!(record_moves(&old, &toc, &p, "later").unwrap(), p);
+    assert_eq!(record_moves(&old, &toc, &p, "later", &store(&["law-one", "law-two"])).unwrap(), p);
 }
 
 #[test]
@@ -251,7 +269,7 @@ fn catch_up_appends_every_behind_slug_and_numbers_the_enacted_key_in_its_part() 
     let _env = testkit::env_read();
     let toc = parse_toc(TOC).unwrap();
     let book = store(&["law-one", "law-two", "law-three", "law-four", "law-five", "law-six"]);
-    let out = rule::code::catch_up(&toc, &Pointers::default(), &book, Some(("law-six", 2))).unwrap();
+    let (out, _) = rule::code::catch_up(&toc, &Pointers::default(), &book, Some(("law-six", 2)), &BTreeMap::new(), "d").unwrap();
     assert_eq!(out[0].slugs, ["law-one", "law-two", "law-five", "law-four"].map(String::from));
     assert_eq!(out[1].slugs, ["law-three", "law-six"].map(String::from));
     assert!(rule::code::behind(&out, &Pointers::default(), &book).is_empty());
@@ -591,7 +609,7 @@ fn one_rename_vocabulary_leaves_the_generated_book_clean_of_retired_terms_runboo
     }
     assert_eq!(book["sop-dwarf-x"], "SYMPTOM: a dwarf stalls");
     let (toc, pointers) = record_renames(&toc, &pointers, &renamed, "2026-01-02").unwrap();
-    let toc = rule::code::catch_up(&toc, &pointers, &book, None).unwrap();
+    let (toc, pointers) = rule::code::catch_up(&toc, &pointers, &book, None, &BTreeMap::new(), "2026-01-02").unwrap();
     let wt_root = testkit::TempDir::new("rule-vocab-e2e-wt");
     let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "rename-vocabulary", "book", &toc, &pointers, &book).unwrap();
     testkit::git(p, &["checkout", "-q", &branch]);
@@ -599,4 +617,149 @@ fn one_rename_vocabulary_leaves_the_generated_book_clean_of_retired_terms_runboo
     let tree = spira_lint::Tree::from_git(p).unwrap();
     let found = FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&tree).unwrap();
     assert!(found.is_empty(), "{found:?}");
+}
+
+fn retired_record(replaced_by: &str) -> String {
+    sop::shelf::Retired { by: "t".into(), at: "2026-11-20T10:00:00Z".into(), epoch: 1, reason: "renamed out of retired vocabulary".into(), text: "Do it.".into(), replaced_by: Some(replaced_by.into()) }.to_json()
+}
+
+const RENAMED_TOC: &str = "[[part]]\nnumber = 1\nname = \"Alpha\"\nslug = \"alpha\"\nscope = \"First scope.\"\nslugs = [\n  \"law-one\",\n  \"law-aeon-x\",\n  \"law-two\",\n]\n"; // ffx-ok
+
+fn lint_finds(p: &std::path::Path) -> Vec<spira_lint::Finding> {
+    use spira_lint::rules::ffx_vocabulary::{FfxVocabulary, Mode};
+    use spira_lint::Rule;
+    FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&spira_lint::Tree::from_git(p).unwrap()).unwrap()
+}
+
+#[test]
+fn store_pointers_reads_one_row_per_retirement_record_and_never_a_second_for_a_pointed_slug() {
+    let _env = testkit::env_read();
+    let mut held = store(&["law-one", "law-dwarf-x"]);
+    held.insert("retired-law-aeon-x".into(), retired_record("law-dwarf-x")); // ffx-ok
+    held.insert("retired-sop-aeon-y".into(), retired_record("sop-dwarf-y")); // ffx-ok
+    let rows = rule::code::store_pointers(&held);
+    assert_eq!(rows, [Retired { slug: "law-aeon-x".into(), reason: "renamed out of retired vocabulary".into(), replaced_by: Some("law-dwarf-x".into()), on: "2026-11-20".into() }]); // ffx-ok
+
+    let have = Pointers { retired: vec![Retired { slug: "law-aeon-x".into(), reason: "by hand".into(), replaced_by: None, on: "d".into() }], ..Pointers::default() }; // ffx-ok
+    assert_eq!(rule::code::with_store_pointers(have.clone(), &held), have);
+    assert_eq!(rule::code::with_store_pointers(Pointers::default(), &held).retired, rows);
+}
+
+#[test]
+fn code_writes_the_book_the_store_holds_when_a_statute_was_renamed_and_the_old_name_lived_only_on_a_lost_branch() {
+    let _env = author_env();
+    let world = testkit::TempDir::new("rule-renamed");
+    let map = spira_config::process::fixture_repo_map(world.path(), &["fixture"]);
+    let toml = spira_config::process::fixture_toml(world.path(), &[("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_HOME_REPO", "fixture")]);
+    let p = world.path().join("fixture");
+    std::fs::create_dir_all(p.join("law")).unwrap();
+    testkit::git(&p, &["init", "-q", "-b", "scratch"]);
+    let texts = testkit::TempDir::new("rule-renamed-texts");
+    let put = |slug: &str, text: &str| std::fs::write(texts.path().join(format!("{slug}.txt")), text).unwrap();
+    for slug in ["law-one", "law-aeon-x", "law-two"] { // ffx-ok
+        put(slug, "Do it.");
+    }
+    std::fs::write(p.join("law/toc.toml"), RENAMED_TOC).unwrap();
+    let harness_home = spira_config::resolve::locate_home_for_process().unwrap();
+    let home = p.to_str().unwrap();
+    let run = |args: &[&str]| {
+        std::process::Command::new(testkit::bin_exe("rule"))
+            .args(["--home", home, "code"])
+            .args(args)
+            .arg("--texts")
+            .arg(texts.path())
+            .current_dir(&p)
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("SPIRA_TOML", &toml)
+            .env("SPIRA_HOME", &harness_home)
+            .output()
+            .unwrap()
+    };
+    assert_eq!(run(&[]).status.code(), Some(0));
+    testkit::git(&p, &["add", "-A"]);
+    testkit::git(&p, &["commit", "-q", "-m", "law"]);
+    testkit::git(&p, &["branch", "local/main"]);
+
+    std::fs::remove_file(texts.path().join("law-aeon-x.txt")).unwrap(); // ffx-ok
+    put("law-dwarf-x", "Do it.");
+    put("retired-law-aeon-x", &retired_record("law-dwarf-x")); // ffx-ok
+    let stale = run(&["--check"]);
+    assert_eq!(stale.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&stale.stderr);
+    assert!(said.contains("toc.toml: lists statutes the store lacks") && said.contains("retirements in the store not yet recorded"), "{said}");
+    let out = run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+
+    let toc = parse_toc(&std::fs::read_to_string(p.join("law/toc.toml")).unwrap()).unwrap();
+    assert_eq!(toc[0].slugs, ["law-one", "law-dwarf-x", "law-two"]);
+    assert!(p.join("law/1-alpha/1.2-law-dwarf-x.md").exists());
+    assert!(!testkit::git(&p, &["ls-files", "law"]).contains("aeon"), "{}", testkit::git(&p, &["ls-files", "law"])); // ffx-ok
+    assert!(!std::fs::read_dir(p.join("law/1-alpha")).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains("aeon"))); // ffx-ok
+    let pointers = parse_pointers(&std::fs::read_to_string(p.join("law/pointers.toml")).unwrap()).unwrap();
+    assert_eq!(pointers.retired.len(), 1);
+    assert_eq!((pointers.retired[0].slug.as_str(), pointers.retired[0].replaced_by.as_deref()), ("law-aeon-x", Some("law-dwarf-x"))); // ffx-ok
+
+    testkit::git(&p, &["add", "-A"]);
+    testkit::git(&p, &["commit", "-q", "-m", "book"]);
+    testkit::git(&p, &["branch", "-f", "local/main", "scratch"]);
+    let clean = run(&["--check"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", String::from_utf8_lossy(&clean.stderr));
+    assert!(lint_finds(&p).is_empty());
+}
+
+fn lost_branch_repo() -> testkit::TempDir {
+    let repo = law_repo();
+    let p = repo.path();
+    let toc = parse_toc(RENAMED_TOC).unwrap();
+    let files = generate(&toc, &Pointers::default(), |s| Some(format!("Do {s}.")));
+    write_tree(&p.join("law"), &render_toc(&toc), &files).unwrap();
+    testkit::git(p, &["add", "-A"]);
+    testkit::git(p, &["commit", "-q", "-m", "book with the old name"]);
+    testkit::git(p, &["checkout", "-q", "-b", "law/kept"]);
+    std::fs::write(p.join("law/note.md"), "kept\n").unwrap();
+    testkit::git(p, &["add", "-A"]);
+    testkit::git(p, &["commit", "-q", "-m", "kept branch"]);
+    testkit::git(p, &["checkout", "-q", "main"]);
+    repo
+}
+
+fn land_from_surviving_branches(p: &std::path::Path, held: &BTreeMap<String, String>) -> (Vec<rule::code::Part>, Pointers) {
+    let landed = rule::code::numbers_of(&rule::code::law_files_at(p, "main").unwrap());
+    let toc = rule::code::with_in_flight(p, Some("main"), parse_toc(&testkit::git(p, &["show", "main:law/toc.toml"])).unwrap());
+    let pointers = rule::code::with_store_pointers(rule::code::with_in_flight_pointers(p, Some("main"), Pointers::default()), held);
+    rule::code::catch_up(&toc, &pointers, held, None, &landed, "2026-11-20").unwrap()
+}
+
+#[test]
+fn a_kept_branch_naming_a_statute_renamed_on_a_lost_branch_is_not_carried_into_the_book() {
+    let _env = author_env();
+    let repo = lost_branch_repo();
+    let p = repo.path();
+    let wt_root = testkit::TempDir::new("rule-lost-wt");
+    let mut held = store(&["law-one", "law-dwarf-x", "law-two"]);
+    held.insert("retired-law-aeon-x".into(), retired_record("law-dwarf-x")); // ffx-ok
+    let (toc, pointers) = land_from_surviving_branches(p, &held);
+    assert_eq!(toc[0].slugs, ["law-one", "law-dwarf-x", "law-two"]);
+    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "code", "book", &toc, &pointers, &held).unwrap();
+    testkit::git(p, &["checkout", "-q", &branch]);
+    assert!(testkit::git(p, &["ls-files", "law"]).contains("1.2-law-dwarf-x.md"));
+    assert!(!testkit::git(p, &["ls-files", "law"]).contains("aeon")); // ffx-ok
+    assert!(lint_finds(p).is_empty());
+}
+
+#[test]
+fn a_statute_the_store_lost_with_no_record_leaves_and_the_later_sections_record_their_move() {
+    let _env = author_env();
+    let repo = lost_branch_repo();
+    let p = repo.path();
+    let wt_root = testkit::TempDir::new("rule-gone-wt");
+    let held = store(&["law-one", "law-dwarf-x", "law-two"]);
+    let (toc, pointers) = land_from_surviving_branches(p, &held);
+    assert_eq!(toc[0].slugs, ["law-one", "law-two", "law-dwarf-x"]);
+    assert_eq!(pointers.moved, [Moved { section: "1.3".into(), slug: "law-two".into(), on: "2026-11-20".into() }]);
+    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "code", "book", &toc, &pointers, &held).unwrap();
+    testkit::git(p, &["checkout", "-q", &branch]);
+    assert!(!testkit::git(p, &["ls-files", "law"]).contains("aeon")); // ffx-ok
+    assert!(lint_finds(p).is_empty());
 }

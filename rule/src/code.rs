@@ -213,14 +213,15 @@ pub fn numbers_of(files: &[String]) -> BTreeMap<String, String> {
 }
 
 /// `pointers` plus a `moved` entry for every slug of `old` whose section differs in `new_toc`.
-/// A slug that ever held a number stays in the toc until retired, so a dropped one is refused.
-pub fn record_moves(old: &BTreeMap<String, String>, new_toc: &[Part], pointers: &Pointers, today: &str) -> Result<Pointers, String> {
-    if let Some(gone) = old.keys().find(|s| section_of(new_toc, s).is_none()) {
-        return Err(format!("law/toc.toml no longer lists {gone}, which holds §{} — a numbered statute stays in the toc; retire it with `rule.sh retire` instead", old[gone]));
+/// A slug the store still holds stays in the toc, so a dropped one is refused; one the store
+/// lacks has left the book and records no move.
+pub fn record_moves(old: &BTreeMap<String, String>, new_toc: &[Part], pointers: &Pointers, today: &str, book: &BTreeMap<String, String>) -> Result<Pointers, String> {
+    if let Some(gone) = old.keys().find(|s| section_of(new_toc, s).is_none() && book.contains_key(*s)) {
+        return Err(format!("law/toc.toml no longer lists {gone}, which holds §{} and is still in the store — a statute in force stays in the toc; retire it with `rule.sh retire` instead", old[gone]));
     }
     let mut out = pointers.clone();
     for (slug, was) in old {
-        let now = section_of(new_toc, slug).unwrap_or_default();
+        let Some(now) = section_of(new_toc, slug) else { continue };
         if now != *was && !out.moved.iter().any(|m| m.section == *was && m.slug == *slug) {
             out.moved.push(Moved { section: was.clone(), slug: slug.clone(), on: today.to_string() });
         }
@@ -228,14 +229,73 @@ pub fn record_moves(old: &BTreeMap<String, String>, new_toc: &[Part], pointers: 
     Ok(out)
 }
 
-/// Problems with `pointers` against `toc`: every slug it names must be in the toc.
+/// The memory key holding the retirement record of statute `slug`.
+pub fn retired_key(slug: &str) -> String {
+    format!("retired-{slug}")
+}
+
+/// One `Retired` row per `retired-law-*` record in `book`; `on` is the date part of its `at`.
+pub fn store_pointers(book: &BTreeMap<String, String>) -> Vec<Retired> {
+    book.iter()
+        .filter_map(|(key, value)| {
+            let slug = key.strip_prefix("retired-").filter(|s| s.starts_with("law-"))?;
+            let r = sop::shelf::Retired::from_json(value)?;
+            Some(Retired { slug: slug.to_string(), reason: r.reason, replaced_by: r.replaced_by, on: r.at.split(['T', ' ']).next().unwrap_or_default().to_string() })
+        })
+        .collect()
+}
+
+/// `pointers` plus the store's retirement records, for each slug no pointer row already names and the store does not hold again.
+pub fn with_store_pointers(mut pointers: Pointers, book: &BTreeMap<String, String>) -> Pointers {
+    for r in store_pointers(book) {
+        let named = book.contains_key(&r.slug) || pointers.retired.iter().any(|p| p.slug == r.slug) || pointers.merged.iter().any(|m| m.from == r.slug);
+        if !named {
+            pointers.retired.push(r);
+        }
+    }
+    pointers
+}
+
+fn successor<'a>(pointers: &'a Pointers, slug: &str) -> Option<&'a str> {
+    if let Some(m) = pointers.merged.iter().rev().find(|m| m.from == slug) {
+        return Some(&m.into);
+    }
+    pointers.retired.iter().rev().find(|r| r.slug == slug).and_then(|r| r.replaced_by.as_deref())
+}
+
+/// `toc` with every slug the store lacks taken out: a successor the store holds and the toc
+/// does not list yet takes its place, otherwise the slug leaves.
+pub fn without_missing(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Vec<Part> {
+    let mut out = toc.to_vec();
+    let missing: Vec<String> = toc.iter().flat_map(|p| p.slugs.iter()).filter(|s| !book.contains_key(*s)).cloned().collect();
+    for slug in missing {
+        let next = successor(pointers, &slug).filter(|n| book.contains_key(*n) && !out.iter().any(|p| p.slugs.iter().any(|s| s == n))).map(str::to_string);
+        for p in &mut out {
+            if let Some(i) = p.slugs.iter().position(|s| *s == slug) {
+                match &next {
+                    Some(n) => p.slugs[i] = n.clone(),
+                    None => {
+                        p.slugs.remove(i);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The book as the store holds it: `toc` without the slugs the store lacks, and a `moved` row
+/// for every slug of `landed` (slug -> section on the landing ref) whose section changed.
+pub fn in_force(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>, landed: &BTreeMap<String, String>, today: &str) -> Result<(Vec<Part>, Pointers), String> {
+    let toc = without_missing(toc, pointers, book);
+    let pointers = record_moves(landed, &toc, pointers, today, book)?;
+    Ok((toc, pointers))
+}
+
+/// Problems with `pointers` against `toc`: every slug a pointer leads to must be in the toc.
+/// The slug a retirement or merge leaves behind need not be.
 pub fn check_pointers(toc: &[Part], pointers: &Pointers) -> Vec<String> {
-    let named = pointers
-        .moved
-        .iter()
-        .map(|m| &m.slug)
-        .chain(pointers.merged.iter().flat_map(|m| [&m.from, &m.into]))
-        .chain(pointers.retired.iter().flat_map(|r| std::iter::once(&r.slug).chain(r.replaced_by.as_ref())));
+    let named = pointers.moved.iter().map(|m| &m.slug).chain(pointers.merged.iter().map(|m| &m.into)).chain(pointers.retired.iter().filter_map(|r| r.replaced_by.as_ref()));
     let mut out: Vec<String> = named.filter(|s| section_of(toc, s).is_none()).map(|s| format!("{POINTERS_FILE}: names {s}, which is not in toc.toml")).collect();
     out.sort();
     out.dedup();
@@ -665,18 +725,20 @@ pub fn behind(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>
     book.keys().filter(|s| s.starts_with("law-") && !accounted(s)).cloned().collect()
 }
 
-/// `toc` with every behind slug appended in store key order under Part 1, the enacted key under
-/// its own Part. Nothing already numbered moves.
-pub fn catch_up(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>, key_part: Option<(&str, u32)>) -> Result<Vec<Part>, String> {
-    let mut out = toc.to_vec();
-    for slug in behind(toc, pointers, book) {
+/// `toc` without the slugs the store lacks, then with every behind slug appended in store key
+/// order under Part 1, the enacted key under its own Part, and a `moved` row for each landed
+/// slug whose section changed.
+pub fn catch_up(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>, key_part: Option<(&str, u32)>, landed: &BTreeMap<String, String>, today: &str) -> Result<(Vec<Part>, Pointers), String> {
+    let mut out = without_missing(toc, pointers, book);
+    for slug in behind(&out, pointers, book) {
         let part = match key_part {
             Some((k, n)) if k == slug => n,
             _ => 1,
         };
         out = append(&out, part, &slug)?;
     }
-    Ok(out)
+    let pointers = record_moves(landed, &out, pointers, today, book)?;
+    Ok((out, pointers))
 }
 
 /// The newest unlanded `law/` or `spira/` branch whose change against `base` stays within the

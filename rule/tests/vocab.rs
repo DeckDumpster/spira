@@ -97,14 +97,15 @@ fn the_dry_run_prints_only_the_changed_sentences_old_then_new_and_a_rename_as_fr
 }
 
 #[test]
-fn every_rename_leaves_a_pointer_and_an_unnumbered_old_slug_is_numbered_first() {
+fn every_rename_leaves_a_pointer_and_an_unnumbered_old_slug_is_never_numbered() {
     use rule::code::{catch_up, check_pointers, resolve};
     use rule::vocab::record_renames;
     let toc = parse_toc(TOC).unwrap();
     let renamed = [("law-an-aeon-x".to_string(), "law-a-dwarf-x".to_string(), false)]; // ffx-ok
     let (toc, pointers) = record_renames(&toc, &Pointers::default(), &renamed, "d").unwrap();
     let book = store(&[("law-a-dwarf-x", "X.")]);
-    let toc = catch_up(&toc, &pointers, &book, None).unwrap();
+    let (toc, pointers) = catch_up(&toc, &pointers, &book, None, &BTreeMap::new(), "d").unwrap();
+    assert!(!toc.iter().flat_map(|p| &p.slugs).any(|s| s == "law-an-aeon-x")); // ffx-ok
     assert!(check_pointers(&toc, &pointers).is_empty());
     let r = resolve(&toc, &pointers, "law-an-aeon-x").unwrap(); // ffx-ok
     assert_eq!(r.slug, "law-a-dwarf-x");
@@ -112,9 +113,9 @@ fn every_rename_leaves_a_pointer_and_an_unnumbered_old_slug_is_numbered_first() 
 
     let numbered = [("law-y".to_string(), "law-z".to_string(), true)];
     let (toc2, p2) = record_renames(&parse_toc(TOC).unwrap(), &Pointers::default(), &numbered, "d").unwrap();
-    assert_eq!(toc2.iter().flat_map(|p| &p.slugs).filter(|s| *s == "law-y").count(), 1);
+    assert_eq!(toc2[0].slugs, ["law-z"], "the new slug takes the old one's section");
     assert_eq!(p2.retired.len(), 1);
-    let toc2 = catch_up(&toc2, &p2, &store(&[("law-z", "Z.")]), None).unwrap();
+    let (toc2, p2) = catch_up(&toc2, &p2, &store(&[("law-z", "Z.")]), None, &BTreeMap::new(), "d").unwrap();
     assert!(check_pointers(&toc2, &p2).is_empty());
     assert_eq!(resolve(&toc2, &p2, "law-y").unwrap().hops.len(), 1);
 }
