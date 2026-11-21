@@ -312,6 +312,56 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "After work submit: session and teardown seconds by rune",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "quantile_over_time(0.5, dwarf_after_submit_seconds[$__range])",
+          "legendFormat": "{{rune}} {{part}} p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "quantile_over_time(0.9, dwarf_after_submit_seconds[$__range])",
+          "legendFormat": "{{rune}} {{part}} p90",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max_over_time(dwarf_after_submit_seconds[$__range])",
+          "legendFormat": "{{rune}} {{part}} max",
+          "refId": "C"
+        }
+      ]
     }
   ]
 }
