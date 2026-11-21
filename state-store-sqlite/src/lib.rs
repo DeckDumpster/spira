@@ -418,7 +418,7 @@ pub type CommitProbe = Arc<dyn Fn() -> Result<()> + Send + Sync>;
 impl Default for Options {
     fn default() -> Self {
         Options {
-            max_read_ms: 1_000,
+            max_read_ms: 100,
             readers: 4,
             clock: Arc::new(state_store::MonotonicClock::new()),
             read_probe: None,

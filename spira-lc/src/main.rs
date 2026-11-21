@@ -73,16 +73,16 @@ use serde_json::Value;
 use spira_lc::{flag, goodput, CANNOT_TELL, REFUSED};
 
 fn run_deadline(verb: &str, args: &[String]) -> (i32, String) {
-    let (slow, run) = match (spira_config::process::cfg("SPIRA_LC_SLOW_VERB_DEADLINES"), spira_config::process::cfg("SPIRA_RUN")) {
-        (Ok(slow), Ok(run)) => (slow, run),
-        (Err(e), _) | (_, Err(e)) => return (CANNOT_TELL, format!("spira-lc deadline: {e}")),
+    let run = match spira_config::process::cfg("SPIRA_RUN") {
+        Ok(run) => run,
+        Err(e) => return (CANNOT_TELL, format!("spira-lc deadline: {e}")),
     };
     let dir = spira_otel::dir_of(std::path::Path::new(&run));
     let now = std::time::SystemTime::now();
     match (verb, args.split_first()) {
-        ("deadline-check", _) => deadline::deadline_check(args, &slow, &dir, now),
-        ("deadline", Some((sub, rest))) if sub == "lower" => deadline::deadline_lower(rest, &slow, &dir, now, &mut deadline::spira_config),
-        _ => (CANNOT_TELL, "spira-lc deadline: usage: deadline-check (--ms N [--verb V] | --configured) | deadline lower --ms N --file F [--verb V]".to_string()),
+        ("deadline-check", _) => deadline::deadline_check(args, &dir, now),
+        ("deadline", Some((sub, rest))) if sub == "lower" => deadline::deadline_lower(rest, &dir, now, &mut deadline::spira_config),
+        _ => (CANNOT_TELL, "spira-lc deadline: usage: deadline-check (--ms N [--verb V] | --configured) | deadline lower --ms N --file F".to_string()),
     }
 }
 

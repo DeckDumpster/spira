@@ -19,7 +19,11 @@ thread_local! {
 struct Counters {
     verbs: BTreeMap<String, (u64, u64)>,
     tasks: BTreeMap<Key, Counts>,
+    reads: BTreeMap<String, ReadCounts>,
 }
+
+/// Reads the store ended at its limit, and reads that ran past it without being ended.
+type ReadCounts = (u64, u64);
 
 /// What a key has served: calls, milliseconds, and calls over the answer limit.
 type Counts = (u64, u64, u64);
@@ -27,7 +31,7 @@ type Counts = (u64, u64, u64);
 /// (verb, caller, task): what a request is counted under.
 type Key = (String, String, String);
 
-static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(), tasks: BTreeMap::new() });
+static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(), tasks: BTreeMap::new(), reads: BTreeMap::new() });
 
 /// How often the counts are pushed over OTLP.
 pub const METRICS_EVERY: Duration = Duration::from_secs(60);
@@ -111,6 +115,17 @@ pub fn caller_of_pid(pid: i32) -> String {
         None
     };
     clean(&named.or_else(parent).unwrap_or(comm))
+}
+
+pub fn reads_done(verb: &str, ended: u64, overran: u64) {
+    if ended == 0 && overran == 0 {
+        return;
+    }
+    if let Ok(mut c) = COUNTERS.lock() {
+        let r = c.reads.entry(clean(verb)).or_default();
+        r.0 += ended;
+        r.1 += overran;
+    }
 }
 
 pub fn request_done(verb: &str, method: &str, caller: &str, task: Option<&str>, took: Duration) {
@@ -294,6 +309,31 @@ fn series_since(c: &Counters, pushed: &BTreeMap<Key, Counts>, at: std::time::Sys
         }
     }
     out
+}
+
+fn read_series_since(c: &Counters, pushed: &BTreeMap<String, ReadCounts>, at: std::time::SystemTime) -> Vec<spira_otel::metrics::Series> {
+    let mut out = Vec::new();
+    for (verb, &(ended, overran)) in &c.reads {
+        let (pe, po) = pushed.get(verb).copied().unwrap_or_default();
+        let series = |name: &str, value: u64| spira_otel::metrics::Series { name: name.into(), value: value as f64, labels: vec![("verb".to_string(), verb.clone())], at };
+        if ended > pe {
+            out.push(series("spira_lc_reads_ended", ended - pe));
+        }
+        if overran > po {
+            out.push(series("spira_lc_reads_overran", overran - po));
+        }
+    }
+    out
+}
+
+/// Pushes the read-limit counts by verb; `pushed` advances only when the push succeeds.
+pub fn push_reads(sink: &spira_otel::metrics::MetricsSink, pushed: &mut BTreeMap<String, ReadCounts>) {
+    let Ok(c) = COUNTERS.lock() else { return };
+    let (series, now) = (read_series_since(&c, pushed, std::time::SystemTime::now()), c.reads.clone());
+    drop(c);
+    if !series.is_empty() && sink.try_push_series(&series).is_ok() {
+        *pushed = now;
+    }
 }
 
 /// Pushes what moved since `pushed`; `pushed` advances only when the push succeeds. The
@@ -702,6 +742,31 @@ mod tests {
         let got = series_since(&c, &pushed, at);
         let flat: Vec<f64> = got.iter().map(|s| s.value).collect();
         assert_eq!(flat, [1.0, 0.2]);
+    }
+
+    #[test]
+    fn reads_ended_and_overran_are_pushed_by_verb_summed_over_requests() {
+        let mut c = Counters::default();
+        for (ended, overran) in [(1, 0), (2, 0)] {
+            let r = c.reads.entry("list".to_string()).or_default();
+            r.0 += ended;
+            r.1 += overran;
+        }
+        c.reads.entry("show".to_string()).or_default().1 += 4;
+        let got = read_series_since(&c, &BTreeMap::new(), std::time::SystemTime::now());
+        let total = |name: &str, verb: &str| got.iter().filter(|s| s.name == name && s.labels == [("verb".to_string(), verb.to_string())]).map(|s| s.value).sum::<f64>();
+        assert_eq!(total("spira_lc_reads_ended", "list"), 3.0);
+        assert_eq!(total("spira_lc_reads_overran", "show"), 4.0);
+        assert_eq!(total("spira_lc_reads_overran", "list"), 0.0);
+        let pushed = BTreeMap::from([("list".to_string(), (3, 0))]);
+        assert!(read_series_since(&c, &pushed, std::time::SystemTime::now()).iter().all(|s| s.labels[0].1 != "list"), "only the delta");
+    }
+
+    #[test]
+    fn reads_done_accumulates_into_the_counters() {
+        reads_done("reads-probe", 1, 0);
+        reads_done("reads-probe", 2, 5);
+        assert_eq!(COUNTERS.lock().unwrap().reads["reads-probe"], (3, 5));
     }
 
     #[test]

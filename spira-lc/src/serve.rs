@@ -49,7 +49,6 @@ fn ledger_ttl_from(read: impl FnOnce(&str) -> Result<String, String>) -> Result<
 }
 
 const DEADLINE_KEY: &str = "SPIRA_LC_REQUEST_DEADLINE_MS";
-const SLOW_KEY: &str = "SPIRA_LC_SLOW_VERB_DEADLINES";
 /// The receiver stops 3 s after receiving (law-calls-have-deadlines); no configured deadline may exceed it.
 const MAX_CONFIGURED_MS: u64 = 3000;
 
@@ -57,27 +56,6 @@ const MAX_CONFIGURED_MS: u64 = 3000;
 #[derive(Clone, Debug)]
 pub(crate) struct Deadlines {
     pub(crate) default: Duration,
-    /// verb -> (its deadline, the bead that fixes it)
-    pub(crate) slow: std::collections::BTreeMap<String, (Duration, String)>,
-}
-
-/// Parses `verb=ms@bead,...`; the verb, its milliseconds and its bead.
-pub(crate) fn parse_slow_entries(value: &str) -> Result<Vec<(String, u64, String)>, String> {
-    let mut out = Vec::new();
-    for entry in value.split(',').map(str::trim).filter(|e| !e.is_empty()) {
-        let bad = |why: &str| format!("spira.lc_slow_verb_deadlines: entry {entry:?} {why}; the form is verb=ms@bead");
-        let (verb, rest) = entry.split_once('=').ok_or_else(|| bad("has no ="))?;
-        let (ms, bead) = rest.split_once('@').ok_or_else(|| bad("names no @bead"))?;
-        if verb.is_empty() || bead.is_empty() {
-            return Err(bad("has an empty verb or bead"));
-        }
-        let ms: u64 = ms.parse().map_err(|_| bad("has a deadline that is not a whole number of ms"))?;
-        if ms == 0 || ms > MAX_CONFIGURED_MS {
-            return Err(bad("has a deadline outside 1..=3000 ms"));
-        }
-        out.push((verb.to_string(), ms, bead.to_string()));
-    }
-    Ok(out)
 }
 
 pub(crate) fn deadlines_from(read: impl Fn(&str) -> Result<String, String>) -> Result<Deadlines, String> {
@@ -86,9 +64,7 @@ pub(crate) fn deadlines_from(read: impl Fn(&str) -> Result<String, String>) -> R
     if default == 0 || default > MAX_CONFIGURED_MS {
         return Err(format!("spira.lc_request_deadline_ms: {default} is outside 1..=3000 ms"));
     }
-    let slow = read(SLOW_KEY).map_err(|e| format!("spira.lc_slow_verb_deadlines: {e}"))?;
-    let slow = parse_slow_entries(&slow)?.into_iter().map(|(v, ms, bead)| (v, (Duration::from_millis(ms), bead))).collect();
-    Ok(Deadlines { default: Duration::from_millis(default), slow })
+    Ok(Deadlines { default: Duration::from_millis(default) })
 }
 
 enum Entry {
@@ -382,9 +358,11 @@ pub fn run(args: &[String]) -> i32 {
             let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
             let metrics = spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", Duration::from_millis(250));
             let mut pushed = Default::default();
+            let mut pushed_reads = Default::default();
             loop {
                 std::thread::sleep(crate::slow::METRICS_EVERY);
                 crate::slow::push_counts(&metrics, &mut pushed);
+                crate::slow::push_reads(&metrics, &mut pushed_reads);
                 if let Some(Ok(store)) = crate::control::served::configured() {
                     match crate::store_gauges::file_series(store.contract().backend(), SystemTime::now()) {
                         Ok(series) => crate::slow::hold_gauges(series),
@@ -945,6 +923,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
     let store = recorder.snapshot();
+    crate::slow::reads_done(measured, store.reads_ended, store.reads_overran);
     let (handed, returned) = worked;
     let before_span = Instant::now();
     let call = spira_otel::Call {
@@ -1126,7 +1105,7 @@ pub const TOOL_DEADLINE: Duration = Duration::from_secs(305);
 
 const WATCH_MARGIN: Duration = Duration::from_millis(500);
 
-/// The request's deadline: the configured default, or the verb's declared slow entry, for every store call but a `watch`, which keeps its own hold. `work`'s lane verbs are
+/// The request's deadline: the configured default, for every store call but a `watch`, which keeps its own hold. `work`'s lane verbs are
 /// batch jobs this service brokers, not calls: they run a harness tool (groomer sweep, bead
 /// filing, mail) for the dwarf, and keep the bound they had.
 pub(crate) fn request_deadline(argv: &[String], deadlines: &Deadlines) -> Duration {
@@ -1141,7 +1120,7 @@ pub(crate) fn request_deadline(argv: &[String], deadlines: &Deadlines) -> Durati
         }
         // batch-job: a repair sweep over every row, bounded at the query deadline like census's.
         Some(v) if crate::composed::SWEEPS.contains(&v) => crate::db::QUERY_DEADLINE,
-        verb => verb.and_then(|v| deadlines.slow.get(v)).map_or(deadlines.default, |(d, _)| *d),
+        _ => deadlines.default,
     }
 }
 
