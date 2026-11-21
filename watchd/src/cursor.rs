@@ -45,32 +45,38 @@ pub fn format_age(seconds: i64) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(trh3zxc)]
     #[test]
     fn a_missing_cursor_reads_as_nothing_unread_from_the_start() {
         assert_eq!(clamp_pos(None, 100), 0);
     }
 
+    #[test_id(t4mn9e0)]
     #[test]
     fn a_cursor_past_the_end_clamps_to_the_end() {
         assert_eq!(clamp_pos(Some(150), 100), 100);
     }
 
+    #[test_id(tkzlt89)]
     #[test]
     fn a_negative_cursor_clamps_to_zero() {
         assert_eq!(clamp_pos(Some(-5), 100), 0);
     }
 
+    #[test_id(t3a4477)]
     #[test]
     fn an_ordinary_cursor_passes_through() {
         assert_eq!(clamp_pos(Some(42), 100), 42);
     }
 
+    #[test_id(tewx31i)]
     #[test]
     fn a_cursor_of_zero_total_is_zero() {
         assert_eq!(clamp_pos(Some(0), 0), 0);
         assert_eq!(clamp_pos(None, 0), 0);
     }
 
+    #[test_id(txcajjc)]
     #[test]
     fn parsing_a_cursor_file() {
         assert_eq!(parse_cursor("42\n"), Some(42));
@@ -79,6 +85,7 @@ mod tests {
         assert_eq!(parse_cursor("-3"), Some(-3));
     }
 
+    #[test_id(t9eqvn3)]
     #[test]
     fn age_picks_the_coarsest_unit_that_is_not_zero() {
         assert_eq!(format_age(0), "0s");
@@ -90,6 +97,7 @@ mod tests {
         assert_eq!(format_age(86400), "1d");
     }
 
+    #[test_id(t6eiwgm)]
     #[test]
     fn a_negative_age_clamps_to_zero_rather_than_render_negative() {
         assert_eq!(format_age(-100), "0s");

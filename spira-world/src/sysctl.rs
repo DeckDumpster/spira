@@ -182,6 +182,7 @@ pub fn plane_of(unit: &str) -> Plane {
 mod tests {
     use super::*;
 
+    #[test_id(tbuz8sr)]
     #[test]
     fn parse_dwarf_units_keeps_only_active_dwarf_services() {
         let l: Vec<String> = [
@@ -199,6 +200,7 @@ mod tests {
         assert_eq!(parse_dwarf_units(&own).len(), 1, "a dwarf the scheduler started is a dwarf");
     }
 
+    #[test_id(t64bv48)]
     #[test]
     fn subject_of_strips_timer_and_instance() {
         assert_eq!(subject_of("spira-groom-prod.timer", "prod"), "spira-groom");
@@ -206,12 +208,14 @@ mod tests {
         assert_eq!(subject_of("spira-groom.timer", ""), "spira-groom");
     }
 
+    #[test_id(tctpam9)]
     #[test]
     fn plane_is_read_from_the_x_spira_section_only() {
         let unit = "[Unit]\nPlane=maintenance\n[X-Spira]\nPlane=observability\n[Timer]\nPlane=work\n";
         assert_eq!(plane_from_unit_text(unit), Some(Plane::Observability));
     }
 
+    #[test_id(tbban0q)]
     #[test]
     fn is_oneshot_reads_the_type_line() {
         assert!(is_oneshot("[Service]\nType=oneshot\nExecStart=x\n"));
@@ -220,6 +224,7 @@ mod tests {
     }
 
     // covers: UC-instance-lifecycle-41
+    #[test_id(tzqqlxm)]
     #[test]
     fn a_stop_takes_work_units_but_never_loom_watchers_or_kept_units_and_a_failed_stop_is_reported() {
         let listing: Vec<String> = [
@@ -248,6 +253,7 @@ mod tests {
         assert!(stop_all(&units, |_| true).is_empty());
     }
 
+    #[test_id(t6gsuzv)]
     #[test]
     fn plane_is_none_when_undeclared_or_unknown() {
         assert_eq!(plane_from_unit_text("[Unit]\nDescription=x\n"), None);

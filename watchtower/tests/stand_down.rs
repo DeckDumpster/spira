@@ -1,6 +1,8 @@
 //! Every periodic check stands down, through the real binary, while the world is halted or the
 //! detectors' lane is stopped on every registered repo, and says which.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::process::Command;
 
 const CHECKS: [&str; 12] = [
@@ -44,6 +46,7 @@ fn stop(run: &std::path::Path, repo: &str) {
     spira_config::scoped_stop::pause_repo(run, repo, &["heimdall".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
 }
 
+#[test_id(t1a150y)]
 #[test]
 fn every_check_stands_down_when_the_detectors_lane_is_stopped_on_every_repo() {
     let (d, run) = world("watchtower-lane");
@@ -55,6 +58,7 @@ fn every_check_stands_down_when_the_detectors_lane_is_stopped_on_every_repo() {
     }
 }
 
+#[test_id(t8ynspx)]
 #[test]
 fn a_check_does_not_stand_down_while_one_repo_still_takes_the_detectors_lane() {
     let (d, run) = world("watchtower-lane-partial");
@@ -66,6 +70,7 @@ fn a_check_does_not_stand_down_while_one_repo_still_takes_the_detectors_lane() {
 }
 
 // covers: UC-ops-detection-remediation-25
+#[test_id(t7c15k2)]
 #[test]
 fn every_periodic_check_stands_down_while_the_world_is_halted() {
     let (d, run) = world("watchtower-halted");

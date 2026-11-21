@@ -1,3 +1,6 @@
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 mod login;
 mod policy;
 mod read;

@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(tbn8ot0)]
 #[test]
 fn a_round_that_opened_and_never_began_is_abandoned_and_its_members_requeued() {
     let r = Rig::new();
@@ -39,6 +40,7 @@ fn a_round_that_opened_and_never_began_is_abandoned_and_its_members_requeued() {
     assert!(noted, "the sweep's reason rides on the released member");
 }
 
+#[test_id(tqvitos)]
 #[test]
 fn a_round_with_an_ejected_member_and_no_phase_write_is_not_abandoned_as_never_began() {
     let r = Rig::new();
@@ -67,6 +69,7 @@ fn a_round_with_an_ejected_member_and_no_phase_write_is_not_abandoned_as_never_b
     assert_eq!(r.state("sp-b"), BeadState::InDelivery);
 }
 
+#[test_id(tki4tto)]
 #[test]
 fn a_round_with_a_recorded_pass_and_no_live_leg_is_not_abandoned_as_never_began() {
     let r = Rig::new();
@@ -93,6 +96,7 @@ fn a_round_with_a_recorded_pass_and_no_live_leg_is_not_abandoned_as_never_began(
 }
 
 
+#[test_id(tdir8e2)]
 #[test]
 fn a_forge_round_with_a_recorded_pr_is_begun_and_not_abandoned_as_never_began() {
     let r = Rig::new();
@@ -110,6 +114,7 @@ fn a_forge_round_with_a_recorded_pr_is_begun_and_not_abandoned_as_never_began() 
     assert_eq!(r.state("sp-a"), BeadState::InDelivery);
 }
 
+#[test_id(tzmz0qc)]
 #[test]
 fn a_forge_round_still_opening_with_no_pr_is_abandoned_as_never_began() {
     let r = Rig::new();
@@ -122,6 +127,7 @@ fn a_forge_round_still_opening_with_no_pr_is_abandoned_as_never_began() {
     assert_eq!(round_state(&r), BatchState::Abandoned);
 }
 
+#[test_id(tj70li0)]
 #[test]
 fn at_121_seconds_a_round_with_a_started_pass_is_left_and_one_with_none_is_abandoned() {
     let begun = Rig::new();
@@ -148,6 +154,7 @@ fn none() -> std::collections::BTreeSet<String> {
     Default::default()
 }
 
+#[test_id(tfz7jo9)]
 #[test]
 fn a_round_with_a_live_leg_unit_is_begun_and_not_abandoned_as_never_began() {
     let r = Rig::new();
@@ -172,6 +179,7 @@ fn a_round_with_a_live_leg_unit_is_begun_and_not_abandoned_as_never_began() {
     assert_eq!(dry.repos.get("b-1").map(String::as_str), Some("spira"));
 }
 
+#[test_id(tshvdma)]
 #[test]
 fn the_requeue_orphans_command_leaves_the_round_it_is_told_is_live() {
     let r = Rig::new();
@@ -190,6 +198,7 @@ fn the_requeue_orphans_command_leaves_the_round_it_is_told_is_live() {
     assert_eq!(round_state(&r), BatchState::Open);
 }
 
+#[test_id(tgr0rp7)]
 #[test]
 fn the_requeue_orphans_command_abandons_a_round_with_no_driver_after_two_minutes_by_default() {
     let r = Rig::new();
@@ -213,6 +222,7 @@ fn the_requeue_orphans_command_abandons_a_round_with_no_driver_after_two_minutes
     assert_eq!(round_state(&r), BatchState::Abandoned);
 }
 
+#[test_id(t3w9rv4)]
 #[test]
 fn requeue_orphans_leaves_a_leased_round_that_never_began_open_and_lists_it_leased() {
     let r = Rig::new();
@@ -239,6 +249,7 @@ fn requeue_orphans_leaves_a_leased_round_that_never_began_open_and_lists_it_leas
 
 /// law-list-reads-paginate-in-the-database: the orphan sweep reads the open rounds through the
 /// state index, never the `batches/` prefix.
+#[test_id(t2zlcag)]
 #[test]
 fn requeue_orphans_reads_the_open_rounds_by_state_not_the_batches_prefix() {
     let r = Rig::on(Counting::default(), &clock());

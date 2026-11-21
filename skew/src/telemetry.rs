@@ -19,6 +19,7 @@ pub fn metered_exit(argv: &[String], f: impl FnOnce() -> ExitCode) -> ExitCode {
 mod tests {
     use super::*;
 
+    #[test_id(tvv7uew)]
     #[test]
     fn a_run_pushes_its_count_duration_and_outcome_for_its_operation() {
         let (addr, h) = spira_otel::metrics::run::fixture_sink();
@@ -31,6 +32,7 @@ mod tests {
         }
     }
 
+    #[test_id(t6m08ig)]
     #[test]
     fn an_unlisted_verb_is_labelled_unknown() {
         assert_eq!(operation(&["--x".into(), "nope".into()]), "unknown");

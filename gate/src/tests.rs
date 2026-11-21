@@ -52,6 +52,7 @@ struct Fake {
     ran: RefCell<Vec<Vec<(String, String)>>>,
     checkouts: RefCell<Vec<String>>,
     written: RefCell<Vec<(PathBuf, String)>>,
+    deny_written: RefCell<Vec<(PathBuf, String)>>,
     unit_config: RefCell<Vec<(PathBuf, String)>>,
     deny: RefCell<Result<String, String>>,
     deny_calls: Cell<u32>,
@@ -283,6 +284,7 @@ impl Fake {
             ran: RefCell::new(Vec::new()),
             checkouts: RefCell::new(Vec::new()),
             written: RefCell::new(Vec::new()),
+            deny_written: RefCell::new(Vec::new()),
             unit_config: RefCell::new(Vec::new()),
             deny: RefCell::new(Ok(String::new())),
             deny_calls: Cell::new(0),
@@ -593,6 +595,10 @@ impl World for Fake {
     fn write_atomic(&self, dir: &Path, name: &str, content: &str) {
         if name == "gate-unit-nextest.toml" {
             self.unit_config.borrow_mut().push((dir.join(name), content.to_string()));
+            return;
+        }
+        if name == "gate-deny-list" {
+            self.deny_written.borrow_mut().push((dir.join(name), content.to_string()));
             return;
         }
         if name.starts_with("gate-out-") {
@@ -919,6 +925,7 @@ impl World for Fake {
 
 // ---------------------------------------------------------------------------- the merge
 
+#[test_id(tm376ja)]
 #[test]
 fn a_branch_that_does_not_merge_is_red_no_rebase_never_no_verdict() {
     let f = Fake::new();
@@ -943,6 +950,7 @@ fn a_branch_that_does_not_merge_is_red_no_rebase_never_no_verdict() {
     assert_eq!(f.yields.borrow()[0][1..5], ["record", "spira", BR, "1"]);
 }
 
+#[test_id(twoc9zp)]
 #[test]
 fn a_merge_that_cannot_be_computed_is_no_verdict() {
     let f = Fake::new();
@@ -951,6 +959,7 @@ fn a_merge_that_cannot_be_computed_is_no_verdict() {
     assert!(f.verdict_line().contains("reason=merge-failed"));
 }
 
+#[test_id(tm4h437)]
 #[test]
 fn a_stale_branch_is_judged_as_the_merge_commit() {
     let f = Fake::new();
@@ -979,6 +988,7 @@ fn a_stale_branch_is_judged_as_the_merge_commit() {
         .contains("gate PASS covered suites: test-a.sh,test-b.sh"));
 }
 
+#[test_id(tzn4oh2)]
 #[test]
 fn a_current_branch_is_judged_as_itself() {
     let f = Fake::new();
@@ -988,6 +998,7 @@ fn a_current_branch_is_judged_as_itself() {
     assert_eq!(f.env_of(0, "SPIRA_GATE_BRANCH"), BR);
 }
 
+#[test_id(tpo7xbh)]
 #[test]
 fn the_gate_command_gets_the_launcher_path_set_outright_from_spira_release() {
     let f = Fake::new();
@@ -1002,6 +1013,7 @@ fn the_gate_command_gets_the_launcher_path_set_outright_from_spira_release() {
     assert_eq!(f.env_of(0, "SPIRA_RELEASE"), "rel");
 }
 
+#[test_id(tdfo29g)]
 #[test]
 fn the_trial_env_carries_spira_toml_so_the_box_tools_a_suites_step_runs_can_resolve_config() {
     let f = Fake::new();
@@ -1011,6 +1023,7 @@ fn the_trial_env_carries_spira_toml_so_the_box_tools_a_suites_step_runs_can_reso
     assert_eq!(f.env_of(0, "SPIRA_TOML"), "box/spira.toml");
 }
 
+#[test_id(t6392xf)]
 #[test]
 fn a_path_tail_entry_inside_a_release_is_no_verdict_naming_it_and_nothing_runs() {
     let f = Fake::new();
@@ -1022,6 +1035,7 @@ fn a_path_tail_entry_inside_a_release_is_no_verdict_naming_it_and_nothing_runs()
     assert!(f.ran.borrow().is_empty(), "no gate command ran");
 }
 
+#[test_id(tmxj65u)]
 #[test]
 fn an_unset_spira_release_is_no_verdict_naming_it_and_nothing_runs() {
     let f = Fake::new();
@@ -1034,6 +1048,7 @@ fn an_unset_spira_release_is_no_verdict_naming_it_and_nothing_runs() {
 }
 
 // covers: UC-gate-verdict-05
+#[test_id(tg5sj8j)]
 #[test]
 fn layer_one_reads_the_merged_content() {
     let f = Fake::new();
@@ -1052,6 +1067,7 @@ fn layer_one_reads_the_merged_content() {
 }
 
 // covers: UC-gate-verdict-05
+#[test_id(t5wg6oq)]
 #[test]
 fn beads_data_in_the_merged_tree_is_refused() {
     let f = Fake::new();
@@ -1063,6 +1079,7 @@ fn beads_data_in_the_merged_tree_is_refused() {
 
 // ---------------------------------------------------------------------------- the trial
 
+#[test_id(tpecqak)]
 #[test]
 fn branch_red_on_a_green_base_is_the_branchs() {
     let f = Fake::new();
@@ -1089,6 +1106,7 @@ fn branch_red_on_a_green_base_is_the_branchs() {
     assert_eq!(f.lc.borrow().len(), 0, "no bead, no certification event");
 }
 
+#[test_id(tctp413)]
 #[test]
 fn a_red_the_base_shares_is_the_bases() {
     let f = Fake::new();
@@ -1112,6 +1130,7 @@ fn a_red_the_base_shares_is_the_bases() {
     );
 }
 
+#[test_id(tecc05p)]
 #[test]
 fn a_red_only_on_the_branch_is_the_branchs_even_on_a_red_base() {
     let f = Fake::new();
@@ -1142,6 +1161,7 @@ fn meter_row(f: &Fake) -> String {
 /// The incident (gate.log 2026-09-29T19:45:58Z, concierge/sp-b4oct): the landing ref moved
 /// between the branch trial and the base trial. The base trial must judge the commit the
 /// merge was cut from, where the suite is red too — not the ref's new tip, which fixed it.
+#[test_id(tvi51cj)]
 #[test]
 fn the_base_trial_judges_the_base_the_merge_was_cut_from() {
     let f = Fake::new();
@@ -1177,6 +1197,7 @@ fn the_base_trial_judges_the_base_the_merge_was_cut_from() {
 }
 
 /// Acceptance 1: the branch trial and the base trial are both red on the same suite.
+#[test_id(t9gqlpt)]
 #[test]
 fn the_same_suite_red_on_the_branch_and_the_base_is_base_red() {
     let f = Fake::new();
@@ -1196,6 +1217,7 @@ fn the_same_suite_red_on_the_branch_and_the_base_is_base_red() {
 
 /// Acceptance 2: the base trial did not select the branch's red suite. It is run on the
 /// base by name before judging; red there too → base-red, not branch-red.
+#[test_id(ta05hd0)]
 #[test]
 fn a_red_the_base_trial_did_not_run_is_run_on_the_base_first() {
     let f = Fake::new();
@@ -1238,6 +1260,7 @@ fn a_red_the_base_trial_did_not_run_is_run_on_the_base_first() {
 }
 
 /// The same red, reproduced by the retry, is BASE_FAIL.
+#[test_id(to1z6wz)]
 #[test]
 fn a_base_red_that_reproduces_is_inherited_not_judged() {
     let f = Fake::new();
@@ -1249,6 +1272,7 @@ fn a_base_red_that_reproduces_is_inherited_not_judged() {
 }
 
 /// The re-run finds the suite green on the base: now, and only now, it is the branch's.
+#[test_id(tdrjiij)]
 #[test]
 fn a_red_the_base_re_run_passes_is_the_branchs() {
     let f = Fake::new();
@@ -1282,6 +1306,7 @@ fn base_cache_path(suite: &str) -> PathBuf {
 /// A full cache hit answers every red suite without running anything extra on the base — the
 /// acceptance this bead exists for: "a flip-suspect (base green in cache, branch red) re-runs
 /// nothing extra."
+#[test_id(td3wlkl)]
 #[test]
 fn a_fresh_base_suite_cache_hit_skips_the_rerun_entirely() {
     let f = Fake::new();
@@ -1310,6 +1335,7 @@ fn a_fresh_base_suite_cache_hit_skips_the_rerun_entirely() {
 
 /// A cached base-red is exactly as informative as a freshly-run one: it still names the
 /// suite, and BASEFAIL still follows.
+#[test_id(toiuxyy)]
 #[test]
 fn a_cached_base_red_still_names_the_suite() {
     let f = Fake::new();
@@ -1339,6 +1365,7 @@ fn a_cached_base_red_still_names_the_suite() {
 
 /// FAIL CLOSED: an entry recorded under a different harness or testenv image is a miss, not
 /// a wrong answer with the right shape — the gate runs the suite rather than trust it.
+#[test_id(tp6zudz)]
 #[test]
 fn a_cache_entry_under_a_different_harness_is_a_miss_and_runs() {
     let f = Fake::new();
@@ -1365,6 +1392,7 @@ fn a_cache_entry_under_a_different_harness_is_a_miss_and_runs() {
 }
 
 /// An unreadable image tag (the query failed) never trusts any cache entry, matching or not.
+#[test_id(tdfsgzt)]
 #[test]
 fn an_unresolved_image_tag_never_trusts_the_cache() {
     let f = Fake::new();
@@ -1387,6 +1415,7 @@ fn an_unresolved_image_tag_never_trusts_the_cache() {
 }
 
 /// A fresh rerun (no prior cache entry) warms the cache for the next gate on this base tree.
+#[test_id(tdysoxq)]
 #[test]
 fn a_fresh_rerun_warms_the_cache_for_the_next_gate() {
     let f = Fake::new();
@@ -1412,6 +1441,7 @@ fn a_fresh_rerun_warms_the_cache_for_the_next_gate() {
 
 /// A suite the base never reports on (a fault, an unexpected timeout) is left uncached — the
 /// next gate asks again rather than trusting a run that did not actually answer.
+#[test_id(tenhmql)]
 #[test]
 fn a_rerun_that_faulted_writes_no_cache_entry() {
     let f = Fake::new();
@@ -1446,6 +1476,7 @@ fn a_rerun_that_faulted_writes_no_cache_entry() {
 /// A branch red on an uncached suite, on a tree that owns a `bin SPIRA_TESTENV_BIN testenv`,
 /// must still rerun X on the base through that binary and attribute branch-red or base-red
 /// — never base-untestable because the rerun could not even start.
+#[test_id(t2ovhj4)]
 #[test]
 fn a_tree_owned_testenv_reruns_through_its_own_binary_never_bare_testenv() {
     const WITH_TESTENV: &str = "# the tree's gate\nbin SPIRA_TESTENV_BIN testenv\nstep bash spira/fence.sh\n";
@@ -1485,6 +1516,7 @@ fn a_tree_owned_testenv_reruns_through_its_own_binary_never_bare_testenv() {
 /// `SPIRA_TESTENV_BIN` reaching a tree that declared one would make a real `testenv`
 /// resolve to nothing on the release's PATH. Asserting the env reaches the image-tag query
 /// too (the cache's own first call) covers sp-kqger's other new call site.
+#[test_id(tnw03l2)]
 #[test]
 fn the_image_tag_query_also_uses_the_tree_owned_testenv() {
     const WITH_TESTENV: &str = "# the tree's gate\nbin SPIRA_TESTENV_BIN testenv\nstep bash spira/fence.sh\n";
@@ -1506,6 +1538,7 @@ fn the_image_tag_query_also_uses_the_tree_owned_testenv() {
 }
 
 /// testenv's --deadline deferred the suite on the base: not run, so re-run.
+#[test_id(twzm9ra)]
 #[test]
 fn a_red_the_base_deferred_by_deadline_is_re_run() {
     let f = Fake::new();
@@ -1528,6 +1561,7 @@ fn a_red_the_base_deferred_by_deadline_is_re_run() {
 }
 
 /// A red suite the base does not have is the branch's own; nothing to run on the base.
+#[test_id(tuqrrsi)]
 #[test]
 fn a_red_suite_the_base_lacks_is_the_branchs_without_a_re_run() {
     let f = Fake::new();
@@ -1543,6 +1577,7 @@ fn a_red_suite_the_base_lacks_is_the_branchs_without_a_re_run() {
     assert_eq!(f.cmds.borrow().len(), 2);
 }
 
+#[test_id(ta31f8y)]
 #[test]
 fn the_re_run_names_only_shell_safe_suites() {
     let c = crate::engine::base_rerun_cmd(&[
@@ -1560,6 +1595,7 @@ fn the_re_run_names_only_shell_safe_suites() {
 /// sp-isom7 — "the release's testenv could not run such a branch's suites at all") needs
 /// that binary for the rerun too. The command names it with a default, so a repository with
 /// no such binding keeps today's bare `testenv`.
+#[test_id(tznqhkv)]
 #[test]
 fn the_re_run_prefers_a_tree_owned_testenv_with_a_bare_fallback() {
     let c = crate::engine::base_rerun_cmd(&["test-a.sh".into()]);
@@ -1588,6 +1624,7 @@ fn the_re_run_prefers_a_tree_owned_testenv_with_a_bare_fallback() {
 /// This is this bead's own positive control for the fix: the generated command must carry
 /// the repo, in the same position the real gate string puts it, so a real `testenv` can
 /// resolve its base ref instead of faulting before a single suite runs.
+#[test_id(t0amiz0)]
 #[test]
 fn the_re_run_also_names_the_repo_so_testenv_can_resolve_its_base_ref() {
     let c = crate::engine::base_rerun_cmd(&["test-persona-model.sh".into()]);
@@ -1603,6 +1640,7 @@ fn the_re_run_also_names_the_repo_so_testenv_can_resolve_its_base_ref() {
 /// `base-untestable` — a fault that reaches the rerun is not a verdict either way — but the
 /// verdict message must say exactly why, not just that it "cannot be established": a reader
 /// should never have to go read `gate.log`'s phases to learn the rerun was even tried.
+#[test_id(tvrwj2q)]
 #[test]
 fn a_rerun_that_faults_on_its_own_base_ref_is_untestable_and_says_why() {
     let f = Fake::new();
@@ -1629,6 +1667,7 @@ fn a_rerun_that_faults_on_its_own_base_ref_is_untestable_and_says_why() {
     );
 }
 
+#[test_id(tewap5e)]
 #[test]
 fn a_base_that_only_timed_out_proves_nothing() {
     let f = Fake::new();
@@ -1646,6 +1685,7 @@ fn a_base_that_only_timed_out_proves_nothing() {
 
 /// Fences are not charged to the deadline, so only the gate timeout can end the base trial:
 /// its rc 124 leaves the base untestable, it is no deadline.
+#[test_id(tle0qeh)]
 #[test]
 fn a_base_trial_that_did_not_run_leaves_it_untestable() {
     let f = Fake::new();
@@ -1659,6 +1699,7 @@ fn a_base_trial_that_did_not_run_leaves_it_untestable() {
     assert!(f.verdict_line().contains("reason=base-untestable"), "{}", f.verdict_line());
 }
 
+#[test_id(tbvpm8s)]
 #[test]
 fn a_deadline_or_harness_fault_is_not_a_red() {
     for (rc, out, reason) in [
@@ -1684,6 +1725,7 @@ fn a_deadline_or_harness_fault_is_not_a_red() {
     }
 }
 
+#[test_id(t49ag95)]
 #[test]
 fn a_silent_red_still_shows_its_status() {
     let f = Fake::new();
@@ -1697,6 +1739,7 @@ fn a_silent_red_still_shows_its_status() {
 }
 
 // covers: UC-gate-verdict-06
+#[test_id(t9oon4u)]
 #[test]
 fn an_empty_gate_string_passes_on_syntax() {
     let f = Fake::new();
@@ -1707,6 +1750,7 @@ fn an_empty_gate_string_passes_on_syntax() {
 }
 
 // covers: UC-gate-verdict-07
+#[test_id(t9bxk79)]
 #[test]
 fn a_gate_string_naming_a_file_the_base_lacks_is_configuration() {
     let f = Fake::new();
@@ -1716,6 +1760,7 @@ fn a_gate_string_naming_a_file_the_base_lacks_is_configuration() {
 }
 
 // covers: UC-gate-verdict-25
+#[test_id(tvu5zb7)]
 #[test]
 fn the_early_refusals() {
     let f = Fake::new();
@@ -1760,6 +1805,7 @@ fn the_early_refusals() {
 }
 
 // covers: UC-gate-verdict-05
+#[test_id(t83ad5i)]
 #[test]
 fn skew_init_fault_and_foreign_harness() {
     let f = Fake::new();
@@ -1773,6 +1819,7 @@ fn skew_init_fault_and_foreign_harness() {
 }
 
 // covers: UC-gate-verdict-03
+#[test_id(th3mi7i)]
 #[test]
 fn an_unreadable_repo_map_is_no_verdict_and_a_repo_absent_from_it_is_another() {
     let f = Fake::new();
@@ -1789,6 +1836,7 @@ fn an_unreadable_repo_map_is_no_verdict_and_a_repo_absent_from_it_is_another() {
 }
 
 // covers: UC-gate-verdict-04
+#[test_id(tsav7l4)]
 #[test]
 fn an_unresolvable_branch_or_base_is_no_verdict_75_naming_the_range_the_repo_and_gits_line() {
     let f = Fake::new();
@@ -1807,6 +1855,7 @@ fn an_unresolvable_branch_or_base_is_no_verdict_75_naming_the_range_the_repo_and
 }
 
 // covers: UC-gate-verdict-05
+#[test_id(tj2nio1)]
 #[test]
 fn a_missing_exclude_or_skew_tool_is_no_verdict_not_a_pass() {
     let f = Fake::new();
@@ -1823,6 +1872,7 @@ fn a_missing_exclude_or_skew_tool_is_no_verdict_not_a_pass() {
 }
 
 // covers: UC-gate-verdict-05
+#[test_id(tj23wqi)]
 #[test]
 fn beads_data_anywhere_in_the_branch_tree_fails_though_the_diff_does_not_name_it() {
     let f = Fake::new();
@@ -1834,6 +1884,7 @@ fn beads_data_anywhere_in_the_branch_tree_fails_though_the_diff_does_not_name_it
 }
 
 // covers: UC-gate-verdict-07
+#[test_id(tsrktr9)]
 #[test]
 fn a_gate_command_runs_once_the_file_it_names_is_on_the_base() {
     let f = Fake::new();
@@ -1843,6 +1894,7 @@ fn a_gate_command_runs_once_the_file_it_names_is_on_the_base() {
 }
 
 // covers: UC-gate-verdict-25
+#[test_id(tyzwtje)]
 #[test]
 fn a_verdict_after_the_lock_is_metered_once_and_a_death_by_signal_too() {
     let f = Fake::new();
@@ -1856,6 +1908,7 @@ fn a_verdict_after_the_lock_is_metered_once_and_a_death_by_signal_too() {
     assert_eq!(f.appended.borrow().len(), 1, "{:?}", f.appended.borrow());
 }
 
+#[test_id(te1bwfk)]
 #[test]
 fn phantom_bead_id_fails_and_store_fault_is_no_verdict() {
     let f = Fake::new();
@@ -1868,6 +1921,7 @@ fn phantom_bead_id_fails_and_store_fault_is_no_verdict() {
     assert!(f.verdict_line().contains("reason=commit-cite-fault"));
 }
 
+#[test_id(tb1daun)]
 #[test]
 fn the_gate_and_submit_judge_the_same_messages_alike() {
     // spira-lc's `cite-check` and `work submit` both run `spira_config::cite::phantoms` and map
@@ -1906,6 +1960,7 @@ fn key_for(f: &Fake, ejected: &str, bead: &str) -> String {
     })
 }
 
+#[test_id(t3cqqe5)]
 #[test]
 fn a_pass_is_cached_under_the_merged_tree() {
     let f = Fake::new();
@@ -1924,6 +1979,7 @@ fn a_pass_is_cached_under_the_merged_tree() {
     assert_eq!(f.removed_trees.get(), 0, "a passing tree is kept for cargo");
 }
 
+#[test_id(tuy110r)]
 #[test]
 fn a_fresh_cached_pass_skips_admission_and_the_trial() {
     let f = Fake::new();
@@ -1951,6 +2007,7 @@ fn a_fresh_cached_pass_skips_admission_and_the_trial() {
     assert!(f.appended.borrow()[0].contains("rc=0 cached test_clock=0s\n"));
 }
 
+#[test_id(tjt2eoz)]
 #[test]
 fn a_stale_cached_pass_runs_again() {
     let f = Fake::new();
@@ -1964,6 +2021,7 @@ fn a_stale_cached_pass_runs_again() {
     assert!(f.verdict_line().contains("reason=pass"));
 }
 
+#[test_id(tvwlvj2)]
 #[test]
 fn only_a_pass_is_cached() {
     let f = Fake::new();
@@ -1974,6 +2032,7 @@ fn only_a_pass_is_cached() {
     assert!(f.written.borrow().iter().all(|(p, _)| p.to_string_lossy().contains("verdicts/red/")), "{:?}", f.written.borrow());
 }
 
+#[test_id(tkf4kqk)]
 #[test]
 fn a_red_is_answered_from_its_record_and_does_not_run_again() {
     let f = Fake::new();
@@ -1998,6 +2057,7 @@ fn a_red_is_answered_from_its_record_and_does_not_run_again() {
     assert!(err.contains(&format!("when {BASE} moves")), "{err}");
 }
 
+#[test_id(t5tqinx)]
 #[test]
 fn a_red_recorded_before_the_base_moved_is_not_replayed_after() {
     let f = Fake::new();
@@ -2014,6 +2074,7 @@ fn a_red_recorded_before_the_base_moved_is_not_replayed_after() {
     assert!(!g.appended.borrow()[0].contains("replayed"), "{}", g.appended.borrow()[0]);
 }
 
+#[test_id(t84w535)]
 #[test]
 fn a_red_recorded_before_the_deny_list_changed_is_not_replayed_after() {
     let f = Fake::new();
@@ -2030,6 +2091,7 @@ fn a_red_recorded_before_the_deny_list_changed_is_not_replayed_after() {
     assert!(!g.appended.borrow()[0].contains("replayed"), "{}", g.appended.borrow()[0]);
 }
 
+#[test_id(t5a1ykw)]
 #[test]
 fn a_red_recorded_under_the_same_denied_tests_is_replayed_whatever_the_header_bead_or_expiry() {
     let f = Fake::new();
@@ -2046,6 +2108,7 @@ fn a_red_recorded_under_the_same_denied_tests_is_replayed_whatever_the_header_be
     assert!(g.appended.borrow()[0].contains("replayed=key:"), "{}", g.appended.borrow()[0]);
 }
 
+#[test_id(terk6ed)]
 #[test]
 fn a_red_recorded_under_another_gate_is_not_replayed_and_the_tip_is_judged_again() {
     let f = Fake::new();
@@ -2062,6 +2125,7 @@ fn a_red_recorded_under_another_gate_is_not_replayed_and_the_tip_is_judged_again
     assert!(!g.appended.borrow()[0].contains("replayed"), "{}", g.appended.borrow()[0]);
 }
 
+#[test_id(t0nt5zr)]
 #[test]
 fn forgetting_a_tip_removes_the_red_recorded_for_it_and_no_other() {
     let f = Fake::new();
@@ -2082,6 +2146,7 @@ fn forgetting_a_tip_removes_the_red_recorded_for_it_and_no_other() {
 
 // ---------------------------------------------------------------------------- ejected suites
 
+#[test_id(tgb4qb1)]
 #[test]
 fn ejected_suites_come_from_the_ejected_file() {
     let f = Fake::new();
@@ -2104,6 +2169,7 @@ fn ejected_suites_come_from_the_ejected_file() {
     );
 }
 
+#[test_id(to66wr1)]
 #[test]
 fn a_sidecar_under_the_retired_landstate_ledger_is_not_read() {
     // sp-2c1n0: the ledger is deleted; a stale `<id>.ejected` left under it forces nothing.
@@ -2116,6 +2182,7 @@ fn a_sidecar_under_the_retired_landstate_ledger_is_not_read() {
 
 // ---------------------------------------------------------------------------- admission & lock
 
+#[test_id(tajpxl5)]
 #[test]
 fn admission_times_out_as_no_verdict() {
     let f = Fake::new();
@@ -2128,6 +2195,7 @@ fn admission_times_out_as_no_verdict() {
     assert!(f.ran.borrow().is_empty());
 }
 
+#[test_id(t62rsdx)]
 #[test]
 fn a_full_gate_pool_is_said_naming_its_holders_and_a_taken_slot_names_the_branch() {
     let f = Fake::new();
@@ -2145,6 +2213,7 @@ fn a_full_gate_pool_is_said_naming_its_holders_and_a_taken_slot_names_the_branch
     assert_eq!(g.env_of(0, "SPIRA_ADMISSION"), "gate");
 }
 
+#[test_id(ty3nezi)]
 #[test]
 fn fences_only_certification_takes_no_admission_slot() {
     let f = Fake::new();
@@ -2154,6 +2223,7 @@ fn fences_only_certification_takes_no_admission_slot() {
     assert_eq!(f.env_of(0, "SPIRA_GATE_SUITES"), "off");
 }
 
+#[test_id(tetj8f8)]
 #[test]
 fn a_held_tree_times_out_and_meters_the_wait() {
     let f = Fake::new();
@@ -2170,6 +2240,7 @@ fn a_held_tree_times_out_and_meters_the_wait() {
     );
 }
 
+#[test_id(tpljjxu)]
 #[test]
 fn a_timed_out_gate_says_it_is_a_queue_not_a_fault_and_leaves_the_holders_tree() {
     let f = Fake::new();
@@ -2182,6 +2253,7 @@ fn a_timed_out_gate_says_it_is_a_queue_not_a_fault_and_leaves_the_holders_tree()
     assert!(f.ran.borrow().is_empty(), "a gate that never got the tree judged nothing");
 }
 
+#[test_id(tevuqvc)]
 #[test]
 fn a_lockfile_that_cannot_be_opened_is_no_verdict_no_lockfile() {
     let f = Fake::new();
@@ -2193,6 +2265,7 @@ fn a_lockfile_that_cannot_be_opened_is_no_verdict_no_lockfile() {
     assert!(f.ran.borrow().is_empty());
 }
 
+#[test_id(tlkwhwz)]
 #[test]
 fn gates_on_different_branches_lock_different_trees_and_one_branch_locks_one() {
     let lock_of = |branch: &str| {
@@ -2208,6 +2281,7 @@ fn gates_on_different_branches_lock_different_trees_and_one_branch_locks_one() {
     assert_eq!(a, lock_of("spira/sp-a"), "the same branch always contends for the same lock");
 }
 
+#[test_id(tas4dem)]
 #[test]
 fn a_gate_that_waits_for_its_branchs_tree_meters_the_wait_and_then_judges_it() {
     let f = Fake::new();
@@ -2219,6 +2293,7 @@ fn a_gate_that_waits_for_its_branchs_tree_meters_the_wait_and_then_judges_it() {
     assert!(row.contains("waited=3s") && row.contains("waited_ms=3000"), "{row}");
 }
 
+#[test_id(tn6y733)]
 #[test]
 fn a_gate_that_never_waited_for_its_tree_meters_no_wait() {
     let f = Fake::new();
@@ -2228,6 +2303,7 @@ fn a_gate_that_never_waited_for_its_tree_meters_no_wait() {
     assert!(row.contains("waited=0s") && !row.contains("waited_ms="), "{row}");
 }
 
+#[test_id(tgykx3n)]
 #[test]
 fn a_passing_gate_keeps_its_tree_and_a_red_one_removes_it() {
     let pass = Fake::new();
@@ -2240,6 +2316,7 @@ fn a_passing_gate_keeps_its_tree_and_a_red_one_removes_it() {
     assert_eq!(red.removed_trees.get(), 1, "a red gate removes the tree it held");
 }
 
+#[test_id(t0o8zgr)]
 #[test]
 fn a_tree_that_cannot_be_checked_out_is_no_verdict_tree_unidentified_and_is_removed() {
     let f = Fake::new();
@@ -2250,6 +2327,7 @@ fn a_tree_that_cannot_be_checked_out_is_no_verdict_tree_unidentified_and_is_remo
     assert_eq!(f.removed_trees.get(), 1, "the half-made tree is this process's to remove");
 }
 
+#[test_id(twjqjoz)]
 #[test]
 fn a_tree_that_was_never_created_is_not_removed() {
     let f = Fake::new();
@@ -2259,6 +2337,7 @@ fn a_tree_that_was_never_created_is_not_removed() {
     assert_eq!(f.removed_trees.get(), 0, "nothing to deregister");
 }
 
+#[test_id(t0ql1rj)]
 #[test]
 fn a_signal_is_no_verdict() {
     let f = Fake::new();
@@ -2278,6 +2357,7 @@ fn a_signal_is_no_verdict() {
 // re-read of the pool's size (`certify_par_live`) reaches an already-waiting gate.
 
 /// The wait is announced once, not once per second: a gate held for a while does not spam.
+#[test_id(tnnmo2u)]
 #[test]
 fn the_waiting_message_prints_exactly_once() {
     let f = Fake::new();
@@ -2295,6 +2375,7 @@ fn the_waiting_message_prints_exactly_once() {
 /// Being admitted after a real wait is also announced — and the wait reaches gate.log's
 /// `waited=`, which used to measure only the tree-lock wait and read 0 for a gate that had
 /// in fact queued for admission.
+#[test_id(tag1s3e)]
 #[test]
 fn an_admission_wait_is_announced_when_admitted_and_logged_as_waited() {
     let f = Fake::new();
@@ -2311,6 +2392,7 @@ fn an_admission_wait_is_announced_when_admitted_and_logged_as_waited() {
 
 /// A gate that never has to wait for admission announces neither message — the fast path
 /// prints exactly what it always did.
+#[test_id(tswyxmz)]
 #[test]
 fn an_instant_admission_announces_nothing() {
     let f = Fake::new();
@@ -2324,6 +2406,7 @@ fn an_instant_admission_announces_nothing() {
 /// cannot. Fixture: slots 1-2 (the frozen par) are permanently busy; slot 3 is the only free
 /// one, and only appears once the live config is read as 3 — one poll after the first,
 /// standing in for "the operator edits the config while this gate is already waiting."
+#[test_id(tssws7s)]
 #[test]
 fn a_limit_raised_in_the_live_config_admits_an_already_waiting_gate() {
     let f = Fake::new();
@@ -2346,6 +2429,7 @@ fn a_limit_raised_in_the_live_config_admits_an_already_waiting_gate() {
 
 // ---------------------------------------------------------------------------- the finish
 
+#[test_id(t1ngk8r)]
 #[test]
 fn the_meter_row_and_yield_on_a_pass() {
     let f = Fake::new();
@@ -2361,6 +2445,7 @@ fn the_meter_row_and_yield_on_a_pass() {
     );
 }
 
+#[test_id(tkk6b7c)]
 #[test]
 fn a_red_certification_carries_the_failed_step_and_its_last_message_line() {
     let f = Fake::new();
@@ -2373,6 +2458,7 @@ fn a_red_certification_carries_the_failed_step_and_its_last_message_line() {
     assert!(!lc[4].is_empty() && lc[5].contains("test-s1.sh RED"), "{lc:?}");
 }
 
+#[test_id(tf201gh)]
 #[test]
 fn a_red_fence_certifies_with_its_message_when_the_message_precedes_the_gate_step_line() {
     let f = Fake::new();
@@ -2385,6 +2471,7 @@ fn a_red_fence_certifies_with_its_message_when_the_message_precedes_the_gate_ste
     assert_eq!((lc[4].as_str(), lc[5].as_str()), ("fixture-config", "gate fixture-config: complete.toml does not resolve"), "{lc:?}");
 }
 
+#[test_id(t0g3wmg)]
 #[test]
 fn a_branch_red_row_carries_its_red_unit_and_line_and_a_pass_row_carries_neither() {
     let f = Fake::new();
@@ -2402,6 +2489,7 @@ fn a_branch_red_row_carries_its_red_unit_and_line_and_a_pass_row_carries_neither
     assert_eq!((v["red_unit"].as_str(), v["red_line"].as_str()), (Some(""), Some("")));
 }
 
+#[test_id(tv4eoc4)]
 #[test]
 fn certification_events_follow_the_outcome() {
     for (rc, out, base, want) in [
@@ -2438,6 +2526,7 @@ fn certification_events_follow_the_outcome() {
     }
 }
 
+#[test_id(to8i1t7)]
 #[test]
 fn a_red_gate_hands_its_failing_output_to_the_bead_before_certifying() {
     let f = Fake::new();
@@ -2450,6 +2539,7 @@ fn a_red_gate_hands_its_failing_output_to_the_bead_before_certifying() {
     assert!(got[0].3.contains("test-b.sh"), "{:?}", got[0].3);
 }
 
+#[test_id(t80tai6)]
 #[test]
 fn a_red_and_a_passing_verdict_on_a_bead_tip_each_keep_one_send_back_entry_holding_the_message() {
     for (rc, out) in [(1, "test-a.sh ok\ntest-b.sh RED"), (0, "test-a.sh ok")] {
@@ -2470,6 +2560,7 @@ fn a_red_and_a_passing_verdict_on_a_bead_tip_each_keep_one_send_back_entry_holdi
     }
 }
 
+#[test_id(tm17dao)]
 #[test]
 fn a_green_gate_records_no_failure() {
     let f = Fake::new();
@@ -2479,6 +2570,7 @@ fn a_green_gate_records_no_failure() {
     assert!(f.failures.borrow().is_empty());
 }
 
+#[test_id(tqn3b5q)]
 #[test]
 fn a_pass_the_row_refuses_for_its_tip_says_so_in_gate_log() {
     let f = Fake::new();
@@ -2498,6 +2590,7 @@ fn a_pass_the_row_refuses_for_its_tip_says_so_in_gate_log() {
     assert!(!g.appended.borrow().iter().any(|r| r.contains("tip-mismatch")), "no refusal, no note");
 }
 
+#[test_id(tk9hkxg)]
 #[test]
 fn a_fail_with_no_message_is_downgraded() {
     use crate::engine::{outcome, settle, Verdict};
@@ -2576,6 +2669,7 @@ fn meter(f: &Fake) -> String {
     f.appended.borrow().last().cloned().unwrap_or_default()
 }
 
+#[test_id(tbwpis1)]
 #[test]
 fn a_unit_builds_with_timings_and_the_gate_log_and_run_row_say_where_the_build_went() {
     let f = unit_fake(&["spira-config/src/lib.rs"]);
@@ -2595,6 +2689,7 @@ const UNIT_DATA = [{"name":"runtime","target":"","start":4.2,"duration":88.4},{"
     assert!(f.written.borrow().iter().any(|(p, c)| p.to_string_lossy().contains("cargo-timing") && c.contains("UNIT_DATA")));
 }
 
+#[test_id(tnpiai0)]
 #[test]
 fn a_unit_gate_records_the_test_phases_count_seconds_and_slowest_tests_beside_the_build() {
     let f = unit_fake(&["spira-config/src/lib.rs"]);
@@ -2618,6 +2713,7 @@ fn a_unit_gate_records_the_test_phases_count_seconds_and_slowest_tests_beside_th
 
 const SPLIT_FIN: &str = "    Finished `test` profile [unoptimized + debuginfo] target(s) in";
 
+#[test_id(t8zd4t2)]
 #[test]
 fn a_unit_gate_splits_its_test_phase_into_compile_list_run_integration_and_other_seconds() {
     let f = unit_fake(&["spira-config/src/lib.rs"]);
@@ -2633,6 +2729,7 @@ fn a_unit_gate_splits_its_test_phase_into_compile_list_run_integration_and_other
     assert!(!m.contains("test_recompiled"), "{m}");
 }
 
+#[test_id(twpxkuf)]
 #[test]
 fn a_test_phase_that_compiles_for_over_thirty_seconds_after_its_build_phase_is_marked_recompiled() {
     for (fin, want) in [("3m 27s", true), ("0.50s", false)] {
@@ -2645,6 +2742,7 @@ fn a_test_phase_that_compiles_for_over_thirty_seconds_after_its_build_phase_is_m
     }
 }
 
+#[test_id(tlj8iz9)]
 #[test]
 fn a_gate_whose_test_phase_did_not_run_records_no_unit_timings() {
     let f = unit_fake(&["docs/x.md"]);
@@ -2654,6 +2752,7 @@ fn a_gate_whose_test_phase_did_not_run_records_no_unit_timings() {
     assert!(rows.iter().any(|r| r.contains("\"unit_tests\":0") && r.contains("\"unit_slowest\":\"\"")), "{rows:?}");
 }
 
+#[test_id(tr50aw7)]
 #[test]
 fn the_unit_cap_the_config_names_narrows_the_crates_the_gate_builds() {
     let f = unit_fake(&["spira-config/src/lib.rs"]);
@@ -2662,6 +2761,7 @@ fn the_unit_cap_the_config_names_narrows_the_crates_the_gate_builds() {
     assert!(f.cmds.borrow()[1].ends_with("--features integration -p spira-config"), "{:?}", f.cmds.borrow());
 }
 
+#[test_id(t97gilr)]
 #[test]
 fn the_shipped_unit_cap_covers_every_workspace_member() {
     let root = testkit::manifest_dir().parent().unwrap().to_path_buf();
@@ -2672,6 +2772,7 @@ fn the_shipped_unit_cap_covers_every_workspace_member() {
     assert!(default >= members, "the cap {default} is below the {members} workspace members");
 }
 
+#[test_id(ts5h8xe)]
 #[test]
 fn a_narrowed_unit_gate_names_the_dependents_it_left_to_the_round() {
     let f = unit_fake(&["spira-config/src/lib.rs"]);
@@ -2684,6 +2785,7 @@ fn a_narrowed_unit_gate_names_the_dependents_it_left_to_the_round() {
     );
 }
 
+#[test_id(tj9up2l)]
 #[test]
 fn a_unit_cap_that_is_not_a_positive_count_runs_the_gate_string_whole() {
     for bad in ["0", "", "many"] {
@@ -2694,6 +2796,7 @@ fn a_unit_cap_that_is_not_a_positive_count_runs_the_gate_string_whole() {
     }
 }
 
+#[test_id(td9i1yu)]
 #[test]
 fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() {
     let f = unit_fake(&["spira-config/src/lib.rs", "docs/x.md"]);
@@ -2737,6 +2840,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     );
 }
 
+#[test_id(trpvrqf)]
 #[test]
 fn a_deny_list_reaches_the_nextest_config_the_integration_command_and_the_suites_env() {
     let list = "disabled\tunit:a::b t::drop\tsp-1\t-\nquarantined\tintegration:p x::y\tsp-2\t-\n";
@@ -2749,7 +2853,7 @@ fn a_deny_list_reaches_the_nextest_config_the_integration_command_and_the_suites
     let cmds = f.cmds.borrow().clone();
     assert!(cmds[2].contains("--test '*' -- --exact --skip x::y"), "{}", cmds[2]);
     assert!(f.env_of(0, "SPIRA_TEST_DENY_LIST").ends_with("target/gate-deny-list"), "the gate-string step names the list file");
-    let written = f.written.borrow();
+    let written = f.deny_written.borrow();
     assert!(written.iter().any(|(p, c)| p.ends_with("target/gate-deny-list") && c.contains("t::drop")), "{written:?}");
 
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
@@ -2761,14 +2865,20 @@ fn a_deny_list_reaches_the_nextest_config_the_integration_command_and_the_suites
         assert!(f.env_of(i, "SPIRA_TEST_DENY_LIST").ends_with("target/gate-deny-list"), "step {i}: the gate string and the re-entry both name the list");
     }
 
+    let header = "# test-registry deny-list at=1 rows=0\n";
     let f = unit_fake(&["spira-config/src/lib.rs"]);
+    *f.deny.borrow_mut() = Ok(header.to_string());
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
     assert_eq!(f.run(), PASS);
-    assert_eq!(f.env_of(0, "SPIRA_TEST_DENY_LIST"), "");
+    assert!(f.env_of(0, "SPIRA_TEST_DENY_LIST").ends_with("target/gate-deny-list"), "an empty list still names its file");
+    let written = f.deny_written.borrow();
+    assert!(written.iter().any(|(p, c)| p.ends_with("target/gate-deny-list") && c == header), "{written:?}");
+    drop(written);
     assert!(!f.cmds.borrow()[2].contains("--skip"));
     assert!(!f.unit_config.borrow()[0].1.contains("default-filter"));
 }
 
+#[test_id(ts1j3kl)]
 #[test]
 fn a_gate_names_the_deny_list_it_ran_with_on_stderr_in_the_record_and_in_the_tsd_row() {
     let list = "disabled\tunit:a::b t::drop\tsp-1\t-\n";
@@ -2786,6 +2896,7 @@ fn a_gate_names_the_deny_list_it_ran_with_on_stderr_in_the_record_and_in_the_tsd
     assert!(f.tsd.borrow().iter().any(|r| r.contains(&format!("\"deny_list\":\"{label}\""))), "{:?}", f.tsd.borrow());
 }
 
+#[test_id(to49n2l)]
 #[test]
 fn a_deny_list_that_cannot_be_resolved_is_no_verdict_and_no_phase_runs() {
     for bad in [Err("registry locked".to_string()), Ok("garbage\n".to_string())] {
@@ -2800,6 +2911,7 @@ fn a_deny_list_that_cannot_be_resolved_is_no_verdict_and_no_phase_runs() {
 /// sp-aprxm: a unit-mode gate builds once. The build fence's cold release `make build` is
 /// dropped from the gate string for a unit composition (branch and base trial alike); a
 /// composition with no build phase of its own keeps it.
+#[test_id(t5rhpd5)]
 #[test]
 fn a_unit_gate_builds_once_and_every_other_composition_keeps_the_build_fence() {
     const G: &str = "bash spira/lint.sh && bash spira/build-fence.sh && run-suites";
@@ -2847,6 +2959,7 @@ fn a_unit_gate_builds_once_and_every_other_composition_keeps_the_build_fence() {
     );
 }
 
+#[test_id(t0clx3n)]
 #[test]
 fn unit_mode_a_bash_touching_branch_runs_todays_gate_unchanged() {
     let f = unit_fake(&["gate/src/engine.rs", "spira/lib.sh"]);
@@ -2863,6 +2976,7 @@ fn unit_mode_a_bash_touching_branch_runs_todays_gate_unchanged() {
     );
 }
 
+#[test_id(t33s9xy)]
 #[test]
 fn unit_mode_nothing_buildable_runs_the_fences_only() {
     let f = unit_fake(&["docs/a.md", "spira/test-x.sh"]);
@@ -2876,6 +2990,7 @@ fn unit_mode_nothing_buildable_runs_the_fences_only() {
     );
 }
 
+#[test_id(tqmib66)]
 #[test]
 fn suites_mode_is_todays_gate_exactly() {
     // The default mode: the same one command, the same env, the same key as before.
@@ -2897,6 +3012,7 @@ fn suites_mode_is_todays_gate_exactly() {
     );
 }
 
+#[test_id(tncd8nm)]
 #[test]
 fn a_repo_declaring_a_build_tier_builds_outside_the_cap_and_the_deadline() {
     let f = Fake::new();
@@ -2914,6 +3030,7 @@ fn a_repo_declaring_a_build_tier_builds_outside_the_cap_and_the_deadline() {
     assert!(meter(&f).contains("test_clock=200s"), "{}", meter(&f));
 }
 
+#[test_id(tr9klv0)]
 #[test]
 fn a_repo_gate_phase_stops_at_its_verdict_and_the_publish_runs_after_it_uncapped_and_uncharged() {
     let f = Fake::new();
@@ -2931,6 +3048,7 @@ fn a_repo_gate_phase_stops_at_its_verdict_and_the_publish_runs_after_it_uncapped
     assert!(t[2].1.parse::<u64>().unwrap() > 260, "the publish is under no phase cap: {t:?}");
 }
 
+#[test_id(tbfx5tw)]
 #[test]
 fn a_publish_that_fails_or_runs_long_never_changes_the_verdict() {
     let f = Fake::new();
@@ -2944,6 +3062,7 @@ fn a_publish_that_fails_or_runs_long_never_changes_the_verdict() {
     assert!(meter(&f).contains("test_clock=200s"), "{}", meter(&f));
 }
 
+#[test_id(t1p358b)]
 #[test]
 fn a_repo_build_that_stalls_is_a_build_stall_and_the_gate_phase_never_runs() {
     let f = Fake::new();
@@ -2954,6 +3073,7 @@ fn a_repo_build_that_stalls_is_a_build_stall_and_the_gate_phase_never_runs() {
     assert!(f.cmds.borrow().iter().all(|c| c.contains("--suites build")), "{:?}", f.cmds.borrow());
 }
 
+#[test_id(tfo6850)]
 #[test]
 fn a_repo_build_that_fails_is_the_branchs_red_and_the_gate_phase_never_runs() {
     let f = Fake::new();
@@ -2964,6 +3084,7 @@ fn a_repo_build_that_fails_is_the_branchs_red_and_the_gate_phase_never_runs() {
     assert!(!meter(&f).contains("build:30,gate"), "{}", meter(&f));
 }
 
+#[test_id(taggoyg)]
 #[test]
 fn a_tree_with_no_build_tier_runs_no_build_phase() {
     let f = Fake::new();
@@ -2984,6 +3105,7 @@ fn capped_with_steps() -> Fake {
     f
 }
 
+#[test_id(tprq5zk)]
 #[test]
 fn a_phase_cap_row_names_the_step_that_ran_long_and_keeps_the_output() {
     let f = capped_with_steps();
@@ -3000,6 +3122,7 @@ fn a_phase_cap_row_names_the_step_that_ran_long_and_keeps_the_output() {
     assert!(f.removed.borrow().contains(&PathBuf::from("tmp/steps")), "the steps file is removed with the file list");
 }
 
+#[test_id(ts69poa)]
 #[test]
 fn a_pass_row_carries_the_slowest_step_and_keeps_no_output() {
     let f = Fake::new();
@@ -3012,6 +3135,7 @@ fn a_pass_row_carries_the_slowest_step_and_keeps_no_output() {
     assert!(f.tsd.borrow().last().unwrap().contains(r#""slowest_step":"run_suites:5""#), "{:?}", f.tsd.borrow());
 }
 
+#[test_id(tlixvt8)]
 #[test]
 fn a_command_that_writes_no_steps_gives_a_row_with_neither_field() {
     let f = Fake::new();
@@ -3021,6 +3145,7 @@ fn a_command_that_writes_no_steps_gives_a_row_with_neither_field() {
     assert!(!meter(&f).contains("slowest_step"), "{}", meter(&f));
 }
 
+#[test_id(t9m6a7r)]
 #[test]
 fn the_fifty_first_kept_output_removes_the_oldest() {
     let f = capped_with_steps();
@@ -3034,6 +3159,7 @@ fn the_fifty_first_kept_output_removes_the_oldest() {
     assert!(old[0].ends_with("gate-out-2020-01-01T00:00:00Z.log"), "{old:?}");
 }
 
+#[test_id(t764by4)]
 #[test]
 fn a_suites_mode_gate_with_a_root_cargo_toml_builds_on_the_warm_target_of_its_repository() {
     let f = Fake::new();
@@ -3045,6 +3171,7 @@ fn a_suites_mode_gate_with_a_root_cargo_toml_builds_on_the_warm_target_of_its_re
     assert!(meter(&f).contains("compose=suites(mode)"));
 }
 
+#[test_id(t0qp9kd)]
 #[test]
 fn an_unreadable_config_composes_as_suites() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3081,6 +3208,7 @@ fn returned(f: Fake, suites: &str) -> Fake {
     f
 }
 
+#[test_id(thf254e)]
 #[test]
 fn unit_mode_rust_only_returned_bead_runs_its_unit_gate_then_exactly_the_named_suites() {
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh,test-c.sh");
@@ -3114,6 +3242,7 @@ fn unit_mode_rust_only_returned_bead_runs_its_unit_gate_then_exactly_the_named_s
         .contains("gate PASS covered suites: test-b.sh,test-c.sh"));
 }
 
+#[test_id(tzna3dk)]
 #[test]
 fn a_named_suite_red_again_on_a_green_base_fails_the_branch() {
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
@@ -3137,6 +3266,7 @@ fn a_named_suite_red_again_on_a_green_base_fails_the_branch() {
         .all(|(p, _)| !p.starts_with("run/verdicts/trees")));
 }
 
+#[test_id(tbkumxa)]
 #[test]
 fn a_named_suite_red_on_the_base_too_is_the_bases() {
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
@@ -3150,6 +3280,7 @@ fn a_named_suite_red_on_the_base_too_is_the_bases() {
     assert!(f.stderr().contains("inherited, not judged"));
 }
 
+#[test_id(tbfph9b)]
 #[test]
 fn a_cached_replay_of_a_passed_suite_proves_it() {
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
@@ -3164,6 +3295,7 @@ fn a_cached_replay_of_a_passed_suite_proves_it() {
     assert!(f.written.borrow()[0].1.contains("suites=test-b.sh"), "{:?}", f.written.borrow());
 }
 
+#[test_id(t2pgfqy)]
 #[test]
 fn a_cached_replay_without_a_passed_suite_line_proves_nothing() {
     for body in [
@@ -3177,6 +3309,7 @@ fn a_cached_replay_without_a_passed_suite_line_proves_nothing() {
     }
 }
 
+#[test_id(tud1aj7)]
 #[test]
 fn a_named_suite_that_only_skips_proves_nothing() {
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
@@ -3200,6 +3333,7 @@ fn a_named_suite_that_only_skips_proves_nothing() {
     );
 }
 
+#[test_id(txnhlsw)]
 #[test]
 fn a_fences_only_branch_still_reruns_the_named_suites() {
     let f = returned(unit_fake(&["docs/x.md"]), "test-b.sh");
@@ -3209,6 +3343,7 @@ fn a_fences_only_branch_still_reruns_the_named_suites() {
     assert!(meter(&f).contains("compose=fences+reentry phases=fences:7,reentry:7"));
 }
 
+#[test_id(tzp5wc1)]
 #[test]
 fn the_reentry_selector_defers_suites_against_the_configured_budget() {
     let f = returned(unit_fake(&["docs/x.md"]), "test-b.sh,test-c.sh");
@@ -3222,6 +3357,7 @@ fn the_reentry_selector_defers_suites_against_the_configured_budget() {
     assert!(!err.contains("test-b.sh deferred"), "400s fits a 420s budget, not a 260s literal: {err}");
 }
 
+#[test_id(tfrj4s4)]
 #[test]
 fn a_beads_suites_off_certification_still_selects_its_covered_suites() {
     let f = unit_fake(&["spira-config/src/lib.rs"]);
@@ -3251,6 +3387,7 @@ fn a_beads_suites_off_certification_still_selects_its_covered_suites() {
     assert!(f.verdict_line().contains("reason=admission-timeout"));
 }
 
+#[test_id(t0qhvbp)]
 #[test]
 fn a_script_branch_in_unit_mode_with_certify_suites_off_still_reruns_them() {
     // Production today: certify_suites = "off". The selector then exits before it ever
@@ -3266,6 +3403,7 @@ fn a_script_branch_in_unit_mode_with_certify_suites_off_still_reruns_them() {
     assert!(meter(&f).contains("compose=suites(script)+reentry phases=gate:7,reentry:7"));
 }
 
+#[test_id(tme61h6)]
 #[test]
 fn suites_off_with_named_suites_takes_an_admission_slot() {
     let f = returned(Fake::new(), "test-b.sh");
@@ -3285,6 +3423,7 @@ fn suites_off_with_named_suites_takes_an_admission_slot() {
     );
 }
 
+#[test_id(t9conl8)]
 #[test]
 fn suites_mode_that_already_ran_the_named_suites_adds_no_phase() {
     let f = returned(Fake::new(), "test-b.sh");
@@ -3301,6 +3440,7 @@ fn suites_mode_that_already_ran_the_named_suites_adds_no_phase() {
     assert!(meter(&f).contains("compose=suites(mode)+reentry phases=gate:7"));
 }
 
+#[test_id(ttcazd6)]
 #[test]
 fn a_named_suite_the_gate_strings_budget_deferred_is_rerun_alone() {
     let f = returned(Fake::new(), "test-b.sh,test-c.sh");
@@ -3314,6 +3454,7 @@ fn a_named_suite_the_gate_strings_budget_deferred_is_rerun_alone() {
     assert!(cmds[1].contains("--suites test-c.sh "), "{}", cmds[1]);
 }
 
+#[test_id(t463iqj)]
 #[test]
 fn a_named_suite_no_longer_on_the_tree_is_said_and_not_run() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3333,6 +3474,7 @@ fn a_named_suite_no_longer_on_the_tree_is_said_and_not_run() {
         .contains("(not suite names, ignored: ../evil.sh)"));
 }
 
+#[test_id(t4ymonu)]
 #[test]
 fn a_branch_that_deletes_a_named_suite_is_answered_by_the_deletion() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3353,6 +3495,7 @@ fn a_branch_that_deletes_a_named_suite_is_answered_by_the_deletion() {
         .contains("re-entry: test-del.sh deleted by this branch — the deletion answers it"));
 }
 
+#[test_id(tr9vgc9)]
 #[test]
 fn a_named_suite_on_neither_the_base_nor_the_branch_still_refuses() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3368,6 +3511,7 @@ fn a_named_suite_on_neither_the_base_nor_the_branch_still_refuses() {
     assert!(f.stderr().contains("test-typo.sh"));
 }
 
+#[test_id(t8jkj2s)]
 #[test]
 fn the_batchers_ejected_sidecar_drives_the_rerun() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3387,6 +3531,7 @@ fn the_batchers_ejected_sidecar_drives_the_rerun() {
     assert!(f.cmds.borrow()[3].contains("--suites test-b.sh "));
 }
 
+#[test_id(t2po8p5)]
 #[test]
 fn unit_mode_no_metadata_falls_back_to_suites() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3399,6 +3544,7 @@ fn unit_mode_no_metadata_falls_back_to_suites() {
     assert!(meter(&f).contains("compose=suites(no-metadata)"));
 }
 
+#[test_id(tycexfx)]
 #[test]
 fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3432,6 +3578,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert!(f.stderr().contains("so the red is charged to this branch: tests::x"));
 }
 
+#[test_id(t4qrifp)]
 #[test]
 fn a_red_units_failure_record_lists_bare_paths_not_name_status_lines() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3446,6 +3593,7 @@ fn a_red_units_failure_record_lists_bare_paths_not_name_status_lines() {
     assert_eq!(got[0].2, ["spira/x.sh", "src/a.rs"]);
 }
 
+#[test_id(tppeqw8)]
 #[test]
 fn a_red_unit_test_without_a_rerun_line_reproduces_with_the_phases_crates() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3474,6 +3622,7 @@ fn certified(f: &Fake, outcome: &str) -> usize {
     f.lc.borrow().iter().filter(|c| c[2] == outcome).count()
 }
 
+#[test_id(tbr44e6)]
 #[test]
 fn a_unit_red_whose_diff_shares_a_path_with_the_other_beads_is_the_branchs_whatever_the_status_letters() {
     let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "src/a.rs"), other_red("sp-y", "t2", "b.rs")]));
@@ -3481,6 +3630,7 @@ fn a_unit_red_whose_diff_shares_a_path_with_the_other_beads_is_the_branchs_whate
     assert_eq!(f.failures.borrow().len(), 1);
 }
 
+#[test_id(t67wd5w)]
 #[test]
 fn a_unit_red_that_two_other_beads_showed_on_disjoint_diffs_certifies_not_judged() {
     let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "a.rs"), other_red("sp-y", "t2", "b.rs")]));
@@ -3490,6 +3640,7 @@ fn a_unit_red_that_two_other_beads_showed_on_disjoint_diffs_certifies_not_judged
     assert!(f.stderr().contains("not judged — t::flip"), "{}", f.stderr());
 }
 
+#[test_id(t81bhuq)]
 #[test]
 fn a_flip_the_gate_declines_to_judge_files_one_deletion_incident() {
     let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "a.rs"), other_red("sp-y", "t2", "b.rs")]));
@@ -3500,6 +3651,7 @@ fn a_flip_the_gate_declines_to_judge_files_one_deletion_incident() {
     assert!(body.contains("law-a-test-that-flips-is-deleted") && body.contains("sp-x") && body.contains("sp-y"), "{body}");
 }
 
+#[test_id(t1rpfkl)]
 #[test]
 fn a_branch_red_files_no_flip() {
     let f = flip_fake(Ok(vec![]));
@@ -3507,6 +3659,7 @@ fn a_branch_red_files_no_flip() {
     assert!(f.flips.borrow().is_empty());
 }
 
+#[test_id(tjpjv1a)]
 #[test]
 fn a_flip_filing_that_fails_still_certifies() {
     let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "a.rs"), other_red("sp-y", "t2", "b.rs")]));
@@ -3516,6 +3669,7 @@ fn a_flip_filing_that_fails_still_certifies() {
     assert!(f.stderr().contains("could not file the deletion"), "{}", f.stderr());
 }
 
+#[test_id(tuslcxk)]
 #[test]
 fn the_prior_failures_are_read_from_seven_days_back() {
     let f = flip_fake(Ok(vec![]));
@@ -3524,6 +3678,7 @@ fn the_prior_failures_are_read_from_seven_days_back() {
     assert_eq!(since, vec![f.now() as i64 - spira_config::ejection::LOOKBACK_SECS]);
 }
 
+#[test_id(t3iip2z)]
 #[test]
 fn a_unit_red_no_other_bead_showed_stays_the_branchs() {
     let f = flip_fake(Ok(vec![]));
@@ -3532,12 +3687,14 @@ fn a_unit_red_no_other_bead_showed_stays_the_branchs() {
     assert_eq!((certified(&f, "pass"), certified(&f, "red")), (0, 1));
 }
 
+#[test_id(tmkytjv)]
 #[test]
 fn a_unit_red_seen_on_one_other_bead_stays_the_branchs() {
     let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "a.rs")]));
     assert_eq!(f.run(), FAIL);
 }
 
+#[test_id(tnm97xf)]
 #[test]
 fn a_shared_unit_red_beside_a_red_fence_stays_the_branchs() {
     let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "a.rs"), other_red("sp-y", "t2", "b.rs")]));
@@ -3547,6 +3704,7 @@ fn a_shared_unit_red_beside_a_red_fence_stays_the_branchs() {
     assert!(f.prior_since.borrow().is_empty(), "the shared-red read was reached past a red fence");
 }
 
+#[test_id(tc1xp8n)]
 #[test]
 fn a_shared_unit_red_beside_a_red_suite_or_a_failed_build_stays_the_branchs() {
     let prior = || Ok(vec![other_red("sp-x", "t1", "a.rs"), other_red("sp-y", "t2", "b.rs")]);
@@ -3559,6 +3717,7 @@ fn a_shared_unit_red_beside_a_red_suite_or_a_failed_build_stays_the_branchs() {
     assert_eq!(certified(&f, "pass"), 0);
 }
 
+#[test_id(tcoen7d)]
 #[test]
 fn a_shared_unit_red_whose_prior_read_failed_stays_the_branchs() {
     let f = flip_fake(Err("spira-lc: gone".into()));
@@ -3566,6 +3725,7 @@ fn a_shared_unit_red_whose_prior_read_failed_stays_the_branchs() {
     assert_eq!(certified(&f, "pass"), 0);
 }
 
+#[test_id(tigttz4)]
 #[test]
 fn a_unit_base_trial_runs_fences_only_never_the_base_build_or_tests() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3578,6 +3738,7 @@ fn a_unit_base_trial_runs_fences_only_never_the_base_build_or_tests() {
     assert!(!m.contains("base-build") && !m.contains("base-test"), "{m}");
 }
 
+#[test_id(t0s8qf4)]
 #[test]
 fn a_gate_on_a_tree_with_a_proved_fences_verdict_runs_no_fences_phase() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3596,6 +3757,7 @@ fn a_gate_on_a_tree_with_a_proved_fences_verdict_runs_no_fences_phase() {
     assert!(!meter(&f).contains("base-fences"), "{}", meter(&f));
 }
 
+#[test_id(t4mz4kt)]
 #[test]
 fn a_crate_the_base_lacks_is_not_tested_on_the_base() {
     let f = unit_fake(&["newcrate/src/lib.rs"]);
@@ -3619,6 +3781,7 @@ fn a_crate_the_base_lacks_is_not_tested_on_the_base() {
     assert!(meter(&f).contains("base-fences:7 unit_build_secs="));
 }
 
+#[test_id(tdqm59l)]
 #[test]
 fn a_gate_with_no_unit_test_deadline_is_no_verdict_config() {
     for var in ["SPIRA_UNIT_TEST_DEADLINE_SECS", "SPIRA_UNIT_TEST_DEADLINE_PERIODS"] {
@@ -3637,6 +3800,7 @@ fn a_gate_with_no_unit_test_deadline_is_no_verdict_config() {
     }
 }
 
+#[test_id(thwoya8)]
 #[test]
 fn a_red_fence_in_unit_mode_still_runs_the_unit_phases() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3652,6 +3816,7 @@ fn a_red_fence_in_unit_mode_still_runs_the_unit_phases() {
     assert!(cmds[3].starts_with("bash spira/fence.sh"), "{cmds:?}");
 }
 
+#[test_id(tz8py1z)]
 #[test]
 fn the_unit_phases_share_the_gate_timeout() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3685,6 +3850,7 @@ fn cert_written(f: &Fake) -> Option<String> {
         .map(|(_, c)| c.clone())
 }
 
+#[test_id(tpxvy7t)]
 #[test]
 fn a_pass_certifies_the_merged_tree_it_judged() {
     let f = hex_fake();
@@ -3704,6 +3870,7 @@ fn a_pass_certifies_the_merged_tree_it_judged() {
     assert_eq!(parsed.suites, "test-a.sh,test-b.sh");
 }
 
+#[test_id(txx7e0l)]
 #[test]
 fn a_cached_pass_and_a_syntax_only_pass_certify_too() {
     let f = hex_fake();
@@ -3736,6 +3903,7 @@ fn a_cached_pass_and_a_syntax_only_pass_certify_too() {
     );
 }
 
+#[test_id(ty2br1d)]
 #[test]
 fn no_verdict_other_than_pass_certifies() {
     let f = hex_fake();
@@ -3759,6 +3927,7 @@ fn tsd_row(f: &Fake) -> serde_json::Value {
     serde_json::from_str(rows[0].trim_end()).unwrap()
 }
 
+#[test_id(tmip7yi)]
 #[test]
 fn a_rust_only_unit_pass_records_its_branch_type_mode_and_wall() {
     let f = unit_fake(&["spira-config/src/lib.rs"]);
@@ -3777,6 +3946,7 @@ fn a_rust_only_unit_pass_records_its_branch_type_mode_and_wall() {
     assert_eq!(v["branch"], BR);
 }
 
+#[test_id(t55b3i3)]
 #[test]
 fn suites_mode_still_records_what_the_branch_touches() {
     // Under gate_mode = suites every composition is suites(mode); the row classifies the
@@ -3796,6 +3966,7 @@ fn suites_mode_still_records_what_the_branch_touches() {
     }
 }
 
+#[test_id(t89pu0w)]
 #[test]
 fn a_no_verdict_trial_is_recorded_as_one() {
     let f = Fake::new();
@@ -3834,12 +4005,14 @@ fn wrapped() -> Fake {
     f
 }
 
+#[test_id(tsx1z7u)]
 #[test]
 fn a_wrapper_that_runs_spira_lint_is_judged_on_spira_lints_line() {
     let f = wrapped();
     assert_eq!(f.run(), PASS, "{}", f.stderr());
 }
 
+#[test_id(tf7ms0j)]
 #[test]
 fn a_unit_composition_judges_the_lint_wrapper_on_spira_lints_line() {
     let f = wrapped();
@@ -3848,6 +4021,7 @@ fn a_unit_composition_judges_the_lint_wrapper_on_spira_lints_line() {
     assert_eq!(f.run(), PASS, "{}", f.stderr());
 }
 
+#[test_id(tp3p99e)]
 #[test]
 fn a_wrapped_spira_lint_that_prints_nothing_is_fence_silent_on_spira_lint() {
     let f = wrapped();
@@ -3857,6 +4031,7 @@ fn a_wrapped_spira_lint_that_prints_nothing_is_fence_silent_on_spira_lint() {
     assert!(vl.contains("reason=fence-silent") && vl.contains("suite=spira-lint"), "{vl}");
 }
 
+#[test_id(tw97q35)]
 #[test]
 fn a_fence_that_exits_0_without_its_line_is_no_verdict_fence_silent() {
     let f = fenced();
@@ -3878,6 +4053,7 @@ fn branch_trial_prints(f: &Fake, out: &str) {
     f.runs.borrow_mut().insert(MERGE_SHA.to_string(), (0, out.to_string()));
 }
 
+#[test_id(tqystne)]
 #[test]
 fn a_summary_naming_fewer_suites_than_the_runner_ran_is_no_verdict() {
     let f = Fake::new();
@@ -3893,6 +4069,7 @@ fn branch_trial_records(f: &Fake, events: &str) {
     f.tier_events.borrow_mut().insert(MERGE_SHA.to_string(), events.to_string());
 }
 
+#[test_id(tur4ita)]
 #[test]
 fn a_repo_tier_run_green_is_pass_naming_its_tier() {
     let f = Fake::new();
@@ -3903,6 +4080,7 @@ fn a_repo_tier_run_green_is_pass_naming_its_tier() {
     assert!(f.stderr().contains("gate PASS covered suites: gate"), "{}", f.stderr());
 }
 
+#[test_id(tjmnkc8)]
 #[test]
 fn a_repo_tier_run_red_names_its_tier_as_the_red_unit() {
     let f = Fake::new();
@@ -3916,6 +4094,7 @@ fn a_repo_tier_run_red_names_its_tier_as_the_red_unit() {
     assert!(f.verdict_line().contains("suite=gate"), "{}", f.verdict_line());
 }
 
+#[test_id(twa22hl)]
 #[test]
 fn two_tier_rows_and_a_harness_row_each_count_toward_ran() {
     let f = Fake::new();
@@ -3925,6 +4104,7 @@ fn two_tier_rows_and_a_harness_row_each_count_toward_ran() {
     assert_eq!(f.run(), PASS, "{}", f.stderr());
 }
 
+#[test_id(te78cfj)]
 #[test]
 fn a_printed_tier_row_without_the_typed_record_is_not_a_ran_suite() {
     let f = Fake::new();
@@ -3934,6 +4114,7 @@ fn a_printed_tier_row_without_the_typed_record_is_not_a_ran_suite() {
     assert!(f.verdict_line().contains("reason=summary-mismatch"), "{}", f.verdict_line());
 }
 
+#[test_id(t8ktdtm)]
 #[test]
 fn a_summary_naming_every_suite_the_runner_ran_still_passes() {
     let f = Fake::new();
@@ -3941,6 +4122,7 @@ fn a_summary_naming_every_suite_the_runner_ran_still_passes() {
     assert_eq!(f.run(), PASS, "{}", f.stderr());
 }
 
+#[test_id(t3v8o2b)]
 #[test]
 fn a_plan_matrix_that_is_skipped_is_fence_silent_even_when_spira_lint_passes() {
     let f = fenced();
@@ -3950,6 +4132,7 @@ fn a_plan_matrix_that_is_skipped_is_fence_silent_even_when_spira_lint_passes() {
     assert!(f.verdict_line().contains("suite=plan-matrix"));
 }
 
+#[test_id(tj3yfus)]
 #[test]
 fn a_fence_that_reports_checked_0_is_silent() {
     let f = fenced();
@@ -3961,6 +4144,7 @@ fn a_fence_that_reports_checked_0_is_silent() {
     assert!(f.verdict_line().contains("suite=inventory"));
 }
 
+#[test_id(t24nlbb)]
 #[test]
 fn every_fence_with_its_line_passes_and_the_counts_are_reported() {
     let f = fenced();
@@ -3980,6 +4164,7 @@ fn every_fence_with_its_line_passes_and_the_counts_are_reported() {
     }
 }
 
+#[test_id(to20vpj)]
 #[test]
 fn a_failing_trial_is_judged_as_before_not_as_silent() {
     let f = fenced();
@@ -3990,6 +4175,7 @@ fn a_failing_trial_is_judged_as_before_not_as_silent() {
     assert!(f.verdict_line().contains("reason=branch-red"));
 }
 
+#[test_id(tgebhq6)]
 #[test]
 fn the_fences_run_in_the_gate_tree_not_the_repository() {
     let f = fenced();
@@ -4007,6 +4193,7 @@ fn the_fences_run_in_the_gate_tree_not_the_repository() {
     assert_eq!(f.env_of(0, "SPIRA_GATE_REPO"), REPO);
 }
 
+#[test_id(tsxt98y)]
 #[test]
 fn a_unit_composition_does_not_expect_the_build_fence_it_dropped() {
     let f = fenced();
@@ -4040,6 +4227,7 @@ fn gate_runs(f: &Fake) -> Vec<String> {
     f.cmds.borrow().iter().filter(|c| !c.starts_with("cargo ")).cloned().collect()
 }
 
+#[test_id(tn0d59a)]
 #[test]
 fn a_tree_definition_is_the_gate_and_the_column_is_ignored() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -4057,6 +4245,7 @@ fn a_tree_definition_is_the_gate_and_the_column_is_ignored() {
     assert!(f.appended.borrow().iter().any(|l| l.contains("phases=tools:")), "{:?}", f.appended.borrow());
 }
 
+#[test_id(tfmjfge)]
 #[test]
 fn a_branch_that_deletes_a_fence_and_its_step_passes() {
     // The base still has b-fence and names it; the branch deletes both.
@@ -4067,6 +4256,7 @@ fn a_branch_that_deletes_a_fence_and_its_step_passes() {
     assert!(!gate_runs(&f)[0].contains("b-fence"));
 }
 
+#[test_id(txcnz63)]
 #[test]
 fn a_branch_that_deletes_a_fence_but_leaves_it_named_fails() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -4077,6 +4267,7 @@ fn a_branch_that_deletes_a_fence_but_leaves_it_named_fails() {
     assert!(f.ran.borrow().is_empty(), "nothing runs on a definition that cannot run");
 }
 
+#[test_id(toiw4kj)]
 #[test]
 fn a_definition_the_base_already_breaks_is_the_bases() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -4089,6 +4280,7 @@ fn a_definition_the_base_already_breaks_is_the_bases() {
     assert!(f.verdict_line().contains("reason=base-gate-definition"));
 }
 
+#[test_id(t6l9lhj)]
 #[test]
 fn a_branch_that_deletes_or_breaks_the_definition_fails_closed() {
     let f = tree_owned(Some(STEPS), None);
@@ -4103,6 +4295,7 @@ fn a_branch_that_deletes_or_breaks_the_definition_fails_closed() {
     assert!(f.stderr().contains("names no step"), "{}", f.stderr());
 }
 
+#[test_id(t710ll7)]
 #[test]
 fn a_repository_that_never_adopted_keeps_its_column() {
     let f = tree_owned(None, None);
@@ -4117,6 +4310,7 @@ fn a_repository_that_never_adopted_keeps_its_column() {
     assert!(gate_runs(&f)[0].starts_with("bash spira/a-fence.sh"));
 }
 
+#[test_id(tox60cw)]
 #[test]
 fn the_base_trial_runs_the_bases_own_definition() {
     let branch_steps = STEPS.replace("step bash spira/b-fence.sh\n", "step bash spira/c-fence.sh\n");
@@ -4132,6 +4326,7 @@ fn the_base_trial_runs_the_bases_own_definition() {
     assert_eq!(tools, 2);
 }
 
+#[test_id(ty9mtyg)]
 #[test]
 fn the_definition_is_part_of_the_verdict_key() {
     let a = tree_owned(Some(STEPS), Some(STEPS));
@@ -4145,6 +4340,7 @@ fn the_definition_is_part_of_the_verdict_key() {
 
 // ------------------------------------------- the trial's budget (testenv DESIGN.md §11, sp-govet)
 
+#[test_id(tbrxtyd)]
 #[test]
 fn a_trial_that_gave_up_on_a_full_queue_is_a_queue_no_verdict_with_its_wait_metered() {
     let out = "testenv: gave up waiting for a slot after 90s (still 2/2 running)\ntestenv: queue-wait=95s pool=container\nVERDICT FAULT rc=2 ran=0 reason=queue";
@@ -4158,12 +4354,14 @@ fn a_trial_that_gave_up_on_a_full_queue_is_a_queue_no_verdict_with_its_wait_mete
     assert!(f.tsd.borrow().iter().any(|r| r.contains("\"queue_secs\":95")), "{:?}", f.tsd.borrow());
 }
 
+#[test_id(tfw6bk7)]
 #[test]
 fn queue_wait_words_are_summed_across_pools() {
     assert_eq!(crate::parse::queue_secs("a queue-wait=5s pool=compile\nqueue-wait=7s pool=test\nqueue-wait=x"), 12);
     assert_eq!(crate::parse::queue_secs("nothing waited"), 0);
 }
 
+#[test_id(tsq6sqc)]
 #[test]
 fn a_suites_trial_cut_at_its_setup_share_is_a_budget_no_verdict_naming_the_phase() {
     for (out, phase) in [
@@ -4192,6 +4390,7 @@ fn a_suites_trial_cut_at_its_setup_share_is_a_budget_no_verdict_naming_the_phase
     assert!(f.verdict_line().contains("reason=harness-fault"));
 }
 
+#[test_id(t7omhqx)]
 #[test]
 fn a_red_before_the_suites_step_is_judged_on_the_bases_fences_only() {
     let f = Fake::new();
@@ -4210,6 +4409,7 @@ fn a_red_before_the_suites_step_is_judged_on_the_bases_fences_only() {
 /// whole suite selection (SPIRA_GATE_SUITES=on for the base too) — the 275-337 s mirror this
 /// bead removes. The base's main command is fences-only now, whatever the branch's red
 /// looked like; the red suite itself is still judged, by the cache or a targeted rerun.
+#[test_id(tttkcbu)]
 #[test]
 fn a_red_inside_the_suites_step_is_still_judged_on_the_base_per_suite() {
     let f = Fake::new();
@@ -4245,6 +4445,7 @@ fn a_red_inside_the_suites_step_is_still_judged_on_the_base_per_suite() {
     );
 }
 
+#[test_id(tsmfpix)]
 #[test]
 fn the_runners_budget_knobs_reach_the_gate_command() {
     let f = Fake::new();
@@ -4262,6 +4463,7 @@ fn the_runners_budget_knobs_reach_the_gate_command() {
 /// `target/debug/spira-lint` the branch trial left, or a keyed directory stamped for some other
 /// tree — flags literals the base's own spira-lint allows. Reading either would charge the
 /// branch's red to local/main (BASE_FAIL); the base's own tools, keyed by its tree, pass.
+#[test_id(t963hxx)]
 #[test]
 fn the_base_trial_runs_tools_keyed_by_the_base_tree_never_a_stale_one() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -4290,6 +4492,7 @@ fn the_base_trial_runs_tools_keyed_by_the_base_tree_never_a_stale_one() {
 
 /// The gate tree does not hold the tree the trial judges: no tool is built or read, and the
 /// branch trial is refused, never judged.
+#[test_id(tepksr8)]
 #[test]
 fn a_gate_tree_holding_another_tree_is_refused_before_its_tools_are_built() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -4302,6 +4505,7 @@ fn a_gate_tree_holding_another_tree_is_refused_before_its_tools_are_built() {
 
 /// An install that fails leaves nothing keyed: the trial is refused, never judged with the
 /// unkeyed build.
+#[test_id(tyatw13)]
 #[test]
 fn a_failed_install_is_refused_not_judged() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -4315,6 +4519,7 @@ fn a_failed_install_is_refused_not_judged() {
 
 /// The base trial's tree cannot be attributed: no base trial, so whose red it is stays
 /// unestablished — NO_VERDICT, never BASE_FAIL on a guess.
+#[test_id(tfpd1ea)]
 #[test]
 fn a_base_trial_whose_tree_cannot_be_attributed_does_not_run() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -4335,6 +4540,7 @@ fn a_base_trial_whose_tree_cannot_be_attributed_does_not_run() {
 
 /// Tools stamped for the very tree a trial judges are reused, not rebuilt; the stamp and
 /// every package prove them.
+#[test_id(th0xcb1)]
 #[test]
 fn tools_stamped_for_the_same_tree_are_reused() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -4359,6 +4565,7 @@ fn tools_stamped_for_the_same_tree_are_reused() {
 
 /// A gate tree from before the tmpfs build holds stamped tools on the disk; moving the build
 /// to tmpfs empties them, and the first gate must rebuild and judge, not NO_VERDICT.
+#[test_id(tfw7539)]
 #[test]
 fn a_pre_tmpfs_tree_with_stamped_tools_on_disk_gets_a_verdict_on_its_first_gate() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -4376,6 +4583,7 @@ fn a_pre_tmpfs_tree_with_stamped_tools_on_disk_gets_a_verdict_on_its_first_gate(
 
 /// Every gate-string run gets the build cache's wrapper, resolved on the PATH the command
 /// gets (the release's plus the box tail), and the switch reaches testenv.
+#[test_id(t8qx9gv)]
 #[test]
 fn every_run_compiles_through_the_wrapper_resolved_on_the_commands_path() {
     let f = Fake::new();
@@ -4393,6 +4601,7 @@ fn every_run_compiles_through_the_wrapper_resolved_on_the_commands_path() {
 
 /// The configured cargo home reaches the gate command and the release-bins build alike; an
 /// empty key sets neither.
+#[test_id(tfg1l2e)]
 #[test]
 fn the_configured_cargo_home_reaches_the_gate_command_and_the_release_bins_build() {
     let f = Fake::new();
@@ -4414,6 +4623,7 @@ fn the_configured_cargo_home_reaches_the_gate_command_and_the_release_bins_build
 
 /// Without `SPIRA_SCCACHE_DAV_ADDR` set, no webdav var reaches the build at all — the
 /// no-store case stays exactly as it was before sp-xtdqi.
+#[test_id(t9rlil9)]
 #[test]
 fn no_configured_store_means_no_webdav_vars_on_the_build() {
     let f = Fake::new();
@@ -4425,6 +4635,7 @@ fn no_configured_store_means_no_webdav_vars_on_the_build() {
 /// No sccache: a trial that builds in the tree (here, the definition's tools) refuses before
 /// any build — never a cold build of every dependency. A trial that builds nothing (a
 /// column-gated repository) does not need the cache and is judged.
+#[test_id(t6or818)]
 #[test]
 fn an_absent_build_cache_refuses_a_building_trial_before_anything_builds() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -4441,6 +4652,7 @@ fn an_absent_build_cache_refuses_a_building_trial_before_anything_builds() {
 }
 
 /// SPIRA_BUILD_CACHE=off is honoured and said out loud; the switch is passed on.
+#[test_id(tuca7cr)]
 #[test]
 fn the_opt_out_is_loud_and_reaches_the_command() {
     let f = Fake::new();
@@ -4454,6 +4666,7 @@ fn the_opt_out_is_loud_and_reaches_the_command() {
 }
 
 /// The gate tree's build goes to tmpfs before anything builds; a target that cannot be prepared is no verdict.
+#[test_id(tmtf9zn)]
 #[test]
 fn the_gate_tree_builds_on_tmpfs_and_an_unpreparable_target_is_no_verdict() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -4471,6 +4684,7 @@ fn the_gate_tree_builds_on_tmpfs_and_an_unpreparable_target_is_no_verdict() {
 }
 
 /// The configured target root reaches the build, and the gate says where it builds.
+#[test_id(t8wi44l)]
 #[test]
 fn the_gate_builds_on_the_configured_target_root() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -4481,6 +4695,7 @@ fn the_gate_builds_on_the_configured_target_root() {
 }
 
 /// The gate's target root is config; a scratch-short verdict names the room the root had.
+#[test_id(t492kus)]
 #[test]
 fn a_scratch_short_verdict_names_the_configured_root_and_what_the_targets_held() {
     let f = Fake::new();
@@ -4493,6 +4708,7 @@ fn a_scratch_short_verdict_names_the_configured_root_and_what_the_targets_held()
 }
 
 /// A judged tree and one cut at a cap hand their build directory on; a refused one does not.
+#[test_id(tv5vqzu)]
 #[test]
 fn a_build_directory_is_handed_on_when_judged_or_cut_and_not_when_refused() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -4510,6 +4726,7 @@ fn a_build_directory_is_handed_on_when_judged_or_cut_and_not_when_refused() {
     assert!(!f.hand_on.borrow().contains(&true), "{:?}", f.hand_on.borrow());
 }
 
+#[test_id(te4guhs)]
 #[test]
 fn only_the_cap_reasons_and_judged_statuses_hand_a_build_directory_on() {
     let vd = |status, reason: &str| Verdict { status, reason: reason.into(), msg: String::new() };
@@ -4532,6 +4749,7 @@ fn only_the_cap_reasons_and_judged_statuses_hand_a_build_directory_on() {
 
 /// A build that dies on the exhausted scratch filesystem is infrastructure — never the
 /// branch's red, and never the base's.
+#[test_id(tqedjoj)]
 #[test]
 fn a_build_that_hits_enospc_is_no_verdict_never_red() {
     for text in ["rustc-LLVM ERROR: Disk quota exceeded", "ld: error writing x: No space left on device"] {
@@ -4549,6 +4767,7 @@ fn a_build_that_hits_enospc_is_no_verdict_never_red() {
 
 /// A build that loses its sccache server is infrastructure, whatever the base re-run says;
 /// a real compile error without transport errors stays the branch's red.
+#[test_id(tnu9o4w)]
 #[test]
 fn a_build_that_loses_sccache_is_no_verdict_but_a_compile_error_is_red() {
     let wedged = "test-a.sh RED\nsccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)";
@@ -4564,6 +4783,7 @@ fn a_build_that_loses_sccache_is_no_verdict_but_a_compile_error_is_red() {
 
 /// A trial that loses its sccache server is run once more with the cache off, and the gate
 /// says so; if the uncached run is clean the gate passes.
+#[test_id(trhlbk8)]
 #[test]
 fn a_trial_that_loses_sccache_retries_once_without_the_cache() {
     let wedged = "test-a.sh RED\nsccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)";
@@ -4582,6 +4802,7 @@ const TEMP_DIR_FAULT: &str = "sccache: error: Failed to create temp dir\nsccache
 
 /// An sccache server that cannot create its temporary folder is a lost cache: the trial is
 /// retried once without it.
+#[test_id(t3eyqzo)]
 #[test]
 fn a_trial_whose_cache_server_cannot_create_its_temp_dir_retries_without_the_cache() {
     let f = Fake::new();
@@ -4594,6 +4815,7 @@ fn a_trial_whose_cache_server_cannot_create_its_temp_dir_retries_without_the_cac
 }
 
 /// A trial that loses the cache on both runs is build-cache-fault quoting the server's line.
+#[test_id(t5lkzq1)]
 #[test]
 fn a_trial_that_cannot_create_the_cache_temp_dir_twice_is_build_cache_fault() {
     let f = Fake::new();
@@ -4606,6 +4828,7 @@ fn a_trial_that_cannot_create_the_cache_temp_dir_twice_is_build_cache_fault() {
 }
 
 /// The same fault on the base re-run, twice, is build-cache-fault quoting the server's line.
+#[test_id(tv3glth)]
 #[test]
 fn a_base_rerun_that_cannot_create_the_cache_temp_dir_twice_is_build_cache_fault() {
     let f = Fake::new();
@@ -4619,6 +4842,7 @@ fn a_base_rerun_that_cannot_create_the_cache_temp_dir_twice_is_build_cache_fault
 
 /// A base re-run that loses its sccache server is run once more with the cache off; a
 /// re-run that then passes lets the branch's red stand as the branch's own.
+#[test_id(t0mddil)]
 #[test]
 fn a_base_rerun_that_loses_sccache_retries_once_without_the_cache_then_passes() {
     let wedged = "sccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)";
@@ -4638,6 +4862,7 @@ fn a_base_rerun_that_loses_sccache_retries_once_without_the_cache_then_passes() 
 }
 
 /// A base re-run that fails the same way after the retry is the gate's NO_VERDICT, retried once.
+#[test_id(t1dlsyz)]
 #[test]
 fn a_base_rerun_that_loses_sccache_twice_is_build_cache_fault() {
     let wedged = "sccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)";
@@ -4652,6 +4877,7 @@ fn a_base_rerun_that_loses_sccache_twice_is_build_cache_fault() {
 
 /// A trial whose cache is already off, or whose red is not a cache fault, is never retried; a
 /// retry that fails the same way is the verdict.
+#[test_id(trds6hr)]
 #[test]
 fn only_a_cache_fault_on_a_cached_trial_is_retried_and_a_failed_retry_is_no_verdict() {
     let wedged = "test-a.sh RED\nsccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)";
@@ -4676,6 +4902,7 @@ fn only_a_cache_fault_on_a_cached_trial_is_retried_and_a_failed_retry_is_no_verd
     assert!(!f.stderr().contains("retrying the trial"), "{}", f.stderr());
 }
 
+#[test_id(t93iu5r)]
 #[test]
 fn the_uncached_env_empties_the_wrapper_and_says_the_cache_is_off() {
     let env = vec![("RUSTC_WRAPPER".to_string(), "box/.cargo/bin/sccache".to_string())];
@@ -4688,6 +4915,7 @@ fn the_uncached_env_empties_the_wrapper_and_says_the_cache_is_off() {
 
 /// A test binary the gate built and something else removed is the host's fault: the red text
 /// may name `CARGO_BIN_EXE_*` or only say NotFound, and the branch is not blamed for either.
+#[test_id(tu21dsd)]
 #[test]
 fn a_gate_whose_built_binaries_vanished_is_no_verdict_never_branch_red() {
     let missing = "test-a.sh RED\nthread 'main' panicked at spira-claim/tests/bin_is_built.rs:7:5:\nassertion failed: Path::new(env!(\"CARGO_BIN_EXE_spira-claim\")).is_file()";
@@ -4707,6 +4935,7 @@ fn a_gate_whose_built_binaries_vanished_is_no_verdict_never_branch_red() {
     assert_eq!(f.run(), FAIL, "a NotFound with the target intact is the branch's own: {}", f.stderr());
 }
 
+#[test_id(tpafwxk)]
 #[test]
 fn the_tools_build_names_no_incremental_override() {
     let d = crate::def::parse("bin SPIRA_LINT_BIN spira-lint\nstep \"$SPIRA_LINT_BIN\"\n").unwrap();
@@ -4717,6 +4946,7 @@ fn the_tools_build_names_no_incremental_override() {
 /// A tree-built testenv is told its harness is the gate tree: its own executable now
 /// resolves into the tmpfs build root, above which no harness marker lies (sp-z61hj). A
 /// definition that builds no testenv sets nothing (the release's testenv finds its own).
+#[test_id(tz5kmsz)]
 #[test]
 fn a_tree_built_testenv_is_given_the_gate_tree_as_its_harness() {
     let steps = "bin SPIRA_LINT_BIN spira-lint\nbin SPIRA_TESTENV_BIN testenv\nstep bash spira/a-fence.sh\n";
@@ -4735,6 +4965,7 @@ fn a_tree_built_testenv_is_given_the_gate_tree_as_its_harness() {
 
 /// `--release-bins` on a PASS: the judged tree's release profile is built in the gate tree
 /// (tmpfs) through the build cache, one-shot, and the landing is told where it is.
+#[test_id(tats1v1)]
 #[test]
 fn release_bins_builds_the_judged_tree_in_the_gate_tree_after_a_pass() {
     let f = Fake::new();
@@ -4758,6 +4989,7 @@ fn release_bins_builds_the_judged_tree_in_the_gate_tree_after_a_pass() {
 
 /// A cached PASS with --release-bins keeps its cached verdict and still builds the judged
 /// tree's release binaries in the gate tree.
+#[test_id(tplau07)]
 #[test]
 fn a_cached_pass_with_release_bins_still_builds_the_judged_tree() {
     let f = Fake::new();
@@ -4776,6 +5008,7 @@ fn a_cached_pass_with_release_bins_still_builds_the_judged_tree() {
 }
 
 /// No PASS, no release build; a failed release build is said out loud and the verdict stands.
+#[test_id(ta08srl)]
 #[test]
 fn release_bins_never_builds_for_a_red_tree_and_a_failed_build_is_loud() {
     let f = Fake::new();
@@ -4793,6 +5026,7 @@ fn release_bins_never_builds_for_a_red_tree_and_a_failed_build_is_loud() {
 
 /// A release build that wrote into a full disk or an exhausted quota is a failure even when
 /// cargo exited 0: the target is emptied and the message names EDQUOT/ENOSPC.
+#[test_id(tx5xy5v)]
 #[test]
 fn release_bins_write_failure_is_loud_and_empties_the_target() {
     let f = Fake::new();
@@ -4808,6 +5042,7 @@ fn release_bins_write_failure_is_loud_and_empties_the_target() {
 /// sp-f4ig1-fix: a gate never loses its verdict to an admission wait. Every command that can
 /// compile — the trial's own and the after-PASS release-bins, which runs outside the trial's
 /// environment — carries the gate's admission token, so testenv runs it on the gate's slot without queueing behind agent builds.
+#[test_id(tu8tf25)]
 #[test]
 fn every_build_the_gate_runs_rides_on_the_gate_slot_including_release_bins() {
     let f = Fake::new();
@@ -4827,6 +5062,7 @@ fn every_build_the_gate_runs_rides_on_the_gate_slot_including_release_bins() {
 
 /// A `spira-admit` on the PATH is not a compiler wrapper: every cargo the gate runs compiles
 /// through sccache, with the gate's token for the pools that still read it.
+#[test_id(t9l20op)]
 #[test]
 fn the_gates_cargo_compiles_through_sccache_even_with_spira_admit_on_the_path() {
     let f = Fake::new();
@@ -4840,6 +5076,7 @@ fn the_gates_cargo_compiles_through_sccache_even_with_spira_admit_on_the_path() 
     }
 }
 
+#[test_id(tlh14t4)]
 #[test]
 fn the_base_trial_never_names_a_suite_the_base_does_not_have() {
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh,test-new.sh");
@@ -4857,6 +5094,7 @@ fn the_base_trial_never_names_a_suite_the_base_does_not_have() {
     assert!(!f.verdict_line().contains("base-untestable"), "{}", f.verdict_line());
 }
 
+#[test_id(t06hk90)]
 #[test]
 fn a_phase_that_outlasts_the_deadline_is_no_verdict_naming_the_phase() {
     let f = Fake::new();
@@ -4867,6 +5105,7 @@ fn a_phase_that_outlasts_the_deadline_is_no_verdict_naming_the_phase() {
     assert!(f.stderr().contains("phase `gate` was running"), "{}", f.stderr());
 }
 
+#[test_id(tlinvyu)]
 #[test]
 fn a_build_that_outlasts_the_deadline_still_reaches_a_verdict() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -4875,6 +5114,7 @@ fn a_build_that_outlasts_the_deadline_still_reaches_a_verdict() {
     assert_eq!(f.run(), PASS, "{}", f.verdict_line());
 }
 
+#[test_id(tdjsdvb)]
 #[test]
 fn tests_that_outlast_the_deadline_are_a_deadline_naming_the_test_phase() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -4886,6 +5126,7 @@ fn tests_that_outlast_the_deadline_are_a_deadline_naming_the_test_phase() {
     assert!(f.stderr().contains("phase `test` was running"), "{}", f.stderr());
 }
 
+#[test_id(to1kmlx)]
 #[test]
 fn a_build_with_no_progress_for_the_stall_bound_is_a_build_stall() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -4896,6 +5137,7 @@ fn a_build_with_no_progress_for_the_stall_bound_is_a_build_stall() {
     assert!(f.stderr().contains("phase `build`"), "{}", f.stderr());
 }
 
+#[test_id(tohquq7)]
 #[test]
 fn a_build_stall_names_the_last_compiler_line() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -4905,6 +5147,7 @@ fn a_build_stall_names_the_last_compiler_line() {
     assert!(f.stderr().contains("last compiler output: Compiling crate-120"), "{}", f.stderr());
 }
 
+#[test_id(tl5dyeq)]
 #[test]
 fn an_operator_timeout_shorter_than_the_deadline_stays_a_timeout() {
     let f = Fake::new();
@@ -4914,6 +5157,7 @@ fn an_operator_timeout_shorter_than_the_deadline_stays_a_timeout() {
     assert!(f.verdict_line().contains("reason=timeout"), "{}", f.verdict_line());
 }
 
+#[test_id(tnjm2zs)]
 #[test]
 fn the_gate_phase_is_cut_at_the_configured_budget_never_a_literal() {
     // Both keys pinned to non-defaults: asserting against the shipped default passes just as
@@ -4937,6 +5181,7 @@ fn the_gate_phase_is_cut_at_the_configured_budget_never_a_literal() {
     assert_eq!(crate::engine::phase_cap("tools", 420), None);
 }
 
+#[test_id(t40odj7)]
 #[test]
 fn the_declared_build_tier_gate_phase_alone_hands_testenv_the_budget() {
     let f = Fake::new();
@@ -4952,6 +5197,7 @@ fn the_declared_build_tier_gate_phase_alone_hands_testenv_the_budget() {
     assert!(!has(&|c| c.contains("--share-publish")).contains("--deadline"));
 }
 
+#[test_id(t27uwa5)]
 #[test]
 fn an_unparsable_gate_budget_refuses_naming_the_key() {
     let f = Fake::new();
@@ -4962,6 +5208,7 @@ fn an_unparsable_gate_budget_refuses_naming_the_key() {
     assert!(f.stderr().contains("SPIRA_GATE_BUDGET"), "{}", f.stderr());
 }
 
+#[test_id(tsgziv0)]
 #[test]
 fn a_phase_killed_at_its_cap_is_not_a_deadline() {
     use crate::engine::killed_verdict;
@@ -4974,6 +5221,7 @@ fn a_phase_killed_at_its_cap_is_not_a_deadline() {
     assert_eq!(killed_verdict(&ph("reentry", 500), 260, 300, 100, "c", "o").reason, "deadline");
 }
 
+#[test_id(t5519ry)]
 #[test]
 fn a_gate_with_no_declared_deadline_refuses() {
     let f = Fake::new();
@@ -5015,6 +5263,7 @@ fn gate_log(f: &Fake) -> String {
 
 /// A bead whose diff touches nothing the tools are built from runs its steps with the active
 /// release's binaries, builds nothing, and says so in gate.log.
+#[test_id(t334dbp)]
 #[test]
 fn a_diff_outside_the_tools_closure_runs_the_steps_with_the_releases_binaries() {
     let f = release_fake();
@@ -5029,6 +5278,7 @@ fn a_diff_outside_the_tools_closure_runs_the_steps_with_the_releases_binaries() 
 
 /// A bead that changes a tool's source, or what every tool is built from, builds the tools from
 /// its tree for this run and its steps use those.
+#[test_id(tma6clu)]
 #[test]
 fn a_diff_inside_the_tools_closure_builds_the_tools_from_the_tree() {
     for changed in ["spira-config/src/lib.rs", "spira-lint/src/main.rs", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml"] {
@@ -5044,6 +5294,7 @@ fn a_diff_inside_the_tools_closure_builds_the_tools_from_the_tree() {
 
 /// The base trial takes the release's tools even when the branch trial built from its tree:
 /// the base touches nothing, and only the branch's build is paid for.
+#[test_id(tsycovv)]
 #[test]
 fn the_base_trial_uses_the_releases_tools_when_the_branch_built_its_own() {
     let f = release_fake();
@@ -5062,6 +5313,7 @@ fn the_base_trial_uses_the_releases_tools_when_the_branch_built_its_own() {
 }
 
 /// A release without a tool the steps name is a harness fault naming the tool, never a build.
+#[test_id(t17kavs)]
 #[test]
 fn a_release_lacking_a_named_tool_is_a_fault_naming_it_not_a_silent_build() {
     let f = release_fake();
@@ -5074,6 +5326,7 @@ fn a_release_lacking_a_named_tool_is_a_fault_naming_it_not_a_silent_build() {
 }
 
 /// Tools whose closure cannot be read are built from the tree: the choice fails closed.
+#[test_id(t0qj4qw)]
 #[test]
 fn a_closure_that_cannot_be_read_builds_from_the_tree() {
     let f = release_fake();
@@ -5086,6 +5339,7 @@ fn a_closure_that_cannot_be_read_builds_from_the_tree() {
 /// The closure a tool is built from follows normal and build dependencies transitively and
 /// leaves dev dependencies and unrelated members out; a path is touched when it is inside a
 /// closure directory or is a workspace-wide build input.
+#[test_id(ty2a5r0)]
 #[test]
 fn the_tools_closure_follows_build_dependencies_and_not_dev_ones() {
     use crate::toolkey::{closure, first_touched};
@@ -5108,6 +5362,7 @@ fn the_tools_closure_follows_build_dependencies_and_not_dev_ones() {
 
 const BASE_F_S1: &str = "gate-step RED rc=1 :: fence-f\n  test-s1.sh RED rc=1 after 3s";
 
+#[test_id(t850zrg)]
 #[test]
 fn a_branch_green_but_for_the_bases_reds_passes_with_them_inherited() {
     let f = Fake::new();
@@ -5119,6 +5374,7 @@ fn a_branch_green_but_for_the_bases_reds_passes_with_them_inherited() {
     assert!(e.contains("inherited, not judged (red on local/main too, so not this branch's): test-s1.sh fence-f"), "{e}");
 }
 
+#[test_id(tjbo95h)]
 #[test]
 fn a_branch_that_adds_a_suite_red_and_a_fence_red_is_held_for_those_only() {
     let f = Fake::new();
@@ -5147,6 +5403,7 @@ mod machine_events {
         f.machine.borrow().last().and_then(|r| r.events.last().map(|e| e.reason.clone())).unwrap_or_default()
     }
 
+    #[test_id(tnhsz6d)]
     #[test]
     fn a_trial_is_recorded_from_queued_to_its_verdict() {
         let f = Fake::new();
@@ -5155,6 +5412,7 @@ mod machine_events {
         assert!(last_reason(&f).starts_with("PASS pass"), "{}", last_reason(&f));
     }
 
+    #[test_id(tkdq0ii)]
     #[test]
     fn a_branch_that_does_not_merge_ends_at_its_verdict_from_queued() {
         let f = Fake::new();
@@ -5164,6 +5422,7 @@ mod machine_events {
         assert!(last_reason(&f).starts_with("FAIL no-rebase"), "{}", last_reason(&f));
     }
 
+    #[test_id(tp8e3lk)]
     #[test]
     fn a_fences_only_run_passes_through_fences_and_takes_no_slot() {
         let f = Fake::new();
@@ -5177,6 +5436,7 @@ mod machine_events {
         assert!(slot.contains("no slot"), "{slot}");
     }
 
+    #[test_id(tccr54o)]
     #[test]
     fn a_record_that_cannot_be_written_refuses_the_run() {
         let f = Fake::new();
@@ -5186,6 +5446,7 @@ mod machine_events {
         assert!(f.ran.borrow().is_empty(), "nothing ran");
     }
 
+    #[test_id(tckkqr3)]
     #[test]
     fn a_cancel_requested_while_the_run_is_live_ends_it_cancelled() {
         let f = Fake::new();
@@ -5196,6 +5457,7 @@ mod machine_events {
         assert!(last_reason(&f).starts_with("NO_VERDICT cancelled"), "{}", last_reason(&f));
     }
 
+    #[test_id(tj3mk9n)]
     #[test]
     fn a_cancel_that_stops_a_waiting_run_reads_as_cancelled_not_died() {
         let f = Fake::new();
@@ -5208,6 +5470,7 @@ mod machine_events {
 
 // ------------------------------------------------- family J: what the verdict suites held
 
+#[test_id(t8nwoi7)]
 #[test]
 fn a_timeout_names_its_budget_and_command_and_is_not_cached() {
     let f = Fake::new();
@@ -5220,6 +5483,7 @@ fn a_timeout_names_its_budget_and_command_and_is_not_cached() {
     assert!(f.written.borrow().is_empty(), "{:?}", f.written.borrow());
 }
 
+#[test_id(tckpv96)]
 #[test]
 fn a_harness_fault_is_never_cached_or_charged_to_the_base() {
     let f = Fake::new();
@@ -5230,6 +5494,7 @@ fn a_harness_fault_is_never_cached_or_charged_to_the_base() {
     assert!(f.written.borrow().is_empty() && f.ran.borrow().len() == 1);
 }
 
+#[test_id(tuzt0qr)]
 #[test]
 fn a_container_death_found_only_at_the_deadline_keeps_its_real_cause() {
     let f = Fake::new();
@@ -5244,6 +5509,7 @@ fn a_container_death_found_only_at_the_deadline_keeps_its_real_cause() {
     assert!(f.written.borrow().is_empty());
 }
 
+#[test_id(t6i8595)]
 #[test]
 fn both_trials_see_the_same_env_contract() {
     let f = Fake::new();
@@ -5272,6 +5538,7 @@ fn tmp_for(f: &Fake) -> String {
     t
 }
 
+#[test_id(t5uhj97)]
 #[test]
 fn every_trial_gets_a_per_tree_tmpdir_on_the_run_disk() {
     let f = Fake::new();
@@ -5283,6 +5550,7 @@ fn every_trial_gets_a_per_tree_tmpdir_on_the_run_disk() {
     assert_eq!(f.env_of(1, "TMPDIR"), t);
 }
 
+#[test_id(tr9y3be)]
 #[test]
 fn a_finished_trial_leaves_no_tmpdir_pass_or_red() {
     for red in [false, true] {
@@ -5297,6 +5565,7 @@ fn a_finished_trial_leaves_no_tmpdir_pass_or_red() {
     }
 }
 
+#[test_id(tu3lld8)]
 #[test]
 fn a_stale_tmpdir_is_emptied_before_the_gate_command_runs() {
     let learn = Fake::new();
@@ -5309,6 +5578,7 @@ fn a_stale_tmpdir_is_emptied_before_the_gate_command_runs() {
     assert_eq!(f.reset_log.borrow().first(), Some(&t), "reset before any command ran");
 }
 
+#[test_id(tmotvvd)]
 #[test]
 fn a_tmpdir_that_cannot_be_reset_is_a_noverdict_naming_the_path_and_runs_nothing() {
     let f = Fake::new();
@@ -5321,6 +5591,7 @@ fn a_tmpdir_that_cannot_be_reset_is_a_noverdict_naming_the_path_and_runs_nothing
     assert!(f.live_dirs.borrow().is_empty(), "nothing left behind: {err}");
 }
 
+#[test_id(ta78tpg)]
 #[test]
 fn a_red_keeps_its_early_diagnostic_whole_and_a_pass_prints_none_of_it() {
     let noisy = format!("DIAG: kept\n{}", (1..=25).map(|i| format!("suite-{i}.sh ok\n")).collect::<String>());
@@ -5335,6 +5606,7 @@ fn a_red_keeps_its_early_diagnostic_whole_and_a_pass_prints_none_of_it() {
     assert!(!f.stderr().contains("DIAG: kept"), "{}", f.stderr());
 }
 
+#[test_id(twyn39j)]
 #[test]
 fn an_inherited_red_carries_the_bases_own_output() {
     let f = Fake::new();
@@ -5347,6 +5619,7 @@ fn an_inherited_red_carries_the_bases_own_output() {
     assert!(!f.verdict_line().contains("base-red"));
 }
 
+#[test_id(tdm1gbi)]
 #[test]
 fn a_base_with_reds_and_timeouts_inherits_the_shared_red() {
     let both = format!("{}\n  test-slow.sh                     TIMEOUT after 600s", red("test-real.sh"));
@@ -5358,6 +5631,7 @@ fn a_base_with_reds_and_timeouts_inherits_the_shared_red() {
     assert!(f.stderr().contains("inherited, not judged") && f.stderr().contains("test-real.sh"));
 }
 
+#[test_id(tnl1a2n)]
 #[test]
 fn an_unnamed_red_on_both_trials_is_the_bases_with_no_suite() {
     let f = Fake::new();
@@ -5368,6 +5642,7 @@ fn an_unnamed_red_on_both_trials_is_the_bases_with_no_suite() {
     assert!(line.contains("reason=base-red") && line.ends_with("suite=-"), "{line}");
 }
 
+#[test_id(tenhvdi)]
 #[test]
 fn a_base_trial_that_reports_a_harness_fault_is_no_verdict_not_base_fail() {
     let f = Fake::new();
@@ -5396,6 +5671,7 @@ fn fences_fake(paths: &[&str]) -> Fake {
     f
 }
 
+#[test_id(tl6wvtd)]
 #[test]
 fn fences_mode_runs_the_fence_tools_the_fences_and_the_build_fence_and_no_test_or_suite() {
     // A workspace input and a script, no crate: nothing here asks for a unit test.
@@ -5424,6 +5700,7 @@ fn fences_mode_runs_the_fence_tools_the_fences_and_the_build_fence_and_no_test_o
     assert!(meter(&f).contains(" compose=fences phases=tools:7,fences:7"), "{}", meter(&f));
 }
 
+#[test_id(tr3f12q)]
 #[test]
 fn fences_mode_a_planted_fence_violation_still_fails_the_gate_and_the_base_runs_the_same_mode() {
     let f = fences_fake(&["docs/x.md"]);
@@ -5436,6 +5713,7 @@ fn fences_mode_a_planted_fence_violation_still_fails_the_gate_and_the_base_runs_
     assert!(!f.cmds.borrow().iter().any(|c| c.contains("; tools/test-sandbox/runner --around cargo nextest run ")));
 }
 
+#[test_id(thpv4e6)]
 #[test]
 fn fences_mode_a_unit_test_failure_in_a_touched_crate_fails_the_branch_at_the_gate() {
     // Fences mode runs the touched crates' unit tests after the fences: a broken unit test is
@@ -5451,6 +5729,7 @@ fn fences_mode_a_unit_test_failure_in_a_touched_crate_fails_the_branch_at_the_ga
     assert!(!d.cmds.borrow().iter().any(|c| c.contains("cargo nextest run")));
 }
 
+#[test_id(t4lfip0)]
 #[test]
 fn fences_mode_a_re_entering_bead_runs_exactly_its_named_suites_and_a_fresh_one_none() {
     // sp-p3srm holds in fences mode: the round's named suites, and the suites the branch
@@ -5487,6 +5766,7 @@ fn fences_mode_a_re_entering_bead_runs_exactly_its_named_suites_and_a_fresh_one_
     assert!(!meter(&fresh).contains("reentry"), "{}", meter(&fresh));
 }
 
+#[test_id(t4dd3cq)]
 #[test]
 fn fences_mode_a_branch_touching_one_suite_runs_that_suite_through_the_trees_runner() {
     let f = fences_fake(&["spira/test-c.sh"]);
@@ -5505,6 +5785,7 @@ fn fences_mode_a_branch_touching_one_suite_runs_that_suite_through_the_trees_run
 
 const COVERED_OUT: &str = "  test-a.sh   ok      3s\nbatch: phases: resolve:0,build:20,up:1,suites:3 (setup 21s, warm: cold)\nVERDICT GREEN ran=1";
 
+#[test_id(tnc0g7w)]
 #[test]
 fn a_fences_mode_certification_runs_its_covered_suites_as_their_own_phase() {
     let f = fences_fake(&["docs/x.md"]);
@@ -5525,6 +5806,7 @@ fn a_fences_mode_certification_runs_its_covered_suites_as_their_own_phase() {
     assert!(f.tsd.borrow().iter().any(|r| r.contains("\"covered_secs\":7") && r.contains("\"covered_deferred\":0")), "{:?}", f.tsd.borrow());
 }
 
+#[test_id(tonbu0b)]
 #[test]
 fn a_covered_fences_pass_is_never_reused_for_a_gate_with_no_bead() {
     let key = |f: &Fake| f.written.borrow().iter().find(|(p, _)| p.starts_with("run/verdicts") && !p.to_string_lossy().contains("/trees/")).map(|(p, _)| p.clone());
@@ -5537,6 +5819,7 @@ fn a_covered_fences_pass_is_never_reused_for_a_gate_with_no_bead() {
     assert!(a != b, "{a:?}");
 }
 
+#[test_id(tyae1md)]
 #[test]
 fn a_fences_mode_gate_with_no_bead_runs_no_covered_phase_and_takes_no_slot() {
     let f = fences_fake(&["docs/x.md"]);
@@ -5553,6 +5836,7 @@ fn a_fences_mode_gate_with_no_bead_runs_no_covered_phase_and_takes_no_slot() {
     assert!(g.verdict_line().contains("reason=admission-timeout"), "{}", g.verdict_line());
 }
 
+#[test_id(tkgtdol)]
 #[test]
 fn what_the_covered_phase_deferred_is_counted_as_a_set_of_suites_and_recorded_by_name() {
     let f = fences_fake(&["docs/x.md"]);
@@ -5569,6 +5853,7 @@ fn what_the_covered_phase_deferred_is_counted_as_a_set_of_suites_and_recorded_by
     assert!(f.tsd.borrow().iter().any(|r| r.contains("\"covered_deferred_suites\":\"test-x.sh,test-y.sh\"")), "{:?}", f.tsd.borrow());
 }
 
+#[test_id(tn656j1)]
 #[test]
 fn a_covered_phase_red_is_the_branchs_only_when_the_base_is_not_red_on_it_too() {
     let red = "  test-b.sh   RED     rc=1 after 4s\nVERDICT RED ran=1 red=1";
@@ -5584,6 +5869,7 @@ fn a_covered_phase_red_is_the_branchs_only_when_the_base_is_not_red_on_it_too() 
     assert!(g.stderr().contains("inherited, not judged"), "{}", g.stderr());
 }
 
+#[test_id(t6lc120)]
 #[test]
 fn a_named_suite_the_covered_phase_showed_ok_is_not_run_again_by_reentry() {
     let f = returned(fences_fake(&["docs/x.md"]), "test-b.sh");
@@ -5597,6 +5883,7 @@ fn a_named_suite_the_covered_phase_showed_ok_is_not_run_again_by_reentry() {
     assert!(meter(&g).contains("reentry:"), "{}", meter(&g));
 }
 
+#[test_id(tmryito)]
 #[test]
 fn a_fences_mode_column_repository_stays_fences_only_and_says_so() {
     let f = Fake::new();
@@ -5609,6 +5896,7 @@ fn a_fences_mode_column_repository_stays_fences_only_and_says_so() {
     assert!(f.stderr().contains("runs its fences only"), "{}", f.stderr());
 }
 
+#[test_id(tjlwivt)]
 #[test]
 fn a_harness_fault_record_carries_the_runners_words() {
     let f = fences_fake(&["spira/test-c.sh"]);
@@ -5621,6 +5909,7 @@ fn a_harness_fault_record_carries_the_runners_words() {
     assert!(detail.contains("SPIRA_X is not declared") && !detail.contains('\n'), "{y:?}");
 }
 
+#[test_id(tuadvkc)]
 #[test]
 fn fences_mode_is_its_own_verdict_key_and_gate_all_runs_the_string_whole() {
     let key = |f: &Fake| f.written.borrow().iter().find(|(p, _)| p.starts_with("run/verdicts") && !p.to_string_lossy().contains("/trees/")).map(|(p, _)| p.clone());
@@ -5643,6 +5932,7 @@ fn fences_mode_is_its_own_verdict_key_and_gate_all_runs_the_string_whole() {
     assert!(meter(&f).contains("compose=suites(gate-all)"), "{}", meter(&f));
 }
 
+#[test_id(th6zjdb)]
 #[test]
 fn a_gate_records_its_start_for_the_bead_once_it_holds_the_tree() {
     let f = Fake::new();
@@ -5666,6 +5956,7 @@ fn builder_fake() -> Fake {
     f
 }
 
+#[test_id(tqu9q74)]
 #[test]
 fn a_unit_gate_builds_in_the_directory_its_beads_builder_submitted_from() {
     let f = builder_fake();
@@ -5680,6 +5971,7 @@ fn a_unit_gate_builds_in_the_directory_its_beads_builder_submitted_from() {
     assert_eq!(tsd_row(&f)["build_dir"], "builder");
 }
 
+#[test_id(taqwu5f)]
 #[test]
 fn a_unit_gate_whose_bead_has_no_build_dir_fact_takes_the_warm_or_cold_path() {
     let f = builder_fake();
@@ -5695,6 +5987,7 @@ fn a_unit_gate_whose_bead_has_no_build_dir_fact_takes_the_warm_or_cold_path() {
     assert!(meter(&w).contains(" build_dir=warm "), "{}", meter(&w));
 }
 
+#[test_id(tgaaa1a)]
 #[test]
 fn a_builders_directory_that_cannot_be_leased_cleaned_or_aged_leaves_the_gate_on_its_own_directory() {
     for (warm, kind) in [(None, "cold"), (Some("c0ffee (3 unchanged files aged)".to_string()), "warm")] {
@@ -5708,6 +6001,7 @@ fn a_builders_directory_that_cannot_be_leased_cleaned_or_aged_leaves_the_gate_on
     }
 }
 
+#[test_id(t2aanyy)]
 #[test]
 fn a_gate_with_no_lease_wait_configured_does_not_look_for_the_builders_directory() {
     let f = builder_fake();
@@ -5718,6 +6012,7 @@ fn a_gate_with_no_lease_wait_configured_does_not_look_for_the_builders_directory
 
 const REENTRY_PHASES: &str = "  test-b.sh   ok   3s\nbatch: phases: resolve:0,build:290,up:1,suites:8 (setup 291s, warm: cold)\nVERDICT GREEN";
 
+#[test_id(t8clq9n)]
 #[test]
 fn a_reentry_phase_is_charged_for_its_suites_not_its_container_build() {
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
@@ -5730,6 +6025,7 @@ fn a_reentry_phase_is_charged_for_its_suites_not_its_container_build() {
     assert!(line.contains("reentry-build:45,reentry:8"), "{line}");
 }
 
+#[test_id(t0am1gx)]
 #[test]
 fn a_reentry_whose_suites_run_past_the_deadline_is_still_a_deadline() {
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
@@ -5741,6 +6037,7 @@ fn a_reentry_whose_suites_run_past_the_deadline_is_still_a_deadline() {
     assert!(f.verdict_line().contains("reason=deadline"), "{}", f.verdict_line());
 }
 
+#[test_id(t7s450c)]
 #[test]
 fn a_deadline_record_carries_the_tail_of_the_phase_output() {
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
@@ -5754,6 +6051,7 @@ fn a_deadline_record_carries_the_tail_of_the_phase_output() {
     assert!(detail.contains("RUNNING-WHEN-CUT"), "{y:?}");
 }
 
+#[test_id(tdg0ljk)]
 #[test]
 fn a_reentry_with_no_phases_report_is_charged_its_whole_wall() {
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
@@ -5763,6 +6061,7 @@ fn a_reentry_with_no_phases_report_is_charged_its_whole_wall() {
     assert!(meter(&f).contains("test_clock=106s"), "{}", meter(&f));
 }
 
+#[test_id(t9md1co)]
 #[test]
 fn a_deadline_record_keeps_only_the_last_4000_bytes() {
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
@@ -5777,6 +6076,7 @@ fn a_deadline_record_keeps_only_the_last_4000_bytes() {
 }
 
 /// The configured cap on the gate's target root also bounds the warm build directory.
+#[test_id(tfhb3ds)]
 #[test]
 fn the_configured_target_cap_reaches_the_release_of_the_gate_tree() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
@@ -5785,6 +6085,7 @@ fn the_configured_target_cap_reaches_the_release_of_the_gate_tree() {
     assert_eq!(f.release_caps.borrow().as_slice(), &[7777]);
 }
 
+#[test_id(txb2k3l)]
 #[test]
 fn a_unit_gate_whose_nextest_run_printed_no_summary_is_a_harness_fault_not_branch_red() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -5806,6 +6107,7 @@ fn a_unit_gate_whose_nextest_run_printed_no_summary_is_a_harness_fault_not_branc
     assert!(!g.stderr().contains("harness-fault"), "{}", g.stderr());
 }
 
+#[test_id(tbbvdtr)]
 #[test]
 fn a_unit_run_cut_at_its_deadline_without_a_summary_is_not_the_missing_report_fault() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -5859,6 +6161,7 @@ fn run_lint_step(t: &testkit::TempDir, bin: &std::path::Path, caller_mode: &str)
     (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
 }
 
+#[test_id(t130o27)]
 #[test]
 fn the_lint_step_enforces_the_trees_ffx_mode_whatever_the_callers_config_says() {
     let (t, bin) = lint_fixture("enforce", &[("rule/tests/vocab.rs", "// the aeon // ffx-ok\n")]);
@@ -5866,6 +6169,7 @@ fn the_lint_step_enforces_the_trees_ffx_mode_whatever_the_callers_config_says() 
     assert!(!ok && out.contains("ffx-vocabulary"), "{out}");
 }
 
+#[test_id(t7xka2e)]
 #[test]
 fn the_lint_step_passes_a_tree_with_no_ffx_term() {
     let (t, bin) = lint_fixture("enforce", &[("rule/tests/vocab.rs", "// nothing here\n")]);

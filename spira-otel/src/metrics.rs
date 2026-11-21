@@ -285,6 +285,7 @@ pub mod run {
     mod tests {
         use super::*;
 
+        #[test_id(tpm6trh)]
         #[test]
         fn a_failed_run_pushes_its_count_duration_and_error_outcome() {
             let (addr, h) = fixture_sink();
@@ -296,6 +297,7 @@ pub mod run {
             }
         }
 
+        #[test_id(tgp30d2)]
         #[test]
         fn a_successful_exit_code_is_ok_and_an_unlisted_operation_is_unknown() {
             let (addr, h) = fixture_sink();
@@ -562,6 +564,7 @@ mod tests {
 
     const LABELS: [(&str, &str); 2] = [("repo", "r"), ("instance_type", "c7a.4xlarge")];
 
+    #[test_id(tm0hgps)]
     #[test]
     fn every_point_encodes_as_a_timestamped_gauge_with_its_labels() {
         let s = sink("127.0.0.1:1");
@@ -578,6 +581,7 @@ mod tests {
         assert_eq!(c.data_points[0].time_unix_nano, 5_000_000_000);
     }
 
+    #[test_id(tbv8z7r)]
     #[test]
     fn a_push_posts_protobuf_to_the_otlp_path() {
         let (addr, h) = serve("HTTP/1.1 204 No Content\r\n\r\n");
@@ -590,6 +594,7 @@ mod tests {
         assert!(ExportMetricsServiceRequest::decode(&got[i..]).is_ok());
     }
 
+    #[test_id(t222tum)]
     #[test]
     fn a_refused_connection_and_a_server_error_are_counted_not_raised() {
         let before = push_failed();
@@ -600,6 +605,7 @@ mod tests {
         assert!(push_failed() >= before + 2);
     }
 
+    #[test_id(tx4rtn1)]
     #[test]
     fn a_run_pushes_invocation_duration_and_extras_labelled_by_component_operation_outcome() {
         let cap = fixture::Capture::start();
@@ -620,6 +626,7 @@ mod tests {
 mod instrument_tests {
     use super::*;
 
+    #[test_id(tt8x46e)]
     #[test]
     fn a_run_pushes_its_invocation_duration_and_outcome_and_keeps_its_exit_code() {
         let fx = crate::fixture::Sink::start();
@@ -638,6 +645,7 @@ mod instrument_tests {
         assert!(got.iter().any(|s| s.name == INVOCATIONS && s.label("operation") == Some("other") && s.label("outcome") == Some("ok")));
     }
 
+    #[test_id(ts8fxsb)]
     #[test]
     fn a_gauge_point_round_trips() {
         let req = MetricsSink::new(None, "s", Duration::from_millis(50)).encode(&[Point::Gauge { name: "g", value: 2.5 }], &[], UNIX_EPOCH);

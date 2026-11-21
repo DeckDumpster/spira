@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(tfov8fy)]
 #[test]
 fn create_bead_refuses_the_planning_fields_it_used_to_keep() {
     let r = Rig::new();
@@ -21,6 +22,7 @@ fn repo_of(r: &Rig, id: &str) -> serde_json::Value {
     rows[0]["repo"].clone()
 }
 
+#[test_id(t1b4juu)]
 #[test]
 fn create_bead_with_a_repo_fills_the_repo_of_a_record_another_writer_made_without_one() {
     let r = Rig::new();
@@ -34,6 +36,7 @@ fn create_bead_with_a_repo_fills_the_repo_of_a_record_another_writer_made_withou
     assert_eq!(rc, 0);
 }
 
+#[test_id(t2afl8j)]
 #[test]
 fn create_bead_never_overwrites_a_repo_the_record_already_names() {
     let r = Rig::new();
@@ -42,6 +45,7 @@ fn create_bead_never_overwrites_a_repo_the_record_already_names() {
     assert_eq!(repo_of(&r, "sp-a"), "deck");
 }
 
+#[test_id(tg4y72i)]
 #[test]
 fn create_bead_leaves_a_working_record_without_a_repo_and_still_exits_zero() {
     let r = Rig::new();

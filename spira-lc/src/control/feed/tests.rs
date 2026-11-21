@@ -71,23 +71,23 @@ fn on_sqlite_across_days(body: fn(&Store<SqliteBackend>)) {
 
 /// Each scenario once on the reference backend and once on SQLite, both on the virtual clock.
 macro_rules! on_each_backend {
-    ($($name:ident),* $(,)?) => {
-        mod mem { $( #[test] fn $name() { super::on_mem(super::$name); } )* }
-        mod sqlite { $( #[test] fn $name() { super::on_sqlite(super::$name); } )* }
-        mod sqlite_across_days { $( #[test] fn $name() { super::on_sqlite_across_days(super::$name); } )* }
+    ($( #[test_id($mem:ident)] #[test_id($sqlite:ident)] #[test_id($days:ident)] $name:ident ),* $(,)?) => {
+        mod mem { $( #[test_id($mem)] #[test] fn $name() { super::super::on_mem(super::super::$name); } )* }
+        mod sqlite { $( #[test_id($sqlite)] #[test] fn $name() { super::super::on_sqlite(super::super::$name); } )* }
+        mod sqlite_across_days { $( #[test_id($days)] #[test] fn $name() { super::super::on_sqlite_across_days(super::super::$name); } )* }
     };
 }
 
 on_each_backend!(
-    a_watch_resumed_from_a_revision_sees_every_later_change_exactly_once,
-    after_history_is_forgotten_a_watch_answers_too_old_with_no_rows_and_the_revision_to_resume_from,
-    history_lists_a_beads_changes_in_order_with_its_refusals_and_lost_races,
-    history_outlives_forgetting_revisions,
-    event_seq_names_only_the_beads_with_an_applied_event_after_the_revision,
-    audits_answers_the_applied_and_refused_events_after_a_revision_in_pages,
-    a_watch_of_several_prefixes_delivers_each_and_nothing_else,
-    store_usage_of_a_backend_that_keeps_no_history_still_pages_by_prefix,
-    store_usage_answers_one_bounded_page_with_a_cursor_and_refuses_a_page_above_the_cap,
+    #[test_id(tvsxi11)] #[test_id(tohw0o9)] #[test_id(trm6c67)] a_watch_resumed_from_a_revision_sees_every_later_change_exactly_once,
+    #[test_id(t2ojdvo)] #[test_id(tf19jao)] #[test_id(tr4bh4s)] after_history_is_forgotten_a_watch_answers_too_old_with_no_rows_and_the_revision_to_resume_from,
+    #[test_id(t6d6e12)] #[test_id(tlq87qb)] #[test_id(tbrcvpt)] history_lists_a_beads_changes_in_order_with_its_refusals_and_lost_races,
+    #[test_id(t7q36wp)] #[test_id(tqvmtel)] #[test_id(tjit989)] history_outlives_forgetting_revisions,
+    #[test_id(ts015jv)] #[test_id(t1s7qfs)] #[test_id(t5ns9a2)] event_seq_names_only_the_beads_with_an_applied_event_after_the_revision,
+    #[test_id(tiqdhhr)] #[test_id(ttfdr44)] #[test_id(tt567iq)] audits_answers_the_applied_and_refused_events_after_a_revision_in_pages,
+    #[test_id(txekrgw)] #[test_id(tzjwb90)] #[test_id(tcjdjjx)] a_watch_of_several_prefixes_delivers_each_and_nothing_else,
+    #[test_id(tuwfa4a)] #[test_id(tnv1j62)] #[test_id(t0ulz44)] store_usage_of_a_backend_that_keeps_no_history_still_pages_by_prefix,
+    #[test_id(ttl2nv3)] #[test_id(t3y6ert)] #[test_id(te7qxcx)] store_usage_answers_one_bounded_page_with_a_cursor_and_refuses_a_page_above_the_cap,
 );
 
 /// A watch from a revision the history ring has turned past is `too_old`, and resumes from the head.
@@ -105,6 +105,7 @@ fn once_the_ring_has_turned_a_watch_answers_too_old_with_no_rows_listed<B: Backe
     assert_eq!(w["list_rev"].as_u64().unwrap(), s.contract().head().unwrap());
 }
 
+#[test_id(tgtikq3)]
 #[test]
 fn a_mem_ring_that_has_turned_relists_a_feed() {
     let clock = VirtualClock::new(0);
@@ -114,6 +115,7 @@ fn a_mem_ring_that_has_turned_relists_a_feed() {
     ));
 }
 
+#[test_id(tlgbus5)]
 #[test]
 fn a_sqlite_ring_that_has_turned_relists_a_feed() {
     let dir = TempDir::new("spira-lc-feed-ring");
@@ -346,6 +348,7 @@ fn history_outlives_forgetting_revisions<B: Backend>(s: &Store<B>) {
     assert_eq!(seqs, [first, second]);
 }
 
+#[test_id(t3v2mz0)]
 #[test]
 fn history_reads_a_beads_keys_in_pages_and_their_events_in_chunks_at_one_revision() {
     use crate::control::store::RECORD_CHUNK;
@@ -384,6 +387,7 @@ fn history_reads_a_beads_keys_in_pages_and_their_events_in_chunks_at_one_revisio
     assert_eq!(call(&s, &["history", "sp-a", "--machine", "bead"]), h);
 }
 
+#[test_id(tmgztoq)]
 #[test]
 fn history_naming_a_rev_with_no_events_key_is_refused_naming_the_rev() {
     use state_store::{Object, Rev, Write};
@@ -444,6 +448,7 @@ fn audits_answers_the_applied_and_refused_events_after_a_revision_in_pages<B: Ba
     assert_ne!(verbs::run(s, &zero).0, 0);
 }
 
+#[test_id(tpk6pd9)]
 #[test]
 fn audits_newest_reads_only_the_newest_chunk_of_a_long_log() {
     use crate::control::audits::CHUNK_REVS;
@@ -515,6 +520,7 @@ fn event_seq_names_only_the_beads_with_an_applied_event_after_the_revision<B: Ba
 
 /// A store carrying many beads' history answers `event-seq --since <recent>` from the events
 /// after the revision alone: the range statements step over the recent rows, not the history.
+#[test_id(ttj4pjk)]
 #[test]
 fn event_seq_since_a_recent_revision_reads_only_the_recent_events_of_a_loaded_store() {
     let dir = TempDir::new("spira-lc-feed-loaded");
@@ -563,6 +569,7 @@ fn store_usage_of_a_backend_that_keeps_no_history_still_pages_by_prefix<B: Backe
     assert!(v["prefixes"].as_object().is_some_and(|p| !p.is_empty()), "{out}");
 }
 
+#[test_id(tyne5wz)]
 #[test]
 fn store_usage_hot_and_file_are_served_on_sqlite_and_refused_elsewhere() {
     let hot = |s: &Store<MemBackend>| verbs::run(s, &["store-usage", "--hot", "1"].map(String::from));
@@ -597,6 +604,7 @@ fn store_usage_hot_and_file_are_served_on_sqlite_and_refused_elsewhere() {
     });
 }
 
+#[test_id(tpxclyc)]
 #[test]
 fn store_usage_families_names_each_family_file_size_and_mark_and_flags_the_file_behind_it() {
     use state_store_sqlite::dated::date_of;
@@ -671,6 +679,7 @@ fn a_watch_with_rows_carries_the_lifecycle_rows_its_events_name<B: Backend>(s: &
     assert_eq!(watch_rows(s, &[keys::LIFECYCLE], head)["progress_rev"], head, "a quiet watch carries no rows");
 }
 
+#[test_id(tombj2i)]
 #[test]
 fn a_mem_watch_with_rows_carries_the_lifecycle_rows_its_events_name() {
     on_mem(a_watch_with_rows_carries_the_lifecycle_rows_its_events_name);

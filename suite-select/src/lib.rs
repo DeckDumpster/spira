@@ -4,6 +4,9 @@
 //! Every stage fails closed: a selection that cannot be computed is a [`Refusal`], never an
 //! empty or a whole-corpus selection by accident.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod budget;
 pub mod closure;
 pub mod corpus;

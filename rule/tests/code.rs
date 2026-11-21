@@ -1,5 +1,7 @@
 //! The statute code: the generator's output, the drift check, append numbering, `enact --part`.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 
 use rule::code::{append, drift, generate, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, Merged, Moved, Pointers, Retired};
@@ -33,6 +35,7 @@ fn book(slug: &str) -> Option<String> {
     }
 }
 
+#[test_id(tp7vbg3)]
 #[test]
 fn three_statutes_in_two_parts_generate_the_expected_tree() {
     let _env = testkit::env_read();
@@ -50,12 +53,14 @@ fn three_statutes_in_two_parts_generate_the_expected_tree() {
     assert_eq!(got, want);
 }
 
+#[test_id(thrcxc0)]
 #[test]
 fn toc_renders_to_itself() {
     let _env = testkit::env_read();
     assert_eq!(render_toc(&parse_toc(TOC).unwrap()), TOC);
 }
 
+#[test_id(t1ik5p4)]
 #[test]
 fn a_hand_edit_or_a_stray_file_is_drift() {
     let _env = testkit::env_read();
@@ -78,6 +83,7 @@ fn a_hand_edit_or_a_stray_file_is_drift() {
     assert_eq!(drift(&dir, &tree), vec!["2-beta/index.md: missing"]);
 }
 
+#[test_id(thce0ou)]
 #[test]
 fn append_adds_at_the_end_and_moves_nothing() {
     let _env = testkit::env_read();
@@ -94,6 +100,7 @@ fn append_adds_at_the_end_and_moves_nothing() {
     assert!(grown.contains_key("1-alpha/1.3-law-four.md"));
 }
 
+#[test_id(ta8dgbo)]
 #[test]
 fn append_refuses_an_unknown_part_and_a_slug_in_another_part() {
     let _env = testkit::env_read();
@@ -103,6 +110,7 @@ fn append_refuses_an_unknown_part_and_a_slug_in_another_part() {
     assert_eq!(append(&parts, 1, "law-one").unwrap(), parts, "an amendment keeps its place");
 }
 
+#[test_id(ttzjq4x)]
 #[test]
 fn a_retired_slug_keeps_its_number() {
     let _env = testkit::env_read();
@@ -118,6 +126,7 @@ fn a_retired_slug_keeps_its_number() {
     assert!(!tree["1-alpha/1.1-law-one.md"].contains("[Reserved]"));
 }
 
+#[test_id(tlmtzwi)]
 #[test]
 fn a_retired_slug_leaves_the_toc_and_its_pointer_stays_and_the_later_sections_move() {
     let _env = testkit::env_read();
@@ -134,6 +143,7 @@ fn a_retired_slug_leaves_the_toc_and_its_pointer_stays_and_the_later_sections_mo
     assert_eq!(resolve(&toc, &p, "law-one").unwrap().slug, "law-three");
 }
 
+#[test_id(tsqu5c1)]
 #[test]
 fn a_merged_slug_renders_where_it_went() {
     let _env = testkit::env_read();
@@ -143,6 +153,7 @@ fn a_merged_slug_renders_where_it_went() {
     assert_eq!(tree["1-alpha/1.1-law-one.md"], "# §1.1 law-one\n\n[Merged into §2.1 law-three] Same rule.\n");
 }
 
+#[test_id(tyb9llx)]
 #[test]
 fn pointers_render_to_themselves_and_refuse_what_they_do_not_know() {
     let _env = testkit::env_read();
@@ -163,6 +174,7 @@ fn ptrs(toml_rows: &str) -> Pointers {
     parse_pointers(&format!("version = 1\n{toml_rows}")).unwrap()
 }
 
+#[test_id(tviqcfr)]
 #[test]
 fn a_retired_slug_with_no_replacement_ends_the_chain_with_its_reason() {
     let _env = testkit::env_read();
@@ -172,6 +184,7 @@ fn a_retired_slug_with_no_replacement_ends_the_chain_with_its_reason() {
     assert_eq!(r.retired.unwrap().reason, "Obsolete.");
 }
 
+#[test_id(t1tnnol)]
 #[test]
 fn a_toc_that_drops_a_numbered_slug_is_refused_by_name() {
     let _env = testkit::env_read();
@@ -182,6 +195,7 @@ fn a_toc_that_drops_a_numbered_slug_is_refused_by_name() {
     assert!(record_moves(&old, &toc, &Pointers::default(), "d", &BTreeMap::new()).unwrap().moved.is_empty(), "a slug the store lacks may leave");
 }
 
+#[test_id(t5hy2gr)]
 #[test]
 fn a_move_records_the_old_number_once() {
     let _env = testkit::env_read();
@@ -192,6 +206,7 @@ fn a_move_records_the_old_number_once() {
     assert_eq!(record_moves(&old, &toc, &p, "later", &store(&["law-one", "law-two"])).unwrap(), p);
 }
 
+#[test_id(t545n6i)]
 #[test]
 fn a_slug_in_two_parts_is_refused() {
     let _env = testkit::env_read();
@@ -199,6 +214,7 @@ fn a_slug_in_two_parts_is_refused() {
     assert!(parse_toc(&bad).unwrap_err().contains("law-one"));
 }
 
+#[test_id(tbvbfql)]
 #[test]
 fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesis_stays_in() {
     let _env = testkit::env_read();
@@ -214,6 +230,7 @@ fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesi
     assert_eq!(tree["2-beta/2.1-law-three.md"], "# §2.1 law-three\n\nDo three (per the spec) always. (spa-x: not a bead)\n");
 }
 
+#[test_id(tvatnc8)]
 #[test]
 fn law_submission_runs_queue_submit_with_no_call_timeout_so_the_gate_survives() {
     let _env = testkit::env_read();
@@ -224,6 +241,7 @@ fn law_submission_runs_queue_submit_with_no_call_timeout_so_the_gate_survives() 
     assert_eq!(args, ["submit", "spira/sp-x", "spira"]);
 }
 
+#[test_id(tzslvjp)]
 #[test]
 fn code_check_reports_a_store_slug_the_toc_lacks() {
     let _env = testkit::env_read();
@@ -251,6 +269,7 @@ fn code_check_reports_a_store_slug_the_toc_lacks() {
     assert_eq!(stderr.trim(), "law/: behind the store by 1: law-four");
 }
 
+#[test_id(ttle7bw)]
 #[test]
 fn behind_names_store_slugs_the_toc_and_pointers_do_not_account_for() {
     let _env = testkit::env_read();
@@ -264,6 +283,7 @@ fn store(slugs: &[&str]) -> BTreeMap<String, String> {
     slugs.iter().map(|s| (s.to_string(), format!("Do {s}."))).collect()
 }
 
+#[test_id(tk2i1zn)]
 #[test]
 fn catch_up_appends_every_behind_slug_and_numbers_the_enacted_key_in_its_part() {
     let _env = testkit::env_read();
@@ -287,6 +307,7 @@ fn law_repo() -> testkit::TempDir {
     repo
 }
 
+#[test_id(tuvid42)]
 #[test]
 fn a_second_law_commit_is_cut_on_the_unlanded_first() {
     let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
@@ -308,6 +329,7 @@ fn a_second_law_commit_is_cut_on_the_unlanded_first() {
     assert!(toc.contains("law-four") && toc.contains("law-five"));
 }
 
+#[test_id(tv9jc19)]
 #[test]
 fn the_newest_book_only_tip_is_named_stranded_or_in_flight_by_its_namespace() {
     use rule::code::BookTip;
@@ -323,6 +345,7 @@ fn the_newest_book_only_tip_is_named_stranded_or_in_flight_by_its_namespace() {
     assert_eq!(rule::code::book_tip_ref(repo.path(), "main"), Some(BookTip::InFlight("spira/sp-abc".to_string())));
 }
 
+#[test_id(tsqtftj)]
 #[test]
 fn the_law_book_log_is_watched() {
     let _env = testkit::env_read();
@@ -330,6 +353,7 @@ fn the_law_book_log_is_watched() {
     assert!(rows.lines().any(|l| l.starts_with("law-book|log|")), "no law-book log row in spira/watchers");
 }
 
+#[test_id(thilizv)]
 #[test]
 fn a_law_commit_is_cut_from_the_landing_ref_when_the_unlanded_branch_touches_more_than_the_book() {
     let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
@@ -350,6 +374,7 @@ fn author_env() -> testkit::EnvGuard {
     testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))])
 }
 
+#[test_id(t6y97oy)]
 #[test]
 fn a_branch_whose_statutes_are_on_the_base_is_never_the_tip() {
     use rule::code::LawBranch;
@@ -366,6 +391,7 @@ fn a_branch_whose_statutes_are_on_the_base_is_never_the_tip() {
     assert_eq!(rule::code::law_branches(p, "main"), vec![(branch, LawBranch::InBook)]);
 }
 
+#[test_id(tp5qg6e)]
 #[test]
 fn law_branches_names_the_tip_and_what_it_carries() {
     use rule::code::LawBranch;
@@ -383,6 +409,7 @@ fn law_branches_names_the_tip_and_what_it_carries() {
     assert_eq!(got[&second], LawBranch::Tip);
 }
 
+#[test_id(tm3535a)]
 #[test]
 fn a_branch_adding_a_slug_neither_the_base_nor_the_tip_holds_is_unreconciled() {
     use rule::code::LawBranch;
@@ -406,6 +433,7 @@ fn a_branch_adding_a_slug_neither_the_base_nor_the_tip_holds_is_unreconciled() {
     assert_eq!(got["law/stray"], LawBranch::Unreconciled);
 }
 
+#[test_id(t2df1u9)]
 #[test]
 fn a_dated_provenance_mark_never_reaches_a_rendered_file() {
     let _env = testkit::env_read();
@@ -427,6 +455,7 @@ fn a_dated_provenance_mark_never_reaches_a_rendered_file() {
     }
 }
 
+#[test_id(tiumk2w)]
 #[test]
 fn an_in_flight_toc_slug_that_is_not_a_statute_is_not_carried() {
     let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
@@ -442,6 +471,7 @@ fn an_in_flight_toc_slug_that_is_not_a_statute_is_not_carried() {
     assert!(slugs.contains(&"law-nine".to_string()), "{slugs:?}");
 }
 
+#[test_id(tuajhww)]
 #[test]
 fn seed_texts_carry_no_dated_provenance_whatever_punctuation_follows_it() {
     let _env = testkit::env_read();
@@ -469,6 +499,7 @@ fn seed_texts_carry_no_dated_provenance_whatever_punctuation_follows_it() {
     }
 }
 
+#[test_id(tb9fgx2)]
 #[test]
 fn write_seeds_removes_every_text_that_is_not_a_numbered_statute() {
     let _env = testkit::env_read();
@@ -486,6 +517,7 @@ fn write_seeds_removes_every_text_that_is_not_a_numbered_statute() {
     assert_eq!(names, ["README.md", "law-one.txt", "law-three.txt", "law-two.txt"]);
 }
 
+#[test_id(txi2flw)]
 #[test]
 fn a_law_commit_does_not_inherit_a_stale_seed_from_the_landing_ref() {
     let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
@@ -503,6 +535,7 @@ fn a_law_commit_does_not_inherit_a_stale_seed_from_the_landing_ref() {
     assert!(tree.contains("spira/statutes/law-four.txt"), "{tree}");
 }
 
+#[test_id(tnxn9wt)]
 #[test]
 fn code_check_reads_law_at_the_landing_ref_from_a_directory_that_is_not_a_checkout() {
     let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
@@ -561,6 +594,7 @@ fn code_check_reads_law_at_the_landing_ref_from_a_directory_that_is_not_a_checko
     assert!(String::from_utf8_lossy(&drifted.stderr).contains("law/stray.md: not generated by toc.toml"), "{}", String::from_utf8_lossy(&drifted.stderr));
 }
 
+#[test_id(t8065ft)]
 #[test]
 fn code_without_check_in_a_checkout_with_no_toc_says_to_use_a_worktree_of_the_home_repository() {
     let _env = testkit::env_read();
@@ -571,6 +605,7 @@ fn code_without_check_in_a_checkout_with_no_toc_says_to_use_a_worktree_of_the_ho
     assert!(String::from_utf8_lossy(&out.stderr).contains("run this from a worktree of the home repository"), "{}", String::from_utf8_lossy(&out.stderr));
 }
 
+#[test_id(t2vb8z5)]
 #[test]
 fn one_rename_vocabulary_leaves_the_generated_book_clean_of_retired_terms_runbooks_included() {
     use rule::vocab::{plan, record_renames, Entry};
@@ -631,6 +666,7 @@ fn lint_finds(p: &std::path::Path) -> Vec<spira_lint::Finding> {
     FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&spira_lint::Tree::from_git(p).unwrap()).unwrap()
 }
 
+#[test_id(t8k33lx)]
 #[test]
 fn store_pointers_reads_one_row_per_retirement_record_and_never_a_second_for_a_pointed_slug() {
     let _env = testkit::env_read();
@@ -645,6 +681,7 @@ fn store_pointers_reads_one_row_per_retirement_record_and_never_a_second_for_a_p
     assert_eq!(rule::code::with_store_pointers(Pointers::default(), &held).retired, rows);
 }
 
+#[test_id(tae4qf6)]
 #[test]
 fn code_writes_the_book_the_store_holds_when_a_statute_was_renamed_and_the_old_name_lived_only_on_a_lost_branch() {
     let _env = author_env();
@@ -731,6 +768,7 @@ fn land_from_surviving_branches(p: &std::path::Path, held: &BTreeMap<String, Str
     rule::code::catch_up(&toc, &pointers, held, None, &landed, "2026-11-20").unwrap()
 }
 
+#[test_id(tt3vhsr)]
 #[test]
 fn a_kept_branch_naming_a_statute_renamed_on_a_lost_branch_is_not_carried_into_the_book() {
     let _env = author_env();
@@ -748,6 +786,7 @@ fn a_kept_branch_naming_a_statute_renamed_on_a_lost_branch_is_not_carried_into_t
     assert!(lint_finds(p).is_empty());
 }
 
+#[test_id(t8fpkca)]
 #[test]
 fn a_statute_the_store_lost_with_no_record_leaves_and_the_later_sections_record_their_move() {
     let _env = author_env();

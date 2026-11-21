@@ -23,11 +23,13 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(tsex5s5)]
 #[test]
 fn t1_registered_boots_and_arms_a_6h_tick() {
     t::t1_registered_and_boots::<H>(SET, TICK);
 }
 
+#[test_id(tga32yt)]
 #[test]
 fn t2_a_render_identical_to_the_mirror_touches_and_commits_nothing() {
     let h = t::handler::<H>(SET);
@@ -40,6 +42,7 @@ fn t2_a_render_identical_to_the_mirror_touches_and_commits_nothing() {
     assert!(rig.requested().iter().all(|q| q.name == task::OBSERVE || q.name == task::TOUCH), "{:?}", rig.requested());
 }
 
+#[test_id(tukzr9y)]
 #[test]
 fn t3_rendered_written_committed_published_and_publish_before_committed_is_refused() {
     let h = t::handler::<H>(SET);
@@ -57,12 +60,14 @@ fn t3_rendered_written_committed_published_and_publish_before_committed_is_refus
     assert_eq!((c.phase, c.refused.as_deref(), acts.len()), (Phase::Refused, Some("no-sp"), 0));
 }
 
+#[test_id(t2yxn2b)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_no_spira_lc_or_python3() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/c/sweep_export_beads.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(t24uery)]
 #[test]
 fn t5_a_changed_dump_writes_sorted_by_id_and_a_half_shrink_refuses() {
     let h = t::handler::<H>(SET);
@@ -97,6 +102,7 @@ impl spira_store::lc_call::Transport for Store {
     }
 }
 
+#[test_id(t8lv1ej)]
 #[test]
 fn the_probe_reads_content_in_bounded_id_chunks_never_one_whole_store_dump() {
     let wiki = testkit::TempDir::new("export-beads-chunks");
@@ -112,6 +118,7 @@ fn the_probe_reads_content_in_bounded_id_chunks_never_one_whole_store_dump() {
     }
 }
 
+#[test_id(t82aaq3)]
 #[test]
 fn the_lifecycle_store_is_read_as_cursor_pages_never_as_list_all() {
     let wiki = testkit::TempDir::new("export-beads-pages");
@@ -146,6 +153,7 @@ fn written_but_uncommitted() -> TaskRig {
     r
 }
 
+#[test_id(tpgqmhk)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&written_but_uncommitted(), task::NAME);
@@ -154,6 +162,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(tmxzknp)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(written_but_uncommitted, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));

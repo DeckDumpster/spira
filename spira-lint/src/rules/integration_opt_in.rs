@@ -220,11 +220,13 @@ mod tests {
         IntegrationOptIn::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tsi84x0)]
     #[test]
     fn a_gated_target_passes_and_is_counted() {
         assert_eq!(run(GOOD, &["a/tests/it/main.rs", "a/tests/it/helper.rs"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tljxw38)]
     #[test]
     fn a_gate_on_the_wrong_feature_is_refused() {
         let bad = GOOD.replace("\"integration\"", "\"other\"");
@@ -233,6 +235,7 @@ mod tests {
         assert!(r[0].contains("lacks required-features"), "{r:?}");
     }
 
+    #[test_id(tuiftdh)]
     #[test]
     fn a_path_that_misses_the_target_is_refused_both_ways() {
         let bad = GOOD.replace("tests/it/main.rs", "tests/ti/main.rs");
@@ -241,6 +244,7 @@ mod tests {
         assert!(r.iter().any(|m| m.contains("has no [[test]]")), "{r:?}");
     }
 
+    #[test_id(tqlsxpb)]
     #[test]
     fn autotests_left_on_is_refused() {
         let bad = GOOD.replace("autotests = false\n", "");
@@ -249,6 +253,7 @@ mod tests {
         assert!(r[0].contains("autotests = false"), "{r:?}");
     }
 
+    #[test_id(t327sw0)]
     #[test]
     fn a_flat_target_resolves_by_name_and_a_new_one_is_caught() {
         let m = "[package]\nname = \"a\"\nautotests = false\n\n[[test]]\nname = \"x\"\nrequired-features = [\"integration\"]\n";
@@ -257,6 +262,7 @@ mod tests {
         assert!(r.iter().any(|m| m.contains("tests/y.rs has no [[test]]")), "{r:?}");
     }
 
+    #[test_id(ta0a5i7)]
     #[test]
     fn cargo_lists_the_target_the_rule_accepts_as_gated() {
         let t = TempDir::new("iop-cargo");
@@ -278,6 +284,7 @@ mod tests {
 
     const CLOSED_OK: &str = "[package]\nname = \"a\"\n\n[features]\nintegration = [\"b/integration\", \"c?/integration\"]\n\n[dependencies]\nb = { path = \"../b\" }\nc = { path = \"../c\", optional = true }\n\n[dev-dependencies]\nd = { path = \"../d\" }\n";
 
+    #[test_id(ttjrrtx)]
     #[test]
     fn a_path_dependency_the_feature_does_not_enable_is_refused() {
         let (_, f) = judge_closed("a/Cargo.toml", CLOSED_OK);
@@ -288,6 +295,7 @@ mod tests {
         assert_eq!((n, f.len()), (3, 0));
     }
 
+    #[test_id(tfsx4wi)]
     #[test]
     fn a_tree_with_no_path_dependency_refuses_rather_than_pass() {
         let t = TempDir::new("iclosed");
@@ -296,6 +304,7 @@ mod tests {
         assert!(IntegrationClosed::default().check(&tree).is_err());
     }
 
+    #[test_id(tgrd5sp)]
     #[test]
     fn a_tree_with_no_target_refuses_rather_than_pass() {
         assert!(run(GOOD, &[]).is_err());

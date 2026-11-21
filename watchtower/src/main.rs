@@ -3,6 +3,9 @@
 //! only argv dispatch and environment resolution — every module it calls is independently
 //! unit-tested.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use watchtower::process::{self, getenv, getenv_i64, lib_sh_dir, resolved_incident_sh};
 use watchtower::{host_real, conditions, czar_outcome, deploy_fault, drift, git, load_fence, lock_holders, log, pr_stall, probes, release_skew, sccache_wedge, dolt_drop, slow_query, sweep, throttle};
 
@@ -426,6 +429,7 @@ mod tests {
     /// that. This is the ONLY test in this binary that calls `getenv`/`resolved_config` —
     /// the `OnceLock` inside `resolved_config` computes once per process and never resets,
     /// so a second test with a different fixture could not observe a different answer.
+    #[test_id(thodeme)]
     #[test]
     fn getenv_falls_back_to_the_callers_default_with_no_registry_fallback() {
         let g = testkit::env(&[("SPIRA_TOML", Some("no/such/spira-toml-for-this-test")), ("SPIRA_DISK_WARN_PCT", None)]);
@@ -439,6 +443,7 @@ mod tests {
     }
 
     // covers: UC-landing-merge-queue-12
+    #[test_id(t52snqz)]
     #[test]
     fn world_halted_reads_the_stamp() {
         let dir = testkit::TempDir::new("watchtower-halted");

@@ -1,6 +1,9 @@
 //! mender — what a mender dwarf is given and how it answers (see the library). Run through
 //! `work mender <verb> <spec> ...`; `<spec>` is the failure spec the calls carries.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::io::Read;
 use std::process::Command;
 
@@ -115,6 +118,7 @@ fn main() {
 mod tests {
     use super::outcome_flags;
 
+    #[test_id(tho231t)]
     #[test]
     fn outcome_flags_take_checks_and_ask_in_either_order() {
         assert_eq!(outcome_flags(&["--checks", "crate:x", "--ask", "a1"]).unwrap(), (Some("crate:x"), Some("a1"), vec![]));
@@ -122,11 +126,13 @@ mod tests {
         assert_eq!(outcome_flags(&[]).unwrap(), (None, None, vec![]));
     }
 
+    #[test_id(tbwp7rv)]
     #[test]
     fn outcome_flags_collect_each_member() {
         assert_eq!(outcome_flags(&["--member", "sp-a", "--member", "sp-b"]).unwrap().2, vec!["sp-a", "sp-b"]);
     }
 
+    #[test_id(tnjiz85)]
     #[test]
     fn outcome_flags_refuse_a_missing_or_empty_value_and_an_unknown_flag() {
         assert!(outcome_flags(&["--ask"]).is_err());

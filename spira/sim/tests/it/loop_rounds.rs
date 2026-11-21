@@ -123,6 +123,7 @@ fn stale_round(seed: u64, until: u64, redrive_ends_it: bool) -> (Run, Vec<String
 /// re-drive, so the stale record held it, and nothing landed under the stale round's id. The
 /// queue's half (land acts on the open round, never on an ended record) is
 /// `queue::tests::round::land_acts_on_the_open_round_and_promotes_no_ended_record`.
+#[test_id(t0svndh)]
 #[test]
 fn stale_round_pointer_a_redriven_stale_record_ends_and_the_next_round_certifies_and_lands() {
     let (r, filed) = stale_round(31, 30 * MIN, true);
@@ -146,6 +147,7 @@ fn stale_round_pointer_a_redriven_stale_record_ends_and_the_next_round_certifies
 /// The boundary of the same property: a stale record the re-drive cannot end is never cut over
 /// while it stands. `batcher.local` re-drives it once, then (undriven again past the wait)
 /// abandons it, naming why, and files no incident: no round stays open with nothing driving it.
+#[test_id(tikot08)]
 #[test]
 fn stale_round_pointer_a_stale_record_the_redrive_cannot_end_is_abandoned_after_one_redrive() {
     let (r, filed) = stale_round(32, 20 * MIN, false);
@@ -161,6 +163,7 @@ fn stale_round_pointer_a_stale_record_the_redrive_cannot_end_is_abandoned_after_
 /// `unit.ran` ever comes): the leg is started once more, then the round is abandoned and the
 /// pool is cut again at once, with no wait. Nothing leaves the round open; a repeat is
 /// braked by count (pace tests), never by wall time.
+#[test_id(tz1o6df)]
 #[test]
 fn a_corpus_leg_that_never_runs_is_started_again_once_then_the_round_is_abandoned() {
     let script = Script { beads: vec![Bead::new("sp-lg01", 30_000)], max_concurrent: 1, until: 20 * MIN, ..Script::default() };
@@ -187,6 +190,7 @@ fn a_corpus_leg_that_never_runs_is_started_again_once_then_the_round_is_abandone
 /// A round the queue opened whose `round open` answer never reached the batcher (the call ended
 /// at the open) is still driven: the next tick finds the open round holding exactly its members
 /// and starts its first pass, well inside the outcome wait, and the round lands.
+#[test_id(t7nk32l)]
 #[test]
 fn a_round_whose_open_answer_is_lost_is_driven_by_the_next_tick_and_lands() {
     let script = Script { beads: vec![Bead::new("sp-lo01", 30_000)], max_concurrent: 1, until: 30 * MIN, ..Script::default() };
@@ -226,6 +230,7 @@ fn attribution_land(members: &[(String, String)]) -> String {
 /// `queue::tests::round::certify_ends_red_on_a_lint_red_the_round_vm_recorded_and_re_drives_pass_two`
 /// with `pass_start_from_attributing_starts_the_next_pass_without_a_rebuild` and
 /// `certify_records_a_lint_or_fence_red_that_ended_the_pass_before_any_suite_ran`.
+#[test_id(t7xqqpi)]
 #[test]
 fn attributing_redrive_a_red_early_round_is_redriven_on_its_own_batch_and_lands_its_member() {
     let script = Script { beads: vec![Bead::new("sp-ar01", 30_000)], max_concurrent: 1, until: 40 * MIN, ..Script::default() };
@@ -272,6 +277,7 @@ fn attributing_redrive_a_red_early_round_is_redriven_on_its_own_batch_and_lands_
 /// An attribution leg that ends while its pass scope is still in its post phase: `round certify`
 /// refuses a round whose pass scope is alive, so the batcher starts it only once the scope has
 /// ended, and the round that re-ran green lands without a hand.
+#[test_id(t3okg7d)]
 #[test]
 fn an_attribution_leg_that_ends_while_its_pass_scope_is_finishing_still_lands_the_round() {
     let script = Script { beads: vec![Bead::new("sp-pp01", 30_000)], max_concurrent: 1, until: 40 * MIN, ..Script::default() };
@@ -319,6 +325,7 @@ fn an_attribution_leg_that_ends_while_its_pass_scope_is_finishing_still_lands_th
 /// the VM before the suites, is `round-vm`'s
 /// `run::tests::the_fences_finish_before_the_unit_tier_starts` and
 /// `a_tree_whose_fences_cannot_be_listed_is_refused_before_a_vm_is_taken`.
+#[test_id(td1y8zp)]
 #[test]
 fn fences_in_vm_the_rounds_checks_are_its_unit_legs_and_no_host_fence_or_gate_runs() {
     assert!(!bl::EFFECTS.iter().any(|e| e.contains("fence") || e.contains("gate")), "batcher.local declares no host fence or gate effect: {:?}", bl::EFFECTS);
@@ -351,6 +358,7 @@ fn fences_in_vm_the_rounds_checks_are_its_unit_legs_and_no_host_fence_or_gate_ru
 /// `queue::tests::round::open_certify_land_is_one_round_the_whole_way`, the lock given back by
 /// every round verb in
 /// `each_round_verb_holds_the_queue_lock_only_for_its_own_transition_so_a_hand_abandon_gets_in_at_once`.
+#[test_id(t4giom2)]
 #[test]
 fn run_state_trail_the_landing_names_its_member_after_its_certificate_and_the_publish_is_at_its_head() {
     let script = Script { beads: vec![Bead::new("sp-rs01", 30_000)], max_concurrent: 1, publish: true, until: 40 * MIN, ..Script::default() };
@@ -371,6 +379,7 @@ fn run_state_trail_the_landing_names_its_member_after_its_certificate_and_the_pu
 /// A provisional member (cut while SUBMITTED, its gate still running) whose own gate goes red
 /// minutes into a pass does not stop it: the pass runs to its end without a restart, the round is
 /// not abandoned, and a green pass lands the round with that member in it.
+#[test_id(tdo1ero)]
 #[test]
 fn a_gate_red_recorded_for_a_provisional_member_mid_pass_leaves_the_pass_running_and_a_green_round_lands_it() {
     let script = Script {
@@ -391,6 +400,7 @@ fn a_gate_red_recorded_for_a_provisional_member_mid_pass_leaves_the_pass_running
 
 /// The same red, but the pass ends red: the recorded member is ejected first, with the gate's
 /// mark, before any attribution, and the other member lands from the round cut again.
+#[test_id(tiej985)]
 #[test]
 fn a_red_pass_ejects_the_provisional_member_whose_gate_went_red_first_and_the_other_lands() {
     let red = loopworld::VerdictAt { at: 3 * MIN, bead: "sp-gr03".into(), verdict: loopworld::Verdict::Red };

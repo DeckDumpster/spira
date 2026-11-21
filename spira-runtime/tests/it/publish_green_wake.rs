@@ -48,6 +48,7 @@ impl EffectRunner for Runner {
     }
 }
 
+#[test_id(tmemipj)]
 #[test]
 fn a_green_standing_publish_pr_is_settled_within_one_queue_step_tick() {
     let clock = VirtualClock::new(NOW);

@@ -283,6 +283,7 @@ mod tests {
 
     const REG: &str = "spira/conf.d/SPIRA_HOME_REPO";
 
+    #[test_id(t1evqy3)]
     #[test]
     fn the_sp_6gsvrm_settings_file_is_caught_at_the_read_and_not_at_the_test_stub() {
         let t = fixture("");
@@ -292,6 +293,7 @@ mod tests {
         assert!(!got.iter().any(|f| f.contains("settings.rs:98:")), "{got:?}");
     }
 
+    #[test_id(tdnx369)]
     #[test]
     fn shell_names_are_caught_in_code_and_not_in_comments() {
         let t = fixture("");
@@ -311,6 +313,7 @@ mod tests {
         }
     }
 
+    #[test_id(tifls5q)]
     #[test]
     fn test_scripts_are_out_of_scope_and_unit_files_are_read_outside_comments() {
         let t = fixture("");
@@ -322,6 +325,7 @@ mod tests {
         assert!(got[0].starts_with("config-key-registered: systemd/a.service:2: SPIRA_UNIT_KEY "), "{got:?}");
     }
 
+    #[test_id(tn63gea)]
     #[test]
     fn a_rust_literal_is_a_name_and_a_comment_or_fragment_is_not() {
         let t = fixture("");
@@ -335,6 +339,7 @@ mod tests {
         assert!(got[1].contains("a/src/main.rs:2: SPIRA_RAW"), "{got:?}");
     }
 
+    #[test_id(tg15x3l)]
     #[test]
     fn a_name_is_allowed_only_in_the_file_it_is_listed_for_and_a_stale_line_is_a_finding() {
         let t = fixture("SPIRA_ENV_ONLY a/src/main.rs\nSPIRA_ENV_ONLY gone/src/lib.rs\nbroken\n");
@@ -347,6 +352,7 @@ mod tests {
         assert!(got.iter().any(|f| f.contains(&format!("{ALLOW}:2:")) && f.contains("remove the line")), "{got:?}");
     }
 
+    #[test_id(t6n5u3d)]
     #[test]
     fn an_empty_registry_is_a_refusal_and_a_clean_tree_reports_how_much_it_checked() {
         let t = TempDir::new("ckr-noreg");
@@ -361,6 +367,7 @@ mod tests {
         assert_eq!(r.checked(), Some((1, "names".to_string())));
     }
 
+    #[test_id(t35kmkv)]
     #[test]
     fn render_allow_round_trips() {
         let t = fixture("");
@@ -372,6 +379,7 @@ mod tests {
         assert!(ConfigKeyRegistered::new().check(&tree).unwrap().is_empty());
     }
 
+    #[test_id(tl6saec)]
     #[test]
     fn a_cfg_parse_literal_split_across_lines_is_caught_at_its_own_line() {
         let t = fixture("");
@@ -384,6 +392,7 @@ mod tests {
         assert!(got.iter().any(|f| f.contains("main.rs:3: SPIRA_NO_SUCH_TOO")), "{got:?}");
     }
 
+    #[test_id(tnqj8g2)]
     #[test]
     fn the_shipped_seed_lists_no_reconciler_read() {
         let seed = include_str!("../../config-key-registered-allow");

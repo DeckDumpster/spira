@@ -251,6 +251,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2xipdj)]
     #[test]
     fn unset_defaults_to_a_quarter_of_cores_clamped() {
         let m = maxpar(&inp(8, 64_000, None));
@@ -265,6 +266,7 @@ mod tests {
     /// hardware bound (32), and with two gates plus one testenv run concurrent, each
     /// claiming the whole box, that put 61 containers and load 90 on one host. Unset must
     /// resolve to a small, host-derived default — never the hardware ceiling.
+    #[test_id(tg8locc)]
     #[test]
     fn unset_never_resolves_to_the_hardware_ceiling() {
         let m = maxpar(&inp(32, 64_000, None));
@@ -276,6 +278,7 @@ mod tests {
         );
     }
 
+    #[test_id(tk7g8tf)]
     #[test]
     fn memory_bound_when_memory_is_short() {
         // (2048 - 1024) / 192 = 5
@@ -283,12 +286,14 @@ mod tests {
         assert_eq!((m.value, m.binding), (5, Binding::Memory));
     }
 
+    #[test_id(tqd5oxv)]
     #[test]
     fn budget_never_drops_below_one_suite() {
         let m = maxpar(&inp(32, 100, None));
         assert_eq!(m.value, 1);
     }
 
+    #[test_id(tn9cw1w)]
     #[test]
     fn ceiling_raises_the_cpu_term() {
         // The ceiling raises `hardware` (the term an explicit override clamps against) —
@@ -300,6 +305,7 @@ mod tests {
         assert_eq!(maxpar(&i).hardware, 8);
     }
 
+    #[test_id(td2u22n)]
     #[test]
     fn override_is_a_ceiling_and_a_non_positive_request_falls_back_to_the_default() {
         assert_eq!(
@@ -340,6 +346,7 @@ mod tests {
         peak
     }
 
+    #[test_id(t4y9r3a)]
     #[test]
     fn sim_lane_jobs_split_off_in_order_and_exclusive_stays() {
         let mk = |n: &str, lane: Option<&str>, ex: bool| Job {
@@ -358,6 +365,7 @@ mod tests {
         assert_eq!(names(&sim), ["a", "d"]);
     }
 
+    #[test_id(thskp6q)]
     #[test]
     fn heavy_suites_in_lpt_order_never_exceed_the_pids_budget() {
         let jobs: Vec<Job> = (0..40).map(|i| heavy(&format!("s{i}"), 1500, None)).collect();
@@ -366,6 +374,7 @@ mod tests {
         assert!(peak_weight(&jobs, Admission::new(32, pids_budget(), 0)) <= pids_budget());
     }
 
+    #[test_id(tzi008a)]
     #[test]
     fn a_suite_heavier_than_the_budget_runs_alone() {
         let mut adm = Admission::new(4, 100, 0);
@@ -377,6 +386,7 @@ mod tests {
         assert!(adm.fits(&heavy("small", 1, None)));
     }
 
+    #[test_id(t1c53m7)]
     #[test]
     fn a_lane_has_its_own_slots_and_leaves_the_pool_free() {
         let mut adm = Admission::new(8, 0, 2);
@@ -389,6 +399,7 @@ mod tests {
         assert!(adm.fits(&sim));
     }
 
+    #[test_id(ttv5mc3)]
     #[test]
     fn given_keeps_the_callers_order_with_exclusive_first() {
         let j = |n: &str, x: bool| Job::new(n, x.then(|| "x".into()));
@@ -397,6 +408,7 @@ mod tests {
         assert_eq!(names, ["x", "c", "a", "b"], "no re-sorting: the caller's order stands");
     }
 
+    #[test_id(tf7o48l)]
     #[test]
     fn exclusive_first_then_longest_first_with_unmeasured_as_longest() {
         let jobs = vec![
@@ -414,6 +426,7 @@ mod tests {
         assert_eq!(names, vec!["x", "new", "b", "c", "a"]);
     }
 
+    #[test_id(tm8bura)]
     #[test]
     fn no_history_keeps_selection_order() {
         let jobs = vec![job("a", false), job("b", false), job("c", false)];

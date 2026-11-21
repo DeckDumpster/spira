@@ -314,6 +314,7 @@ mod tests {
         Event { id: EventId(id.into()), stream: StreamKey(stream.into()), kind, at, cause: cause.map(|c| EventId(c.into())), correlation: CorrelationId("c".into()) }
     }
 
+    #[test_id(t73z0bz)]
     #[test]
     fn readers_parse_like_the_script_first_line_wins() {
         let r = cfg().readers;
@@ -324,6 +325,7 @@ mod tests {
 
     // covers: UC-operator-channel-10
 
+    #[test_id(t65939z)]
     #[test]
     fn unread_mail_is_one_wake_with_the_scripts_line_and_nothing_unread_is_silence() {
         let look = Look { mailbox: "concierge".into(), attempt: 2, new_dir: "m/concierge/new".into() };
@@ -336,6 +338,7 @@ mod tests {
 
     // covers: UC-operator-channel-10
 
+    #[test_id(tmfdqf5)]
     #[test]
     fn the_backoff_steps_then_repeats_its_last() {
         let c = cfg();
@@ -344,6 +347,7 @@ mod tests {
 
     // covers: UC-operator-channel-10
 
+    #[test_id(tszmjkc)]
     #[test]
     fn an_arrival_settles_then_the_due_looks_then_the_look_wakes_then_the_outcome_rearms() {
         let c = cfg();
@@ -387,6 +391,7 @@ mod tests {
 
     // covers: UC-operator-channel-10
 
+    #[test_id(t15m6ok)]
     #[test]
     fn the_sweep_looks_at_every_registered_mailbox_at_the_slowest_step_and_rearms() {
         let c = cfg();
@@ -402,6 +407,7 @@ mod tests {
         assert!(cmds.iter().any(|c| matches!(c, Command::Timer { at: 901_000, kind } if kind.tag == BOOT)), "the sweep re-arms one last step later");
     }
 
+    #[test_id(t5dhz4x)]
     #[test]
     fn an_unregistered_mailbox_is_never_woken() {
         let s = mail_arrived::stream("stranger");
@@ -411,6 +417,7 @@ mod tests {
         assert!(cfg().handle(&Ctx::new(0, 0), &view, &arrived).is_empty());
     }
 
+    #[test_id(tcyub8e)]
     #[test]
     fn the_look_counts_new_files_and_the_oldest_age_and_a_missing_dir_is_nothing() {
         let d = testkit::TempDir::new("mail-wake");
@@ -434,6 +441,7 @@ mod tests {
         }
     }
 
+    #[test_id(tdwt70i)]
     #[test]
     fn the_wake_runs_the_readers_own_command_under_its_deadline_and_says_why_it_failed() {
         let w = Wake { mailbox: "concierge".into(), attempt: 0, argv: vec!["concierge.sh".into(), "wake".into(), "line".into()] };

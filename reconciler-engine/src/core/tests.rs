@@ -6,6 +6,7 @@ fn gap(desired: &str, observed: &str) -> RawStatus {
 
 // law-absence-needs-a-positive-control: prove satisfied stays satisfied before every
 // gap/unobservable/hysteresis case below.
+#[test_id(tzgswqp)]
 #[test]
 fn satisfied_stays_satisfied() {
     let (v, st) = step(0, RawStatus::Satisfied, 60, HysteresisState::default());
@@ -16,6 +17,7 @@ fn satisfied_stays_satisfied() {
     assert_eq!(st, HysteresisState::default());
 }
 
+#[test_id(trpns9v)]
 #[test]
 fn unobservable_is_never_reported_as_satisfied() {
     let raw = RawStatus::Unobservable { reason: "forge call failed".into() };
@@ -32,6 +34,7 @@ fn unobservable_is_never_reported_as_satisfied() {
     assert!(v2.is_gap, "an unobservable input still counts toward the remedy ladder once past grace");
 }
 
+#[test_id(t7oa2ss)]
 #[test]
 fn gap_inside_grace_period_raises_nothing() {
     let raw = gap("green", "red");
@@ -44,6 +47,7 @@ fn gap_inside_grace_period_raises_nothing() {
     assert_eq!(v2.since, Some(1000));
 }
 
+#[test_id(t8uzua1)]
 #[test]
 fn gap_outside_grace_period_counts() {
     let raw = gap("green", "red");
@@ -53,6 +57,7 @@ fn gap_outside_grace_period_counts() {
     assert_eq!(v.since, Some(1000), "since-when is when it first went bad, not when grace expired");
 }
 
+#[test_id(tx0sqcx)]
 #[test]
 fn since_hint_overrides_first_noticed_time() {
     // A queued-since timestamp from the forge is the true since-when, even on the pass
@@ -63,6 +68,7 @@ fn since_hint_overrides_first_noticed_time() {
     assert!(v.is_gap);
 }
 
+#[test_id(txstjqp)]
 #[test]
 fn one_clean_pass_closes_a_gap() {
     let raw = gap("green", "red");
@@ -76,6 +82,7 @@ fn one_clean_pass_closes_a_gap() {
     assert_eq!(st2, HysteresisState::default(), "state resets once closed");
 }
 
+#[test_id(t7fqckn)]
 #[test]
 fn a_flap_does_not_close_early_but_a_real_recovery_does() {
     // Grace 300s: gap, gap, gap — never closes on its own from repeated gaps.
@@ -87,6 +94,7 @@ fn a_flap_does_not_close_early_but_a_real_recovery_does() {
     assert!(!v2.just_closed);
 }
 
+#[test_id(t9p0wtc)]
 #[test]
 fn remedy_that_closes_its_gap_is_not_flagged_failed() {
     let raw = gap("running", "stopped");
@@ -101,6 +109,7 @@ fn remedy_that_closes_its_gap_is_not_flagged_failed() {
     assert_eq!(next, HysteresisState::default());
 }
 
+#[test_id(t5ouky0)]
 #[test]
 fn remedy_that_does_not_close_its_gap_escalates_on_the_next_pass() {
     let raw = gap("running", "stopped");
@@ -115,6 +124,7 @@ fn remedy_that_does_not_close_its_gap_escalates_on_the_next_pass() {
     assert_eq!(last_remedy(&next), None, "the failed attempt marker is cleared for a fresh attempt");
 }
 
+#[test_id(ta1wfys)]
 #[test]
 fn remedy_marker_does_not_leak_across_a_fresh_streak() {
     let raw = gap("running", "stopped");
@@ -129,6 +139,7 @@ fn remedy_marker_does_not_leak_across_a_fresh_streak() {
 
 // Replay test: a single sequence of synthetic observations, asserting the full trace of
 // is_gap/just_closed/remedy_failed matches what the design's hysteresis rules predict.
+#[test_id(tdhqcy7)]
 #[test]
 fn replay_grace_in_then_remedy_then_flap_then_real_recovery() {
     let grace = 120u64;

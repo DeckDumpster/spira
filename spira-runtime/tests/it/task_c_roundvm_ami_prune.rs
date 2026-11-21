@@ -18,16 +18,19 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(tg50ypw)]
 #[test]
 fn t1_registered_boots_and_arms_the_next_0630() {
     t::t1_registered_and_boots::<H>(SET, AT_0630);
 }
 
+#[test_id(tcsurt6)]
 #[test]
 fn t2_two_round_images_within_keep_are_the_probe_alone() {
     t::t2_silent::<H>(SET, &json(&Snapshot { stores: vec![image(1, "r1"), image(2, "r2")], current_recipe: "r2".into(), ..Snapshot::default() }));
 }
 
+#[test_id(tlma1h9)]
 #[test]
 fn t3_an_image_is_deregistered_then_its_snapshots_deleted_and_the_reverse_is_refused() {
     let h = t::handler::<H>(SET);
@@ -40,12 +43,14 @@ fn t3_an_image_is_deregistered_then_its_snapshots_deleted_and_the_reverse_is_ref
     assert!(refused.contains("planned"), "{refused}");
 }
 
+#[test_id(tqfm80j)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_nothing() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/c/roundvm_ami_prune.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(tmw73a1)]
 #[test]
 fn t5_the_fake_ec2_fixture_plans_ami_0_and_deregisters_it_first() {
     let h = t::handler::<H>(SET);
@@ -78,6 +83,7 @@ fn deregistered_with_snapshots_left() -> TaskRig {
     r
 }
 
+#[test_id(t0thq66)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&deregistered_with_snapshots_left(), task::NAME);
@@ -86,6 +92,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(tswkpzd)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(deregistered_with_snapshots_left, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));

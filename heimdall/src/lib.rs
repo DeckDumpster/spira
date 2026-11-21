@@ -1,5 +1,8 @@
 //! heimdall — the watchdog over the loop. See DESIGN.md.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod alerts;
 pub mod conditions;
 pub mod classify;

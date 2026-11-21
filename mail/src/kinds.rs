@@ -102,6 +102,7 @@ mod tests {
 
     // covers: UC-operator-channel-03
 
+    #[test_id(tt142g0)]
     #[test]
     fn requires_is_read_only_from_the_frontmatter() {
         let k = parse(QUESTION);
@@ -109,6 +110,7 @@ mod tests {
         assert_eq!(k.sections, vec!["Question".to_string(), "Default".to_string()]);
     }
 
+    #[test_id(tfwli7a)]
     #[test]
     fn a_kind_with_no_requires_line_requires_nothing() {
         let k = parse(NOTE);
@@ -116,21 +118,25 @@ mod tests {
         assert_eq!(k.sections, vec!["Note".to_string()]);
     }
 
+    #[test_id(t1n1rk6)]
     #[test]
     fn section_empty_true_when_heading_absent() {
         assert!(section_empty("Note", "## Other\n\ncontent\n"));
     }
 
+    #[test_id(t7ssqsh)]
     #[test]
     fn section_empty_true_when_heading_has_only_blank_lines() {
         assert!(section_empty("Note", "## Note\n\n\n## Next\ncontent\n"));
     }
 
+    #[test_id(tka8tmv)]
     #[test]
     fn section_empty_false_when_content_present() {
         assert!(!section_empty("Note", "## Note\n\nSome content here.\n"));
     }
 
+    #[test_id(te1f4jy)]
     #[test]
     fn section_empty_stops_at_the_next_heading() {
         assert!(!section_empty("Note", "## Note\n\nok\n\n## Next\n"));

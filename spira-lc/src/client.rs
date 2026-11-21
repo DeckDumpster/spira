@@ -115,27 +115,30 @@ pub(crate) fn exchange(stream: std::os::unix::net::UnixStream, args: &[String], 
 mod tests {
     /// The admin verbs carry their own (superuser) credentials: forwarding one to the service
     /// would run it as the service user instead (see try_socket).
+    #[test_id(twn8y1h)]
     #[test]
     fn admin_verbs_never_go_through_the_socket() {
         for verb in ["admin-create-store", "admin-drop-lifecycle", "admin-store", "admin-provision-reader", "admin-provision-writer", "serve"] {
-            assert!(super::try_socket(&[verb.to_string(), "x".to_string()]).is_none(), "{verb}");
+            assert!(super::super::try_socket(&[verb.to_string(), "x".to_string()]).is_none(), "{verb}");
         }
     }
 
+    #[test_id(tm42klz)]
     #[test]
     fn a_list_carrying_an_old_snapshot_flag_still_reaches_the_service() {
         let dir = testkit::TempDir::new("lc-client-flag");
         let path = dir.join("a-file").join("sock");
         std::fs::write(dir.join("a-file"), "").unwrap();
         let args: Vec<String> = ["list", "--live", "--snapshot"].map(String::from).to_vec();
-        let (code, out) = super::route_call(&args, Ok(super::Route::Service(path.to_str().unwrap().into()))).expect("a routed call is answered");
+        let (code, out) = super::super::route_call(&args, Ok(super::super::Route::Service(path.to_str().unwrap().into()))).expect("a routed call is answered");
         assert_eq!(code, 2, "{out}");
         assert!(out.contains(path.to_str().unwrap()), "the call reached the socket: {out}");
     }
 
+    #[test_id(tlqu1im)]
     #[test]
     fn only_a_declared_empty_socket_means_direct_and_a_config_failure_is_never_direct() {
-        use super::{route_of, Route};
+        use super::super::{route_of, Route};
         assert_eq!(route_of(Ok(String::new())), Ok(Route::Direct));
         assert_eq!(route_of(Ok("  ".into())), Ok(Route::Direct));
         assert_eq!(route_of(Ok("run/user/1000/spira-lc/sock".into())), Ok(Route::Service("run/user/1000/spira-lc/sock".into())));
@@ -145,22 +148,24 @@ mod tests {
 
     /// sp-yvyvzd: a declared socket nothing answers is the service down — exit 2 naming it,
     /// never `None` (which the CLI reads as "open your own connection").
+    #[test_id(tyk3x5m)]
     #[test]
     fn a_declared_socket_that_does_not_answer_fails_naming_the_service() {
         let dir = testkit::TempDir::new("lc-client-down");
         std::fs::write(dir.join("a-file"), "").unwrap();
         let path = dir.join("a-file").join("sock");
-        let (code, out) = super::forward(path.to_str().unwrap(), &["show".to_string(), "sp-x".to_string()]);
+        let (code, out) = super::super::forward(path.to_str().unwrap(), &["show".to_string(), "sp-x".to_string()]);
         assert_eq!(code, 2, "{out}");
         assert!(out.starts_with("cannot tell") && out.contains("not answering") && out.contains(path.to_str().unwrap()), "names the socket: {out}");
     }
 
+    #[test_id(txaf0bp)]
     #[test]
     fn an_absent_socket_is_store_not_running_after_its_wait() {
         let dir = testkit::TempDir::new("lc-client-not-running");
         let path = dir.join("no-such.sock");
         let wait = std::time::Duration::from_millis(200);
-        let (code, out, _) = super::forward_within(path.to_str().unwrap(), &["hold".to_string(), "sp-a".to_string()], None, wait, wait);
+        let (code, out, _) = super::super::forward_within(path.to_str().unwrap(), &["hold".to_string(), "sp-a".to_string()], None, wait, wait);
         assert_eq!(code, 2, "{out}");
         assert!(out.contains("store not running") && out.contains("nothing was sent") && out.contains(path.to_str().unwrap()), "{out}");
     }
@@ -175,11 +180,12 @@ mod tests {
         (client, h)
     }
 
+    #[test_id(tpaj84r)]
     #[test]
     fn a_lost_reply_is_cannot_tell_never_a_fallback() {
         for reply in [&b""[..], b"not json\n", b"{\"exit_code\":0}\n", b"{\"exit_code\":0,\"len\":9}\nshort"] {
             let (client, h) = serve_once(reply);
-            let (code, out, _) = super::exchange(client, &["close".to_string()], None);
+            let (code, out, _) = super::super::exchange(client, &["close".to_string()], None);
             h.join().unwrap();
             assert_eq!(code, 2, "{reply:?}");
             assert!(out.starts_with("cannot tell"), "{out}");
@@ -206,26 +212,29 @@ mod tests {
         (dir, path.to_str().unwrap().to_string(), seen)
     }
 
+    #[test_id(twfdev9)]
     #[test]
     fn a_read_dropped_by_a_restarting_service_is_answered_on_the_next_try() {
         let (_dir, path, seen) = flaky_socket(2);
-        let (code, out, _) = super::forward_with(&path, &["content".to_string(), "list".to_string()], None);
+        let (code, out, _) = super::super::forward_with(&path, &["content".to_string(), "list".to_string()], None);
         assert_eq!((code, out.as_str()), (0, "ok"));
         assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
+    #[test_id(txkvb5p)]
     #[test]
     fn a_write_dropped_by_a_restarting_service_is_cannot_tell_after_one_attempt() {
         let (_dir, path, seen) = flaky_socket(1);
-        let (code, out, _) = super::forward_with(&path, &["hold".to_string(), "sp-a".to_string()], None);
+        let (code, out, _) = super::super::forward_with(&path, &["hold".to_string(), "sp-a".to_string()], None);
         assert!(code == 2 && out.starts_with("cannot tell"), "{out}");
         assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
+    #[test_id(tmbx0ld)]
     #[test]
     fn a_whole_reply_is_passed_through() {
         let (client, h) = serve_once(b"{\"exit_code\":3,\"len\":2}\nhi");
-        assert_eq!(super::exchange(client, &["x".to_string()], None), (3, "hi".to_string(), String::new()));
+        assert_eq!(super::super::exchange(client, &["x".to_string()], None), (3, "hi".to_string(), String::new()));
         h.join().unwrap();
     }
 }

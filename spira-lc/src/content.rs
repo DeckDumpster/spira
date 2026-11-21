@@ -508,6 +508,7 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::BTreeMap;
 
+    #[test_id(tgs1bm7)]
     #[test]
     fn a_filing_under_a_parent_or_of_a_closed_insight_is_served() {
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -540,6 +541,7 @@ mod tests {
         a.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(toq6vwd)]
     #[test]
     fn a_tick_driven_caller_is_refused_the_whole_history_with_exit_3_named() {
         let whole = argv(&["list", "--all", "--limit", "0", "--json"]);
@@ -550,6 +552,7 @@ mod tests {
         }
     }
 
+    #[test_id(thccm0f)]
     #[test]
     fn other_callers_and_bounded_reads_are_not_refused() {
         let whole = argv(&["list", "--all", "--limit", "0", "--json"]);
@@ -560,6 +563,7 @@ mod tests {
         assert!(refuse_whole_history(&argv(&["list", "--all", "--limit", "0", "--label-any", "x"]), "spira-runtime").is_some(), "a label can match every bead");
     }
 
+    #[test_id(tdz7i4e)]
     #[test]
     fn purge_alerts_reports_dry_then_exports_before_deleting_and_a_second_run_changes_nothing() {
         let dir = testkit::TempDir::new("purge-alerts");
@@ -587,6 +591,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "a second run writes nothing");
     }
 
+    #[test_id(tsnm452)]
     #[test]
     fn purge_alerts_deletes_nothing_when_bd_cannot_be_read() {
         let dir = testkit::TempDir::new("purge-alerts-down");
@@ -599,6 +604,7 @@ mod tests {
         s.iter().map(|x| x.to_string()).collect()
     }
 
+    #[test_id(tjwb0yg)]
     #[test]
     fn reads_and_the_task_writes_pass() {
         for (ok, kind) in [
@@ -654,6 +660,7 @@ mod tests {
         }
     }
 
+    #[test_id(tbi3kzl)]
     #[test]
     fn a_read_the_door_does_not_serve_is_refused_naming_its_exit() {
         for (args, exit) in [
@@ -668,6 +675,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2pqr1d)]
     #[test]
     fn every_other_write_is_refused() {
         for bad in [
@@ -793,6 +801,7 @@ mod tests {
 
     const WHOLE_ASK: &str = "## Question\nWhich?\nDefault: a\nClass: policy\n";
 
+    #[test_id(t6kbgrx)]
     #[test]
     fn the_content_guard_reaches_bdqs_verdict_on_every_write() {
         let with_override = |mut c: BTreeMap<String, String>| {
@@ -945,6 +954,7 @@ mod tests {
     /// A case: its name, persona, repo, body and the caller's variables.
     type Filing<'a> = (&'a str, &'a str, Option<&'a str>, String, BTreeMap<String, String>);
 
+    #[test_id(t3hfwau)]
     #[test]
     fn a_filing_is_refused_through_the_socket_with_the_text_bead_sh_refuses_it_with() {
         const SPEC: &str = "## Build\nthe artifact, and where\n";
@@ -989,6 +999,7 @@ mod tests {
         assert!(refusal("contract cannot tell").1.contains("cannot tell"));
     }
 
+    #[test_id(tcrkbg3)]
     #[test]
     fn an_admitted_override_is_recorded_ahead_of_the_filings_body() {
         let env = caller(&[("BEAD_CROSS_REPO_CONSIDERED", "shared kit"), ("BEAD_STATUTE_CONSIDERED", "n/a")]);
@@ -1002,6 +1013,7 @@ mod tests {
         assert!(args.last().unwrap().starts_with("Statute check: law-y\n\n## Build"), "{args:?}");
     }
 
+    #[test_id(t2j14eb)]
     #[test]
     fn a_create_that_names_no_personas_partition_is_not_a_filing() {
         let env = caller(&[]);
@@ -1012,6 +1024,7 @@ mod tests {
         }
     }
 
+    #[test_id(tdrw90v)]
     #[test]
     fn a_partition_label_is_refused_through_the_socket_with_the_text_bead_sh_refuses_it_with() {
         let parts = filing_policy().partitions();
@@ -1030,6 +1043,7 @@ mod tests {
         );
     }
 
+    #[test_id(txchrd4)]
     #[test]
     fn text_written_onto_a_bead_meets_its_repos_identity_and_the_statutes() {
         let none = caller(&[]);
@@ -1045,6 +1059,7 @@ mod tests {
         assert_eq!((overridden.0, overridden.2.as_deref()), (Ok(()), Some("Cross-repo considered: kit\n\npokedex")));
     }
 
+    #[test_id(t6bhfjc)]
     #[test]
     fn the_door_serves_a_description_replacement_only_from_the_request_body() {
         assert_eq!(check(&v(&["update", "sp-a", "--body-file", "-"])), Ok(Kind::Write { body: true }));
@@ -1052,6 +1067,7 @@ mod tests {
         assert!(takes_body(&v(&["update", "sp-a", "--body-file", "-"])));
     }
 
+    #[test_id(tdss33k)]
     #[test]
     fn a_claimed_bead_refuses_a_description_replacement_through_the_door() {
         let held = serde_json::json!({"bead_id": "sp-a", "state": "WORKING", "holder": "dwarf-sp-a", "lease_until": NOW + 600});
@@ -1074,6 +1090,7 @@ mod tests {
         run(&v(args), &mut body, &mut gd, &mut no_after, &|_| Ok(String::new()), &ran)
     }
 
+    #[test_id(t112293)]
     #[test]
     fn a_blocks_edge_onto_an_epic_or_an_incident_is_refused_through_the_door() {
         let ran = std::cell::Cell::new(false);
@@ -1094,6 +1111,7 @@ mod tests {
         assert!(!ran.get(), "a refused edge never reaches bd");
     }
 
+    #[test_id(tko20w0)]
     #[test]
     fn a_dep_add_through_the_door_is_mirrored_to_the_lifecycle_store() {
         let mut m = Recorder(Vec::new());
@@ -1107,6 +1125,7 @@ mod tests {
         assert!(m.0.iter().all(|c| !c[0].starts_with("dep-")), "a relate is no lifecycle edge: {:?}", m.0);
     }
 
+    #[test_id(ti183ag)]
     #[test]
     fn a_dep_mirror_the_machine_refuses_is_reported_and_bds_write_stands() {
         struct Down;
@@ -1119,6 +1138,7 @@ mod tests {
         assert!(report.contains("dep-add sp-a -> sp-b is in bd but was not mirrored") && report.contains("store down"), "{report}");
     }
 
+    #[test_id(ttdn3pq)]
     #[test]
     fn a_forced_edit_through_the_door_is_acknowledged() {
         let held = serde_json::json!({"bead_id": "sp-a", "state": "WORKING", "holder": "dwarf-sp-a", "lease_until": NOW + 600});
@@ -1147,6 +1167,7 @@ mod tests {
         assert_eq!(wrote.len(), 3);
     }
 
+    #[test_id(t2v185t)]
     #[test]
     fn a_force_flag_on_an_unheld_bead_never_reaches_bd() {
         let env = caller(&[]);
@@ -1159,6 +1180,7 @@ mod tests {
         assert!(g.forced.take().is_none());
     }
 
+    #[test_id(t9naqf3)]
     #[test]
     fn every_variable_the_filing_contract_reads_reaches_the_service() {
         for var in bead::filing::VARS {
@@ -1166,6 +1188,7 @@ mod tests {
         }
     }
 
+    #[test_id(to43vbg)]
     #[test]
     fn an_overridden_state_write_is_admitted_and_logged() {
         let env = caller(&[("SPIRA_BDQ_STATE_WRITE", "landing")]);
@@ -1177,6 +1200,7 @@ mod tests {
         );
     }
 
+    #[test_id(tz0xzkq)]
     #[test]
     fn a_guard_refusal_is_the_answer_and_bd_never_runs() {
         let never_w = |_: &[String], _: Option<&str>| -> Result<String, String> { panic!("bd must not run") };
@@ -1199,6 +1223,7 @@ mod tests {
         assert_eq!((ans.code, ans.stdout.as_str()), (0, "read"), "a read is never guarded");
     }
 
+    #[test_id(t4j1yzx)]
     #[test]
     fn a_claimed_beads_assignee_clear_is_judged_as_bdq_judges_it() {
         let held = serde_json::json!({"bead_id": "sp-a", "state": "WORKING", "holder": "dwarf-sp-a", "lease_until": NOW + 600});
@@ -1211,6 +1236,7 @@ mod tests {
         }
     }
 
+    #[test_id(tspf3vb)]
     #[test]
     fn a_gate_discover_runs_bd_in_the_registered_repo_root() {
         let ask = || Ok::<_, String>(ASK.to_string());
@@ -1233,6 +1259,7 @@ mod tests {
         assert_eq!(ran.borrow().len(), 1, "an unregistered name writes nothing");
     }
 
+    #[test_id(tt1dz7p)]
     #[test]
     fn a_remembered_text_is_bds_last_argument_and_the_door_refuses_to_write_the_watermark() {
         let mut args = v(&["remember", "--key", "k"]);
@@ -1244,6 +1271,7 @@ mod tests {
         assert!(check(&v(&["kv", "set", crate::plan::KV_KEY, "1"])).unwrap_err().contains("planning watermark"));
     }
 
+    #[test_id(tot8gfj)]
     #[test]
     fn the_new_writes_reach_bd_with_bdqs_argv_and_a_remembered_body_last() {
         let ask = || Ok::<_, String>(ASK.to_string());
@@ -1317,6 +1345,7 @@ mod tests {
         m.0.into_iter().filter(|a| a[0] == "create-bead").collect()
     }
 
+    #[test_id(tlojpvj)]
     #[test]
     fn a_created_beads_row_carries_the_repo_its_labels_name() {
         let named = rows_written_after(&["create", "T", "--labels", "plan,repo:deck,x"]);
@@ -1325,6 +1354,7 @@ mod tests {
         assert_eq!(bare, [v(&["create-bead", "sp-new", "--ready"])], "no repo label, no repo");
     }
 
+    #[test_id(t1jb2wl)]
     #[test]
     fn a_lifecycle_write_that_fails_after_bd_applied_is_reported_with_bds_answer() {
         let w = |_: &[String], _: Option<&str>| Ok::<_, String>("sp-new\n".to_string());
@@ -1339,6 +1369,7 @@ mod tests {
         assert_eq!((ans.code, ans.stderr.as_str()), (1, "bd: down\n"));
     }
 
+    #[test_id(t6zwirf)]
     #[test]
     fn run_refuses_before_calling_bd() {
         let never = |_: &[String]| -> Result<String, crate::composed::ReadError> { panic!("bd must not run") };

@@ -8,6 +8,7 @@ fn ui(argv: &[&str], image: Option<&str>) -> Ui {
     Ui { argv: argv.iter().map(|s| s.to_string()).collect(), image: image.map(String::from), dir: None, timeout: None }
 }
 
+#[test_id(ttolyhs)]
 #[test]
 fn the_playwright_dir_is_the_first_that_holds_a_config() {
     let t = dir("find");
@@ -20,6 +21,7 @@ fn the_playwright_dir_is_the_first_that_holds_a_config() {
     assert_eq!(playwright_dir(t.path(), Some("nowhere")), None);
 }
 
+#[test_id(tsdvt8d)]
 #[test]
 fn the_version_comes_from_the_lock_before_the_range() {
     let t = dir("ver");
@@ -32,6 +34,7 @@ fn the_version_comes_from_the_lock_before_the_range() {
     assert_eq!(playwright_version(t.path()), None);
 }
 
+#[test_id(td40vi9)]
 #[test]
 fn the_image_is_pinned_to_the_version_unless_declared() {
     assert_eq!(image_for(None, Some("1.57.2")).unwrap(), "mcr.microsoft.com/playwright:v1.57.2-noble");
@@ -39,6 +42,7 @@ fn the_image_is_pinned_to_the_version_unless_declared() {
     assert!(image_for(None, None).is_err());
 }
 
+#[test_id(ta81yrd)]
 #[test]
 fn a_declared_argv_replaces_the_default() {
     let gone = dir("argv").join("nonexistent");
@@ -47,6 +51,7 @@ fn a_declared_argv_replaces_the_default() {
     assert_eq!(argv_for(Some(&ui(&["serve"], None)), &gone, "d"), vec!["serve".to_string()]);
 }
 
+#[test_id(t080iz5)]
 #[test]
 fn a_dir_holding_run_sh_runs_it_not_a_bare_playwright() {
     let d = testkit::TempDir::new("ui-run-sh");
@@ -57,6 +62,7 @@ fn a_dir_holding_run_sh_runs_it_not_a_bare_playwright() {
     assert!(argv_for(None, &d, "tests/visual")[2].contains("npx playwright test"));
 }
 
+#[test_id(t9zhre9)]
 #[test]
 fn a_spec_that_could_be_a_flag_or_a_command_is_refused() {
     for bad in ["--update-snapshots", "a; rm -rf /", "$(x)", ""] {

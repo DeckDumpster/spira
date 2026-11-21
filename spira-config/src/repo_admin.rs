@@ -708,6 +708,7 @@ mod tests {
             .map(|p| p.name)
     }
 
+    #[test_id(txwf3lf)]
     #[test]
     fn unregistered_is_named_first() {
         let f = fx();
@@ -726,6 +727,7 @@ mod tests {
         }
     }
 
+    #[test_id(tc1utlg)]
     #[test]
     fn set_gate_to_empty_reads_back_empty_and_reports_old_and_new() {
         let f = fx();
@@ -738,6 +740,7 @@ mod tests {
         assert_eq!(r.root("fixture").as_deref(), Some("srv/fx"));
     }
 
+    #[test_id(t7d1mba)]
     #[test]
     fn set_refuses_an_unknown_field_and_leaves_the_map_alone() {
         let f = fx();
@@ -748,6 +751,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&f.map).unwrap(), before);
     }
 
+    #[test_id(tvm5znw)]
     #[test]
     fn set_refuses_an_unregistered_name_and_bad_values() {
         let f = fx();
@@ -761,6 +765,7 @@ mod tests {
         assert!(set("fixture", "queue", "forge", &t).is_err());
     }
 
+    #[test_id(tzam1ri)]
     #[test]
     fn rm_drops_only_the_named_row() {
         let f = fx();
@@ -773,6 +778,7 @@ mod tests {
         assert!(rm("fixture", &t).is_err());
     }
 
+    #[test_id(tofcl2v)]
     #[test]
     fn reap_dead_checks_removes_only_the_dead_pids_tree() {
         let d = testkit::TempDir::new("repo-check-reap");
@@ -795,6 +801,7 @@ mod tests {
         repo
     }
 
+    #[test_id(the9gp9)]
     #[test]
     fn a_locked_check_worktree_is_removed_when_its_guard_drops() {
         let d = testkit::TempDir::new("wt-locked");
@@ -807,6 +814,7 @@ mod tests {
         assert!(!listed.contains("repo-check-"), "{listed}");
     }
 
+    #[test_id(tpoeamc)]
     #[test]
     fn a_dead_pids_locked_check_registration_is_pruned_by_the_next_cut() {
         let d = testkit::TempDir::new("wt-dead-locked");
@@ -825,6 +833,7 @@ mod tests {
         assert!(!listed.contains("repo-check-"), "{listed}");
     }
 
+    #[test_id(togag7w)]
     #[test]
     fn a_failed_cut_leaves_no_check_worktree_listed() {
         let d = testkit::TempDir::new("wt-failed");
@@ -836,6 +845,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
     }
 
+    #[test_id(ttf72r7)]
     #[test]
     fn worktree_root_is_under_the_run_dir_not_temp() {
         let d = testkit::TempDir::new("repo-check-root");
@@ -844,6 +854,7 @@ mod tests {
         assert!(root.starts_with(d.path()));
     }
 
+    #[test_id(tm4kdy4)]
     #[test]
     fn a_zombie_pid_is_not_alive() {
         // SAFETY: the child calls only async-signal-safe `_exit`.
@@ -867,6 +878,7 @@ mod tests {
         assert!(!alive);
     }
 
+    #[test_id(tjdtfrf)]
     #[test]
     fn a_kept_check_tree_is_reported_with_its_reason() {
         let d = testkit::TempDir::new("repo-check-kept");
@@ -881,6 +893,7 @@ mod tests {
         assert!(lines[1].starts_with("repo-check: kept ") && lines[1].ends_with("repo-check-222-2 (pid 222 still running)"), "{lines:?}");
     }
 
+    #[test_id(tjfqc12)]
     #[test]
     fn a_stat_line_is_gone_only_in_state_z_or_x() {
         assert!(stat_state_is_gone("5 (a) b) Z 1 2"));

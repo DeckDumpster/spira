@@ -102,6 +102,7 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(tdkl46j)]
     #[test]
     fn longest_first_by_mean_history_with_batch_rows_ignored() {
         let h = [
@@ -117,6 +118,7 @@ mod tests {
         assert!(o.unmeasured.is_empty());
     }
 
+    #[test_id(tow7i3h)]
     #[test]
     fn an_unmeasured_suite_goes_first_and_is_named() {
         let h = [row("test-a.sh", 5), row("test-b.sh", 50)].concat();
@@ -125,12 +127,14 @@ mod tests {
         assert_eq!(o.unmeasured, names(&["test-new.sh"]));
     }
 
+    #[test_id(t3sc4ye)]
     #[test]
     fn no_history_at_all_is_every_suite_unmeasured_not_alphabetical_silence() {
         let o = longest_first(&names(&["test-a.sh", "test-b.sh"]), "");
         assert_eq!(o.unmeasured.len(), 2);
     }
 
+    #[test_id(tirdyl9)]
     #[test]
     fn an_incomplete_list_refuses_and_names_the_missing() {
         let tree = names(&["test-a.sh", "test-b.sh"]);
@@ -139,6 +143,7 @@ mod tests {
         assert!(covers(&tree, &names(&["test-b.sh", "test-a.sh"])).is_ok());
     }
 
+    #[test_id(teysb3q)]
     #[test]
     fn expected_secs_sums_the_mean_wall_of_the_named_suites_and_skips_the_unrecorded() {
         let h = format!("{}{}{}", row("a.sh", 10), row("a.sh", 20), row("b.sh", 7));

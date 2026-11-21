@@ -289,6 +289,7 @@ mod tests {
         TimeOnlyWait.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tbfzdja)]
     #[test]
     fn a_sleep_then_proceed_and_an_expiring_stamp_are_flagged() {
         let t = TempDir::new("tow-fail");
@@ -309,6 +310,7 @@ mod tests {
         );
     }
 
+    #[test_id(tndfnbg)]
     #[test]
     fn a_capped_poll_on_a_named_condition_ticks_markers_and_tests_pass() {
         let t = TempDir::new("tow-pass");
@@ -325,6 +327,7 @@ mod tests {
         assert_eq!(run(&t, &files).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tfn1335)]
     #[test]
     fn an_uncapped_poll_is_flagged() {
         let t = TempDir::new("tow-uncapped");
@@ -333,6 +336,7 @@ mod tests {
         assert_eq!(run(&t, &["spira/w.sh"]).unwrap(), vec![format!("time-only-wait: spira/w.sh:3: {UNCAPPED_POLL}")]);
     }
 
+    #[test_id(tm0qu7b)]
     #[test]
     fn a_counted_allowance_passes_and_a_stale_or_malformed_one_is_refused() {
         let t = TempDir::new("tow-allow");
@@ -347,6 +351,7 @@ mod tests {
         assert!(run(&t, &["spira/old.sh"]).is_err());
     }
 
+    #[test_id(t0i6cih)]
     #[test]
     fn no_candidate_files_is_a_refusal() {
         let t = TempDir::new("tow-empty");

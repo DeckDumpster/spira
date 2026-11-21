@@ -11,8 +11,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["bead/integration", "mail/integration", "reconciler-engine/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-world/integration", "testkit/integration", "tsd/integration", "system-paths/integration"]
-
+integration = ["bead/integration", "mail/integration", "reconciler-engine/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-world/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 bead = { path = "../bead" }
@@ -40,6 +39,7 @@ name = "incident-stub-bd"
 path = "src/bin/incident-stub-bd.rs"
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [profile.release]

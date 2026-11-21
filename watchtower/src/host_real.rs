@@ -123,6 +123,7 @@ pub fn pass(now: u64, cfg: &Cfg, run: &Path) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    #[test_id(tr94if0)]
     #[test]
     fn the_count_is_read_from_the_line_that_carries_the_verb() {
         let out = "target-reap: removed 3 stale foreign-cache run dir(s)\nidle: target-reap: would remove 20 target dir(s), 4 MiB (sp-a)\n";

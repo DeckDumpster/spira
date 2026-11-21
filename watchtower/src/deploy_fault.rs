@@ -195,6 +195,7 @@ pub fn run(now: i64, queue_dir: &Path, run_dir: &Path, db: &str, home_repo: &str
 mod tests {
     use super::*;
 
+    #[test_id(t4lj8r0)]
     #[test]
     fn parses_head_and_reason_and_rejects_garbage() {
         assert_eq!(parse("abc123 release build exited 1\n"), Some(("abc123", "release build exited 1")));
@@ -223,6 +224,7 @@ mod tests {
     /// sp-6ugk85: a release left accepted and unactivated (its landing's activation was lost)
     /// is activated by the next check, from the release's own binary, and the marker clears.
     /// A retry stamp left by an earlier fault does not hold back a new head's first retry.
+    #[test_id(tlvprq0)]
     #[test]
     fn an_accepted_release_left_unactivated_is_activated_by_the_next_check() {
         let t = testkit::TempDir::new("deploy-fault-activate");
@@ -244,6 +246,7 @@ mod tests {
         assert!(!queue.join("spira/deploy-fault").exists(), "a successful activation clears the marker");
     }
 
+    #[test_id(tt4ggk8)]
     #[test]
     fn the_alarm_title_names_the_repo_the_release_and_the_first_failed_unit() {
         let head = "0123456789abcdef0123456789abcdef01234567";
@@ -254,11 +257,13 @@ mod tests {
         );
     }
 
+    #[test_id(tmm4efp)]
     #[test]
     fn a_why_naming_no_unit_is_cut_to_200_chars() {
         assert_eq!(first_failure(&"x".repeat(300)).len(), 200);
     }
 
+    #[test_id(tsvlx2a)]
     #[test]
     fn a_retry_stamp_counts_only_for_the_head_it_names() {
         assert_eq!(last_attempt("abc 100", "abc"), Some(100));
@@ -266,6 +271,7 @@ mod tests {
         assert_eq!(last_attempt("100", "abc"), None);
     }
 
+    #[test_id(tw08y34)]
     #[test]
     fn retry_waits_out_the_interval() {
         assert!(retry_due(None, 100, 1800));

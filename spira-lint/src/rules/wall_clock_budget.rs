@@ -146,6 +146,7 @@ mod tests {
     const SH_MSG: &str = "shell test compares a measured duration against a constant";
     const RS_MSG: &str = "test asserts a measured duration against a constant";
 
+    #[test_id(tzyr3ra)]
     #[test]
     fn duration_budgets_are_caught_naming_file_and_line() {
         let t = TempDir::new("wcb-fail");
@@ -173,6 +174,7 @@ mod tests {
         );
     }
 
+    #[test_id(t1gy5yt)]
     #[test]
     fn counts_rows_lower_bounds_perf_paths_and_non_test_code_pass() {
         let t = TempDir::new("wcb-pass");
@@ -193,6 +195,7 @@ mod tests {
         );
     }
 
+    #[test_id(ts5a28w)]
     #[test]
     fn a_listed_exception_passes_and_a_stale_one_is_refused() {
         let t = TempDir::new("wcb-allow");
@@ -205,6 +208,7 @@ mod tests {
         );
     }
 
+    #[test_id(tafuvfd)]
     #[test]
     fn no_candidate_files_is_a_refusal() {
         let t = TempDir::new("wcb-empty");

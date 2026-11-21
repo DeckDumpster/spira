@@ -50,6 +50,7 @@ pub fn holds(run: &Path, prereq: &str, tip: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test_id(tukhhm0)]
     #[test]
     fn a_marker_holds_for_its_tip_and_lapses_when_the_tip_moves() {
         let d = testkit::TempDir::new("stack-conflict");
@@ -59,6 +60,7 @@ mod tests {
         assert!(!holds(d.path(), "sp-a", "t2"), "a rebased prerequisite is free again");
     }
 
+    #[test_id(t6uxm76)]
     #[test]
     fn an_old_marker_lapses_though_its_tip_never_moved() {
         let d = testkit::TempDir::new("stack-conflict-old");

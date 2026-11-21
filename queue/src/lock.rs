@@ -302,6 +302,7 @@ mod tests {
 
     /// A forked child holds a copy of every descriptor until its exec closes it, and flock
     /// belongs to the open file description that copy shares: a duplicate stands in for one.
+    #[test_id(t18fi98)]
     #[test]
     fn a_dropped_lock_is_free_while_a_forked_copy_of_its_descriptor_lives() {
         let d = tmpdir("lockfork");
@@ -322,6 +323,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2ou1hf)]
     #[test]
     fn second_taker_is_refused_until_the_first_drops() {
         let d = tmpdir("lock");
@@ -332,6 +334,7 @@ mod tests {
         assert!(matches!(try_lock(&d, "spira"), Acquire::Held(_)));
     }
 
+    #[test_id(t9f5zxp)]
     #[test]
     fn a_verb_s_hold_of_the_queue_lock_is_recorded_taken_then_released_and_nothing_else_is() {
         let d = tmpdir("lockhold");
@@ -365,6 +368,7 @@ mod tests {
         );
     }
 
+    #[test_id(to1k34r)]
     #[test]
     fn a_recording_queue_lock_holder_beats_until_it_drops() {
         let d = tmpdir("lockbeat");
@@ -386,6 +390,7 @@ mod tests {
         drop(b);
     }
 
+    #[test_id(teu9tuh)]
     #[test]
     fn a_recorded_holder_is_named_while_held_and_cleared_on_drop() {
         let d = tmpdir("lockholder");
@@ -406,6 +411,7 @@ mod tests {
         drop(b);
     }
 
+    #[test_id(t15rlf6)]
     #[test]
     fn a_batch_certify_lock_is_per_batch_and_names_its_holder() {
         let d = tmpdir("certlock");
@@ -430,6 +436,7 @@ mod tests {
         ));
     }
 
+    #[test_id(t3lnw9w)]
     #[test]
     fn an_ended_rounds_certify_lock_is_removed_unless_another_process_holds_it() {
         let d = tmpdir("certrm");
@@ -459,6 +466,7 @@ mod tests {
         drop((held, ours));
     }
 
+    #[test_id(t8c0pu3)]
     #[test]
     fn the_step_lock_is_a_different_file_from_the_queue_lock() {
         let d = tmpdir("steplock");

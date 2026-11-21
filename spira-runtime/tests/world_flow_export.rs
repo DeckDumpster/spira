@@ -1,12 +1,15 @@
 //! `World::flow_snapshot` brings the exporter up to the lifecycle log by asking spira-lc only for
 //! the log's head revision, never for a walk of every event.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
 
 use runtime::RuntimeError;
 use spira_runtime::world::World;
 
+#[test_id(t5qrh17)]
 #[test]
 fn the_flow_export_asks_for_the_event_head_and_not_the_whole_log() {
     let dir = testkit::TempDir::new("world-flow-export");
@@ -59,6 +62,7 @@ fn pass_with_failing_check(exported: u64) -> (serde_json::Value, String) {
     (snap, std::fs::read_to_string(ran).unwrap_or_default())
 }
 
+#[test_id(tlcv79n)]
 #[test]
 fn a_current_checkpoint_still_runs_the_check_and_a_failed_check_blinds_the_pass() {
     let (snap, ran) = pass_with_failing_check(7);
@@ -66,6 +70,7 @@ fn a_current_checkpoint_still_runs_the_check_and_a_failed_check_blinds_the_pass(
     assert!(snap["export"]["Err"].as_str().is_some_and(|e| e.contains("check: exit 1") && e.contains("trails the log")), "{snap}");
 }
 
+#[test_id(t8cvgpz)]
 #[test]
 fn a_run_that_exported_the_log_is_still_refused_when_the_check_fails() {
     let (snap, ran) = pass_with_failing_check(3);

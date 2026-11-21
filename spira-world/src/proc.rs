@@ -62,6 +62,7 @@ mod tests {
         v
     }
 
+    #[test_id(tw7vi50)]
     #[test]
     fn argv_has_matches_exact_element_only() {
         let c = cmdline(&["bash", "-c", "echo /opt/x/spira/dwarf.sh"]);
@@ -71,6 +72,7 @@ mod tests {
         assert!(argv_has(&c2, &["opt/x/spira/dwarf.sh"]));
     }
 
+    #[test_id(t4fwb4d)]
     #[test]
     fn argv_has_is_immune_to_operator_discussing_the_path() {
         // The scar world.sh's own comment names: a shell whose -c text merely mentions the
@@ -79,6 +81,7 @@ mod tests {
         assert!(!argv_has(&c, &["prod/dwarf.sh"]));
     }
 
+    #[test_id(tjmtuqp)]
     #[test]
     fn live_workers_finds_gate_and_landing_pass() {
         let d = testkit::TempDir::new("proc-live-workers");
@@ -89,6 +92,7 @@ mod tests {
         assert_eq!(found, vec!["55".to_string()]);
     }
 
+    #[test_id(tu0fwyt)]
     #[test]
     fn excluded_work_services_cover_loom_and_watchers() {
         assert!(is_excluded_work_service("spira-loom-prod.service", "-prod"));
@@ -112,6 +116,7 @@ pub fn signal(pid: &str, sig: i32) -> bool {
 mod signal_tests {
     use super::*;
 
+    #[test_id(tm8z9ik)]
     #[test]
     fn signal_reaches_a_live_child_and_refuses_groups_and_junk() {
         let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();

@@ -50,6 +50,7 @@ pub fn read(events: &str) -> Vec<Tier> {
 mod tests {
     use super::*;
 
+    #[test_id(tjy8sr6)]
     #[test]
     fn a_suite_event_with_a_tier_status_is_a_tier() {
         let t = read("10 phase setup\n11 suite gate RED\n12 suite build ok\n13 suite lint FAULT\n14 verdict RED -");
@@ -57,6 +58,7 @@ mod tests {
         assert_eq!(got, [("gate", Status::Red), ("build", Status::Ok), ("lint", Status::Fault)]);
     }
 
+    #[test_id(ty2i5r2)]
     #[test]
     fn lines_that_are_no_tier_record_name_nothing() {
         for l in ["", "11 suite gate", "11 suite gate bogus", "11 suite gate ok extra", "11 phase gate", "suite gate ok"] {

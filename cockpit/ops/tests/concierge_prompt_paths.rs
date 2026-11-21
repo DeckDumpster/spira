@@ -1,6 +1,8 @@
 //! Every command path the Concierge prompt gives under `{{COCKPIT}}/` or `{{SPIRA_HOME}}/`
 //! must name a file the release ships.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -57,6 +59,7 @@ fn unresolved(prompt: &str, root: &Path) -> Vec<String> {
     bad
 }
 
+#[test_id(taec350)]
 #[test]
 fn concierge_prompt_names_only_paths_the_release_ships() {
     let root = repo_root();
@@ -65,6 +68,7 @@ fn concierge_prompt_names_only_paths_the_release_ships() {
     assert!(bad.is_empty(), "\n{}\n", bad.join("\n"));
 }
 
+#[test_id(tu0q0ze)]
 #[test]
 fn the_check_resolves_a_shipped_bin_and_refuses_a_missing_cockpit_script() {
     let root = repo_root();

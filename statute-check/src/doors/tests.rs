@@ -6,6 +6,7 @@ fn root() -> std::path::PathBuf {
     spira_config::resolve::checkout_root_for_process().unwrap()
 }
 
+#[test_id(txvgsx2)]
 #[test]
 fn every_usage_in_the_registry_is_verbatim_in_the_tool_that_prints_it() {
     let reg = parse(REGISTRY).unwrap();
@@ -19,6 +20,7 @@ fn every_usage_in_the_registry_is_verbatim_in_the_tool_that_prints_it() {
     assert!(checked >= 6, "the check must have had something to check, saw {checked}");
 }
 
+#[test_id(ttiurki)]
 #[test]
 fn glob_stops_a_star_at_a_path_part_and_lets_a_leading_star_slash_cross() {
     assert!(glob("*/rounds-pace/*/pause", "r/x/run/rounds-pace/spira/pause"));
@@ -29,6 +31,7 @@ fn glob_stops_a_star_at_a_path_part_and_lets_a_leading_star_slash_cross() {
     assert!(!glob("refs/heads/spira/*", "refs/heads/spiral"));
 }
 
+#[test_id(tqak1ui)]
 #[test]
 fn every_resource_names_a_way_to_be_touched_and_a_sentence_of_scar() {
     let reg = parse(REGISTRY).unwrap();

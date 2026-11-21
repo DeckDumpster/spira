@@ -56,6 +56,7 @@ pub fn now_epoch() -> u64 {
 mod tests {
     use super::*;
 
+    #[test_id(tbu9rh9)]
     #[test]
     fn override_parses_numeric_and_rejects_the_rest() {
         assert_eq!(override_from(Some("1700000000")), Some(1_700_000_000));
@@ -64,6 +65,7 @@ mod tests {
         assert_eq!(override_from(None), None);
     }
 
+    #[test_id(tgvpavw)]
     #[test]
     fn now_epoch_reads_the_override_and_falls_back_to_the_wall() {
         assert_eq!(with_now_for_test(42, now_epoch), 42);

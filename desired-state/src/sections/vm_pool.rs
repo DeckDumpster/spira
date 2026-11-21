@@ -104,6 +104,7 @@ mod tests {
         })
     }
 
+    #[test_id(tpd16qm)]
     #[test]
     fn the_kind_admits_a_term_whose_distance_sums_both_shares_over_their_targets() {
         let s = parse_section(&section(status(), json!([]))).unwrap();
@@ -112,6 +113,7 @@ mod tests {
         assert!((s.distance_value(kind).unwrap().unwrap() - 0.28).abs() < 1e-9);
     }
 
+    #[test_id(tnxxrla)]
     #[test]
     fn a_share_under_its_target_adds_no_distance() {
         let mut st = status();
@@ -121,6 +123,7 @@ mod tests {
         assert_eq!(s.distance_value(admit_publish(&s).unwrap()).unwrap().unwrap(), 0.0);
     }
 
+    #[test_id(te0lbo2)]
     #[test]
     fn a_field_the_kind_does_not_declare_is_refused_by_name() {
         let mut st = status();
@@ -129,6 +132,7 @@ mod tests {
         assert!(r.rule.contains("free_slots"), "{r:?}");
     }
 
+    #[test_id(tdh01xd)]
     #[test]
     fn the_shipped_spec_seeds_both_targets_and_the_distance_follows_them() {
         let fragment = crate::producer::parse_fragment(include_str!("../../examples/vm-pool.toml")).unwrap();

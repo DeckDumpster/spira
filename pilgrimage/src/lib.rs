@@ -1,6 +1,9 @@
 //! The pilgrimage workflow: the recorded machine, its file store, the OTLP points each move
 //! pushes, and the clean-close hand-off to the Concierge.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod machine;
 pub mod store;
 

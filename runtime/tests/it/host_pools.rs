@@ -76,6 +76,7 @@ fn count(j: &dyn Journal, tag: &str) -> usize {
     runtime::conformance::trace(j).iter().filter(|t| t.2 == tag).count()
 }
 
+#[test_id(t9vl57p)]
 #[tokio::test]
 async fn a_full_class_defers_records_it_and_runs_the_effect_later() {
     let j: Arc<dyn Journal> = MemJournal::new();
@@ -108,6 +109,7 @@ async fn a_full_class_defers_records_it_and_runs_the_effect_later() {
     assert!(status.classes.iter().all(|c| c.class != "host" || c.refusals == 0), "{:?}", status.classes);
 }
 
+#[test_id(tcmyptr)]
 #[tokio::test]
 async fn a_deferred_effect_is_offered_again_only_when_a_slot_frees_not_on_idle_turns() {
     let j: Arc<dyn Journal> = MemJournal::new();
@@ -145,6 +147,7 @@ impl EffectRunner for Named {
     }
 }
 
+#[test_id(tazpky0)]
 #[tokio::test]
 async fn the_live_host_names_the_registered_task_to_the_runner() {
     let j: Arc<dyn Journal> = MemJournal::new();
@@ -159,6 +162,7 @@ async fn the_live_host_names_the_registered_task_to_the_runner() {
     assert_eq!(*runner.0.lock().unwrap(), ["builds"]);
 }
 
+#[test_id(td7o6vb)]
 #[test]
 fn a_deferred_effect_is_lost_at_a_restart_and_never_runs_again() {
     let j: Arc<dyn Journal> = MemJournal::new();

@@ -440,6 +440,7 @@ mod tests {
         move |f| incident::alarm_outcome(&cfg.incident_sh, f)
     }
 
+    #[test_id(tpbw9tb)]
     #[test]
     fn the_stranded_finding_lists_each_bead_with_how_long_it_has_been_stranded() {
         assert_eq!(stranded_ages("sp-a=370 sp-b=61", ""), "  sp-a — 6m10s\n  sp-b — 1m01s");
@@ -466,6 +467,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27
+    #[test_id(tud1yaf)]
     #[test]
     fn a_question_mark_never_fires_the_unsent_escalation() {
         let d = testkit::TempDir::new("wt-escalate-unsent-unknown");
@@ -476,6 +478,7 @@ mod tests {
         assert!(!d.join("captured.txt").exists());
     }
 
+    #[test_id(tpcdzjw)]
     #[test]
     fn a_missing_incident_sh_never_panics_it_just_skips() {
         let d = testkit::TempDir::new("wt-escalate-missing-inc");
@@ -490,6 +493,7 @@ mod tests {
         std::fs::read_to_string(d.join("captured.txt")).unwrap_or_default()
     }
 
+    #[test_id(teyv1id)]
     #[test]
     fn a_failed_unit_is_tracked_only_when_the_content_door_names_a_live_bead() {
         let d = testkit::TempDir::new("wt-escalate-lc");
@@ -509,6 +513,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27
+    #[test_id(t5xzi83)]
     #[test]
     fn drain_escalation_is_silent_when_not_draining_or_the_age_is_unreadable() {
         let d = testkit::TempDir::new("wt-esc-drain-quiet");
@@ -520,6 +525,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-07 UC-ops-detection-remediation-27
+    #[test_id(tqz67af)]
     #[test]
     fn the_draining_escalation_is_filed_fenrir_exempt() {
         let d = testkit::TempDir::new("wt-esc-drain-exempt");
@@ -545,6 +551,7 @@ mod tests {
         captured(&d)
     }
 
+    #[test_id(tudp2ms)]
     #[test]
     fn batched_stranded_is_silent_at_zero_and_at_a_question_mark() {
         assert!(file_one("wt-esc-bs0", batched_stranded, &[("SP_BATCHED_STRANDED", "0")]).is_empty());
@@ -567,12 +574,14 @@ mod tests {
         raised
     }
 
+    #[test_id(t7gspqm)]
     #[test]
     fn a_bead_the_machine_no_longer_holds_in_delivery_is_not_alarmed() {
         let (_, lc) = crate::lc::scripted::scripted_by(&[("list --state IN_DELIVERY", 0, "[]")]);
         assert!(stranded_raised("wt-esc-bs-landed", "sp-landed", "sp-landed=400", lc).is_empty());
     }
 
+    #[test_id(tfx6n95)]
     #[test]
     fn only_the_beads_still_in_delivery_are_named_in_the_title_and_body() {
         let (_, lc) = crate::lc::scripted::scripted_by(&[("list --state IN_DELIVERY", 0, r#"[{"bead_id":"sp-stuck","tip":"t","since":1}]"#)]);
@@ -584,12 +593,14 @@ mod tests {
         assert!(raised[0].body.contains("IN_DELIVERY branches: 1"), "{}", raised[0].body);
     }
 
+    #[test_id(txl7o09)]
     #[test]
     fn a_lifecycle_that_does_not_answer_files_no_stranded_alarm() {
         let (_, lc) = crate::lc::scripted::scripted(2, "cannot tell");
         assert!(stranded_raised("wt-esc-bs-fault", "sp-a", "sp-a=400", lc).is_empty());
     }
 
+    #[test_id(tzks5lf)]
     #[test]
     fn batched_too_long_is_silent_at_zero_and_at_a_question_mark() {
         assert!(file_one("wt-esc-bl0", batched_too_long, &[("SP_BATCHED_TOO_LONG", "0")]).is_empty());
@@ -597,12 +608,14 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27
+    #[test_id(tmp48sh)]
     #[test]
     fn unadopted_refs_is_silent_at_zero_and_at_a_question_mark() {
         assert!(file_one("wt-esc-un0", unadopted_refs, &[("SP_UNADOPTED", "0")]).is_empty());
         assert!(file_one("wt-esc-unq", unadopted_refs, &[("SP_UNADOPTED", "?")]).is_empty());
     }
 
+    #[test_id(t0fpne9)]
     #[test]
     fn gate_slow_files_the_deadline_it_was_configured_with() {
         let d = testkit::TempDir::new("wt-esc-gslow");
@@ -622,6 +635,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27
+    #[test_id(txgo7zt)]
     #[test]
     fn an_unread_oldest_unsent_is_silent_even_at_a_zero_threshold() {
         let d = testkit::TempDir::new("wt-esc-unsent0");
@@ -647,6 +661,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27
+    #[test_id(ty4tm13)]
     #[test]
     fn the_hel_escalation_files_at_the_configured_threshold_under_one_stable_ref() {
         let at = |h: &str, warn: i64| raised("wt-esc-hel", hel_oldest_unsent, &|d, c| {
@@ -663,6 +678,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27
+    #[test_id(tyoathu)]
     #[test]
     fn the_closed_stranded_escalation_prescribes_the_per_bead_dry_run_not_the_cursor_resumed_one() {
         let filed = raised("wt-esc-stranded", closed_stranded, &|d, c| {
@@ -680,6 +696,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27
+    #[test_id(tcct3iq)]
     #[test]
     fn the_dedup_escalation_files_on_any_duplicate_ref_and_never_on_zero_or_a_question_mark() {
         let with = |refs: &str| raised("wt-esc-dedup", dedup_meter, &|d, _| {
@@ -695,6 +712,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-27
+    #[test_id(trfyis8)]
     #[test]
     fn the_drain_escalation_files_at_the_configured_threshold_and_not_below_it() {
         let at = |mins: i64, warn: i64| raised("wt-esc-drain-at", drain_escalation, &|d, c| {

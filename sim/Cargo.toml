@@ -30,8 +30,7 @@ path = "tests/it/main.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["lifecycle/integration", "reconciler-engine/integration", "runtime/integration", "spira-config/integration", "spira-desired-state/integration", "spira-lc/integration", "spira-otel/integration", "spira-runtime/integration", "state-store/integration", "testkit/integration"]
-
+integration = ["lifecycle/integration", "reconciler-engine/integration", "runtime/integration", "spira-config/integration", "spira-desired-state/integration", "spira-lc/integration", "spira-otel/integration", "spira-runtime/integration", "state-store/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 serde = { version = "1", features = ["derive"] }
@@ -45,6 +44,7 @@ state-store = { path = "../state-store" }
 reconciler-engine = { path = "../reconciler-engine" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 spira-runtime = { path = "../spira-runtime" }
 lifecycle = { path = "../lifecycle" }
 testkit = { path = "../testkit" }

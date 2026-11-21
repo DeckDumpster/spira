@@ -151,6 +151,7 @@ mod tests {
     const T0: u64 = 1_800_000_000;
     const REL: &str = "wiki/projects/zed/designs/alpha.md";
 
+    #[test_id(t5otx1p)]
     #[test]
     fn an_uncovered_draft_is_told_once_per_repeat_window_with_its_age() {
         let s = snap(vec![page(REL, "draft")], "");
@@ -161,6 +162,7 @@ mod tests {
         assert!(again[0].contains("no open ask for 5h"), "{again:?}");
     }
 
+    #[test_id(tz5t8f3)]
     #[test]
     fn a_page_is_covered_by_path_slug_or_artifact_url_and_only_draft_or_review_counts() {
         let mut with_url = page(REL, "in-review");
@@ -172,6 +174,7 @@ mod tests {
         assert!(decide(&cfg(), &Carry::default(), &snap(vec![page(REL, "approved")], ""), T0).1.is_empty());
     }
 
+    #[test_id(tys1ppk)]
     #[test]
     fn a_page_that_gains_an_ask_loses_its_clock() {
         let (c, _) = decide(&cfg(), &Carry::default(), &snap(vec![page(REL, "draft")], ""), T0);
@@ -179,6 +182,7 @@ mod tests {
         assert!(c.since.is_empty());
     }
 
+    #[test_id(tzwjqun)]
     #[test]
     fn a_failure_is_said_once_and_never_read_as_no_designs() {
         let bad = Snapshot { failure: Some("the brain is gone".into()), ..Snapshot::default() };
@@ -189,6 +193,7 @@ mod tests {
         assert_eq!(decide(&cfg(), &c, &bad, T0 + 3).1.len(), 1, "a recovered watcher says its next failure");
     }
 
+    #[test_id(tkmwdjf)]
     #[test]
     fn a_failed_tick_keeps_the_clocks_of_pages_already_told() {
         let (c, _) = decide(&cfg(), &Carry::default(), &snap(vec![page(REL, "draft")], ""), T0);

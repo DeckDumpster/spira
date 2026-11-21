@@ -2,6 +2,8 @@
 //! in one `list --ids`, never a `show` per bead. No projection is installed in this process, so
 //! every read goes over the client.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
@@ -53,6 +55,7 @@ fn row(id: &str, state: &str, tip: &str, stack: &str) -> Value {
     json!({ "bead_id": id, "state": state, "tip": tip, "holds": "[]", "express": "0", "repo": "alpha", "stack": stack, "updated_at": 4_000_000_000_i64 })
 }
 
+#[test_id(t4z30iv)]
 #[test]
 fn observe_repo_reads_stacks_from_the_pool_rows_and_prerequisites_in_one_list_ids() {
     let dir = testkit::TempDir::new("sift-reads");

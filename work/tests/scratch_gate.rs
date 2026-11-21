@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate spira_test_id;
 use std::path::Path;
 use std::process::Command;
 
@@ -17,6 +19,7 @@ fn fixture() -> testkit::TempDir {
     d
 }
 
+#[test_id(tyn0cso)]
 #[test]
 fn a_branch_that_force_adds_session_scratch_is_refused_naming_the_path() {
     let d = fixture();
@@ -28,6 +31,7 @@ fn a_branch_that_force_adds_session_scratch_is_refused_naming_the_path() {
     assert!(e.contains(".runtime/session-tmp-9/x"), "{e}");
 }
 
+#[test_id(tfbeslp)]
 #[test]
 fn a_branch_that_deletes_session_scratch_is_not_refused() {
     let d = fixture();
@@ -36,6 +40,7 @@ fn a_branch_that_deletes_session_scratch_is_not_refused() {
     work::scratch::gate(d.path(), "main").unwrap();
 }
 
+#[test_id(t7u5yzm)]
 #[test]
 fn an_unresolvable_landing_ref_refuses() {
     let d = fixture();

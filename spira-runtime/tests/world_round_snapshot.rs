@@ -2,6 +2,8 @@
 //! SUBMITTED pool is counted unheld, and a round whose batch the store still has OPEN is
 //! reported with the second its record says it opened.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::os::unix::net::UnixListener;
 
 use runtime::RuntimeError;
@@ -28,6 +30,7 @@ fn world(batches_answer: bool) -> (testkit::TempDir, World) {
     (dir, w)
 }
 
+#[test_id(tvyhccq)]
 #[test]
 fn unheld_submitted_beads_are_counted_and_an_open_state_round_is_reported_unadvanced() {
     let _env = testkit::env_read();
@@ -38,6 +41,7 @@ fn unheld_submitted_beads_are_counted_and_an_open_state_round_is_reported_unadva
     assert_eq!(snap.unadvanced, [("b-open".to_string(), 1_700_000_000)]);
 }
 
+#[test_id(t99s74l)]
 #[test]
 fn a_round_the_store_holds_open_is_open_though_the_queue_directory_has_no_record_of_it() {
     let _env = testkit::env_read();
@@ -47,6 +51,7 @@ fn a_round_the_store_holds_open_is_open_though_the_queue_directory_has_no_record
     assert_eq!((snap.state, snap.open), (RoundState::Open, 1), "only the home repo's unended round counts");
 }
 
+#[test_id(tfja0ru)]
 #[test]
 fn an_unreadable_round_source_is_unknown_never_none() {
     let _env = testkit::env_read();
@@ -55,6 +60,7 @@ fn an_unreadable_round_source_is_unknown_never_none() {
     assert_eq!(snap.state, RoundState::Unknown);
 }
 
+#[test_id(t2jaupz)]
 #[test]
 fn a_store_that_refuses_the_lifecycle_read_is_named_in_the_error_with_its_reason() {
     let _env = testkit::env_read();
@@ -69,6 +75,7 @@ fn a_store_that_refuses_the_lifecycle_read_is_named_in_the_error_with_its_reason
     assert!(why.starts_with("lifecycle did not answer for alpha: ") && why.contains("the watch is lost: cannot tell: deadline"), "{why}");
 }
 
+#[test_id(t7ncspu)]
 #[test]
 fn a_refused_round_view_is_unknown_with_the_refusal_in_why() {
     let _env = testkit::env_read();
@@ -81,6 +88,7 @@ fn cfg() -> RoundDuty {
     RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300, halt_page_secs: 3_600, activation_bound_s: 90, run_dir: Default::default() }
 }
 
+#[test_id(thbcbwp)]
 #[test]
 fn a_certifying_round_with_a_certified_bead_set_aside_pages_nothing_and_no_round_pages_once() {
     let _env = testkit::env_read();
@@ -102,6 +110,7 @@ fn a_certifying_round_with_a_certified_bead_set_aside_pages_nothing_and_no_round
     assert!(later.is_empty(), "{later:?}");
 }
 
+#[test_id(tyzdeov)]
 #[test]
 fn a_work_halt_stamp_reaches_the_snapshot_with_its_reason_and_no_stamp_is_no_halt() {
     let _env = testkit::env_read();
@@ -121,6 +130,7 @@ fn stamp(dir: &testkit::TempDir) {
     std::fs::write(dir.path().join("run/world.halted"), "2026-11-11T05:10:52Z\nwhy: operator order: freeze\n").unwrap();
 }
 
+#[test_id(tgittok)]
 #[test]
 fn the_throughput_and_transitions_snapshots_carry_the_halt_even_when_unreadable() {
     let _env = testkit::env_read();
@@ -133,6 +143,7 @@ fn the_throughput_and_transitions_snapshots_carry_the_halt_even_when_unreadable(
     assert_eq!(x.halt.map(|h| h.why), Some("operator order: freeze".to_string()));
 }
 
+#[test_id(ty9swqe)]
 #[test]
 fn the_throughput_snapshot_names_the_oldest_waiting_bead_certified_ones_included() {
     let dir = testkit::TempDir::new("world-throughput-oldest");
@@ -166,6 +177,7 @@ fn the_throughput_snapshot_names_the_oldest_waiting_bead_certified_ones_included
     assert_eq!((oldest.bead.as_str(), oldest.since), ("a-old", Some(1699990000)));
 }
 
+#[test_id(t6ueriq)]
 #[test]
 fn a_failed_observe_inside_a_release_activation_window_says_wait_blind_and_never_pages() {
     let dir = testkit::TempDir::new("round-duty-activation");

@@ -1,6 +1,8 @@
 //! No Spira→Spira child remains in this crate's sources except a site marked `FORK-EDGE:`
 //! (the scheduler consolidation's §2 edges): a library call or the port replaces each.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::{Path, PathBuf};
 
 const BANNED: &[&str] = &["spira-lc", "bd", "bdq", "bash", "systemctl", "systemd-run", "tsd-write", "mail", "queue", "pgrep"];
@@ -38,6 +40,7 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+#[test_id(tg7584l)]
 #[test]
 fn no_unmarked_spira_child_remains_in_src() {
     let mut files = Vec::new();
@@ -50,6 +53,7 @@ fn no_unmarked_spira_child_remains_in_src() {
     assert!(found.is_empty(), "unmarked Spira→Spira children:\n{}", found.join("\n"));
 }
 
+#[test_id(tb3v2b9)]
 #[test]
 fn a_planted_site_is_caught_and_a_marked_one_is_not() {
     let planted = "fn f() {\n    let _ = Command::new(\"spira-lc\").arg(\"show\");\n}\n";
@@ -75,6 +79,7 @@ fn spawns_bdq(text: &str) -> Vec<String> {
         .collect()
 }
 
+#[test_id(tlcp237)]
 #[test]
 fn no_bdq_spawn_remains_in_bead_main() {
     let text = std::fs::read_to_string(testkit::manifest_dir().join("src/main.rs")).expect("read main.rs");
@@ -82,6 +87,7 @@ fn no_bdq_spawn_remains_in_bead_main() {
     assert!(found.is_empty(), "bead's main.rs spawns bdq; its writes go to `spira-lc content`:\n{}", found.join("\n"));
 }
 
+#[test_id(tjt97of)]
 #[test]
 fn a_planted_bdq_spawn_is_caught_marked_or_not() {
     let planted = "// FORK-EDGE: store\nlet mut cmd = Command::new(spira_config::release_env::tool(\"bdq\")?);\n";

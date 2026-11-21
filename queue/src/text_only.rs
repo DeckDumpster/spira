@@ -34,6 +34,7 @@ mod tests {
         xs.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(t44jdth)]
     #[test]
     fn a_diff_of_declared_directories_and_extensions_is_text() {
         let allow = v(&["law/", "*.md", "NOTES"]);
@@ -43,23 +44,27 @@ mod tests {
         ));
     }
 
+    #[test_id(tqkkyx3)]
     #[test]
     fn one_source_file_makes_the_diff_not_text() {
         let allow = v(&["law/", "*.md"]);
         assert!(!is_text_only(&v(&["law/x.md", "queue/src/lib.rs"]), &allow));
     }
 
+    #[test_id(tdildyd)]
     #[test]
     fn an_empty_diff_or_an_empty_allow_list_is_never_text() {
         assert!(!is_text_only(&[], &v(&["law/"])));
         assert!(!is_text_only(&v(&["law/x.md"]), &[]));
     }
 
+    #[test_id(t7397m3)]
     #[test]
     fn a_directory_entry_does_not_match_a_sibling_sharing_its_prefix() {
         assert!(!is_text_only(&v(&["lawless/x"]), &v(&["law/"])));
     }
 
+    #[test_id(txoqja4)]
     #[test]
     fn the_skip_line_says_it_lands_by_lint() {
         assert_eq!(skip_line("sp-a"), "sp-a: text-only: lands by lint");

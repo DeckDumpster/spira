@@ -222,32 +222,38 @@ pub fn json_only(text: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tdcntjb)]
     #[test]
     fn json_only_drops_a_warning_banner() {
         assert_eq!(json_only("warning: noise\n{\"a\":1}\n"), "{\"a\":1}\n");
     }
 
+    #[test_id(trp97ae)]
     #[test]
     fn json_only_passes_clean_json_through() {
         assert_eq!(json_only("[1,2]\n"), "[1,2]\n");
     }
 
+    #[test_id(tt535uk)]
     #[test]
     fn json_only_empty_when_nothing_matches() {
         assert_eq!(json_only("just text\nmore text\n"), "");
     }
 
+    #[test_id(t0pmf3s)]
     #[test]
     fn iso_utc_epoch_zero() {
         assert_eq!(iso_utc(0), "1970-01-01T00:00:00Z");
     }
 
+    #[test_id(tnt12ax)]
     #[test]
     fn iso_utc_known_instant() {
         // 2026-09-30T00:00:00Z
         assert_eq!(iso_utc(1790726400), "2026-09-30T00:00:00Z");
     }
 
+    #[test_id(t2yckf4)]
     #[test]
     fn log_line_shape() {
         assert_eq!(log_line(0, "hello"), "1970-01-01T00:00:00Z spira: hello");

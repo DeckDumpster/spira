@@ -152,6 +152,7 @@ mod tests {
         RegistryReaders::default().check(tree).unwrap().iter().map(|f| f.message.clone()).collect()
     }
 
+    #[test_id(td4zwww)]
     #[test]
     fn a_planted_reader_missing_from_the_list_is_reported() {
         let t = TempDir::new("rr-plant");
@@ -160,6 +161,7 @@ mod tests {
         assert!(m.iter().any(|x| x.starts_with("planted-crate reads") && x.contains("missing from REGISTRY_READERS")), "{m:?}");
     }
 
+    #[test_id(tv7dtmm)]
     #[test]
     fn a_listed_crate_whose_sources_read_nothing_is_stale() {
         let t = TempDir::new("rr-stale");
@@ -169,6 +171,7 @@ mod tests {
         assert!(!m.iter().any(|x| x.contains("planted-crate")), "{m:?}");
     }
 
+    #[test_id(ttxv5qo)]
     #[test]
     fn a_read_in_a_comment_or_doc_line_is_not_a_read() {
         let t = TempDir::new("rr-comment");
@@ -179,6 +182,7 @@ mod tests {
         assert!(messages(&live).iter().any(|x| x.contains("planted-crate")));
     }
 
+    #[test_id(tmd0dfx)]
     #[test]
     fn a_file_outside_the_walk_is_never_read() {
         let t = TempDir::new("rr-target");
@@ -188,6 +192,7 @@ mod tests {
         assert!(!messages(&tree).iter().any(|x| x.contains("planted-crate")));
     }
 
+    #[test_id(t28l6to)]
     #[test]
     fn a_delta_load_counts_only_beside_the_manifest_dir() {
         let t = TempDir::new("rr-load");
@@ -198,6 +203,7 @@ mod tests {
         assert!(messages(&with).iter().any(|x| x.contains("planted-crate")));
     }
 
+    #[test_id(tcwx4lc)]
     #[test]
     fn a_registry_read_through_the_run_time_home_door_is_a_read() {
         let t = TempDir::new("rr-door");
@@ -208,6 +214,7 @@ mod tests {
         assert!(!messages(&other).iter().any(|x| x.contains("planted-crate")));
     }
 
+    #[test_id(te3fjln)]
     #[test]
     fn checked_counts_the_crates_whose_sources_were_scanned() {
         let t = TempDir::new("rr-count");
@@ -217,6 +224,7 @@ mod tests {
         assert_eq!(rule.checked(), Some((2, "crates".to_string())));
     }
 
+    #[test_id(tqnrojd)]
     #[test]
     fn a_listed_crate_that_reads_the_registry_is_not_reported() {
         let t = TempDir::new("rr-clean");
@@ -229,6 +237,7 @@ mod tests {
         assert!(m.iter().any(|x| x.contains("names bead")), "{m:?}");
     }
 
+    #[test_id(tifbs1t)]
     #[test]
     fn a_workspace_with_no_rust_file_is_refused() {
         let t = TempDir::new("rr-empty");

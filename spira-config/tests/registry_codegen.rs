@@ -2,6 +2,8 @@
 //! field` mapping and the validation are read from it at run time, so a hand-kept list cannot
 //! drift from it (conf_key_parity).
 
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeSet;
 use std::fs;
 
@@ -10,6 +12,7 @@ fn only_in_first(a: &BTreeSet<String>, b: &BTreeSet<String>) -> Vec<String> {
     a.difference(b).cloned().collect()
 }
 
+#[test_id(tyo0kjb)]
 #[test]
 fn the_difference_check_sees_a_planted_offender() {
     let a: BTreeSet<String> = ["X".to_string(), "Y".to_string()].into();
@@ -17,6 +20,7 @@ fn the_difference_check_sees_a_planted_offender() {
     assert_eq!(only_in_first(&a, &b), vec!["Y".to_string()]);
 }
 
+#[test_id(tl7xfby)]
 #[test]
 fn the_required_key_check_sees_a_planted_offender() {
     let dir = testkit::TempDir::new("spira-config-registry-offender");

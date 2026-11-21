@@ -103,6 +103,7 @@ pub fn wait_for_clear(
 mod tests {
     use super::*;
 
+    #[test_id(tvyo44w)]
     #[test]
     fn parse_reads_all_three_fields() {
         let s = parse("ready: h1 10.0.0.1\nprovisioning: pid 4242\noutage: none\n");
@@ -111,12 +112,14 @@ mod tests {
         assert_eq!(s.outage, None);
     }
 
+    #[test_id(t6a8r94)]
     #[test]
     fn parse_of_all_none_is_all_none() {
         let s = parse("ready: none\nprovisioning: none\noutage: none\n");
         assert_eq!(s, RoundVmStatus::default());
     }
 
+    #[test_id(tkrv65n)]
     #[test]
     fn in_flight_description_only_when_provisioning() {
         let idle = parse("ready: none\nprovisioning: none\noutage: none\n");
@@ -134,6 +137,7 @@ mod tests {
     /// deterministic `None` — true of a bare dev box, false of this one (and every gate
     /// run), once the release's own `bin/round-vm` is on it: it then drove the real tool
     /// and asserted against whatever un-fixtured state it actually reported.
+    #[test_id(tl7uut7)]
     #[test]
     fn wait_for_clear_returns_true_immediately_when_the_reader_reports_nothing_in_flight() {
         use std::time::Instant;
@@ -147,6 +151,7 @@ mod tests {
     /// The positive control the single-read test above cannot give: a reader that reports
     /// in-flight a few times before clearing must be polled exactly that many times, then
     /// return `true` — never timing out early, never lying about having waited.
+    #[test_id(tngxhan)]
     #[test]
     fn wait_for_clear_polls_until_the_reader_clears_then_returns_true() {
         use std::time::Instant;
@@ -166,6 +171,7 @@ mod tests {
     /// `false` once the deadline passes, not hang (there is no real round-vm to shell to
     /// in a test, so a reader that always reports in-flight is the fixture for "it never
     /// clears before the deadline").
+    #[test_id(t1yi4st)]
     #[test]
     fn wait_for_clear_times_out_false_when_the_reader_never_clears() {
         use std::time::{Duration as D, Instant};

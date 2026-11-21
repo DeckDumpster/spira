@@ -2,6 +2,8 @@
 //! `[spira]`, `[repo.<name>]` and `[persona.<name>]` each — plus the T0 check that the
 //! shipped example validates, and that the checked-in schema still matches the types.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeSet;
 use std::fs;
 
@@ -14,6 +16,7 @@ fn manifest_path(rel: &str) -> String {
         .into_owned()
 }
 
+#[test_id(t4t6t7x)]
 #[test]
 fn t0_shipped_example_validates() {
     let text = fs::read_to_string(manifest_path("examples/spira.toml")).expect("example exists");
@@ -34,6 +37,7 @@ const GRANDFATHERED_SECRET_SHAPED_FIELDS: &[&str] = &["broker_gh_token"];
 
 // POSITIVE CONTROL: a planted secret-shaped name must be caught by the same walk, proving
 // the check above could have found a real offender instead of passing vacuously.
+#[test_id(tnty2em)]
 #[test]
 fn schema_refuses_new_secret_shaped_field_names_positive_control() {
     let mut names = BTreeSet::new();
@@ -49,23 +53,27 @@ fn schema_refuses_new_secret_shaped_field_names_positive_control() {
 mod spira_section {
     use super::validate;
 
+    #[test_id(twb9xls)]
     #[test]
     fn valid() {
         validate("[spira]\nid_prefix = \"sp\"\nhome_repo = \"home\"\nmax_dwarves = 4\n").expect("valid");
     }
 
+    #[test_id(tmu0l7t)]
     #[test]
     fn unknown_key() {
         let (_, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nhome_repo = \"home\"\nspelled_rong = 1\n").unwrap();
         assert!(w.iter().any(|m| m.starts_with("spira.spelled_rong")), "{w:?}");
     }
 
+    #[test_id(twnmouy)]
     #[test]
     fn wrong_type() {
         let err = validate("[spira]\nid_prefix = \"sp\"\nmax_dwarves = true\n").unwrap_err();
         assert!(err.starts_with("spira.max_dwarves"), "{err}");
     }
 
+    #[test_id(to2mj9y)]
     #[test]
     fn an_unknown_enum_value_is_dropped_with_a_warning_and_a_mistyped_one_errors() {
         let (doc, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\ncertify_suites = \"maybe\"\n").unwrap();
@@ -75,6 +83,7 @@ mod spira_section {
         assert!(err.starts_with("spira.certify_suites"), "{err}");
     }
 
+    #[test_id(tk21j1l)]
     #[test]
     fn a_getter_answers_by_registry_name_and_refuses_an_unregistered_or_mistyped_one() {
         let doc = validate("[spira]\nid_prefix = \"sp\"\nmax_dwarves = 4\n").unwrap();
@@ -85,6 +94,7 @@ mod spira_section {
         assert!(s.get_str("SPIRA_MAX_DWARVES").unwrap_err().contains("TYPE=u32"));
     }
 
+    #[test_id(tolzvi7)]
     #[test]
     fn negative_oversized_list_and_enum_values_are_refused_naming_the_field() {
         for (line, field) in [
@@ -99,6 +109,7 @@ mod spira_section {
         }
     }
 
+    #[test_id(tpc7qui)]
     #[test]
     fn an_empty_table_needs_no_field() {
         // An empty [spira] table configures nothing, matching a clean clone that overrides
@@ -111,6 +122,7 @@ mod spira_section {
     // pre-activate) refuses a table that sets anything and leaves the prefix out, naming the
     // key. The typed readers still load such a document — refusing the whole file would drop
     // every other key to its default.
+    #[test_id(t1nrjuo)]
     #[test]
     fn id_prefix_is_required_by_strict_validation_once_the_table_sets_anything() {
         let text = "[spira]\nhome_repo = \"home\"\n";
@@ -125,6 +137,7 @@ mod spira_section {
         spira_config::validate_strict("[repo.a]\npath = \"/a\"\nmode = \"push\"\n").expect("no [spira] at all");
     }
 
+    #[test_id(tzljdrr)]
     #[test]
     fn an_unusable_id_prefix_is_refused() {
         for bad in ["", "sp-", "s p", "sp-spira"] {
@@ -133,6 +146,7 @@ mod spira_section {
         }
     }
 
+    #[test_id(thrntad)]
     #[test]
     fn the_retired_goal_key_warns_and_does_not_stand_in_for_the_prefix() {
         let (doc, w) = spira_config::validate_strict("[spira]\nid_prefix = \"sp\"\ngoal = \"sp-spira\"\n")
@@ -144,6 +158,7 @@ mod spira_section {
         assert!(err.starts_with("spira.id_prefix: required"), "{err}");
     }
 
+    #[test_id(tspgzoj)]
     #[test]
     fn the_migration_is_one_set() {
         let text = "[spira]\ngoal = \"sp-spira\"\ndb = \"db\"\n";
@@ -155,6 +170,7 @@ mod spira_section {
         assert!(!out.contains("goal"), "and the retired key is gone from the rewrite: {out}");
     }
 
+    #[test_id(tfaif1t)]
     #[test]
     fn stack_max_depth_at_the_pinned_non_default_value_is_valid() {
         // Pinned away from the shipped default (4) per this repo's own fixture rule: 2
@@ -164,6 +180,7 @@ mod spira_section {
         assert_eq!(doc.spira.unwrap().get_u32("SPIRA_STACK_MAX_DEPTH").unwrap(), Some(2));
     }
 
+    #[test_id(t21s7sa)]
     #[test]
     fn stack_max_depth_zero_is_valid() {
         // stacked-dependents-2026-09-28 §1: 0 reproduces today's no-stacking behaviour.
@@ -171,6 +188,7 @@ mod spira_section {
         assert_eq!(doc.spira.unwrap().get_u32("SPIRA_STACK_MAX_DEPTH").unwrap(), Some(0));
     }
 
+    #[test_id(t7vrz27)]
     #[test]
     fn mail_mute_true_is_valid() {
         // sp-9hwim: the typed replacement for the mail-mute file-existence override.
@@ -178,12 +196,14 @@ mod spira_section {
         assert_eq!(doc.spira.unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), Some(true));
     }
 
+    #[test_id(tc8adlj)]
     #[test]
     fn mail_mute_wrong_type_is_refused() {
         let err = validate("[spira]\nid_prefix = \"sp\"\nmail_mute = \"yes\"\n").unwrap_err();
         assert!(err.starts_with("spira.mail_mute"), "{err}");
     }
 
+    #[test_id(tt0jo2n)]
     #[test]
     fn stack_max_depth_above_the_hard_ceiling_is_refused_by_validate_itself() {
         // The shipped schema's `maximum` is never run against the document — validate()
@@ -193,6 +213,7 @@ mod spira_section {
         assert!(err.starts_with("spira.stack_max_depth"), "{err}");
     }
 
+    #[test_id(thof0y6)]
     #[test]
     fn stack_max_depth_at_the_hard_ceiling_is_valid() {
         let doc = validate("[spira]\nid_prefix = \"sp\"\nstack_max_depth = 4\n").expect("valid");
@@ -204,6 +225,7 @@ mod retired_keys {
     use super::*;
     use spira_config::validate_with_warnings;
 
+    #[test_id(tnak2zf)]
     #[test]
     fn a_toml_still_setting_cert_idle_skip_loads_with_a_warning() {
         let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\ncert_idle_skip = false\n")
@@ -211,6 +233,7 @@ mod retired_keys {
         assert!(w.iter().any(|m| m.contains("cert_idle_skip") && m.contains("sp-6d9th")), "{w:?}");
     }
 
+    #[test_id(t2wg833)]
     #[test]
     fn a_toml_still_setting_broker_enable_loads_with_a_warning() {
         let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbroker_enable = \"0\"\n")
@@ -218,6 +241,7 @@ mod retired_keys {
         assert!(w.iter().any(|m| m.contains("broker_enable") && m.contains("sp-1tvphb")), "{w:?}");
     }
 
+    #[test_id(trgw3bp)]
     #[test]
     fn retired_key_warns_naming_the_key_and_bead() {
         let (doc, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_local_gate = 1\n")
@@ -229,6 +253,7 @@ mod retired_keys {
         );
     }
 
+    #[test_id(tb0r4s0)]
     #[test]
     fn lanes_reserve_is_a_retired_key() {
         let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nlanes_reserve = 1\n")
@@ -236,6 +261,7 @@ mod retired_keys {
         assert!(warnings.iter().any(|w| w.contains("lanes_reserve")), "got {warnings:?}");
     }
 
+    #[test_id(twy07ka)]
     #[test]
     fn a_config_written_while_the_unit_test_deadline_keys_shipped_still_validates() {
         let (_, warnings) = validate_with_warnings(
@@ -246,6 +272,7 @@ mod retired_keys {
         assert!(warnings.iter().any(|w| w.contains("unit_test_terminate_after")), "got {warnings:?}");
     }
 
+    #[test_id(t4a6lnw)]
     #[test]
     fn a_config_written_while_the_round_vm_disk_preflight_shipped_still_validates() {
         let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nround_vm_disk_need_gib = 40\n")
@@ -253,6 +280,7 @@ mod retired_keys {
         assert!(!warnings.iter().any(|w| w.contains("round_vm_disk_need_gib")), "a registered key is not retired: {warnings:?}");
     }
 
+    #[test_id(tww2fcx)]
     #[test]
     fn a_config_written_while_the_throughput_floor_shipped_still_validates() {
         let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nthroughput_floor_per_day = 150\nthroughput_restop_after = 3600\n")
@@ -261,6 +289,7 @@ mod retired_keys {
         assert!(warnings.iter().any(|w| w.contains("throughput_restop_after is retired (sp-ner2yi)")), "got {warnings:?}");
     }
 
+    #[test_id(t2qaxvn)]
     #[test]
     fn a_config_written_while_lc_serve_held_live_rows_still_validates() {
         let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nlc_live_check_secs = 60\n")
@@ -268,6 +297,7 @@ mod retired_keys {
         assert!(warnings.iter().any(|w| w.contains("lc_live_check_secs is retired (sp-kti9ip)")), "got {warnings:?}");
     }
 
+    #[test_id(tfwd5h9)]
     #[test]
     fn a_config_written_while_the_repo_events_poll_shipped_still_validates() {
         let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nruntime_repo_events_secs = 45\n")
@@ -275,6 +305,7 @@ mod retired_keys {
         assert!(warnings.iter().any(|w| w.contains("runtime_repo_events_secs is retired (sp-nao9lu.2)")), "got {warnings:?}");
     }
 
+    #[test_id(t11myov)]
     #[test]
     fn a_config_written_while_the_ec2_spill_watchers_shipped_still_validates() {
         for key in ["round_vm_ec2_key_warn_days", "round_vm_ec2_launch_window", "round_vm_ec2_probe_deadline"] {
@@ -284,6 +315,7 @@ mod retired_keys {
         }
     }
 
+    #[test_id(t816lf8)]
     #[test]
     fn a_config_written_while_the_repo_contract_sweep_shipped_still_validates() {
         let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nruntime_sweep_repo_contract_calendar = \"*-*-* 05:10:00\"\nruntime_sweep_repo_contract_jitter_secs = 600\n")
@@ -293,6 +325,7 @@ mod retired_keys {
         }
     }
 
+    #[test_id(t6ffprq)]
     #[test]
     fn the_complete_fixture_carries_no_repo_contract_sweep_key() {
         let path = spira_config::resolve::checkout_root_for_process().unwrap().join("spira/testlib/complete.toml");
@@ -301,6 +334,7 @@ mod retired_keys {
         assert!(!warnings.iter().any(|w| w.contains("runtime_sweep_repo_contract_")), "got {warnings:?}");
     }
 
+    #[test_id(tdgxfjm)]
     #[test]
     fn a_config_written_while_the_warm_pool_shipped_still_validates() {
         let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\ndwarf_warm_base = \"/x\"\ndwarf_warm_cap_mib = 6144\n")
@@ -310,6 +344,7 @@ mod retired_keys {
         }
     }
 
+    #[test_id(tyj3t7s)]
     #[test]
     fn a_config_written_while_the_nix_gc_task_shipped_still_validates() {
         let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nruntime_sweep_nix_gc_calendar = \"Sun 03:00\"\nruntime_sweep_nix_gc_jitter_secs = 600\nnix_env_link = \"/x\"\n")
@@ -319,12 +354,14 @@ mod retired_keys {
         }
     }
 
+    #[test_id(t9jbu6s)]
     #[test]
     fn a_misspelt_key_warns_and_is_ignored() {
         let (_, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_batch_idle_cutt = 1\n").unwrap();
         assert!(w.iter().any(|m| m.starts_with("spira.queue_batch_idle_cutt")), "{w:?}");
     }
 
+    #[test_id(t0cf320)]
     #[test]
     fn dropping_a_key_without_retiring_it_fails_the_suite() {
         let history: BTreeSet<String> =
@@ -342,11 +379,13 @@ mod retired_keys {
 mod repo_section {
     use super::validate;
 
+    #[test_id(tho4zw1)]
     #[test]
     fn valid() {
         validate("[repo.home]\npath = \"/srv/checkouts/home\"\nmode = \"push\"\n").expect("valid");
     }
 
+    #[test_id(t4lfiqg)]
     #[test]
     fn unknown_key() {
         let (_, w) = spira_config::validate_with_warnings(
@@ -356,6 +395,7 @@ mod repo_section {
         assert!(w.iter().any(|m| m.starts_with("repo.home.nickname")), "{w:?}");
     }
 
+    #[test_id(tku5y43)]
     #[test]
     fn wrong_type() {
         let err = validate(
@@ -365,6 +405,7 @@ mod repo_section {
         assert!(err.starts_with("repo.home.lanes"), "{err}");
     }
 
+    #[test_id(too9inp)]
     #[test]
     fn bad_enum() {
         let err = validate("[repo.home]\npath = \"/srv/checkouts/home\"\nmode = \"sometimes\"\n")
@@ -372,6 +413,7 @@ mod repo_section {
         assert!(err.starts_with("repo.home.mode"), "{err}");
     }
 
+    #[test_id(t9inwe5)]
     #[test]
     fn missing_field() {
         let err = validate("[repo.home]\nmode = \"push\"\n").unwrap_err();
@@ -382,6 +424,7 @@ mod repo_section {
 mod persona_section {
     use super::validate;
 
+    #[test_id(tt0dolu)]
     #[test]
     fn wrong_type() {
         let err = validate("[persona.builder]\nmodel = \"claude-sonnet-5\"\ntools = \"Bash\"\n")
@@ -392,6 +435,7 @@ mod persona_section {
 
 const MODELS: &str = "[persona.ops]\nmodel = \"claude-x\"\n[persona.warden]\nmodel = \"claude-x\"\n";
 
+#[test_id(txjhonm)]
 #[test]
 fn strict_validation_refuses_a_rostered_persona_with_no_declared_model() {
     let roster = "[spira]\nid_prefix = \"sp\"\nrunes = [\"ops\", \"warden\"]\n[persona.ops]\nmodel = \"claude-x\"\n";
@@ -400,6 +444,7 @@ fn strict_validation_refuses_a_rostered_persona_with_no_declared_model() {
     spira_config::validate_strict(&format!("{roster}[persona.warden]\nmodel = \"claude-x\"\n")).expect("every rostered persona declares a model");
 }
 
+#[test_id(tny517e)]
 #[test]
 fn strict_validation_refuses_a_timer_partition_label_whose_persona_is_unrostered() {
     let omits = "[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nrunes = [\"ops\"]\n";
@@ -409,6 +454,7 @@ fn strict_validation_refuses_a_timer_partition_label_whose_persona_is_unrostered
     spira_config::validate_strict(&ok).expect("rostered");
 }
 
+#[test_id(tyr5shh)]
 #[test]
 fn the_complete_fixture_roster_covers_its_lanes_and_timer_labels() {
     spira_config::validate_strict(&spira_config::process::complete_fixture_text()).expect("a roster that omits a lane's persona strands that lane's beads");

@@ -124,6 +124,7 @@ mod tests {
         (proc, run)
     }
 
+    #[test_id(tybzl83)]
     #[test]
     fn stop_holder_stops_the_dwarf_unit_through_the_units_port() {
         let t = testkit::TempDir::new("hel-verbs-stop-holder");
@@ -137,6 +138,7 @@ mod tests {
         assert_eq!(units.calls(), vec![format!("stop {UNIT}")]);
     }
 
+    #[test_id(tcn7mxr)]
     #[test]
     fn stop_holder_names_the_process_that_will_not_leave() {
         let t = testkit::TempDir::new("hel-verbs-stop-holder-stays");

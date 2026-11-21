@@ -88,6 +88,7 @@ mod tests {
         Answer { kind, diagnosis, checks, ask: None, members: if kind == Kind::Return { &["sp-a"] } else { &[] }, round: &["sp-a", "sp-b"] }
     }
 
+    #[test_id(tmy4uci)]
     #[test]
     fn every_name_parses_and_nothing_else_does() {
         for (s, k) in [("mended", Kind::Mended), ("environment", Kind::Environment), ("flaky", Kind::Flaky), ("return", Kind::Return), ("unsure", Kind::Unsure)] {
@@ -97,6 +98,7 @@ mod tests {
         assert_eq!(Kind::parse("Mended"), None);
     }
 
+    #[test_id(tdzd12u)]
     #[test]
     fn file_line_is_recognised_and_prose_is_not() {
         assert!(cites_file_line("wrong approach at spira-lc/src/work.rs:412: reads bd directly"));
@@ -106,12 +108,14 @@ mod tests {
         assert!(!cites_file_line("ratio a:1"));
     }
 
+    #[test_id(tlltvue)]
     #[test]
     fn a_return_without_file_line_is_refused_and_with_one_is_kept() {
         assert!(validate(&a(Kind::Return, "it is wrong somewhere", None)).is_err());
         assert_eq!(validate(&a(Kind::Return, "bad at x/y.rs:9", None)).unwrap(), "bad at x/y.rs:9");
     }
 
+    #[test_id(t32xpb5)]
     #[test]
     fn mended_needs_the_checks_and_records_them_in_the_diagnosis() {
         assert!(validate(&a(Kind::Mended, "fixed", None)).is_err());
@@ -119,6 +123,7 @@ mod tests {
         assert_eq!(validate(&a(Kind::Mended, "fixed", Some("cargo test -p spira-lc ok"))).unwrap(), "fixed\nchecks: cargo test -p spira-lc ok");
     }
 
+    #[test_id(tsng6e8)]
     #[test]
     fn checks_on_any_other_outcome_and_an_empty_diagnosis_are_refused() {
         assert!(validate(&a(Kind::Flaky, "ok", Some("x"))).is_err());
@@ -127,6 +132,7 @@ mod tests {
         }
     }
 
+    #[test_id(t44cm5g)]
     #[test]
     fn an_ask_on_any_outcome_but_a_mend_is_refused() {
         let with_ask = |kind| validate(&Answer { kind, diagnosis: "bad at x/y.rs:9", checks: None, ask: Some("a1"), members: &["sp-a"], round: &["sp-a"] });
@@ -134,6 +140,7 @@ mod tests {
         assert!(with_ask(Kind::Flaky).is_err());
     }
 
+    #[test_id(t8j31c2)]
     #[test]
     fn a_return_names_a_member_of_the_round_or_is_refused_naming_the_round() {
         let ret = |members: &[&str]| validate(&Answer { kind: Kind::Return, diagnosis: "bad at x/y.rs:9", checks: None, ask: None, members, round: &["sp-a", "sp-b"] });
@@ -143,12 +150,14 @@ mod tests {
         }
     }
 
+    #[test_id(tvn7ozu)]
     #[test]
     fn a_member_on_any_other_outcome_is_refused() {
         let flaky = validate(&Answer { kind: Kind::Flaky, diagnosis: "ok", checks: None, ask: None, members: &["sp-a"], round: &["sp-a"] });
         assert!(flaky.is_err());
     }
 
+    #[test_id(tgdwhx2)]
     #[test]
     fn the_return_event_carries_its_members() {
         assert_eq!(terminal_event(Kind::Return, "d", &["sp-b"]), json!({"Return": {"at": 0, "diagnosis": "d", "members": ["sp-b"]}}));

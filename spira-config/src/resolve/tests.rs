@@ -1,12 +1,14 @@
     use super::*;
     use std::collections::BTreeMap;
 
+    #[test_id(tuav0fm)]
     #[test]
     fn the_victorialogs_url_is_exported_to_every_child_that_ships_or_counts() {
         assert!(EXPORT_KEYS.contains(&"SPIRA_VICTORIALOGS_URL"));
         assert!(EXPORT_KEYS.windows(2).all(|w| w[0] < w[1]), "the export list stays sorted and without repeats");
     }
 
+    #[test_id(tjqc804)]
     #[test]
     fn resolve_or_say_returns_empty_on_a_missing_conf_d() {
         let ws = testkit::TempDir::new("spira-config-resolve-or-say");
@@ -18,6 +20,7 @@
 
     /// THE ONE SOURCE: a key spira.toml does not declare is refused by name — never
     /// defaulted, never read from the environment (per Ryan 2026-10-05).
+    #[test_id(t3hzyas)]
     #[test]
     fn an_undeclared_key_is_refused_by_name_even_when_the_environment_sets_it() {
         let ws = testkit::TempDir::new("spira-config-resolve-undeclared");
@@ -31,6 +34,7 @@
         assert!(!msg.contains("from/the/environment"), "the environment must not be read: {msg}");
     }
 
+    #[test_id(tqogl9u)]
     #[test]
     fn an_empty_runes_dir_resolves_to_the_homes_runes_and_reaches_sh_all() {
         let ws = testkit::TempDir::new("spira-config-resolve-runes-dir");
@@ -47,6 +51,7 @@
         assert_eq!(r.get("SPIRA_RUNES_DIR"), "elsewhere/runes");
     }
 
+    #[test_id(t00tz2g)]
     #[test]
     fn sh_all_never_assigns_the_launchers_release_over_the_environment() {
         let ws = testkit::TempDir::new("spira-config-resolve-release");
@@ -80,6 +85,7 @@
 
 
 
+    #[test_id(trgdky0)]
     #[test]
     fn derive_home_repo_env_override_wins() {
         let ws = testkit::TempDir::new("spira-config-derive-repo-env");
@@ -96,6 +102,7 @@
         m
     }
 
+    #[test_id(tzmdpn2)]
     #[test]
     fn derive_home_repo_falls_back_to_parent_outside_a_checkout() {
         let ws = testkit::TempDir::new("spira-config-derive-repo-noparent");
@@ -108,6 +115,7 @@
     }
 
 
+    #[test_id(tq90g8s)]
     #[test]
     fn a_declared_mail_readers_beats_the_registered_default() {
         let ws = testkit::TempDir::new("spira-config-mail-readers");
@@ -121,6 +129,7 @@
 
     /// An env override still wins outright, exactly as `SPIRA_RUN` always has — this is
     /// what makes a systemd unit, which sets it explicitly, keep working unchanged.
+    #[test_id(ti3o1t6)]
     #[test]
     fn resolve_ask_label_reads_the_declaration_never_the_environment() {
         let ws = testkit::TempDir::new("spira-config-ask-label");
@@ -148,6 +157,7 @@
     }
 
     // covers: UC-config-store-preflight-01
+    #[test_id(tge5msq)]
     #[test]
     fn a_declared_key_beats_its_derived_default_and_the_environment_never_speaks() {
         let ws = testkit::TempDir::new("spira-config-precedence");
@@ -164,6 +174,7 @@
         assert!(refused.is_err(), "reading a config that leaves a key undeclared is refused, not defaulted");
     }
 
+    #[test_id(tcvpxi7)]
     #[test]
     fn spira_claude_is_a_deprecated_alias_that_only_an_undeclared_agent_falls_back_to() {
         let ws = testkit::TempDir::new("spira-config-claude-alias");
@@ -185,6 +196,7 @@
     }
 
     // covers: UC-config-store-preflight-03
+    #[test_id(tbf12m9)]
     #[test]
     fn derived_defaults_follow_the_install_location_and_the_whole_shipped_key_set_resolves() {
         let ws = testkit::TempDir::new("spira-config-derived-location");
@@ -204,6 +216,7 @@
     }
 
     // covers: UC-config-store-preflight-04
+    #[test_id(ts1kxk9)]
     #[test]
     fn prod_keeps_unqualified_paths_and_a_non_prod_instance_gets_its_own_database_and_runtime_directory() {
         let ws = testkit::TempDir::new("spira-config-instance-paths");
@@ -218,6 +231,7 @@
         assert_eq!(acc.get("SPIRA_RUN"), "h/.local/share/spira-acc/run");
     }
 
+#[test_id(tfc1vyp)]
 #[test]
 fn checkout_root_is_the_parent_of_the_home() {
     let env = |k: &str, v: &str| BTreeMap::from([(k.to_string(), v.to_string())]);
@@ -227,12 +241,14 @@ fn checkout_root_is_the_parent_of_the_home() {
     assert!(checkout_root(&env("SPIRA_HOME", "spira")).unwrap_err().contains("has no parent"));
 }
 
+#[test_id(tibluub)]
 #[test]
 fn checkout_root_refuses_a_home_with_no_parent() {
     let env = BTreeMap::from([("SPIRA_HOME".to_string(), "/".to_string())]);
     assert!(checkout_root(&env).unwrap_err().contains("has no parent"));
 }
 
+#[test_id(tr0x835)]
 #[test]
 fn checkout_root_for_process_reads_the_process_environment() {
     let _g = testkit::env(&[("SPIRA_HOME", Some("w/spira"))]);

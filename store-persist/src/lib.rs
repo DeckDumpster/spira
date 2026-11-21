@@ -5,6 +5,9 @@
 //! (`<durable>/meta`). Every write committed before a pass's recorded `start` is in the copy
 //! once that pass has finished.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod history;
 pub mod ports;
 

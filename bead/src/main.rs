@@ -2,6 +2,9 @@
 //! this binary by bare name on the release PATH, passing its own directory as `--home`
 //! (the same convention `gate.sh` established).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -2184,6 +2187,7 @@ mod tests {
         testkit::env(&[("SPIRA_TOML", Some(&toml.to_string_lossy())), ("SPIRA_HOME", Some(&testkit::manifest_dir().join("../spira").to_string_lossy()))])
     }
 
+    #[test_id(t5abe2z)]
     #[test]
     fn every_bead_write_goes_to_the_content_door() {
         let dir = testkit::TempDir::new("bead-door-writes");
@@ -2236,6 +2240,7 @@ mod tests {
         TEST_REPOINT.with(|r| std::mem::take(&mut r.borrow_mut().0))
     }
 
+    #[test_id(tt0ceft)]
     #[test]
     fn the_repoint_wiring_names_the_registry_verb_and_reads_its_stdout() {
         assert_eq!(repoint_argv("sp-i", "sp-f"), argv(&["repoint", "--from", "sp-i", "--to", "sp-f", "--actor", "bead"]));
@@ -2247,6 +2252,7 @@ mod tests {
         assert!(failed.contains("edge sp-i -> sp-f is in") && failed.contains("did not move") && failed.contains("db locked"), "{failed}");
     }
 
+    #[test_id(t8wjeyk)]
     #[test]
     fn a_blocks_edge_from_an_incident_moves_its_registry_rows_to_the_fix() {
         let dir = testkit::TempDir::new("bead-dep-repoint");
@@ -2279,6 +2285,7 @@ mod tests {
         assert_eq!(sent(&d), vec![argv(&["content", "dep", "add", "sp-i", "sp-f"])], "the edge stays");
     }
 
+    #[test_id(t9jvrsn)]
     #[test]
     fn a_filing_with_a_blocker_creates_without_deps_and_wires_the_new_bead_as_the_blocked_one() {
         let dir = testkit::TempDir::new("bead-door-deps");
@@ -2291,6 +2298,7 @@ mod tests {
         assert!(sent.iter().any(|(a, _)| *a == argv(&["content", "dep", "add", "sp-new", "sp-a", "--type", "blocks"])), "{sent:?}");
     }
 
+    #[test_id(tw49x1k)]
     #[test]
     fn a_create_the_store_cuts_is_sent_again_under_the_same_request_and_the_filing_completes() {
         let dir = testkit::TempDir::new("bead-door-resend");
@@ -2310,6 +2318,7 @@ mod tests {
 
     const LISTED_NOW: &str = r#"[{"id":"sp-held","title":"T","issue_type":"task","created_at":"2999-01-01T00:00:00Z"}]"#;
 
+    #[test_id(tn7w361)]
     #[test]
     fn a_retry_of_a_title_the_store_holds_sends_no_create_and_still_completes_the_bead() {
         let dir = testkit::TempDir::new("bead-door-retry");
@@ -2322,6 +2331,7 @@ mod tests {
         assert_eq!(w, [argv(&["create-bead", "sp-held", "--repo", "r"]), argv(&["content", "dep", "add", "sp-held", "sp-a", "--type", "blocks"])]);
     }
 
+    #[test_id(t6dnoed)]
     #[test]
     fn an_edge_already_in_the_content_store_is_mirrored_to_the_lifecycle_store_not_failed() {
         let dir = testkit::TempDir::new("bead-door-present");
@@ -2333,6 +2343,7 @@ mod tests {
         assert_eq!(blocks_edge_present_ok("sp-new", "sp-a"), 1, "an edge the store does not hold stays a failure");
     }
 
+    #[test_id(tre495q)]
     #[test]
     fn an_unfinished_filing_names_the_express_mark_and_the_incident_edge_with_their_repairs() {
         let text = unrecovered(None, true, Some("sp-inc"));
@@ -2340,12 +2351,14 @@ mod tests {
         assert_eq!(unrecovered(Some("sp-x"), false, None), "");
     }
 
+    #[test_id(t9thqof)]
     #[test]
     fn a_refusal_the_door_gives_is_the_exit_code_and_stderr_the_caller_sees() {
         install(vec![("content label add", 1, "bead: refusing\n")]);
         assert_eq!(put(&["label", "add", "sp-a", "x"], None), 1);
     }
 
+    #[test_id(t7bwbll)]
     #[test]
     fn dep_convert_removes_the_blocks_edge_then_adds_the_parent_edge_and_leaves_the_edge_it_did_not_add() {
         let epic = ("content show sp-e", 0, r#"[{"id":"sp-e","issue_type":"epic","labels":[]}]"#);

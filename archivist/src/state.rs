@@ -143,6 +143,7 @@ pub fn numeric_or_zero(v: Option<&str>) -> (u64, bool) {
 mod tests {
     use super::*;
 
+    #[test_id(to8a8ce)]
     #[test]
     fn crossed_orders_the_bands() {
         assert_eq!(crossed("warn"), 0);
@@ -153,6 +154,7 @@ mod tests {
         assert_eq!(crossed("garbage"), -1);
     }
 
+    #[test_id(tgh2rrb)]
     #[test]
     fn render_and_read_back_roundtrip() {
         let text = render(State::Safe, 42, 3);
@@ -161,6 +163,7 @@ mod tests {
         assert_eq!(key(&text, "items_filed"), Some("3".to_string()));
     }
 
+    #[test_id(tfq9com)]
     #[test]
     fn live_marker_exists_only_while_held() {
         let dir = testkit::TempDir::new("archivist-state");
@@ -170,6 +173,7 @@ mod tests {
         assert!(!LiveMarker::path(&dir, "sess-1").exists());
     }
 
+    #[test_id(tvysome)]
     #[test]
     fn numeric_or_zero_accepts_plain_digits_only() {
         assert_eq!(numeric_or_zero(Some("42")), (42, true));
@@ -179,6 +183,7 @@ mod tests {
         assert_eq!(numeric_or_zero(None), (0, false));
     }
 
+    #[test_id(t7eceoh)]
     #[test]
     fn write_and_read_state_file_roundtrip() {
         let dir = testkit::TempDir::new("archivist-state");

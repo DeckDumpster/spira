@@ -29,6 +29,7 @@ fn waiting_world() -> T {
     t
 }
 
+#[test_id(tmhlsme)]
 #[test]
 fn a_landing_rebases_the_waiting_queue_and_sends_a_conflict_back_with_its_paths() {
     let t = waiting_world();
@@ -85,6 +86,7 @@ fn a_landing_rebases_the_waiting_queue_and_sends_a_conflict_back_with_its_paths(
     );
 }
 
+#[test_id(tjs8llz)]
 #[test]
 fn a_red_gate_or_an_unattempted_rebase_moves_nothing() {
     let t = waiting_world();
@@ -117,6 +119,7 @@ fn a_red_gate_or_an_unattempted_rebase_moves_nothing() {
     );
 }
 
+#[test_id(tp4rjxk)]
 #[test]
 fn a_bead_rebase_stale_already_certified_at_the_new_tip_is_left_alone() {
     let t = waiting_world();

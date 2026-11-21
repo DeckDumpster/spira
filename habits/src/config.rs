@@ -134,6 +134,7 @@ mod build_row_tests {
         load_checks(dir.path())
     }
 
+    #[test_id(tp5bnjn)]
     #[test]
     fn a_row_may_declare_the_stage_it_defers_to_and_an_unknown_key_is_refused() {
         let rows = load("[[check]]\nname = \"u\"\nrun = \"testenv {branch}\"\ndeferred_to = \"gate\"\n").unwrap();
@@ -142,6 +143,7 @@ mod build_row_tests {
         assert!(load("[[check]]\nname = \"u\"\nrun = \"x\"\ndefer = \"gate\"\n").is_err());
     }
 
+    #[test_id(thum6gd)]
     #[test]
     fn a_build_row_must_run_the_package_it_builds() {
         let rows = load("[[check]]\nname = \"a\"\nrun = \"x-lint --diff y\"\nbuild = \"x-lint\"\n").unwrap();

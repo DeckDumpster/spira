@@ -447,6 +447,7 @@ fn entries_size(p: &Path) -> u64 {
 mod tests {
     use super::*;
 
+    #[test_id(to4tvfa)]
     #[test]
     fn cargo_home_env_carries_a_set_key_and_nothing_for_an_empty_one() {
         let set = cargo_home_env(|k| (k == "SPIRA_CARGO_HOME").then(|| "vol/cargo".to_string()));
@@ -460,6 +461,7 @@ mod tests {
         std::fs::write(p, vec![1u8; kib * 1024]).unwrap();
     }
 
+    #[test_id(tfx4lxt)]
     #[test]
     fn size_counts_blocks_so_a_sparse_file_holds_nothing() {
         let d = testkit::TempDir::new("warm-sparse");
@@ -472,6 +474,7 @@ mod tests {
         assert!(size_of(&dense) >= 512 * 1024, "allocated blocks count");
     }
 
+    #[test_id(tl4w7pt)]
     #[test]
     fn size_follows_a_link_at_the_root_but_not_below_it() {
         let d = testkit::TempDir::new("size-link");
@@ -501,6 +504,7 @@ mod tests {
         (d, path)
     }
 
+    #[test_id(ti5ncvf)]
     #[test]
     fn absent_sccache_is_a_refusal_naming_deps_and_the_opt_out() {
         let (_d, path) = bin_dir(false);
@@ -511,6 +515,7 @@ mod tests {
         assert!(wrapper("relative/dir", None).is_err());
     }
 
+    #[test_id(tehp5we)]
     #[test]
     fn off_is_explicit_and_clears_any_configured_wrapper() {
         let (_d, path) = bin_dir(false);
@@ -523,6 +528,7 @@ mod tests {
         assert_eq!(w.env(Some(&store)), vec![("RUSTC_WRAPPER".to_string(), String::new())]);
     }
 
+    #[test_id(tu9skdk)]
     #[test]
     fn the_shared_server_runs_as_its_own_foreground_unit_on_the_configured_store() {
         let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
@@ -559,6 +565,7 @@ mod tests {
         (r, fx.calls.into_inner())
     }
 
+    #[test_id(t9o4dn2)]
     #[test]
     fn an_inactive_unit_after_the_first_start_means_a_stray_holds_the_port_and_is_replaced() {
         let (r, calls) = ensure_with(false);
@@ -566,6 +573,7 @@ mod tests {
         assert_eq!(r, ServerUnit::StrayReplaced);
     }
 
+    #[test_id(tuiycp7)]
     #[test]
     fn an_active_unit_is_left_alone() {
         let (r, calls) = ensure_with(true);
@@ -573,6 +581,7 @@ mod tests {
         assert_eq!(r, ServerUnit::Running);
     }
 
+    #[test_id(thi3wbe)]
     #[test]
     fn a_server_whose_scratch_root_is_gone_is_stopped_and_a_present_root_is_left_alone() {
         let tmp = testkit::TempDir::new("spira-config-scratch-root");
@@ -587,6 +596,7 @@ mod tests {
 
     // ------------------------------------------------------------- Store (sp-xtdqi)
 
+    #[test_id(ts44ha2)]
     #[test]
     fn store_from_values_defaults_the_scheme_and_fixes_the_key_prefix() {
         let v: std::collections::BTreeMap<_, _> = [(STORE_ADDR_ENV.to_string(), "192.168.1.56:9431".to_string())].into();
@@ -599,6 +609,7 @@ mod tests {
         assert_eq!(s2.endpoint, "https://box:9431", "a scheme already present is kept, not doubled");
     }
 
+    #[test_id(t45074w)]
     #[test]
     fn store_from_values_is_none_when_the_operator_never_named_a_store() {
         assert!(Store::from_values(|_| None).is_none(), "absent key");

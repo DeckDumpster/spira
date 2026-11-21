@@ -286,6 +286,7 @@ mod tests {
 
 
 
+    #[test_id(tupmkrs)]
     #[test]
     fn tier_of_stops_at_set_and_takes_the_first() {
         assert_eq!(tier_of("# tier: T2\n# tier: T3\n"), Some("T2".into()));

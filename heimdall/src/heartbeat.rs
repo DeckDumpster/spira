@@ -84,36 +84,43 @@ pub fn write(path: &Path, text: &str) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    #[test_id(ttkczt6)]
     #[test]
     fn db_read_ok_when_reachable() {
         assert_eq!(db_read_status(true, false), DbStatus::Ok);
     }
 
+    #[test_id(txbc6c2)]
     #[test]
     fn db_read_saturated_outranks_down_when_the_read_itself_timed_out() {
         assert_eq!(db_read_status(false, true), DbStatus::Saturated);
     }
 
+    #[test_id(turndxq)]
     #[test]
     fn db_read_down_otherwise() {
         assert_eq!(db_read_status(false, false), DbStatus::Down);
     }
 
+    #[test_id(tk0aa4v)]
     #[test]
     fn db_write_unknown_never_renders_as_ok() {
         assert_eq!(db_write_status(None, false), DbStatus::Unknown);
     }
 
+    #[test_id(t9zxzva)]
     #[test]
     fn db_write_down_promoted_to_saturated_on_a_timeout() {
         assert_eq!(db_write_status(Some(false), true), DbStatus::Saturated);
     }
 
+    #[test_id(tc27il9)]
     #[test]
     fn db_write_plain_down_without_a_timeout() {
         assert_eq!(db_write_status(Some(false), false), DbStatus::Down);
     }
 
+    #[test_id(tzn15s9)]
     #[test]
     fn render_shape() {
         let keys = vec!["a".to_string(), "b".to_string()];
@@ -126,6 +133,7 @@ mod tests {
         assert!(text.contains("SP_HEIMDALL_ACTED=2"));
     }
 
+    #[test_id(twe6t6w)]
     #[test]
     fn render_with_nothing_firing_is_still_written() {
         let h = Heartbeat { at: 1, firing_keys: &[], db_read: DbStatus::Down, db_write: DbStatus::Unknown, db_saturated: false, fallback_written: true, acted: 0 };
@@ -136,6 +144,7 @@ mod tests {
         assert!(text.contains("SP_HEIMDALL_FALLBACK=1"));
     }
 
+    #[test_id(t7q41ko)]
     #[test]
     fn write_then_read_round_trips() {
         let dir = testkit::TempDir::new("heimdall-heartbeat");

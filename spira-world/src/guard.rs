@@ -23,17 +23,20 @@ pub fn halt_refusal(stamp: &Path, stamp_text: Option<&str>) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[test_id(tdwgmwh)]
     #[test]
     fn no_stamp_no_refusal() {
         assert_eq!(halt_refusal(Path::new("run/world.halted"), None), None);
     }
 
+    #[test_id(t8k6rnt)]
     #[test]
     fn the_refusal_names_the_stamp_the_reason_and_what_lifts_it() {
         let r = halt_refusal(Path::new("run/world.halted"), Some("2000-01-01T00:00:00Z\nwhy: planted reason\n")).unwrap();
         assert!(r.contains("run/world.halted") && r.contains("2000-01-01T00:00:00Z") && r.contains("why: planted reason") && r.contains("world start"), "{r}");
     }
 
+    #[test_id(twj7uta)]
     #[test]
     fn an_empty_stamp_still_refuses() {
         let r = halt_refusal(Path::new("run/world.halted"), Some("")).unwrap();

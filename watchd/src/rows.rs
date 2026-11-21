@@ -69,6 +69,7 @@ mod tests {
         MapResolver(Box::leak(Box::new(HashMap::new())))
     }
 
+    #[test_id(t9b5rt1)]
     #[test]
     fn a_missing_manifest_is_reported_as_missing_not_malformed() {
         let d = TempDir::new("watchd-rows");
@@ -76,6 +77,7 @@ mod tests {
         assert!(matches!(r, Err(RowsError::Missing(_))));
     }
 
+    #[test_id(to85f6e)]
     #[test]
     fn a_good_manifest_with_no_overlay_dir_parses() {
         let d = TempDir::new("watchd-rows");
@@ -84,6 +86,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
     }
 
+    #[test_id(tc4ia0w)]
     #[test]
     fn overlay_watchers_files_are_merged_in_sorted_order_and_share_the_name_space() {
         let d = TempDir::new("watchd-rows");
@@ -99,6 +102,7 @@ mod tests {
         assert_eq!(rows[2].name, "mine");
     }
 
+    #[test_id(tmf22hs)]
     #[test]
     fn an_overlay_row_the_harness_manifest_now_ships_is_skipped_and_the_manifest_row_stands() {
         let d = TempDir::new("watchd-rows");
@@ -110,6 +114,7 @@ mod tests {
         assert_eq!(names, vec![("pool", "pool.sh"), ("mine", "mine.sh")]);
     }
 
+    #[test_id(t8opxtk)]
     #[test]
     fn a_duplicate_name_between_two_overlay_files_is_still_a_fault() {
         let d = TempDir::new("watchd-rows");
@@ -121,6 +126,7 @@ mod tests {
         assert!(matches!(r, Err(RowsError::Malformed(_))));
     }
 
+    #[test_id(t6bxz2x)]
     #[test]
     fn one_bad_line_in_an_overlay_file_refuses_the_whole_manifest() {
         let d = TempDir::new("watchd-rows");

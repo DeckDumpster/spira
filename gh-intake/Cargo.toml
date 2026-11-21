@@ -20,8 +20,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["lifecycle/integration", "mail/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration"]
-
+integration = ["lifecycle/integration", "mail/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
 lifecycle = { path = "../lifecycle" }
 mail = { path = "../mail" }
@@ -33,4 +32,5 @@ spira-otel = { path = "../spira-otel" }
 ureq = { version = "2", default-features = false, features = ["tls"] }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

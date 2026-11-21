@@ -46,6 +46,7 @@ fn carry(r: &TaskRig) -> Carry {
     r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap_or_default()
 }
 
+#[test_id(tqhzixa)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_two_minute_tick() {
     let row = acc::row(NAME);
@@ -60,6 +61,7 @@ fn t1_the_row_is_registered_and_its_boot_arms_the_two_minute_tick() {
     assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
 }
 
+#[test_id(tqbro6d)]
 #[test]
 fn t2_no_breach_and_no_stop_journals_nothing() {
     let mut r = rig(1, Arc::new(Mutex::new(quiet())));
@@ -67,6 +69,7 @@ fn t2_no_breach_and_no_stop_journals_nothing() {
     acc::assert_healthy(&r, STREAM);
 }
 
+#[test_id(tfapvzw)]
 #[test]
 fn t3_seen_is_the_current_breach_set_and_a_stop_lifts_only_when_reached() {
     let w = Arc::new(Mutex::new(overdue()));
@@ -90,6 +93,7 @@ fn t3_seen_is_the_current_breach_set_and_a_stop_lifts_only_when_reached() {
     assert_eq!(asked(&r, LIFT_STOP).len(), 1, "held → lifted on reached=Ok(true)");
 }
 
+#[test_id(tvmrtz0)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("d/watch_mend.rs")), None);
@@ -101,6 +105,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 }
 
 /// `mend_watch.rs:22,29` and the stop-lifting lines, exactly, with no timestamp prefix.
+#[test_id(tctvgbn)]
 #[test]
 fn t5_the_log_lines_are_mend_watchs_and_pause_sweeps() {
     let mut triple = overdue();
@@ -113,6 +118,7 @@ fn t5_the_log_lines_are_mend_watchs_and_pause_sweeps() {
     assert_eq!(asked(&r, LOG_APPEND), ["pause-sweep: kept spira: history unreadable"]);
 }
 
+#[test_id(tn1s6b9)]
 #[test]
 fn t7_acts_carry_the_act_tables_keys_not_a_digest_of_their_input() {
     let snap = Snapshot { stops: vec![Stop { repo: "spira".into(), bead: "sp-x".into(), state: "LANDED".into(), since: 500, reached: Ok(true) }], ..overdue() };
@@ -125,6 +131,7 @@ fn t7_acts_carry_the_act_tables_keys_not_a_digest_of_their_input() {
     assert_ne!(key(&first, LOG_APPEND), key(&later, LOG_APPEND), "the same line on a later tick is a new request, not a refused repeat");
 }
 
+#[test_id(tsauyb2)]
 #[test]
 fn t8_the_pattern_passes_each_act_key_through_to_its_effect_command() {
     use runtime::event::EffectSpec;
@@ -139,12 +146,14 @@ fn standing_breach() -> TaskRig {
     rig(1, Arc::new(Mutex::new(overdue())))
 }
 
+#[test_id(tz734f7)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&standing_breach(), NAME);
     assert!(rows.iter().any(|k| k == "seen"), "{rows:?}");
 }
 
+#[test_id(tdmoj4t)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(standing_breach, || WatchMend::new(config()).registration(), STREAM, WatchMend::boot().2);

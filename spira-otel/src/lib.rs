@@ -3,6 +3,9 @@
 //! `otlpjsonfile` receiver can ship the files unchanged. Emitting never fails or blocks the
 //! caller beyond one short append: an error is counted and dropped.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod fixture;
 pub mod logs;
 pub mod metrics;
@@ -298,6 +301,7 @@ mod tests {
         span.attributes.iter().find(|a| a.key == k).and_then(|a| a.value.as_ref()?.value.as_ref())
     }
 
+    #[test_id(txpa66z)]
     #[test]
     fn answer_time_and_cutoff_are_int_attributes_only_when_given() {
         let dir = tmp("answer-cut");
@@ -313,6 +317,7 @@ mod tests {
         assert_eq!(attr(&spans[1], "spira.deadline_cut_ms"), None);
     }
 
+    #[test_id(tal4n2j)]
     #[test]
     fn the_subverb_children_and_queries_are_written_only_when_present() {
         let dir = tmp("subverb");
@@ -332,6 +337,7 @@ mod tests {
         }
     }
 
+    #[test_id(tovzjfu)]
     #[test]
     fn the_serve_stages_and_the_cut_are_written_each_under_its_own_name() {
         let dir = tmp("serve-stages");
@@ -347,6 +353,7 @@ mod tests {
         assert_eq!(attr(&span, "spira.serve.cut"), Some(&Value::BoolValue(true)));
     }
 
+    #[test_id(tb7lqpy)]
     #[test]
     fn a_span_is_one_line_that_round_trips_through_the_protos_own_deserializer() {
         let dir = tmp("roundtrip");
@@ -384,6 +391,7 @@ mod tests {
         attrs.iter().find(|a| a.key == k).and_then(|a| a.value.as_ref()?.value.as_ref())
     }
 
+    #[test_id(t9khpf6)]
     #[test]
     fn a_write_after_utc_midnight_opens_the_next_days_file_and_old_files_go() {
         let dir = tmp("rotate");
@@ -407,6 +415,7 @@ mod tests {
         assert!(dir.join("other.2023-11-01.jsonl").exists(), "another service's files are not ours");
     }
 
+    #[test_id(t46j4z6)]
     #[test]
     fn an_unwritable_sink_drops_and_counts_without_failing() {
         let dir = tmp("blocked");
@@ -419,6 +428,7 @@ mod tests {
         assert_eq!(dropped(), before + 1);
     }
 
+    #[test_id(t91nkcq)]
     #[test]
     fn the_checked_in_fixture_still_deserializes() {
         let text = include_str!("../tests/fixtures/spira-lc.ndjson");
@@ -429,6 +439,7 @@ mod tests {
         }
     }
 
+    #[test_id(tidl5ug)]
     #[test]
     #[ignore = "rewrites tests/fixtures/spira-lc.ndjson from freshly emitted spans"]
     fn regenerate_fixture() {
@@ -444,6 +455,7 @@ mod tests {
         fs::copy(dir.join("spira-lc.2023-11-14.jsonl"), testkit::manifest_dir().join("tests/fixtures/spira-lc.ndjson")).unwrap();
     }
 
+    #[test_id(toec17w)]
     #[test]
     fn civil_dates_round_trip() {
         for t in [0u64, 86_400 * 59, 86_400 * 60, 1_700_000_000, 4_102_444_800] {

@@ -382,6 +382,7 @@ mod tests {
         Row { name: name.into(), kind, target: target.into(), health: health.into() }
     }
 
+    #[test_id(triukfa)]
     #[test]
     fn an_operator_alarms_condition_stands_while_its_escalation_stamp_does() {
         let run = testkit::TempDir::new("watchd-condition");
@@ -397,12 +398,14 @@ mod tests {
         assert_eq!(condition_exit(run_s, "../x"), 2);
     }
 
+    #[test_id(t7en8w4)]
     #[test]
     fn fingerprints_are_stable_and_distinguish_different_keys() {
         assert_eq!(fingerprint("a"), fingerprint("a"));
         assert_ne!(fingerprint("a"), fingerprint("b"));
     }
 
+    #[test_id(tbpqcgw)]
     #[test]
     fn a_fresh_actionable_backlog_does_not_escalate_before_the_age_threshold() {
         let d = TempDir::new("watchd-notify");
@@ -418,6 +421,7 @@ mod tests {
         assert_eq!(ops.asks.borrow().len(), 0);
     }
 
+    #[test_id(thxob33)]
     #[test]
     fn an_old_stamped_backlog_escalates_immediately_using_its_own_clock() {
         let d = TempDir::new("watchd-notify");
@@ -434,6 +438,7 @@ mod tests {
         assert_eq!(ops.asks.borrow().len(), 1);
     }
 
+    #[test_id(t4dqsx6)]
     #[test]
     fn an_unchanged_backlog_does_not_re_escalate_on_the_next_pass() {
         let d = TempDir::new("watchd-notify");
@@ -451,6 +456,7 @@ mod tests {
         assert_eq!(ops.asks.borrow().len(), 1, "but does not mail a second time");
     }
 
+    #[test_id(t54lq6m)]
     #[test]
     fn a_refused_ask_still_reports_the_finding_and_is_not_stamped() {
         let d = TempDir::new("watchd-notify");
@@ -466,6 +472,7 @@ mod tests {
         assert!(!paths::watchd_dir(&c.run).join("notify.escalated").exists());
     }
 
+    #[test_id(t6t8xyn)]
     #[test]
     fn a_dead_daemon_escalates_through_notify_health() {
         let d = TempDir::new("watchd-notify");
@@ -483,6 +490,7 @@ mod tests {
         assert_eq!(ops.asks.borrow().len(), 1);
     }
 
+    #[test_id(tjv3g48)]
     #[test]
     fn a_halted_world_clears_the_unhealthy_clock_instead_of_escalating() {
         let d = TempDir::new("watchd-notify");
@@ -496,6 +504,7 @@ mod tests {
         assert_eq!(ops.asks.borrow().len(), 0);
     }
 
+    #[test_id(t0ygavc)]
     #[test]
     fn an_unread_backlog_and_a_dead_watcher_escalate_as_two_asks_from_two_stamps() {
         let d = TempDir::new("watchd-notify");
@@ -532,6 +541,7 @@ mod tests {
         vec![("sop-recert".into(), "MATCH: FAIL round\nSYMPTOM: s\nCHECK: c\nFIX: f\nRUN: recert --batch {batch}\nDEADLINE: 60".into())]
     }
 
+    #[test_id(tk62fsw)]
     #[test]
     fn a_stale_row_matching_a_runnable_sop_runs_the_tool_and_tells_the_concierge_instead_of_asking() {
         let d = TempDir::new("watchd-notify");
@@ -545,6 +555,7 @@ mod tests {
         assert!(ops.concierge_mail.borrow()[0].2.contains("recertified b42"));
     }
 
+    #[test_id(ti3bua0)]
     #[test]
     fn a_failing_tool_still_escalates_and_the_ask_names_the_sop_and_its_exit_code() {
         let d = TempDir::new("watchd-notify");
@@ -557,6 +568,7 @@ mod tests {
         assert!(asks[0].3.contains("sop-recert") && asks[0].3.contains("exit code 7"), "{}", asks[0].3);
     }
 
+    #[test_id(tqjgml7)]
     #[test]
     fn a_failing_tool_on_a_stale_row_is_reported_with_one_tried_prefix_and_a_lone_runbook_with_none() {
         let d = TempDir::new("watchd-notify");
@@ -573,6 +585,7 @@ mod tests {
         assert!(out.report.contains("  runbooks that matched: sop-recert") && !out.report.contains("tried"), "{}", out.report);
     }
 
+    #[test_id(twc08ub)]
     #[test]
     fn the_third_pass_over_one_standing_incident_escalates_instead_of_running_a_third_time() {
         let d = TempDir::new("watchd-notify");
@@ -586,6 +599,7 @@ mod tests {
         assert_eq!(ops.asks.borrow().len(), 1);
     }
 
+    #[test_id(t6m2z7p)]
     #[test]
     fn a_dead_watcher_matching_a_runnable_sop_runs_the_tool_instead_of_asking() {
         let d = TempDir::new("watchd-notify");
@@ -612,6 +626,7 @@ mod tests {
 
     const UNDRIVEN_SOP: &str = "MATCH: ROUND OPEN .* with no driver\nSYMPTOM: s\nCHECK: c\nFIX: f\nRUN: finish-round --batch {batch} --repo {repo}\nDEADLINE: 60";
 
+    #[test_id(tj6vokg)]
     #[test]
     fn a_page_a_sop_tool_handles_runs_the_tool_with_the_incident_fields_and_stays_out_of_the_inbox() {
         let d = TempDir::new("watchd-page");
@@ -625,6 +640,7 @@ mod tests {
         assert!(log.contains(UNDRIVEN) && log.contains("members=sp-a,sp-b"), "{log}");
     }
 
+    #[test_id(ts6a9hl)]
     #[test]
     fn a_page_no_sop_matches_reaches_the_inbox_with_the_text_a_person_reads_unchanged() {
         let d = TempDir::new("watchd-page");
@@ -637,6 +653,7 @@ mod tests {
 
     const RUNBOOK: &str = "MATCH: ROUND OPEN .* with no driver\nSYMPTOM: s\nCHECK: c\nFIX: f";
 
+    #[test_id(tuycfyy)]
     #[test]
     fn a_runbook_with_no_run_does_not_stop_a_page_from_running_the_runnable_sop() {
         let d = TempDir::new("watchd-page");
@@ -647,6 +664,7 @@ mod tests {
         assert!(ops.inbox.borrow().is_empty(), "{:?}", ops.inbox.borrow());
     }
 
+    #[test_id(tcqcqky)]
     #[test]
     fn a_page_only_a_runbook_matches_points_at_it_without_claiming_a_tool_was_tried() {
         let d = TempDir::new("watchd-page");
@@ -657,6 +675,7 @@ mod tests {
         assert!(ops.tool_calls.borrow().is_empty());
     }
 
+    #[test_id(ty8xe4v)]
     #[test]
     fn a_page_whose_tool_failed_reaches_the_inbox_naming_what_was_tried() {
         let d = TempDir::new("watchd-page");
@@ -667,6 +686,7 @@ mod tests {
         assert!(inbox[0].starts_with(&format!("[watch:rounds-loop] {UNDRIVEN} (tried before escalating:")) && inbox[0].contains("exit code 2"), "{inbox:?}");
     }
 
+    #[test_id(t5kj31x)]
     #[test]
     fn a_delivered_page_is_not_left_unread_for_notify_to_escalate_again() {
         let d = TempDir::new("watchd-page");
@@ -676,6 +696,7 @@ mod tests {
         assert_eq!(fs_ops::read_pos(&paths::cursorfile(&c.run, "rounds-loop"), fs_ops::total_lines(&lf)), 1);
     }
 
+    #[test_id(t7hyiqr)]
     #[test]
     fn a_page_for_an_unknown_or_non_log_row_is_refused() {
         let d = TempDir::new("watchd-page");
@@ -685,6 +706,7 @@ mod tests {
         assert!(cmd_page(&rows, &Fake::default(), &c, "rounds-loop", UNDRIVEN, &fields).is_err());
     }
 
+    #[test_id(tnj0g40)]
     #[test]
     fn the_third_page_of_one_incident_inside_the_window_reaches_the_inbox_instead_of_running_the_tool_again() {
         let d = TempDir::new("watchd-page");

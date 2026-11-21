@@ -57,6 +57,7 @@ mod tests {
         d
     }
 
+    #[test_id(t7u7wj5)]
     #[test]
     fn read_parses_every_compat_entry() {
         let d = stage_with_deps_toml(
@@ -66,18 +67,21 @@ mod tests {
         assert_eq!(v, vec![("world".to_string(), "world.sh".to_string()), ("ctrl".to_string(), "ctrl.sh".to_string())]);
     }
 
+    #[test_id(t0wpaz1)]
     #[test]
     fn read_is_empty_when_deps_toml_is_missing() {
         let d = testkit::TempDir::new("compat-missing");
         assert!(read(&d).is_empty());
     }
 
+    #[test_id(t5y76ul)]
     #[test]
     fn read_is_empty_when_the_table_is_absent() {
         let d = stage_with_deps_toml("[[dep]]\nname = \"bd\"\n");
         assert!(read(&d).is_empty());
     }
 
+    #[test_id(tdmub0v)]
     #[test]
     fn link_refuses_a_compat_entry_whose_binary_is_missing() {
         let d = stage_with_deps_toml("[[compat]]\nname = \"mail\"\nalias = \"mail.sh\"\n");

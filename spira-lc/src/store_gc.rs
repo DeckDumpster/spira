@@ -187,6 +187,7 @@ mod tests {
         }
     }
 
+    #[test_id(tyu0bxj)]
     #[test]
     fn the_noms_size_counts_every_file_under_nested_directories() {
         let d = testkit::TempDir::new("store-gc-noms");
@@ -202,6 +203,7 @@ mod tests {
         assert!(gone.free_bytes().unwrap_err().contains("cannot stat"));
     }
 
+    #[test_id(tjx2qf4)]
     #[test]
     fn the_live_port_refuses_a_name_that_is_not_plain_before_it_connects() {
         let live = Live { admin: Conn::unreachable(), data: PathBuf::new() };
@@ -212,6 +214,7 @@ mod tests {
         a.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(tasoa9b)]
     #[test]
     fn a_collected_database_reports_noms_and_mount_free_before_and_after() {
         let fake = FakeStoreGc::new(&["beads", "information_schema", "mysql"]);
@@ -220,6 +223,7 @@ mod tests {
         assert_eq!(out, "beads: collected, noms 900 B -> 100 B; mount free 5000 B -> 5800 B");
     }
 
+    #[test_id(tt1ojmb)]
     #[test]
     fn a_failed_collection_exits_one_naming_dolts_error_and_the_rest_still_run() {
         let mut fake = FakeStoreGc::new(&["a", "b"]);
@@ -230,6 +234,7 @@ mod tests {
         assert!(out.contains("b: collected"), "{out}");
     }
 
+    #[test_id(t5hcdhp)]
     #[test]
     fn db_limits_the_run_to_the_named_databases() {
         let fake = FakeStoreGc::new(&["a", "b", "c"]);
@@ -239,6 +244,7 @@ mod tests {
         assert!(!out.contains("a:"), "{out}");
     }
 
+    #[test_id(t81g320)]
     #[test]
     fn a_bare_positional_is_refused_naming_db() {
         let fake = FakeStoreGc::new(&["a"]);
@@ -248,6 +254,7 @@ mod tests {
         assert!(fake.collected.borrow().is_empty());
     }
 
+    #[test_id(th9pxge)]
     #[test]
     fn a_database_name_that_is_not_plain_is_refused() {
         let fake = FakeStoreGc::new(&[]);

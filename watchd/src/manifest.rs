@@ -292,6 +292,7 @@ mod tests {
         (rows, faults)
     }
 
+    #[test_id(t52kqz0)]
     #[test]
     fn the_shipped_manifest_alone_parses_and_names_no_inbox_keeper_row() {
         let path = spira_config::resolve::locate_home_for_process().unwrap().join("watchers");
@@ -307,6 +308,7 @@ mod tests {
     /// W2 of the scheduler consolidation: the harness's own manifest runs no process. Every
     /// watcher that looped as a `daemon` row is a `spira-runtime serve` task or retired; the rows
     /// left name logs other components write. An operator overlay may still add a daemon row.
+    #[test_id(tzxh3aj)]
     #[test]
     fn the_shipped_manifest_has_no_daemon_rows() {
         let path = spira_config::resolve::locate_home_for_process().unwrap().join("watchers");
@@ -320,6 +322,7 @@ mod tests {
         assert!(rows.iter().any(|r| r.name == "concierge-inbox" && r.kind == Kind::Log), "positive control: the read contract rows were parsed");
     }
 
+    #[test_id(toeka4w)]
     #[test]
     fn a_well_formed_daemon_row_parses() {
         let r = resolver(&[]);
@@ -328,6 +331,7 @@ mod tests {
         assert_eq!(rows, vec![Row { name: "pool".into(), kind: Kind::Daemon, target: "pool.sh watch".into(), health: "pool.sh health".into() }]);
     }
 
+    #[test_id(t6aol5r)]
     #[test]
     fn blank_lines_and_comments_are_skipped() {
         let r = resolver(&[]);
@@ -336,6 +340,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
     }
 
+    #[test_id(tuvhwcu)]
     #[test]
     fn fewer_than_three_fields_is_a_fault() {
         let r = resolver(&[]);
@@ -344,6 +349,7 @@ mod tests {
         assert_eq!(faults, vec!["m:1: expected name|kind|target[|health], got 2 field(s): pool|daemon"]);
     }
 
+    #[test_id(t755sye)]
     #[test]
     fn an_unusable_name_is_a_fault() {
         let r = resolver(&[]);
@@ -352,6 +358,7 @@ mod tests {
         assert!(faults[0].contains("not a usable watcher name"));
     }
 
+    #[test_id(tm7wsj3)]
     #[test]
     fn a_duplicate_name_is_a_fault_and_the_first_row_stands() {
         let r = resolver(&[]);
@@ -362,6 +369,7 @@ mod tests {
         assert!(faults[0].contains("already defined above"));
     }
 
+    #[test_id(tni2ata)]
     #[test]
     fn an_unknown_kind_is_a_fault() {
         let r = resolver(&[]);
@@ -370,6 +378,7 @@ mod tests {
         assert!(faults[0].contains("not a kind"));
     }
 
+    #[test_id(t6483vf)]
     #[test]
     fn an_empty_target_is_a_fault() {
         // A trailing `|` with nothing after it is dropped as a field the way bash's own
@@ -383,6 +392,7 @@ mod tests {
         assert!(faults[0].contains("has no target"), "{:?}", faults);
     }
 
+    #[test_id(tcejv9w)]
     #[test]
     fn a_trailing_bare_pipe_with_nothing_after_it_is_a_field_count_fault_not_an_empty_target() {
         let r = resolver(&[]);
@@ -391,6 +401,7 @@ mod tests {
         assert!(faults[0].contains("got 2 field(s)"), "{:?}", faults);
     }
 
+    #[test_id(t2yqcz6)]
     #[test]
     fn a_daemon_target_may_not_be_a_relative_path_with_a_slash() {
         let r = resolver(&[]);
@@ -399,6 +410,7 @@ mod tests {
         assert!(faults[0].contains("bare name or an absolute path"));
     }
 
+    #[test_id(tvzmqge)]
     #[test]
     fn a_daemon_target_may_be_a_bare_name_or_absolute() {
         let r = resolver(&[]);
@@ -407,6 +419,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
     }
 
+    #[test_id(t0p6efg)]
     #[test]
     fn a_log_target_must_be_absolute() {
         let r = resolver(&[]);
@@ -415,6 +428,7 @@ mod tests {
         assert!(faults[0].contains("must be an absolute path"));
     }
 
+    #[test_id(t9l0jmk)]
     #[test]
     fn an_unknown_placeholder_refuses_even_an_optional_row() {
         let r = resolver(&[]);
@@ -424,6 +438,7 @@ mod tests {
         assert!(faults[0].contains("unknown placeholder"));
     }
 
+    #[test_id(tfq6bwi)]
     #[test]
     fn a_required_row_with_an_unset_key_is_a_fault() {
         let r = resolver(&[]);
@@ -433,6 +448,7 @@ mod tests {
         assert!(faults[0].contains("@SPIRA_VIEW@ is empty"));
     }
 
+    #[test_id(ty22vuy)]
     #[test]
     fn an_optional_row_with_an_unset_key_becomes_off_naming_that_key() {
         let r = resolver(&[]);
@@ -441,6 +457,7 @@ mod tests {
         assert_eq!(rows, vec![Row { name: "view".into(), kind: Kind::Off, target: "@SPIRA_VIEW@".into(), health: String::new() }]);
     }
 
+    #[test_id(tvspv5a)]
     #[test]
     fn an_optional_row_whose_health_key_is_unset_becomes_off() {
         let root = testkit::TempDir::new("watchd-view");
@@ -452,6 +469,7 @@ mod tests {
         assert_eq!(rows[0].target, "@SPIRA_VIEW_SESSION@");
     }
 
+    #[test_id(tvtke08)]
     #[test]
     fn placeholders_expand_when_set() {
         let root = testkit::TempDir::new("watchd-view");
@@ -464,6 +482,7 @@ mod tests {
         assert_eq!(rows[0].health, format!("watchd health-ids {view} ops"));
     }
 
+    #[test_id(ta083z4)]
     #[test]
     fn one_bad_line_does_not_stop_the_rest_of_the_file_from_being_checked() {
         let r = resolver(&[]);
@@ -475,6 +494,7 @@ mod tests {
         assert_eq!(faults.len(), 1);
     }
 
+    #[test_id(tb87c9j)]
     #[test]
     fn health_may_itself_contain_pipes_and_is_rejoined() {
         let r = resolver(&[]);
@@ -483,6 +503,7 @@ mod tests {
         assert_eq!(rows[0].health, "a.sh check | grep -v ok");
     }
 
+    #[test_id(txoyhr9)]
     #[test]
     fn keys_list_matches_the_eleven_placeholders() {
         assert_eq!(KEYS.len(), 11);

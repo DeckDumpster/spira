@@ -454,6 +454,7 @@ mod tests {
         Ok(c)
     }
 
+    #[test_id(tu62qp2)]
     #[test]
     fn an_empty_path_falls_back_to_the_registry_file_in_the_run_dir() {
         let c = with_run_default(cfg_with(""), || Ok("r/run/".into()));
@@ -465,6 +466,7 @@ mod tests {
         assert!(none(PATH_KEY).is_err());
     }
 
+    #[test_id(t2cz1xr)]
     #[test]
     fn an_empty_path_exits_3_naming_the_key() {
         let o = run(&argv("list"), 1, &cfg_with(""), &mem);
@@ -472,6 +474,7 @@ mod tests {
         assert!(o.stderr.contains(PATH_KEY), "{}", o.stderr);
     }
 
+    #[test_id(theczrj)]
     #[test]
     fn an_empty_path_exits_3_for_a_write_verb_and_for_deny_list_even_with_a_bad_time() {
         for line in [
@@ -483,6 +486,7 @@ mod tests {
         }
     }
 
+    #[test_id(t9mqi8c)]
     #[test]
     fn a_hold_that_is_not_an_unsigned_integer_exits_3() {
         let cfg = |k: &str| {
@@ -501,6 +505,7 @@ mod tests {
         assert_eq!(o.code, 3, "{}", o.stderr);
     }
 
+    #[test_id(to598n8)]
     #[test]
     fn every_exit_path_prints_json_under_json() {
         let ok_cfg = cfg_with("x");
@@ -536,6 +541,7 @@ mod tests {
         }
     }
 
+    #[test_id(t1o2hap)]
     #[test]
     fn disable_without_a_bead_is_a_usage_error_and_a_malformed_bead_is_refused() {
         let c = cfg_with("x");
@@ -571,6 +577,7 @@ mod tests {
         );
     }
 
+    #[test_id(thtpqk3)]
     #[test]
     fn disable_then_deny_list_round_trips_through_the_verbs() {
         let dir = testkit::TempDir::new("test-registry-cli");
@@ -594,6 +601,7 @@ mod tests {
         assert!(o.stdout.contains("\"rows\":0"), "{}", o.stdout);
     }
 
+    #[test_id(t1m8ppn)]
     #[test]
     fn clear_landed_takes_repeated_beads_and_prints_the_cleared_tests() {
         let dir = testkit::TempDir::new("test-registry-cli-clear");
@@ -640,6 +648,7 @@ mod tests {
         );
     }
 
+    #[test_id(tguc1nk)]
     #[test]
     fn repoint_prints_the_moved_tests_in_text_and_json() {
         let dir = testkit::TempDir::new("test-registry-cli-repoint");
@@ -683,6 +692,7 @@ mod tests {
         assert_eq!(o.stdout, "suite:a.sh");
     }
 
+    #[test_id(t3aq1iq)]
     #[test]
     fn backup_writes_a_file_that_opens_with_the_same_rows() {
         let dir = testkit::TempDir::new("test-registry-backup");
@@ -711,6 +721,7 @@ mod tests {
         assert!(!std::path::Path::new(&format!("{out}.tmp")).exists());
     }
 
+    #[test_id(tz2568w)]
     #[test]
     fn backup_of_a_registry_that_does_not_exist_refuses_and_creates_nothing() {
         let dir = testkit::TempDir::new("test-registry-backup-missing");
@@ -731,6 +742,7 @@ mod tests {
         assert!(!std::path::Path::new(file).exists() && !std::path::Path::new(&out).exists());
     }
 
+    #[test_id(taja21a)]
     #[test]
     fn until_accepts_rfc3339_utc_and_epoch() {
         assert_eq!(parse_time("1970-01-02T00:00:00Z").unwrap(), 86400);
@@ -761,6 +773,7 @@ mod tests {
         (dir, p)
     }
 
+    #[test_id(ta66b4k)]
     #[test]
     fn mint_under_one_seed_prints_the_same_id_twice_and_it_fits_the_grammar() {
         let (a, b) = (id_run("mint", 7), id_run("mint", 7));
@@ -769,6 +782,7 @@ mod tests {
         assert_ne!(id_run("mint", 8).stdout, a.stdout);
     }
 
+    #[test_id(ti4kxbp)]
     #[test]
     fn stamp_writes_an_attribute_above_each_unstamped_test_at_its_indent_and_only_there() {
         let (_d, p) = fixture("test-registry-stamp", SRC);
@@ -790,6 +804,7 @@ mod tests {
         assert!(ids.iter().all(|i| is_id(i)) && ids.iter().collect::<std::collections::BTreeSet<_>>().len() == 3);
     }
 
+    #[test_id(tfn5v04)]
     #[test]
     fn a_second_stamp_changes_no_byte_and_exits_0() {
         let (_d, p) = fixture("test-registry-stamp-twice", SRC);
@@ -800,6 +815,7 @@ mod tests {
         assert_eq!(std::fs::read(&p).unwrap(), once);
     }
 
+    #[test_id(tndddc8)]
     #[test]
     fn a_test_inside_macro_rules_is_refused_by_line_and_the_rest_is_still_stamped() {
         let src = "macro_rules! m {\n    ($n:ident) => {\n        #[test]\n        fn $n() {}\n    };\n}\n#[test]\nfn plain() {}\n";
@@ -812,6 +828,7 @@ mod tests {
         assert!(after.contains("fn plain"));
     }
 
+    #[test_id(t6veeqs)]
     #[test]
     fn stamp_without_a_path_or_with_a_positional_one_is_usage_naming_path() {
         let none = id_run("stamp", 7);
@@ -825,6 +842,7 @@ mod tests {
         assert_eq!(id_run("stamp --path /nonexistent/zz.rs", 7).code, 2);
     }
 
+    #[test_id(trjf6i5)]
     #[test]
     fn stamp_never_mints_an_id_already_in_the_given_files() {
         let first = id_run("mint", 7).stdout;
@@ -836,6 +854,7 @@ mod tests {
         assert_ne!(minted, first);
     }
 
+    #[test_id(thqw9fu)]
     #[test]
     fn stamp_across_two_files_and_a_repeated_path_mints_distinct_ids_once_per_test() {
         let (_d, a) = fixture("test-registry-stamp-two-a", "#[test]\nfn a() {}\n");
@@ -848,6 +867,7 @@ mod tests {
         }
     }
 
+    #[test_id(tznssud)]
     #[test]
     fn help_carries_the_intent_paragraph_and_each_new_verb() {
         let o = id_run("-h", 7);

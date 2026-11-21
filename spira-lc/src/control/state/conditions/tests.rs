@@ -56,6 +56,7 @@ fn raise(r: &Rig, key: &str, msg: &str) {
     r.ok(&["condition", "set", key, "--type", "Alert", "--reason", "Firing", "--message", msg]);
 }
 
+#[test_id(t1w3sxs)]
 #[test]
 fn a_refresh_keeps_the_transition_and_a_reraise_counts_a_flap_from_the_first_sighting() {
     let r = Rig::new();
@@ -77,6 +78,7 @@ fn a_refresh_keeps_the_transition_and_a_reraise_counts_a_flap_from_the_first_sig
     assert_eq!(c["acked"], false, "a new firing is unseen");
 }
 
+#[test_id(tnlbeq8)]
 #[test]
 fn silence_sets_and_lifts_a_deadline_and_a_missing_condition_is_refused() {
     let r = Rig::new();

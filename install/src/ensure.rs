@@ -101,6 +101,7 @@ mod tests {
         testkit::TempDir::new("ensure-test")
     }
 
+    #[test_id(t1go048)]
     #[test]
     fn ensure_installs_missing_units_and_enables_only_new_ones_but_never_restarts() {
         let base = td();
@@ -155,6 +156,7 @@ mod tests {
         (base, unit_dir, sc, r)
     }
 
+    #[test_id(tvbnvc8)]
     #[test]
     fn retire_removes_an_instance_unit_the_release_dropped_and_keeps_the_shipped_ones() {
         let (_base, unit_dir, _sc, r) = retire_fixture(true);
@@ -169,6 +171,7 @@ mod tests {
     /// and this one no longer renders — a ported loop timer and its service, a retired timer
     /// (watch-refresh), a retired watchd daemon instance (queue-watch), the retired cockpit collector with its drop-in — is stopped, disabled and
     /// removed, ledgered or not, while the scheduler's own unit stays.
+    #[test_id(tvkncq6)]
     #[test]
     fn activation_retires_every_installed_unit_the_manifest_dropped_and_keeps_the_scheduler() {
         let base = td();
@@ -201,6 +204,7 @@ mod tests {
         assert!(run(&ctx, true).retired.is_empty(), "a second activation has nothing left to retire");
     }
 
+    #[test_id(tdmfia5)]
     #[test]
     fn without_retire_a_dropped_unit_is_left_alone() {
         let (_base, unit_dir, _sc, r) = retire_fixture(false);

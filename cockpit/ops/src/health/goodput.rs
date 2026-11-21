@@ -150,6 +150,7 @@ const NOW: i64 = 1_000_000;
         ))
     }
 
+    #[test_id(tpup4h2)]
     #[test]
     fn the_top_line_names_goodput_the_binding_condition_and_the_step_in_flight() {
         let top = strip(&top_lines(&snap(14), 200, DEADMAN, NOW).join("\n"));
@@ -161,6 +162,7 @@ const NOW: i64 = 1_000_000;
         );
     }
 
+    #[test_id(t14liw1)]
     #[test]
     fn each_section_has_one_row_with_its_distance_age_and_freshness() {
         let rows = sections_section(&snap(14), 120, DEADMAN, NOW).iter().map(|r| strip(r)).collect::<Vec<_>>();
@@ -172,6 +174,7 @@ const NOW: i64 = 1_000_000;
         assert!(stale.contains("stale") && stale.contains("age ?") && stale.contains("distance ?"), "{stale}");
     }
 
+    #[test_id(tthnrsm)]
     #[test]
     fn a_pass_older_than_the_dead_man_threshold_renders_dim_with_its_age() {
         let fresh = top_lines(&snap(300), 120, DEADMAN, NOW).join("\n");
@@ -182,6 +185,7 @@ const NOW: i64 = 1_000_000;
         assert!(view(&snap(901), 120, DEADMAN, NOW).stale && !view(&snap(300), 120, DEADMAN, NOW).stale);
     }
 
+    #[test_id(tlk1a5t)]
     #[test]
     fn with_the_pass_record_absent_everything_reads_a_question_mark_and_nothing_reads_zero() {
         let none = Snapshot::parse("SP_GP_SEC_N='0'\n");
@@ -193,6 +197,7 @@ const NOW: i64 = 1_000_000;
         assert!(rows.contains('?') && !rows.contains('0'), "{rows}");
     }
 
+    #[test_id(tbuxfqy)]
     #[test]
     fn no_line_is_wider_than_the_page() {
         for cols in [30, 40, 60] {
@@ -206,6 +211,7 @@ const NOW: i64 = 1_000_000;
         assert!(view(&snap(14), 40, DEADMAN, NOW).top.len() > 1, "a long top line wraps instead of being cut");
     }
 
+    #[test_id(ts8uefh)]
     #[test]
     fn a_step_not_yet_acked_says_so_and_a_pass_with_no_open_gap_names_none() {
         let unacked = Snapshot::parse("SP_GP_PASS_AT='999999'\nSP_GP_BINDING='a/b'\nSP_GP_DISTANCE='2 x'\nSP_GP_STEP='hold t'\nSP_GP_STEP_HORIZON='5m'\n");
@@ -217,6 +223,7 @@ const NOW: i64 = 1_000_000;
         assert!(unread.contains("a/b: ?") && !unread.contains("step"), "{unread}");
     }
 
+    #[test_id(tw6wk66)]
     #[test]
     fn a_word_longer_than_the_page_is_cut_rather_than_overflowing() {
         let long = format!("SP_GP_PASS_AT='999999'\nSP_GP_BINDING='{}/x'\n", "k".repeat(80));
@@ -225,6 +232,7 @@ const NOW: i64 = 1_000_000;
         }
     }
 
+    #[test_id(tvi263k)]
     #[test]
     fn a_collector_that_stopped_cannot_leave_the_pass_looking_current() {
         let written_at_14s_old = snap(14);
@@ -233,6 +241,7 @@ const NOW: i64 = 1_000_000;
         assert!(later.stale && later.top.join(" ").contains("stale pass, 10014s old"), "{:?}", later.top);
     }
 
+    #[test_id(t8c6dcw)]
     #[test]
     fn only_the_rows_of_a_stale_section_take_the_warning_colour() {
         let rows = sections_section(&snap(14), 30, DEADMAN, NOW);

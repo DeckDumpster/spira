@@ -87,6 +87,7 @@ fn answer() -> AskEventKind {
     }
 }
 
+#[test_id(trlodfw)]
 #[test]
 fn closing_an_ask_lifts_its_work_beads_hold_in_the_same_txn() {
     let r = Rig::new();
@@ -103,6 +104,7 @@ fn closing_an_ask_lifts_its_work_beads_hold_in_the_same_txn() {
     assert!(r.holds().is_empty());
 }
 
+#[test_id(t8res4y)]
 #[test]
 fn a_closed_ask_is_refused_and_an_existing_ask_is_left_as_it_is() {
     let r = Rig::new();

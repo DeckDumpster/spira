@@ -123,6 +123,7 @@ mod tests {
         ConfigRegistryRuntime::default().check(&tree).unwrap().iter().map(|f| f.to_string()).collect()
     }
 
+    #[test_id(tc2izdi)]
     #[test]
     fn a_planted_include_str_of_the_registry_is_found() {
         let t = TempDir::new("crr-include");
@@ -134,6 +135,7 @@ mod tests {
         assert!(got[1].contains("complete.toml"), "{got:?}");
     }
 
+    #[test_id(txmmkjs)]
     #[test]
     fn a_planted_rerun_if_changed_on_the_registry_is_found() {
         let t = TempDir::new("crr-rerun");
@@ -143,6 +145,7 @@ mod tests {
         assert!(got[0].contains("a/build.rs:2") && got[0].contains("conf.d"), "{got:?}");
     }
 
+    #[test_id(tb9cw28)]
     #[test]
     fn unrelated_embeds_a_comment_and_runtime_reads_are_clean() {
         let t = TempDir::new("crr-clean");

@@ -130,6 +130,7 @@ pub fn utc_stamp(secs: u64) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(t6h4not)]
     #[test]
     fn stamp_matches_date_u() {
         assert_eq!(utc_stamp(0), "1970-01-01T00:00:00Z");

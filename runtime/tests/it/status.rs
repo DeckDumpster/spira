@@ -48,6 +48,7 @@ fn engine(j: Arc<MemJournal>, clock: &VirtualClock) -> Engine {
     Engine::open(j, Arc::new(clock.clone()), regs, 1).unwrap().with_classifier(Arc::new(|s: &EffectSpec| if s.name == "suite" { "container".into() } else { "host".into() }))
 }
 
+#[test_id(t9l7y50)]
 #[test]
 fn status_reflects_a_fired_tick() {
     let (j, clock) = (MemJournal::new(), VirtualClock::new(0));
@@ -72,6 +73,7 @@ fn status_reflects_a_fired_tick() {
     assert_eq!(s.at, 130);
 }
 
+#[test_id(tdl8r7x)]
 #[test]
 fn status_reflects_an_in_flight_effect_its_outcome_and_a_deferral() {
     let (j, clock) = (MemJournal::new(), VirtualClock::new(0));
@@ -106,6 +108,7 @@ fn status_reflects_an_in_flight_effect_its_outcome_and_a_deferral() {
     assert_eq!(depth(&s, "host"), Some((0, 0)));
 }
 
+#[test_id(tzvg9vi)]
 #[test]
 fn status_shows_the_halt() {
     let (j, clock) = (MemJournal::new(), VirtualClock::new(0));
@@ -123,6 +126,7 @@ fn status_shows_the_halt() {
     assert_eq!(s.held, 0);
 }
 
+#[test_id(tndfbvy)]
 #[test]
 fn a_fire_whose_handler_does_nothing_leaves_last_outcome_quiet_not_null() {
     let (j, clock) = (MemJournal::new(), VirtualClock::new(0));

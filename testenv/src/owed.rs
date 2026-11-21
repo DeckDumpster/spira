@@ -67,17 +67,20 @@ paths = ["frontend/"]
 argv = ["x"]
 "#;
 
+    #[test_id(tp04kmn)]
     #[test]
     fn a_frontend_diff_owes_the_frontend_tier_and_not_the_rust_one() {
         assert_eq!(owed_for(Some(DECL_TEXT), "frontend/src/a.svelte\n").unwrap(), ["frontend"]);
     }
 
+    #[test_id(tc4131a)]
     #[test]
     fn a_backend_only_diff_does_not_owe_the_frontend_tier() {
         assert_eq!(owed_for(Some(DECL_TEXT), "crates/db/src/lib.rs\n").unwrap(), ["rust"]);
         assert!(owed_for(Some(DECL_TEXT), "README.md\n").unwrap().is_empty(), "a tier with no paths is never owed");
     }
 
+    #[test_id(t6mgmyt)]
     #[test]
     fn no_declaration_owes_nothing_and_a_bad_path_is_refused() {
         assert!(owed_for(None, "frontend/a\n").unwrap().is_empty());

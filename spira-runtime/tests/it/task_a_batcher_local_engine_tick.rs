@@ -39,11 +39,13 @@ impl EffectRunner for Runner {
     }
 }
 
+#[test_id(tsw6dbp)]
 #[test]
 fn a_tick_on_the_stored_certifying_row_observes_and_cuts_the_waiting_member() {
     tick_on_stored_row(false);
 }
 
+#[test_id(tpq49x4)]
 #[test]
 fn a_tick_on_the_stored_certifying_row_with_a_standing_refusal_poison_observes_and_cuts_the_waiting_member() {
     tick_on_stored_row(true);

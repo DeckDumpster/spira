@@ -281,6 +281,7 @@ mod tests {
         Outbox::open(dir, head, SEGMENT_BYTES).unwrap()
     }
 
+    #[test_id(tc9sdje)]
     #[test]
     fn a_record_above_the_main_head_is_removed_at_open() {
         let dir = testkit::TempDir::new("outbox-above");
@@ -294,6 +295,7 @@ mod tests {
         assert_eq!(open(dir.path(), 0).mains().unwrap(), Vec::<u64>::new());
     }
 
+    #[test_id(tog1ikt)]
     #[test]
     fn a_torn_tail_is_dropped_and_what_precedes_it_is_read() {
         let dir = testkit::TempDir::new("outbox-torn");
@@ -307,6 +309,7 @@ mod tests {
         assert_eq!(open(dir.path(), 9).mains().unwrap(), [1]);
     }
 
+    #[test_id(t5hhm5v)]
     #[test]
     fn an_undone_append_leaves_nothing_and_the_next_one_lands_whole() {
         let dir = testkit::TempDir::new("outbox-undo");
@@ -321,6 +324,7 @@ mod tests {
         assert_eq!(held[1].1[0].key, "c");
     }
 
+    #[test_id(tzfgu8n)]
     #[test]
     fn a_missing_main_is_a_gap_unless_a_recorded_jump_covers_it() {
         let dir = testkit::TempDir::new("outbox-gap");
@@ -334,6 +338,7 @@ mod tests {
         assert_eq!(o.after(0, 5, 10, &[(2, 4)]).unwrap().unwrap().len(), 2);
     }
 
+    #[test_id(tzxo3we)]
     #[test]
     fn a_failed_write_leaves_no_torn_record_for_the_next_append_to_hide_behind() {
         let dir = testkit::TempDir::new("outbox-short-write");
@@ -348,6 +353,7 @@ mod tests {
         assert_eq!(o.mains().unwrap(), [1, 2]);
     }
 
+    #[test_id(trev3qc)]
     #[test]
     fn a_released_segment_is_gone_and_a_later_one_stays() {
         let dir = testkit::TempDir::new("outbox-release");

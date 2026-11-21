@@ -96,6 +96,7 @@ pub fn scan(dir: &Path) -> Vec<String> {
 mod tests {
     use super::*;
 
+    #[test_id(tghl71v)]
     #[test]
     fn a_planted_spira_child_is_caught() {
         let planted = "fn f() {\n    let x = 1;\n    let _ = Command::new(\"spira-lc\").arg(\"list\");\n}\n";
@@ -104,6 +105,7 @@ mod tests {
         assert_eq!(offenders(via_var).len(), 1);
     }
 
+    #[test_id(tg5p0n1)]
     #[test]
     fn a_marked_or_external_child_passes() {
         let marked = "    // FORK-EDGE: machine leg testenv\n    let _ = Command::new(testenv);\n";
@@ -114,6 +116,7 @@ mod tests {
         assert!(offenders(in_test).is_empty());
     }
 
+    #[test_id(tr1icq5)]
     #[test]
     fn a_spawn_after_a_test_item_mid_file_is_still_caught() {
         let src = "#[cfg(test)]\nmod t {\n    fn f() { Command::new(\"queue\"); }\n}\n\nfn g() {\n    Command::new(\"incident.sh\");\n}\n";
@@ -122,6 +125,7 @@ mod tests {
         assert_eq!(offenders(attr_on_fn).len(), 1);
     }
 
+    #[test_id(tvtycea)]
     #[test]
     fn this_crate_starts_no_unmarked_child() {
         let got = scan(&testkit::manifest_dir().join("src"));

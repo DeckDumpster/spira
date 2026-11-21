@@ -12,6 +12,9 @@
 //! One implementation, two callers, and the service path and the same-user fallback can never
 //! drift apart.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 mod backfill_claim;
 mod backfill_repo;
 mod bd;
@@ -399,6 +402,7 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tc2upq1)]
     #[test]
     fn the_deleted_dolt_verbs_are_unknown_and_a_kept_one_still_answers() {
         let argv = |v: &str| vec![v.to_string()];
@@ -411,6 +415,7 @@ mod tests {
         assert_eq!(rc, 0, "the control: a kept verb is not refused as unknown: {out}");
     }
 
+    #[test_id(ths131p)]
     #[test]
     fn every_refusal_name_fits_the_event_column() {
         let s = || String::new();
@@ -435,6 +440,7 @@ mod tests {
         }
     }
 
+    #[test_id(t39d0y2)]
     #[test]
     fn a_unit_variant_and_a_struct_variant_are_both_named() {
         let unit = serde_json::to_value(lifecycle::bead::BeadEventKind::Release).unwrap();

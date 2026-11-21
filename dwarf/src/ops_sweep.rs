@@ -212,6 +212,7 @@ mod tests {
         move |p| p == rel.join("model-bin/work")
     }
 
+    #[test_id(t9hqp56)]
     #[test]
     fn the_sweep_session_runs_under_the_models_restricted_environment() {
         let (_root, home, run, rel) = setup("env", true);
@@ -231,6 +232,7 @@ mod tests {
         assert!(b.env.is_empty());
     }
 
+    #[test_id(toc93zz)]
     #[test]
     fn a_bd_directory_and_a_credential_on_the_managers_environment_stay_out_of_the_session() {
         let (_root, home, run, rel) = setup("cred", true);
@@ -245,6 +247,7 @@ mod tests {
         assert!(joined.contains("SPIRA_RUNE=ops") && !joined.contains("SPIRA_WORK_BEAD_ID"));
     }
 
+    #[test_id(teri133)]
     #[test]
     fn a_release_without_model_bin_work_refuses_the_sweep() {
         let (_root, home, run, rel) = setup("nowork", false);
@@ -281,6 +284,7 @@ mod tests {
         d
     }
 
+    #[test_id(thbcikc)]
     #[test]
     fn prune_removes_over_age_sweep_files_and_spares_the_current_run_and_other_files() {
         let d = planted("ops-prune");
@@ -289,6 +293,7 @@ mod tests {
         assert_eq!(names(d.path()), ["dwarf-ledger.log", "ops.log", "sweep-ops-rCUR.log", "sweep-ops-rCUR.system.md", "sweep-ops-rNEW.log"]);
     }
 
+    #[test_id(t7k8mhn)]
     #[test]
     fn prune_removes_at_most_max_oldest_first_and_counts_the_rest() {
         let d = planted("ops-prune-max");

@@ -40,6 +40,9 @@
 //! re-syncs behind it. Waiting a second for `bd` to confirm what you just asked for is the
 //! same latency by another name.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 mod lcio;
 mod model;
 mod render;
@@ -1266,6 +1269,7 @@ mod tests {
 
     /// The bead's acceptance criterion, verbatim: from the bottom, 20 Downs then one Up
     /// scrolls up by one line.
+    #[test_id(t3oqrz1)]
     #[test]
     fn down_past_the_end_banks_nothing() {
         let s = Scroll::new();
@@ -1280,6 +1284,7 @@ mod tests {
 
     /// The paint loop skips frames while input is queued, so a whole burst can land against
     /// a stale bound. The next frame's `set_max` must pull the position back in.
+    #[test_id(tfkafa1)]
     #[test]
     fn a_burst_against_an_unknown_bound_is_repaired_by_the_next_frame() {
         let s = Scroll::new();
@@ -1293,6 +1298,7 @@ mod tests {
         assert_eq!(s.get(), 4);
     }
 
+    #[test_id(tpthf4z)]
     #[test]
     fn page_keys_clamp_at_both_ends() {
         let s = Scroll::new();
@@ -1306,6 +1312,7 @@ mod tests {
     }
 
     /// A body that fits the pane has max 0: every key is a no-op, not a banked offset.
+    #[test_id(t58m040)]
     #[test]
     fn a_body_that_fits_never_scrolls() {
         let s = Scroll::new();
@@ -1316,6 +1323,7 @@ mod tests {
     }
 
     /// Leaving the reader forgets the bound; the next item's is measured, not inherited.
+    #[test_id(tuaeed3)]
     #[test]
     fn reset_forgets_the_previous_items_bound() {
         let s = Scroll::new();

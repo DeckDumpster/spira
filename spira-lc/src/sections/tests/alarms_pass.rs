@@ -159,6 +159,7 @@ fn put_record<B: Backend>(r: &Rig<B>, rec: &PassRecord) {
     assert!(r.store.txn(&t, &Request::new(&format!("pass/{}", r.head()), "test", "t")).unwrap().succeeded);
 }
 
+#[test_id(tb30fsi)]
 #[test]
 fn a_page_on_raise_condition_pages_on_raise_without_a_pass_record() {
     let r = rig();
@@ -173,6 +174,7 @@ fn a_page_on_raise_condition_pages_on_raise_without_a_pass_record() {
     assert_eq!(w.pass(&r).sent, ["page:Probe/b:Wedged"], "a new raise pages inside the window");
 }
 
+#[test_id(tiqnsnp)]
 #[test]
 fn raised_conditions_of_one_type_page_once_each_by_key_and_link_their_runbook() {
     let r = rig();
@@ -208,6 +210,7 @@ fn lifecycle<B: Backend>(r: &Rig<B>, rate: Value, below: bool) {
     r.ok(&["section", "publish-status", "--actor", "spira-lc", "--expect-rev", &rev], Some(&body));
 }
 
+#[test_id(t37308x)]
 #[test]
 fn below_the_floor_is_one_standing_ask_refiled_only_when_the_binding_condition_changes() {
     let r = rig();
@@ -247,6 +250,7 @@ fn below_the_floor_is_one_standing_ask_refiled_only_when_the_binding_condition_c
     assert_eq!(ap::floor_cleared(&Dispatch(&r)), Ok(false), "a warming rate never clears it");
 }
 
+#[test_id(tlsxorn)]
 #[test]
 fn the_dead_man_pages_once_under_reconciler_and_reads_the_switch_first() {
     let r = rig();
@@ -284,6 +288,7 @@ fn the_dead_man_pages_once_under_reconciler_and_reads_the_switch_first() {
     assert_eq!((status["deadman_state"].clone(), status["heartbeat_state"].clone()), (json!("fresh"), json!("delivered")), "typed beside the prose, for arm-check");
 }
 
+#[test_id(tlpqjjx)]
 #[test]
 fn when_the_alarms_pass_stops_its_section_reads_stale() {
     let r = rig();
@@ -294,6 +299,7 @@ fn when_the_alarms_pass_stops_its_section_reads_stale() {
     assert_eq!(alarms_section(&r)["freshness"]["state"], "Stale");
 }
 
+#[test_id(tk3dcu0)]
 #[test]
 fn an_exhausted_section_pages_once_under_its_open_conditions() {
     let r = rig();
@@ -309,6 +315,7 @@ fn an_exhausted_section_pages_once_under_its_open_conditions() {
     assert!(w.pass(&r).sent.is_empty());
 }
 
+#[test_id(tlve41b)]
 #[test]
 fn the_probe_proves_the_primary_path_alone_and_its_health_reads_the_latest_probe() {
     let r = rig();

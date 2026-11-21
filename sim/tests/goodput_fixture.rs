@@ -3,6 +3,8 @@
 //! the manifest's `b-1226` (the bead `sp-w2fute` names); the join check substitutes the
 //! lifecycle's attribution rows for the TSD `round-attribution` family, which carries no batch id.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeSet;
 
 use sim::replay::{fixtures_root, load, Attribution, CertPass, Record, ReplayWorld, Slice};
@@ -50,6 +52,7 @@ fn ratio(g: &Goodput) -> f64 {
     }
 }
 
+#[test_id(txbd3rf)]
 #[test]
 fn the_landing_stop_beads_cost_is_its_typed_stop_window_and_it_pulls_the_days_ratio_down_by_at_least_that() {
     let events = oct31_events();
@@ -70,6 +73,7 @@ fn the_landing_stop_beads_cost_is_its_typed_stop_window_and_it_pulls_the_days_ra
     assert!(drop + 1e-9 >= stop as f64 / w.secs as f64, "ratio fell by {drop}, the stop is {stop}s of {}s", w.secs);
 }
 
+#[test_id(tfft72b)]
 #[test]
 fn one_recorded_red_that_cost_an_innocent_member_moves_the_days_ratio_by_under_a_tenth_of_what_the_landing_stop_does() {
     let landings: Vec<LoopEvent> = oct31_events()
@@ -117,6 +121,7 @@ fn slice_records(slice: Slice) -> Vec<(u64, Record)> {
     load(&fixtures_root().unwrap().join(slice.dir())).unwrap()
 }
 
+#[test_id(tmnqiz7)]
 #[test]
 fn the_join_check_names_a_cert_pass_whose_batch_no_round_holds() {
     let mut records = slice_records(Slice::Oct31);
@@ -126,6 +131,7 @@ fn the_join_check_names_a_cert_pass_whose_batch_no_round_holds() {
     assert_eq!(orphans, ["repo-a-19700101T000000Z"]);
 }
 
+#[test_id(thvvb9h)]
 #[test]
 fn every_cert_pass_batch_is_the_batch_id_the_rounds_and_attributions_carry() {
     for slice in [Slice::Oct31, Slice::HeldOut] {
@@ -136,6 +142,7 @@ fn every_cert_pass_batch_is_the_batch_id_the_rounds_and_attributions_carry() {
     }
 }
 
+#[test_id(tcwcwmb)]
 #[test]
 fn the_join_check_names_an_attributed_red_whose_pass_no_red_cert_pass_carries() {
     let mut records = slice_records(Slice::Oct31);
@@ -154,6 +161,7 @@ fn the_join_check_names_an_attributed_red_whose_pass_no_red_cert_pass_carries() 
     assert_eq!(orphans, [format!("{batch} pass {pass}")]);
 }
 
+#[test_id(tupog3u)]
 #[test]
 fn a_recorded_red_is_charged_to_its_owner_in_that_owners_repo_scope() {
     let world = oct31_world();

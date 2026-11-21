@@ -244,6 +244,7 @@ mod tests {
 
     const H: u64 = 3600;
 
+    #[test_id(tbi6lu7)]
     #[test]
     fn a_drill_is_fresh_to_eight_days_stale_past_it_and_never_without_a_stamp() {
         let now = 10_000_000;
@@ -255,6 +256,7 @@ mod tests {
         assert_eq!(measure_drill(Some("junk"), now), Db::Unreadable);
     }
 
+    #[test_id(tdi1wev)]
     #[test]
     fn a_stale_drill_turns_the_aggregate_red() {
         let snap = Snapshot::Dbs(vec![("a".into(), Db::Ok { age: 1 }), ("drill:a".into(), Db::Stale { age: 50 * H })]);
@@ -277,6 +279,7 @@ mod tests {
         }
     }
 
+    #[test_id(tfdweq7)]
     #[test]
     fn observe_at_reports_the_control_drill_when_the_store_is_configured() {
         let found = |v: &[(String, Db)]| v.iter().find(|(n, _)| n == "drill:control").map(|(_, d)| d.clone());

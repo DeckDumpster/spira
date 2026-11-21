@@ -205,6 +205,7 @@ mod tests {
         d
     }
 
+    #[test_id(t1r5bg9)]
     #[test]
     fn durations_parse() {
         assert_eq!(parse_duration("10m"), Some(600));
@@ -216,6 +217,7 @@ mod tests {
         assert_eq!(parse_duration("x"), None);
     }
 
+    #[test_id(t373riv)]
     #[test]
     fn an_amend_id_is_never_a_bead_id() {
         let d = tmp("amend-id");
@@ -225,6 +227,7 @@ mod tests {
         assert!(!r.id.starts_with("sp-"));
     }
 
+    #[test_id(tobd1vj)]
     #[test]
     fn pending_blocks_submit_until_answered() {
         let d = tmp("amend-submit");
@@ -235,6 +238,7 @@ mod tests {
         assert!(submit_refusal(&m, "sp-x1").is_none());
     }
 
+    #[test_id(t89r7ze)]
     #[test]
     fn a_decline_records_the_reason_and_cannot_be_answered_twice() {
         let d = tmp("amend-decline");
@@ -246,6 +250,7 @@ mod tests {
         assert!(submit_refusal(&m, "sp-x1").is_none());
     }
 
+    #[test_id(tbsjbzk)]
     #[test]
     fn enforce_waits_for_the_deadline_unless_declined() {
         let d = tmp("amend-enforce");
@@ -262,6 +267,7 @@ mod tests {
         assert!(enforceable(&load(&m, "sp-x1", &d.id).unwrap(), 9999).is_err());
     }
 
+    #[test_id(tz0yeoj)]
     #[test]
     fn find_locates_a_record_by_id_alone() {
         let d = tmp("amend-find");

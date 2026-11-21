@@ -9,6 +9,9 @@
 //! crate per script would recreate the five-copies-of-one-idea problem `cockpit/db.sh`'s own
 //! header names as the reason it is one function and not five.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod lcio;
 pub mod lcview;
 pub mod lctui;

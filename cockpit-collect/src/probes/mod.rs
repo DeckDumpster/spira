@@ -117,6 +117,7 @@ fn cert_window_mins(raw: &str) -> Result<i64, String> {
 mod cert_window_tests {
     use super::*;
 
+    #[test_id(t0zvgaz)]
     #[test]
     fn empty_is_the_default_and_a_value_is_parsed() {
         assert_eq!(cert_window_mins("").unwrap(), 90);
@@ -697,6 +698,7 @@ mod sop_tests {
     }
 
     // covers: UC-cockpit-observability-14
+    #[test_id(t87h2ne)]
     #[test]
     fn never_fired_and_recurred_respect_the_window_held_and_check_fail() {
         let none = probe(None, SHELF_FLAT);
@@ -712,6 +714,7 @@ mod sop_tests {
     }
 
     // covers: UC-cockpit-observability-14
+    #[test_id(tf6ryeq)]
     #[test]
     fn the_sweep_age_is_the_newest_ledger_entry_and_unreadable_sources_are_unknown() {
         let stale = probe(Some(&entry("sop-disk-full", "pass", "yes", NOW - 7200)), SHELF_FLAT);
@@ -735,6 +738,7 @@ mod mail_tests {
     use super::*;
 
     // covers: UC-cockpit-observability-26
+    #[test_id(ti9bv0w)]
     #[test]
     fn mail_keys_count_unread_and_label_each_message_new_read_or_done() {
         let dir = testkit::TempDir::new("mail-keys");
@@ -764,6 +768,7 @@ mod stamp_tests {
     use super::*;
 
     // covers: UC-cockpit-observability-02
+    #[test_id(tb2f6tx)]
     #[test]
     fn a_pass_opens_with_its_stamp_then_the_window() {
         let _env = testkit::env(&[("SPIRA_COCKPIT_WINDOW_HOURS", Some("6"))]);
@@ -787,6 +792,7 @@ mod gate_scan_tests {
     }
 
     // covers: UC-cockpit-observability-15
+    #[test_id(tu06juz)]
     #[test]
     fn a_gate_is_live_only_when_its_pid_is_alive_and_its_cmdline_is_the_gate() {
         let run = testkit::TempDir::new("gate-scan");
@@ -804,6 +810,7 @@ mod gate_scan_tests {
     }
 
     // covers: UC-cockpit-observability-15
+    #[test_id(tnigpsg)]
     #[test]
     fn no_gate_run_directory_is_zero_gates() {
         let run = testkit::TempDir::new("gate-scan-none");
@@ -817,6 +824,7 @@ mod waiting_tests {
     use super::*;
 
     // covers: UC-cockpit-observability-08
+    #[test_id(tcfizpc)]
     #[test]
     fn waiting_is_unknown_when_bd_refused_and_zero_when_the_store_is_empty() {
         let refusal = "schema version mismatch: database is at v61, binary knows up to v53";
@@ -837,6 +845,7 @@ mod waiting_tests {
 mod bound_tests {
     use super::bound_records;
 
+    #[test_id(trihsxo)]
     #[test]
     fn bound_records_joins_each_class_and_says_question_when_the_scheduler_is_silent() {
         let two = r#"[{"class":"build-disk","limit":7,"held":9,"waiting":3,"over":true},{"class":"memory","limit":4,"held":2,"waiting":1,"over":false}]"#;
@@ -1624,6 +1633,7 @@ pub fn czar_progress(bead: &Value, lc: Option<&HashMap<String, lc::Row>>) -> Cza
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tb4inqo)]
     #[test]
     fn firing_alerts_come_from_the_stores_heimdall_conditions() {
         let doc = r#"{"conditions":[{"key":"sentinel-stale","status":"True"},{"key":"mirror-stale","status":"False"},{"key":"db-down","status":"True"}]}"#;
@@ -1633,6 +1643,7 @@ mod tests {
         assert_eq!(heimdall_alerts(Some("garbage".into())).0, "?");
     }
 
+    #[test_id(tltvb0a)]
     #[test]
     fn loop_keys_come_from_the_schedulers_own_record_of_each_task() {
         let doc = r#"{"at":100000,"tasks":[
@@ -1652,6 +1663,7 @@ mod tests {
         }
     }
 
+    #[test_id(t5dj2m3)]
     #[test]
     fn dwarf_static_cache_honours_ttl_and_refuses_partial_rows() {
         let t = testkit::TempDir::new("dwarf-static");
@@ -1679,6 +1691,7 @@ mod tests {
     // covers: UC-cockpit-observability-13
     /// Duplicate incident refs are counted from the lifecycle row: only non-terminal rows
     /// count; terminal, rowless and duplicate-of: never do.
+    #[test_id(t9sqx4x)]
     #[test]
     fn dup_refs_count_by_lifecycle_state_not_bd_status() {
         let rows: Vec<Value> = serde_json::from_str(
@@ -1697,6 +1710,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-13
+    #[test_id(tg6sfi5)]
     #[test]
     fn a_terminal_predecessor_and_a_recurrence_is_not_surplus_but_two_live_rows_are() {
         let rows: Vec<Value> = serde_json::from_str(
@@ -1712,6 +1726,7 @@ mod tests {
     }
 
     /// sp-mve9i: the counts follow the lifecycle row, whatever bd's status says.
+    #[test_id(t9d3jw3)]
     #[test]
     fn well_counts_read_the_lifecycle_state_not_bd_status() {
         let rows: Vec<Value> = serde_json::from_str(
@@ -1732,12 +1747,14 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-13
+    #[test_id(ttdqp1u)]
     #[test]
     fn poison_counts_live_poison_holds() {
         let lc = lcmap(&[("a", "REWORK", &["poison"]), ("b", "LANDED", &["poison"]), ("c", "READY", &["wait"])]);
         assert_eq!(poison_count(&lc), 1);
     }
 
+    #[test_id(tea23i4)]
     #[test]
     fn ask_holds_are_counted_apart_from_other_hold_kinds() {
         let lc = lcmap(&[
@@ -1751,6 +1768,7 @@ mod tests {
         assert_eq!(poison_count(&lc), 1);
     }
 
+    #[test_id(tim0rqt)]
     #[test]
     fn czar_outcome_follows_the_lifecycle_row() {
         let bead: Value = serde_json::from_str(r#"{"id":"z","status":"closed"}"#).unwrap();
@@ -1761,6 +1779,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-13
+    #[test_id(tv1eyvg)]
     #[test]
     fn repo_label_meters_count_unmapped_and_absent_and_an_unreadable_map_is_unknown() {
         let rows: Vec<Value> = serde_json::from_str(
@@ -1774,6 +1793,7 @@ mod tests {
         assert_eq!(out, vec![("SP_REPO_UNMAPPED".to_string(), "?".to_string()), ("SP_REPO_ABSENT".to_string(), "?".to_string())]);
     }
 
+    #[test_id(tif88pe)]
     #[test]
     fn the_repo_label_probe_asks_plan_with_the_sorted_names_and_reads_the_reply() {
         assert_eq!(repo_labels_argv(&["a", "b"]), ["plan", "repo-labels", "--valid", "a,b"]);
@@ -1781,6 +1801,7 @@ mod tests {
         assert_eq!(repo_labels_from_server(r#"{"unmapped":1}"#), None);
     }
 
+    #[test_id(tv4mqrd)]
     #[test]
     fn well_reports_zero_not_question_mark_on_empty() {
         // well_keys hits bd for real; this only checks the pure classification helper
@@ -1788,6 +1809,7 @@ mod tests {
         assert_eq!(io::json_rows(Some("[]".to_string())), Some(vec![]));
     }
 
+    #[test_id(tqb2sk9)]
     #[test]
     fn dwarf_alive_delegates_to_strands_canonical_predicate() {
         // Wave 4.23 (sp-0ffox) retired this crate's own cmdline check; the positive/negative
@@ -1804,6 +1826,7 @@ mod tests {
 mod drift_tests {
     use super::drift_value;
 
+    #[test_id(tep1yzh)]
     #[test]
     fn a_probe_that_could_not_run_is_never_read_as_clean() {
         assert_eq!(drift_value(Some(0), "", "DIRTY", "DIRTY "), "OK");
@@ -1821,6 +1844,7 @@ mod drift_tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(t5yvwcs)]
     #[test]
     fn the_strand_ledger_counts_ghosts_apart_from_every_other_class() {
         let kv = strand(Some(r#"{"spira,plan:ghost:sp-a":{},"spira,plan:ghost:sp-b":{},"spira,plan:empty:sp-c":{},"spira,plan:cycle:sp-d":{"escalated":5}}"#));
@@ -1833,6 +1857,7 @@ mod drift_tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(t33pvy0)]
     #[test]
     fn an_unreadable_or_unclassifiable_ledger_is_a_question_mark_before_the_split_never_a_zero() {
         for ledger in [None, Some("not json"), Some("[]")] {
@@ -1856,6 +1881,7 @@ mod livelock_tests {
     }
 
     // covers: UC-ops-detection-remediation-29
+    #[test_id(t67kqvj)]
     #[test]
     fn a_store_that_answers_with_nothing_flagged_reports_zero_never_a_question_mark() {
         let kv = livelock_report("", "", || true, || true);
@@ -1865,6 +1891,7 @@ mod livelock_tests {
     }
 
     // covers: UC-ops-detection-remediation-29
+    #[test_id(t15kipb)]
     #[test]
     fn a_store_that_does_not_answer_is_a_question_mark_not_a_clean_bill() {
         let kv = livelock_report("", "", || false, || false);
@@ -1874,6 +1901,7 @@ mod livelock_tests {
 
     // covers: UC-ops-detection-remediation-29
     // covers: UC-ops-detection-remediation-30
+    #[test_id(tc6slhw)]
     #[test]
     fn each_detector_row_reaches_its_own_count_and_an_allowed_row_counts_in_neither() {
         let ll = "LIVELOCK sp-a unclaimable — x\nLIVELOCK sp-b ci-stuck — y";

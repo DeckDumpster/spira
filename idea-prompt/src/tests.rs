@@ -42,6 +42,7 @@ fn run(f: &Fake, st: &mut State) -> Outcome {
     pass(f, &cfg(), st).unwrap()
 }
 
+#[test_id(tdsmiod)]
 #[test]
 fn thirty_idle_minutes_in_waking_hours_prompt_exactly_once() {
     let f = Fake::new();
@@ -59,6 +60,7 @@ fn thirty_idle_minutes_in_waking_hours_prompt_exactly_once() {
     assert!(sent[0].2.contains("1. sp-b — newer\n2. sp-a — older\n"), "{}", sent[0].2);
 }
 
+#[test_id(t1p0uog)]
 #[test]
 fn busy_work_suppresses_and_resets_the_idle_clock() {
     let f = Fake::new();
@@ -71,6 +73,7 @@ fn busy_work_suppresses_and_resets_the_idle_clock() {
     assert!(f.sent.borrow().is_empty());
 }
 
+#[test_id(tq9w2is)]
 #[test]
 fn an_unanswered_prompt_waits_for_busy_then_idle_and_a_day() {
     let f = Fake::new();
@@ -87,6 +90,7 @@ fn an_unanswered_prompt_waits_for_busy_then_idle_and_a_day() {
     assert_eq!(f.sent.borrow().len(), 2);
 }
 
+#[test_id(tmor7pf)]
 #[test]
 fn outside_waking_hours_nothing_is_sent() {
     let f = Fake::new();
@@ -99,6 +103,7 @@ fn outside_waking_hours_nothing_is_sent() {
     assert_eq!(run(&f, &mut st), Outcome::Prompted(2), "positive control: the same state prompts at 07:00");
 }
 
+#[test_id(txo1yhr)]
 #[test]
 fn no_ideas_sends_nothing() {
     let mut f = Fake::new();
@@ -108,6 +113,7 @@ fn no_ideas_sends_nothing() {
     assert!(f.sent.borrow().is_empty());
 }
 
+#[test_id(tg0wmfj)]
 #[test]
 fn state_round_trips() {
     let s = State { last_busy: 5, last_prompt: 9, prompted: true };

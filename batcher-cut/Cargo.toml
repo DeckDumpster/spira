@@ -10,8 +10,7 @@ name = "batcher"
 path = "src/main.rs"
 
 [features]
-integration = ["batcher/integration", "forge/integration", "gate/integration", "lifecycle/integration", "runtime/integration", "sift/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "store-view/integration", "suite-select/integration", "testenv/integration", "testkit/integration", "tsd/integration", "system-paths/integration"]
-
+integration = ["batcher/integration", "forge/integration", "gate/integration", "lifecycle/integration", "runtime/integration", "sift/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "store-view/integration", "suite-select/integration", "testenv/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 batcher = { path = "../batcher" }
@@ -40,6 +39,7 @@ path = "tests/fence_green.rs"
 required-features = ["integration"]
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [profile.release]

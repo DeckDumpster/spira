@@ -95,6 +95,7 @@ fn replay(name: &str) -> (String, i64) {
 }
 
 // covers: UC-ops-detection-remediation-18
+#[test_id(tgj7adp)]
 #[test]
 fn a_healthy_loop_fires_nothing_and_neither_does_a_replay_of_real_passes() {
     assert_eq!(keys(&obs(&healthy(), json!({}))), Vec::<String>::new());
@@ -106,6 +107,7 @@ fn a_healthy_loop_fires_nothing_and_neither_does_a_replay_of_real_passes() {
 }
 
 // covers: UC-ops-detection-remediation-18
+#[test_id(t284pkl)]
 #[test]
 fn passes_that_never_finish_and_a_dead_timer_raise_sentinel_stalled_naming_which() {
     let wedged = obs(&mklog(10, 5, 0, false, false, NOW - 60, ""), json!({"heimdall_first": NOW - 86400}));
@@ -118,6 +120,7 @@ fn passes_that_never_finish_and_a_dead_timer_raise_sentinel_stalled_naming_which
 }
 
 // covers: UC-ops-detection-remediation-18
+#[test_id(tiyl888)]
 #[test]
 fn a_tail_with_no_completed_pass_is_measured_from_the_later_of_its_start_and_heimdalls_first_run() {
     let nodone = mklog(10, 5, 0, false, false, NOW - 60, "");
@@ -128,6 +131,7 @@ fn a_tail_with_no_completed_pass_is_measured_from_the_later_of_its_start_and_hei
 }
 
 // covers: UC-ops-detection-remediation-18
+#[test_id(twxmcov)]
 #[test]
 fn an_unreadable_log_is_the_alert_not_a_clear() {
     let o = obs("", json!({"sentinel_log_readable": false, "sentinel_log_error": "no such file"}));
@@ -135,6 +139,7 @@ fn an_unreadable_log_is_the_alert_not_a_clear() {
 }
 
 // covers: UC-ops-detection-remediation-18
+#[test_id(tubdj8o)]
 #[test]
 fn halt_or_drain_suppresses_sentinel_stalled_but_only_because_the_same_world_fires_without_it() {
     let dead = mklog(10, 5, 0, false, true, NOW - 4000, "");
@@ -148,6 +153,7 @@ fn halt_or_drain_suppresses_sentinel_stalled_but_only_because_the_same_world_fir
 }
 
 // covers: UC-ops-detection-remediation-18
+#[test_id(to2114m)]
 #[test]
 fn call_starvation_needs_sustained_passes_and_excludes_withholds_and_dwarves_at_cap() {
     let starved = |n, ready, dwarves, extra: &str| obs(&mklog(n, ready, dwarves, false, true, NOW - 60, extra), json!({}));
@@ -165,6 +171,7 @@ fn call_starvation_needs_sustained_passes_and_excludes_withholds_and_dwarves_at_
 }
 
 // covers: UC-ops-detection-remediation-18
+#[test_id(twdbdgz)]
 #[test]
 fn database_mirror_ghost_and_restart_alerts_are_distinct_and_do_not_mask_each_other() {
     let h = healthy();
@@ -195,6 +202,7 @@ fn database_mirror_ghost_and_restart_alerts_are_distinct_and_do_not_mask_each_ot
 }
 
 // covers: UC-ops-detection-remediation-18
+#[test_id(tgpfxie)]
 #[test]
 fn the_older_ready_spelling_still_parses_and_untimestamped_lines_are_skipped() {
     let old = mklog(6, 15, 0, false, true, NOW - 60, "").replace("plan_ready=", "ready=");

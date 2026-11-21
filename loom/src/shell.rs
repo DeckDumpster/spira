@@ -98,6 +98,7 @@ pub fn wrap_foreign(html: &str, active: &str, bar: &Bar) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tx6op4e)]
     #[test]
     fn every_section_is_one_tab_and_only_the_active_one_is_marked() {
         let t = tabs("stuck");
@@ -109,6 +110,7 @@ mod tests {
         assert_eq!(tabs("nowhere").matches("aria-current").count(), 0, "positive control: an unknown section marks nothing");
     }
 
+    #[test_id(to6kb7v)]
     #[test]
     fn the_factory_tab_is_marked_current_on_the_factory_page() {
         let t = tabs("factory");
@@ -117,6 +119,7 @@ mod tests {
         assert_eq!(SECTIONS.len(), 7);
     }
 
+    #[test_id(tbu1fx7)]
     #[test]
     fn the_bar_names_what_it_does_not_know_and_flags_an_old_snapshot() {
         let blank = bar_html(&Bar::default());
@@ -125,6 +128,7 @@ mod tests {
         assert!(old.contains("stale 10m") && old.contains("dwarves 2/4") && old.contains("abc"), "{old}");
     }
 
+    #[test_id(tjjma8h)]
     #[test]
     fn a_foreign_page_gets_the_tabs_inside_its_body() {
         let w = wrap_foreign("<html><body><p>x</p></body></html>", "lifecycle", &Bar::default());

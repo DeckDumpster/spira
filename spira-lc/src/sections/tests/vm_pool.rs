@@ -56,6 +56,7 @@ fn published(r: &Rig<MemBackend>) -> Value {
     r.ok(&["section", "get", "VmPool/pool"], None)["section"].clone()
 }
 
+#[test_id(tz52o3f)]
 #[test]
 fn the_hours_shares_are_the_fixtures_infra_and_over_cap_passes_over_its_passes() {
     let r = at_five();
@@ -69,6 +70,7 @@ fn the_hours_shares_are_the_fixtures_infra_and_over_cap_passes_over_its_passes()
     assert_eq!(s["metadata"]["owner"], kind::OWNER);
 }
 
+#[test_id(tyduhtz)]
 #[test]
 fn a_vm_lost_pass_counts_as_infra_incomplete_and_a_row_that_is_no_pass_counts_as_nothing() {
     let r = at_five();
@@ -85,6 +87,7 @@ fn a_vm_lost_pass_counts_as_infra_incomplete_and_a_row_that_is_no_pass_counts_as
     assert_eq!((reading.passes, reading.infra_incomplete_share, reading.over_cap_share), (2, 0.5, 0.0));
 }
 
+#[test_id(tg91i5h)]
 #[test]
 fn an_hour_with_no_pass_publishes_a_share_of_zero_so_its_distance_is_defined() {
     let r = at_five();
@@ -92,6 +95,7 @@ fn an_hour_with_no_pass_publishes_a_share_of_zero_so_its_distance_is_defined() {
     assert_eq!((reading.passes, reading.infra_incomplete_share, reading.over_cap_share), (0, 0.0, 0.0));
 }
 
+#[test_id(tj8c099)]
 #[test]
 fn the_publisher_declares_no_action_and_the_selector_records_the_section_as_a_term() {
     let r = at_five();
@@ -109,6 +113,7 @@ fn the_publisher_declares_no_action_and_the_selector_records_the_section_as_a_te
     assert!(plan.steps.is_empty() && plan.would_step.is_empty());
 }
 
+#[test_id(tgyspmb)]
 #[test]
 fn the_section_turns_stale_when_the_publisher_stops_for_longer_than_its_max_age() {
     let r = at_five();
@@ -126,6 +131,7 @@ fn the_section_turns_stale_when_the_publisher_stops_for_longer_than_its_max_age(
     assert_eq!(cannot_see(&r), None, "the next publish makes it fresh");
 }
 
+#[test_id(tdfky7l)]
 #[test]
 fn a_second_publish_replaces_the_first_on_its_revision() {
     let r = at_five();
@@ -136,6 +142,7 @@ fn a_second_publish_replaces_the_first_on_its_revision() {
     assert_eq!(s["metadata"]["observedAt"], format_rfc3339(FIVE + 300));
 }
 
+#[test_id(tugxy23)]
 #[test]
 fn a_store_that_refuses_the_write_is_an_error_naming_the_verb() {
     struct Refuses;
@@ -152,6 +159,7 @@ fn a_store_that_refuses_the_write_is_an_error_naming_the_verb() {
     assert!(e.contains("publish VmPool/pool") && e.contains("exit 3"), "{e}");
 }
 
+#[test_id(tafjc9j)]
 #[test]
 fn a_store_that_cannot_answer_the_read_stops_the_publish_before_any_write() {
     struct Down;
@@ -164,6 +172,7 @@ fn a_store_that_cannot_answer_the_read_stops_the_publish_before_any_write() {
     assert!(section::run(&Down, FIVE, &[], slots()).unwrap_err().contains("section get VmPool/pool"));
 }
 
+#[test_id(tk3uexh)]
 #[test]
 fn leases_are_counted_per_pool_and_every_pool_is_named_at_zero() {
     use round_vm::schema::{Lease, Vm};
@@ -180,6 +189,7 @@ fn spec_for_pool(r: &Rig<MemBackend>) {
     }
 }
 
+#[test_id(t2affrt)]
 #[test]
 fn a_family_with_no_file_reads_as_no_passes_and_any_other_failure_stops_the_publish() {
     use tsd::query::{Failure, ERR_NO_FAMILY};

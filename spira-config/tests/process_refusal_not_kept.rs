@@ -1,6 +1,9 @@
 //! A refused resolution is not kept: the process door re-reads `$SPIRA_TOML` until one succeeds,
 //! then pins that success. Own test binary, so the process-global cell starts empty.
 
+#[macro_use]
+extern crate spira_test_id;
+#[test_id(tjs6jcy)]
 #[test]
 fn a_refused_resolution_is_not_kept_and_a_resolved_one_is() {
     {

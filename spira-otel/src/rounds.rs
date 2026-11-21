@@ -45,6 +45,7 @@ pub fn hand_managed_query() -> String {
 mod tests {
     use super::*;
 
+    #[test_id(t05czee)]
     #[test]
     fn emit_writes_a_record_that_reads_back_with_its_actor_and_kind() {
         let d = testkit::TempDir::new("otel-rounds");
@@ -72,6 +73,7 @@ mod tests {
         assert_eq!(get("id").as_deref(), Some("sp-a"));
     }
 
+    #[test_id(tloroz7)]
     #[test]
     fn only_concierge_and_operator_are_hands() {
         for a in ACTORS {
@@ -80,6 +82,7 @@ mod tests {
         assert!(!is_hand("spira-lc"));
     }
 
+    #[test_id(tjyx70e)]
     #[test]
     fn the_hand_managed_query_is_pinned() {
         assert_eq!(
@@ -88,6 +91,7 @@ mod tests {
         );
     }
 
+    #[test_id(t7judol)]
     #[test]
     fn the_shipped_panel_runs_the_pinned_query() {
         let dash: serde_json::Value = serde_json::from_str(include_str!(

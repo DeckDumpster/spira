@@ -1587,6 +1587,7 @@ mod tests {
         ]
     }
 
+    #[test_id(to9hu14)]
     #[test]
     fn builder_time_and_sessions_accumulate_over_entries_to_and_exits_from_working() {
         let tip = "1111111111111111111111111111111111111111";
@@ -1611,6 +1612,7 @@ mod tests {
         assert_eq!((r.sessions, r.worked_s), (2, 17580));
     }
 
+    #[test_id(tzkzrig)]
     #[test]
     fn a_session_with_no_recorded_start_or_a_backwards_clock_adds_no_builder_time() {
         let submit = |r: &LifecycleRow, at: Option<i64>| {
@@ -1628,6 +1630,7 @@ mod tests {
         assert_eq!(submit(&r, Some(40)).worked_s, 50, "a backwards clock clamps to zero");
     }
 
+    #[test_id(t63ftvu)]
     #[test]
     fn since_is_stamped_on_every_state_change_and_not_on_a_move_within_a_state() {
         let mut r = row(BeadState::InDelivery);
@@ -1658,6 +1661,7 @@ mod tests {
         assert_eq!((out.row.state, out.row.since), (BeadState::Working, Some(5)));
     }
 
+    #[test_id(tajnhsm)]
     #[test]
     fn legal_edges_are_the_machines_own_moves() {
         let edges = legal_edges();
@@ -1677,6 +1681,7 @@ mod tests {
         assert!(has(BeadState::Certified, "Submit", BeadState::Submitted));
     }
 
+    #[test_id(tw0s03o)]
     #[test]
     fn promote_takes_an_open_record_to_ready_and_no_other_state_anywhere() {
         let out = apply(&row(BeadState::Open), &ev(BeadState::Open, 0, BeadEventKind::Promote));
@@ -1689,6 +1694,7 @@ mod tests {
         }
     }
 
+    #[test_id(tlf5pk9)]
     #[test]
     fn event_names_hold_every_variant_once_under_its_serde_tag() {
         let names = event_names();
@@ -1701,6 +1707,7 @@ mod tests {
         }
     }
 
+    #[test_id(tjch6s6)]
     #[test]
     fn every_probe_is_named_as_its_serde_tag() {
         for kind in edge_probes() {
@@ -1710,6 +1717,7 @@ mod tests {
         }
     }
 
+    #[test_id(th7hy9o)]
     #[test]
     fn every_state_event_pair_has_an_explicit_outcome() {
         for &state in &ALL_STATES {
@@ -1737,6 +1745,7 @@ mod tests {
         BeadEvent { actor: "classifier".into(), ..ev(expect, 0, kind) }
     }
 
+    #[test_id(th6mlh5)]
     #[test]
     fn reclassify_overwrites_only_the_residue_default_on_a_terminal_row() {
         let mut r = row(BeadState::Dropped);
@@ -1753,6 +1762,7 @@ mod tests {
         assert!(!apply(&row(BeadState::Landed), &classifier_ev(BeadState::Landed, reclassify(BeadState::Dropped, "x"))).applied);
     }
 
+    #[test_id(tj7rkrh)]
     #[test]
     fn reclassify_is_the_classifiers_alone_and_never_touches_a_holder() {
         let r = row(BeadState::Submitted);
@@ -1762,6 +1772,7 @@ mod tests {
         assert!(!apply(&w, &classifier_ev(BeadState::Working, reclassify(BeadState::Dropped, "x"))).applied);
     }
 
+    #[test_id(tonk6fm)]
     #[test]
     fn reclassify_to_the_same_state_and_rule_is_refused() {
         let mut r = row(BeadState::Dropped);
@@ -1773,6 +1784,7 @@ mod tests {
         BreakGlass { reason: "hand-mended".into(), evidence: "npm test 101/0".into(), evidence_tip: tip.into() }
     }
 
+    #[test_id(to2h0xk)]
     #[test]
     fn a_terminal_transition_clears_every_hold() {
         let sets = [vec![HoldKind::Manual], vec![HoldKind::Wait, HoldKind::Manual], vec![HoldKind::Poison]];
@@ -1797,6 +1809,7 @@ mod tests {
         }
     }
 
+    #[test_id(ts27urm)]
     #[test]
     fn holds_survive_a_non_terminal_move_and_an_ask_still_refuses_drop() {
         let mut r = row(BeadState::Ready);
@@ -1811,6 +1824,7 @@ mod tests {
         assert!(!out.applied && matches!(out.refusal, Some(Refusal::AwaitingReply { .. })), "{:?}", out.refusal);
     }
 
+    #[test_id(tqcucvp)]
     #[test]
     fn a_manually_held_rework_row_is_resubmitted_to_submitted_and_no_other_is() {
         let tip = "2222222222222222222222222222222222222222";
@@ -1848,6 +1862,7 @@ mod tests {
         assert!(matches!(bad.refusal, Some(Refusal::MalformedTip { .. })));
     }
 
+    #[test_id(to9qbmx)]
     #[test]
     fn a_resubmit_at_the_ejected_red_tip_withdraws_the_red() {
         let t = "2222222222222222222222222222222222222222";
@@ -1873,6 +1888,7 @@ mod tests {
         assert!(matches!(out.refusal, Some(Refusal::BreakGlassIncomplete { .. })), "{:?}", out.refusal);
     }
 
+    #[test_id(tthaijh)]
     #[test]
     fn a_resubmit_without_its_provenance_is_refused_naming_the_missing_field() {
         let tip = "2222222222222222222222222222222222222222";
@@ -1899,6 +1915,7 @@ mod tests {
         }
     }
 
+    #[test_id(tiv1x7r)]
     #[test]
     fn unholding_a_gate_hold_by_hand_is_break_glass_and_other_unholds_are_not() {
         let tip = "2222222222222222222222222222222222222222";
@@ -1938,6 +1955,7 @@ mod tests {
         assert_eq!(wire, r#"{"Unhold":{"kind":"Manual"}}"#);
     }
 
+    #[test_id(tl9pi3u)]
     #[test]
     fn express_is_orthogonal_to_state_and_reversible() {
         for state in [BeadState::Ready, BeadState::Working, BeadState::Submitted, BeadState::Certified, BeadState::InDelivery, BeadState::Rework] {
@@ -1949,6 +1967,7 @@ mod tests {
         }
     }
 
+    #[test_id(t5kg97i)]
     #[test]
     fn a_sift_pass_is_recorded_only_at_the_current_tip_of_a_submitted_or_certified_row() {
         for state in ALL_STATES {
@@ -1965,6 +1984,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2qclfu)]
     #[test]
     fn a_restack_records_the_edge_and_the_new_tip_on_a_submitted_or_certified_row() {
         let new_tip = "2222222222222222222222222222222222222222";
@@ -1995,6 +2015,7 @@ mod tests {
         assert!(!bad(new_tip, Stack::from([(r.bead_id.clone(), "t".to_string())]), 1).applied, "a bead cannot stack on itself");
     }
 
+    #[test_id(tjpbifx)]
     #[test]
     fn terminal_states_absorb_every_event() {
         for &state in &[BeadState::Landed, BeadState::Superseded, BeadState::Dropped, BeadState::Done] {
@@ -2008,6 +2029,7 @@ mod tests {
         }
     }
 
+    #[test_id(tf3wncw)]
     #[test]
     fn claim_from_ready_enters_working() {
         let r = row(BeadState::Ready);
@@ -2019,6 +2041,7 @@ mod tests {
         assert_eq!(out.row.version, 1);
     }
 
+    #[test_id(t4vc033)]
     #[test]
     fn a_directed_claim_names_who_directed_why_and_the_dwarf_it_replaced() {
         let by = Direction { by: "concierge".into(), reason: "loop fix".into(), previous_holder: Some("dwarf-old".into()) };
@@ -2032,6 +2055,7 @@ mod tests {
         assert!(matches!(legacy, BeadEventKind::Claim { directed: None, .. }));
     }
 
+    #[test_id(t0infhj)]
     #[test]
     fn a_claim_records_its_persona_beside_the_holder_and_a_legacy_claim_has_none() {
         let claim = |persona: Option<&str>| {
@@ -2048,6 +2072,7 @@ mod tests {
         assert!(released.applied && released.row.persona.is_none());
     }
 
+    #[test_id(t80qj7g)]
     #[test]
     fn release_and_holder_dead_both_return_to_ready() {
         for kind in [BeadEventKind::Release, BeadEventKind::HolderDead] {
@@ -2061,6 +2086,7 @@ mod tests {
         }
     }
 
+    #[test_id(tckhbjc)]
     #[test]
     fn holder_dead_clears_a_legacy_submitted_rows_holder_and_keeps_its_state() {
         let mut r = row(BeadState::Submitted);
@@ -2074,6 +2100,7 @@ mod tests {
         assert_eq!(out.row.tip, r.tip);
     }
 
+    #[test_id(todaa71)]
     #[test]
     fn a_round_delivers_a_submitted_tip_without_a_per_bead_gate() {
         // law-a-round-is-feature-first-then-catch-all: the round's full suite is the certification.
@@ -2088,6 +2115,7 @@ mod tests {
         assert!(!apply(&row(BeadState::Rework), &ev(BeadState::Rework, 0, BeadEventKind::Deliver)).applied);
     }
 
+    #[test_id(t12w2jc)]
     #[test]
     fn a_submit_releases_the_holder_so_no_dead_holder_outlives_the_session() {
         let mut r = row(BeadState::Working);
@@ -2099,6 +2127,7 @@ mod tests {
         assert_eq!((out.row.holder, out.row.persona, out.row.lease_until), (None, None, None));
     }
 
+    #[test_id(twxzxqr)]
     #[test]
     fn submit_then_gate_pass_certifies_the_same_tip() {
         let mut r = row(BeadState::Working);
@@ -2118,6 +2147,7 @@ mod tests {
         assert_eq!(out.row.gate_key.as_deref(), Some("k1"));
     }
 
+    #[test_id(t7n0yo1)]
     #[test]
     fn gate_pass_on_a_stale_tip_is_refused_and_does_not_mutate() {
         let mut r = row(BeadState::Submitted);
@@ -2129,6 +2159,7 @@ mod tests {
         assert!(matches!(out.refusal, Some(Refusal::TipMismatch { .. })));
     }
 
+    #[test_id(t42w5sp)]
     #[test]
     fn requeued_with_matching_tip_returns_to_certified() {
         let mut r = row(BeadState::InDelivery);
@@ -2139,6 +2170,7 @@ mod tests {
         assert_eq!(out.row.state, BeadState::Certified);
     }
 
+    #[test_id(tuau8hw)]
     #[test]
     fn a_requeue_returns_each_member_to_the_state_it_was_delivered_from() {
         for (from, back) in [(BeadState::Submitted, BeadState::Submitted), (BeadState::Certified, BeadState::Certified)] {
@@ -2157,6 +2189,7 @@ mod tests {
         }
     }
 
+    #[test_id(tb5o5tn)]
     #[test]
     fn a_requeue_without_a_gate_key_never_yields_certified() {
         let mut r = row(BeadState::InDelivery);
@@ -2167,6 +2200,7 @@ mod tests {
         assert_eq!(out.row.state, BeadState::Submitted);
     }
 
+    #[test_id(t7pqugg)]
     #[test]
     fn requeued_with_a_different_tip_voids_certification_to_submitted() {
         let mut r = row(BeadState::InDelivery);
@@ -2179,6 +2213,7 @@ mod tests {
         assert_eq!(out.row.tip.as_deref(), Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
     }
 
+    #[test_id(tcij78s)]
     #[test]
     fn expect_mismatch_never_mutates() {
         let r = row(BeadState::Ready);
@@ -2189,6 +2224,7 @@ mod tests {
         assert!(matches!(out.refusal, Some(Refusal::ExpectMismatch { .. })));
     }
 
+    #[test_id(t9d9ily)]
     #[test]
     fn stale_version_never_mutates() {
         let mut r = row(BeadState::Ready);
@@ -2200,6 +2236,7 @@ mod tests {
         assert!(matches!(out.refusal, Some(Refusal::StaleVersion { .. })));
     }
 
+    #[test_id(tkflzem)]
     #[test]
     fn hold_and_unhold_suspend_without_losing_state() {
         let r = row(BeadState::Submitted);
@@ -2214,6 +2251,7 @@ mod tests {
         assert!(out2.row.holds.contains(&HoldKind::Ask));
     }
 
+    #[test_id(t6j948r)]
     #[test]
     fn a_verdict_on_the_held_tip_lifts_the_gates_no_verdict_wait() {
         let held = || {
@@ -2255,6 +2293,7 @@ mod tests {
         r
     }
 
+    #[test_id(theb3is)]
     #[test]
     fn a_gate_bead_is_refused_every_close_on_marker_text_alone() {
         let r = gate_row();
@@ -2275,6 +2314,7 @@ mod tests {
         }
     }
 
+    #[test_id(tpug4d0)]
     #[test]
     fn a_gate_bead_closes_after_a_reply_event_carrying_a_message_id() {
         let r = gate_row();
@@ -2287,6 +2327,7 @@ mod tests {
         assert_eq!(closed.row.state, BeadState::Done);
     }
 
+    #[test_id(tgushay)]
     #[test]
     fn a_withdrawn_ask_lifts_by_its_own_event_and_needs_an_ask() {
         let out = apply(&gate_row(), &ev(BeadState::Working, 0, BeadEventKind::AskWithdrawn));
@@ -2296,6 +2337,7 @@ mod tests {
         assert!(!apply(&row(BeadState::Working), &ev(BeadState::Working, 0, BeadEventKind::AskWithdrawn)).applied);
     }
 
+    #[test_id(t6rt6e2)]
     #[test]
     fn a_reply_needs_an_ask_and_a_message_id() {
         let none = apply(&row(BeadState::Working), &ev(BeadState::Working, 0, BeadEventKind::Reply { message_id: "m-1".into() }));
@@ -2304,6 +2346,7 @@ mod tests {
         assert!(!blank.applied);
     }
 
+    #[test_id(tcurayg)]
     #[test]
     fn hold_is_refused_on_a_terminal_row() {
         let r = row(BeadState::Landed);
@@ -2312,6 +2355,7 @@ mod tests {
         assert!(matches!(out.refusal, Some(Refusal::Terminal { .. })));
     }
 
+    #[test_id(tjgp6cj)]
     #[test]
     fn content_on_base_lands_from_any_non_terminal_state() {
         for &state in &[
@@ -2329,6 +2373,7 @@ mod tests {
         }
     }
 
+    #[test_id(texkodr)]
     #[test]
     fn supersede_and_drop_are_available_from_any_non_terminal_state() {
         for &state in &[BeadState::Ready, BeadState::Working, BeadState::Rework] {
@@ -2344,6 +2389,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2mqof6)]
     #[test]
     fn in_delivery_is_left_only_by_a_delivery_exit_event() {
         // The three delivery exit events are delivered/returned/requeued. The orthogonal
@@ -2377,6 +2423,7 @@ mod tests {
         }
     }
 
+    #[test_id(t6c7twm)]
     #[test]
     fn resubmitting_a_moved_tip_voids_certification_to_submitted() {
         let mut r = row(BeadState::Certified);
@@ -2389,6 +2436,7 @@ mod tests {
         assert_eq!(out.row.gate_key, None, "a voided certification carries no gate key forward");
     }
 
+    #[test_id(t5bfm3o)]
     #[test]
     fn resubmitting_the_same_tip_leaves_certification_standing() {
         let mut r = row(BeadState::Certified);
@@ -2400,6 +2448,7 @@ mod tests {
         assert_eq!(out.row.gate_key.as_deref(), Some("k1"), "an unchanged tip is not a change to void");
     }
 
+    #[test_id(t39x8mx)]
     #[test]
     fn a_moved_tip_resubmitted_while_submitted_replaces_the_pending_tip() {
         let mut r = row(BeadState::Submitted);
@@ -2414,6 +2463,7 @@ mod tests {
         assert!(!stale.applied, "a verdict on the replaced tip is TipMismatch");
     }
 
+    #[test_id(t8fgodm)]
     #[test]
     fn resubmitting_the_same_tip_while_submitted_is_a_no_op() {
         let mut r = row(BeadState::Submitted);
@@ -2423,6 +2473,7 @@ mod tests {
         assert_eq!((out.row.state, out.row.tip.as_deref()), (BeadState::Submitted, Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")));
     }
 
+    #[test_id(tmlahkb)]
     #[test]
     fn version_is_monotonic_across_a_chain_of_applied_events() {
         let mut r = row(BeadState::Ready);
@@ -2469,6 +2520,7 @@ mod tests {
         ReturnedReason::BatchEjectedRed,
         ReturnedReason::BaseWithdrawn,
     ];
+    #[test_id(t9zqbzq)]
     #[test]
     fn submit_at_a_tip_a_round_ejected_red_is_refused_and_a_new_tip_is_accepted() {
         let mut r = row(BeadState::Working);
@@ -2489,6 +2541,7 @@ mod tests {
         assert_eq!((fresh.row.state, fresh.row.tip.as_deref()), (BeadState::Submitted, Some("5555555555555555555555555555555555555555")));
     }
 
+    #[test_id(ts906x2)]
     #[test]
     fn every_path_into_rework_clears_the_dead_holder_and_lease() {
         let held = |state| {
@@ -2513,6 +2566,7 @@ mod tests {
         }
     }
 
+    #[test_id(ttb2kcu)]
     #[test]
     fn a_red_gate_or_pr_check_eject_bars_the_tip_and_a_rebase_conflict_does_not() {
         let go = |state, kind| {
@@ -2530,6 +2584,7 @@ mod tests {
         assert_eq!(go(BeadState::InDelivery, pr).as_deref(), Some("1111111111111111111111111111111111111111"));
     }
 
+    #[test_id(trzol21)]
     #[test]
     fn a_known_red_tip_is_neither_delivered_nor_requeued_to_submitted() {
         let t = "1111111111111111111111111111111111111111";
@@ -2548,6 +2603,7 @@ mod tests {
         assert_eq!(out.row.state, BeadState::Submitted);
     }
 
+    #[test_id(tlo98og)]
     #[test]
     fn absolving_a_red_tip_needs_evidence_and_readmits_the_tip() {
         let t = "1111111111111111111111111111111111111111";
@@ -2572,6 +2628,7 @@ mod tests {
         assert!(!go(&clean, glass("e", t)).applied, "nothing recorded, nothing to absolve");
     }
 
+    #[test_id(tnn95t1)]
     #[test]
     fn a_pr_red_bead_resubmitted_at_the_same_tip_is_refused() {
         let mut r = row(BeadState::Submitted);
@@ -2582,6 +2639,7 @@ mod tests {
         assert_eq!(again.refusal, Some(Refusal::EjectedRedTip { tip: "1111111111111111111111111111111111111111".into() }));
     }
 
+    #[test_id(tq21ukh)]
     #[test]
     fn an_ejection_that_was_not_red_does_not_bar_the_tip() {
         let mut r = row(BeadState::InDelivery);
@@ -2600,6 +2658,7 @@ mod tests {
         HoldCause::ManualHold,
     ];
 
+    #[test_id(tomvpsv)]
     #[test]
     fn every_gate_red_reason_moves_submitted_to_rework_and_is_recorded() {
         for reason in ALL_GATE_RED_REASONS {
@@ -2612,6 +2671,7 @@ mod tests {
         }
     }
 
+    #[test_id(tqdg8ar)]
     #[test]
     fn a_certified_bead_that_no_longer_merges_returns_to_rework_on_its_own_tip() {
         let mut r = row(BeadState::Certified);
@@ -2626,6 +2686,7 @@ mod tests {
         assert!(matches!(out.refusal, Some(Refusal::TipMismatch { .. })));
     }
 
+    #[test_id(tksggp1)]
     #[test]
     fn every_returned_reason_moves_in_delivery_to_rework_and_is_recorded() {
         for reason in ALL_RETURNED_REASONS {
@@ -2638,6 +2699,7 @@ mod tests {
         }
     }
 
+    #[test_id(t7il4m0)]
     #[test]
     fn every_drop_reason_drops_a_ready_bead_and_is_recorded() {
         for reason in ALL_DROP_REASONS {
@@ -2649,6 +2711,7 @@ mod tests {
         }
     }
 
+    #[test_id(tfivixs)]
     #[test]
     fn every_hold_cause_holds_a_ready_bead_and_is_recorded() {
         for cause in ALL_HOLD_CAUSES {
@@ -2660,6 +2723,7 @@ mod tests {
         }
     }
 
+    #[test_id(tahes9v)]
     #[test]
     fn a_manual_hold_needs_a_reason_that_is_not_a_bead_id_or_a_snooze() {
         let manual = |detail: Option<&str>| {
@@ -2680,6 +2744,7 @@ mod tests {
         assert!(manual(Some("repeat offender, parked by the Concierge")).applied);
     }
 
+    #[test_id(t0afy00)]
     #[test]
     fn a_wait_hold_may_carry_a_bead_id_or_a_snooze_and_a_legacy_operator_event_still_replays() {
         for d in ["sp-abc12", "snooze-until:99"] {
@@ -2692,6 +2757,7 @@ mod tests {
         assert_eq!(HoldKind::from_str("operator"), None);
     }
 
+    #[test_id(t2gtwd4)]
     #[test]
     fn a_manual_hold_records_its_raise_and_a_manual_unhold_clears_it() {
         let hold = |cause, detail: &str, at: i64| BeadEvent { at: Some(at), ..ev(BeadState::Ready, at as u64 / 10 - 1, BeadEventKind::Hold { kind: HoldKind::Manual, cause, detail: Some(detail.into()) }) };
@@ -2711,6 +2777,7 @@ mod tests {
         assert_eq!(dropped.row.manual_hold, None, "a terminal row keeps no raise with no hold behind it");
     }
 
+    #[test_id(t60nl8i)]
     #[test]
     fn hold_detail_overrides_the_causes_own_name_in_the_row() {
         // work.rs's superseded-by asks the operator to confirm against a specific successor
@@ -2735,6 +2802,7 @@ mod tests {
         ev(expect, version, BeadEventKind::Claim { holder: "dwarf-1".into(), lease_until: 100, stack, stack_depth, stack_max_depth, persona: None, directed: None })
     }
 
+    #[test_id(t4kvw7s)]
     #[test]
     fn claim_records_the_proposed_stack_and_depth() {
         let r = row(BeadState::Ready);
@@ -2760,6 +2828,7 @@ mod tests {
         red.row
     }
 
+    #[test_id(tfxxw9c)]
     #[test]
     fn a_stacked_claim_after_gate_red_is_refused_while_the_base_is_unchanged() {
         let r = stacked_red_row();
@@ -2770,6 +2839,7 @@ mod tests {
         assert!(matches!(out.refusal, Some(Refusal::StackUnchanged { ref prereqs }) if prereqs == &["sp-a".to_string()]));
     }
 
+    #[test_id(tsi4wup)]
     #[test]
     fn a_stacked_claim_after_gate_red_is_allowed_once_the_base_moves() {
         let r = stacked_red_row();
@@ -2777,6 +2847,7 @@ mod tests {
         assert!(apply(&r, &claim_ev(BeadState::Rework, r.version, Stack::new(), 0, 4)).applied);
     }
 
+    #[test_id(twpoxf0)]
     #[test]
     fn an_unstacked_or_non_gate_red_rework_claim_is_unaffected() {
         let mut r = stacked_red_row();
@@ -2787,6 +2858,7 @@ mod tests {
         assert!(apply(&r, &claim_ev(BeadState::Rework, r.version, stack_of("8888888888888888888888888888888888888888"), 1, 4)).applied);
     }
 
+    #[test_id(txic1th)]
     #[test]
     fn of_two_racing_claims_exactly_one_holds() {
         let r = row(BeadState::Ready);
@@ -2798,6 +2870,7 @@ mod tests {
         assert_eq!(second.row.holder, first.row.holder);
     }
 
+    #[test_id(tq6x51y)]
     #[test]
     fn depth_at_the_ceiling_is_allowed_one_past_it_is_refused() {
         let r = row(BeadState::Ready);
@@ -2811,6 +2884,7 @@ mod tests {
         assert!(matches!(out.refusal, Some(Refusal::DepthExceeded { depth: 5, max: 4 })));
     }
 
+    #[test_id(tzsaol7)]
     #[test]
     fn stack_max_depth_zero_reproduces_todays_behaviour_no_stacking_allowed() {
         let r = row(BeadState::Ready);
@@ -2824,6 +2898,7 @@ mod tests {
         assert!(!out.applied, "any depth above zero is refused when stack_max_depth is 0");
     }
 
+    #[test_id(tcy73hy)]
     #[test]
     fn a_config_ceiling_above_four_would_be_refused_by_the_schema_this_crate_only_enforces_the_number_given() {
         // The hard ceiling of 4 is spira-config's own schema job (ceiling 4, per Ryan
@@ -2834,6 +2909,7 @@ mod tests {
         assert!(out.applied, "this crate trusts the ceiling it is given");
     }
 
+    #[test_id(tcjibwv)]
     #[test]
     fn stale_stack_entries_reports_a_prerequisite_whose_tip_moved() {
         let mut stack = Stack::new();
@@ -2854,6 +2930,7 @@ mod tests {
         assert_eq!(stale[0].current_tip.as_deref(), Some("3333333333333333333333333333333333333333"));
     }
 
+    #[test_id(t9ff3xo)]
     #[test]
     fn stale_stack_entries_is_empty_when_every_tip_still_matches() {
         let mut stack = Stack::new();
@@ -2865,6 +2942,7 @@ mod tests {
         assert!(stale_stack_entries(&stack, &[prereq_a]).is_empty());
     }
 
+    #[test_id(t1dcqse)]
     #[test]
     fn stale_stack_entries_reports_a_prerequisite_with_no_row_at_all() {
         let mut stack = Stack::new();
@@ -2882,6 +2960,7 @@ mod tests {
         r
     }
 
+    #[test_id(tsbmb2j)]
     #[test]
     fn base_withdrawn_on_ready_reapplies_the_wait_hold_and_leaves_stack_untouched() {
         let r = row(BeadState::Ready);
@@ -2891,6 +2970,7 @@ mod tests {
         assert!(out.row.stack.is_empty());
     }
 
+    #[test_id(tbua6ld)]
     #[test]
     fn base_withdrawn_on_working_stays_working_and_is_refused_if_the_tip_does_not_match() {
         let r = claimed_row(BeadState::Working, "sp-a", "1111111111111111111111111111111111111111");
@@ -2905,6 +2985,7 @@ mod tests {
         assert!(matches!(out.refusal, Some(Refusal::NotInStack { .. })));
     }
 
+    #[test_id(t8qemdn)]
     #[test]
     fn submit_is_refused_once_the_prerequisite_row_shows_the_stack_is_stale() {
         let r = claimed_row(BeadState::Working, "sp-a", "4444444444444444444444444444444444444444");
@@ -2919,6 +3000,7 @@ mod tests {
         assert_eq!(submit_refusal_for_stale_stack(&r, &[prereq]), None, "a fresh stack must not block submit");
     }
 
+    #[test_id(tzk2413)]
     #[test]
     fn claim_is_refused_when_the_proposed_stack_is_already_stale() {
         let mut stack = Stack::new();
@@ -2934,6 +3016,7 @@ mod tests {
         assert_eq!(claim_refusal_for_stale_stack(&stack, &[prereq]), None, "a fresh proposal must not be refused");
     }
 
+    #[test_id(t3jdieh)]
     #[test]
     fn base_withdrawn_moves_submitted_and_certified_to_rework_with_the_reason_named() {
         for state in [BeadState::Submitted, BeadState::Certified] {
@@ -2945,6 +3028,7 @@ mod tests {
         }
     }
 
+    #[test_id(tj1lvxl)]
     #[test]
     fn base_withdrawn_on_in_delivery_stays_in_delivery_pending_the_batch_ejects_it() {
         let r = claimed_row(BeadState::InDelivery, "sp-a", "1111111111111111111111111111111111111111");
@@ -2953,6 +3037,7 @@ mod tests {
         assert_eq!(out.row.state, BeadState::InDelivery);
     }
 
+    #[test_id(tdn0q1s)]
     #[test]
     fn a_red_verdict_at_the_tip_is_recorded_on_an_in_delivery_row_and_marks_it_for_eject() {
         let mut r = claimed_row(BeadState::InDelivery, "sp-a", "1111111111111111111111111111111111111111");
@@ -2965,6 +3050,7 @@ mod tests {
         assert_eq!(out.row.version, r.version + 1);
     }
 
+    #[test_id(t13xv00)]
     #[test]
     fn a_red_verdict_at_a_superseded_tip_changes_nothing_on_an_in_delivery_row() {
         let mut r = claimed_row(BeadState::InDelivery, "sp-a", "2222222222222222222222222222222222222222");
@@ -2976,6 +3062,7 @@ mod tests {
         assert_eq!(out.row, r);
     }
 
+    #[test_id(ta2dv3z)]
     #[test]
     fn base_withdrawn_is_refused_on_a_terminal_row() {
         for state in [BeadState::Landed, BeadState::Superseded, BeadState::Dropped, BeadState::Done] {
@@ -2986,6 +3073,7 @@ mod tests {
         }
     }
 
+    #[test_id(t01vy80)]
     #[test]
     fn prereq_landed_drops_the_entry_from_stack_and_is_idempotent() {
         let r = claimed_row(BeadState::Working, "sp-a", "1111111111111111111111111111111111111111");
@@ -2998,6 +3086,7 @@ mod tests {
         assert!(out2.applied);
     }
 
+    #[test_id(tkadljw)]
     #[test]
     fn release_from_working_clears_the_voided_stack() {
         let r = claimed_row(BeadState::Working, "sp-a", "1111111111111111111111111111111111111111");
@@ -3008,6 +3097,7 @@ mod tests {
         assert_eq!(out.row.stack_depth, 0);
     }
 
+    #[test_id(th916s4)]
     #[test]
     fn a_certified_same_repo_blocker_releases_the_wait_hold_others_do_not() {
         for state in [BeadState::Certified, BeadState::InDelivery, BeadState::Landed] {
@@ -3018,6 +3108,7 @@ mod tests {
         }
     }
 
+    #[test_id(te0y85v)]
     #[test]
     fn a_blocker_moving_backwards_from_certified_reapplies_the_wait_hold() {
         for state in [BeadState::Rework, BeadState::Submitted] {
@@ -3028,6 +3119,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4m0ug1)]
     #[test]
     fn replay_reproduces_stack_exactly_across_claim_and_base_withdrawn() {
         let mut stack = Stack::new();
@@ -3065,6 +3157,7 @@ mod tests {
         BeadEvent { actor: actor.into(), ..ev(r.state, r.version, BeadEventKind::Renew { lease_until }) }
     }
 
+    #[test_id(tucop7g)]
     #[test]
     fn renewal_by_the_holder_keeps_a_long_session_working_with_an_advancing_lease() {
         // A session three leases long, renewed every tick: the row never leaves WORKING,
@@ -3083,6 +3176,7 @@ mod tests {
         assert!(r.lease_until.unwrap() > 600 * 3);
     }
 
+    #[test_id(tditoml)]
     #[test]
     fn a_non_holders_renewal_is_refused_and_changes_nothing() {
         let r = held("dwarf-austri", 600);
@@ -3092,6 +3186,7 @@ mod tests {
         assert!(matches!(out.refusal, Some(Refusal::NotHolder { ref actor, .. }) if actor == "dwarf-other"), "{:?}", out.refusal);
     }
 
+    #[test_id(ticpwiv)]
     #[test]
     fn a_renewal_never_shrinks_the_lease() {
         let r = held("dwarf-austri", 600);
@@ -3102,6 +3197,7 @@ mod tests {
         }
     }
 
+    #[test_id(tjnhf59)]
     #[test]
     fn renewal_is_version_checked_and_working_only() {
         let r = held("dwarf-austri", 600);
@@ -3118,6 +3214,7 @@ mod tests {
         }
     }
 
+    #[test_id(tzfv30t)]
     #[test]
     fn a_dead_holder_that_stops_renewing_is_still_reaped_and_its_late_renewal_refused() {
         // The holder renewed a while, then died: its last lease stands, the reaper's
@@ -3147,6 +3244,7 @@ mod tests {
         apply(&back.row, &BeadEvent { actor: holder.into(), ..ev(BeadState::Rework, back.row.version, k) }).row
     }
 
+    #[test_id(tatx97n)]
     #[test]
     fn an_unclaim_returns_a_bead_to_the_state_it_was_claimed_from() {
         for kind in [BeadEventKind::HolderDead, BeadEventKind::Release] {
@@ -3163,6 +3261,7 @@ mod tests {
         }
     }
 
+    #[test_id(tw5naoh)]
     #[test]
     fn a_row_claimed_before_the_field_existed_is_released_to_ready() {
         let mut r = claimed("dwarf-a");
@@ -3171,6 +3270,7 @@ mod tests {
         assert_eq!(out.row.state, BeadState::Ready);
     }
 
+    #[test_id(tesbqvu)]
     #[test]
     fn leaving_working_by_submit_clears_claimed_from() {
         let r = rework_claimed("dwarf-a");
@@ -3187,6 +3287,7 @@ mod tests {
         BeadEvent { actor: actor.into(), ..ev(r.state, r.version, BeadEventKind::Phase { phase }) }
     }
 
+    #[test_id(t9erf58)]
     #[test]
     fn a_claim_starts_the_row_in_the_claimed_phase() {
         let r = claimed("dwarf-a");
@@ -3194,6 +3295,7 @@ mod tests {
         assert_eq!(LifecycleRow::filed("sp-x").phase, None);
     }
 
+    #[test_id(t21j2bz)]
     #[test]
     fn every_forward_phase_applies_and_is_recorded() {
         let mut r = claimed("dwarf-a");
@@ -3208,6 +3310,7 @@ mod tests {
         }
     }
 
+    #[test_id(tvmn1x4)]
     #[test]
     fn only_phases_a_working_row_can_still_reach_exist() {
         assert_eq!(DwarfPhase::ALL.map(DwarfPhase::as_str), ["claimed", "building", "session", "teardown"]);
@@ -3215,6 +3318,7 @@ mod tests {
         assert_eq!(DwarfPhase::from_str("submitting"), None);
     }
 
+    #[test_id(tyz77m7)]
     #[test]
     fn a_phase_may_skip_ahead() {
         let r = claimed("dwarf-a");
@@ -3223,6 +3327,7 @@ mod tests {
         assert_eq!(out.row.phase, Some(DwarfPhase::Teardown));
     }
 
+    #[test_id(tz4ajg6)]
     #[test]
     fn a_repeated_or_backward_phase_is_refused_naming_the_state() {
         let mut r = claimed("dwarf-a");
@@ -3238,6 +3343,7 @@ mod tests {
         }
     }
 
+    #[test_id(ttuupc3)]
     #[test]
     fn a_phase_from_anyone_but_the_holder_is_refused() {
         let r = claimed("dwarf-a");
@@ -3247,6 +3353,7 @@ mod tests {
         assert_eq!(out.row, r, "the refused move leaves the phase where it was");
     }
 
+    #[test_id(tlls7yr)]
     #[test]
     fn a_phase_outside_working_is_refused_naming_the_state() {
         for &state in &ALL_STATES {
@@ -3266,6 +3373,7 @@ mod tests {
         }
     }
 
+    #[test_id(tgv45lj)]
     #[test]
     fn leaving_working_clears_the_phase_and_the_disposition() {
         let mut r = claimed("dwarf-a");
@@ -3279,6 +3387,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4mwir7)]
     #[test]
     fn a_reclaim_starts_a_fresh_phase_and_no_disposition() {
         let mut r = claimed("dwarf-a");
@@ -3289,6 +3398,7 @@ mod tests {
         assert_eq!((out.row.phase, out.row.disposition), (Some(DwarfPhase::Claimed), None));
     }
 
+    #[test_id(trx7hro)]
     #[test]
     fn every_disposition_applies_and_is_recorded_with_its_note() {
         for status in DispositionStatus::ALL {
@@ -3302,6 +3412,7 @@ mod tests {
         }
     }
 
+    #[test_id(t65krmw)]
     #[test]
     fn a_weaker_or_repeated_disposition_never_overwrites_a_stronger_one() {
         let r = claimed("dwarf-a");
@@ -3321,6 +3432,7 @@ mod tests {
         assert_eq!(stronger.row.disposition_note.as_deref(), Some("op"));
     }
 
+    #[test_id(tdzodm9)]
     #[test]
     fn a_disposition_outside_working_is_refused_naming_the_state() {
         for &state in &ALL_STATES {
@@ -3338,6 +3450,7 @@ mod tests {
         }
     }
 
+    #[test_id(tatv9it)]
     #[test]
     fn phase_and_disposition_names_round_trip() {
         for p in DwarfPhase::ALL {
@@ -3352,6 +3465,7 @@ mod tests {
         }
     }
 
+    #[test_id(tiwzzt4)]
     #[test]
     fn a_replay_of_the_log_reproduces_the_phase_and_disposition() {
         let r0 = LifecycleRow::filed("sp-replay");
@@ -3367,6 +3481,7 @@ mod tests {
         assert_eq!(crate::replay::fold_bead("sp-replay", &log), live);
         assert_eq!((live.phase, live.disposition), (Some(DwarfPhase::Session), Some(DispositionStatus::Thrash)));
     }
+    #[test_id(t02bulj)]
     #[test]
     fn submit_of_a_tip_that_is_not_a_full_sha_is_refused_in_every_state() {
         let upper = "A".repeat(40);
@@ -3383,6 +3498,7 @@ mod tests {
     }
 
 
+    #[test_id(ts3tomo)]
     #[test]
     fn delivered_with_a_live_holder_closes_landed_and_leaves_the_holder_a_terminal_row() {
         for from in [BeadState::Working, BeadState::Rework] {

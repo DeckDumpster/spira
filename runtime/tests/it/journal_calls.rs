@@ -187,6 +187,7 @@ fn outcome_turns(store: &Store, path: &std::path::Path, watchers: usize) -> Vec<
     per_turn
 }
 
+#[test_id(tb0ywp8)]
 #[test]
 fn an_outcome_turn_costs_one_store_call_however_many_handlers_consume_it() {
     for watchers in [7, 0] {
@@ -199,6 +200,7 @@ fn an_outcome_turn_costs_one_store_call_however_many_handlers_consume_it() {
     }
 }
 
+#[test_id(tn94oqa)]
 #[test]
 fn a_restart_settles_the_effect_a_crash_left_unanswered_as_lost_and_relaunches_nothing() {
     let (store, path, _dir) = serve();
@@ -218,6 +220,7 @@ fn a_restart_settles_the_effect_a_crash_left_unanswered_as_lost_and_relaunches_n
 }
 
 /// Every conformance scenario over the socket client, with the fake VictoriaLogs as the history.
+#[test_id(td3hhzz)]
 #[test]
 fn the_conformance_suite_holds_over_the_socket_journal() {
     let dirs: Arc<Mutex<Vec<TempDir>>> = Arc::default();
@@ -233,6 +236,7 @@ fn ev(stream: &str, body: &str) -> Event {
     Event { id: EventId("e1".into()), stream: StreamKey(stream.into()), kind: EventKind::new("t", body), at: 7, cause: Some(EventId("c0".into())), correlation: CorrelationId("co".into()) }
 }
 
+#[test_id(t2jt3lp)]
 #[test]
 fn an_append_reaches_the_listener_with_the_bead_id_from_its_stream_or_else_its_body() {
     let (_store, path, _dir) = serve();
@@ -266,6 +270,7 @@ impl Handler for Echo {
     }
 }
 
+#[test_id(tos3xe6)]
 #[test]
 fn an_event_is_shipped_before_the_turn_that_made_it_commits() {
     let (store, path, _dir) = serve();
@@ -278,6 +283,7 @@ fn an_event_is_shipped_before_the_turn_that_made_it_commits() {
     assert_eq!(shipped, ["ping", "pong"]);
 }
 
+#[test_id(tlk1sqm)]
 #[test]
 fn a_full_shipping_queue_is_counted_on_the_status_and_the_sink_and_never_blocks_the_engine() {
     let (_store, path, _dir) = serve();
@@ -298,6 +304,7 @@ fn a_full_shipping_queue_is_counted_on_the_status_and_the_sink_and_never_blocks_
 
 /// The scheduler's turns over the socket: an outcome turn commits once, a tick turn (its schedule
 /// fired, an effect asked for, the next tick scheduled) once.
+#[test_id(to5krkk)]
 #[test]
 fn an_engine_turn_commits_in_one_transaction() {
     let (store, path, _dir) = serve();

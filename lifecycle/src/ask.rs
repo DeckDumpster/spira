@@ -175,6 +175,7 @@ pub fn legal_edges() -> Vec<LegalEdge> {
 mod tests {
     use super::*;
 
+    #[test_id(td5f9gj)]
     #[test]
     fn legal_edges_are_the_machines_own_moves() {
         let edges = legal_edges();
@@ -193,6 +194,7 @@ mod tests {
         AskEventKind::Answer { quote: "yes, ship it".into(), channel: "pane".into() }
     }
 
+    #[test_id(telwn52)]
     #[test]
     fn each_exit_records_who_and_the_quoted_words() {
         let row = AskRow::open("sp-a", Some("sp-w".into()));
@@ -207,6 +209,7 @@ mod tests {
         assert_eq!(w.row.state, AskState::Withdrawn);
     }
 
+    #[test_id(t6vwmpr)]
     #[test]
     fn a_closed_ask_refuses_every_further_exit_and_is_unchanged() {
         let closed = apply(&AskRow::open("sp-a", None), &ev(answer())).row;
@@ -218,6 +221,7 @@ mod tests {
         }
     }
 
+    #[test_id(tvpfgeq)]
     #[test]
     fn an_exit_without_words_or_an_actor_is_refused() {
         let row = AskRow::open("sp-a", None);
@@ -225,6 +229,7 @@ mod tests {
         assert!(!apply(&row, &AskEvent { actor: "".into(), ..ev(answer()) }).applied);
     }
 
+    #[test_id(tik1s07)]
     #[test]
     fn a_stale_version_or_expectation_is_refused() {
         let row = AskRow::open("sp-a", None);
@@ -232,6 +237,7 @@ mod tests {
         assert!(matches!(apply(&row, &AskEvent { expect: AskState::Answered, ..ev(answer()) }).refusal, Some(Refusal::ExpectMismatch { .. })));
     }
 
+    #[test_id(t94tcdf)]
     #[test]
     fn states_round_trip_their_names() {
         for s in [AskState::Open, AskState::Answered, AskState::DefaultTaken, AskState::Withdrawn] {

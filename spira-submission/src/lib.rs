@@ -1,6 +1,9 @@
 //! spira-submission: implicit-TLS SMTP submission that hands each accepted message to
 //! `mail sendmail`, so a reply from a mail client behaves exactly like a cockpit reply.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod clock;
 pub mod credential;
 pub mod provision;

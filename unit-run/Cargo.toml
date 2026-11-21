@@ -20,8 +20,7 @@ path = "tests/accounting.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration", "system-paths/integration", "tsd/integration"]
-
+integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration", "system-paths/integration", "tsd/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 serde = { version = "1", features = ["derive"] }
@@ -31,6 +30,7 @@ spira-otel = { path = "../spira-otel" }
 tsd = { path = "../tsd" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [profile.release]

@@ -99,6 +99,7 @@ fn bare(argv: &[String]) -> Step {
     }
 }
 
+#[test_id(tge9twt)]
 #[test]
 fn a_log_lines_wall_stamp_is_written_as_the_capture_writes_it_and_nothing_else_is() {
     assert_eq!(
@@ -111,6 +112,7 @@ fn a_log_lines_wall_stamp_is_written_as_the_capture_writes_it_and_nothing_else_i
     );
 }
 
+#[test_id(tks4vfl)]
 #[test]
 fn a_payload_verbs_stdin_reaches_the_store_as_its_json_flag_and_only_it_is_served() {
     let argv: Vec<String> = ["batch-progress", "b-open"].map(String::from).into();

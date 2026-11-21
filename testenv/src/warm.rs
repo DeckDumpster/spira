@@ -342,6 +342,7 @@ mod tests {
         );
     }
 
+    #[test_id(thsgg6n)]
     #[test]
     fn the_record_round_trips_and_refuses_a_foreign_name() {
         let s = Spare {
@@ -354,6 +355,7 @@ mod tests {
         assert_eq!(Spare::parse("name=spira-warm-0\n"), None, "no tag");
     }
 
+    #[test_id(tva7ex1)]
     #[test]
     fn a_spare_is_claimed_once_and_its_record_is_gone_before_use() {
         let (_root, run, scratch, owner) = world("once");
@@ -382,6 +384,7 @@ mod tests {
         ));
     }
 
+    #[test_id(th6fwma)]
     #[test]
     fn a_stale_spare_is_discarded_not_used() {
         let (_root, run, scratch, owner) = world("stale");
@@ -422,6 +425,7 @@ mod tests {
         );
     }
 
+    #[test_id(tkrmemp)]
     #[test]
     fn a_failed_boot_records_nothing_and_leaves_no_container() {
         let (_root, run, scratch, owner) = world("fail");
@@ -436,6 +440,7 @@ mod tests {
         assert!(rt.testenv_calls.lock().unwrap().is_empty());
     }
 
+    #[test_id(tdihqc0)]
     #[test]
     fn the_warm_sweep_keeps_recorded_and_owned_spares_and_takes_orphans() {
         let (_root, run, scratch, owner) = world("sweep");
@@ -467,6 +472,7 @@ mod tests {
 
     /// sp-s8v5r, positive control: a fake free-space reading below the floor drops the
     /// oldest-booted idle spare, and stops as soon as the (fake) drop clears the floor.
+    #[test_id(t17qnq9)]
     #[test]
     fn shed_drops_the_oldest_idle_spare_first_until_the_floor_clears() {
         let (_root, _run, scratch, owner) = world("shed");
@@ -503,6 +509,7 @@ mod tests {
 
     /// sp-s8v5r, positive control: a busy slot (its flock held) is never dropped, even
     /// though it is the oldest and free space stays short the whole time.
+    #[test_id(tlokk9u)]
     #[test]
     fn shed_never_drops_a_slot_whose_lock_is_held() {
         let (_root, _run, scratch, owner) = world("shed-busy");
@@ -524,6 +531,7 @@ mod tests {
 
     /// The filesystem has room but the user's quota does not: the combined probe is below the
     /// floor, so the idle spare is shed.
+    #[test_id(t090339)]
     #[test]
     fn shed_fires_on_quota_headroom_even_when_the_filesystem_has_room() {
         let (_root, _run, scratch, owner) = world("shed-quota");
@@ -539,6 +547,7 @@ mod tests {
         assert!(rt.purged.lock().unwrap().contains(&name));
     }
 
+    #[test_id(tcld9ke)]
     #[test]
     fn shed_does_nothing_when_free_space_already_clears_the_floor() {
         let (_root, _run, scratch, owner) = world("shed-ok");

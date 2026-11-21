@@ -24,16 +24,19 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(tbgjuya)]
 #[test]
 fn t1_registered_boots_and_arms_the_next_0420() {
     t::t1_registered_and_boots::<H>(SET, AT_0420);
 }
 
+#[test_id(tass1k3)]
 #[test]
 fn t2_three_families_inside_their_bounds_journal_nothing() {
     t::t2_silent::<H>(SET, &json(&within(40 * DAY_MS)));
 }
 
+#[test_id(tje607g)]
 #[test]
 fn t3_idle_prunes_and_returns_and_a_prune_outcome_while_idle_is_refused() {
     let h = t::handler::<H>(SET);
@@ -47,12 +50,14 @@ fn t3_idle_prunes_and_returns_and_a_prune_outcome_while_idle_is_refused() {
     assert!(refused.contains("idle"), "{refused}");
 }
 
+#[test_id(t39hnna)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_nothing() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/c/sweep_tsd.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(t9v1mr9)]
 #[test]
 fn t5_only_families_past_their_keep_days_are_pruned_as_dry_run_lists_them() {
     let h = t::handler::<H>(SET);
@@ -79,6 +84,7 @@ fn after_a_prune() -> TaskRig {
     r
 }
 
+#[test_id(tuommbm)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&after_a_prune(), task::NAME);
@@ -87,6 +93,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(thchui9)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(after_a_prune, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));

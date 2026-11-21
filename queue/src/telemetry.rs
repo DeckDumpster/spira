@@ -94,6 +94,7 @@ mod tests {
     use super::*;
     use spira_otel::metrics::fixture;
 
+    #[test_id(t3ly2k4)]
     #[test]
     fn a_run_pushes_its_count_and_seconds_labelled_by_component_operation_and_outcome() {
         let (code, got) = fixture::capture(|s| run(s, Some("submit"), || 1));
@@ -116,6 +117,7 @@ mod tests {
         );
     }
 
+    #[test_id(tj7w628)]
     #[test]
     fn each_queue_lock_hold_a_verb_gave_back_is_one_sample_by_verb_and_repo() {
         let (_, got) = fixture::capture(|s| {
@@ -143,6 +145,7 @@ mod tests {
         );
     }
 
+    #[test_id(ti0rtrg)]
     #[test]
     fn an_argument_that_is_no_operation_is_other() {
         assert_eq!(operation(Some("sp-abc123")), "other");

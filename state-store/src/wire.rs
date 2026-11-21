@@ -184,6 +184,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<T>(&text).unwrap(), v, "{text}");
     }
 
+    #[test_id(th52rm2)]
     #[test]
     fn every_request_round_trips_to_an_equal_value() {
         let txn = Txn {
@@ -259,6 +260,7 @@ mod tests {
         assert_eq!(decode::<T>(code, &text), r, "{code} {text}");
     }
 
+    #[test_id(tywqale)]
     #[test]
     fn every_answer_round_trips_to_an_equal_value() {
         through::<Option<Item>>(Ok(Some(item())));
@@ -289,6 +291,7 @@ mod tests {
         through(Ok(()));
     }
 
+    #[test_id(t0hjt40)]
     #[test]
     fn every_error_round_trips_to_an_equal_value() {
         let errors = [
@@ -337,17 +340,20 @@ mod tests {
         }
     }
 
+    #[test_id(t7v44be)]
     #[test]
     fn a_write_past_its_deadline_is_cannot_tell() {
         assert_eq!(refused(&Error::Deadline), cannot_tell("deadline"));
     }
 
+    #[test_id(t09tmws)]
     #[test]
     fn a_backend_failure_is_cannot_tell_and_a_refusal_is_exit_3() {
         assert_eq!(refused(&Error::Backend("gone".into())).0, CANNOT_TELL);
         assert_eq!(refused(&Error::NotFound { key: "k".into() }).0, REFUSED);
     }
 
+    #[test_id(tcgzzc1)]
     #[test]
     fn an_unreadable_answer_is_backend_carrying_the_text() {
         for (code, text) in [

@@ -288,6 +288,7 @@ mod tests {
         testkit::TempDir::new(tag)
     }
 
+    #[test_id(tg8y3zb)]
     #[test]
     fn every_legal_transition_applies_and_is_recorded() {
         for (from, to) in LEGAL {
@@ -299,6 +300,7 @@ mod tests {
         }
     }
 
+    #[test_id(tz98a04)]
     #[test]
     fn every_illegal_transition_is_refused_naming_the_state() {
         for from in GateState::ALL {
@@ -314,6 +316,7 @@ mod tests {
         }
     }
 
+    #[test_id(trdo199)]
     #[test]
     fn a_run_can_only_begin_queued() {
         let mut r = Run::new("sp-1", "b", "spira");
@@ -321,6 +324,7 @@ mod tests {
         r.record(Queued, "x", 1).unwrap();
     }
 
+    #[test_id(tzy3slv)]
     #[test]
     fn entering_the_state_already_held_is_not_a_move() {
         let mut r = at(Trial);
@@ -329,6 +333,7 @@ mod tests {
         assert_eq!(r.enter(Verdict, "done", 5), Ok(true));
     }
 
+    #[test_id(tpfnbr9)]
     #[test]
     fn the_read_returns_exactly_the_recorded_state() {
         let t = tmp("read");
@@ -344,6 +349,7 @@ mod tests {
         }
     }
 
+    #[test_id(t8rn7lk)]
     #[test]
     fn status_of_an_unrecorded_run_is_refused() {
         let t = tmp("none");
@@ -351,6 +357,7 @@ mod tests {
         assert_eq!(status_main(t.path(), &[]), 2);
     }
 
+    #[test_id(tftef8z)]
     #[test]
     fn cancel_is_refused_naming_the_state_unless_the_run_is_live() {
         let t = tmp("cancel");
@@ -372,6 +379,7 @@ mod tests {
         assert!(!cancel_requested(t.path(), "sp-2"));
     }
 
+    #[test_id(tnutuch)]
     #[test]
     fn an_id_is_one_path_component() {
         assert_eq!(id_for("", "spira/sp-1"), "spira_sp-1");

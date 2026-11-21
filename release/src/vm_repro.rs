@@ -433,6 +433,7 @@ mod tests {
         Opts { bead: "sp-x".into(), suites: None, repo: "r".into(), run: "run".into(), release: "rel/abc".into(), home: "h".into(), toml: "t.toml".into(), path_tail: String::new(), dav_addr: String::new(), deadline: 600, was: None }
     }
 
+    #[test_id(t2aydxs)]
     #[test]
     fn the_suite_run_names_the_branch_and_repo_explicitly() {
         let mut o = opts();
@@ -440,6 +441,7 @@ mod tests {
         assert_eq!(testenv_args(&o, Path::new("t")).join(" "), "--mode parallel --artifacts t/target/release --suites a.sh,b.sh --deadline 600 spira/sp-x r");
     }
 
+    #[test_id(tlzlxin)]
     #[test]
     fn the_path_puts_the_release_first_and_adds_cargo() {
         let p = path_for(&opts()).unwrap();
@@ -447,6 +449,7 @@ mod tests {
         assert!(p.ends_with(":h/.cargo/bin"), "{p}");
     }
 
+    #[test_id(ti9yzvr)]
     #[test]
     fn the_environment_is_built_from_nothing_but_what_the_verb_names() {
         let env = base_env(&opts(), &|k| (k == "XDG_RUNTIME_DIR").then(|| "run/user/1".to_string()).or_else(|| (k == "SECRET").then(|| "s".to_string()))).unwrap();
@@ -455,6 +458,7 @@ mod tests {
         assert!(!keys.contains(&"SECRET"));
     }
 
+    #[test_id(txjpwob)]
     #[test]
     fn a_verdict_line_in_the_log_wins_and_a_missing_one_is_made_from_the_exit() {
         assert_eq!(verdict_of(Some(0), "x\nVERDICT GREEN rc=0\n").code, 0);
@@ -464,12 +468,14 @@ mod tests {
         assert_eq!(verdict_of(None, "").code, EXIT_FAULT);
     }
 
+    #[test_id(tezp3ld)]
     #[test]
     fn a_green_line_over_a_failing_exit_is_a_fault() {
         assert_eq!(verdict_of(Some(1), "VERDICT GREEN\n").code, EXIT_FAULT);
         assert_eq!(verdict_of(Some(0), "no verdict line but rc 0 and a fault line\nVERDICT FAULT\n").code, EXIT_FAULT);
     }
 
+    #[test_id(tin4y5a)]
     #[test]
     fn a_run_where_every_suite_skipped_tested_nothing() {
         let r = outcome("VERDICT GREEN ran=0", "  test-b.sh   SKIPPED\n  test-c.sh   SKIP-REQ requires:jq\n", &[], None);
@@ -477,6 +483,7 @@ mod tests {
         assert!(r[1].starts_with("NOTHING TESTED"), "{r:?}");
     }
 
+    #[test_id(t2abiar)]
     #[test]
     fn a_bead_id_cannot_climb_out_of_the_run_directory() {
         assert!(valid_bead("sp-5vww8l") && valid_bead("sp-1.2"));
@@ -492,6 +499,7 @@ mod tests {
         t
     }
 
+    #[test_id(thsrxur)]
     #[test]
     fn with_no_list_given_the_rounds_red_suites_are_the_list_and_a_given_list_wins() {
         let t = tree(&[("spira/test-a.sh", ""), ("spira/test-b.sh", "# lane: sim\nset -u\n"), ("spira/test-c.sh", ""), ("spira/test-d.sh", ""), ("spira/skip-allowlist.tsv", "test-a.sh\tr\tw\n")]);
@@ -505,6 +513,7 @@ mod tests {
 
     const BATCHES: &str = r#"[{"batch_id":"new","members":[{"bead_id":"sp-x"}],"passes":[{"n":1,"verdict":"red","red_suites":["test-old.sh"]},{"n":2,"verdict":"red","red_suites":["test-a.sh","test-b.sh"]},{"n":3,"verdict":"green"}]},{"batch_id":"older","members":[{"bead_id":"sp-x"}],"passes":[{"n":1,"verdict":"red","red_suites":["test-stale.sh"]}]},{"batch_id":"other","members":[{"bead_id":"sp-y"}],"passes":[{"n":1,"verdict":"red","red_suites":["test-y.sh"]}]}]"#;
 
+    #[test_id(thsneuq)]
     #[test]
     fn the_red_suites_are_the_newest_rounds_last_red_pass_for_that_member() {
         assert_eq!(red_in(BATCHES, "sp-x").unwrap(), ["test-a.sh", "test-b.sh"]);
@@ -513,12 +522,14 @@ mod tests {
         assert!(red_in("not json", "sp-x").is_err());
     }
 
+    #[test_id(tmjdzw2)]
     #[test]
     fn a_lane_header_after_the_script_starts_is_not_a_lane() {
         let t = tree(&[("spira/test-a.sh", "set -u\n# lane: sim\n"), ("spira/test-b.sh", "")]);
         assert_eq!(suites_for(t.path(), None, &[]).0.as_deref(), Some("test-a.sh"));
     }
 
+    #[test_id(t5nfm8x)]
     #[test]
     fn a_tree_without_suite_scripts_is_left_to_testenv() {
         let t = tree(&[("README", "")]);

@@ -234,6 +234,7 @@ mod tests {
         cmd_next(&rows, &ctx(&d.join("run").display().to_string()), &args)
     }
 
+    #[test_id(t16wyti)]
     #[test]
     fn echoes_and_repeats_are_dropped_a_new_line_is_delivered_and_unread_falls_to_zero() {
         let d = unique_dir("watchd-next");
@@ -251,6 +252,7 @@ mod tests {
         assert_eq!(fs_ops::read_pos(&cf, fs_ops::total_lines(&log)), fs_ops::total_lines(&log));
     }
 
+    #[test_id(tzzcplw)]
     #[test]
     fn a_delivery_leaves_a_record_of_its_exit_and_a_timeout_leaves_none() {
         let d = unique_dir("watchd-next-rec");
@@ -284,6 +286,7 @@ mod tests {
         log
     }
 
+    #[test_id(tuqwvhw)]
     #[test]
     fn an_undelivered_delivery_is_printed_again_marked_and_only_once() {
         let d = unique_dir("watchd-undeliver");
@@ -293,6 +296,7 @@ mod tests {
         assert_eq!(run_next(&d, &log, 0), Err(EXIT_TIMEOUT), "a redelivery is not delivered twice");
     }
 
+    #[test_id(tm704wb)]
     #[test]
     fn undeliver_while_a_reader_holds_the_lock_changes_nothing() {
         let d = unique_dir("watchd-undeliver-live");
@@ -305,6 +309,7 @@ mod tests {
         assert_eq!(run_next(&d, &log, 0), Err(EXIT_TIMEOUT));
     }
 
+    #[test_id(tlhj8gb)]
     #[test]
     fn undeliver_for_a_session_not_in_the_ancestors_changes_nothing() {
         let d = unique_dir("watchd-undeliver-other");
@@ -315,6 +320,7 @@ mod tests {
         assert!(run_next(&d, &log, 5).unwrap().starts_with("[redelivered] "));
     }
 
+    #[test_id(tpg0d8z)]
     #[test]
     fn a_missing_record_is_nothing_to_undo_and_an_unreadable_one_fails() {
         let d = unique_dir("watchd-undeliver-rec");
@@ -325,6 +331,7 @@ mod tests {
         assert_eq!(undeliver(&d, None), 1);
     }
 
+    #[test_id(t3ml780)]
     #[test]
     fn a_redelivery_comes_before_a_line_that_arrived_after_it() {
         let d = unique_dir("watchd-undeliver-order");
@@ -335,6 +342,7 @@ mod tests {
         assert_eq!(run_next(&d, &log, 5).unwrap(), "fresh\n");
     }
 
+    #[test_id(tprsriv)]
     #[test]
     fn a_redelivery_that_fails_in_turn_is_redelivered_with_one_marker() {
         let d = unique_dir("watchd-undeliver-twice");

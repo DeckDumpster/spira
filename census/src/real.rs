@@ -382,6 +382,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-15
+    #[test_id(t3dcvm5)]
     #[test]
     fn the_census_sql_call_succeeds_after_two_transient_failures_in_three_attempts() {
         let calls = std::cell::Cell::new(0);
@@ -390,6 +391,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-15
+    #[test_id(tdrgdp2)]
     #[test]
     fn the_census_sql_call_surfaces_the_driver_error_when_all_three_attempts_fail() {
         let calls = std::cell::Cell::new(0);
@@ -399,6 +401,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-15
+    #[test_id(tbb3wys)]
     #[test]
     fn a_first_success_is_not_retried() {
         let calls = std::cell::Cell::new(0);
@@ -418,6 +421,7 @@ mod tests {
         (Real { home: dir.to_path_buf(), lc, child_env: Vec::new() }, calls)
     }
 
+    #[test_id(taovm3f)]
     #[test]
     fn the_fact_leg_reads_fact_list_since_the_watermark_and_never_facts_query() {
         let tmp = testkit::TempDir::new("census-argv");
@@ -430,6 +434,7 @@ mod tests {
         assert!(out.contains("| bd | row |") && out.contains("| requeued | gate-red | 1 | 1 | 1 |"), "{out}");
     }
 
+    #[test_id(t20935z)]
     #[test]
     fn a_report_with_no_watermark_reads_the_whole_history_in_one_fetch() {
         let tmp = testkit::TempDir::new("census-whole");
@@ -441,6 +446,7 @@ mod tests {
         assert_eq!(argv.lines().collect::<Vec<_>>(), ["fact list --kinds requeued,reclaimed,recurred,lapsed,reopen"; 2]);
     }
 
+    #[test_id(tycva0u)]
     #[test]
     fn deliberate_reads_since_the_watermark_and_handwritten_renders_what_it_fetched() {
         let tmp = testkit::TempDir::new("census-tables");
@@ -458,6 +464,7 @@ mod tests {
         assert!(handwritten.contains("| requeued | gate-red | alice | 1 | 1 |"), "{handwritten}");
     }
 
+    #[test_id(t5enyh9)]
     #[test]
     fn the_sql_goes_to_admin_store_on_stdin_and_the_label_read_is_a_content_list_filtered_here() {
         let tmp = testkit::TempDir::new("census-door");
@@ -479,6 +486,7 @@ mod tests {
         assert!(calls.contains("content list --all --limit 0 --json"), "{calls}");
     }
 
+    #[test_id(tcjmvok)]
     #[test]
     fn glob_matches_a_prefix_star_and_nothing_else() {
         assert!(glob_match("covers:*", "covers:x") && glob_match("covers:*", "covers:"));

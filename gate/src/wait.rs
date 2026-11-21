@@ -210,6 +210,7 @@ mod tests {
         testkit::TempDir::new(&format!("gate-wait-test-{name}"))
     }
 
+    #[test_id(temlgnu)]
     #[test]
     fn a_pass_is_reported_and_exits_0() {
         let d = tmp("pass");
@@ -223,6 +224,7 @@ mod tests {
 
     const PASS_RC: i32 = 0;
 
+    #[test_id(t4p35lz)]
     #[test]
     fn a_fail_exits_1() {
         let d = tmp("fail");
@@ -233,6 +235,7 @@ mod tests {
         assert_eq!(o.rc, 1);
     }
 
+    #[test_id(tbzzy9b)]
     #[test]
     fn a_base_fail_exits_76() {
         let d = tmp("basefail");
@@ -243,6 +246,7 @@ mod tests {
         assert_eq!(o.rc, 76);
     }
 
+    #[test_id(t3p0jdy)]
     #[test]
     fn a_process_gone_without_any_verdict_line_is_no_verdict_reason_gone() {
         let d = tmp("kill9");
@@ -254,6 +258,7 @@ mod tests {
         assert_eq!(o.rc, 75);
     }
 
+    #[test_id(to47t8i)]
     #[test]
     fn no_pid_file_ever_appearing_is_a_named_fault_not_a_hang() {
         let d = tmp("nopid");

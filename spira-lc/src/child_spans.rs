@@ -87,6 +87,7 @@ fn sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
+#[test_id(txvdfxn)]
 #[test]
 fn every_spawn_site_runs_inside_a_child_phase() {
     let mut files = Vec::new();
@@ -110,6 +111,7 @@ fn every_spawn_site_runs_inside_a_child_phase() {
     );
 }
 
+#[test_id(timawbt)]
 #[test]
 fn the_matcher_finds_planted_spawns_and_passes_wrapped_ones() {
     let planted = "fn a() {\n    let o = Command::new(\"git\").output();\n}\nfn b() {\n    let o = bounded::bounded(\"git\").output();\n}\nfn c() {\n    let o = bounded::bounded_for(\"git\", 1).output();\n}\n";

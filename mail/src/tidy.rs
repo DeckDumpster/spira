@@ -263,6 +263,7 @@ mod tests {
         maildir::mail_ensure(&root.join(mailbox)).unwrap();
     }
 
+    #[test_id(thbwqge)]
     #[test]
     fn refuses_without_a_configured_store() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -271,6 +272,7 @@ mod tests {
         assert!(err.contains("not configured"), "{err}");
     }
 
+    #[test_id(t4mhfnk)]
     #[test]
     fn refuses_when_the_mailbox_was_never_created() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -279,6 +281,7 @@ mod tests {
         assert!(err.contains("mailbox not found"), "{err}");
     }
 
+    #[test_id(tugeui1)]
     #[test]
     fn refuses_when_the_query_fails() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -288,6 +291,7 @@ mod tests {
         assert!(err.contains("refusing"), "{err}");
     }
 
+    #[test_id(t98odbd)]
     #[test]
     fn refuses_when_empty_result_fails_the_positive_control() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -297,6 +301,7 @@ mod tests {
         assert!(err.contains("positive control"), "{err}");
     }
 
+    #[test_id(tio5ehe)]
     #[test]
     fn positive_control_failure_names_bds_exit_code_and_stderr() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -307,6 +312,7 @@ mod tests {
         assert!(err.contains("Access denied for user 'spira_lc'"), "{err}");
     }
 
+    #[test_id(tla6hjx)]
     #[test]
     fn open_ask_is_kept_closed_ask_is_archived() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -321,6 +327,7 @@ mod tests {
         assert!(d.path().join("archive/cur/b").exists());
     }
 
+    #[test_id(t5bjao2)]
     #[test]
     fn fresh_unread_is_kept_even_without_a_bead() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -331,6 +338,7 @@ mod tests {
         assert_eq!((report.archived, report.kept), (0, 1));
     }
 
+    #[test_id(tnwa1ng)]
     #[test]
     fn fresh_unread_mail_of_a_closed_bead_is_archived_open_one_is_kept() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -352,6 +360,7 @@ mod tests {
 
     /// A bead id in the body is prose, not the mail's subject bead: a fresh unread note that
     /// mentions a closed bead is not that bead's mail, and is kept.
+    #[test_id(t9eo2n3)]
     #[test]
     fn a_bead_named_only_in_the_body_is_not_the_mails_bead() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -364,6 +373,7 @@ mod tests {
         assert!(path.exists());
     }
 
+    #[test_id(tr0lisd)]
     #[test]
     fn fresh_unread_mail_of_an_unresolvable_bead_is_kept() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -374,6 +384,7 @@ mod tests {
         assert_eq!((report.archived, report.kept), (0, 1));
     }
 
+    #[test_id(ts3wyyh)]
     #[test]
     fn urgent_retention_at_both_edges_of_the_seven_day_window() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -390,6 +401,7 @@ mod tests {
         assert!(!d.path().join("operator/cur/out:2,S").exists());
     }
 
+    #[test_id(tt5lito)]
     #[test]
     fn only_the_newest_copy_of_a_repeated_subject_is_kept() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -405,6 +417,7 @@ mod tests {
         assert!(!d.path().join("operator/new/e2").exists());
     }
 
+    #[test_id(tusmpvv)]
     #[test]
     fn dry_run_reports_without_moving() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -427,6 +440,7 @@ mod tests {
         FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#)])
     }
 
+    #[test_id(ttsvipe)]
     #[test]
     fn a_read_digest_note_is_archived_inside_the_fresh_window_and_an_unread_one_is_kept() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -439,6 +453,7 @@ mod tests {
         assert!(d.path().join("operator/new/m2").exists());
     }
 
+    #[test_id(t1w7jhn)]
     #[test]
     fn a_read_alarm_is_kept_while_its_condition_is_raised_and_archived_once_it_ended() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -459,6 +474,7 @@ mod tests {
         assert_eq!(asked, ["mail-health:concierge", "strand:p:starved:-"]);
     }
 
+    #[test_id(tllfvzt)]
     #[test]
     fn an_unread_alarm_inside_the_fresh_window_stays_even_when_its_condition_ended() {
         let d = testkit::TempDir::new("mail-tidy");
@@ -468,6 +484,7 @@ mod tests {
         assert_eq!((report.archived, report.kept), (0, 1));
     }
 
+    #[test_id(tonjwk1)]
     #[test]
     fn the_owners_exit_status_decides_ended_only_for_the_ended_code() {
         let d = testkit::TempDir::new("mail-tidy-owner");
@@ -482,6 +499,7 @@ mod tests {
         assert!(ask_owner(&d.path().join("missing").to_string_lossy(), &[], "the-detail"), "a tool that cannot run is raised");
     }
 
+    #[test_id(t56mjrh)]
     #[test]
     fn a_condition_whose_owner_cannot_be_asked_reads_as_raised() {
         assert!(condition_raised("no-colon"));

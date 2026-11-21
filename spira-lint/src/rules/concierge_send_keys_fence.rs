@@ -107,6 +107,7 @@ pub fn rules() -> Vec<Box<dyn crate::Rule>> {
 mod tests {
     use super::*;
 
+    #[test_id(ta7pjhk)]
     #[test]
     fn a_send_keys_caller_is_flagged_and_the_allowed_set_is_not() {
         let rogue = b"#!/usr/bin/env bash\ntmux -L x send-keys -t concierge -l hi\n";
@@ -115,6 +116,7 @@ mod tests {
         assert!(scan("cockpit/ops/src/layout.rs", rogue).is_empty());
     }
 
+    #[test_id(tftf5sp)]
     #[test]
     fn a_wake_caller_is_flagged_and_the_documented_callers_are_not() {
         let rogue = b"#!/usr/bin/env bash\nconcierge.sh wake \"hi\"\n\"$CONCIERGE\" wake x\n";
@@ -122,6 +124,7 @@ mod tests {
         assert!(scan("spira/inbox-keeper.sh", rogue).is_empty());
     }
 
+    #[test_id(tnboo4t)]
     #[test]
     fn a_rust_wake_call_is_flagged_outside_the_runtime_wake_module() {
         let rogue = b"Command::new(c).arg(\"wake\").arg(line);\n";
@@ -129,6 +132,7 @@ mod tests {
         assert!(scan("spira-runtime/src/wake.rs", rogue).is_empty());
     }
 
+    #[test_id(tymiac8)]
     #[test]
     fn comments_and_tests_are_silent() {
         assert!(scan("spira/x.sh", b"# tmux send-keys is forbidden\n").is_empty());
@@ -136,6 +140,7 @@ mod tests {
         assert!(in_scope("heimdall/src/main.rs"));
     }
 
+    #[test_id(t4rj1zk)]
     #[test]
     fn a_component_outside_the_allowed_set_is_in_scope_so_a_send_keys_there_is_caught() {
         assert_eq!(scan("heimdall/src/main.rs", b"Command::new(\"tmux\").arg(\"send-keys\");\n").len(), 1);

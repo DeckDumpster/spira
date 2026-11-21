@@ -139,6 +139,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-09
+    #[test_id(t0iseki)]
     #[test]
     fn requeue_thrash_ledger_lines_count_as_thrash_and_inflate_nothing_else() {
         let line = |ev: &str, rest: &str| format!("{} {ev} rune sp-x {rest}", ts(-10));
@@ -155,6 +156,7 @@ mod tests {
         assert_eq!((m["SP_DWARF_THRASH"].as_str(), m["SP_DWARF_WORKED"].as_str()), ("2", "1"));
     }
 
+    #[test_id(t1d107e)]
     #[test]
     fn failed_deletes_count_distinct_beads_inside_the_window_and_age_from_the_newest() {
         let l = |off: i64, verb: &str, id: &str| format!("{} {verb:<9} {id:<22} branch b survived deletion: x [by hel]", ts(off));
@@ -165,6 +167,7 @@ mod tests {
         assert_eq!(reap_metrics(&[], NOW - 86400, NOW)["SP_SENT_FAILED_AGE_M"], "?");
     }
 
+    #[test_id(tk2x1jt)]
     #[test]
     fn unreadable_sources_render_question_marks() {
         let k = collect("nonexistent/a", "nonexistent/b", 24.0, NOW);

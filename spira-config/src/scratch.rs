@@ -85,6 +85,7 @@ mod tests {
         testkit::TempDir::new(&format!("scratch-{tag}"))
     }
 
+    #[test_id(t7io91k)]
     #[test]
     fn classifies_exhaustion_and_nothing_else() {
         assert!(is_exhaustion("rustc-LLVM ERROR: Disk quota exceeded"));
@@ -92,6 +93,7 @@ mod tests {
         assert!(!is_exhaustion("error[E0308]: mismatched types"));
     }
 
+    #[test_id(ta04ehh)]
     #[test]
     fn sweep_takes_old_unheld_and_spares_young_and_held() {
         let d = tmp("sweep");
@@ -105,6 +107,7 @@ mod tests {
         assert!(d.join("spira-held").exists() && d.join("other-old").exists());
     }
 
+    #[test_id(toscu5m)]
     #[test]
     fn sweep_removes_a_tree_whose_write_bit_is_off() {
         use std::os::unix::fs::PermissionsExt;
@@ -117,6 +120,7 @@ mod tests {
         assert_eq!(gone, vec!["spira-ro".to_string()]);
     }
 
+    #[test_id(t20x2lg)]
     #[test]
     fn a_process_holding_a_directory_as_cwd_is_seen() {
         let cwd = std::env::current_dir().unwrap();

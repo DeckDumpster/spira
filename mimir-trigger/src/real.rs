@@ -219,6 +219,7 @@ mod tests {
 
     /// sp-mve9i: an open trigger is one whose lifecycle row is still before its builder's
     /// hand-off; bd's status is not read.
+    #[test_id(tg04f41)]
     #[test]
     fn an_open_trigger_is_one_the_machine_has_not_seen_handed_on() {
         let ids = json_ids(r#"[{"id":"a","status":"closed"},{"id":"b","status":"open"},{"id":"c"},{"id":"d"},{"id":"e"}]"#).unwrap();
@@ -234,6 +235,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-16
+    #[test_id(txqmn0y)]
     #[test]
     fn landings_on_a_repo_whose_only_remote_is_not_origin_are_read_from_its_own_default_branch_since_the_mark() {
         let ws = testkit::TempDir::new("mimir-trigger-gitea");
@@ -267,6 +269,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-16
+    #[test_id(tshqhsu)]
     #[test]
     fn a_trigger_still_working_suppresses_a_second_and_one_handed_on_does_not() {
         let ids = json_ids(r#"[{"id":"w"},{"id":"s"}]"#).unwrap();

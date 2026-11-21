@@ -11,6 +11,7 @@ fn mail(delivered_at: u64) -> AskMail {
     AskMail { delivered_at, mailbox: "operator".into() }
 }
 
+#[test_id(t943dzj)]
 #[test]
 fn a_wait_is_lifted_past_its_expiry_and_not_at_or_before_it() {
     let until = NOW - 10;
@@ -22,18 +23,21 @@ fn a_wait_is_lifted_past_its_expiry_and_not_at_or_before_it() {
     assert_eq!(decide(NOW, &h, None, None), None);
 }
 
+#[test_id(t225zzh)]
 #[test]
 fn a_wait_with_no_timed_expiry_is_a_blocker_not_a_snooze() {
     assert_eq!(decide(NOW, &hold(Kind::Wait, Some(0), Some("blocked on sp-y")), None, None), None);
     assert_eq!(decide(NOW, &hold(Kind::Wait, Some(0), None), None, None), None);
 }
 
+#[test_id(th2n5nh)]
 #[test]
 fn a_silent_ask_is_re_raised() {
     let h = hold(Kind::Ask, Some(NOW - 4 * 24 * H), Some("May I?"));
     assert_eq!(decide(NOW, &h, None, None), Some(Action::RaiseAsk), "no delivered question exists");
 }
 
+#[test_id(tq6euj0)]
 #[test]
 fn a_re_raise_is_not_repeated_inside_the_resurface_window() {
     let h = hold(Kind::Ask, Some(0), Some("q"));
@@ -41,6 +45,7 @@ fn a_re_raise_is_not_repeated_inside_the_resurface_window() {
     assert_eq!(decide(NOW, &h, None, Some(NOW - ASK_RESURFACE_SECS)), Some(Action::RaiseAsk));
 }
 
+#[test_id(tauxehp)]
 #[test]
 fn a_delivered_ask_is_resurfaced_once_after_24h_and_not_before() {
     let h = hold(Kind::Ask, Some(0), Some("q"));
@@ -54,6 +59,7 @@ fn a_delivered_ask_is_resurfaced_once_after_24h_and_not_before() {
     assert_eq!(decide(NOW, &h, Some(&stale), Some(NOW - H)), None, "already resurfaced for this delivery");
 }
 
+#[test_id(tzm6lwu)]
 #[test]
 fn a_poison_is_diagnosed_past_24h_once_and_a_missing_timestamp_is_never_old() {
     let at = |age: u64| hold(Kind::Poison, Some(NOW - age), None);
@@ -63,6 +69,7 @@ fn a_poison_is_diagnosed_past_24h_once_and_a_missing_timestamp_is_never_old() {
     assert_eq!(decide(NOW, &hold(Kind::Poison, None, None), None, None), None);
 }
 
+#[test_id(t46s3z6)]
 #[test]
 fn a_manual_hold_is_reminded_past_72h_and_again_every_72h() {
     let at = |age: u64| hold(Kind::Operator, Some(NOW - age), Some("until publishing resumes"));
@@ -111,6 +118,7 @@ fn named(bead: &str, mut h: Hold) -> Hold {
     h
 }
 
+#[test_id(tq9mkz0)]
 #[test]
 fn the_sweep_visits_every_kind_and_acts_on_the_ones_at_threshold() {
     let mut env = Fake::new(vec![
@@ -138,6 +146,7 @@ fn the_sweep_visits_every_kind_and_acts_on_the_ones_at_threshold() {
     assert_eq!(state.last_pass, NOW);
 }
 
+#[test_id(t6p7xoe)]
 #[test]
 fn a_second_pass_does_not_repeat_what_the_first_did() {
     let mut env = Fake::new(vec![
@@ -152,6 +161,7 @@ fn a_second_pass_does_not_repeat_what_the_first_did() {
     assert!(again.wanted.is_empty());
 }
 
+#[test_id(tm9bxtc)]
 #[test]
 fn a_failed_action_is_retried_and_stays_wanted() {
     let mut env = Fake::new(vec![named("a-silent", hold(Kind::Ask, Some(0), Some("q")))]);
@@ -165,6 +175,7 @@ fn a_failed_action_is_retried_and_stays_wanted() {
     assert_eq!(env.acts, vec![("a-silent".to_string(), "raise-ask")]);
 }
 
+#[test_id(t6oizo1)]
 #[test]
 fn unreadable_mailboxes_skip_asks_instead_of_raising_every_one() {
     let mut env = Fake::new(vec![
@@ -178,6 +189,7 @@ fn unreadable_mailboxes_skip_asks_instead_of_raising_every_one() {
     assert_eq!(env.acts, vec![("p-old".to_string(), "diagnose-poison")]);
 }
 
+#[test_id(tzx8ama)]
 #[test]
 fn an_unreadable_store_fails_the_sweep_and_acts_on_nothing() {
     let mut env = Fake::new(vec![]);
@@ -186,6 +198,7 @@ fn an_unreadable_store_fails_the_sweep_and_acts_on_nothing() {
     assert!(env.acts.is_empty());
 }
 
+#[test_id(t6tszas)]
 #[test]
 fn shadow_records_the_step_and_does_none_of_it() {
     let mut env = Fake::new(vec![named("a-silent", hold(Kind::Ask, Some(0), Some("q")))]);
@@ -195,6 +208,7 @@ fn shadow_records_the_step_and_does_none_of_it() {
     assert!(env.acts.is_empty() && state.acted.is_empty());
 }
 
+#[test_id(tx0j1s5)]
 #[test]
 fn state_for_a_hold_that_is_gone_is_forgotten() {
     let mut state = SweepState::default();
@@ -203,6 +217,7 @@ fn state_for_a_hold_that_is_gone_is_forgotten() {
     assert!(state.acted.is_empty());
 }
 
+#[test_id(t434e84)]
 #[test]
 fn state_round_trips_and_a_corrupt_file_is_empty() {
     let dir = testkit::TempDir::new("reconciler-engine-holds-state");
@@ -225,6 +240,7 @@ fn exits_at(mins: &[u64]) -> Vec<Exit> {
     mins.iter().map(|m| Exit { ended_at: NOW + m * 60, note: format!("exit at {m}") }).collect()
 }
 
+#[test_id(t4sco9o)]
 #[test]
 fn the_breaker_trips_on_the_fourth_exit_and_not_the_third() {
     assert_eq!(breaker().tripped(&exits_at(&[0, 2, 4])), None);
@@ -232,22 +248,26 @@ fn the_breaker_trips_on_the_fourth_exit_and_not_the_third() {
     assert_eq!(breaker().tripped(&four), Some(four));
 }
 
+#[test_id(tcoabas)]
 #[test]
 fn four_exits_spread_over_more_than_the_window_do_not_trip() {
     assert_eq!(breaker().tripped(&exits_at(&[0, 60, 120, 181])), None);
     assert!(breaker().tripped(&exits_at(&[0, 60, 120, 180])).is_some());
 }
 
+#[test_id(t6uyp8g)]
 #[test]
 fn a_dense_run_inside_a_long_history_trips() {
     assert!(breaker().tripped(&exits_at(&[0, 500, 1000, 1001, 1002, 1003])).is_some());
 }
 
+#[test_id(tiob1v2)]
 #[test]
 fn a_breaker_with_no_claims_or_no_window_is_refused() {
     assert!(Breaker::new(0, 180).is_err() && Breaker::new(4, 0).is_err());
 }
 
+#[test_id(tzbtiv4)]
 #[test]
 fn a_tripped_wait_is_asked_about_even_when_its_snooze_has_expired() {
     let mut env = Fake::new(vec![hold(Kind::Wait, Some(NOW - 7200), Some("snooze-until:100 no-progress: stuck"))]);
@@ -256,6 +276,7 @@ fn a_tripped_wait_is_asked_about_even_when_its_snooze_has_expired() {
     assert_eq!(env.acts, vec![("sp-x".to_string(), "trip-breaker")], "{report:?}");
 }
 
+#[test_id(tr9rgki)]
 #[test]
 fn an_untripped_wait_is_lifted_as_before() {
     let mut env = Fake::new(vec![hold(Kind::Wait, Some(NOW - 7200), Some("snooze-until:100"))]);
@@ -264,6 +285,7 @@ fn an_untripped_wait_is_lifted_as_before() {
     assert_eq!(env.acts[0].1, "lift-wait");
 }
 
+#[test_id(t7gcjt3)]
 #[test]
 fn an_unconfigured_breaker_refuses_to_lift_a_wait_but_still_sweeps_other_holds() {
     let mut env = Fake::new(vec![

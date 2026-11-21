@@ -17,6 +17,7 @@ pub fn metered_exit(operation: &str, f: impl FnOnce() -> ExitCode) -> ExitCode {
 mod tests {
     use super::*;
 
+    #[test_id(tuljuny)]
     #[test]
     fn a_failed_install_pushes_its_count_duration_and_error_outcome() {
         let (addr, h) = spira_otel::metrics::run::fixture_sink();
@@ -28,6 +29,7 @@ mod tests {
         }
     }
 
+    #[test_id(t8ajy35)]
     #[test]
     fn a_run_through_the_wrapper_keeps_its_exit_code() {
         assert!(format!("{:?}", metered_exit("nope", || ExitCode::from(2))) == format!("{:?}", ExitCode::from(2)));

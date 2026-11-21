@@ -22,17 +22,20 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(t1kj4z0)]
 #[test]
 fn t1_registered_boots_and_arms_the_next_35() {
     t::t1_registered_and_boots::<H>(SET, AT_35);
 }
 
+#[test_id(ts5tfeo)]
 #[test]
 fn t2_a_keep_unlanded_branch_and_a_halted_world_are_the_probe_alone() {
     t::t2_silent::<H>(SET, &json(&keep()));
     t::t2_silent::<H>(SET, &json(&Snapshot { repo: "spira".into(), halted: true, ..Snapshot::default() }));
 }
 
+#[test_id(t4f2sz0)]
 #[test]
 fn t3_a_pass_observes_acts_and_ends_and_a_tick_while_acting_is_refused() {
     let h = t::handler::<H>(SET);
@@ -52,12 +55,14 @@ fn t3_a_pass_observes_acts_and_ends_and_a_tick_while_acting_is_refused() {
     assert!(acts.is_empty(), "past the 900 s budget nothing more is issued: {acts:?}");
 }
 
+#[test_id(tazu7yx)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_nothing() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/c/hel_sweep.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(tiqwsga)]
 #[test]
 fn t5_one_disposition_per_branch_as_hel_dry_run_would() {
     let h = t::handler::<H>(SET);
@@ -84,6 +89,7 @@ fn acting_on_a_started_leg() -> TaskRig {
     r
 }
 
+#[test_id(t7ripcu)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&acting_on_a_started_leg(), task::NAME);
@@ -92,11 +98,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(teg1c3p)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(acting_on_a_started_leg, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
 }
 
+#[test_id(teo4eiu)]
 #[test]
 fn a_store_that_would_not_answer_the_branch_read_fails_the_pass_naming_the_repo_and_the_stores_text() {
     let e = task::store_failure("spira", "reads every bead ever filed and is refused");
@@ -105,6 +113,7 @@ fn a_store_that_would_not_answer_the_branch_read_fails_the_pass_naming_the_repo_
 
 /// A pass whose scheduler restarts before its next slot: the timer that held the slot is gone,
 /// and the boot must run the sweep that was due rather than wait an hour for the next one.
+#[test_id(tclkcl3)]
 #[test]
 fn a_slot_missed_across_a_restart_runs_when_the_scheduler_comes_back() {
     let worlds = [json(&Snapshot { branches: vec![branch("sp-a", true)], rows: [("sp-a".to_string(), "SUBMITTED".to_string())].into(), ..keep() }), json(&Snapshot { branches: vec![branch("sp-b", true)], rows: [("sp-b".to_string(), "SUBMITTED".to_string())].into(), ..keep() })];
@@ -124,6 +133,7 @@ fn a_slot_missed_across_a_restart_runs_when_the_scheduler_comes_back() {
     assert!(r.requested().iter().any(|q| q.name == task::SEND && q.input.contains("sp-b")), "the sweep due while the scheduler was down runs at its boot: {:?}", r.requested().iter().map(|q| (&q.name, &q.input)).collect::<Vec<_>>());
 }
 
+#[test_id(t07xjuz)]
 #[test]
 fn a_restart_that_lost_the_probe_of_a_pass_between_repositories_observes_that_repository_again() {
     let cadence = runtime::calendar::Calendar::parse(SPEC).map(|c| spira_runtime::tasks::b::kit::Cadence::Calendar(c, 0)).unwrap();
@@ -138,6 +148,7 @@ fn real_in(run: &std::path::Path) -> hel::real::Real {
     hel::real::Real::minimal(run.to_path_buf(), run.to_path_buf(), None)
 }
 
+#[test_id(tjm8uvi)]
 #[test]
 fn the_resume_cursor_is_kept_per_repo_in_the_run_dir_and_only_moves_forward() {
     use hel::ports::World;
@@ -152,6 +163,7 @@ fn the_resume_cursor_is_kept_per_repo_in_the_run_dir_and_only_moves_forward() {
     assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-d"));
 }
 
+#[test_id(t982fym)]
 #[test]
 fn the_pace_is_read_from_the_pinned_ms_and_a_non_number_refuses() {
     let get = |ms: &'static str| move |k: &str| Ok::<String, String>(if k == task::PACE_KEY { ms.to_string() } else { "x".to_string() });
@@ -172,6 +184,7 @@ impl spira_store::lc_call::Transport for Timed {
     }
 }
 
+#[test_id(tb4092p)]
 #[test]
 fn a_600_branch_prefetch_is_twelve_bounded_store_calls() {
     use hel::ports::World;
@@ -184,6 +197,7 @@ fn a_600_branch_prefetch_is_twelve_bounded_store_calls() {
     assert_eq!(calls.len(), 12, "6 content reads and 6 list reads of 100 ids, not one per branch");
 }
 
+#[test_id(t0mzstd)]
 #[test]
 fn a_cursor_skips_branches_up_to_it_even_when_the_branch_it_names_is_gone() {
     assert!(!task::past_cursor("spira/sp-b", Some("spira/sp-c")));
@@ -192,6 +206,7 @@ fn a_cursor_skips_branches_up_to_it_even_when_the_branch_it_names_is_gone() {
     assert!(task::past_cursor("spira/sp-a", None));
 }
 
+#[test_id(tjusu04)]
 #[test]
 fn a_resumed_repo_with_nothing_to_act_on_clears_its_cursor_and_one_with_work_keeps_it() {
     use hel::ports::World;

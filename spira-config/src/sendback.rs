@@ -221,6 +221,7 @@ mod tests {
         vec![("trial.out".into(), b"red \xff\n".to_vec()), ("sift.txt".into(), b"why".to_vec())]
     }
 
+    #[test_id(td8dzs0)]
     #[test]
     fn keep_writes_files_that_list_and_read_return_byte_for_byte() {
         let run = tmp("rt");
@@ -231,6 +232,7 @@ mod tests {
         assert_eq!(keep(run.path(), "gate", &files(), 7, 1000).unwrap(), "gate-1000-1");
     }
 
+    #[test_id(t6uitvo)]
     #[test]
     fn an_entry_past_the_retention_is_removed_on_the_next_write_and_a_younger_one_kept() {
         let run = tmp("prune");
@@ -242,6 +244,7 @@ mod tests {
         assert!(read(run.path(), &young, "sift.txt").is_ok());
     }
 
+    #[test_id(ta4frk6)]
     #[test]
     fn read_refuses_an_id_or_file_that_climbs_out_of_the_store() {
         let run = tmp("esc");

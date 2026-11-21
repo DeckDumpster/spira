@@ -147,6 +147,7 @@ mod tests {
         }
     }
 
+    #[test_id(tqpcbwg)]
     #[test]
     fn use_cases_count_covered_and_list_the_uncovered_ids() {
         let r = uc_report(&matrix(&[("UC-dispatch-01", true), ("UC-dispatch-02", false)]));
@@ -154,6 +155,7 @@ mod tests {
         assert_eq!(r.areas[0].uncovered_ids, vec!["UC-dispatch-02"]);
     }
 
+    #[test_id(tbvune6)]
     #[test]
     fn metrics_carry_one_series_per_area() {
         let r = build_report(None, &matrix(&[("UC-dispatch-01", true)]));

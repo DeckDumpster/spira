@@ -87,6 +87,7 @@ fn condemn(extra: &str) -> String {
 
 const QUESTION: &str = r#"{"words":"why open?","exemplar":{"path":"demo/src/store.rs","line":3},"kind":"question","rule":"Open states its failure.","scope":"unit"}"#;
 
+#[test_id(tzxpemi)]
 #[test]
 fn recorded_findings_get_ids_and_land_on_the_page_and_only_a_pattern_in_the_catalogue() {
     let mut w = world();
@@ -107,6 +108,7 @@ fn recorded_findings_get_ids_and_land_on_the_page_and_only_a_pattern_in_the_cata
     assert_eq!(w.commits.log.borrow()[0].0, ["cr-001.md", "patterns.md"]);
 }
 
+#[test_id(tf8ott5)]
 #[test]
 fn re_recording_an_id_replaces_the_finding_and_the_catalogue_does_not_duplicate_it() {
     let mut w = world();
@@ -120,6 +122,7 @@ fn re_recording_an_id_replaces_the_finding_and_the_catalogue_does_not_duplicate_
     assert_eq!(w.page("patterns.md").matches("### A lock is not held across a send.").count(), 1);
 }
 
+#[test_id(t9qlbzv)]
 #[test]
 fn a_second_run_with_no_new_findings_commits_nothing() {
     let mut w = world();
@@ -131,6 +134,7 @@ fn a_second_run_with_no_new_findings_commits_nothing() {
     assert_eq!(w.commits.log.borrow().len(), 1);
 }
 
+#[test_id(txi28ox)]
 #[test]
 fn the_closeout_sorts_comments_into_agreed_only_you_and_only_the_concierge() {
     let mut w = world();
@@ -152,6 +156,7 @@ fn the_closeout_sorts_comments_into_agreed_only_you_and_only_the_concierge() {
     assert!(o.stdout.contains("001-1 [condemn] A lock is not held across a send. → statute law-no-lock-across-send"), "{}", o.stdout);
 }
 
+#[test_id(tb8s48b)]
 #[test]
 fn post_makes_one_forge_call_to_the_pull_requests_comments_with_the_closeout() {
     let mut w = world();
@@ -166,6 +171,7 @@ fn post_makes_one_forge_call_to_the_pull_requests_comments_with_the_closeout() {
     assert!(o.stdout.contains("https://forge.invalid/o/r/pull/7#c1"));
 }
 
+#[test_id(tai2px8)]
 #[test]
 fn an_exemplar_outside_the_unit_or_past_the_end_of_its_file_is_refused() {
     let mut w = world();
@@ -176,6 +182,7 @@ fn an_exemplar_outside_the_unit_or_past_the_end_of_its_file_is_refused() {
     assert!(!record::dir(w.run.path(), 1).join("findings.jsonl").exists());
 }
 
+#[test_id(tr8ktq9)]
 #[test]
 fn an_empty_findings_directory_is_refused_by_name() {
     let mut w = world();
@@ -186,9 +193,10 @@ fn an_empty_findings_directory_is_refused_by_name() {
     assert!(o.stderr.contains("SPIRA_CR_FINDINGS_DIR"), "{}", o.stderr);
 }
 
+#[test_id(tk2cfen)]
 #[test]
 fn branch_lines_map_to_source_lines_through_the_elision_markers() {
-    use super::super::findings::source_line;
+    use super::super::super::findings::source_line;
     let regions = Some(vec![(5, 10), (20, 22)]);
     let at = |l| source_line(&regions, 40, l);
     assert_eq!([at(2), at(7), at(9), at(11)], [5, 10, 20, 22]);
@@ -196,6 +204,7 @@ fn branch_lines_map_to_source_lines_through_the_elision_markers() {
     assert_eq!(source_line(&None, 40, 3), 3);
 }
 
+#[test_id(tjy88nq)]
 #[test]
 fn comments_either_side_of_an_elided_gap_do_not_agree_though_their_branch_lines_are_close() {
     let w = world();
@@ -214,6 +223,7 @@ fn comments_either_side_of_an_elided_gap_do_not_agree_though_their_branch_lines_
     assert!(!agreed.contains("C-before"), "{}", o.stdout);
 }
 
+#[test_id(t6644qk)]
 #[test]
 fn a_failed_commit_is_retried_by_the_next_run_though_no_page_changed() {
     let mut w = world();

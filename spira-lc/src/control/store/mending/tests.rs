@@ -178,6 +178,7 @@ impl<B: Backend> Rig<B> {
     }
 }
 
+#[test_id(tqxqjkp)]
 #[test]
 fn a_failed_suite_opens_its_mending_row_in_the_events_txn_and_is_recorded_once() {
     let r = Rig::new();
@@ -199,6 +200,7 @@ fn a_failed_suite_opens_its_mending_row_in_the_events_txn_and_is_recorded_once()
     assert_eq!(r.round_version(), v, "a second Failed writes nothing");
 }
 
+#[test_id(td6e13j)]
 #[test]
 fn a_mend_moves_the_branch_the_next_mender_builds_on_and_a_stale_one_returns_the_failure() {
     let r = Rig::new();
@@ -224,6 +226,7 @@ fn a_mend_moves_the_branch_the_next_mender_builds_on_and_a_stale_one_returns_the
     assert_eq!(r.row_state("test-b.sh"), MendingState::Returned);
 }
 
+#[test_id(tzvd959)]
 #[test]
 fn an_overdue_mend_expires_on_sweep_and_a_waiting_failure_of_an_ended_round_is_returned() {
     let r = Rig::new();
@@ -262,6 +265,7 @@ fn an_overdue_mend_expires_on_sweep_and_a_waiting_failure_of_an_ended_round_is_r
     assert_eq!(states, ["RETURNED", "RETURNED"]);
 }
 
+#[test_id(ttnq2za)]
 #[test]
 fn a_sweep_reads_the_live_rows_through_the_state_index_not_every_row_ever() {
     use MendingState::{Mending, Returned, Waiting};
@@ -304,6 +308,7 @@ fn hand_facts(evidence_tip: &str) -> String {
     )
 }
 
+#[test_id(tmf4cp9)]
 #[test]
 fn a_concierge_hand_mends_a_waiting_failure_with_provenance_and_the_next_certify_carries_the_tip() {
     let r = Rig::new();
@@ -322,6 +327,7 @@ fn a_concierge_hand_mends_a_waiting_failure_with_provenance_and_the_next_certify
     );
 }
 
+#[test_id(tmrm10x)]
 #[test]
 fn a_hand_mend_without_provenance_is_refused_and_leaves_the_failure_waiting() {
     let r = Rig::new();

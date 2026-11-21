@@ -118,6 +118,7 @@ pub fn manifest_line(control: Option<u64>, planning: Option<u64>) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(ttu5gfs)]
     #[test]
     fn the_planes_agree_within_the_bound_and_are_refused_past_it_naming_the_exit() {
         assert_eq!(judge(None, None, 0), Ok(()));
@@ -129,6 +130,7 @@ mod tests {
         assert!(one.contains("only one plane carries a planning watermark (control plane 10, bd unstamped)"), "{one}");
     }
 
+    #[test_id(tn0ir4f)]
     #[test]
     fn each_plane_s_answer_parses_and_a_garbled_one_cannot_tell() {
         assert_eq!(parse_kv(Some("41\n")), Ok(Some(41)));
@@ -171,6 +173,7 @@ mod tests {
         }
     }
 
+    #[test_id(tn79min)]
     #[test]
     fn skew_check_refuses_past_the_bound_cannot_tell_on_a_failed_read_and_passes_without_a_control_store() {
         let (rc, out) = served(Some(Ok(Some(90))), &mut Kv(Ok(Some(40))), Ok(25));
@@ -183,6 +186,7 @@ mod tests {
         assert_eq!(served(None, &mut Kv(Ok(Some(1))), Ok(0)).0, 0);
     }
 
+    #[test_id(twv8lbk)]
     #[test]
     fn the_manifest_line_names_both_planes() {
         assert_eq!(manifest_line(Some(5), None), "Planning watermarks: control plane **5**, bd **unstamped**.");

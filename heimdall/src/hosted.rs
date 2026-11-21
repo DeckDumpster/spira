@@ -118,6 +118,7 @@ mod tests {
 
     const TH: Thresholds = Thresholds { pass_stale: 900, mirror_stale: 90_000, restart_threshold: 5, restart_window: 3600, red_streak: 4 };
 
+    #[test_id(tg86ckg)]
     #[test]
     fn a_stale_sentinel_fires_unless_the_world_is_halted() {
         let r = Readings { now: 10_000, sentinel_armed: true, sentinel_last_fired: Some(1_000), ..Readings::default() };
@@ -126,6 +127,7 @@ mod tests {
         assert!(classify(&Readings { sentinel_last_fired: Some(9_500), ..r }, &TH).is_empty());
     }
 
+    #[test_id(tnk5fnw)]
     #[test]
     fn a_steady_firing_key_stops_counting_at_its_threshold() {
         let f = vec![Firing { key: "k".into(), title: "t".into(), evidence: String::new() }];

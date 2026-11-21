@@ -177,6 +177,7 @@ mod tests {
 
     // covers: UC-operator-channel-02
 
+    #[test_id(txo7fy5)]
     #[test]
     fn missing_from_is_refused() {
         let d = kinds_tmp();
@@ -190,6 +191,7 @@ mod tests {
 
     // covers: UC-operator-channel-02
 
+    #[test_id(tz2xzmi)]
     #[test]
     fn an_empty_question_is_refused_with_the_complete_example_body() {
         let d = kinds_tmp();
@@ -203,6 +205,7 @@ mod tests {
 
     // covers: UC-operator-channel-02
 
+    #[test_id(tsswwva)]
     #[test]
     fn present_from_is_accepted() {
         let d = kinds_tmp();
@@ -215,6 +218,7 @@ mod tests {
 
     // covers: UC-operator-channel-02
 
+    #[test_id(ta5vrpp)]
     #[test]
     fn subject_that_is_a_bead_id_is_refused() {
         let d = kinds_tmp();
@@ -227,6 +231,7 @@ mod tests {
 
     // covers: UC-operator-channel-02
 
+    #[test_id(te9dji6)]
     #[test]
     fn subject_leading_with_bead_id_and_colon_is_refused() {
         let d = kinds_tmp();
@@ -239,6 +244,7 @@ mod tests {
 
     // covers: UC-operator-channel-02
 
+    #[test_id(tx4teq3)]
     #[test]
     fn human_topic_subject_is_accepted() {
         let d = kinds_tmp();
@@ -251,6 +257,7 @@ mod tests {
 
     // covers: UC-operator-channel-02
 
+    #[test_id(tm3wd93)]
     #[test]
     fn sparse_bead_id_context_is_refused() {
         let d = kinds_tmp();
@@ -263,6 +270,7 @@ mod tests {
 
     // covers: UC-operator-channel-02
 
+    #[test_id(t616lfe)]
     #[test]
     fn sufficient_bead_id_context_is_accepted() {
         let d = kinds_tmp();
@@ -283,6 +291,7 @@ mod tests {
 
     // covers: UC-operator-channel-02
 
+    #[test_id(tgx1n5e)]
     #[test]
     fn key_value_metadata_line_with_bead_id_is_accepted() {
         let d = kinds_tmp();
@@ -295,6 +304,7 @@ mod tests {
 
     // covers: UC-operator-channel-02
 
+    #[test_id(tymcn0y)]
     #[test]
     fn bare_display_name_is_refused_with_no_address() {
         let d = kinds_tmp();
@@ -309,6 +319,7 @@ mod tests {
 
     // covers: UC-operator-channel-02
 
+    #[test_id(t89f7ep)]
     #[test]
     fn group_syntax_is_refused_with_rfc_6854() {
         let d = kinds_tmp();
@@ -322,6 +333,7 @@ mod tests {
 
     // covers: UC-operator-channel-03
 
+    #[test_id(t2llma6)]
     #[test]
     fn unknown_kind_is_refused_naming_it() {
         let d = kinds_tmp();
@@ -335,6 +347,7 @@ mod tests {
 
     // covers: UC-operator-channel-03
 
+    #[test_id(t1n0gdb)]
     #[test]
     fn decision_without_default_is_refused() {
         let d = kinds_tmp();
@@ -349,6 +362,7 @@ mod tests {
 
     // covers: UC-operator-channel-03
 
+    #[test_id(taabuv2)]
     #[test]
     fn decision_with_default_is_accepted() {
         let d = kinds_tmp();
@@ -362,6 +376,7 @@ mod tests {
 
     // covers: UC-operator-channel-03
 
+    #[test_id(t4slczx)]
     #[test]
     fn note_with_empty_section_is_refused_naming_section() {
         let d = kinds_tmp();
@@ -375,6 +390,7 @@ mod tests {
 
     // covers: UC-operator-channel-03
 
+    #[test_id(trxns2o)]
     #[test]
     fn suit_with_empty_grounds_is_refused() {
         let d = kinds_tmp();
@@ -388,6 +404,7 @@ mod tests {
 
     // covers: UC-operator-channel-03
 
+    #[test_id(t9td94i)]
     #[test]
     fn urgent_without_why_section_is_refused() {
         let d = kinds_tmp();
@@ -401,6 +418,7 @@ mod tests {
 
     // covers: UC-operator-channel-03
 
+    #[test_id(totpqtb)]
     #[test]
     fn urgent_with_why_section_is_accepted() {
         let d = kinds_tmp();
@@ -419,6 +437,7 @@ mod tests {
         .is_ok());
     }
 
+    #[test_id(t70xmov)]
     #[test]
     fn archivist_per_finding_note_is_refused_law_named() {
         let d = kinds_tmp();
@@ -430,6 +449,7 @@ mod tests {
         assert!(e.contains("law-fail-closed-at-the-source"), "{e}");
     }
 
+    #[test_id(tm3r1qs)]
     #[test]
     fn archivist_question_is_unaffected_by_the_note_rule() {
         let d = kinds_tmp();
@@ -448,6 +468,7 @@ mod tests {
         .is_ok());
     }
 
+    #[test_id(tyzij2t)]
     #[test]
     fn non_archivist_sender_is_unaffected_by_the_note_rule() {
         let d = kinds_tmp();
@@ -458,6 +479,7 @@ mod tests {
         .is_ok());
     }
 
+    #[test_id(tz4vzp9)]
     #[test]
     fn archivist_note_with_digest_is_accepted() {
         let d = kinds_tmp();
@@ -470,6 +492,7 @@ mod tests {
 
     // covers: UC-operator-channel-03
 
+    #[test_id(tw2gpyi)]
     #[test]
     fn ask_below_promise_with_no_section_is_refused() {
         let d = kinds_tmp();
@@ -488,6 +511,7 @@ mod tests {
         .is_err());
     }
 
+    #[test_id(t94rvt2)]
     #[test]
     fn question_below_phrase_with_no_section_is_also_refused() {
         let d = kinds_tmp();
@@ -500,6 +524,7 @@ mod tests {
 
     // covers: UC-operator-channel-03
 
+    #[test_id(ts36ve8)]
     #[test]
     fn ask_below_promise_with_a_question_section_is_accepted() {
         let d = kinds_tmp();
@@ -518,6 +543,7 @@ mod tests {
         .is_ok());
     }
 
+    #[test_id(tu7popp)]
     #[test]
     fn body_with_no_promise_phrase_is_accepted() {
         let d = kinds_tmp();
@@ -530,6 +556,7 @@ mod tests {
 
     // covers: UC-operator-channel-03
 
+    #[test_id(t3w69hd)]
     #[test]
     fn editing_a_kind_file_changes_acceptance_with_no_code_change() {
         let d = testkit::TempDir::new("mail-lint-custom-kind");

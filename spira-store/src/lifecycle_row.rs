@@ -540,6 +540,7 @@ mod tests {
         t.seen.lock().unwrap().len()
     }
 
+    #[test_id(tsc1cfv)]
     #[test]
     fn reopen_says_could_not_tell_for_exit_2_and_refused_for_exit_3() {
         let (c, _, _) = scripted(&[2], 5);
@@ -550,6 +551,7 @@ mod tests {
         assert!(e.contains("refused the reopen of sp-x") && !e.contains("could not tell"), "{e}");
     }
 
+    #[test_id(tepeo3d)]
     #[test]
     fn call_idempotent_resends_a_cannot_tell_and_returns_the_first_applied_reply() {
         let (c, t, retry) = scripted(&[2, 2, 0], 60);
@@ -559,6 +561,7 @@ mod tests {
         assert_eq!(*t.bodies.lock().unwrap(), vec![Some("body".to_string()); 3]);
     }
 
+    #[test_id(t4gqy3j)]
     #[test]
     fn call_idempotent_returns_a_refusal_reply_without_resending() {
         let (c, t, retry) = scripted(&[3], 60);
@@ -566,6 +569,7 @@ mod tests {
         assert_eq!(sent(&t), 1);
     }
 
+    #[test_id(tcckduv)]
     #[test]
     fn call_idempotent_stops_at_the_bound() {
         let (c, t, retry) = scripted(&[2], 12);
@@ -574,6 +578,7 @@ mod tests {
         assert_eq!(sent(&t), 3, "sends at 0 s, 5.25 s and 10.75 s; the next backoff passes 12 s");
     }
 
+    #[test_id(tvrz8s7)]
     #[test]
     fn a_create_the_store_cannot_tell_twice_is_sent_a_third_time_and_succeeds() {
         let (c, t, retry) = scripted(&[2, 2, 0], 60);
@@ -582,6 +587,7 @@ mod tests {
         assert_eq!(t.seen.lock().unwrap()[2], ["create-bead", "sp-1", "--ready"]);
     }
 
+    #[test_id(tqxuypd)]
     #[test]
     fn a_store_down_for_longer_than_three_attempts_is_waited_out_within_the_bound() {
         let (c, t, retry) = scripted(&[2, 2, 2, 2, 2, 0], 60);
@@ -589,6 +595,7 @@ mod tests {
         assert_eq!(sent(&t), 6);
     }
 
+    #[test_id(tgypl65)]
     #[test]
     fn a_store_that_never_answers_reports_after_the_bound_and_not_before() {
         let (c, t, retry) = scripted(&[2], 60);
@@ -598,6 +605,7 @@ mod tests {
         assert!(t.pace.now() <= Duration::from_secs(60 + 5), "never runs far past the bound");
     }
 
+    #[test_id(tlt55zt)]
     #[test]
     fn a_bound_of_zero_makes_one_attempt() {
         let (c, t, retry) = scripted(&[2, 0], 0);
@@ -605,6 +613,7 @@ mod tests {
         assert_eq!(sent(&t), 1);
     }
 
+    #[test_id(tmyas8u)]
     #[test]
     fn a_refusal_is_final_and_sent_once() {
         for code in [1, 3] {
@@ -614,6 +623,7 @@ mod tests {
         }
     }
 
+    #[test_id(tu9nano)]
     #[test]
     fn claim_inputs_are_retried_the_same_way() {
         let (c, t, retry) = scripted(&[2, 2, 0], 60);
@@ -622,6 +632,7 @@ mod tests {
     }
 
 
+    #[test_id(tu4p3nx)]
     #[test]
     fn created_id_reads_silent_and_json() {
         assert_eq!(created_id("sp-abc\n").as_deref(), Some("sp-abc"));
@@ -631,6 +642,7 @@ mod tests {
         assert_eq!(created_id("warning: something odd"), None);
     }
 
+    #[test_id(tflmn0v)]
     #[test]
     fn created_ids_reads_import_and_mol_json() {
         let import = "{\"created\":2,\"ids\":[\"sp-a\",\"sp-b\"],\"skipped\":0}";

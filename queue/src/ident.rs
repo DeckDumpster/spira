@@ -62,6 +62,7 @@ pub fn bounded_text(text: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tkiobg4)]
     #[test]
     fn plain_identifiers_pass() {
         for s in [
@@ -78,6 +79,7 @@ mod tests {
         }
     }
 
+    #[test_id(tc1wqkp)]
     #[test]
     fn option_like_space_and_long_values_are_refused() {
         assert!(check("x", "--force").is_err());
@@ -87,6 +89,7 @@ mod tests {
         assert!(check("x", &"a".repeat(MAX_IDENT + 1)).is_err());
     }
 
+    #[test_id(twvirn9)]
     #[test]
     fn bounded_text_is_one_line_and_capped() {
         assert_eq!(bounded_text("a\nb   c"), "a b c");

@@ -278,6 +278,7 @@ pub(crate) mod tests {
         paths.iter().map(|p| (p.to_string(), "h".to_string())).collect()
     }
 
+    #[test_id(tj46k22)]
     #[test]
     fn a_log_entry_pulls_in_the_dirty_page_it_links_to() {
         let dirty = snap(&["log.md", "wiki/projects/spira/disk-model.md", "wiki/notes/other.md"]);
@@ -285,12 +286,14 @@ pub(crate) mod tests {
         assert_eq!(got, vec!["wiki/projects/spira/disk-model.md".to_string()]);
     }
 
+    #[test_id(tvcgohm)]
     #[test]
     fn an_announced_page_already_in_the_set_is_not_added_twice() {
         let dirty = snap(&["wiki/notes/a.md"]);
         assert!(announced_dirty("[[a#section]]", &dirty, &["wiki/notes/a.md".to_string()]).is_empty());
     }
 
+    #[test_id(tolps85)]
     #[test]
     fn the_dirty_checkout_refusal_is_recognised_and_other_failures_are_not() {
         assert!(is_dirty_checkout_refusal("git pull --rebase failed: exit 128: error: cannot pull with rebase: You have unstaged changes."));

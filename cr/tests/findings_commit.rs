@@ -1,6 +1,8 @@
 //! `GitCommitter` over a real repository: only the named paths are committed, the message
 //! comes through stdin, and a rerun with nothing changed makes no commit.
 
+#[macro_use]
+extern crate spira_test_id;
 use cr::ports::{Committer, GitCommitter};
 use std::path::Path;
 use std::process::Command;
@@ -11,6 +13,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
+#[test_id(tvxcc7z)]
 #[test]
 fn commits_exactly_the_named_paths_with_the_message_and_makes_no_empty_commit() {
     let d = testkit::TempDir::new("cr-commit");

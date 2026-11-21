@@ -3,6 +3,9 @@
 //! first, then the GateRed), superseded, or — once the cap is spent — held out and reported. A conflict is never capped or counted: the landing ref moves, so a rebased branch conflicts again and goes back to a builder each time. A
 //! candidate the screen cannot judge records nothing and stays unscreened.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 mod git;
 pub mod identity;
 pub mod machine;
@@ -313,6 +316,7 @@ mod tests;
 
 #[cfg(test)]
 mod fork_fence {
+    #[test_id(t2jpw3l)]
     #[test]
     fn sift_starts_no_spira_child_that_is_not_a_named_fork_edge() {
         let got = forge::fork_scan::scan(&testkit::manifest_dir().join("src"));

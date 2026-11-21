@@ -241,12 +241,14 @@ mod tests {
         scan(src.as_bytes(), &|_| false).into_iter().map(|h| h.0).collect()
     }
 
+    #[test_id(t83zpqh)]
     #[test]
     fn iteration_into_println_fails() {
         assert_eq!(rs("fn f(m: HashMap<String, u32>) {\n    for (k, v) in &m {\n        println!(\"{k} {v}\");\n    }\n}\n"), vec![2]);
         assert_eq!(rs("fn f() {\n    let s: HashSet<u32> = HashSet::new();\n    for x in s.iter() {\n        writeln!(out, \"{x}\").unwrap();\n    }\n}\n"), vec![3]);
     }
 
+    #[test_id(t337dzc)]
     #[test]
     fn collecting_an_iteration_into_an_unsorted_vec_fails() {
         assert_eq!(rs("fn f(m: &HashMap<String, u32>) -> Vec<String> {\n    m.keys().cloned().collect()\n}\n"), vec![2]);
@@ -254,6 +256,7 @@ mod tests {
         assert_eq!(rs("fn f() {\n    let m = HashMap::new();\n    println!(\"{:?}\", m.values().collect::<Vec<_>>());\n}\n"), vec![3]);
     }
 
+    #[test_id(ticy852)]
     #[test]
     fn a_lookup_passes() {
         assert!(rs("fn f(m: HashMap<String, u32>, s: HashSet<u32>) -> bool {\n    println!(\"{:?}\", m.get(\"a\"));\n    m.contains_key(\"b\") && s.contains(&1) && m.len() > 0\n}\n").is_empty());
@@ -261,22 +264,26 @@ mod tests {
         assert!(rs("fn f(m: HashMap<String, u32>) {\n    for (k, v) in &m {\n        total += v;\n    }\n}\n").is_empty());
     }
 
+    #[test_id(tfch1eg)]
     #[test]
     fn a_btree_iteration_passes() {
         assert!(rs("fn f(m: BTreeMap<String, u32>) {\n    for (k, v) in &m {\n        println!(\"{k} {v}\");\n    }\n    let v: Vec<_> = m.keys().cloned().collect();\n}\n").is_empty());
     }
 
+    #[test_id(txntodn)]
     #[test]
     fn sorting_the_result_passes() {
         assert!(rs("fn f(m: &HashMap<String, u32>) -> Vec<String> {\n    let mut v: Vec<String> = m.keys().cloned().collect();\n    v.sort();\n    v\n}\n").is_empty());
         assert!(rs("fn f(m: &HashMap<String, u32>) -> BTreeSet<String> {\n    m.keys().cloned().collect::<BTreeSet<_>>()\n}\n").is_empty());
     }
 
+    #[test_id(tglj29h)]
     #[test]
     fn prose_and_literals_are_not_code() {
         assert!(rs("fn f(m: HashMap<String, u32>) {\n    // for x in m { println!(\"x\"); }\n    let _ = \"for x in m { println!(); }\";\n}\n").is_empty());
     }
 
+    #[test_id(trk22lm)]
     #[test]
     fn test_code_is_exempt() {
         let src = "fn f(m: HashMap<String, u32>) {\n    for (k, v) in &m {\n        println!(\"{k}\");\n    }\n}\n";
@@ -290,6 +297,7 @@ mod tests {
 
     const OFFENDER: &str = "fn f(m: HashMap<String, u32>) {\n    for k in &m {\n        println!(\"{k:?}\");\n    }\n}\n";
 
+    #[test_id(tskf5fw)]
     #[test]
     fn the_allow_list_only_shrinks() {
         let t = TempDir::new("hashiter-allow");

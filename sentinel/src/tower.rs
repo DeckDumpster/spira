@@ -163,11 +163,12 @@ fn conditions_check(n: i64, run: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(txxtcns)]
     #[test]
     fn the_twelve_are_check_6s() {
-        assert_eq!(super::CHECKS.len(), 12);
+        assert_eq!(super::super::CHECKS.len(), 12);
         let src = include_str!("../../watchtower/src/main.rs");
-        for c in super::CHECKS.iter().filter(|c| **c != "conditions-check" && **c != "drift-check") {
+        for c in super::super::CHECKS.iter().filter(|c| **c != "conditions-check" && **c != "drift-check") {
             assert!(src.contains(&format!("\"--{c}\"")), "{c} is a watchtower flag");
         }
     }

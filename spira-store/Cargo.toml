@@ -5,8 +5,7 @@ edition = "2021"
 description = "spira-store — the lifecycle store client: LcClient, typed state reads, row writes, planning-write recognition."
 
 [features]
-integration = ["lifecycle/integration", "spira-config/integration", "testkit/integration"]
-
+integration = ["lifecycle/integration", "spira-config/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
 spira-config = { path = "../spira-config" }
 serde = { version = "1", features = ["derive"] }
@@ -14,4 +13,5 @@ serde_json = "1"
 lifecycle = { path = "../lifecycle" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

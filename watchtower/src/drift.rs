@@ -115,6 +115,7 @@ pub fn run(spira_home: &str, repo: &str, db: &str, home_repo: &str, incident_sh:
 mod tests {
     use super::*;
 
+    #[test_id(tgwoi1n)]
     #[test]
     fn exit_one_is_drift_and_anything_else_unrecognised_is_unreadable() {
         assert!(matches!(classify(Some(0), ""), Probe::Clean));
@@ -123,6 +124,7 @@ mod tests {
         assert!(matches!(classify(None, ""), Probe::Unreadable));
     }
 
+    #[test_id(t40ifkg)]
     #[test]
     fn target_prefers_repo_then_release() {
         assert_eq!(checkout_target(Some("r".into()), Some("rel".into())).as_deref(), Some("r"));

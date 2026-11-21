@@ -27,6 +27,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -112,6 +113,7 @@ version = "0.1.0"
 dependencies = [
  "forge",
  "spira-config",
+ "spira-test-id",
  "suite-select",
  "testkit",
 ]
@@ -133,6 +135,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "state-store",
  "store-view",
  "suite-select",
@@ -153,6 +156,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "strand",
  "system-paths",
  "testkit",
@@ -181,6 +185,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -214,6 +219,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-store",
+ "spira-test-id",
  "strand",
  "testkit",
 ]
@@ -237,6 +243,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "store-view",
  "strand",
  "system-paths",
@@ -262,6 +269,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "spira-world",
  "store-view",
  "system-paths",
@@ -291,6 +299,7 @@ dependencies = [
  "sha2",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "testkit",
  "toml",
 ]
@@ -343,6 +352,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "store-view",
  "testkit",
  "tsd",
@@ -363,6 +373,7 @@ name = "doctor"
 version = "1.0.0"
 dependencies = [
  "spira-config",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -383,6 +394,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "strand",
  "system-paths",
  "testkit",
@@ -422,6 +434,7 @@ version = "1.0.0"
 dependencies = [
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -447,6 +460,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -469,6 +483,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -556,6 +571,7 @@ dependencies = [
  "spira-config",
  "spira-desired-state",
  "spira-otel",
+ "spira-test-id",
  "suite-select",
  "system-paths",
  "testkit",
@@ -572,6 +588,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -582,6 +599,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "testenv",
  "testkit",
  "tsd",
@@ -594,6 +612,7 @@ dependencies = [
  "libc",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -609,6 +628,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
  "tsd",
 ]
@@ -657,6 +677,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
  "ureq",
 ]
@@ -672,6 +693,7 @@ dependencies = [
  "spira-desired-state",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "strand",
  "testkit",
 ]
@@ -685,6 +707,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "suite-select",
  "test-plan",
  "testkit",
@@ -719,6 +742,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -733,6 +757,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -832,6 +857,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -850,6 +876,7 @@ name = "inbox-rules"
 version = "1.0.0"
 dependencies = [
  "regex",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -862,6 +889,7 @@ dependencies = [
  "regex",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "spira-world",
  "testkit",
 ]
@@ -881,6 +909,7 @@ dependencies = [
  "spira-config",
  "spira-desired-state",
  "spira-store",
+ "spira-test-id",
  "spira-world",
  "system-paths",
  "testkit",
@@ -930,6 +959,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "system-paths",
  "testkit",
  "watchdog",
@@ -942,6 +972,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "tsd",
 ]
 
@@ -981,6 +1012,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
  "ureq",
 ]
@@ -1000,6 +1032,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "system-paths",
  "testkit",
  "tsd",
@@ -1041,6 +1074,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -1054,6 +1088,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
  "tree-sitter",
  "tree-sitter-bash",
@@ -1097,6 +1132,7 @@ dependencies = [
  "spira-otel",
  "spira-runtime",
  "spira-store",
+ "spira-test-id",
  "store-view",
  "system-paths",
  "testkit",
@@ -1117,6 +1153,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "system-paths",
  "testkit",
  "tsd",
@@ -1144,6 +1181,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "suite-select",
 ]
 
@@ -1161,6 +1199,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "strand",
  "testkit",
 ]
@@ -1248,6 +1287,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -1288,6 +1328,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -1300,6 +1341,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
 ]
 
 [[package]]
@@ -1309,6 +1351,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -1418,6 +1461,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "state-store",
  "system-paths",
  "testkit",
@@ -1518,6 +1562,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -1526,6 +1571,7 @@ dependencies = [
 name = "reclaim"
 version = "0.1.0"
 dependencies = [
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -1546,6 +1592,7 @@ dependencies = [
  "spira-desired-state",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "system-paths",
  "testkit",
  "tsd",
@@ -1562,6 +1609,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -1577,6 +1625,7 @@ dependencies = [
  "spira-desired-state",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
  "toml",
  "tsd",
@@ -1592,6 +1641,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
  "toml",
  "tsd",
@@ -1614,6 +1664,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-store",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -1658,6 +1709,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "state-store",
  "system-paths",
  "testkit",
@@ -1673,6 +1725,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "testkit",
  "toml",
 ]
@@ -1710,6 +1763,7 @@ dependencies = [
  "spira-desired-state",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "system-paths",
  "test-registry",
  "testkit",
@@ -1729,6 +1783,7 @@ dependencies = [
  "spira-lint",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
  "toml",
 ]
@@ -1743,6 +1798,7 @@ dependencies = [
  "socket2",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "system-paths",
  "testkit",
  "tokio",
@@ -1758,6 +1814,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -1861,6 +1918,7 @@ dependencies = [
  "httpdate",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "testkit",
  "tokio",
 ]
@@ -1910,6 +1968,7 @@ dependencies = [
  "spira-config",
  "spira-desired-state",
  "spira-store",
+ "spira-test-id",
  "strand",
  "system-paths",
  "testkit",
@@ -2017,6 +2076,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -2066,6 +2126,7 @@ dependencies = [
  "spira-lc",
  "spira-otel",
  "spira-runtime",
+ "spira-test-id",
  "state-store",
  "testkit",
  "toml",
@@ -2081,6 +2142,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "system-paths",
  "testkit",
  "tsd",
@@ -2118,6 +2180,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -2135,6 +2198,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "store-view",
  "system-paths",
  "testkit",
@@ -2151,6 +2215,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "spira-otel",
+ "spira-test-id",
  "system-paths",
  "testkit",
  "toml",
@@ -2166,6 +2231,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -2181,6 +2247,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "testkit",
  "toml",
 ]
@@ -2210,6 +2277,7 @@ dependencies = [
  "spira-desired-state",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "state-store",
  "state-store-sqlite",
  "system-paths",
@@ -2227,6 +2295,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "suite-select",
  "system-paths",
  "test-plan",
@@ -2243,6 +2312,7 @@ dependencies = [
  "prost",
  "serde",
  "serde_json",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -2303,6 +2373,7 @@ dependencies = [
  "spira-otel",
  "spira-store",
  "spira-submission",
+ "spira-test-id",
  "spira-world",
  "store-view",
  "system-paths",
@@ -2334,6 +2405,7 @@ dependencies = [
  "spira-otel",
  "spira-runtime",
  "spira-store",
+ "spira-test-id",
  "system-paths",
  "test-registry",
  "testkit",
@@ -2348,6 +2420,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -2361,6 +2434,7 @@ dependencies = [
  "sha2",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -2372,6 +2446,7 @@ dependencies = [
  "libc",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -2397,6 +2472,7 @@ dependencies = [
  "spira-ctrl",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "system-paths",
  "testkit",
  "tsd",
@@ -2409,6 +2485,7 @@ dependencies = [
  "runtime",
  "serde",
  "serde_json",
+ "spira-test-id",
 ]
 
 [[package]]
@@ -2421,6 +2498,7 @@ dependencies = [
  "sha2",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "state-store",
  "system-paths",
  "testkit",
@@ -2434,6 +2512,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "testkit",
  "toml",
 ]
@@ -2445,6 +2524,7 @@ dependencies = [
  "libc",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -2456,6 +2536,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-store",
+ "spira-test-id",
 ]
 
 [[package]]
@@ -2470,6 +2551,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-store",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -2486,6 +2568,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -2532,6 +2615,7 @@ dependencies = [
  "serde_path_to_error",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "toml",
 ]
 
@@ -2546,6 +2630,7 @@ dependencies = [
  "spira-config",
  "spira-lint",
  "spira-otel",
+ "spira-test-id",
  "testkit",
 ]
 
@@ -2562,6 +2647,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "suite-select",
  "system-paths",
  "testkit",
@@ -2574,6 +2660,7 @@ name = "testkit"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "spira-test-id",
  "system-paths",
 ]
 
@@ -2788,6 +2875,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-otel",
+ "spira-test-id",
  "system-paths",
  "testkit",
 ]
@@ -2802,6 +2890,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
 ]
 
 [[package]]
@@ -2845,6 +2934,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "system-paths",
  "testkit",
  "tsd",
@@ -2976,6 +3066,7 @@ dependencies = [
  "sop",
  "spira-config",
  "spira-store",
+ "spira-test-id",
  "spira-world",
  "system-paths",
  "testkit",
@@ -2992,6 +3083,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-test-id",
  "system-paths",
  "testkit",
  "tsd",
@@ -3013,6 +3105,7 @@ dependencies = [
  "spira-ctrl",
  "spira-desired-state",
  "spira-store",
+ "spira-test-id",
  "strand",
  "system-paths",
  "testkit",
@@ -3193,6 +3286,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "system-paths",
  "testkit",
  "tsd",

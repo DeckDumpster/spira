@@ -129,6 +129,7 @@ pub enum SuiteState {
 mod tests {
     use super::*;
 
+    #[test_id(t8gh7m2)]
     #[test]
     fn headers_stop_at_the_first_set_line() {
         let t = "#!/usr/bin/env bash\n# requires: jq, dolt testenv\n# exclusive: builds cargo\n# tier: T2 \nset -uo pipefail\n# requires: late\n";
@@ -142,6 +143,7 @@ mod tests {
         );
     }
 
+    #[test_id(t2mrbgz)]
     #[test]
     fn host_requires_is_read_before_set_and_is_not_requires() {
         let h = SuiteHeaders::parse("# host-requires: jq, py:jwt\n# requires: dolt\nset -u\n# host-requires: late\n");
@@ -149,6 +151,7 @@ mod tests {
         assert_eq!(h.requires, vec!["dolt"]);
     }
 
+    #[test_id(tqtaidb)]
     #[test]
     fn headers_after_set_are_ignored_and_first_wins() {
         let h = SuiteHeaders::parse("set -e\n# requires: jq\n");
@@ -157,6 +160,7 @@ mod tests {
         assert_eq!(h.requires, vec!["a"]);
     }
 
+    #[test_id(t9jwasw)]
     #[test]
     fn testdb_server_mode_is_read_from_anywhere_in_the_suite() {
         let t = "#!/usr/bin/env bash\nset -uo pipefail\n# testdb-mode: server — needs bd sql\nexport SPIRA_TESTDB_MODE=server\n";
@@ -166,6 +170,7 @@ mod tests {
         assert!(!SuiteHeaders::parse("export SPIRA_TESTDB_MODE=server\n").testdb_server, "the lint's header is the signal");
     }
 
+    #[test_id(t77r146)]
     #[test]
     fn testdb_embedded_mode_opts_a_suite_out_of_the_batch_wide_server_fixture() {
         let t = "# testdb-mode: embedded — needs a local store it can make unreadable\n";
@@ -176,6 +181,7 @@ mod tests {
         assert!(!SuiteHeaders::parse("").testdb_embedded);
     }
 
+    #[test_id(tm50bsn)]
     #[test]
     fn pids_and_lane_are_read_from_the_header_only() {
         let h = SuiteHeaders::parse("# pids: 900\n# lane: sim — four worlds\nset -uo pipefail\n# pids: 5\n");
@@ -184,6 +190,7 @@ mod tests {
         assert_eq!((h.pids, h.lane), (None, None));
     }
 
+    #[test_id(tbwtwyq)]
     #[test]
     fn empty_exclusive_is_not_exclusive() {
         assert_eq!(SuiteHeaders::parse("# exclusive:\n").exclusive, None);

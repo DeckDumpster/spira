@@ -153,6 +153,7 @@ mod tests {
 
     const FILES: [&str; 3] = ["spira/conf.d/SPIRA_RUN", "a/src/main.rs", EXCEPTIONS];
 
+    #[test_id(t1as1k9)]
     #[test]
     fn a_planted_raw_read_of_a_registered_key_is_found() {
         let t = fixture("cer-red", "");
@@ -167,6 +168,7 @@ mod tests {
         assert!(got[1].contains(":4:"), "{got:?}");
     }
 
+    #[test_id(txdgnp7)]
     #[test]
     fn an_unregistered_key_a_comment_and_test_code_are_clean() {
         let t = fixture("cer-green", "");
@@ -178,6 +180,7 @@ mod tests {
         assert!(run(&t, &FILES).unwrap().is_empty());
     }
 
+    #[test_id(t5uq6cz)]
     #[test]
     fn a_listed_file_passes_and_a_stale_or_reasonless_line_is_refused() {
         let t = fixture("cer-table", "a/src/main.rs bootstrap: runs before config exists\nb/src/lib.rs\nc/src/lib.rs hermetic\n");
@@ -190,6 +193,7 @@ mod tests {
         assert!(got[1].contains(":3: lists c/src/lib.rs"), "{got:?}");
     }
 
+    #[test_id(t7ed8an)]
     #[test]
     fn no_registry_is_a_refusal_not_a_pass() {
         let t = TempDir::new("cer-noreg");

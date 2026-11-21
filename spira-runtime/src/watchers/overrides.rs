@@ -90,6 +90,7 @@ impl Handler for Overrides {
 mod tests {
     use super::*;
 
+    #[test_id(tepmef1)]
     #[test]
     fn a_failure_is_said_once_until_it_changes_or_clears() {
         let (c, say) = decide(&Carry::default(), Some("bead sp-x is not in the store"));
@@ -101,6 +102,7 @@ mod tests {
         assert!(decide(&cleared, Some("bead sp-x is not in the store")).1.is_some(), "a failure that returns after success is said again");
     }
 
+    #[test_id(tdxxe8w)]
     #[test]
     fn every_tick_asks_for_a_pass_and_schedules_the_next() {
         use runtime::ports::VirtualClock;
@@ -112,6 +114,7 @@ mod tests {
         assert_eq!(e.pending_effects().iter().filter(|p| p.spec.name == APPLY).count(), 1);
     }
 
+    #[test_id(t472fvw)]
     #[test]
     fn a_failed_pass_reaches_the_inbox_once_across_ticks() {
         use runtime::ports::VirtualClock;

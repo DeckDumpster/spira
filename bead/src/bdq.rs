@@ -482,6 +482,7 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    #[test_id(tnpxhhr)]
     #[test]
     fn czar_fence_admits_act_only_and_defaults_to_shadow() {
         let stage = |v: &str| (v == "SPIRA_CZAR_STAGE_LOOP_STALLED").then(|| "act".to_string());
@@ -491,6 +492,7 @@ mod tests {
         assert!(czar_fence("", &stage).is_err());
     }
 
+    #[test_id(t93407l)]
     #[test]
     fn utc_stamp_nanos_matches_date_formatting() {
         let t = std::time::UNIX_EPOCH + std::time::Duration::new(1_762_200_000, 5);
@@ -507,6 +509,7 @@ mod tests {
 
     // -- check_repo_label -------------------------------------------------------------------
 
+    #[test_id(tf4wldc)]
     #[test]
     fn every_state_verb_is_refused_and_names_the_machines_door() {
         for argv in [&["close", "sp-a", "--reason", "x"][..], &["reopen", "sp-a"], &["defer", "sp-a"], &["undefer", "sp-a"],
@@ -518,6 +521,7 @@ mod tests {
         assert!(check_state_verb(&s(&["reopen", "sp-a"])).unwrap().contains("spira-lc reopen"));
     }
 
+    #[test_id(tc2tiw4)]
     #[test]
     fn reads_notes_labels_and_creates_are_not_state_verbs() {
         for argv in [&["show", "sp-a"][..], &["list", "--status", "open"], &["note", "sp-a", "--stdin"], &["label", "add", "sp-a", "x"],
@@ -527,6 +531,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-13
+    #[test_id(t7v2bl1)]
     #[test]
     fn repo_label_allows_home_repo_and_known_repos() {
         let e = env(&[("SPIRA_HOME_REPO", "spira")]);
@@ -535,6 +540,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-13
+    #[test_id(tx3sjvh)]
     #[test]
     fn repo_label_refuses_unknown_repo_and_names_valid_keys() {
         let map = "spira | /srv/spira | push | origin/main | |\nwidget | /srv/widget | pr | origin/main | |\n";
@@ -559,6 +565,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-14
+    #[test_id(teydy3m)]
     #[test]
     fn no_shipped_runes_persona_names_a_repository_by_literal() {
         let planted = "bd create -l \"plan,repo:sentinel-test-literal\" and repo:<name> and repo:${SPIRA_HOME_REPO}";
@@ -581,12 +588,14 @@ mod tests {
         assert!(found.is_empty(), "personas that hardcode a repository: {found:?}");
     }
 
+    #[test_id(tvjzo9k)]
     #[test]
     fn repo_label_no_repo_label_at_all_is_allowed() {
         let reg = registry_from_env(&env(&[]), Path::new("x"));
         assert_eq!(check_repo_label(&s(&["create", "title", "--labels", "plan"]), &reg), None);
     }
 
+    #[test_id(tjk1npq)]
     #[test]
     fn repo_label_in_a_non_last_labels_flag_is_still_checked() {
         let map = "spira | /srv/spira | push | origin/main | |\n";
@@ -596,6 +605,7 @@ mod tests {
         assert_eq!(check_repo_label(&s(&["create", "title", "-l", "repo:spira", "--labels=plan"]), &reg), None);
     }
 
+    #[test_id(thn8jnf)]
     #[test]
     fn created_repo_reads_the_repo_label_from_every_labels_flag() {
         assert_eq!(created_repo(&s(&["create", "T", "-l", "repo:deck", "-l", "plan"])), Some("deck".into()));
@@ -605,6 +615,7 @@ mod tests {
 
     // -- check_schema_delete -----------------------------------------------------------------
 
+    #[test_id(ts02y9t)]
     #[test]
     fn ask_label_cannot_be_added_to_an_existing_bead() {
         let a = "needs-ryan"; // literal-ok: fixture/fallback
@@ -617,6 +628,7 @@ mod tests {
         assert_eq!(check_ask_label_write(&s(&["label", "add", "sp-1", a]), ""), None);
     }
 
+    #[test_id(tdcecp3)]
     #[test]
     fn ask_shape_refuses_a_bare_alarm_and_accepts_a_decision() {
         let alarm = s(&["create", "SLOW QUERY on dolt", "--labels", "needs-ryan,overseer"]); // literal-ok: fixture/fallback
@@ -631,6 +643,7 @@ mod tests {
     }
 
     // covers: UC-safety-fences-13
+    #[test_id(tnt6md6)]
     #[test]
     fn schema_delete_is_detected_regardless_of_case_or_spacing() {
         assert!(check_schema_delete(&s(&["create", "DELETE   FROM schema_migrations"])).is_some());
@@ -639,6 +652,7 @@ mod tests {
         assert_eq!(check_schema_delete(&s(&["create", "delete from somewhere_else"])), None);
     }
 
+    #[test_id(tmr42gf)]
     #[test]
     fn schema_delete_labels_flag_is_not_a_bypass_and_is_not_misread_as_title() {
         // --labels is unrecognised by this parser; its value must not leak into title.
@@ -655,6 +669,7 @@ mod tests {
 
     // -- is_create ----------------------------------------------------------------------------
 
+    #[test_id(tv3a2f5)]
     #[test]
     fn a_no_row_type_create_leaves_no_lifecycle_row() {
         for ty in ["event", "epic", "decision", "gate"] {
@@ -666,6 +681,7 @@ mod tests {
         assert!(!creates_rowless_type(&s(&["create", "event"])));
     }
 
+    #[test_id(tyfyto2)]
     #[test]
     fn creates_closed_reads_the_status_flag() {
         assert!(creates_closed(&s(&["create", "t", "--status", "closed"])));
@@ -674,6 +690,7 @@ mod tests {
         assert!(!creates_closed(&s(&["create", "closed"])));
     }
 
+    #[test_id(tse52du)]
     #[test]
     fn is_create_only_true_for_the_create_verb() {
         assert!(is_create(&s(&["create", "x"])));
@@ -683,6 +700,7 @@ mod tests {
         assert!(!is_create(&s(&[])));
     }
 
+    #[test_id(t18o2eh)]
     #[test]
     fn creates_beads_covers_import_and_mol_spawns() {
         assert!(creates_beads(&s(&["create", "x"])));
@@ -700,12 +718,14 @@ mod tests {
         assert!(!creates_beads(&s(&["update", "sp-a"])));
     }
 
+    #[test_id(t7nxvip)]
     #[test]
     fn import_and_mol_are_not_create_fenced() {
         assert!(!is_create(&s(&["import", "f"])));
         assert!(!is_create(&s(&["mol", "pour", "p"])));
     }
 
+    #[test_id(t24xa0z)]
     #[test]
     fn id_bearing_args_adds_json_only_where_ids_are_otherwise_unprinted() {
         assert_eq!(id_bearing_args(&s(&["import", "f"])), s(&["import", "f", "--json"]));
@@ -716,17 +736,20 @@ mod tests {
 
     // -- czar fence dispatch ------------------------------------------------------------------
 
+    #[test_id(ttjkkkn)]
     #[test]
     fn czar_fence_fires_on_reopen_when_czar_with_class() {
         assert_eq!(czar_fence_class("czar", "deadlock", "", &s(&["reopen", "sp-a"])), Some("deadlock"));
     }
 
+    #[test_id(ty1vklz)]
     #[test]
     fn czar_fence_skips_non_czar_or_empty_class() {
         assert_eq!(czar_fence_class("builder", "deadlock", "", &s(&["reopen", "sp-a"])), None);
         assert_eq!(czar_fence_class("czar", "", "", &s(&["reopen", "sp-a"])), None);
     }
 
+    #[test_id(tlm7auy)]
     #[test]
     fn czar_fence_update_close_skip_the_trigger_bead_itself() {
         assert_eq!(czar_fence_class("czar", "deadlock", "sp-trigger", &s(&["update", "sp-trigger"])), None);
@@ -737,6 +760,7 @@ mod tests {
         assert_eq!(czar_fence_class("czar", "deadlock", "", &s(&["close", "sp-a"])), Some("deadlock"));
     }
 
+    #[test_id(tuoq5si)]
     #[test]
     fn czar_fence_ignores_other_verbs() {
         assert_eq!(czar_fence_class("czar", "deadlock", "", &s(&["create", "x"])), None);
@@ -745,12 +769,14 @@ mod tests {
 
     // -- json_only ----------------------------------------------------------------------------
 
+    #[test_id(tb4jvgw)]
     #[test]
     fn json_only_drops_a_warning_banner_before_the_json() {
         assert_eq!(json_only("warning: schema drift\n[{\"a\":1}]\n"), "[{\"a\":1}]\n");
         assert_eq!(json_only("{\"a\":1}\n"), "{\"a\":1}\n");
     }
 
+    #[test_id(tkzq61w)]
     #[test]
     fn json_only_requires_column_one_no_leading_whitespace_tolerance() {
         // Matches sed's `^[[{]` exactly: a line that starts with whitespace before the
@@ -758,11 +784,13 @@ mod tests {
         assert_eq!(json_only("  [1]\n"), "");
     }
 
+    #[test_id(t91asv1)]
     #[test]
     fn json_only_no_json_line_is_empty() {
         assert_eq!(json_only("just a warning\nand another line\n"), "");
     }
 
+    #[test_id(tcfz5p3)]
     #[test]
     fn json_only_keeps_a_trailing_non_json_line_too() {
         // sed prints from the first match to the end of input, unconditionally.
@@ -771,17 +799,20 @@ mod tests {
 
     // -- json_count ---------------------------------------------------------------------------
 
+    #[test_id(tm38mh7)]
     #[test]
     fn json_count_array_length() {
         assert_eq!(json_count("[1,2,3]"), 3);
         assert_eq!(json_count("[]"), 0);
     }
 
+    #[test_id(tdd73ls)]
     #[test]
     fn json_count_object_is_one() {
         assert_eq!(json_count("{\"a\":1}"), 1);
     }
 
+    #[test_id(tvuxg0i)]
     #[test]
     fn json_count_unparseable_is_zero() {
         assert_eq!(json_count(""), 0);
@@ -790,6 +821,7 @@ mod tests {
 
     // -- should_retry -------------------------------------------------------------------------
 
+    #[test_id(tlbyhrc)]
     #[test]
     fn is_write_is_every_verb_that_is_not_a_read() {
         assert!(is_write(&s(&["close", "x"])));
@@ -799,6 +831,7 @@ mod tests {
         assert!(!is_write(&[]));
     }
 
+    #[test_id(topyb5o)]
     #[test]
     fn a_silent_failed_write_says_its_outcome_is_unknown_and_a_loud_one_adds_nothing() {
         let w = silent_failure_note(&s(&["create", "t"]), 2, "", 3, 1200).unwrap();
@@ -809,6 +842,7 @@ mod tests {
         assert_eq!(silent_failure_note(&s(&["create", "t"]), 0, "", 1, 5), None);
     }
 
+    #[test_id(tp3upsz)]
     #[test]
     fn should_retry_only_on_invalid_connection_within_budget() {
         assert!(should_retry(1, 1, 2, true));
@@ -817,6 +851,7 @@ mod tests {
         assert!(!should_retry(1, 1, 2, false), "a different error never retries");
     }
 
+    #[test_id(tkhjraq)]
     #[test]
     fn retryable_reads_on_any_drop_writes_only_before_the_statement() {
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -831,12 +866,14 @@ mod tests {
         assert!(!retryable(&a(&["show", "x"]), "bead not found"));
     }
 
+    #[test_id(tj55z23)]
     #[test]
     fn backoff_doubles() {
         assert_eq!(backoff_ms(1000, 1), 1000);
         assert_eq!(backoff_ms(1000, 2), 2000);
     }
 
+    #[test_id(tf12g34)]
     #[test]
     fn should_retry_zero_retries_configured_still_allows_one_attempt() {
         // bash: tries="0" from env; try=1 after the first attempt, "1 -ge 0" is true -> break.

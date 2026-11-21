@@ -47,6 +47,7 @@ fn run(seed: u64, hours: u64, extra: Option<Registration>) -> Run {
     Run { trace: sim.workflow_trace(), asked: doubles.asked(), spawned: proc.spawned() }
 }
 
+#[test_id(teq4vj2)]
 #[test]
 fn the_task_table_runs_virtual_hours_deterministically_and_spawns_nothing() {
     let regs = registrations(&settings()).len();
@@ -73,6 +74,7 @@ impl Handler for Plant {
     }
 }
 
+#[test_id(t6ilr3a)]
 #[test]
 fn a_double_that_forks_is_counted() {
     let r = run(3, 1, Some(Registration::new("plant", Plant)));

@@ -139,6 +139,7 @@ pub fn sorted_entries(dir: &Path) -> Vec<PathBuf> {
 mod tests {
     use super::*;
 
+    #[test_id(t8zxju4)]
     #[test]
     fn mailbox_valid_rejects_empty_and_option_looking_names() {
         assert!(mailbox_valid("operator").is_ok());
@@ -146,6 +147,7 @@ mod tests {
         assert!(mailbox_valid("--unread").is_err());
     }
 
+    #[test_id(t5pnl1d)]
     #[test]
     fn ensure_creates_all_three_maildir_subdirs() {
         let d = testkit::TempDir::new("mail-ensure");
@@ -157,12 +159,14 @@ mod tests {
         assert!(mailbox_exists(&dir));
     }
 
+    #[test_id(tavsi9y)]
     #[test]
     fn mailbox_exists_is_false_until_ensured() {
         let d = testkit::TempDir::new("mail-exists");
         assert!(!mailbox_exists(&d.path().join("nope")));
     }
 
+    #[test_id(t5d08kl)]
     #[test]
     fn deliver_lands_in_new_when_unmuted_and_cur_seen_when_muted() {
         let d = testkit::TempDir::new("mail-deliver");
@@ -179,6 +183,7 @@ mod tests {
         assert!(dest2.starts_with(dir.join("cur")));
     }
 
+    #[test_id(txn1w2y)]
     #[test]
     fn deliver_refuses_an_empty_message_and_leaves_nothing_in_the_mailbox() {
         let d = testkit::TempDir::new("mail-deliver-empty");
@@ -195,6 +200,7 @@ mod tests {
         assert!(sorted_entries(&dir.join("cur")).is_empty());
     }
 
+    #[test_id(tmgaoyt)]
     #[test]
     fn mint_msgid_is_unique_across_many_calls() {
         let mut seen = std::collections::HashSet::new();
@@ -203,6 +209,7 @@ mod tests {
         }
     }
 
+    #[test_id(t86gql7)]
     #[test]
     fn is_unread_rules() {
         assert!(is_unread(Path::new("m/box/new/123")));
@@ -212,6 +219,7 @@ mod tests {
         assert!(!is_unread(Path::new("m/box/cur/123:2,RS")));
     }
 
+    #[test_id(txpr0qy)]
     #[test]
     fn add_flag_sorts_and_is_idempotent() {
         assert_eq!(add_flag("123", 'R').unwrap(), "123:2,R");

@@ -13,6 +13,9 @@
 //! which of the rest still need a home.
 
 /// The directory under a worktree that holds harness-owned runtime state.
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub const RUNTIME_DIR: &str = ".runtime";
 /// The name prefix of a session's scratch directory under [`RUNTIME_DIR`]; the pid follows.
 pub const SESSION_TMP_PREFIX: &str = "session-tmp-";

@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate spira_test_id;
 use std::process::Command;
 
 fn function(name: &str) -> String {
@@ -6,6 +8,7 @@ fn function(name: &str) -> String {
     s[f..f + s[f..].find("\n}\n").unwrap() + 3].to_string()
 }
 
+#[test_id(t9m8913)]
 #[test]
 fn a_hung_unit_test_is_terminated_at_its_deadline_and_named_while_the_other_tests_still_run() {
     let cargo_home = std::env::var("CARGO_HOME").unwrap_or_else(|_| format!("{}/.cargo", std::env::var("HOME").unwrap()));

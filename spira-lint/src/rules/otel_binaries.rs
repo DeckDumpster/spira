@@ -133,6 +133,7 @@ pub fn rules() -> Vec<Box<dyn crate::Rule>> {
 mod tests {
     use super::*;
 
+    #[test_id(tv99iim)]
     #[test]
     fn bead_ids() {
         assert!(bead_id("sp-vpfp3i") && bead_id("sp-vpfp3i.2"));

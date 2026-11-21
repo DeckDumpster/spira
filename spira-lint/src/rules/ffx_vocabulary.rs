@@ -382,6 +382,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         t
     }
 
+    #[test_id(t79gz9m)]
     #[test]
     fn undeclared_key_takes_the_value_the_release_delta_adds() {
         let t = fixture();
@@ -393,6 +394,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert!(r.check(&bare).is_err(), "no delta entry must still refuse");
     }
 
+    #[test_id(ta4ysmi)]
     #[test]
     fn a_fragment_may_add_the_mode_and_two_fragments_that_disagree_read_as_undeclared() {
         let t = fixture();
@@ -405,6 +407,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert!(r.check(&both).is_err());
     }
 
+    #[test_id(tuhsh18)]
     #[test]
     fn enforce_fails_on_every_term_and_report_lists_them_and_exits_clean() {
         let t = fixture();
@@ -421,12 +424,14 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert!(!text.contains("spikes") && !text.contains("tsv"), "{text}");
     }
 
+    #[test_id(tctcm5m)]
     #[test]
     fn an_article_after_a_multibyte_char_is_fixed_without_panicking() {
         assert_eq!(rewrite("Each rule—an aeon owns it.\n"), "Each rule—a dwarf owns it.\n"); // ffx-ok
         assert_eq!(rewrite("x—summon"), "x—call"); // ffx-ok
     }
 
+    #[test_id(t3ylyx1)]
     #[test]
     fn rewrite_replaces_terms_keeping_case_and_article_and_skips_marked_lines() {
         let input = "An aeon's aeon-fence.sh; Aeons summoned the Sending.\nffx-ok aeon\n";
@@ -436,6 +441,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert_eq!(rewrite("AeonState SPIRA_MAX_AEONS a ifrit, Sin, sending_keys, magus"), "DwarfState SPIRA_MAX_DWARVES an eitri, Fenrir, hel_keys, magus");
     }
 
+    #[test_id(th1q90u)]
     #[test]
     fn a_slug_article_a_singular_determiner_and_a_bare_summons_are_read_for_grammar() {
         assert_eq!(rewrite("law-an-aeon-touches-only-its-own-ref"), "law-a-dwarf-touches-only-its-own-ref"); // ffx-ok
@@ -450,6 +456,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert_eq!(rewrite("spira/chamber/ SPIRA_CHAMBERS"), "spira/runes/ SPIRA_RUNES"); // ffx-ok
     }
 
+    #[test_id(teuy30h)]
     #[test]
     fn the_book_pointer_file_is_exempt_as_rename_history() {
         let t = TempDir::new("ffx-ptr");
@@ -472,6 +479,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
 
     const RETIRED_FILES: &[&str] = &["law/toc.toml", "law/pointers.toml", "law/1-a/1.1-law-aeon-old.md", "law/1-a/index.md", "law/1-a/1.2-law-live.md", "docs/x.md"]; // ffx-ok
 
+    #[test_id(tek51xr)]
     #[test]
     fn a_retired_slugs_pointer_index_line_and_toc_entry_are_not_findings() {
         let t = retired_fixture(true);
@@ -481,6 +489,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert_eq!(paths, ["docs/x.md", "law/1-a/1.2-law-live.md"], "{found:?}");
     }
 
+    #[test_id(t5ach1n)]
     #[test]
     fn without_a_retired_row_the_old_slug_is_a_finding_everywhere() {
         let t = retired_fixture(false);
@@ -491,6 +500,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert!(found.iter().any(|f| f.path == "law/1-a/1.1-law-aeon-old.md" && f.line == Some(1))); // ffx-ok
     }
 
+    #[test_id(ts9vu7y)]
     #[test]
     fn a_merged_slug_is_skipped_listed_or_not_and_other_terms_stay_findings() {
         let t = TempDir::new("ffx-merged");
@@ -503,6 +513,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert_eq!(at, [("law/a.md", Some(3)), ("law/b.md", Some(1))], "{found:?}");
     }
 
+    #[test_id(tsqli0s)]
     #[test]
     fn a_missing_pointers_file_or_an_unparseable_file_leaves_every_finding() {
         let body = "law-aeon-old\n"; // ffx-ok
@@ -522,6 +533,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         }
     }
 
+    #[test_id(tzzugj4)]
     #[test]
     fn replacement_answers_every_term() {
         for t in terms_in(ALL) {
@@ -533,12 +545,14 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert_eq!(replacement("magus"), "(none; rephrase)");
     }
 
+    #[test_id(tk593is)]
     #[test]
     fn lowercase_sin_and_longer_words_are_not_terms() {
         assert_eq!(terms_in("a sin; SIN; Single; summonses; chambermaid; sending a message"), Vec::<String>::new());
         assert_eq!(terms_in("AeonState SPIRA_MAX_AEONS aeon-fence.sh"), vec!["aeon", "aeons", "aeon"]);
     }
 
+    #[test_id(tn5r96i)]
     #[test]
     fn a_term_in_a_path_is_reported_at_line_zero() {
         let t = TempDir::new("ffx-path");
@@ -548,6 +562,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert_eq!((found[0].line, found[0].path.as_str()), (None, "spira/aeon-fence.sh"));
     }
 
+    #[test_id(t6ieo2h)]
     #[test]
     fn an_unreadable_mode_refuses() {
         let t = fixture();

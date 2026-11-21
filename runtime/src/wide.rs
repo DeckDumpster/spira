@@ -149,6 +149,7 @@ pub fn rss_kb() -> u64 {
 mod tests {
     use super::*;
 
+    #[test_id(tsu3hln)]
     #[test]
     fn a_key_outside_the_dotted_lowercase_form_is_recorded_not_stored() {
         let w = Wide::default();

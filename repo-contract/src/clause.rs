@@ -277,11 +277,13 @@ mod tests {
         judge(f, c, "r", None).line(c)
     }
 
+    #[test_id(tx3mft5)]
     #[test]
     fn environment_met_names_the_shell_and_the_image() {
         assert_eq!(line(&green(), Clause::Environment), "met environment: flake dev shell k1 provides lint=cargo; unit tier runs in image img:1");
     }
 
+    #[test_id(tbog5q4)]
     #[test]
     fn a_unit_build_row_runs_cargo_not_its_placeholder() {
         let mut f = green();
@@ -289,6 +291,7 @@ mod tests {
         assert_eq!(line(&f, Clause::Environment), "met environment: flake dev shell k1 provides unit=cargo; unit tier runs in image img:1");
     }
 
+    #[test_id(tk6233n)]
     #[test]
     fn environment_not_met_names_the_row_and_program_the_shell_lacks() {
         let mut f = green();
@@ -296,6 +299,7 @@ mod tests {
         assert_eq!(line(&f, Clause::Environment), "not met environment: check \"lint\" runs \"uv\", which the flake's dev shell does not provide");
     }
 
+    #[test_id(t2k02e8)]
     #[test]
     fn environment_not_met_without_a_flake_lock_or_a_dev_shell_or_when_it_will_not_enter() {
         let mut f = green();
@@ -309,6 +313,7 @@ mod tests {
         assert_eq!(line(&f, Clause::Environment), "not met environment: the flake's dev shell does not enter: boom");
     }
 
+    #[test_id(thfxoyq)]
     #[test]
     fn a_checker_fault_entering_the_shell_is_cannot_tell_and_exits_two() {
         let mut f = green();
@@ -317,6 +322,7 @@ mod tests {
         assert_eq!(run(&f, "r", None, &[Clause::Environment], &mut |_| {}), 2);
     }
 
+    #[test_id(tt5gxfa)]
     #[test]
     fn a_built_row_is_not_judged_against_the_shell() {
         let mut f = green();
@@ -324,6 +330,7 @@ mod tests {
         assert!(line(&f, Clause::Environment).starts_with("met environment"));
     }
 
+    #[test_id(t8kx4ts)]
     #[test]
     fn submit_checks_met_carries_each_rows_line_and_not_met_when_absent_or_unparsable() {
         assert_eq!(line(&green(), Clause::SubmitChecks), "met submit-checks: .spira/checks.toml declares 1 row(s): lint");
@@ -334,6 +341,7 @@ mod tests {
         assert!(line(&f, Clause::SubmitChecks).starts_with("not met submit-checks: .spira/checks.toml does not parse"));
     }
 
+    #[test_id(tvb6kme)]
     #[test]
     fn submit_checks_met_when_the_file_declares_no_rows() {
         let mut f = green();
@@ -341,6 +349,7 @@ mod tests {
         assert_eq!(line(&f, Clause::SubmitChecks), "met submit-checks: .spira/checks.toml declares no [[check]] rows");
     }
 
+    #[test_id(tn7fxfz)]
     #[test]
     fn a_checks_file_with_no_rows_leaves_the_check_exit_zero() {
         let mut f = green();
@@ -351,6 +360,7 @@ mod tests {
         assert!(!out.iter().any(|l| l.starts_with("not met")), "{out:?}");
     }
 
+    #[test_id(tx2u8qt)]
     #[test]
     fn test_tiers_name_the_declared_default_and_need_one() {
         assert_eq!(line(&green(), Clause::TestTiers), "met test-tiers: .spira/testenv.toml declares default tiers: unit,lint");
@@ -361,6 +371,7 @@ mod tests {
         assert_eq!(line(&f, Clause::TestTiers), "not met test-tiers: .spira/testenv.toml does not exist");
     }
 
+    #[test_id(tbxz75i)]
     #[test]
     fn test_tiers_reads_the_tree_when_given_one() {
         let mut f = green();
@@ -372,6 +383,7 @@ mod tests {
         assert_eq!(out, ["not met test-tiers: .spira/testenv.toml does not exist"]);
     }
 
+    #[test_id(tir8pbw)]
     #[test]
     fn landing_needs_every_piece_and_for_a_forge_queue_the_workflow_file() {
         assert_eq!(line(&green(), Clause::Landing), "met landing: 1 registration pieces ok; forge workflow \"Gate\" is under .github/workflows/");
@@ -385,6 +397,7 @@ mod tests {
         assert!(line(&f, Clause::Landing).starts_with("met landing"));
     }
 
+    #[test_id(tk9j71x)]
     #[test]
     fn landing_matches_the_workflow_name_to_the_file_stem_ignoring_case() {
         let mut f = green();
@@ -397,6 +410,7 @@ mod tests {
         assert!(line(&f, Clause::Landing).starts_with("not met landing"));
     }
 
+    #[test_id(ts4sf39)]
     #[test]
     fn deploy_needs_a_non_empty_after_landing() {
         assert_eq!(line(&green(), Clause::Deploy), "met deploy: after_landing: curl the health url");
@@ -407,6 +421,7 @@ mod tests {
         assert_eq!(line(&f, Clause::Deploy), "not met deploy: .spira/deploy.toml does not exist");
     }
 
+    #[test_id(tab7brv)]
     #[test]
     fn all_clauses_judge_tiers_and_rows_from_the_files_alone() {
         let mut lines = Vec::new();
@@ -415,6 +430,7 @@ mod tests {
         assert!(lines.contains(&"met submit-checks: .spira/checks.toml declares 1 row(s): lint".to_string()));
     }
 
+    #[test_id(t0akkea)]
     #[test]
     fn a_red_clause_does_not_stop_the_later_ones_and_the_exit_is_one() {
         let mut f = green();
@@ -430,6 +446,7 @@ mod tests {
         assert!(lines.iter().all(|l| l.starts_with("met ")));
     }
 
+    #[test_id(twyvhih)]
     #[test]
     fn a_port_failure_is_cannot_tell_and_exits_two() {
         struct Broken(Fake);
@@ -454,6 +471,7 @@ mod tests {
         assert_eq!(code, 2);
     }
 
+    #[test_id(tj7icpb)]
     #[test]
     fn all_omits_the_home_repo() {
         let all = vec!["spira".to_string(), "a".into(), "b".into()];

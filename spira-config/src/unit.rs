@@ -78,12 +78,14 @@ fn loaded(systemctl: &str, unit: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test_id(t3a1rgk)]
     #[test]
     fn watch_unit_name_formats_with_the_given_instance() {
         assert_eq!(watch_unit_name("answers", "prod"), "spira-watch-answers-prod.service");
         assert_eq!(watch_unit_name("testview", "test"), "spira-watch-testview-test.service");
     }
 
+    #[test_id(twwjen2)]
     #[test]
     fn unit_name_carries_the_instance_suffix() {
         assert_eq!(unit_name("submission", "service", "prod"), "spira-submission-prod.service");
@@ -91,11 +93,13 @@ mod tests {
         assert_eq!(unit_name("loom", "service", ""), "spira-loom-prod.service");
     }
 
+    #[test_id(ttomiis)]
     #[test]
     fn watch_unit_name_defaults_empty_instance_to_prod() {
         assert_eq!(watch_unit_name("cockpit", ""), "spira-watch-cockpit-prod.service");
     }
 
+    #[test_id(tejii1d)]
     #[test]
     fn watch_unit_name_never_produces_the_template_form() {
         // Positive control (test-watchd-unit-name.sh's own one): the old template form

@@ -29,16 +29,19 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(txtktl5)]
 #[test]
 fn t1_registered_boots_and_arms_a_2min_tick() {
     t::t1_registered_and_boots::<H>(SET, TICK);
 }
 
+#[test_id(t62cg2h)]
 #[test]
 fn t2_nothing_firing_with_a_reachable_store_writes_nothing() {
     t::t2_silent::<H>(SET, &json(&quiet(0)));
 }
 
+#[test_id(t12339t)]
 #[test]
 fn t3_a_key_confirms_fires_clears_and_a_raise_while_unreachable_is_refused() {
     let h = t::handler::<H>(SET);
@@ -55,6 +58,7 @@ fn t3_a_key_confirms_fires_clears_and_a_raise_while_unreachable_is_refused() {
     assert!(refused.contains("unreachable"), "{refused}");
 }
 
+#[test_id(tvghezk)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_forks_neither_date_nor_systemctl() {
     let sim = sim::doubles::service().names();
@@ -62,6 +66,7 @@ fn t4_its_effects_are_runnable_and_the_module_forks_neither_date_nor_systemctl()
     t::t4_runnable::<H>(src, &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(tt85ocp)]
 #[test]
 fn t5_a_confirmed_stall_raises_once_and_a_store_outage_writes_nothing() {
     let h = t::handler::<H>(SET);
@@ -78,6 +83,7 @@ fn mirror_stale() -> String {
     json(&Snapshot { db_reachable: true, mirror_age_secs: Some(200_000), ..Snapshot::default() })
 }
 
+#[test_id(tlgtxe5)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rig = t::rig::<H>(1, MIRROR_SET, &mirror_stale());
@@ -85,11 +91,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     assert!(rows.iter().any(|k| k == "keys/mirror-stale"), "{rows:?}");
 }
 
+#[test_id(t7gqe82)]
 #[test]
 fn a_boot_neither_forgets_a_sighting_nor_raises_without_its_second() {
     t::assert_boot_matches_an_unstopped_run::<H>(MIRROR_SET, vec![mirror_stale()], |_| {});
 }
 
+#[test_id(tq6rbfp)]
 #[test]
 fn the_sentinel_is_found_by_its_real_task_name_in_the_scheduler_status() {
     let doc = serde_json::json!({"tasks": [{"name": "sentinel-pass", "next_due_at": null, "last_fired_at": 1_000_000u64, "last_outcome": "succeeded"}]});

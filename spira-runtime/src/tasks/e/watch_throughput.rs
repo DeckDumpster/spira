@@ -412,6 +412,7 @@ fn tune(env: &mut incident::intake::Env, reference: String) {
 mod tests {
     use super::tune;
 
+    #[test_id(tvt2d22)]
     #[test]
     fn a_stall_incident_is_filed_express_p0_against_the_home_repo() {
         crate::fixture::fixture_config_door();

@@ -45,6 +45,7 @@ fn comment(id: u64, in_reply_to: Option<u64>, author: &str, line: Option<u64>, b
     Comment { id, in_reply_to, author: author.into(), bot: false, path: Some("demo/src/store.rs".into()), line, body: body.into(), created_at: at }
 }
 
+#[test_id(tq7oqac)]
 #[test]
 fn thread_prints_the_code_around_the_line_and_the_thread_in_order() {
     let w = world();
@@ -66,6 +67,7 @@ fn thread_prints_the_code_around_the_line_and_the_thread_in_order() {
     assert!(!out.contains("unrelated"), "{out}");
 }
 
+#[test_id(tlpltd8)]
 #[test]
 fn thread_of_a_conversation_comment_has_no_code() {
     let w = world();
@@ -76,6 +78,7 @@ fn thread_of_a_conversation_comment_has_no_code() {
     assert!(o.stdout.starts_with("conversation\n") && o.stdout.contains("publish it"), "{}", o.stdout);
 }
 
+#[test_id(tbfaadt)]
 #[test]
 fn thread_of_a_comment_the_watcher_never_kept_exits_two() {
     let w = world();
@@ -84,6 +87,7 @@ fn thread_of_a_comment_the_watcher_never_kept_exits_two() {
     assert_eq!(w.cr(&["thread", "--review", "001", "--comment", "1"]).code, 2);
 }
 
+#[test_id(ttdmz43)]
 #[test]
 fn an_oversized_files_branch_line_maps_back_to_its_source_line() {
     let regions = [(3, 4), (10, 11)];
@@ -94,6 +98,7 @@ fn an_oversized_files_branch_line_maps_back_to_its_source_line() {
     assert_eq!(source_line(None, 20, 7), Some(7));
 }
 
+#[test_id(tic7x4h)]
 #[test]
 fn reply_with_an_empty_stdin_exits_two_and_calls_nothing() {
     let mut w = world();
@@ -103,6 +108,7 @@ fn reply_with_an_empty_stdin_exits_two_and_calls_nothing() {
     assert_eq!(w.gh.count(), 0);
 }
 
+#[test_id(t8o8azd)]
 #[test]
 fn reply_posts_stdin_in_the_comments_thread_and_prints_the_new_url() {
     let mut w = world();

@@ -199,6 +199,7 @@ mod tests {
         }
     }
 
+    #[test_id(tcbn87a)]
     #[test]
     fn a_branch_changing_ami_setup_dispatches_the_image_build_and_a_failure_refuses_naming_the_step() {
         let f = fake(
@@ -223,6 +224,7 @@ mod tests {
         p.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(tg9lmgv)]
     #[test]
     fn a_branch_is_judged_against_its_registered_landing_ref_not_a_stale_local_main() {
         let mut f = fake(&[], vec![None]);
@@ -236,6 +238,7 @@ mod tests {
         assert_eq!(*f.asked.borrow(), vec!["origin/main".to_string()]);
     }
 
+    #[test_id(tv8pdcc)]
     #[test]
     fn a_repository_without_the_image_workflow_is_never_diffed_or_dispatched() {
         let mut f = fake(&["rust-toolchain.toml"], vec![Some(Build::NotStarted)]);
@@ -245,6 +248,7 @@ mod tests {
         assert!(f.asked.borrow().is_empty());
     }
 
+    #[test_id(t6zhxc4)]
     #[test]
     fn spira_editing_a_recipe_input_against_local_main_still_dispatches() {
         let mut f = fake(&[], vec![Some(Build::NotStarted), Some(Build::Running("7".into())), Some(Build::Failure("7".into(), vec!["build / Build, image and tag".into()]))]);
@@ -257,6 +261,7 @@ mod tests {
         );
     }
 
+    #[test_id(tmlcj70)]
     #[test]
     fn an_unresolvable_landing_ref_refuses_naming_it_and_asks_the_forge_nothing() {
         let mut f = fake(&["round-vm/ami-setup.sh"], vec![Some(Build::NotStarted)]);
@@ -266,12 +271,14 @@ mod tests {
         assert!(f.calls.borrow().is_empty());
     }
 
+    #[test_id(tnuu3cu)]
     #[test]
     fn a_successful_image_build_lets_the_submit_proceed() {
         let f = fake(&["round-vm/ssm-commands.jq"], vec![Some(Build::NotStarted), Some(Build::Success("8".into()))]);
         assert_eq!(gate(&f, "sp-x", "abc", 1, 5400), Ok(Verdict::Built("8".into())));
     }
 
+    #[test_id(tz6bi4n)]
     #[test]
     fn an_unrelated_branch_neither_pushes_nor_dispatches() {
         let f = fake(&["work/src/main.rs", "round-vm/src/cli.rs"], vec![None]);
@@ -279,18 +286,21 @@ mod tests {
         assert!(f.calls.borrow().is_empty());
     }
 
+    #[test_id(taw1f0i)]
     #[test]
     fn an_unreadable_forge_refuses_rather_than_passes() {
         let f = fake(&["round-vm/ami-setup.sh"], vec![None]);
         assert!(gate(&f, "sp-x", "abc", 1, 5400).unwrap_err().contains("forge cannot be read for the round image build: route stub: the forge answered `?`"));
     }
 
+    #[test_id(t2tvgth)]
     #[test]
     fn a_build_that_never_finishes_refuses_at_the_wait_bound() {
         let f = fake(&[".github/workflows/round-ami-build.yml"], vec![Some(Build::Running("9".into()))]);
         assert!(gate(&f, "sp-x", "abc", 1, 180).unwrap_err().contains("did not finish within 180s"));
     }
 
+    #[test_id(tzor43z)]
     #[test]
     fn an_unreadable_diff_refuses() {
         let mut f = fake(&[], vec![None]);
@@ -298,6 +308,7 @@ mod tests {
         assert!(gate(&f, "sp-x", "abc", 1, 1).is_err());
     }
 
+    #[test_id(tbhf11p)]
     #[test]
     fn every_path_the_workflow_builds_on_is_a_recipe_path() {
         let workflow = include_str!("../../.github/workflows/round-ami-build.yml");
@@ -311,6 +322,7 @@ mod tests {
         }
     }
 
+    #[test_id(t206lg1)]
     #[test]
     fn a_dispatch_that_never_starts_refuses_and_removes_its_branch() {
         let f = fake(&["flake.lock"], vec![Some(Build::NotStarted)]);
@@ -318,6 +330,7 @@ mod tests {
         assert_eq!(f.calls.borrow().last().map(String::as_str), Some("delete spira-round-candidate/sp-x-abc-1"));
     }
 
+    #[test_id(t2vchjf)]
     #[test]
     fn a_timeout_removes_the_pushed_branch() {
         let f = fake(&["flake.lock"], vec![Some(Build::NotStarted), Some(Build::Running("9".into()))]);
@@ -325,6 +338,7 @@ mod tests {
         assert!(f.calls.borrow().iter().any(|c| c.starts_with("delete ")));
     }
 
+    #[test_id(tj1f3t3)]
     #[test]
     fn forge_answers_parse_and_an_unreadable_one_does_not() {
         assert_eq!(Build::parse("failure 9\nfailed-step: build / x\n"), Some(Build::Failure("9".into(), vec!["build / x".into()])));

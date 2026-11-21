@@ -18,6 +18,9 @@
 //   --field     JSON-sniffs its value (numbers, bools stay typed).
 //   --field-str keeps its value a string regardless of shape (a SHA, an id).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -199,6 +202,7 @@ fn run(args: &[String]) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test_id(t0jz5xz)]
     #[test]
     fn a_torn_or_multiline_row_is_refused_and_writes_nothing() {
         let dir = testkit::TempDir::new("tsd-torn-refused");
@@ -211,6 +215,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "{\"a\":1}\n");
     }
 
+    #[test_id(tagi2tl)]
     #[test]
     fn a_row_after_a_planted_torn_tail_is_not_fused_to_it() {
         let dir = testkit::TempDir::new("tsd-torn-tail");
@@ -224,6 +229,7 @@ mod tests {
         assert!(text.ends_with('\n'));
     }
 
+    #[test_id(tkg89un)]
     #[test]
     fn escape_row_with_an_unknown_class_is_a_silent_no_op() {
         let dir = testkit::TempDir::new("tsd-escape-unknown");

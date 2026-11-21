@@ -451,11 +451,13 @@ mod tests {
         p.calls.iter().map(|c| c.rune.as_str()).collect()
     }
 
+    #[test_id(tts8b76)]
     #[test]
     fn an_open_fleet_calls_one_per_ready_bead() {
         assert_eq!(called(&plan(&world())), ["builder", "builder"]);
     }
 
+    #[test_id(tf3s2z5)]
     #[test]
     fn a_single_flight_persona_runs_one_at_a_time() {
         let sf = |live, ready| CallWorld { task: vec![Rune { single_flight: true, live, ..rune("warden", ready) }], ..world() };
@@ -463,12 +465,14 @@ mod tests {
         assert_eq!(called(&plan(&sf(0, 2))), ["warden"], "none live, two ready: one");
     }
 
+    #[test_id(tk5afg0)]
     #[test]
     fn a_persona_without_single_flight_is_called_once_per_ready_bead() {
         let w = CallWorld { task: vec![Rune { live: 2, ..rune("skuld", 3) }], max_live_dwarves: Some(9), ..world() };
         assert_eq!(called(&plan(&w)), ["skuld", "skuld", "skuld"]);
     }
 
+    #[test_id(tx0hcw5)]
     #[test]
     fn a_closed_gate_calls_nobody_and_says_why() {
         for w in [CallWorld { world: World::Halted, ..world() }, CallWorld { skew: Some("old".into()), ..world() }, CallWorld { capacity: Capacity::Unknown, ..world() }] {
@@ -477,6 +481,7 @@ mod tests {
         }
     }
 
+    #[test_id(tqne8an)]
     #[test]
     fn an_unreadable_ready_count_is_never_zero_and_calls_nobody() {
         let mut w = world();
@@ -486,6 +491,7 @@ mod tests {
         assert!(p.log.iter().any(|l| l.contains("CLAIM-ERROR")), "{:?}", p.log);
     }
 
+    #[test_id(tqyp1ek)]
     #[test]
     fn the_fleet_ceiling_is_a_backstop_nobody_starts_above() {
         let w = CallWorld { task: vec![Rune { live: 40, ..rune("builder", 2) }], reactive: vec![Rune { reactive: true, ..rune("ops", 1) }], max_live_dwarves: Some(40), ..world() };
@@ -494,6 +500,7 @@ mod tests {
         assert!(p.log.iter().any(|l| l.contains("40/40 dwarf(s) live across the whole fleet — not calling")), "{:?}", p.log);
     }
 
+    #[test_id(t7z30vj)]
     #[test]
     fn reactive_runes_are_called_before_planned_ones() {
         let w = CallWorld { task: vec![rune("builder", 1)], reactive: vec![Rune { reactive: true, ..rune("ops", 1) }], max_live_dwarves: Some(4), ..world() };
@@ -502,6 +509,7 @@ mod tests {
         assert_eq!(called(&p), ["ops"], "{:?}", p.log);
     }
 
+    #[test_id(tj7c50r)]
     #[test]
     fn throttled_with_an_express_bead_grants_exactly_one_restricted_slot() {
         let w = CallWorld { throttled: true, express_ready: true, max_live_dwarves: Some(5), task: vec![rune("builder", 5)], ..world() };
@@ -510,6 +518,7 @@ mod tests {
         assert!(plan(&CallWorld { express_ready: false, ..w }).calls.is_empty(), "throttled with nothing express: the pool is 0");
     }
 
+    #[test_id(t2e6f5q)]
     #[test]
     fn urgent_work_yields_the_reactive_runes_and_a_full_fleet_preempts_the_youngest_reactive_dwarf() {
         let mut w = world();
@@ -526,6 +535,7 @@ mod tests {
         assert!(p.preempt.is_none() && !called(&p).contains(&"triage"), "an unanswered urgent read yields the reactive runes");
     }
 
+    #[test_id(t1pc5zg)]
     #[test]
     fn a_p0_behind_a_full_pool_holds_only_the_reactive_runes_that_use_a_bound_class() {
         let mut w = limited(vec![builder(2, 5)], &[("build-disk", 5)]);
@@ -537,6 +547,7 @@ mod tests {
         assert!(p.log.iter().any(|l| l == "CHECK7 mender: yielding — urgent bead(s) unclaimed: sp-7nj5be"), "{:?}", p.log);
     }
 
+    #[test_id(tqkucrt)]
     #[test]
     fn an_unanswered_urgent_read_holds_only_the_reactive_runes_that_use_a_bound_class() {
         let mut w = limited(vec![builder(0, 0)], &[("build-disk", 5)]);
@@ -547,6 +558,7 @@ mod tests {
         assert!(p.log.iter().any(|l| l == "CHECK7 mender: yielding — the urgent read did not answer"), "{:?}", p.log);
     }
 
+    #[test_id(tj4jrgp)]
     #[test]
     fn urgent_work_logs_no_preemption_when_no_reactive_rune_is_rostered() {
         let mut w = world();
@@ -560,6 +572,7 @@ mod tests {
         plan(w).task_room
     }
 
+    #[test_id(t8ruqi7)]
     #[test]
     fn task_room_is_zero_when_the_task_pool_is_full() {
         let mut w = world();
@@ -570,6 +583,7 @@ mod tests {
         assert_eq!(room(&w), Some(0));
     }
 
+    #[test_id(t4wn34b)]
     #[test]
     fn task_room_is_what_the_fleet_ceiling_leaves() {
         let mut w = world();
@@ -583,6 +597,7 @@ mod tests {
         assert_eq!(room(&w), Some(2));
     }
 
+    #[test_id(t23wida)]
     #[test]
     fn task_room_is_zero_when_the_fleet_is_full_though_the_pool_has_room() {
         let mut w = world();
@@ -594,6 +609,7 @@ mod tests {
         assert_eq!(room(&w), Some(0));
     }
 
+    #[test_id(t987g2e)]
     #[test]
     fn task_room_is_zero_when_throttled_or_halted() {
         assert_eq!(room(&CallWorld { throttled: true, ..world() }), Some(0));
@@ -602,6 +618,7 @@ mod tests {
         }
     }
 
+    #[test_id(trzrxd7)]
     #[test]
     fn task_room_is_unknown_when_no_ceiling_is_configured() {
         assert_eq!(room(&CallWorld { max_live_dwarves: None, ..world() }), None);
@@ -611,6 +628,7 @@ mod tests {
         plan(w).task_limit.map(|t| (t.name, t.limit, t.held))
     }
 
+    #[test_id(tbvszbn)]
     #[test]
     fn a_full_pool_under_a_roomy_ceiling_is_bound_by_the_pool() {
         let mut w = world();
@@ -621,6 +639,7 @@ mod tests {
         assert_eq!(binding(&w), Some(("pool".into(), 7, 7)));
     }
 
+    #[test_id(t02kv34)]
     #[test]
     fn a_full_fleet_with_pool_room_is_bound_by_the_ceiling() {
         let mut w = world();
@@ -632,12 +651,14 @@ mod tests {
         assert_eq!(binding(&w), Some(("ceiling".into(), 9, 9)));
     }
 
+    #[test_id(t1tve7z)]
     #[test]
     fn a_throttle_or_a_closed_gate_names_itself_as_the_limit() {
         assert_eq!(binding(&CallWorld { throttled: true, ..world() }).map(|b| b.0), Some("throttle".into()));
         assert_eq!(binding(&CallWorld { world: World::Halted, ..world() }).map(|b| b.0), Some("closed".into()));
     }
 
+    #[test_id(tff0mgz)]
     #[test]
     fn no_ceiling_and_no_pool_names_no_limit() {
         assert_eq!(binding(&CallWorld { max_live_dwarves: None, ..world() }), None);
@@ -659,6 +680,7 @@ mod tests {
         CallWorld { task, limits: limits.iter().map(|(c, l)| (c.to_string(), *l)).collect(), max_live_dwarves: None, urgent: Some(vec![]), ..CallWorld::default() }
     }
 
+    #[test_id(tcqbrqa)]
     #[test]
     fn a_session_with_no_bound_class_is_admitted_with_every_limit_full() {
         let w = limited(vec![builder(0, 7), using("hasher", 0, 1, &["cpu"], false), rune("spike", 1)], &[("build-disk", 7), ("cpu", 1)]);
@@ -666,6 +688,7 @@ mod tests {
         assert_eq!(called(&p), ["spike"], "{:?}", p.log);
     }
 
+    #[test_id(tc80jov)]
     #[test]
     fn a_planned_build_disk_session_waits_at_the_limit() {
         let w = limited(vec![builder(3, 5), mender(0, 2)], &[("build-disk", 7)]);
@@ -674,6 +697,7 @@ mod tests {
         assert!(p.log.iter().any(|l| l.contains("build-disk 7 of 7 held — no backfill")), "{:?}", p.log);
     }
 
+    #[test_id(tm5gojh)]
     #[test]
     fn a_reactive_session_spills_and_no_planned_session_starts_until_back_under() {
         let pass = |builders: i64, menders: i64| {
@@ -688,6 +712,7 @@ mod tests {
         assert_eq!(pass(4, 2).0, ["builder"], "back under: one builder fills the last unit: {:?}", pass(4, 2).1);
     }
 
+    #[test_id(tcuzba7)]
     #[test]
     fn a_limit_on_a_class_makes_only_its_declarers_wait() {
         let tasks = || vec![using("a", 1, 1, &["memory"], false), using("b", 1, 0, &[], false)];
@@ -695,6 +720,7 @@ mod tests {
         assert_eq!(called(&plan(&limited(tasks(), &[]))), ["a", "b"]);
     }
 
+    #[test_id(td1eg6e)]
     #[test]
     fn a_reactive_session_over_the_limit_logs_it_and_a_live_one_leaves_no_room_for_a_builder() {
         let p = plan(&limited(vec![builder(3, 7), mender(1, 0)], &[("build-disk", 7)]));
@@ -703,12 +729,14 @@ mod tests {
         assert_eq!(p.task_room, Some(0), "a live mender fills the class: {:?}", p.log);
     }
 
+    #[test_id(tifsol8)]
     #[test]
     fn bound_reports_held_waiting_and_over() {
         let p = plan(&limited(vec![builder(3, 7), mender(0, 2)], &[("build-disk", 7)]));
         assert_eq!(p.bound, [Bound { class: "build-disk".into(), limit: 7, held: 9, waiting: 3, over: true }], "{:?}", p.log);
     }
 
+    #[test_id(t02idte)]
     #[test]
     fn uncalled_names_the_refusal_that_stopped_each_rune_with_ready_work() {
         let mut w = limited(vec![builder(3, 5), mender(0, 2), rune("idle", 0), rune("blind", 1), rune("served", 1)], &[("build-disk", 7)]);
@@ -730,6 +758,7 @@ mod tests {
         assert_eq!(p.uncalled.get("capped").map(String::as_str), Some("2 ready, at concurrency cap"), "{:?}", p.log);
     }
 
+    #[test_id(tp76e1v)]
     #[test]
     fn a_closed_gate_gives_every_ready_rune_the_gates_reason() {
         let mut w = CallWorld { world: World::Halted, ..world() };
@@ -739,6 +768,7 @@ mod tests {
         assert_eq!(p.uncalled, BTreeMap::from([("builder".to_string(), why.clone()), ("ops".to_string(), why)]));
     }
 
+    #[test_id(tpeg07n)]
     #[test]
     fn the_urgent_yield_is_the_reason_a_bound_reactive_rune_is_uncalled() {
         let mut w = limited(vec![builder(1, 0)], &[("build-disk", 7)]);
@@ -748,6 +778,7 @@ mod tests {
         assert_eq!(p.uncalled.get("mender").map(String::as_str), Some("yielding — urgent bead(s) unclaimed: sp-x"));
     }
 
+    #[test_id(thmsiov)]
     #[test]
     fn a_builder_takes_the_room_of_its_tightest_declared_class() {
         let mut b = builder(5, 0);

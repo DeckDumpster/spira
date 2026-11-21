@@ -516,17 +516,20 @@ fn wait_for(mut cmd: Command, stdin: Option<&str>, what: &str, keep_stderr: bool
 mod settled_tests {
     use super::*;
 
+    #[test_id(ttyqon3)]
     #[test]
     fn a_failed_close_of_a_bead_that_reads_closed_is_done() {
         assert!(settled(Err("context canceled".into()), "sp-a", || Ok(vec![])).is_ok());
     }
 
+    #[test_id(t3acaqg)]
     #[test]
     fn a_failed_close_of_a_bead_still_open_or_unreadable_stays_failed() {
         assert_eq!(settled(Err("boom".into()), "sp-a", || Ok(vec!["sp-a".into()])), Err("boom".into()));
         assert_eq!(settled(Err("boom".into()), "sp-a", || Err("down".into())), Err("boom".into()));
     }
 
+    #[test_id(tlzwbse)]
     #[test]
     fn a_successful_close_is_never_reread() {
         assert!(settled(Ok(()), "sp-a", || panic!("must not read")).is_ok());
@@ -537,6 +540,7 @@ mod settled_tests {
 mod verb_tests {
     use super::verb_of;
 
+    #[test_id(trzfft8)]
     #[test]
     fn the_verb_is_the_first_word_that_is_not_a_flag() {
         assert_eq!(verb_of(&["--json", "show", "sp-1"]), "show");
@@ -549,6 +553,7 @@ mod verb_tests {
 mod resolve_tests {
     use super::*;
 
+    #[test_id(tfiwsml)]
     #[test]
     fn a_path_is_never_searched() {
         assert_eq!(resolve_tool("x/y").unwrap(), "x/y");
@@ -565,6 +570,7 @@ mod filing_tests {
         p.to_string_lossy().into_owned()
     }
 
+    #[test_id(tlb0cuk)]
     #[test]
     fn a_filing_that_outlives_its_deadline_names_the_call_that_timed_out() {
         let dir = testkit::TempDir::new("filing");
@@ -573,6 +579,7 @@ mod filing_tests {
         assert!(err.contains("bead.sh file") && err.contains("timed out"), "reason names the call: {err:?}");
     }
 
+    #[test_id(tht9rin)]
     #[test]
     fn a_filing_carries_the_considered_reason_to_bead_sh_and_none_when_not_given() {
         let _env = testkit::env(&[("BEAD_CONTRACT_CONSIDERED", None)]);
@@ -585,6 +592,7 @@ mod filing_tests {
         assert_eq!(file_child_via((&prog, "5"), "t", "builder", "r", None, None, None).unwrap(), "[unset]");
     }
 
+    #[test_id(tuq9r4u)]
     #[test]
     fn a_label_or_dependency_call_that_outlives_its_deadline_names_itself() {
         let dir = testkit::TempDir::new("filing-dep");
@@ -593,6 +601,7 @@ mod filing_tests {
         assert!(err.contains("label add sp-x split") && err.contains("timed out"), "{err:?}");
     }
 
+    #[test_id(tbubnvk)]
     #[test]
     fn an_ask_whose_mail_files_past_the_plain_call_deadline_is_delivered() {
         let dir = testkit::TempDir::new("ask-slow-mail");
@@ -604,6 +613,7 @@ mod filing_tests {
         assert!(r.is_ok(), "an ask mail still filing at the plain call deadline was cut and read as undelivered: {r:?}");
     }
 
+    #[test_id(t72boqm)]
     #[test]
     fn a_filing_waits_longer_than_the_plain_call_deadline() {
         let filing: u64 = FILING_SECS.parse().unwrap();
@@ -620,6 +630,7 @@ mod store_read_tests {
         Bead { id: id.into(), status: status.into(), close_reason: reason.map(str::to_string), ..Bead::default() }
     }
 
+    #[test_id(td6zz6a)]
     #[test]
     fn closed_rows_carry_their_reason_and_open_ones_are_every_other_status() {
         let found = vec![row("sp-a", "closed", Some("done")), row("sp-b", "in_progress", None), row("sp-c", "closed", None)];
@@ -627,6 +638,7 @@ mod store_read_tests {
         assert_eq!(open_of(found), ["sp-b"]);
     }
 
+    #[test_id(telza67)]
     #[test]
     fn a_blank_external_ref_is_not_external() {
         let b = |r: Option<&str>| Bead { external_ref: r.map(str::to_string), ..Bead::default() };
@@ -637,6 +649,7 @@ mod store_read_tests {
 
 #[cfg(test)]
 mod no_read_fork_tests {
+    #[test_id(tehztx6)]
     #[test]
     fn this_module_forks_bd_for_no_read_verb() {
         let code = include_str!("bd.rs").split("#[cfg(test)]").next().unwrap();
@@ -650,6 +663,7 @@ mod no_read_fork_tests {
 mod child_phase_tests {
     use super::*;
 
+    #[test_id(tt6csjx)]
     #[test]
     fn a_brokered_tool_is_one_child_named_by_its_program() {
         let dir = testkit::TempDir::new("bd-child-phase");

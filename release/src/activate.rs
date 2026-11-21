@@ -1351,6 +1351,7 @@ mod restart_tests {
     /// Over-broad-scopes #4 (sp-ipwlic): a release that changed only another binary leaves a
     /// service running; one that changed this service's binary, its unit text, or the script it
     /// runs restarts it.
+    #[test_id(twverpw)]
     #[test]
     fn a_service_restarts_only_when_its_program_bytes_or_unit_text_changed() {
         let t = testkit::TempDir::new("release-restart-needed");
@@ -1376,6 +1377,7 @@ mod restart_tests {
     /// activation compares after `current` has moved, so reading the old unit's path read the
     /// NEW binary and every such service was "left running" on its old code. Each side's
     /// program resolves under its own release root; identical bytes still leave it running.
+    #[test_id(tphqwqe)]
     #[test]
     fn a_unit_naming_current_restarts_when_the_binary_under_the_old_root_differs() {
         let t = testkit::TempDir::new("release-restart-current");
@@ -1400,6 +1402,7 @@ mod restart_tests {
     /// sp-m9rruh: a running server is on old code when its environment pins the previous
     /// release by name, or when its process runs an executable other than the one its unit now
     /// names (left behind by an earlier activation); not when both match.
+    #[test_id(tz5b8da)]
     #[test]
     fn a_running_server_pinned_to_an_old_release_or_running_an_old_executable_is_stale() {
         let t = testkit::TempDir::new("release-live-reason");
@@ -1423,6 +1426,7 @@ mod restart_tests {
 
     /// sp-r1gmno: a running process whose executable cannot be read, or a program the unit
     /// names that cannot be read, is not shown to match, so the service restarts.
+    #[test_id(tmwlbfa)]
     #[test]
     fn a_running_executable_that_cannot_be_compared_restarts_the_service() {
         let t = testkit::TempDir::new("release-live-unreadable");
@@ -1441,6 +1445,7 @@ mod restart_tests {
 
     /// sp-sv2lw2: a stale unit is restarted unless its template states a reason for never
     /// being restarted; a bare boolean is no reason, and a left unit is named with its reason.
+    #[test_id(tk7gu1x)]
     #[test]
     fn a_stale_unit_is_restarted_unless_its_template_gives_a_reason_to_leave_it() {
         let texts = [
@@ -1458,6 +1463,7 @@ mod restart_tests {
 
     /// sp-sv2lw2: an earlier activation rewrote the unit file and left the process; the file
     /// now names the current release but the process started under another, so it is stale.
+    #[test_id(tacgx3a)]
     #[test]
     fn a_process_started_under_another_release_is_stale_though_its_unit_file_is_current() {
         let t = testkit::TempDir::new("release-started-under");

@@ -129,6 +129,7 @@ mod tests {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
     }
 
+    #[test_id(tnnew4k)]
     #[test]
     fn the_arrival_is_the_oldest_reflog_update_landing_on_the_range_whatever_the_history_before_it() {
         let reflog = "ddd x@{400}\nccc x@{300}\nbbb x@{200}\naaa x@{100}\n";
@@ -137,6 +138,7 @@ mod tests {
         assert_eq!(arrival_in("ddd\nccc\nbbb\n", &format!("{reflog}{deep}")), Ok(200));
     }
 
+    #[test_id(tgfmgnr)]
     #[test]
     fn an_arrival_no_reflog_entry_records_is_refused() {
         assert!(arrival_in("zzz", "aaa x@{100}\n").is_err());
@@ -159,6 +161,7 @@ mod tests {
         clone
     }
 
+    #[test_id(tcqfw77)]
     #[test]
     fn fifty_unpublished_commits_are_counted_with_their_arrival_and_the_tips_they_were_read_at() {
         let scratch = testkit::TempDir::new("runtime-unpublished-fifty");
@@ -170,6 +173,7 @@ mod tests {
         assert_eq!(m.forge_tip, run(&clone, &["rev-parse", "refs/remotes/origin/main"]));
     }
 
+    #[test_id(trmeaje)]
     #[test]
     fn a_long_history_before_the_published_commit_measures_the_same_range_as_a_short_one() {
         let count = |history: usize| {
@@ -187,6 +191,7 @@ mod tests {
         assert_eq!((count(2), count(20)), (2, 2));
     }
 
+    #[test_id(tryf20s)]
     #[test]
     fn a_fetch_that_completed_a_while_ago_ages_the_record_by_it() {
         let scratch = testkit::TempDir::new("runtime-unpublished-aged");
@@ -199,6 +204,7 @@ mod tests {
         assert_eq!(m.count, 2);
     }
 
+    #[test_id(ty7z6jm)]
     #[test]
     fn a_tip_with_no_fetch_head_is_aged_from_its_reflog_and_one_with_neither_is_refused() {
         let scratch = testkit::TempDir::new("runtime-unpublished-reflog");
@@ -213,6 +219,7 @@ mod tests {
         assert!(why.contains("age is unknown"), "{why} ({tip})");
     }
 
+    #[test_id(t3qng4m)]
     #[test]
     fn a_checkout_never_fetched_is_refused_naming_that() {
         let scratch = testkit::TempDir::new("runtime-unpublished-unfetched");
@@ -222,6 +229,7 @@ mod tests {
         assert!(why.contains("has not been fetched"), "{why}");
     }
 
+    #[test_id(tmnbdi5)]
     #[test]
     fn the_record_body_names_the_repo_and_carries_the_tips_or_the_declaration() {
         let m = Measurement::Measured(Measured { landing_tip: "b".into(), forge_tip: "a".into(), count: 2, oldest_arrival: None, read_at: 9 });

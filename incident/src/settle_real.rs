@@ -189,6 +189,7 @@ mod tests {
 
     /// sp-ipwlic: the detector reads the unit's state through the port: failed fires, every
     /// other state (absent included) is quiet, and no facts is an error, never quiet.
+    #[test_id(tv0z4d8)]
     #[test]
     fn the_detector_reads_failed_from_the_unit_port() {
         use runtime::units::{UnitFacts, UnitState};
@@ -215,6 +216,7 @@ mod tests {
 
     /// sp-7crdc8: a settle tick reads the lifecycle, the open incidents by id, then every
     /// fix by id, all through the door and none by a spawned `bdq`.
+    #[test_id(tzhawhp)]
     #[test]
     fn a_settle_tick_reads_incidents_and_their_fixes_in_three_door_requests() {
         use serde_json::json;
@@ -240,6 +242,7 @@ mod tests {
         }
     }
 
+    #[test_id(tkzeh78)]
     #[test]
     fn only_a_bead_id_is_followed_as_a_successor() {
         assert!(is_bead_id("sp-l9i5io") && is_bead_id("sp-ab.1"));
@@ -248,6 +251,7 @@ mod tests {
         }
     }
 
+    #[test_id(txfxw86)]
     #[test]
     fn blocks_of_keeps_only_this_beads_blocks_edges() {
         let b: serde_json::Value = serde_json::from_str(
@@ -258,6 +262,7 @@ mod tests {
         assert_eq!(blocks_of(&b), vec!["f"]);
     }
 
+    #[test_id(twlbdbg)]
     #[test]
     fn the_id_pattern_does_not_match_a_longer_or_child_id() {
         let re = id_pattern("sp-ab.1");
@@ -265,6 +270,7 @@ mod tests {
         assert!(!re.contains("sp-ab.1"));
     }
 
+    #[test_id(tv6zwi7)]
     #[test]
     fn release_sha_is_the_forty_hex_directory_name() {
         let sha = "9f6f7e976db26649b7e4b753de0a992b1fc2f75b";
@@ -272,6 +278,7 @@ mod tests {
         assert_eq!(release_sha_of("r/checkout"), None);
     }
 
+    #[test_id(tbzjtju)]
     #[test]
     fn release_sha_follows_a_current_symlink() {
         let sha = "9f6f7e976db26649b7e4b753de0a992b1fc2f75b";

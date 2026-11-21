@@ -9,6 +9,7 @@ fn record_round(r: &Rig, row: lifecycle::batch::BatchRow, opened_at: i64) {
     r.s.commit(c, &r.req(), "cut").unwrap();
 }
 
+#[test_id(tt2wkk9)]
 #[test]
 fn dwell_reports_the_newest_round_cut_per_repo_from_the_round_records_whatever_the_audit_log_holds() {
     let r = Rig::new();
@@ -24,6 +25,7 @@ fn dwell_reports_the_newest_round_cut_per_repo_from_the_round_records_whatever_t
 }
 
 /// The dwell verb's rounds come from the `opened_at` index, and a Staged round is still skipped.
+#[test_id(th9mlzj)]
 #[test]
 fn dwell_reads_the_rounds_in_its_window_from_the_opened_at_index() {
     let r = Rig::on(Counting::default(), &clock());
@@ -37,6 +39,7 @@ fn dwell_reads_the_rounds_in_its_window_from_the_opened_at_index() {
     assert_eq!(d.last["spira"]["Deliver"], AT - 100, "b-000 is staged and skipped; b-001 is next");
 }
 
+#[test_id(tua1kw3)]
 #[test]
 fn dwell_with_a_window_holding_the_cap_of_rounds_errors_naming_it() {
     let r = Rig::new();

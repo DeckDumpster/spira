@@ -813,6 +813,7 @@ pub fn content_drift(cfg: &ContentDriftCfg) -> Reading {
 mod tests {
     use super::*;
 
+    #[test_id(tf8ayj1)]
     #[test]
     fn rowless_reads_bd_through_the_content_door_and_finds_the_bead_with_no_row() {
         let d = testkit::TempDir::new("wt-rowless-lc");
@@ -831,6 +832,7 @@ mod tests {
         assert!(matches!(rowless_beads(&cfg, 1_700_000_000), Reading::Unknown), "no answer is unknown, never no rowless beads");
     }
 
+    #[test_id(tlhoe7z)]
     #[test]
     fn content_drift_is_the_store_reconcile_content_dry_run() {
         let d = testkit::TempDir::new("wt-drift-lc");
@@ -844,6 +846,7 @@ mod tests {
         assert!(matches!(content_drift(&cfg), Reading::Unknown));
     }
 
+    #[test_id(t99rlnc)]
     #[test]
     fn lifecycle_ids_come_from_the_store_client() {
         let (t, c) = crate::lc::scripted::scripted(0, r#"[{"bead_id":"sp-a"},{"bead_id":"sp-b"}]"#);
@@ -861,6 +864,7 @@ mod tests {
         UnitDetail { environment: env.iter().map(|e| e.to_string()).collect(), main_pid: pid, state: UnitState::Active, ..UnitDetail::absent(name) }
     }
 
+    #[test_id(tpeslxe)]
     #[test]
     fn the_probes_read_the_unit_manager_the_cfg_names_and_no_manager_is_unknown() {
         let d = testkit::TempDir::new("probes-units");
@@ -884,12 +888,14 @@ mod tests {
         assert!(matches!(release_currency(&c), Reading::Unknown));
     }
 
+    #[test_id(t4pjizw)]
     #[test]
     fn a_unit_without_a_restart_counter_is_not_an_oom_candidate() {
         let timer = UnitDetail { state: UnitState::Active, ..UnitDetail::absent("spira-t.timer") };
         assert_eq!(oom_reads(&[timer, UnitDetail::absent("spira-gone.service")]), vec![]);
     }
 
+    #[test_id(tucupet)]
     #[test]
     fn an_oom_kill_is_read_from_the_unit_result_and_held() {
         let rows = oom_reads(&[restarted("spira-a.service", 4, "success"), restarted("spira-b.service", 0, "oom-kill")]);
@@ -900,6 +906,7 @@ mod tests {
         assert_eq!(oom_decide(200, Some(&OomRow { restarts: 4, last_oom: 100 }), &rows[0]).last_oom, 100, "a past hit is held");
     }
 
+    #[test_id(tjkm9cy)]
     #[test]
     fn a_sigterm_stop_is_not_a_failed_run() {
         let term = Run { result: "signal".into(), exit: Some(Exit::Signal(15)), ..run("failed", "i2") };
@@ -908,6 +915,7 @@ mod tests {
         assert_eq!(tally(Some(("i1", 2)), &kill), Some(("i2".into(), 3)));
     }
 
+    #[test_id(taoe892)]
     #[test]
     fn rowless_plan_is_incremental_between_full_sweeps_and_full_after() {
         let st = RowlessState { last_full: 1000, last_check: 1500, missing: vec!["sp-m".into()] };
@@ -919,6 +927,7 @@ mod tests {
         assert_eq!(rowless_plan(Some(&st), 900, 3600).created_after, None, "a clock gone backwards: full sweep");
     }
 
+    #[test_id(t7flrw1)]
     #[test]
     fn rowless_state_round_trips() {
         let t = testkit::TempDir::new("rowless-state");
@@ -928,6 +937,7 @@ mod tests {
         assert_eq!(load_rowless_state(&f), Some(st));
     }
 
+    #[test_id(tzcgi7l)]
     #[test]
     fn rowless_finds_an_injected_rowless_bead_and_caps_the_list() {
         let open: Vec<String> = ["sp-a", "sp-b", "sp-c"].iter().map(|s| s.to_string()).collect();
@@ -942,6 +952,7 @@ mod tests {
         assert_eq!(c.sustain_secs, 300);
     }
 
+    #[test_id(tiaia6t)]
     #[test]
     fn a_dry_run_reads_through_its_seq_and_the_beads_it_would_close() {
         let out = b"would close sp-a (lifecycle LANDED)\nthrough-seq: 9\nreconcile-content: 1 would close (dry run; --apply to write)\n";
@@ -949,6 +960,7 @@ mod tests {
         assert_eq!(drift_read(b"reconcile-content: 0 would close (dry run; --apply to write)\n"), None, "no seq, no state to advance");
     }
 
+    #[test_id(trlirdl)]
     #[test]
     fn units_off_current_names_only_units_rendering_another_release() {
         let show = [rendering("spira-a-prod.service", &["SPIRA_RELEASE=/r/aaa", "PATH=/x"], None), rendering("spira-b-prod.service", &["SPIRA_RELEASE=/r/bbb"], None), rendering("spira-c-prod.service", &[], None)];
@@ -956,12 +968,14 @@ mod tests {
         assert!(units_off_current(&show, "aaa", &|_| None).iter().any(|(u, _)| u == "spira-b-prod.service"));
     }
 
+    #[test_id(tj646id)]
     #[test]
     fn units_rendering_the_current_symlink_are_current() {
         let show = [rendering("spira-a-prod.service", &["SPIRA_RELEASE=/r/current"], None), rendering("spira-b-prod.service", &["SPIRA_RELEASE=/r/current/"], None), rendering("spira-c-prod.service", &["SPIRA_RELEASE=/r/aaa"], None)];
         assert_eq!(units_off_current(&show, "bbb", &|_| None), vec![("spira-c-prod.service".to_string(), "aaa".to_string())]);
     }
 
+    #[test_id(t12q49h)]
     #[test]
     fn a_unit_rendering_current_is_stale_only_when_its_process_started_from_another_release() {
         let cur = ["SPIRA_RELEASE=/r/current"];
@@ -974,6 +988,7 @@ mod tests {
         Run { active_state: state.into(), invocation: inv.into(), result: "exit-code".into(), exit: Some(Exit::Code(1)) }
     }
 
+    #[test_id(tlukubf)]
     #[test]
     fn tally_counts_each_new_failed_invocation_once() {
         assert_eq!(tally(None, &run("failed", "i1")), Some(("i1".into(), 1)));
@@ -981,6 +996,7 @@ mod tests {
         assert_eq!(tally(Some(("i1", 1)), &run("failed", "i2")), Some(("i2".into(), 2)));
     }
 
+    #[test_id(t3yw681)]
     #[test]
     fn tally_survives_a_restart_in_flight_and_resets_on_success() {
         assert_eq!(tally(Some(("i1", 2)), &run("activating", "i2")), Some(("i1".into(), 2)));
@@ -988,6 +1004,7 @@ mod tests {
         assert_eq!(tally(Some(("i1", 2)), &run("active", "i2")), None);
     }
 
+    #[test_id(tgq60lp)]
     #[test]
     fn tally_file_round_trips() {
         let mut m = BTreeMap::new();
@@ -995,6 +1012,7 @@ mod tests {
         assert_eq!(parse_tally(&render_tally(&m)), m);
     }
 
+    #[test_id(ti3f63h)]
     #[test]
     fn df_and_psi_parse_the_real_shapes() {
         let psi = "some avg10=1.00 avg60=2.00 avg300=0.50 total=1\nfull avg10=0.00 avg60=12.34 avg300=1.00 total=1\n";
@@ -1043,6 +1061,7 @@ mod tests {
         c
     }
 
+    #[test_id(tnbxom7)]
     #[test]
     fn tmp_held_pages_above_the_share_of_memory_and_not_below() {
         let d = testkit::TempDir::new("wt-tmp-held");
@@ -1058,6 +1077,7 @@ mod tests {
         assert!(s[0].title.starts_with("TMPFS HOLDS RAM:") && s[0].title.contains("250 MiB, 25% of 1000 MiB"), "{}", s[0].title);
     }
 
+    #[test_id(tuf3tsz)]
     #[test]
     fn tmp_held_stays_silent_when_memory_cannot_be_read() {
         let d = testkit::TempDir::new("wt-tmp-held-nomem");
@@ -1066,6 +1086,7 @@ mod tests {
         assert!(keys(pressure_with(&c, &usage_held(3000), &|_| false)).is_empty());
     }
 
+    #[test_id(t57tp57)]
     #[test]
     fn tmp_entries_group_by_owner_class_and_mark_pid_state() {
         let e = |n: &str| TmpEntry { name: n.into(), mib: 10, age_secs: 5, unreadable: 0 };
@@ -1080,6 +1101,7 @@ mod tests {
         assert_eq!(live.iter().find(|c| c.name == "repo-check").unwrap().live, 1);
     }
 
+    #[test_id(tuim7zd)]
     #[test]
     fn tmp_scan_counts_a_symlink_as_unreadable_and_sizes_a_directory() {
         let d = testkit::TempDir::new("wt-tmp-scan");
@@ -1103,6 +1125,7 @@ mod tests {
         }
     }
 
+    #[test_id(t1tjdfk)]
     #[test]
     fn release_store_crosses_only_past_keep_plus_slack() {
         let d = testkit::TempDir::new("wt-store");
@@ -1118,12 +1141,14 @@ mod tests {
         assert!(s[0].title.contains("4 trees"));
     }
 
+    #[test_id(t8s6nlu)]
     #[test]
     fn release_store_is_unknown_when_the_directory_cannot_be_read() {
         let d = testkit::TempDir::new("wt-store-missing");
         assert!(matches!(release_store(&cfg(&d)), Reading::Unknown));
     }
 
+    #[test_id(tpfnkuo)]
     #[test]
     fn cold_overlap_stands_only_with_two_cold_builds_and_io_pressure() {
         let d = testkit::TempDir::new("wt-cold");
@@ -1144,6 +1169,7 @@ mod tests {
         standing(r).into_iter().map(|c| c.key).collect()
     }
 
+    #[test_id(tqsxorv)]
     #[test]
     fn disk_room_pages_a_filesystem_at_95_percent_used() {
         let d = testkit::TempDir::new("wt-disk-full");
@@ -1155,6 +1181,7 @@ mod tests {
         assert!(s[0].title.contains("5% free"), "{}", s[0].title);
     }
 
+    #[test_id(tjupigb)]
     #[test]
     fn disk_room_pages_a_fill_rate_that_empties_the_disk_inside_the_bound() {
         let d = testkit::TempDir::new("wt-disk-rate");
@@ -1167,6 +1194,7 @@ mod tests {
         assert!(s[0].title.contains("FILLING"), "{}", s[0].title);
     }
 
+    #[test_id(tmjy48i)]
     #[test]
     fn a_refill_after_a_cleanup_is_measured_from_the_cleanup() {
         let h = 3600;
@@ -1175,6 +1203,7 @@ mod tests {
         assert_eq!(secs_to_empty(&[(0, 50), (h, 90)], 2 * h, 100), None, "a disk gaining space is not filling");
     }
 
+    #[test_id(tsfoypz)]
     #[test]
     fn disk_room_is_quiet_when_the_fill_rate_outlasts_the_bound() {
         let d = testkit::TempDir::new("wt-disk-slow");
@@ -1184,6 +1213,7 @@ mod tests {
         assert!(keys(disk_room(&c, t0 + 5 * 3600, &|_| fs(1, 190, 62))).is_empty());
     }
 
+    #[test_id(t5x8evx)]
     #[test]
     fn disk_room_reads_a_shared_filesystem_once_and_every_distinct_one() {
         let d = testkit::TempDir::new("wt-disk-dev");
@@ -1195,6 +1225,7 @@ mod tests {
         assert_eq!(keys(disk_room(&c, 1_000, &read)), vec!["disk-free-run-dir", "disk-free-build-pool"]);
     }
 
+    #[test_id(tmkxny2)]
     #[test]
     fn a_hand_build_root_on_its_own_disk_pages_at_the_floor_and_names_it() {
         let d = testkit::TempDir::new("wt-disk-hand");
@@ -1207,11 +1238,13 @@ mod tests {
         assert!(s[0].title.contains("srv/scratch") && s[0].title.contains("1% free"), "{}", s[0].title);
     }
 
+    #[test_id(tzk3rip)]
     #[test]
     fn watch_paths_always_name_root_run_build_pool_and_hand_roots_before_the_extras() {
         assert_eq!(watch_paths(Path::new("r"), "nix/store x", "b c", "h i"), ["/", "r", "b", "c", "h", "i", "nix/store", "x"]);
     }
 
+    #[test_id(tjrtv0m)]
     #[test]
     fn disk_room_is_unknown_when_nothing_reads() {
         let d = testkit::TempDir::new("wt-disk-unk");

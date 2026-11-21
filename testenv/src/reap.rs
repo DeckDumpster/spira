@@ -362,6 +362,7 @@ mod tests {
         fs::write(root.join(name).join("src.rs"), "kept").unwrap();
     }
 
+    #[test_id(thp0rh4)]
     #[test]
     fn bead_ids_are_the_only_candidates() {
         for ok in ["sp-z61hj", "sp-zs04v.3", "sp-wenrl.2", "sp-n9z"] {
@@ -372,6 +373,7 @@ mod tests {
         }
     }
 
+    #[test_id(ti6p720)]
     #[test]
     fn concierge_prefixed_dirs_resolve_to_the_bare_id_and_nothing_else_does() {
         assert_eq!(worktree_id("sp-x9kbg"), Some("sp-x9kbg"));
@@ -386,6 +388,7 @@ mod tests {
         false
     }
 
+    #[test_id(t00ja45)]
     #[test]
     fn a_landed_worktrees_target_goes_whatever_the_bead_says_or_the_dir_is_named() {
         let s = scratch("reap");
@@ -417,6 +420,7 @@ mod tests {
         assert!(line.contains("kept 1 unlanded") && line.contains("sp-ghost"), "{line}");
     }
 
+    #[test_id(tmhv1db)]
     #[test]
     fn sp_x9kbg_red_a_landed_branch_with_an_open_bead_in_a_concierge_dir_is_kept_today() {
         // THE REPORTED DEFECT (sp-x9kbg): a worktree whose content has landed still held
@@ -430,6 +434,7 @@ mod tests {
         assert_eq!(r.removed, vec!["sp-open".to_string()], "a landed branch's target must go, whatever the bead's status or the dir's name");
     }
 
+    #[test_id(tt4rs2q)]
     #[test]
     fn unlanded_is_never_reaped_even_when_landed_ness_is_the_only_signal() {
         let s = scratch("unlanded");
@@ -440,6 +445,7 @@ mod tests {
         assert!(s.1.join("sp-busy/target/debug/x").is_file());
     }
 
+    #[test_id(tzgpe35)]
     #[test]
     fn unknown_landed_ness_reaps_nothing() {
         let s = scratch("unknown");
@@ -450,6 +456,7 @@ mod tests {
         assert!(s.1.join("sp-done/target/debug/x").is_file());
     }
 
+    #[test_id(t4vebdp)]
     #[test]
     fn tmp_targets_of_a_non_working_bead_go_and_a_working_ones_stays() {
         let s = scratch("tmp");
@@ -479,6 +486,7 @@ mod tests {
         assert_eq!((r.kept_active, r.kept_busy, r.kept_unknown.clone()), (2, 1, vec!["sp-ghost".to_string()]));
     }
 
+    #[test_id(tl9irxs)]
     #[test]
     fn dry_run_removes_nothing_and_says_so() {
         let s = scratch("dry");
@@ -489,6 +497,7 @@ mod tests {
         assert!(describe(&r, true).starts_with("target-reap: would remove 1"));
     }
 
+    #[test_id(ty337zs)]
     #[test]
     fn a_target_link_is_unlinked_never_followed() {
         let s = scratch("link");
@@ -502,6 +511,7 @@ mod tests {
         assert!(elsewhere.join("keep").is_file());
     }
 
+    #[test_id(tsmelzr)]
     #[test]
     fn sp_x9kbg_a_busy_worktree_is_kept_even_though_it_is_landed() {
         // THE SECOND GUARD: landed-ness alone is not the last word — a live process still
@@ -528,6 +538,7 @@ mod tests {
         }
     }
 
+    #[test_id(tfhp4v0)]
     #[test]
     fn sp_blsz9_an_idle_worktrees_target_goes_landed_or_not_and_a_busy_or_recent_one_stays() {
         let s = scratch("idle");
@@ -545,6 +556,7 @@ mod tests {
         }
     }
 
+    #[test_id(tjfohhb)]
     #[test]
     fn sp_blsz9_below_the_floor_reclaims_oldest_idle_first_and_stops_at_the_floor() {
         let s = scratch("floor");
@@ -562,6 +574,7 @@ mod tests {
         assert!(r.removed.is_empty(), "unreadable free space reclaims nothing");
     }
 
+    #[test_id(tuzwsz2)]
     #[test]
     fn idle_age_ignores_target_and_sees_source_changes() {
         let s = scratch("age");
@@ -578,6 +591,7 @@ mod tests {
         assert!(idle_age_secs(&d).unwrap() < 60, "an edit outside target/ does");
     }
 
+    #[test_id(tak68e7)]
     #[test]
     fn pick_idle_takes_the_oldest_idle_unbusy_until_the_deficit_is_covered() {
         let t = |id: &str, idle_secs: u64, busy: bool, bytes: u64| IdleTarget { id: id.into(), idle_secs, busy, bytes };
@@ -587,6 +601,7 @@ mod tests {
         assert_eq!(pick_idle(&items, 50, Some(0)), Vec::<usize>::new());
     }
 
+    #[test_id(tsr8up5)]
     #[test]
     fn free_bytes_reads_the_filesystem_in_process() {
         assert!(free_bytes(Path::new("/")).is_some_and(|b| b > 0));

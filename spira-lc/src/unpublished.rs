@@ -64,6 +64,7 @@ mod tests {
         json!({ "landing_tip": "bbb", "forge_tip": "aaa", "count": 2, "oldest_arrival": 40, "read_at": read_at })
     }
 
+    #[test_id(tvl2loj)]
     #[test]
     fn a_fresh_record_is_answered_in_the_verbs_json_without_stale() {
         let s = store();
@@ -73,6 +74,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<Value>(&out).unwrap(), json!({ "forge_tip": "aaa", "landing_tip": "bbb", "count": 2, "oldest_arrival": 40 }));
     }
 
+    #[test_id(trfh18m)]
     #[test]
     fn a_record_read_a_minute_ago_is_answered_stale_with_its_age() {
         let s = store();
@@ -83,6 +85,7 @@ mod tests {
         assert_eq!((v["stale"].clone(), v["forge_tip_age_secs"].clone(), v["count"].clone()), (json!(true), json!(60), json!(2)));
     }
 
+    #[test_id(t8qy3q2)]
     #[test]
     fn a_repo_declared_unpublished_answers_so() {
         let s = store();
@@ -90,6 +93,7 @@ mod tests {
         assert_eq!(answer(&s, "r", 5), (0, r#"{"declared_unpublished":true}"#.into()));
     }
 
+    #[test_id(ta06cwo)]
     #[test]
     fn a_repo_with_no_record_exits_2_naming_why() {
         let (code, out) = answer(&store(), "r", 5);
@@ -98,6 +102,7 @@ mod tests {
         assert_eq!(run(&[]).0, 2);
     }
 
+    #[test_id(tt3mw63)]
     #[test]
     fn answering_runs_no_child_process() {
         let s = store();

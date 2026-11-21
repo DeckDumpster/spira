@@ -484,6 +484,7 @@ mod tests {
 
     // ── suites: the positive control (sp-missing-scan.py's verdict.sh case) ──
 
+    #[test_id(tgq8mdc)]
     #[test]
     fn a_suite_calling_a_deleted_script_via_sh_is_caught_then_clears() {
         let t = TempDir::new("sc-sh");
@@ -494,6 +495,7 @@ mod tests {
         assert!(run(&t, &["spira/test-planted.sh", "spira/verdict.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(tiu44s8)]
     #[test]
     fn a_bare_name_variable_assigned_a_deleted_script_is_caught() {
         // sp-yv4b3's shape, read by a suite: WORLD=world.sh then "$WORLD" start, wrapped in
@@ -507,6 +509,7 @@ mod tests {
         assert_eq!(got, vec!["script-callers: spira/test-bare.sh:3: invokes spira/world.sh, which is not in the tree and is not written by this suite"]);
     }
 
+    #[test_id(tee4fs0)]
     #[test]
     fn a_suite_that_writes_the_script_itself_is_exempt() {
         // a real suite's shape: SH repointed at a sandbox, the suite
@@ -519,6 +522,7 @@ mod tests {
         assert!(run(&t, &["spira/test-sandboxed.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(tacztg3)]
     #[test]
     fn source_and_dot_are_interpreters_too() {
         let t = TempDir::new("sc-source");
@@ -527,6 +531,7 @@ mod tests {
         assert_eq!(got, vec!["script-callers: spira/test-src.sh:3: invokes spira/gone.sh, which is not in the tree and is not written by this suite"]);
     }
 
+    #[test_id(thxgppe)]
     #[test]
     fn an_existing_target_is_clean() {
         let t = TempDir::new("sc-ok");
@@ -535,6 +540,7 @@ mod tests {
         assert!(run(&t, &["spira/test-ok.sh", "spira/lib.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(tk66atc)]
     #[test]
     fn here_dot_dot_names_a_repo_root_sibling_not_a_literal_dot_dot_path() {
         // `$HERE/../install.sh` from a suite in spira/ names the repo-root install.sh —
@@ -550,6 +556,7 @@ mod tests {
 
     // ── Rust string literals ──
 
+    #[test_id(tw9h380)]
     #[test]
     fn a_production_default_naming_a_deleted_script_is_caught() {
         let t = TempDir::new("sc-rust");
@@ -563,6 +570,7 @@ mod tests {
         assert_eq!(got, vec![format!("script-callers: batcher-cut/src/main.rs:1: names spira/{planted}, which is not in the tree")]);
     }
 
+    #[test_id(t02mjzk)]
     #[test]
     fn a_command_new_spawn_naming_a_deleted_script_is_caught() {
         // The real production hit this rule's own first run turned up: spira-world's
@@ -576,6 +584,7 @@ mod tests {
         assert_eq!(got, vec![format!("script-callers: spira-world/src/bin/world.rs:1: names spira/{planted}, which is not in the tree")]);
     }
 
+    #[test_id(tkz3kuh)]
     #[test]
     fn test_code_literals_are_not_scanned() {
         let t = TempDir::new("sc-rust-test");
@@ -588,6 +597,7 @@ mod tests {
         assert!(run(&t, &["queue/src/lib.rs", "queue/tests/it.rs"]).unwrap().is_empty());
     }
 
+    #[test_id(t3w0z0p)]
     #[test]
     fn a_comment_mentioning_the_construct_is_not_a_literal() {
         let t = TempDir::new("sc-rust-comment");
@@ -596,6 +606,7 @@ mod tests {
         assert!(run(&t, &["gate/src/x.rs"]).unwrap().is_empty());
     }
 
+    #[test_id(t8p16yl)]
     #[test]
     fn a_log_message_or_usage_string_is_not_a_literal() {
         // Exactly what flooded the first draft of this rule: a log line or --help text
@@ -608,6 +619,7 @@ mod tests {
         assert!(run(&t, &["dwarf/src/escape.rs"]).unwrap().is_empty());
     }
 
+    #[test_id(ttj15x5)]
     #[test]
     fn a_rust_file_that_writes_the_script_before_naming_it_is_exempt() {
         let t = TempDir::new("sc-rust-creates");
@@ -621,6 +633,7 @@ mod tests {
 
     // ── unit templates & the watchers manifest ──
 
+    #[test_id(t0ft5ei)]
     #[test]
     fn a_unit_s_placeholder_target_naming_a_deleted_script_is_caught() {
         let t = TempDir::new("sc-unit");
@@ -632,6 +645,7 @@ mod tests {
         assert_eq!(got, vec!["script-callers: systemd/spira-planted.service:2: names spira/gone.sh, which is not in the tree"]);
     }
 
+    #[test_id(tnuhy62)]
     #[test]
     fn a_unit_s_comment_is_not_scanned() {
         let t = TempDir::new("sc-unit-comment");
@@ -639,6 +653,7 @@ mod tests {
         assert!(run(&t, &["systemd/spira-ok.service"]).unwrap().is_empty());
     }
 
+    #[test_id(t59aj2v)]
     #[test]
     fn a_watchers_row_naming_a_deleted_bare_script_is_caught() {
         let t = TempDir::new("sc-watchers");
@@ -650,6 +665,7 @@ mod tests {
         );
     }
 
+    #[test_id(toyszvg)]
     #[test]
     fn an_unknown_placeholder_is_not_guessed_at() {
         let t = TempDir::new("sc-unknown-ph");
@@ -659,12 +675,14 @@ mod tests {
 
     // ── scope, refusal, positive control ──
 
+    #[test_id(tst81gx)]
     #[test]
     fn empty_scope_refuses() {
         let t = TempDir::new("sc-empty");
         assert_eq!(run(&t, &["README"]), Err(LintError::EmptyScope));
     }
 
+    #[test_id(thcnwxd)]
     #[test]
     fn a_clean_tree_reports_checked() {
         let t = TempDir::new("sc-checked");
@@ -675,6 +693,7 @@ mod tests {
         assert_eq!(r.checked(), Some((1, "callers".to_string())));
     }
 
+    #[test_id(ti9h962)]
     #[test]
     fn a_listed_file_is_silenced_and_a_stale_entry_is_refused() {
         let t = TempDir::new("sc-allow");

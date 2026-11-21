@@ -1217,6 +1217,7 @@ impl Run {
 mod complete_fixture_home_tests {
     use super::*;
 
+    #[test_id(t36nfbl)]
     #[test]
     fn the_complete_fixture_is_read_from_spira_home_and_absent_without_one() {
         let h = testkit::TempDir::new("complete-home");

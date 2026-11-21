@@ -126,6 +126,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-09
+    #[test_id(tef5gky)]
     #[test]
     fn a_planted_offender_is_refused_by_file_and_line() {
         let t = TempDir::new("icl");
@@ -138,6 +139,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-09
+    #[test_id(tyrg6e0)]
     #[test]
     fn a_declared_site_is_clean() {
         let t = TempDir::new("icl-ok");
@@ -149,6 +151,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-09
+    #[test_id(tq89q5l)]
     #[test]
     fn a_site_near_the_top_of_a_short_file_still_finds_a_nearby_cause() {
         // This is the clamped-window fix: line 2 has no 10 lines before it, but the cause
@@ -159,6 +162,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-09
+    #[test_id(to3i8vv)]
     #[test]
     fn a_comment_quoting_the_assignment_is_not_a_site() {
         let t = TempDir::new("icl-comment");
@@ -170,6 +174,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-09
+    #[test_id(t0kw30s)]
     #[test]
     fn a_quoted_reference_before_the_assignment_is_not_a_site() {
         let t = TempDir::new("icl-quoted");
@@ -177,6 +182,7 @@ mod tests {
         assert!(run(&t, &["spira/x.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(t8wmivk)]
     #[test]
     fn suites_and_non_sh_files_are_out_of_scope() {
         let t = TempDir::new("icl-scope");
@@ -186,6 +192,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-09
+    #[test_id(tcezw5r)]
     #[test]
     fn a_clean_tree_reports_checked() {
         let t = TempDir::new("icl-clean");

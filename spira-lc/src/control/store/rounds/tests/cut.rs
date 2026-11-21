@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(tw2fdrg)]
 #[test]
 fn a_cut_of_an_id_another_cut_took_after_the_plan_loses_and_leaves_that_round_whole() {
     let r = Rig::new();
@@ -32,6 +33,7 @@ fn a_cut_of_an_id_another_cut_took_after_the_plan_loses_and_leaves_that_round_wh
     assert!(r.s.delivery("sp-a").unwrap().is_none());
 }
 
+#[test_id(tm5sc00)]
 #[test]
 fn a_delivery_written_after_the_plan_makes_the_cut_lose() {
     let r = Rig::new();
@@ -55,6 +57,7 @@ fn a_delivery_written_after_the_plan_makes_the_cut_lose() {
     );
 }
 
+#[test_id(td78opy)]
 #[test]
 fn a_cut_is_one_txn_writing_the_round_with_its_members_and_each_members_delivery() {
     let r = Rig::new();
@@ -116,6 +119,7 @@ fn a_cut_is_one_txn_writing_the_round_with_its_members_and_each_members_delivery
     );
 }
 
+#[test_id(te38a6t)]
 #[test]
 fn a_cut_whose_member_moved_after_the_plan_writes_nothing_and_audits_every_step_as_lost() {
     let r = Rig::new();
@@ -150,6 +154,7 @@ fn a_cut_whose_member_moved_after_the_plan_writes_nothing_and_audits_every_step_
     assert_eq!((rc, out.as_str()), (1, "{}"));
 }
 
+#[test_id(tkodlzk)]
 #[test]
 fn a_cut_refuses_a_member_not_at_its_tip_or_still_in_another_round_before_writing() {
     let r = Rig::new();
@@ -187,6 +192,7 @@ fn a_cut_refuses_a_member_not_at_its_tip_or_still_in_another_round_before_writin
     assert_eq!(r.s.contract().head().unwrap(), head, "nothing written");
 }
 
+#[test_id(tynfbz5)]
 #[test]
 fn a_round_id_is_taken_in_every_repo_once_any_repo_cuts_it() {
     let r = Rig::new();
@@ -215,6 +221,7 @@ fn a_round_id_is_taken_in_every_repo_once_any_repo_cuts_it() {
         .is_none());
 }
 
+#[test_id(tp0pkn8)]
 #[test]
 fn a_cut_ships_each_step_it_committed_under_its_machine() {
     use spira_otel::vlogs::fake::FakeLogs;
@@ -237,6 +244,7 @@ fn a_cut_ships_each_step_it_committed_under_its_machine() {
     assert!(cut.iter().any(|(s, b)| s == "lifecycle.delivery" && b == "sp-b"), "the cut's delivery steps ship under their own machine: {cut:?}");
 }
 
+#[test_id(t8i82j7)]
 #[test]
 fn a_round_cut_with_one_member_twice_writes_no_discontinuous_delivery_event() {
     let r = Rig::new();

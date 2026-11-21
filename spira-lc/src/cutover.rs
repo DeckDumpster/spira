@@ -138,6 +138,7 @@ pub(crate) fn stacked_dependents_from(
 mod inline_tests {
     use super::inline_payload_from;
 
+    #[test_id(tzzionh)]
     #[test]
     fn publish_readiness_carries_its_stdin_body_as_json() {
         let argv = vec!["publish-readiness".to_string()];
@@ -167,6 +168,7 @@ mod containment_tests {
         vec![("sp-dep".into(), "tip-dep".into()), ("sp-pre".into(), "tip-pre".into())]
     }
 
+    #[test_id(t1jwe9w)]
     #[test]
     fn a_member_whose_range_holds_anothers_whole_range_is_its_dependent() {
         let s = store();
@@ -177,6 +179,7 @@ mod containment_tests {
         assert_eq!(edges, std::collections::BTreeSet::from([("sp-dep".to_string(), "sp-pre".to_string())]));
     }
 
+    #[test_id(tr82fg4)]
     #[test]
     fn with_no_range_recorded_no_edge_is_found() {
         let s = store();
@@ -186,6 +189,7 @@ mod containment_tests {
         assert!(branch_containment(&s, &row, &members()).is_empty(), "one range alone contains nothing");
     }
 
+    #[test_id(t3ofcac)]
     #[test]
     fn ranges_recorded_for_another_repo_or_base_are_not_read() {
         let s = store();

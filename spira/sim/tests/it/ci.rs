@@ -36,6 +36,7 @@ fn gate() -> String {
     std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join(".github/workflows/gate.yml")).unwrap()
 }
 
+#[test_id(th7zytv)]
 #[test]
 fn a_jobs_steps_are_read_with_their_env_and_script_and_no_other_jobs() {
     let s = steps(TOY, "cut").unwrap();
@@ -46,6 +47,7 @@ fn a_jobs_steps_are_read_with_their_env_and_script_and_no_other_jobs() {
     assert!(steps(TOY, "nope").is_err());
 }
 
+#[test_id(tc82ons)]
 #[test]
 fn the_shipped_cut_job_reads_as_its_named_script_steps() {
     let s = steps(&gate(), "cut").unwrap();
@@ -56,6 +58,7 @@ fn the_shipped_cut_job_reads_as_its_named_script_steps() {
     assert!(cut.env.iter().any(|(k, _)| k == "GIT_COMMITTER_EMAIL"));
 }
 
+#[test_id(t2e25ua)]
 #[test]
 fn only_the_expressions_a_runner_provides_are_expanded() {
     let cx = Context { sha: "abc", workspace: Path::new("w"), temp: Path::new("t") };

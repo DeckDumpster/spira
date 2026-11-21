@@ -2,6 +2,9 @@
 //! signals. Nothing here reads the journal. The clock and `systemctl` arrive as the traits below
 //! so a test drives both.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod dbus;
 pub mod watch;
 

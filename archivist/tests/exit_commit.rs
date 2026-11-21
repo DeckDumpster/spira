@@ -1,5 +1,7 @@
 //! The exit commit of an archive run, against a real git checkout with a real remote.
 
+#[macro_use]
+extern crate spira_test_id;
 use archivist::config::Env;
 use archivist::run::{commit_after, Outcome};
 use std::path::Path;
@@ -42,6 +44,7 @@ fn brain(tag: &str) -> (TempDir, TempDir) {
     (remote, work)
 }
 
+#[test_id(twrocd6)]
 #[test]
 fn a_failed_exit_commit_fails_the_run_naming_the_dirty_path() {
     let (_remote, work) = brain("exit-fail");
@@ -57,6 +60,7 @@ fn a_failed_exit_commit_fails_the_run_naming_the_dirty_path() {
     assert_eq!(Outcome::of(0, &Some(committed)), Outcome::CommitFailed);
 }
 
+#[test_id(thy7wab)]
 #[test]
 fn a_log_entry_is_committed_with_the_page_an_earlier_run_left_dirty() {
     let (_remote, work) = brain("exit-announced");

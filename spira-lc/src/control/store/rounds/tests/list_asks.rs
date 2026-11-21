@@ -18,6 +18,7 @@ fn reads_of(r: &Rig<Counting>) -> Vec<(&'static str, String)> {
 
 /// law: a list reads the live set. `list-asks` over many closed asks reads the OPEN state index
 /// only, and `--state ALL` still answers every ask.
+#[test_id(tb7o6w2)]
 #[test]
 fn list_asks_reads_only_the_open_asks_and_all_reads_every_one() {
     use lifecycle::ask::AskState;
@@ -44,6 +45,7 @@ fn list_asks_reads_only_the_open_asks_and_all_reads_every_one() {
 
 /// law: a list reads the live set. `mending list --live` over many returned rows ranges the
 /// WAITING and MENDING state indexes only, and reads one ask per live row at most.
+#[test_id(tz3xcw0)]
 #[test]
 fn mending_list_live_reads_only_the_waiting_and_mending_rows() {
     use lifecycle::mending::MendingState;

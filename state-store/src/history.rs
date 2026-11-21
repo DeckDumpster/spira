@@ -246,6 +246,7 @@ mod tests {
         }
     }
 
+    #[test_id(t0h9kj5)]
     #[test]
     fn the_ring_never_exceeds_its_bound_and_its_floor_follows_what_it_evicts() {
         let max = 10_000;
@@ -264,6 +265,7 @@ mod tests {
         assert_eq!(h.log(floor, 1000).unwrap().first().unwrap().rev.main, floor + 1);
     }
 
+    #[test_id(ty0t3mz)]
     #[test]
     fn a_key_reads_as_its_previous_value_from_the_first_write_after_the_revision() {
         let mut h = History::new(0, usize::MAX);
@@ -275,6 +277,7 @@ mod tests {
         assert_eq!(h.as_of("untouched", 1).unwrap(), AsOf::Live);
     }
 
+    #[test_id(tt1b9z0)]
     #[test]
     fn a_popped_commit_leaves_no_trace_in_the_log_or_the_index() {
         let mut h = History::new(0, usize::MAX);
@@ -290,6 +293,7 @@ mod tests {
         assert_eq!(h.newest(), 1);
     }
 
+    #[test_id(teke2sd)]
     #[test]
     fn keys_written_after_a_revision_come_back_with_their_value_at_it() {
         let mut h = History::new(0, usize::MAX);
@@ -300,6 +304,7 @@ mod tests {
         assert!(h.touched_after(b"h/", Some(b"h0"), 2).unwrap().is_empty());
     }
 
+    #[test_id(to92kid)]
     #[test]
     fn the_hottest_keys_are_counted_from_the_commits_after_a_revision() {
         let mut h = History::new(0, usize::MAX);
@@ -311,6 +316,7 @@ mod tests {
         assert!(h.hot_keys(3, 5).is_empty());
     }
 
+    #[test_id(tf8hisu)]
     #[test]
     fn forgetting_through_a_revision_raises_the_floor_to_it() {
         let mut h = History::new(0, usize::MAX);
@@ -322,6 +328,7 @@ mod tests {
         assert_eq!(h.log(0, 10), Err(Error::TooOld { compacted: 1 }));
     }
 
+    #[test_id(tcapvlu)]
     #[test]
     fn overlay_drops_created_keys_restores_deleted_ones_and_rewinds_overwritten() {
         let live = vec![("a".to_string(), ver("2", 2)), ("c".to_string(), ver("n", 3))];

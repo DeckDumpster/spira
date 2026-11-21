@@ -242,6 +242,7 @@ mod tests {
         out
     }
 
+    #[test_id(txbybk9)]
     #[test]
     fn the_cert_sweeps_are_retired() {
         for gone in ["cert.full", "cert.sample"] {
@@ -252,6 +253,7 @@ mod tests {
         }
     }
 
+    #[test_id(tv7fpqa)]
     #[test]
     fn every_watcher_module_and_the_heartbeat_have_a_row() {
         let names = watcher_names();
@@ -283,6 +285,7 @@ mod tests {
         out
     }
 
+    #[test_id(tg6izw7)]
     #[test]
     fn every_family_file_is_in_the_families_list() {
         let src = std::fs::read_to_string(testkit::manifest_dir().join("src/tasks.rs")).unwrap();
@@ -297,6 +300,7 @@ mod tests {
         assert_eq!(pending().count(), PENDING_FAMILIES.iter().map(|f| f.len()).sum::<usize>());
     }
 
+    #[test_id(tm29r2l)]
     #[test]
     fn a_task_name_maps_to_its_contract_page() {
         assert_eq!(contract_page("hel.reap_terminal"), "hel-reap-terminal");
@@ -317,6 +321,7 @@ mod tests {
         out
     }
 
+    #[test_id(t4zyg9i)]
     #[test]
     fn every_pending_row_has_a_contract_page_and_no_row_is_both_pending_and_ported() {
         let rows: Vec<&str> = CONTRACT_PAGES.iter().copied().filter(|p| !p.starts_with("source-")).collect();
@@ -349,6 +354,7 @@ mod tests {
         format!("/// | Key | Declared in `KEYS` by |\n/// |---|---|\n{}", rows.concat())
     }
 
+    #[test_id(tit65c2)]
     #[test]
     fn the_undeclarable_table_in_the_docs_is_the_rows() {
         let src = std::fs::read_to_string(testkit::manifest_dir().join("src/tasks.rs")).unwrap();
@@ -357,6 +363,7 @@ mod tests {
         assert!(doc.contains(&want), "the table above PENDING_FAMILIES is stale; it is:\n{want}");
     }
 
+    #[test_id(tromiq7)]
     #[test]
     fn no_two_tasks_across_families_share_a_name_or_a_stream() {
         static PLANTED: &[Task] = &[Task { name: heartbeat::NAME, plane: runtime::Plane::Work, signal: &[], boot: Heartbeat::boot, cadence_ms: |_| 1, effects: &[], runners: &[], keys: &[], build: |s| (CORE[0].build)(s) }];
@@ -365,6 +372,7 @@ mod tests {
         assert_eq!(clashes(FAMILIES), Vec::<String>::new());
     }
 
+    #[test_id(tgh8oe2)]
     #[test]
     fn the_registrations_and_the_boot_list_are_the_table() {
         let s = crate::settings::fixture();
@@ -373,6 +381,7 @@ mod tests {
         assert_eq!(boots().iter().map(|b| b.1).collect::<Vec<_>>(), all().map(|t| t.stream()).collect::<Vec<_>>());
     }
 
+    #[test_id(tx9i6kc)]
     #[test]
     fn every_declared_effect_has_one_runner_and_every_runner_is_declared() {
         let routes = routes();
@@ -385,6 +394,7 @@ mod tests {
         assert!(orphan.is_empty(), "runners no task declares: {orphan:?}");
     }
 
+    #[test_id(t79oem1)]
     #[test]
     fn every_pending_row_declares_each_effect_once_with_one_runner_for_each() {
         let shared: Vec<&str> = SHARED.iter().map(|(n, _)| *n).collect();
@@ -414,6 +424,7 @@ mod tests {
         have.len() == want.len() && set(have) == set(want)
     }
 
+    #[test_id(t18pz6m)]
     #[test]
     fn the_sim_names_a_double_for_every_effect_of_every_row_ported_or_pending() {
         let want: Vec<(&str, Vec<&str>)> = all().chain(pending()).map(|t| (t.name, t.effects.to_vec())).collect();
@@ -434,6 +445,7 @@ mod tests {
         assert!(shared.iter().all(|e| sim::doubles::service().names().iter().any(|d| d == e)), "every shared effect has a double");
     }
 
+    #[test_id(t12urlu)]
     #[test]
     fn the_unit_effects_are_shared_and_run_on_the_configured_unit_manager() {
         use runtime::host::EffectRunner;
@@ -458,6 +470,7 @@ mod tests {
         assert!(scripted.calls().iter().any(|c| c.starts_with("start ")) && scripted.calls().iter().any(|c| c.starts_with("stop ")), "{:?}", scripted.calls());
     }
 
+    #[test_id(t9qkqh0)]
     #[test]
     fn an_unknown_effect_name_is_refused_by_the_router() {
         use runtime::host::EffectRunner;
@@ -469,6 +482,7 @@ mod tests {
 
     /// A halt lets signal-plane effects run, so none may do the world's work: every one, of
     /// every row ported or pending, is cleared in `SIGNAL_SAFE` and is no unit verb.
+    #[test_id(tvjnjad)]
     #[test]
     fn no_signal_task_does_work() {
         for (name, _) in SIGNAL_SAFE {
@@ -486,6 +500,7 @@ mod tests {
 
     /// The rule is per effect: a row on `Work` with a unit start or an unreviewed effect on the
     /// signal plane is reported, and a `Signal` row is shorthand for every effect signal.
+    #[test_id(ttpjygh)]
     #[test]
     fn a_signal_effect_that_starts_a_unit_or_is_unreviewed_is_reported() {
         let base = all().find(|t| t.name == e::inbox_notify::NAME).expect("inbox.notify is a row");
@@ -498,6 +513,7 @@ mod tests {
         assert_eq!(base.plane_of(units::UNIT_START), runtime::Plane::Work, "inbox.notify's unit starts stay on Work");
     }
 
+    #[test_id(tvi4d89)]
     #[test]
     fn every_row_boots_arms_its_cadence_and_asks_only_for_declared_effects() {
         let s = crate::settings::fixture();
@@ -525,6 +541,7 @@ mod tests {
 
     /// A task whose effect times out asks the world before it asks again: a retry on timeout
     /// that never observed repeats an act whose first run may have landed.
+    #[test_id(tf5e4lv)]
     #[test]
     fn no_task_retries_an_act_on_timeout_without_observing_first() {
         use runtime::taskrig::retries_without_observing;

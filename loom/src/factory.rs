@@ -1170,6 +1170,7 @@ mod tests {
         v.as_array().unwrap().iter().map(|x| x.as_str().unwrap()).collect()
     }
 
+    #[test_id(tc37856)]
     #[tokio::test]
     async fn a_state_added_to_a_machine_appears_as_a_belt_with_no_change_to_loom() {
         let grown = graph(&[("OPEN", "CiStarted", "CI_RUNNING"), ("CI_RUNNING", "Quarantine", "QUARANTINED")]);
@@ -1179,6 +1180,7 @@ mod tests {
         assert!(f["stations"].as_array().unwrap().iter().any(|s| s["id"] == "batch.Quarantine"), "an event no station names gets its own");
     }
 
+    #[test_id(te5pukv)]
     #[tokio::test]
     async fn round_open_takes_submitted_and_certified_and_fills_in_delivery_and_creates_a_batch() {
         let f = floor(script(batch_graph(), &quiet(), json!([]))).await.unwrap();
@@ -1191,6 +1193,7 @@ mod tests {
         assert!(has("bead.cut", "batch.OPEN") && has("bead.cut", "bead.IN_DELIVERY") && has("bead.SUBMITTED", "bead.cut"));
     }
 
+    #[test_id(tryjnc6)]
     #[tokio::test]
     async fn belts_are_sources_sinks_or_unreachable_by_the_stations_that_feed_them() {
         let f = floor(script(batch_graph(), &quiet(), json!([]))).await.unwrap();
@@ -1204,6 +1207,7 @@ mod tests {
         assert_eq!((kind("rel.ACTIVATED"), kind("pub.MERGED")), ("offmachine".into(), "offmachine".into()));
     }
 
+    #[test_id(t04b6nj)]
     #[tokio::test]
     async fn claim_order_is_express_then_rework_then_priority_then_oldest_with_parked_last() {
         let mut held = bead("held-p0", "READY", Some(0), 100);
@@ -1224,6 +1228,7 @@ mod tests {
         assert_eq!(order, ["express-p2", "rework-p1", "p0", "p1-old", "p1-new", "no-p", "held-p0"]);
     }
 
+    #[test_id(t7lbtil)]
     #[tokio::test]
     async fn a_stations_wait_is_the_age_of_the_oldest_unparked_item_on_its_inputs() {
         let mut held = bead("held-old", "SUBMITTED", Some(1), NOW - 9000);
@@ -1234,6 +1239,7 @@ mod tests {
         assert_eq!(by_id(&f, "belts", "bead.SUBMITTED")["oldest_s"], 9000, "the belt's oldest counts parked items");
     }
 
+    #[test_id(taosnwu)]
     #[tokio::test]
     async fn unclaim_counts_release_and_holder_dead_rows_together() {
         let row = |seq: i64, event: &str, at: i64| json!({"seq": seq, "bead_id": "sp-a", "event": event, "from_state": "WORKING", "to_state": "READY", "at": at});
@@ -1247,6 +1253,7 @@ mod tests {
         assert_eq!(by_id(&f, "stations", "bead.build")["per24h"], 1);
     }
 
+    #[test_id(tlr7349)]
     #[tokio::test]
     async fn a_sinks_in24h_is_the_logsql_count_into_it_and_an_unreadable_store_is_null_with_an_error() {
         let (logs, s) = counted(&[("bead", "Drop", "READY", "DROPPED", 2), ("bead", "Drop", "SUBMITTED", "DROPPED", 3)]);
@@ -1264,6 +1271,7 @@ mod tests {
         assert!(errors.iter().any(|e| e.as_str().unwrap().starts_with("24 h counts")), "{errors:?}");
     }
 
+    #[test_id(tb7gbv5)]
     #[tokio::test]
     async fn retire_draws_an_input_only_from_belts_that_sent_it_an_item_in_the_last_day() {
         let row = json!({"seq": 1, "bead_id": "sp-a", "event": "Drop", "from_state": "READY", "to_state": "DROPPED", "at": NOW - 100});
@@ -1273,6 +1281,7 @@ mod tests {
         assert!(by_id(&quiet_floor, "stations", "bead.retire")["inputs"].as_array().unwrap().is_empty());
     }
 
+    #[test_id(tjdgtwc)]
     #[tokio::test]
     async fn a_refused_list_live_is_named_and_its_numbers_are_null_not_zero() {
         let mut answers = script(batch_graph(), &quiet(), json!([]));
@@ -1288,6 +1297,7 @@ mod tests {
         assert_eq!(by_id(&f, "belts", "batch.OPEN")["now"], 0, "a read that answered stays a number");
     }
 
+    #[test_id(t0nbd2x)]
     #[tokio::test]
     async fn a_failed_ops_graph_is_no_floor_at_all() {
         let mut answers = script(batch_graph(), &quiet(), json!([]));
@@ -1298,6 +1308,7 @@ mod tests {
         assert!(e.contains("ops-graph --machine ask"), "{e}");
     }
 
+    #[test_id(tharqxg)]
     #[tokio::test]
     async fn ready_parts_come_from_the_claim_view_the_holds_and_the_blockers() {
         let mut held = bead("held", "READY", Some(1), 1);
@@ -1311,6 +1322,7 @@ mod tests {
         assert_eq!(by_id(&f, "belts", "bead.READY")["now"], 3);
     }
 
+    #[test_id(tuhtsa7)]
     #[tokio::test]
     async fn loom_and_the_pane_count_the_same_claim_view_rows_the_same() {
         let rows: Value = serde_json::from_str(include_str!("../../cockpit/ops/tests/fixtures/live-claim-view.json")).unwrap();
@@ -1325,6 +1337,7 @@ mod tests {
         assert_eq!(cockpit_ops::lcview::view(&pane).next_count as u64, parts["claimable"].as_u64().unwrap());
     }
 
+    #[test_id(t0ylojs)]
     #[tokio::test]
     async fn a_ready_row_with_no_claim_view_fails_the_live_read_and_is_not_counted() {
         let mut bare = bead("bare", "READY", Some(1), 1);
@@ -1335,6 +1348,7 @@ mod tests {
         assert!(errors.iter().any(|e| e.as_str().unwrap().contains("bare") && e.as_str().unwrap().contains("claim_view")), "{errors:?}");
     }
 
+    #[test_id(tlefc6v)]
     #[test]
     fn every_event_the_table_names_is_one_its_machine_names() {
         let names: BTreeMap<&str, Vec<&str>> = BTreeMap::from([
@@ -1358,6 +1372,7 @@ mod tests {
         }
     }
 
+    #[test_id(tszi0fq)]
     #[test]
     fn every_limit_key_is_a_registered_config_key() {
         let conf_d = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
@@ -1366,6 +1381,7 @@ mod tests {
         }
     }
 
+    #[test_id(trxr7al)]
     #[test]
     fn the_dwarf_session_queues_the_build_disk_limit_and_no_lane_cap_is_shown() {
         let session = COMPONENTS.iter().find(|c| c.id == "dwarf-session").unwrap();
@@ -1374,6 +1390,7 @@ mod tests {
         assert!(fixture.contains("\"label\": \"build-disk limit\"") && !fixture.contains("lane cap"));
     }
 
+    #[test_id(t0gp9uj)]
     #[tokio::test]
     async fn an_event_qualified_by_its_from_state_takes_only_the_moves_out_of_that_state() {
         let f = floor(script(batch_graph(), &quiet(), json!([]))).await.unwrap();
@@ -1383,6 +1400,7 @@ mod tests {
         assert_eq!(ids(&by_id(&f, "stations", "batch.deploy")["inputs"]), ["batch.LANDING", "batch.DEPLOYING"]);
     }
 
+    #[test_id(t4pjpyc)]
     #[test]
     fn every_component_a_station_names_exists_and_every_limit_key_is_read() {
         let ids: BTreeSet<&str> = COMPONENTS.iter().map(|c| c.id).collect();
@@ -1395,6 +1413,7 @@ mod tests {
         assert_eq!(used, LIMIT_KEYS.iter().copied().collect::<BTreeSet<_>>());
     }
 
+    #[test_id(t15b82w)]
     #[tokio::test]
     async fn a_queue_reads_the_limit_its_registered_key_carries() {
         let client = LcClient::over(Arc::new(Answers(script(batch_graph(), &quiet(), json!([])))), true);
@@ -1406,6 +1425,7 @@ mod tests {
         assert!(by_id(&f, "components", "checks")["queues"][0]["config"].is_null());
     }
 
+    #[test_id(tdvz0a4)]
     #[tokio::test]
     async fn activated_releases_of_the_last_day_are_the_release_exits_count() {
         let t = testkit::TempDir::new("loom-factory-releases");
@@ -1421,6 +1441,7 @@ mod tests {
         assert!(by_id(&f, "belts", "pub.MERGED")["in24h"].is_null());
     }
 
+    #[test_id(tewiac5)]
     #[tokio::test]
     async fn submitted_work_with_no_cut_inside_the_bound_is_a_stall_sensor_at_round_open_for_its_repo() {
         let run = run_with_a_release();
@@ -1439,6 +1460,7 @@ mod tests {
         assert_eq!(sensor(&f, "wt.ASK→ANSWERED")["at"], json!(["ask.close"]));
     }
 
+    #[test_id(t8azbqm)]
     #[tokio::test]
     async fn submitted_work_behind_a_full_set_of_open_rounds_is_queued_not_a_stall_sensor() {
         let run = run_with_a_release();
@@ -1452,6 +1474,7 @@ mod tests {
         assert!(of_kind(&f, "transitions").iter().all(|s| s["status"] != "STALL"), "{:?}", of_kind(&f, "transitions"));
     }
 
+    #[test_id(t1n3m5z)]
     #[tokio::test]
     async fn a_round_open_in_another_repo_leaves_this_repos_stall_standing() {
         let run = run_with_a_release();
@@ -1466,6 +1489,7 @@ mod tests {
         assert!(stalls.iter().any(|s| s["repo"] == "spira" && s["reading"].as_str().unwrap().contains("oldest uncovered waited")), "{stalls:?}");
     }
 
+    #[test_id(tw2w75a)]
     #[tokio::test]
     async fn a_refused_dwell_makes_every_transitions_sensor_blind_and_names_the_refusal() {
         let run = run_with_a_release();
@@ -1480,6 +1504,7 @@ mod tests {
         }
     }
 
+    #[test_id(tn94u08)]
     #[tokio::test]
     async fn pinned_bounds_that_are_refused_make_every_transitions_sensor_blind_and_name_the_key() {
         let refused = Sensing { transitions: Err("SPIRA_TRANSITIONS_CUT_BOUND: unset".into()), ..sensing() };
@@ -1489,12 +1514,14 @@ mod tests {
         assert!(all.iter().all(|s| s["status"] == "BLIND" && s["reading"].as_str().unwrap().contains("SPIRA_TRANSITIONS_CUT_BOUND")), "{all:?}");
     }
 
+    #[test_id(tpk7ie9)]
     #[tokio::test]
     async fn no_release_record_is_blind_not_an_empty_wait() {
         let f = floor(script(batch_graph(), &quiet(), json!([]))).await.unwrap();
         assert_eq!(sensor(&f, "wt.READY")["status"], "BLIND");
     }
 
+    #[test_id(tnr25wm)]
     #[tokio::test]
     async fn every_non_terminal_batch_belt_has_a_missing_sensor_including_one_for_an_added_state() {
         let grown = graph(&[("OPEN", "CiStarted", "CI_RUNNING"), ("CI_RUNNING", "Hold", "HELD"), ("HELD", "PassGreen", "GREEN"), ("GREEN", "FastForward", "LANDED")]);
@@ -1513,6 +1540,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4cvfhl)]
     #[tokio::test]
     async fn a_stats_answer_is_the_count_and_mean_at_the_stations_its_verb_is_declared_for() {
         let mut answers = script(batch_graph(), &quiet(), json!([]));
@@ -1527,6 +1555,7 @@ mod tests {
         assert!(sensor(&f, "perf.writes")["reading"].as_str().unwrap().starts_with("9 writes · 3 commits · 2 groups"));
     }
 
+    #[test_id(t92btir)]
     #[tokio::test]
     async fn an_unreadable_stats_and_an_unreadable_tsd_are_blind_and_name_why() {
         let f = floor(script(batch_graph(), &quiet(), json!([]))).await.unwrap();
@@ -1540,6 +1569,7 @@ mod tests {
         assert_eq!(sensor(&f, "tsd.cert-pass")["at"], json!(["batch.pass", "batch.CI_RUNNING"]));
     }
 
+    #[test_id(tglq95c)]
     #[test]
     fn a_tsd_reading_is_the_count_how_many_waited_and_the_wait_percentiles() {
         let rows: Vec<Value> = [0, 0, 5, 10].iter().map(|w| json!({"pool": "build", "waited_secs": w, "held_secs": 3})).collect();

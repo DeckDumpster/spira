@@ -131,12 +131,14 @@ mod tests {
         d
     }
 
+    #[test_id(tk7dxkx)]
     #[test]
     fn a_marker_with_the_failing_command_names_its_line_and_command() {
         let d = results(Some("phase=release rc=1 line=712 cmd=cp /x /y\n"), Some("round-vm: PHASE release\n"));
         assert_eq!(name(d.path()).cause, "FAULT phase=release rc=1 line=712 cmd=cp /x /y: the script wrote nothing");
     }
 
+    #[test_id(tqvp7v2)]
     #[test]
     fn a_written_fault_kind_is_the_first_word_of_its_file_and_its_detail_the_rest() {
         let d = TempDir::new();
@@ -144,6 +146,7 @@ mod tests {
         assert_eq!(fs::read_to_string(d.path().join(FAULT_KIND_FILE)).unwrap(), "over-cap guard=suites-cap cap=600s\n");
     }
 
+    #[test_id(tqwzyb9)]
     #[test]
     fn a_testenv_settings_refusal_names_its_reason_its_key_and_ends_the_tail_at_the_refusal() {
         let mut log: Vec<String> = (1..=50).map(|i| format!("round-vm: setup line {i}")).collect();
@@ -164,6 +167,7 @@ mod tests {
         assert!(f.render().contains("settings-key: SPIRA_TESTENV_SCRATCH_ROOT\n"));
     }
 
+    #[test_id(tdih5r0)]
     #[test]
     fn a_script_that_left_no_marker_says_so_and_still_carries_its_log() {
         let d = results(None, Some("round-vm: built the round in 9s\nkilled\nround-vm: PHASE release\n"));
@@ -173,6 +177,7 @@ mod tests {
         assert_eq!(f.settings_key, None);
     }
 
+    #[test_id(tttoxf4)]
     #[test]
     fn without_the_scripts_log_the_launchers_stderr_is_read_and_said_to_be() {
         let d = results(Some("phase=release rc=2\n"), None);
@@ -183,6 +188,7 @@ mod tests {
         );
     }
 
+    #[test_id(t6jylv1)]
     #[test]
     fn missing_evidence_is_itself_named() {
         let d = results(Some("phase=checkout rc=128\n"), None);
@@ -190,6 +196,7 @@ mod tests {
         assert!(name(results(None, None).path()).cause.starts_with("FAULT with no phase marker"));
     }
 
+    #[test_id(t00fsdb)]
     #[test]
     fn a_refusal_whose_batch_line_names_no_key_names_none() {
         let d = results(Some("phase=suites rc=2\n"), Some("batch: cannot read the config\nVERDICT FAULT rc=2 ran=0 reason=settings-refused\n"));

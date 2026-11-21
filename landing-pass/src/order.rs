@@ -128,6 +128,7 @@ mod tests {
         }
     }
 
+    #[test_id(tw0h55b)]
     #[test]
     // covers: UC-landing-merge-queue-04 UC-landing-merge-queue-11
     fn base_fix_then_express_then_rest_each_by_priority_then_age() {
@@ -145,6 +146,7 @@ mod tests {
         );
     }
 
+    #[test_id(tj5od9v)]
     #[test]
     // covers: UC-landing-merge-queue-11
     fn basefix_green_only_for_its_own_repository_and_suite() {
@@ -162,6 +164,7 @@ mod tests {
         assert!(basefail_fix_decision(Some("basefail:spira:test-x.sh"), "spira", outside));
     }
 
+    #[test_id(tvjdlv7)]
     #[test]
     fn basefix_for_a_fence_red_base_checks_the_branch_is_fully_green() {
         // suite='-': the base failed a fence, before any suite ran — there is no single
@@ -178,6 +181,7 @@ mod tests {
         assert!(basefail_fix_decision(Some("basefail:spira:-"), "spira", outside));
     }
 
+    #[test_id(trguth3)]
     #[test]
     fn prior_pass_reads_the_last_record() {
         let t = "gate-run: gate PASS covered suites: a.sh\nx\ngate-run: gate PASS covered suites: a.sh b.sh\n";

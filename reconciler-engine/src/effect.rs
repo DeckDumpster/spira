@@ -116,12 +116,14 @@ mod tests {
         PendingEffect { action: "restart x".into(), metric: "gap".into(), before, acted_at: 100, passes_seen: 0 }
     }
 
+    #[test_id(tefk53a)]
     #[test]
     fn kind_is_the_key_prefix() {
         assert_eq!(kind_of("disk:/var"), "disk");
         assert_eq!(kind_of("release"), "release");
     }
 
+    #[test_id(tv9we0s)]
     #[test]
     fn the_kill_switch_names_kinds_or_everything() {
         let some = vec!["disk".to_string()];
@@ -131,11 +133,13 @@ mod tests {
         assert!(!is_shadowed(&[], "disk"));
     }
 
+    #[test_id(tz82qca)]
     #[test]
     fn a_drop_in_the_metric_is_an_effect() {
         assert_eq!(measure(pending(1.0), 0.0, 3), Outcome::Effect { before: 1.0, after: 0.0 });
     }
 
+    #[test_id(tfzk6io)]
     #[test]
     fn no_drop_is_pending_until_the_pass_budget_is_spent_then_no_effect() {
         let Outcome::Pending(p1) = measure(pending(1.0), 1.0, 3) else { panic!("pass 1 must stay pending") };
@@ -143,11 +147,13 @@ mod tests {
         assert_eq!(measure(p2, 1.0, 3), Outcome::NoEffect { before: 1.0, after: 1.0 });
     }
 
+    #[test_id(tmbaznk)]
     #[test]
     fn a_rise_in_the_metric_is_no_effect_not_effect() {
         assert_eq!(measure(pending(1.0), 2.0, 1), Outcome::NoEffect { before: 1.0, after: 2.0 });
     }
 
+    #[test_id(t97ytzk)]
     #[test]
     fn the_no_effect_body_carries_both_readings() {
         let body = compose_no_effect("disk:/var", &pending(1.0), 1.0, 160, 2);

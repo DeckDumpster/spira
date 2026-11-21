@@ -421,6 +421,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-26
+    #[test_id(tli5xfd)]
     #[test]
     fn a_passing_verify_closes_the_ask_with_a_reason_quoting_the_command() {
         let (next, acts) = decide(&cfg(), &checking("sp-a", "test -f /done", &[]), &checked("sp-a", 0), 0).unwrap();
@@ -433,6 +434,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-26
+    #[test_id(trpj4ht)]
     #[test]
     fn a_failing_verify_leaves_the_ask_open_and_closes_nothing() {
         let (next, acts) = decide(&cfg(), &checking("sp-a", "false", &[]), &checked("sp-a", 1), 0).unwrap();
@@ -441,6 +443,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-26
+    #[test_id(tdzlclw)]
     #[test]
     fn a_closed_ask_withdraws_the_hold_on_each_work_bead_that_is_not_yet_terminal() {
         let snap = Snapshot { asks: vec![Ask { id: "sp-a".into(), works: vec!["sp-live".into(), "sp-landed".into()], cmd: "true".into() }], work_states: BTreeMap::from([("sp-live".into(), "WORKING".into()), ("sp-landed".into(), "LANDED".into())]), ..Snapshot::default() };
@@ -452,6 +455,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-26
+    #[test_id(tzrvaks)]
     #[test]
     fn only_open_non_epic_asks_with_a_verify_line_are_checked_and_open_epics_are_reported() {
         let mut closed = row("sp-closed", "decision", &["needs-x"], "VERIFY: exit 0");
@@ -469,6 +473,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-26
+    #[test_id(tsqp7pp)]
     #[test]
     fn a_verify_that_never_returned_closes_nothing() {
         let timed_out = Input::Outcome { effect: CHECK.into(), ok: false, body: String::new() };
@@ -477,6 +482,7 @@ mod tests {
         assert_eq!(next.asks["sp-a"], Phase::Checking);
     }
 
+    #[test_id(tbw1u9c)]
     #[test]
     fn the_observe_checks_the_open_asks_and_never_reads_the_whole_history() {
         let store = Arc::new(fake::Content::new(vec![ask("sp-open", "open"), ask("sp-done", "closed")]));

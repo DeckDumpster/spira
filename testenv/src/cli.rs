@@ -337,6 +337,7 @@ mod tests {
         }
     }
 
+    #[test_id(tr3ipt6)]
     #[test]
     fn a_share_flag_names_the_share_and_whether_it_is_kept() {
         let k = run(&["--share-keep", "a/b", "b"]).share.unwrap();
@@ -346,6 +347,7 @@ mod tests {
         assert_eq!(run(&["b"]).share, None);
     }
 
+    #[test_id(tthyc18)]
     #[test]
     fn share_publish_parses_and_is_refused_beside_either_share_flag() {
         assert_eq!(run(&["--share-publish", "k", "b"]).share_publish.as_deref(), Some("k"));
@@ -356,18 +358,21 @@ mod tests {
         }
     }
 
+    #[test_id(tar4t5g)]
     #[test]
     fn share_with_share_keep_is_refused_naming_both() {
         let UsageError(lines) = p(&["--share", "k", "--share-keep", "k", "b"]).unwrap_err();
         assert!(lines[0].contains("--share") && lines[0].contains("--share-keep"), "{lines:?}");
     }
 
+    #[test_id(tn9g5al)]
     #[test]
     fn record_is_taken_from_its_flag() {
         assert_eq!(run(&["--record", "p", "b"]).record.as_deref(), Some("p"));
         assert_eq!(run(&["b"]).record, None);
     }
 
+    #[test_id(tvim5a9)]
     #[test]
     fn repeat_reason_is_taken_from_its_flag() {
         assert_eq!(
@@ -377,12 +382,14 @@ mod tests {
         assert_eq!(run(&["b"]).repeat_reason, None);
     }
 
+    #[test_id(t9804tt)]
     #[test]
     fn direct_is_taken_from_its_flag_and_is_off_without_it() {
         assert!(run(&["--direct", "b"]).direct);
         assert!(!run(&["b"]).direct);
     }
 
+    #[test_id(txpxbza)]
     #[test]
     fn defaults_are_parallel_dev_diff() {
         let r = run(&["spira/sp-x"]);
@@ -393,6 +400,7 @@ mod tests {
         assert_eq!(r.repo, None);
     }
 
+    #[test_id(tv66w93)]
     #[test]
     fn round_invocation_parses_and_with_bins_means_release() {
         let r = run(&[
@@ -411,6 +419,7 @@ mod tests {
         );
     }
 
+    #[test_id(txk39qa)]
     #[test]
     fn explicit_profile_wins_over_with_bins() {
         assert_eq!(
@@ -425,6 +434,7 @@ mod tests {
         );
     }
 
+    #[test_id(tmfjhvi)]
     #[test]
     fn stdin_suites_and_equals_forms() {
         let r = run(&["--mode=serial", "--suites=-", "HEAD"]);
@@ -432,12 +442,14 @@ mod tests {
         assert_eq!(r.suites, Some(SuitesArg::Stdin));
     }
 
+    #[test_id(tx5z2px)]
     #[test]
     fn suites_twice_is_refused() {
         let e = p(&["--suites", "a", "--suites=b", "x"]).unwrap_err();
         assert_eq!(e.0, vec!["batch: --suites may only be given once"]);
     }
 
+    #[test_id(tdd6n4r)]
     #[test]
     fn unknown_option_names_it_and_prints_usage() {
         let e = p(&["--frobnicate", "x"]).unwrap_err();
@@ -445,6 +457,7 @@ mod tests {
         assert_eq!(e.0[1], USAGE);
     }
 
+    #[test_id(t62vhav)]
     #[test]
     fn bad_mode_and_missing_branch_are_usage_errors() {
         assert!(p(&["--mode", "fast", "x"]).unwrap_err().0[0]
@@ -453,6 +466,7 @@ mod tests {
         assert!(p(&["--mode"]).is_err());
     }
 
+    #[test_id(tuehm0i)]
     #[test]
     fn report_takes_an_optional_number() {
         assert_eq!(p(&["--report"]).unwrap(), Invocation::Report(20));
@@ -461,6 +475,7 @@ mod tests {
         assert_eq!(p(&["--report", "HEAD"]).unwrap(), Invocation::Report(20));
     }
 
+    #[test_id(t7rbmfr)]
     #[test]
     fn deadline_is_optional_and_must_be_positive_seconds() {
         assert_eq!(run(&["b"]).deadline, None);
@@ -479,6 +494,7 @@ mod tests {
         assert!(p(&["--deadline"]).is_err());
     }
 
+    #[test_id(tnbxzs5)]
     #[test]
     fn artifacts_is_optional_and_excludes_a_build_profile() {
         assert_eq!(run(&["b"]).artifacts, None);
@@ -502,6 +518,7 @@ mod tests {
         assert!(p(&["--artifacts"]).is_err());
     }
 
+    #[test_id(tmjo9kt)]
     #[test]
     fn tests_takes_comma_separated_test_names_and_refuses_anything_else() {
         assert_eq!(run(&["b"]).tests, None);
@@ -517,11 +534,13 @@ mod tests {
         assert!(p(&["--tests"]).is_err());
     }
 
+    #[test_id(tkn571w)]
     #[test]
     fn profile_names_are_checked() {
         assert!(p(&["--profile", "../x", "b"]).is_err());
     }
 
+    #[test_id(to81nje)]
     #[test]
     fn crates_takes_comma_separated_names_and_is_refused_with_direct() {
         assert_eq!(run(&["--crates", "mail,queue", "br"]).crates, Some(vec!["mail".to_string(), "queue".to_string()]));
@@ -532,6 +551,7 @@ mod tests {
         assert!(e.0[0].contains("--crates") && e.0[0].contains("--direct"), "{e:?}");
     }
 
+    #[test_id(tgsmg33)]
     #[test]
     fn an_unknown_crate_is_refused_naming_it() {
         let named = ["mail".to_string(), "nosuch".to_string()];

@@ -144,6 +144,7 @@ mod tests {
         e.run_until_idle().unwrap();
     }
 
+    #[test_id(t2yl1iw)]
     #[test]
     fn a_look_through_a_revision_is_not_asked_for_again_below_it() {
         let (mut e, clock) = engine();
@@ -154,6 +155,7 @@ mod tests {
         assert_eq!(looks(&e).last(), Some(&Pass { through: Some(41), ..Pass::default() }));
     }
 
+    #[test_id(tmigjs2)]
     #[test]
     fn a_failed_pass_leaves_the_revision_so_the_same_changes_are_asked_for_again() {
         let (mut e, clock) = engine();
@@ -167,6 +169,7 @@ mod tests {
         assert!(e.pending_effects().iter().any(|p| p.spec.name == RUN), "the failed run is asked for again");
     }
 
+    #[test_id(t6b5o4l)]
     #[test]
     fn a_moved_revision_with_no_keys_is_carried_without_a_run() {
         let (mut e, _clock) = engine();
@@ -175,6 +178,7 @@ mod tests {
         assert_eq!(carried::<Carry>(e.projection(), &StreamKey(STREAM.into()), STATE), Carry { through: Some(41) });
     }
 
+    #[test_id(tntq209)]
     #[test]
     fn the_revision_never_moves_back() {
         let carry = Carry { through: Some(50) };

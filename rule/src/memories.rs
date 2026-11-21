@@ -88,6 +88,7 @@ mod tests {
 
     const FIX3: &str = r#"{"law-rm-alpha":"Alpha statute body. This is the full text of alpha.","law-rm-beta":"Beta statute body. This is the full text of beta.","law-rm-gamma":"Gamma statute body. This is the full text of gamma."}"#;
 
+    #[test_id(tm140sm)]
     #[test]
     fn core_slug_renders_in_full_others_as_index_slugs() {
         let out = render(FIX3, "law-rm-", 120_000, "law-rm-alpha", "h");
@@ -97,6 +98,7 @@ mod tests {
         assert!(!out.contains("Beta statute body"));
     }
 
+    #[test_id(tj0pj1i)]
     #[test]
     fn budget_fallback_demotes_to_index_rather_than_vanishing() {
         let out = render(FIX3, "law-rm-", 40, "law-rm-alpha,law-rm-beta", "h");
@@ -104,6 +106,7 @@ mod tests {
         assert!(!out.contains("Alpha statute body"));
     }
 
+    #[test_id(tt33rto)]
     #[test]
     fn mixed_namespaces_each_get_their_own_retrieval_command() {
         let fix = r#"{"law-rm-alpha":"Alpha statute body.","sop-rm-widget":"Widget runbook body."}"#;
@@ -114,11 +117,13 @@ mod tests {
         assert!(!law_section.contains("sop-rm-widget"));
     }
 
+    #[test_id(tjlqn5t)]
     #[test]
     fn garbage_json_renders_empty() {
         assert_eq!(render("garbage", "law-", 1, "", "h"), "");
     }
 
+    #[test_id(tcvtyif)]
     #[test]
     fn split_separates_on_the_task_marker() {
         let (sys, task) = split("STATUTES", "system part\n<!-- task -->\ntask part");
@@ -126,6 +131,7 @@ mod tests {
         assert_eq!(task, "task part");
     }
 
+    #[test_id(tu5h6mg)]
     #[test]
     fn split_with_no_marker_is_entirely_the_task() {
         let (sys, task) = split("", "just a task, no split");

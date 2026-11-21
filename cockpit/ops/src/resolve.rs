@@ -296,6 +296,7 @@ mod tests {
         }
     }
 
+    #[test_id(tb85ivd)]
     #[test]
     fn a_work_bead_is_no_ask_for_a_label_another_bead_in_its_show_carries() {
         let c = DependsOnAnAsk { closed: Default::default() };
@@ -304,6 +305,7 @@ mod tests {
         assert!(!c.closed.get());
     }
 
+    #[test_id(tvsi6ug)]
     #[test]
     fn an_ask_with_no_work_bead_label_resolves_cleanly_through_the_ask_machine() {
         let c = MachineAsk { code: 0, closed: Default::default() };
@@ -312,6 +314,7 @@ mod tests {
         assert_eq!(*c.closed.borrow(), vec![("sp-ask1".to_string(), "statute question answered in the pane".to_string())]);
     }
 
+    #[test_id(td1apej)]
     #[test]
     fn an_ask_row_left_open_fails_the_resolve_and_a_closed_one_is_quiet() {
         let Outcome::Failed(s) = run("sp-ask1", "moot", Path::new("db"), &MachineAsk { code: 2, closed: Default::default() }) else { panic!() };
@@ -319,11 +322,13 @@ mod tests {
         assert!(matches!(run("sp-ask1", "moot", Path::new("db"), &MachineAsk { code: 3, closed: Default::default() }), Outcome::Closed(_)));
     }
 
+    #[test_id(toqd0g4)]
     #[test]
     fn an_ask_bead_with_a_lifecycle_row_still_closes() {
         assert!(matches!(run("sp-a1", "moot", Path::new("db"), &AskRowFake), Outcome::Closed(_)));
     }
 
+    #[test_id(t0cbcsc)]
     #[test]
     fn a_work_bead_is_refused_naming_reply_and_nothing_is_written() {
         let c = WorkFake { closed: Default::default() };
@@ -334,6 +339,7 @@ mod tests {
 
     /// THE GAP THIS CLOSES (sp-v62vn follow-up): resolving an ask about a work bead —
     /// the question closed without the operator's answer — withdraws that bead's ask hold.
+    #[test_id(tongh1h)]
     #[test]
     fn resolving_an_ask_about_a_work_bead_withdraws_its_ask_hold() {
         let c = AskFake { labels: r#""overseer","work-bead:sp-w1""#, code: 0, withdrawn: Default::default() };
@@ -342,6 +348,7 @@ mod tests {
         assert!(s.contains("withdrew the ask hold on sp-w1"), "{s}");
     }
 
+    #[test_id(t8m3usc)]
     #[test]
     fn a_refused_withdraw_is_quiet_and_a_cannot_tell_is_reported() {
         let c = AskFake { labels: r#""work-bead:sp-w1""#, code: 3, withdrawn: Default::default() };
@@ -355,6 +362,7 @@ mod tests {
         assert!(c.withdrawn.borrow().is_empty());
     }
 
+    #[test_id(tuoikls)]
     #[test]
     fn usage_error_when_id_or_reason_missing() {
         assert!(usage_error("", "why"));
@@ -362,6 +370,7 @@ mod tests {
         assert!(!usage_error("sp-1", "why"));
     }
 
+    #[test_id(tzm0309)]
     #[test]
     fn success_message_names_id_and_db_basename() {
         let c = Fake { success: true, combined: "" };
@@ -372,6 +381,7 @@ mod tests {
         }
     }
 
+    #[test_id(turdg7p)]
     #[test]
     fn failure_message_includes_bds_combined_output() {
         // The schema-mismatch scar this guards: bd's refusal text must survive, not just

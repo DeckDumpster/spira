@@ -1,6 +1,9 @@
 //! gate — the certification gate (DESIGN.md). The branch is judged merged onto its landing
 //! ref; a branch that does not merge is red (FAIL reason=no-rebase), never NO_VERDICT.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod basecache;
 pub mod buildtiming;
 pub mod cert;

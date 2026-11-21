@@ -4,6 +4,8 @@
 //! to `Command::new`, to spira-config's `bounded`/`bounded_for`, or as the program a
 //! `timeout` child runs.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::Path;
 
 const BANNED: &[&str] = &["spira-lc", "bd", "bdq", "bash", "systemctl", "systemd-run", "tsd-write", "mail", "queue", "pgrep"];
@@ -57,6 +59,7 @@ fn walk(dir: &Path, out: &mut Vec<String>) {
     }
 }
 
+#[test_id(t93hhgz)]
 #[test]
 fn no_unmarked_spira_fork_edge_remains() {
     let mut found = Vec::new();
@@ -64,6 +67,7 @@ fn no_unmarked_spira_fork_edge_remains() {
     assert!(found.is_empty(), "unmarked Spira→Spira fork edges:\n{}", found.join("\n"));
 }
 
+#[test_id(t0rpo44)]
 #[test]
 fn the_scan_catches_a_planted_site_and_passes_a_marked_one() {
     let q = '"';

@@ -196,6 +196,7 @@ mod tests {
         Store::new(c, 1_000)
     }
 
+    #[test_id(t99rz9l)]
     #[test]
     fn the_scan_returns_the_audits_at_or_after_the_floor_and_says_it_reached_it() {
         let s = store();
@@ -213,6 +214,7 @@ mod tests {
         assert!(later.iter().all(|l| l.0 != "sp-a"));
     }
 
+    #[test_id(tx0lcp3)]
     #[test]
     fn a_limited_read_from_zero_keeps_the_lowest_imported_seqs_across_history_pages() {
         use serde_json::json;
@@ -221,7 +223,7 @@ mod tests {
         let audit = |n: u64| json!({ "machine": "bead", "lc_key": format!("sp-{n}"), "event": "Claim", "expect": "READY", "from_state": "READY", "to_state": "WORKING", "applied": true, "refusal": null, "evidence": {}, "actor": "a", "at": 1 });
         let total = PAGE as u64 + 5;
         for chunk in (1..=total).rev().collect::<Vec<_>>().chunks(100) {
-            let txn = chunk.iter().fold(Txn::new(), |t, n| t.put(&super::super::keys::history_entry(&format!("sp-{:04}", total - n), 0, "import"), Object::new(json!({ "seq": n, "audit": audit(*n) }))));
+            let txn = chunk.iter().fold(Txn::new(), |t, n| t.put(&super::super::super::keys::history_entry(&format!("sp-{:04}", total - n), 0, "import"), Object::new(json!({ "seq": n, "audit": audit(*n) }))));
             s.contract().txn(&txn, &Request::new(&format!("import-{}", chunk[0]), "t", "t")).unwrap();
         }
         let first = s.audits_after_upto(0, 3).unwrap().audits;
@@ -230,9 +232,10 @@ mod tests {
         assert_eq!(all.iter().map(|l| l.rev).collect::<Vec<_>>(), (1..=total).collect::<Vec<_>>());
     }
 
+    #[test_id(tjm4yf7)]
     #[test]
     fn a_limited_read_from_zero_reads_the_imported_rows_through_the_seq_index_and_stops_at_its_limit() {
-        use super::super::store::counting::Counting;
+        use super::super::super::store::counting::Counting;
         use serde_json::json;
         use state_store::{Object, Txn};
         let c = Contract::open(Counting::default(), Ports::virtual_clock(&VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
@@ -244,18 +247,19 @@ mod tests {
                 s.contract().txn(&txn, &Request::new(&format!("{tag}-{n}"), "t", "t")).unwrap();
             }
         };
-        put((1..=300u64).map(|n| (super::super::keys::history_entry(&format!("imp-{n:04}"), 0, "import"), json!({ "seq": n, "audit": audit(n) }))).collect(), "import");
-        put((0..3_000u64).map(|n| (super::super::keys::history_entry(&format!("txn-{n:05}"), 7, "claim"), json!({ "audit": audit(n) }))).collect(), "txn");
+        put((1..=300u64).map(|n| (super::super::super::keys::history_entry(&format!("imp-{n:04}"), 0, "import"), json!({ "seq": n, "audit": audit(n) }))).collect(), "import");
+        put((0..3_000u64).map(|n| (super::super::super::keys::history_entry(&format!("txn-{n:05}"), 7, "claim"), json!({ "audit": audit(n) }))).collect(), "txn");
         s.contract().backend().take();
         let got = s.audits_after_upto(0, 50).unwrap().audits;
         assert_eq!(got.iter().map(|l| l.rev).collect::<Vec<_>>(), (1..=50).collect::<Vec<_>>());
         let reads = s.contract().backend().take();
-        assert!(reads.iter().all(|(k, p, _)| !(*k == "range" && p.starts_with(super::super::keys::HISTORY))), "{reads:?}");
+        assert!(reads.iter().all(|(k, p, _)| !(*k == "range" && p.starts_with(super::super::super::keys::HISTORY))), "{reads:?}");
         let indexed: usize = reads.iter().filter(|(k, _, _)| *k == "range_by_seq").map(|(_, _, n)| n).sum();
         assert!(indexed > 0 && indexed <= 50 + PAGE, "{reads:?}");
         assert!(reads.iter().all(|(k, _, _)| *k != "range"), "a filled limit reads no events: {reads:?}");
     }
 
+    #[test_id(tww8q1r)]
     #[test]
     fn audits_after_a_revision_skip_it_and_everything_before() {
         let s = store();

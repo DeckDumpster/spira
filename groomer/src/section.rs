@@ -186,6 +186,7 @@ mod claimable_ready_tests {
         }
     }
 
+    #[test_id(tgdjs0z)]
     #[test]
     fn the_count_is_the_claim_views_claimable_rows_that_a_rune_takes() {
         let view = View(json!({"beads": [
@@ -197,6 +198,7 @@ mod claimable_ready_tests {
         assert_eq!(claimable_ready(&view), Ok(1));
     }
 
+    #[test_id(teqpoi2)]
     #[test]
     fn an_answer_with_no_beads_is_an_error_not_zero() {
         assert!(claimable_ready(&View(json!({"cannot_tell": "x"}))).is_err());
@@ -219,6 +221,7 @@ mod filed_transitions_tests {
         }
     }
 
+    #[test_id(tdb8xva)]
     #[test]
     fn the_filings_are_read_as_pages_by_cursor_never_a_whole_terminal_list() {
         let lc = Pages(Mutex::new(Vec::new()));

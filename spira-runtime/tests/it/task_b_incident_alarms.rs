@@ -61,11 +61,13 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(t8h78bh)]
 #[test]
 fn t1_registered_boots_and_arms_a_60s_tick() {
     t::t1_registered_and_boots::<H>(SET, MIN);
 }
 
+#[test_id(tg4sor9)]
 #[test]
 fn t2_a_fresh_quiet_world_is_the_probe_alone() {
     let h = t::handler::<H>(SET);
@@ -74,6 +76,7 @@ fn t2_a_fresh_quiet_world_is_the_probe_alone() {
     t::t2_silent::<H>(SET, &json(&idle(0)));
 }
 
+#[test_id(t4f53y5)]
 #[test]
 fn t3_the_deadman_pages_and_floors_move_and_a_second_floor_ask_is_refused() {
     let h = t::handler::<H>(SET);
@@ -101,12 +104,14 @@ fn t3_the_deadman_pages_and_floors_move_and_a_second_floor_ask_is_refused() {
     assert!(c.floors.is_empty(), "a cleared floor drops its row");
 }
 
+#[test_id(tg24l6y)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_nothing() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/b/incident_alarms.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(tqyh2q5)]
 #[test]
 fn t5_a_no_lever_pass_pages_and_an_observability_halt_only_waits() {
     let h = t::handler::<H>(SET);
@@ -122,6 +127,7 @@ fn t5_a_no_lever_pass_pages_and_an_observability_halt_only_waits() {
     assert!(!names(&acts).contains(&task::PAGE) && !names(&acts).contains(&task::HEARTBEAT), "{acts:?}");
 }
 
+#[test_id(tb7l4b2)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rig = t::rig::<H>(1, SET, &json(&idle(0)));
@@ -129,11 +135,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     assert!(rows.iter().any(|k| k == "knob_inited"), "{rows:?}");
 }
 
+#[test_id(txal9op)]
 #[test]
 fn a_boot_repeats_no_knob_init_and_misses_none() {
     t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![json(&idle(0))], |_| {});
 }
 
+#[test_id(t4160o1)]
 #[test]
 fn a_boot_does_not_page_again_inside_the_page_window() {
     let mut no_lever = idle(0);

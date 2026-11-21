@@ -133,6 +133,7 @@ mod tests {
         WritebackInput { config_write: false, home, prod, repo, xdg_spira_dir: xdg.to_path_buf() }
     }
 
+    #[test_id(tkiyobb)]
     #[test]
     fn config_write_escape_hatch_leaves_the_candidate_alone() {
         let d = testkit::TempDir::new("writeback-config-write");
@@ -142,6 +143,7 @@ mod tests {
         assert_eq!(writeback(&candidate, &i), candidate);
     }
 
+    #[test_id(twlbi5b)]
     #[test]
     fn single_checkout_home_equals_prod_leaves_the_candidate_alone() {
         let d = testkit::TempDir::new("writeback-single-checkout");
@@ -150,6 +152,7 @@ mod tests {
         assert_eq!(writeback(&candidate, &i), candidate);
     }
 
+    #[test_id(to6lsot)]
     #[test]
     fn an_unprivileged_worktree_redirects_under_a_writable_repo() {
         let home = testkit::TempDir::new("writeback-wt-home");
@@ -160,6 +163,7 @@ mod tests {
         assert_eq!(writeback(&candidate, &i), repo.join("spira.toml"));
     }
 
+    #[test_id(tz0e2nq)]
     #[test]
     fn empty_prod_still_redirects_rather_than_matching_home() {
         let home = testkit::TempDir::new("writeback-empty-prod-home");
@@ -171,6 +175,7 @@ mod tests {
         assert_eq!(writeback(&candidate, &i), repo.join("spira.toml"));
     }
 
+    #[test_id(tuzaqe0)]
     #[test]
     fn unwritable_repo_falls_further_to_xdg() {
         // A mode-0555 directory does not stop root writing it, so as root this case cannot
@@ -190,6 +195,7 @@ mod tests {
         assert_eq!(got, xdg.join("spira.toml"));
     }
 
+    #[test_id(ts4wmo9)]
     #[test]
     fn both_repo_and_xdg_unwritable_falls_to_a_writable_scratch_file() {
         // A mode-0555 directory does not stop root writing it, so as root this case cannot
@@ -211,6 +217,7 @@ mod tests {
         assert!(got.exists(), "the double-unwritable fallback is itself a writable, existing path: {got:?}");
     }
 
+    #[test_id(tq3g13v)]
     #[test]
     fn redirect_keeps_the_candidates_basename() {
         let home = testkit::TempDir::new("writeback-basename-home");

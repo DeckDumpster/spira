@@ -160,6 +160,7 @@ mod tests {
         serde_json::from_str::<Vec<Value>>(out).unwrap().iter().map(|b| b["id"].as_str().unwrap().to_string()).collect()
     }
 
+    #[test_id(tlf8vh5)]
     #[test]
     fn list_hides_closed_unless_asked_and_ands_labels() {
         assert_eq!(ids(&answer(FX, "list", &s(&["--json"])).unwrap()), ["a", "c"]);
@@ -171,6 +172,7 @@ mod tests {
         assert!(ids(&answer(FX, "list", &s(&["--all", "--closed-after", "2026-02-01"])).unwrap()).is_empty());
     }
 
+    #[test_id(tjdb5mb)]
     #[test]
     fn show_returns_requested_ids_in_order_and_object_fixtures_split_keys() {
         assert_eq!(ids(&answer(FX, "show", &s(&["c", "--json", "a", "zz"])).unwrap()), ["c", "a"]);
@@ -179,6 +181,7 @@ mod tests {
         assert_eq!(answer(obj, "memories", &[]).unwrap().trim(), r#"{"m":1}"#);
     }
 
+    #[test_id(t7bu1k7)]
     #[test]
     fn unsimulated_shapes_and_bad_fixtures_fail() {
         assert_eq!(answer(FX, "list", &s(&["--type", "x"])).unwrap_err().0, 1);

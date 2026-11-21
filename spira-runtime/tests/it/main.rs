@@ -10,6 +10,8 @@
 //! for a whole `run_brief`, and a test of this binary that reads them unlocked would see the swap
 //! (spira-lint `env-edit-shared-binary`).
 
+#[macro_use]
+extern crate spira_test_id;
 mod boot_stagger;
 mod check_config;
 mod effects_runnable;

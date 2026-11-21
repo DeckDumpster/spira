@@ -2,6 +2,9 @@
 //! lifecycle-store implementation, the scheduler, the in-process executor and the conformance
 //! suite every executor must pass.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod bridge;
 pub mod calendar;
 pub mod conformance;

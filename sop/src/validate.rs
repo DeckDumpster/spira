@@ -94,6 +94,7 @@ mod tests {
         v.into_iter().map(|x| x.0).collect()
     }
 
+    #[test_id(tx7f76p)]
     #[test]
     fn empty_text_is_one_violation() {
         assert_eq!(msgs(validate("", 250)), vec!["empty SOP"]);
@@ -101,6 +102,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-44
+    #[test_id(t2hrvv6)]
     #[test]
     fn missing_fields_are_named_individually() {
         let v = msgs(validate("SYMPTOM: it broke", 250));
@@ -109,6 +111,7 @@ mod tests {
         assert!(!v.iter().any(|m| m.contains("SYMPTOM")));
     }
 
+    #[test_id(t65h5qf)]
     #[test]
     fn a_complete_sop_is_clean() {
         let text = "SYMPTOM: x\nCHECK: y\nFIX: z\n";
@@ -116,6 +119,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-44
+    #[test_id(tr3w07e)]
     #[test]
     fn a_bad_match_regex_is_caught() {
         let text = "MATCH: [unterminated\nSYMPTOM: x\nCHECK: y\nFIX: z\n";
@@ -123,6 +127,7 @@ mod tests {
         assert!(v.iter().any(|m| m.contains("not a valid extended regex")), "{v:?}");
     }
 
+    #[test_id(tzuvutb)]
     #[test]
     fn a_good_match_regex_is_not_flagged() {
         let text = "MATCH: disk.*full\nSYMPTOM: x\nCHECK: y\nFIX: z\n";
@@ -130,6 +135,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-44
+    #[test_id(tqg9v56)]
     #[test]
     fn metric_shape_rules() {
         let ok = "METRIC: SP_UNADOPTED unsent\nSYMPTOM: x\nCHECK: y\nFIX: z\n";
@@ -146,6 +152,7 @@ mod tests {
         }
     }
 
+    #[test_id(tj6bdvw)]
     #[test]
     fn run_rules_are_enforced_by_the_write_validator() {
         let ok = "MATCH: x\nSYMPTOM: s\nCHECK: c\nFIX: f\nRUN: tool {bead}\nDEADLINE: 30\n";
@@ -157,6 +164,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-44
+    #[test_id(tq8vsw7)]
     #[test]
     fn word_cap_is_enforced() {
         let long = format!("SYMPTOM: x\nCHECK: y\nFIX: {}\n", "word ".repeat(300));
@@ -164,6 +172,7 @@ mod tests {
         assert!(v.iter().any(|m| m.contains("cap is 250")), "{v:?}");
     }
 
+    #[test_id(tpbxzcy)]
     #[test]
     fn match_line_extracts_trimmed_value() {
         assert_eq!(match_line("MATCH:   disk full  \nSYMPTOM: x"), Some("disk full".to_string()));

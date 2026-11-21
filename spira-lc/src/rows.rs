@@ -8,6 +8,7 @@ pub fn escape(s: &str) -> String {
 mod escape_tests {
     use super::escape;
 
+    #[test_id(t9t798q)]
     #[test]
     fn hostile_text_stays_inside_its_literal() {
         let text = r"it's a \ ; DROP TABLE x; -- \' ''";
@@ -24,6 +25,7 @@ mod escape_tests {
         assert_eq!(back, text);
     }
 
+    #[test_id(t570vvu)]
     #[test]
     fn only_one_escaper_exists_in_the_crate() {
         let dir = testkit::manifest_dir().join("src");

@@ -267,6 +267,7 @@ mod tests {
         }
     }
 
+    #[test_id(ta9etw4)]
     #[test]
     fn key_path_is_absolute_for_root_and_other_users() {
         assert_eq!(authorized_keys_path("root"), format!("{}/.ssh/authorized_keys", system_paths::ROOT_HOME));
@@ -275,6 +276,7 @@ mod tests {
         assert_eq!(authorized_keys_path("ci"), format!("{ci}/.ssh/authorized_keys"));
     }
 
+    #[test_id(tfwt8es)]
     #[test]
     fn key_delivery_creates_ssh_dir_700_then_writes_the_absolute_path() {
         let p = FakeProvider::new();
@@ -290,6 +292,7 @@ mod tests {
         assert_eq!(p.file(&vm.handle, &format!("{}/.ssh/authorized_keys", system_paths::ROOT_HOME)).as_deref(), Some("ssh-ed25519 AAAA host\n"));
     }
 
+    #[test_id(t73xbcj)]
     #[test]
     fn provision_returns_the_guest_address_and_names_the_vm_round_id() {
         let p = FakeProvider::new();
@@ -300,6 +303,7 @@ mod tests {
         assert_eq!(vm.addr, format!("10.0.0.{}", vm.handle));
     }
 
+    #[test_id(tbhd13l)]
     #[test]
     fn every_failure_after_clone_destroys_the_vm() {
         for step in [Step::Clone, Step::Start, Step::Addr, Step::Exec, Step::FileWrite] {
@@ -312,6 +316,7 @@ mod tests {
         }
     }
 
+    #[test_id(t6rd5pu)]
     #[test]
     fn a_vm_that_will_not_die_is_reported_doomed_not_forgotten() {
         let p = FakeProvider::new();
@@ -322,6 +327,7 @@ mod tests {
         assert!(e.reason.contains("did not start"), "{}", e.reason);
     }
 
+    #[test_id(tyzx5c9)]
     #[test]
     fn nextid_failure_names_the_api() {
         let p = FakeProvider::new();
@@ -330,6 +336,7 @@ mod tests {
         assert!(e.reason.contains("API unreachable"), "{}", e.reason);
     }
 
+    #[test_id(tpmnqtt)]
     #[test]
     fn destroy_is_verified_and_a_gone_vmid_is_success() {
         let p = FakeProvider::new();
@@ -340,6 +347,7 @@ mod tests {
         destroy_verified(&p, &vm.handle, t).unwrap();
     }
 
+    #[test_id(tjshze8)]
     #[test]
     fn destroy_that_leaves_the_vm_listed_is_an_error() {
         let p = FakeProvider::new();
@@ -349,6 +357,7 @@ mod tests {
         assert!(matches!(e, DestroyError::Failed(ref m) if m.contains("still present")), "{e:?}");
     }
 
+    #[test_id(tba4rs3)]
     #[test]
     fn destroy_refuses_a_vm_without_our_tag_under_a_round_name() {
         let p = FakeProvider::new();
@@ -362,6 +371,7 @@ mod tests {
         assert_eq!(p.count("destroy"), 0);
     }
 
+    #[test_id(tfq8qyg)]
     #[test]
     fn destroy_refuses_a_vm_not_named_round_id() {
         let p = FakeProvider::new();
@@ -371,6 +381,7 @@ mod tests {
         assert_eq!(p.name("9000").as_deref(), Some("ci-template"));
     }
 
+    #[test_id(tpfrwer)]
     #[test]
     fn a_clone_that_lost_the_nextid_race_retries_on_a_fresh_id_and_spares_the_winner() {
         let p = FakeProvider::new();
@@ -383,6 +394,7 @@ mod tests {
         assert_eq!(p.name("100").as_deref(), Some("someone-else"));
     }
 
+    #[test_id(t569mit)]
     #[test]
     fn a_clone_that_keeps_losing_the_race_gives_up_after_a_bounded_number_of_ids() {
         let p = FakeProvider::new();
@@ -395,6 +407,7 @@ mod tests {
         assert_eq!(p.name("100").as_deref(), Some("someone-else"));
     }
 
+    #[test_id(tre5fc5)]
     #[test]
     fn a_clone_refused_for_another_reason_is_not_retried() {
         let p = FakeProvider::new();

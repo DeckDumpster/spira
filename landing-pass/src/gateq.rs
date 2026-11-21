@@ -484,6 +484,7 @@ mod tests {
         Done { job: job.clone(), run: GateRun::parse(1, CAP.into()), started_ms: 1, finished_ms: 2001, gate: String::new() }
     }
 
+    #[test_id(tdj6dxf)]
     #[test]
     fn pending_lists_inbox_and_slot_claims_and_leaves_an_unparsable_file_in_place() {
         let d = tmpdir("pending");
@@ -501,6 +502,7 @@ mod tests {
         assert!(!d.join("gate-worker/refused").exists());
     }
 
+    #[test_id(tsg7zxm)]
     #[test]
     fn a_recorded_red_verdict_gives_the_failing_step_and_line_and_an_absent_one_gives_none() {
         let d = tmpdir("failing-at");
@@ -512,6 +514,7 @@ mod tests {
         assert_eq!(q.failing_at("r", "spira/b", "other-tip"), None);
     }
 
+    #[test_id(to5q861)]
     #[test]
     fn a_first_cap_death_goes_back_to_the_inbox_behind_every_other_job() {
         let d = tmpdir("settle-first");
@@ -534,6 +537,7 @@ mod tests {
         Done { job: job.clone(), run: GateRun::parse(75, STALL.into()), started_ms: 1, finished_ms: 2001, gate: String::new() }
     }
 
+    #[test_id(t40spe9)]
     #[test]
     fn a_death_at_an_unchanged_tip_while_another_gate_runs_is_filed_not_queued() {
         let d = tmpdir("settle-busy");
@@ -546,6 +550,7 @@ mod tests {
         assert_eq!(q.find("r", "spira/sp-a", "t1"), Some(Where::Done));
     }
 
+    #[test_id(tcbmewt)]
     #[test]
     fn a_build_stall_alone_is_queued_again_once() {
         let d = tmpdir("settle-stall");
@@ -556,6 +561,7 @@ mod tests {
         assert_eq!(q.find("r", "spira/sp-a", "t1"), Some(Where::Inbox));
     }
 
+    #[test_id(t8gydd9)]
     #[test]
     fn a_second_verdictless_run_of_one_tip_holds_the_bead_with_one_line_naming_tip_reason_and_both_runs() {
         let d = tmpdir("settle-hold");
@@ -572,6 +578,7 @@ mod tests {
         assert_eq!(q.find("r", "spira/sp-a", "t1"), Some(Where::Done));
     }
 
+    #[test_id(tg4blt7)]
     #[test]
     fn a_deadline_or_phase_cap_no_verdict_is_filed_never_queued_again() {
         let d = tmpdir("settle-deadline");
@@ -587,6 +594,7 @@ mod tests {
         }
     }
 
+    #[test_id(ts6ofdd)]
     #[test]
     fn a_second_cap_death_is_filed_naming_both_runs_and_a_pass_is_filed_as_it_is() {
         let d = tmpdir("settle-second");
@@ -611,6 +619,7 @@ mod tests {
         Done { job: job.clone(), run: GateRun::parse(0, "ok".into()), started_ms: 1, finished_ms: 2, gate: String::new() }
     }
 
+    #[test_id(tny65ng)]
     #[test]
     fn a_verdict_filed_by_another_gate_is_not_this_gates_to_replay_and_the_tip_is_queued_again() {
         let dir = tmpdir("gq-gate");
@@ -627,6 +636,7 @@ mod tests {
         assert!(new.peek_done("r", "spira/sp-1", "t1").is_none());
     }
 
+    #[test_id(t0c2gig)]
     #[test]
     fn forgetting_a_done_verdict_lets_the_same_tip_be_queued() {
         let dir = tmpdir("gq-gate");
@@ -640,6 +650,7 @@ mod tests {
         assert!(q.enqueue(&job).unwrap());
     }
 
+    #[test_id(tyrecrl)]
     #[test]
     fn enqueue_is_idempotent_per_tip_and_replaces_a_moved_tip() {
         let d = tmpdir("gq1");
@@ -652,6 +663,7 @@ mod tests {
         assert_eq!(q.queued().iter().map(|j| j.tip.as_str()).collect::<Vec<_>>(), vec!["bbb"]);
     }
 
+    #[test_id(txw9lli)]
     #[test]
     fn a_p0_queued_after_a_p2_is_claimed_first() {
         let d = tmpdir("gq-pri");
@@ -661,6 +673,7 @@ mod tests {
         assert_eq!(q.claim(0).unwrap().bead, "sp-p0");
     }
 
+    #[test_id(tfdurdc)]
     #[test]
     fn an_express_job_is_claimed_before_an_older_lower_priority_number() {
         let d = tmpdir("gq-express");
@@ -670,6 +683,7 @@ mod tests {
         assert_eq!(q.claim(0).unwrap().bead, "sp-x");
     }
 
+    #[test_id(tuwn4k3)]
     #[test]
     fn a_base_fix_still_ranks_above_an_express_job() {
         let d = tmpdir("gq-fix-express");
@@ -679,6 +693,7 @@ mod tests {
         assert_eq!(q.claim(0).unwrap().bead, "sp-f");
     }
 
+    #[test_id(t7zqxi9)]
     #[test]
     fn a_job_file_without_express_still_parses() {
         let j = Job::new("r", "spira/sp-a", "sp-a", "t", false);
@@ -687,6 +702,7 @@ mod tests {
         assert!(!serde_json::from_value::<Job>(v).unwrap().express);
     }
 
+    #[test_id(t35znuh)]
     #[test]
     fn a_p0_in_a_busy_repo_is_claimed_before_a_p2_in_an_idle_repo() {
         let d = tmpdir("gq-busy-p0");
@@ -698,6 +714,7 @@ mod tests {
         assert_eq!(q.claim(1).unwrap().bead, "a2");
     }
 
+    #[test_id(tt2kobk)]
     #[test]
     fn a_free_slot_goes_to_the_repo_holding_fewest_even_behind_older_jobs() {
         let d = tmpdir("gq-fair");
@@ -711,6 +728,7 @@ mod tests {
         assert_eq!(q.claim(2).unwrap().repo, "A");
     }
 
+    #[test_id(tq17r2l)]
     #[test]
     fn all_slots_held_by_a_repo_still_yield_to_a_queued_other_repo() {
         let d = tmpdir("gq-fair2");
@@ -724,6 +742,7 @@ mod tests {
         assert_eq!(q.claim(2).unwrap().repo, "B");
     }
 
+    #[test_id(tql3jlk)]
     #[test]
     fn claim_takes_base_fixes_first_then_oldest_and_a_verdict_is_taken_once() {
         let d = tmpdir("gq2");
@@ -744,6 +763,7 @@ mod tests {
         assert!(q.take_done("r", "spira/sp-1", "t1").is_none());
     }
 
+    #[test_id(to34626)]
     #[test]
     fn recover_returns_a_dead_workers_claim_and_garbage_is_refused() {
         let d = tmpdir("gq3");
@@ -758,6 +778,7 @@ mod tests {
         assert!(d.join("gate-worker/refused/junk.json").exists());
     }
 
+    #[test_id(tcmzwp9)]
     #[test]
     fn two_slots_claim_the_same_job_only_once() {
         let d = tmpdir("gq4");
@@ -769,6 +790,7 @@ mod tests {
         assert!(q.claim(1).is_none());
     }
 
+    #[test_id(trpsf7y)]
     #[test]
     fn a_live_slots_claim_survives_another_slots_recover() {
         let d = tmpdir("gq5");
@@ -784,6 +806,7 @@ mod tests {
         assert_eq!(q.find("r", "spira/sp-1", "t1"), Some(Where::Done));
     }
 
+    #[test_id(tr30o4q)]
     #[test]
     fn a_flat_legacy_claim_is_recovered_by_slot_0_and_not_by_slot_1() {
         let d = tmpdir("gq6");

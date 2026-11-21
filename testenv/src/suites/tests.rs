@@ -124,6 +124,7 @@ impl T {
 
 // ------------------------------------------------------------------------- parse / usage
 
+#[test_id(trdu6jw)]
 #[test]
 fn parse_every_subcommand_and_refuse_the_retired_ones() {
     let p = |a: &[&str]| parse(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
@@ -139,6 +140,7 @@ fn parse_every_subcommand_and_refuse_the_retired_ones() {
 
 // --------------------------------------------------------------------------- list/names
 
+#[test_id(toadmf3)]
 #[test]
 fn names_is_the_glob_minus_the_gate_list_and_nothing_else_on_stdout() {
     let t = T::new("names");
@@ -157,6 +159,7 @@ fn names_is_the_glob_minus_the_gate_list_and_nothing_else_on_stdout() {
     assert!(t.err().contains("gate-suites is unreadable — refusing to guess which suites the gate runs"));
 }
 
+#[test_id(telcywt)]
 #[test]
 fn list_reports_runs_last_age_and_covers() {
     let t = T::new("list");
@@ -175,6 +178,7 @@ fn list_reports_runs_last_age_and_covers() {
     assert_eq!(out.len(), 4);
 }
 
+#[test_id(tqiljmw)]
 #[test]
 fn list_with_an_unreadable_gate_list_says_so_and_marks_runs_unknown() {
     let t = T::new("list-q");
@@ -186,6 +190,7 @@ fn list_with_an_unreadable_gate_list_says_so_and_marks_runs_unknown() {
     assert_eq!(out[3], format!("{} is unreadable — which suites the gate runs is unknown", t.s.gate_list.display()));
 }
 
+#[test_id(teqey5z)]
 #[test]
 fn corpus_is_every_suite_and_a_tree_suite_state_file_narrows_nothing() {
     let t = T::new("corpus");
@@ -203,6 +208,7 @@ fn status_line(label: &str, value: &str) -> String {
     format!("  {label:<36}{value}")
 }
 
+#[test_id(tolpe8x)]
 #[test]
 fn status_block_counts_timed_results_and_renders_unknowns_as_question_marks() {
     let t = T::new("status");
@@ -236,6 +242,7 @@ fn status_block_counts_timed_results_and_renders_unknowns_as_question_marks() {
     );
 }
 
+#[test_id(tlis0k9)]
 #[test]
 fn status_with_nothing_run_and_with_no_gate_list() {
     let t = T::new("status-empty");
@@ -255,6 +262,7 @@ fn status_with_nothing_run_and_with_no_gate_list() {
 
 // ------------------------------------------------------------------------- observe-flake
 
+#[test_id(tyt0eqq)]
 #[test]
 fn observe_flake_is_not_a_verb() {
     let t = T::new("flake-gone");
@@ -268,6 +276,7 @@ fn observe_flake_is_not_a_verb() {
 // --------------------------------------------------------------------------- spira-lc
 
 /// `testenv suites` never runs spira-lc or reads SPIRA_LC_BIN.
+#[test_id(ta9zlo7)]
 #[test]
 fn suites_never_touches_spira_lc() {
     for (name, src) in [

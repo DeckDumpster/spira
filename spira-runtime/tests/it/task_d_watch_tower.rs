@@ -41,6 +41,7 @@ fn asked(r: &TaskRig, name: &str) -> Vec<String> {
     r.requested().iter().filter(|q| q.name == name).map(|q| q.input.clone()).collect()
 }
 
+#[test_id(tfaclcp)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_half_hour_tick() {
     let row = acc::row(NAME);
@@ -55,6 +56,7 @@ fn t1_the_row_is_registered_and_its_boot_arms_the_half_hour_tick() {
     assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
 }
 
+#[test_id(t9c6gya)]
 #[test]
 fn t2_a_nominal_sweep_with_the_prompt_unchanged_journals_nothing() {
     let mut r = rig(1, Arc::new(Mutex::new(nominal())));
@@ -63,6 +65,7 @@ fn t2_a_nominal_sweep_with_the_prompt_unchanged_journals_nothing() {
     acc::assert_healthy(&r, STREAM);
 }
 
+#[test_id(toi0lv7)]
 #[test]
 fn t3_halted_acts_on_nothing_nominal_prompts_and_a_failure_prompts_and_alarms() {
     let halted_failing = Snapshot { halted: true, ..failing() };
@@ -79,6 +82,7 @@ fn t3_halted_acts_on_nothing_nominal_prompts_and_a_failure_prompts_and_alarms() 
     assert_eq!(asked(&r, ALARM).len(), 1, "not-nominal → one alarm per escalation");
 }
 
+#[test_id(tgpwbs0)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("d/watch_tower.rs")), None);
@@ -90,6 +94,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 }
 
 /// The nominal prompt line (`sweep/mod.rs:51`) and the failed-unit alarm (`sweep/escalate.rs:76-86`).
+#[test_id(t067e0h)]
 #[test]
 fn t5_the_prompt_and_the_alarm_are_the_ones_watchtower_wrote() {
     let r = rig(1, Arc::new(Mutex::new(nominal())));
@@ -111,6 +116,7 @@ fn nominal_prompt_written() -> TaskRig {
     rig(1, Arc::new(Mutex::new(nominal())))
 }
 
+#[test_id(tfa6lmc)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&failing_past_the_warn_window(), NAME);
@@ -119,16 +125,19 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     assert!(rows.iter().any(|k| k == "prompt"), "{rows:?}");
 }
 
+#[test_id(t49u61q)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(failing_past_the_warn_window, || WatchTower::new(config()).registration(), STREAM, WatchTower::boot().2);
 }
 
+#[test_id(t94cf26)]
 #[test]
 fn a_boot_does_not_rewrite_the_nominal_prompt_it_already_wrote() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(nominal_prompt_written, || WatchTower::new(config()).registration(), STREAM, WatchTower::boot().2);
 }
 
+#[test_id(tj6n7f8)]
 #[test]
 fn two_failures_of_different_invocations_half_an_hour_apart_raise_no_failed_unit_alarm() {
     let on = |inv: &str| Snapshot { failed_invocations: [("spira-gate-prod.service".to_string(), inv.to_string())].into(), ..failing() };
@@ -141,6 +150,7 @@ fn two_failures_of_different_invocations_half_an_hour_apart_raise_no_failed_unit
     assert!(a.is_empty(), "{a:?}");
 }
 
+#[test_id(t6oj3o3)]
 #[test]
 fn a_carry_from_before_invocations_loads_and_restarts_the_unit_age() {
     let old: Carry = serde_json::from_str(r#"{"failed_units":{"spira-gate-prod.service":1000}}"#).unwrap();

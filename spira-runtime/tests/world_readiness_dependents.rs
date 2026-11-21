@@ -2,6 +2,8 @@
 //! a socket that speaks `lc_call`'s protocol: the first pass takes the head and judges nothing,
 //! a later one reads the changes since the carried revision, and a failed judgement fails the pass.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
 
@@ -40,6 +42,7 @@ fn input(through: Option<u64>) -> String {
     serde_json::to_string(&Pass { through, changed: 0, keys: vec![] }).unwrap()
 }
 
+#[test_id(txm0a0n)]
 #[test]
 fn the_first_pass_takes_the_head_as_its_baseline_and_judges_nothing() {
     let d = double(&[]);
@@ -48,6 +51,7 @@ fn the_first_pass_takes_the_head_as_its_baseline_and_judges_nothing() {
     assert_eq!(*d.sent.lock().unwrap(), ["event-seq --since 18446744073709551615"]);
 }
 
+#[test_id(tjj56xr)]
 #[test]
 fn a_later_pass_reads_since_the_carried_revision() {
     let d = double(&[]);
@@ -55,6 +59,7 @@ fn a_later_pass_reads_since_the_carried_revision() {
     assert_eq!(*d.sent.lock().unwrap(), ["event-seq --since 41"]);
 }
 
+#[test_id(tszk3o8)]
 #[test]
 fn a_look_names_the_changed_keys_and_judges_nothing() {
     let d = double(&["sp-a", "sp-b"]);
@@ -63,6 +68,7 @@ fn a_look_names_the_changed_keys_and_judges_nothing() {
     assert_eq!(*d.sent.lock().unwrap(), ["event-seq --since 41"]);
 }
 
+#[test_id(t6mlfzw)]
 #[test]
 fn a_pass_with_keys_reads_no_event_seq_and_its_failed_judgement_fails_the_pass() {
     let d = double(&[]);
@@ -87,6 +93,7 @@ fn serve(replies: fn(&[String]) -> Option<String>) -> (testkit::TempDir, std::pa
     (dir, path, sent)
 }
 
+#[test_id(t74pv5d)]
 #[test]
 fn reconcile_content_reads_only_the_head_of_the_event_log() {
     let _env = testkit::env_read();
@@ -101,6 +108,7 @@ fn reconcile_content_reads_only_the_head_of_the_event_log() {
     assert_eq!(*sent.lock().unwrap(), ["event-seq --head"]);
 }
 
+#[test_id(ttbynm6)]
 #[test]
 fn reconcile_content_since_asks_the_store_from_the_cursor_and_reads_its_through_seq() {
     let _env = testkit::env_read();
@@ -114,6 +122,7 @@ fn reconcile_content_since_asks_the_store_from_the_cursor_and_reads_its_through_
     assert_eq!(*sent.lock().unwrap(), ["reconcile-content --dry-run --since-seq 40"]);
 }
 
+#[test_id(tm5t8t4)]
 #[test]
 fn reconcile_content_full_reads_the_head_then_the_whole_dry_run() {
     let _env = testkit::env_read();
@@ -128,6 +137,7 @@ fn reconcile_content_full_reads_the_head_then_the_whole_dry_run() {
     assert_eq!(*sent.lock().unwrap(), ["event-seq --head", "reconcile-content --dry-run"]);
 }
 
+#[test_id(tvlwydr)]
 #[test]
 fn reconcile_content_observe_names_an_unknown_input() {
     let _env = testkit::env_read();
@@ -137,6 +147,7 @@ fn reconcile_content_observe_names_an_unknown_input() {
     assert!(err.contains("weekly"), "{err}");
 }
 
+#[test_id(t53hij4)]
 #[test]
 fn reconcile_content_observe_reports_a_halted_world_without_asking_the_store() {
     let _env = testkit::env_read();

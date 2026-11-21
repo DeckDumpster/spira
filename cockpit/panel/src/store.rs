@@ -877,6 +877,7 @@ mod tests {
         serde_json::json!({"id": id, "status": status, "labels": ["overseer"], "updated_at": updated})
     }
 
+    #[test_id(tkdxfkk)]
     #[test]
     fn the_window_starts_the_stated_days_before_now() {
         assert_eq!(day_before(1_794_000_000, 14), "2026-10-23"); // 2026-11-06T21:20Z
@@ -884,6 +885,7 @@ mod tests {
         assert_eq!(day_before(1_735_689_600, 1), "2024-12-31");
     }
 
+    #[test_id(ttjn1xa)]
     #[test]
     fn the_pane_reads_open_beads_and_a_closed_window_and_never_the_history() {
         let mut rows = vec![row("sp-open", "open", "2026-11-01"), row("sp-event", "closed", "2026-11-09")];
@@ -897,6 +899,7 @@ mod tests {
         assert!(store.requests().iter().any(|r| r.contains(&"--updated-after".to_string()) && r.contains(&"2026-10-23".to_string())));
     }
 
+    #[test_id(t47oh8d)]
     #[test]
     fn the_alert_conditions_are_read_in_process() {
         let (t, client) = crate::lcio::tests::scripted(0, "{\"conditions\":[{\"type\":\"Alert\"}]}");
@@ -914,6 +917,7 @@ mod tests {
         }
     }
 
+    #[test_id(tcpypz2)]
     #[test]
     fn cfg_refuses_a_missing_operator_actor_naming_it() {
         let cfg = |k: &str| if k == "SPIRA_OPERATOR_ACTOR" { Err(format!("{k} is not declared")) } else { declared(k) };
@@ -921,6 +925,7 @@ mod tests {
         assert!(e.contains("SPIRA_OPERATOR_ACTOR"), "{e}");
     }
 
+    #[test_id(tdr7en5)]
     #[test]
     fn cfg_refuses_an_empty_database_naming_it() {
         let cfg = |k: &str| if k == "COCKPIT_DB" { Ok(String::new()) } else { declared(k) };
@@ -928,6 +933,7 @@ mod tests {
         assert!(e.contains("COCKPIT_DB"), "{e}");
     }
 
+    #[test_id(t1d0if0)]
     #[test]
     fn cfg_refuses_without_spira_release_and_never_inherits_path() {
         let e = Cfg::from_values(&declared, None, Some("h")).err().unwrap();
@@ -941,6 +947,7 @@ mod tests {
     /// the long insight in `tests/fixture.json`. An insight that opens "what is blocked" and closes by
     /// asking for a verdict IS a bug report, whatever the label says, which is what the operator was
     /// reading. The prose in between is the author's and is left alone.
+    #[test_id(talf721)]
     #[test]
     fn an_insight_loses_the_escalation_templates_call_to_action() {
         let got = fyi_body(concat!(
@@ -959,6 +966,7 @@ mod tests {
 
     /// The trailer `ask.sh` writes now is true and belongs in the stored record — and it is
     /// still boilerplate the pane will not spend two of nineteen rows repeating.
+    #[test_id(t8mmdar)]
     #[test]
     fn the_recorded_trailer_goes_too() {
         let got = fyi_body(concat!(
@@ -974,6 +982,7 @@ mod tests {
     }
 
     /// Evidence is not boilerplate: it is the finding. It sits above the trailer and stays.
+    #[test_id(tb4v237)]
     #[test]
     fn the_evidence_block_survives() {
         let got = fyi_body(concat!(
@@ -990,6 +999,7 @@ mod tests {
 
     /// A body with neither label nor trailer is returned untouched — most insights written
     /// from now on by anything other than `ask.sh` will look like this.
+    #[test_id(tmcgsnu)]
     #[test]
     fn a_plain_body_is_left_alone() {
         let b = "one line.\n\nand another.";
@@ -999,6 +1009,7 @@ mod tests {
     /// When the description IS only the Default recommendation, `ask_body` returns an empty
     /// string — the lead already renders it as "default: …", and a body that only repeats
     /// that sentence costs a row and says nothing new.
+    #[test_id(tqf1ahp)]
     #[test]
     fn the_lead_line_is_removed_from_the_ask_body() {
         assert_eq!(ask_body("**Default:** do X."), "");
@@ -1056,6 +1067,7 @@ mod tests {
     /// queue of things waiting on the operator. Two halves are needed: the event arm matched
     /// first, AND the decisions arm excluding on `issue_type`. Same shape as the bug where
     /// requiring `overseer` hid every rig escalation.
+    #[test_id(tus06eg)]
     #[test]
     fn an_event_is_a_notification_and_never_a_decision() {
         // AN *OPEN* EVENT, deliberately. DECISIONS also drops anything closed, and every
@@ -1085,6 +1097,7 @@ mod tests {
     /// DECISIONS" while being completely broken. Same labels, same status: only the type
     /// differs, so the exclusion is the type doing the work and nothing else
     /// (law-absence-needs-a-positive-control).
+    #[test_id(tk1q6qe)]
     #[test]
     fn the_same_row_as_a_task_is_a_decision() {
         let mut r = serde_json::json!({
@@ -1101,6 +1114,7 @@ mod tests {
 
     /// An event is created CLOSED, so `archived` is the only thing "read" can mean.
     /// `h` toggles between live events and archived ones; both use the same label as FYI.
+    #[test_id(t9m8gh5)]
     #[test]
     fn a_read_event_leaves_the_pane_and_h_brings_it_back() {
         let s = snap(vec![
@@ -1114,6 +1128,7 @@ mod tests {
     /// The badge is what distinguishes a landing from a reclaim from a CI verdict, and only
     /// `event_kind` carries that. Derived from labels it would badge every event alike.
     /// An event also never has a `lead` — it has already happened; there is nothing to agree to.
+    #[test_id(t9gom91)]
     #[test]
     fn an_events_badge_is_its_event_kind_and_it_has_no_lead() {
         let s = snap(vec![event_row("sp-ev", &[])]);
@@ -1125,6 +1140,7 @@ mod tests {
     /// THE OPTIMISTIC HIDE ENDS WHEN THE WRITE IS VISIBLE. Archiving labels a row; it does not
     /// remove it. Pruning on presence therefore never released a dismissed event, so `A` then
     /// `h` rendered an empty history over the burst just archived.
+    #[test_id(twvwnfy)]
     #[test]
     fn an_archived_row_stops_being_hidden_once_the_label_lands() {
         let before = snap(vec![event_row("sp-ev", &[])]);
@@ -1136,6 +1152,7 @@ mod tests {
     }
 
     /// A close settles on the status; a row gone from the store entirely is also settled.
+    #[test_id(tt6or0d)]
     #[test]
     fn a_close_settles_on_the_status_or_on_the_row_going_away() {
         let mut open = serde_json::json!({
@@ -1156,6 +1173,7 @@ mod tests {
     }
 
     /// Nothing has synced yet: hide everything rather than releasing a row prematurely.
+    #[test_id(t5mqy8a)]
     #[test]
     fn an_unsynced_store_settles_nothing() {
         let s = Snapshot::default();
@@ -1164,6 +1182,7 @@ mod tests {
     }
 
     /// An event whose emitter wrote only a payload still has to say something.
+    #[test_id(ts1r3gl)]
     #[test]
     fn an_event_with_no_prose_falls_back_to_its_payload() {
         let mut r = event_row("sp-ev", &[]);
@@ -1245,6 +1264,7 @@ mod tests {
     }
 
     /// An insight nobody has dismissed is on the tab whatever its thread says.
+    #[test_id(t59l1uz)]
     #[test]
     fn an_undismissed_insight_is_on_the_tab_regardless_of_whose_turn_it_is() {
         let _env = env_lock();
@@ -1288,6 +1308,7 @@ mod tests {
 
     /// The ALERTS tab reads the watchdog's conditions, not bd: an alert-labelled bead is not
     /// an alert, and a condition is, with its title from the message's first line.
+    #[test_id(tt49nvf)]
     #[test]
     fn the_alert_list_reads_the_watchdogs_conditions_not_bd() {
         let mut s = conds(vec![firing("db-down", "2026-09-05T10:00:00Z"), probe()]);
@@ -1301,6 +1322,7 @@ mod tests {
     /// THE POSITIVE CONTROL (law-absence-needs-a-positive-control). "No alerts" and "the
     /// reader read no store" are the same pixels, and the wrong one reads as all-clear. An
     /// empty read is refused; a read holding only the probe is a genuine all-clear.
+    #[test_id(t3eftmd)]
     #[test]
     fn an_empty_read_is_refused_and_a_proved_read_is_not() {
         assert!(view_items(&conds(vec![]), View::Alerts, false, NOW, &Cfg::default()).is_err());
@@ -1311,6 +1333,7 @@ mod tests {
     }
 
     /// Oldest first by first sighting: the condition true longest is not fixing itself.
+    #[test_id(ter04ru)]
     #[test]
     fn alerts_are_sorted_by_first_seen_oldest_first() {
         let s = conds(vec![
@@ -1326,6 +1349,7 @@ mod tests {
 
     /// THE TAB SELF-CLEARS. A False condition is a retracted statement and leaves with nobody
     /// touching it — and stays reachable behind the history toggle.
+    #[test_id(tm1q7ci)]
     #[test]
     fn a_cleared_alert_leaves_the_tab_on_its_own_and_stays_reachable() {
         let s = conds(vec![
@@ -1337,6 +1361,7 @@ mod tests {
     }
 
     /// A SILENCE EXPIRES BY BEING READ: the deadline is compared against `now`.
+    #[test_id(twl8asz)]
     #[test]
     fn a_silence_expires_on_its_own_deadline() {
         let quiet = |until: &str| {
@@ -1354,6 +1379,7 @@ mod tests {
     }
 
     /// ACKNOWLEDGING IS NOT CLEARING. An acked alert is still firing, so it stays on the tab.
+    #[test_id(t48x84q)]
     #[test]
     fn an_acknowledged_alert_is_still_on_the_tab() {
         let mut c = firing("sp-seen", "2026-09-05T10:00:00Z");
@@ -1365,6 +1391,7 @@ mod tests {
 
     /// The flap count reaches the badge, and only when there is one to show. An alert never
     /// carries a default.
+    #[test_id(tzfe8w1)]
     #[test]
     fn the_flap_count_rides_the_badge_and_there_is_never_a_default() {
         let s = conds(vec![
@@ -1388,6 +1415,7 @@ mod tests {
     /// The pane leads with the thread and the list's turn marker reads its last entry, so a
     /// thread arriving newest-first would both read backwards and put the wrong arrow on the
     /// row. Enforced here rather than trusted to `bd comments`.
+    #[test_id(tnhqzen)]
     #[test]
     fn a_thread_is_ordered_oldest_first() {
         let got = oldest_first(vec![
@@ -1404,6 +1432,7 @@ mod tests {
 
     /// An unstamped comment sorts before every stamped one, which would hoist it to the top
     /// of the conversation. Better to keep the order the database gave us than to invent one.
+    #[test_id(tlo516l)]
     #[test]
     fn an_unstamped_comment_leaves_the_order_alone() {
         let got = oldest_first(vec![
@@ -1417,6 +1446,7 @@ mod tests {
 
     /// Equal stamps keep the order they arrived in — two comments in the same second are
     /// common enough, and a reshuffle there is a conversation reordered for no reason.
+    #[test_id(tai2dmw)]
     #[test]
     fn equal_stamps_keep_their_arrival_order() {
         let got = oldest_first(vec![
@@ -1451,6 +1481,7 @@ mod tests {
     /// DECISIONS renders newest-first. bd list returns beads newest-first; before sp-dyh80
     /// the unconditional reverse put the oldest bead on top, which was the one most likely to
     /// have been overtaken by everything below it.
+    #[test_id(ttb541e)]
     #[test]
     fn decisions_are_newest_first() {
         // bd list returns newest-first, so we give the snapshot rows in that order and
@@ -1468,6 +1499,7 @@ mod tests {
 
     /// ALERTS renders oldest-first. The condition that has been true longest is the one that is
     /// not fixing itself. This direction is deliberately opposite to DECISIONS and must stay so.
+    #[test_id(tthbf12)]
     #[test]
     fn alerts_ordering_is_opposite_to_decisions() {
         let s = conds(vec![

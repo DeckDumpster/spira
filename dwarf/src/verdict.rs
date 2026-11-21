@@ -269,6 +269,7 @@ mod tests {
             Out::ok(text)
         }
     }
+    #[test_id(t6eu5c4)]
     #[test]
     fn verdict_committed_walks_branch_then_landrefs() {
         let mut log = BTreeMap::new();
@@ -290,6 +291,7 @@ mod tests {
     // ---- own_dirty (UC-dwarf-execution-16) --------------------------------------------
 
     // covers: UC-dwarf-execution-16
+    #[test_id(t0e74e5)]
     #[test]
     fn own_dirty_worktree_is_refused_naming_path_and_override() {
         let n = own_dirty("w/own", " M f\n", &[], "local/main", false).expect("dirty worktree is refused");
@@ -300,12 +302,14 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-16
+    #[test_id(tzim65w)]
     #[test]
     fn own_dirty_override_lets_the_hand_on_stand() {
         assert_eq!(own_dirty("w/own", " M f\n", &[], "local/main", true), None);
     }
 
     // covers: UC-dwarf-execution-16
+    #[test_id(tf21963)]
     #[test]
     fn clean_worktree_is_not_refused() {
         assert_eq!(own_dirty("w/own", "", &[], "local/main", false), None);
@@ -313,6 +317,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-16
+    #[test_id(t0onf2g)]
     #[test]
     fn paths_identical_to_the_landing_ref_get_the_checkout_remedy() {
         let n = own_dirty("w/own", " M f\n M g\n", &["f".into(), "g".into()], "local/main", false).unwrap();
@@ -334,6 +339,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-16
+    #[test_id(t6htwt0)]
     #[test]
     fn guard_reads_only_the_dwarfs_own_worktree_never_the_shared_checkout() {
         let git = DirGit(Default::default());

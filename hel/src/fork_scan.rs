@@ -55,6 +55,7 @@ pub fn scan(dir: &Path, banned: &[&str], skip: &[&str]) -> Vec<String> {
 mod tests {
     use super::*;
 
+    #[test_id(tfjnp8j)]
     #[test]
     fn no_hel_source_starts_a_spira_program_as_a_child() {
         let dir = testkit::manifest_dir().join("src");
@@ -62,6 +63,7 @@ mod tests {
         assert!(hits.is_empty(), "Spira children left in hel (in-process them, or mark FORK-EDGE):\n{}", hits.join("\n"));
     }
 
+    #[test_id(tfug4fi)]
     #[test]
     fn a_planted_child_is_caught_and_a_marked_one_is_not() {
         let planted = "fn f() {\n    let _ = std::process::Command::new(\"spira-lc\").arg(\"list\");\n    let _ = Command::new(&systemctl);\n}\n";
@@ -75,6 +77,7 @@ mod tests {
         assert!(sites("x.rs", "let _ = Command::new(\"git\");", BANNED).is_empty());
     }
 
+    #[test_id(tp0muj9)]
     #[test]
     fn a_directory_with_nothing_to_read_fails_closed() {
         let t = testkit::TempDir::new("hel-fork-scan-empty");

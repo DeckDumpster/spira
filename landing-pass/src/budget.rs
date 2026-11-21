@@ -24,6 +24,7 @@ pub fn gate_lock_wait(gate_timeout: i64, explicit: Option<&str>) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tvw0sp3)]
     #[test]
     fn fits_until_the_reserve() {
         assert!(gate_fits(0, 0, 2700, 99_999));
@@ -31,6 +32,7 @@ mod tests {
         assert!(!gate_fits(3600, 1000, 2700, 1901));
     }
 
+    #[test_id(tj6by91)]
     #[test]
     fn lock_wait_is_twice_the_gate_timeout_and_an_exhausted_pass_budget_does_not_shorten_it() {
         assert_eq!(gate_lock_wait(700, None), "1400");

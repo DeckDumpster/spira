@@ -676,6 +676,7 @@ fn dump(r: &Run) -> String {
     format!("history {:?}\nrefused {:?}\nunits {:?}\n{}", r.history, r.refused, r.unit_calls, interesting.join("\n"))
 }
 
+#[test_id(tdls98x)]
 #[test]
 fn one_bead_is_filed_claimed_submitted_cut_certified_and_landed_on_the_service_tasks() {
     let script = Script { file: vec![(30_000, "sp-w3a")], single_flight: true, guilty: None };
@@ -705,6 +706,7 @@ fn one_bead_is_filed_claimed_submitted_cut_certified_and_landed_on_the_service_t
 /// Two members in one round, one of them red. Both are sifted in one pass, so the one cut takes
 /// both: the corpus goes red, the attribution leg ejects the guilty member (GateRed: REWORK) and
 /// names the survivor, which is certified and landed.
+#[test_id(tg6jir3)]
 #[test]
 fn a_red_round_attributes_ejects_the_guilty_member_and_lands_the_rest() {
     let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: Some("sp-w3b") };
@@ -729,6 +731,7 @@ fn a_red_round_attributes_ejects_the_guilty_member_and_lands_the_rest() {
 /// together; the second is decided against the carry the first answer emitted (Assembling, not
 /// Idle), because the engine places a handler's writes in the projection before its stream's
 /// next event (`runtime::conformance::a_handlers_writes_are_seen_before_its_streams_next_event`).
+#[test_id(tnw9o1v)]
 #[test]
 fn two_members_sifted_in_one_pass_are_cut_into_one_round() {
     let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: None };
@@ -813,11 +816,13 @@ fn crash_at_cutting(name: &str, script: fn() -> Script, seed: u64, double: &'sta
     assert_eq!(a.trace, b.trace, "one seed, one trace");
 }
 
+#[test_id(tlo6qiv)]
 #[test]
 fn a_crash_after_the_dwarfs_claim_converges_on_the_store() {
     crash_at("claim", GREEN2, 12, "sentinel_unit_start", 1);
 }
 
+#[test_id(t9kbzbc)]
 #[test]
 fn a_crash_after_sift_recorded_both_passes_converges_on_the_store() {
     crash_at("sifted_both", GREEN2, 12, "sift_record_pass", 2);
@@ -825,51 +830,61 @@ fn a_crash_after_sift_recorded_both_passes_converges_on_the_store() {
 
 /// Sift's first pass reached the store and the second did not: the batcher's first look at the
 /// restarted store finds one member sifted and cuts it alone, and the other lands in the next round.
+#[test_id(tn7py3n)]
 #[test]
 fn a_crash_after_sift_recorded_one_pass_cuts_what_the_store_shows_sifted() {
     crash_at_cutting("sifted_one", GREEN2, 12, "sift_record_pass", 1, Some(2));
 }
 
+#[test_id(tl650s3)]
 #[test]
 fn a_crash_after_the_round_was_recorded_converges_on_the_store() {
     crash_at("round_open", GREEN2, 12, "batcher_round_open", 1);
 }
 
+#[test_id(tbzns1e)]
 #[test]
 fn a_crash_after_the_first_member_was_certified_converges_on_the_store() {
     crash_at("lc_certify", GREEN2, 12, "batcher_lc_certify", 1);
 }
 
+#[test_id(tkzafc4)]
 #[test]
 fn a_crash_after_the_first_members_deliver_converges_on_the_store() {
     crash_at("land_1_deliver", GREEN2, 12, "batcher_land", 1);
 }
 
+#[test_id(t0h2dv7)]
 #[test]
 fn a_crash_after_the_first_member_landed_converges_on_the_store() {
     crash_at("land_1_delivered", GREEN2, 12, "batcher_land", 2);
 }
 
+#[test_id(tkbzbjj)]
 #[test]
 fn a_crash_after_the_last_member_landed_converges_on_the_store() {
     crash_at("land_2_delivered", GREEN2, 12, "batcher_land", 4);
 }
 
+#[test_id(t5clgcl)]
 #[test]
 fn a_crash_after_the_round_was_closed_converges_on_the_store() {
     crash_at("land_closed", GREEN2, 12, "batcher_land", 5);
 }
 
+#[test_id(t4yjl2t)]
 #[test]
 fn a_crash_after_the_last_member_was_certified_converges_on_the_store() {
     crash_at("lc_certify_both", GREEN2, 12, "batcher_lc_certify", 2);
 }
 
+#[test_id(tvmd5kp)]
 #[test]
 fn a_crash_after_the_round_was_recorded_converges_when_one_member_is_red() {
     crash_at("red_round_open", RED2, 12, "batcher_round_open", 1);
 }
 
+#[test_id(tfhu3y0)]
 #[test]
 fn a_crash_after_the_survivor_was_delivered_converges_when_one_member_is_red() {
     crash_at("red_land", RED2, 12, "batcher_land", 1);
@@ -877,6 +892,7 @@ fn a_crash_after_the_survivor_was_delivered_converges_when_one_member_is_red() {
 
 /// The checks above must be able to see a lost effect: a restart that is told nothing about
 /// the effects the first scheduler left open never answers the round open, and they fail.
+#[test_id(t52flua)]
 #[test]
 fn the_checks_see_an_effect_lost_at_a_restart() {
     let blind = Interrupt { crash: Some(Crash { double: "batcher_round_open", after: 1 }), blind: true, ..Interrupt::default() };
@@ -903,6 +919,7 @@ fn assert_recovers(base: &Run, r: &Run, at: &str) {
 }
 
 /// J1: the store applied `land` and the scheduler died before it heard: the round ends landed with no page.
+#[test_id(tn8ed8r)]
 #[test]
 fn a_restart_after_land_applied_ends_the_round_landed_without_a_landing_refused_page() {
     let base = run(12, GREEN2());
@@ -918,6 +935,7 @@ fn a_restart_after_land_applied_ends_the_round_landed_without_a_landing_refused_
 }
 
 /// J2: the same restart with the store cold for two virtual minutes.
+#[test_id(thyb643)]
 #[test]
 fn a_restart_at_landing_with_the_store_cold_for_two_minutes_raises_no_withdraw_abandon_pause_or_page() {
     let base = run(12, GREEN2());
@@ -928,6 +946,7 @@ fn a_restart_at_landing_with_the_store_cold_for_two_minutes_raises_no_withdraw_a
 }
 
 /// J3: the scheduler dies while the certify leg runs; the leg's `unit.ran` reaches the restarted batcher and the round lands.
+#[test_id(tqjbbga)]
 #[test]
 fn a_crash_mid_certify_lands_the_round_from_the_units_end_without_a_redrive() {
     let base = run(12, GREEN2());
@@ -956,6 +975,7 @@ fn releases_of(j: &dyn Journal, held: &[String]) -> Vec<usize> {
 }
 
 /// J4: a halt survives the restart; each effect held before it is released once on resume.
+#[test_id(t6456v9)]
 #[test]
 fn a_halt_holds_across_a_joint_crash_and_the_resume_releases_each_held_effect_once() {
     let rig = Rig::new(13, Script { file: vec![(30_000, "sp-w3a")], single_flight: true, guilty: None }, None);

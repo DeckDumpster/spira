@@ -470,6 +470,7 @@ mod tests {
         p.t.log.lock().unwrap().iter().rev().find(|(_, path, _)| path.contains(needle)).cloned().expect(needle)
     }
 
+    #[test_id(trmd881)]
     #[test]
     fn file_write_sends_raw_content_and_no_encoding_parameter() {
         let p = pve();
@@ -484,6 +485,7 @@ mod tests {
         );
     }
 
+    #[test_id(ta1ga7s)]
     #[test]
     fn exec_sends_only_command_params_and_returns_the_exit_code() {
         let p = pve();
@@ -497,6 +499,7 @@ mod tests {
         assert_eq!(q, vec![("pid".into(), "42".into())]);
     }
 
+    #[test_id(tnnwm4g)]
     #[test]
     fn clone_names_the_template_and_pool_and_waits_on_the_task() {
         let p = pve();
@@ -509,6 +512,7 @@ mod tests {
         assert_eq!(log[1].1, "/nodes/pve/tasks/UPID%3Apve%3A0001%3Atask%3A/status"); // not a path: Proxmox API route
     }
 
+    #[test_id(tusi9x4)]
     #[test]
     fn a_slot_always_gets_the_same_mac_and_slots_differ() {
         assert_eq!(slot_mac("124").unwrap(), slot_mac("124").unwrap());
@@ -517,6 +521,7 @@ mod tests {
         assert!(slot_mac("x").is_err());
     }
 
+    #[test_id(tgl9qbv)]
     #[test]
     fn clone_pins_the_slot_mac_on_net0_keeping_the_rest() {
         let p = pve();
@@ -537,6 +542,7 @@ mod tests {
         assert_eq!(last(&first, "/qemu/124/config").2, params); // not a path: Proxmox API route
     }
 
+    #[test_id(tcs55l0)]
     #[test]
     fn clone_applies_the_configured_memory_and_vcpus() {
         let mut p = pve();
@@ -548,12 +554,14 @@ mod tests {
         assert!(params.contains(&("cores".into(), "16".into())));
     }
 
+    #[test_id(tlp1g1q)]
     #[test]
     fn with_mac_refuses_a_net0_without_a_model_field() {
         assert_eq!(with_mac("e1000=AA:BB,bridge=b", "02:00:00:00:00:01").as_deref(), Some("e1000=02:00:00:00:00:01,bridge=b"));
         assert_eq!(with_mac("bridge", "02:00:00:00:00:01"), None);
     }
 
+    #[test_id(t7rtzok)]
     #[test]
     fn a_template_build_shuts_down_gracefully_and_converts() {
         let p = pve();
@@ -566,6 +574,7 @@ mod tests {
         assert!(!p.is_template("124").unwrap());
     }
 
+    #[test_id(t2ev721)]
     #[test]
     fn destroy_purges_through_delete() {
         let p = pve();
@@ -575,6 +584,7 @@ mod tests {
         assert!(params.contains(&("purge".into(), "1".into())));
     }
 
+    #[test_id(tnsl5ym)]
     #[test]
     fn a_failed_task_is_an_error() {
         struct Failing;
@@ -588,6 +598,7 @@ mod tests {
         assert!(e.contains("clone failed"), "{e}");
     }
 
+    #[test_id(t5k1o6g)]
     #[test]
     fn reads_nextid_address_liveness_and_names() {
         let p = pve();
@@ -600,6 +611,7 @@ mod tests {
         assert_eq!(p.name_of("124").unwrap(), None);
     }
 
+    #[test_id(t0dl3yp)]
     #[test]
     fn a_vm_without_our_tag_is_never_destroyed_even_under_a_round_name() {
         use crate::provider::{destroy_verified, DestroyError, Timing};
@@ -614,6 +626,7 @@ mod tests {
         assert!(p.t.log.lock().unwrap().iter().any(|(m, path, _)| *m == Method::Delete && path.ends_with("/qemu/126"))); // not a path: Proxmox API route
     }
 
+    #[test_id(tocswv1)]
     #[test]
     fn transport_refuses_a_cacert_with_no_certificate() {
         let d = crate::testutil::TempDir::new();
@@ -624,6 +637,7 @@ mod tests {
         assert!(HttpTransport::new(&env).err().unwrap().contains("no certificate"));
     }
 
+    #[test_id(t9cytqi)]
     #[test]
     fn a_clone_refused_because_the_id_exists_is_retried_on_the_next_nextid() {
         use crate::provider::{provision, ProvisionSpec, Timing};
@@ -641,6 +655,7 @@ mod tests {
         assert_eq!(seen, ["123", "124"]);
     }
 
+    #[test_id(t2usq2i)]
     #[test]
     fn a_clone_from_a_missing_template_is_refused_naming_the_template() {
         let p = pve();
@@ -650,6 +665,7 @@ mod tests {
         assert!(e.contains("refusing the lease"), "{e}");
     }
 
+    #[test_id(t5nj3ht)]
     #[test]
     fn check_template_passes_a_live_template_and_refuses_a_missing_or_plain_vm() {
         let mut p = pve();

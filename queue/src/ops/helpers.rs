@@ -465,6 +465,7 @@ mod tests {
         (id.into(), tip.into(), epoch)
     }
 
+    #[test_id(te9qq18)]
     #[test]
     fn parse_rows_drops_short_lines_and_ignores_extra_fields() {
         let rows = parse_rows("sp-a ta 6\nsp-b tb 5 extra junk\nonly-two fields\n\n");
@@ -477,6 +478,7 @@ mod tests {
         );
     }
 
+    #[test_id(turvqqd)]
     #[test]
     fn unparseable_prio_json_fails_open_in_original_order_with_a_warning() {
         let rows = [row("sp-a", "ta", 6), row("sp-b", "tb", 5)];
@@ -493,6 +495,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-11
+    #[test_id(ttt2cn6)]
     #[test]
     fn priority_orders_rows_whatever_their_certification_age() {
         let rows = [row("sp-p1", "t1", 2), row("sp-p0", "t2", 1)];
@@ -511,6 +514,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-11
+    #[test_id(tfnggm2)]
     #[test]
     fn within_one_priority_the_earlier_certification_goes_first() {
         let rows = [row("sp-late", "t1", 9), row("sp-early", "t2", 3)];
@@ -519,6 +523,7 @@ mod tests {
         assert_eq!(ranked.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-early", "sp-late"]);
     }
 
+    #[test_id(t4qkk2s)]
     #[test]
     fn two_rows_of_one_priority_keep_their_submitted_order_whatever_they_touch() {
         let rows = [row("sp-z", "tip-a", 1), row("sp-a", "tip-b", 2)];
@@ -527,6 +532,7 @@ mod tests {
         assert_eq!(ranked.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-z", "sp-a"]);
     }
 
+    #[test_id(t7y5rrw)]
     #[test]
     fn express_ranks_ahead_of_everything_else() {
         let rows = [
@@ -542,6 +548,7 @@ mod tests {
         assert_eq!(ids, vec!["sp-express", "sp-hi-prio"]);
     }
 
+    #[test_id(t8m13bw)]
     #[test]
     fn malformed_prio_entries_default_to_priority_nine_rather_than_crashing() {
         let rows = [row("sp-a", "ta", 1)];
@@ -554,6 +561,7 @@ mod tests {
         assert_eq!(ranked[0].prio, 9);
     }
 
+    #[test_id(tiqz0bd)]
     #[test]
     fn render_row_pads_priority_and_epoch() {
         let r = RankedRow {

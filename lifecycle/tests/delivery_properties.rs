@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate spira_test_id;
 use lifecycle::delivery::{apply, DeliveryEvent, DeliveryEventKind, DeliveryRow, Mode};
 use proptest::prelude::*;
 
@@ -15,6 +17,7 @@ fn event_for(row: &DeliveryRow, kind: DeliveryEventKind, actor: &str) -> Deliver
 }
 
 proptest! {
+    #[test_id(t622f9l)]
     #[test]
     fn only_queue_and_local_rows_are_cut(m in any::<u8>()) {
         let row = start(m);

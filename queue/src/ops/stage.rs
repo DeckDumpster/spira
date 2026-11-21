@@ -899,6 +899,7 @@ mod tests {
     use super::refuse_over_cap;
     use state_store::limits::MAX_CUT_MEMBERS;
 
+    #[test_id(t5sbyej)]
     #[test]
     fn a_round_at_the_store_cap_is_admitted_whole_and_one_more_member_is_refused() {
         let ids = |n: usize| (0..n).map(|i| format!("sp-{i}")).collect::<Vec<_>>();

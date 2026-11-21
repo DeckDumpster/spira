@@ -323,6 +323,7 @@ pub fn client_request(argv: &[String], stdin: &mut dyn FnMut() -> Result<String,
 mod tests {
     use super::*;
 
+    #[test_id(ty6cksb)]
     #[test]
     fn the_git_proved_caller_verbs_stay_with_the_caller_and_every_other_composed_verb_is_served() {
         for v in ["deliver", "content-on-base", "show", "event", "close-on-land", "serve", "admin-drop-lifecycle", "unpublished"] {
@@ -333,6 +334,7 @@ mod tests {
         }
     }
 
+    #[test_id(tkaog64)]
     #[test]
     fn a_reason_file_is_read_by_the_caller_and_sent_as_the_body() {
         let dir = testkit::TempDir::new("lc-composed-reason");
@@ -349,6 +351,7 @@ mod tests {
         assert_eq!(client_request(&v(&["hold", "sp-a", "wait"]), &mut piped).1, None, "only close and a content write that takes one send a body");
     }
 
+    #[test_id(t9ds4w2)]
     #[test]
     fn a_content_write_that_takes_a_body_sends_the_callers_stdin() {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();

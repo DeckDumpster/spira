@@ -152,6 +152,7 @@ mod tests {
         p
     }
 
+    #[test_id(t3fr3lt)]
     #[test]
     fn batch_show_reads_the_open_forge_batch_from_the_views_with_no_process() {
         let p = projection("spira");
@@ -161,6 +162,7 @@ mod tests {
         assert_eq!(batch_show_in(&p, "other").as_deref(), Some(""), "no open batch prints nothing");
     }
 
+    #[test_id(tk696ga)]
     #[test]
     fn every_open_and_staged_round_member_is_in_flight_and_an_ended_one_is_not() {
         let p = projection("spira");
@@ -179,6 +181,7 @@ mod tests {
         sent.sent.lock().unwrap().iter().filter(|a| a.as_slice() == ["list"]).count()
     }
 
+    #[test_id(tta3hoa)]
     #[test]
     fn batch_show_on_an_unwatched_view_reads_only_the_batch_records() {
         let (p, sent) = unloaded();
@@ -186,6 +189,7 @@ mod tests {
         assert_eq!(bare_lists(&sent), 0);
     }
 
+    #[test_id(t6hofor)]
     #[test]
     fn round_members_on_an_unwatched_view_reads_only_the_batch_records() {
         let (p, sent) = unloaded();
@@ -193,6 +197,7 @@ mod tests {
         assert_eq!(bare_lists(&sent), 0);
     }
 
+    #[test_id(tirdspp)]
     #[test]
     fn an_unloaded_view_cannot_tell() {
         let (c, _) = client(&[]);
@@ -200,6 +205,7 @@ mod tests {
         assert_eq!(batch_show_in(&p, "spira"), None);
     }
 
+    #[test_id(tzs1pcj)]
     #[test]
     fn a_verb_goes_over_the_socket_and_a_refusal_is_none() {
         let (c, sent) = client(&[("list", 0, "[{\"bead_id\":\"sp-a\"}]"), ("ops-snapshot", 3, "refused")]);
@@ -220,6 +226,7 @@ mod tests {
         }
     }
 
+    #[test_id(ttb6fvp)]
     #[test]
     fn a_probe_client_answers_not_running_after_one_call_with_no_wait() {
         let seen = Arc::new(Absent(std::sync::Mutex::new(Vec::new())));

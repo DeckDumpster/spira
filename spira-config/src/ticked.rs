@@ -31,6 +31,7 @@ pub fn task_of_probe(effect: &str) -> Option<&str> {
 mod tests {
     use super::*;
 
+    #[test_id(t67zwm3)]
     #[test]
     fn only_an_observe_probe_names_a_task() {
         assert_eq!(task_of_probe("batcher.local.observe"), Some("batcher.local"));
@@ -38,6 +39,7 @@ mod tests {
         assert_eq!(task_of_probe(".observe"), None);
     }
 
+    #[test_id(tyl5fkm)]
     #[test]
     fn a_stamp_is_fresh_and_a_task_that_never_stamped_has_no_age() {
         let run = testkit::TempDir::new("ticked");

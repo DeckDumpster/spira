@@ -120,12 +120,14 @@ pub fn is_round_vm_fault(err: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test_id(t68u0e5)]
     #[test]
     fn sp_56d3l3_an_emptied_outcome_reads_back_as_emptied_not_blocked() {
         let emptied = Attribution::Emptied("unit-tests red ejected every member".into());
         assert_eq!(Attribution::parse(&emptied.line()), Some(emptied));
     }
 
+    #[test_id(turqwo8)]
     #[test]
     fn a_land_line_round_trips_its_head_and_a_line_without_one_reads_as_empty() {
         let land = Attribution::Land {
@@ -147,12 +149,14 @@ mod tests {
         );
     }
 
+    #[test_id(tmn6s9h)]
     #[test]
     fn a_faulted_outcome_reads_back_as_faulted_not_blocked_or_fault() {
         let faulted = Attribution::Faulted("attribution faulted: its reruns of test-x.sh could not run".into());
         assert_eq!(Attribution::parse(&faulted.line()), Some(faulted));
     }
 
+    #[test_id(t8z7r1z)]
     #[test]
     fn an_outcome_reads_back_from_the_last_line_among_other_output() {
         let land = Attribution::Land {
@@ -178,6 +182,7 @@ mod tests {
         );
     }
 
+    #[test_id(t7ggq6a)]
     #[test]
     fn an_unconverged_outcome_round_trips_and_its_line_says_unconverged() {
         let u = Attribution::Unconverged("unit-tests red reproduces but 8 probes named no member".into());
@@ -185,12 +190,14 @@ mod tests {
         assert_eq!(Attribution::parse(&u.line()), Some(u));
     }
 
+    #[test_id(t7y9yca)]
     #[test]
     fn a_fault_reads_back_as_a_fault_not_a_block() {
         let fault = Attribution::Fault("round-vm: harness fault".into());
         assert_eq!(Attribution::parse(&fault.line()), Some(fault));
     }
 
+    #[test_id(tjpgj4o)]
     #[test]
     fn only_a_round_vm_harness_fault_is_a_fault() {
         assert!(is_round_vm_fault(
@@ -205,6 +212,7 @@ mod tests {
         assert!(!is_round_vm_fault("refresh failed after round-vm refresh"));
     }
 
+    #[test_id(tphsy4q)]
     #[test]
     fn no_line_or_a_malformed_one_is_none() {
         assert_eq!(Attribution::parse("batcher: spira-lc unreachable\n"), None);
@@ -220,6 +228,7 @@ mod tests {
         assert_eq!(Attribution::parse(&format!("{PREFIX}not json")), None);
     }
 
+    #[test_id(t6l5fgh)]
     #[test]
     fn members_round_trip_and_a_bad_one_refuses() {
         let m = vec![

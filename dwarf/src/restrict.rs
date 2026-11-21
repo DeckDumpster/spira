@@ -167,17 +167,20 @@ mod tests {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
+    #[test_id(t0qmric)]
     #[test]
     fn work_bin_dir_finds_the_first_hit() {
         let found = |p: &Path| p == Path::new("rel/bin/work");
         assert_eq!(work_bin_dir("usr/bin:rel/bin:rel/spira", found), Some("rel/bin".to_string()));
     }
 
+    #[test_id(tywiaw9)]
     #[test]
     fn work_bin_dir_none_when_not_on_path() {
         assert_eq!(work_bin_dir("usr/bin:bin", |_| false), None);
     }
 
+    #[test_id(tu32fdb)]
     #[test]
     fn work_bin_dir_skips_empty_path_segments() {
         let found = |p: &Path| p == Path::new("bin/work");
@@ -200,6 +203,7 @@ mod tests {
         "SPIRA_MODEL_BIN_CONSIDERED",
     ];
 
+    #[test_id(t80avrh)]
     #[test]
     fn bd_and_db_never_appear() {
         let mut b = base(&[("HOME", "home/dwarf")]);
@@ -215,6 +219,7 @@ mod tests {
         }
     }
 
+    #[test_id(t5slfj6)]
     #[test]
     fn the_forge_fences_reach_the_model_and_the_tokens_do_not() {
         let b = base(&[
@@ -236,6 +241,7 @@ mod tests {
         move |p: &Path| paths.iter().any(|q| p == Path::new(q))
     }
 
+    #[test_id(t5z8d9m)]
     #[test]
     fn model_bin_is_the_release_sibling_of_bin_never_bin_itself() {
         let is = exe_at(&["rel/bin/work", "rel/model-bin/work"]);
@@ -247,6 +253,7 @@ mod tests {
         assert!(!path.split(':').any(|x| x == "rel/bin"), "the full bin dir must never be on the model's PATH: {path}");
     }
 
+    #[test_id(tjeyl91)]
     #[test]
     fn model_bin_prefers_spira_release() {
         let is = exe_at(&["other/bin/work", "rel/model-bin/work"]);
@@ -254,6 +261,7 @@ mod tests {
         assert_eq!(model_bin_dir(&b, "other/bin", is).unwrap(), "rel/model-bin");
     }
 
+    #[test_id(ta8w2gt)]
     #[test]
     fn a_missing_model_bin_refuses_and_names_the_override() {
         let is = exe_at(&["rel/bin/work"]);
@@ -263,6 +271,7 @@ mod tests {
         assert!(err.contains("SPIRA_MODEL_BIN_CONSIDERED"), "{err}");
     }
 
+    #[test_id(t5h2faq)]
     #[test]
     fn the_override_is_used_as_given_and_still_needs_work() {
         let b = base(&[("SPIRA_MODEL_BIN_CONSIDERED", "opt/model")]);
@@ -271,12 +280,14 @@ mod tests {
         assert!(err.contains("no executable work"), "{err}");
     }
 
+    #[test_id(tebc4kk)]
     #[test]
     fn path_is_exactly_the_two_system_dirs_plus_work() {
         let e = restricted_env("sp-x", &BTreeMap::new(), "rel/bin");
         assert_eq!(e.get("PATH").unwrap(), &format!("{}:rel/bin", system_paths::SYSTEM_PATH_MIN));
     }
 
+    #[test_id(tvjbgu4)]
     #[test]
     fn path_adds_the_cargo_toolchain_and_never_the_inherited_path() {
         let b = base(&[("HOME", "h"), ("PATH", "h/.local/bin:elsewhere")]);
@@ -287,6 +298,7 @@ mod tests {
         assert!(!e.get("PATH").unwrap().contains(".local/bin"), "bd lives in ~/.local/bin; it must stay out");
     }
 
+    #[test_id(tn78fur)]
     #[test]
     fn a_configured_cargo_home_reaches_the_model_and_leaves_path_on_the_rustup_proxies() {
         let b = base(&[("HOME", "h"), ("CARGO_HOME", "vol/cargo"), ("SPIRA_CARGO_HOME", "vol/cargo")]);
@@ -296,12 +308,14 @@ mod tests {
         assert!(!e.contains_key("SPIRA_CARGO_HOME"));
     }
 
+    #[test_id(tnfgmf7)]
     #[test]
     fn bead_id_is_always_the_bound_one() {
         let e = restricted_env("sp-bound1", &BTreeMap::new(), "rel/bin");
         assert_eq!(e.get("SPIRA_WORK_BEAD_ID").unwrap(), "sp-bound1");
     }
 
+    #[test_id(twujh5e)]
     #[test]
     fn the_retired_lifecycle_switch_never_reaches_the_model() {
         let b = base(&[("SPIRA_LIFECYCLE_ENFORCE", "1")]);
@@ -309,12 +323,14 @@ mod tests {
         assert!(!e.contains_key("SPIRA_LIFECYCLE_ENFORCE"));
     }
 
+    #[test_id(tfu8kel)]
     #[test]
     fn home_is_unconditional_even_when_absent() {
         let e = restricted_env("sp-x", &BTreeMap::new(), "rel/bin");
         assert_eq!(e.get("HOME").unwrap(), "");
     }
 
+    #[test_id(t65kdhr)]
     #[test]
     fn the_session_tmpdir_reaches_the_model() {
         let b = base(&[("TMPDIR", "w/.runtime/session-tmp-1")]);
@@ -322,6 +338,7 @@ mod tests {
         assert_eq!(e.get("TMPDIR").map(String::as_str), Some("w/.runtime/session-tmp-1"));
     }
 
+    #[test_id(tz887me)]
     #[test]
     fn the_session_worktree_reaches_the_model_only_when_set() {
         let b = base(&[("SPIRA_WORK", "run/worktree/sp-x")]);
@@ -335,6 +352,7 @@ mod tests {
         }
     }
 
+    #[test_id(tlgv62v)]
     #[test]
     fn conditional_vars_are_absent_when_unset() {
         let e = restricted_env("sp-x", &BTreeMap::new(), "rel/bin");
@@ -343,6 +361,7 @@ mod tests {
         }
     }
 
+    #[test_id(to7tuno)]
     #[test]
     fn conditional_vars_are_absent_when_set_but_empty() {
         let b = base(&[("TERM", ""), ("SPIRA_MAIL", "")]);
@@ -351,6 +370,7 @@ mod tests {
         assert!(!e.contains_key("SPIRA_MAIL"));
     }
 
+    #[test_id(tdbzx32)]
     #[test]
     fn conditional_vars_carry_through_when_non_empty() {
         let b = base(&[
@@ -378,6 +398,7 @@ mod tests {
         }
     }
 
+    #[test_id(tpth8vg)]
     #[test]
     fn prod_and_run_roots_never_reach_the_model() {
         let b = base(&[("HOME", "h"), ("SPIRA_PROD", "prod/spira"), ("SPIRA_RUN", "run/spira")]);
@@ -388,6 +409,7 @@ mod tests {
         assert!(!CONDITIONAL.contains(&"SPIRA_PROD") && !CONDITIONAL.contains(&"SPIRA_RUN"));
     }
 
+    #[test_id(to0x9s0)]
     #[test]
     fn nothing_outside_the_allowlist_survives() {
         let b = base(&[("HOME", "h"), ("PATH", "whatever"), ("SHELL", "bin/zsh"), ("SSH_AUTH_SOCK", "tmp/sock"), ("AWS_SECRET_ACCESS_KEY", "leak")]);

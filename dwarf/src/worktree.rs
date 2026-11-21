@@ -217,6 +217,7 @@ pub fn holder(git: &dyn Git, repo: &Path, branch: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[test_id(tax1bf0)]
     #[test]
     fn a_process_standing_in_the_worktree_is_an_occupant() {
         let t = testkit::TempDir::new("dwarf-occupants");
@@ -267,6 +268,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-01
+    #[test_id(tlw6ljb)]
     #[test]
     fn a_new_bead_gets_a_worktree_cut_from_the_fetched_remote_base_not_the_local_branch() {
         let t = testkit::TempDir::new("dwarf-wt-fresh");
@@ -289,6 +291,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-01
+    #[test_id(tkusswj)]
     #[test]
     fn a_tree_of_another_repository_at_the_worktree_path_is_moved_aside_with_its_contents() {
         let t = testkit::TempDir::new("dwarf-wt-foreign");
@@ -305,6 +308,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-01
+    #[test_id(tzn999d)]
     #[test]
     fn this_repositorys_own_tree_at_the_path_is_left_alone() {
         let t = testkit::TempDir::new("dwarf-wt-own");
@@ -318,6 +322,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-01
+    #[test_id(tjxi9k6)]
     #[test]
     fn a_bead_whose_own_branch_sits_at_an_old_path_has_that_tree_moved_aside_and_the_branch_reattached() {
         let t = testkit::TempDir::new("dwarf-wt-prior");
@@ -343,6 +348,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-01
+    #[test_id(thgvy96)]
     #[test]
     fn a_branch_checked_out_in_another_beads_worktree_is_never_adopted() {
         let t = testkit::TempDir::new("dwarf-wt-collision");

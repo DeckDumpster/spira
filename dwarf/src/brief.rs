@@ -836,12 +836,14 @@ mod tests {
     }
 
     // sp-4vq2q, sp-gypjk: the runner is the bare name — never a path relative to home.
+    #[test_id(t0ajevq)]
     #[test]
     fn testenv_runner_is_the_bare_name() {
         assert_eq!(TESTENV, "testenv");
     }
 
     // sp-o4co5: {{FOLLOWUP}} names the `work` verbs, never raw `bd create`.
+    #[test_id(taeh8a3)]
     #[test]
     fn followup_names_the_work_verbs() {
         let on = followup_brief("sp-a");
@@ -868,6 +870,7 @@ mod tests {
         }
     }
 
+    #[test_id(ta5uzmd)]
     #[test]
     fn the_builder_system_prompt_is_its_rune_with_three_substitutions() {
         let rune = include_str!("../../spira/runes/builder.md");
@@ -878,6 +881,7 @@ mod tests {
         assert!(rune.contains("{{ID}}"), "positive control: the template carries its tokens");
     }
 
+    #[test_id(tb5idjr)]
     #[test]
     fn stacked_brief_names_each_prerequisite_its_tip_and_says_to_submit() {
         let b = stacked_brief(&[("sp-a".to_string(), "abc123def".to_string())].into());
@@ -885,16 +889,19 @@ mod tests {
         assert!(b.contains("already merges") && b.contains("do not duplicate") && b.contains("Submit when"), "{b}");
     }
 
+    #[test_id(te6osr1)]
     #[test]
     fn stacked_brief_is_empty_for_an_empty_stack() {
         assert_eq!(stacked_brief(&Default::default()), "");
     }
 
+    #[test_id(t96luy1)]
     #[test]
     fn dependencies_brief_is_empty_without_blockers() {
         assert_eq!(dependencies_brief(&[]), "");
     }
 
+    #[test_id(tlxip87)]
     #[test]
     fn dependencies_brief_names_a_landed_dependency_with_its_time_and_commit() {
         let d = Dep { id: "sp-pvn16v".into(), state: "LANDED".into(), since: Some(1795123820), commit: Some("8ce75d2da5f0123456789".into()) };
@@ -903,6 +910,7 @@ mod tests {
         assert!(b.contains("an input that changed"), "{b}");
     }
 
+    #[test_id(tjocv0n)]
     #[test]
     fn dependencies_brief_says_when_a_dependency_cannot_be_read() {
         let d = Dep { id: "sp-x".into(), state: "cannot tell (rc=2: down)".into(), since: None, commit: None };
@@ -910,12 +918,14 @@ mod tests {
         assert!(b.contains("- sp-x state cannot tell (rc=2: down)"), "{b}");
     }
 
+    #[test_id(tzgm8ia)]
     #[test]
     fn the_builder_task_prompt_matches_its_golden_fixture() {
         let t = static_task(&facts("first\nsecond", "`spira/sp-a` carries 1 commit(s):\n\n```\n  abc1234 sp-a: x\n```"));
         assert_eq!(t, BUILDER_TASK_GOLDEN);
     }
 
+    #[test_id(trys5jt)]
     #[test]
     fn the_builder_task_prompt_omits_empty_notes_and_prior_sections() {
         let t = static_task(&facts("", " \n"));
@@ -923,6 +933,7 @@ mod tests {
         assert!(static_task(&facts("n", "")).contains("## Notes\nn\n") && !static_task(&facts("n", "")).contains("Prior attempt"));
     }
 
+    #[test_id(t5awj96)]
     #[test]
     fn tail_notes_keeps_the_newest() {
         assert_eq!(tail_notes("abc", 10), "abc");
@@ -934,6 +945,7 @@ mod tests {
     }
 
     // The batcher brief, too, allows only the reproduce-one-named-suite run, never a pre-close one.
+    #[test_id(tl89efc)]
     #[test]
     fn batcher_runes_runs_only_a_named_suite() {
         let runes = include_str!("../../spira/runes/batcher.md");
@@ -953,6 +965,7 @@ mod tests {
     }
 
     // {{FINISH}} is the `work` verbs (sp-wmcvb).
+    #[test_id(tef2apb)]
     #[test]
     fn finish_is_the_work_verbs() {
         let on = finish_brief("sp-a");
@@ -962,6 +975,7 @@ mod tests {
         assert!(!on.contains("bd -C"));
     }
 
+    #[test_id(thxeezy)]
     #[test]
     fn landing_and_park_by_mode() {
         assert!(landing_brief("pr", "spira/sp-a", "main", "svc", "origin/main").contains("opens a pull request against `main`; svc's own CI"));
@@ -975,6 +989,7 @@ mod tests {
         assert!(push.ends_with("none of it needs you."));
     }
 
+    #[test_id(t5xjfvn)]
     #[test]
     fn fixture_brief_is_truthful_about_what_exists() {
         let none = fixture_brief(None, "spira/testdb.sh", 0);
@@ -992,6 +1007,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-07
+    #[test_id(tdd1dsm)]
     #[test]
     fn resume_slain_deadline_renderers() {
         assert_eq!(resume_brief("b", "w", "0", "x"), "");
@@ -1013,6 +1029,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-07
+    #[test_id(t2bnoju)]
     #[test]
     fn a_prompt_rendered_from_every_brief_leaves_no_placeholder_for_the_model() {
         let t = Tokens {
@@ -1035,6 +1052,7 @@ mod tests {
         }
     }
 
+    #[test_id(t0hmxw8)]
     #[test]
     fn a_call_on_an_old_incident_gets_a_positive_wall_from_its_own_start() {
         let incident_first_seen = 1_000_000 - 6 * 86_400;
@@ -1055,6 +1073,7 @@ mod tests {
         spira_config::amendment::Record { id: id.into(), bead: "sp-a".into(), amender: "operator".into(), text: "reword the commit\nmore".into(), created, deadline: created + 600, state }
     }
 
+    #[test_id(tecc0yu)]
     #[test]
     fn an_eject_brief_leads_with_the_test_location_and_output_and_is_empty_without_one() {
         let d = spira_config::ejection::digest("aaa", &[], "---- t::boom stdout ----\nthread 't::boom' panicked at x/y.rs:7:1:\nit broke\n\nfailures:\n");
@@ -1069,6 +1088,7 @@ mod tests {
         assert_eq!(send_back_brief(&[send("batcher", 1, "aaa", "  \n")], &[], &["aaa", "bbb"]), "");
     }
 
+    #[test_id(tdjf7m5)]
     #[test]
     fn a_rework_after_an_accepted_amendment_leads_with_its_reason_and_demotes_the_amendment() {
         let reason = "run both suites:\n- test-spike.sh: 'not ok 2 - a spike bead is in the spike's partition / wanted [1] got [0]'\n- test-sim.sh: 'not ok 1 - x exits 0 in 33s'";
@@ -1087,6 +1107,7 @@ mod tests {
         assert!(!send_back_brief(&[send("concierge", 500, "aaa", reason)], &am, &["aaa"]).contains("newer than every amendment"));
     }
 
+    #[test_id(tmfuuqb)]
     #[test]
     fn every_sender_renders_through_one_section_newest_first() {
         let d = spira_config::ejection::digest("aaa", &[], "---- t::boom stdout ----\nboom\n\nfailures:\n");
@@ -1106,6 +1127,7 @@ mod tests {
         assert!(b.contains("By sift") && !b.contains("elsewhere"), "a red on another tip is not the lead: {b}");
     }
 
+    #[test_id(twt4grz)]
     #[test]
     fn pending_amendments_are_not_history() {
         let am = [amendment("am-p", 1, spira_config::amendment::State::Pending)];
@@ -1115,6 +1137,7 @@ mod tests {
         assert!(d.contains("am-d") && d.contains("declined (no)") && !d.contains("am-p"), "{d}");
     }
 
+    #[test_id(tn2omia)]
     #[test]
     fn holds_brief_rows() {
         assert!(holds_brief("sp-a", 2, "").contains("COULD NOT CHECK"));
@@ -1124,6 +1147,7 @@ mod tests {
     }
 
     // test-brief-notes.sh T6: BEAD_BODY is passed through bound_bead_notes.
+    #[test_id(treboyn)]
     #[test]
     fn bead_body_is_bounded() {
         let mut body = String::from("sp-a · incident\n\nNOTES\n");
@@ -1140,6 +1164,7 @@ mod tests {
         assert_eq!(bound_bead_notes("no notes here", 5, 1), "no notes here");
     }
 
+    #[test_id(t2jiyww)]
     #[test]
     fn overlays_whole_section_append_and_absent() {
         let d = tmpdir("ov");
@@ -1168,6 +1193,7 @@ mod tests {
         assert_eq!((f.as_str(), l), ("builtin", None));
     }
 
+    #[test_id(tsuuesg)]
     #[test]
     fn substitution_is_literal_and_ordered() {
         let t = Tokens {
@@ -1183,6 +1209,7 @@ mod tests {
         assert_eq!(p, "id sp-a db d&b|x\\y\nbody with PARK! & more\n{{PARK}}\nFX{{FIXTURE}}\nDLFIN{{UNKNOWN}}");
     }
 
+    #[test_id(t7jvmzx)]
     #[test]
     fn the_shipped_groomer_splits_operations_into_system_and_finishing_into_task() {
         let (sys, task) = split("LAW", &render_prompt(include_str!("../../spira/runes/groomer.md"), &Tokens::default(), None));
@@ -1191,6 +1218,7 @@ mod tests {
         assert!(!task.contains("Memories in force") && !task.contains("Four operations, one refusal"));
     }
 
+    #[test_id(tbsc0hu)]
     #[test]
     fn thrash_banner_lands_in_the_task_half() {
         let b = thrash_banner("2", "Bash: cargo test");
@@ -1203,6 +1231,7 @@ mod tests {
         assert!(p2.starts_with("STICKING POINT") && p2.ends_with("\n\nno marker"));
     }
 
+    #[test_id(tac339s)]
     #[test]
     fn split_layers() {
         let (s, t) = split("LAW", "persona\n<!-- task -->\ntask body\n<!-- task -->\nmore");
@@ -1213,6 +1242,7 @@ mod tests {
         assert_eq!(t, "everything");
     }
 
+    #[test_id(tf0cieh)]
     #[test]
     fn memories_core_and_index() {
         let j = r#"{"law-b":" B text ","law-a":"A text","sop-x":"X","other":"no","law-c":7}"#;
@@ -1226,6 +1256,7 @@ mod tests {
         assert_eq!(render_memories("garbage", "law-", 1, "", "h"), "");
     }
 
+    #[test_id(trrlgls)]
     #[test]
     fn missing_core_names_unresolved_slugs() {
         let j = r#"{"law-a":"A","sop-x":"X"}"#;
@@ -1237,6 +1268,7 @@ mod tests {
         assert!(missing_core(r#"{"sop-x":"X"}"#, "law-", "law-a").is_empty());
     }
 
+    #[test_id(tn9dexe)]
     #[test]
     fn with_local_core_appends_and_handles_empties() {
         assert_eq!(with_local_core("", ""), "");
@@ -1246,6 +1278,7 @@ mod tests {
         assert_eq!(with_local_core(" law-a ", " law-local "), "law-a,law-local", "trims each side");
     }
 
+    #[test_id(tr8f0c9)]
     #[test]
     fn local_core_slug_renders_in_full_and_a_missing_one_refuses() {
         let j = r#"{"law-a":"A text","law-local":"Local text"}"#;
@@ -1263,6 +1296,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-07
+    #[test_id(t02oipo)]
     #[test]
     fn close_and_already_done_blocks() {
         let composed = format!("{}{}", already_done_brief("origin/main", "sp-a", "w"), rebase_brief("b", "o/m", "w", ""));
@@ -1275,6 +1309,7 @@ mod tests {
         assert_eq!(dirty_brief(&[]), "");
     }
 
+    #[test_id(tinw4ms)]
     #[test]
     fn the_tool_placeholders_are_work_verbs() {
         for (k, v) in tool_tokens() {
@@ -1282,6 +1317,7 @@ mod tests {
         }
     }
 
+    #[test_id(tjhx9y2)]
     #[test]
     fn the_bd_detector_sees_a_raw_command_and_spares_prose() {
         let raw_bd = regex::Regex::new(r"(?m)(^|[^A-Za-z0-9_./-])bd\s+(-C\b|[a-z][a-z-]*)").unwrap();

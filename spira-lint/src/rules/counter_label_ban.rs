@@ -113,6 +113,7 @@ pub fn rules() -> Vec<Box<dyn crate::Rule>> {
 mod tests {
     use super::*;
 
+    #[test_id(tis6cs8)]
     #[test]
     fn a_counter_label_write_is_found_and_a_comment_or_other_label_is_not() {
         assert_eq!(label_writes(b"x\nbdq label add \"$b\" sp-attempt-3\n"), vec![2]);
@@ -120,6 +121,7 @@ mod tests {
         assert!(label_writes(b"# bdq label add b sp-attempt-1\nbdq label add b plan\n").is_empty());
     }
 
+    #[test_id(tetoj6o)]
     #[test]
     fn a_bump_that_writes_a_label_is_found_and_an_event_write_is_not() {
         let bad = b"bump_requeue() {\n  bdq label add \"$1\" x\n}\nother() { :; }\n";
@@ -143,6 +145,7 @@ mod tests {
 
     const CLEAN_LIB: &str = "bump_requeue() { _bump_write_event \"$1\" requeued; }\nbump_poison_cleared() { :; }\n";
 
+    #[test_id(tuzjml1)]
     #[test]
     fn check_finds_a_script_writer_and_ignores_suites_and_the_shim() {
         let bad = "bdq label add \"$b\" sp-attempt-2\n";
@@ -152,6 +155,7 @@ mod tests {
         assert_eq!(f[0].line, Some(1));
     }
 
+    #[test_id(t4ebwac)]
     #[test]
     fn check_finds_a_bump_that_writes_a_label_past_an_inner_brace() {
         let lib = "bump_requeue() {\n  x=\"${y}\"\n  # label add in prose\n  bdq label add \"$1\" l\n}\nbump_poison_cleared() { :; }\n";
@@ -162,6 +166,7 @@ mod tests {
         assert!(run(&[("spira/lib.sh", prose)]).unwrap().is_empty());
     }
 
+    #[test_id(t85t08s)]
     #[test]
     fn check_reports_a_missing_bump_and_refuses_without_lib() {
         let f = run(&[("spira/lib.sh", "bump_requeue() { :; }\n")]).unwrap();

@@ -159,6 +159,7 @@ mod tests {
         symlink(lock, d.join("fd/9")).unwrap();
     }
 
+    #[test_id(t112l8x)]
     #[test]
     fn a_lock_held_by_a_stray_process_is_reported_as_a_suspect_and_a_lander_is_not() {
         let dir = testkit::TempDir::new("wt-lock-holders");
@@ -184,6 +185,7 @@ mod tests {
         assert!(render(&hs).contains("LEAKED-LOCK SUSPECT"));
     }
 
+    #[test_id(t5zyzbl)]
     #[test]
     fn no_holder_is_found_when_nothing_holds_a_lock() {
         let dir = testkit::TempDir::new("wt-lock-holders-none");

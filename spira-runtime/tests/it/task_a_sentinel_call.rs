@@ -12,6 +12,7 @@ spira_runtime::family_a_acceptance! {
     registration: SentinelCall::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: 60_000,
+    test_ids: [ #[test_id(thwpsj2)] #[test_id(t0ym2d8)] #[test_id(t90bmai)] #[test_id(taxxc64)] #[test_id(tafwsk4)] ],
 }
 
 /// The contract's idle fixture: world running, every rune `ready=0`.
@@ -28,6 +29,7 @@ fn starts(acts: &[Act]) -> usize {
     acts.iter().filter(|a| a.effect == UNIT_START).count()
 }
 
+#[test_id(tfhk46h)]
 #[test]
 fn t3_every_row_of_the_state_table_is_taken() {
     for (from, on, to) in TABLE {
@@ -38,6 +40,7 @@ fn t3_every_row_of_the_state_table_is_taken() {
     }
 }
 
+#[test_id(tk3pr0s)]
 #[test]
 fn t3_a_foreign_unit_ran_in_idle_is_ignored_and_starting_x_tick_is_refused_naming_starting() {
     assert_eq!(step(State::Idle, Trigger::UnitRanForeign), Ok(State::Idle));
@@ -45,6 +48,7 @@ fn t3_a_foreign_unit_ran_in_idle_is_ignored_and_starting_x_tick_is_refused_namin
     assert!(refused.to_lowercase().contains("starting"), "{refused}");
 }
 
+#[test_id(tfw6apz)]
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
     let mut r = rig(1, busy());
@@ -54,6 +58,7 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 }
 
 /// `call::tests` (`call.rs:964`): throttled with one express bead ready and 5 free grants 1, not 5.
+#[test_id(tdq968r)]
 #[test]
 fn t5_throttled_with_one_express_bead_grants_one_slot_not_the_pool() {
     let snap = Snapshot { throttle: true, express_ready: Some(1), max_live: Some(5), ready_by_rune: [("builder".to_string(), Some(5))].into(), ..idle() };
@@ -61,6 +66,7 @@ fn t5_throttled_with_one_express_bead_grants_one_slot_not_the_pool() {
 }
 
 /// `call_rune`'s gates (`call.rs:577-675`): a halted world, a skew, or paused capacity call nobody.
+#[test_id(t1a1kca)]
 #[test]
 fn t5_a_closed_gate_calls_nobody() {
     for snap in [Snapshot { world: World::Halted, ..busy() }, Snapshot { skew: Some("release skew".into()), ..busy() }, Snapshot { capacity: Capacity::Paused, ..busy() }] {
@@ -70,6 +76,7 @@ fn t5_a_closed_gate_calls_nobody() {
 
 /// `ck7_pool` (`call.rs:981`): live at the fleet ceiling floors the pool at 0; an open fleet
 /// calls the ready rune and carries each started unit in flight.
+#[test_id(tyr6eyx)]
 #[test]
 fn t5_a_full_fleet_calls_nobody_and_an_open_one_calls_the_ready_rune() {
     let full = Snapshot { live_by_rune: [("builder".to_string(), 4)].into(), ..busy() };
@@ -81,6 +88,7 @@ fn t5_a_full_fleet_calls_nobody_and_an_open_one_calls_the_ready_rune() {
 
 /// A dwarf call starts under `call_argv`'s properties: the rune's timeout as `TimeoutStartSec`,
 /// the idle IO class, IO weight 10, and no `ExecStopPost` re-exec.
+#[test_id(tqbn2oy)]
 #[test]
 fn t5_a_dwarf_call_carries_call_argvs_properties() {
     let p = runtime::units::dwarf_props("3600").unwrap();
@@ -136,6 +144,7 @@ fn crowded(f: &Fleet, now_ms: u64) -> Snapshot {
 
 /// The bead's first acceptance: with 4 dwarves started by `unit_start` live, the next tick
 /// launches none. Ticks a minute apart, each reading the fleet back from the unit manager.
+#[test_id(tu3ry36)]
 #[test]
 fn sp_bpnmzg_four_live_dwarves_started_by_unit_start_hold_the_next_tick_at_none() {
     let (clock, u) = manager(1_000_000);
@@ -157,6 +166,7 @@ fn sp_bpnmzg_four_live_dwarves_started_by_unit_start_hold_the_next_tick_at_none(
 /// The bead's second acceptance: dwarves.sh's count and sentinel-call's count agree on the
 /// same unit list — dwarves started by the scheduler and by name, live and ended, beside units
 /// that are no dwarf at all.
+#[test_id(trd0ueu)]
 #[test]
 fn sp_bpnmzg_dwarves_sh_and_sentinel_call_count_the_same_units() {
     let (_clock, u) = manager(1_000_000);
@@ -193,6 +203,7 @@ fn sp_bpnmzg_dwarves_sh_and_sentinel_call_count_the_same_units() {
 
 /// A dwarf directed onto a named bead holds a slot while it lives: four pooled builders and one
 /// directed one fill a ceiling of five, so the scheduler calls nobody, and the slot returns when it exits.
+#[test_id(t3clhmx)]
 #[test]
 fn sp_ljgmia_a_directed_dwarf_takes_a_slot_in_the_fleet_ceiling() {
     let (_clock, u) = manager(1_000_000);
@@ -221,16 +232,19 @@ fn at_work() -> TaskRig {
     r
 }
 
+#[test_id(tmoblyk)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     kit::assert_kept_as_rows(&at_work(), NAME);
 }
 
+#[test_id(tfroq15)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(t6bjbn9)]
 #[test]
 fn a_started_builders_metric_rides_as_a_probe_and_is_not_journaled() {
     let r = at_work();
@@ -243,6 +257,7 @@ fn a_started_builders_metric_rides_as_a_probe_and_is_not_journaled() {
 // ---------------------------------------------------------------------------------------------
 // sp-kyniae: the carry says since when a task slot has been open.
 
+#[test_id(t9m8uqx)]
 #[test]
 fn the_carry_keeps_room_since_across_passes_with_room_and_a_full_pass_clears_it() {
     let open = |now_ms| Snapshot { now_ms, ..busy() };
@@ -278,6 +293,7 @@ fn shipped_runes(names: &[&str]) -> BTreeMap<String, RuneCfg> {
         .collect()
 }
 
+#[test_id(tovcn0n)]
 #[test]
 fn skuld_starts_while_the_build_disk_class_is_full() {
     let roster = ["builder", "mender", "ops", "skuld"];
@@ -299,6 +315,7 @@ fn skuld_starts_while_the_build_disk_class_is_full() {
     assert!(started.iter().all(|s| s.contains("\"rune\":\"skuld\"")), "{started:?}");
 }
 
+#[test_id(te8vh1i)]
 #[test]
 fn sp_lhumql_a_p0_behind_a_full_pool_does_not_hold_skuld() {
     let roster = ["builder", "mender", "ops", "skuld"];
@@ -320,6 +337,7 @@ fn sp_lhumql_a_p0_behind_a_full_pool_does_not_hold_skuld() {
     assert!(started.iter().all(|s| s.contains("\"rune\":\"skuld\"")), "{started:?}");
 }
 
+#[test_id(tzn0jyu)]
 #[test]
 fn call_world_binds_only_the_classes_that_have_a_limit() {
     let snap = Snapshot { max_dwarves: Some(7), class_limits: [("memory".to_string(), 3)].into(), ..idle() };
@@ -329,6 +347,7 @@ fn call_world_binds_only_the_classes_that_have_a_limit() {
     assert!(unbound.limits.is_empty());
 }
 
+#[test_id(theiqxr)]
 #[test]
 fn a_decided_pass_carries_each_bound_class_as_it_left_it_and_the_carry_round_trips() {
     let snap = Snapshot { max_dwarves: Some(7), class_limits: [("memory".to_string(), 3)].into(), ..idle() };
@@ -343,6 +362,7 @@ fn a_decided_pass_carries_each_bound_class_as_it_left_it_and_the_carry_round_tri
     assert_eq!(Carry::default().bound, None, "no pass yet is not an empty array");
 }
 
+#[test_id(thre9c0)]
 #[test]
 fn a_decided_pass_carries_why_each_ready_rune_got_no_call_and_the_carry_round_trips() {
     let full = Snapshot { live_by_rune: [("builder".to_string(), 4)].into(), ..busy() };
@@ -366,12 +386,14 @@ fn unit_start_with_pause(until_offset: i64) -> Result<String, String> {
 
 const CAPACITY_REFUSAL: &str = "the account's capacity is paused or unreadable — not calling";
 
+#[test_id(thsa20x)]
 #[test]
 fn unit_start_does_not_refuse_on_a_capacity_pause_whose_time_has_passed() {
     let err = unit_start_with_pause(-60).unwrap_err();
     assert!(!err.contains(CAPACITY_REFUSAL), "{err}");
 }
 
+#[test_id(ttutwus)]
 #[test]
 fn unit_start_still_refuses_on_a_capacity_pause_in_the_future() {
     let err = unit_start_with_pause(3600).unwrap_err();

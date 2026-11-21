@@ -195,6 +195,7 @@ mod tests {
         rel
     }
 
+    #[test_id(tq2ywom)]
     #[test]
     fn sp_io4b8m_the_guard_run_from_a_release_at_the_tip_passes_beside_a_lagging_checkout() {
         let (d, shas) = repo_with_commits(4);
@@ -206,6 +207,7 @@ mod tests {
         assert!(landref_currency(repo, None, false, || Some("main".into())).is_err(), "the same checkout, run as a checkout, is behind");
     }
 
+    #[test_id(tfp0gls)]
     #[test]
     fn sp_io4b8m_the_guard_run_from_an_old_release_refuses() {
         let (d, shas) = repo_with_commits(4);
@@ -215,6 +217,7 @@ mod tests {
         assert!(err.contains("2 commit(s) behind main"), "{err}");
     }
 
+    #[test_id(t4an3hi)]
     #[test]
     fn sp_io4b8m_a_release_with_no_resolvable_landref_is_refused() {
         let (d, shas) = repo_with_commits(1);
@@ -223,6 +226,7 @@ mod tests {
         assert!(landref_currency(d.path().to_str().unwrap(), Some(&exe), false, || None).is_err());
     }
 
+    #[test_id(tu1jj6p)]
     #[test]
     fn sp_io4b8m_a_release_at_the_landref_tip_passes_though_the_checkout_head_lags() {
         let (d, shas) = repo_with_commits(4);
@@ -233,6 +237,7 @@ mod tests {
         assert_eq!(release_currency(&git_in(d.path()), &commit, "main", false), Ok(()));
     }
 
+    #[test_id(tg839rv)]
     #[test]
     fn sp_io4b8m_a_release_older_than_the_landref_is_refused() {
         let (d, shas) = repo_with_commits(4);
@@ -240,24 +245,28 @@ mod tests {
         assert!(err.contains("2 commit(s) behind main"), "{err}");
     }
 
+    #[test_id(t6ib9z9)]
     #[test]
     fn sp_io4b8m_a_release_commit_the_repository_does_not_know_is_refused() {
         let (d, _) = repo_with_commits(1);
         assert!(release_currency(&git_in(d.path()), &"0".repeat(40), "main", false).is_err());
     }
 
+    #[test_id(trj99ep)]
     #[test]
     fn sp_0g8vmz_an_unmeasurable_release_is_admitted_on_a_fresh_install_only() {
         assert_eq!(release_verdict(None, "abc", "main", true), Ok(()));
         assert!(release_verdict(None, "abc", "main", false).is_err());
     }
 
+    #[test_id(todoq9x)]
     #[test]
     fn sp_0g8vmz_a_release_behind_the_limit_is_refused_even_on_a_fresh_install() {
         assert!(release_verdict(Some(3), "abc", "main", true).is_err());
         assert_eq!(release_verdict(Some(0), "abc", "main", true), Ok(()));
     }
 
+    #[test_id(tlp0wv5)]
     #[test]
     fn sp_0g8vmz_a_release_the_repository_never_held_passes_the_guard_on_a_fresh_install_only() {
         let (d, _) = repo_with_commits(2);
@@ -268,6 +277,7 @@ mod tests {
         assert!(landref_currency(repo, Some(&exe), false, || Some("main".into())).is_err());
     }
 
+    #[test_id(tplz4e0)]
     #[test]
     fn sp_0g8vmz_a_unit_dir_holding_no_spira_unit_is_a_fresh_install() {
         let t = testkit::TempDir::new("units");
@@ -279,12 +289,14 @@ mod tests {
         assert!(!no_spira_units_installed(t.path()));
     }
 
+    #[test_id(trc5dso)]
     #[test]
     fn sp_io4b8m_a_directory_without_a_manifest_commit_is_not_a_release() {
         let t = testkit::TempDir::new("norel");
         assert_eq!(release_commit(t.path()), None);
     }
 
+    #[test_id(txao39y)]
     #[test]
     fn sp_li4zys_a_live_dwarf_the_scheduler_started_refuses_the_install() {
         let s = FakeSystemctl::default();
@@ -301,6 +313,7 @@ mod tests {
     }
 
     // covers: UC-instance-lifecycle-19
+    #[test_id(ttxizt5)]
     #[test]
     fn a_checkout_on_the_wrong_branch_or_behind_the_landref_is_refused_and_a_release_or_tag_install_is_not_judged() {
         let (d, shas) = landref_repo();

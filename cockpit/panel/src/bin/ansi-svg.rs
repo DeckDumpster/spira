@@ -6,6 +6,9 @@
 //! (law-ui-changes-need-screenshots); an SVG is an image that costs no dependency. Reads SGR
 //! escapes only, which is all the panel emits; anything else is passed over.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::io::{Read, Write};
 
 const PAL: [&str; 16] = [
@@ -153,6 +156,7 @@ fn main() {
 mod tests {
     use super::*;
 
+    #[test_id(tre6e59)]
     #[test]
     fn colours_bold_and_reverse_render() {
         let svg = render("\x1b[31mred\x1b[0m \x1b[1mB\x1b[0m\x1b[7mR\x1b[0m<&>");

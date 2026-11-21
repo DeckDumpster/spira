@@ -30,11 +30,13 @@ impl Filter {
 mod tests {
     use super::*;
 
+    #[test_id(tgjy3z3)]
     #[test]
     fn an_empty_pattern_is_refused() {
         assert!(Filter::compile("").is_err());
     }
 
+    #[test_id(txrnnt0)]
     #[test]
     fn the_default_pattern_matches_the_words_it_names() {
         let f = Filter::compile(DEFAULT).unwrap();
@@ -44,6 +46,7 @@ mod tests {
         assert!(f.matches("⚠ BRANCH stale"));
     }
 
+    #[test_id(t75zeog)]
     #[test]
     fn the_default_pattern_does_not_match_ordinary_progress_lines() {
         let f = Filter::compile(DEFAULT).unwrap();

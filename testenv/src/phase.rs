@@ -261,6 +261,7 @@ mod tests {
         testkit::TempDir::new(tag)
     }
 
+    #[test_id(t2zv2c1)]
     #[test]
     fn a_verdict_keeps_the_session_that_faulted_through_the_file_and_status() {
         let d = tmp("session");
@@ -272,6 +273,7 @@ mod tests {
         assert_eq!(run.status_json()["verdict"]["session"], "sim");
     }
 
+    #[test_id(tg9z8ro)]
     #[test]
     fn every_legal_move_applies_and_is_recorded() {
         let d = tmp("legal");
@@ -285,6 +287,7 @@ mod tests {
         assert_eq!(run.suites().get("test-b.sh").map(String::as_str), Some("red"));
     }
 
+    #[test_id(tpacay3)]
     #[test]
     fn an_illegal_move_is_refused_naming_the_state_and_writes_nothing() {
         let d = tmp("illegal");
@@ -301,6 +304,7 @@ mod tests {
         assert_eq!(fs::read_to_string(d.join(EVENTS_FILE)).unwrap(), before);
     }
 
+    #[test_id(t07lo19)]
     #[test]
     fn the_read_is_exactly_the_recorded_state() {
         let d = tmp("read");
@@ -316,6 +320,7 @@ mod tests {
         assert_eq!(main(&["--json".into(), d.display().to_string()]), 0);
     }
 
+    #[test_id(t9azy4g)]
     #[test]
     fn begin_discards_an_earlier_runs_record_and_a_garbled_line_refuses() {
         let d = tmp("begin");

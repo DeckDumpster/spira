@@ -116,6 +116,7 @@ mod tests {
         DwarfStateReaders::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tk7rm97)]
     #[test]
     fn a_planted_read_of_a_marker_file_is_caught_in_every_tree_that_could_read_one() {
         let t = TempDir::new("asr-marker");
@@ -127,6 +128,7 @@ mod tests {
         assert_eq!(got.len(), 4, "{got:?}");
     }
 
+    #[test_id(tga4b03)]
     #[test]
     fn a_planted_pid_lease_ledger_or_proc_read_is_caught_in_the_health_and_panel_readers() {
         let t = TempDir::new("asr-reader");
@@ -138,6 +140,7 @@ mod tests {
         assert_eq!(got.len(), 4, "{got:?}");
     }
 
+    #[test_id(t6791sr)]
     #[test]
     fn what_is_not_a_read_is_silent() {
         let t = TempDir::new("asr-ok");
@@ -151,6 +154,7 @@ mod tests {
         assert_eq!(got, Vec::<String>::new());
     }
 
+    #[test_id(t6v4sz6)]
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("asr-none");

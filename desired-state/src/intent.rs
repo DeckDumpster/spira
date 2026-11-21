@@ -149,6 +149,7 @@ pub fn admit_put(key: &str, i: &Intent, token: &str) -> Result<&'static SectionK
 mod tests {
     use super::*;
 
+    #[test_id(tpbolj8)]
     #[test]
     fn a_key_names_kind_section_and_id_and_nothing_else() {
         assert_eq!(intent_key("Probe", "a", "7"), "intents/Probe/a/7");
@@ -158,6 +159,7 @@ mod tests {
         }
     }
 
+    #[test_id(tinn328)]
     #[test]
     fn ack_results_are_kebab_case_and_a_refusal_carries_its_reason() {
         let r = serde_json::to_value(AckResult::AlreadyApplied).unwrap();

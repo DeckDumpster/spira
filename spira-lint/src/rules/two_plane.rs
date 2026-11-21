@@ -317,6 +317,7 @@ mod tests {
         TwoPlane.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tkt7wli)]
     #[test]
     fn a_clean_control_plane_passes() {
         let t = fixture("tp-clean");
@@ -324,6 +325,7 @@ mod tests {
         assert_eq!(run(&t, &["spira-lc/src/q.rs"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tocn4t7)]
     #[test]
     fn a_registered_record_with_a_planning_field_is_reported() {
         let t = fixture("tp-rec");
@@ -337,6 +339,7 @@ mod tests {
         );
     }
 
+    #[test_id(t84ijpk)]
     #[test]
     fn a_registry_line_naming_a_missing_type_refuses() {
         let t = fixture("tp-missing");
@@ -348,6 +351,7 @@ mod tests {
         assert!(matches!(run(&t, &[]), Err(LintError::Refused(_))));
     }
 
+    #[test_id(tsjt8jl)]
     #[test]
     fn a_bead_key_literal_or_type_in_control_code_is_reported() {
         let t = fixture("tp-key");
@@ -365,6 +369,7 @@ mod tests {
         );
     }
 
+    #[test_id(t24tlop)]
     #[test]
     fn sql_in_control_code_naming_planning_data_is_reported() {
         let t = fixture("tp-rsql");
@@ -387,6 +392,7 @@ mod tests {
         );
     }
 
+    #[test_id(tcua9ta)]
     #[test]
     fn an_allowlisted_finding_passes_and_a_stale_line_is_reported() {
         let t = fixture("tp-allow");
@@ -407,6 +413,7 @@ mod tests {
         }
     }
 
+    #[test_id(tje7rbb)]
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("tp-none");

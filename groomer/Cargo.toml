@@ -11,8 +11,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["reconciler-engine/integration", "spira-desired-state/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "strand/integration", "testkit/integration"]
-
+integration = ["reconciler-engine/integration", "spira-desired-state/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "strand/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -24,6 +23,7 @@ spira-otel = { path = "../spira-otel" }
 strand = { path = "../strand" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [[bin]]

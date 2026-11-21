@@ -66,6 +66,7 @@ mod occupied_tests {
         serde_json::from_str(&super::payload(live, &lc, &HashMap::new(), entries, "t", None)).unwrap()
     }
 
+    #[test_id(t75jntb)]
     #[test]
     fn an_occupied_entry_publishes_its_verdict_and_an_unjudged_record_its_state() {
         let (a, b) = (row("sp-a", BeadState::Ready), row("sp-b", BeadState::Working));
@@ -84,6 +85,7 @@ mod occupied_tests {
         out["entries"][0].clone()
     }
 
+    #[test_id(tm00bnn)]
     #[test]
     fn an_idle_parent_is_not_named_a_blocker_of_an_unjudged_child_but_stays_in_gates() {
         let e = child_entry(BeadState::Certified, &[], row("sp-p", BeadState::Ready), vec![]);
@@ -91,6 +93,7 @@ mod occupied_tests {
         assert_eq!(e["gates"]["sp-p"]["class"], "idle");
     }
 
+    #[test_id(t6g97w1)]
     #[test]
     fn a_parent_that_blocks_is_still_named() {
         let split = child_entry(BeadState::Certified, &[spira_config::nonwork::SPLIT_LABEL], row("sp-p", BeadState::Ready), vec![]);
@@ -103,6 +106,7 @@ mod occupied_tests {
         assert_eq!(tipped["blocked_by"], serde_json::json!(["sp-p"]));
     }
 
+    #[test_id(tq4bzx0)]
     #[test]
     fn a_declared_blocks_dependency_on_a_ready_bead_is_still_named() {
         let dep = Dependency { issue_id: Some("sp-c".into()), depends_on_id: Some("sp-d".into()), dep_type: Some("blocks".into()) };
@@ -110,12 +114,13 @@ mod occupied_tests {
         let ready = ReadyRow { id: "sp-c".into(), parent: Some("sp-p".into()), dependencies: vec![dep], ..Default::default() };
         let lc: HashMap<String, LifecycleRow> = [child.clone(), row("sp-p", BeadState::Ready), row("sp-d", BeadState::Ready)].into_iter().map(|r| (r.bead_id.clone(), r)).collect();
         let bd = HashMap::from([("sp-c".to_string(), ready)]);
-        let out: serde_json::Value = serde_json::from_str(&super::payload(&[&child], &lc, &bd, &[], "t", None)).unwrap();
+        let out: serde_json::Value = serde_json::from_str(&super::super::payload(&[&child], &lc, &bd, &[], "t", None)).unwrap();
         assert_eq!(out["entries"][0]["blocked_by"], serde_json::json!(["sp-d"]));
     }
 
+    #[test_id(tpdi2u8)]
     #[test]
     fn an_occupied_verdict_is_not_claimable() {
-        assert!(!super::claimable(super::Kind::Occupied));
+        assert!(!super::super::claimable(super::Kind::Occupied));
     }
 }

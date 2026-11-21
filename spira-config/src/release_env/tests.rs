@@ -1,5 +1,6 @@
     use super::*;
 
+    #[test_id(tvq7mjm)]
     #[test]
     fn resolve_tool_without_spira_release_refuses_naming_the_key() {
         let e = resolve_tool("spira-lc", None).unwrap_err();
@@ -7,6 +8,7 @@
         assert!(resolve_tool("spira-lc", Some("")).unwrap_err().contains("SPIRA_RELEASE"));
     }
 
+    #[test_id(t4u1fwf)]
     #[test]
     fn resolve_tool_never_resolves_on_path_or_by_bare_name() {
         let t = testkit::TempDir::new("resolve-tool-nopath");
@@ -15,6 +17,7 @@
         assert!(e.contains("SPIRA_RELEASE") && e.contains("sh is not in"), "{e}");
     }
 
+    #[test_id(twzl9w6)]
     #[test]
     fn resolve_tool_finds_bin_then_spira_under_the_release() {
         let t = testkit::TempDir::new("resolve-tool");
@@ -28,18 +31,21 @@
         assert_eq!(resolve_tool("queue", Some(&format!("{rel}/"))).unwrap(), format!("{rel}/bin/queue"));
     }
 
+    #[test_id(tftvvcn)]
     #[test]
     fn launcher_path_without_spira_release_refuses_naming_the_key() {
         let e = launcher_path(None, Some("h"), "").unwrap_err();
         assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
     }
 
+    #[test_id(tjix2sd)]
     #[test]
     fn launcher_path_without_home_refuses_naming_the_key() {
         let e = launcher_path(Some("r"), None, "").unwrap_err();
         assert!(e.contains("HOME is not set"), "{e}");
     }
 
+    #[test_id(t4v9j8a)]
     #[test]
     fn child_path_env_never_carries_the_inherited_path() {
         let got = child_path_env(Some("opt/rel"), Some("h"), "box/bin").unwrap();
@@ -49,17 +55,20 @@
         assert_eq!(rel, Some("opt/rel"));
     }
 
+    #[test_id(tb7ur0l)]
     #[test]
     fn a_build_child_runs_from_the_stage_it_builds() {
         let got = stage_child_path_env(Path::new("w/stage"));
         assert_eq!(got, vec![(crate::RELEASE_ENV.to_string(), "w/stage".to_string()), ("PATH".to_string(), "w/stage/bin:w/stage/spira:/usr/local/bin:/usr/bin:/bin".to_string())]);
     }
 
+    #[test_id(t3d8z8w)]
     #[test]
     fn child_path_env_refuses_a_tail_inside_a_release() {
         assert!(child_path_env(Some("opt/rel"), Some("h"), "x/spira-releases/abc/bin").is_err());
     }
 
+    #[test_id(tbeli23)]
     #[test]
     fn a_pilgrim_can_run_repo_contract_because_model_bin_links_it() {
         let t = testkit::TempDir::new("model-bin-repo-contract");
@@ -73,6 +82,7 @@
         assert!(model_bin_problems(t.path()).is_empty());
     }
 
+    #[test_id(tbb1the)]
     #[test]
     fn a_builder_can_run_test_registry_because_model_bin_links_it() {
         let t = testkit::TempDir::new("model-bin-test-registry");

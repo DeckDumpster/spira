@@ -470,6 +470,7 @@ mod tests {
     use crate::fake::{cfg, FakeBd, FakeMailer, FixedClock};
     use std::cell::RefCell;
 
+    #[test_id(tji7unx)]
     #[test]
     fn collapse_marks_the_duplicate_and_labels_it_for_the_meter() {
         let bd = FakeBd::new();
@@ -479,6 +480,7 @@ mod tests {
         assert_eq!(bd.label_list("db", "sp-a"), vec!["duplicate-of:sp-b".to_string()]);
     }
 
+    #[test_id(tqrf8de)]
     #[test]
     fn collapse_refuses_self_and_already_collapsed_before_writing() {
         let bd = FakeBd::new();
@@ -488,6 +490,7 @@ mod tests {
         assert!(bd.duplicated.borrow().is_empty());
     }
 
+    #[test_id(tmkvxvr)]
     #[test]
     fn first_filing_creates_a_bead() {
         let bd = FakeBd::new();
@@ -503,6 +506,7 @@ mod tests {
         assert_eq!(bd.created.borrow().len(), 1);
     }
 
+    #[test_id(t01b66x)]
     #[test]
     fn a_not_declared_red_for_a_retired_key_files_no_bead() {
         let bd = FakeBd::new();
@@ -525,6 +529,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-01
+    #[test_id(tyq6f06)]
     #[test]
     fn second_filing_is_a_recurrence_not_a_new_bead() {
         let bd = FakeBd::new();
@@ -547,6 +552,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-01
+    #[test_id(toxdu0d)]
     #[test]
     fn a_second_filing_from_a_different_repo_is_a_recurrence_not_a_new_bead() {
         let bd = FakeBd::new();
@@ -566,6 +572,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-01 UC-ops-detection-remediation-06
+    #[test_id(t3opt27)]
     #[test]
     fn ten_unchanged_recurrences_leave_one_counter_line_and_no_per_tick_notes() {
         let bd = FakeBd::new();
@@ -587,6 +594,7 @@ mod tests {
         assert_eq!(counters.len(), 1, "{counters:?}");
     }
 
+    #[test_id(tv9lwpp)]
     #[test]
     fn five_payloads_under_one_reference_make_one_bead_and_four_notes() {
         let bd = FakeBd::new();
@@ -610,6 +618,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-06
+    #[test_id(toravyc)]
     #[test]
     fn three_identical_filings_write_the_payload_note_exactly_once() {
         let bd = FakeBd::new();
@@ -634,6 +643,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-10
+    #[test_id(tppi73a)]
     #[test]
     fn unreachable_database_stays_spooled() {
         let bd = FakeBd { reachable: false, next_id: RefCell::new(1), ..Default::default() };
@@ -649,6 +659,7 @@ mod tests {
     /// sp-jgjvh: a lifecycle machine that does not answer cannot say no incident holds the
     /// reference — the event stays spooled, never filed as a fresh bead.
     // covers: UC-ops-detection-remediation-10
+    #[test_id(t017pfj)]
     #[test]
     fn an_unanswering_lifecycle_machine_stays_spooled() {
         let bd = FakeBd { reachable: true, lc_down: true, next_id: RefCell::new(1), ..Default::default() };
@@ -666,6 +677,7 @@ mod tests {
     /// and linked to it; the old bead is not reopened, noted or labelled, and its row stays
     /// terminal. SEEN RED before the fix: the old bead was reopened in bd and noted under a
     /// LANDED row, and no new bead was filed (`created` stayed 0).
+    #[test_id(tbe8mp9)]
     #[test]
     fn a_recurrence_whose_fact_fails_to_write_is_logged() {
         let known = vec!["spira".to_string()];
@@ -682,6 +694,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-03
+    #[test_id(tq51dh0)]
     #[test]
     fn a_recurrence_of_a_landed_incident_files_a_fresh_bead_citing_its_predecessor() {
         let bd = FakeBd::new();
@@ -722,6 +735,7 @@ mod tests {
         assert_eq!(bd.created.borrow().len(), 1);
     }
 
+    #[test_id(tlgm4yp)]
     #[test]
     fn an_alarm_whose_reference_resolves_to_a_closed_bead_files_a_fresh_owner_with_the_evidence() {
         let bd = FakeBd::new();
@@ -752,6 +766,7 @@ mod tests {
         bead::bdq::created_repo(&args)
     }
 
+    #[test_id(tbdfwzk)]
     #[test]
     fn an_alarm_recurrence_of_a_terminal_incident_is_created_carrying_its_repo() {
         let bd = FakeBd::new();
@@ -774,6 +789,7 @@ mod tests {
         assert_eq!(created_repo_of(&bd, &id).as_deref(), Some("spira"));
     }
 
+    #[test_id(t145q7z)]
     #[test]
     fn a_first_filing_is_created_carrying_its_repo_and_an_unmapped_repo_falls_back_to_home() {
         let known = vec!["spira".to_string()];
@@ -791,6 +807,7 @@ mod tests {
         }
     }
 
+    #[test_id(t8p16lm)]
     #[test]
     fn a_repo_label_the_caller_already_passed_is_not_duplicated_or_overridden() {
         let known = vec!["spira".to_string(), "other".to_string()];
@@ -806,6 +823,7 @@ mod tests {
         assert_eq!(created_repo_of(&bd, &id).as_deref(), Some("other"));
     }
 
+    #[test_id(tanf5d3)]
     #[test]
     fn an_alarm_with_no_bead_history_stays_an_inbox_note() {
         let bd = FakeBd::new();
@@ -820,6 +838,7 @@ mod tests {
 
     /// A terminal incident superseded by a live bead has its fix in flight: the recurrence
     /// bumps it and files nothing (law-a-bug-with-a-fix-in-flight-depends-on-it).
+    #[test_id(t2cl1iy)]
     #[test]
     fn a_recurrence_across_a_supersede_to_a_live_bead_files_nothing() {
         let bd = FakeBd::new();
@@ -852,6 +871,7 @@ mod tests {
     /// A handed-on but non-terminal incident (SUBMITTED) still absorbs the recurrence: its
     /// row can still move, so the existing bead stays the incident's identity.
     // covers: UC-ops-detection-remediation-03
+    #[test_id(tdrdak5)]
     #[test]
     fn a_recurrence_of_a_submitted_incident_still_reopens_it() {
         let bd = FakeBd::new();
@@ -873,6 +893,7 @@ mod tests {
         assert_eq!(*bd.reopened.borrow(), vec!["sp-submitted".to_string()]);
     }
 
+    #[test_id(tmryrh7)]
     #[test]
     fn a_fenrir_page_names_the_incident_not_the_filing_process() {
         let bd = FakeBd::new();
@@ -905,6 +926,7 @@ mod tests {
         assert_eq!(mail::lint::lint_check(&input, &kinds, "sp"), Ok(()));
     }
 
+    #[test_id(tuyihe3)]
     #[test]
     fn a_fenrir_body_omits_filed_by_when_no_unit_is_known() {
         let bd = FakeBd::new();
@@ -923,6 +945,7 @@ mod tests {
         assert!(body.contains("Last run: recurrence 1 at "), "{body}");
     }
 
+    #[test_id(tb084tk)]
     #[test]
     fn a_failed_unit_fenrir_carries_its_run_and_exit_status() {
         let bd = FakeBd::new();
@@ -943,6 +966,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-07
+    #[test_id(tst681j)]
     #[test]
     fn fenrir_threshold_escalates_exactly_once() {
         let bd = FakeBd::new();
@@ -969,6 +993,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-05
+    #[test_id(to78odn)]
     #[test]
     fn declared_repo_is_written_to_the_lifecycle_row() {
         let bd = FakeBd::new();
@@ -984,6 +1009,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-05
+    #[test_id(taeqrrn)]
     #[test]
     fn undeclared_repo_gets_needs_repo_triage() {
         let bd = FakeBd::new();
@@ -1002,6 +1028,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-08
+    #[test_id(tnwnzhs)]
     #[test]
     fn delivers_default_is_action() {
         let bd = FakeBd::new();
@@ -1020,6 +1047,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-08
+    #[test_id(tzzkdsl)]
     #[test]
     fn delivers_note_inside_run_creates_the_ledger_directory_and_is_stamped() {
         let run_dir = testkit::TempDir::new("sp-0ekp7-run-rs-note-in");
@@ -1047,6 +1075,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-08
+    #[test_id(t2vp078)]
     #[test]
     fn delivers_note_outside_run_falls_back_to_action_and_logs_outside() {
         let run_dir = testkit::TempDir::new("sp-0ekp7-run-rs-note-out");
@@ -1072,6 +1101,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-08
+    #[test_id(t0hnpq0)]
     #[test]
     fn delivers_action_mode_writes_that_label_verbatim() {
         let bd = FakeBd::new();
@@ -1091,6 +1121,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-08
+    #[test_id(tag3xpe)]
     #[test]
     fn delivers_unrecognised_value_writes_no_label_and_logs_it() {
         let bd = FakeBd::new();
@@ -1110,6 +1141,7 @@ mod tests {
         assert!(log.iter().any(|l| l.contains("unrecognised")), "{log:?}");
     }
 
+    #[test_id(thqg9n8)]
     #[test]
     fn epoch_date_matches_known_values() {
         // Verified against `date -u -d @1790812800 +%Y-%m-%d` => 2026-10-01.
@@ -1118,12 +1150,14 @@ mod tests {
         assert_eq!(parse_iso8601("1970-01-01T00:00:00Z"), Some(0));
     }
 
+    #[test_id(tc78irl)]
     #[test]
     fn since_date_subtracts_lookback_days() {
         // 1_790_812_800 - 7*86400 = 1_790_208_000 => `date -u` 2026-09-24.
         assert_eq!(since_date(1_790_812_800, 7), "2026-09-24");
     }
 
+    #[test_id(tdsh2ao)]
     #[test]
     fn provenance_format() {
         assert_eq!(decide::provenance("foo.service", "host1", "tmp/x"), "foo.service on host1: tmp/x");
@@ -1134,6 +1168,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-01
+    #[test_id(twumf16)]
     #[test]
     fn n_filings_of_one_ref_leave_one_bead_and_log_n_minus_one_recurrences_whatever_the_labels_or_repo() {
         let bd = FakeBd::new();
@@ -1152,6 +1187,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-03
+    #[test_id(trhfhux)]
     #[test]
     fn a_recurrence_inside_the_lookback_reopens_the_closed_bead_and_one_outside_files_a_new_one() {
         let known = vec!["spira".to_string()];
@@ -1171,6 +1207,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-04
+    #[test_id(tnuwazb)]
     #[test]
     fn the_dedup_lookup_is_label_keyed_makes_no_bd_show_and_still_finds_a_legacy_bead() {
         let bd = FakeBd::new();
@@ -1190,6 +1227,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-05
+    #[test_id(tpa0ij9)]
     #[test]
     fn an_undeclared_repo_leaves_a_note_naming_the_missing_declaration() {
         let bd = FakeBd::new();
@@ -1205,6 +1243,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-07
+    #[test_id(trbq8jb)]
     #[test]
     fn an_exempt_ref_still_counts_its_recurrences_but_is_never_labelled_or_paged() {
         let known = vec!["spira".to_string()];

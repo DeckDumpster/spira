@@ -148,6 +148,7 @@ mod tests {
         })
     }
 
+    #[test_id(tbcm8b5)]
     #[test]
     fn the_kind_admits_its_section_and_its_distance_sums_each_excess_over_its_spec() {
         let s = parse_section(&section(status())).unwrap();
@@ -157,6 +158,7 @@ mod tests {
         assert!((s.distance_value(kind).unwrap().unwrap() - 1.0).abs() < 1e-9);
     }
 
+    #[test_id(thzse8q)]
     #[test]
     fn a_host_inside_every_spec_has_no_distance() {
         let mut st = status();
@@ -166,6 +168,7 @@ mod tests {
         assert_eq!(s.distance_value(admit_publish(&s).unwrap()).unwrap().unwrap(), 0.0);
     }
 
+    #[test_id(tw7hvru)]
     #[test]
     fn a_field_the_kind_does_not_declare_is_refused_by_name() {
         let mut st = status();
@@ -174,6 +177,7 @@ mod tests {
         assert!(r.rule.contains("io_full_avg60"), "{r:?}");
     }
 
+    #[test_id(to0h4w4)]
     #[test]
     fn the_shipped_spec_seeds_the_three_targets_and_the_distance_follows_them() {
         let fragment = crate::producer::parse_fragment(include_str!("../../examples/host.toml")).unwrap();

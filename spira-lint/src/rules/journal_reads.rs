@@ -136,6 +136,7 @@ mod tests {
         JournalReads.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(t1b5gif)]
     #[test]
     fn a_journalctl_call_in_a_non_allowlisted_file_is_flagged() {
         let t = TempDir::new("jr-fail");
@@ -147,6 +148,7 @@ mod tests {
         assert!(got[1].starts_with("journal-reads: spira/probe.sh:2:"), "{got:?}");
     }
 
+    #[test_id(tghdmrs)]
     #[test]
     fn tests_prose_and_allowlisted_readers_pass() {
         let t = TempDir::new("jr-pass");
@@ -161,6 +163,7 @@ mod tests {
         assert_eq!(run(&t, &files).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tg8qm22)]
     #[test]
     fn a_stale_or_malformed_allowance_is_refused() {
         let t = TempDir::new("jr-allow");
@@ -175,6 +178,7 @@ mod tests {
         assert!(run(&t, &files).is_err());
     }
 
+    #[test_id(tywro0z)]
     #[test]
     fn no_candidate_files_is_a_refusal() {
         let t = TempDir::new("jr-empty");

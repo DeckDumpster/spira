@@ -1,5 +1,8 @@
 //! `gate-run [--status|--exec] <branch> [repo-name]` — see DESIGN.md.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 mod engine;
 mod ports;
 mod real;

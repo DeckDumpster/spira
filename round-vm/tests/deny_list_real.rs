@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate spira_test_id;
 use std::process::Command;
 
 fn function(name: &str) -> String {
@@ -67,6 +69,7 @@ fn run_in(tmp: &testkit::TempDir, cargo_home: &str, list: &str) -> (Option<i32>,
     bash_in_code2(&dir, cargo_home, &script, &deny.config_filter_line(), list)
 }
 
+#[test_id(tr9w5nw)]
 #[test]
 fn a_denied_unit_test_is_absent_from_the_nextest_run_and_the_others_pass() {
     let log = run_tiny("disabled\tunit:tiny t::drop\tsp-x\t-\n");
@@ -76,6 +79,7 @@ fn a_denied_unit_test_is_absent_from_the_nextest_run_and_the_others_pass() {
     assert_eq!(unit_stream_reds(&log), "", "a SKIP line is no red: {log}");
 }
 
+#[test_id(tqrnsiv)]
 #[test]
 fn a_deny_row_naming_no_test_says_it_matched_none() {
     let log = run_tiny("disabled\tunit:tiny t::gone\tsp-x\t-\n");
@@ -95,6 +99,7 @@ fn unit_stream_reds(log: &str) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
+#[test_id(tvffwxx)]
 #[test]
 fn with_an_empty_deny_list_both_unit_tests_run() {
     let log = run_tiny("");
@@ -129,6 +134,7 @@ fn gate_unit_run(list: &str) -> String {
     bash_in(&dir, &cargo_home, &script, "")
 }
 
+#[test_id(t9l2a8v)]
 #[test]
 fn a_disabled_row_excludes_exactly_that_test_from_a_gate_run_and_a_round_run() {
     let reg = testkit::TempDir::new("deny-list-registry");
@@ -150,12 +156,14 @@ fn a_disabled_row_excludes_exactly_that_test_from_a_gate_run_and_a_round_run() {
     }
 }
 
+#[test_id(tjla9pj)]
 #[test]
 fn the_digest_the_registry_prints_is_the_one_the_gate_and_the_round_record() {
     assert_eq!(test_registry::digest("abc"), "ba7816bf8f01");
     assert_eq!(&gate::key::sha256_hex(b"abc")[..12], "ba7816bf8f01");
 }
 
+#[test_id(td7bmaa)]
 #[test]
 fn a_test_red_once_on_the_round_tree_is_disabled_through_the_rounds_own_path_and_the_next_pass_does_not_run_it() {
     let flaky = "#[cfg(test)]\nmod t {\n#[test] fn keep() {}\n#[test] fn drop() {\nlet m = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"drop.mark\");\nif !m.exists() { std::fs::write(&m, \"\").unwrap(); panic!(\"flaked\"); }\n}\n}\n";
@@ -201,6 +209,7 @@ fn a_test_red_once_on_the_round_tree_is_disabled_through_the_rounds_own_path_and
     assert!(log.contains("t::keep") && !names_in_pass_or_fail(&log, "t::drop"), "the re-certifying pass does not run the disabled test: {log}");
 }
 
+#[test_id(tbfle4a)]
 #[test]
 fn an_integration_test_red_in_a_member_crate_is_named_by_its_package_through_real_cargo() {
     let cargo_home = std::env::var("CARGO_HOME").unwrap_or_else(|_| format!("{}/.cargo", std::env::var("HOME").unwrap()));

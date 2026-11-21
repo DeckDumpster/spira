@@ -39,6 +39,7 @@ fn run(
     (o, filed)
 }
 
+#[test_id(twchwnb)]
 #[test]
 fn a_planted_class_over_baseline_is_filed_naming_caller_examples_and_times() {
     let (o, filed) = run(
@@ -59,6 +60,7 @@ fn a_planted_class_over_baseline_is_filed_naming_caller_examples_and_times() {
     assert_eq!(o.filed.len(), 1);
 }
 
+#[test_id(t0s1gyk)]
 #[test]
 fn a_class_at_or_under_baseline_is_not_filed() {
     let (_, filed) = run(
@@ -69,6 +71,7 @@ fn a_class_at_or_under_baseline_is_not_filed() {
     assert!(filed.is_empty(), "{filed:?}");
 }
 
+#[test_id(tknyxth)]
 #[test]
 fn a_class_repeats_once_per_window_and_not_per_event() {
     let rows = [row("a", "Submit", 50)];
@@ -88,6 +91,7 @@ fn a_class_repeats_once_per_window_and_not_per_event() {
     assert_eq!(second.state, first.state);
 }
 
+#[test_id(tdau8ks)]
 #[test]
 fn a_failed_filing_is_not_recorded_and_is_retried() {
     let (now, classes) = parse(&answer(&[row("a", "Submit", 9)])).unwrap();
@@ -97,6 +101,7 @@ fn a_failed_filing_is_not_recorded_and_is_retried() {
     assert_eq!((o.filed.len(), o.failed.len(), o.state.len()), (0, 1, 0));
 }
 
+#[test_id(tcjecuw)]
 #[test]
 fn a_batch_is_bounded_worst_class_first() {
     let rows = [
@@ -113,6 +118,7 @@ fn a_batch_is_bounded_worst_class_first() {
     assert_eq!(o.deferred, 1);
 }
 
+#[test_id(tfq3l6x)]
 #[test]
 fn an_answer_that_is_not_the_expected_shape_is_an_error() {
     assert!(parse("").is_err());
@@ -121,6 +127,7 @@ fn an_answer_that_is_not_the_expected_shape_is_an_error() {
     assert_eq!(parse(r#"{"now":1,"classes":[]}"#).unwrap().1.len(), 0);
 }
 
+#[test_id(tmjm8hi)]
 #[test]
 fn state_round_trips() {
     let mut s = BTreeMap::new();
@@ -128,6 +135,7 @@ fn state_round_trips() {
     assert_eq!(parse_state(&render_state(&s)), s);
 }
 
+#[test_id(t8eg9ca)]
 #[test]
 fn iso_formats_epochs() {
     assert_eq!(iso(0), "1970-01-01T00:00:00Z");
@@ -144,6 +152,7 @@ impl spira_store::lc_call::Transport for Scripted {
 }
 
 /// sp-ipwlic: the refusals are read over the store client; a non-zero answer is an error.
+#[test_id(t74maxe)]
 #[test]
 fn refusals_are_read_through_the_store_client() {
     let t = std::sync::Arc::new(Scripted(Default::default(), 0));

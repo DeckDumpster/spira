@@ -59,6 +59,7 @@ mod tests {
         testkit::TempDir::new("testenv-runslot")
     }
 
+    #[test_id(t7mljy9)]
     #[test]
     fn with_the_ceiling_at_one_a_second_run_reports_waiting_and_proceeds_when_the_first_releases() {
         let d = dir();
@@ -76,6 +77,7 @@ mod tests {
         assert_eq!(said.borrow().first().map(String::as_str), Some("testenv: waiting for a CPU slot (1 running)"));
     }
 
+    #[test_id(t69eg7c)]
     #[test]
     fn the_derived_ceiling_divides_by_the_jobs_the_unit_tier_defaults_to() {
         let script = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("unit-tests.sh")).unwrap();
@@ -83,6 +85,7 @@ mod tests {
         assert!(script.contains(&want), "spira/unit-tests.sh no longer defaults to {want}");
     }
 
+    #[test_id(t4f4otp)]
     #[test]
     fn a_wait_past_the_deadline_is_a_fault_naming_the_slot() {
         let d = dir();

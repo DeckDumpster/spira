@@ -161,6 +161,7 @@ mod tests {
         }
     }
 
+    #[test_id(tbcdl03)]
     #[test]
     fn prod_falls_back_to_home_and_derives_release_keys() {
         let m = hv().to_map();
@@ -171,6 +172,7 @@ mod tests {
         assert_eq!(m["SPIRA_PATH_TAIL"], "");
     }
 
+    #[test_id(tvt4xtb)]
     #[test]
     fn an_explicit_prod_is_kept_and_path_tail_gets_a_leading_colon() {
         let mut h = hv();
@@ -184,6 +186,7 @@ mod tests {
         assert_eq!(m["SPIRA_PATH_TAIL"], ":opt/extra/bin");
     }
 
+    #[test_id(tewvklc)]
     #[test]
     fn a_service_renders_and_an_unfilled_placeholder_refuses() {
         let out = render("x.service", "ExecStart=@SPIRA_HOME@/x\n", &hv(), None).unwrap();
@@ -192,6 +195,7 @@ mod tests {
         assert!(e.contains("NOPE"), "{e}");
     }
 
+    #[test_id(t1an8xy)]
     #[test]
     fn a_known_key_substitutes_even_when_its_value_is_empty() {
         // render.py's own permissive rule: SPIRA_DOLT_DATA is a known key, just an empty one
@@ -205,6 +209,7 @@ mod tests {
         assert_eq!(out, "Environment=PATH=/bin\n");
     }
 
+    #[test_id(trzmxuc)]
     #[test]
     fn dolt_is_the_one_key_refused_when_empty_and_used() {
         let mut h = hv();
@@ -216,12 +221,14 @@ mod tests {
         assert_eq!(out, "ExecStart=/bin/true\n");
     }
 
+    #[test_id(tv4ys0v)]
     #[test]
     fn a_watcher_template_substitutes_percent_i() {
         let out = render("spira-watch@.service", "ExecStart=/w %i\n", &hv(), Some("testview")).unwrap();
         assert_eq!(out, "ExecStart=/w testview\n");
     }
 
+    #[test_id(tb5sxdw)]
     #[test]
     fn a_timer_template_gains_the_instance_suffix_on_its_unit_line() {
         let out = render("spira-sentinel.timer", "[Unit]\nUnit=spira-sentinel.service\n", &hv(), None).unwrap();

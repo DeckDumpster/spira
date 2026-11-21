@@ -143,6 +143,7 @@ mod tests {
         git_fact(s, "spira-runtime", &["git-fact", "put", kind, "--json", &body.to_string()])
     }
 
+    #[test_id(t23v4mt)]
     #[test]
     fn a_program_that_is_not_a_writer_is_refused_and_nothing_is_recorded() {
         let s = store();
@@ -155,6 +156,7 @@ mod tests {
         assert_eq!(git_fact(&s, "spira-runtime/publish-backlog", &["git-fact", "put", "unpublished", "--json", &body]).0, 0);
     }
 
+    #[test_id(ty8938n)]
     #[test]
     fn a_permitted_writer_putting_an_unknown_kind_is_told_the_kinds_and_a_stranger_is_refused() {
         let s = store();
@@ -165,6 +167,7 @@ mod tests {
         assert_eq!(argv("dwarf").0, REFUSED);
     }
 
+    #[test_id(tzvlqj4)]
     #[test]
     fn each_kind_is_recorded_only_by_the_programs_that_measure_it() {
         let s = store();
@@ -182,6 +185,7 @@ mod tests {
         }
     }
 
+    #[test_id(tpgkllk)]
     #[test]
     fn an_unpublished_record_reads_back_and_a_second_put_replaces_it() {
         let s = store();
@@ -195,6 +199,7 @@ mod tests {
         assert_eq!(git_fact(&s, "-", &["git-fact", "get", "unpublished", "other"]).0, CANNOT_TELL);
     }
 
+    #[test_id(tj6kxyb)]
     #[test]
     fn an_unpublished_body_missing_a_field_is_refused_not_stored_as_a_zero() {
         let s = store();
@@ -203,6 +208,7 @@ mod tests {
         assert_eq!(s.git_fact_unpublished("r").unwrap(), None);
     }
 
+    #[test_id(t77940l)]
     #[test]
     fn a_range_is_pinned_to_its_shas_and_a_second_put_of_the_key_changes_nothing() {
         let s = store();
@@ -215,6 +221,7 @@ mod tests {
         assert_eq!((code, out.as_str()), (0, r#"["c1","c2"]"#));
     }
 
+    #[test_id(t9w3b9f)]
     #[test]
     fn a_range_with_no_commits_is_a_fact_not_an_absence() {
         let s = store();
@@ -222,6 +229,7 @@ mod tests {
         assert_eq!(s.git_fact_range("r", "b", "t").unwrap(), Some(BTreeSet::new()));
     }
 
+    #[test_id(tu8arkc)]
     #[test]
     fn a_repo_name_with_a_slash_cannot_reach_another_repos_key() {
         let s = store();

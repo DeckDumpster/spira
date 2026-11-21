@@ -283,6 +283,7 @@ mod tests {
         sh
     }
 
+    #[test_id(tsse27u)]
     #[test]
     fn admin_dolt_assemble_prints_the_manifest_it_used_after_head_files_and_bytes() {
         let dir = TempDir::new("lc-assemble-manifest");
@@ -298,6 +299,7 @@ mod tests {
         assert_eq!((rc, via_file), (0, format!("h1 0 0 {mp}")));
     }
 
+    #[test_id(tzt12u3)]
     #[test]
     fn admin_restore_replays_every_run_and_refuses_a_gap_naming_it() {
         let dir = TempDir::new("lc-admin-restore");
@@ -319,6 +321,7 @@ mod tests {
         assert_eq!(admin_restore(&s(&["--snapshot", &snap])).0, CANNOT_TELL);
     }
 
+    #[test_id(tg8ps54)]
     #[test]
     fn the_shipper_stages_in_the_configured_directory_and_falls_back_to_the_run_dir() {
         let run = Path::new("run-here");
@@ -327,6 +330,7 @@ mod tests {
         assert_eq!(ship_dir_at(None, run), Path::new("run-here/lc-ship"));
     }
 
+    #[test_id(tu4wjdt)]
     #[test]
     fn admin_drill_passes_on_the_shipped_objects_and_prints_the_skew_procedure() {
         let dir = TempDir::new("lc-admin-drill");
@@ -376,6 +380,7 @@ mod tests {
             .collect()
     }
 
+    #[test_id(t2g40iv)]
     #[test]
     fn lc_serve_gets_the_backup_credentials_from_its_unit_and_ships_a_revision_to_s3() {
         let dir = TempDir::new("lc-serve-env");
@@ -411,6 +416,7 @@ mod tests {
         assert!(urls.iter().any(|u| u.starts_with("http://s3.test/bucket/lc/revlog/")), "{urls:?}");
     }
 
+    #[test_id(t6ifb45)]
     #[test]
     fn admin_archive_put_lands_the_file_byte_identical_and_refuses_a_second_put_of_the_key() {
         let dir = TempDir::new("lc-archive-put");
@@ -431,6 +437,7 @@ mod tests {
         assert_eq!(std::fs::read(dir.path().join("off/archive/lifecycle-export.jsonl")).unwrap(), body, "never overwritten");
     }
 
+    #[test_id(tgwigmb)]
     #[test]
     fn admin_archive_put_refuses_by_name_what_one_put_cannot_carry() {
         let dir = TempDir::new("lc-archive-refuse");
@@ -455,6 +462,7 @@ mod tests {
         assert_eq!(admin_archive_put(&s(&["--file", &small]), &url).0, CANNOT_TELL);
     }
 
+    #[test_id(tyfx0r4)]
     #[test]
     fn the_ship_tick_writes_one_alarm_line_per_crossing() {
         let dir = TempDir::new("lc-ship-alarm");

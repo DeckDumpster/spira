@@ -210,6 +210,7 @@ mod lib_seam_tests {
         LibSeam::with(PathBuf::from("nonexistent/lib.sh"), cfg, claim)
     }
 
+    #[test_id(taf2p6i)]
     #[test]
     fn a_config_key_is_read_through_the_config_door_not_a_shell() {
         let s = seam(Rc::default());
@@ -217,6 +218,7 @@ mod lib_seam_tests {
         assert!(s.conf("SPIRA_NOT_A_KEY").is_err());
     }
 
+    #[test_id(tvqmtz9)]
     #[test]
     fn the_poison_cleared_event_is_spira_claims_write_event_with_no_shell() {
         let log: Rc<RefCell<Vec<Vec<String>>>> = Rc::default();
@@ -226,6 +228,7 @@ mod lib_seam_tests {
         assert_eq!(*log.borrow(), want);
     }
 
+    #[test_id(tu1eke3)]
     #[test]
     fn the_ask_clear_removes_the_asked_marker_in_process() {
         let dir = testkit::TempDir::new("groomer-ask-clear");

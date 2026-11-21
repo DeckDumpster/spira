@@ -274,6 +274,7 @@ fn extract_version(out: &str, marker: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[test_id(tfkl5bj)]
     #[test]
     fn the_schema_preflight_asks_spira_lc() {
         let script = schema_preflight_script();
@@ -281,6 +282,7 @@ mod tests {
         assert!(!script.contains("migrate schema"), "{script}");
     }
 
+    #[test_id(tjnfgso)]
     #[test]
     fn path_tail_appends_each_segment_once() {
         let got = path_tail("release/bin:release/spira", "opt/custom", "fixture-home");
@@ -290,6 +292,7 @@ mod tests {
         );
     }
 
+    #[test_id(t54cxxa)]
     #[test]
     fn path_tail_never_shadows_the_launchers_release() {
         // THE LAUNCHER'S PATH COMES FIRST AND IS NEVER REWRITTEN (sp-gypjk): a tail segment
@@ -299,6 +302,7 @@ mod tests {
         assert_eq!(got, "release/bin:/usr/bin:fixture-home/.local/bin:fixture-home/.cargo/bin:/usr/local/bin:/bin");
     }
 
+    #[test_id(t22jxmf)]
     #[test]
     fn path_tail_is_idempotent_on_resource() {
         let once = path_tail("release/bin", "", "fixture-home");
@@ -306,18 +310,21 @@ mod tests {
         assert_eq!(once, twice, "re-sourcing conf.sh must not grow PATH");
     }
 
+    #[test_id(tcsz175)]
     #[test]
     fn path_tail_empty_spira_path_contributes_nothing() {
         let got = path_tail("release/bin", "", "fixture-home");
         assert_eq!(got, "release/bin:fixture-home/.local/bin:fixture-home/.cargo/bin:/usr/local/bin:/usr/bin:/bin");
     }
 
+    #[test_id(th1uq1c)]
     #[test]
     fn path_tail_collapses_doubled_colons_in_spira_path() {
         let got = path_tail("", "a::b", "h");
         assert_eq!(got, "a:b:h/.local/bin:h/.cargo/bin:/usr/local/bin:/usr/bin:/bin");
     }
 
+    #[test_id(tr0zoz6)]
     #[test]
     fn resolve_bd_skips_a_non_executable_candidate() {
         let dir = testkit::TempDir::new("spira-config-env-bootstrap-resolve-bd-noexec");
@@ -327,17 +334,20 @@ mod tests {
         assert_eq!(resolve_bd(&path), "bd");
     }
 
+    #[test_id(tb5vq43)]
     #[test]
     fn resolve_bd_falls_back_to_bare_name_when_nothing_found() {
         assert_eq!(resolve_bd("nonexistent/one:nonexistent/two"), "bd");
     }
 
+    #[test_id(tg7wjpo)]
     #[test]
     fn bootstrap_sh_leaves_an_existing_spira_bd_untouched() {
         let out = bootstrap_sh("release/bin", "", "fixture-home", "pinned/bd");
         assert!(out.contains("SPIRA_BD='pinned/bd'"), "{out}");
     }
 
+    #[test_id(tbfqn2a)]
     #[test]
     fn check_bd_schema_skips_when_no_store() {
         let dir = testkit::TempDir::new("spira-config-check-bd-no-store");
@@ -348,6 +358,7 @@ mod tests {
         assert!(!run.exists(), "a skipped check must not even create SPIRA_RUN");
     }
 
+    #[test_id(t0ixyaa)]
     #[test]
     fn schema_verdict_table() {
         const MISMATCH: &str = "database is at v99\nbinary knows up to v53\n";
@@ -381,6 +392,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-09
+    #[test_id(tn3uaeh)]
     #[test]
     fn schema_verdict_mismatch_names_cause_and_remedy() {
         let v = schema_verdict(1, "database is at v99\nbinary knows up to v53\n", "x/bd", false, "etc/spira.conf");
@@ -389,6 +401,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-09
+    #[test_id(t9553ka)]
     #[test]
     fn an_unrunnable_bd_refuses_naming_the_binary_and_a_doctor_run_tolerates_it() {
         let out = "spira: could not run x/bd: no such file";
@@ -400,6 +413,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-10
+    #[test_id(tvxq4oh)]
     #[test]
     fn a_locked_store_is_a_configuration_error_naming_the_remedy_never_a_pass() {
         let locked = "Error: failed to open database: the database is locked by another dolt process\n";

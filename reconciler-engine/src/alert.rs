@@ -79,6 +79,7 @@ mod tests {
     }
 
     // law-absence-needs-a-positive-control: a gap inside its grace period raises nothing.
+    #[test_id(t7m64v7)]
     #[test]
     fn a_gap_inside_grace_does_not_alert() {
         let (v, _) = gap_verdict(0, 60, HysteresisState::default());
@@ -88,6 +89,7 @@ mod tests {
         assert_eq!(next, None);
     }
 
+    #[test_id(tunmpmp)]
     #[test]
     fn a_gap_past_grace_alerts_once() {
         let (_, st1) = gap_verdict(0, 0, HysteresisState::default());
@@ -98,6 +100,7 @@ mod tests {
         assert_eq!(since, v2.since);
     }
 
+    #[test_id(taqr4av)]
     #[test]
     fn the_same_streak_does_not_alert_twice() {
         let (_, st1) = gap_verdict(0, 0, HysteresisState::default());
@@ -112,6 +115,7 @@ mod tests {
         assert_eq!(since, alerted_since);
     }
 
+    #[test_id(t5333gg)]
     #[test]
     fn a_closed_then_reopened_gap_alerts_again() {
         let (_, st1) = gap_verdict(0, 0, HysteresisState::default());
@@ -135,6 +139,7 @@ mod tests {
 
     // An unreadable input is never satisfied, and never silently skipped either — it drives
     // the exact same alert path as a `Gap` once its own grace period has passed.
+    #[test_id(t4h679a)]
     #[test]
     fn unobservable_past_grace_alerts_like_a_gap() {
         let raw = RawStatus::Unobservable { reason: "forge call failed".into() };
@@ -145,6 +150,7 @@ mod tests {
         assert!(fire);
     }
 
+    #[test_id(tce555p)]
     #[test]
     fn compose_alert_carries_all_four_fields() {
         let (_, st1) = gap_verdict(0, 0, HysteresisState::default());
@@ -157,6 +163,7 @@ mod tests {
         assert!(body.contains("last remedy tried: scaled dwarves to 8"));
     }
 
+    #[test_id(twqn64c)]
     #[test]
     fn compose_alert_names_a_failed_remedy_as_failed() {
         let raw = RawStatus::Gap { desired: "d".into(), observed: "o".into(), since_hint: None };
@@ -168,6 +175,7 @@ mod tests {
         assert!(body.contains("restarted the unit — did not close the gap"));
     }
 
+    #[test_id(t6befq3)]
     #[test]
     fn compose_alert_with_no_remedy_says_so() {
         let (_, st1) = gap_verdict(0, 0, HysteresisState::default());
@@ -176,6 +184,7 @@ mod tests {
         assert!(body.contains("last remedy tried: none attempted"));
     }
 
+    #[test_id(tvzr0a0)]
     #[test]
     fn compose_alert_reports_unobservable_reason_as_observed() {
         let raw = RawStatus::Unobservable { reason: "queue-watch: no reading".into() };
@@ -186,6 +195,7 @@ mod tests {
         assert!(body.contains("observed:  queue-watch: no reading"));
     }
 
+    #[test_id(tka7ila)]
     #[test]
     fn classify_escalation_accepts_exactly_the_three_named_classes() {
         assert_eq!(classify_escalation("permissions"), Some(EscalationClass::Permissions));
@@ -193,6 +203,7 @@ mod tests {
         assert_eq!(classify_escalation("destructive"), Some(EscalationClass::Destructive));
     }
 
+    #[test_id(tjsk1jb)]
     #[test]
     fn classify_escalation_is_case_and_whitespace_insensitive() {
         assert_eq!(classify_escalation(" Permissions \n"), Some(EscalationClass::Permissions));
@@ -202,6 +213,7 @@ mod tests {
     // law-a-control-that-cannot-check-must-refuse, applied to the operator path itself:
     // anything not one of the three named classes is refused by construction, not passed
     // through on a best-effort guess.
+    #[test_id(t3eyzlv)]
     #[test]
     fn classify_escalation_refuses_everything_else() {
         for label in ["urgent", "queue-stall", "", "permission", "destructive action", "tech-debt"] {

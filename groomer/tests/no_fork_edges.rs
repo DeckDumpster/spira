@@ -4,6 +4,8 @@
 //! to `Command::new`, to spira-config's `bounded`/`bounded_for`, or as the program a
 //! `timeout` child runs.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::Path;
 
 const BANNED: &[&str] = &["spira-lc", "bd", "bdq", "bash", "systemctl", "systemd-run", "tsd-write", "mail", "queue", "pgrep"];
@@ -57,6 +59,7 @@ fn walk(dir: &Path, out: &mut Vec<String>) {
     }
 }
 
+#[test_id(t6yzyip)]
 #[test]
 fn no_unmarked_spira_fork_edge_remains() {
     let mut found = Vec::new();
@@ -64,6 +67,7 @@ fn no_unmarked_spira_fork_edge_remains() {
     assert!(found.is_empty(), "unmarked Spira→Spira fork edges:\n{}", found.join("\n"));
 }
 
+#[test_id(tv7ziuq)]
 #[test]
 fn the_scan_catches_a_planted_site_and_passes_a_marked_one() {
     let q = '"';
@@ -89,6 +93,7 @@ fn body_of<'a>(text: &'a str, name: &str) -> &'a str {
 
 /// Every verb the store's content door serves reaches it, never a forked bdq (sp-ipwlic): the
 /// door applies bdq's protections and writes a create's lifecycle row itself.
+#[test_id(thp3sty)]
 #[test]
 fn the_verbs_the_content_door_serves_never_fork_bdq() {
     let src = testkit::manifest_dir().join("src/bd.rs");

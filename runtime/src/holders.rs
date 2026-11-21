@@ -83,6 +83,7 @@ mod tests {
         d
     }
 
+    #[test_id(tonybv3)]
     #[test]
     fn a_process_working_inside_the_tree_is_a_holder_and_one_outside_is_not() {
         let dir = scratch("holders-find");
@@ -99,6 +100,7 @@ mod tests {
         assert!(spared.is_empty());
     }
 
+    #[test_id(ttcjq1z)]
     #[test]
     fn stopping_the_holders_ends_a_process_that_ignores_term() {
         let dir = scratch("holders-stop");

@@ -66,6 +66,7 @@ mod tests {
     use super::*;
     use spira_otel::metrics::fixture;
 
+    #[test_id(ta1jv36)]
     #[test]
     fn a_run_pushes_its_count_and_seconds_labelled_by_component_operation_and_outcome() {
         let (code, got) = fixture::capture(|s| run(s, Some("pr-create"), || 1));
@@ -88,6 +89,7 @@ mod tests {
         );
     }
 
+    #[test_id(tg6v7im)]
     #[test]
     fn an_argument_that_is_no_operation_is_other() {
         assert_eq!(operation(Some("sp-abc123")), "other");

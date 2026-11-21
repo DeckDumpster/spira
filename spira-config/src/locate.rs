@@ -83,6 +83,7 @@ mod tests {
         f()
     }
 
+    #[test_id(t8tffss)]
     #[test]
     fn spira_toml_names_the_file() {
         let d = scratch_dir("pin");
@@ -92,6 +93,7 @@ mod tests {
         assert_eq!(got, LocateOutcome::Found(p));
     }
 
+    #[test_id(taiqcny)]
     #[test]
     fn a_pin_to_a_missing_file_is_not_found_naming_it() {
         let d = scratch_dir("missing");
@@ -102,6 +104,7 @@ mod tests {
 
     /// THE ONE SOURCE: with SPIRA_TOML unset, a spira.toml in every place the old search
     /// looked (XDG, HOME/.config) and a legacy spira.conf beside it are all ignored.
+    #[test_id(tpy0rey)]
     #[test]
     fn nothing_is_discovered_without_the_pin() {
         let d = scratch_dir("nodiscover");
@@ -124,6 +127,7 @@ mod tests {
         assert_eq!(got, LocateOutcome::NotFound { tried: Vec::new() });
     }
 
+    #[test_id(t2qegex)]
     #[test]
     fn an_explicit_path_is_taken_as_given() {
         let p = PathBuf::from("explicit/spira.toml");

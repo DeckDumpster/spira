@@ -104,6 +104,7 @@ mod tests {
         testkit::TempDir::new(tag)
     }
 
+    #[test_id(tk3baxb)]
     #[test]
     fn a_record_passes_only_its_own_commit_and_kind() {
         let d = run_dir("own");
@@ -113,6 +114,7 @@ mod tests {
         assert!(check(d.path(), Kind::AcceptanceAd, SHA, None, "me", "now").is_err());
     }
 
+    #[test_id(tw33rli)]
     #[test]
     fn the_refusal_names_the_missing_record_and_the_producing_command() {
         let d = run_dir("refuse");
@@ -120,6 +122,7 @@ mod tests {
         assert!(e.contains("acceptance-ad") && e.contains(SHA) && e.contains("acceptance-local.sh") && e.contains(OVERRIDE_ENV), "{e}");
     }
 
+    #[test_id(t0ss6sw)]
     #[test]
     fn an_override_needs_a_real_reason_and_is_logged() {
         let d = run_dir("override");
@@ -131,6 +134,7 @@ mod tests {
         assert!(log.contains("full-suite") && log.contains(SHA) && log.contains("by=me"), "{log}");
     }
 
+    #[test_id(t32irrt)]
     #[test]
     fn a_non_sha_is_refused_never_used_as_a_path() {
         let d = run_dir("sha");

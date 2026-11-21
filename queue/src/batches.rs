@@ -512,6 +512,7 @@ mod tests {
     use super::mem::MemDoor;
     use super::*;
 
+    #[test_id(tj8v2d7)]
     #[test]
     fn open_batches_are_the_unended_rounds_of_the_repo_in_creation_order() {
         let d = MemDoor::default();
@@ -535,6 +536,7 @@ mod tests {
         assert_eq!(batches(&d, "spira").unwrap().len(), 6);
     }
 
+    #[test_id(t7ufw5d)]
     #[test]
     fn a_round_the_queue_never_wrote_reads_as_the_machines_fields() {
         let d = MemDoor::default();
@@ -553,6 +555,7 @@ mod tests {
         assert!(batch(&d, "spira", "spira-9").unwrap().is_none());
     }
 
+    #[test_id(tz0v3fi)]
     #[test]
     fn saved_fields_read_back_as_written_and_a_machine_step_after_keeps_them() {
         let d = MemDoor::default();
@@ -571,6 +574,7 @@ mod tests {
         );
     }
 
+    #[test_id(t5z5lfm)]
     #[test]
     fn a_save_of_a_round_the_store_does_not_hold_is_refused_naming_it() {
         let d = MemDoor::default();
@@ -580,6 +584,7 @@ mod tests {
         assert!(e.contains("spira-9") && e.contains("spira"), "{e}");
     }
 
+    #[test_id(taugcb3)]
     #[test]
     fn a_state_reads_in_either_spelling_and_an_unknown_one_is_undecodable_not_open() {
         assert_eq!(state_word("Abandoned"), Some("ABANDONED"));
@@ -595,6 +600,7 @@ mod tests {
         assert!(e.contains("Retired"), "{e}");
     }
 
+    #[test_id(te9nxy4)]
     #[test]
     fn a_progress_key_under_a_round_is_not_a_round() {
         assert_eq!(round_id("spira", "batches/spira/b1"), Some("b1"));

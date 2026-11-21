@@ -104,6 +104,7 @@ fn store() -> Store {
     }
 }
 
+#[test_id(t0fklrr)]
 #[test]
 fn the_snapshot_lists_the_manual_holds_and_reads_each_unknown_one() {
     let d = Double::new(store());
@@ -118,6 +119,7 @@ fn the_snapshot_lists_the_manual_holds_and_reads_each_unknown_one() {
     assert_eq!(d.sent(), ["list --live --hold manual", "list --ids sp-new"]);
 }
 
+#[test_id(tpusfw0)]
 #[test]
 fn the_snapshot_skips_a_version_already_read_and_reads_it_again_once_it_moves() {
     let d = Double::new(store());
@@ -128,6 +130,7 @@ fn the_snapshot_skips_a_version_already_read_and_reads_it_again_once_it_moves() 
     assert!(!d.sent().iter().any(|v| v.starts_with("history")), "a known version sends no history read");
 }
 
+#[test_id(tx11j87)]
 #[test]
 fn the_snapshot_fails_when_the_list_is_refused_and_when_a_held_row_has_no_manual_hold() {
     let d = Double::new(Store { refuse: ["list".to_string()].into(), ..store() });
@@ -138,6 +141,7 @@ fn the_snapshot_fails_when_the_list_is_refused_and_when_a_held_row_has_no_manual
     assert!(!d.sent().iter().any(|v| v.starts_with("history")), "never a history read");
 }
 
+#[test_id(t1i35zn)]
 #[test]
 fn a_held_fleet_is_read_from_its_rows_without_a_history_or_state_call_per_bead() {
     let states = ["LANDED", "SUBMITTED", "READY", "SUPERSEDED"];
@@ -173,6 +177,7 @@ fn a_held_fleet_is_read_from_its_rows_without_a_history_or_state_call_per_bead()
     assert_eq!(snap.held.iter().filter(|h| matches!(h.reading, Reading::Request { .. })).count(), 10);
 }
 
+#[test_id(tkbaepv)]
 #[test]
 fn a_supersede_writes_the_row_then_the_bd_side_then_the_note() {
     let d = Double::new(store());
@@ -180,6 +185,7 @@ fn a_supersede_writes_the_row_then_the_bd_side_then_the_note() {
     assert_eq!(d.sent(), [format!("supersede sp-old sp-new {}", supersede_duty::ACTOR), "bd-supersede sp-old sp-new".into(), "bd-note sp-old superseded by sp-new".into()]);
 }
 
+#[test_id(tby0jdr)]
 #[test]
 fn an_unhold_writes_the_release_and_the_note_and_no_bd_supersede() {
     let d = Double::new(store());
@@ -187,6 +193,7 @@ fn an_unhold_writes_the_release_and_the_note_and_no_bd_supersede() {
     assert_eq!(d.sent(), [format!("unhold sp-old manual {}", supersede_duty::ACTOR), "bd-note sp-old superseded by sp-new".into()]);
 }
 
+#[test_id(tr21nx8)]
 #[test]
 fn a_supersede_repeated_is_settled_and_writes_nothing_more() {
     let d = Double::new(store());
@@ -196,6 +203,7 @@ fn a_supersede_repeated_is_settled_and_writes_nothing_more() {
     assert_eq!(d.sent(), [format!("supersede sp-old sp-new {}", supersede_duty::ACTOR), "state sp-old".into()], "no second bd-supersede or note");
 }
 
+#[test_id(t165ra8)]
 #[test]
 fn a_refused_write_on_a_live_bead_fails_and_leaves_no_note() {
     for verb in [Verb::Supersede, Verb::Unhold] {
@@ -206,6 +214,7 @@ fn a_refused_write_on_a_live_bead_fails_and_leaves_no_note() {
     }
 }
 
+#[test_id(t0d970r)]
 #[test]
 fn a_bd_side_or_note_that_fails_after_the_row_took_is_flagged_not_failed() {
     let d = Double::new(Store { fault: ["bd-supersede".to_string(), "bd-note".to_string()].into(), ..store() });

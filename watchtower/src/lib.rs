@@ -2,6 +2,9 @@
 //! detectors, so the scheduler's `watch.tower` task calls them in-process. `main.rs` is argv
 //! dispatch and environment resolution over these modules.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod conditions;
 pub mod cpu_throttle;
 pub mod czar_outcome;

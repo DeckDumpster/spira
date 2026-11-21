@@ -109,7 +109,7 @@ pub const DENY_LIST_ENV: &str = "SPIRA_TEST_DENY_LIST";
 /// `test-registry deny-list` prints them: `<state>\t<test>\t<bead>\t<until>` per row.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DenyList {
-    rows: Vec<(String, String)>,
+    rows: Vec<(String, String, String)>,
 }
 
 impl DenyList {
@@ -130,20 +130,23 @@ impl DenyList {
             let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric() || "_:.-/".contains(c));
             let well_formed = match f[1].split_once(':') {
                 Some(("suite", name)) => word(name),
+                Some(("test", id)) => {
+                    id.len() == 7 && id.starts_with('t') && id[1..].bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
+                }
                 Some(("unit" | "integration", rest)) => rest.split_once(' ').is_some_and(|(a, b)| word(a) && word(b)),
                 _ => false,
             };
             if !well_formed {
-                return Err(format!("deny list line {n}: test {:?} is not suite:<file>, unit:<binary-id> <path> or integration:<package> <path>", f[1]));
+                return Err(format!("deny list line {n}: test {:?} is not suite:<file>, test:<id>, unit:<binary-id> <path> or integration:<package> <path>", f[1]));
             }
-            rows.push((f[0].to_string(), f[1].to_string()));
+            rows.push((f[0].to_string(), f[1].to_string(), f[2].to_string()));
         }
         Ok(DenyList { rows })
     }
 
     /// The text [`Self::parse`] reads back: one row per denied test, state and test only.
     pub fn render(&self) -> String {
-        self.rows.iter().map(|(s, t)| format!("{s}\t{t}\t-\t-\n")).collect()
+        self.rows.iter().map(|(s, t, _)| format!("{s}\t{t}\t-\t-\n")).collect()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -152,12 +155,17 @@ impl DenyList {
 
     /// The tests of one kind (`suite`, `unit`, `integration`), the part after the prefix.
     pub fn tests(&self, kind: &str) -> Vec<&str> {
-        self.rows.iter().filter_map(|(_, t)| t.strip_prefix(kind)?.strip_prefix(':')).collect()
+        self.rows.iter().filter_map(|(_, t, _)| t.strip_prefix(kind)?.strip_prefix(':')).collect()
+    }
+
+    /// Each `test:` row's state, id and owning bead.
+    pub fn test_rows(&self) -> Vec<(&str, &str, &str)> {
+        self.rows.iter().filter_map(|(s, t, b)| Some((s.as_str(), t.strip_prefix("test:")?, b.as_str()))).collect()
     }
 
     /// Each `suite:` row's file and state.
     pub fn suites(&self) -> Vec<(&str, &str)> {
-        self.rows.iter().filter_map(|(s, t)| Some((t.strip_prefix("suite:")?, s.as_str()))).collect()
+        self.rows.iter().filter_map(|(s, t, _)| Some((t.strip_prefix("suite:")?, s.as_str()))).collect()
     }
 
     pub fn nextest_filter(&self) -> Option<String> {
@@ -299,6 +307,33 @@ pub fn parse(text: &str) -> Option<UnitFile> {
 mod tests {
     use super::*;
 
+    const TEST_ROW: &str = "disabled\ttest:t0aaaaa\tsp-x\t-\n";
+
+    #[test_id(tq0hr1m)]
+    #[test]
+    fn a_test_id_row_parses_and_test_rows_returns_its_bead() {
+        let d = DenyList::parse(TEST_ROW).unwrap();
+        assert_eq!(d.test_rows(), vec![("disabled", "t0aaaaa", "sp-x")]);
+    }
+
+    #[test_id(ty6n2di)]
+    #[test]
+    fn a_malformed_test_id_row_is_refused_by_line_number() {
+        let e = DenyList::parse(&format!("{TEST_ROW}quarantined\ttest:T0\tsp-x\t-\n")).unwrap_err();
+        assert!(e.starts_with("deny list line 2:"), "{e}");
+    }
+
+    #[test_id(tv80b70)]
+    #[test]
+    fn test_id_rows_reach_no_nextest_filter_and_no_integration_skip() {
+        let d = DenyList::parse(TEST_ROW).unwrap();
+        assert_eq!(d.nextest_filter(), None);
+        assert_eq!(d.integration_skips(), "");
+        let mixed = DenyList::parse(&format!("{TEST_ROW}disabled\tunit:a b::c\tsp-1\t-\n")).unwrap();
+        assert_eq!(mixed.nextest_filter().unwrap(), "not ((binary_id(=a) & test(=b::c)))");
+    }
+
+    #[test_id(t2te7i8)]
     #[test]
     fn each_macro_gives_the_words_of_its_fn() {
         assert_eq!(
@@ -315,6 +350,7 @@ mod tests {
         );
     }
 
+    #[test_id(ts5rb7x)]
     #[test]
     fn the_printf_format_prints_the_config_text() {
         let fmt = unit_tier_config_printf!()
@@ -326,6 +362,7 @@ mod tests {
 
     const TWO: &str = "# test-registry deny-list at=1 rows=2\ndisabled\tunit:a::b t::drop\tsp-1\t-\nquarantined\tunit:c d::e\tsp-2\t5\n";
 
+    #[test_id(ty3yp8p)]
     #[test]
     fn an_empty_deny_list_composes_no_filter_no_skips_and_todays_config() {
         let d = DenyList::default();
@@ -335,14 +372,16 @@ mod tests {
         assert_eq!(DenyList::parse("# test-registry deny-list at=1 rows=0\n").unwrap(), d);
     }
 
+    #[test_id(tzb1b4a)]
     #[test]
     fn two_unit_rows_of_either_state_give_the_exact_filter_expression() {
         let d = DenyList::parse(TWO).unwrap();
         assert_eq!(d.nextest_filter().unwrap(), "not ((binary_id(=a::b) & test(=t::drop)) | (binary_id(=c) & test(=d::e)))");
         assert!(nextest_config(7, 3, &d).ends_with("default-filter = \"not ((binary_id(=a::b) & test(=t::drop)) | (binary_id(=c) & test(=d::e)))\"\n"));
-        assert_eq!(DenyList::parse(&d.render()).unwrap(), d);
+        assert_eq!(DenyList::parse(&d.render()).unwrap().render(), d.render(), "render keeps state and test, not the bead");
     }
 
+    #[test_id(trfvnun)]
     #[test]
     fn integration_rows_become_exact_skips_and_suite_rows_reach_neither_filter() {
         let d = DenyList::parse("disabled\tintegration:p x::y\t-\t-\nquarantined\tintegration:q z\t-\t-\ndisabled\tsuite:test-a.sh\t-\t-\n").unwrap();
@@ -351,6 +390,7 @@ mod tests {
         assert_eq!(d.suites(), [("test-a.sh", "disabled")]);
     }
 
+    #[test_id(tiptmp9)]
     #[test]
     fn a_malformed_deny_list_line_is_refused_by_its_number() {
         for (text, line) in [
@@ -367,6 +407,7 @@ mod tests {
         }
     }
 
+    #[test_id(tkv2b4i)]
     #[test]
     fn the_default_profile_names_no_profile_and_no_override() {
         for w in [
@@ -379,6 +420,7 @@ mod tests {
         }
     }
 
+    #[test_id(tafjah0)]
     #[test]
     fn no_word_names_a_thread_count() {
         for w in [
@@ -407,6 +449,7 @@ mod tests {
         l
     }
 
+    #[test_id(tdso2vl)]
     #[test]
     fn timings_read_the_count_from_the_summary_and_keep_the_ten_slowest_once() {
         let t = timings(&nextest_log());
@@ -416,6 +459,7 @@ mod tests {
         assert_eq!(t.slowest[0].1, 60.0);
     }
 
+    #[test_id(tzxicbs)]
     #[test]
     fn timings_say_whether_nextest_printed_its_summary() {
         assert!(!timings("").summarized);
@@ -426,11 +470,13 @@ mod tests {
         assert_eq!(t.tests, 3);
     }
 
+    #[test_id(t1lgkfk)]
     #[test]
     fn timings_of_a_log_with_no_tests_are_empty() {
         assert_eq!(timings("error: could not compile\n"), UnitTimings::default());
     }
 
+    #[test_id(t3vj6ui)]
     #[test]
     fn the_file_form_round_trips_and_leaves_the_parse_to_timings() {
         let lines: String = nextest_log().lines().filter(|l| l.contains("] (") || l.contains("Summary [")).map(|l| format!("{l}\n")).collect();
@@ -441,6 +487,7 @@ mod tests {
         assert_eq!(parse("garbage"), None);
     }
 
+    #[test_id(tkrzhxj)]
     #[test]
     fn the_slowest_field_is_name_colon_secs_joined_by_commas() {
         let t = UnitTimings { tests: 2, summarized: true, run_secs: 0.0, slowest: vec![("a t1".into(), 1.5), ("b t2".into(), 0.25)] };
