@@ -772,18 +772,35 @@ fn unseal_labels_each_comment_with_its_half() {
 #[test]
 fn status_shows_each_published_reviews_two_scores_in_order() {
     let mut w = world();
-    for (n, seed) in [("001", "3"), ("002", "4")] {
+    for (n, seed) in [("001", "3"), ("002", "4"), ("003", "5")] {
         assert_eq!(w.cr(&["open", "--seed", seed]).code, 0);
         let c = w.comments(n.parse().unwrap());
         assert_eq!(w.seal_with(n, &c).code, 0);
     }
-    record::set_state(w.run.path(), 2, State::Published, NOW).unwrap();
+    let path = record::load(w.run.path(), 1).unwrap().unit.files[0].path.clone();
+    let dir = record::dir(w.run.path(), 1);
+    std::fs::write(dir.join("comments.json"), format!(r#"[{{"path":"{path}","line":1,"body":"h","user":{{"type":"User"}}}},{{"path":"{path}","line":40,"body":"h2","user":{{"type":"User"}}}}]"#)).unwrap();
+    let finding = format!(r#"{{"id":"001-1","words":"w","exemplar":{{"path":"{path}","line":1}},"kind":"question","rule":"r","scope":"unit","endorses":1}}"#);
+    std::fs::write(dir.join("findings.jsonl"), format!("{finding}\n")).unwrap();
+    record::set_state(w.run.path(), 3, State::Published, NOW).unwrap();
     record::set_state(w.run.path(), 1, State::Closed, NOW).unwrap();
     let j: serde_json::Value = serde_json::from_str(&w.cr(&["status", "--json"]).stdout).unwrap();
     let rows: Vec<(&str, u64, u64, u64, u64)> = j["scores"].as_array().unwrap().iter().map(|r| (r["review"].as_str().unwrap(), r["lens_predicted"].as_u64().unwrap(), r["his_comments"].as_u64().unwrap(), r["fresh_endorsed"].as_u64().unwrap(), r["fresh_points"].as_u64().unwrap())).collect();
-    assert_eq!(rows, [("001", 0, 0, 0, 1), ("002", 0, 0, 0, 1)]);
+    assert_eq!(rows, [("001", 1, 2, 1, 1), ("003", 0, 0, 0, 1)], "002 is still open and has no score row");
     let text = w.cr(&["status"]).stdout;
     let at = text.find("scores\n").expect("a scores section");
     let lines: Vec<&str> = text[at..].lines().skip(1).take(2).collect();
-    assert_eq!(lines, ["  001 lens 0/0 fresh 0/1", "  002 lens 0/0 fresh 0/1"]);
+    assert_eq!(lines, ["  001 lens 1/2 fresh 1/1", "  003 lens 0/0 fresh 0/1"]);
+}
+
+#[test]
+fn a_review_sealed_as_one_undivided_array_scores_all_lens_and_no_fresh() {
+    let mut w = world();
+    assert_eq!(w.open_and_seal().code, 0);
+    let path = record::load(w.run.path(), 1).unwrap().unit.files[0].path.clone();
+    std::fs::write(w.sealed_path(1), format!(r#"[{{"path":"{path}","line":1,"body":"old"}}]"#)).unwrap();
+    record::set_state(w.run.path(), 1, State::Published, NOW).unwrap();
+    let j: serde_json::Value = serde_json::from_str(&w.cr(&["status", "--json"]).stdout).unwrap();
+    assert_eq!(j["scores"][0]["fresh_points"], 0);
+    assert_eq!(j["scores"][0]["lens_predicted"], 0);
 }

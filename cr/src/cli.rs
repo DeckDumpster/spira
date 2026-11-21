@@ -48,8 +48,10 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   status prints the open reviews, then coverage at the landing-ref commit: the share of files a
   published review has reached, by area (first path component) and by unit kind, the oldest
   never-reviewed files, and the files changed since their review with lines changed and the review
-  that covered them. Both lists are cut to SPIRA_CR_STATUS_LIMIT and end `… <k> more`. --json
-  prints {reviews, coverage}. Coverage is reported, never a target.
+  that covered them. Both lists are cut to SPIRA_CR_STATUS_LIMIT and end `… <k> more`. It also
+  scores each published or closed review, oldest first: his lens by how many of his comments it
+  predicted, the fresh read by how many of its points he endorsed. --json prints
+  {reviews, scores, coverage}. Coverage is reported, never a target.
 
   The coverage ledger is ledger.jsonl on the review repository's default branch; seal appends a
   review's open row. ledger-close appends its close row once, as published if the operator
