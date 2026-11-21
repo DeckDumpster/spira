@@ -1,7 +1,7 @@
 //! `cr pick` through `cli::run`, over an in-memory tree and ledger: no git, no process.
 
 use crate::cli::{run, Outcome};
-use crate::ledger::{Ledger, LedgerFile, Row};
+use crate::ledger::{ClosedAs, Ledger, LedgerFile, Row};
 use crate::ports::{blob_of, Config, FixtureTree, History, Ports, SourceTree, VirtualClock};
 use serde_json::Value;
 
@@ -53,12 +53,20 @@ pub(crate) fn fixture() -> FixtureTree {
         .with_commits("demo/src/store.rs", &[NOW - DAY, NOW - 2 * DAY, NOW - 90 * DAY])
 }
 
+pub(crate) fn seeded(rows: &[Row]) -> gh::FakeGh {
+    gh::FakeGh::default().with_ledger_text(&rows.iter().map(|r| format!("{}\n", serde_json::to_string(r).unwrap())).collect::<String>())
+}
+
+pub(crate) fn ledger_rows(g: &gh::FakeGh) -> Vec<Row> {
+    Ledger::parse(&g.ledger_text()).unwrap().rows
+}
+
 fn ports_with(tree: FixtureTree, ledger: Vec<Row>, config: Config) -> Ports {
-    Ports { tree: Box::new(tree), ledger: Ledger::from_rows(ledger), config, ..ports_with_tree(Box::new(Unreadable)) }
+    Ports { tree: Box::new(tree), gh: Box::new(seeded(&ledger)), repo_owner: gh::OWNER.into(), repo_name: gh::NAME.into(), config, ..ports_with_tree(Box::new(Unreadable)) }
 }
 
 fn ports_with_tree(tree: Box<dyn SourceTree>) -> Ports {
-    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), gh: Box::new(gh::FakeGh::default()), repo_owner: String::new(), repo_name: String::new(), findings_dir: String::new(), committer: Box::new(NoCommit), source_repo: "src".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree, beads: Box::new(crate::ports::FixtureBeads::default()), registry: Box::new(crate::ports::FixtureRegistry::default()), ledger: Ledger::from_rows(vec![]), config: cfg(), env_seed: None }
+    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), gh: Box::new(gh::FakeGh::default()), repo_owner: String::new(), repo_name: String::new(), findings_dir: String::new(), committer: Box::new(NoCommit), source_repo: "src".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree, beads: Box::new(crate::ports::FixtureBeads::default()), registry: Box::new(crate::ports::FixtureRegistry::default()), config: cfg(), env_seed: None }
 }
 
 fn ports() -> Ports {
@@ -83,13 +91,19 @@ fn unit_files(v: &Value) -> Vec<String> {
 
 fn row(kind: &str, unit_id: &str, at: u64, files: &[(&str, &str)]) -> Row {
     Row {
-        review: "r1".into(),
-        at,
-        commit: "old".into(),
+        review: format!("r-{unit_id}"),
         kind: kind.into(),
         unit_id: unit_id.into(),
+        commit: "old".into(),
         files: files.iter().map(|(p, b)| LedgerFile { path: p.to_string(), blob: b.to_string() }).collect(),
+        opened_at: at,
+        closed_at: None,
+        closed_as: None,
     }
+}
+
+fn closed(r: Row, at: u64, how: ClosedAs) -> Row {
+    r.closing(at, how)
 }
 
 #[test]
@@ -218,19 +232,78 @@ fn excluded_paths_are_never_drawn_across_a_hundred_seeds() {
     assert_eq!(code, 1, "{v}");
 }
 
-#[test]
-fn a_unit_sent_at_its_current_blob_is_not_drawn_until_the_file_changes() {
-    let store = "//! The store.\n\npub struct Store;\n\nimpl Store {\n    pub fn open() -> Store {\n        Store\n    }\n}\n";
-    let sent = row("module", "module:demo/src/store.rs", NOW - DAY, &[("demo/src/store.rs", &blob_of(store.as_bytes()))]);
-    let p = ports_with(fixture(), vec![sent.clone()], cfg());
-    let (code, v) = json(&p, &["pick", "--aim", "demo/src/store.rs"]);
-    assert_eq!(code, 1, "{v}");
+const STORE: &str = "//! The store.\n\npub struct Store;\n\nimpl Store {\n    pub fn open() -> Store {\n        Store\n    }\n}\n";
+const STORE_ID: &str = "module:demo/src/store.rs";
 
-    let changed = fixture().with_file("demo/src/store.rs", &format!("{store}// edited\n"));
-    let p = ports_with(changed, vec![sent], cfg());
+fn store_row() -> Row {
+    row("module", STORE_ID, NOW - 40 * DAY, &[("demo/src/store.rs", &blob_of(STORE.as_bytes()))])
+}
+
+#[test]
+fn a_review_closed_unpublished_leaves_its_unit_never_reviewed() {
+    let open = store_row();
+    let p = ports_with(fixture(), vec![open.clone()], cfg());
+    let (code, v) = json(&p, &["pick", "--aim", "demo/src/store.rs"]);
+    assert_eq!(code, 1, "an open row alone holds the unit: {v}");
+
+    let p = ports_with(fixture(), vec![open.clone(), closed(open.clone(), NOW - DAY, ClosedAs::Unpublished)], cfg());
     let (code, v) = json(&p, &["pick", "--aim", "demo/src/store.rs"]);
     assert_eq!(code, 0, "{v}");
-    assert!(v["weight"]["review_factor"].as_f64().unwrap() < 4.0);
+    assert_eq!(v["weight"]["review_factor"].as_f64().unwrap(), 4.0);
+
+    let p = ports_with(fixture(), vec![open.clone(), closed(open.clone(), NOW - DAY, ClosedAs::Published)], cfg());
+    let (code, v) = json(&p, &["pick", "--aim", "demo/src/store.rs"]);
+    assert_eq!(code, 1, "a published review at the same blob is not drawn: {v}");
+}
+
+#[test]
+fn a_changed_file_is_drawable_again_and_weighs_by_lines_changed() {
+    let open = store_row();
+    let rows = vec![open.clone(), closed(open, NOW - 30 * DAY, ClosedAs::Published)];
+    let old = blob_of(STORE.as_bytes());
+    let edited = fixture().with_file("demo/src/store.rs", &format!("{STORE}// edited\n")).with_changed("demo/src/store.rs", &old, 4);
+    let (code, v) = json(&ports_with(edited, rows.clone(), cfg()), &["pick", "--aim", "demo/src/store.rs"]);
+    assert_eq!(code, 0, "{v}");
+    let w = &v["weight"];
+    assert_eq!(w["changed_lines"], 4);
+    let lines = w["lines"].as_f64().unwrap();
+    let term = 1.0 + (4.0 / lines).min(1.0);
+    assert!((w["changed_term"].as_f64().unwrap() - term).abs() < 1e-9, "{w}");
+    assert!((w["review_factor"].as_f64().unwrap() - 2.0).abs() < 1e-9, "{w}");
+    let product = w["review_factor"].as_f64().unwrap() * term * w["churn_term"].as_f64().unwrap() * w["dependents_term"].as_f64().unwrap() * w["size_term"].as_f64().unwrap();
+    assert!((w["total"].as_f64().unwrap() - product).abs() < 1e-9, "{w}");
+
+    let unmeasured = fixture().with_file("demo/src/store.rs", &format!("{STORE}// edited\n"));
+    let (_, v) = json(&ports_with(unmeasured, rows, cfg()), &["pick", "--aim", "demo/src/store.rs"]);
+    let (changed, lines) = (v["weight"]["changed_lines"].as_f64().unwrap(), v["weight"]["lines"].as_f64().unwrap());
+    assert_eq!(changed, 10.0, "an undiffable blob counts as wholly changed: {v}");
+    assert!((v["weight"]["changed_term"].as_f64().unwrap() - (1.0 + changed / lines)).abs() < 1e-9, "{v}");
+}
+
+#[test]
+fn a_renamed_file_keeps_its_review() {
+    let mut old = row("module", "module:demo/src/old.rs", NOW - 40 * DAY, &[("demo/src/old.rs", &blob_of(STORE.as_bytes()))]);
+    old.commit = "before".into();
+    let rows = vec![old.clone(), closed(old, NOW - DAY, ClosedAs::Published)];
+    let renamed = fixture().with_rename("before", "demo/src/old.rs", "demo/src/store.rs");
+    let (code, v) = json(&ports_with(renamed, rows.clone(), cfg()), &["pick", "--aim", "demo/src/store.rs"]);
+    assert_eq!(code, 1, "the renamed file is still reviewed: {v}");
+    let (code, v) = json(&ports_with(fixture(), rows, cfg()), &["pick", "--aim", "demo/src/store.rs"]);
+    assert_eq!(code, 0, "without the rename the new path is unreviewed: {v}");
+}
+
+#[test]
+fn pick_refuses_when_the_ledger_file_is_missing_or_the_repository_unnamed() {
+    let mut p = ports();
+    p.gh = Box::new(gh::FakeGh::default());
+    let (code, v) = json(&p, &["pick"]);
+    assert_eq!(code, 1);
+    assert!(v["error"].as_str().unwrap().contains("create it empty"), "{v}");
+    let mut p = ports();
+    p.repo_owner = String::new();
+    let (code, v) = json(&p, &["pick"]);
+    assert_eq!(code, 1);
+    assert!(v["error"].as_str().unwrap().contains("SPIRA_CR_REPO_OWNER"), "{v}");
 }
 
 #[test]
@@ -301,17 +374,6 @@ fn help_documents_every_flag_and_the_exit_codes() {
     for want in ["--aim", "--seed", "--json", "Exit codes", "  0 ", "  1 ", "  2 "] {
         assert!(o.stdout.contains(want), "{want}");
     }
-}
-
-#[test]
-fn the_ledger_round_trips_through_a_file() {
-    let dir = testkit::TempDir::new("cr-ledger");
-    let path = dir.path().join("cr").join("ledger.jsonl");
-    assert!(Ledger::load(&path).unwrap().rows.is_empty());
-    let r = row("module", "m", 5, &[("a.rs", "b1")]);
-    Ledger::append(&path, &r).unwrap();
-    Ledger::append(&path, &r).unwrap();
-    assert_eq!(Ledger::load(&path).unwrap().rows, vec![r.clone(), r]);
 }
 
 fn lines(n: std::ops::Range<u32>) -> String {
@@ -412,6 +474,12 @@ impl SourceTree for Unreadable {
     }
     fn at(&self, _: &str) -> Result<Box<dyn SourceTree>, String> {
         Err("unreadable".into())
+    }
+    fn renamed_since(&self, _: &str) -> Result<std::collections::BTreeMap<String, String>, String> {
+        Ok(Default::default())
+    }
+    fn changed_lines(&self, _: &str, _: &str) -> Option<u32> {
+        None
     }
 }
 

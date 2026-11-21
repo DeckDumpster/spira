@@ -1,7 +1,7 @@
 //! `cr thread` and `cr reply` through `cli::run`: a kept `comments.json`, an in-memory tree and a scripted forge.
 
 use super::gh::{FakeGh, Shared, NAME, OWNER};
-use super::{cfg, fixture, go, ports_with};
+use super::{cfg, fixture, go, ports_with, seeded};
 use crate::cli::Outcome;
 use crate::ports::Ports;
 use crate::record;
@@ -17,7 +17,7 @@ struct World {
 
 fn world() -> World {
     let run = TempDir::new("cr-thread");
-    let gh = Rc::new(FakeGh::default());
+    let gh = Rc::new(seeded(&[]));
     let mut ports = ports_with(fixture(), vec![], cfg());
     ports.run_dir = run.path().to_path_buf();
     ports.gh = Box::new(Shared(gh.clone()));

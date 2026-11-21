@@ -317,6 +317,18 @@ mod tests {
     }
 
     #[test]
+    fn a_review_published_and_closed_in_one_tick_is_published_before_it_is_closed() {
+        let mut r = review(vec![]);
+        r.reviews = Some(vec![submitted(false, "COMMENTED")]);
+        r.pull = Some(Pull { state: "closed".into(), closed_at: Some(950) });
+        let (_, _, records) = decide(&Carry::default(), &snap(r), 1000);
+        assert_eq!(
+            records.changes,
+            [Change { number: 7, state: State::Published, at: 900 }, Change { number: 7, state: State::Closed, at: 950 }]
+        );
+    }
+
+    #[test]
     fn an_unanswered_forge_leaves_the_carry_unchanged() {
         let (c, _, _) = decide(&Carry::default(), &snap(review(vec![person(41, "why")])), 1000);
         let silent = ReviewObs { number: 7, pr: 3, state: Some(State::Open), ..ReviewObs::default() };

@@ -5,7 +5,6 @@
 mod gh;
 
 use cr::cli::run;
-use cr::ledger::Ledger;
 use cr::ports::{Config, GitTree, Ports, VirtualClock};
 use cr::record;
 use gh::{unbase64, FakeGh, Shared, NAME, OWNER};
@@ -41,7 +40,7 @@ fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
     git(p, &["commit", "-q", "-m", "one"]);
     let sha = String::from_utf8(git(p, &["rev-parse", "HEAD"])).unwrap().trim().to_string();
 
-    let gh = Rc::new(FakeGh::default());
+    let gh = Rc::new(FakeGh::default().with_ledger_text(""));
     let ports = Ports {
         run_dir: run_dir.path().to_path_buf(),
         gh: Box::new(Shared(gh.clone())),
@@ -55,7 +54,6 @@ fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
         tree: Box::new(GitTree::new(p.to_str().unwrap(), "main").unwrap()),
         beads: Box::new(cr::ports::FixtureBeads::default()),
         registry: Box::new(cr::ports::FixtureRegistry::default()),
-        ledger: Ledger::default(),
         config: Config { page_lines: 60, exclude: vec![], churn_days: 60, rewrite_days: 90, count_limit: 50 },
         env_seed: None,
     };

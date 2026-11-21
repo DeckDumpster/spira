@@ -1,7 +1,6 @@
 //! Ports `cr` reads the world through. `Clock` and `Rng` are `runtime::ports`; `SourceTree`
 //! answers for one commit of the home repository.
 
-use crate::ledger::Ledger;
 pub use forge::ports::Gh;
 pub use runtime::ports::{Clock, Rng, SeededRng, VirtualClock, WallClock};
 use std::cell::RefCell;
@@ -50,6 +49,10 @@ pub trait SourceTree {
     fn removed_tests(&self, paths: &[String]) -> Vec<RemovedTest>;
     /// The same repository at another commit.
     fn at(&self, commit: &str) -> Result<Box<dyn SourceTree>, String>;
+    /// Files renamed between `commit` and this tree's commit, old path to new.
+    fn renamed_since(&self, commit: &str) -> Result<BTreeMap<String, String>, String>;
+    /// Lines that differ between the blob `old_blob` and `path`'s blob here; `None` when unknown.
+    fn changed_lines(&self, old_blob: &str, path: &str) -> Option<u32>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,7 +192,6 @@ pub struct Ports {
     pub tree: Box<dyn SourceTree>,
     pub beads: Box<dyn Beads>,
     pub registry: Box<dyn Registry>,
-    pub ledger: Ledger,
     pub config: Config,
     pub env_seed: Option<String>,
 }
@@ -204,6 +206,8 @@ pub struct FixtureTree {
     logs: HashMap<String, Vec<CommitInfo>>,
     line_ages: HashMap<String, Vec<u64>>,
     removed: Vec<RemovedTest>,
+    renames: HashMap<String, BTreeMap<String, String>>,
+    changed: HashMap<(String, String), u32>,
 }
 
 impl FixtureTree {
@@ -233,6 +237,16 @@ impl FixtureTree {
 
     pub fn with_removed_test(mut self, path: &str, name: &str, sha: &str, at_ms: u64) -> Self {
         self.removed.push(RemovedTest { path: path.to_string(), name: name.to_string(), sha: sha.to_string(), at_ms });
+        self
+    }
+
+    pub fn with_rename(mut self, commit: &str, old: &str, new: &str) -> Self {
+        self.renames.entry(commit.to_string()).or_default().insert(old.to_string(), new.to_string());
+        self
+    }
+
+    pub fn with_changed(mut self, path: &str, old_blob: &str, lines: u32) -> Self {
+        self.changed.insert((path.to_string(), old_blob.to_string()), lines);
         self
     }
 
@@ -290,6 +304,12 @@ impl SourceTree for FixtureTree {
             Err(format!("the fixture tree holds commit {} only, not {commit}", self.commit_id))
         }
     }
+    fn renamed_since(&self, commit: &str) -> Result<BTreeMap<String, String>, String> {
+        Ok(self.renames.get(commit).cloned().unwrap_or_default())
+    }
+    fn changed_lines(&self, old_blob: &str, path: &str) -> Option<u32> {
+        self.changed.get(&(path.to_string(), old_blob.to_string())).copied()
+    }
 }
 
 /// `git -C <root>` against one resolved commit.
@@ -300,6 +320,7 @@ pub struct GitTree {
     contents: RefCell<Option<HashMap<String, Vec<u8>>>>,
     log: RefCell<Option<HashMap<String, Vec<u64>>>>,
     full_log: RefCell<Option<FullLog>>,
+    renames: RefCell<HashMap<String, BTreeMap<String, String>>>,
 }
 
 /// Every commit, and for each path the indexes of the commits touching it.
@@ -313,7 +334,7 @@ impl GitTree {
         let spec = format!("{base}^{{commit}}");
         let out = git(&root, &["rev-parse", "--verify", &spec])?;
         let commit = String::from_utf8_lossy(&out).trim().to_string();
-        Ok(GitTree { root, commit, listing: RefCell::new(None), contents: RefCell::new(None), log: RefCell::new(None), full_log: RefCell::new(None) })
+        Ok(GitTree { root, commit, listing: RefCell::new(None), contents: RefCell::new(None), log: RefCell::new(None), full_log: RefCell::new(None), renames: RefCell::new(HashMap::new()) })
     }
 
     fn listing(&self) -> Result<std::cell::Ref<'_, BTreeMap<String, String>>, String> {
@@ -536,5 +557,30 @@ impl SourceTree for GitTree {
     }
     fn at(&self, commit: &str) -> Result<Box<dyn SourceTree>, String> {
         Ok(Box::new(GitTree::new(&self.root.to_string_lossy(), commit)?))
+    }
+    fn renamed_since(&self, commit: &str) -> Result<BTreeMap<String, String>, String> {
+        if let Some(m) = self.renames.borrow().get(commit) {
+            return Ok(m.clone());
+        }
+        let out = git(&self.root, &["diff", "-M", "--name-status", "-z", commit, &self.commit])?;
+        let mut map = BTreeMap::new();
+        let mut toks = out.split(|b| *b == 0).filter(|t| !t.is_empty()).map(|t| String::from_utf8_lossy(t).into_owned());
+        while let Some(status) = toks.next() {
+            let paths = if status.starts_with('R') || status.starts_with('C') { 2 } else { 1 };
+            let named: Vec<String> = toks.by_ref().take(paths).collect();
+            if status.starts_with('R') && named.len() == 2 {
+                map.insert(named[0].clone(), named[1].clone());
+            }
+        }
+        self.renames.borrow_mut().insert(commit.to_string(), map.clone());
+        Ok(map)
+    }
+    fn changed_lines(&self, old_blob: &str, path: &str) -> Option<u32> {
+        let now = self.blob(path)?;
+        let out = git(&self.root, &["diff", "--numstat", old_blob, &now]).ok()?;
+        let line = String::from_utf8_lossy(&out).lines().next()?.to_string();
+        let mut cols = line.split('\t');
+        let (added, deleted): (u32, u32) = (cols.next()?.parse().ok()?, cols.next()?.parse().ok()?);
+        Some(added.max(deleted))
     }
 }
