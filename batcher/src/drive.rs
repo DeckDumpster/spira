@@ -7204,11 +7204,11 @@ pub(crate) mod tests {
             Some(FilterRed { harness: vec![], name: "unit-tests".into(), named: vec![], failed: vec![], ..Default::default() })
         }));
         f.bisects = true;
-        f.probe_kept = "/run/batch-results/r-1/probes/b1".into();
+        f.probe_kept = "r-1/probes/b1".into();
         let mut ops = Ops::default();
         let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
         let text = format!("{end:?} {:?} {:?}", ops.incidents, ops.eject_evidence);
-        assert!(text.contains("base red; output: /run/batch-results/r-1/probes/b1"), "{text}");
+        assert!(text.contains("base red; output: r-1/probes/b1"), "{text}");
     }
 
     #[test]
