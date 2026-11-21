@@ -16,8 +16,31 @@ fn testenv() -> PathBuf {
     }
     match std::env::var("SPIRA_RELEASE").map(|r| Path::new(&r).join("bin/testenv")) {
         Ok(p) if p.is_file() => p,
-        _ => testkit::bin_exe("testenv"),
+        _ => built_testenv(),
     }
+}
+
+fn built_testenv() -> PathBuf {
+    static BUILT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            let exe = std::env::current_exe().expect("current_exe");
+            let profile = exe.parent().and_then(Path::parent).expect("test executable under <target>/<profile>/deps");
+            let target = profile.parent().expect("target dir");
+            let bin = profile.join("testenv");
+            if !bin.is_file() {
+                let mut build = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+                build.args(["build", "-p", "testenv", "--bin", "testenv"]);
+                if profile.file_name().is_some_and(|n| n == "release") {
+                    build.arg("--release");
+                }
+                let st = build.env("CARGO_TARGET_DIR", target).status().expect("cargo runs");
+                assert!(st.success(), "cargo build -p testenv failed");
+            }
+            assert!(bin.is_file(), "testenv not built at {}", bin.display());
+            bin
+        })
+        .clone()
 }
 
 fn report(text: &str, key: &str) -> String {
