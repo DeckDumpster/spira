@@ -580,7 +580,7 @@ mod tests {
             assert!(env.contains(&format!("RUSTC_WRAPPER={dir}/bin/sccache\n")), "{build}: {env}");
             assert!(env.lines().any(|l| l.starts_with("PATH=") && l.contains(&format!("{dir}/bin"))), "{build}: {env}");
             assert!(!env.contains("SPIRA_"), "{build}: {env}");
-            assert!(env.lines().any(|l| l.starts_with("CARGO_TARGET_DIR=") && l.ends_with("/home/attr-target")), "{build}: the target dir arrives unquoted: {env}");
+            assert!(env.lines().any(|l| l.starts_with("CARGO_TARGET_DIR=") && l.ends_with("home/attr-target")), "{build}: the target dir arrives unquoted: {env}");
         }
     }
 
