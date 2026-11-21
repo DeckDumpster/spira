@@ -351,8 +351,9 @@ fn a_create_gets_its_id_from_the_server_in_the_one_transaction_and_starts_no_pro
     let shown = lc.shows(&id);
     assert!(shown.contains("what the bead says") && shown.contains("repo:spira"), "{shown}");
     assert!(store.bd(&["show", &id], None).contains(&id), "bd reads the bead the server wrote");
+    assert_ne!(lc.run(&["show", &seed], None).0, 0, "a bead made outside the door has no lifecycle row");
     let (rc, row) = lc.run(&["show", &id], None);
-    assert!(rc == 0 && row.contains(&id), "create-bead files the lifecycle row from the create's output ({rc}): {row}");
+    assert!(rc == 0 && row.to_lowercase().contains("ready"), "create-bead files the lifecycle row from the create's output ({rc}): {row}");
 }
 
 #[test]
@@ -530,4 +531,19 @@ fn a_create_prints_what_bd_prints_with_json_and_with_neither_flag() {
     let said = store.bd(&["create", "a shown bead"], None);
     let (id, bd_id) = (text.split_whitespace().nth(3).unwrap_or_default().to_string(), said.split_whitespace().nth(3).unwrap_or_default().to_string());
     assert_eq!(text.replace(&id, "ID").lines().take(3).collect::<Vec<_>>(), said.replace(&bd_id, "ID").lines().take(3).collect::<Vec<_>>(), "{text} vs {said}");
+}
+
+#[test]
+fn a_blocking_edge_blocks_its_dependent_and_closing_the_blocker_unblocks_it_as_bd_reads_it() {
+    let store = Store::up();
+    let lc = writer_lc(&store, "b");
+    let (a, b) = (store.create_bead(), store.create_bead());
+    let blocked = || store.bd(&["blocked", "--json"], None);
+    assert!(!blocked().contains(&a), "nothing blocks {a} yet");
+    let (out, children) = lc.children_of("content", &["content", "dep", "add", &a, &b, "--type", "blocks"], None);
+    assert_eq!(children, 0, "{out}");
+    assert!(blocked().contains(&a), "bd reads {a} as blocked by the edge the service wrote");
+    let (out, children) = lc.children_of("close", &["close", &b, "--reason", "done"], None);
+    assert_eq!(children, 0, "{out}");
+    assert!(!blocked().contains(&a), "bd reads {a} as unblocked once its blocker closed in SQL");
 }
