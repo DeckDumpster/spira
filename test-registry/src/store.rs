@@ -362,6 +362,7 @@ mod tests {
         assert_eq!(ever_disabled(&c).unwrap(), vec![("unit:a x::one".to_string(), 100), ("unit:a x::two".to_string(), 200)]);
     }
 
+    #[test_id(tvqh1ej)]
     #[test]
     fn deny_list_includes_a_live_row_and_excludes_an_expired_one() {
         let c = db();

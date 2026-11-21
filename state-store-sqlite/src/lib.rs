@@ -2677,6 +2677,7 @@ mod tests {
         assert_eq!(waited, Some(60_000));
     }
 
+    #[test_id(t3881mn)]
     #[test]
     fn a_commit_that_fails_inside_its_transaction_is_not_recorded_as_a_commit() {
         let dir = testkit::TempDir::new("sqlite-phases-failed");

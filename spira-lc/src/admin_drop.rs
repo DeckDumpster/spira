@@ -280,6 +280,7 @@ mod tests {
         assert_eq!(s.journal_state().unwrap()[0].value, "newer");
     }
 
+    #[test_id(tn8ybzz)]
     #[test]
     fn a_turn_that_clears_a_state_key_deletes_its_row() {
         let s = store();

@@ -120,6 +120,7 @@ pub fn body_at(key: &str, when: &str, flaps: i64, evidence: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tzteh3r)]
     #[test]
     fn a_no_verdict_streak_fires_at_the_configured_count() {
         let row = |b: &str| serde_json::json!({ "bead": b, "status": "NO_VERDICT", "reason": "x" });

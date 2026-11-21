@@ -294,6 +294,7 @@ mod tests {
     const STREAK: &str = "gate-red-streak/spira";
     const CARGO: &str = "bwrap: execvp cargo: No such file or directory";
 
+    #[test_id(t52y8wm)]
     #[test]
     fn a_shared_red_on_four_beads_raises_one_streak_condition_and_a_pass_clears_it() {
         let mut r = Rig::new();
@@ -320,6 +321,7 @@ mod tests {
         beads.iter().map(|b| gate_row(b, "NO_VERDICT", reason, "", "")).collect()
     }
 
+    #[test_id(twtmgy5)]
     #[test]
     fn four_no_verdicts_with_one_reason_on_four_beads_page_once_and_a_pass_clears_it() {
         let mut r = Rig::new();
@@ -345,6 +347,7 @@ mod tests {
         assert_eq!(r.inbox().len(), 2);
     }
 
+    #[test_id(t7j846y)]
     #[test]
     fn a_no_verdict_streak_holds_through_an_unreadable_section_and_a_failed_append_leaves_the_raise() {
         let mut r = Rig::new();
@@ -359,6 +362,7 @@ mod tests {
         assert_eq!(r.status_and_flaps(NOVERDICT), Some(("True".into(), 1)));
     }
 
+    #[test_id(tqcmz0g)]
     #[test]
     fn no_verdicts_that_do_not_share_a_reason_or_four_beads_page_nothing() {
         let mut r = Rig::new();
@@ -379,6 +383,7 @@ mod tests {
         assert_eq!(r.status_and_flaps(NOVERDICT), Some(("True".into(), 1)), "a FAIL between does not break it");
     }
 
+    #[test_id(tj50xij)]
     #[test]
     fn a_red_that_is_not_one_shared_red_on_four_beads_raises_nothing() {
         let mut r = Rig::new();
@@ -397,6 +402,7 @@ mod tests {
         assert_eq!(r.ops.row(STREAK), None, "a no-verdict is not a red");
     }
 
+    #[test_id(tnkchae)]
     #[test]
     fn a_streak_holds_through_a_no_verdict_and_an_unreadable_section_and_clears_only_on_a_pass() {
         let mut r = Rig::new();
@@ -412,6 +418,7 @@ mod tests {
 
     // reconcile.rs holds the confirm rule (one_sighting_does_not_fire_a_condition_must_be_confirmed);
     // this asserts what it does to the store.
+    #[test_id(tbjyzz2)]
     #[test]
     // covers: UC-ops-detection-remediation-19
     fn one_sighting_does_not_fire_a_condition_must_be_confirmed() {
@@ -422,6 +429,7 @@ mod tests {
         assert!(r.heartbeat().contains("SP_HEIMDALL_AT="), "the heartbeat is written even when nothing is raised");
     }
 
+    #[test_id(tlqn5pw)]
     #[test]
     // covers: UC-ops-detection-remediation-19
     fn a_confirmed_condition_raises_one_alert_whose_message_leads_with_the_title() {
@@ -436,6 +444,7 @@ mod tests {
         assert_eq!(r.ops.count_of_kind(ALERT), 1);
     }
 
+    #[test_id(t9g2z6l)]
     #[test]
     // covers: UC-ops-detection-remediation-19
     fn one_clear_sighting_does_not_retract_and_the_second_clears_it() {
@@ -451,6 +460,7 @@ mod tests {
 
     // The store forgets `acked` and keeps `silent_until` on this same `set`
     // (spira-lc: a_refresh_keeps_the_transition_and_a_reraise_counts_a_flap_from_the_first_sighting).
+    #[test_id(tzyjnhy)]
     #[test]
     // covers: UC-ops-detection-remediation-19
     fn a_returning_condition_reopens_the_same_alert_as_one_more_flap() {
@@ -464,6 +474,7 @@ mod tests {
         assert_eq!(sets, 2, "the reopen is the same write as the raise, so the store's acked/silence rules apply");
     }
 
+    #[test_id(t5y8ha6)]
     #[test]
     // covers: UC-ops-detection-remediation-19
     fn an_alert_closed_by_hand_is_not_reopened_while_it_still_fires() {
@@ -478,6 +489,7 @@ mod tests {
         assert_eq!(writes, 0);
     }
 
+    #[test_id(tufyoib)]
     #[test]
     fn an_unreachable_store_falls_back_to_the_file_channel_and_the_file_goes_when_it_answers() {
         let mut r = Rig::new();
@@ -495,6 +507,7 @@ mod tests {
         assert!(!r.fallback_exists(), "the fallback survived the store coming back");
     }
 
+    #[test_id(th40ve8)]
     #[test]
     fn a_healthy_store_shows_write_ok_with_a_probe_that_never_fires_and_no_fallback() {
         let mut r = Rig::new();
@@ -507,6 +520,7 @@ mod tests {
         assert!(!r.fallback_exists());
     }
 
+    #[test_id(tgzxfga)]
     #[test]
     fn a_write_only_failure_reads_ok_reports_write_down_and_recovers() {
         let mut r = Rig::new();
@@ -524,6 +538,7 @@ mod tests {
         assert!(!r.fallback_exists());
     }
 
+    #[test_id(t8a4vpp)]
     #[test]
     fn a_raise_the_store_refuses_is_retried_next_pass_and_written_to_the_fallback() {
         let mut r = Rig::new();
@@ -541,6 +556,7 @@ mod tests {
         assert!(!r.fallback_exists());
     }
 
+    #[test_id(tt3gv8e)]
     #[test]
     fn a_timed_out_store_is_saturated_not_down_and_writes_the_fallback() {
         let mut r = Rig::new();
@@ -554,6 +570,7 @@ mod tests {
 
     // restart.rs holds the threshold (restart_count_below_threshold_produces_a_small_delta); an
     // alert is only handed in above it.
+    #[test_id(tomj8ir)]
     #[test]
     fn a_restart_loop_is_confirmed_stays_one_firing_clears_and_reopens_the_same_alert() {
         let mut r = Rig::new();
@@ -575,6 +592,7 @@ mod tests {
         assert_eq!(r.status_and_flaps(LOOPING), Some(("True".into(), 2)));
     }
 
+    #[test_id(t3ncfvq)]
     #[test]
     fn a_halted_loop_raises_nothing_and_lifting_the_halt_restores_alerting() {
         let mut r = Rig::new();
