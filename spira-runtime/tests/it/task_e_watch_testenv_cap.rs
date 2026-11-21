@@ -172,7 +172,8 @@ fn the_tick_asks_observe_to_read_the_ledgers_under_the_configured_run_dir() {
 fn observe_reads_the_ledger_under_the_run_dir_it_is_given() {
     let dir = testkit::TempDir::new("cap-observe-runner");
     let exe = dir.path().join("testenv");
-    std::fs::copy("/bin/sleep", &exe).unwrap();
+    let sleep = std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join("sleep")).find(|p| p.exists()).expect("sleep on PATH");
+    std::fs::copy(sleep, &exe).unwrap();
     let mut child = std::process::Command::new(&exe).arg("30").spawn().unwrap();
     let me = testenv::cap::live().into_iter().find(|p| p.pid == child.id()).unwrap();
     ledger(dir.path(), me.pid, &format!("{} 0 0", me.start_ticks));
