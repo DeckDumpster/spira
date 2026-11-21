@@ -246,6 +246,25 @@ mod tests {
     }
 
     #[test]
+    fn every_fence_a_bash_step_is_expected_to_print_is_printed_by_its_script() {
+        let d = checked_in();
+        let unit = crate::compose::gate_string(&crate::compose::Composition::Unit { touched: vec![], crates: vec![], targets: Default::default(), dropped: vec![] }, &d.command()).0;
+        for s in [d.command(), unit] {
+            let paths = crate::parse::bash_paths(&s);
+            for name in crate::fence::expected(&s) {
+                for path in paths.iter().filter(|p| std::path::Path::new(p.as_str()).file_stem().is_some_and(|st| st == name.as_str())) {
+                    let text = std::fs::read_to_string(root().join(path)).unwrap_or_else(|e| panic!("{path}: {e}"));
+                    let want = format!("fence: {name} checked");
+                    assert!(
+                        text.lines().any(|l| !l.trim().starts_with('#') && l.contains(&want)),
+                        "the gate expects `{want}` from the step `bash {path}`, but {path} prints no such line"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn parse_reads_steps_bins_comments_and_blanks() {
         let d = parse("# c\n\nbin SPIRA_LINT_BIN spira-lint\nstep  bash a.sh  \nstep \"$SPIRA_LINT_BIN\" --only x\n").unwrap();
         assert_eq!(d.bins, [Bin { var: "SPIRA_LINT_BIN".into(), package: "spira-lint".into() }]);

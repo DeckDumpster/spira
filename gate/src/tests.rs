@@ -125,6 +125,8 @@ struct Fake {
     /// Fences that exit 0 without their `fence: <name> checked` line. Every other fence the
     /// gate string names prints `checked 1` when the string exits 0, as a real one does.
     silent_fences: RefCell<HashSet<String>>,
+    /// Step word (script path or tool word) -> the fence names that step prints.
+    fence_prints: RefCell<Vec<(String, Vec<String>)>>,
     /// The tree each gate-string run happened in.
     trees: RefCell<Vec<PathBuf>>,
     // ---- the tree owns its gate (sp-quu2w)
@@ -330,6 +332,7 @@ impl Fake {
             reentry_runs: RefCell::new(HashMap::new()),
             covered_runs: RefCell::new(HashMap::new()),
             silent_fences: RefCell::new(HashSet::new()),
+            fence_prints: RefCell::new(vec![("spira/fence.sh".into(), vec!["fence".into()])]),
             trees: RefCell::new(Vec::new()),
             gone: RefCell::new(HashSet::new()),
             lint_by_bin: RefCell::new(HashMap::new()),
@@ -473,8 +476,12 @@ impl Fake {
         }
         // The fences ran and passed: each prints its positive control, unless told not to.
         let silent = self.silent_fences.borrow();
-        let mut lines: Vec<String> = crate::fence::expected(cmd)
-            .into_iter()
+        let mut lines: Vec<String> = self
+            .fence_prints
+            .borrow()
+            .iter()
+            .filter(|(word, _)| cmd.contains(word.as_str()))
+            .flat_map(|(_, names)| names.clone())
             .filter(|f| !silent.contains(f))
             .map(|f| format!("fence: {f} checked 1 files"))
             .collect();
@@ -503,6 +510,9 @@ impl Fake {
         }
         self.clock.set(t0 + secs);
         (0, "build ok".into())
+    }
+    fn prints(&self, word: &str, names: &[&str]) {
+        self.fence_prints.borrow_mut().push((word.into(), names.iter().map(|n| n.to_string()).collect()));
     }
     fn put_var(&self, k: &str, v: &str) {
         self.ctx
@@ -1838,6 +1848,7 @@ fn beads_data_anywhere_in_the_branch_tree_fails_though_the_diff_does_not_name_it
 fn a_gate_command_runs_once_the_file_it_names_is_on_the_base() {
     let f = Fake::new();
     f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = "bash spira/present.sh".into();
+    f.prints("spira/present.sh", &["present"]);
     assert_eq!(f.run(), PASS);
     assert_eq!(f.ran.borrow().len(), 1, "the command ran");
 }
@@ -2803,7 +2814,11 @@ fn a_deny_list_that_cannot_be_resolved_is_no_verdict_and_no_phase_runs() {
 #[test]
 fn a_unit_gate_builds_once_and_every_other_composition_keeps_the_build_fence() {
     const G: &str = "bash spira/lint.sh && bash spira/build-fence.sh && run-suites";
-    let set = |f: &Fake| f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = G.into();
+    let set = |f: &Fake| {
+        f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = G.into();
+        f.prints("spira/lint.sh", &["lint"]);
+        f.prints("spira/build-fence.sh", &["build-fence"]);
+    };
 
     let f = unit_fake(&["gate/src/x.rs"]);
     set(&f);
@@ -3820,6 +3835,9 @@ fn fenced() -> Fake {
     for p in ["spira/inventory.sh", "spira/build-fence.sh"] {
         f.blobs.borrow_mut().insert(format!("{BASE}:{p}"), b"x".to_vec());
     }
+    f.prints("spira/inventory.sh", &["inventory"]);
+    f.prints("spira/build-fence.sh", &["build-fence"]);
+    f.prints("$SPIRA_LINT_BIN", &["spira-lint", "plan-matrix", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"]);
     f
 }
 
@@ -3845,6 +3863,14 @@ fn a_unit_composition_judges_the_lint_wrapper_on_spira_lints_line() {
     let f = wrapped();
     *f.mode.borrow_mut() = Ok(GateMode::Unit);
     *f.touched.borrow_mut() = Ok(vec![Changed { path: "gate/src/x.rs".into(), exec: false }]);
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+}
+
+#[test]
+fn a_wrapper_script_that_prints_no_fence_line_of_its_own_still_passes() {
+    let f = fenced();
+    f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = r#"bash spira/lint-staged.sh "$SPIRA_LINT_BIN" && bash spira/build-fence.sh"#.into();
+    f.blobs.borrow_mut().insert(format!("{BASE}:spira/lint-staged.sh"), b"x".to_vec());
     assert_eq!(f.run(), PASS, "{}", f.stderr());
 }
 
@@ -4026,6 +4052,10 @@ const STEPS: &str = "# the tree's gate\nbin SPIRA_LINT_BIN spira-lint\nstep bash
 
 fn tree_owned(base: Option<&str>, merged: Option<&str>) -> Fake {
     let f = Fake::new();
+    f.prints("spira/a-fence.sh", &["a-fence"]);
+    f.prints("spira/b-fence.sh", &["b-fence"]);
+    f.prints("spira/c-fence.sh", &["c-fence"]);
+    f.prints("$SPIRA_LINT_BIN", &["spira-lint", "plan-matrix", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"]);
     f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = "bash spira/config-only.sh".into();
     if let Some(b) = base {
         f.blobs.borrow_mut().insert(format!("{BASE}:gate.steps"), b.as_bytes().to_vec());
@@ -5389,6 +5419,12 @@ fn checked_in_steps() -> String {
 fn fences_fake(paths: &[&str]) -> Fake {
     let steps = checked_in_steps();
     let f = tree_owned(Some(&steps), Some(&steps));
+    f.prints("$SPIRA_GUARD_BIN", &["lifecycle-guard"]);
+    f.prints("spira/build-fence.sh", &["build-fence"]);
+    f.prints("$SPIRA_FIXTURE_BIN", &["fixture-config"]);
+    f.prints("spira/round-image-preflight.sh", &["round-image-preflight"]);
+    f.prints("spira/ci-spill-guard.sh", &["ci-spill-guard"]);
+    f.prints("spira/boundary.sh", &["boundary"]);
     *f.mode.borrow_mut() = Ok(GateMode::Fences);
     *f.touched.borrow_mut() = Ok(paths.iter().map(|p| Changed { path: p.to_string(), exec: false }).collect());
     f.put_var("SPIRA_GATE_BEAD", "sp-a");
