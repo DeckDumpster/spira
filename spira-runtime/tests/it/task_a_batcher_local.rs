@@ -1095,7 +1095,7 @@ fn sp_8nlvra_a_pool_with_nothing_admissible_names_each_member() {
         m.sifted_tip = Some("old".into());
     }
     let (carry, acts) = decide(&Carry::default(), &s);
-    assert!(acts.is_empty(), "{acts:?}");
+    assert!(acts.iter().all(|a| a.effect == NOTE_LEFT_OUT), "{acts:?}");
     let why = carry.repos["spira"].skip_why.clone().expect("named");
     assert!(why.contains("sp-a: no sift pass at its tip t1") && why.contains("sp-b: no sift pass at its tip t2"), "{why}");
 }
@@ -1180,6 +1180,29 @@ fn sp_7der7t_a_member_refused_held_is_cut_once_the_pool_shows_it_unheld() {
         let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ASSEMBLE).expect("a leg").input).unwrap();
         assert_eq!(leg.members.iter().any(|(id, _)| id == "sp-b"), cut, "{kind}: {leg:?}");
     }
+}
+
+/// 2026-11-21: sp-7wx6ql was left out of two cuts and nobody was told why.
+#[test]
+fn sp_7der7t_a_cut_names_each_member_it_left_out() {
+    let mut unsifted = member("sp-c", "t3");
+    unsifted.sifted_tip = None;
+    let mut r = repo(vec![member("sp-a", "t1"), member("sp-b", "t2"), unsifted]);
+    r.left_out = vec![batcher_cut::io::LeftOut { id: "sp-d".into(), tip: "t4".into(), cause: batcher_cut::io::Cause::Held(vec!["manual".into()]) }];
+    let snap = Snapshot { repos: [("spira".to_string(), r)].into(), now_ms: NOW };
+    let rc = RepoCarry { refused: [("sp-b".to_string(), ("t2".to_string(), "b1".to_string(), "integration".to_string()))].into(), ..RepoCarry::default() };
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let (next, acts) = decide(&carry, &snap);
+    assert!(acts.iter().any(|a| a.effect == ASSEMBLE), "sp-a is cut: {acts:?}");
+    let notes: Vec<&Act> = acts.iter().filter(|a| a.effect == NOTE_LEFT_OUT).collect();
+    assert_eq!(notes.len(), 1, "{acts:?}");
+    let leg: Leg = serde_json::from_str(&notes[0].input).unwrap();
+    let left: Vec<batcher_cut::io::LeftOut> = serde_json::from_str(&leg.why).unwrap();
+    let mut got: Vec<(&str, String)> = left.iter().map(|l| (l.id.as_str(), l.tag())).collect();
+    got.sort();
+    assert_eq!(got, [("sp-b", "refused-integration".to_string()), ("sp-c", "no-sift".to_string()), ("sp-d", "held-manual".to_string())]);
+    let (_, again) = decide(&next, &snap);
+    assert!(!again.iter().any(|a| a.effect == NOTE_LEFT_OUT), "an unchanged list is not noted again: {again:?}");
 }
 
 /// Every named member refused: no round, no abandon, and the repo is idle with the members out.

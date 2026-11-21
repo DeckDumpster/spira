@@ -131,6 +131,7 @@ pub const ROUND_OPEN: &str = "batcher.local.round_open";
 pub const CORPUS: &str = "batcher.local.corpus";
 pub const STAGE: &str = "batcher.local.stage";
 pub const STAGE_TEST: &str = "batcher.local.stage_test";
+pub const NOTE_LEFT_OUT: &str = "batcher.local.note_left_out";
 const SOLE_KEY: &str = ":sole";
 /// Refusal kinds the observe's pool read (`batcher_cut::io::pool_rows`) already excludes while they hold; remembering them would only outlive the lifting.
 const POOL_READ_REFUSALS: [&str; 3] = ["held", "state", "no-row"];
@@ -168,6 +169,7 @@ pub const ACTS: &[(&str, u64)] = &[
     (CORPUS, UNIT_START_DEADLINE_MS),
     (STAGE, UNIT_START_DEADLINE_MS),
     (STAGE_TEST, UNIT_START_DEADLINE_MS),
+    (NOTE_LEFT_OUT, 60_000),
     (EJECT, 30_000),
     (EJECT_GATE_RED, 30_000),
     (WITHDRAW, 10_000),
@@ -188,7 +190,7 @@ pub const ACTS: &[(&str, u64)] = &[
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, EJECT_GATE_RED, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, PAUSE, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, NOTE_LEFT_OUT, EJECT, EJECT_GATE_RED, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, PAUSE, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -329,6 +331,9 @@ pub struct Repo {
     /// The carried batches the lifecycle reports LANDED or ABANDONED.
     #[serde(default)]
     pub settled: Vec<String>,
+    /// Beads the pool read kept out of the pool, with why (held, ejected red, tip moved, ...).
+    #[serde(default)]
+    pub left_out: Vec<batcher_cut::io::LeftOut>,
 }
 
 impl Repo {
@@ -593,6 +598,9 @@ pub struct RepoCarry {
     pub conflict_streaks: BTreeMap<String, (String, u32)>,
     #[serde(default)]
     pub held_keys: Vec<String>,
+    /// The (id, cause tag, tip) of each bead the last note effect named as left out of the cut.
+    #[serde(default)]
+    pub left_noted: Vec<(String, String, String)>,
     /// Pool members refused for an unlanded prerequisite, with the first one, as of the last pass.
     #[serde(default)]
     pub blocked: BTreeMap<String, String>,
@@ -1134,22 +1142,42 @@ pub fn select(repo: &Repo, max_members: usize) -> Option<(Vec<core::Member>, Str
 /// pool is). The blocked are refused before the round is selected, so a feature group whose
 /// every member waits on an unlanded prerequisite never starves the catch-all.
 pub fn select_why(repo: &Repo, max_members: usize) -> Result<(Vec<core::Member>, String), Vec<String>> {
+    select_split(repo, max_members).0
+}
+
+/// [`select_why`], with every pool member the selection kept out of the cut and why.
+pub fn select_split(repo: &Repo, max_members: usize) -> (Result<(Vec<core::Member>, String), Vec<String>>, Vec<batcher_cut::io::LeftOut>) {
+    use batcher_cut::io::{Cause, LeftOut};
     let mut why: Vec<String> = Vec::new();
+    let mut left: Vec<LeftOut> = Vec::new();
+    let out = |m: &core::Member, cause| LeftOut { id: m.id.clone(), tip: m.tip.clone(), cause };
     let pool: Vec<core::Member> = repo.pool.iter().map(|m| m.core(&repo.blockers)).collect();
     let sifted: BTreeMap<String, String> = repo.pool.iter().filter_map(|m| m.sifted_tip.clone().map(|t| (m.id.clone(), t))).collect();
     let screened = batcher_cut::screen::cut_pool(pool.clone(), &sifted);
-    why.extend(pool.iter().filter(|m| !screened.iter().any(|s| s.id == m.id)).map(|m| format!("{}: no sift pass at its tip {}", m.id, m.tip)));
-    let (pool, blocked) = core::refuse_blocked(screened);
+    for m in pool.iter().filter(|m| !screened.iter().any(|s| s.id == m.id)) {
+        why.push(format!("{}: no sift pass at its tip {}", m.id, m.tip));
+        left.push(out(m, Cause::NoSift));
+    }
+    let blocked_out = |before: &[core::Member], blocked: &[core::BlockedRefusal], left: &mut Vec<LeftOut>| {
+        left.extend(blocked.iter().filter_map(|r| before.iter().find(|m| m.id == r.id).map(|m| out(m, Cause::Blocked { dep: r.blocker.clone() }))));
+    };
+    let (kept, blocked) = core::refuse_blocked(screened.clone());
     why.extend(blocked.iter().map(|r| r.to_string()));
-    let (pool, _) = core::select_round(core::base_fix_lane(pool));
-    let (pool, _) = core::cap_round(core::topo_order(&pool), max_members);
-    let (pool, blocked) = core::refuse_blocked(pool);
+    blocked_out(&screened, &blocked, &mut left);
+    let (selected, kind) = core::select_round(core::base_fix_lane(kept.clone()));
+    if let core::RoundKind::Feature(root) = &kind {
+        left.extend(kept.iter().filter(|m| !selected.iter().any(|s| s.id == m.id)).map(|m| out(m, Cause::OutsideFeature { root: root.clone() })));
+    }
+    let (capped, _) = core::cap_round(core::topo_order(&selected), max_members);
+    left.extend(selected.iter().filter(|m| !capped.iter().any(|c| c.id == m.id)).map(|m| out(m, Cause::RoundFull { cap: max_members })));
+    let (pool, blocked) = core::refuse_blocked(capped.clone());
     why.extend(blocked.iter().map(|r| r.to_string()));
+    blocked_out(&capped, &blocked, &mut left);
     if core::should_cut(&core::TriggerInputs { pool: &pool, main_red: false, batch_open: false }).is_none() {
-        return Err(why);
+        return (Err(why), left);
     }
     let key = core::round_key(&pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>());
-    Ok((pool, key))
+    (Ok((pool, key)), left)
 }
 
 /// Ticks the same assemble error must repeat before a person is paged.
@@ -1852,10 +1880,14 @@ impl Machine<'_> {
             None => String::new(),
         };
         let held: Vec<&str> = repo.open_rounds().flat_map(|r| r.members.iter().map(String::as_str)).chain(live.iter().flat_map(|r| r.members.iter().map(|(id, _)| id.as_str()))).collect();
-        let (repo, refused) = self.without_refused(repo);
+        let (repo, refused, refused_out) = self.without_refused(repo);
         let repo = Repo { pool: repo.pool.into_iter().filter(|m| !held.contains(&m.id.as_str())).collect(), ..repo };
         let repo = &repo;
-        match select_why(repo, policy.max_members) {
+        let (selected, selection_out) = select_split(repo, policy.max_members);
+        let observed = repo.left_out.iter().filter(|l| !held.contains(&l.id.as_str())).cloned();
+        let left: Vec<batcher_cut::io::LeftOut> = observed.chain(refused_out).chain(selection_out).collect();
+        self.note_left_out(left);
+        match selected {
             Ok((_, key)) if self.rc.held_keys.contains(&key) => {
                 self.rc.skip_why = Some(held_key_why(&key));
                 self.go(Trigger::NoTrigger);
@@ -2000,12 +2032,29 @@ impl Machine<'_> {
 
     /// `repo` without the members `queue round open` refused at their current tip and base, and
     /// a line naming each; a refusal whose tip or base has moved since is forgotten.
-    fn without_refused(&mut self, repo: &Repo) -> (Repo, Vec<String>) {
+    fn without_refused(&mut self, repo: &Repo) -> (Repo, Vec<String>, Vec<batcher_cut::io::LeftOut>) {
         self.rc.refused.retain(|id, (tip, base, _)| repo.pool.iter().any(|m| &m.id == id && &m.tip == tip) && base == &repo.base_sha);
         let refused = &self.rc.refused;
         let why = repo.pool.iter().filter_map(|m| refused.get(&m.id).map(|(_, _, kind)| format!("{}: queue round open refused it ({kind}) at this tip and base", m.id))).collect();
+        let left = repo.pool.iter().filter_map(|m| refused.get(&m.id).map(|(tip, _, kind)| batcher_cut::io::LeftOut { id: m.id.clone(), tip: tip.clone(), cause: batcher_cut::io::Cause::Refused { kind: kind.clone() } })).collect();
         let pool = repo.pool.iter().filter(|m| !refused.contains_key(&m.id)).cloned().collect();
-        (Repo { pool, ..repo.clone() }, why)
+        (Repo { pool, ..repo.clone() }, why, left)
+    }
+
+    /// One note per bead left out of this cut, pushed only when the set differs from the last one named.
+    fn note_left_out(&mut self, mut left: Vec<batcher_cut::io::LeftOut>) {
+        let mut seen = std::collections::BTreeSet::new();
+        left.retain(|l| seen.insert(l.id.clone()));
+        let named: Vec<(String, String, String)> = left.iter().map(|l| (l.id.clone(), l.tag(), l.tip.clone())).collect();
+        if named == self.rc.left_noted {
+            return;
+        }
+        self.rc.left_noted = named;
+        if left.is_empty() {
+            return;
+        }
+        let why = serde_json::to_string(&left).unwrap_or_default();
+        self.acts.push(Leg { key: format!("{}:left-out:{}", self.repo, digest(&why)), why, ..Leg::on(self.repo) }.act(NOTE_LEFT_OUT));
     }
 
     fn leg_ended(&mut self, exit: Exit) {
@@ -2991,7 +3040,8 @@ pub mod edge {
 
     fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo, units: Option<&dyn runtime::units::Units>) -> Result<Repo, String> {
         let sifted = io::sifted_tips(env)?;
-        let pool: Vec<Member> = io::certified_pool(env, repo)?
+        let (certified, left_out) = io::certified_pool_left_out(env, repo)?;
+        let pool: Vec<Member> = certified
             .into_iter()
             .map(|m| Member {
                 state: if m.provisional { "SUBMITTED" } else { "CERTIFIED" }.into(),
@@ -3023,7 +3073,7 @@ pub mod edge {
         let cut_hold = cut_hold_in_force(&env.queue_dir, &repo.name);
         let unfit = open_round.as_ref().and_then(|r| r.unfit.clone());
         let base_sha = if open_round.is_some() { io::resolve_base_sha(repo).unwrap_or_default() } else { io::resolve_base_sha(repo)? };
-        Ok(Repo { pool, blockers, branch_tips, open_round, open_above, base_sha, stopped, stop_why, cut_hold, paused, paused_since, unfit, ..Repo::default() })
+        Ok(Repo { pool, blockers, branch_tips, open_round, open_above, base_sha, stopped, stop_why, cut_hold, paused, paused_since, unfit, left_out, ..Repo::default() })
     }
 
     pub fn refuse_if_cut_held(queue_dir: &std::path::Path, repo: &str) -> Result<(), String> {
@@ -3289,6 +3339,14 @@ pub mod edge {
         if let Some(line) = batcher_cut::io::registry_clearing_line(&env, &repo, &beads) {
             println!("{line}");
         }
+        Ok("{}".into())
+    }
+
+    /// Notes each bead the cut left out, once per (cause, tip), as the legacy cut does.
+    pub fn note_left_out(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let left: Vec<batcher_cut::io::LeftOut> = serde_json::from_str(&leg.why).map_err(|e| format!("{}: bad list: {e}", spec.name))?;
+        batcher_cut::io::announce_left_out(&env, &repo_of(&env, &leg)?, &left);
         Ok("{}".into())
     }
 
