@@ -313,8 +313,9 @@ pub fn join_answer(args: &[String], answer: (i32, String), lookup: &TitleLookup)
     }
 }
 
-pub fn with_planning_fields(answer: (i32, String)) -> (i32, String) {
-    join_planning(answer, &|ids| titled(ids).map(|t| t.into_iter().collect()))
+/// [`join_answer`] over bd, through the planning cache.
+pub fn with_planning_fields(args: &[String], answer: (i32, String)) -> (i32, String) {
+    join_answer(args, answer, &|ids| titled(ids).map(|t| t.into_iter().collect()))
 }
 
 /// The titles and priorities of `ids` bd has, held under the planning watermark.
@@ -1081,6 +1082,8 @@ mod merge_tests {
         assert_eq!(join_answer(&args(&["watch", "lifecycle", "--rows"]), (0, plain.clone()), lookup), (0, plain));
         let failed = (2, r#"{"rows":[{"bead_id":"sp-a"}]}"#.to_string());
         assert_eq!(join_answer(&args(&["watch", "lifecycle", "--rows"]), failed.clone(), lookup), failed);
+        let delivery = (0, r#"[{"bead_id":"sp-a"}]"#.to_string());
+        assert_eq!(join_answer(&args(&["list", "--delivery"]), delivery.clone(), lookup), delivery);
         let garbled = (0, "not json".to_string());
         assert_eq!(join_answer(&args(&["watch", "lifecycle", "--rows"]), garbled.clone(), lookup), garbled);
     }
