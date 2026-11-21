@@ -121,6 +121,7 @@ while IFS= read -r k; do
         CARGO_HOME | RUSTUP_HOME | RUSTUP_TOOLCHAIN | \
             CARGO | CARGO_MANIFEST_DIR | CARGO_MANIFEST_PATH | CARGO_CRATE_NAME | CARGO_BIN_NAME | \
             CARGO_PRIMARY_PACKAGE | CARGO_PKG_* | CARGO_BIN_EXE_* | \
+            LD_LIBRARY_PATH | \
             RUST_TEST_* | RUST_BACKTRACE | RUST_LIB_BACKTRACE | RUST_MIN_STACK | RUST_LOG)
             setenv "$k" "${!k}" ;;
     esac

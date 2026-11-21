@@ -229,3 +229,147 @@ pub fn whole_test_files(tree: &Tree, shapes: &[(&Entry, Shape)]) -> BTreeSet<Str
     }
     whole
 }
+
+/// One test fn found in a file: `#[test]` or `#[tokio::test…]` in code, with the fn it decorates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestSite {
+    /// 1-based line of the site's first test attribute.
+    pub line: usize,
+    /// The leading whitespace of that line.
+    pub indent: String,
+    pub fn_name: String,
+    /// The argument of a `#[test_id(…)]` among the fn's attributes.
+    pub id: Option<String>,
+    pub in_macro_rules: bool,
+}
+
+/// Every test site in `src`, in file order. Comments and string literals never make one.
+pub fn test_sites(src: &[u8]) -> Vec<TestSite> {
+    static TEST_ATTR: OnceLock<Regex> = OnceLock::new();
+    static ID_ATTR: OnceLock<Regex> = OnceLock::new();
+    static ITEM: OnceLock<Regex> = OnceLock::new();
+    static MACRO: OnceLock<Regex> = OnceLock::new();
+    let test_attr = re(&TEST_ATTR, r"^#\s*\[\s*(?:tokio\s*::\s*)?test\s*(?:\(|\])");
+    let id_attr = re(&ID_ATTR, r"^#\s*\[\s*(?:spira_test_id\s*::\s*)?test_id\s*\(\s*([^)\s]*)\s*\)\s*\]");
+    let item = re(&ITEM, r"^(?:pub(?:\s*\([^)]*\))?\s+)?(?:(?:async|unsafe|const)\s+)*fn\s+(\$?[A-Za-z_][A-Za-z0-9_]*)");
+    let macro_rules = re(&MACRO, r"\bmacro_rules\s*!\s*[A-Za-z_][A-Za-z0-9_]*\s*[{(\[]");
+    let cl = rust::classify(src);
+    let code = cl.code_only();
+    let macro_bodies: Vec<(usize, usize)> = macro_rules
+        .find_iter(&code)
+        .filter_map(|m| {
+            let open = m.end() - 1;
+            close_of(&code, open).map(|end| (open, end))
+        })
+        .collect();
+    let mut sites = Vec::new();
+    let mut i = 0;
+    while i < code.len() {
+        if code[i] != b'#' || (i > 0 && (code[i - 1].is_ascii_alphanumeric() || code[i - 1] == b'_')) {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        let mut first_test: Option<usize> = None;
+        let mut id: Option<String> = None;
+        loop {
+            let a = skip_ws(&code, j);
+            if a >= code.len() || code[a] != b'#' {
+                j = a;
+                break;
+            }
+            let b = skip_ws(&code, a + 1);
+            if b >= code.len() || code[b] != b'[' {
+                j = a;
+                break;
+            }
+            let Some(end) = close_of(&code, b) else {
+                j = code.len();
+                break;
+            };
+            let attr = &code[a..end];
+            if test_attr.is_match(attr) && first_test.is_none() {
+                first_test = Some(a);
+            }
+            if let Some(c) = id_attr.captures(attr) {
+                id = Some(String::from_utf8_lossy(&c[1]).into_owned());
+            }
+            j = end;
+        }
+        if j == skip_ws(&code, i) {
+            i += 1;
+            continue;
+        }
+        if let (Some(at), Some(c)) = (first_test, item.captures(&code[j.min(code.len())..])) {
+            let line_start = src[..at].iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1);
+            let indent: String = src[line_start..at]
+                .iter()
+                .take_while(|b| **b == b' ' || **b == b'\t')
+                .map(|&b| b as char)
+                .collect();
+            sites.push(TestSite {
+                line: cl.line_of(at),
+                indent,
+                fn_name: String::from_utf8_lossy(&c[1]).into_owned(),
+                id,
+                in_macro_rules: macro_bodies.iter().any(|(a, b)| *a <= at && at < *b),
+            });
+        }
+        i = j.max(i + 1);
+    }
+    sites
+}
+
+#[cfg(test)]
+mod test_sites_tests {
+    use super::test_sites;
+
+    fn sites(src: &str) -> Vec<super::TestSite> {
+        test_sites(src.as_bytes())
+    }
+
+    #[test]
+    fn a_test_attribute_in_a_string_literal_or_a_comment_is_no_site() {
+        let src = "const S: &str = \"#[test] fn a() {}\";\n// #[test]\n// fn b() {}\n/* #[test] fn c() {} */\n";
+        assert!(sites(src).is_empty());
+        let real = sites("#[test]\nfn a() {}\n");
+        assert_eq!(real.len(), 1, "the matcher must find a real one");
+    }
+
+    #[test]
+    fn a_stamped_and_an_unstamped_test_carry_some_and_none() {
+        let s = sites("#[test_id(t7k3m9q)]\n#[test]\nfn a() {}\n\n    #[test]\n    fn b() {}\n");
+        assert_eq!(s.len(), 2);
+        assert_eq!((s[0].id.as_deref(), s[0].fn_name.as_str(), s[0].line), (Some("t7k3m9q"), "a", 2));
+        assert_eq!((s[1].id.clone(), s[1].fn_name.as_str(), s[1].line, s[1].indent.as_str()), (None, "b", 5, "    "));
+    }
+
+    #[test]
+    fn a_tokio_test_with_arguments_on_an_async_fn_is_a_site() {
+        let s = sites("#[tokio::test(flavor = \"multi_thread\")]\nasync fn a() {}\n");
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].fn_name, "a");
+    }
+
+    #[test]
+    fn a_test_in_a_macro_rules_body_is_marked_and_one_after_it_is_not() {
+        let s = sites("macro_rules! m {\n    ($n:ident) => {\n        #[test]\n        fn $n() {}\n    };\n}\n#[test]\nfn after() {}\n");
+        assert_eq!(s.len(), 2);
+        assert!(s[0].in_macro_rules && s[0].fn_name == "$n");
+        assert!(!s[1].in_macro_rules);
+    }
+
+    #[test]
+    fn a_test_in_a_proptest_block_is_a_site_outside_macro_rules() {
+        let s = sites("proptest! {\n    #[test]\n    fn p(x in 0u8..3) {}\n}\n");
+        assert_eq!(s.len(), 1);
+        assert!(!s[0].in_macro_rules);
+    }
+
+    #[test]
+    fn other_attributes_around_the_test_do_not_hide_it() {
+        let s = sites("/// doc\n#[allow(unused)]\n#[test]\n#[should_panic(expected = \"x\")]\n#[cfg(unix)]\npub async fn a() -> Result<(), String> {}\n");
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].line, 3);
+    }
+}

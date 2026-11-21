@@ -52,7 +52,7 @@ impl Registry {
             cli::HOLD_KEY => Ok(self.hold_secs.clone()),
             other => Err(format!("{other} is not a registry key")),
         };
-        cli::run(argv, epoch_at(at_ms), &cfg, &store::open)
+        cli::run(argv, epoch_at(at_ms), &cfg, &store::open, &mut runtime::ports::SeededRng::new(0))
     }
 
     fn said(&self, at_ms: u64, args: &[&str]) -> Result<String, String> {

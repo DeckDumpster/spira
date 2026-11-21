@@ -108,7 +108,7 @@ fn registry(path: &str, args: &[&str], now: i64) -> test_registry::cli::Outcome 
         _ => Err(format!("{k} unknown")),
     };
     let argv: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-    test_registry::cli::run(&argv, now, &cfg, &|p| test_registry::open(p))
+    test_registry::cli::run(&argv, now, &cfg, &|p| test_registry::open(p), &mut runtime::ports::SeededRng::new(0))
 }
 
 fn resolve(path: &str, at: i64) -> String {
