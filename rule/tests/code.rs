@@ -324,6 +324,55 @@ fn the_newest_book_only_tip_is_named_stranded_or_in_flight_by_its_namespace() {
 }
 
 #[test]
+fn a_second_commit_on_a_submitted_in_flight_item_rides_it_and_leaves_no_law_branch() {
+    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
+    let repo = law_repo();
+    let p = repo.path();
+    let wt_root = testkit::TempDir::new("rule-carry-wt");
+    let base_toc = parse_toc(TOC).unwrap();
+    let t1 = append(&base_toc, 1, "law-four").unwrap();
+    let first = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &t1, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
+    testkit::git(p, &["branch", "-m", &first, "spira/sp-abc"]);
+    let first_tip = testkit::git(p, &["rev-parse", "spira/sp-abc"]);
+    let t2 = append(&rule::code::with_in_flight(p, Some("main"), base_toc), 1, "law-five").unwrap();
+    let (second, cut_from) = rule::code::commit_law_cut(p, Some("main"), wt_root.path(), "enact", "law-five", &t2, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four", "law-five"])).unwrap();
+    let carrier = rule::code::carrier_of(cut_from.as_deref(), |id| (id == "sp-abc").then(|| "SUBMITTED".to_string()));
+    assert_eq!(carrier.as_deref(), Some("sp-abc"));
+    rule::code::fast_forward_onto(p, &second, "spira/sp-abc").unwrap();
+    assert_eq!(testkit::git(p, &["rev-parse", "spira/sp-abc^"]), first_tip);
+    assert!(testkit::git(p, &["show", "spira/sp-abc:law/toc.toml"]).contains("law-five"));
+    assert_eq!(testkit::git(p, &["branch", "--list", "law/*"]), "");
+}
+
+#[test]
+fn fast_forward_onto_refuses_a_branch_that_does_not_descend_from_the_carrier() {
+    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
+    let repo = law_repo();
+    let p = repo.path();
+    let wt_root = testkit::TempDir::new("rule-carry-refuse-wt");
+    let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
+    let book = store(&["law-one", "law-two", "law-three", "law-four"]);
+    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap();
+    testkit::git(p, &["branch", "spira/sp-abc", "main"]);
+    testkit::git(p, &["commit", "-q", "--allow-empty", "-m", "elsewhere"]);
+    testkit::git(p, &["branch", "-f", "spira/sp-abc", "HEAD"]);
+    assert!(rule::code::fast_forward_onto(p, &branch, "spira/sp-abc").is_err());
+    assert!(!testkit::git(p, &["branch", "--list", "law/*"]).is_empty(), "the law/ commit is kept");
+}
+
+#[test]
+fn the_carry_decision_names_a_submitted_spira_item_and_files_anew_otherwise() {
+    let _env = testkit::env_read();
+    use rule::code::carrier_of;
+    let submitted = |_: &str| Some("SUBMITTED".to_string());
+    assert_eq!(carrier_of(Some("refs/heads/spira/sp-abc"), submitted).as_deref(), Some("sp-abc"));
+    assert_eq!(carrier_of(None, submitted), None, "cut from the base");
+    assert_eq!(carrier_of(Some("refs/heads/law/four-1"), submitted), None, "a stranded law/ branch");
+    assert_eq!(carrier_of(Some("refs/heads/spira/sp-abc"), |_| Some("IN_DELIVERY".to_string())), None);
+    assert_eq!(carrier_of(Some("refs/heads/spira/sp-abc"), |_| None), None, "an unreadable bead");
+}
+
+#[test]
 fn the_law_book_log_is_watched() {
     let _env = testkit::env_read();
     let rows = include_str!("../../spira/watchers");
