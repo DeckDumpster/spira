@@ -9,8 +9,7 @@ name = "reclaim"
 path = "src/lib.rs"
 
 [features]
-integration = ["testkit/integration", "system-paths/integration"]
-
+integration = ["testkit/integration", "system-paths/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 

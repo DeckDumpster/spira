@@ -14,8 +14,7 @@ path = "tests/conformance_mem.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["runtime/integration"]
-
+integration = ["runtime/integration", "spira-test-id/integration"]
 [dependencies]
 runtime = { path = "../runtime" }
 serde = { version = "1", features = ["derive"] }

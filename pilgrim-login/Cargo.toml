@@ -20,8 +20,7 @@ path = "tests/signin.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration"]
-
+integration = ["spira-config/integration", "spira-otel/integration", "spira-test-id/integration"]
 [dependencies]
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }

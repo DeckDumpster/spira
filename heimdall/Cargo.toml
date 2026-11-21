@@ -23,8 +23,7 @@ path = "tests/lane.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration"]
-
+integration = ["runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -31,8 +31,7 @@ path = "tests/victoria.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["spira-otel/integration", "testkit/integration", "system-paths/integration"]
-
+integration = ["spira-otel/integration", "testkit/integration", "system-paths/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 serde = { version = "1", features = ["derive"] }
