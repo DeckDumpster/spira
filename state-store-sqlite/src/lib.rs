@@ -3622,6 +3622,72 @@ mod tests {
         assert_eq!(mirrored, 0, "every version row mirrors its latest");
     }
 
+    /// Migration 10 gives each record under an Ask hold the newest applied Ask `Hold`'s time,
+    /// from imported and from txn history, in `latest` and in the version row it mirrors.
+    #[test]
+    fn migration_10_fills_an_ask_held_records_ask_since_from_its_history() {
+        let dir = testkit::TempDir::new("sqlite-m10");
+        let path = dir.path().join("m10.db");
+        let obj = |data: serde_json::Value| serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": data })).unwrap();
+        let hold = |id: &str, kind: &str, at: i64, applied: bool| {
+            serde_json::json!({ "machine": "bead", "lc_key": id, "event": "Hold", "at": at, "applied": applied,
+                "evidence": { "Hold": { "kind": kind, "cause": "operator-question", "detail": "q" } } })
+        };
+        let plain = obj(serde_json::json!({ "bead_id": "sp-b", "holds": ["Manual"] }));
+        let rows: Vec<(&str, i64, Vec<u8>)> = vec![
+            ("lifecycle/sp-a", 9, obj(serde_json::json!({ "bead_id": "sp-a", "holds": ["Ask", "Wait"] }))),
+            ("lifecycle/sp-b", 9, plain.clone()),
+            ("history/sp-a/0/import/1", 1, obj(serde_json::json!({ "seq": 1, "audit": hold("sp-a", "Ask", 10, true) }))),
+            ("history/sp-a/0/import/2", 1, obj(serde_json::json!({ "seq": 2, "audit": hold("sp-a", "Wait", 99, true) }))),
+            ("history/sp-a/0/import/3", 1, obj(serde_json::json!({ "seq": 3, "audit": hold("sp-a", "Ask", 98, false) }))),
+            ("history/sp-a/5/r1", 7, obj(serde_json::json!({}))),
+            (
+                "events/00000000000000000007",
+                7,
+                obj(serde_json::json!({ "refused": false, "evidence": {
+                    "then": [hold("sp-a", "Ask", 30, true)],
+                    "else": [hold("sp-a", "Ask", 97, true)],
+                } })),
+            ),
+            ("history/sp-b/0/import/1", 1, obj(serde_json::json!({ "seq": 1, "audit": hold("sp-b", "Manual", 5, true) }))),
+        ];
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in SCHEMA.iter().chain(MIGRATIONS[..9].iter().flat_map(|m| m.iter())) {
+                exec(&conn, sql, []).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 9).unwrap();
+            for table in ["versions", "latest"] {
+                let sql = format!(
+                    "INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
+                     VALUES (?1, ?2, 0, ?3, ?2, 0, 1)"
+                );
+                for (k, main, v) in &rows {
+                    exec(&conn, &sql, params![k.as_bytes(), main, v]).unwrap();
+                }
+            }
+            exec(&conn, "UPDATE meta SET value = 9 WHERE name = 'head'", []).unwrap();
+        }
+        let opts = Options { jump_on_open: false, ..Options::default() };
+        let b = SqliteBackend::open(&path, opts).unwrap();
+        assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
+        let ask_since = |key: &str| {
+            let v = b.get(key, 9).unwrap().unwrap().value;
+            serde_json::from_slice::<serde_json::Value>(&v).unwrap()["data"]["ask_since"].clone()
+        };
+        assert_eq!(ask_since("lifecycle/sp-a"), serde_json::json!(30));
+        assert_eq!(b.get("lifecycle/sp-b", 9).unwrap().unwrap().value, plain, "no Ask hold: byte-identical");
+        let w = lock(&b.0.writer);
+        let (mirrored, ask_in_versions): (i64, i64) = w
+            .conn
+            .prepare("SELECT (SELECT count(*) FROM versions v JOIN latest l ON l.key = v.key AND l.main = v.main WHERE v.value IS NOT l.value),
+                             (SELECT count(*) FROM versions WHERE CAST(key AS TEXT) = 'lifecycle/sp-a' AND json_extract(CAST(value AS TEXT), '$.data.ask_since') = 30)")
+            .and_then(|mut s| s.query_row([], |r| Ok((r.get(0)?, r.get(1)?))))
+            .unwrap();
+        assert_eq!(mirrored, 0, "every version row mirrors its latest");
+        assert_eq!(ask_in_versions, 1);
+    }
+
     /// A store written before `owner_refs` existed answers `owned_by` once opened: the
     /// migration fills the index from `latest`, skipping what is not JSON and what is not owned.
     #[test]

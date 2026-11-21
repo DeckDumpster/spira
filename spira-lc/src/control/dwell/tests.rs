@@ -25,11 +25,11 @@ fn ev(expect: BeadState, version: u64, kind: BeadEventKind, at: i64) -> BeadEven
     BeadEvent { expect, version, kind, actor: "dwarf-1".into(), at: Some(at) }
 }
 
-fn version(s: &Store<MemBackend>, id: &str) -> u64 {
+fn version<B: state_store::Backend>(s: &Store<B>, id: &str) -> u64 {
     s.record(id).unwrap().unwrap().value.row.version
 }
 
-fn create(s: &Store<MemBackend>, id: &str, repo: &str, at: i64) {
+fn create<B: state_store::Backend>(s: &Store<B>, id: &str, repo: &str, at: i64) {
     s.create(id, Some(repo), None, at, &req(&format!("create-{id}"))).unwrap();
 }
 
@@ -53,7 +53,7 @@ fn ask(s: &Store<MemBackend>, id: &str, at: i64) {
 }
 
 /// The sweep thread's warm-up to `window` before `now`, which a request otherwise finds done.
-fn warm(s: &Store<MemBackend>, now: i64, window: u64) {
+fn warm<B: state_store::Backend>(s: &Store<B>, now: i64, window: u64) {
     s.warm_dwell(now, window, 100_000).unwrap();
 }
 
@@ -167,18 +167,36 @@ struct Sized {
     _dir: testkit::TempDir,
 }
 
-/// A backend that counts the `events/` keys it hands out.
+/// A backend that counts the `events/` and `history/` keys it hands out and every read call.
 struct Counting<B> {
     inner: B,
     events: std::sync::atomic::AtomicUsize,
+    history: std::sync::atomic::AtomicUsize,
+    calls: std::sync::atomic::AtomicUsize,
 }
 
 impl<B> Counting<B> {
     fn new(inner: B) -> Self {
-        Counting { inner, events: Default::default() }
+        Counting { inner, events: Default::default(), history: Default::default(), calls: Default::default() }
     }
     fn events_read(&self) -> usize {
         self.events.swap(0, std::sync::atomic::Ordering::SeqCst)
+    }
+    fn history_read(&self) -> usize {
+        self.history.swap(0, std::sync::atomic::Ordering::SeqCst)
+    }
+    fn calls_made(&self) -> usize {
+        self.calls.swap(0, std::sync::atomic::Ordering::SeqCst)
+    }
+    fn handed_out<'a>(&self, keys: impl IntoIterator<Item = &'a str>) {
+        use std::sync::atomic::Ordering::SeqCst;
+        for key in keys {
+            if key.starts_with(state_store::EVENTS_PREFIX) {
+                self.events.fetch_add(1, SeqCst);
+            } else if key.starts_with(state_store::HISTORY_PREFIX) {
+                self.history.fetch_add(1, SeqCst);
+            }
+        }
     }
 }
 
@@ -193,16 +211,27 @@ impl<B: state_store::Backend> state_store::Backend for Counting<B> {
         self.inner.owned_by(owner, after, limit, at)
     }
     fn get(&self, key: &str, at: u64) -> state_store::Result<Option<state_store::Version>> {
-        self.inner.get(key, at)
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let found = self.inner.get(key, at)?;
+        if found.is_some() {
+            self.handed_out([key]);
+        }
+        Ok(found)
+    }
+    fn get_many(&self, keys: &[&str], at: u64) -> state_store::Result<Vec<Option<state_store::Version>>> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let found = self.inner.get_many(keys, at)?;
+        self.handed_out(keys.iter().zip(&found).filter(|(_, v)| v.is_some()).map(|(k, _)| *k));
+        Ok(found)
     }
     fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let rows = self.inner.range(prefix, after, limit, at)?;
-        if prefix == state_store::EVENTS_PREFIX {
-            self.events.fetch_add(rows.len(), std::sync::atomic::Ordering::SeqCst);
-        }
+        self.handed_out(rows.iter().map(|(k, _)| k.as_str()));
         Ok(rows)
     }
     fn range_in_state(&self, prefix: &str, state: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.inner.range_in_state(prefix, state, after, limit, at)
     }
     fn commit(&self, expect: u64, batch: &[state_store::Write]) -> state_store::Result<u64> {
@@ -227,6 +256,7 @@ fn production_sized(recent: u64) -> Sized {
     let now: i64 = 2_000_000_000;
     let put = |key: String, data: Value, main: u64| Write::Put { key, value: Object::new(data).encode(), create_rev: Rev::new(main, 0), prev: None };
     let audit = |id: &str, event: &str, at: i64| serde_json::json!({ "refused": false, "evidence": { "then": [{ "machine": "bead", "lc_key": id, "event": event, "expect": "READY", "from_state": "READY", "to_state": "READY", "applied": true, "refusal": null, "evidence": null, "actor": "a", "at": at }] } });
+    const ASK_HELD: u64 = 9;
     let (records, waiting, txns) = (13_000u64, 400u64, 300_000u64);
     let mut head = b.head().unwrap();
     let mut repo_of = std::collections::BTreeMap::new();
@@ -242,11 +272,17 @@ fn production_sized(recent: u64) -> Sized {
         if main_n <= records {
             let state = if main_n <= waiting { "Working" } else { "Landed" };
             let repo = ["spira", "deckdumpster", "pokedumpster"][(main_n % 3) as usize];
-            let rec = serde_json::json!({ "bead_id": id, "state": state, "tip": null, "gate_key": null, "holder": null, "lease_until": null, "holds": [], "reason": null, "version": 1, "since": at, "repo": repo, "updated_at": at });
+            let asked = main_n <= ASK_HELD;
+            let rec = serde_json::json!({ "bead_id": id, "state": state, "tip": null, "gate_key": null, "holder": null, "lease_until": null, "holds": if asked { vec!["Ask"] } else { vec![] }, "ask_since": if asked { Some(at) } else { None }, "reason": null, "version": 1, "since": at, "repo": repo, "updated_at": at });
             batch.push(put(keys::lifecycle(&id), rec, main));
             repo_of.insert(id.clone(), repo.to_string());
         }
         seen.push((id, event, at));
+        head = b.commit(head, &batch).unwrap();
+    }
+    for n in 1..=ASK_HELD {
+        let id = format!("sp-{n:05}");
+        let batch: Vec<Write> = (0..100usize).map(|k| { let event = ["Hold", "Claim", "Submit"][k % 3]; put(format!("history/{id}/0/import/{k}"), serde_json::json!({ "seq": k + 1, "audit": { "machine": "bead", "lc_key": id, "event": event, "applied": true, "at": k as i64, "evidence": { "Hold": { "kind": "Wait" } } } }), head + 1) }).collect();
         head = b.commit(head, &batch).unwrap();
     }
     let (mut last, mut delivered) = (std::collections::BTreeMap::new(), std::collections::BTreeMap::<String, Vec<i64>>::new());
@@ -261,6 +297,72 @@ fn production_sized(recent: u64) -> Sized {
     let clock = VirtualClock::new(0);
     let c = Contract::open(Counting::new(b), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: FLOOR_MS }).unwrap();
     Sized { store: Store::new(c, FLOOR_MS), now, waiting, last, delivered, _dir: dir }
+}
+
+/// `beads` ask-held beads, each raised `entries` times (every raise is one applied history
+/// entry), on a counting store; the newest raise per bead.
+fn ask_held(beads: usize, entries: usize) -> (Store<Counting<MemBackend>>, Vec<(String, i64)>) {
+    let clock = VirtualClock::new(0);
+    let c = Contract::open(Counting::new(MemBackend::new()), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: FLOOR_MS }).unwrap();
+    let s = Store::new(c, FLOOR_MS);
+    let mut newest = vec![];
+    for b in 0..beads {
+        let id = format!("sp-{b:03}");
+        create(&s, &id, "harness", 100);
+        let mut at = 0;
+        for n in 0..entries {
+            at = 1_000 + (b * entries + n) as i64;
+            let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some("which?".into()) };
+            let out = s.apply(&id, &ev(BeadState::Ready, version(&s, &id), hold, at), &req(&format!("ask-{id}-{n}"))).unwrap();
+            assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
+        }
+        newest.push((id, at));
+    }
+    (s, newest)
+}
+
+fn second_dwell_reads(s: &Store<Counting<MemBackend>>) -> (Value, usize, usize, usize) {
+    let now = 1_000_000;
+    warm(s, now, 3_600);
+    let (code, _) = verbs::run(s, &["dwell".into(), "--now".into(), now.to_string(), "--window".into(), "3600".into()]);
+    assert_eq!(code, 0);
+    let counting = s.contract().backend();
+    let _ = (counting.history_read(), counting.events_read(), counting.calls_made());
+    let (code, out) = verbs::run(s, &["dwell".into(), "--now".into(), now.to_string(), "--window".into(), "3600".into()]);
+    assert_eq!(code, 0, "{out}");
+    let counting = s.contract().backend();
+    (serde_json::from_str(&out).unwrap(), counting.history_read(), counting.events_read(), counting.calls_made())
+}
+
+#[test]
+fn a_warm_dwell_reads_the_same_keys_however_many_beads_are_ask_held_and_however_long_their_history() {
+    let (a, a_newest) = ask_held(1, 5);
+    let (b, b_newest) = ask_held(20, 150);
+    let (da, a_history, a_events, a_calls) = second_dwell_reads(&a);
+    let (db, b_history, b_events, b_calls) = second_dwell_reads(&b);
+    assert_eq!((a_history, b_history), (0, 0), "no history/ key is read");
+    assert_eq!((a_events, b_events), (0, 0), "nothing new was committed");
+    assert_eq!(a_calls, b_calls, "the same backend calls at both sizes");
+    for (d, newest) in [(&da, &a_newest), (&db, &b_newest)] {
+        for (id, at) in newest {
+            let bead = d["beads"].as_array().unwrap().iter().find(|x| x["id"] == id.as_str()).unwrap();
+            assert_eq!(bead["ask_since"].as_i64(), Some(*at), "{id}");
+        }
+    }
+}
+
+#[test]
+fn an_ask_held_record_with_no_ask_since_cannot_tell_and_names_the_migration() {
+    use state_store::{Backend, Object, Rev, Write};
+    let b = MemBackend::new();
+    let rec = serde_json::json!({ "bead_id": "sp-old", "state": "Rework", "holds": ["Ask"], "version": 1, "since": 5, "repo": "harness", "updated_at": 5 });
+    let main = b.head().unwrap() + 1;
+    b.commit(main - 1, &[Write::Put { key: keys::lifecycle("sp-old"), value: Object::new(rec).encode(), create_rev: Rev::new(main, 0), prev: None }]).unwrap();
+    let clock = VirtualClock::new(0);
+    let s = Store::new(Contract::open(b, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: FLOOR_MS }).unwrap(), FLOOR_MS);
+    let (code, out) = verbs::run(&s, &["dwell".into(), "--now".into(), "100".into()]);
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("cannot tell") && out.contains("sp-old") && out.contains("ask_since") && out.contains("migration"), "{out}");
 }
 
 /// Run by hand, release as lc-serve runs:
