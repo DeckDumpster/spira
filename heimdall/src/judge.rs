@@ -186,6 +186,7 @@ pub fn classify(o: &Value) -> Result<Vec<Firing>, String> {
     let ghost_stale = thv("ghost_stale", 1800);
     let restart_threshold = thv("restart_threshold", 5);
     let red_streak = thv("red_streak", 4);
+    let noverdict_streak = thv("noverdict_streak", 4);
     let mut out: Vec<Firing> = Vec::new();
     let mut alert = |key: &str, title: String, evidence: String| {
         out.push(Firing { key: key.to_string(), title, evidence: evidence.trim().to_string() });
@@ -404,9 +405,14 @@ pub fn classify(o: &Value) -> Result<Vec<Firing>, String> {
     for repo_runs in obj.get("gate_runs").and_then(Value::as_array).into_iter().flatten() {
         let repo = text_of(repo_runs.get("repo"));
         let rows = repo_runs.get("rows").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
-        let Some(s) = crate::streak::find(rows, red_streak.max(0) as usize) else { continue };
-        let f = crate::streak::firing(&repo, &s);
-        alert(&f.key, f.title, f.evidence);
+        if let Some(s) = crate::streak::find(rows, red_streak.max(0) as usize) {
+            let f = crate::streak::firing(&repo, &s);
+            alert(&f.key, f.title, f.evidence);
+        }
+        if let Some(s) = crate::streak::find_noverdict(rows, noverdict_streak.max(0) as usize) {
+            let f = crate::streak::firing_noverdict(&repo, &s);
+            alert(&f.key, f.title, f.evidence);
+        }
     }
     Ok(out)
 }

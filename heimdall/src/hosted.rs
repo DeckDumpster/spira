@@ -36,6 +36,7 @@ pub struct Thresholds {
     pub restart_threshold: i64,
     pub restart_window: i64,
     pub red_streak: i64,
+    pub noverdict_streak: i64,
 }
 
 fn age(sec: i64) -> String {
@@ -83,6 +84,9 @@ pub fn classify(r: &Readings, th: &Thresholds) -> Vec<Firing> {
         if let Some(s) = crate::streak::find(rows, th.red_streak.max(0) as usize) {
             out.push(crate::streak::firing(repo, &s));
         }
+        if let Some(s) = crate::streak::find_noverdict(rows, th.noverdict_streak.max(0) as usize) {
+            out.push(crate::streak::firing_noverdict(repo, &s));
+        }
     }
     out.sort_by(|a, b| a.key.cmp(&b.key));
     out
@@ -116,7 +120,7 @@ pub fn body_at(key: &str, when: &str, flaps: i64, evidence: &str) -> String {
 mod tests {
     use super::*;
 
-    const TH: Thresholds = Thresholds { pass_stale: 900, mirror_stale: 90_000, restart_threshold: 5, restart_window: 3600, red_streak: 4 };
+    const TH: Thresholds = Thresholds { pass_stale: 900, mirror_stale: 90_000, restart_threshold: 5, restart_window: 3600, red_streak: 4, noverdict_streak: 4 };
 
     #[test]
     fn a_stale_sentinel_fires_unless_the_world_is_halted() {
