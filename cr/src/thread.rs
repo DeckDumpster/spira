@@ -27,6 +27,16 @@ pub fn comments_path(run: &std::path::Path, number: u32) -> std::path::PathBuf {
     record::dir(run, number).join(COMMENTS_FILE)
 }
 
+/// The comments the watcher kept; none kept is none.
+pub fn kept_comments(run: &std::path::Path, number: u32) -> Result<Vec<Comment>, String> {
+    let path = comments_path(run, number);
+    match std::fs::read_to_string(&path) {
+        Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{}: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("reading {}: {e}", path.display())),
+    }
+}
+
 fn refuse(code: i32, msg: &str) -> Outcome {
     Outcome { code, stdout: String::new(), stderr: format!("cr: {msg}\n") }
 }

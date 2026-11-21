@@ -1,7 +1,7 @@
 //! `cr pick` through `cli::run`, over an in-memory tree and ledger: no git, no process.
 
 use crate::cli::{run, Outcome};
-use crate::ledger::{ClosedAs, Ledger, LedgerFile, Row};
+use crate::ledger::{Attention, ClosedAs, Ledger, LedgerFile, Row};
 use crate::ports::{blob_of, Config, FixtureTree, History, Ports, SourceTree, VirtualClock};
 use serde_json::Value;
 
@@ -99,11 +99,12 @@ fn row(kind: &str, unit_id: &str, at: u64, files: &[(&str, &str)]) -> Row {
         opened_at: at,
         closed_at: None,
         closed_as: None,
+        attention: None,
     }
 }
 
 fn closed(r: Row, at: u64, how: ClosedAs) -> Row {
-    r.closing(at, how)
+    r.closing(at, how, None)
 }
 
 #[test]
@@ -534,4 +535,110 @@ fn help_documents_count_and_its_exit_codes() {
     for want in ["cr count", "--regex", "--path", "--limit"] {
         assert!(o.stdout.contains(want), "{want}");
     }
+}
+
+fn attended(comments: &[(&str, u32)]) -> Vec<Row> {
+    let mut open = row(
+        "persona",
+        "persona:elsewhere",
+        NOW - 3 * DAY,
+        &[("elsewhere.md", "x")],
+    );
+    open.review = "r-attended".into();
+    let how = Attention {
+        comments_by_path: comments.iter().map(|(p, n)| (p.to_string(), *n)).collect(),
+        finding_kinds: Default::default(),
+    };
+    vec![
+        open.clone(),
+        open.closing(NOW - 2 * DAY, ClosedAs::Published, Some(how)),
+    ]
+}
+
+#[test]
+fn his_comments_raise_weights_in_their_area_only() {
+    let p = ports_with(fixture(), attended(&[("demo/src/old.rs", 3)]), cfg());
+    let (_, plain) = json(&ports(), &["pick", "--aim", "demo/src/store.rs"]);
+    let (_, demo) = json(&p, &["pick", "--aim", "demo/src/store.rs"]);
+    let (_, other) = json(&p, &["pick", "--aim", "other/src/util.rs"]);
+    assert_eq!(
+        (
+            demo["weight"]["attention_share"].as_f64(),
+            demo["weight"]["attention_term"].as_f64()
+        ),
+        (Some(1.0), Some(2.0)),
+        "{demo}"
+    );
+    assert_eq!(
+        (
+            other["weight"]["attention_share"].as_f64(),
+            other["weight"]["attention_term"].as_f64()
+        ),
+        (Some(0.0), Some(1.0)),
+        "{other}"
+    );
+    let (a, b) = (
+        demo["weight"]["total"].as_f64().unwrap(),
+        plain["weight"]["total"].as_f64().unwrap(),
+    );
+    assert!((a - 2.0 * b).abs() < 1e-9, "{a} vs {b}");
+}
+
+#[test]
+fn a_renamed_file_keeps_his_comments_in_its_new_area() {
+    let mut rows = attended(&[("demo/src/old.rs", 1), ("other/x.rs", 1)]);
+    for r in &mut rows {
+        r.commit = "before".into();
+    }
+    let p = ports_with(
+        fixture().with_rename("before", "demo/src/old.rs", "other/src/old.rs"),
+        rows,
+        cfg(),
+    );
+    let (_, v) = json(&p, &["pick", "--aim", "other/src/util.rs"]);
+    assert_eq!(v["weight"]["attention_share"].as_f64(), Some(1.0), "{v}");
+}
+
+#[test]
+fn attention_counts_only_published_reviews() {
+    let mut rows = attended(&[("demo/a.rs", 3)]);
+    rows[1].closed_as = Some(ClosedAs::Unpublished);
+    let (_, v) = json(
+        &ports_with(fixture(), rows, cfg()),
+        &["pick", "--aim", "demo/src/store.rs"],
+    );
+    assert_eq!(v["weight"]["attention_term"].as_f64(), Some(1.0), "{v}");
+}
+
+#[test]
+fn attention_does_not_move_the_rotation_of_kinds() {
+    let mut rows = vec![row(
+        "module",
+        "module:elsewhere",
+        NOW - DAY,
+        &[("elsewhere.rs", "x")],
+    )];
+    rows[0].review = "r-module".into();
+    rows.extend(
+        attended(&[("demo/src/store.rs", 50)])
+            .into_iter()
+            .skip(1)
+            .map(|mut r| {
+                r.kind = "module".into();
+                r
+            }),
+    );
+    let p = ports_with(fixture(), rows, cfg());
+    for seed in 0..20 {
+        let (_, v) = json(&p, &["pick", "--seed", &seed.to_string()]);
+        assert_ne!(v["unit"]["kind"], "module", "seed {seed}");
+        assert_eq!(v["stratum"]["kind"], "trait");
+    }
+}
+
+#[test]
+fn the_weight_line_names_his_comments_in_the_candidates_area() {
+    let p = ports_with(fixture(), attended(&[("demo/src/old.rs", 3)]), cfg());
+    let o = go(&p, &["pick", "--aim", "demo/src/store.rs"]);
+    assert!(o.stdout.contains("x attention 2.000 (3 of his 3 comments in demo)"), "{}", o.stdout);
 }

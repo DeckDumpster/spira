@@ -27,7 +27,7 @@ pub enum Kind {
 }
 
 impl Kind {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Kind::Question => "question",
             Kind::Refactor => "refactor",
@@ -107,7 +107,7 @@ fn findings_path(run: &Path, number: u32) -> PathBuf {
     record::dir(run, number).join("findings.jsonl")
 }
 
-fn load(run: &Path, number: u32) -> Result<Vec<Finding>, String> {
+pub(crate) fn load(run: &Path, number: u32) -> Result<Vec<Finding>, String> {
     let path = findings_path(run, number);
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
