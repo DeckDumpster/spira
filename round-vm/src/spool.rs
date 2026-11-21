@@ -580,6 +580,7 @@ mod tests {
             assert!(env.contains(&format!("RUSTC_WRAPPER={dir}/bin/sccache\n")), "{build}: {env}");
             assert!(env.lines().any(|l| l.starts_with("PATH=") && l.contains(&format!("{dir}/bin"))), "{build}: {env}");
             assert!(!env.contains("SPIRA_"), "{build}: {env}");
+            assert!(env.lines().any(|l| l.starts_with("CARGO_TARGET_DIR=") && l.ends_with("/home/attr-target")), "{build}: the target dir arrives unquoted: {env}");
         }
     }
 
@@ -587,6 +588,9 @@ mod tests {
     fn the_round_and_the_attribution_probe_splice_the_same_unit_env_fragment() {
         assert!(crate::run::REMOTE_SCRIPT.contains(crate::run::UNIT_ENV_FN));
         assert!(REMOTE_ATTR_SCRIPT.contains(crate::run::UNIT_ENV_FN));
+        for script in [crate::run::REMOTE_SCRIPT, REMOTE_ATTR_SCRIPT] {
+            assert_eq!(script.matches("unit_env() {").count(), 1, "one definition per script");
+        }
     }
 
     fn workspace_job_rc(cargo_rc: i32) -> (i32, bool) {
