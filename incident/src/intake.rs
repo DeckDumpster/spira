@@ -693,6 +693,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-10
+    #[test_id(t2etwc7)]
     #[test]
     fn an_entry_with_no_ref_is_moved_aside_and_never_filed() {
         let dir = testkit::TempDir::new("incident-drain-noref");

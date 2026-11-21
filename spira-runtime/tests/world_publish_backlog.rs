@@ -20,6 +20,7 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+#[test_id(tpr5txo)]
 #[test]
 fn the_snapshot_records_the_unpublished_range_it_measured_and_runs_no_verb_that_measures() {
     let dir = testkit::TempDir::new("world-publish-backlog");

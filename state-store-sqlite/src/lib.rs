@@ -3760,6 +3760,7 @@ mod tests {
 
     /// A store at the previous migration count gains the `history_seq` index, and the imported
     /// rows in seq order are a range of it, equal to the scan the default makes.
+    #[test_id(tdtrnx1)]
     #[test]
     fn migration_9_indexes_the_seq_of_the_history_a_store_already_holds() {
         let dir = testkit::TempDir::new("sqlite-m9");

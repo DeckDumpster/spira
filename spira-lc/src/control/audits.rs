@@ -259,6 +259,7 @@ mod tests {
         assert!(reads.iter().all(|(k, _, _)| *k != "range"), "a filled limit reads no events: {reads:?}");
     }
 
+    #[test_id(tww8q1r)]
     #[test]
     fn audits_after_a_revision_skip_it_and_everything_before() {
         let s = store();
