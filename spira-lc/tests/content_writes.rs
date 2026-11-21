@@ -44,14 +44,14 @@ fn built_testenv() -> PathBuf {
 }
 
 /// The tool on this process's PATH, else on the harness's declared tool path (`spira.path`) or
-/// the round VM's `~/spira-env/bin`, where a round keeps its third-party tools when the test
-/// environment is bare. A tool found nowhere fails here, naming it.
-fn tool(name: &str) -> String {
+/// the round VM's `~/spira-env/bin`. A tool found nowhere is `None`: the caller skips, as the
+/// other real-tool integration tests do when their binary is absent.
+fn tool(name: &str) -> Option<String> {
     let on = |dirs: &str| dirs.split(':').filter(|d| !d.is_empty()).map(|d| Path::new(d).join(name)).find(|p| p.is_file());
     let declared = spira_config::process::cfg("SPIRA_PATH").unwrap_or_default();
     let env_bin = std::env::var("HOME").map(|h| format!("{h}/spira-env/bin")).unwrap_or_default();
     let found = on(&std::env::var("PATH").unwrap_or_default()).or_else(|| on(&declared)).or_else(|| on(&env_bin));
-    found.unwrap_or_else(|| panic!("{name} is on neither PATH, spira.path ({declared:?}) nor {env_bin}")).display().to_string()
+    found.map(|p| p.display().to_string())
 }
 
 fn report(text: &str, key: &str) -> String {
@@ -67,10 +67,13 @@ struct Store {
 }
 
 impl Store {
-    fn up() -> Store {
+    fn up() -> Option<Store> {
         let dir = testkit::TempDir::new("lcw");
-        let bd = std::env::var("SPIRA_BD").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| tool("bd"));
-        let dolt = std::env::var("TESTDB_DOLT").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| tool("dolt"));
+        let named = |var: &str, name: &str| std::env::var(var).ok().filter(|b| !b.is_empty()).or_else(|| tool(name));
+        let (Some(bd), Some(dolt)) = (named("SPIRA_BD", "bd"), named("TESTDB_DOLT", "dolt")) else {
+            eprintln!("SKIP: no bd and dolt on PATH, spira.path or ~/spira-env/bin");
+            return None;
+        };
         let mut up = Command::new(testenv());
         up.args(["testdb", "up", "--tag", "content-writes", "--bd", &bd, "--dolt", &dolt]);
         let root = std::env::var("TESTDB_ROOT").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| dir.join("db").display().to_string());
@@ -78,7 +81,7 @@ impl Store {
         let out = up.output().expect("testenv runs");
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         assert!(out.status.success(), "testdb up: {text}{}", String::from_utf8_lossy(&out.stderr));
-        Store { dir, fixture: report(&text, "TESTDB_FIXTURE"), db: report(&text, "TESTDB_DIR"), bd: report(&text, "TESTDB_BD"), port: report(&text, "TESTDB_SERVER_PORT") }
+        Some(Store { dir, fixture: report(&text, "TESTDB_FIXTURE"), db: report(&text, "TESTDB_DIR"), bd: report(&text, "TESTDB_BD"), port: report(&text, "TESTDB_SERVER_PORT") })
     }
 
     fn create_bead(&self) -> String {
@@ -290,7 +293,7 @@ fn provision(lc: &Lc) {
 
 #[test]
 fn with_a_provisioned_writer_every_note_and_label_verb_writes_in_sql_and_starts_no_process() {
-    let store = Store::up();
+    let Some(store) = Store::up() else { return };
     let id = store.create_bead();
     let writer = store.dir.join("writer.credential");
     let mut lc = Lc::new(&store, "p", &writer.display().to_string());
@@ -304,7 +307,7 @@ fn with_a_provisioned_writer_every_note_and_label_verb_writes_in_sql_and_starts_
 
 #[test]
 fn without_a_writer_credential_the_same_verbs_still_write_through_bd() {
-    let store = Store::up();
+    let Some(store) = Store::up() else { return };
     let id = store.create_bead();
     let mut lc = Lc::new(&store, "u", "");
     provision(&lc);
