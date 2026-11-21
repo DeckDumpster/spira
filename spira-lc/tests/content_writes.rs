@@ -284,11 +284,11 @@ fn verbs(id: &str) -> Vec<Verb> {
     let v = |a: &[&str]| a.iter().map(|s| s.replace("ID", id)).collect::<Vec<_>>();
     vec![
         Verb { name: "work note -", args: v(&["work", "ID", "note", "-", "--actor", "builder"]), stdin: Some("a note from work note"), method: "work", seen: "a note from work note" },
-        Verb { name: "work note-on", args: v(&["work", "ID", "note-on", "ID", "a note from note-on", "--actor", "groomer"]), stdin: None, method: "work", seen: "a note from note-on" },
-        Verb { name: "work label-add", args: v(&["work", "ID", "label-add", "ID", "writes:added", "--actor", "groomer"]), stdin: None, method: "work", seen: "writes:added" },
+        Verb { name: "content note (other bead)", args: v(&["content", "note", "ID", "a note from note-on"]), stdin: None, method: "content", seen: "a note from note-on" },
+        Verb { name: "content label add", args: v(&["content", "label", "add", "ID", "writes:added"]), stdin: None, method: "content", seen: "writes:added" },
         Verb { name: "bd-note", args: v(&["bd-note", "ID", "a note from bd-note"]), stdin: None, method: "bd-note", seen: "a note from bd-note" },
         Verb { name: "content note", args: v(&["content", "note", "ID", "a note from content note"]), stdin: None, method: "content", seen: "a note from content note" },
-        Verb { name: "work label-remove", args: v(&["work", "ID", "label-remove", "ID", "writes:added", "--actor", "groomer"]), stdin: None, method: "work", seen: "" },
+        Verb { name: "content label remove", args: v(&["content", "label", "remove", "ID", "writes:added"]), stdin: None, method: "content", seen: "" },
     ]
 }
 
@@ -296,12 +296,12 @@ fn drive(lc: &Lc, id: &str) -> Vec<(&'static str, i64, bool)> {
     let mut children = vec![];
     for verb in verbs(id) {
         let args: Vec<&str> = verb.args.iter().map(String::as_str).collect();
-        if verb.name == "work label-remove" {
+        if verb.name == "content label remove" {
             assert!(lc.shows(id).contains("writes:added"), "label-add did not land before label-remove");
         }
         children.push((verb.name, lc.children_of(verb.method, &args, verb.stdin).1, lc.cut.load(std::sync::atomic::Ordering::Relaxed)));
         let shown = lc.shows(id);
-        if verb.name == "work label-remove" {
+        if verb.name == "content label remove" {
             assert!(!shown.contains("writes:added"), "label-remove settled but the label is on {id}: {shown}");
         } else {
             assert!(shown.contains(verb.seen), "{}: settled but {:?} is not on {id}: {shown}", verb.name, verb.seen);
