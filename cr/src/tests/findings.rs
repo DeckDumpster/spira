@@ -224,3 +224,50 @@ fn a_failed_commit_is_retried_by_the_next_run_though_no_page_changed() {
     assert_eq!(w.cr(&["findings", "--review", "001"]).code, 0);
     assert_eq!(w.commits.log.borrow().len(), 1);
 }
+
+fn finding_of(kind: &str, scope: &str, became: &str, extra: &str) -> String {
+    format!(r#"{{{extra}"words":"this is bad","exemplar":{{"path":"{SRC}","line":6}},"kind":"{kind}","rule":"Fix the lock.","scope":"{scope}","became":{became}}}"#)
+}
+
+fn findings_rows(w: &World) -> String {
+    std::fs::read_to_string(record::dir(w.run.path(), 1).join("findings.jsonl")).unwrap_or_default()
+}
+
+#[test]
+fn a_fix_finding_is_recorded_for_the_unit_and_stays_out_of_the_catalogue() {
+    let mut w = world();
+    let o = w.finding(&finding_of("fix", "unit", r#"{"items":["sp-x"]}"#, ""));
+    assert_eq!((o.code, o.stdout.as_str()), (0, "001-1\n"), "{}", o.stderr);
+    let closeout = w.cr(&["findings", "--review", "001"]);
+    assert!(closeout.stdout.contains("[fix]"), "{}", closeout.stdout);
+    assert!(w.page("cr-001.md").contains("kind: fix"));
+    assert!(!w.page("patterns.md").contains("Fix the lock."));
+}
+
+#[test]
+fn a_fix_finding_with_a_statute_or_a_wider_scope_is_refused() {
+    let mut w = world();
+    for (scope, became) in [("unit", r#"{"statutes":["law-x"]}"#), ("unit", r#"{"catalogue":["x"]}"#), ("crate", r#"{"items":["sp-x"]}"#)] {
+        let o = w.finding(&finding_of("fix", scope, became, ""));
+        assert_eq!(o.code, 2, "{scope} {became}");
+        assert!(o.stderr.contains("for this unit only"), "{}", o.stderr);
+    }
+    assert_eq!(findings_rows(&w), "");
+}
+
+#[test]
+fn an_other_finding_keeps_his_words_and_generalises_only_with_his_comment() {
+    let mut w = world();
+    assert_eq!(w.finding(&finding_of("other", "unit", "{}", "")).code, 0);
+    let catalogue = r#"{"catalogue":["x"]}"#;
+    let refused = w.finding(&finding_of("other", "rust", catalogue, ""));
+    assert_eq!(refused.code, 2);
+    assert!(refused.stderr.contains("generalised_by"), "{}", refused.stderr);
+    let ok = w.finding(&finding_of("other", "rust", catalogue, r#""generalised_by":123,"#));
+    assert_eq!((ok.code, ok.stdout.as_str()), (0, "001-2\n"), "{}", ok.stderr);
+    w.cr(&["findings", "--review", "001"]);
+    let cat = w.page("patterns.md");
+    assert_eq!(cat.matches("## Generalised by the operator").count(), 1, "{cat}");
+    assert_eq!(cat.matches("### Fix the lock.").count(), 1, "{cat}");
+    assert!(w.page("cr-001.md").contains("generalised_by: 123"));
+}

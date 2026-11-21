@@ -33,7 +33,9 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   cr status [--json]
 
   finding records one verdict of a review (JSON: {id?, words, comment_id?, exemplar: {path, line},
-  kind, rule, scope, became}) and prints its id; an id already recorded is replaced. findings
+  kind, rule, scope, became, generalised_by?}) and prints its id; an id already recorded is
+  replaced. kind is question|fix|refactor|condemn|replicate|style|other; fix is for this unit
+  only (scope unit, no statute or catalogue), other names one only with generalised_by. findings
   regenerates the review's page and the pattern catalogue in SPIRA_CR_FINDINGS_DIR, commits those
   two files, and prints the closeout comment; --post posts it on the review's pull request.
 
