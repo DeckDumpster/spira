@@ -2137,13 +2137,15 @@ fn a_leg_stopped_by_its_rounds_abandon_ends_the_round_unjudged_and_the_repo_cuts
 
 /// An attribution that saw the abandon marker says so; that is no red.
 #[test]
-fn an_attribution_line_saying_abandoned_pauses_and_abandons_nothing() {
+fn an_attribution_line_saying_abandoned_ends_the_round_unjudged_and_the_repo_cuts_again() {
     use batcher_cut::attribute::Attribution;
-    let mut r = carried(&driving(State::Attributing, "spira.a2"));
-    let n = r.requested().len();
-    r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(0), &Attribution::Abandoned.line())).unwrap();
-    kit::assert_unpoisoned(&r, STREAM);
-    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
-    let after: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
-    assert!(!after.contains(&PAUSE.to_string()) && !after.contains(&ABANDON.to_string()), "{after:?}");
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, "spira.a2").unwrap(), exit: runtime::units::Exit::Code(0), duration_ms: 1 };
+    let out = runtime::units::RanOutput { stdout_tail: Some(Attribution::Abandoned.line()), ..Default::default() };
+    let (carry, acts) = on_ran_with(&driving(State::Attributing, "spira.a2"), &ran, &out, NOW).expect("its own leg");
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    for no in [CORPUS, ABANDON, PAUSE, EJECT] {
+        assert!(!names.contains(&no), "{no} asked: {names:?}");
+    }
+    let (_, acts) = decide(&carry, &busy());
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE]);
 }
