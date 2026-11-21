@@ -124,6 +124,15 @@ mod tests {
     }
 
     #[test]
+    fn a_caller_failing_again_does_not_extend_the_window() {
+        let mut f = Followups::default();
+        f.observe(S(0), "spira-runtime", "list", true, 2);
+        f.observe(S(20), "spira-runtime", "list", true, 2);
+        f.expire(S(31));
+        assert_eq!((f.surfaced["spira-runtime"], total(&f).0), (1, 0));
+    }
+
+    #[test]
     fn no_follow_up_past_the_window_is_surfaced() {
         let mut f = Followups::default();
         f.observe(S(0), "spira-runtime", "list", true, 2);
