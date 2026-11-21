@@ -2118,3 +2118,32 @@ fn an_attribution_whose_record_lost_a_carried_member_is_stopped_and_certifies_th
     let (_, again) = decide(&next, &snap);
     assert_eq!(stops(&again), 0, "one stop per eject: {again:?}");
 }
+
+/// The abandon of a round stops its leg with SIGTERM: whichever leg it was, the round is not
+/// judged — no attribution, no abandon, no pause — and the repo cuts again on the next tick.
+#[test]
+fn a_leg_stopped_by_its_rounds_abandon_ends_the_round_unjudged_and_the_repo_cuts_again() {
+    for (state, leg) in [(State::Certifying, "spira.c3"), (State::Corpus, "spira.c1")] {
+        let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, leg).unwrap(), exit: runtime::units::Exit::Signal(15), duration_ms: 1 };
+        let (carry, acts) = on_ran_with(&driving(state, leg), &ran, &runtime::units::RanOutput::default(), NOW).expect("its own leg");
+        let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+        for no in [CORPUS, ABANDON, PAUSE, EJECT] {
+            assert!(!names.contains(&no), "{state:?}: {no} asked: {names:?}");
+        }
+        let (_, acts) = decide(&carry, &busy());
+        assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE], "{state:?}: cut again on the next tick");
+    }
+}
+
+/// An attribution that saw the abandon marker says so; that is no red.
+#[test]
+fn an_attribution_line_saying_abandoned_pauses_and_abandons_nothing() {
+    use batcher_cut::attribute::Attribution;
+    let mut r = carried(&driving(State::Attributing, "spira.a2"));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(0), &Attribution::Abandoned.line())).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let after: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
+    assert!(!after.contains(&PAUSE.to_string()) && !after.contains(&ABANDON.to_string()), "{after:?}");
+}

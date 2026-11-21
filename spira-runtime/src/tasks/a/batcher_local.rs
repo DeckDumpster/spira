@@ -42,6 +42,7 @@
 //! | Corpus, Attributing, Certifying | the leg's unit fails to start, or is unlisted for two observes with no `unit.ran` | the same state with the leg started once more; the second time Done (`abandon` naming the leg, pace Infra) |
 //! | Corpus | `unit.ran` red | Attributing (`eject` + re-run leg) |
 //! | Corpus | `unit.ran` green | Mending if menders open, else Certifying |
+//! | Corpus, Attributing, Certifying | `unit.ran` exit SIGTERM, or the attribution line says abandoned | Done (not judged: no attribution, no abandon, pace Quiet, no pause) |
 //! | Attributing | `unit.ran` (re-run) | Corpus-judged: Mending / Certifying / Done(blocked) |
 //! | Corpus, Attributing, Certifying | observe: no leg carries the round, its record names red suites (`red=`), first time on this head | Attributing (the pass's kept results are attributed; pace untouched) |
 //! | Corpus, Attributing, Certifying | observe: the same, a second time on the same head | Done (`red_naming` the red suites, pace Red) |
@@ -448,6 +449,8 @@ pub enum Trigger {
     PassRedRecorded,
     /// An eject left the round with no member: the round ended in the store and nothing is left to attribute (not in the contract's table).
     RoundEmptied,
+    /// The leg was stopped by its round's abandon (or its attribution said so): the round is not judged.
+    LegStopped,
 }
 
 pub static TABLE: &[(State, Trigger, State)] = &[
@@ -504,6 +507,9 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Corpus, Trigger::RoundEmptied, State::Done),
     (State::Attributing, Trigger::RoundEmptied, State::Done),
     (State::Certifying, Trigger::RoundEmptied, State::Done),
+    (State::Corpus, Trigger::LegStopped, State::Done),
+    (State::Attributing, Trigger::LegStopped, State::Done),
+    (State::Certifying, Trigger::LegStopped, State::Done),
     (State::Attributing, Trigger::LegLost, State::Done),
     (State::Certifying, Trigger::LegLost, State::Done),
     (State::Certifying, Trigger::CertifyHeld, State::Certified),
@@ -2079,6 +2085,14 @@ impl Machine<'_> {
         if !ok && matches!(exit, Exit::Code(_)) && matches!(self.rc.state, State::Corpus | State::Certifying) && self.eject_recorded_gate_reds() {
             return;
         }
+        if matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying)
+            && (exit == Exit::Signal(SIGTERM) || Attribution::parse(out) == Some(Attribution::Abandoned))
+        {
+            eprintln!("{NAME} {}: batch {:?} {:?} leg: the round was abandoned while it ran — stopped, no verdict written", self.repo, self.rc.batch, self.rc.state);
+            self.go(Trigger::LegStopped);
+            self.finish(pace::Outcome::Quiet, "");
+            return;
+        }
         match (self.rc.state, ok) {
             (State::Corpus, true) => {
                 self.go(Trigger::LegGreen);
@@ -2137,13 +2151,13 @@ impl Machine<'_> {
                 Some(Attribution::Blocked(why)) if batcher_cut::io::HeldEject::parse(&why).is_some() => {
                     self.hold_eject(batcher_cut::io::HeldEject::parse(&why).unwrap_or_default());
                 }
+                Some(Attribution::Abandoned) => {
+                    self.go(Trigger::LegStopped);
+                    self.finish(pace::Outcome::Quiet, "");
+                }
                 Some(Attribution::Blocked(why)) => {
                     self.go(Trigger::RerunBlocked);
                     self.red(&format!("local corpus red — held before reaching CI: {why}"));
-                }
-                None if exit == Exit::Signal(SIGTERM) => {
-                    self.go(Trigger::RerunBlocked);
-                    self.finish(pace::Outcome::Quiet, "");
                 }
                 None => {
                     self.go(Trigger::RerunBlocked);

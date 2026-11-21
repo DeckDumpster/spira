@@ -443,6 +443,7 @@ impl Machine<'_> {
                     let why = match outcome {
                         Some(Attribution::Blocked(why) | Attribution::Emptied(why) | Attribution::Fault(why) | Attribution::Faulted(why) | Attribution::Unconverged(why)) => why,
                         Some(Attribution::Land { .. }) => "attribution withdrew every member".into(),
+                        Some(Attribution::Abandoned) => "the round was abandoned".into(),
                         None => format!("the attribution leg ended ({exit:?}) with no outcome"),
                     };
                     self.verdict("red", &format!("local corpus red — held before reaching CI: {why}"));
