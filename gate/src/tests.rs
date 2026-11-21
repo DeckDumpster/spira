@@ -4047,6 +4047,7 @@ fn a_wrapper_script_that_prints_no_fence_line_of_its_own_still_passes() {
     assert_eq!(f.run(), PASS, "{}", f.stderr());
 }
 
+#[test_id(txrm5ln)]
 #[test]
 fn a_wrapped_spira_lint_that_prints_nothing_is_fence_silent_on_spira_lint() {
     let f = wrapped();

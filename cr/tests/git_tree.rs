@@ -68,6 +68,7 @@ fn cr_pick_runs_over_a_real_git_tree() {
     assert_eq!(v["weight"]["commits"], 2);
 }
 
+#[test_id(t967db9)]
 #[test]
 fn git_tree_reads_the_full_log_line_times_and_deleted_tests_of_a_real_history() {
     let dir = testkit::TempDir::new("cr-git-history");

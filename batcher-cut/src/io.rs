@@ -6636,6 +6636,7 @@ mod eject_args_tests {
         assert!(!a.iter().any(|x| x == "--no-rebuild"), "{a:?}");
     }
 
+    #[test_id(tjwbdv1)]
     #[test]
     fn open_land_and_abandon_are_run_as_the_batcher_and_status_is_left_alone() {
         for verb in ["open", "land", "abandon"] {

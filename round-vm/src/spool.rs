@@ -605,6 +605,7 @@ mod tests {
         }
     }
 
+    #[test_id(txlw94u)]
     #[test]
     fn a_red_unit_or_integration_probe_leaves_its_cargo_output_and_a_red_result() {
         for (build, rc) in [("unit", 100), ("integration", 101)] {
