@@ -3823,6 +3823,40 @@ fn fenced() -> Fake {
     f
 }
 
+/// The checked-in step's shape: a wrapper script that execs spira-lint and prints no line.
+const WRAPPED: &str = r#"bash spira/lint-staged.sh "$SPIRA_LINT_BIN" && bash spira/build-fence.sh && { _s="$("$SPIRA_SELECT_BIN" gate "$SPIRA_GATE_BASE" x)" || exit 75; [ -n "$_s" ] || exit 0; }"#;
+
+fn wrapped() -> Fake {
+    let f = fenced();
+    f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = WRAPPED.into();
+    f.blobs.borrow_mut().insert(format!("{BASE}:spira/lint-staged.sh"), b"x".to_vec());
+    f.silent_fences.borrow_mut().insert("lint-staged".into());
+    f
+}
+
+#[test]
+fn a_wrapper_that_runs_spira_lint_is_judged_on_spira_lints_line() {
+    let f = wrapped();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+}
+
+#[test]
+fn a_unit_composition_judges_the_lint_wrapper_on_spira_lints_line() {
+    let f = wrapped();
+    *f.mode.borrow_mut() = Ok(GateMode::Unit);
+    *f.touched.borrow_mut() = Ok(vec![Changed { path: "gate/src/x.rs".into(), exec: false }]);
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+}
+
+#[test]
+fn a_wrapped_spira_lint_that_prints_nothing_is_fence_silent_on_spira_lint() {
+    let f = wrapped();
+    f.silent_fences.borrow_mut().insert("spira-lint".into());
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    let vl = f.verdict_line();
+    assert!(vl.contains("reason=fence-silent") && vl.contains("suite=spira-lint"), "{vl}");
+}
+
 #[test]
 fn a_fence_that_exits_0_without_its_line_is_no_verdict_fence_silent() {
     let f = fenced();

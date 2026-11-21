@@ -236,6 +236,16 @@ mod tests {
     }
 
     #[test]
+    fn the_checked_in_gate_expects_spira_lint_not_the_wrapper_that_runs_it() {
+        let d = checked_in();
+        let direct = crate::fence::expected(&d.command());
+        assert!(direct.iter().any(|f| f == "spira-lint") && !direct.iter().any(|f| f == "lint-staged"), "{direct:?}");
+        let comp = crate::compose::gate_string(&crate::compose::Composition::Unit { touched: vec![], crates: vec![], targets: Default::default(), dropped: vec![] }, &d.command()).0;
+        let composed = crate::fence::expected(&comp);
+        assert!(composed.iter().any(|f| f == "spira-lint") && !composed.iter().any(|f| f == "lint-staged"), "{composed:?}");
+    }
+
+    #[test]
     fn parse_reads_steps_bins_comments_and_blanks() {
         let d = parse("# c\n\nbin SPIRA_LINT_BIN spira-lint\nstep  bash a.sh  \nstep \"$SPIRA_LINT_BIN\" --only x\n").unwrap();
         assert_eq!(d.bins, [Bin { var: "SPIRA_LINT_BIN".into(), package: "spira-lint".into() }]);
