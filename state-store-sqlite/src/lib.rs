@@ -24,6 +24,7 @@ pub mod compact;
 pub mod dated;
 pub mod durability;
 pub mod live;
+mod ask_since;
 mod migrations;
 pub mod outbox;
 pub mod relayout;
@@ -1307,7 +1308,7 @@ impl SqliteBackend {
                 .spawn(move || c.run(checkpoint_conn, w, g, &p, metrics, mr))
                 .map_err(|e| Error::Backend(format!("{}: the checkpointer: {e}", path.display())))?
         };
-        Ok(SqliteBackend(Arc::new(Inner {
+        let opened = SqliteBackend(Arc::new(Inner {
             checkpointer,
             checkpoint_thread: Mutex::new(Some(thread)),
             path: path.to_path_buf(),
@@ -1341,7 +1342,16 @@ impl SqliteBackend {
             shm: File::open(format!("{}-shm", path.display())).ok(),
             last_commit: Mutex::new(CommitNote::default()),
             _lock: OpenerLock(lock_file),
-        })))
+        }));
+        let unfilled = ask_since::fill(&opened)?;
+        if !unfilled.is_empty() {
+            eprintln!(
+                "ask_since: {} ask-held record(s) have no applied Ask hold in their history and stay without ask_since: {}",
+                unfilled.len(),
+                unfilled.join(", ")
+            );
+        }
+        Ok(opened)
     }
 
     /// The WAL's backfill mark, `None` when the index cannot be read.
@@ -3686,6 +3696,72 @@ mod tests {
             .unwrap();
         assert_eq!(mirrored, 0, "every version row mirrors its latest");
         assert_eq!(ask_in_versions, 1);
+    }
+
+    fn ask_obj(data: serde_json::Value) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": data })).unwrap()
+    }
+
+    fn ask_hold(at: i64, applied: bool) -> serde_json::Value {
+        serde_json::json!({ "machine": "bead", "lc_key": "sp-a", "event": "Hold", "at": at, "applied": applied,
+            "evidence": { "Hold": { "kind": "Ask", "cause": "operator-question", "detail": "q" } } })
+    }
+
+    fn ask_put(key: &str, value: Vec<u8>, prev: Option<Rev>) -> Write {
+        Write::Put { key: key.into(), value, create_rev: Rev::new(1, 0), prev }
+    }
+
+    /// The raise of an ask lives in an events day file the main file never holds; opening a
+    /// store that missed migration 10's fill still finds it through the merged read path.
+    #[test]
+    fn ask_since_fills_from_an_ask_hold_whose_event_is_in_a_day_file() {
+        let dir = testkit::TempDir::new("sqlite-ask-since-day");
+        let path = dir.path().join("a.db");
+        let opts = || Options { jump_on_open: false, ..Options::default() };
+        {
+            let b = SqliteBackend::open(&path, opts()).unwrap();
+            let head = b.commit(0, &[ask_put("lifecycle/sp-a", ask_obj(serde_json::json!({ "bead_id": "sp-a", "holds": [] })), None)]).unwrap();
+            let m = head + 1;
+            let events = ask_obj(serde_json::json!({ "refused": false, "evidence": {
+                "then": [ask_hold(30, true)], "else": [ask_hold(97, false)] } }));
+            b.commit(head, &[
+                ask_put("lifecycle/sp-a", ask_obj(serde_json::json!({ "bead_id": "sp-a", "holds": ["Ask"] })), Some(Rev::new(head, 0))),
+                ask_put(&format!("history/sp-a/{:020}/r/apply", m - 1), ask_obj(serde_json::json!({})), None),
+                ask_put(&state_store::events_key(m), events, None),
+            ])
+            .unwrap();
+            let in_main: i64 = lock(&b.0.writer)
+                .conn
+                .prepare("SELECT count(*) FROM latest WHERE key >= CAST('events/' AS BLOB) AND key < CAST('events0' AS BLOB)")
+                .and_then(|mut s| s.query_row([], |r| r.get(0)))
+                .unwrap();
+            assert_eq!(in_main, 0, "the main file holds no events row");
+            let files = b.family_files().unwrap();
+            assert!(files.iter().any(|f| f.family == "events" && !f.files.is_empty()), "an events day file exists");
+        }
+        Connection::open(&path).unwrap().pragma_update(None, "user_version", 9).unwrap();
+        let b = SqliteBackend::open(&path, opts()).unwrap();
+        let head = b.head().unwrap();
+        let v = b.get("lifecycle/sp-a", head).unwrap().unwrap().value;
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&v).unwrap()["data"]["ask_since"], serde_json::json!(30));
+    }
+
+    /// An ask-held record with no Ask hold anywhere in its history opens, stays without
+    /// `ask_since`, and is named by the fill so the store's start can say so.
+    #[test]
+    fn open_names_an_ask_held_record_with_no_ask_hold_in_its_history() {
+        let dir = testkit::TempDir::new("sqlite-ask-since-none");
+        let path = dir.path().join("a.db");
+        let opts = || Options { jump_on_open: false, ..Options::default() };
+        let held = ask_obj(serde_json::json!({ "bead_id": "sp-a", "holds": ["Ask"] }));
+        {
+            let b = SqliteBackend::open(&path, opts()).unwrap();
+            b.commit(0, &[ask_put("lifecycle/sp-a", held.clone(), None)]).unwrap();
+        }
+        let b = SqliteBackend::open(&path, opts()).unwrap();
+        assert_eq!(ask_since::fill(&b).unwrap(), vec!["sp-a".to_string()]);
+        let head = b.head().unwrap();
+        assert_eq!(b.get("lifecycle/sp-a", head).unwrap().unwrap().value, held, "the record is untouched");
     }
 
     /// A store written before `owner_refs` existed answers `owned_by` once opened: the
