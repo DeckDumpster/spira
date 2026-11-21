@@ -18,12 +18,12 @@ fn a_stdin_note_is_one_mutation_carrying_its_body() {
 }
 
 #[test]
-fn writes_that_are_not_label_or_note_verbs_still_fork_bd() {
+fn the_state_and_key_value_writes_are_mutations_and_fork_no_bd() {
     let r = rig(false, three_seconds());
     send(&r.door, &["content", "set-state", "sp-a", "branch=spira/sp-a"], None);
     send(&r.door, &["content", "kv", "set", "k", "v"], None);
-    assert_eq!(r.notes.writes().len(), 2, "{:?}", r.notes.writes());
-    assert!(r.notes.mutations().is_empty());
+    assert!(r.notes.writes().is_empty(), "{:?}", r.notes.writes());
+    assert_eq!(r.notes.mutations(), ["set-state sp-a branch=spira/sp-a", "kv set k v"]);
 }
 
 /// `argv` (after `content`) over the socket: the answer, and what the server wrote to bd.

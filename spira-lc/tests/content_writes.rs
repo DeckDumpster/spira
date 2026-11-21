@@ -416,17 +416,23 @@ struct Twin {
     method: &'static str,
     /// The same write through the fixture's bd.
     bd: &'static [&'static str],
+    /// The beads under `A` (`.1`) the write makes, read back as well.
+    kids: &'static [&'static str],
 }
 
 const TWINS: &[Twin] = &[
-    Twin { name: "reopen", before: &[&["update", "A", "--status", "blocked", "--assignee", "bob"]], request: &["reopen", "A", "operator-reopen", "groomer"], stdin: None, method: "reopen", bd: &["update", "A", "--status", "open", "--assignee", ""] },
-    Twin { name: "update --assignee", before: &[], request: &["content", "update", "A", "--assignee", "bob"], stdin: None, method: "content", bd: &["update", "A", "--assignee", "bob"] },
-    Twin { name: "update --body-file -", before: &[], request: &["content", "update", "A", "--body-file", "-"], stdin: Some("a new description\n"), method: "content", bd: &["update", "A", "--body-file", "-"] },
-    Twin { name: "close --reason", before: &[], request: &["close", "A", "--reason", "it is done"], stdin: None, method: "close", bd: &["close", "A", "--force", "--reason", "it is done"] },
-    Twin { name: "dep add --type blocks", before: &[], request: &["content", "dep", "add", "A", "B", "--type", "blocks"], stdin: None, method: "content", bd: &["dep", "add", "A", "B", "--type", "blocks"] },
-    Twin { name: "dep remove", before: &[&["dep", "add", "A", "B", "--type", "blocks"]], request: &["content", "dep", "remove", "A", "B"], stdin: None, method: "content", bd: &["dep", "remove", "A", "B"] },
-    Twin { name: "dep relate", before: &[], request: &["content", "dep", "relate", "A", "B"], stdin: None, method: "content", bd: &["dep", "relate", "A", "B"] },
-    Twin { name: "bd-supersede", before: &[], request: &["bd-supersede", "A", "B"], stdin: None, method: "bd-supersede", bd: &["supersede", "A", "--with", "B"] },
+    Twin { name: "reopen", before: &[&["update", "A", "--status", "blocked", "--assignee", "bob"]], request: &["reopen", "A", "operator-reopen", "groomer"], stdin: None, method: "reopen", bd: &["update", "A", "--status", "open", "--assignee", ""], kids: &[] },
+    Twin { name: "update --assignee", before: &[], request: &["content", "update", "A", "--assignee", "bob"], stdin: None, method: "content", bd: &["update", "A", "--assignee", "bob"], kids: &[] },
+    Twin { name: "update --body-file -", before: &[], request: &["content", "update", "A", "--body-file", "-"], stdin: Some("a new description\n"), method: "content", bd: &["update", "A", "--body-file", "-"], kids: &[] },
+    Twin { name: "close --reason", before: &[], request: &["close", "A", "--reason", "it is done"], stdin: None, method: "close", bd: &["close", "A", "--force", "--reason", "it is done"], kids: &[] },
+    Twin { name: "dep add --type blocks", before: &[], request: &["content", "dep", "add", "A", "B", "--type", "blocks"], stdin: None, method: "content", bd: &["dep", "add", "A", "B", "--type", "blocks"], kids: &[] },
+    Twin { name: "dep remove", before: &[&["dep", "add", "A", "B", "--type", "blocks"]], request: &["content", "dep", "remove", "A", "B"], stdin: None, method: "content", bd: &["dep", "remove", "A", "B"], kids: &[] },
+    Twin { name: "dep relate", before: &[], request: &["content", "dep", "relate", "A", "B"], stdin: None, method: "content", bd: &["dep", "relate", "A", "B"], kids: &[] },
+    Twin { name: "bd-supersede", before: &[], request: &["bd-supersede", "A", "B"], stdin: None, method: "bd-supersede", bd: &["supersede", "A", "--with", "B"], kids: &[] },
+    Twin { name: "set-state", before: &[], request: &["content", "set-state", "A", "branch=spira/x"], stdin: None, method: "content", bd: &["set-state", "A", "branch=spira/x"], kids: &[".1"] },
+    Twin { name: "set-state swapping the value", before: &[&["set-state", "A", "lane=builder"]], request: &["content", "set-state", "A", "lane=groomer"], stdin: None, method: "content", bd: &["set-state", "A", "lane=groomer"], kids: &[".1", ".2"] },
+    Twin { name: "set-state to the value it holds", before: &[&["set-state", "A", "lane=builder"]], request: &["content", "set-state", "A", "lane=builder"], stdin: None, method: "content", bd: &["set-state", "A", "lane=builder"], kids: &[".1"] },
+    Twin { name: "duplicate", before: &[], request: &["content", "duplicate", "A", "--of", "B"], stdin: None, method: "content", bd: &["duplicate", "A", "--of", "B"], kids: &[] },
 ];
 
 fn fill(words: &[&str], a: &str, b: &str) -> Vec<String> {
@@ -452,6 +458,14 @@ fn twins(store: &Store, lc: &Lc) -> Vec<(&'static str, i64, String)> {
         store.bd(&argv.iter().map(String::as_str).collect::<Vec<_>>(), t.stdin);
         for (x, y, x2, y2) in [(&a, &b, &a2, &b2), (&b, &a, &b2, &a2)] {
             assert_eq!(plain(&lc.shows(x), x, y), plain(&lc.shows(x2), x2, y2), "{}: the service and bd wrote different rows ({out})", t.name);
+        }
+        for kid in t.kids {
+            let (k, k2) = (format!("{a}{kid}"), format!("{a2}{kid}"));
+            let (mut ours, mut theirs) = (plain(&lc.shows(&k), &a, &b), plain(&lc.shows(&k2), &a2, &b2));
+            for row in [&mut ours, &mut theirs] {
+                row.as_array_mut().unwrap().iter_mut().for_each(|r| drop(r.as_object_mut().unwrap().remove("created_by")));
+            }
+            assert_eq!(ours, theirs, "{}: the event bead {kid} differs ({out})", t.name);
         }
     }
     children
@@ -546,4 +560,147 @@ fn a_blocking_edge_blocks_its_dependent_and_closing_the_blocker_unblocks_it_as_b
     let (out, children) = lc.children_of("close", &["close", &b, "--reason", "done"], None);
     assert_eq!(children, 0, "{out}");
     assert!(!blocked().contains(&a), "bd reads {a} as unblocked once its blocker closed in SQL");
+}
+
+const WATERMARK: &str = "spira.planning_watermark";
+
+fn said(out: &str, key: &str) -> String {
+    out.replace(key, "KEY")
+}
+
+#[test]
+fn the_key_value_and_memory_verbs_write_the_config_rows_bd_writes_in_sql_and_start_no_process() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "kv");
+    let door = |args: &[&str], stdin: Option<&str>| {
+        let mut a = vec!["content"];
+        a.extend(args);
+        let (out, children) = lc.children_of("content", &a, stdin);
+        assert_eq!(children, 0, "{args:?} started a process: {out}");
+        out
+    };
+    let out = door(&["kv", "set", "spira.twin_a", "hello"], None);
+    assert_eq!(said(&out, "spira.twin_a"), said(&store.bd(&["kv", "set", "spira.twin_b", "hello"], None), "spira.twin_b"));
+    assert_eq!(store.bd(&["kv", "get", "spira.twin_a"], None), store.bd(&["kv", "get", "spira.twin_b"], None));
+    let out = door(&["kv", "clear", "spira.twin_a"], None);
+    assert_eq!(said(&out, "spira.twin_a"), said(&store.bd(&["kv", "clear", "spira.twin_b"], None), "spira.twin_b"));
+    let listed = store.bd(&["kv", "list"], None);
+    assert!(!listed.contains("spira.twin_a") && !listed.contains("spira.twin_b"), "{listed}");
+
+    let text = "a memory worth keeping\nover two lines";
+    for pass in ["Remembered", "Updated"] {
+        let out = door(&["remember", "--key", "mem-a"], Some(text));
+        let theirs = store.bd(&["remember", "--key", "mem-b", text], None);
+        assert_eq!(said(&out, "mem-a"), said(&theirs, "mem-b"), "{pass}");
+        assert!(out.starts_with(pass), "{out}");
+        assert_eq!(store.bd(&["recall", "mem-a"], None), store.bd(&["recall", "mem-b"], None));
+    }
+    let out = door(&["forget", "mem-a"], None);
+    assert_eq!(said(&out, "mem-a"), said(&store.bd(&["forget", "mem-b"], None), "mem-b"));
+    let memories = store.bd(&["memories"], None);
+    assert!(!memories.contains("mem-a") && !memories.contains("mem-b"), "{memories}");
+}
+
+#[test]
+fn a_key_value_write_to_the_planning_watermark_is_refused_by_the_door() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "wm");
+    for args in [["content", "kv", "set", WATERMARK, "1"], ["content", "kv", "clear", WATERMARK, ""]] {
+        let args: Vec<&str> = args.iter().copied().filter(|a| !a.is_empty()).collect();
+        let (rc, out) = lc.run(&args, None);
+        assert!(rc != 0 && out.contains("planning watermark"), "{args:?}: {rc} {out}");
+    }
+}
+
+/// The gate bead `bd gate create --blocks <blocked>` made, read from what it printed.
+fn gate_for(store: &Store, blocked: &str, flags: &[&str]) -> String {
+    let out = store.bd(&[&["gate", "create", "--blocks", blocked][..], flags].concat(), None);
+    out.split_whitespace().find(|w| w.contains('-') && w.starts_with(blocked.split('-').next().unwrap())).unwrap_or_else(|| panic!("no gate id in {out}")).to_string()
+}
+
+fn without_reason(mut shown: serde_json::Value) -> serde_json::Value {
+    fn walk(v: &mut serde_json::Value) {
+        match v {
+            serde_json::Value::Object(m) => {
+                m.remove("close_reason");
+                m.values_mut().for_each(walk);
+            }
+            serde_json::Value::Array(a) => a.iter_mut().for_each(walk),
+            _ => {}
+        }
+    }
+    walk(&mut shown);
+    shown
+}
+
+#[test]
+fn a_gate_check_closes_the_timer_gates_that_expired_as_bd_does_in_sql_and_starts_no_process() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "gc");
+    let (a, a2) = (store.create_bead(), store.create_bead());
+    let g = gate_for(&store, &a, &["--type=timer", "--timeout=1ms"]);
+    let pending = gate_for(&store, &store.create_bead(), &["--type=timer", "--timeout=2h"]);
+    let (out, children) = lc.children_of("content", &["content", "gate", "check", "--type=timer"], None);
+    assert_eq!(children, 0, "the check started a process: {out}");
+    assert!(out.contains(&format!("{g}: resolved - timer expired")) && (out.contains(&format!("{pending}: pending - expires in 1h59m")) || out.contains(&format!("{pending}: pending - expires in 2h0m0s"))), "{out}");
+    assert!(out.contains("Checked 2 gates: 1 resolved, 0 escalated, 0 errors"), "{out}");
+    let g2 = gate_for(&store, &a2, &["--type=timer", "--timeout=1ms"]);
+    store.bd(&["gate", "check", "--type=timer"], None);
+    for (x, y, x2, y2) in [(&a, &g, &a2, &g2)] {
+        assert_eq!(without_reason(plain(&lc.shows(x), x, y)), without_reason(plain(&lc.shows(x2), x2, y2)), "the blocked bead reads differently");
+        assert_eq!(without_reason(plain(&lc.shows(y), x, y)), without_reason(plain(&lc.shows(y2), x2, y2)), "the gate reads differently");
+    }
+    assert!(lc.shows(&g).contains("timer expired"), "the close reason is bd's");
+    let (out, children) = lc.children_of("content", &["content", "gate", "check", "--type", "gh:run"], None);
+    assert_eq!((children, out.trim()), (0, "No open gates of type 'gh:run' found."));
+}
+
+#[test]
+fn a_gate_resolve_closes_the_gate_and_unblocks_what_it_blocked_as_bd_does() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "gr");
+    let (a, a2) = (store.create_bead(), store.create_bead());
+    let (g, g2) = (gate_for(&store, &a, &[]), gate_for(&store, &a2, &[]));
+    let (out, children) = lc.children_of("content", &["content", "gate", "resolve", &g], None);
+    assert_eq!(children, 0, "the resolve started a process: {out}");
+    let theirs = store.bd(&["gate", "resolve", &g2], None);
+    assert_eq!(out.replace(&g, "G"), theirs.replace(&g2, "G"));
+    assert_eq!(plain(&lc.shows(&g), &a, &g), plain(&lc.shows(&g2), &a2, &g2));
+    assert_eq!(plain(&lc.shows(&a), &a, &g), plain(&lc.shows(&a2), &a2, &g2));
+    assert!(!store.bd(&["blocked", "--json"], None).contains(&a), "{a} is still blocked by its resolved gate");
+}
+
+#[test]
+fn purge_alerts_deletes_the_alerts_rows_in_sql_and_unblocks_what_they_blocked() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "pa");
+    let (alert, keeper, other) = (store.create_bead(), store.create_bead(), store.create_bead());
+    store.bd(&["label", "add", &alert, "alert"], None);
+    store.bd(&["comments", "add", &alert, "a comment on the alert"], None);
+    store.bd(&["note", &alert, "a note"], None);
+    store.bd(&["dep", "add", &keeper, &alert, "--type", "blocks"], None);
+    assert!(store.bd(&["blocked", "--json"], None).contains(&keeper), "{keeper} is blocked by the alert before the purge");
+    let (out, children) = lc.children_of("content", &["content", "purge-alerts", "--apply"], None);
+    assert_eq!(children, 0, "the purge started a process: {out}");
+    assert!(out.contains("deleted them"), "{out}");
+    assert_ne!(lc.run(&["content", "show", &alert], None).0, 0, "the alert is still there");
+    assert!(lc.shows(&keeper).contains(&keeper) && lc.shows(&other).contains(&other), "the purge took more than the alert");
+    assert!(!store.bd(&["blocked", "--json"], None).contains(&keeper), "{keeper} is still blocked by a bead that is gone");
+}
+
+#[test]
+fn recompute_blocked_leaves_a_consistent_graph_as_bd_does_in_sql_and_starts_no_process() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "rb");
+    let (a, b, a2, b2) = (store.create_bead(), store.create_bead(), store.create_bead(), store.create_bead());
+    for (x, y) in [(&a, &b), (&a2, &b2)] {
+        store.bd(&["dep", "add", x, y, "--type", "blocks"], None);
+    }
+    let (out, children) = lc.children_of("content", &["content", "recompute-blocked"], None);
+    assert_eq!(children, 0, "the recompute started a process: {out}");
+    assert_eq!(out, store.bd(&["recompute-blocked"], None));
+    for (x, y, x2, y2) in [(&a, &b, &a2, &b2), (&b, &a, &b2, &a2)] {
+        assert_eq!(plain(&lc.shows(x), x, y), plain(&lc.shows(x2), x2, y2));
+    }
+    assert!(store.bd(&["blocked", "--json"], None).contains(&a), "{a} is still blocked by {b}");
 }
