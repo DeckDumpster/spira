@@ -445,6 +445,17 @@ fn status_lists_files_changed_since_review_with_lines_changed() {
 }
 
 #[test]
+fn status_counts_a_file_reviewed_under_its_old_name() {
+    let files = store_unit_files();
+    let mut at = at_today(&fixture(), &files);
+    at[0].0 = "demo/src/old_store.rs".into();
+    let rows = published("001", "module:demo/src/store.rs", &at, ClosedAs::Published);
+    let (_run, p) = coverage_ports(fixture().with_rename("old", "demo/src/old_store.rs", &files[0]), rows, 10);
+    let c = &status_json(&p)["coverage"];
+    assert_eq!(c["files"]["current"], files.len());
+}
+
+#[test]
 fn a_review_closed_unpublished_adds_no_coverage() {
     let files = store_unit_files();
     let rows = published("001", "module:demo/src/store.rs", &at_today(&fixture(), &files), ClosedAs::Unpublished);
