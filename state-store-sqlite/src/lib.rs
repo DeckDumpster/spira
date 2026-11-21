@@ -758,6 +758,12 @@ const NEWEST_OPENED: &str = "SELECT key, main, sub, value, create_main, create_s
      WHERE opened_at >= ?1 AND key >= ?2 AND (?3 IS NULL OR key < ?3)
      ORDER BY opened_at DESC, key DESC LIMIT ?4";
 
+/// The head's live keys in `[?2, ?3)` whose `history_seq` is above `?1`, lowest first: one range
+/// of `latest_by_history_seq`.
+const BY_SEQ: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
+     WHERE history_seq > ?1 AND key >= ?2 AND (?3 IS NULL OR key < ?3)
+     ORDER BY history_seq, key LIMIT ?4";
+
 /// The head's live keys in `[?4, ?5)` of fact kind `?1`, strictly after `(?2, ?3)` by
 /// `(fact_at, key)`, oldest first: one range of `latest_by_fact`.
 const KIND_SINCE: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
@@ -1066,6 +1072,43 @@ fn newest_opened_at_head(
     }
     let n = stmt.reset_status(rusqlite::StatementStatus::VmStep);
     snap.steps.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
+    Ok(out)
+}
+
+/// The head's first `limit` live keys in `[prefix, hi)` with `history_seq` above `after_seq`.
+fn by_seq_at_head(
+    conn: &Connection,
+    snap: &Snapshot,
+    (prefix, hi): (&[u8], Option<&[u8]>),
+    after_seq: u64,
+    limit: usize,
+    deadline: &dyn Fn() -> Result<()>,
+) -> Result<Vec<(String, Version)>> {
+    deadline()?;
+    let mut stmt = conn.prepare_cached(BY_SEQ).map_err(db)?;
+    stmt.reset_status(rusqlite::StatementStatus::VmStep);
+    let mut out = Vec::new();
+    {
+        let after = i64::try_from(after_seq).unwrap_or(i64::MAX);
+        let mut rows = stmt
+            .query(params![
+                after,
+                prefix,
+                hi,
+                i64::try_from(limit).unwrap_or(i64::MAX)
+            ])
+            .map_err(db)?;
+        while let Some(r) = rows.next().map_err(db)? {
+            deadline()?;
+            let key: Vec<u8> = r.get(0).map_err(db)?;
+            if let Some(v) = version_row(r, 1).map_err(db)? {
+                out.push((key_of(key)?, v));
+            }
+        }
+    }
+    let n = stmt.reset_status(rusqlite::StatementStatus::VmStep);
+    snap.steps
+        .fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
     Ok(out)
 }
 
@@ -1972,6 +2015,52 @@ impl Backend for SqliteBackend {
                 Some((opened, k, v))
             }));
             merged.sort_by(|a, b| (b.0, &b.1).cmp(&(a.0, &a.1)));
+            merged.truncate(limit);
+            Ok(merged.into_iter().map(|(_, k, v)| (k, v)).collect())
+        })
+    }
+
+    /// The rows by `data.seq`: a forward range of `latest_by_history_seq`, below the head
+    /// corrected by the history ring as `range_newest_opened` is.
+    fn range_by_seq(
+        &self,
+        prefix: &str,
+        after_seq: u64,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        self.read(|conn, snap, deadline| {
+            snap.readable(at)?;
+            let hi = successor(prefix.as_bytes());
+            let span = (prefix.as_bytes(), hi.as_deref());
+            if at == snap.head {
+                return by_seq_at_head(conn, snap, span, after_seq, limit, deadline);
+            }
+            let touched =
+                lock(&self.0.history).touched_after(prefix.as_bytes(), hi.as_deref(), at)?;
+            let rows = by_seq_at_head(
+                conn,
+                snap,
+                span,
+                after_seq,
+                limit.saturating_add(touched.len()),
+                deadline,
+            )?;
+            let mut merged: Vec<(u64, String, Version)> = rows
+                .into_iter()
+                .filter(|(k, _)| {
+                    touched
+                        .binary_search_by(|(t, _)| t.as_str().cmp(k))
+                        .is_err()
+                })
+                .filter_map(|(k, v)| Some((state_store::backend::seq_of(&v.value)?, k, v)))
+                .collect();
+            merged.extend(touched.into_iter().filter_map(|(k, v)| {
+                let v = v?;
+                let seq = state_store::backend::seq_of(&v.value).filter(|s| *s > after_seq)?;
+                Some((seq, k, v))
+            }));
+            merged.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
             merged.truncate(limit);
             Ok(merged.into_iter().map(|(_, k, v)| (k, v)).collect())
         })
@@ -3563,6 +3652,88 @@ mod tests {
             assert!(!step.starts_with("SCAN") && !step.contains("TEMP B-TREE"), "{step}");
         }
         assert!(plan(&b, NEWEST_OPENED).iter().any(|s| s.contains("latest_by_opened")));
+    }
+
+    /// A store at the previous migration count gains the `history_seq` index, and the imported
+    /// rows in seq order are a range of it, equal to the scan the default makes.
+    #[test]
+    fn migration_9_indexes_the_seq_of_the_history_a_store_already_holds() {
+        let dir = testkit::TempDir::new("sqlite-m9");
+        let path = dir.path().join("m9.db");
+        let doc =
+            |seq: i64| serde_json::to_vec(&serde_json::json!({ "data": { "seq": seq } })).unwrap();
+        let mut rows: Vec<(String, Vec<u8>)> = (0..500)
+            .map(|i| {
+                (
+                    format!("history/b{i:04}/{:020}/import", 0),
+                    doc((i * 7) % 500 + 1),
+                )
+            })
+            .collect();
+        rows.extend((0..500).map(|i| {
+            (
+                format!("history/b{i:04}/{:020}/txn", 3),
+                br#"{"data":{"audit":{}}}"#.to_vec(),
+            )
+        }));
+        rows.push(("other/x".into(), doc(1)));
+        rows.push(("history/odd".into(), br#"{"data":{"seq":"soon"}}"#.to_vec()));
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in SCHEMA
+                .iter()
+                .chain(MIGRATIONS[..8].iter().flat_map(|m| m.iter()))
+            {
+                exec(&conn, sql, []).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 8).unwrap();
+            for table in ["versions", "latest"] {
+                let sql = format!(
+                    "INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
+                     VALUES (?1, 1, 0, ?2, 1, 0, 1)"
+                );
+                for (k, v) in &rows {
+                    exec(&conn, &sql, params![k.as_bytes(), v]).unwrap();
+                }
+            }
+            exec(&conn, "UPDATE meta SET value = 1 WHERE name = 'head'", []).unwrap();
+        }
+        let b = SqliteBackend::open(
+            &path,
+            Options {
+                jump_on_open: false,
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
+        b.take_read_steps();
+        let first = b.range_by_seq("history/", 0, 5, 1).unwrap();
+        let steps = b.take_read_steps();
+        assert!(steps <= 200, "{steps} VM steps for 5 of 500 rows");
+        let seqs = |rows: &[(String, Version)]| -> Vec<u64> {
+            rows.iter()
+                .map(|(_, v)| state_store::backend::seq_of(&v.value).unwrap())
+                .collect()
+        };
+        assert_eq!(seqs(&first), [1, 2, 3, 4, 5]);
+        assert_eq!(
+            first,
+            state_store::backend::range_by_seq_by_scan(&b, "history/", 0, 5, 1).unwrap()
+        );
+        let by_scan =
+            state_store::backend::range_by_seq_by_scan(&b, "history/", 300, 1_000, 1).unwrap();
+        assert_eq!(by_scan.len(), 200);
+        assert_eq!(b.range_by_seq("history/", 300, 1_000, 1).unwrap(), by_scan);
+        for step in plan(&b, BY_SEQ) {
+            assert!(
+                !step.starts_with("SCAN") && !step.contains("TEMP B-TREE"),
+                "{step}"
+            );
+        }
+        assert!(plan(&b, BY_SEQ)
+            .iter()
+            .any(|s| s.contains("latest_by_history_seq")));
     }
 
     /// Below the head the newest rows are still the index's, with the ring's keys judged by

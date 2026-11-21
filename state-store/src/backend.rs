@@ -192,6 +192,19 @@ pub trait Backend: Send + Sync {
     ) -> Result<Vec<(String, Version)>> {
         range_kind_since_by_scan(self, prefix, kind, since, after, limit, at)
     }
+    /// Keys starting with `prefix` whose value's `data.seq` is an integer above `after_seq`,
+    /// ascending by `(seq, key)`, at most `limit`. The default pages [`Backend::range`] and
+    /// sorts; a backend that indexes `seq` overrides it, so the lowest rows are read without
+    /// the rest.
+    fn range_by_seq(
+        &self,
+        prefix: &str,
+        after_seq: u64,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        range_by_seq_by_scan(self, prefix, after_seq, limit, at)
+    }
     /// Applies `batch` as main `expect + 1`, or `Stale` if the head is no longer `expect`. The
     /// contract never puts a key in a batch twice.
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64>;
@@ -335,6 +348,48 @@ pub fn range_newest_opened_by_scan<B: Backend + ?Sized>(
         }
     }
     rows.sort_by(|a, b| (b.0, &b.1).cmp(&(a.0, &a.1)));
+    rows.truncate(limit);
+    Ok(rows.into_iter().map(|(_, k, v)| (k, v)).collect())
+}
+
+/// The value's `data.seq`, when it is a non-negative integer.
+pub fn seq_of(value: &[u8]) -> Option<u64> {
+    #[derive(serde::Deserialize)]
+    struct Data {
+        seq: Option<serde_json::Value>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Obj {
+        data: Option<Data>,
+    }
+    let o: Obj = serde_json::from_slice(value).ok()?;
+    o.data?.seq?.as_u64()
+}
+
+/// [`Backend::range_by_seq`] by paging through `range` and sorting.
+pub fn range_by_seq_by_scan<B: Backend + ?Sized>(
+    b: &B,
+    prefix: &str,
+    after_seq: u64,
+    limit: usize,
+    at: u64,
+) -> Result<Vec<(String, Version)>> {
+    const SCAN: usize = 1_000;
+    let mut rows = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = b.range(prefix, cursor.as_deref(), SCAN, at)?;
+        let full = page.len() == SCAN;
+        cursor = page.last().map(|(k, _)| k.clone());
+        rows.extend(page.into_iter().filter_map(|(k, v)| {
+            let seq = seq_of(&v.value).filter(|s| *s > after_seq)?;
+            Some((seq, k, v))
+        }));
+        if !full {
+            break;
+        }
+    }
+    rows.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
     rows.truncate(limit);
     Ok(rows.into_iter().map(|(_, k, v)| (k, v)).collect())
 }

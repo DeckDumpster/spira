@@ -753,6 +753,16 @@ impl<B: Backend> Contract<B> {
             .collect()
     }
 
+    /// The items under `prefix` whose `data.seq` is above `after_seq`, ascending by `(seq, key)`,
+    /// at most `limit`, read through the backend's `seq` index.
+    pub fn range_by_seq(&self, prefix: &str, after_seq: u64, limit: usize, at: u64) -> Result<Vec<Item>> {
+        self.backend
+            .range_by_seq(prefix, after_seq, limit, at)?
+            .into_iter()
+            .map(|(k, v)| item(k, v).map(|i| self.with_expiry(i)))
+            .collect()
+    }
+
     /// The items under `prefix` of `data.kind` `kind` with `data.at` above `since`, ascending by
     /// `(at, key)` strictly after `after`, at most `limit`, read through the backend's
     /// `(kind, at)` index.

@@ -151,31 +151,29 @@ impl<B: Backend> Store<B> {
     pub fn audits_after_upto(&self, after: u64, limit: usize) -> Result<Scanned> {
         let head = self.contract().head()?;
         let mut audits: Vec<Logged> = Vec::new();
-        let (mut cursor, mut history_done): (Option<String>, bool) = (None, false);
-        while after == 0 && !history_done {
-            let page = self.contract().range_at(super::keys::HISTORY, cursor.as_deref(), PAGE, head)?;
+        let mut seq_cursor = 0u64;
+        while after == 0 && audits.len() < limit {
+            let want = PAGE.min(limit - audits.len());
+            let page = self.contract().range_by_seq(super::keys::HISTORY, seq_cursor, want, head)?;
             for i in &page {
                 let d = &i.value.data;
                 if let (Some(seq), Ok(audit)) = (d["seq"].as_u64(), serde_json::from_value::<Audit>(d["audit"].clone())) {
-                    if seq > after {
-                        audits.push(Logged { rev: seq, audit });
-                    }
+                    audits.push(Logged { rev: seq, audit });
                 }
             }
-            if audits.len() > limit {
-                audits.sort_by_key(|l| l.rev);
-                audits.truncate(limit);
+            let last = page.last().and_then(|i| i.value.data["seq"].as_u64());
+            match last {
+                Some(seq) if page.len() == want => seq_cursor = seq,
+                _ => break,
             }
-            history_done = page.len() < PAGE;
-            cursor = page.last().map(|i| i.key.clone());
         }
         let mut cursor = (after > 0).then(|| events_key(after));
-        loop {
+        while audits.len() < limit {
             let page = self.contract().range_at(EVENTS_PREFIX, cursor.as_deref(), PAGE, head)?;
             for item in &page {
                 audits.extend(branch_audits(item).into_iter().map(|audit| Logged { rev: item.mod_rev.main, audit }));
             }
-            if page.len() < PAGE || audits.len() >= limit {
+            if page.len() < PAGE {
                 break;
             }
             cursor = page.last().map(|i| i.key.clone());
@@ -230,6 +228,32 @@ mod tests {
         assert_eq!(first.iter().map(|l| l.rev).collect::<Vec<_>>(), [1, 2, 3]);
         let all = s.audits_after(0).unwrap().audits;
         assert_eq!(all.iter().map(|l| l.rev).collect::<Vec<_>>(), (1..=total).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_limited_read_from_zero_reads_the_imported_rows_through_the_seq_index_and_stops_at_its_limit() {
+        use super::super::store::counting::Counting;
+        use serde_json::json;
+        use state_store::{Object, Txn};
+        let c = Contract::open(Counting::default(), Ports::virtual_clock(&VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let s = Store::new(c, 1_000);
+        let audit = |n: u64| json!({ "machine": "bead", "lc_key": format!("sp-{n}"), "event": "Claim", "expect": "READY", "from_state": "READY", "to_state": "WORKING", "applied": true, "refusal": null, "evidence": {}, "actor": "a", "at": 1 });
+        let put = |keys: Vec<(String, serde_json::Value)>, tag: &str| {
+            for (n, chunk) in keys.chunks(100).enumerate() {
+                let txn = chunk.iter().fold(Txn::new(), |t, (k, v)| t.put(k, Object::new(v.clone())));
+                s.contract().txn(&txn, &Request::new(&format!("{tag}-{n}"), "t", "t")).unwrap();
+            }
+        };
+        put((1..=300u64).map(|n| (super::super::keys::history_entry(&format!("imp-{n:04}"), 0, "import"), json!({ "seq": n, "audit": audit(n) }))).collect(), "import");
+        put((0..3_000u64).map(|n| (super::super::keys::history_entry(&format!("txn-{n:05}"), 7, "claim"), json!({ "audit": audit(n) }))).collect(), "txn");
+        s.contract().backend().take();
+        let got = s.audits_after_upto(0, 50).unwrap().audits;
+        assert_eq!(got.iter().map(|l| l.rev).collect::<Vec<_>>(), (1..=50).collect::<Vec<_>>());
+        let reads = s.contract().backend().take();
+        assert!(reads.iter().all(|(k, p, _)| !(*k == "range" && p.starts_with(super::super::keys::HISTORY))), "{reads:?}");
+        let indexed: usize = reads.iter().filter(|(k, _, _)| *k == "range_by_seq").map(|(_, _, n)| n).sum();
+        assert!(indexed > 0 && indexed <= 50 + PAGE, "{reads:?}");
+        assert!(reads.iter().all(|(k, _, _)| *k != "range"), "a filled limit reads no events: {reads:?}");
     }
 
     #[test]
