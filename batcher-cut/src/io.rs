@@ -413,8 +413,8 @@ fn holds_empty(r: &serde_json::Value) -> bool {
 /// A pool row: id, tip, certified-at epoch, express, unlanded blockers, and whether it is provisional (SUBMITTED).
 type PoolRow = (String, String, u64, bool, Vec<String>, bool);
 
-/// Why a CERTIFIED bead is not in the pool.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Why a SUBMITTED or CERTIFIED bead is not in the cut.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Cause {
     Held(Vec<String>),
     EjectedRed,
@@ -422,9 +422,13 @@ pub enum Cause {
     Blocked { dep: String },
     StackedOn { prereq: String },
     NoContentRow,
+    Refused { kind: String },
+    NoSift,
+    RoundFull { cap: usize },
+    OutsideFeature { root: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LeftOut {
     pub id: String,
     pub tip: String,
@@ -432,7 +436,7 @@ pub struct LeftOut {
 }
 
 impl LeftOut {
-    fn tag(&self) -> String {
+    pub fn tag(&self) -> String {
         match &self.cause {
             Cause::Held(kinds) => format!("held-{}", kinds.join(",")),
             Cause::EjectedRed => "ejected-red".into(),
@@ -440,10 +444,14 @@ impl LeftOut {
             Cause::Blocked { .. } => "blocked".into(),
             Cause::StackedOn { .. } => "stacked-on-barred".into(),
             Cause::NoContentRow => "no-content-row".into(),
+            Cause::Refused { kind } => format!("refused-{kind}"),
+            Cause::NoSift => "no-sift".into(),
+            Cause::RoundFull { .. } => "round-full".into(),
+            Cause::OutsideFeature { .. } => "outside-feature".into(),
         }
     }
 
-    fn line(&self, repo: &str) -> String {
+    pub fn line(&self, repo: &str) -> String {
         let (id, tip) = (&self.id, &self.tip);
         let (why, exit) = match &self.cause {
             Cause::Held(kinds) => (
@@ -469,6 +477,22 @@ impl LeftOut {
             Cause::NoContentRow => (
                 "the content store returned no row for it".into(),
                 "a readable content row for the bead readmits it".into(),
+            ),
+            Cause::Refused { kind } => (
+                format!("queue round open refused it ({kind}) at this tip and base"),
+                "a new tip, or the base moving, readmits it".into(),
+            ),
+            Cause::NoSift => (
+                format!("its tip {tip} has no sift pass"),
+                format!("a sift pass at {tip}, or a new commit that sifts, readmits it"),
+            ),
+            Cause::RoundFull { cap } => (
+                format!("the round is full at {cap} members"),
+                "a later round, once this one has landed, takes it".into(),
+            ),
+            Cause::OutsideFeature { root } => (
+                format!("this round is feature {root} and it is not part of it"),
+                format!("the {root} round landing lets the next cut take it"),
             ),
         };
         format!("batcher {repo}: {id} left out of the cut: {why} — {exit}")
@@ -534,13 +558,15 @@ pub fn cut_left_out(
     left
 }
 
-pub fn announce_left_out(env: &Env, repo: &Repo, left: &[LeftOut]) {
+pub fn announce_left_out(env: &Env, repo: &Repo, left: &[LeftOut]) -> usize {
+    let mut failed = 0;
     let lines = announce_with(&env.run, &repo.name, left, &mut |id, text| {
-        bead_note(env, id, text)
+        bead_note(env, id, text).inspect_err(|_| failed += 1)
     });
     for l in lines {
         eprintln!("{l}");
     }
+    failed
 }
 
 fn moved_tips(pool: &[PoolRow], branches: &BTreeMap<String, String>) -> Vec<LeftOut> {
@@ -5117,6 +5143,24 @@ mod pool_parity_tests {
             1,
             "a failed note leaves no record, so the line comes back"
         );
+    }
+
+    #[test]
+    fn each_cut_cause_line_names_what_readmits_the_bead() {
+        let causes = [
+            (Cause::Refused { kind: "integration".into() }, "refused-integration", "(integration)", "a new tip"),
+            (Cause::NoSift, "no-sift", "no sift pass", "a sift pass at t1"),
+            (Cause::RoundFull { cap: 7 }, "round-full", "full at 7", "a later round"),
+            (Cause::OutsideFeature { root: "sp-f".into() }, "outside-feature", "feature sp-f", "the next cut"),
+        ];
+        for (cause, tag, why, exit) in causes {
+            let l = LeftOut { id: "sp-a".into(), tip: "t1".into(), cause };
+            let line = l.line("r");
+            assert_eq!(l.tag(), tag);
+            let (head, tail) = line.split_once(" — ").unwrap_or_else(|| panic!("no exit in {line}"));
+            assert!(head.starts_with("batcher r: sp-a left out of the cut: ") && head.contains(why), "{line}");
+            assert!(tail.contains(exit), "{line}");
+        }
     }
 
     #[test]

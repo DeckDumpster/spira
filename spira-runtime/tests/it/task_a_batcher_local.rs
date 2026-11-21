@@ -1095,7 +1095,7 @@ fn sp_8nlvra_a_pool_with_nothing_admissible_names_each_member() {
         m.sifted_tip = Some("old".into());
     }
     let (carry, acts) = decide(&Carry::default(), &s);
-    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [NOTE_LEFT_OUT], "{acts:?}");
     let why = carry.repos["spira"].skip_why.clone().expect("named");
     assert!(why.contains("sp-a: no sift pass at its tip t1") && why.contains("sp-b: no sift pass at its tip t2"), "{why}");
 }
@@ -1180,6 +1180,68 @@ fn sp_7der7t_a_member_refused_held_is_cut_once_the_pool_shows_it_unheld() {
         let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ASSEMBLE).expect("a leg").input).unwrap();
         assert_eq!(leg.members.iter().any(|(id, _)| id == "sp-b"), cut, "{kind}: {leg:?}");
     }
+}
+
+/// 2026-11-21: sp-7wx6ql was left out of two cuts and nobody was told why.
+#[test]
+fn sp_7der7t_a_cut_names_each_member_it_left_out() {
+    let mut unsifted = member("sp-c", "t3");
+    unsifted.sifted_tip = None;
+    let mut r = repo(vec![member("sp-a", "t1"), member("sp-b", "t2"), unsifted]);
+    r.left_out = vec![batcher_cut::io::LeftOut { id: "sp-d".into(), tip: "t4".into(), cause: batcher_cut::io::Cause::Held(vec!["manual".into()]) }];
+    let snap = Snapshot { repos: [("spira".to_string(), r)].into(), now_ms: NOW };
+    let rc = RepoCarry { refused: [("sp-b".to_string(), ("t2".to_string(), "b1".to_string(), "integration".to_string()))].into(), ..RepoCarry::default() };
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let (next, acts) = decide(&carry, &snap);
+    assert!(acts.iter().any(|a| a.effect == ASSEMBLE), "sp-a is cut: {acts:?}");
+    let notes: Vec<&Act> = acts.iter().filter(|a| a.effect == NOTE_LEFT_OUT).collect();
+    assert_eq!(notes.len(), 1, "{acts:?}");
+    let leg: Leg = serde_json::from_str(&notes[0].input).unwrap();
+    let left: Vec<batcher_cut::io::LeftOut> = serde_json::from_str(&leg.why).unwrap();
+    let mut got: Vec<(&str, String)> = left.iter().map(|l| (l.id.as_str(), l.tag())).collect();
+    got.sort();
+    assert_eq!(got, [("sp-b", "refused-integration".to_string()), ("sp-c", "no-sift".to_string()), ("sp-d", "held-manual".to_string())]);
+    let (_, again) = decide(&next, &snap);
+    assert!(!again.iter().any(|a| a.effect == NOTE_LEFT_OUT), "an unchanged list is not noted again: {again:?}");
+}
+
+/// A feature round leaves out what is not part of it; a full round leaves out its overflow; a
+/// dependency on an unlanded bead leaves the dependant out.
+#[test]
+fn sp_fssqg1_the_selection_names_the_feature_full_and_blocked_members_it_drops() {
+    let mut blocked = member("sp-e", "t5");
+    blocked.deps = vec!["sp-gone".into()];
+    let mut r = repo(vec![member("sp-f.1", "t1"), member("sp-f.2", "t2"), member("sp-f.3", "t3"), member("sp-x", "t4"), blocked]);
+    r.blockers = vec!["sp-gone".into()];
+    let (selected, left) = spira_runtime::tasks::a::batcher_local::select_split(&r, 2);
+    assert!(selected.is_ok());
+    let mut got: Vec<(String, String)> = left.iter().map(|l| (l.id.clone(), l.tag())).collect();
+    got.sort();
+    assert_eq!(got, [("sp-e".to_string(), "blocked".to_string()), ("sp-f.3".to_string(), "round-full".to_string()), ("sp-x".to_string(), "outside-feature".to_string())]);
+}
+
+/// A list that empties clears the records once; an idle empty list pushes nothing.
+#[test]
+fn sp_fssqg1_a_list_that_empties_is_pushed_once_to_clear_its_records() {
+    let rc = RepoCarry { left_noted: vec![("sp-d".into(), "held-manual".into(), "t4".into())], ..RepoCarry::default() };
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let (next, acts) = decide(&carry, &busy());
+    assert_eq!(acts.iter().filter(|a| a.effect == NOTE_LEFT_OUT).count(), 1, "{acts:?}");
+    let (_, again) = decide(&next, &busy());
+    assert!(!again.iter().any(|a| a.effect == NOTE_LEFT_OUT), "{again:?}");
+}
+
+/// A note that failed leaves the list unnamed, so the next decide pushes it again.
+#[test]
+fn sp_fssqg1_a_failed_left_out_note_is_pushed_again() {
+    let mut r = repo(vec![]);
+    r.left_out = vec![batcher_cut::io::LeftOut { id: "sp-d".into(), tip: "t4".into(), cause: batcher_cut::io::Cause::Held(vec!["manual".into()]) }];
+    let snap = Snapshot { repos: [("spira".to_string(), r)].into(), now_ms: NOW };
+    let (named, acts) = decide(&Carry::default(), &snap);
+    let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == NOTE_LEFT_OUT).expect("first push").input).unwrap();
+    let (failed, _) = on_outcome(&named, NOTE_LEFT_OUT, false, "bead down", &leg, NOW);
+    let (_, again) = decide(&failed, &snap);
+    assert!(again.iter().any(|a| a.effect == NOTE_LEFT_OUT), "{again:?}");
 }
 
 /// Every named member refused: no round, no abandon, and the repo is idle with the members out.

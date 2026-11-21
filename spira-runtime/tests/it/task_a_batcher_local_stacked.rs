@@ -101,7 +101,7 @@ fn the_second_round_is_assembled_on_the_open_rounds_head_in_a_tree_of_its_own() 
     let p = small(2);
     let (carry, _) = cut_and_open(&p, &Carry::default(), &snap(vec![], NOW), "r1");
     let (_, acts) = decide_with(&p, &carry, &snap(vec![round("r1", &["sp-a", "sp-b"], "h1", 60)], NOW + 60_000));
-    assert_eq!(names(&acts), [FETCH, ASSEMBLE], "{acts:?}");
+    assert_eq!(names(&acts), [NOTE_LEFT_OUT, FETCH, ASSEMBLE], "the first cut's left-out records are cleared: {acts:?}");
     let cut = leg_of(&acts, ASSEMBLE);
     assert_eq!((cut.onto.as_str(), ids(&cut.members)), ("h1", ["sp-c", "sp-d"].to_vec()), "the pool minus the open round's members, on its head");
 }
