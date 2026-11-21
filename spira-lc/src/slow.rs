@@ -258,7 +258,7 @@ pub fn method_of(argv: &[String]) -> String {
 /// Brokered batch jobs run a harness tool; they are bounded by their own deadline, not the
 /// store-call ceiling.
 fn is_batch_method(method: &str) -> bool {
-    method.strip_prefix("work:").is_some_and(|v| crate::work::brokers_tool(v) && !crate::work::exec_verb(v) && !matches!(v, "note-on" | "label-add" | "label-remove"))
+    method.strip_prefix("work:").is_some_and(|v| crate::work::brokers_tool(v) && !crate::work::exec_verb(v) && !crate::work::answered_write(v))
 }
 
 pub fn sample(method: &str, caller: &str, took: Duration) {
@@ -633,6 +633,11 @@ mod tests {
         let (lim, t0, mut l) = (limits(&[]), std::time::Instant::now(), Latency::default());
         feed(&mut l, &lim, "work:note-on", "x", t0, &[4000]);
         assert_eq!(l.transitions(&lim, t0, 1).len(), 1);
+        for verb in ["note-on", "label-add", "label-remove"] {
+            let argv: Vec<String> = ["work", "sp-x", verb].map(String::from).to_vec();
+            assert!(!is_batch_method(&method_of(&argv)), "{verb}");
+        }
+        assert!(is_batch_method("work:submit"));
     }
 
     #[test]
