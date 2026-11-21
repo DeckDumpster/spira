@@ -1033,6 +1033,21 @@ impl Create {
     }
 }
 
+/// The statement that sets bd's kv `key` to the number `value`, never lowering one already held.
+fn kv_upsert_sql(db: &str, key: &str, value: u64) -> String {
+    let key = escape(&format!("{}{key}", crate::content_sql::KV_PREFIX));
+    format!("INSERT INTO {db}.config (`key`, value) VALUES ('{key}', '{value}') ON DUPLICATE KEY UPDATE value = IF(CAST(value AS UNSIGNED) < {value}, VALUES(value), value)")
+}
+
+/// Moves bd's kv `key` forward to `value` in one statement. `None` when no writer is configured.
+pub fn upsert_kv(key: &str, value: u64) -> Option<Result<(), String>> {
+    let w = match writer()? {
+        Ok(w) => w,
+        Err(e) => return Some(Err(e)),
+    };
+    Some(w.conn.execute(&kv_upsert_sql(&w.db, key, value)).map_err(|e| format!("{e:?}")).map(|()| COMMITTER.owe()))
+}
+
 /// The committer thread lc-serve runs.
 pub fn run_committer() {
     loop {
@@ -1067,6 +1082,13 @@ mod tests {
         assert_eq!(cell.get_or_build(|| build(Ok(7))), Ok(&7));
         assert_eq!(cell.get_or_build(|| build(Ok(8))), Ok(&7));
         assert_eq!(builds.get(), 2);
+    }
+
+    #[test_id(tz26imh)]
+    #[test]
+    fn the_kv_upsert_moves_a_number_forward_only_and_names_the_prefixed_key() {
+        let sql = kv_upsert_sql("`beads`", "spira.planning_watermark", 7);
+        assert_eq!(sql, "INSERT INTO `beads`.config (`key`, value) VALUES ('kv.spira.planning_watermark', '7') ON DUPLICATE KEY UPDATE value = IF(CAST(value AS UNSIGNED) < 7, VALUES(value), value)");
     }
 
     fn v(a: &[&str]) -> Vec<String> {

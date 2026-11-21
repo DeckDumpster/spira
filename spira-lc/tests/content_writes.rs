@@ -86,7 +86,8 @@ impl Store {
     fn sql(&self, statement: &str) {
         let dolt = std::env::var("TESTDB_DOLT").ok().filter(|b| !b.is_empty()).or_else(|| tool("dolt")).expect("dolt, as the store came up with it");
         let out = Command::new(dolt).args(["--host", "127.0.0.1", "--port", &self.port, "--no-tls", "-u", "root", "-p", "", "--use-db", "sptest", "sql", "-q", statement]).output().expect("dolt runs");
-        assert!(out.status.success(), "{statement}: {}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success() || said.contains("nothing to commit"), "{statement}: {said}");
     }
 
     fn create_bead(&self) -> String {
@@ -114,6 +115,10 @@ struct Lc {
 
 impl Lc {
     fn new(store: &Store, name: &str, writer_file: &str) -> Lc {
+        Lc::with_bd(store, name, writer_file, &store.bd)
+    }
+
+    fn with_bd(store: &Store, name: &str, writer_file: &str, bd_program: &str) -> Lc {
         let dir = store.dir.join(name);
         let run = dir.join("run");
         std::fs::create_dir_all(&run).unwrap();
@@ -130,7 +135,7 @@ impl Lc {
                 ("SPIRA_LC_SOCKET", &sock),
                 ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9"),
                 ("SPIRA_DB", &db),
-                ("SPIRA_BD", &store.bd),
+                ("SPIRA_BD", bd_program),
                 ("SPIRA_BEADS_SQL_HOST", "127.0.0.1"),
                 ("SPIRA_BEADS_SQL_PORT", &store.port),
                 ("SPIRA_BEADS_SQL_USER", "spira_lc_ro"),
@@ -283,11 +288,11 @@ fn verbs(id: &str) -> Vec<Verb> {
     let v = |a: &[&str]| a.iter().map(|s| s.replace("ID", id)).collect::<Vec<_>>();
     vec![
         Verb { name: "work note -", args: v(&["work", "ID", "note", "-", "--actor", "builder"]), stdin: Some("a note from work note"), method: "work", seen: "a note from work note" },
-        Verb { name: "work note-on", args: v(&["work", "ID", "note-on", "ID", "a note from note-on", "--actor", "groomer"]), stdin: None, method: "work", seen: "a note from note-on" },
-        Verb { name: "work label-add", args: v(&["work", "ID", "label-add", "ID", "writes:added", "--actor", "groomer"]), stdin: None, method: "work", seen: "writes:added" },
+        Verb { name: "content note (other bead)", args: v(&["content", "note", "ID", "a note from note-on"]), stdin: None, method: "content", seen: "a note from note-on" },
+        Verb { name: "content label add", args: v(&["content", "label", "add", "ID", "writes:added"]), stdin: None, method: "content", seen: "writes:added" },
         Verb { name: "bd-note", args: v(&["bd-note", "ID", "a note from bd-note"]), stdin: None, method: "bd-note", seen: "a note from bd-note" },
         Verb { name: "content note", args: v(&["content", "note", "ID", "a note from content note"]), stdin: None, method: "content", seen: "a note from content note" },
-        Verb { name: "work label-remove", args: v(&["work", "ID", "label-remove", "ID", "writes:added", "--actor", "groomer"]), stdin: None, method: "work", seen: "" },
+        Verb { name: "content label remove", args: v(&["content", "label", "remove", "ID", "writes:added"]), stdin: None, method: "content", seen: "" },
     ]
 }
 
@@ -295,12 +300,12 @@ fn drive(lc: &Lc, id: &str) -> Vec<(&'static str, i64, bool)> {
     let mut children = vec![];
     for verb in verbs(id) {
         let args: Vec<&str> = verb.args.iter().map(String::as_str).collect();
-        if verb.name == "work label-remove" {
+        if verb.name == "content label remove" {
             assert!(lc.shows(id).contains("writes:added"), "label-add did not land before label-remove");
         }
         children.push((verb.name, lc.children_of(verb.method, &args, verb.stdin).1, lc.cut.load(std::sync::atomic::Ordering::Relaxed)));
         let shown = lc.shows(id);
-        if verb.name == "work label-remove" {
+        if verb.name == "content label remove" {
             assert!(!shown.contains("writes:added"), "label-remove settled but the label is on {id}: {shown}");
         } else {
             assert!(shown.contains(verb.seen), "{}: settled but {:?} is not on {id}: {shown}", verb.name, verb.seen);
@@ -767,4 +772,44 @@ fn a_gate_check_over_a_github_gate_is_left_to_bd() {
     gate_for(&store, &a, &["--type=gh:run", "--await-id=1"]);
     let (out, children) = lc.children_of("content", &["content", "gate", "check", "--type=gh:run"], None);
     assert!(children > 0 || out.contains("deadline"), "bd asks GitHub, so it must have run: {out}");
+}
+
+/// A `bd` that records every argv it is run with, then is the real one.
+fn recording_bd(store: &Store, log: &Path) -> String {
+    let path = store.dir.join("recording-bd");
+    std::fs::write(&path, format!("#!/bin/sh\necho \"$@\" >> '{}'\nexec '{}' \"$@\"\n", log.display(), store.bd)).unwrap();
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&path, perms).unwrap();
+    path.display().to_string()
+}
+
+#[test_id(tu3jyzu)]
+#[test]
+fn a_planning_write_moves_the_kv_watermark_in_sql_and_starts_no_bd_kv() {
+    let Some(store) = Store::up() else { return };
+    let writer = store.dir.join("writer.credential");
+    let log = store.dir.join("bd-argv.log");
+    let bd = recording_bd(&store, &log);
+    let mut lc = Lc::with_bd(&store, "k", &writer.display().to_string(), &bd);
+    provision(&lc);
+    lc.admin("admin-provision-writer");
+    lc.serve();
+    assert!(Command::new(&bd).args(["kv", "set", "planted", "1"]).output().is_ok());
+    assert!(std::fs::read_to_string(&log).unwrap_or_default().lines().any(|l| l.starts_with("kv ")), "the recorder must see a planted bd kv before its silence means anything");
+    std::fs::remove_file(&log).unwrap();
+    let (rc, out) = lc.run(&["plan", "stamp"], None);
+    assert_eq!(rc, 0, "{out}");
+    let want = serde_json::from_str::<serde_json::Value>(out.trim()).unwrap()["watermark"].as_u64().expect("a watermark");
+    let mut last = String::new();
+    for _ in 0..600 {
+        last = lc.run(&["content", "kv", "get", "spira.planning_watermark"], None).1;
+        if last.trim() == want.to_string() {
+            let argv = std::fs::read_to_string(&log).unwrap_or_default();
+            assert!(!argv.lines().any(|l| l.starts_with("-C") && l.contains(" kv ") || l.starts_with("kv ")), "lc-serve ran bd kv: {argv}");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50)); // clock-safe: polls the store, the signal waited on
+    }
+    panic!("kv never reached {want}: {last}");
 }

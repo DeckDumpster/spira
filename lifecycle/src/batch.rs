@@ -137,6 +137,13 @@ impl BatchRow {
     }
 }
 
+/// Where a pass ran and the placement decision that put it there, as the pass recorded them.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PassRunner {
+    pub place: String,
+    pub why: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BatchEventKind {
     /// Valid only while OPEN. Membership itself lives in the `batch_member` table; this
@@ -149,9 +156,9 @@ pub enum BatchEventKind {
     /// verdict it is `LateBoundary`: done, and nothing changes.
     SuitesStarted { n: u32 },
     /// Phase suites -> GREEN.
-    PassGreen { n: u32, suites_s: u64, build_s: u64 },
+    PassGreen { n: u32, suites_s: u64, build_s: u64, #[serde(default)] runner: Option<PassRunner> },
     /// Any phase -> ATTRIBUTING: the pass ran and suites (or the build) failed.
-    PassRed { n: u32, red_suites: Vec<String>, suites_s: u64, build_s: u64 },
+    PassRed { n: u32, red_suites: Vec<String>, suites_s: u64, build_s: u64, #[serde(default)] runner: Option<PassRunner> },
     /// Any phase -> ATTRIBUTING: the pass produced no verdict (over the cap, VM lost).
     PassIncomplete { n: u32, reason: String },
     /// Any phase -> ATTRIBUTING: the pass was stopped on purpose, with `done` of `total`
@@ -510,8 +517,8 @@ fn event_probes() -> Vec<BatchEventKind> {
         BatchEventKind::PassStarted { n: 1, head: "h".into() },
         BatchEventKind::PassStarted { n: 2, head: "h".into() },
         BatchEventKind::SuitesStarted { n: 1 },
-        BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1 },
-        BatchEventKind::PassRed { n: 1, red_suites: vec!["test-x.sh".into()], suites_s: 1, build_s: 1 },
+        BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1, runner: None },
+        BatchEventKind::PassRed { n: 1, red_suites: vec!["test-x.sh".into()], suites_s: 1, build_s: 1, runner: None },
         BatchEventKind::PassIncomplete { n: 1, reason: "cap".into() },
         BatchEventKind::PassPreempted { n: 1, done: 3, total: 9, red_suites: vec![] },
         BatchEventKind::Failed { suite: "test-x.sh".into(), n: 1 },
@@ -590,6 +597,28 @@ mod tests {
     }
 
     #[test_id(tif5xmc)]
+    #[test]
+    fn a_pass_green_stored_without_a_runner_still_parses_and_applies() {
+        let kind: BatchEventKind = serde_json::from_str(r#"{"PassGreen":{"n":1,"suites_s":5,"build_s":6}}"#).unwrap();
+        assert_eq!(kind, BatchEventKind::PassGreen { n: 1, suites_s: 5, build_s: 6, runner: None });
+        let red: BatchEventKind = serde_json::from_str(r#"{"PassRed":{"n":1,"red_suites":[],"suites_s":5,"build_s":6}}"#).unwrap();
+        assert!(matches!(red, BatchEventKind::PassRed { runner: None, .. }));
+    }
+
+    #[test_id(tgnq2wd)]
+    #[test]
+    fn a_pass_verdict_carrying_a_runner_round_trips() {
+        let runner = Some(PassRunner { place: "ec2".into(), why: "host io pressure full avg300 55.0 above 50.0".into() });
+        for kind in [
+            BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1, runner: runner.clone() },
+            BatchEventKind::PassRed { n: 1, red_suites: vec!["a".into()], suites_s: 1, build_s: 1, runner: runner.clone() },
+        ] {
+            let back: BatchEventKind = serde_json::from_str(&serde_json::to_string(&kind).unwrap()).unwrap();
+            assert_eq!(back, kind);
+        }
+    }
+
+    #[test_id(t0jmmoq)]
     #[test]
     fn legal_edges_are_the_machines_own_moves() {
         let edges = legal_edges();
@@ -859,7 +888,7 @@ mod tests {
         assert_eq!((r.state, r.pass, r.phase), (BatchState::CiRunning, 1, Some(BatchPhase::Build)));
         let r = step(&r, BatchEventKind::SuitesStarted { n: 1 });
         assert_eq!(r.phase, Some(BatchPhase::Suites));
-        let r = step(&r, BatchEventKind::PassRed { n: 1, red_suites: vec!["test-x.sh".into()], suites_s: 90, build_s: 30 });
+        let r = step(&r, BatchEventKind::PassRed { n: 1, red_suites: vec!["test-x.sh".into()], suites_s: 90, build_s: 30, runner: None });
         assert_eq!((r.state, r.phase), (BatchState::Attributing, None));
         let r = step(&r, BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "red".into() });
         assert_eq!(r.state, BatchState::Attributing);
@@ -867,7 +896,7 @@ mod tests {
         assert_eq!((r.state, r.head.as_deref(), r.pass), (BatchState::Open, Some("h2"), 1));
         let r = step(&r, BatchEventKind::PassStarted { n: 2, head: "h2".into() });
         let r = step(&r, BatchEventKind::SuitesStarted { n: 2 });
-        let r = step(&r, BatchEventKind::PassGreen { n: 2, suites_s: 80, build_s: 20 });
+        let r = step(&r, BatchEventKind::PassGreen { n: 2, suites_s: 80, build_s: 20, runner: None });
         assert_eq!((r.state, r.pass, r.phase), (BatchState::Green, 2, None));
     }
 
@@ -878,7 +907,7 @@ mod tests {
         let r = step(&r, BatchEventKind::SuitesStarted { n: 1 });
         let incomplete = step(&r, BatchEventKind::PassIncomplete { n: 1, reason: "over the 900s cap".into() });
         assert_eq!(incomplete.state, BatchState::Attributing);
-        let green = apply(&row(BatchState::Attributing), &ev(BatchState::Attributing, 0, BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1 }));
+        let green = apply(&row(BatchState::Attributing), &ev(BatchState::Attributing, 0, BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1, runner: None }));
         assert!(!green.applied);
     }
 
@@ -898,13 +927,13 @@ mod tests {
     #[test]
     fn pass_events_must_name_the_current_pass_and_phase() {
         let r = step(&row(BatchState::Open), BatchEventKind::PassStarted { n: 1, head: "h".into() });
-        let at = refused(&r, BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1 });
+        let at = refused(&r, BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1, runner: None });
         assert_eq!(at, "CI_RUNNING (pass 1, phase build)", "a green before the suites started is refused, naming the phase");
         refused(&r, BatchEventKind::SuitesStarted { n: 2 });
         refused(&row(BatchState::Open), BatchEventKind::PassStarted { n: 2, head: "h".into() });
         let s = step(&r, BatchEventKind::SuitesStarted { n: 1 });
         refused(&s, BatchEventKind::SuitesStarted { n: 1 });
-        refused(&s, BatchEventKind::PassGreen { n: 3, suites_s: 1, build_s: 1 });
+        refused(&s, BatchEventKind::PassGreen { n: 3, suites_s: 1, build_s: 1, runner: None });
     }
 
     #[test_id(tf98o5p)]
@@ -921,7 +950,7 @@ mod tests {
         for state in [BatchState::Open, BatchState::Green, BatchState::Attributing, BatchState::Rebuilding] {
             refused(&row(state), failed("test-a.sh", 1));
         }
-        let red = step(&two, BatchEventKind::PassRed { n: 1, red_suites: vec!["test-a.sh".into(), "test-b.sh".into()], suites_s: 1, build_s: 1 });
+        let red = step(&two, BatchEventKind::PassRed { n: 1, red_suites: vec!["test-a.sh".into(), "test-b.sh".into()], suites_s: 1, build_s: 1, runner: None });
         assert_eq!(red.state, BatchState::Attributing, "the verdict still ends the pass");
     }
 
@@ -929,7 +958,7 @@ mod tests {
     #[test]
     fn a_build_failure_is_red_from_the_build_phase() {
         let r = step(&row(BatchState::Open), BatchEventKind::PassStarted { n: 1, head: "h".into() });
-        let r = step(&r, BatchEventKind::PassRed { n: 1, red_suites: vec!["workspace-build".into()], suites_s: 0, build_s: 12 });
+        let r = step(&r, BatchEventKind::PassRed { n: 1, red_suites: vec!["workspace-build".into()], suites_s: 0, build_s: 12, runner: None });
         assert_eq!(r.state, BatchState::Attributing);
     }
 
@@ -1008,14 +1037,14 @@ mod tests {
     #[test]
     fn a_red_lint_pass_then_its_late_boundaries_then_a_green_second_pass() {
         let r = step(&row(BatchState::Open), BatchEventKind::PassStarted { n: 1, head: "h1".into() });
-        let r = step(&r, BatchEventKind::PassRed { n: 1, red_suites: vec!["spira-lint".into()], suites_s: 0, build_s: 9 });
+        let r = step(&r, BatchEventKind::PassRed { n: 1, red_suites: vec!["spira-lint".into()], suites_s: 0, build_s: 9, runner: None });
         for kind in boundaries(1) {
             let out = apply(&r, &ev(r.state, r.version, kind));
             assert!(matches!(out.refusal, Some(Refusal::LateBoundary { pass: 1, .. })), "{:?}", out.refusal);
         }
         let r = step(&r, BatchEventKind::PassStarted { n: 2, head: "h1".into() });
         let r = step(&r, BatchEventKind::SuitesStarted { n: 2 });
-        let r = step(&r, BatchEventKind::PassGreen { n: 2, suites_s: 80, build_s: 20 });
+        let r = step(&r, BatchEventKind::PassGreen { n: 2, suites_s: 80, build_s: 20, runner: None });
         assert_eq!((r.state, r.pass), (BatchState::Green, 2));
     }
 

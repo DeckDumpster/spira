@@ -667,7 +667,7 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
 /// The event types the claim fold reads.
 const EVENT_KINDS: &[&str] = &["claimed", "status_changed", "closed", "requeued", "reopened", "reopen", "reclaimed", "poison.cleared"];
 
-const KV_PREFIX: &str = "kv.";
+pub(crate) const KV_PREFIX: &str = "kv.";
 
 /// The bead `id` with its labels and edges; `None` when the store holds none.
 pub fn bead(sql: &dyn Sql, db: &str, id: &str) -> Res<Option<Bead>> {

@@ -360,6 +360,8 @@ fn describe(c: &Scored, ix: &Index, st: &Stratum, aim: &Option<(String, &'static
             "review_factor": w.review_factor,
             "changed_lines": w.changed_lines,
             "changed_term": w.changed_term(),
+            "attention_share": w.attention_share(),
+            "attention_term": w.attention_term(),
             "review": review,
             "commits": w.commits,
             "churn_term": w.churn_term(),
@@ -379,8 +381,8 @@ fn describe(c: &Scored, ix: &Index, st: &Stratum, aim: &Option<(String, &'static
         t.push_str(&format!("  {} ({} lines)\n", f.path, ix.lines(&f.path)));
     }
     t.push_str(&format!(
-        "weight: {:.3} = review {:.2} ({review}) x changed {:.3} (1 + min({} changed lines / {} lines, 1)) x churn {:.0} (1 + {} commits) x dependents {:.3} (1 + ln(1 + {})) x size {:.3} (min({} lines / {page_lines}, 3))\n",
-        w.total, w.review_factor, w.changed_term(), w.changed_lines, w.lines.max(1), w.churn_term(), w.commits, w.dependents_term(), w.dependents, w.size_term(page_lines), w.lines
+        "weight: {:.3} = review {:.2} ({review}) x attention {:.3} ({} of his {} comments in {}) x changed {:.3} (1 + min({} changed lines / {} lines, 1)) x churn {:.0} (1 + {} commits) x dependents {:.3} (1 + ln(1 + {})) x size {:.3} (min({} lines / {page_lines}, 3))\n",
+        w.total, w.review_factor, w.attention_term(), w.area_comments, w.his_comments, w.area, w.changed_term(), w.changed_lines, w.lines.max(1), w.churn_term(), w.commits, w.dependents_term(), w.dependents, w.size_term(page_lines), w.lines
     ));
     t.push_str(&format!("stratum: {stratum_reason}\n"));
     match aim {

@@ -398,4 +398,5 @@ slugs = [
   "law-dwarves-never-operate-the-queue",
   "law-one-dwarf-one-worktree",
   "law-a-gate-change-is-judged-by-its-own-gate",
+  "law-one-item-per-cause-express-only-for-a-stop",
 ]

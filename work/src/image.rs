@@ -56,6 +56,14 @@ impl Build {
     }
 }
 
+/// `Build::parse` of the forge's answer; a queue receipt that reached here says so, naming its request.
+pub fn read_result(out: &str) -> Result<Build, String> {
+    Build::parse(out).ok_or_else(|| match spira_store::lc_call::queued_id(out) {
+        Some(id) => format!("`work forge ami-result` answered the queue receipt for request {id}, not its result; `spira-lc work-request show {id}` has its answer"),
+        None => format!("`work forge ami-result` answered {:?}, which is not a build state", out.trim()),
+    })
+}
+
 pub trait Ports {
     /// True when the tip tree carries [`RECIPE_WORKFLOW`]: only then is there an image to build.
     fn has_recipe(&self) -> bool;
@@ -135,6 +143,22 @@ pub fn gate(p: &dyn Ports, bead: &str, tip: &str, nonce: u64, wait_secs: u64) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tojo1g1)]
+    #[test]
+    fn a_queue_receipt_is_named_as_one_with_its_request_and_command() {
+        let e = read_result("queued wr-14").unwrap_err();
+        assert!(e.contains("queue receipt for request wr-14") && e.contains("spira-lc work-request show wr-14"), "{e}");
+        assert!(read_result("garbage").unwrap_err().contains("not a build state"));
+    }
+
+    #[test_id(t1473lk)]
+    #[test]
+    fn read_result_agrees_with_parse_on_every_build_state() {
+        for t in ["none", "running 9", "success 9", "failure 9\nfailed-step: build / ami"] {
+            assert_eq!(read_result(t).ok(), Build::parse(t), "{t}");
+        }
+    }
     use std::cell::{Cell, RefCell};
 
     struct Fake {

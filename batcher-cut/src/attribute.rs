@@ -31,6 +31,8 @@ pub enum Attribution {
     /// The probe ceiling was reached without naming a member: the red is kept for the next
     /// round to convict, and the round is abandoned.
     Unconverged(String),
+    /// The round was abandoned while the attribution ran: it is not judged, red or green.
+    Abandoned,
 }
 
 impl Attribution {
@@ -50,6 +52,7 @@ impl Attribution {
             Attribution::Fault(why) => json!({ "end": "fault", "why": why }),
             Attribution::Faulted(why) => json!({ "end": "faulted", "why": why }),
             Attribution::Unconverged(why) => json!({ "end": "unconverged", "why": why }),
+            Attribution::Abandoned => json!({ "end": "abandoned" }),
         };
         format!("{PREFIX}{body}")
     }
@@ -85,6 +88,7 @@ impl Attribution {
             "fault" => Some(Attribution::Fault(body.get("why")?.as_str()?.to_string())),
             "faulted" => Some(Attribution::Faulted(body.get("why")?.as_str()?.to_string())),
             "unconverged" => Some(Attribution::Unconverged(body.get("why")?.as_str()?.to_string())),
+            "abandoned" => Some(Attribution::Abandoned),
             _ => None,
         }
     }
@@ -128,6 +132,14 @@ mod tests {
     }
 
     #[test_id(turqwo8)]
+    #[test]
+    fn an_abandoned_outcome_round_trips_and_is_not_blocked() {
+        let line = Attribution::Abandoned.line();
+        assert_eq!(Attribution::parse(&line), Some(Attribution::Abandoned));
+        assert_eq!(line, format!("{PREFIX}{{\"end\":\"abandoned\"}}"));
+    }
+
+    #[test_id(twyrhwb)]
     #[test]
     fn a_land_line_round_trips_its_head_and_a_line_without_one_reads_as_empty() {
         let land = Attribution::Land {

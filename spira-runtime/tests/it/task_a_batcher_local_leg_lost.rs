@@ -332,3 +332,82 @@ fn a_tick_reads_every_leg_in_flight_through_unit_facts() {
         assert!(asked.iter().any(|n| *n != UNIT_FACTS && *n != OBSERVE), "{state:?}: the exit read from facts moved the machine: {asked:?}");
     }
 }
+
+const RED_MARK: &str = "suites-failed; failing step: test-a.sh";
+
+fn certifying_three(below: bool) -> Carry {
+    let members = vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into()), ("sp-c".into(), "t3".into())];
+    let rc = RepoCarry { state: State::Certifying, round_key: Some("k".into()), batch: Some("r9".into()), members, wt: "w".into(), base: "b1".into(), leg: Some("spira.r9.certify1".into()), leg_at_ms: NOW - 180_000, run: 1, head: "h0".into(), leg_head: "h0".into(), ..RepoCarry::default() };
+    if below {
+        let lower = RepoCarry { batch: Some("r8".into()), members: vec![("sp-z".into(), "t9".into())], wt: "w8".into(), leg: Some("spira.r8.certify1".into()), head: "g1".into(), leg_head: "g1".into(), leg_at_ms: NOW, round_key: Some("kz".into()), ..rc.clone() };
+        return Carry { repos: [("spira".to_string(), RepoCarry { above: vec![rc], ..lower })].into() };
+    }
+    Carry { repos: [("spira".to_string(), rc)].into() }
+}
+
+fn r9(head: &str, phase: &str, driven: bool, gate_red: Vec<(String, String, String)>) -> Round {
+    Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-b".into(), "sp-c".into()], head: head.into(), worktree: "w".into(), driven, phase: phase.into(), gate_red, ..Round::default() }
+}
+
+fn snap_rounds(now_ms: u64, live: Option<Vec<String>>, below: Option<Round>, r: Round) -> Snapshot {
+    let (open_round, open_above) = match below {
+        Some(b) => (Some(b), vec![r]),
+        None => (Some(r), vec![]),
+    };
+    let repo = Repo { open_round, open_above, live_legs: live, base_sha: "b1".into(), ..Repo::default() };
+    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms }
+}
+
+/// Carries the round through the gate-red eject into a started certify leg on head h1, then lets
+/// the store record green with the leg unlisted and no `unit.ran`.
+fn green_with_leg_gone(below: Option<Round>) -> (Carry, Vec<Act>, Vec<Act>) {
+    let red = vec![("sp-a".to_string(), "t1".to_string(), RED_MARK.to_string())];
+    let (carry, acts) = decide(&certifying_three(below.is_some()), &snap_rounds(NOW, Some(vec!["spira.r9.certify1".into(), "spira.r8.certify1".into()]), below.clone(), r9("h0", "certifying", true, red)));
+    assert!(acts.is_empty(), "{acts:?}");
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, "spira.r9.certify1").unwrap(), exit: runtime::units::Exit::Code(1), duration_ms: 1 };
+    let out = runtime::units::RanOutput::captured(b"verdict=red\n", b"");
+    let (carry, acts) = on_ran_with(&carry, &ran, &out, NOW).expect("the carried leg ended");
+    assert_eq!(names(&acts), [EJECT_GATE_RED], "{acts:?}");
+    let eject: Leg = serde_json::from_str(&acts[0].input).unwrap();
+    let (carry, acts) = on_outcome(&carry, EJECT_GATE_RED, true, "{}", &eject, NOW);
+    assert_eq!(names(&acts), [CERTIFY], "{acts:?}");
+    let leg: Leg = serde_json::from_str(&acts[0].input).unwrap();
+    let live = || {
+        let mut l = vec![leg.unit.clone()];
+        if below.is_some() {
+            l.push("spira.r8.certify1".into());
+        }
+        Some(l)
+    };
+    let (carry, _) = decide(&carry, &snap_rounds(NOW + TICK, live(), below.clone(), r9("h1", "certifying", true, vec![])));
+    let (mut carry, mut all) = (carry, vec![]);
+    for i in 2..=3 {
+        let (c, a) = decide(&carry, &snap_rounds(NOW + i * TICK, Some(if below.is_some() { vec!["spira.r8.certify1".into()] } else { vec![] }), below.clone(), r9("h1", "green", true, vec![])));
+        carry = c;
+        all.extend(a);
+    }
+    (carry, all, acts)
+}
+
+#[test_id(tznbo04)]
+#[test]
+fn a_green_round_whose_certify_unit_ran_has_not_arrived_lands_not_abandoned_and_a_late_unit_ran_changes_nothing() {
+    let (carry, acts, started) = green_with_leg_gone(None);
+    let n = names(&acts);
+    assert!(n.contains(&LAND) && n.contains(&LC_CERTIFY), "{acts:?}");
+    assert!(!n.contains(&ABANDON) && !n.contains(&CERTIFY), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Landing);
+    let leg: Leg = serde_json::from_str(&started[0].input).unwrap();
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, &leg.unit).unwrap(), exit: runtime::units::Exit::Code(0), duration_ms: 1 };
+    assert!(on_ran(&carry, &ran, NOW + 9 * TICK).is_none());
+}
+
+#[test_id(tw9fgjw)]
+#[test]
+fn a_green_stacked_round_whose_certify_unit_ran_has_not_arrived_is_certified_and_held_not_abandoned() {
+    let below = Round { id: "r8".into(), members: vec!["sp-z".into()], head: "g1".into(), worktree: "w8".into(), driven: true, phase: "certifying".into(), ..Round::default() };
+    let (carry, acts, _) = green_with_leg_gone(Some(below));
+    let n = names(&acts);
+    assert!(!n.contains(&LAND) && !n.contains(&ABANDON), "{acts:?}");
+    assert_eq!(carry.repos["spira"].above[0].state, State::Certified);
+}

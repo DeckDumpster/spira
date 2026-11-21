@@ -2021,6 +2021,16 @@ impl Lc for RealLc {
             json_str(&v, "phase").unwrap_or_default(),
         ))
     }
+    fn batch_passes(&self, batch_id: &str) -> Vec<serde_json::Value> {
+        let Ok(out) = self.stdout(&["list", "--batches", "--batch", batch_id]) else {
+            return Vec::new();
+        };
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap_or_default();
+        rows.as_array()
+            .and_then(|r| r.first())
+            .and_then(|r| r["passes"].as_array().cloned())
+            .unwrap_or_default()
+    }
     fn batch_progress(&self, batch_id: &str) -> Option<serde_json::Value> {
         let out = self.stdout(&["show-batch", batch_id]).ok()?;
         let v: serde_json::Value = serde_json::from_str(&out).ok()?;

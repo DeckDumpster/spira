@@ -141,7 +141,7 @@ pub fn open(a: &OpenArgs, ports: &Ports) -> Outcome {
             return refuse(1, &format!("only {} of {} units are drawable: the rest are excluded, in flight, or reviewed at their current blobs", chosen.len(), a.count));
         };
         let unit = left[i].unit.clone();
-        ledger.rows.push(Row { review: String::new(), kind: unit.kind.as_str().to_string(), unit_id: unit.id.clone(), commit: ix.commit.clone(), files: Vec::new(), opened_at: now, closed_at: None, closed_as: None });
+        ledger.rows.push(Row { review: String::new(), kind: unit.kind.as_str().to_string(), unit_id: unit.id.clone(), commit: ix.commit.clone(), files: Vec::new(), opened_at: now, closed_at: None, closed_as: None, attention: None });
         chosen.push(unit);
     }
     let mut out = String::new();
@@ -503,6 +503,7 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
                     opened_at: ports.clock.now_ms(),
                     closed_at: None,
                     closed_as: None,
+                    attention: None,
                 };
                 if let Err(e) = ledger::append(ports, &[row]).and_then(|()| {
                     p.ledger_row = true;

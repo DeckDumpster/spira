@@ -42,6 +42,7 @@
 //! | Corpus, Attributing, Certifying | the leg's unit fails to start, or is unlisted for two observes with no `unit.ran` | the same state with the leg started once more; the second time Done (`abandon` naming the leg, pace Infra) |
 //! | Corpus | `unit.ran` red | Attributing (`eject` + re-run leg) |
 //! | Corpus | `unit.ran` green | Mending if menders open, else Certifying |
+//! | Corpus, Attributing, Certifying | `unit.ran` exit SIGTERM, or the attribution line says abandoned | Done (not judged: no attribution, no abandon, pace Quiet, no pause) |
 //! | Attributing | `unit.ran` (re-run) | Corpus-judged: Mending / Certifying / Done(blocked) |
 //! | Corpus, Attributing, Certifying | observe: no leg carries the round, its record names red suites (`red=`), first time on this head | Attributing (the pass's kept results are attributed; pace untouched) |
 //! | Corpus, Attributing, Certifying | observe: the same, a second time on the same head | Done (`red_naming` the red suites, pace Red) |
@@ -53,7 +54,7 @@
 //! | Certifying | `unit.ran` red after both attributions, two or more members, no `red-output=`, a red suite no attribution of the round covered | Attributing, `after_certify` (its rerun reaches the flip handling; once per red suite) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
-//! | Attributing | observe: the round's open round is green on the carried head | Landing (`land`), or Certified when stacked; the attribution leg is stopped in the same tick |
+//! | Corpus, Attributing, Certifying | observe: the round's open round is green on the carried head | Landing (`land`), or Certified when stacked; the carried leg is stopped in the same tick |
 //! | Attributing | observe: the round's record no longer holds a member the leg carries (ejected by another actor) | Certifying for the record's survivors at its head, certify held until no pass runs; the attribution leg is stopped |
 //! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
@@ -448,6 +449,8 @@ pub enum Trigger {
     PassRedRecorded,
     /// An eject left the round with no member: the round ended in the store and nothing is left to attribute (not in the contract's table).
     RoundEmptied,
+    /// The leg was stopped by its round's abandon (or its attribution said so): the round is not judged.
+    LegStopped,
 }
 
 pub static TABLE: &[(State, Trigger, State)] = &[
@@ -504,6 +507,9 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Corpus, Trigger::RoundEmptied, State::Done),
     (State::Attributing, Trigger::RoundEmptied, State::Done),
     (State::Certifying, Trigger::RoundEmptied, State::Done),
+    (State::Corpus, Trigger::LegStopped, State::Done),
+    (State::Attributing, Trigger::LegStopped, State::Done),
+    (State::Certifying, Trigger::LegStopped, State::Done),
     (State::Attributing, Trigger::LegLost, State::Done),
     (State::Certifying, Trigger::LegLost, State::Done),
     (State::Certifying, Trigger::CertifyHeld, State::Certified),
@@ -1652,7 +1658,7 @@ impl Machine<'_> {
         if self.rc.leg_head.is_empty() {
             self.rc.leg_head = open.head.clone();
         }
-        if self.rc.leg_head == open.head && self.rc.state == State::Attributing && open.phase == "green" {
+        if self.rc.leg_head == open.head && open.phase == "green" {
             self.stop_carried_leg();
             return self.land_green();
         }
@@ -2079,6 +2085,14 @@ impl Machine<'_> {
         if !ok && matches!(exit, Exit::Code(_)) && matches!(self.rc.state, State::Corpus | State::Certifying) && self.eject_recorded_gate_reds() {
             return;
         }
+        if matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying)
+            && (exit == Exit::Signal(SIGTERM) || Attribution::parse(out) == Some(Attribution::Abandoned))
+        {
+            eprintln!("{NAME} {}: batch {:?} {:?} leg: the round was abandoned while it ran — stopped, no verdict written", self.repo, self.rc.batch, self.rc.state);
+            self.go(Trigger::LegStopped);
+            self.finish(pace::Outcome::Quiet, "");
+            return;
+        }
         match (self.rc.state, ok) {
             (State::Corpus, true) => {
                 self.go(Trigger::LegGreen);
@@ -2137,13 +2151,13 @@ impl Machine<'_> {
                 Some(Attribution::Blocked(why)) if batcher_cut::io::HeldEject::parse(&why).is_some() => {
                     self.hold_eject(batcher_cut::io::HeldEject::parse(&why).unwrap_or_default());
                 }
+                Some(Attribution::Abandoned) => {
+                    self.go(Trigger::LegStopped);
+                    self.finish(pace::Outcome::Quiet, "");
+                }
                 Some(Attribution::Blocked(why)) => {
                     self.go(Trigger::RerunBlocked);
                     self.red(&format!("local corpus red — held before reaching CI: {why}"));
-                }
-                None if exit == Exit::Signal(SIGTERM) => {
-                    self.go(Trigger::RerunBlocked);
-                    self.finish(pace::Outcome::Quiet, "");
                 }
                 None => {
                     self.go(Trigger::RerunBlocked);

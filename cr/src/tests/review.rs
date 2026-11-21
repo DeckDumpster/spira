@@ -22,7 +22,7 @@ struct World {
 }
 
 fn prior_row() -> Row {
-    Row { review: "900".into(), kind: "persona".into(), unit_id: "persona:other".into(), commit: "older".into(), files: vec![LedgerFile { path: "other.md".into(), blob: "b".into() }], opened_at: 5, closed_at: None, closed_as: None }
+    Row { review: "900".into(), kind: "persona".into(), unit_id: "persona:other".into(), commit: "older".into(), files: vec![LedgerFile { path: "other.md".into(), blob: "b".into() }], opened_at: 5, closed_at: None, closed_as: None, attention: None }
 }
 
 fn world() -> World {
@@ -397,8 +397,8 @@ fn store_unit_files() -> Vec<String> {
 }
 
 fn published(review: &str, unit_id: &str, files: &[(String, String)], closed_as: ClosedAs) -> Vec<Row> {
-    let open = Row { review: review.into(), kind: unit_id.split(':').next().unwrap().into(), unit_id: unit_id.into(), commit: "old".into(), files: files.iter().map(|(p, b)| LedgerFile { path: p.clone(), blob: b.clone() }).collect(), opened_at: NOW - 10 * DAY, closed_at: None, closed_as: None };
-    vec![open.clone(), open.closing(NOW - 5 * DAY, closed_as)]
+    let open = Row { review: review.into(), kind: unit_id.split(':').next().unwrap().into(), unit_id: unit_id.into(), commit: "old".into(), files: files.iter().map(|(p, b)| LedgerFile { path: p.clone(), blob: b.clone() }).collect(), opened_at: NOW - 10 * DAY, closed_at: None, closed_as: None, attention: None };
+    vec![open.clone(), open.closing(NOW - 5 * DAY, closed_as, None)]
 }
 
 fn at_today(tree: &crate::ports::FixtureTree, paths: &[String]) -> Vec<(String, String)> {
@@ -865,4 +865,75 @@ fn a_review_sealed_as_one_undivided_array_scores_all_lens_and_no_fresh() {
     let j: serde_json::Value = serde_json::from_str(&w.cr(&["status", "--json"]).stdout).unwrap();
     assert_eq!(j["scores"][0]["fresh_points"], 0);
     assert_eq!(j["scores"][0]["lens_predicted"], 0);
+}
+
+fn close_with(w: &mut World, comments: &str, findings: &str, publish: bool) -> Row {
+    assert_eq!(w.open_and_seal().code, 0);
+    if publish {
+        record::set_state(w.run.path(), 1, State::Published, NOW + 1).unwrap();
+    }
+    let dir = record::dir(w.run.path(), 1);
+    std::fs::write(dir.join("comments.json"), comments).unwrap();
+    std::fs::write(dir.join("findings.jsonl"), findings).unwrap();
+    assert_eq!(
+        w.cr(&["ledger-close", "--review", "001", "--at", "777"])
+            .code,
+        0
+    );
+    ledger_rows(&w.gh).pop().unwrap()
+}
+
+fn comment(id: u64, bot: bool, path: Option<&str>) -> String {
+    let path = path.map_or("null".to_string(), |p| format!("\"{p}\""));
+    format!(
+        r#"{{"id":{id},"in_reply_to":null,"author":"x","bot":{bot},"path":{path},"line":1,"body":"b","created_at":1}}"#
+    )
+}
+
+#[test_id(tgcdjig)]
+#[test]
+fn ledger_close_records_his_comments_by_path_and_findings_by_kind() {
+    let mut w = world();
+    let comments = format!(
+        "[{},{},{},{}]",
+        comment(1, false, Some("demo/src/store.rs")),
+        comment(2, false, Some("demo/src/store.rs")),
+        comment(3, true, Some("demo/src/store.rs")),
+        comment(4, false, None)
+    );
+    let finding = r#"{"words":"w","exemplar":{"path":"demo/src/store.rs","line":3},"kind":"refactor","rule":"r","scope":"unit"}"#;
+    let last = close_with(&mut w, &comments, &format!("{finding}\n"), true);
+    let a = last.attention.expect("a published close records attention");
+    assert_eq!(
+        serde_json::to_value(&a.comments_by_path).unwrap(),
+        serde_json::json!({"demo/src/store.rs": 2})
+    );
+    assert_eq!(
+        serde_json::to_value(&a.finding_kinds).unwrap(),
+        serde_json::json!({"refactor": 1})
+    );
+}
+
+#[test_id(t2htgym)]
+#[test]
+fn a_review_closed_unpublished_records_no_attention() {
+    let mut w = world();
+    let comments = format!("[{}]", comment(1, false, Some("demo/src/store.rs")));
+    let last = close_with(&mut w, &comments, "", false);
+    assert_eq!(
+        (last.closed_as, last.attention),
+        (Some(ClosedAs::Unpublished), None)
+    );
+}
+
+#[test_id(ti87ur8)]
+#[test]
+fn comments_recorded_at_close_weigh_the_next_pick_in_their_area() {
+    let mut w = world();
+    let comments = format!("[{}]", comment(1, false, Some("demo/src/store.rs")));
+    close_with(&mut w, &comments, "", true);
+    let o = w.cr(&["pick", "--aim", "demo/src/net.rs", "--json"]);
+    assert_eq!(o.code, 0, "{} {}", o.stdout, o.stderr);
+    let v: serde_json::Value = serde_json::from_str(&o.stdout).unwrap();
+    assert!(v["weight"]["attention_share"].as_f64().unwrap() > 0.0, "{v}");
 }

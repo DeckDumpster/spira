@@ -1315,6 +1315,22 @@ impl Lc for FLc {
             None => Some((1, "suites".into())),
         }
     }
+    fn batch_passes(&self, id: &str) -> Vec<serde_json::Value> {
+        let prefix = format!("event batch {id} ");
+        let mut rows: Vec<serde_json::Value> = Vec::new();
+        for call in self.calls.borrow().iter() {
+            let Some(kind) = call.strip_prefix(&prefix).and_then(|c| c.splitn(3, ' ').nth(2)) else {
+                continue;
+            };
+            let Ok(ev) = serde_json::from_str::<serde_json::Value>(kind) else { continue };
+            for (name, verdict) in [("PassGreen", "green"), ("PassRed", "red")] {
+                if let Some(b) = ev.get(name) {
+                    rows.push(serde_json::json!({"n": b["n"], "verdict": verdict, "runner": b["runner"]}));
+                }
+            }
+        }
+        rows
+    }
     fn batch_progress(&self, id: &str) -> Option<serde_json::Value> {
         self.calls.borrow_mut().push(format!("show-batch {id}"));
         self.batch_progress.borrow().get(id).cloned()

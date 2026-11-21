@@ -396,3 +396,4 @@ Placeholder Part until the table of contents is approved.
 - §1.392 law-dwarves-never-operate-the-queue — A dwarf never operates production: it does not run landing, batch, verdict, queue, slay, world or deploy scripts, never opens, closes or merges a pull request, never pushes, and never edits the executing checkout.
 - §1.393 law-one-dwarf-one-worktree — No two sessions share a worktree or a branch.
 - §1.394 law-a-gate-change-is-judged-by-its-own-gate — A change to the gate own files (its definition, the gate crate, the fence scripts its steps run) enters a round only once its own gate has passed it at that tip; a no-verdict or a red keeps it out.
+- §1.395 law-one-item-per-cause-express-only-for-a-stop — A defect is filed as one item per cause, never one per symptom: before filing, the filer looks for a waiting or rework item with the same outcome and amends it.

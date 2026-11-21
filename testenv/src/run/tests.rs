@@ -286,6 +286,11 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
 
     /// As above with the run's own flags; `shell_only` makes the branch touch a script, not crate `c`.
     fn run_flags(pool: &str, suite: &str, deny: Option<&str>, state: Option<&str>, flags: &[&str], shell_only: &str) -> (String, Vec<String>, usize, Vec<String>) {
+        run_flags_env(pool, suite, deny, state, flags, shell_only, &[])
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_flags_env(pool: &str, suite: &str, deny: Option<&str>, state: Option<&str>, flags: &[&str], shell_only: &str, more_env: &[(&str, &str)]) -> (String, Vec<String>, usize, Vec<String>) {
         let root = testkit::TempDir::new("testenv-admission-cancel");
         let (repo, harness, owner) = (root.join("repo"), root.join("harness"), root.join("owner"));
         for d in [&repo.join("spira"), &harness.join("spira"), &owner] {
@@ -333,6 +338,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         .into_iter()
         .chain(extra)
         .map(|(k, v)| (k.to_string(), v))
+        .chain(more_env.iter().map(|(k, v)| (k.to_string(), v.to_string())))
         .collect();
         let start = spira_config::admission::Procs::start_of(&spira_config::admission::RealProcs, 1).expect("pid 1");
         let dir = root.join(format!("run/{pool}-admission"));
@@ -386,6 +392,43 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         let left = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("slot.") || n.starts_with("wait.")).collect();
         let all = lines.lock().unwrap().clone();
         (last, left, sleeps.load(Ordering::SeqCst), all)
+    }
+
+    fn deadline_run(bead: &str, flags: &[&str]) -> (Vec<String>, Vec<String>) {
+        let mut env = vec![("SPIRA_TESTENV_SUITE_CAP", "600")];
+        if !bead.is_empty() {
+            env.push(("SPIRA_WORK_BEAD_ID", bead));
+        }
+        let mut all = vec!["--suites", "test-a.sh"];
+        all.extend(flags);
+        let (_, left, _, lines) = run_flags_env("unit", "test-a.sh", None, None, &all, "", &env);
+        (left, lines)
+    }
+
+    #[test_id(td8uaax)]
+    #[test]
+    fn a_builder_run_with_a_deadline_above_the_suite_cap_is_refused_before_any_slot() {
+        let (left, lines) = deadline_run("sp-x", &["--deadline", "3000"]);
+        assert!(lines.iter().any(|l| l.contains("VERDICT FAULT rc=2") && l.contains("reason=deadline-over-cap")), "{lines:?}");
+        assert_eq!(left, ["slot.1"], "only the planted holder's lease may exist");
+    }
+
+    #[test_id(tdrxb6s)]
+    #[test]
+    fn the_refusal_names_the_bead_the_deadline_the_cap_and_the_way_through() {
+        let msg = builder_deadline_refusal(Some(3000), 600, Some("sp-x".into())).unwrap();
+        for want in ["--deadline 3000", "600s", "sp-x", "drop --deadline", "no SPIRA_WORK_BEAD_ID"] {
+            assert!(msg.contains(want), "{want}: {msg}");
+        }
+    }
+
+    #[test_id(tjutywm)]
+    #[test]
+    fn a_builder_deadline_at_the_cap_or_none_and_a_non_builder_deadline_are_not_refused() {
+        for (bead, flags) in [("sp-x", &["--deadline", "600"][..]), ("sp-x", &[][..]), ("", &["--deadline", "3000"][..])] {
+            let (_, lines) = deadline_run(bead, flags);
+            assert!(!lines.iter().any(|l| l.contains("deadline-over-cap")), "{bead} {flags:?}: {lines:?}");
+        }
     }
 
     #[test_id(thbo8zs)]
