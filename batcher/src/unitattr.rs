@@ -94,6 +94,11 @@ pub fn scope_token_ok(token: &str) -> bool {
     }
 }
 
+/// Whether a scope names exactly the failing tests: non-empty, every token `package=test`.
+pub fn scope_is_exact(scope: &[String]) -> bool {
+    !scope.is_empty() && scope.iter().all(|t| t.contains('=') && scope_token_ok(t))
+}
+
 /// What a rerun of a red test phase judges: `package=test` for each failing test, the bare
 /// `package` for a failure whose test name cannot be handed to a test filter. A run of exactly
 /// the failed tests is never narrower than the red.
@@ -260,6 +265,16 @@ pub fn assertion_owner(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_scope_is_exact_only_when_every_token_is_a_package_and_a_test() {
+        let v = |t: &[&str]| t.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(super::scope_is_exact(&v(&["a=x::y"])));
+        assert!(!super::scope_is_exact(&v(&["a"])));
+        assert!(!super::scope_is_exact(&v(&[])));
+        assert!(!super::scope_is_exact(&v(&["test:it"])));
+        assert!(!super::scope_is_exact(&v(&["a=x::y", "b"])));
+    }
+
     #[test]
     fn assertion_delta_is_the_line_one_side_of_the_failed_assertion_holds_alone() {
         let out = "thread 'x' panicked at gate/src/tests.rs:2701:5:\nassertion `left == right` failed\n  left: \"[profile.default]\\nslow-timeout = { period = \\\"60s\\\", terminate-after = 2 }\\nstatus-level = \\\"skip\\\"\\n\"\n right: \"[profile.default]\\nslow-timeout = { period = \\\"60s\\\", terminate-after = 2 }\\n\"\n";
