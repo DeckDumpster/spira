@@ -45,6 +45,7 @@ mod admin_reader;
 mod admin_writer;
 mod durability;
 mod facts;
+mod followups;
 mod git_evidence;
 mod journal;
 mod mend_watch;
