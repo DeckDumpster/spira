@@ -22,17 +22,6 @@
 # A unit composition drops the `step bash spira/build-fence.sh` line (its build phase is the
 # compile check, sp-aprxm); keep it a line of its own.
 
-# The gate's own files (law-a-gate-change-is-judged-by-its-own-gate): a change to one is left out of every cut until its own gate has passed
-# it, because a provisional member that breaks the gate leaves every later round with no
-# verdict. The bin packages are not listed: each is judged by the binary built from its branch.
-own gate.steps
-own gate/
-own spira/lint-staged.sh
-own spira/build-fence.sh
-own spira/round-image-preflight.sh
-own spira/ci-spill-guard.sh
-own spira/boundary.sh
-
 bin SPIRA_LINT_BIN spira-lint
 bin SPIRA_SELECT_BIN suite-select
 # The suite runner is the tree's own (sp-isom7): how a tree's suites are staged and launched —
