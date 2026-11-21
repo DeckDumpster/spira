@@ -1676,16 +1676,51 @@ fn compact_refuses_while_the_store_is_open_and_writes_nothing() {
     drop(b);
 }
 
+fn wal_conn(path: &Path) -> rusqlite::Connection {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+    conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+    conn
+}
+
 #[test]
-fn compact_refuses_a_store_whose_wal_is_not_empty_and_writes_nothing() {
+#[allow(clippy::disallowed_methods)]
+fn compact_folds_a_crash_image_wal_into_the_main_file_before_it_rewrites() {
     let dir = TempDir::new("sqlite-compact-wal");
+    let live = dir.path().join("live.db");
+    none_mode_store_with_free_pages(&live);
+    let conn = wal_conn(&live);
+    conn.execute_batch("CREATE TABLE crash_rows(n INTEGER); BEGIN; INSERT INTO crash_rows VALUES (1),(2),(3); COMMIT;")
+        .unwrap();
+    let image = dir.path().join("image.db");
+    std::fs::copy(&live, &image).unwrap();
+    std::fs::copy(format!("{}-wal", live.display()), format!("{}-wal", image.display())).unwrap();
+    assert!(std::fs::metadata(format!("{}-wal", image.display())).unwrap().len() > 0);
+    let report = state_store_sqlite::compact::compact(&image).unwrap();
+    drop(conn);
+    assert!(report.wal_bytes_before > 0);
+    assert_eq!(report.auto_vacuum, 2);
+    assert_eq!(count(&image, "SELECT count(*) FROM crash_rows"), 3);
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)]
+fn compact_refuses_naming_the_wal_when_a_reader_keeps_it_from_folding_and_writes_nothing() {
+    let dir = TempDir::new("sqlite-compact-wal-held");
     let path = dir.path().join("s.db");
     none_mode_store_with_free_pages(&path);
-    std::fs::write(format!("{}-wal", path.display()), b"unclean").unwrap();
+    let conn = wal_conn(&path);
+    conn.execute_batch("CREATE TABLE held(n INTEGER); INSERT INTO held VALUES (1);").unwrap();
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+    conn.execute_batch("BEGIN; SELECT count(*) FROM held;").unwrap();
+    let other = rusqlite::Connection::open(&path).unwrap();
+    other.execute_batch("INSERT INTO held VALUES (2);").unwrap();
     let sum = std::fs::read(&path).unwrap();
     let err = state_store_sqlite::compact::compact(&path).unwrap_err().to_string();
-    assert!(err.contains("-wal") && err.contains("is not empty"), "{err}");
+    assert!(err.contains(&format!("{}-wal", path.display())), "{err}");
     assert_eq!(std::fs::read(&path).unwrap(), sum);
+    drop(other);
+    drop(conn);
 }
 
 #[test]

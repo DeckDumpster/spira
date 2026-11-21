@@ -9,13 +9,13 @@ use crate::{CANNOT_TELL, REFUSED};
 
 pub const USAGE: &str = "usage: spira-lc admin-store-compact --store <main file>
 
-Rewrites the stopped store's main file with incremental auto-vacuum, giving back its free
+Folds a stopped store's -wal into its main file, then rewrites it with incremental auto-vacuum, giving back its free
 pages, and prints a JSON report on stdout. Day files are not touched.
 
   --store <file>   the main file; its <file>.lock must be free, so stop lc-serve first
   -h               this text
 
-exit 0 done, 3 refused (the store is open, or its -wal is not empty), 2 usage";
+exit 0 done, 3 refused (the store is open, or its -wal could not be folded in), 2 usage";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Asked {
