@@ -64,6 +64,17 @@ impl PackageGraph {
     }
 }
 
+impl PackageGraph {
+    /// Like `resolve` for one word, but a `test:<target>` word shared by several packages names
+    /// every one of them.
+    pub fn owners(&self, word: &str) -> Vec<String> {
+        match word.strip_prefix("test:").and_then(|t| self.tests.get(t)) {
+            Some(all) if all.len() > 1 => all.clone(),
+            _ => self.resolve(&[word.to_string()]),
+        }
+    }
+}
+
 /// The package of each failing-test line (`FAIL <binary> <test>`, the binary id's package being
 /// the part before `::`), once each.
 pub fn failing_packages(lines: &[String]) -> Vec<String> {
@@ -105,14 +116,16 @@ pub fn rerun_scope(failed: &[String], graph: Option<&PackageGraph>) -> Vec<Strin
             continue;
         };
         let package = bin.split("::").next().unwrap_or(bin).to_string();
-        let package = match graph {
-            Some(g) => g.resolve(&[package]).remove(0),
-            None => package,
+        let packages = match graph {
+            Some(g) => g.owners(&package),
+            None => vec![package],
         };
-        let token = token_of(&package, test);
-        let token = if scope_token_ok(&token) { token } else { package.clone() };
-        if !out.contains(&token) {
-            out.push(token);
+        for package in packages {
+            let token = token_of(&package, test);
+            let token = if scope_token_ok(&token) { token } else { package.clone() };
+            if !out.contains(&token) {
+                out.push(token);
+            }
         }
     }
     let whole: Vec<String> = out.iter().filter(|t| !t.contains('=')).cloned().collect();
@@ -432,6 +445,19 @@ mod tests {
         assert_eq!(
             g.resolve(&words(&["test:solo", "test:shared", "test:none"])),
             words(&["a", "test:shared", "test:none"])
+        );
+    }
+
+    #[test]
+    fn a_test_word_two_packages_share_reruns_the_test_in_each_owner() {
+        let g = PackageGraph {
+            dirs: [("a".to_string(), "a".to_string()), ("b".to_string(), "b".to_string())].into(),
+            tests: [("it".to_string(), vec!["a".to_string(), "b".to_string()])].into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            rerun_scope(&["FAIL test:it x::y".to_string()], Some(&g)),
+            vec!["a=x::y".to_string(), "b=x::y".to_string()]
         );
     }
 }
