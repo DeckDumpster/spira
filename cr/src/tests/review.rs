@@ -620,3 +620,24 @@ fn a_ledger_put_conflict_rereads_and_retries() {
     let rows = put_rows(&puts[1]);
     assert_eq!(rows.iter().map(|r| r.review.as_str()).collect::<Vec<_>>(), ["900", "901", "001"]);
 }
+
+#[test]
+fn a_ledger_that_moves_under_every_write_gives_up_after_three_puts() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    w.gh.conflict_every_ledger_put();
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains("moved under 3 writes"), "{}", o.stderr);
+    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 3);
+}
+
+#[test]
+fn closing_a_review_that_was_never_sealed_writes_nothing_and_succeeds() {
+    let w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    let o = w.cr(&["ledger-close", "--review", "001", "--at", "5"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    assert!(w.gh.put("contents/ledger.jsonl").is_empty());
+}

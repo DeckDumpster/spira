@@ -191,7 +191,7 @@ pub fn close(number: u32, at: u64, ports: &Ports) -> Outcome {
         Err(e) => return refuse(1, &e),
     };
     let Some(latest) = ledger.latest_of(&id) else {
-        return refuse(2, &format!("{FILE} has no open row for review {id}; it was never sealed"));
+        return Outcome { code: 0, stdout: format!("review {id} has no open row in the ledger; nothing to close\n"), stderr: String::new() };
     };
     if latest.closed_at.is_some() {
         return Outcome { code: 0, stdout: format!("review {id} is already closed in the ledger\n"), stderr: String::new() };

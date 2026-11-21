@@ -19,6 +19,7 @@ pub struct FakeGh {
     ledger: RefCell<Option<(String, u32)>>,
     conflict: RefCell<Option<String>>,
     put_fails: Cell<bool>,
+    always_conflict: Cell<bool>,
 }
 
 impl FakeGh {
@@ -60,6 +61,10 @@ impl FakeGh {
     /// The next ledger write fails as a conflict, and `line` is appended by someone else first.
     pub fn conflict_next_ledger_put(&self, line: &str) {
         *self.conflict.borrow_mut() = Some(format!("{line}\n"));
+    }
+    /// Every ledger write fails as a conflict, someone else having appended first.
+    pub fn conflict_every_ledger_put(&self) {
+        self.always_conflict.set(true);
     }
     pub fn put(&self, suffix: &str) -> Vec<serde_json::Value> {
         self.calls
@@ -134,7 +139,8 @@ impl FakeGh {
             return GhOut { code: 1, stdout: b"gh: Not Found (HTTP 404)".to_vec() };
         };
         if args.iter().any(|a| a == "PUT") {
-            if let Some(other) = self.conflict.borrow_mut().take() {
+            let other = if self.always_conflict.get() { Some(format!("{{\"review\":\"x{version}\"}}\n")) } else { self.conflict.borrow_mut().take() };
+            if let Some(other) = other {
                 text.push_str(&other);
                 *version += 1;
                 return GhOut { code: 1, stdout: b"gh: is at a different sha (HTTP 409)".to_vec() };
