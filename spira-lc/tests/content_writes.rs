@@ -328,7 +328,7 @@ fn without_a_writer_credential_the_same_verbs_still_write_through_bd() {
 fn writer_lc(store: &Store, name: &str) -> Lc {
     let writer = store.dir.join(format!("{name}.writer"));
     let mut lc = Lc::new(store, name, &writer.display().to_string());
-    provision(store, &lc);
+    provision(&lc);
     lc.admin("admin-provision-writer");
     lc.serve();
     lc
@@ -470,7 +470,7 @@ fn each_remaining_write_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
 fn without_a_writer_credential_those_writes_still_go_through_bd_and_make_the_same_rows() {
     let store = Store::up();
     let mut lc = Lc::new(&store, "n", "");
-    provision(&store, &lc);
+    provision(&lc);
     lc.serve();
     for (verb, children, out) in twins(&store, &lc) {
         assert!(children > 0 || out.contains("deadline"), "{verb} should have forked bd: {out}");
