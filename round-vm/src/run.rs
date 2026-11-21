@@ -310,6 +310,7 @@ macro_rules! unit_env_fn {
 }
 pub(crate) use unit_env_fn;
 
+#[cfg(test)]
 pub(crate) const UNIT_ENV_FN: &str = unit_env_fn!();
 
 /// The VM side of a round. The VM is a LAUNCHER (design runtime-is-a-release, sp-dvfea): it
