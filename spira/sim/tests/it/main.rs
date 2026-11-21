@@ -3,6 +3,7 @@
 
 mod agent;
 mod callworld;
+mod gh_review;
 mod ci;
 mod jq;
 mod loop_gate;
