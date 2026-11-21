@@ -119,6 +119,9 @@ impl Content for LiveContent {
         crate::bd::write_stdin(&m.argv, m.body.as_deref())
     }
     fn delete(&self, ids: &[String]) -> Result<(), String> {
+        if let Some(done) = crate::content_write::delete(ids) {
+            return done;
+        }
         match crate::bd::tool("bdq", &[&["delete".to_string()][..], ids, &["--force".to_string()]].concat(), None, "purge-alerts", 120) {
             (0, _) => Ok(()),
             (rc, out) => Err(format!("bdq delete exited {rc}: {out}")),

@@ -8,6 +8,8 @@
 use crate::rows::escape;
 
 mod ids;
+mod verbs;
+pub use verbs::delete;
 
 const ACTOR: &str = "spira-lc";
 
@@ -58,19 +60,30 @@ enum Op {
     DepRemove { on: String },
     DepRelate { other: String },
     Supersede { with: String },
+    Duplicate { of: String },
+    SetState { dimension: String, value: String },
+    GateResolve,
+    RecomputeBlocked,
+    GateCheck { kind: String },
+    KvSet { key: String, value: String },
+    KvClear { key: String },
+    Remember { key: String, text: String },
+    Forget { key: String },
 }
 
 impl Op {
+    /// A verb on the store itself, not on one bead's row.
+    fn is_standalone(&self) -> bool {
+        matches!(self, Op::RecomputeBlocked | Op::GateCheck { .. } | Op::KvSet { .. } | Op::KvClear { .. } | Op::Remember { .. } | Op::Forget { .. })
+    }
+
     fn is_column(&self) -> bool {
         matches!(self, Op::Status(_) | Op::Assignee(_) | Op::Description(_))
     }
 
     /// Whether bd rewrites the issue row (`updated_at`, `row_lock`) for it.
     fn touches_row(&self) -> bool {
-        !matches!(
-            self,
-            Op::LabelAdd(_) | Op::LabelRemove(_) | Op::Comment(_) | Op::Status(_) | Op::Assignee(_) | Op::Description(_) | Op::Create(_) | Op::Close { .. } | Op::DepAdd { .. } | Op::DepRemove { .. } | Op::DepRelate { .. } | Op::Supersede { .. }
-        )
+        matches!(self, Op::Note(_) | Op::Metadata(..) | Op::Priority(_))
     }
 }
 
@@ -111,7 +124,21 @@ impl Mutation {
             ["comments", "add", id, t] if body.is_none() => (*id, vec![Op::Comment((*t).into())]),
             ["update", id, flags @ ..] if !flags.is_empty() => (*id, update_ops(flags, body)?),
             ["create", rest @ ..] => ("", vec![Op::Create(Box::new(create_spec(rest, body)?))]),
+            ["remember", "--key", k] => ("", vec![Op::Remember { key: (*k).into(), text: body?.into() }]),
             _ if body.is_some() => return None,
+            ["set-state", id, kv] => {
+                let (dimension, value) = kv.split_once('=').filter(|(d, v)| !d.is_empty() && !v.is_empty())?;
+                (*id, vec![Op::SetState { dimension: dimension.into(), value: value.into() }])
+            }
+            ["duplicate", id, "--of", of] => (*id, vec![Op::Duplicate { of: (*of).into() }]),
+            ["gate", "resolve", id] => (*id, vec![Op::GateResolve]),
+            ["recompute-blocked"] => ("", vec![Op::RecomputeBlocked]),
+            ["gate", "check", "--type", kind] => ("", vec![Op::GateCheck { kind: (*kind).into() }]),
+            ["gate", "check", flag] if flag.starts_with("--type=") => ("", vec![Op::GateCheck { kind: flag["--type=".len()..].into() }]),
+            ["kv", "set", key, value] => ("", vec![Op::KvSet { key: (*key).into(), value: (*value).into() }]),
+            ["kv", "clear", key] => ("", vec![Op::KvClear { key: (*key).into() }]),
+            ["remember", "--key", key, text] => ("", vec![Op::Remember { key: (*key).into(), text: (*text).into() }]),
+            ["forget", key] => ("", vec![Op::Forget { key: (*key).into() }]),
             ["close", id] => (*id, vec![Op::Close { reason: String::new(), force: false }]),
             ["close", id, "--force"] => (*id, vec![Op::Close { reason: String::new(), force: true }]),
             ["close", id, "--reason", r] if !r.is_empty() => (*id, vec![Op::Close { reason: (*r).into(), force: false }]),
@@ -123,7 +150,7 @@ impl Mutation {
             ["supersede", id, "--with", with] => (*id, vec![Op::Supersede { with: (*with).into() }]),
             _ => return None,
         };
-        if id.starts_with('-') || (id.is_empty() && !matches!(ops.first(), Some(Op::Create(_)))) {
+        if id.starts_with('-') || (id.is_empty() && !ops.first().is_some_and(|op| matches!(op, Op::Create(_)) || op.is_standalone())) {
             return None;
         }
         Some(Mutation { argv: args.to_vec(), body: body.map(str::to_string), id: id.into(), ops, forced: a.contains(&"--force") })
@@ -148,6 +175,7 @@ impl Mutation {
                 Op::DepAdd { on, .. } | Op::DepRemove { on } => Some(on.as_str()),
                 Op::DepRelate { other } => Some(other.as_str()),
                 Op::Supersede { with } => Some(with.as_str()),
+                Op::Duplicate { of } => Some(of.as_str()),
                 _ => None,
             })
             .collect()
@@ -161,7 +189,6 @@ impl Mutation {
 
     pub fn script_in(&self, db: &str, env: &Env) -> Vec<String> {
         let id = escape(&self.id);
-        let event = |kind: &str, comment: &str, guard: &str| event_row(db, &id, kind, "NULL", "NULL", comment, guard);
         let lit = |s: &str| format!("'{}'", escape(s));
         let before = before_json(db, &id);
         let mut s = vec!["BEGIN".to_string()];
@@ -170,16 +197,8 @@ impl Mutation {
             let settled = |column: &str| format!("UPDATE {db}.events SET new_value = (SELECT JSON_OBJECT('{column}', {column}) FROM {db}.issues WHERE id = '{id}') WHERE id = @event{n}");
             let filed = |old: &str| format!("INSERT INTO {db}.events (id, issue_id, event_type, actor, old_value, new_value, comment, created_at) VALUES (@event{n}, '{id}', 'updated', '{ACTOR}', {old}, NULL, NULL, UTC_TIMESTAMP())");
             match op {
-                Op::LabelAdd(l) => {
-                    let e = escape(l);
-                    s.push(event("label_added", &lit(&format!("Added label: {l}")), &format!(" WHERE NOT EXISTS (SELECT 1 FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}')")));
-                    s.push(format!("INSERT IGNORE INTO {db}.labels (issue_id, label) VALUES ('{id}', '{e}')"));
-                }
-                Op::LabelRemove(l) => {
-                    let e = escape(l);
-                    s.push(event("label_removed", &lit(&format!("Removed label: {l}")), &format!(" WHERE EXISTS (SELECT 1 FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}')")));
-                    s.push(format!("DELETE FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}'"));
-                }
+                Op::LabelAdd(l) => s.extend(label_add_sql(db, &self.id, l)),
+                Op::LabelRemove(l) => s.extend(label_remove_sql(db, &self.id, l)),
                 Op::Note(t) => {
                     s.push(format!("SET @event{n} = UUID()"));
                     s.push(filed(&before));
@@ -217,6 +236,11 @@ impl Mutation {
                     s.extend(dep_add_sql(db, &self.id, with, "supersedes", false, env));
                     s.extend(close_sql(db, &self.id, "", env));
                 }
+                Op::Duplicate { of } => {
+                    s.extend(dep_add_sql(db, &self.id, of, "duplicates", false, env));
+                    s.extend(close_sql(db, &self.id, "", env));
+                }
+                Op::GateResolve => s.extend(close_sql(db, &self.id, "", env)),
                 _ => {}
             }
         }
@@ -226,6 +250,18 @@ impl Mutation {
         s.push("COMMIT".into());
         s
     }
+}
+
+fn label_add_sql(db: &str, bead: &str, label: &str) -> Vec<String> {
+    let (id, e) = (&*escape(bead), escape(label));
+    let absent = format!(" WHERE NOT EXISTS (SELECT 1 FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}')");
+    vec![event_row(db, id, "label_added", "NULL", "NULL", &format!("'Added label: {e}'"), &absent), format!("INSERT IGNORE INTO {db}.labels (issue_id, label) VALUES ('{id}', '{e}')")]
+}
+
+fn label_remove_sql(db: &str, bead: &str, label: &str) -> Vec<String> {
+    let (id, e) = (&*escape(bead), escape(label));
+    let present = format!(" WHERE EXISTS (SELECT 1 FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}')");
+    vec![event_row(db, id, "label_removed", "NULL", "NULL", &format!("'Removed label: {e}'"), &present), format!("DELETE FROM {db}.labels WHERE issue_id = '{id}' AND label = '{e}'")]
 }
 
 const ROW_LOCK: &str = "CAST((RAND() - 0.5) * 1.8e19 AS SIGNED)";
@@ -365,13 +401,19 @@ fn settle_blocked(db: &str, seeds: &[&str]) -> Vec<String> {
     let level0 = format!("{named} UNION SELECT issue_id FROM {db}.dependencies WHERE depends_on_issue_id IN ({list})");
     let below = |level: &str| format!("{level} UNION SELECT issue_id FROM {db}.dependencies WHERE type = 'parent-child' AND depends_on_issue_id IN ({level})");
     let level2 = below(&below(&level0));
+    blocked_passes(db, Some(&level2), 3)
+}
+
+/// `passes` rounds of bd's mark and unmark over the beads `scope` selects, or over every bead.
+fn blocked_passes(db: &str, scope: Option<&str>, passes: usize) -> Vec<String> {
+    let within = scope.map(|ids| format!("i.id IN ({ids}) AND ")).unwrap_or_default();
     let untouched = format!("NOT EXISTS (SELECT 1 FROM {db}.dependencies g WHERE g.issue_id = i.id AND (g.type = 'waits-for' OR g.depends_on_wisp_id IS NOT NULL))");
     let held = format!(
         "(EXISTS (SELECT 1 FROM {db}.dependencies d JOIN {db}.issues t ON t.id = d.depends_on_issue_id WHERE d.issue_id = i.id AND d.type IN ('blocks', 'conditional-blocks') AND t.status <> 'closed' AND t.status <> 'pinned') OR EXISTS (SELECT 1 FROM {db}.dependencies d JOIN {db}.issues p ON p.id = d.depends_on_issue_id WHERE d.issue_id = i.id AND d.type = 'parent-child' AND p.is_blocked = 1))"
     );
-    let unmark = format!("UPDATE {db}.issues i SET i.is_blocked = 0, i.updated_at = i.updated_at WHERE i.id IN ({level2}) AND i.is_blocked = 1 AND {untouched} AND (i.status = 'closed' OR i.status = 'pinned' OR NOT {held})");
-    let mark = format!("UPDATE {db}.issues i SET i.is_blocked = 1, i.updated_at = i.updated_at WHERE i.id IN ({level2}) AND i.is_blocked = 0 AND {untouched} AND i.status <> 'closed' AND i.status <> 'pinned' AND {held}");
-    (0..3).flat_map(|_| [unmark.clone(), mark.clone()]).collect()
+    let unmark = format!("UPDATE {db}.issues i SET i.is_blocked = 0, i.updated_at = i.updated_at WHERE {within}i.is_blocked = 1 AND {untouched} AND (i.status = 'closed' OR i.status = 'pinned' OR NOT {held})");
+    let mark = format!("UPDATE {db}.issues i SET i.is_blocked = 1, i.updated_at = i.updated_at WHERE {within}i.is_blocked = 0 AND {untouched} AND i.status <> 'closed' AND i.status <> 'pinned' AND {held}");
+    (0..passes).flat_map(|_| [unmark.clone(), mark.clone()]).collect()
 }
 
 /// How bd stores a `--set-metadata` value: a number, `true`, `false` or `null` as that JSON value,
@@ -685,10 +727,13 @@ fn serve(w: &Writer, m: &Mutation) -> Result<Option<String>, String> {
     if let Some(c) = m.create() {
         return create(w, c);
     }
+    if m.ops.first().is_some_and(Op::is_standalone) {
+        return verbs::standalone(w, m);
+    }
     let db = &w.db;
     let mut named = vec![m.bead()];
     named.extend(m.others());
-    let found = rows(w, &format!("SELECT id, status, status = 'closed' AS closed, status = 'in_progress' AS claimed, COALESCE(assignee, '') AS assignee, description, is_blocked FROM {db}.issues WHERE id IN ({})", in_list(&named)))?;
+    let found = rows(w, &format!("SELECT id, status, issue_type, status = 'closed' AS closed, status = 'in_progress' AS claimed, COALESCE(assignee, '') AS assignee, description, is_blocked, ephemeral FROM {db}.issues WHERE id IN ({})", in_list(&named)))?;
     let row_of = |id: &str| found.iter().find(|r| cell(r, "id") == id);
     let Some(me) = row_of(m.bead()) else {
         return Err(format!("no issue found matching {:?}", m.bead()));
@@ -701,6 +746,9 @@ fn serve(w: &Writer, m: &Mutation) -> Result<Option<String>, String> {
     };
     if m.ops.is_empty() {
         return Ok(Some(String::new()));
+    }
+    if let Some(Op::SetState { dimension, value }) = m.ops.first() {
+        return verbs::set_state(w, m.bead(), dimension, value);
     }
     let env = env_of(w)?;
     w.conn.transaction(|tx| apply(&m.script_in(db, &env), tx)).and_then(|r| r)?;
@@ -743,12 +791,14 @@ fn preflight(w: &Writer, m: &Mutation, me: &serde_json::Value) -> Result<Option<
                     return Ok(None);
                 }
             }
-            Op::Supersede { with } => {
-                let against = with == m.bead() || edge(m.bead(), with)?.is_some_and(|t| t != "supersedes");
-                if against {
+            Op::Supersede { with: other } | Op::Duplicate { of: other } => {
+                let kind = if matches!(op, Op::Supersede { .. }) { "supersedes" } else { "duplicates" };
+                if other == m.bead() || edge(m.bead(), other)?.is_some_and(|t| t != kind) {
                     return Ok(None);
                 }
             }
+            Op::GateResolve if cell(me, "issue_type") != "gate" || cell(me, "closed") == "1" => return Ok(None),
+            Op::SetState { .. } if cell(me, "ephemeral") == "1" => return Ok(None),
             _ => {}
         }
         kept.push(op.clone());
@@ -790,6 +840,8 @@ impl Mutation {
             Some(Op::Supersede { with }) => {
                 format!("✓ Marked {id} as superseded by {with} (closed)\n")
             }
+            Some(Op::Duplicate { of }) => format!("✓ Marked {id} as duplicate of {of} (closed)\n"),
+            Some(Op::GateResolve) => format!("✓ Gate resolved: {id}\n"),
             _ => String::new(),
         }
     }
@@ -1047,8 +1099,7 @@ mod tests {
     #[test]
     fn only_the_served_verbs_are_mutations() {
         for argv in [
-            &["set-state", "sp-a", "branch=x"][..],
-            &["update", "sp-a", "--set-metadata", "a\"b=c"],
+            &["update", "sp-a", "--set-metadata", "a\"b=c"][..],
             &["update", "sp-a", "--priority", "9"],
             &["update", "sp-a"],
             &["update", "sp-a", "--title", "x"],
@@ -1093,9 +1144,44 @@ mod tests {
             (&["dep", "remove", "sp-a", "sp-b"], None),
             (&["dep", "relate", "sp-a", "sp-b"], None),
             (&["supersede", "sp-a", "--with", "sp-b"], None),
+            (&["duplicate", "sp-a", "--of", "sp-b"], None),
+            (&["set-state", "sp-a", "branch=spira/sp-a"], None),
+            (&["gate", "resolve", "sp-a"], None),
+            (&["recompute-blocked"], None),
+            (&["gate", "check", "--type", "timer"], None),
+            (&["gate", "check", "--type=timer"], None),
+            (&["kv", "set", "k", "v"], None),
+            (&["kv", "clear", "k"], None),
+            (&["remember", "--key", "k", "the text"], None),
+            (&["remember", "--key", "k"], Some("the text")),
+            (&["forget", "k"], None),
         ] {
             assert!(Mutation::of(&v(argv), body).is_some(), "{argv:?}");
         }
+    }
+
+    #[test]
+    fn a_verb_the_port_does_not_make_exactly_stays_bds() {
+        for argv in [&["set-state", "sp-a", "branch="][..], &["set-state", "sp-a", "=x"], &["duplicate", "sp-a"], &["gate", "check"], &["gate", "discover", "--branch", "b", "--repo", "r"], &["kv", "set", "k"], &["remember", "--key"]] {
+            assert!(Mutation::of(&v(argv), None).is_none(), "{argv:?}");
+        }
+        assert!(Mutation::of(&v(&["recompute-blocked"]), Some("stdin")).is_none());
+    }
+
+    #[test]
+    fn a_duplicate_is_a_closed_bead_with_a_duplicates_edge_and_no_dependency_event() {
+        let s = script(&["duplicate", "sp-a", "--of", "sp-b"], None);
+        assert!(s.iter().any(|q| q.contains("INSERT INTO `beads`.dependencies") && q.contains("'duplicates'")), "{s:?}");
+        assert!(!s.iter().any(|q| q.contains("dependency_added")), "{s:?}");
+        assert!(s.iter().any(|q| q.starts_with("UPDATE `beads`.issues SET status = 'closed'")), "{s:?}");
+    }
+
+    #[test]
+    fn a_recompute_settles_every_bead_and_not_only_a_scope() {
+        let s = blocked_passes("`d`", None, 2);
+        assert_eq!(s.len(), 4);
+        assert!(s.iter().all(|q| !q.contains("i.id IN")), "{s:?}");
+        assert!(blocked_passes("`d`", Some("SELECT 'x'"), 1).iter().all(|q| q.contains("i.id IN (SELECT 'x')")));
     }
 
     #[test]
