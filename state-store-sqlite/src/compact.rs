@@ -3,12 +3,12 @@
 //! Day files are not touched.
 
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use rusqlite::Connection;
 use state_store::{Error, Result};
 
-use crate::{checkpoint_row, db, take_opener, wal_of};
+use crate::{db, fold_wal, take_opener};
 
 #[derive(Debug, Default, Clone)]
 pub struct Report {
@@ -46,18 +46,8 @@ pub fn compact(path: &Path) -> Result<Report> {
         return Err(Error::Backend(format!("{}: no such store", path.display())));
     }
     let _opener = take_opener(path)?;
-    let wal_bytes_before = std::fs::metadata(wal_of(path)).map_or(0, |m| m.len());
+    let wal_bytes_before = fold_wal(path)?;
     let conn = Connection::open(path).map_err(db)?;
-    conn.busy_timeout(Duration::ZERO).map_err(db)?;
-    let folded = conn.prepare("PRAGMA wal_checkpoint(TRUNCATE)").and_then(|mut s| s.query_row([], checkpoint_row)).map_err(db)?;
-    if folded.busy || folded.checkpointed < folded.wal_frames {
-        return Err(Error::Backend(format!(
-            "{}: could not fold the WAL into the main file ({} of {} frames): another process holds the file open",
-            wal_of(path).display(),
-            folded.checkpointed,
-            folded.wal_frames
-        )));
-    }
     let (bytes_before, free_bytes_before) = usage(&conn, path)?;
     conn.pragma_update(None, "auto_vacuum", 2).map_err(db)?;
     conn.prepare("VACUUM").and_then(|mut s| s.execute([])).map_err(db)?;

@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use state_store::{events_key, Error, Result, EVENTS_PREFIX, REQUESTS_PREFIX, REQUEST_TTL_SECS};
 
 use crate::dated::{day_of, stem_of, Family, Files, EVENTS, FAMILIES, RECEIPTS};
-use crate::{take_opener, wal_of, db, key_of, outbox_dir, recorded_at, successor, Options, SqliteBackend, StoredRow, SCHEMA_MIGRATIONS};
+use crate::{fold_wal, take_opener, db, key_of, outbox_dir, recorded_at, successor, Options, SqliteBackend, StoredRow, SCHEMA_MIGRATIONS};
 
 const PAGE: usize = 1_000;
 const FLUSH_ROWS: usize = 10_000;
@@ -43,6 +43,7 @@ impl ClassReport {
 
 #[derive(Debug, Default, Clone)]
 pub struct Report {
+    pub wal_bytes_before: u64,
     pub head: u64,
     pub live: ClassReport,
     pub events: ClassReport,
@@ -60,7 +61,7 @@ impl Report {
             })
         };
         serde_json::json!({
-            "relayout": "certified", "head": self.head,
+            "relayout": "certified", "wal_bytes_before": self.wal_bytes_before, "head": self.head,
             "live": class(&self.live), "events": class(&self.events), "receipts": class(&self.receipts),
             "elapsed_ms": self.elapsed_ms,
         })
@@ -89,12 +90,7 @@ pub fn relayout_probed(from: &Path, to: &Path, wall: &dyn Clock, before_certify:
         return refuse(format!("{} or a day file of its stem exists; relayout builds a new store and never writes over one", to.display()));
     }
     let _opener = take_opener(from)?;
-    if std::fs::metadata(wal_of(from)).is_ok_and(|m| m.len() > 0) {
-        return refuse(format!(
-            "{} is not empty: the store did not close cleanly; start and stop the store once, then run relayout again",
-            wal_of(from).display()
-        ));
-    }
+    let wal_bytes_before = fold_wal(from).or_else(|e| refuse(e.to_string()))?;
     let old = open_old(from)?;
     if let Some(dir) = to.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| Error::Backend(format!("{}: {e}", dir.display())))?;
@@ -105,6 +101,7 @@ pub fn relayout_probed(from: &Path, to: &Path, wall: &dyn Clock, before_certify:
         remove_new(to);
     }
     let mut report = built?;
+    report.wal_bytes_before = wal_bytes_before;
     report.elapsed_ms = elapsed_ms(started);
     Ok(report)
 }

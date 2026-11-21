@@ -2472,6 +2472,25 @@ pub(crate) fn wal_of(path: &Path) -> PathBuf {
     PathBuf::from(format!("{}-wal", path.display()))
 }
 
+/// Folds `path`'s `-wal` into the main file and returns the WAL's bytes before. The caller holds
+/// the opener lock; refuses when a reader or writer keeps the checkpoint from finishing.
+pub(crate) fn fold_wal(path: &Path) -> Result<u64> {
+    let wal_bytes_before = std::fs::metadata(wal_of(path)).map_or(0, |m| m.len());
+    let conn = rusqlite::Connection::open(path).map_err(db)?;
+    conn.busy_timeout(Duration::ZERO).map_err(db)?;
+    let folded = conn.prepare("PRAGMA wal_checkpoint(TRUNCATE)").and_then(|mut s| s.query_row([], checkpoint_row)).map_err(db)?;
+    if folded.busy || folded.checkpointed < folded.wal_frames {
+        return Err(Error::Backend(format!(
+            "{}: could not fold the WAL into the main file ({} of {} frames): another process holds the file open",
+            wal_of(path).display(),
+            folded.checkpointed,
+            folded.wal_frames
+        )));
+    }
+    drop(conn);
+    Ok(wal_bytes_before)
+}
+
 pub(crate) fn take_opener(from: &Path) -> Result<File> {
     let lock_path = PathBuf::from(format!("{}.lock", from.display()));
     let file = OpenOptions::new()

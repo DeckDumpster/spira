@@ -1345,7 +1345,7 @@ mod relayout {
     }
 
     #[test]
-    fn relayout_refuses_and_leaves_nothing_when_the_old_store_is_open_the_target_exists_or_the_wal_holds_frames() {
+    fn relayout_refuses_and_leaves_nothing_when_the_old_store_is_open_or_the_target_exists() {
         let dir = TempDir::new("relayout-refuse");
         let (old, new) = (dir.path().join("old.db"), dir.path().join("new.db"));
         fixture(&old);
@@ -1360,12 +1360,6 @@ mod relayout {
         std::fs::remove_file(dir.path().join("old.db.lock")).unwrap();
         assert_eq!(files_beside(dir.path()), before);
 
-        std::fs::write(dir.path().join("old.db-wal"), b"frames").unwrap();
-        let e = relayout(&old, &new, &clock).unwrap_err().to_string();
-        assert!(e.contains("-wal") && e.contains("start and stop"), "{e}");
-        std::fs::remove_file(dir.path().join("old.db-wal")).unwrap();
-        assert!(!new.exists());
-
         std::fs::write(dir.path().join("new.events-2024-10-04.db"), b"x").unwrap();
         assert!(relayout(&old, &new, &clock).is_err(), "a day file of the target's stem is in the way");
         std::fs::remove_file(dir.path().join("new.events-2024-10-04.db")).unwrap();
@@ -1374,6 +1368,48 @@ mod relayout {
         assert_eq!(std::fs::read(&new).unwrap(), b"x");
         std::fs::remove_file(&new).unwrap();
         assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")), "{:?}", files_beside(dir.path()));
+    }
+
+    #[test]
+    #[allow(clippy::disallowed_methods)]
+    fn relayout_folds_a_crash_image_wal_in_and_the_wal_only_rows_reach_the_new_store() {
+        let dir = TempDir::new("relayout-wal");
+        let (live, old, new) = (dir.path().join("live.db"), dir.path().join("old.db"), dir.path().join("new.db"));
+        fixture(&live);
+        let conn = Connection::open(&live).unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        conn.prepare("UPDATE latest SET value = CAST('{\"state\":\"Batched\",\"wal\":1}' AS BLOB) WHERE key = CAST('deliveries/sp-0007' AS BLOB)")
+            .unwrap().execute([]).unwrap();
+        std::fs::copy(&live, &old).unwrap();
+        std::fs::copy(format!("{}-wal", live.display()), format!("{}-wal", old.display())).unwrap();
+        assert!(std::fs::metadata(format!("{}-wal", old.display())).unwrap().len() > 0);
+        let report = relayout(&old, &new, &VirtualClock::new(WALL)).unwrap();
+        drop(conn);
+        assert!(report.wal_bytes_before > 0);
+        let to = Connection::open(&new).unwrap();
+        let value: Vec<u8> = to.query_row("SELECT value FROM latest WHERE key = CAST('deliveries/sp-0007' AS BLOB)", [], |r| r.get(0)).unwrap();
+        assert!(String::from_utf8_lossy(&value).contains("\"wal\""), "{value:?}");
+    }
+
+    #[test]
+    #[allow(clippy::disallowed_methods)]
+    fn relayout_refuses_naming_the_wal_when_a_reader_keeps_it_from_folding_and_leaves_nothing() {
+        let dir = TempDir::new("relayout-wal-held");
+        let (old, new) = (dir.path().join("old.db"), dir.path().join("new.db"));
+        fixture(&old);
+        let conn = Connection::open(&old).unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        conn.execute_batch("BEGIN; SELECT count(*) FROM latest;").unwrap();
+        let other = Connection::open(&old).unwrap();
+        other.prepare("DELETE FROM latest WHERE key = CAST('deliveries/sp-0001' AS BLOB)").unwrap().execute([]).unwrap();
+        let e = relayout(&old, &new, &VirtualClock::new(WALL)).unwrap_err().to_string();
+        assert!(e.contains(&format!("{}-wal", old.display())), "{e}");
+        assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")), "{:?}", files_beside(dir.path()));
+        drop(other);
+        drop(conn);
     }
 
     #[test]
