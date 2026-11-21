@@ -459,7 +459,7 @@ mod tests {
             "INSERT INTO test_state_history(at,verb,test,state,reason,actor) VALUES (1,'disable','unit:loom a::b::t0aaaaa','disabled','flaky','a')",
             "PRAGMA user_version = 1",
         ] {
-            c.execute_batch(ddl).unwrap();
+            exec(&c, ddl, []).unwrap();
         }
         init(&c).unwrap();
         assert_eq!(scalar(&c, "PRAGMA user_version").unwrap(), 2);

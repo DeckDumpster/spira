@@ -13,7 +13,8 @@ const LIB: &str = "#[cfg(test)]\n#[macro_use]\nextern crate spira_test_id;\n#[cf
 const RENAMED_LIB: &str = "#[cfg(test)]\n#[macro_use]\nextern crate spira_test_id;\n#[cfg(test)]\nmod t {\n#[test_id(t0bbbbb)]\n#[test]\nfn keep() {}\n}\n#[cfg(test)]\nmod other {\n#[test_id(t0aaaaa)]\n#[test]\nfn dropped() {}\n}\n";
 
 fn test_id_dep() -> String {
-    format!("[dev-dependencies]\nspira-test-id = {{ path = {:?} }}\n", concat!(env!("CARGO_MANIFEST_DIR"), "/../spira-test-id"))
+    let macro_crate = std::env::current_dir().unwrap().join("../spira-test-id").canonicalize().unwrap();
+    format!("[dev-dependencies]\nspira-test-id = {{ path = {:?} }}\n", macro_crate.display().to_string())
 }
 
 fn tiny_crate() -> (testkit::TempDir, String) {
