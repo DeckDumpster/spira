@@ -2656,8 +2656,6 @@ impl Emit for StdEmit {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     fn crate_tree(root: &Path, a_bytes: &str) {
         for c in ["a", "b"] {
             fs::create_dir_all(root.join(c).join("src")).unwrap();
@@ -2668,7 +2666,9 @@ mod tests {
         fs::write(root.join("Cargo.lock"), "# lock\n").unwrap();
     }
 
-    fn release_world(name: &str, cargo_body: &str) -> (testkit::TempDir, Vec<(&'static str, Option<String>)>, PathBuf, PathBuf, PathBuf) {
+    type World = (testkit::TempDir, Vec<(&'static str, Option<String>)>, PathBuf, PathBuf, PathBuf);
+
+    fn release_world(name: &str, cargo_body: &str) -> World {
         let d = testkit::TempDir::new(name);
         let base = d.path().join("pool");
         let toml = spira_config::process::fixture_toml(d.path(), &[("SPIRA_DWARF_BUILD_BASE", base.to_str().unwrap())]);
@@ -2722,7 +2722,7 @@ mod tests {
         let wt = d.path().join("wt");
         fs::create_dir_all(&wt).unwrap();
         crate_tree(&wt, "pub fn f() {}\n");
-        let err = RealScripts { home }.build_release(&wt, "hand-1").err().expect("fails");
+        let err = RealScripts { home }.build_release(&wt, "hand-1").expect_err("fails");
         assert!(err.contains("cargo build --profile release failed (rc=3)"), "{err}");
     }
 
