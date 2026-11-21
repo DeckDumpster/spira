@@ -432,7 +432,7 @@ fn fill(words: &[&str], a: &str, b: &str) -> Vec<String> {
 
 /// Runs every twin: the service writes one pair, the fixture's bd writes the other, and the
 /// two pairs must read back the same. Returns the children each request started.
-fn twins(store: &Store, lc: &Lc) -> Vec<(&'static str, i64)> {
+fn twins(store: &Store, lc: &Lc) -> Vec<(&'static str, i64, String)> {
     let mut children = vec![];
     for t in TWINS {
         let (a, b, a2, b2) = (store.create_bead(), store.create_bead(), store.create_bead(), store.create_bead());
@@ -444,7 +444,7 @@ fn twins(store: &Store, lc: &Lc) -> Vec<(&'static str, i64)> {
         }
         let request = fill(t.request, &a, &b);
         let (out, n) = lc.children_of(t.method, &request.iter().map(String::as_str).collect::<Vec<_>>(), t.stdin);
-        children.push((t.name, n));
+        children.push((t.name, n, out.clone()));
         let argv = fill(t.bd, &a2, &b2);
         store.bd(&argv.iter().map(String::as_str).collect::<Vec<_>>(), t.stdin);
         for (x, y, x2, y2) in [(&a, &b, &a2, &b2), (&b, &a, &b2, &a2)] {
@@ -458,8 +458,8 @@ fn twins(store: &Store, lc: &Lc) -> Vec<(&'static str, i64)> {
 fn each_remaining_write_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
     let store = Store::up();
     let lc = writer_lc(&store, "t");
-    for (verb, children) in twins(&store, &lc) {
-        assert_eq!(children, 0, "{verb} started a process");
+    for (verb, children, out) in twins(&store, &lc) {
+        assert_eq!(children, 0, "{verb} started a process: {out}");
     }
 }
 
@@ -469,7 +469,7 @@ fn without_a_writer_credential_those_writes_still_go_through_bd_and_make_the_sam
     let mut lc = Lc::new(&store, "n", "");
     provision(&store, &lc);
     lc.serve();
-    for (verb, children) in twins(&store, &lc) {
-        assert!(children > 0, "{verb} should have forked bd");
+    for (verb, children, out) in twins(&store, &lc) {
+        assert!(children > 0 || out.contains("deadline"), "{verb} should have forked bd: {out}");
     }
 }

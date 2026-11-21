@@ -201,20 +201,19 @@ impl Mutation {
                 }
                 op if op.is_column() => {
                     if !std::mem::replace(&mut columns_done, true) {
-                        s.extend(columns_sql(db, &id, &self.ops, n, env));
+                        s.extend(columns_sql(db, &self.id, &self.ops, n, env));
                     }
                 }
-                Op::Close { reason, .. } => s.extend(close_sql(db, &id, reason, env)),
-                Op::DepAdd { on, kind } => s.extend(dep_add_sql(db, &id, &escape(on), kind, true, env)),
-                Op::DepRemove { on } => s.extend(dep_remove_sql(db, &id, &escape(on))),
+                Op::Close { reason, .. } => s.extend(close_sql(db, &self.id, reason, env)),
+                Op::DepAdd { on, kind } => s.extend(dep_add_sql(db, &self.id, on, kind, true, env)),
+                Op::DepRemove { on } => s.extend(dep_remove_sql(db, &self.id, on)),
                 Op::DepRelate { other } => {
-                    let other = escape(other);
-                    s.extend(dep_add_sql(db, &id, &other, "relates-to", true, env));
-                    s.extend(dep_add_sql(db, &other, &id, "relates-to", true, env));
+                    s.extend(dep_add_sql(db, &self.id, other, "relates-to", true, env));
+                    s.extend(dep_add_sql(db, other, &self.id, "relates-to", true, env));
                 }
                 Op::Supersede { with } => {
-                    s.extend(dep_add_sql(db, &id, &escape(with), "supersedes", false, env));
-                    s.extend(close_sql(db, &id, "", env));
+                    s.extend(dep_add_sql(db, &self.id, with, "supersedes", false, env));
+                    s.extend(close_sql(db, &self.id, "", env));
                 }
                 _ => {}
             }
@@ -244,7 +243,8 @@ fn before_json(db: &str, id: &str) -> String {
 }
 
 /// A status, assignee and description edit made by one `update`: one row change, one event.
-fn columns_sql(db: &str, id: &str, ops: &[Op], n: usize, env: &Env) -> Vec<String> {
+fn columns_sql(db: &str, bead: &str, ops: &[Op], n: usize, env: &Env) -> Vec<String> {
+    let id = &*escape(bead);
     let lit = |s: &str| format!("'{}'", escape(s));
     let find = |pick: fn(&Op) -> Option<&String>| ops.iter().find_map(pick);
     let status = find(|o| if let Op::Status(v) = o { Some(v) } else { None });
@@ -291,7 +291,7 @@ fn columns_sql(db: &str, id: &str, ops: &[Op], n: usize, env: &Env) -> Vec<Strin
         s.push(format!("DELETE FROM {db}.leases WHERE issue_id = '{id}' AND NOT ({now_status} = 'in_progress' AND {now_holder} <> '' AND @was{n} = 'in_progress' AND {now_holder} = @holder{n})"));
     }
     if status.is_some() {
-        s.extend(settle_blocked(db, &[id]));
+        s.extend(settle_blocked(db, &[bead]));
     }
     s
 }
@@ -300,57 +300,56 @@ fn touch_coordination(db: &str, parent: &str, env: &Env) -> Vec<String> {
     if !env.local_metadata {
         return Vec::new();
     }
-    ["dependencies", "wisp_dependencies"].iter().map(|tier| format!("REPLACE INTO {db}.local_metadata (`key`, value) VALUES ('{}', CAST({ROW_LOCK} AS CHAR))", ids::coordination_key(&unescape(parent), tier))).collect()
+    ["dependencies", "wisp_dependencies"].iter().map(|tier| format!("REPLACE INTO {db}.local_metadata (`key`, value) VALUES ('{}', CAST({ROW_LOCK} AS CHAR))", ids::coordination_key(parent, tier))).collect()
 }
 
-fn close_sql(db: &str, id: &str, reason: &str, env: &Env) -> Vec<String> {
-    let r = escape(reason);
+fn close_sql(db: &str, bead: &str, reason: &str, env: &Env) -> Vec<String> {
+    let (id, r) = (&*escape(bead), escape(reason));
     let open = format!(" WHERE EXISTS (SELECT 1 FROM {db}.issues WHERE id = '{id}' AND status <> 'closed')");
-    let mut s = touch_coordination(db, id, env);
+    let mut s = touch_coordination(db, bead, env);
     s.push(event_row(db, id, "closed", "''", &format!("'{r}'"), "NULL", &open));
     s.push(format!("UPDATE {db}.issues SET status = 'closed', closed_at = UTC_TIMESTAMP(), updated_at = UTC_TIMESTAMP(), close_reason = '{r}', closed_by_session = '', row_lock = {ROW_LOCK} WHERE id = '{id}' AND status <> 'closed'"));
     if env.leases {
         s.push(format!("DELETE FROM {db}.leases WHERE issue_id = '{id}'"));
     }
-    s.extend(settle_blocked(db, &[id]));
+    s.extend(settle_blocked(db, &[bead]));
     s
 }
 
 const TARGET: &str = "COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)";
 
-fn dep_add_sql(db: &str, id: &str, on: &str, kind: &str, emit: bool, env: &Env) -> Vec<String> {
-    let k = escape(kind);
+fn dep_add_sql(db: &str, from: &str, to: &str, kind: &str, emit: bool, env: &Env) -> Vec<String> {
+    let (id, on, k) = (&*escape(from), &*escape(to), escape(kind));
     let absent = format!(" WHERE NOT EXISTS (SELECT 1 FROM {db}.dependencies WHERE issue_id = '{id}' AND {TARGET} = '{on}')");
     let mut s = Vec::new();
     if emit {
         s.push(event_row(db, id, "dependency_added", "''", &format!("'Added dependency: {id} {k} {on}'"), "NULL", &absent));
     }
-    s.push(dependency_row(db, id, on, kind, &absent));
+    s.push(dependency_row(db, from, to, kind, &absent));
     if kind == "parent-child" {
-        s.extend(touch_coordination(db, on, env));
+        s.extend(touch_coordination(db, to, env));
     }
     if BLOCKING.contains(&kind) {
-        s.extend(settle_blocked(db, &[id, on]));
+        s.extend(settle_blocked(db, &[from, to]));
     }
     s
 }
 
-fn dependency_row(db: &str, id: &str, on: &str, kind: &str, guard: &str) -> String {
+fn dependency_row(db: &str, from: &str, to: &str, kind: &str, guard: &str) -> String {
     format!(
-        "INSERT INTO {db}.dependencies (id, issue_id, depends_on_issue_id, type, created_at, created_by, metadata, thread_id) SELECT '{}', '{id}', '{on}', '{}', UTC_TIMESTAMP(), '{ACTOR}', '{{}}', '' FROM DUAL{guard}",
-        ids::dependency_id(&unescape(id), &unescape(on)),
+        "INSERT INTO {db}.dependencies (id, issue_id, depends_on_issue_id, type, created_at, created_by, metadata, thread_id) SELECT '{}', '{}', '{}', '{}', UTC_TIMESTAMP(), '{ACTOR}', '{{}}', '' FROM DUAL{guard}",
+        ids::dependency_id(from, to),
+        escape(from),
+        escape(to),
         escape(kind)
     )
 }
 
-fn unescape(s: &str) -> String {
-    s.replace("\\'", "'").replace("\\\\", "\\")
-}
-
-fn dep_remove_sql(db: &str, id: &str, on: &str) -> Vec<String> {
+fn dep_remove_sql(db: &str, from: &str, to: &str) -> Vec<String> {
+    let (id, on) = (&*escape(from), &*escape(to));
     let present = format!(" WHERE EXISTS (SELECT 1 FROM {db}.dependencies WHERE issue_id = '{id}' AND {TARGET} = '{on}')");
     let mut s = vec![event_row(db, id, "dependency_removed", "''", &format!("'Removed dependency on {on}'"), "NULL", &present), format!("DELETE FROM {db}.dependencies WHERE issue_id = '{id}' AND {TARGET} = '{on}'")];
-    s.extend(settle_blocked(db, &[id, on]));
+    s.extend(settle_blocked(db, &[from, to]));
     s
 }
 
@@ -358,7 +357,7 @@ fn dep_remove_sql(db: &str, id: &str, on: &str) -> Vec<String> {
 /// parent-child descendants three levels down. A bead with a `waits-for` edge or a wisp target
 /// is left as it is; the port does not read those.
 fn settle_blocked(db: &str, seeds: &[&str]) -> Vec<String> {
-    let literals = seeds.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>();
+    let literals = seeds.iter().map(|s| format!("'{}'", escape(s))).collect::<Vec<_>>();
     let list = literals.join(", ");
     let named = literals.iter().map(|l| format!("SELECT {l}")).collect::<Vec<_>>().join(" UNION ");
     let level0 = format!("{named} UNION SELECT issue_id FROM {db}.dependencies WHERE depends_on_issue_id IN ({list})");
@@ -819,7 +818,7 @@ fn create(w: &Writer, c: &Create) -> Result<Option<String>, String> {
     let mut named: Vec<&str> = c.deps.iter().map(|(_, t)| t.as_str()).collect();
     named.extend(c.parent.as_deref());
     named.extend(c.id.as_deref());
-    let present = rows(w, &format!("SELECT id FROM {db}.issues WHERE id IN ({})", in_list(&named)))?;
+    let present = if named.is_empty() { Vec::new() } else { rows(w, &format!("SELECT id FROM {db}.issues WHERE id IN ({})", in_list(&named)))? };
     let exists = |id: &str| present.iter().any(|r| cell(r, "id") == id);
     if c.deps.iter().any(|(_, t)| !exists(t)) || c.parent.as_deref().is_some_and(|p| !exists(p)) {
         return Ok(None);
@@ -907,7 +906,7 @@ fn create_script(db: &str, env: &Env, c: &Create, id: &str, labels: &[String], c
     let hash = ids::content_hash(&ids::Content { title: &c.title, description: &c.description, status: &c.status, priority: c.priority, issue_type: &c.issue_type, assignee: &c.assignee, owner: "", created_by: ACTOR, external_ref: &c.external_ref });
     let mut s = vec!["BEGIN".to_string()];
     if let Some(p) = &c.parent {
-        s.extend(touch_coordination(db, &escape(p), env));
+        s.extend(touch_coordination(db, p, env));
     }
     s.push(format!(
         "INSERT INTO {db}.issues (id, content_hash, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, created_at, created_by, owner, updated_at, external_ref, spec_id, work_type, row_lock) VALUES ('{q}', '{hash}', {}, {}, '', '', '', {}, {}, {}, {}, UTC_TIMESTAMP(), '{ACTOR}', '', UTC_TIMESTAMP(), {}, '', '', {ROW_LOCK})",
@@ -936,11 +935,11 @@ fn create_script(db: &str, env: &Env, c: &Create, id: &str, labels: &[String], c
     let edges = c.parent.iter().map(|p| ("parent-child", p.as_str())).chain(c.deps.iter().map(|(k, t)| (k.as_str(), t.as_str())));
     let mut blocking = false;
     for (kind, target) in edges {
-        s.push(dependency_row(db, &q, &escape(target), kind, ""));
+        s.push(dependency_row(db, id, target, kind, ""));
         blocking |= BLOCKING.contains(&kind);
     }
     if blocking {
-        s.extend(settle_blocked(db, &[&q]));
+        s.extend(settle_blocked(db, &[id]));
     }
     s.push("COMMIT".into());
     s
