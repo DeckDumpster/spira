@@ -282,7 +282,7 @@ fn production_sized(recent: u64) -> Sized {
     }
     for n in 1..=ASK_HELD {
         let id = format!("sp-{n:05}");
-        let batch: Vec<Write> = (0..100).map(|k| put(format!("history/{id}/{:020}/r{k}", head + 1), serde_json::json!({}), head + 1)).collect();
+        let batch: Vec<Write> = (0..100usize).map(|k| { let event = ["Hold", "Claim", "Submit"][k % 3]; put(format!("history/{id}/0/import/{k}"), serde_json::json!({ "seq": k + 1, "audit": { "machine": "bead", "lc_key": id, "event": event, "applied": true, "at": k as i64, "evidence": { "Hold": { "kind": "Wait" } } } }), head + 1) }).collect();
         head = b.commit(head, &batch).unwrap();
     }
     let (mut last, mut delivered) = (std::collections::BTreeMap::new(), std::collections::BTreeMap::<String, Vec<i64>>::new());

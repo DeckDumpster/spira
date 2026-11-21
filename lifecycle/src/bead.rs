@@ -651,7 +651,7 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
             let mut new = row.clone();
             new.holds.insert(*kind);
             if *kind == HoldKind::Ask {
-                new.ask_since = ev.at;
+                new.ask_since = Some(ev.at.unwrap_or(0));
             }
             if *kind == HoldKind::Manual {
                 new.manual_hold = Some(ManualHold { at: ev.at, cause: *cause, detail: detail.clone() });
@@ -2729,6 +2729,8 @@ mod tests {
         assert_eq!(first.row.ask_since, Some(10));
         let second = apply(&first.row, &hold(&first.row, HoldKind::Ask, 20));
         assert_eq!(second.row.ask_since, Some(20));
+        let undated = apply(&row(BeadState::Ready), &ev(BeadState::Ready, 0, BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: None }));
+        assert_eq!(undated.row.ask_since, Some(0), "an Ask hold with no time is still ask-held with a raise, as its audit says");
         for kind in [HoldKind::Wait, HoldKind::Manual, HoldKind::Poison] {
             assert_eq!(apply(&second.row, &hold(&second.row, kind, 30)).row.ask_since, Some(20), "{kind:?}");
         }
