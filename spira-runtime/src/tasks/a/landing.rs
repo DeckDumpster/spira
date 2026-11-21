@@ -806,7 +806,6 @@ impl Handler for Landing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn the_refresh_loop_ask_reaches_the_concierge_and_passes_the_question_lint() {
@@ -815,7 +814,7 @@ mod tests {
         std::fs::create_dir_all(root.join("run")).unwrap();
         let env = mail::env::Env {
             mail_root: root.join("mail"),
-            kinds_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../spira/mail/kinds"),
+            kinds_dir: testkit::manifest_dir().join("../spira/mail/kinds"),
             index_file: root.join("index"),
             mute: false,
             loom_budget_ms: 1000,
