@@ -43,7 +43,7 @@ pub enum MainEnd {
 pub enum MainKind {
     Corpus,
     Verify,
-    /// The reds are already known from the certify pass: no main run, only the attribution jobs.
+    /// Attribution seeded from the certify pass's reds: jobs only, no main run.
     Seeded,
 }
 
