@@ -166,15 +166,15 @@ fn gate_check(w: &Writer, kind: &str) -> Result<Option<String>, String> {
                 if target.is_empty() || target.contains(':') {
                     return Ok(None);
                 }
-                let Some(status) = rows(w, &format!("SELECT status FROM {db}.issues WHERE id = '{}'", escape(&target)))?.first().map(|r| cell(r, "status")) else {
+                let Some(held) = rows(w, &format!("SELECT status, status = 'closed' AS closed FROM {db}.issues WHERE id = '{}'", escape(&target)))?.into_iter().next() else {
                     return Ok(None);
                 };
-                if status == "closed" {
+                if cell(&held, "closed") == "1" {
                     let reason = format!("bead {target} closed");
                     lines.push_str(&format!("✓ {id}: resolved - {reason}\n"));
                     closing.push((id, reason));
                 } else {
-                    lines.push_str(&format!("○ {id}: pending - bead {target} is {status}\n"));
+                    lines.push_str(&format!("○ {id}: pending - bead {target} is {}\n", cell(&held, "status")));
                 }
             }
             t if t.starts_with("gh:run") || t.starts_with("gh:pr") => return Ok(None),
@@ -228,6 +228,7 @@ pub(super) fn set_state(w: &Writer, bead: &str, dimension: &str, value: &str) ->
         let event_id = format!("{bead}.{n}");
         let mut script = create_script(db, &env, &event, &event_id, &[], Some(&(bead.to_string(), n)));
         script.pop();
+        script.push(format!("UPDATE {db}.issues SET closed_at = UTC_TIMESTAMP() WHERE id = '{}'", escape(&event_id)));
         if let Some(was) = &old {
             script.extend(label_remove_sql(db, bead, &format!("{prefix}{was}")));
         }

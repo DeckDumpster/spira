@@ -972,9 +972,6 @@ fn create_script(db: &str, env: &Env, c: &Create, id: &str, labels: &[String], c
         optional(&c.assignee),
         optional(&c.external_ref)
     ));
-    if c.status == "closed" {
-        s.push(format!("UPDATE {db}.issues SET closed_at = UTC_TIMESTAMP() WHERE id = '{q}'"));
-    }
     s.push(event_row(db, &q, "created", "''", "''", "NULL", ""));
     for l in labels {
         s.push(format!("INSERT IGNORE INTO {db}.labels (issue_id, label) VALUES ('{q}', {})", lit(l)));
