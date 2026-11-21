@@ -741,13 +741,14 @@ pub fn catch_up(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, Strin
     Ok((out, pointers))
 }
 
-/// The newest unlanded `law/` or `spira/` branch whose change against `base` stays within the
-/// statute book, so a later law commit cut on it fast-forwards.
+/// The newest unlanded `law/` or `spira/` branch cut on `base`'s current tip whose change stays
+/// within the statute book, so a later law commit cut on it fast-forwards.
 pub fn newest_book_only_tip(repo_path: &Path, base: &str) -> Option<String> {
     let refs = git_in(repo_path, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)", &format!("--no-merged={base}"), "refs/heads/law", "refs/heads/spira"]).ok()?;
     let held = base_book(repo_path, base);
     refs.lines().find(|r| {
-        git_in(repo_path, &["diff", "--name-only", &format!("{base}...{r}")]).is_ok_and(|names| !names.is_empty() && names.lines().all(|n| n.starts_with("law/") || n.starts_with("spira/statutes/")))
+        git_in(repo_path, &["merge-base", "--is-ancestor", base, r]).is_ok()
+            && git_in(repo_path, &["diff", "--name-only", &format!("{base}...{r}")]).is_ok_and(|names| !names.is_empty() && names.lines().all(|n| n.starts_with("law/") || n.starts_with("spira/statutes/")))
             && !(r.starts_with("refs/heads/law/") && in_book(repo_path, r, held.as_ref()))
     }).map(str::to_string)
 }
@@ -781,6 +782,7 @@ fn in_book(repo_path: &Path, r: &str, held: Option<&(Vec<Part>, Pointers)>) -> b
 pub enum LawBranch {
     Tip,
     CarriedBy(String),
+    ReplacedBy(String),
     InBook,
     Unreconciled,
 }
@@ -800,6 +802,8 @@ pub fn law_branches(repo_path: &Path, base: &str) -> Vec<(String, LawBranch)> {
                 LawBranch::Tip
             } else if let Some(t) = tip.as_deref().filter(|t| git_in(repo_path, &["merge-base", "--is-ancestor", r, t]).is_ok()) {
                 LawBranch::CarriedBy(t.strip_prefix("refs/heads/").unwrap_or(t).to_string())
+            } else if let Some(t) = tip.as_deref().filter(|t| in_book(repo_path, r, base_book(repo_path, t).as_ref())) {
+                LawBranch::ReplacedBy(t.strip_prefix("refs/heads/").unwrap_or(t).to_string())
             } else {
                 LawBranch::Unreconciled
             };
@@ -899,6 +903,11 @@ pub fn submit_law(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch:
     submit_law_on(repo_path, repo_name, wt_root, law_branch, verb, key, &mut held).map_err(|e| format!("{e}\nrule: the law/ commit is kept on branch {held}"))
 }
 
+/// Renames `law_branch` to `branch`; a refiled item's existing branch is replaced, not refused.
+pub fn name_law_branch(repo_path: &Path, law_branch: &str, branch: &str, refiled: bool) -> Result<(), String> {
+    git_in(repo_path, &["branch", if refiled { "-M" } else { "-m" }, law_branch, branch]).map(|_| ())
+}
+
 fn submit_law_on(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch: &str, verb: &str, key: &str, held: &mut String) -> Result<(String, String), String> {
     let tip = git_in(repo_path, &["rev-parse", law_branch])?;
     let title = format!("law: {verb} {key} — land its law/ commit");
@@ -926,7 +935,7 @@ fn submit_law_on(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch: 
     }
     let id = filed_id(&String::from_utf8_lossy(&filed.stdout))?;
     let branch = format!("spira/{id}");
-    git_in(repo_path, &["branch", "-m", law_branch, &branch])?;
+    name_law_branch(repo_path, law_branch, &branch, said.contains("reporting it as filed"))?;
     *held = branch.clone();
     let queue = spira_config::release_env::tool("queue").map_err(|e| format!("rule: {e}"))?;
     let submit = queue_submit_command(&queue, &branch, repo_name).stdin(Stdio::null()).output().map_err(|e| format!("rule: queue: {e}"))?;

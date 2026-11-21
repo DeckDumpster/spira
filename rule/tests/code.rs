@@ -763,3 +763,48 @@ fn a_statute_the_store_lost_with_no_record_leaves_and_the_later_sections_record_
     assert!(!testkit::git(p, &["ls-files", "law"]).contains("aeon")); // ffx-ok
     assert!(lint_finds(p).is_empty());
 }
+
+#[test]
+fn a_book_branch_the_base_has_moved_past_is_replaced_not_built_upon() {
+    use rule::code::LawBranch;
+    let _env = author_env();
+    let repo = law_repo();
+    let p = repo.path();
+    let wt_root = testkit::TempDir::new("rule-moved-wt");
+    let base_toc = parse_toc(TOC).unwrap();
+    let t4 = append(&base_toc, 1, "law-four").unwrap();
+    let a = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &t4, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
+    let a_tip = testkit::git(p, &["rev-parse", &a]);
+    let t6 = append(&base_toc, 1, "law-six").unwrap();
+    std::fs::write(p.join("law/toc.toml"), render_toc(&t6)).unwrap();
+    testkit::git(p, &["commit", "-q", "-am", "enact law-six"]);
+    let main_tip = testkit::git(p, &["rev-parse", "main"]);
+    let both = append(&t4, 1, "law-six").unwrap();
+    let new = rule::code::commit_law(p, Some("main"), wt_root.path(), "code", "book", &both, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four", "law-six"])).unwrap();
+    assert_eq!(testkit::git(p, &["rev-parse", &format!("{new}^")]), main_tip);
+    assert_ne!(testkit::git(p, &["rev-parse", &format!("{new}^")]), a_tip);
+    let merged = std::process::Command::new("git").arg("-C").arg(p).args(["merge-tree", "--write-tree", "main", &new]).output().unwrap();
+    assert!(merged.status.success(), "{}", String::from_utf8_lossy(&merged.stdout));
+    assert_eq!(rule::code::book_tip_ref(p, "main"), Some(rule::code::BookTip::Stranded(new.clone())));
+    let kinds: BTreeMap<String, LawBranch> = rule::code::law_branches(p, "main").into_iter().collect();
+    assert_eq!(kinds.get(&a), Some(&LawBranch::ReplacedBy(new)));
+}
+
+#[test]
+fn a_refiled_law_branch_replaces_the_beads_existing_branch_and_a_first_filing_takes_a_free_name() {
+    let _env = author_env();
+    let repo = law_repo();
+    let p = repo.path();
+    testkit::git(p, &["branch", "spira/sp-x"]);
+    std::fs::write(p.join("law/extra"), "x").unwrap();
+    testkit::git(p, &["checkout", "-q", "-b", "law/fresh"]);
+    testkit::git(p, &["add", "-A"]);
+    testkit::git(p, &["commit", "-q", "-m", "fresh"]);
+    let fresh = testkit::git(p, &["rev-parse", "law/fresh"]);
+    assert!(rule::code::name_law_branch(p, "law/fresh", "spira/sp-x", false).is_err());
+    rule::code::name_law_branch(p, "law/fresh", "spira/sp-x", true).unwrap();
+    assert_eq!(testkit::git(p, &["rev-parse", "spira/sp-x"]), fresh);
+    testkit::git(p, &["branch", "law/second"]);
+    rule::code::name_law_branch(p, "law/second", "spira/sp-y", false).unwrap();
+    assert_eq!(testkit::git(p, &["rev-parse", "spira/sp-y"]), fresh);
+}
