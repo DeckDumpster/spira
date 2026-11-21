@@ -1685,6 +1685,12 @@ fn a_row_the_machine_cannot_read_is_refused_with_the_machines_own_answer() {
 }
 
 #[test]
+fn settle_owed_reopen_of_a_row_the_machine_cannot_read_carries_the_machines_answer() {
+    let e = crate::reconcile_content::settle_owed_reopen(&mut Fake { down: true, ..Default::default() }, &mut FakeBd::default(), "sp-t").unwrap_err();
+    assert!(e.contains("cannot tell: down"), "{e}");
+}
+
+#[test]
 fn record_state_of_a_row_the_machine_cannot_read_carries_the_machines_answer() {
     let e = crate::reconcile_content::record_state(&mut Fake { down: true, ..Default::default() }, "sp-t").unwrap_err();
     assert!(e.contains("cannot tell: down"), "{e}");
