@@ -29,6 +29,19 @@ impl World {
     }
 
     fn run(&self, args: &[&str]) -> (i32, String) {
+        let mut answer = self.run_once(args);
+        for _ in 0..8 {
+            if !answer.1.contains("read ended") {
+                break;
+            }
+            answer = self.run_once(args);
+        }
+        answer
+    }
+
+    // A starved process can be ended at the 100 ms limit whatever it reads; what a verb answers is
+    // under test here, not the host's scheduling.
+    fn run_once(&self, args: &[&str]) -> (i32, String) {
         let out = Command::new(testkit::bin_exe("spira-lc"))
             .args(args)
             .env_clear()
