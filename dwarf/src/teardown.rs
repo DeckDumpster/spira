@@ -271,7 +271,7 @@ impl Run<'_> {
         let f = self.rune.name.clone();
         self.stop_heartbeat();
         let lc = self.lc_bead(&id);
-        self.s.submitted_at = lc.as_ref().filter(|r| r.state == "SUBMITTED").and_then(|r| r.since);
+        self.s.submitted_at = lc.as_ref().filter(|r| r.state == "SUBMITTED").and_then(|r| r.since).filter(|&at| at >= self.s.claimed_at.unwrap_or(0));
         if lc.as_ref().is_some_and(|r| r.working()) {
             self.phase("teardown");
         }
