@@ -81,8 +81,12 @@ pub fn expected(cmd: &str) -> Vec<String> {
         else {
             continue;
         };
-        let element_end = cmd[from..].find("&&").map_or(cmd.len(), |i| from + i);
-        let runs_a_tool = LINT_WORDS.iter().chain(GUARD_WORDS).any(|t| cmd[from..element_end].contains(t));
+        let element_end = cmd[from..].find(['&', ';', '|', '\n', '}']).map_or(cmd.len(), |i| from + i);
+        let runs_a_tool = LINT_WORDS.iter().chain(GUARD_WORDS).any(|t| {
+            cmd[from..element_end].match_indices(t).any(|(i, _)| {
+                !cmd[from + i + t.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+            })
+        });
         if stem != SELECTOR && !runs_a_tool {
             words.push((at, vec![stem.to_string()]));
         }
@@ -207,6 +211,14 @@ mod tests {
             expected(r#"bash spira/lint-staged.sh "$SPIRA_LINT_BIN" --only plan-matrix"#),
             ["spira-lint", "plan-matrix"]
         );
+    }
+
+    #[test]
+    fn a_fence_script_is_not_a_runner_unless_the_tool_word_is_its_own_argument() {
+        assert_eq!(expected(r#"bash spira/x.sh "$SPIRA_GUARD_BIN""#), ["lifecycle-guard"]);
+        assert_eq!(expected(r#"bash spira/a.sh; "$SPIRA_LINT_BIN" --only plan-matrix"#)[0], "a");
+        assert_eq!(expected(r#"bash spira/a.sh || "$SPIRA_LINT_BIN""#)[0], "a");
+        assert_eq!(expected(r#"bash spira/a.sh "$SPIRA_LINT_BINX""#), ["a"]);
     }
 
     #[test]
