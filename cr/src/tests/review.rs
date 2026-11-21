@@ -1058,6 +1058,9 @@ fn adopt_refusals_exit_two_and_write_nothing() {
     let o = w.adopt(&stdin, &sha, &["--review", "001"]);
     assert_eq!(o.code, 2, "{}", o.stderr);
     assert_eq!((w.review_json(1), w.gh.ledger_text()), (closed_record, before_ledger));
+    r.state = State::Staged;
+    record::save(w.run.path(), &r).unwrap();
+    assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
 }
 
 #[test]
@@ -1082,4 +1085,5 @@ fn adopt_rejects_review_with_unit_and_an_incomplete_form_before_anything_runs() 
         assert_eq!(o.code, 2, "{args:?}: {}", o.stderr);
     }
     assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
+    assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
 }
