@@ -187,10 +187,12 @@ pub struct Holder {
     pub who: String,
     /// Units of the pool this job takes.
     pub weight: u64,
+    /// Seconds the job may run once admitted.
+    pub bound_secs: Option<u64>,
 }
 
 /// One lease line: `pid=<p> start=<s> who=<w> since=<epoch> waited=<secs> last=<epoch>
-/// weight=<units>`.
+/// weight=<units> [until=<epoch>]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lease {
     pub slot: u64,
@@ -201,6 +203,8 @@ pub struct Lease {
     pub waited: u64,
     pub last: u64,
     pub weight: u64,
+    /// Epoch the holder's cap ends.
+    pub until: Option<u64>,
 }
 
 fn clean_who(w: &str) -> String {
@@ -214,8 +218,9 @@ fn clean_who(w: &str) -> String {
 
 impl Lease {
     pub fn render(&self) -> String {
+        let until = self.until.map_or(String::new(), |u| format!(" until={u}"));
         format!(
-            "pid={} start={} who={} since={} waited={} last={} weight={}\n",
+            "pid={} start={} who={} since={} waited={} last={} weight={}{until}\n",
             self.pid,
             self.start,
             clean_who(&self.who),
@@ -227,7 +232,7 @@ impl Lease {
     }
 
     pub fn parse(slot: u64, text: &str) -> Option<Lease> {
-        let mut l = Lease { slot, pid: 0, start: 0, who: String::new(), since: 0, waited: 0, last: 0, weight: 1 };
+        let mut l = Lease { slot, pid: 0, start: 0, who: String::new(), since: 0, waited: 0, last: 0, weight: 1, until: None };
         for f in text.split_whitespace() {
             let (k, v) = f.split_once('=')?;
             match k {
@@ -238,6 +243,7 @@ impl Lease {
                 "waited" => l.waited = v.parse().unwrap_or(0),
                 "last" => l.last = v.parse().unwrap_or(0),
                 "weight" => l.weight = v.parse::<u64>().unwrap_or(1).max(1),
+                "until" => l.until = v.parse().ok(),
                 _ => {}
             }
         }
@@ -276,8 +282,8 @@ impl Procs for RealProcs {
 }
 
 /// A holder for a live process: its pid and starttime.
-pub fn holder_for(pid: u32, who: &str, weight: u64, procs: &dyn Procs) -> Option<Holder> {
-    Some(Holder { pid, start: procs.start_of(pid)?, who: who.to_string(), weight: weight.max(1) })
+pub fn holder_for(pid: u32, who: &str, weight: u64, bound_secs: Option<u64>, procs: &dyn Procs) -> Option<Holder> {
+    Some(Holder { pid, start: procs.start_of(pid)?, who: who.to_string(), weight: weight.max(1), bound_secs })
 }
 
 fn alive(pid: u32, start: u64, procs: &dyn Procs) -> bool {
@@ -487,7 +493,7 @@ pub fn try_take_staggered(
     if first && fits && !staggered(&dir, used > 0, now, stagger) {
         let _ = write_atomic(&dir.join("last-start"), &format!("{now}\n"));
         let n = (1..).find(|n| !live.iter().any(|l| l.slot == *n)).unwrap_or(1);
-        let l = Lease { slot: n, pid: me.pid, start: me.start, who: me.who.clone(), since: now, waited, last: now, weight: me.weight.max(1) };
+        let l = Lease { slot: n, pid: me.pid, start: me.start, who: me.who.clone(), since: now, waited, last: now, weight: me.weight.max(1), until: me.bound_secs.map(|b| now + b) };
         write_atomic(&dir.join(format!("slot.{n}")), &l.render())?;
         let _ = fs::remove_file(dir.join(format!("wait.{}", me.pid)));
         return Ok((Take::Admitted { slot: n, fresh: true }, ended));
@@ -533,7 +539,12 @@ pub fn wait_line(pool: Pool, size: u64, holders: &[Lease], now: u64) -> String {
         .iter()
         .map(|l| {
             let w = if l.weight > 1 { format!(" ×{}", l.weight) } else { String::new() };
-            format!("{}{w} (pid {}, {}s)", l.who, l.pid, now.saturating_sub(l.since))
+            let cap = match l.until {
+                Some(u) if u > now => format!(", may run {}s more", u - now),
+                Some(u) => format!(", past its cap by {}s", now - u),
+                None => String::new(),
+            };
+            format!("{}{w} (pid {}, {}s{cap})", l.who, l.pid, now.saturating_sub(l.since))
         })
         .collect();
     format!(
@@ -649,6 +660,8 @@ pub struct Request<'a> {
     pub inherit: Option<&'a str>,
     /// Units of the pool the job takes.
     pub weight: u64,
+    /// Seconds the job may run once admitted, when it is capped.
+    pub bound_secs: Option<u64>,
 }
 
 /// What [`acquire`] reads and waits through: the pool's size (re-read every pass), the
@@ -674,7 +687,7 @@ pub fn acquire_unless(q: &Request, s: &Seams, say: &mut dyn FnMut(&str), stopped
     if let Some(t) = inherit.map(str::trim).filter(|t| !t.is_empty()) {
         return Some(Guard::inherited(pool, t));
     }
-    let Some(me) = holder_for(holder_pid, who, q.weight, procs) else {
+    let Some(me) = holder_for(holder_pid, who, q.weight, q.bound_secs, procs) else {
         say(&format!("admission: cannot read process {holder_pid} — running without a {} slot", pool.name()));
         return Some(Guard::inherited(pool, "none"));
     };
@@ -855,6 +868,7 @@ pub fn gate_occupancy(run: &Path, size: u64) -> Occupancy {
             waited: 0,
             last: 0,
             weight: 1,
+            until: None,
         }));
     }
     Occupancy { pool: Pool::Gate, size, holders, waiting: 0, waiters: Vec::new() }
@@ -876,7 +890,7 @@ fn highest_gate_slot(dir: &Path) -> u64 {
 
 /// The gate's holder sidecar line for slot `n`.
 pub fn gate_holder_line(pid: u32, start: u64, who: &str, since: u64) -> String {
-    Lease { slot: 0, pid, start, who: who.to_string(), since, waited: 0, last: since, weight: 1 }.render()
+    Lease { slot: 0, pid, start, who: who.to_string(), since, waited: 0, last: since, weight: 1, until: None }.render()
 }
 
 /// A uniform jitter in `0..=max` seconds from `seed` (the dwarf's pid and clock), so a batch

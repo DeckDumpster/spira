@@ -22,7 +22,7 @@ impl DeadlineWaiting {
 
 /// The run pool's request for the process `holder_pid`.
 pub fn request<'a>(run: &'a Path, holder_pid: u32, who: &'a str) -> Request<'a> {
-    Request { run, pool: Pool::Run, holder_pid, who, inherit: None, weight: 1 }
+    Request { run, pool: Pool::Run, holder_pid, who, inherit: None, weight: 1, bound_secs: crate::cap::remaining() }
 }
 
 /// Blocks until a slot is free, saying the wait on `say`, or until `out_of_time`.
@@ -39,6 +39,18 @@ mod tests {
     use spira_config::admission::Procs;
     use std::time::Duration;
     use std::cell::{Cell, RefCell};
+
+    #[test]
+    fn the_run_slot_request_carries_the_cap_armed_on_this_thread() {
+        let run = Path::new("run");
+        assert_eq!(request(run, 1, "x").bound_secs, None);
+        let armed = crate::cap::arm(crate::cap::Cap { secs: 600, source: "test" }, None);
+        assert!(matches!(request(run, 1, "x").bound_secs, Some(s) if (599..=600).contains(&s)));
+        let held = crate::cap::hold();
+        assert!(matches!(request(run, 1, "x").bound_secs, Some(s) if (599..=600).contains(&s)));
+        drop(held);
+        armed.finish();
+    }
 
     struct Procs1;
     impl Procs for Procs1 {
