@@ -320,6 +320,19 @@ pub fn test_sites(src: &[u8]) -> Vec<TestSite> {
     sites
 }
 
+/// Every `#[test_id(<id>)]` in code whose argument is a literal id, as (1-based line, id): a
+/// test site's own and a macro invocation's argument alike. A `$` fragment is no literal.
+pub fn literal_test_ids(src: &[u8]) -> Vec<(usize, String)> {
+    static LITERAL: OnceLock<Regex> = OnceLock::new();
+    let literal = re(&LITERAL, r"#\s*\[\s*(?:spira_test_id\s*::\s*)?test_id\s*\(\s*(t[0-9a-z]{6})\s*\)\s*\]");
+    let cl = rust::classify(src);
+    let code = cl.code_only();
+    literal
+        .captures_iter(&code)
+        .filter_map(|c| Some((cl.line_of(c.get(0)?.start()), String::from_utf8_lossy(&c[1]).into_owned())))
+        .collect()
+}
+
 #[cfg(test)]
 mod test_sites_tests {
     use super::test_sites;

@@ -48,6 +48,7 @@ pub const LINT_RULE_FENCES: &[&str] = &[
     "tier-budget-allowlist",
     "tier-budget-area-allowlist",
     "tier-budget-areas",
+    "test-id-row-orphan",
 ];
 
 /// The lifecycle analyser's word in a gate string (sp-ts2qr: `bin SPIRA_GUARD_BIN
