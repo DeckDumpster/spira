@@ -874,3 +874,14 @@ fn a_review_closed_unpublished_records_no_attention() {
         (Some(ClosedAs::Unpublished), None)
     );
 }
+
+#[test]
+fn comments_recorded_at_close_weigh_the_next_pick_in_their_area() {
+    let mut w = world();
+    let comments = format!("[{}]", comment(1, false, Some("demo/src/store.rs")));
+    close_with(&mut w, &comments, "", true);
+    let o = w.cr(&["pick", "--aim", "demo/src/net.rs", "--json"]);
+    assert_eq!(o.code, 0, "{} {}", o.stdout, o.stderr);
+    let v: serde_json::Value = serde_json::from_str(&o.stdout).unwrap();
+    assert!(v["weight"]["attention_share"].as_f64().unwrap() > 0.0, "{v}");
+}
