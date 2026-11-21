@@ -138,9 +138,6 @@ pub fn operator_refusal(kind: &str, default: &str, class: &str, body: &str, requ
     if kind != "question" && kind != "decision" {
         return Some(format!("kind '{kind}' is not a decision ask; a write-up the operator asked for goes as --kind report --requested-by \"<his words>\""));
     }
-    if default.trim().is_empty() {
-        return Some("no --default carried".to_string());
-    }
     class_refusal(class, default, body)
 }
 
@@ -229,6 +226,14 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
     let mut rerouted = false;
     if mailbox == "operator" && !args.digest && env.operator_considered.is_none() {
         if let Some(why) = operator_refusal(args.kind, args.default, args.class, &body, args.requested_by) {
+            if matches!(args.kind, "question" | "decision") {
+                if env.lint_considered.is_none() {
+                    let from = args.from.map(str::to_string).or_else(|| env.mail_from.clone()).unwrap_or_default();
+                    let input = LintInput { from: &from, subject: args.subject, kind: args.kind, default: args.default, urgent: args.urgent, body: &sent_body, digest: args.digest };
+                    lint::lint_check(&input, &env.kinds_dir, env.id_prefix_for_regex())?;
+                }
+                return Err(format!("refusing an ask for the operator — {why}"));
+            }
             eprintln!(
                 "mail: routed to the concierge, not the operator — {why}. The operator mailbox admits only question asks with a class, a default and the sections above; everything else is the concierge's judgement, and carries no ask label."
             );
@@ -508,7 +513,9 @@ pub fn list(env: &Env, mailbox: &str, unread_only: bool) -> Result<String, Strin
             let from = non_empty_or_dash(message::header_line_sed(&text, "From"));
             let subject = non_empty_or_dash(message::header_line_sed(&text, "Subject"));
             let date = non_empty_or_dash(message::header_line_sed(&text, "Date"));
-            lines.push(format!("{date}  [{sub}]  From: {from}  Subject: {subject}"));
+            let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let id = if sub == "cur" { name.split(':').next().unwrap_or(&name).to_string() } else { name };
+            lines.push(format!("{id}  {date}  [{sub}]  From: {from}  Subject: {subject}"));
         }
     }
     Ok(lines.join("\n"))
@@ -1027,9 +1034,23 @@ mod probe_tests {
     }
 
     #[test]
-    fn unclassed_or_non_question_operator_mail_is_rerouted_to_the_concierge() {
+    fn question_asks_that_fail_the_shape_are_refused_with_nothing_delivered() {
         let basis = "## Class basis\nit is policy\n";
-        let cases = [("fyi", "d", "policy", basis), ("alert", "d", "policy", basis), ("question", "d", "", basis), ("question", "", "policy", basis), ("question", "d", "policy", "no basis")];
+        let cases = [("question", "d", "", basis), ("question", "", "policy", basis), ("question", "d", "policy", "no basis")];
+        for (n, (kind, default, class, body)) in cases.iter().enumerate() {
+            let t = testkit::TempDir::new(&format!("mail-refuse-{n}"));
+            let a = SendArgs { kind, default, class, ..args("Something happened", false) };
+            let err = send(&FakeBd::new(vec![]), &env(t.path()), &a, (*body).into()).unwrap_err();
+            assert!(err.contains("## Class basis"), "{err}");
+            assert_eq!(root_mailbox_entries(t.path(), "operator"), 0, "{kind}/{default}/{class}");
+            assert_eq!(root_mailbox_entries(t.path(), "concierge"), 0, "{kind}/{default}/{class}");
+        }
+    }
+
+    #[test]
+    fn non_ask_operator_mail_is_rerouted_to_the_concierge() {
+        let basis = "## Class basis\nit is policy\n";
+        let cases = [("fyi", "d", "policy", basis), ("alert", "d", "policy", basis)];
         for (n, (kind, default, class, body)) in cases.iter().enumerate() {
             let t = testkit::TempDir::new(&format!("mail-reroute-{n}"));
             let a = SendArgs { kind, default, class, ..args("Something happened", false) };
@@ -1053,9 +1074,10 @@ mod probe_tests {
             assert_eq!(root_mailbox_entries(t.path(), "operator"), 0);
             assert_eq!(root_mailbox_entries(t.path(), "concierge"), 0);
         }
-        send(&FakeBd::new(vec![]), &e, &a, "## Question\nx?\n\n## Default\ny\n".into()).unwrap();
+        let msg = send(&FakeBd::new(vec![]), &e, &a, "## Question\nx?\n\n## Default\ny\n".into()).unwrap_err();
+        assert!(msg.contains("## Class basis") && !msg.contains("section \"Question\" is empty"), "{msg}");
         assert_eq!(root_mailbox_entries(t.path(), "operator"), 0);
-        assert_eq!(root_mailbox_entries(t.path(), "concierge"), 1);
+        assert_eq!(root_mailbox_entries(t.path(), "concierge"), 0);
     }
 
     const THREE_PARAS: &str = "first paragraph\n\nsecond paragraph\n\nthird paragraph";
@@ -1119,16 +1141,17 @@ mod probe_tests {
         let t = testkit::TempDir::new("mail-ask-ten");
         let mut e = ask_env(t.path());
         e.repeat_considered = None;
-        std::fs::create_dir_all(t.path().join("mail/concierge/new")).unwrap();
-        let ask = SendArgs { bead: "sp-w1", class: "", ..ask_args() };
+        std::fs::create_dir_all(t.path().join("mail/operator/new")).unwrap();
+        let ask = SendArgs { bead: "sp-w1", ..ask_args() };
         let mut ok = 0;
         for _ in 0..10 {
-            if send(&FakeBd::new(vec![]), &e, &ask, "## Question\nq\n".into()).is_ok() {
+            let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+            if send(&bd, &e, &ask, ASK_BODY.into()).is_ok() {
                 ok += 1;
             }
         }
         assert_eq!(ok, 1);
-        assert_eq!(root_mailbox_entries(t.path(), "concierge"), 1);
+        assert_eq!(root_mailbox_entries(t.path(), "operator"), 1);
     }
 
     #[test]
@@ -1139,11 +1162,11 @@ mod probe_tests {
         assert_eq!(mailbox_entries(t.path()), 1);
     }
 
-    fn send_ask(root: &Path, bd: &FakeBd, default: &str, class: &str, body: &str) -> SendOutcome {
+    fn send_ask(root: &Path, bd: &FakeBd, default: &str, class: &str, body: &str, kind: &str) -> SendOutcome {
         for d in ["mail/operator/new", "mail/concierge/new", "run"] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
-        let args = SendArgs { mailbox: "operator", from: None, subject: "Mute it?", kind: "question", default, class, bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
+        let args = SendArgs { mailbox: "operator", from: None, subject: "Mute it?", kind, default, class, bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
         let mut e = env(root);
         e.db = "db".into();
         send(bd, &e, &args, body.to_string()).unwrap()
@@ -1171,7 +1194,7 @@ mod probe_tests {
     fn a_machine_alarm_with_no_class_carries_no_ask_label_and_reaches_the_concierge() {
         let t = testkit::TempDir::new("mail-ask-alarm");
         let bd = FakeBd::new(vec![]);
-        let out = send_ask(t.path(), &bd, "mute it", "", "## Question\nrecurred 5 times\n");
+        let out = send_ask(t.path(), &bd, "mute it", "", "## Question\nrecurred 5 times\n", "alert");
         assert!(bd.calls().is_empty(), "no tracking bead, so no ask label: {:?}", bd.calls());
         assert!(out.delivered_path.to_string_lossy().contains("/concierge/"), "{:?}", out.delivered_path);
     }
@@ -1180,7 +1203,7 @@ mod probe_tests {
     fn a_proper_decision_ask_still_carries_the_ask_label() {
         let t = testkit::TempDir::new("mail-ask-proper");
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
-        let out = send_ask(t.path(), &bd, "grant it", "permissions", "## Question\nq\n\n## Class basis\nneeds a credential\n");
+        let out = send_ask(t.path(), &bd, "grant it", "permissions", "## Question\nq\n\n## Class basis\nneeds a credential\n", "question");
         let calls = bd.calls();
         assert!(calls[1].0.iter().any(|a| a.starts_with("needs-x")), "{calls:?}");
         assert!(out.delivered_path.to_string_lossy().contains("/operator/"), "{:?}", out.delivered_path);
