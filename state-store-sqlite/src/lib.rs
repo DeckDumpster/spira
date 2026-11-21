@@ -328,11 +328,9 @@ impl Checkpointer {
                 .map(|(p, forced)| {
                     counts.record(&p, forced);
                     owed = p.busy;
-                    if !p.busy {
-                        if passive_done == Some(false) {
-                            let mut st = lock(&self.state);
-                            st.pending = st.pending.saturating_sub(seen);
-                        }
+                    if !p.busy && passive_done == Some(false) {
+                        let mut st = lock(&self.state);
+                        st.pending = st.pending.saturating_sub(seen);
                     }
                     !p.busy
                 });
