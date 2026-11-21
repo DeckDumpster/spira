@@ -10059,8 +10059,8 @@ fn resubmit_runs_only_the_still_active_tests_when_some_named_tests_are_disabled(
     assert_eq!(resubmit_unit_red(&t), 0, "{}", t.err());
     let runs: Vec<String> = t.scripts.calls.borrow().iter().filter(|c| c.starts_with("suite_run")).cloned().collect();
     assert_eq!(runs.len(), 1, "{runs:?}");
-    assert!(runs[0].starts_with(&format!("suite_run unit-tests {T_FIX} spira first=true tests=other_test deny=")), "{runs:?}");
-    assert!(t.out().contains(&format!("running unit-tests at {T_FIX} via testenv --tests other_test")), "{}", t.out());
+    assert!(runs[0].starts_with(&format!("suite_run unit-tests {T_FIX} spira first=true tests=::t0other deny=")), "{runs:?}");
+    assert!(t.out().contains(&format!("running unit-tests at {T_FIX} via testenv --tests ::t0other")), "{}", t.out());
 }
 
 #[test_id(tn6femf)]

@@ -562,7 +562,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
     #[test_id(tgiyllr)]
     #[test]
     fn a_suite_the_deny_list_disables_is_preempted_and_the_others_still_run() {
-        let list = "disabled\tsuite:test-a.sh\tsp-1\t-\nquarantined\tunit:x y\tsp-2\t-\n";
+        let list = "disabled\tsuite:test-a.sh\tsp-1\t-\nquarantined\ttest:t0xxxxx\tsp-2\t-\n";
         let (last, _, slept, lines) = run_with_deny("test", "test-a.sh,test-b.sh", Some(list), None);
         assert!(lines.iter().any(|l| l.contains("test-a.sh") && l.to_lowercase().contains("disabled")), "{lines:?}");
         assert!(!lines.iter().any(|l| l.contains("test-b.sh") && l.to_lowercase().contains("disabled")), "{lines:?}");

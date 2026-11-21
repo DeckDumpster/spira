@@ -8,8 +8,16 @@ fn function(name: &str) -> String {
     s[f..f + s[f..].find("\n}\n").unwrap() + 3].to_string()
 }
 
+const LIB: &str = "#[cfg(test)]\n#[macro_use]\nextern crate spira_test_id;\n#[cfg(test)]\nmod t {\n#[test_id(t0bbbbb)]\n#[test]\nfn keep() {}\n#[test_id(t0aaaaa)]\n#[test]\nfn drop() {}\n}\n";
+
+const RENAMED_LIB: &str = "#[cfg(test)]\n#[macro_use]\nextern crate spira_test_id;\n#[cfg(test)]\nmod t {\n#[test_id(t0bbbbb)]\n#[test]\nfn keep() {}\n}\n#[cfg(test)]\nmod other {\n#[test_id(t0aaaaa)]\n#[test]\nfn dropped() {}\n}\n";
+
+fn test_id_dep() -> String {
+    format!("[dev-dependencies]\nspira-test-id = {{ path = {:?} }}\n", concat!(env!("CARGO_MANIFEST_DIR"), "/../spira-test-id"))
+}
+
 fn tiny_crate() -> (testkit::TempDir, String) {
-    tiny_crate_with("#[cfg(test)]\nmod t {\n#[test] fn keep() {}\n#[test] fn drop() {}\n}\n")
+    tiny_crate_with(LIB)
 }
 
 fn tiny_crate_with(lib: &str) -> (testkit::TempDir, String) {
@@ -20,7 +28,7 @@ fn tiny_crate_with(lib: &str) -> (testkit::TempDir, String) {
     let tmp = testkit::TempDir::new("deny-list-real");
     let dir = tmp.path().to_path_buf();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[features]\nintegration = []\n[profile.unittest]\ninherits = \"dev\"\n").unwrap();
+    std::fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[features]\nintegration = []\n[profile.unittest]\ninherits = \"dev\"\n{}", test_id_dep())).unwrap();
     std::fs::write(dir.join("src/lib.rs"), lib).unwrap();
     std::fs::write(dir.join("rust-toolchain.toml"), include_str!("../../rust-toolchain.toml")).unwrap();
     (tmp, cargo_home)
@@ -72,9 +80,9 @@ fn run_in(tmp: &testkit::TempDir, cargo_home: &str, list: &str) -> (Option<i32>,
 #[test_id(tr9w5nw)]
 #[test]
 fn a_denied_unit_test_is_absent_from_the_nextest_run_and_the_others_pass() {
-    let log = run_tiny("disabled\tunit:tiny t::drop\tsp-x\t-\n");
+    let log = run_tiny("disabled\ttest:t0aaaaa\tsp-x\t-\n");
     assert!(log.contains("PASS") && log.contains("t::keep"), "{log}");
-    assert!(log.contains("SKIPPED (registry disabled) tiny t::drop"), "{log}");
+    assert!(log.contains("SKIPPED (registry disabled) test:t0aaaaa"), "{log}");
     assert!(!names_in_pass_or_fail(&log, "t::drop"), "{log}");
     assert_eq!(unit_stream_reds(&log), "", "a SKIP line is no red: {log}");
 }
@@ -82,8 +90,8 @@ fn a_denied_unit_test_is_absent_from_the_nextest_run_and_the_others_pass() {
 #[test_id(tqrnsiv)]
 #[test]
 fn a_deny_row_naming_no_test_says_it_matched_none() {
-    let log = run_tiny("disabled\tunit:tiny t::gone\tsp-x\t-\n");
-    assert!(log.contains("registry row tiny t::gone matched no test in the run"), "{log}");
+    let log = run_tiny("disabled\ttest:t0zzzzz\tsp-x\t-\n");
+    assert!(log.contains("registry row test:t0zzzzz matched no test in the run"), "{log}");
     assert!(!log.contains("SKIPPED"), "{log}");
 }
 
@@ -124,6 +132,10 @@ fn resolve(path: &str, at: i64) -> String {
 /// engine writes for the same list, run in the tiny crate.
 fn gate_unit_run(list: &str) -> String {
     let (tmp, cargo_home) = tiny_crate();
+    gate_unit_run_in(&tmp, &cargo_home, list)
+}
+
+fn gate_unit_run_in(tmp: &testkit::TempDir, cargo_home: &str, list: &str) -> String {
     let dir = tmp.path().to_path_buf();
     let deny = spira_config::unit_tier::DenyList::parse(list).unwrap();
     let cmds = gate::compose::unit_test_commands(&["tiny".to_string()], gate::compose::Targets { lib: true, bin: false, test: false }, &deny);
@@ -131,7 +143,7 @@ fn gate_unit_run(list: &str) -> String {
     std::fs::create_dir_all(dir.join("target")).unwrap();
     std::fs::write(dir.join(gate::compose::NEXTEST_CONFIG), spira_config::unit_tier::nextest_config(10, 1, &deny)).unwrap();
     let script = format!("export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{unit}\n");
-    bash_in(&dir, &cargo_home, &script, "")
+    bash_in(&dir, cargo_home, &script, "")
 }
 
 #[test_id(t9l2a8v)]
@@ -139,16 +151,16 @@ fn gate_unit_run(list: &str) -> String {
 fn a_disabled_row_excludes_exactly_that_test_from_a_gate_run_and_a_round_run() {
     let reg = testkit::TempDir::new("deny-list-registry");
     let path = reg.path().join("registry.sqlite").display().to_string();
-    let o = registry(&path, &["disable", "--test", "unit:tiny t::drop", "--bead", "sp-x", "--reason", "r", "--actor", "a"], 1000);
+    let o = registry(&path, &["disable", "--test", "test:t0aaaaa", "--bead", "sp-x", "--reason", "r", "--actor", "a"], 1000);
     assert_eq!(o.code, 0, "{}", o.stderr);
     let list = resolve(&path, 1100);
-    assert!(list.contains("disabled\tunit:tiny t::drop"), "{list}");
+    assert!(list.contains("disabled\ttest:t0aaaaa"), "{list}");
     for (who, log) in [("gate", gate_unit_run(&list)), ("round", run_tiny(&list))] {
         assert!(log.contains("PASS") && log.contains("t::keep"), "{who}: {log}");
         assert!(!names_in_pass_or_fail(&log, "t::drop"), "{who}: the disabled test does not run: {log}");
     }
 
-    let o = registry(&path, &["activate", "--test", "unit:tiny t::drop", "--reason", "fixed", "--actor", "a"], 1200);
+    let o = registry(&path, &["activate", "--test", "test:t0aaaaa", "--reason", "fixed", "--actor", "a"], 1200);
     assert_eq!(o.code, 0, "{}", o.stderr);
     let list = resolve(&path, 1700);
     for (who, log) in [("gate", gate_unit_run(&list)), ("round", run_tiny(&list))] {
@@ -166,7 +178,7 @@ fn the_digest_the_registry_prints_is_the_one_the_gate_and_the_round_record() {
 #[test_id(td7bmaa)]
 #[test]
 fn a_test_red_once_on_the_round_tree_is_disabled_through_the_rounds_own_path_and_the_next_pass_does_not_run_it() {
-    let flaky = "#[cfg(test)]\nmod t {\n#[test] fn keep() {}\n#[test] fn drop() {\nlet m = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"drop.mark\");\nif !m.exists() { std::fs::write(&m, \"\").unwrap(); panic!(\"flaked\"); }\n}\n}\n";
+    let flaky = "#[cfg(test)]\n#[macro_use]\nextern crate spira_test_id;\n#[cfg(test)]\nmod t {\n#[test_id(t0bbbbb)]\n#[test] fn keep() {}\n#[test_id(t0aaaaa)]\n#[test] fn drop() {\nlet m = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"drop.mark\");\nif !m.exists() { std::fs::write(&m, \"\").unwrap(); panic!(\"flaked\"); }\n}\n}\n";
     let (tmp, cargo_home) = tiny_crate_with(flaky);
     let (code, log) = run_in(&tmp, &cargo_home, "");
     assert_ne!(code, Some(0), "the first pass is red: {log}");
@@ -174,12 +186,12 @@ fn a_test_red_once_on_the_round_tree_is_disabled_through_the_rounds_own_path_and
     let script = format!("{}\nnextest_reds red.log | awk '{{ print $1, $3, $2 }}'\n", function("nextest_reds"));
     let out = Command::new("bash").arg("-c").arg(script).current_dir(tmp.path()).output().unwrap();
     let failed = batcher::unitattr::failing_lines(&String::from_utf8_lossy(&out.stdout));
-    assert_eq!(failed, ["FAIL tiny t::drop"], "{log}");
+    assert_eq!(failed, ["FAIL tiny t::drop::t0aaaaa"], "{log}");
     let (code, log) = run_in(&tmp, &cargo_home, "");
     assert_eq!(code, Some(0), "the unchanged tree reruns green: {log}");
 
-    let ids = batcher::drive::flip_ids(&failed, None).unwrap();
-    assert_eq!(ids, ["unit:tiny t::drop"]);
+    let ids = batcher::drive::flip_ids(&failed).unwrap();
+    assert_eq!(ids, ["test:t0aaaaa"]);
     let reg = testkit::TempDir::new("flip-registry");
     let path = reg.path().join("registry.sqlite").display().to_string();
     let results = reg.path().join("results");
@@ -197,9 +209,9 @@ fn a_test_red_once_on_the_round_tree_is_disabled_through_the_rounds_own_path_and
         &ids,
     )
     .unwrap();
-    assert_eq!((rows[0].test.as_str(), rows[0].state.as_str(), rows[0].bead.as_str()), ("unit:tiny t::drop", "disabled", "sp-flip1"));
+    assert_eq!((rows[0].test.as_str(), rows[0].state.as_str(), rows[0].bead.as_str()), ("test:t0aaaaa", "disabled", "sp-flip1"));
     let held = resolve(&path, 1100);
-    assert!(held.contains("disabled\tunit:tiny t::drop\tsp-flip1"), "{held}");
+    assert!(held.contains("disabled\ttest:t0aaaaa\tsp-flip1"), "{held}");
     let round_list = batcher_cut::vm::DenySnapshot::from_pass(&results).unwrap().text;
     assert_eq!(round_list.lines().skip(1).collect::<Vec<_>>(), held.lines().skip(1).collect::<Vec<_>>());
 
@@ -209,34 +221,91 @@ fn a_test_red_once_on_the_round_tree_is_disabled_through_the_rounds_own_path_and
     assert!(log.contains("t::keep") && !names_in_pass_or_fail(&log, "t::drop"), "the re-certifying pass does not run the disabled test: {log}");
 }
 
-#[test_id(tbfle4a)]
-#[test]
-fn an_integration_test_red_in_a_member_crate_is_named_by_its_package_through_real_cargo() {
+const FLAKY: &str = "#[macro_use]\nextern crate spira_test_id;\n#[test_id(t0ddddd)]\n#[test]\nfn steady() {}\n#[test_id(t0ccccc)]\n#[test]\nfn flaked() { panic!(\"flaked\"); }\n";
+
+const FLAKY_RENAMED: &str = "#[macro_use]\nextern crate spira_test_id;\n#[test_id(t0ddddd)]\n#[test]\nfn steady() {}\nmod moved {\n#[test_id(t0ccccc)]\n#[test]\nfn flaked_again() { panic!(\"flaked\"); }\n}\n";
+
+fn member_workspace(flaky: &str) -> (testkit::TempDir, String) {
     let cargo_home = std::env::var("CARGO_HOME").unwrap_or_else(|_| format!("{}/.cargo", std::env::var("HOME").unwrap()));
     let tmp = testkit::TempDir::new("integration-flip-real");
     let dir = tmp.path().to_path_buf();
     std::fs::create_dir_all(dir.join("member/src")).unwrap();
     std::fs::create_dir_all(dir.join("member/tests")).unwrap();
     std::fs::write(dir.join("Cargo.toml"), "[workspace]\nresolver = \"2\"\nmembers = [\"member\"]\n").unwrap();
-    std::fs::write(dir.join("member/Cargo.toml"), "[package]\nname = \"memb\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+    std::fs::write(dir.join("member/Cargo.toml"), format!("[package]\nname = \"memb\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{}", test_id_dep())).unwrap();
     std::fs::write(dir.join("member/src/lib.rs"), "").unwrap();
-    std::fs::write(dir.join("member/tests/flaky.rs"), "#[test]\nfn flaked() { panic!(\"flaked\"); }\n").unwrap();
+    std::fs::write(dir.join("member/tests/flaky.rs"), flaky).unwrap();
     std::fs::write(dir.join("rust-toolchain.toml"), include_str!("../../rust-toolchain.toml")).unwrap();
+    (tmp, cargo_home)
+}
 
-    let script = "export CARGO_HOME=\"$2\" RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\ncargo test --offline --test '*' > test.log 2>&1\ncargo metadata --no-deps --format-version 1 > meta.json\n";
-    let mut cmd = Command::new("bash");
-    cmd.arg("-c").arg(script).arg("bash").arg("").arg(&cargo_home).current_dir(&dir).env_clear().env("HOME", std::env::var("HOME").unwrap()).env("PATH", format!("{cargo_home}/bin:/usr/local/bin:/usr/bin:/bin"));
-    for k in ["RUSTUP_TOOLCHAIN", "RUSTUP_HOME"] {
-        if let Some(v) = std::env::var_os(k) {
-            cmd.env(k, v);
-        }
-    }
-    assert!(cmd.status().unwrap().success());
-    let log = std::fs::read_to_string(dir.join("test.log")).unwrap();
-    assert!(log.contains("flaked ... FAILED"), "control: the test failed: {log}");
+fn integration_run(dir: &std::path::Path, cargo_home: &str, skips: &str) -> (Option<i32>, String) {
+    let script = format!("export CARGO_HOME=\"$2\" RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\ncargo test --offline --test '*'{skips} > test.log 2>&1\nrc=$?\ncargo metadata --no-deps --format-version 1 > meta.json\nexit $rc\n");
+    let (code, err) = bash_in_code2(dir, cargo_home, &script, "", cargo_home);
+    (code, format!("{err}{}", std::fs::read_to_string(dir.join("test.log")).unwrap_or_default()))
+}
 
-    let reds = Command::new("bash").arg("-c").arg(format!("{}\ncargo_test_reds test.log\n", function("cargo_test_reds"))).current_dir(&dir).output().unwrap();
+#[test_id(tbfle4a)]
+#[test]
+fn an_integration_test_red_in_a_member_crate_is_named_by_its_id_through_real_cargo() {
+    let (tmp, cargo_home) = member_workspace(FLAKY);
+    let dir = tmp.path();
+    let (code, log) = integration_run(dir, &cargo_home, "");
+    assert_ne!(code, Some(0), "control: the test failed: {log}");
+    assert!(log.contains("flaked::t0ccccc ... FAILED"), "{log}");
+    let reds = Command::new("bash").arg("-c").arg(format!("{}\ncargo_test_reds test.log\n", function("cargo_test_reds"))).current_dir(dir).output().unwrap();
     let failed = batcher::unitattr::failing_lines(&String::from_utf8_lossy(&reds.stdout));
-    let graph = batcher_cut::io::package_graph(&std::fs::read_to_string(dir.join("meta.json")).unwrap()).unwrap();
-    assert_eq!(batcher::drive::flip_ids(&failed, Some(&graph)).unwrap(), ["integration:memb flaked"], "{failed:?}\n{log}");
+    assert_eq!(batcher::drive::flip_ids(&failed).unwrap(), ["test:t0ccccc"], "{failed:?}\n{log}");
+}
+
+fn deny_by_id(id: &str, bead: &str) -> (testkit::TempDir, String, String) {
+    let reg = testkit::TempDir::new("deny-by-id");
+    let path = reg.path().join("registry.sqlite").display().to_string();
+    let test = format!("test:{id}");
+    let o = registry(&path, &["disable", "--test", &test, "--bead", bead, "--reason", "r", "--actor", "a"], 1000);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let list = resolve(&path, 1100);
+    (reg, path, list)
+}
+
+#[test_id(t0r1n2m)]
+#[test]
+fn a_unit_test_disabled_by_id_stays_out_of_the_gate_and_round_runs_after_a_rename_and_a_move() {
+    let (_reg, path, list) = deny_by_id("t0aaaaa", "sp-x");
+    let (tmp, cargo_home) = tiny_crate();
+    for (who, log) in [("gate", gate_unit_run_in(&tmp, &cargo_home, &list)), ("round", run_in(&tmp, &cargo_home, &list).1)] {
+        assert!(log.contains("PASS") && log.contains("t::keep"), "{who}: {log}");
+        assert!(!names_in_pass_or_fail(&log, "drop"), "{who}: drop is absent: {log}");
+    }
+
+    std::fs::write(tmp.path().join("src/lib.rs"), RENAMED_LIB).unwrap();
+    let o = registry(&path, &["clear-landed", "--bead", "sp-renamer", "--actor", "batcher"], 1200);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    assert_eq!(resolve(&path, 1300), list.replace("at=1100", "at=1300"), "no row cleared");
+    for (who, log) in [("gate", gate_unit_run_in(&tmp, &cargo_home, &list)), ("round", run_in(&tmp, &cargo_home, &list).1)] {
+        assert!(log.contains("PASS") && log.contains("t::keep"), "{who}: {log}");
+        assert!(!names_in_pass_or_fail(&log, "dropped"), "{who}: the renamed, moved test is still absent: {log}");
+    }
+    let (code, log) = run_in(&tmp, &cargo_home, "");
+    assert_eq!(code, Some(0), "{log}");
+    assert!(names_in_pass_or_fail(&log, "other::dropped::t0aaaaa"), "control: without the row the renamed test runs: {log}");
+}
+
+#[test_id(t0i2n3t)]
+#[test]
+fn an_integration_test_disabled_by_id_stays_out_of_the_star_run_after_a_rename() {
+    let (_reg, _path, list) = deny_by_id("t0ccccc", "sp-x");
+    let skips = spira_config::unit_tier::DenyList::parse(&list).unwrap().integration_skips();
+    assert_eq!(skips, " -- --skip ::t0ccccc");
+    let (tmp, cargo_home) = member_workspace(FLAKY);
+    let (code, log) = integration_run(tmp.path(), &cargo_home, "");
+    assert_ne!(code, Some(0), "control: red with no skip: {log}");
+    let (code, log) = integration_run(tmp.path(), &cargo_home, &skips);
+    assert_eq!(code, Some(0), "{log}");
+    assert!(log.contains("steady") && !log.contains("flaked"), "{log}");
+
+    std::fs::write(tmp.path().join("member/tests/flaky.rs"), FLAKY_RENAMED).unwrap();
+    let (code, log) = integration_run(tmp.path(), &cargo_home, &skips);
+    assert_eq!(code, Some(0), "{log}");
+    assert!(log.contains("steady") && !log.contains("flaked_again"), "{log}");
 }
