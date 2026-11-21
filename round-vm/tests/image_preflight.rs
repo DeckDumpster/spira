@@ -29,8 +29,11 @@ fn the_guest_copies_only_the_listed_source_not_the_whole_mounted_tree() {
 #[test]
 fn the_package_list_payload_is_update_then_the_apt_line_on_stdin_never_argv() {
     assert!(HOST.contains(r#"printf '%s\n' 'set -euo pipefail' 'export DEBIAN_FRONTEND=noninteractive' 'apt-get update -qq' "$apt_line""#));
-    let run = HOST.lines().find(|l| l.contains("run --rm -i --network host")).expect("the package-list run");
-    assert!(run.contains(r#"-v "$CACHE/apt:/var/cache/apt/archives""#) && !run.contains("apt_line"), "{run}");
+    let at = HOST.find("'apt-get update -qq'").unwrap();
+    let pipeline = &HOST[at..at + HOST[at..].find(">\"$log\"").unwrap()];
+    assert_eq!(pipeline.matches("apt_line").count(), 1, "{pipeline}");
+    assert!(pipeline.find("apt_line").unwrap() < pipeline.find("| timeout").unwrap(), "the apt line is only the printf's input: {pipeline}");
+    assert!(pipeline.contains(r#"-v "$CACHE/apt:/var/cache/apt/archives""#), "{pipeline}");
     assert!(HOST.contains(r#"PODMAN=(podman --root "$ROOT/storage""#));
 }
 
@@ -45,4 +48,34 @@ fn a_failing_install_prints_the_red_block_with_the_log_tail_and_exits_1() {
 #[test]
 fn a_skipped_diff_keeps_its_fence_line() {
     assert!(HOST.contains("(0 touched, setup not run)"));
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) {
+    let st = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.email=t@t", "-c", "user.name=t"]).args(args).status().unwrap();
+    assert!(st.success(), "git {args:?}");
+}
+
+#[test]
+fn the_verb_reads_a_real_diff_into_a_plan() {
+    let tmp = testkit::TempDir::new("preflight-plan-verb");
+    let d = tmp.path();
+    std::fs::create_dir_all(d.join("round-vm")).unwrap();
+    git(d, &["init", "-q", "-b", "main", "."]);
+    std::fs::write(d.join("round-vm/ami-setup.sh"), "apt-get install -y curl\nsystemctl enable ssh\n").unwrap();
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-qm", "base"]);
+    std::fs::write(d.join("round-vm/ami-setup.sh"), "apt-get install -y curl git\nsystemctl enable ssh\n").unwrap();
+    git(d, &["commit", "-qam", "apt"]);
+    let verb = |base: &str| {
+        let o = std::process::Command::new(env!("CARGO_BIN_EXE_round-vm")).args(["preflight-plan", "--tree"]).arg(d).args(["--base", base, "--head", "HEAD"]).output().unwrap();
+        (o.status.code(), String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned())
+    };
+    let (rc, out, _) = verb("HEAD~1");
+    assert_eq!(rc, Some(0));
+    assert!(out.contains("plan=package-list\n") && out.contains("touched=round-vm/ami-setup.sh\n") && out.contains("apt_line=apt-get install -y curl git\n"), "{out}");
+    let (rc, out, _) = verb("HEAD");
+    assert_eq!((rc, out.contains("plan=skip\n")), (Some(0), true), "{out}");
+    let (rc, _, err) = verb("no-such-ref");
+    assert_eq!(rc, Some(2));
+    assert!(err.contains("cannot diff no-such-ref...HEAD"), "{err}");
 }

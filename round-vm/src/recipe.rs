@@ -121,7 +121,6 @@ mod tests {
         assert_eq!(super::tree_channel(d), None);
     }
 
-    // covers: UC-test-infrastructure-44
     const APT: &str = "apt-get install -y -qq podman git bubblewrap";
     const HEAD: &str = "#!/bin/bash\napt-get update -qq\napt-get install -y -qq podman git bubblewrap\nsystemctl enable ssh\n";
     const APT_DIFF: &str = "-apt-get install -y -qq podman git\n+apt-get install -y -qq podman git bubblewrap\n";
@@ -131,6 +130,7 @@ mod tests {
         super::preflight_plan(touched, diff, head)
     }
 
+    // covers: UC-test-infrastructure-44
     #[test]
     fn an_apt_line_only_change_installs_the_package_list() {
         assert_eq!(plan(&[AMI], APT_DIFF, HEAD), super::PreflightPlan::PackageList { apt_line: APT.into() });
