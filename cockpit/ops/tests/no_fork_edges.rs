@@ -139,7 +139,7 @@ fn marks(dir: &std::path::Path) -> usize {
         if p.is_dir() {
             n += marks(&p);
         } else if p.extension().is_some_and(|x| x == "rs") {
-            let text = std::fs::read_to_string(&p).expect("read file");
+            let text = std::fs::read_to_string(&p).expect("read file").replace("#[cfg(test)]\n#[macro_use]\nextern crate spira_test_id;\n", "");
             n += text.lines().take_while(|l| !l.trim_start().starts_with("#[cfg(test)]")).filter(|l| l.contains("FORK-EDGE:")).count();
         }
     }
