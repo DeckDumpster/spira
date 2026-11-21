@@ -1,0 +1,6 @@
+TYPE=u64
+GROUP=lc
+DOC=Bytes of write-ahead log at which the control store's checkpointer stops giving up on a restart and holds the read gate until every read in flight has ended; below it a restart yields after a short hold. The log stays near this line plus the commits of one read deadline.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_WAL_LINE_BYTES:=8388608}"
+SPIRA_CONF_DEFAULT_EOF

@@ -67,11 +67,30 @@ fn git_tree_reads_the_resolved_commit_not_the_working_tree() {
 fn cr_pick_runs_over_a_real_git_tree() {
     let dir = repo();
     let tree = GitTree::new(dir.path().to_str().unwrap(), "main").unwrap();
-    let config = Config { page_lines: 60, oversize_pages: 6, exclude: vec![], churn_days: 60, count_limit: 50 };
-    let ports = Ports { run_dir: dir.path().join("unused-run"), gh: Box::new(NoGh), repo_owner: String::new(), repo_name: String::new(), findings_dir: String::new(), committer: Box::new(cr::ports::GitCommitter), source_repo: "k".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(1_700_000_000_000)), tree: Box::new(tree), ledger: Ledger::default(), config, env_seed: None };
+    let config = Config { page_lines: 60, oversize_pages: 6, exclude: vec![], churn_days: 60, rewrite_days: 90, count_limit: 50 };
+    let ports = Ports { run_dir: dir.path().join("unused-run"), gh: Box::new(NoGh), repo_owner: String::new(), repo_name: String::new(), findings_dir: String::new(), committer: Box::new(cr::ports::GitCommitter), source_repo: "k".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(1_700_000_000_000)), tree: Box::new(tree), beads: Box::new(cr::ports::FixtureBeads::default()), registry: Box::new(cr::ports::FixtureRegistry::default()), ledger: Ledger::default(), config, env_seed: None };
     let o = run(&["pick".into(), "--seed".into(), "1".into(), "--json".into()], &ports);
     assert_eq!(o.code, 0, "{}{}", o.stdout, o.stderr);
     let v: serde_json::Value = serde_json::from_str(&o.stdout).unwrap();
     assert_eq!(v["unit"]["id"], "module:k/src/lib.rs");
     assert_eq!(v["weight"]["commits"], 2);
+}
+
+#[test]
+fn git_tree_reads_the_full_log_line_times_and_deleted_tests_of_a_real_history() {
+    let dir = testkit::TempDir::new("cr-git-history");
+    let p = dir.path();
+    git(p, &["init", "-q", "-b", "main"]);
+    let file = p.join("lib.rs");
+    std::fs::write(&file, "pub fn a() {}\n\n#[test]\nfn gone() {\n    a();\n}\n\n#[test]\nfn kept() {\n    a();\n}\n").unwrap();
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-q", "-m", "sp-aaa111: first"]);
+    std::fs::write(&file, "pub fn a() {}\n\n#[test]\nfn kept() {\n    a();\n}\n").unwrap();
+    git(p, &["commit", "-q", "-am", "sp-bbb222: drop a test", "-m", "This reverts commit abc"]);
+    let t = GitTree::new(p.to_str().unwrap(), "main").unwrap();
+    let log = t.log("lib.rs");
+    assert_eq!(log.iter().map(|c| (c.subject.as_str(), c.reverts)).collect::<Vec<_>>(), [("sp-bbb222: drop a test", true), ("sp-aaa111: first", false)]);
+    assert_eq!(t.line_times("lib.rs"), vec![1_700_000_000_000; 6]);
+    let removed = t.removed_tests(&["lib.rs".to_string()]);
+    assert_eq!(removed.iter().map(|r| (r.name.as_str(), r.sha.as_str())).collect::<Vec<_>>(), [("gone", log[0].sha.as_str())]);
 }

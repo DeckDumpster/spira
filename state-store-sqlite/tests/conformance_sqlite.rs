@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use runtime::ports::VirtualClock;
+use runtime::ports::{Clock, VirtualClock};
 use serde_json::json;
 use state_store::conformance::{self as suite, Rig, SCENARIOS};
 use state_store::{Backend, Contract, Error, Object, Request, Rev, Txn, Write};
@@ -1389,7 +1389,7 @@ mod relayout {
 
     #[test_id(tupd8pa)]
     #[test]
-    fn relayout_refuses_and_leaves_nothing_when_the_old_store_is_open_the_target_exists_or_the_wal_holds_frames() {
+    fn relayout_refuses_and_leaves_nothing_when_the_old_store_is_open_or_the_target_exists() {
         let dir = TempDir::new("relayout-refuse");
         let (old, new) = (dir.path().join("old.db"), dir.path().join("new.db"));
         fixture(&old);
@@ -1404,12 +1404,6 @@ mod relayout {
         std::fs::remove_file(dir.path().join("old.db.lock")).unwrap();
         assert_eq!(files_beside(dir.path()), before);
 
-        std::fs::write(dir.path().join("old.db-wal"), b"frames").unwrap();
-        let e = relayout(&old, &new, &clock).unwrap_err().to_string();
-        assert!(e.contains("-wal") && e.contains("start and stop"), "{e}");
-        std::fs::remove_file(dir.path().join("old.db-wal")).unwrap();
-        assert!(!new.exists());
-
         std::fs::write(dir.path().join("new.events-2024-10-04.db"), b"x").unwrap();
         assert!(relayout(&old, &new, &clock).is_err(), "a day file of the target's stem is in the way");
         std::fs::remove_file(dir.path().join("new.events-2024-10-04.db")).unwrap();
@@ -1421,6 +1415,48 @@ mod relayout {
     }
 
     #[test_id(tdqsh0y)]
+    #[test]
+    #[allow(clippy::disallowed_methods)]
+    fn relayout_folds_a_crash_image_wal_in_and_the_wal_only_rows_reach_the_new_store() {
+        let dir = TempDir::new("relayout-wal");
+        let (live, old, new) = (dir.path().join("live.db"), dir.path().join("old.db"), dir.path().join("new.db"));
+        fixture(&live);
+        let conn = Connection::open(&live).unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        conn.prepare("UPDATE latest SET value = CAST('{\"state\":\"Batched\",\"wal\":1}' AS BLOB) WHERE key = CAST('deliveries/sp-0007' AS BLOB)")
+            .unwrap().execute([]).unwrap();
+        std::fs::copy(&live, &old).unwrap();
+        std::fs::copy(format!("{}-wal", live.display()), format!("{}-wal", old.display())).unwrap();
+        assert!(std::fs::metadata(format!("{}-wal", old.display())).unwrap().len() > 0);
+        let report = relayout(&old, &new, &VirtualClock::new(WALL)).unwrap();
+        drop(conn);
+        assert!(report.wal_bytes_before > 0);
+        let to = Connection::open(&new).unwrap();
+        let value: Vec<u8> = to.query_row("SELECT value FROM latest WHERE key = CAST('deliveries/sp-0007' AS BLOB)", [], |r| r.get(0)).unwrap();
+        assert!(String::from_utf8_lossy(&value).contains("\"wal\""), "{value:?}");
+    }
+
+    #[test]
+    #[allow(clippy::disallowed_methods)]
+    fn relayout_refuses_naming_the_wal_when_a_reader_keeps_it_from_folding_and_leaves_nothing() {
+        let dir = TempDir::new("relayout-wal-held");
+        let (old, new) = (dir.path().join("old.db"), dir.path().join("new.db"));
+        fixture(&old);
+        let conn = Connection::open(&old).unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        conn.execute_batch("BEGIN; SELECT count(*) FROM latest;").unwrap();
+        let other = Connection::open(&old).unwrap();
+        other.prepare("DELETE FROM latest WHERE key = CAST('deliveries/sp-0001' AS BLOB)").unwrap().execute([]).unwrap();
+        let e = relayout(&old, &new, &VirtualClock::new(WALL)).unwrap_err().to_string();
+        assert!(e.contains(&format!("{}-wal", old.display())), "{e}");
+        assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")), "{:?}", files_beside(dir.path()));
+        drop(other);
+        drop(conn);
+    }
+
     #[test]
     fn relayout_refuses_an_old_file_newer_than_this_binary() {
         let dir = TempDir::new("relayout-newer");
@@ -2056,6 +2092,8 @@ fn a_commit_is_not_held_by_a_wal_restart_that_is_waiting_on_a_reader() {
 
 /// A one-reader store whose first read, once armed, holds its transaction open until released.
 /// Every later read reports the `-wal` size it sees on `probed`.
+const HELD_LINE_FRAMES: u32 = 64;
+
 struct HeldRead {
     b: SqliteBackend,
     wal: String,
@@ -2066,7 +2104,7 @@ struct HeldRead {
 }
 
 impl HeldRead {
-    fn open(dir: &TempDir, cap: i64) -> HeldRead {
+    fn open(dir: &TempDir, line_bytes: u64) -> HeldRead {
         use std::sync::mpsc::channel;
         let path = dir.path().join("s.db");
         let wal = format!("{}-wal", path.display());
@@ -2091,7 +2129,7 @@ impl HeldRead {
             max_read_ms: 120_000,
             readers: 1,
             checkpoint_every: u64::MAX,
-            wal_restart_cap_frames: cap,
+            wal_line_bytes: line_bytes,
             read_probe: Some(probe),
             ..Options::default()
         };
@@ -2128,14 +2166,14 @@ impl HeldRead {
 
 #[test_id(t0bbulp)]
 #[test]
-fn a_restart_past_the_wal_cap_waits_out_a_read_in_flight() {
+fn a_restart_past_the_wal_line_waits_out_a_read_in_flight() {
     let dir = TempDir::new("sqlite-restart-past-cap");
-    let mut h = HeldRead::open(&dir, 64);
-    h.grow_wal_past(64);
+    let mut h = HeldRead::open(&dir, u64::from(HELD_LINE_FRAMES) * 4096);
+    h.grow_wal_past(HELD_LINE_FRAMES);
     let pass = h.start_pass();
     std::thread::sleep(std::time::Duration::from_millis(200)); // clock-safe: only orders the release after GATE_HOLD; the verdict holds however late it comes
     h.release_reader();
-    assert!(pass.join().unwrap().unwrap(), "the restart gave up on a read in flight past the cap");
+    assert!(pass.join().unwrap().unwrap(), "the restart gave up on a read in flight past the line");
     assert_eq!(std::fs::metadata(&h.wal).unwrap().len(), 0);
 }
 
@@ -2143,8 +2181,8 @@ fn a_restart_past_the_wal_cap_waits_out_a_read_in_flight() {
 #[test]
 fn a_read_queued_on_a_reader_does_not_start_while_a_restart_holds_the_gate() {
     let dir = TempDir::new("sqlite-restart-queued-read");
-    let mut h = HeldRead::open(&dir, 64);
-    h.grow_wal_past(64);
+    let mut h = HeldRead::open(&dir, u64::from(HELD_LINE_FRAMES) * 4096);
+    h.grow_wal_past(HELD_LINE_FRAMES);
     let queued = {
         let b = h.b.clone();
         std::thread::spawn(move || {
@@ -2164,11 +2202,136 @@ fn a_read_queued_on_a_reader_does_not_start_while_a_restart_holds_the_gate() {
 
 #[test_id(tpy2lrz)]
 #[test]
-fn a_restart_below_the_wal_cap_still_gives_up_while_a_read_is_held() {
+fn a_restart_below_the_wal_line_still_gives_up_while_a_read_is_held() {
     let dir = TempDir::new("sqlite-restart-below-cap");
-    let mut h = HeldRead::open(&dir, 64);
-    assert!(mx_frame(&h.path) <= 64);
+    let mut h = HeldRead::open(&dir, u64::from(HELD_LINE_FRAMES) * 4096);
+    assert!(mx_frame(&h.path) <= HELD_LINE_FRAMES);
     let pass = h.start_pass();
     assert!(!pass.join().unwrap().unwrap(), "the restart finished while a read was still held");
     h.release_reader();
+}
+
+/// A [`VirtualClock`] that notes when the thread named `pass` first reads it: the restart reads
+/// it as it begins, so the flag says the restart has taken its start time.
+#[derive(Clone)]
+struct PassClock {
+    time: VirtualClock,
+    pass_began: Arc<AtomicBool>,
+}
+
+impl Clock for PassClock {
+    fn now_ms(&self) -> u64 {
+        let now = self.time.now_ms();
+        if std::thread::current().name() == Some("pass") {
+            self.pass_began.store(true, Ordering::SeqCst);
+        }
+        now
+    }
+}
+
+#[test]
+fn the_wal_stays_under_nine_mib_while_two_readers_never_pause_and_one_is_held_open() {
+    const LINE: u64 = 8 << 20;
+    const MAX_READ_MS: u64 = 100;
+    let dir = TempDir::new("sqlite-wal-line-held");
+    let path = dir.path().join("s.db");
+    let wal = format!("{}-wal", path.display());
+    let clock = VirtualClock::new(0);
+    let pass_began = Arc::new(AtomicBool::new(false));
+    let test_clock = PassClock { time: clock.clone(), pass_began: pass_began.clone() };
+    let (armed_tx, armed_rx) = std::sync::mpsc::channel::<u64>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let (ended_tx, ended_rx) = std::sync::mpsc::channel::<()>();
+    let probe = {
+        let (clock, armed_tx, release_rx) = (clock.clone(), Mutex::new(armed_tx), Mutex::new(release_rx));
+        Arc::new(move || {
+            if std::thread::current().name() == Some("held") {
+                armed_tx.lock().unwrap().send(clock.now_ms()).unwrap();
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }) as Arc<dyn Fn() + Send + Sync>
+    };
+    let opts = Options {
+        max_read_ms: MAX_READ_MS,
+        readers: 4,
+        clock: Arc::new(test_clock),
+        checkpoint_every: u64::MAX,
+        wal_line_bytes: LINE,
+        read_probe: Some(probe),
+        ..Options::default()
+    };
+    let b = SqliteBackend::open(&path, opts).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let mut readers: Vec<_> = (0..2)
+        .map(|_| {
+            let (b, stop) = (b.clone(), stop.clone());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    let head = b.head().unwrap();
+                    let _ = b.range("", None, 10, head);
+                }
+            })
+        })
+        .collect();
+    readers.push({
+        let (b, stop) = (b.clone(), stop.clone());
+        std::thread::Builder::new()
+            .name("held".into())
+            .spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    let head = b.head().unwrap();
+                    let _ = b.range("", None, 10, head);
+                    let _ = ended_tx.send(());
+                }
+            })
+            .unwrap()
+    });
+    let page = 4096u64;
+    let mut held_deadline = armed_rx.recv().unwrap() + MAX_READ_MS;
+    let release_held = |held_deadline: &mut u64| {
+        release_tx.send(()).unwrap();
+        ended_rx.recv().unwrap();
+        *held_deadline = armed_rx.recv().unwrap() + MAX_READ_MS;
+    };
+    let mut largest = 0u64;
+    for commit in 1..=2_000u32 {
+        put_next(&b);
+        largest = largest.max(std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0));
+        if commit % 50 != 0 {
+            continue;
+        }
+        clock.advance(1);
+        if clock.now_ms() > held_deadline {
+            release_held(&mut held_deadline);
+            clock.advance(1);
+        }
+        let past_line = u64::from(mx_frame(&path)) * page > LINE;
+        let b2 = b.clone();
+        pass_began.store(false, Ordering::SeqCst);
+        let pass = std::thread::Builder::new()
+            .name("pass".into())
+            .spawn(move || state_store_sqlite::bench::checkpoint_pass(&b2))
+            .unwrap();
+        while !pass_began.load(Ordering::SeqCst) {
+            std::thread::yield_now();
+        }
+        if past_line {
+            clock.advance_to(held_deadline + 1);
+            release_tx.send(()).unwrap();
+            ended_rx.recv().unwrap();
+            assert!(pass.join().unwrap().unwrap(), "the restart past the line gave up with the held read ended");
+            held_deadline = armed_rx.recv().unwrap() + MAX_READ_MS;
+        } else {
+            clock.advance(50);
+            pass.join().unwrap().unwrap();
+        }
+        largest = largest.max(std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0));
+    }
+    stop.store(true, Ordering::SeqCst);
+    release_tx.send(()).unwrap();
+    for r in readers {
+        r.join().unwrap();
+    }
+    assert!(largest <= 9 * 1_048_576, "the WAL grew to {largest} B, past {} B", 9 * 1_048_576);
+    assert!(largest > LINE / 2, "the workload never built a WAL worth bounding: {largest} B");
 }

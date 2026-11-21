@@ -4,6 +4,7 @@ extern crate spira_test_id;
 pub mod cli;
 pub mod count;
 pub mod findings;
+pub mod history;
 pub mod glob;
 pub mod index;
 pub mod ledger;

@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=heimdall
+DOC=How many consecutive gates of one repo must end NO_VERDICT for one reason on different beads, with no PASS since, before Heimdall raises gate-noverdict-streak/<repo> and writes one Concierge inbox line.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Consecutive NO_VERDICT gates of one repo, on different beads, sharing one reason, that raise
+    # gate-noverdict-streak/<repo>: the gate is judging nothing.
+    : "${SPIRA_HEIMDALL_NOVERDICT_STREAK:=4}"
+SPIRA_CONF_DEFAULT_EOF

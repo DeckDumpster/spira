@@ -280,6 +280,16 @@ mod tests {
         assert_eq!(s.journal_state().unwrap()[0].value, "newer");
     }
 
+    #[test]
+    fn a_turn_that_clears_a_state_key_deletes_its_row() {
+        let s = store();
+        let row = |k: &str| StateRow { task: "t".into(), skey: k.into(), value: "v".into(), at: 1 };
+        s.journal_turn(&crate::control::journal::Turn { state: vec![row("a"), row("b")], ..Default::default() }, "runtime").unwrap();
+        s.journal_turn(&crate::control::journal::Turn { cleared: vec![("t".into(), "a".into())], ..Default::default() }, "runtime").unwrap();
+        let left: Vec<String> = s.journal_state().unwrap().into_iter().map(|r| r.skey).collect();
+        assert_eq!(left, vec!["b".to_string()]);
+    }
+
     /// A server that answers each read from a script keyed by the table it names, and records every statement.
     struct Scripted {
         present: bool,

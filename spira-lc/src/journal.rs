@@ -154,6 +154,13 @@ pub fn turn_of(turn: &Value) -> Result<Turn, String> {
     for r in list(turn, "state")? {
         out.state.push(state_row(r)?);
     }
+    for r in list(turn, "cleared")? {
+        let pair = r.as_array().filter(|a| a.len() == 2).and_then(|a| Some((a[0].as_str()?, a[1].as_str()?)));
+        let (task, skey) = pair.ok_or_else(|| format!("journal: turn refused: a cleared key is not a [task, skey] pair: {}", clip(&r.to_string())))?;
+        check_text("turn", "task", task, TASK_MAX)?;
+        check_text("turn", "skey", skey, KEY_MAX)?;
+        out.cleared.push((task.into(), skey.into()));
+    }
     for r in list(turn, "effects")? {
         out.effects.push(effect_row(r)?);
     }
@@ -383,11 +390,15 @@ mod tests {
             json!({"resolved": [""]}),
             json!({"fired": [7]}),
             json!({"state": {"task": "t"}}),
+            json!({"cleared": [["t"]]}),
+            json!({"cleared": [["t", "k".repeat(256)]]}),
             json!({"state": [{"task": "t", "skey": "carry", "value": "v", "at": 1}], "fired": [""]}),
         ] {
             assert!(turn_of(&bad).unwrap_err().starts_with("journal:"), "{bad}");
         }
         assert!(turn_of(&wide("ekey", 255)).is_ok(), "the limit itself is accepted");
+        let sent = serde_json::to_value(runtime::journal::Turn { cleared: vec![("t".into(), "k".into())], ..Default::default() }).unwrap();
+        assert_eq!(turn_of(&sent).unwrap().cleared, vec![("t".to_string(), "k".to_string())], "a cleared key the runtime sends is read as sent");
         assert_eq!(turn_of(&json!({})).unwrap(), Turn::default(), "an empty turn writes nothing");
     }
 

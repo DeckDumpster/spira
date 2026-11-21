@@ -69,8 +69,7 @@ mod bead_sweep {
         start(&mut r);
         *world.lock().unwrap() = vec![];
         r.advance(1000).unwrap();
-        assert_eq!(rows_of(&r, NAME).len(), 1);
-        assert_eq!(r.journal.state().values().filter(|v| v.contains("SUSPECT")).count(), 0, "the cleared mark is overwritten, not left");
+        assert_eq!(rows_of(&r, NAME).len(), 0, "the cleared mark is deleted, not left");
         restart(&mut r);
         *world.lock().unwrap() = vec![poisoned("sp-a")];
         r.advance(1000).unwrap();

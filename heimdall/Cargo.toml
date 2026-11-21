@@ -23,7 +23,8 @@ path = "tests/lane.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
+integration = ["runtime/integration", "inbox-rules/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -32,6 +33,7 @@ spira-config = { path = "../spira-config" }
 spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
 runtime = { path = "../runtime" }
+inbox-rules = { path = "../inbox-rules" }
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }

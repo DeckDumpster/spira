@@ -3487,7 +3487,6 @@ pub fn eject_args(batch: &str, repo: &str, id: &str, csv: &str) -> Vec<String> {
         repo,
         "--reason-file",
         "-",
-        "--no-rebuild",
         "--by",
         "batcher",
     ]
@@ -6587,6 +6586,12 @@ mod eject_args_tests {
     }
 
     #[test_id(tvckgo0)]
+    #[test]
+    fn the_batchers_eject_lets_the_queue_rebuild_the_rounds_tree() {
+        let a = eject_args("r9", "spira", "sp-a", "lint");
+        assert!(!a.iter().any(|x| x == "--no-rebuild"), "{a:?}");
+    }
+
     #[test]
     fn open_land_and_abandon_are_run_as_the_batcher_and_status_is_left_alone() {
         for verb in ["open", "land", "abandon"] {

@@ -15,7 +15,8 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = ["forge/integration", "spira-config/integration", "runtime/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
+integration = ["spira-store/integration", "test-registry/integration", "forge/integration", "spira-config/integration", "runtime/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
+
 [dependencies]
 base64 = "0.22"
 regex = "1"
@@ -26,6 +27,8 @@ serde_json = "1"
 sha2 = "0.10"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
+spira-store = { path = "../spira-store" }
+test-registry = { path = "../test-registry" }
 toml = "0.8"
 
 [dev-dependencies]

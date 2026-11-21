@@ -141,6 +141,10 @@ pub trait RoundRunner {
     fn probe_output(&mut self) -> String {
         String::new()
     }
+    /// Where the last probe's full output was kept, or empty when the runner keeps none.
+    fn probe_kept(&self) -> String {
+        String::new()
+    }
     /// The name the last subset probe ran under, for evidence that cites it.
     fn probe_label(&self) -> String {
         String::new()
@@ -910,8 +914,16 @@ fn probe_filter_owners<R: RoundRunner>(
 ) -> (Vec<Action>, &'static str, String) {
     let red = format!("{} red{tests}", f.name);
     let mut said: Vec<(Vec<Id>, String)> = vec![];
+    let mut base_kept = String::new();
     let mut green_in = |runner: &mut R, m: &[Member]| {
-        let v = probes.run(m, || runner.filter_green_in(&f.name, scope, m));
+        let mut ran = false;
+        let v = probes.run(m, || {
+            ran = true;
+            runner.filter_green_in(&f.name, scope, m)
+        });
+        if ran && m.is_empty() {
+            base_kept = runner.probe_kept();
+        }
         if v == Some(false) {
             said.push((
                 m.iter().map(|x| x.id.clone()).collect(),
@@ -934,17 +946,17 @@ fn probe_filter_owners<R: RoundRunner>(
                     String::new(),
                 )
             }
-            Alone::Base(said) if unitattr::scope_is_exact(scope) => return (actions, "base", said),
+            Alone::Base(said) if unitattr::scope_is_exact(scope) => return (actions, "base", with_kept_output(said, &base_kept)),
             Alone::Base(_) => {
                 let ran = if scope.is_empty() { "workspace".to_string() } else { scope.join(" ") };
                 return (
                     actions,
                     "unattributed",
-                    format!("base red on a wider run than the failing tests (scope: {ran})"),
+                    with_kept_output(format!("base red on a wider run than the failing tests (scope: {ran})"), &base_kept),
                 );
             }
             Alone::Unconverged => return (actions, "unattributed", String::new()),
-            Alone::Cleared(said) => return (actions, "unattributed", said),
+            Alone::Cleared(said) => return (actions, "unattributed", with_kept_output(said, &base_kept)),
             Alone::Flipped(said) => return (actions, "unattributed", said),
         }
     }
@@ -953,6 +965,15 @@ fn probe_filter_owners<R: RoundRunner>(
         "unattributed",
         String::new(),
     )
+}
+
+/// `said` followed by where the base probe's full output was kept, when it was.
+fn with_kept_output(said: String, kept: &str) -> String {
+    match (said.is_empty(), kept.is_empty()) {
+        (_, true) => said,
+        (true, false) => format!("output: {kept}"),
+        (false, false) => format!("{said}; output: {kept}"),
+    }
 }
 
 /// How much of a red probe's output an eject note carries: the tail, where a failing check says why.
@@ -2932,6 +2953,7 @@ pub(crate) mod tests {
         pub filtered: Option<FilterRed>,
         /// What a red filter probe prints.
         pub probe_said: String,
+        pub probe_kept: String,
         /// A compiler: the error text for a tree holding these members, if it does not build.
         pub compiler: Option<BuildFn>,
         pub build_failed: Option<String>,
@@ -3011,6 +3033,7 @@ pub(crate) mod tests {
                 filter: None,
                 filtered: None,
                 probe_said: String::new(),
+                probe_kept: String::new(),
                 compiler: None,
                 build_failed: None,
                 aborts_with: None,
@@ -3145,6 +3168,9 @@ pub(crate) mod tests {
         }
         fn probe_output(&mut self) -> String {
             self.probe_said.clone()
+        }
+        fn probe_kept(&self) -> String {
+            self.probe_kept.clone()
         }
         fn filter_red(&mut self) -> Option<FilterRed> {
             self.filtered.take()
@@ -7305,6 +7331,20 @@ pub(crate) mod tests {
     }
 
     #[test_id(tnynlka)]
+    #[test]
+    fn a_base_red_filter_end_names_where_the_base_probe_kept_its_output() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(Box::new(|_| {
+            Some(FilterRed { harness: vec![], name: "unit-tests".into(), named: vec![], failed: vec!["FAIL spira-lc::bin/spira-lc a::b".into()], ..Default::default() })
+        }));
+        f.bisects = true;
+        f.probe_kept = "r-1/probes/b1".into();
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let text = format!("{end:?} {:?} {:?}", ops.incidents, ops.eject_evidence);
+        assert!(text.contains("base red; output: r-1/probes/b1"), "{text}");
+    }
+
     #[test]
     fn an_ejection_carries_the_probe_of_that_member_alone_and_only_the_tail_of_a_long_one() {
         let said = vec![

@@ -18,7 +18,7 @@ day files beside --to. It never writes --from, and prints a JSON report on stdou
   --to <file>     the new main file; it and its day files must not exist
   -h              this text
 
-exit 0 done, 3 refused (the store is open, --to exists, the old file's -wal is not empty,
+exit 0 done, 3 refused (the store is open, --to exists, the old file's -wal could not be folded in,
 the old file is newer than this binary, or certification failed), 2 usage";
 
 /// What a command line asked for.

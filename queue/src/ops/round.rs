@@ -524,7 +524,21 @@ where
 }
 
 fn pass_start(w: &World, batch: &str, repo: Option<&str>, resume: bool) -> i32 {
-    pass_verb(w, "round pass-start", batch, repo, |_, kv| {
+    let label = "round pass-start";
+    let Ok((c, path)) = local_ctx(w, label, repo) else {
+        return FAIL;
+    };
+    if idents(w, label, &[("batch id", batch)]).is_err() {
+        return FAIL;
+    }
+    if let Ok(kv) = load(w, label, &c, batch) {
+        let wt = worktree_of(&kv);
+        let held = ejected_still_in_tree(w, &path, &wt, &kv);
+        if !held.is_empty() {
+            return refuse_ejected_in_tree(w, label, batch, &wt, &held);
+        }
+    }
+    pass_verb(w, label, batch, repo, |_, kv| {
         start_pass(w, batch, kv.get("head").unwrap_or(""), !resume)
     })
 }
@@ -3778,6 +3792,33 @@ fn members_merged_on_base(w: &World, path: &Path, kv: &Kv, head: &str) -> bool {
     })
 }
 
+const EJECTED_TIPS: &str = "ejected-tips";
+
+/// The ejected members whose recorded tip is in the round worktree's `HEAD` and not in the base.
+fn ejected_still_in_tree(w: &World, path: &Path, wt: &Path, kv: &Kv) -> Vec<(String, String)> {
+    let Some(head) = w.git.rev_parse(wt, "HEAD") else {
+        return Vec::new();
+    };
+    let base = kv.get("base").unwrap_or("");
+    kv.get(EJECTED_TIPS)
+        .unwrap_or("")
+        .split_whitespace()
+        .filter_map(|p| p.split_once(':'))
+        .filter(|(_, tip)| w.git.is_ancestor(path, tip, &head) && (base.is_empty() || !w.git.is_ancestor(path, tip, base)))
+        .map(|(id, tip)| (id.to_string(), tip.to_string()))
+        .collect()
+}
+
+fn refuse_ejected_in_tree(w: &World, label: &str, batch: &str, wt: &Path, held: &[(String, String)]) -> i32 {
+    let named: Vec<String> = held.iter().map(|(id, tip)| format!("{id} ({tip})")).collect();
+    w.err(format!(
+        "queue.sh {label}: refused — the round worktree {} still holds ejected member(s) of {batch}: {}; no pass ran. Rebuild the worktree from the recorded members (the next certify adopts it), or `queue round abandon {batch}`",
+        wt.display(),
+        named.join(", ")
+    ));
+    FAIL
+}
+
 #[allow(clippy::too_many_arguments)]
 fn certify_pass(
     w: &World,
@@ -3867,6 +3908,10 @@ fn certify_pass(
                 "re-certify of a GREEN round",
                 (ran, 0),
             );
+        }
+        let held = ejected_still_in_tree(w, path, &wt, &kv);
+        if !held.is_empty() {
+            return refuse_ejected_in_tree(w, label, batch, &wt, &held);
         }
         let run_id = format!("{batch}-{}", w.clock.now());
         let live = fs::read_to_string(handle_of(c, batch))
@@ -4886,6 +4931,13 @@ fn eject(
         |acc, m| format!("{acc}{} ", m.id),
     );
     set(&mut kv, "ejected", &ejected);
+    if !rebuild {
+        let tips = stacked.iter().fold(
+            format!("{}{id}:{ejected_tip} ", kv.get(EJECTED_TIPS).unwrap_or("")),
+            |acc, m| format!("{acc}{}:{} ", m.id, m.tip),
+        );
+        set(&mut kv, EJECTED_TIPS, &tips);
+    }
     let rebuilt = serde_json::json!({"PassRebuilt": {"head": new_head}}).to_string();
     let ride = Ride::with(w, &kv);
     warn_unrecorded(

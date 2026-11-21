@@ -12,6 +12,7 @@ pub enum Phase {
     WriterWait,
     Commit,
     ReaderWait,
+    GateWait,
     Read,
     Drain,
     ContentWait,
@@ -19,7 +20,7 @@ pub enum Phase {
     Child,
 }
 
-const PHASES: usize = 9;
+const PHASES: usize = 10;
 
 impl Phase {
     pub fn name(self) -> &'static str {
@@ -28,6 +29,7 @@ impl Phase {
             Phase::WriterWait => "writer_wait",
             Phase::Commit => "commit",
             Phase::ReaderWait => "reader_wait",
+            Phase::GateWait => "gate_wait",
             Phase::Read => "read",
             Phase::Drain => "drain",
             Phase::ContentWait => "content_wait",
@@ -41,6 +43,7 @@ impl Phase {
         Phase::WriterWait,
         Phase::Commit,
         Phase::ReaderWait,
+        Phase::GateWait,
         Phase::Read,
         Phase::Drain,
         Phase::ContentWait,
@@ -204,11 +207,11 @@ fn current() -> Option<Arc<Recorder>> {
 }
 
 /// A phase that ends, recording its duration, when dropped.
-pub struct Open(Option<(Arc<Recorder>, Phase, Instant)>, bool);
+pub struct Open(Option<(Arc<Recorder>, Phase, Instant)>, bool, Option<Duration>);
 
 impl Drop for Open {
     fn drop(&mut self) {
-        let record = self.1;
+        let (record, took) = (self.1, self.2);
         if let Some((rec, phase, at)) = self.0.take() {
             let mut g = rec.inner();
             if let Some(i) = g.open.iter().rposition(|p| *p == phase) {
@@ -216,7 +219,7 @@ impl Drop for Open {
             }
             drop(g);
             if record {
-                rec.add(phase, at.elapsed());
+                rec.add(phase, took.unwrap_or_else(|| at.elapsed()));
             }
         }
     }
@@ -226,6 +229,12 @@ impl Open {
     /// Ends the phase and records it; an `Open` from [`begin_unconfirmed`] dropped otherwise records nothing.
     pub fn confirm(mut self) {
         self.1 = true;
+    }
+
+    /// Ends the phase recording `took`, measured by the caller's own clock, not this one.
+    pub fn confirm_after(mut self, took: Duration) {
+        self.1 = true;
+        self.2 = Some(took);
     }
 }
 
@@ -245,6 +254,7 @@ fn open(phase: Phase, record: bool) -> Open {
             (rec, phase, Instant::now())
         }),
         record,
+        None,
     )
 }
 

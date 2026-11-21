@@ -10,6 +10,7 @@ mod host_pools;
 mod in_process;
 mod journal_calls;
 mod journal_cannot_tell;
+mod keyed_state_clear;
 mod memory_only;
 mod no_unit_children;
 mod observe_mode;

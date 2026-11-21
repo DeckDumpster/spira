@@ -149,10 +149,10 @@ unit)
     cd "$d" || exit 2
     scope_of unit
     [ -f "$HOME/round-nextest.toml" ] || { echo "round-vm: no round-nextest.toml on this VM: the round's unit tier has not run here" >&2; exit 2; }
-    CARGO_TARGET_DIR="$HOME/attr-target" unit_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "$scope"), r#" $filters >&2
-    rc=$?
+    CARGO_TARGET_DIR="$HOME/attr-target" unit_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "$scope"), r#" $filters 2>&1 | tee "$SPIRA_BATCH_RESULTS/unit-tests.out" >&2
+    rc=${PIPESTATUS[0]}
     cd "$HOME" && rm -rf "$d"
-    [ "$rc" -eq 100 ] || [ "$rc" -eq 101 ] && exit 5
+    if [ "$rc" -eq 100 ] || [ "$rc" -eq 101 ]; then echo "red 0 0 - - - $rc" > "$SPIRA_BATCH_RESULTS/unit-tests.result"; exit 5; fi
     [ "$rc" -eq 0 ] || exit "$rc"
     echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/unit-tests.result"
     exit 0 ;;
@@ -162,10 +162,10 @@ integration)
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
     scope_of integration
-    CARGO_TARGET_DIR="$HOME/attr-target" unit_env "#, spira_config::unit_tier_integration!("unittest", "$scope"), r#" $filters >&2
-    rc=$?
+    CARGO_TARGET_DIR="$HOME/attr-target" unit_env "#, spira_config::unit_tier_integration!("unittest", "$scope"), r#" $filters 2>&1 | tee "$SPIRA_BATCH_RESULTS/integration-tests.out" >&2
+    rc=${PIPESTATUS[0]}
     cd "$HOME" && rm -rf "$d"
-    [ "$rc" -eq 101 ] && exit 5
+    if [ "$rc" -eq 101 ]; then echo "red 0 0 - - - $rc" > "$SPIRA_BATCH_RESULTS/integration-tests.result"; exit 5; fi
     [ "$rc" -eq 0 ] || exit "$rc"
     echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/integration-tests.result"
     exit 0 ;;
@@ -543,12 +543,17 @@ mod tests {
     }
 
     fn attr_job(build: &str, suites: &str, cargo_rc: i32, result: &str) -> (i32, bool, String) {
-        let (rc, made, ran, _) = attr_job_env(build, suites, cargo_rc, result, None);
+        let d = TempDir::new();
+        let (rc, made, ran, _) = attr_job_env(&d, build, suites, cargo_rc, result, None);
         (rc, made, ran)
     }
 
-    fn attr_job_env(build: &str, suites: &str, cargo_rc: i32, result: &str, launcher: Option<&str>) -> (i32, bool, String, String) {
-        let d = TempDir::new();
+    fn attr_job_in(d: &TempDir, build: &str, suites: &str, cargo_rc: i32, result: &str) -> (i32, bool, String) {
+        let (rc, made, ran, _) = attr_job_env(d, build, suites, cargo_rc, result, None);
+        (rc, made, ran)
+    }
+
+    fn attr_job_env(d: &TempDir, build: &str, suites: &str, cargo_rc: i32, result: &str, launcher: Option<&str>) -> (i32, bool, String, String) {
         let (bin, home) = (d.path().join("bin"), d.path().join("home"));
         fs::create_dir_all(&bin).unwrap();
         fs::create_dir_all(&home).unwrap();
@@ -557,7 +562,8 @@ mod tests {
         fs::write(home.join("round-nextest.toml"), "").unwrap();
         let stub = |name: &str, body: &str| testkit::write_exe(bin.join(name), &format!("#!/bin/bash\n{body}\n"));
         stub("git", "for a; do last=$a; done; mkdir -p \"$last\"");
-        stub("cargo", &format!("echo \"$*\" > \"$HOME/cargo.args\"; env > \"$HOME/cargo.env\"; exit {cargo_rc}"));
+        let said = if cargo_rc == 0 { "" } else { "echo 'test x ... FAILED'; " };
+        stub("cargo", &format!("echo \"$*\" > \"$HOME/cargo.args\"; env > \"$HOME/cargo.env\"; {said}exit {cargo_rc}"));
         let status = std::process::Command::new(system_paths::BIN_BASH)
             .args(["-c", REMOTE_ATTR_SCRIPT, "bash", "h", "9430", "j1", "attr-j1", suites, build, ""])
             .env_clear()
@@ -579,7 +585,7 @@ mod tests {
     fn the_unit_and_integration_probes_run_cargo_in_the_environment_the_round_launcher_recorded() {
         let launcher = "export CARGO_HOME={d}\nexport RUSTC_WRAPPER={d}/bin/sccache\n";
         for (build, result) in [("unit", "unit-tests.result"), ("integration", "integration-tests.result")] {
-            let (_, _, _, env) = attr_job_env(build, build, 0, result, Some(launcher));
+            let (_, _, _, env) = attr_job_env(&TempDir::new(), build, build, 0, result, Some(launcher));
             let home_line = env.lines().find(|l| l.starts_with("CARGO_HOME=")).unwrap_or_else(|| panic!("{build}: {env}"));
             let dir = home_line.trim_start_matches("CARGO_HOME=");
             assert!(env.contains(&format!("RUSTC_WRAPPER={dir}/bin/sccache\n")), "{build}: {env}");
@@ -596,6 +602,20 @@ mod tests {
         assert!(REMOTE_ATTR_SCRIPT.contains(crate::run::UNIT_ENV_FN));
         for script in [crate::run::REMOTE_SCRIPT, REMOTE_ATTR_SCRIPT] {
             assert_eq!(script.matches("unit_env() {").count(), 1, "one definition per script");
+        }
+    }
+
+    #[test]
+    fn a_red_unit_or_integration_probe_leaves_its_cargo_output_and_a_red_result() {
+        for (build, rc) in [("unit", 100), ("integration", 101)] {
+            let d = TempDir::new();
+            let (code, made, _) = attr_job_in(&d, build, build, rc, &format!("{build}-tests.result"));
+            assert_eq!((code, made), (5, true), "{build}");
+            let res = d.path().join("home/attr-results/j1");
+            let out = fs::read_to_string(res.join(format!("{build}-tests.out"))).unwrap();
+            assert!(out.contains("test x ... FAILED"), "{build}: {out}");
+            let result = fs::read_to_string(res.join(format!("{build}-tests.result"))).unwrap();
+            assert_eq!(result.split_whitespace().next(), Some("red"), "{build}: {result}");
         }
     }
 
@@ -628,8 +648,8 @@ mod tests {
     fn a_unit_job_exits_5_when_the_tests_fail_and_0_with_a_result_when_they_pass() {
         let r = parse_request("u1", "branch=spira/batcher-attr/x-u1\nsuites=unit\nbuild=unit\n").unwrap();
         assert_eq!(r.build, Build::Unit);
-        assert_eq!(attr_job_rc("unit", 101, "unit-tests.result"), (5, false));
-        assert_eq!(attr_job_rc("unit", 100, "unit-tests.result"), (5, false), "nextest's own exit for a failed test run");
+        assert_eq!(attr_job_rc("unit", 101, "unit-tests.result"), (5, true));
+        assert_eq!(attr_job_rc("unit", 100, "unit-tests.result"), (5, true), "nextest's own exit for a failed test run");
         assert_eq!(attr_job_rc("unit", 137, "unit-tests.result"), (137, false), "a killed run is a fault, not red");
         assert_eq!(attr_job_rc("unit", 0, "unit-tests.result"), (0, true));
     }
@@ -641,7 +661,7 @@ mod tests {
         assert_eq!(r.build, Build::Integration);
         let (_, _, args) = attr_job("integration", "spira-runtime,gate", 0, "integration-tests.result");
         assert!(args.contains("-p spira-runtime -p gate") && args.contains("--test *") && args.contains("--features integration"), "{args}");
-        assert_eq!(attr_job_rc("integration", 101, "integration-tests.result"), (5, false));
+        assert_eq!(attr_job_rc("integration", 101, "integration-tests.result"), (5, true));
         assert_eq!(attr_job_rc("integration", 0, "integration-tests.result"), (0, true));
     }
 

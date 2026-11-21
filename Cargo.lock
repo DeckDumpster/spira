@@ -299,7 +299,9 @@ dependencies = [
  "sha2",
  "spira-config",
  "spira-otel",
+ "spira-store",
  "spira-test-id",
+ "test-registry",
  "testkit",
  "toml",
 ]
@@ -735,6 +737,7 @@ dependencies = [
 name = "heimdall"
 version = "1.0.0"
 dependencies = [
+ "inbox-rules",
  "regex",
  "runtime",
  "serde",

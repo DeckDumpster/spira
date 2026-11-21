@@ -21,6 +21,7 @@ fn build_ports() -> Result<Ports, String> {
         page_lines: cfg_parse("SPIRA_CR_PAGE_LINES")?,
         oversize_pages: cfg_parse("SPIRA_CR_OVERSIZE_PAGES")?,
         churn_days: cfg_parse("SPIRA_CR_CHURN_DAYS")?,
+        rewrite_days: cfg_parse("SPIRA_CR_REWRITE_DAYS")?,
         count_limit: cfg_parse::<u32>("SPIRA_CR_COUNT_LIMIT")? as usize,
         exclude: exclude.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect(),
     };
@@ -29,6 +30,7 @@ fn build_ports() -> Result<Ports, String> {
         None => Box::new(WallClock),
     };
     let run_dir = spira_config::resolve::run_dir_for_process()?;
+    let registry_path = test_registry::cli::with_run_default(spira_config::process::cfg, || Ok(run_dir.to_string_lossy().into_owned()))(test_registry::cli::PATH_KEY)?;
     let key = |k: &str| spira_config::process::cfg(k).unwrap_or_default();
     let stdin = if matches!(std::env::args().nth(1).as_deref(), Some("seal" | "finding" | "reply")) {
         use std::io::Read;
@@ -47,7 +49,7 @@ fn build_ports() -> Result<Ports, String> {
         committer: Box::new(cr::ports::GitCommitter),
         source_repo: repo.clone(),
         stdin,
-        clock, tree: Box::new(tree), ledger: Ledger::load(&ledger_path)?, config,
+        clock, tree: Box::new(tree), beads: Box::new(cr::ports::LcBeads), registry: Box::new(cr::ports::SqliteRegistry { path: registry_path }), ledger: Ledger::load(&ledger_path)?, config,
         env_seed: spira_config::process::cfg("SPIRA_SEED").ok().filter(|s| !s.is_empty()),
     })
 }

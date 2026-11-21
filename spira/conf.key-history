@@ -766,6 +766,7 @@ limit_cpu
 limit_memory
 limit_network
 heimdall_red_streak
+heimdall_noverdict_streak
 gate_builder_dir_wait_secs
 dolt_persist_gc_interval_secs
 runtime_sweep_repo_contract_calendar
@@ -809,3 +810,5 @@ cr_open_hour
 cr_stale_days
 runtime_cr_cadence_secs
 beads_sql_writer_password_file
+cr_rewrite_days
+lc_wal_line_bytes

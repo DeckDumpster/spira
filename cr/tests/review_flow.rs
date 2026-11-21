@@ -56,8 +56,10 @@ fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
         stdin: String::new(),
         clock: Box::new(VirtualClock::new(1_700_000_000_000)),
         tree: Box::new(GitTree::new(p.to_str().unwrap(), "main").unwrap()),
+        beads: Box::new(cr::ports::FixtureBeads::default()),
+        registry: Box::new(cr::ports::FixtureRegistry::default()),
         ledger: Ledger::default(),
-        config: Config { page_lines: 60, oversize_pages: 6, exclude: vec![], churn_days: 60, count_limit: 50 },
+        config: Config { page_lines: 60, oversize_pages: 6, exclude: vec![], churn_days: 60, rewrite_days: 90, count_limit: 50 },
         env_seed: None,
     };
     let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -69,14 +71,14 @@ fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
 
     let r = record::load(run_dir.path(), 1).unwrap();
     assert_eq!(r.source_sha, sha);
-    let comment = format!(r#"[{{"path":"{}","line":1,"body":"b"}}]"#, r.unit.files[0].path);
+    let comment = format!(r#"{{"does":"d","look_first":"l","comments":[{{"path":"{}","line":1,"body":"b"}}]}}"#, r.unit.files[0].path);
     let mut sealing = ports;
     sealing.stdin = comment;
     let o = run(&args(&["seal", "--review", "001"]), &sealing);
     assert_eq!(o.code, 0, "{}", o.stderr);
 
     let blobs = gh.posted("git/blobs");
-    assert_eq!(blobs.len(), r.unit.files.len() + 1);
+    assert_eq!(blobs.len(), r.unit.files.len());
     for (f, b) in r.unit.files.iter().zip(&blobs) {
         let want = git(p, &["show", &format!("{sha}:{}", f.path)]);
         assert_eq!(unbase64(b["content"].as_str().unwrap()), want, "{}", f.path);
