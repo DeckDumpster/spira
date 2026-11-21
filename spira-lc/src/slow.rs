@@ -34,6 +34,11 @@ type Key = (String, String, String);
 
 static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(), tasks: BTreeMap::new(), reads: BTreeMap::new(), gate_max: BTreeMap::new() });
 
+/// Reads the store ended at its limit, by verb.
+pub const READS_ENDED: &str = "spira_lc_reads_ended";
+/// Reads that ran past the limit without being ended, by verb; expected 0.
+pub const READS_OVERRAN: &str = "spira_lc_reads_overran";
+
 /// The longest wait at the store's read gate by one request of a verb, per push interval.
 pub const GATE_WAIT_MAX_SECONDS: &str = "spira_lc_gate_wait_max_seconds";
 
@@ -345,10 +350,10 @@ fn read_series_since(c: &Counters, pushed: &BTreeMap<String, ReadCounts>, at: st
         let (pe, po) = pushed.get(verb).copied().unwrap_or_default();
         let series = |name: &str, value: u64| spira_otel::metrics::Series { name: name.into(), value: value as f64, labels: vec![("verb".to_string(), verb.clone())], at };
         if ended > pe {
-            out.push(series("spira_lc_reads_ended", ended - pe));
+            out.push(series(READS_ENDED, ended - pe));
         }
         if overran > po {
-            out.push(series("spira_lc_reads_overran", overran - po));
+            out.push(series(READS_OVERRAN, overran - po));
         }
     }
     out
@@ -783,9 +788,9 @@ mod tests {
         c.reads.entry("show".to_string()).or_default().1 += 4;
         let got = read_series_since(&c, &BTreeMap::new(), std::time::SystemTime::now());
         let total = |name: &str, verb: &str| got.iter().filter(|s| s.name == name && s.labels == [("verb".to_string(), verb.to_string())]).map(|s| s.value).sum::<f64>();
-        assert_eq!(total("spira_lc_reads_ended", "list"), 3.0);
-        assert_eq!(total("spira_lc_reads_overran", "show"), 4.0);
-        assert_eq!(total("spira_lc_reads_overran", "list"), 0.0);
+        assert_eq!(total(READS_ENDED, "list"), 3.0);
+        assert_eq!(total(READS_OVERRAN, "show"), 4.0);
+        assert_eq!(total(READS_OVERRAN, "list"), 0.0);
         let pushed = BTreeMap::from([("list".to_string(), (3, 0))]);
         assert!(read_series_since(&c, &pushed, std::time::SystemTime::now()).iter().all(|s| s.labels[0].1 != "list"), "only the delta");
     }
