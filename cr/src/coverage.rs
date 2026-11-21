@@ -60,7 +60,7 @@ pub fn coverage(ix: &Index, tree: &dyn SourceTree, ledger: &Ledger, cfg: &Config
     let mut changed = Vec::new();
     let mut reviewed_paths = BTreeSet::new();
     for path in universe {
-        let area = areas.entry(path.split('/').next().unwrap_or(path).to_string()).or_insert(Tally { reviewed: 0, current: 0, total: 0 });
+        let area = areas.entry(crate::ledger::area_of(path).to_string()).or_insert(Tally { reviewed: 0, current: 0, total: 0 });
         files.total += 1;
         area.total += 1;
         match latest_published(ledger, path) {
