@@ -106,6 +106,14 @@ impl Store {
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
+    /// A statement on the fixture's server as its root user: how a test plants state bd itself
+    /// would never write, such as a stale `is_blocked` flag, and settles it into a Dolt commit.
+    fn sql(&self, statement: &str) {
+        let dolt = std::env::var("TESTDB_DOLT").ok().filter(|b| !b.is_empty()).or_else(|| tool("dolt")).expect("dolt, as the store came up with it");
+        let out = Command::new(dolt).args(["--host", "127.0.0.1", "--port", &self.port, "--no-tls", "-u", "root", "-p", "", "--use-db", "sptest", "sql", "-q", statement]).output().expect("dolt runs");
+        assert!(out.status.success(), "{statement}: {}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    }
+
     fn create_bead(&self) -> String {
         self.bd(&["create", "a bead the writes land on", "--silent"], None).trim().to_string()
     }
@@ -684,21 +692,45 @@ fn purge_alerts_deletes_the_alerts_rows_in_sql_and_unblocks_what_they_blocked() 
     assert_ne!(lc.run(&["content", "show", &alert], None).0, 0, "the alert is still there");
     assert!(lc.shows(&keeper).contains(&keeper) && lc.shows(&other).contains(&other), "the purge took more than the alert");
     assert!(!store.bd(&["blocked", "--json"], None).contains(&keeper), "{keeper} is still blocked by a bead that is gone");
+    let (alert2, keeper2) = (store.create_bead(), store.create_bead());
+    store.bd(&["comments", "add", &alert2, "a comment on the alert"], None);
+    store.bd(&["dep", "add", &keeper2, &alert2, "--type", "blocks"], None);
+    store.bd(&["delete", &alert2, "--force"], None);
+    assert_eq!(plain(&lc.shows(&keeper), &keeper, &alert), plain(&lc.shows(&keeper2), &keeper2, &alert2), "bd's delete leaves the dependent as the service's does");
+}
+
+/// Two beads whose `is_blocked` flags disagree with the graph: `blocked` has a blocker and a
+/// flag of 0, `free` has no blocker and a flag of 1.
+fn stale_pair(store: &Store) -> (String, String, String) {
+    let (blocked, blocker, free) = (store.create_bead(), store.create_bead(), store.create_bead());
+    store.bd(&["dep", "add", &blocked, &blocker, "--type", "blocks"], None);
+    store.sql(&format!("UPDATE issues SET is_blocked = 0 WHERE id = '{blocked}'; UPDATE issues SET is_blocked = 1 WHERE id = '{free}'; CALL DOLT_COMMIT('-Am', 'plant stale flags')"));
+    (blocked, blocker, free)
 }
 
 #[test]
-fn recompute_blocked_leaves_a_consistent_graph_as_bd_does_in_sql_and_starts_no_process() {
+fn recompute_blocked_repairs_stale_flags_and_says_what_bd_says_in_sql_and_starts_no_process() {
     let Some(store) = Store::up() else { return };
     let lc = writer_lc(&store, "rb");
-    let (a, b, a2, b2) = (store.create_bead(), store.create_bead(), store.create_bead(), store.create_bead());
-    for (x, y) in [(&a, &b), (&a2, &b2)] {
-        store.bd(&["dep", "add", x, y, "--type", "blocks"], None);
-    }
+    let (blocked, ..) = stale_pair(&store);
+    assert!(!store.bd(&["blocked", "--json"], None).contains(&blocked), "{blocked} reads as unblocked while its flag is stale");
     let (out, children) = lc.children_of("content", &["content", "recompute-blocked"], None);
     assert_eq!(children, 0, "the recompute started a process: {out}");
-    assert_eq!(out, store.bd(&["recompute-blocked"], None));
-    for (x, y, x2, y2) in [(&a, &b, &a2, &b2), (&b, &a, &b2, &a2)] {
-        assert_eq!(plain(&lc.shows(x), x, y), plain(&lc.shows(x2), x2, y2));
-    }
-    assert!(store.bd(&["blocked", "--json"], None).contains(&a), "{a} is still blocked by {b}");
+    assert!(store.bd(&["blocked", "--json"], None).contains(&blocked), "{blocked} is blocked once the service recomputed");
+    store.sql("CALL DOLT_COMMIT('-Am', 'settle')");
+    let (blocked2, ..) = stale_pair(&store);
+    let theirs = store.bd(&["recompute-blocked"], None);
+    assert_eq!(out, theirs, "the words the recompute prints");
+    assert!(store.bd(&["blocked", "--json"], None).contains(&blocked2));
+    assert_eq!(lc.run(&["content", "recompute-blocked"], None).1, "is_blocked already consistent — nothing to recompute.\n");
+}
+
+#[test]
+fn a_gate_check_over_a_github_gate_is_left_to_bd() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "gh");
+    let a = store.create_bead();
+    gate_for(&store, &a, &["--type=gh:run", "--await-id=1"]);
+    let (out, children) = lc.children_of("content", &["content", "gate", "check", "--type=gh:run"], None);
+    assert!(children > 0 || out.contains("deadline"), "bd asks GitHub, so it must have run: {out}");
 }
