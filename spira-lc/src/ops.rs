@@ -1284,7 +1284,7 @@ mod tests {
         use state_store::{events_key, Backend, Object, Rev, Write};
         use state_store_sqlite::{Options, SqliteBackend};
         let dir = testkit::TempDir::new("spira-lc-ops-memory");
-        let b = SqliteBackend::open(&dir.path().join("control.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("control.db"), Options { clock: std::sync::Arc::new(VirtualClock::new(0)), ..Options::default() }).unwrap();
         let now: i64 = 2_000_000_000;
         let bulk = "x".repeat(2_000);
         let states = ["READY", "WORKING", "SUBMITTED", "CERTIFIED"];
@@ -1307,6 +1307,13 @@ mod tests {
             head = b.commit(head, &[write]).unwrap();
         }
         (b, now, dir)
+    }
+
+    #[test]
+    fn a_fixture_store_ends_no_read_for_the_time_it_took() {
+        let (b, now, _dir) = fortnight_backend(2_000);
+        b.set_max_read_ms(0);
+        open_on(b).fold_stays(now, 100_000).unwrap();
     }
 
     fn open_on<B: Backend>(b: B) -> Store<B> {
