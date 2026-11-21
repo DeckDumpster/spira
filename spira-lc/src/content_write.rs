@@ -720,7 +720,7 @@ fn preflight(w: &Writer, m: &Mutation, me: &serde_json::Value) -> Result<Option<
             Op::Status(v) if *v == status => continue,
             Op::Assignee(v) if v.chars().count() > 255 => return Ok(None),
             Op::Assignee(v) if *v == holder => continue,
-            Op::Assignee(_) if !m.forced && !holder.is_empty() && status == "in_progress" => return Ok(None),
+            Op::Assignee(_) if !m.forced && !holder.is_empty() && holder != ACTOR && status == "in_progress" => return Ok(None),
             Op::Description(v) if *v == cell(me, "description") => continue,
             Op::Close { force: false, .. } if status != "closed" => {
                 let children = count(w, &format!("SELECT COUNT(DISTINCT d.issue_id) AS n FROM {db}.dependencies d JOIN {db}.issues c ON c.id = d.issue_id WHERE d.depends_on_issue_id = '{id}' AND d.type = 'parent-child' AND c.status <> 'closed'"))?;
@@ -951,7 +951,7 @@ impl Create {
         match self.shape {
             Shape::Id => format!("{id}\n"),
             Shape::Json => {
-                let stamp = rfc3339(now);
+                let stamp = spira_desired_state::store::format_rfc3339(now);
                 let mut row = serde_json::json!({
                     "id": id,
                     "title": self.title,
@@ -977,21 +977,6 @@ impl Create {
             Shape::Text => format!("✓ Created issue: {id} — {}\n  Priority: P{}\n  Status: {}\n", self.title, self.priority, self.status),
         }
     }
-}
-
-/// An RFC 3339 UTC timestamp, from epoch seconds.
-fn rfc3339(epoch: u64) -> String {
-    let (days, rem) = ((epoch / 86_400) as i64, epoch % 86_400);
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
 /// The committer thread lc-serve runs.
@@ -1220,12 +1205,6 @@ mod tests {
         assert_eq!(json["labels"][0], "a");
         assert_eq!(bead::parse_created_id(&c(&["T", "--json"]).stdout("sp-x1", &[], 0)).as_deref(), Some("sp-x1"));
         assert!(c(&["T"]).stdout("sp-x1", &[], 0).starts_with("✓ Created issue: sp-x1"));
-    }
-
-    #[test]
-    fn a_timestamp_is_written_in_utc_to_the_second() {
-        assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
-        assert_eq!(rfc3339(951_782_400 + 3661), "2000-02-29T01:01:01Z");
     }
 
     #[test]

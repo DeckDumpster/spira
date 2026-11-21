@@ -351,6 +351,8 @@ fn a_create_gets_its_id_from_the_server_in_the_one_transaction_and_starts_no_pro
     let shown = lc.shows(&id);
     assert!(shown.contains("what the bead says") && shown.contains("repo:spira"), "{shown}");
     assert!(store.bd(&["show", &id], None).contains(&id), "bd reads the bead the server wrote");
+    let (rc, row) = lc.run(&["show", &id], None);
+    assert!(rc == 0 && row.contains(&id), "create-bead files the lifecycle row from the create's output ({rc}): {row}");
 }
 
 #[test]
@@ -417,6 +419,14 @@ struct Twin {
 
 const TWINS: &[Twin] = &[
     Twin { name: "reopen", before: &[&["update", "A", "--status", "blocked", "--assignee", "bob"]], request: &["reopen", "A", "operator-reopen", "groomer"], stdin: None, method: "reopen", bd: &["update", "A", "--status", "open", "--assignee", ""] },
+    Twin {
+        name: "reopen from in_progress",
+        before: &[&["update", "A", "--status", "in_progress", "--assignee", "spira-lc"]],
+        request: &["reopen", "A", "operator-reopen", "groomer"],
+        stdin: None,
+        method: "reopen",
+        bd: &["update", "A", "--status", "open", "--assignee", ""],
+    },
     Twin { name: "update --assignee", before: &[], request: &["content", "update", "A", "--assignee", "bob"], stdin: None, method: "content", bd: &["update", "A", "--assignee", "bob"] },
     Twin { name: "update --body-file -", before: &[], request: &["content", "update", "A", "--body-file", "-"], stdin: Some("a new description\n"), method: "content", bd: &["update", "A", "--body-file", "-"] },
     Twin { name: "close --reason", before: &[], request: &["close", "A", "--reason", "it is done"], stdin: None, method: "close", bd: &["close", "A", "--force", "--reason", "it is done"] },
@@ -472,4 +482,72 @@ fn without_a_writer_credential_those_writes_still_go_through_bd_and_make_the_sam
     for (verb, children, out) in twins(&store, &lc) {
         assert!(children > 0 || out.contains("deadline"), "{verb} should have forked bd: {out}");
     }
+}
+
+/// A create made by the service and by the fixture's bd must read back the same.
+const CREATES: &[(&str, &[&str], Option<&str>)] = &[
+    ("every filing flag", &["a full bead", "--type", "bug", "--priority", "P1", "--labels", "x:1,y:2", "--external-ref", "gh-9", "--assignee", "bob", "--deps", "B", "--body-file", "-"], Some("the body\n")),
+    ("an explicit id", &["--id", "ID", "an id given", "--labels", "z:1"], None),
+    ("a child", &["a child", "--parent", "B"], None),
+    ("a child that inherits no labels", &["a child", "--parent", "B", "--no-inherit-labels", "--labels", "own:1"], None),
+    ("a discovered-from edge", &["found while", "--deps", "discovered-from:B", "-d", "by flag"], None),
+];
+
+#[test]
+fn a_create_makes_the_row_bd_makes_for_every_filing_flag() {
+    let store = Store::up();
+    let lc = writer_lc(&store, "w");
+    let words = |args: &[&str], dep: &str, id: &str| -> Vec<String> {
+        args.iter()
+            .map(|w| {
+                if *w == "B" {
+                    dep.to_string()
+                } else if *w == "ID" {
+                    id.to_string()
+                } else {
+                    w.to_string()
+                }
+            })
+            .collect()
+    };
+    for (name, args, stdin) in CREATES {
+        let (b, b2) = (store.create_bead(), store.create_bead());
+        store.bd(&["label", "add", &b, "inherited:1"], None);
+        store.bd(&["label", "add", &b2, "inherited:1"], None);
+        let mut ours = vec!["content".to_string(), "create".to_string()];
+        ours.extend(words(args, &b, "sp-lcid1"));
+        ours.push("--silent".into());
+        let (out, children) = lc.children_of("content", &ours.iter().map(String::as_str).collect::<Vec<_>>(), *stdin);
+        assert_eq!(children, 0, "{name} started a process: {out}");
+        let a = first_line(&out);
+        let mut theirs = vec!["create".to_string()];
+        theirs.extend(words(args, &b2, "sp-bdid1"));
+        theirs.push("--silent".into());
+        let a2 = first_line(&store.bd(&theirs.iter().map(String::as_str).collect::<Vec<_>>(), *stdin));
+        for (x, y, x2, y2) in [(&a, &b, &a2, &b2), (&b, &a, &b2, &a2)] {
+            assert_eq!(plain(&lc.shows(x), x, y), plain(&lc.shows(x2), x2, y2), "{name}: the service and bd made different rows ({out})");
+        }
+    }
+}
+
+#[test]
+fn a_create_prints_what_bd_prints_with_json_and_with_neither_flag() {
+    let store = Store::up();
+    let lc = writer_lc(&store, "j");
+    let (_, row) = lc.run(&["content", "create", "a shown bead", "--priority", "1", "--json"], None);
+    let theirs = store.bd(&["create", "a shown bead", "--priority", "1", "--json"], None);
+    let (ours, theirs): (serde_json::Value, serde_json::Value) = (serde_json::from_str(row.trim_end()).unwrap_or_else(|e| panic!("{e}: {row}")), serde_json::from_str(theirs.trim_end()).unwrap());
+    assert!(bead::parse_created_id(&row).is_some_and(|id| id == ours["id"]), "content::after reads the id from the row");
+    let (mut a, mut b) = (ours.clone(), theirs.clone());
+    for row in [&mut a, &mut b] {
+        row.as_object_mut().unwrap().remove("id");
+        strip(row);
+    }
+    for (key, value) in a.as_object().unwrap() {
+        assert_eq!(Some(value), b.get(key), "bd prints {key} differently: ours {ours} bd's {theirs}");
+    }
+    let (_, text) = lc.run(&["content", "create", "a shown bead"], None);
+    let said = store.bd(&["create", "a shown bead"], None);
+    let (id, bd_id) = (text.split_whitespace().nth(3).unwrap_or_default().to_string(), said.split_whitespace().nth(3).unwrap_or_default().to_string());
+    assert_eq!(text.replace(&id, "ID").lines().take(3).collect::<Vec<_>>(), said.replace(&bd_id, "ID").lines().take(3).collect::<Vec<_>>(), "{text} vs {said}");
 }
