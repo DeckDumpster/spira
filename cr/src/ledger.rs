@@ -26,6 +26,13 @@ pub enum ClosedAs {
     Unpublished,
 }
 
+/// Where his comments on a published review went.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attention {
+    pub comments_by_path: BTreeMap<String, u32>,
+    pub finding_kinds: BTreeMap<String, u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Row {
     pub review: String,
@@ -37,11 +44,18 @@ pub struct Row {
     pub opened_at: u64,
     pub closed_at: Option<u64>,
     pub closed_as: Option<ClosedAs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention: Option<Attention>,
+}
+
+/// The first path component.
+pub fn area_of(path: &str) -> &str {
+    path.split('/').next().unwrap_or(path)
 }
 
 impl Row {
-    pub fn closing(&self, at: u64, how: ClosedAs) -> Row {
-        Row { closed_at: Some(at), closed_as: Some(how), ..self.clone() }
+    pub fn closing(&self, at: u64, how: ClosedAs, attention: Option<Attention>) -> Row {
+        Row { closed_at: Some(at), closed_as: Some(how), attention, ..self.clone() }
     }
 }
 
@@ -86,12 +100,25 @@ impl Ledger {
         self.rows.iter().filter(|r| r.kind == kind).map(|r| r.opened_at).max()
     }
 
+    /// His comment counts per area over published reviews, and their total.
+    pub fn attention_by_area(&self) -> (BTreeMap<String, u32>, u32) {
+        let mut by_area: BTreeMap<String, u32> = BTreeMap::new();
+        let mut total = 0;
+        for a in self.folded().iter().filter(|r| r.closed_as == Some(ClosedAs::Published)).filter_map(|r| r.attention.as_ref()) {
+            for (path, n) in &a.comments_by_path {
+                *by_area.entry(area_of(path).to_string()).or_default() += n;
+                total += n;
+            }
+        }
+        (by_area, total)
+    }
+
     /// The ledger with every path renamed to its name at `tree`'s commit.
     pub fn at_tree(&self, tree: &dyn SourceTree) -> Result<Ledger, String> {
         let mut by_commit: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
         let mut rows = self.rows.clone();
         for r in &mut rows {
-            if r.files.is_empty() {
+            if r.files.is_empty() && r.attention.is_none() {
                 continue;
             }
             if !by_commit.contains_key(&r.commit) {
@@ -102,6 +129,13 @@ impl Ledger {
                 if let Some(new) = renames.get(&f.path) {
                     f.path = new.clone();
                 }
+            }
+            if let Some(a) = &mut r.attention {
+                let mut moved = BTreeMap::new();
+                for (path, n) in std::mem::take(&mut a.comments_by_path) {
+                    *moved.entry(renames.get(&path).cloned().unwrap_or(path)).or_default() += n;
+                }
+                a.comments_by_path = moved;
             }
         }
         Ok(Ledger { rows })
@@ -197,8 +231,28 @@ pub fn close(number: u32, at: u64, ports: &Ports) -> Outcome {
         return Outcome { code: 0, stdout: format!("review {id} is already closed in the ledger\n"), stderr: String::new() };
     }
     let how = if r.published_at.is_some() { ClosedAs::Published } else { ClosedAs::Unpublished };
-    match append(ports, &[latest.closing(at, how)]) {
+    let attention = match how {
+        ClosedAs::Published => match attention_of(ports, number) {
+            Ok(a) => Some(a),
+            Err(e) => return refuse(1, &e),
+        },
+        ClosedAs::Unpublished => None,
+    };
+    match append(ports, &[latest.closing(at, how, attention)]) {
         Ok(()) => Outcome { code: 0, stdout: format!("review {id} closed as {}\n", if how == ClosedAs::Published { "published" } else { "unpublished" }), stderr: String::new() },
         Err(e) => refuse(1, &e),
     }
+}
+
+fn attention_of(ports: &Ports, number: u32) -> Result<Attention, String> {
+    let mut a = Attention::default();
+    for c in crate::thread::kept_comments(&ports.run_dir, number)?.iter().filter(|c| !c.bot) {
+        if let Some(p) = &c.path {
+            *a.comments_by_path.entry(p.clone()).or_default() += 1;
+        }
+    }
+    for f in crate::findings::kept(&ports.run_dir, number)? {
+        *a.finding_kinds.entry(f.kind.as_str().to_string()).or_default() += 1;
+    }
+    Ok(a)
 }

@@ -21,10 +21,24 @@ pub struct Weight {
     pub lines: u32,
     /// Lines changed since each of the unit's files was last reviewed.
     pub changed_lines: u32,
+    /// The candidate's area, his comments in it, and his comments in all.
+    pub area: String,
+    pub area_comments: u32,
+    pub his_comments: u32,
     pub total: f64,
 }
 
 impl Weight {
+    pub fn attention_share(&self) -> f64 {
+        if self.his_comments == 0 {
+            0.0
+        } else {
+            f64::from(self.area_comments) / f64::from(self.his_comments)
+        }
+    }
+    pub fn attention_term(&self) -> f64 {
+        1.0 + self.attention_share()
+    }
     pub fn churn_term(&self) -> f64 {
         1.0 + f64::from(self.commits)
     }
@@ -82,6 +96,7 @@ pub fn dependents(ix: &Index, unit: &Unit) -> u32 {
 /// Scores every unit. `ledger` carries today's paths (`Ledger::at_tree`). A unit whose primary
 /// file is in flight, or was published at today's blob, is dropped.
 pub fn score_all(ix: &Index, tree: &dyn SourceTree, units: Vec<Unit>, cfg: &Config, ledger: &Ledger, now_ms: u64) -> Vec<Scored> {
+    let (attention, his_comments) = ledger.attention_by_area();
     let since = now_ms.saturating_sub(u64::from(cfg.churn_days) * DAY_MS);
     units
         .into_iter()
@@ -98,11 +113,11 @@ pub fn score_all(ix: &Index, tree: &dyn SourceTree, units: Vec<Unit>, cfg: &Conf
             let review_factor = days.map_or(NEVER_REVIEWED_FACTOR, |d| 1.0 + (d / 30.0).min(3.0));
             // A blob the tree cannot diff counts as wholly changed rather than as unchanged.
             let changed_lines: u32 = reviewed.iter().filter(|(p, b, _)| ix.blobs.get(p) != Some(b)).map(|(p, b, _)| tree.changed_lines(b, p).unwrap_or_else(|| ix.lines(p))).sum();
-            let mut w = Weight { review_factor, days_since_reviewed: days, commits, dependents: dependents(ix, &unit), lines, changed_lines, total: 0.0 };
+            let mut w = Weight { review_factor, days_since_reviewed: days, commits, dependents: dependents(ix, &unit), lines, changed_lines, area: ledger::area_of(primary).to_string(), area_comments: attention.get(ledger::area_of(primary)).copied().unwrap_or(0), his_comments, total: 0.0 };
             w.total = if paths.iter().any(|p| glob::any(&cfg.exclude, p)) {
                 0.0
             } else {
-                review_factor * w.changed_term() * w.churn_term() * w.dependents_term() * w.size_term(cfg.page_lines)
+                review_factor * w.attention_term() * w.changed_term() * w.churn_term() * w.dependents_term() * w.size_term(cfg.page_lines)
             };
             Some(Scored { unit, weight: w })
         })

@@ -27,7 +27,7 @@ pub enum Kind {
 }
 
 impl Kind {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Kind::Question => "question",
             Kind::Refactor => "refactor",
@@ -115,6 +115,10 @@ fn load(run: &Path, number: u32) -> Result<Vec<Finding>, String> {
         Err(e) => return Err(format!("reading {}: {e}", path.display())),
     };
     text.lines().filter(|l| !l.trim().is_empty()).map(|l| serde_json::from_str(l).map_err(|e| format!("{}: {e}", path.display()))).collect()
+}
+
+pub(crate) fn kept(run: &Path, number: u32) -> Result<Vec<Finding>, String> {
+    load(run, number)
 }
 
 fn save(run: &Path, number: u32, rows: &[Finding]) -> Result<(), String> {
