@@ -681,7 +681,7 @@ pub struct RepoCarry {
     #[serde(default)]
     pub assemble_failed: Option<(String, u32)>,
     /// Members `queue round open` refused, as id → (tip, base, kind): each stays out of the cut
-    /// until its tip or the base moves.
+    /// until its tip or the base moves. Kinds in `POOL_READ_REFUSALS` are not kept.
     #[serde(default)]
     pub refused: BTreeMap<String, (String, String, String)>,
     /// The base the round was re-certified on after a base-moved land refusal: at most once per
@@ -2335,7 +2335,7 @@ impl Machine<'_> {
     }
 
     /// `round open` refused the members it names (typed, sp-822b8l): each is set aside at its tip
-    /// and the round's base, and the round is asked for again with the rest; with none left the
+    /// and the round's base (but not a `POOL_READ_REFUSALS` kind, which only leaves this leg), and the round is asked for again with the rest; with none left the
     /// cut is over, nothing opened and nothing abandoned. The queue has already routed them (a
     /// base conflict back to rework, a round conflict into an integration that carries it).
     fn refused_some(&mut self, refused: &[(String, String, String)], leg: &Leg) {
