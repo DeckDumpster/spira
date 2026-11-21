@@ -52,6 +52,7 @@ struct Fake {
     ran: RefCell<Vec<Vec<(String, String)>>>,
     checkouts: RefCell<Vec<String>>,
     written: RefCell<Vec<(PathBuf, String)>>,
+    deny_written: RefCell<Vec<(PathBuf, String)>>,
     unit_config: RefCell<Vec<(PathBuf, String)>>,
     deny: RefCell<Result<String, String>>,
     deny_calls: Cell<u32>,
@@ -283,6 +284,7 @@ impl Fake {
             ran: RefCell::new(Vec::new()),
             checkouts: RefCell::new(Vec::new()),
             written: RefCell::new(Vec::new()),
+            deny_written: RefCell::new(Vec::new()),
             unit_config: RefCell::new(Vec::new()),
             deny: RefCell::new(Ok(String::new())),
             deny_calls: Cell::new(0),
@@ -593,6 +595,10 @@ impl World for Fake {
     fn write_atomic(&self, dir: &Path, name: &str, content: &str) {
         if name == "gate-unit-nextest.toml" {
             self.unit_config.borrow_mut().push((dir.join(name), content.to_string()));
+            return;
+        }
+        if name == "gate-deny-list" {
+            self.deny_written.borrow_mut().push((dir.join(name), content.to_string()));
             return;
         }
         if name.starts_with("gate-out-") {
@@ -2847,7 +2853,7 @@ fn a_deny_list_reaches_the_nextest_config_the_integration_command_and_the_suites
     let cmds = f.cmds.borrow().clone();
     assert!(cmds[2].contains("--test '*' -- --exact --skip x::y"), "{}", cmds[2]);
     assert!(f.env_of(0, "SPIRA_TEST_DENY_LIST").ends_with("target/gate-deny-list"), "the gate-string step names the list file");
-    let written = f.written.borrow();
+    let written = f.deny_written.borrow();
     assert!(written.iter().any(|(p, c)| p.ends_with("target/gate-deny-list") && c.contains("t::drop")), "{written:?}");
 
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
@@ -2865,7 +2871,7 @@ fn a_deny_list_reaches_the_nextest_config_the_integration_command_and_the_suites
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
     assert_eq!(f.run(), PASS);
     assert!(f.env_of(0, "SPIRA_TEST_DENY_LIST").ends_with("target/gate-deny-list"), "an empty list still names its file");
-    let written = f.written.borrow();
+    let written = f.deny_written.borrow();
     assert!(written.iter().any(|(p, c)| p.ends_with("target/gate-deny-list") && c == header), "{written:?}");
     drop(written);
     assert!(!f.cmds.borrow()[2].contains("--skip"));

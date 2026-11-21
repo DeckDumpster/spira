@@ -237,6 +237,7 @@ mod tests {
                 "tier-budget-allowlist",
                 "tier-budget-area-allowlist",
                 "tier-budget-areas",
+                "test-id-row-orphan",
                 "testdb-mode-lint",
                 "bd-stdin-lint",
                 "gh-intake-lint",

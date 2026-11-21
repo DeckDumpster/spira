@@ -378,7 +378,7 @@ mod tests {
         let d = DenyList::parse(TWO).unwrap();
         assert_eq!(d.nextest_filter().unwrap(), "not ((binary_id(=a::b) & test(=t::drop)) | (binary_id(=c) & test(=d::e)))");
         assert!(nextest_config(7, 3, &d).ends_with("default-filter = \"not ((binary_id(=a::b) & test(=t::drop)) | (binary_id(=c) & test(=d::e)))\"\n"));
-        assert_eq!(DenyList::parse(&d.render()).unwrap(), d);
+        assert_eq!(DenyList::parse(&d.render()).unwrap().render(), d.render(), "render keeps state and test, not the bead");
     }
 
     #[test_id(trfvnun)]
