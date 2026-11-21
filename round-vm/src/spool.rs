@@ -109,7 +109,7 @@ rm -rf "$SPIRA_BATCH_RESULTS"; mkdir -p "$SPIRA_BATCH_RESULTS"
 # path-ok: the round's own testenv, built on this VM from the round tree by the corpus run
 tenv="$HOME/round-work/target/release/testenv"
 set +e
-# suites= names packages, or package=test for a failing test: the run is then those tests alone,
+"#, crate::run::unit_env_fn!(), r#"# suites= names packages, or package=test for a failing test: the run is then those tests alone,
 # unless a package is named bare, which keeps every test of the packages named.
 scope_of() {
     scope="--workspace"; filters=""
@@ -149,8 +149,7 @@ unit)
     cd "$d" || exit 2
     scope_of unit
     [ -f "$HOME/round-nextest.toml" ] || { echo "round-vm: no round-nextest.toml on this VM: the round's unit tier has not run here" >&2; exit 2; }
-    env -i HOME="$HOME" PATH="$PATH" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" CARGO_TARGET_DIR="$HOME/attr-target" \
-        cargo "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "$scope"), r#" $filters >&2
+    CARGO_TARGET_DIR="$HOME/attr-target" unit_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "$scope"), r#" $filters >&2
     rc=$?
     cd "$HOME" && rm -rf "$d"
     [ "$rc" -eq 100 ] || [ "$rc" -eq 101 ] && exit 5
@@ -163,8 +162,7 @@ integration)
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
     scope_of integration
-    env -i HOME="$HOME" PATH="$PATH" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" CARGO_TARGET_DIR="$HOME/attr-target" \
-        cargo "#, spira_config::unit_tier_integration!("unittest", "$scope"), r#" $filters >&2
+    CARGO_TARGET_DIR="$HOME/attr-target" unit_env "#, spira_config::unit_tier_integration!("unittest", "$scope"), r#" $filters >&2
     rc=$?
     cd "$HOME" && rm -rf "$d"
     [ "$rc" -eq 101 ] && exit 5
@@ -489,6 +487,8 @@ mod tests {
             .env("SPIRA_HOME", "r/rel/spira")
             .env("SPIRA_REPO", "r/work")
             .env("SPIRA_TOML", toml)
+            .env("CARGO_HOME", "vm/cache home")
+            .env("RUSTC_WRAPPER", "vm/cache home/bin/sccache")
             .status()
             .unwrap();
         assert!(wrote.success(), "the corpus's launcher line runs");
@@ -496,13 +496,13 @@ mod tests {
         assert!(env.contains("export SPIRA_TOML="), "the launcher env carries SPIRA_TOML:\n{env}");
         assert!(env.contains("export SPIRA_HOME=r/rel/spira\n"), "the launcher env carries the staged release's registry home:\n{env}");
         let out = std::process::Command::new("bash")
-            .args(["-c", &format!("set -euo pipefail\n{source}\nprintf %s \"${{SPIRA_TOML:?batch: SPIRA_TOML is not set}}\"")])
+            .args(["-c", &format!("set -euo pipefail\n{source}\nprintf '%s|%s|%s' \"${{SPIRA_TOML:?batch: SPIRA_TOML is not set}}\" \"$CARGO_HOME\" \"$RUSTC_WRAPPER\"")])
             .env_clear()
             .env("HOME", d.path())
             .output()
             .unwrap();
         assert!(out.status.success(), "the rerun sees SPIRA_TOML: {}", String::from_utf8_lossy(&out.stderr));
-        assert_eq!(String::from_utf8_lossy(&out.stdout), toml, "the rerun sees the corpus's value, intact");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{toml}|vm/cache home|vm/cache home/bin/sccache"), "the rerun sees the corpus's values, intact");
     }
 
     #[test]
@@ -539,11 +539,17 @@ mod tests {
     }
 
     fn attr_job(build: &str, suites: &str, cargo_rc: i32, result: &str) -> (i32, bool, String) {
+        let (rc, made, ran, _) = attr_job_env(build, suites, cargo_rc, result, None);
+        (rc, made, ran)
+    }
+
+    fn attr_job_env(build: &str, suites: &str, cargo_rc: i32, result: &str, launcher: Option<&str>) -> (i32, bool, String, String) {
         let d = TempDir::new();
         let (bin, home) = (d.path().join("bin"), d.path().join("home"));
         fs::create_dir_all(&bin).unwrap();
         fs::create_dir_all(&home).unwrap();
-        fs::write(home.join("round-launcher.env"), "").unwrap();
+        let launcher = launcher.unwrap_or("export CARGO_HOME={d}\n").replace("{d}", &d.path().display().to_string());
+        fs::write(home.join("round-launcher.env"), launcher).unwrap();
         fs::write(home.join("round-nextest.toml"), "").unwrap();
         let stub = |name: &str, body: &str| testkit::write_exe(bin.join(name), &format!("#!/bin/bash\n{body}\n"));
         stub("git", "for a; do last=$a; done; mkdir -p \"$last\"");
@@ -561,7 +567,26 @@ mod tests {
             assert!(ran.contains("--lib --bins"), "the unit phase's targets: {ran}");
             assert!(!env.contains("SPIRA_"), "a scrubbed environment: {env}");
         }
-        (status.code().unwrap(), home.join("attr-results/j1").join(result).exists(), ran)
+        (status.code().unwrap(), home.join("attr-results/j1").join(result).exists(), ran, env)
+    }
+
+    #[test]
+    fn the_unit_and_integration_probes_run_cargo_in_the_environment_the_round_launcher_recorded() {
+        let launcher = "export CARGO_HOME={d}\nexport RUSTC_WRAPPER={d}/bin/sccache\n";
+        for (build, result) in [("unit", "unit-tests.result"), ("integration", "integration-tests.result")] {
+            let (_, _, _, env) = attr_job_env(build, build, 0, result, Some(launcher));
+            let home_line = env.lines().find(|l| l.starts_with("CARGO_HOME=")).unwrap_or_else(|| panic!("{build}: {env}"));
+            let dir = home_line.trim_start_matches("CARGO_HOME=");
+            assert!(env.contains(&format!("RUSTC_WRAPPER={dir}/bin/sccache\n")), "{build}: {env}");
+            assert!(env.lines().any(|l| l.starts_with("PATH=") && l.contains(&format!("{dir}/bin"))), "{build}: {env}");
+            assert!(!env.contains("SPIRA_"), "{build}: {env}");
+        }
+    }
+
+    #[test]
+    fn the_round_and_the_attribution_probe_splice_the_same_unit_env_fragment() {
+        assert!(crate::run::REMOTE_SCRIPT.contains(crate::run::UNIT_ENV_FN));
+        assert!(REMOTE_ATTR_SCRIPT.contains(crate::run::UNIT_ENV_FN));
     }
 
     fn workspace_job_rc(cargo_rc: i32) -> (i32, bool) {
