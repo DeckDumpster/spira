@@ -794,11 +794,11 @@ fn api(st: &mut State, args: &[String]) -> R<Out> {
             }));
             json!({"number": n, "html_url": url})
         }
-        ("GET", ["pulls", n]) => match st.list("prs").iter().find(|p| p["number"].to_string() == *n) {
+        ("GET", ["pulls", n]) => match st.list("prs").iter().find(|p| p["number"] == parse_u64(n).unwrap_or(0)) {
             Some(p) => gh_pr_json(p),
             None => return http_error(404),
         },
-        ("GET", ["pulls", n, "comments"]) => Value::Array(st.list("review_comments").iter().filter(|c| c["pr"].to_string() == *n).map(|c| c["json"].clone()).collect()),
+        ("GET", ["pulls", n, "comments"]) => Value::Array(st.list("review_comments").iter().filter(|c| c["pr"] == parse_u64(n).unwrap_or(0)).map(|c| c["json"].clone()).collect()),
         ("POST", ["pulls", n, "comments", id, "replies"]) => {
             let (n, id) = (parse_u64(n)?, parse_u64(id)?);
             let parent = st.list("review_comments").iter().find(|c| c["pr"] == n && c["json"]["id"] == id).map(|c| c["json"].clone());
@@ -807,7 +807,7 @@ fn api(st: &mut State, args: &[String]) -> R<Out> {
             let root = parent["in_reply_to_id"].as_u64().unwrap_or(id);
             st.add_review_comment(n, BOT, "Bot", parent["path"].clone(), parent["line"].clone(), body, Some(root), None)
         }
-        ("GET", ["pulls", n, "reviews"]) => Value::Array(st.list("reviews").iter().filter(|r| r["pr"].to_string() == *n).map(|r| r["json"].clone()).collect()),
+        ("GET", ["pulls", n, "reviews"]) => Value::Array(st.list("reviews").iter().filter(|r| r["pr"] == parse_u64(n).unwrap_or(0)).map(|r| r["json"].clone()).collect()),
         ("POST", ["pulls", n, "reviews"]) => {
             let n = parse_u64(n)?;
             let input = input_json(&f)?;
@@ -822,13 +822,13 @@ fn api(st: &mut State, args: &[String]) -> R<Out> {
             }
             review
         }
-        ("GET", ["issues", n, "comments"]) => Value::Array(st.list("issue_comments").iter().filter(|c| c["pr"].to_string() == *n).map(|c| c["json"].clone()).collect()),
+        ("GET", ["issues", n, "comments"]) => Value::Array(st.list("issue_comments").iter().filter(|c| c["pr"] == parse_u64(n).unwrap_or(0)).map(|c| c["json"].clone()).collect()),
         ("POST", ["issues", n, "comments"]) => {
             let n = parse_u64(n)?;
             let body = input_json(&f)?["body"].clone();
             st.add_issue_comment(n, BOT, "Bot", body)
         }
-        ("GET", ["issues", "comments", id]) => match st.list("issue_comments").iter().find(|c| c["json"]["id"].to_string() == *id) {
+        ("GET", ["issues", "comments", id]) => match st.list("issue_comments").iter().find(|c| c["json"]["id"] == parse_u64(id).unwrap_or(0)) {
             Some(c) => c["json"].clone(),
             None => return http_error(404),
         },
