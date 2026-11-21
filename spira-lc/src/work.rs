@@ -1301,7 +1301,7 @@ pub fn record_argv(bead: &str, actor: &str, argv: &[String], stdin: Option<&str>
         Ok(s) => s,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
-    match store.put_work_request(bead, actor, argv, stdin, bound_ms, crate::db::now_epoch(), &crate::control::served::call_request_id()) {
+    match store.put_work_request(&crate::control::work_requests::NewRequest { bead, actor, argv, stdin, bound_ms }, crate::db::now_epoch(), &crate::control::served::call_request_id()) {
         Ok(id) => (0, queued_answer(&id)),
         Err(e) => (CANNOT_TELL, format!("cannot tell: recording the request: {e}")),
     }

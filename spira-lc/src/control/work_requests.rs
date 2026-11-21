@@ -75,20 +75,29 @@ fn encode(r: &WorkRequest) -> Object {
     Object::new(serde_json::to_value(r).unwrap_or(Value::Null))
 }
 
+/// What a caller asks to have run: the request before the store allocates its id.
+pub struct NewRequest<'a> {
+    pub bead: &'a str,
+    pub actor: &'a str,
+    pub argv: &'a [String],
+    pub stdin: Option<&'a str>,
+    pub bound_ms: u64,
+}
+
 impl<B: Backend> Store<B> {
-    /// Records a request as queued and returns the id the store allocated for it.
-    pub fn put_work_request(&self, bead: &str, actor: &str, argv: &[String], stdin: Option<&str>, bound_ms: u64, at: i64, base: &str) -> Result<String> {
+    /// Records a request as queued at `at` and returns the id the store allocated for it.
+    pub fn put_work_request(&self, new: &NewRequest, at: i64, base: &str) -> Result<String> {
         for attempt in 0..ATTEMPTS {
             let seq = self.contract().get(keys::WORK_REQUEST_SEQ)?;
             let n = seq.as_ref().and_then(|i| i.value.data["n"].as_u64()).unwrap_or(0) + 1;
             let id = format!("wr-{n}");
             let rec = WorkRequest {
                 id: id.clone(),
-                bead: bead.into(),
-                actor: actor.into(),
-                argv: argv.to_vec(),
-                stdin: stdin.map(str::to_string),
-                bound_ms,
+                bead: new.bead.into(),
+                actor: new.actor.into(),
+                argv: new.argv.to_vec(),
+                stdin: new.stdin.map(str::to_string),
+                bound_ms: new.bound_ms,
                 state: QUEUED.into(),
                 code: None,
                 output: String::new(),
@@ -197,7 +206,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], base: &str, now: i64) 
             };
             let Ok(argv) = serde_json::from_str::<Vec<String>>(&argv) else { return cannot("--argv-json is not a JSON array of strings".into()) };
             let bound_ms = flag(rest, "--bound-ms").and_then(|v| v.parse().ok()).unwrap_or(0);
-            match store.put_work_request(&bead, &actor, &argv, flag(rest, "--stdin").as_deref(), bound_ms, now, base) {
+            match store.put_work_request(&NewRequest { bead: &bead, actor: &actor, argv: &argv, stdin: flag(rest, "--stdin").as_deref(), bound_ms }, now, base) {
                 Ok(id) => (0, serde_json::json!({ "id": id }).to_string()),
                 Err(e) => cannot(e.to_string()),
             }
@@ -261,7 +270,7 @@ mod tests {
     }
 
     fn put(s: &Store<MemBackend>, tag: &str) -> String {
-        s.put_work_request("sp-a", "builder", &["work".into(), "sp-a".into(), "submit".into()], Some("body"), 300_000, 10, tag).unwrap()
+        s.put_work_request(&NewRequest { bead: "sp-a", actor: "builder", argv: &["work".into(), "sp-a".into(), "submit".into()], stdin: Some("body"), bound_ms: 300_000 }, 10, tag).unwrap()
     }
 
     #[test]
