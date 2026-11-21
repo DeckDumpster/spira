@@ -37,8 +37,8 @@ fn hook(state: &std::path::Path, env: &[(&str, &str)], command: &str) -> String 
 fn an_unattributed_suite_red_in_two_rounds_is_governed_by_the_flipping_test_statute() {
     let (code, out) = check(&["suite red unattributed in two rounds with different members"]);
     assert_eq!(code, 0);
-    assert!(out.starts_with("law-a-test-that-flips-is-deleted\n"), "{out}");
-    assert!(out.contains("A test that fails then passes on an unchanged tree is deleted"), "full text follows the slug");
+    assert!(out.contains("law-a-flipping-test-is-disabled-by-a-registry-row\n"), "{out}");
+    assert!(out.contains("A test that fails then passes on an unchanged tree is disabled"), "full text follows the slug");
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn the_first_queue_rework_is_refused_with_the_law_and_the_retry_passes_with_it_a
     let first: serde_json::Value = serde_json::from_str(&hook(&d, &env, cmd)).unwrap();
     assert_eq!(first["decision"], "block");
     let reason = first["reason"].as_str().unwrap();
-    for want in ["law-a-test-that-flips-is-deleted", "law-landing-rounds-run-the-full-suite-on-a-vm"] {
+    for want in ["law-a-flipping-test-is-disabled-by-a-registry-row", "law-a-provisional-member-leaves-on-its-gate-red"] {
         assert!(reason.contains(want), "{want} missing: {reason}");
     }
     assert!(!reason.contains("law-never-derive-an-id-from-output"), "an unrelated statute is not shown");
@@ -83,7 +83,7 @@ fn another_verb_class_is_refused_on_its_own_first_call() {
 #[test]
 fn the_override_passes_and_is_logged_with_its_reason() {
     let d = testkit::TempDir::new("statute-check-override");
-    let out = hook(&d, &[], "STATUTE_CHECK_CONSIDERED=\"law-a-test-that-flips-is-deleted read; red on both runs\" queue rework sp-1");
+    let out = hook(&d, &[], "STATUTE_CHECK_CONSIDERED=\"law-a-flipping-test-is-disabled-by-a-registry-row read; red on both runs\" queue rework sp-1");
     assert_eq!(out, "");
     let log = std::fs::read_to_string(d.join("overrides.log")).unwrap();
     assert!(log.contains("red on both runs") && log.contains("queue rework"), "{log}");
