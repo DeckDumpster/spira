@@ -739,7 +739,7 @@ mod tests {
     fn env(root: &Path) -> mail::env::Env {
         mail::env::Env {
             mail_root: root.join("mail"),
-            kinds_dir: root.join("kinds"),
+            kinds_dir: testkit::manifest_dir().join("../spira/mail/kinds"),
             index_file: root.join("index"),
             mute: false,
             loom_budget_ms: 1000,
@@ -753,7 +753,7 @@ mod tests {
             run_dir: root.join("run"),
             home: PathBuf::from(root),
             mail_from: None,
-            lint_considered: Some("test".into()),
+            lint_considered: None,
             repeat_considered: None,
             operator_considered: None,
             statute_guards: String::new(),
