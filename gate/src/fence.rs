@@ -17,7 +17,9 @@
 //!
 //! Which fences a gate string runs is read from the string itself, the same way the
 //! preflight reads its `bash <path>` words ([`parse::bash_paths`]): each `bash <dir>/<x>.sh`
-//! is the fence `<x>`, except the suite selector ([`SELECTOR`]), which runs none; the
+//! is the fence `<x>`, except the suite selector ([`SELECTOR`]), which runs none, and a
+//! script handed a lint or guard word (`bash spira/lint-staged.sh "$SPIRA_LINT_BIN"`), which
+//! is a runner for that tool and prints no line of its own; the
 //! `"$SPIRA_LINT_BIN"` word is spira-lint and the rules it prints a line for.
 
 use crate::parse;
@@ -79,7 +81,9 @@ pub fn expected(cmd: &str) -> Vec<String> {
         else {
             continue;
         };
-        if stem != SELECTOR {
+        let element_end = cmd[from..].find("&&").map_or(cmd.len(), |i| from + i);
+        let runs_a_tool = LINT_WORDS.iter().chain(GUARD_WORDS).any(|t| cmd[from..element_end].contains(t));
+        if stem != SELECTOR && !runs_a_tool {
             words.push((at, vec![stem.to_string()]));
         }
     }
@@ -183,6 +187,27 @@ mod tests {
     /// (sp-wx2tw). The live definition is the tree's `gate.steps` (def.rs, sp-quu2w); a fence
     /// port edits that file, not this fixture.
     const PROD: &str = r#"bash spira/inventory.sh && bash spira/literal-lint.sh && bash spira/scratch-fence.sh && "$SPIRA_LINT_BIN" && bash spira/testdb-mode-lint.sh && bash spira/bd-stdin-lint.sh && bash spira/gh-intake-lint.sh && bash spira/incident-cause-lint.sh && bash spira/tmux-scope-fence.sh && bash spira/wiki-add-fence.sh && bash spira/build-fence.sh && { _s="$("$SPIRA_SELECT_BIN" gate "$SPIRA_GATE_BASE" "${SPIRA_GATE_SELECT_HEAD:-$SPIRA_GATE_BRANCH}")" || { _r=$?; [ "$_r" = 1 ] && exit 1; exit 75; }; [ -n "$_s" ] || exit 0; _b=0; "$SPIRA_TESTENV_BIN" --deadline "${SPIRA_GATE_BUDGET:-300}" --suites "${_s//$'\n'/,}" "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }"#;
+
+    #[test]
+    fn a_script_wrapping_spira_lint_is_a_runner_not_a_fence() {
+        let all = [
+            "spira-lint",
+            "plan-matrix",
+            "lockfile-lint",
+            "tier-budget-allowlist",
+            "tier-budget-area-allowlist",
+            "tier-budget-areas",
+            "build-fence",
+        ];
+        assert_eq!(
+            expected(r#"bash spira/lint-staged.sh "$SPIRA_LINT_BIN" && bash spira/build-fence.sh"#),
+            all
+        );
+        assert_eq!(
+            expected(r#"bash spira/lint-staged.sh "$SPIRA_LINT_BIN" --only plan-matrix"#),
+            ["spira-lint", "plan-matrix"]
+        );
+    }
 
     #[test]
     fn the_production_gate_string_runs_these_fences() {
