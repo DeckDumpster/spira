@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 pub const DIR: &str = "sendback-logs";
 const DAY_SECS: i64 = 24 * 3600;
 
-fn root(run: &Path) -> PathBuf {
+pub fn root(run: &Path) -> PathBuf {
     run.join(DIR)
 }
 
