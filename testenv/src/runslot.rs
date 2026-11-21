@@ -40,6 +40,18 @@ mod tests {
     use std::time::Duration;
     use std::cell::{Cell, RefCell};
 
+    #[test]
+    fn the_run_slot_request_carries_the_cap_armed_on_this_thread() {
+        let run = Path::new("/run");
+        assert_eq!(request(run, 1, "x").bound_secs, None);
+        let armed = crate::cap::arm(crate::cap::Cap { secs: 600, source: "test" }, None);
+        assert!(matches!(request(run, 1, "x").bound_secs, Some(s) if (599..=600).contains(&s)));
+        let held = crate::cap::hold();
+        assert!(matches!(request(run, 1, "x").bound_secs, Some(s) if (599..=600).contains(&s)));
+        drop(held);
+        armed.finish();
+    }
+
     struct Procs1;
     impl Procs for Procs1 {
         fn start_of(&self, pid: u32) -> Option<u64> {
