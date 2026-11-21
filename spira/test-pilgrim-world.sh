@@ -39,9 +39,21 @@ pilgrim_work() { # pilgrim_work <world> <verb and args...>
     local w="$1"; shift
     in_world "$w" "spira-lc work sp-pilgrimage $* --actor pilgrim"
 }
-pilgrim_file() { # pilgrim_file <world> <title>
-    in_world "$1" "spira-lc work sp-pilgrimage file '$2' --for builder --repo sim --body-file - --stdin '## Build
-the $2' --actor pilgrim" 2>/dev/null
+PILGRIM_CALLS=0
+pilgrim_file() { # pilgrim_file <world> <title>; on an empty id or a non-zero exit, prints #-lines naming why, then the id
+    local n=$((++PILGRIM_CALLS)) out rc
+    out="$(in_world "$1" "spira-lc work sp-pilgrimage file '$2' --for builder --repo sim --body-file - --stdin '## Build
+the $2' --actor pilgrim" 2>"$T/file-$n.err")"
+    rc=$?
+    if [ -z "$out" ] || [ "$rc" -ne 0 ]; then
+        {
+            echo "# pilgrim_file '$2' exited $rc"
+            sed 's/^/# stderr: /' "$T/file-$n.err"
+            sed 's/^/# lc-run.log: /' "$T/pilgrim/lc-run.log" 2>&1
+        } >&2
+    fi
+    printf '%s' "$out"
+    return "$rc"
 }
 plain() { sed 's/\x1b\[[0-9;]*m//g'; }
 claimable_ids() { in_world "$1" "spira-lc list --live --json" | jq -r '[.[] | select(.claim_view.verdict == "claimable") | .bead_id] | sort | join(" ")'; }
