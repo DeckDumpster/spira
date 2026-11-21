@@ -3,6 +3,9 @@
 //! release's `bin/` for the program a tool verb starts. The service records the verb and answers
 //! at once; the program runs in `work-exec`, never in the service.
 
+#[macro_use]
+extern crate spira_test_id;
+
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};

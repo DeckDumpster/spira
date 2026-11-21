@@ -2,6 +2,9 @@
 //! real Dolt server: with a provisioned writer each is one transaction and starts no process;
 //! without one it still goes through bd.
 
+#[macro_use]
+extern crate spira_test_id;
+
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
