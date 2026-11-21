@@ -223,7 +223,7 @@ fn production_sized(recent: u64) -> Sized {
     use state_store::{events_key, Backend, Object, Rev, Write};
     use state_store_sqlite::{Options, SqliteBackend};
     let dir = testkit::TempDir::new("spira-lc-dwell-size");
-    let b = SqliteBackend::open(&dir.path().join("control.db"), Options::default()).unwrap();
+    let b = SqliteBackend::open(&dir.path().join("control.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
     let now: i64 = 2_000_000_000;
     let put = |key: String, data: Value, main: u64| Write::Put { key, value: Object::new(data).encode(), create_rev: Rev::new(main, 0), prev: None };
     let audit = |id: &str, event: &str, at: i64| serde_json::json!({ "refused": false, "evidence": { "then": [{ "machine": "bead", "lc_key": id, "event": event, "expect": "READY", "from_state": "READY", "to_state": "READY", "applied": true, "refusal": null, "evidence": null, "actor": "a", "at": at }] } });

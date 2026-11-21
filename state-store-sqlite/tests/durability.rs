@@ -22,13 +22,13 @@ use state_store_sqlite::{Options, SqliteBackend};
 use testkit::TempDir;
 
 fn open(path: &Path) -> SqliteBackend {
-    SqliteBackend::open(path, Options::default()).unwrap()
+    SqliteBackend::open(path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap()
 }
 
 /// A copy being checked (a snapshot, a restore, a backup): opened without the jump, so its
 /// revisions read exactly as written (sp-r3yb7x).
 fn verify(path: &Path) -> SqliteBackend {
-    SqliteBackend::open(path, Options { jump_on_open: false, day_receipts: false, ..Options::default() }).unwrap()
+    SqliteBackend::open(path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, jump_on_open: false, day_receipts: false, ..Options::default() }).unwrap()
 }
 
 fn req(id: &str) -> Request {

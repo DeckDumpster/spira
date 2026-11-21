@@ -51,7 +51,7 @@ fn list_batches_reads_only_the_rounds_it_shows() {
 #[test]
 fn list_batches_costs_the_same_over_a_larger_history_on_the_real_store() {
     let dir = testkit::TempDir::new("lc-batches-steps");
-    let b = SqliteBackend::open(&dir.path().join("c.db"), state_store_sqlite::Options { max_read_ms: 120_000, ..Default::default() }).unwrap();
+    let b = SqliteBackend::open(&dir.path().join("c.db"), state_store_sqlite::Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Default::default() }).unwrap();
     let r = Rig::on(b, &clock());
     let steps = |argv: &[&str]| -> u64 {
         r.s.contract().backend().take_read_steps();

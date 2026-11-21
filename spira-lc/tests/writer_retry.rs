@@ -26,7 +26,7 @@ fn a_content_write_builds_the_writer_again_once_its_password_file_exists() {
     let run_dir = dir.join("run");
     std::fs::create_dir_all(&run_dir).unwrap();
     let store = dir.join("control.db");
-    drop(SqliteBackend::open(&store, Options::default()).unwrap());
+    drop(SqliteBackend::open(&store, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap());
     let socket = dir.join("lc.sock");
     let beads = dir.join("beads");
     std::fs::create_dir_all(beads.join(".beads")).unwrap();

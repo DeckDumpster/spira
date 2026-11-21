@@ -102,7 +102,7 @@ fn world() -> World {
     std::fs::create_dir_all(dir.join("release/bin")).unwrap();
     std::fs::create_dir_all(dir.join("home")).unwrap();
     let store = dir.join("control.db");
-    drop(SqliteBackend::open(&store, Options::default()).unwrap());
+    drop(SqliteBackend::open(&store, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap());
     let socket = dir.join("lc.sock");
     let (d, r, s, sock) = (dir.display().to_string(), run.display().to_string(), store.display().to_string(), socket.display().to_string());
     let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_WORKSPACES", &d), ("SPIRA_RUN", &r), ("SPIRA_LC_STORE_PATH", &s), ("SPIRA_LC_SOCKET", &sock), ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9")]);

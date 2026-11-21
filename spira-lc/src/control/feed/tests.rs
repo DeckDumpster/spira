@@ -35,6 +35,7 @@ fn on_sqlite(body: fn(&Store<SqliteBackend>)) {
     let clock = VirtualClock::new(0);
     let opts = Options {
         clock: Arc::new(clock.clone()),
+        max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
         ..Options::default()
     };
     let b = SqliteBackend::open(&dir.path().join("control.db"), opts).unwrap();
@@ -57,6 +58,7 @@ fn on_sqlite_across_days(body: fn(&Store<SqliteBackend>)) {
     let opts = Options {
         clock: Arc::new(clock.clone()),
         wall: Arc::new(SixHoursPerRead(AtomicU64::new(0))),
+        max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
         ..Options::default()
     };
     let b = SqliteBackend::open(&dir.path().join("control.db"), opts).unwrap();
@@ -121,6 +123,7 @@ fn a_sqlite_ring_that_has_turned_relists_a_feed() {
     let opts = Options {
         clock: Arc::new(clock.clone()),
         history_bytes: 6_000,
+        max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
         ..Options::default()
     };
     let b = SqliteBackend::open(&dir.path().join("control.db"), opts).unwrap();
@@ -521,6 +524,7 @@ fn event_seq_since_a_recent_revision_reads_only_the_recent_events_of_a_loaded_st
     let clock = VirtualClock::new(0);
     let opts = Options {
         clock: Arc::new(clock.clone()),
+        max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
         ..Options::default()
     };
     let b = SqliteBackend::open(&dir.path().join("control.db"), opts).unwrap();
@@ -607,6 +611,7 @@ fn store_usage_families_names_each_family_file_size_and_mark_and_flags_the_file_
     let opts = Options {
         clock: Arc::new(clock.clone()),
         wall: Arc::new(VirtualClock::new(today as u64 * DAY_MS)),
+        max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
         ..Options::default()
     };
     let b = SqliteBackend::open(&dir.path().join("control.db"), opts).unwrap();

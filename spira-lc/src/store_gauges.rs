@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn file_and_family_gauges_carry_their_names_and_the_family_label() {
         let dir = testkit::TempDir::new("store-gauges");
-        let b = state_store_sqlite::SqliteBackend::open(&dir.path().join("control.db"), state_store_sqlite::Options::default()).unwrap();
+        let b = state_store_sqlite::SqliteBackend::open(&dir.path().join("control.db"), state_store_sqlite::Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..state_store_sqlite::Options::default() }).unwrap();
         let mut head = 0;
         let bulk = vec![b'x'; 8_000];
         for i in 0..200 {

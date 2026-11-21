@@ -568,7 +568,7 @@ mod tests {
         use state_store::{events_key, Object, Rev, Write};
         use state_store_sqlite::{Options, SqliteBackend};
         let dir = Box::leak(Box::new(testkit::TempDir::new("spira-lc-ops-log")));
-        let b = SqliteBackend::open(&dir.path().join("control.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("control.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let mut head = b.head().unwrap();
         for l in log {
             let a = serde_json::to_value(&l.audit).unwrap();

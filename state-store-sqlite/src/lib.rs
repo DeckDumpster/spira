@@ -2536,7 +2536,7 @@ mod tests {
     fn a_passive_checkpoint_a_reader_holds_back_is_not_complete() {
         let dir = testkit::TempDir::new("sqlite-passive-partial");
         let path = dir.path().join("s.db");
-        let b = SqliteBackend::open(&path, Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
+        let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
         let put = |prev: Option<Rev>, n: u64| Write::Put { key: "k".into(), value: vec![1; 4096], create_rev: Rev::new(1, 0), prev: prev.map(|_| Rev::new(n, 0)) };
         b.commit(0, &[put(None, 0)]).unwrap();
         let reader = connect(&path).unwrap();
@@ -2555,7 +2555,7 @@ mod tests {
         let path = dir.path().join("s.db");
         let mut forked = Vec::new();
         for _ in 0..200 {
-            let b = SqliteBackend::open(&path, Options::default()).unwrap();
+            let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
             forked.push(b.0._lock.0.try_clone().unwrap());
             drop(b);
         }
@@ -2576,7 +2576,7 @@ mod tests {
                 Ok(())
             })
         };
-        let b = SqliteBackend::open(&path, Options { commit_probe: Some(probe), ..Options::default() }).unwrap();
+        let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, commit_probe: Some(probe), ..Options::default() }).unwrap();
         let put = |key: &str| Write::Put { key: key.into(), value: vec![7u8; 1 << 10], create_rev: Rev::new(1, 0), prev: None };
         assert!(b.backfill().is_some(), "the WAL index must be readable or no commit can report a checkpoint");
         let mut head = b.head().unwrap();
@@ -2594,7 +2594,7 @@ mod tests {
     fn a_checkpoint_completion_is_signalled_once_checkpoint_every_commits_have_landed() {
         let dir = testkit::TempDir::new("sqlite-signal");
         let path = dir.path().join("s.db");
-        let b = SqliteBackend::open(&path, Options { checkpoint_every: 4, ..Options::default() }).unwrap();
+        let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: 4, ..Options::default() }).unwrap();
         let put = |key: &str| Write::Put { key: key.into(), value: vec![7u8; 1 << 10], create_rev: Rev::new(1, 0), prev: None };
         let mut head = b.head().unwrap();
         for k in ["a", "b", "c", "d"] {
@@ -2607,7 +2607,7 @@ mod tests {
     #[test]
     fn no_checkpoint_is_signalled_below_checkpoint_every() {
         let dir = testkit::TempDir::new("sqlite-no-signal");
-        let b = SqliteBackend::open(&dir.path().join("s.db"), Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
         let put = Write::Put { key: "a".into(), value: vec![7u8; 1 << 10], create_rev: Rev::new(1, 0), prev: None };
         b.commit(b.head().unwrap(), &[put]).unwrap();
         assert_eq!(bench::await_checkpoint(&b, 0, Duration::from_millis(200)), None);
@@ -2616,7 +2616,7 @@ mod tests {
     #[test]
     fn a_tracked_commit_and_read_record_their_waits_and_the_read_is_counted() {
         let dir = testkit::TempDir::new("sqlite-phases");
-        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let rec = Arc::new(phases::Recorder::default());
         phases::track(rec.clone());
         let put = Write::Put { key: "k".into(), value: b"1".to_vec(), create_rev: Rev::new(1, 0), prev: None };
@@ -2668,7 +2668,7 @@ mod tests {
     #[test]
     fn a_commit_that_fails_inside_its_transaction_is_not_recorded_as_a_commit() {
         let dir = testkit::TempDir::new("sqlite-phases-failed");
-        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let rec = Arc::new(phases::Recorder::default());
         phases::track(rec.clone());
         let bad = Write::Put { key: "k".into(), value: b"1".to_vec(), create_rev: Rev::new(u64::MAX, 0), prev: None };
@@ -2682,7 +2682,7 @@ mod tests {
     #[test]
     fn a_read_begun_past_the_request_deadline_is_refused() {
         let dir = testkit::TempDir::new("sqlite-read-deadline");
-        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         assert!(b.get("k", 0).is_ok(), "a read with no deadline bound is served");
         let _passed = phases::deadline_scoped(std::time::Instant::now());
         assert!(matches!(b.get("k", 0), Err(Error::Deadline)));
@@ -2691,7 +2691,7 @@ mod tests {
     #[test]
     fn every_connection_reads_through_a_page_cache_sized_for_a_large_file() {
         let dir = testkit::TempDir::new("sqlite-cache");
-        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let size = |c: &Connection| c.pragma_query_value(None, "cache_size", |r| r.get::<_, i64>(0)).unwrap();
         assert_eq!(size(&lock(&b.0.readers[0].conn)), -CACHE_KIB);
         assert_eq!(size(&lock(&b.0.writer).conn), -CACHE_KIB);
@@ -2700,7 +2700,7 @@ mod tests {
     #[test]
     fn lowering_the_read_budget_lowers_the_readers_busy_timeout() {
         let dir = testkit::TempDir::new("sqlite-busy");
-        let opts = Options { max_read_ms: 120_000, readers: 1, ..Options::default() };
+        let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, readers: 1, ..Options::default() };
         let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
         b.set_max_read_ms(1_000);
         let busy: i64 = lock(&b.0.readers[0].conn)
@@ -2790,7 +2790,7 @@ mod tests {
             }) as Arc<dyn Fn() + Send + Sync>
         };
         let line = 8 * 4096;
-        let opts = Options { max_read_ms: 120_000, readers: 1, checkpoint_every: u64::MAX, wal_line_bytes: line, read_probe: Some(probe), ..Options::default() };
+        let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, readers: 1, checkpoint_every: u64::MAX, wal_line_bytes: line, read_probe: Some(probe), ..Options::default() };
         let b = SqliteBackend::open(&path, opts).unwrap();
         let wal = format!("{}-wal", path.display());
         let put = |b: &SqliteBackend| {
@@ -2803,7 +2803,7 @@ mod tests {
         conn.busy_timeout(Duration::ZERO).unwrap();
         let mut counts = PassCounts::default();
         let restart = |clock: &ReleasingClock, counts: &mut PassCounts| {
-            let terms = RestartTerms { clock, max_read_ms: 120_000, line };
+            let terms = RestartTerms { clock, max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, line };
             let (pass, forced) = checkpoint_step(&conn, &b.0.writer, &b.0.read_gate, &terms, false, |_| {}).unwrap();
             counts.record(&pass, forced);
         };
@@ -2929,7 +2929,7 @@ mod tests {
     #[test]
     fn a_commit_writes_the_live_row_and_nothing_to_versions() {
         let dir = testkit::TempDir::new("sqlite-one-copy");
-        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         for i in 0..100u64 {
             let key = format!("k/{}", i % 10);
             let prev = (i >= 10).then(|| Rev::new(i - 9, 0));
@@ -2942,7 +2942,7 @@ mod tests {
     #[test]
     fn a_commit_that_fails_leaves_no_ring_entry_and_no_log_line() {
         let dir = testkit::TempDir::new("sqlite-failed-commit");
-        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         b.commit(0, &[put_write("a", b"1", 1, None)]).unwrap();
         {
             let w = lock(&b.0.writer);
@@ -2972,7 +2972,7 @@ mod tests {
     fn dropping_the_outbox_removes_it_and_later_commits_still_land() {
         let dir = testkit::TempDir::new("sqlite-drop-outbox");
         let path = dir.path().join("s.db");
-        let b = SqliteBackend::open(&path, Options::default()).unwrap();
+        let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         b.commit(0, &[put_write("a", b"1", 1, None)]).unwrap();
         assert!(outbox_dir(&path).is_dir());
         b.drop_outbox().unwrap();
@@ -2986,7 +2986,7 @@ mod tests {
     #[test]
     fn a_read_below_the_head_is_the_live_row_corrected_by_the_ring_across_pages() {
         let dir = testkit::TempDir::new("sqlite-below-head");
-        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let keys: Vec<String> = (0..50).map(|i| format!("p/{i:03}")).collect();
         let puts: Vec<Write> = keys.iter().map(|k| put_write(k, b"old", 1, None)).collect();
         b.commit(0, &puts).unwrap();
@@ -3057,6 +3057,7 @@ mod tests {
         }
         let opts = Options {
             jump_on_open: false,
+            max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
             ..Options::default()
         };
         SqliteBackend::open(&path, opts).unwrap()
@@ -3107,7 +3108,7 @@ mod tests {
 
     /// Keys under `a/` (one rewritten five times), `b/` and `events/`, one commit each.
     fn usage_store(dir: &testkit::TempDir) -> SqliteBackend {
-        let b = SqliteBackend::open(&dir.path().join("u.db"), Options { day_receipts: false, max_read_ms: 120_000, ..Options::default() }).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("u.db"), Options { day_receipts: false, max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let put = |key: &str, value: &[u8], prev: Option<Rev>| {
             let head = b.head().unwrap();
             b.commit(
@@ -3185,7 +3186,7 @@ mod tests {
             }
             exec(&conn, "UPDATE meta SET value = 200000 WHERE name = 'head'", []).unwrap();
         }
-        SqliteBackend::open(&path, Options { jump_on_open: false, ..Options::default() }).unwrap()
+        SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, jump_on_open: false, ..Options::default() }).unwrap()
     }
 
     #[test]
@@ -3281,7 +3282,7 @@ mod tests {
     #[test]
     fn range_outside_never_visits_the_skipped_prefixes() {
         let dir = testkit::TempDir::new("sqlite-outside");
-        let b = SqliteBackend::open(&dir.path().join("o.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("o.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let put = |key: String| Write::Put {
             key,
             value: b"{}".to_vec(),
@@ -3335,7 +3336,7 @@ mod tests {
     #[test]
     fn a_state_filtered_page_below_the_head_reads_o_page_rows_and_judges_touched_keys_at_the_revision() {
         let dir = testkit::TempDir::new("sqlite-state-below");
-        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let doc = |state: &str| serde_json::to_vec(&serde_json::json!({ "data": { "state": state } })).unwrap();
         let put = |key: String, state: &str, prev: Option<Rev>| Write::Put {
             key,
@@ -3423,6 +3424,7 @@ mod tests {
         }
         let opts = Options {
             jump_on_open: false,
+            max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
             ..Options::default()
         };
         let b = SqliteBackend::open(&path, opts).unwrap();
@@ -3516,6 +3518,7 @@ mod tests {
         }
         let opts = Options {
             jump_on_open: false,
+            max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
             ..Options::default()
         };
         let b = SqliteBackend::open(&path, opts).unwrap();
@@ -3600,7 +3603,7 @@ mod tests {
             }
             exec(&conn, "UPDATE meta SET value = 9 WHERE name = 'head'", []).unwrap();
         }
-        let opts = Options { jump_on_open: false, ..Options::default() };
+        let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, jump_on_open: false, ..Options::default() };
         let b = SqliteBackend::open(&path, opts).unwrap();
         assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
         let manual_hold = |key: &str| {
@@ -3658,6 +3661,7 @@ mod tests {
         }
         let opts = Options {
             jump_on_open: false,
+            max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
             ..Options::default()
         };
         let b = SqliteBackend::open(&path, opts).unwrap();
@@ -3670,7 +3674,7 @@ mod tests {
     #[test]
     fn the_owned_by_query_neither_scans_nor_sorts() {
         let dir = testkit::TempDir::new("sqlite-owned-plan");
-        let b = SqliteBackend::open(&dir.path().join("o.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("o.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         for step in plan(&b, OWNED_BY) {
             assert!(!step.starts_with("SCAN") && !step.contains("TEMP B-TREE"), "{step}");
         }
@@ -3679,7 +3683,7 @@ mod tests {
     #[test]
     fn the_due_query_neither_scans_nor_sorts() {
         let dir = testkit::TempDir::new("sqlite-due-plan");
-        let b = SqliteBackend::open(&dir.path().join("d.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("d.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         for step in plan(&b, DUE) {
             assert!(!step.starts_with("SCAN") && !step.contains("TEMP B-TREE"), "{step}");
         }
@@ -3732,6 +3736,7 @@ mod tests {
         let before = wall();
         let opts = Options {
             jump_on_open: false,
+            max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
             ..Options::default()
         };
         let b = SqliteBackend::open(&path, opts).unwrap();
@@ -3785,7 +3790,7 @@ mod tests {
             }
             exec(&conn, "UPDATE meta SET value = 1 WHERE name = 'head'", []).unwrap();
         }
-        let b = SqliteBackend::open(&path, Options { jump_on_open: false, ..Options::default() }).unwrap();
+        let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, jump_on_open: false, ..Options::default() }).unwrap();
         assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
         b.take_read_steps();
         let newest = b.range_newest_opened("r/", i64::MIN, 5, 1).unwrap();
@@ -3853,6 +3858,7 @@ mod tests {
             &path,
             Options {
                 jump_on_open: false,
+                max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
                 ..Options::default()
             },
         )
@@ -3892,7 +3898,7 @@ mod tests {
     #[test]
     fn the_newest_opened_below_the_head_reads_the_index_and_judges_touched_keys_at_the_revision() {
         let dir = testkit::TempDir::new("sqlite-newest-below");
-        let b = SqliteBackend::open(&dir.path().join("n.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("n.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let doc = |opened: i64| serde_json::to_vec(&serde_json::json!({ "data": { "opened_at": opened } })).unwrap();
         let put = |key: String, opened: i64, prev: Option<Rev>| Write::Put { key, value: doc(opened), create_rev: Rev::new(1, 0), prev };
         let batch: Vec<Write> = (0..5_000).map(|i| put(format!("r/{i:05}"), 1_000 + i, None)).collect();
@@ -3976,6 +3982,7 @@ mod tests {
             &path,
             Options {
                 jump_on_open: false,
+                max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
                 ..Options::default()
             },
         )
@@ -4069,7 +4076,7 @@ mod tests {
     fn a_store_with_more_migrations_than_this_binary_knows_is_refused() {
         let dir = testkit::TempDir::new("sqlite-migrations");
         let path = dir.path().join("s.db");
-        drop(SqliteBackend::open(&path, Options::default()).unwrap());
+        drop(SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap());
         let conn = Connection::open(&path).unwrap();
         conn.pragma_update(None, "user_version", SCHEMA_MIGRATIONS as i64 + 1)
             .unwrap();
