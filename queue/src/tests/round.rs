@@ -9436,6 +9436,22 @@ fn certify_refuses_a_worktree_that_still_holds_an_ejected_member() {
 }
 
 #[test]
+fn certify_attest_and_rehead_refuse_a_worktree_that_still_holds_an_ejected_member() {
+    let t = round_world();
+    let batch = an_ejected_member_still_in_the_worktree(&t);
+    let head = kv_of(&t, "round")["head"].clone();
+
+    for argv in [
+        vec!["round", "certify", &batch, "--rehead", &head],
+        vec!["round", "certify", &batch, "--attest", &head, "--ran", "1"],
+    ] {
+        assert_eq!(t.run(&argv), 1, "{argv:?}");
+        assert!(t.err().contains("sp-b") && t.err().contains("no pass ran"), "{argv:?}: {}", t.err());
+    }
+    assert!(!events_of(&t, &batch).iter().any(|e| e.contains("PassStarted")));
+}
+
+#[test]
 fn pass_start_refuses_a_worktree_that_still_holds_an_ejected_member() {
     let t = round_world();
     let batch = an_ejected_member_still_in_the_worktree(&t);
