@@ -86,7 +86,7 @@ fn a_content_write_builds_the_writer_again_once_its_password_file_exists() {
         first.err
     );
     assert!(
-        !second.err.contains(&reading),
+        !second.err.contains(&reading) && !second.out.contains(spira_store::lc_call::DEADLINE_ANSWER),
         "second write: code {} out {:?} err {:?}: the failed build was kept",
         second.code,
         second.out,
