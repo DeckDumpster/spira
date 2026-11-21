@@ -518,7 +518,32 @@ impl LcClient {
 
     fn send<S: AsRef<str>>(&self, argv: &[S], stdin: Option<&str>) -> Result<Reply, LcError> {
         let argv: Vec<String> = argv.iter().map(|a| a.as_ref().to_string()).collect();
-        self.transport.exchange_kind(&argv, stdin, self.deadline, self.not_running_wait)
+        let reply = self.transport.exchange_kind(&argv, stdin, self.deadline, self.not_running_wait)?;
+        match queued_id(&reply.out) {
+            Some(id) if reply.code == 0 => self.await_record(id),
+            _ => Ok(reply),
+        }
+    }
+
+    /// The answer of the recorded request `id`, each poll a plain read of its record.
+    fn await_record(&self, id: &str) -> Result<Reply, LcError> {
+        let show = ["work-request".to_string(), "show".to_string(), id.to_string()];
+        let began = std::time::Instant::now();
+        loop {
+            let r = self.transport.exchange_kind(&show, None, self.deadline, self.not_running_wait)?;
+            if r.code != 0 {
+                return Ok(r);
+            }
+            match record_answer(&r.out) {
+                Ok(Some((code, out))) => return Ok(Reply { code, out, err: String::new() }),
+                Ok(None) => {}
+                Err(e) => return Err(LcError::Fault(format!("request {id}: {e}"))),
+            }
+            if began.elapsed() >= RECORD_WAIT {
+                return Ok(Reply { code: CANNOT_TELL, out: record_timeout(id), err: String::new() });
+            }
+            std::thread::sleep(RECORD_POLL); // waits-on: the scheduler finishing the request; cap RECORD_WAIT
+        }
     }
 
     /// The answer's stdout when it applied (exit 0); a refusal (3) or anything else is an error.
@@ -636,6 +661,25 @@ mod tests {
         assert_eq!(record_answer("{\"state\":\"running\",\"code\":null}"), Ok(None));
         assert_eq!(record_answer("{\"state\":\"done\",\"code\":124,\"output\":\"killed\"}"), Ok(Some((124, "killed".to_string()))));
         assert!(record_answer("not json").is_err());
+    }
+
+    #[test]
+    fn a_client_call_answers_with_the_finished_request_not_the_queue_receipt() {
+        struct Recorded(std::sync::Mutex<u32>);
+        impl Transport for Recorded {
+            fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+                let ok = |out: &str| Ok(Reply { code: 0, out: out.into(), err: String::new() });
+                if argv[0] != "work-request" {
+                    return ok("queued wr-7\n");
+                }
+                let mut polls = self.0.lock().unwrap();
+                *polls += 1;
+                ok(if *polls < 2 { "{\"state\":\"running\"}" } else { "{\"state\":\"done\",\"code\":3,\"output\":\"sp-new\"}" })
+            }
+        }
+        let c = LcClient::over(Arc::new(Recorded(Default::default())), true);
+        let r = c.call(&["work", "sp-x", "file"]).unwrap();
+        assert_eq!((r.code, r.out.as_str()), (3, "sp-new"));
     }
 
     #[test]
