@@ -3848,7 +3848,6 @@ fn wrapped() -> Fake {
     let f = fenced();
     f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = WRAPPED.into();
     f.blobs.borrow_mut().insert(format!("{BASE}:spira/lint-staged.sh"), b"x".to_vec());
-    f.silent_fences.borrow_mut().insert("lint-staged".into());
     f
 }
 
