@@ -253,6 +253,34 @@ impl Files {
         let _ = atomic_write(&self.unjudged_incident_file(repo), &format!("{}\n", ids.join("\n")));
     }
 
+    fn unjudged_branch_file(&self, repo: &str) -> PathBuf {
+        self.run.join("gate-unjudged-branch").join(repo)
+    }
+
+    pub fn unjudged_branches(&self, repo: &str) -> Vec<String> {
+        let t = fs::read_to_string(self.unjudged_branch_file(repo)).unwrap_or_default();
+        t.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
+    }
+
+    pub fn note_unjudged_branch(&self, repo: &str, branch: &str) {
+        let mut brs = self.unjudged_branches(repo);
+        if brs.iter().any(|b| b == branch) {
+            return;
+        }
+        brs.push(branch.to_string());
+        let _ = fs::create_dir_all(self.run.join("gate-unjudged-branch"));
+        let _ = atomic_write(&self.unjudged_branch_file(repo), &format!("{}\n", brs.join("\n")));
+    }
+
+    pub fn forget_unjudged_branches(&self, repo: &str) {
+        let _ = fs::remove_file(self.unjudged_branch_file(repo));
+    }
+
+    /// The gate may judge `branch` again before its backoff ends.
+    pub fn clear_backoff(&self, branch: &str) {
+        let _ = fs::remove_file(self.backoff_file(branch));
+    }
+
     /// A gate reached a verdict for `branch`: its run of dead gates is over.
     pub fn note_gate_judged(&self, branch: &str) {
         let _ = fs::remove_file(self.dead_file(branch));

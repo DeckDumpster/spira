@@ -22,8 +22,6 @@ pub trait Lc {
     }
     /// `spira-lc resubmit-submitted <id> <tip>`: make a SUBMITTED row hold the branch tip the gate judged.
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String>;
-    /// `spira-lc hold <id> wait snooze-until:<until> <why>`: a self-lifting hold.
-    fn hold_wait(&self, id: &str, until: u64, why: &str) -> Result<String, String>;
     /// `spira-lc list --state SUBMITTED,CERTIFIED`: each waiting row's `(repo, id, tip)`, every repo's in one read; a row with no tip is omitted. The pass's only `list`: its answer is also the proof the store is reachable.
     fn waiting(&self) -> Result<Vec<Waiting>, String>;
 }
@@ -90,17 +88,6 @@ impl Lc for RealLc {
                 Some(Waiting { repo: r["repo"].as_str().unwrap_or_default().to_string(), id: r["bead_id"].as_str()?.to_string(), tip: tip.to_string() })
             })
             .collect())
-    }
-
-    fn hold_wait(&self, id: &str, until: u64, why: &str) -> Result<String, String> {
-        let c = client(self.client.as_ref(), self.bin.as_deref())?;
-        let reason = format!("{}{until} {why}", spira_store::lc_state::SNOOZE_PREFIX);
-        let (rc, so, se) = run(&c, &["hold", id, "wait", &reason, "landing-pass"]);
-        let out = so.trim().to_string();
-        if rc != 0 {
-            return Err(format!("spira-lc hold exited {rc}: {out} {}", se.lines().next().unwrap_or("")));
-        }
-        Ok(out)
     }
 
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String> {
