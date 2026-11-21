@@ -66,14 +66,14 @@ fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
 
     let r = record::load(run_dir.path(), 1).unwrap();
     assert_eq!(r.source_sha, sha);
-    let comment = format!(r#"[{{"path":"{}","line":1,"body":"b"}}]"#, r.unit.files[0].path);
+    let comment = format!(r#"{{"does":"d","look_first":"l","comments":[{{"path":"{}","line":1,"body":"b"}}]}}"#, r.unit.files[0].path);
     let mut sealing = ports;
     sealing.stdin = comment;
     let o = run(&args(&["seal", "--review", "001"]), &sealing);
     assert_eq!(o.code, 0, "{}", o.stderr);
 
     let blobs = gh.posted("git/blobs");
-    assert_eq!(blobs.len(), r.unit.files.len() + 1);
+    assert_eq!(blobs.len(), r.unit.files.len());
     for (f, b) in r.unit.files.iter().zip(&blobs) {
         let want = git(p, &["show", &format!("{sha}:{}", f.path)]);
         assert_eq!(unbase64(b["content"].as_str().unwrap()), want, "{}", f.path);

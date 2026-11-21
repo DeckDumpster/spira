@@ -24,7 +24,7 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   cr pick  [--aim <X>] [--seed <n>] [--json]
   cr count --regex <re> [--path <glob>]... [--limit <n>] [--json]
   cr open [--count <N>] [--aim <X>] [--seed <n>] [--scheduled]
-  cr seal --review <NNN> < comments.json
+  cr seal --review <NNN> < seal.json
   cr finding --review <NNN> < finding.json
   cr findings --review <NNN> [--post]
   cr unseal --review <NNN> [--said <comment-id>]
@@ -40,8 +40,9 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   two files, and prints the closeout comment; --post posts it on the review's pull request.
 
   open stages N units (default 1) as reviews and makes no forge call. seal reads the
-  Concierge's own review, a JSON array of {path, line, body}, stores it hashed, and opens the
-  pull request in the review repository. unseal posts it once the operator has published.
+  Concierge's own review as one JSON object
+  {does, look_first, comments: [{path, line, body}]}, stores the comments hashed, and opens the
+  pull request in the review repository with does and look_first in its description. unseal posts it once the operator has published.
 
   --aim <X>   aim the draw: a path, a workspace crate, a struct/enum/trait/type name, or words
               (every word must appear in a unit's paths or module docs, case-folded)
