@@ -74,6 +74,7 @@ fn pool_caps(get: &dyn Fn(&str) -> Result<String, String>) -> Result<runtime::po
         forge: cap("SPIRA_POOL_CAP_FORGE")?,
         host: cap("SPIRA_POOL_CAP_HOST")?,
         container: cap("SPIRA_POOL_CAP_CONTAINER")?,
+        broker: cap("SPIRA_RUNTIME_BROKER_CAP")?,
     };
     if caps.container > HOST_RUN_CEILING {
         return Err(format!("SPIRA_POOL_CAP_CONTAINER is {}, over the host run ceiling of {HOST_RUN_CEILING} — refusing", caps.container));
@@ -130,6 +131,7 @@ impl Settings {
         "SPIRA_POOL_CAP_FORGE",
         "SPIRA_POOL_CAP_HOST",
         "SPIRA_POOL_CAP_CONTAINER",
+        "SPIRA_RUNTIME_BROKER_CAP",
     ];
 
     /// Every key `from_lookup` may read, each once: the service's, its real sources'
@@ -502,7 +504,7 @@ mod tests {
     #[test]
     fn each_pool_cap_reaches_its_class_and_a_container_cap_over_the_ceiling_is_refused() {
         let s = Settings::from_lookup(&lookup("7")).unwrap();
-        assert_eq!(s.pool_caps, runtime::pools::PoolCaps { store: 41, unit: 42, git: 43, forge: 44, host: 45, container: 2 });
+        assert_eq!(s.pool_caps, runtime::pools::PoolCaps { store: 41, unit: 42, git: 43, forge: 44, host: 45, container: 2, broker: 46 });
         let with = |key: &'static str, val: &'static str| {
             let base = lookup("7");
             move |k: &str| if k == key { Ok(val.to_string()) } else { base(k) }

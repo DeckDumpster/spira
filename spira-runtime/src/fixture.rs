@@ -71,6 +71,7 @@ pub fn lookup(secs: &'static str) -> impl Fn(&str) -> Result<String, String> {
             "SPIRA_POOL_CAP_FORGE" => "44",
             "SPIRA_POOL_CAP_HOST" => "45",
             "SPIRA_POOL_CAP_CONTAINER" => "2",
+            "SPIRA_RUNTIME_BROKER_CAP" => "46",
             k if reconciler_fixture(k).is_some() => reconciler_fixture(k).unwrap_or_default(),
             "BD_TIMEOUT" => "30",
             "SPIRA_COCKPIT_WINDOW_HOURS" => "24",

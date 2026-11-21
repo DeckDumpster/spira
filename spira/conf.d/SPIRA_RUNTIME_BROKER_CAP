@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=runtime
+DOC=Recorded work verbs spira-runtime runs at once (the broker effector class): each is a program of up to five minutes.
+SCHEMA=Recorded work verbs spira-runtime runs at once. (unit: requests; integer; default 4). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Recorded work verbs spira-runtime runs at once (the broker effector class).
+    : "${SPIRA_RUNTIME_BROKER_CAP:=4}"
+SPIRA_CONF_DEFAULT_EOF

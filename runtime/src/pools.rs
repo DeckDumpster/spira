@@ -17,10 +17,11 @@ pub enum EffectClass {
     #[default]
     Host,
     Container,
+    Broker,
 }
 
 impl EffectClass {
-    pub const ALL: [EffectClass; 6] = [EffectClass::Store, EffectClass::Unit, EffectClass::Git, EffectClass::Forge, EffectClass::Host, EffectClass::Container];
+    pub const ALL: [EffectClass; 7] = [EffectClass::Store, EffectClass::Unit, EffectClass::Git, EffectClass::Forge, EffectClass::Host, EffectClass::Container, EffectClass::Broker];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -30,6 +31,7 @@ impl EffectClass {
             EffectClass::Forge => "forge",
             EffectClass::Host => "host",
             EffectClass::Container => "container",
+            EffectClass::Broker => "broker",
         }
     }
 
@@ -58,18 +60,20 @@ pub struct PoolCaps {
     pub host: usize,
     /// Container and VM runs; never above [`HOST_RUN_CEILING`].
     pub container: usize,
+    /// Recorded `work` verbs run at once: each is a program of up to five minutes.
+    pub broker: usize,
 }
 
 impl Default for PoolCaps {
     fn default() -> Self {
-        PoolCaps { store: 4, unit: 4, git: 2, forge: 2, host: 4, container: HOST_RUN_CEILING }
+        PoolCaps { store: 4, unit: 4, git: 2, forge: 2, host: 4, container: HOST_RUN_CEILING, broker: 4 }
     }
 }
 
 impl PoolCaps {
     /// `n` for every class, the container class held to the ceiling.
     pub fn uniform(n: usize) -> Self {
-        PoolCaps { store: n, unit: n, git: n, forge: n, host: n, container: n.min(HOST_RUN_CEILING) }
+        PoolCaps { store: n, unit: n, git: n, forge: n, host: n, container: n.min(HOST_RUN_CEILING), broker: n }
     }
 
     /// The cap in force: at least one, so a class never wedges; container at most the ceiling.
@@ -81,6 +85,7 @@ impl PoolCaps {
             EffectClass::Forge => self.forge,
             EffectClass::Host => self.host,
             EffectClass::Container => self.container.min(HOST_RUN_CEILING),
+            EffectClass::Broker => self.broker,
         };
         raw.max(1)
     }
