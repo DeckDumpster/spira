@@ -664,7 +664,7 @@ fn a_watch_with_rows_carries_the_lifecycle_rows_its_events_name<B: Backend>(s: &
     let request = crate::control::served::call_request_id();
     let call = crate::control::state::Call { now: 300, request: &request, inputs: &crate::control::claimable::FIXED };
     let (_, listed) = crate::control::state::run(s, &["list".into(), "--ids".into(), "sp-a".into()], &call);
-    assert_eq!(w["rows"], serde_json::from_str::<Value>(&listed).unwrap(), "the rows are what `list --ids` composes: {w}");
+    assert_eq!(w["rows"], serde_json::from_str::<Value>(&listed).unwrap(), "the control plane carries what `list --ids` composes, before the planning join: {w}");
     assert_eq!(w["rows"][0]["express"], "1");
     assert!(w["rows"][0].get("claim_view").is_some(), "the claim verdict rides with it: {w}");
     let head = s.contract().head().unwrap();
