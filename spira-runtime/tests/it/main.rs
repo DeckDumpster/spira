@@ -15,6 +15,7 @@ mod check_config;
 mod effects_runnable;
 mod no_fork_edges_ops;
 mod no_spawn;
+mod pinned_settings_env;
 mod pr_notify_parity;
 mod repin;
 mod restart_wakes;
