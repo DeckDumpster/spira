@@ -110,7 +110,7 @@ pub struct SqliteRegistry {
 impl Registry for SqliteRegistry {
     fn disabled(&self) -> Result<Vec<(String, i64)>, String> {
         if !Path::new(&self.path).exists() {
-            return Ok(Vec::new());
+            return Err(format!("no registry file at {}", self.path));
         }
         test_registry::store::ever_disabled(&test_registry::open(&self.path)?)
     }

@@ -491,7 +491,7 @@ fn the_cover_gives_the_rewritten_share_and_median_line_age() {
     w.ports.tree = Box::new(fixture().with_line_times("demo/src/store.rs", &[now - 10 * DAY, now - 10 * DAY, now - 200 * DAY, now - 400 * DAY]));
     let body = sealed_body(&mut w);
     assert!(body.contains("50% of"), "{body}");
-    assert!(body.contains("Rewritten in the last 90 days: 50% of"), "{body}");
+    assert!(body.contains("Rewritten in the last 45 days: 50% of"), "{body}");
     assert!(body.contains("median line age 105 days"), "{body}");
 }
 
