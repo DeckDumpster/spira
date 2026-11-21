@@ -213,24 +213,23 @@ fn seal_cover_note_carries_facts_and_no_critique() {
 }
 
 #[test]
-fn seal_writes_an_oversized_file_as_regions_joined_by_a_marker_naming_the_elided_range() {
+fn seal_sends_a_large_module_whole_and_byte_identical() {
     let mut w = world();
     assert_eq!(w.cr(&["open", "--aim", "demo/src/big.rs", "--seed", "2"]).code, 0);
-    let r = record::load(w.run.path(), 1).unwrap();
-    let regions = r.unit.files[0].regions.clone().expect("big.rs is oversized");
     let c = w.comments(1);
     let o = w.seal_with("001", &c);
     assert_eq!(o.code, 0, "{}", o.stderr);
-    let blobs = w.gh.posted("git/blobs");
-    let text = String::from_utf8(unbase64(blobs[0]["content"].as_str().unwrap())).unwrap();
-    assert!(text.contains("// [cr: source lines "), "{text}");
-    assert!(text.contains(" elided]"), "{text}");
     let source = crate::ports::SourceTree::read(&fixture(), "demo/src/big.rs").unwrap();
-    assert!(text.len() < source.len());
-    let first = source.split(|b| *b == b'\n').nth(regions[0].0 as usize - 1).unwrap();
-    assert!(text.contains(&String::from_utf8_lossy(first).into_owned()));
+    let blobs = w.gh.posted("git/blobs");
+    assert!(!blobs.is_empty());
+    for b in &blobs {
+        assert!(!String::from_utf8_lossy(&unbase64(b["content"].as_str().unwrap())).contains("[cr: source lines"));
+    }
+    assert!(blobs.iter().any(|b| unbase64(b["content"].as_str().unwrap()) == source), "no posted blob equals the source");
+    let lines = String::from_utf8_lossy(&source).lines().count() as u32;
     let note = w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string();
-    assert!(note.contains("elided source lines"), "{note}");
+    let want = format!("- `demo/src/big.rs`: {lines} lines (about {} pages)\n- Total: {lines} lines", lines.div_ceil(10));
+    assert!(note.contains(&want), "missing {want:?} in:\n{note}");
 }
 
 #[test]

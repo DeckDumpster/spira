@@ -8,7 +8,6 @@ use std::path::Path;
 pub struct LedgerFile {
     pub path: String,
     pub blob: String,
-    pub regions: Option<Vec<(u32, u32)>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

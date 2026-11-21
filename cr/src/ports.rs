@@ -55,17 +55,10 @@ pub trait SourceTree {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub page_lines: u32,
-    pub oversize_pages: u32,
     pub exclude: Vec<String>,
     pub churn_days: u32,
     pub rewrite_days: u32,
     pub count_limit: usize,
-}
-
-impl Config {
-    pub fn oversize_lines(&self) -> u32 {
-        self.page_lines.saturating_mul(self.oversize_pages)
-    }
 }
 
 /// The `issue_type` of each bead named, read through spira-lc; a bead the store lacks is absent.

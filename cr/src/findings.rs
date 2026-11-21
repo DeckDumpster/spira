@@ -293,39 +293,13 @@ struct Theirs {
     user: Option<Author>,
 }
 
-/// The review branch line of each comment, as a source line: a line the elision marker
-/// stands on has no source line and keeps its own number, negated, so it only meets itself.
-pub(crate) fn source_line(regions: &Option<Vec<(u32, u32)>>, total: u32, branch_line: u32) -> i64 {
-    let Some(regions) = regions else { return branch_line as i64 };
-    let mut at = 0u32;
-    let mut next = 1u32;
-    for &(a, b) in regions {
-        let (a, b) = (a.max(1), b.min(total));
-        if a > b {
-            continue;
-        }
-        if next < a {
-            at += 1;
-            if at == branch_line {
-                return -(branch_line as i64);
-            }
-        }
-        if branch_line <= at + (b - a + 1) {
-            return (a + branch_line - at - 1) as i64;
-        }
-        at += b - a + 1;
-        next = b + 1;
-    }
-    -(branch_line as i64)
-}
-
 struct Agreement {
     agreed: Vec<(Comment, String)>,
     only_you: Vec<String>,
     only_concierge: Vec<Comment>,
 }
 
-fn agreement(run: &Path, r: &Review, ports: &Ports) -> Result<Agreement, String> {
+fn agreement(run: &Path, r: &Review) -> Result<Agreement, String> {
     let sealed: Vec<Comment> = match std::fs::read(record::dir(run, r.number).join("sealed.json")) {
         Ok(b) => serde_json::from_slice(&b).map_err(|e| format!("sealed.json: {e}"))?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
@@ -337,21 +311,15 @@ fn agreement(run: &Path, r: &Review, ports: &Ports) -> Result<Agreement, String>
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(e) => return Err(format!("reading {}: {e}", path.display())),
     };
-    let source = ports.tree.at(&r.source_sha)?;
-    let place = |p: &str, line: u32| -> i64 {
-        let Some(f) = r.unit.files.iter().find(|f| f.path == p) else { return line as i64 };
-        let total = source.read(p).map_or(0, |b| review::line_count(&b));
-        source_line(&f.regions, total, line)
-    };
     let mut theirs: Vec<(Theirs, bool)> = theirs.into_iter().filter(|t| t.user.as_ref().and_then(|u| u.kind.as_deref()) != Some("Bot")).map(|t| (t, false)).collect();
     let mut out = Agreement { agreed: Vec::new(), only_you: Vec::new(), only_concierge: Vec::new() };
     for c in sealed {
-        let here = place(&c.path, c.line);
+        let here = i64::from(c.line);
         let hit = theirs
             .iter()
             .enumerate()
-            .filter(|(_, (t, used))| !used && t.path == c.path && t.line.is_some_and(|l| (place(&t.path, l) - here).abs() <= AGREE_WITHIN))
-            .min_by_key(|(_, (t, _))| (place(&t.path, t.line.unwrap_or(0)) - here).abs())
+            .filter(|(_, (t, used))| !used && t.path == c.path && t.line.is_some_and(|l| (i64::from(l) - here).abs() <= AGREE_WITHIN))
+            .min_by_key(|(_, (t, _))| (i64::from(t.line.unwrap_or(0)) - here).abs())
             .map(|(i, _)| i);
         match hit {
             Some(i) => {
@@ -416,7 +384,7 @@ pub fn findings(number: u32, post: bool, ports: &Ports) -> Outcome {
         let rows = load(run, number)?;
         let dir = Path::new(&ports.findings_dir);
         let review_name = format!("cr-{number:03}.md");
-        let a = agreement(run, &r, ports)?;
+        let a = agreement(run, &r)?;
         write_if_changed(&dir.join(&review_name), &page(&r, &rows))?;
         write_if_changed(&dir.join(CATALOGUE), &catalogue(run)?)?;
         let message = format!("cr findings: review {number:03}, {} finding(s)\n\nRegenerated {review_name} and {CATALOGUE} from the findings records.\n", rows.len());

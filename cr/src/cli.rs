@@ -3,7 +3,7 @@
 use crate::count;
 use crate::findings;
 use crate::index::Index;
-use crate::pick::{self, Scored, Shaped, Stratum};
+use crate::pick::{self, Scored, Stratum};
 use crate::ports::{Ports, SeededRng};
 use crate::record;
 use crate::review;
@@ -273,8 +273,7 @@ pub fn run(argv: &[String], ports: &Ports) -> Outcome {
         return fail(1, json, why, &[], Some(seed), Some(&commit));
     };
     let chosen = &scored[i];
-    let shaped = pick::shape(&ix, &chosen.unit, &ports.config, &mut rng);
-    let body = describe(chosen, &shaped, &stratum, &aim_note, seed, &commit, ports.config.page_lines);
+    let body = describe(chosen, &ix, &stratum, &aim_note, seed, &commit, ports.config.page_lines);
     if json {
         Outcome { code: 0, stdout: format!("{}\n", body.0), stderr: String::new() }
     } else {
@@ -319,11 +318,7 @@ fn run_count(a: CountArgs, json: bool, ports: &Ports) -> Outcome {
     Outcome { code: 0, stdout: t, stderr: String::new() }
 }
 
-fn ranges_text(r: &[(u32, u32)]) -> String {
-    r.iter().map(|(a, b)| if a == b { a.to_string() } else { format!("{a}-{b}") }).collect::<Vec<_>>().join(",")
-}
-
-fn describe(c: &Scored, shaped: &[Shaped], st: &Stratum, aim: &Option<(String, &'static str, usize)>, seed: u64, commit: &str, page_lines: u32) -> (Value, String) {
+fn describe(c: &Scored, ix: &Index, st: &Stratum, aim: &Option<(String, &'static str, usize)>, seed: u64, commit: &str, page_lines: u32) -> (Value, String) {
     let w = &c.weight;
     let review = match w.days_since_sent {
         None => "never sent".to_string(),
@@ -333,17 +328,7 @@ fn describe(c: &Scored, shaped: &[Shaped], st: &Stratum, aim: &Option<(String, &
         None => format!("{} has never been sent", st.kind.as_str()),
         Some(t) => format!("{} was last sent at {t} ms, the oldest of the kinds", st.kind.as_str()),
     };
-    let files: Vec<Value> = shaped
-        .iter()
-        .map(|f| {
-            json!({
-                "path": f.path,
-                "lines": f.lines,
-                "regions": f.regions,
-                "oversized": f.part.as_ref().map(|p| format!("oversized: public surface plus {p}")),
-            })
-        })
-        .collect();
+    let files: Vec<Value> = c.unit.files.iter().map(|f| json!({"path": f.path, "lines": ix.lines(&f.path)})).collect();
     let v = json!({
         "ok": true,
         "unit": {"id": c.unit.id, "kind": c.unit.kind.as_str(), "title": c.unit.title, "files": files},
@@ -364,12 +349,8 @@ fn describe(c: &Scored, shaped: &[Shaped], st: &Stratum, aim: &Option<(String, &
         "commit": commit,
     });
     let mut t = format!("unit: {}\nkind: {}\ntitle: {}\nfiles:\n", c.unit.id, c.unit.kind.as_str(), c.unit.title);
-    for f in shaped {
-        t.push_str(&format!("  {} ({} lines)", f.path, f.lines));
-        if let (Some(r), Some(p)) = (&f.regions, &f.part) {
-            t.push_str(&format!(" oversized: public surface plus {p}; lines {}", ranges_text(r)));
-        }
-        t.push('\n');
+    for f in &c.unit.files {
+        t.push_str(&format!("  {} ({} lines)\n", f.path, ix.lines(&f.path)));
     }
     t.push_str(&format!(
         "weight: {:.3} = review {:.2} ({review}) x churn {:.0} (1 + {} commits) x dependents {:.3} (1 + ln(1 + {})) x size {:.3} (min({} lines / {page_lines}, 3))\n",

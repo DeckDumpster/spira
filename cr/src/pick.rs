@@ -139,45 +139,6 @@ pub fn draw(cands: &[Scored], ledger: &Ledger, rng: &mut dyn Rng) -> Option<(usi
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Shaped {
-    pub path: String,
-    pub lines: u32,
-    pub regions: Option<Vec<(u32, u32)>>,
-    pub part: Option<String>,
-}
-
-/// A file over the oversize count becomes its public surface plus one cohesive part; any
-/// other file, and any file that is not Rust, goes whole.
-pub fn shape(ix: &Index, unit: &Unit, cfg: &Config, rng: &mut dyn Rng) -> Vec<Shaped> {
-    unit.files
-        .iter()
-        .map(|f| {
-            let lines = ix.lines(&f.path);
-            let whole = Shaped { path: f.path.clone(), lines, regions: None, part: None };
-            if lines <= cfg.oversize_lines() || ext(&f.path) != "rs" {
-                return whole;
-            }
-            let text = &ix.text[&f.path];
-            let raw: Vec<&str> = text.split('\n').collect();
-            let code = rustsrc::code_lines(text);
-            let items = rustsrc::items(&raw, &code);
-            let mut ranges = rustsrc::public_surface(&raw, &code, &items);
-            let cands = rustsrc::part_candidates(&items);
-            let mut part = None;
-            if !cands.is_empty() {
-                let chosen = cands[(rng.next_u64() % cands.len() as u64) as usize];
-                let (r, helpers) = rustsrc::part_ranges(&code, &items, chosen);
-                ranges.extend(r);
-                let it = &items[chosen];
-                let label = if it.kind == rustsrc::ItemKind::Fn { format!("fn {}", it.name) } else { it.name.clone() };
-                part = Some(if helpers.is_empty() { label } else { format!("{label} and its helpers {}", helpers.join(", ")) });
-            }
-            Shaped { path: f.path.clone(), lines, regions: Some(rustsrc::merge(ranges)), part }
-        })
-        .collect()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution {
     Path,
     Crate,

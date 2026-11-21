@@ -27,30 +27,6 @@ pub fn comments_path(run: &std::path::Path, number: u32) -> std::path::PathBuf {
     record::dir(run, number).join(COMMENTS_FILE)
 }
 
-/// The line of the source file that line `line` of the review branch's copy shows. A file the
-/// branch holds whole maps to itself; an oversized one is its regions, each gap shown as one marker
-/// line, which maps to nothing.
-pub fn source_line(regions: Option<&[(u32, u32)]>, total: u32, line: u32) -> Option<u32> {
-    let Some(regions) = regions else { return Some(line) };
-    let (mut next, mut shown) = (1u32, 0u32);
-    for &(a, b) in regions {
-        let (a, b) = (a.max(1), b.min(total));
-        if a > b {
-            continue;
-        }
-        if next < a {
-            shown += 1;
-        }
-        let len = b - a + 1;
-        if line > shown && line <= shown + len {
-            return Some(a + (line - shown - 1));
-        }
-        shown += len;
-        next = b + 1;
-    }
-    None
-}
-
 fn refuse(code: i32, msg: &str) -> Outcome {
     Outcome { code, stdout: String::new(), stderr: format!("cr: {msg}\n") }
 }
@@ -69,11 +45,11 @@ fn root_of(all: &[Comment], id: u64) -> u64 {
 fn code_block(c: &Comment, number: u32, ports: &Ports) -> Result<String, String> {
     let r = record::load(&ports.run_dir, number)?;
     let (Some(path), Some(line)) = (&c.path, c.line) else { return Ok(String::new()) };
-    let file = r.unit.files.iter().find(|f| &f.path == path).ok_or_else(|| format!("{path} is not a file of review {number:03}'s unit"))?;
+    r.unit.files.iter().find(|f| &f.path == path).ok_or_else(|| format!("{path} is not a file of review {number:03}'s unit"))?;
     let bytes = ports.tree.at(&r.source_sha)?.read(path).ok_or_else(|| format!("{path} is not readable at {}", r.source_sha))?;
     let text = String::from_utf8_lossy(&bytes);
     let lines: Vec<&str> = text.lines().collect();
-    let at = source_line(file.regions.as_deref(), lines.len() as u32, line as u32).ok_or_else(|| format!("{path}:{line} is a marker of the oversized file, not source"))?;
+    let at = line as u32;
     let (from, to) = (at.saturating_sub(CONTEXT).max(1), (at + CONTEXT).min(lines.len() as u32));
     let mut out = String::new();
     for n in from..=to {
