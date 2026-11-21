@@ -661,6 +661,7 @@ pub fn run_bounded(mut cmd: Command, limit: Duration) -> (i32, String) {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tsmi0of)]
     #[test]
     fn a_record_answers_only_once_it_is_done() {
         assert_eq!(record_answer("{\"state\":\"queued\"}"), Ok(None));
@@ -669,6 +670,7 @@ mod tests {
         assert!(record_answer("not json").is_err());
     }
 
+    #[test_id(tegw1u1)]
     #[test]
     fn a_client_call_answers_with_the_finished_request_not_the_queue_receipt() {
         struct Recorded(std::sync::Mutex<u32>);
@@ -688,6 +690,7 @@ mod tests {
         assert_eq!((r.code, r.out.as_str()), (3, "sp-new"));
     }
 
+    #[test_id(tnue6lm)]
     #[test]
     fn only_the_services_queued_line_names_a_request() {
         assert_eq!(queued_id("queued wr-12\n"), Some("wr-12"));

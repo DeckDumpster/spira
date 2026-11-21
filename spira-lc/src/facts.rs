@@ -214,6 +214,7 @@ mod tests {
         assert!(rows[0].get("created_at").is_none(), "shaped rows carry created_at, raw ones carry at");
     }
 
+    #[test_id(tqifvph)]
     #[test]
     fn fact_without_a_known_sub_verb_answers_the_usage() {
         for a in [&["frobnicate"][..], &[]] {

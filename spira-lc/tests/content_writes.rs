@@ -317,6 +317,7 @@ fn provision(lc: &Lc) {
     lc.admin("admin-provision-reader");
 }
 
+#[test_id(t6zrd6z)]
 #[test]
 fn with_a_provisioned_writer_every_note_and_label_verb_writes_in_sql_and_starts_no_process() {
     let Some(store) = Store::up() else { return };
@@ -331,6 +332,7 @@ fn with_a_provisioned_writer_every_note_and_label_verb_writes_in_sql_and_starts_
     }
 }
 
+#[test_id(tp4mu6r)]
 #[test]
 fn without_a_writer_credential_the_same_verbs_still_write_through_bd() {
     let Some(store) = Store::up() else { return };

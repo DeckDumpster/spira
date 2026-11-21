@@ -202,6 +202,7 @@ mod tests {
         Entry { id: id.into(), bound_ms: 300_000 }
     }
 
+    #[test_id(t4d3gdy)]
     #[test]
     fn each_queued_request_is_one_effect_keyed_on_its_id_with_the_verbs_bound() {
         let specs = decide(&Snapshot { queued: vec![entry("wr-1"), entry("wr-2")], stale: vec![] });
@@ -209,6 +210,7 @@ mod tests {
         assert!(specs.iter().all(|s| s.name == RUN && s.deadline_ms == 300_000 + MARGIN_MS));
     }
 
+    #[test_id(t6a17xw)]
     #[test]
     fn a_stale_running_request_gets_its_own_key_so_it_never_shares_the_queued_ones_ledger() {
         let specs = decide(&Snapshot { queued: vec![], stale: vec![entry("wr-3")] });
@@ -216,6 +218,7 @@ mod tests {
         assert!(serde_json::from_str::<Job>(&specs[0].input).unwrap().stale);
     }
 
+    #[test_id(tcud1d9)]
     #[test]
     fn nothing_queued_decides_nothing_and_a_quiet_answer_reads_as_nothing_queued() {
         assert!(decide(&Snapshot::default()).is_empty());
@@ -269,6 +272,7 @@ mod tests {
         Job { id: "wr-9".into(), bound_ms: 300_000, stale: false }
     }
 
+    #[test_id(tzlbokm)]
     #[test]
     fn a_runner_that_recorded_its_answer_is_not_finished_again() {
         let lc = lc("done", 0);
@@ -281,6 +285,7 @@ mod tests {
         assert_eq!((*ran.borrow(), finished(&lc).len()), (1, 0), "{out}");
     }
 
+    #[test_id(t6jui3n)]
     #[test]
     fn a_runner_that_died_or_hit_its_bound_leaves_the_request_finished_124_with_a_reason() {
         for (code, said, want) in [(124, "", "cut off at its bound"), (137, "killed", "ended with exit 137")] {
@@ -294,6 +299,7 @@ mod tests {
         }
     }
 
+    #[test_id(tp7x8uz)]
     #[test]
     fn a_request_another_runner_took_is_left_alone_and_never_run() {
         let lc = lc("running", 3);
@@ -302,6 +308,7 @@ mod tests {
         assert!(finished(&lc).is_empty());
     }
 
+    #[test_id(tm7d4va)]
     #[test]
     fn a_stale_request_is_finished_without_taking_or_running_anything() {
         let lc = lc("running", 0);

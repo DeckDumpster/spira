@@ -2342,6 +2342,7 @@ mod store_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tz7tibq)]
     #[test]
     fn every_verb_that_starts_a_program_is_recorded_and_the_reads_stay_in_the_service() {
         for verb in ["submit", "ack", "file-followup", "split", "blocked", "superseded-by", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand", "hel", "mender", "forge", "file", "ask"] {
