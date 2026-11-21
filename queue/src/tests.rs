@@ -581,10 +581,10 @@ impl Scripts for FScripts {
             (0, format!("{check}: all passed"))
         }
     }
-    fn gate(&self, br: &str, repo: &str, bead: &str, suites: &str) -> (i32, String) {
+    fn gate(&self, br: &str, repo: &str, bead: &str, suites: &str, lock_wait: &str) -> (i32, String) {
         self.calls
             .borrow_mut()
-            .push(format!("gate {br} {repo} bead={bead} suites={suites}"));
+            .push(format!("gate {br} {repo} bead={bead} suites={suites} lock_wait={lock_wait}"));
         if let Some(dir) = self.lock_probe.borrow().as_ref() {
             let free = matches!(
                 crate::lock::try_lock(dir, "spira"),
@@ -1926,6 +1926,8 @@ impl T {
             publish_red_escalate_after: 3,
             publish_defer_max: Some(3),
             publish_no_run_secs: Some(600),
+            gate_timeout: Some(2700),
+            gate_lock_wait: Some("0".into()),
         };
         fs::create_dir_all(s.queue_dir.join("spira")).unwrap();
         let landref = match mode {
@@ -4927,6 +4929,32 @@ fn settle_exits_zero_and_logs_when_the_queue_lock_is_held() {
 
 // covers: UC-landing-merge-queue-27
 #[test]
+fn submit_hands_the_gate_twice_the_gate_timeout_which_an_explicit_wait_may_only_raise() {
+    for (explicit, want) in [("0", "5400"), ("9000", "9000")] {
+        let mut t = T::new(LandMode::Queue);
+        t.git.set("refs/heads/spira/sp-a", "t1");
+        t.lib.s.certify_suites = "off".into();
+        t.lib.s.gate_timeout = Some(2700);
+        t.lib.s.gate_lock_wait = Some(explicit.into());
+        assert_eq!(t.run(&["submit", "spira/sp-a"]), 0);
+        assert_eq!(
+            t.scripts.calls.borrow()[1],
+            format!("gate spira/sp-a spira bead=sp-a suites=off lock_wait={want}")
+        );
+    }
+}
+
+#[test]
+fn submit_refuses_naming_the_key_when_the_gate_timeout_does_not_resolve() {
+    let mut t = T::new(LandMode::Queue);
+    t.git.set("refs/heads/spira/sp-a", "t1");
+    t.lib.s.gate_timeout = None;
+    assert_ne!(t.run(&["submit", "spira/sp-a"]), 0);
+    assert!(t.err().contains("SPIRA_GATE_TIMEOUT"), "{}", t.err());
+    assert_eq!(count_calls(&t, "gate "), 0);
+}
+
+#[test]
 fn submit_green_in_a_queue_mode_certifies_on_spira_lc_and_keeps_no_record_of_its_own() {
     let mut t = T::new(LandMode::Queue);
     t.git.set("refs/heads/spira/sp-a", "t1");
@@ -4935,7 +4963,7 @@ fn submit_green_in_a_queue_mode_certifies_on_spira_lc_and_keeps_no_record_of_its
     assert_eq!(t.scripts.calls.borrow()[0], "lint t1 verify=false");
     assert_eq!(
         t.scripts.calls.borrow()[1],
-        "gate spira/sp-a spira bead=sp-a suites=off"
+        "gate spira/sp-a spira bead=sp-a suites=off lock_wait=5400"
     );
     assert!(t.lc.has("certify sp-a t1"));
     assert!(
