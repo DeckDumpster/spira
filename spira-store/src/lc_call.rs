@@ -526,7 +526,7 @@ impl LcClient {
     }
 
     /// The answer of the recorded request `id`, each poll a plain read of its record.
-    fn await_record(&self, id: &str) -> Result<Reply, LcError> {
+    pub fn await_record(&self, id: &str) -> Result<Reply, LcError> {
         let show = ["work-request".to_string(), "show".to_string(), id.to_string()];
         let began = std::time::Instant::now();
         loop {

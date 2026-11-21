@@ -116,22 +116,9 @@ pub(crate) fn exchange(stream: std::os::unix::net::UnixStream, args: &[String], 
 
 /// The answer of the recorded request `id`, polled until it is done. Every poll is a plain read.
 pub fn await_request(socket_path: &str, id: &str) -> (i32, String) {
-    use spira_store::lc_call::{record_answer, record_timeout, RECORD_POLL, RECORD_WAIT};
-    let began = std::time::Instant::now();
-    loop {
-        let (code, out, err) = forward_with(socket_path, &["work-request".to_string(), "show".to_string(), id.to_string()], None);
-        if code != 0 {
-            return (code, format!("{out}{err}"));
-        }
-        match record_answer(&out) {
-            Ok(Some(answer)) => return answer,
-            Ok(None) => {}
-            Err(e) => return (2, format!("cannot tell: request {id}: {e}")),
-        }
-        if began.elapsed() >= RECORD_WAIT {
-            return (2, record_timeout(id));
-        }
-        std::thread::sleep(RECORD_POLL); // waits-on: the scheduler finishing the request; cap RECORD_WAIT
+    match spira_store::lc_call::LcClient::socket(socket_path).await_record(id) {
+        Ok(r) => (r.code, r.out),
+        Err(e) => (2, format!("cannot tell: request {id}: {e}")),
     }
 }
 
