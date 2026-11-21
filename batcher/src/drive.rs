@@ -1129,7 +1129,13 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         let graph = ops.package_graph();
         let mut packages = unitattr::failing_packages(&f.failed);
         if let Some(g) = &graph {
-            packages = g.resolve(&packages);
+            let mut owned: Vec<String> = vec![];
+            for p in packages.iter().flat_map(|p| g.owners(p)) {
+                if !owned.contains(&p) {
+                    owned.push(p);
+                }
+            }
+            packages = owned;
         }
         let tests = noted_tests(&f.failed);
         let scope = unitattr::rerun_scope(&f.failed, graph.as_ref());
@@ -2947,6 +2953,9 @@ pub(crate) mod tests {
         pub narrow_clears: bool,
         /// The failing scope rerun on every member together comes back green.
         pub rerun_green: bool,
+        /// A scoped probe is red unless every token is `package=test`, and then red exactly when
+        /// the tree holds m3.
+        pub m3_alone_fails_named_tests: bool,
         /// A filter probe of exactly this member alone has no verdict.
         pub unknown_alone: Option<String>,
         /// A runner that cannot build a tree with members taken out: every such job fails to launch.
@@ -3011,6 +3020,7 @@ pub(crate) mod tests {
                 runner_started: false,
                 narrow_clears: false,
                 rerun_green: false,
+                m3_alone_fails_named_tests: false,
                 unknown_alone: None,
                 refuses_removals: false,
                 added_by: BTreeMap::new(),
@@ -3190,6 +3200,10 @@ pub(crate) mod tests {
                 if self.unknown_alone.as_deref() == Some(only.id.as_str()) {
                     return None;
                 }
+            }
+            if self.m3_alone_fails_named_tests {
+                let named = packages.iter().all(|p| p.contains('='));
+                return Some(named && !members.iter().any(|m| m.id == "m3"));
             }
             if self.narrow_clears && packages.iter().any(|p| p.contains('=')) {
                 self.probes.push(vec![]);
@@ -7683,6 +7697,56 @@ pub(crate) mod tests {
             vec![vec!["integration:state-store-sqlite the_wal_x".to_string()]]
         );
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn a_red_named_only_by_a_test_target_several_packages_share_is_probed_on_that_test_in_each_owner() {
+        let red = FilterRed {
+            harness: vec![],
+            name: "integration-tests".into(),
+            named: vec![],
+            failed: vec!["FAIL test:it x::y".into()],
+            ..Default::default()
+        };
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.m3_alone_fails_named_tests = true;
+        f.filter = Some(Box::new(move |tree| tree.contains("m3").then(|| red.clone())));
+        let mut ops = Ops {
+            graph: Some(PackageGraph {
+                dirs: [("a".to_string(), "a".to_string()), ("b".to_string(), "b".to_string())].into(),
+                tests: [("it".to_string(), vec!["a".to_string(), "b".to_string()])].into(),
+                ..Default::default()
+            }),
+            diffs: vec![
+                diff_of("m1", "docs/x.md"),
+                diff_of("m2", "docs/y.md"),
+                diff_of("m3", "a/src/lib.rs"),
+                diff_of("m4", "docs/z.md"),
+            ],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            four(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.ejected,
+            vec![("m3".to_string(), vec!["integration-tests".to_string()])]
+        );
+        assert!(ops.eject_evidence[0].1.contains("FAIL test:it x::y"), "{:?}", ops.eject_evidence);
+        assert!(ops.incidents.iter().all(|(k, _)| k != "base"), "{:?}", ops.incidents);
+        assert!(!f.scoped.is_empty());
+        assert_eq!(f.scoped[0], ["a", "b"], "the control keeps both owners whole");
+        assert!(f.scoped[1..].iter().all(|s| s == &["a=x::y", "b=x::y"]), "{:?}", f.scoped);
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m4"]);
     }
 
     #[test]
