@@ -12,7 +12,12 @@
 //! bin SPIRA_LINT_BIN spira-lint      # build this cargo package from the tree, export $VAR
 //! step bash spira/inventory.sh       # one element of the `&&` chain, in order
 //! step "$SPIRA_LINT_BIN"
+//! own gate/                          # a change to this path must be certified by its own gate
 //! ```
+//!
+//! `own <path>` names the gate's own files (a trailing `/` is a directory prefix, anything
+//! else an exact file). It changes no trial: the batcher reads it from the landing ref and
+//! admits a change to such a path into a cut only once its own gate certified it.
 //!
 //! [`Def::command`] joins the steps with ` && `: the exact string production config held,
 //! so everything downstream of it (the fences' expectations, the build-fence drop of a unit
@@ -41,6 +46,7 @@ pub struct Bin {
 pub struct Def {
     pub bins: Vec<Bin>,
     pub steps: Vec<String>,
+    pub own: Vec<String>,
 }
 
 fn is_var(s: &str) -> bool {
@@ -85,7 +91,22 @@ pub fn parse(text: &str) -> Result<Def, String> {
                 }
                 d.bins.push(Bin { var: var.to_string(), package: package.to_string() });
             }
-            _ => return Err(format!("{PATH}:{n}: unknown directive `{word}` (a line is `step <command>`, `bin <VAR> <package>`, a `#` comment or blank)")),
+            "own" => {
+                if rest.is_empty() {
+                    return Err(format!("{PATH}:{n}: `own` with no path"));
+                }
+                if rest.contains(char::is_whitespace) {
+                    return Err(format!("{PATH}:{n}: `own` takes one path, with no whitespace in it: {line}"));
+                }
+                if rest.starts_with('/') || rest.split('/').any(|c| c == "..") {
+                    return Err(format!("{PATH}:{n}: `own {rest}`: the path must be repo-relative, with no `..`"));
+                }
+                if d.own.iter().any(|o| o == rest) {
+                    return Err(format!("{PATH}:{n}: `own {rest}` declared twice"));
+                }
+                d.own.push(rest.to_string());
+            }
+            _ => return Err(format!("{PATH}:{n}: unknown directive `{word}` (a line is `step <command>`, `bin <VAR> <package>`, `own <path>`, a `#` comment or blank)")),
         }
     }
     if d.steps.is_empty() {
@@ -95,6 +116,12 @@ pub fn parse(text: &str) -> Result<Def, String> {
 }
 
 impl Def {
+    /// Whether `path` is one of the gate's own files: an exact `own` entry, or under an
+    /// `own` directory entry (one ending in `/`).
+    pub fn owns(&self, path: &str) -> bool {
+        self.own.iter().any(|o| if o.ends_with('/') { path.starts_with(o.as_str()) } else { path == o })
+    }
+
     /// The gate string: the steps, in order, joined as one `&&` chain.
     pub fn command(&self) -> String {
         self.steps.join(" && ")
@@ -137,7 +164,7 @@ impl Def {
         }
         let reads = |v: &str| steps.iter().chain(also).any(|s| s.contains(&format!("${v}")) || s.contains(&format!("${{{v}")));
         let bins = self.bins.iter().filter(|b| reads(&b.var)).cloned().collect();
-        Def { bins, steps }
+        Def { bins, steps, own: self.own.clone() }
     }
 
     /// The step that selects and runs the suites covering a diff.
@@ -273,6 +300,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_reads_own_paths() {
+        let d = parse("own gate.steps\nown gate/\nstep a\n").unwrap();
+        assert_eq!(d.own, ["gate.steps", "gate/"]);
+        assert_eq!(d.key_text(), parse("step a\n").unwrap().key_text());
+        assert!(d.owns("gate.steps") && d.owns("gate/src/def.rs"));
+        assert!(!d.owns("gate.steps.bak") && !d.owns("gatex/a.rs") && !d.owns("gate") && !d.owns("spira/gate.steps"));
+    }
+
+    #[test]
     fn fences_only_keeps_the_fences_and_only_the_bins_they_read() {
         let d = parse("bin SPIRA_LINT_BIN spira-lint\nbin SPIRA_GUARD_BIN lifecycle-guard\nbin SPIRA_SELECT_BIN suite-select\nbin SPIRA_TESTENV_BIN testenv\nstep \"$SPIRA_LINT_BIN\"\nstep \"${SPIRA_GUARD_BIN}\" --gate .\nstep bash spira/build-fence.sh\nstep { \"$SPIRA_SELECT_BIN\" gate x && \"$SPIRA_TESTENV_BIN\" --suites y; }\n").unwrap();
         let f = d.fences_only(&[]);
@@ -298,6 +334,11 @@ mod tests {
             "bin X Pkg;rm\nstep a\n",
             "bin X a b\nstep a\n",
             "bin X a\nbin X b\nstep a\n",
+            "own\nstep a\n",
+            "own /abs\nstep a\n",
+            "own ../x\nstep a\n",
+            "own a\nown a\nstep a\n",
+            "own a b\nstep a\n",
         ] {
             assert!(parse(bad).is_err(), "{bad:?} parsed");
         }
@@ -348,6 +389,19 @@ mod tests {
         assert!(missing.is_empty(), "gate.steps names files the tree lacks: {missing:?}");
         for b in &d.bins {
             assert!(root().join(&b.package).join("Cargo.toml").is_file(), "bin {} names no package dir", b.package);
+        }
+    }
+
+    #[test]
+    fn the_checked_in_definition_owns_itself_its_crate_and_every_fence_script_it_runs() {
+        let d = checked_in();
+        assert!(d.own.iter().any(|o| o == PATH) && d.own.iter().any(|o| o == "gate/"), "{:?}", d.own);
+        for p in crate::parse::bash_paths(&d.command()) {
+            assert!(d.own.contains(&p), "gate.steps runs {p} but does not `own` it");
+        }
+        for o in &d.own {
+            let at = root().join(o);
+            assert!(if o.ends_with('/') { at.is_dir() } else { at.is_file() }, "own {o} names nothing the tree carries");
         }
     }
 
