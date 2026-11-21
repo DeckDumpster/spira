@@ -361,8 +361,87 @@ pub fn refs(code_text: &str) -> Refs {
     r
 }
 
-/// Whether `line` is an impl of trait `name`: `impl Name for`, `impl<T> Name<T> for`, `unsafe impl`.
-pub fn is_impl_of(line: &str, name: &str) -> bool {
+/// One name a `use` declaration brings in: `use a::{b as c, d::*}` is `a::b` as `c` and glob `a::d`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Use {
+    pub path: Vec<String>,
+    pub alias: String,
+    pub glob: bool,
+    pub public: bool,
+}
+
+fn use_tree(toks: &[Tok], j: &mut usize, prefix: &mut Vec<String>, public: bool, out: &mut Vec<Use>) {
+    let base = prefix.len();
+    loop {
+        match toks.get(*j) {
+            Some(Tok::Sep) => *j += 1,
+            Some(Tok::Id(x)) if toks.get(*j + 1) == Some(&Tok::Sep) => {
+                prefix.push(x.clone());
+                *j += 2;
+            }
+            Some(Tok::Id(x)) => {
+                *j += 1;
+                let mut path = prefix.clone();
+                if x != "self" {
+                    path.push(x.clone());
+                }
+                let mut alias = path.last().cloned().unwrap_or_default();
+                if let (Some(Tok::Id(kw)), Some(Tok::Id(a))) = (toks.get(*j), toks.get(*j + 1)) {
+                    if kw == "as" {
+                        alias = a.clone();
+                        *j += 2;
+                    }
+                }
+                out.push(Use { path, alias, glob: false, public });
+                break;
+            }
+            Some(Tok::Ch('*')) => {
+                *j += 1;
+                out.push(Use { path: prefix.clone(), alias: String::new(), glob: true, public });
+                break;
+            }
+            Some(Tok::Ch('{')) => {
+                *j += 1;
+                loop {
+                    use_tree(toks, j, prefix, public, out);
+                    match toks.get(*j) {
+                        Some(Tok::Ch(',')) => *j += 1,
+                        Some(Tok::Ch('}')) => {
+                            *j += 1;
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+                break;
+            }
+            _ => break,
+        }
+    }
+    prefix.truncate(base);
+}
+
+/// Every name the `use` declarations in `code_text` bring in, groups expanded and renames kept.
+pub fn uses(code_text: &str) -> Vec<Use> {
+    let toks = tokens(code_text);
+    let mut out = Vec::new();
+    for (k, t) in toks.iter().enumerate() {
+        if *t != Tok::Id("use".to_string()) || toks.get(k + 1) == Some(&Tok::Ch('<')) {
+            continue;
+        }
+        let public = k > 0 && matches!(toks[k - 1], Tok::Id(ref p) if p == "pub") || k > 0 && toks[k - 1] == Tok::Ch(')');
+        let mut j = k + 1;
+        use_tree(&toks, &mut j, &mut Vec::new(), public, &mut out);
+    }
+    out
+}
+
+fn path_segments(path: &str) -> Vec<String> {
+    path.split("::").map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+}
+
+/// Whether `line` is an impl whose trait path `resolves`: `impl Name for`, `impl<T> a::Name<T> for`, `unsafe impl`.
+pub fn is_impl_of(line: &str, resolves: &dyn Fn(&[String]) -> bool) -> bool {
     let t = line.trim_start().trim_start_matches("unsafe").trim_start();
     let Some(rest) = t.strip_prefix("impl") else { return false };
     let mut rest = rest.trim_start();
@@ -387,23 +466,20 @@ pub fn is_impl_of(line: &str, name: &str) -> bool {
     }
     let rest = rest.strip_prefix('!').unwrap_or(rest);
     let path = rest.split(" for ").next().unwrap_or("");
-    rest.contains(" for ") && last_segment(path.split('<').next().unwrap_or("")) == name
+    rest.contains(" for ") && resolves(&path_segments(path.split('<').next().unwrap_or("")))
 }
 
-fn last_segment(path: &str) -> &str {
-    path.trim().rsplit("::").next().unwrap_or("")
-}
-
-/// Whether `code` names `name` as `dyn Name` or `impl Name` where it is not an impl block.
-pub fn names_trait_object(code: &str, name: &str) -> bool {
+/// Whether `code` names a trait whose path `resolves` as `dyn Path` or `impl Path`, outside an impl block header.
+pub fn names_trait_object(code: &str, resolves: &dyn Fn(&[String]) -> bool) -> bool {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
     ["dyn", "impl"].iter().any(|kw| {
-        let pat = format!("{kw} {name}");
-        code.match_indices(&pat).any(|(at, _)| {
-            let before = code[..at].chars().next_back();
-            let after = code[at + pat.len()..].chars().next();
-            !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
-                && !after.is_some_and(|c| c.is_alphanumeric() || c == '_')
-                && !(*kw == "impl" && code[at..].lines().next().is_some_and(|l| is_impl_of(l, name)))
+        code.match_indices(kw).any(|(at, _)| {
+            let after = &code[at + kw.len()..];
+            let path: String = after.trim_start().chars().take_while(|c| ident(*c) || *c == ':').collect();
+            !code[..at].chars().next_back().is_some_and(ident)
+                && after.starts_with(char::is_whitespace)
+                && resolves(&path_segments(&path))
+                && !(*kw == "impl" && code[at..].lines().next().is_some_and(|l| is_impl_of(l, resolves)))
         })
     })
 }
