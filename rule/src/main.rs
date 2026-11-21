@@ -447,11 +447,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
 }
 
 fn report_unlanded(err: &str, not_submitted: &str) {
-    if err.contains(code::RED_AFTER_FILING) {
-        eprintln!("rule: the law/ item is submitted and red; the gate's verdict above stands — fix the branch it names, then resubmit it");
-    } else {
-        eprintln!("{not_submitted}");
-    }
+    eprintln!("{}", code::unlanded_message(err, not_submitted));
 }
 
 fn log_law_book_failure(verb: &str, key: &str, err: &str) {

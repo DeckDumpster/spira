@@ -1004,6 +1004,15 @@ fn submit_law_on(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch: 
 /// Marks an error raised after the law/ item was filed: the item exists and the gate judged it red.
 pub const RED_AFTER_FILING: &str = "(SUBMITTED) but red at the gate";
 
+/// The closing line for a failed landing: a red on a filed item says so; anything earlier says the item was never submitted.
+pub fn unlanded_message(err: &str, not_submitted: &str) -> String {
+    if err.contains(RED_AFTER_FILING) {
+        "rule: the law/ item is submitted and red; the gate's verdict above stands — fix the branch it names, then resubmit it".to_string()
+    } else {
+        not_submitted.to_string()
+    }
+}
+
 /// Reads `queue submit`'s exit status. 75 (no verdict) and 76 (base red) are not a fault in the
 /// law/ commit: the item stays SUBMITTED and the round's gate judges it, so they yield a note.
 /// Any other failure is a red gate on a filed item.

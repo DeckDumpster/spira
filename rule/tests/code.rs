@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use rule::code::{append, drift, generate, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, submit_outcome, Merged, Moved, Pointers, Retired};
+use rule::code::{append, drift, generate, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, submit_outcome, unlanded_message, Merged, Moved, Pointers, Retired};
 
 const TOC: &str = r#"[[part]]
 number = 1
@@ -892,4 +892,12 @@ fn a_red_gate_names_the_item_as_submitted_and_red() {
 fn a_passing_gate_has_nothing_to_say() {
     let _env = testkit::env_read();
     assert_eq!(submit_outcome(Some(0), "", "sp-x", "spira/sp-x"), Ok(None));
+}
+
+#[test]
+fn only_a_failure_before_filing_says_law_was_not_submitted() {
+    let _env = testkit::env_read();
+    let red = submit_outcome(Some(1), "gate: VERDICT=FAIL\n", "sp-x", "spira/sp-x").unwrap_err();
+    assert!(!unlanded_message(&red, "law/ was not submitted").contains("not submitted"));
+    assert_eq!(unlanded_message("rule: bead.sh file: boom", "law/ was not submitted"), "law/ was not submitted");
 }
