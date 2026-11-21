@@ -1236,6 +1236,7 @@ fn sp_822b8l_a_refused_member_stays_out_until_its_tip_or_the_base_moves() {
 
 /// A refusal the pool read already shows (held, state) is not remembered: once the pool lists the
 /// member again at the same tip and base it is cut; one the pool cannot see stays out.
+#[test_id(tibinsn)]
 #[test]
 fn sp_7der7t_a_member_refused_held_is_cut_once_the_pool_shows_it_unheld() {
     for (kind, cut) in [("held", true), ("state", true), ("no-row", true), ("integration", false), ("text-only", false), ("batch-red", false)] {

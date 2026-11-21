@@ -815,6 +815,7 @@ mod tests {
         assert!(read_series_since(&c, &pushed, std::time::SystemTime::now()).iter().all(|s| s.labels[0].1 != "list"), "only the delta");
     }
 
+    #[test_id(t2chqmo)]
     #[test]
     fn the_longest_gate_wait_of_a_verb_is_pushed_once_per_interval() {
         gate_waited("list", Duration::from_millis(20));
@@ -834,6 +835,7 @@ mod tests {
         assert_eq!(COUNTERS.lock().unwrap().reads["reads-probe"], (3, 5));
     }
 
+    #[test_id(trxmf09)]
     #[test]
     fn resident_memory_is_read_from_the_vmrss_line_in_kb() {
         assert_eq!(rss_bytes_of("Name:\tspira-lc\nVmRSS:\t  2048 kB\nThreads:\t4\n"), Some(2048 * 1024));
