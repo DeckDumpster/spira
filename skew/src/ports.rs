@@ -81,7 +81,7 @@ pub trait World {
     fn is_executable(&self, p: &Path) -> bool;
     /// `gh release list --repo <slug> --json tagName,isDraft` -> Ok(json) or Err(stderr's first line).
     fn gh_release_list(&self, slug: &str) -> Result<String, String>;
-    /// `mail send operator --from "Skew check <skew@spira>" --subject <subject> --kind
+    /// `mail send concierge --from "Skew check <skew@spira>" --subject <subject> --kind
     /// question --default <default_action>` (the `mail` binary, was `mail.sh`, sp-ooh1k),
     /// body on stdin -> Ok or Err(combined output).
     fn mail_send_question(&self, subject: &str, body: &str, default_action: &str) -> Result<(), String>;

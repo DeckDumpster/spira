@@ -65,6 +65,11 @@ pub fn escalation_body(question: &str, default: &str, out: &str) -> String {
     format!("## Question\n{question}\n\n## Default\n{default}\n\nthe Spira DAG is stalled with open work and nothing ready\n\n{out}\n")
 }
 
+/// A stall is loop operation, so the escalation goes to the Concierge, not the operator.
+fn escalation_mail<'a>(question: &'a str, default: &'a str, body: &'a str) -> crate::ask::Mail<'a> {
+    crate::ask::Mail { mailbox: "concierge", from: "Reflect <reflect@spira>", subject: question, kind: "question", default, body, bead: "", own_dedup: false }
+}
+
 /// `reflect-recur.sh`'s key: the text before the first `|`, lowercased, every run of other
 /// characters one `-`, trimmed of `-`, at most 80 characters.
 pub fn recur_key(text: &str) -> String {
@@ -184,7 +189,7 @@ pub fn run(ids: &[String]) -> Result<String, String> {
     if let Some(q) = &a.escalate {
         let default = escalation_default(&a);
         let body = escalation_body(q, &default, &out);
-        match crate::ask::send(&crate::ask::Mail { mailbox: "operator", from: "Reflect <reflect@spira>", subject: q, kind: "question", default: &default, body: &body, bead: "", own_dedup: false }) {
+        match crate::ask::send(&escalation_mail(q, &default, &body)) {
             Ok(()) => log.push_str("reflect: escalated to the cockpit\n"),
             Err(e) => log.push_str(&format!("reflect: the escalation was not accepted: {e}\n")),
         }
@@ -234,6 +239,60 @@ fn file_bead(title: &str, body: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct NoStore;
+
+    impl mail::bead::Bd for NoStore {
+        fn run(&self, _args: &[String], _stdin: Option<&str>) -> mail::bead::BdOut {
+            mail::bead::BdOut::ok("")
+        }
+        fn close(&self, _id: &str, _reason: &str) -> Result<(), spira_store::lc_call::LcError> {
+            Ok(())
+        }
+        fn ensure_ask(&self, _id: &str, _work_bead: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn mail_env(root: &std::path::Path) -> mail::env::Env {
+        mail::env::Env {
+            mail_root: root.join("mail"),
+            kinds_dir: root.join("kinds"),
+            index_file: root.join("index"),
+            mute: false,
+            loom_budget_ms: 1000,
+            repeat_window_s: 0,
+            tidy_fresh_s: 0,
+            id_prefix: "sp".into(),
+            ask_label: String::new(),
+            db: String::new(),
+            bd_conn_retries: 1,
+            operator_actor: "operator".into(),
+            run_dir: root.join("run"),
+            home: root.to_path_buf(),
+            mail_from: None,
+            lint_considered: Some("test".into()),
+            repeat_considered: None,
+            operator_considered: None,
+            statute_guards: String::new(),
+            statute_considered: None,
+            allow_blocking: false,
+            bead_id: None,
+            lock_timeout_ms: 1000,
+            condition: None,
+        }
+    }
+
+    #[test]
+    fn a_stall_escalation_is_delivered_to_the_concierge_and_never_the_operator() {
+        let tmp = testkit::TempDir::new("reflect-escalate");
+        std::fs::create_dir_all(tmp.path().join("run")).unwrap();
+        let (q, default) = ("ship it?", "read the diagnosis and decide");
+        let body = escalation_body(q, default, "diagnosis");
+        crate::ask::send_with(&NoStore, mail_env(tmp.path()), &escalation_mail(q, default, &body)).unwrap();
+        assert_eq!(std::fs::read_dir(tmp.path().join("mail/concierge/new")).unwrap().count(), 1);
+        assert!(!tmp.path().join("mail/operator/new").exists());
+    }
 
     #[test]
     fn the_answer_reads_the_first_check_and_escalate_lines() {

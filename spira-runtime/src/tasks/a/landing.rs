@@ -690,13 +690,15 @@ pub fn bump_requeue(input: &str) -> Result<String, String> {
     Err(format!("{BUMP_REQUEUE}: {} — lib.sh's bump_requeue has no library to call; the requeue count lives in the landing carry", leg.id))
 }
 
-/// The refresh-loop ask, through mail's question kind, unless one with the subject is open.
+const ROUND_LOSER_DEFAULT: &str = "rebase it by hand and land it";
+
+/// The refresh-loop ask to the Concierge, through mail's question kind.
 pub fn ask(e: &crate::Effects, input: &str) -> Result<String, String> {
     let leg = leg_of(input, ASK)?;
     let env = e.concierge_mail.as_deref().or(e.mail.as_deref()).ok_or("no mail environment configured")?;
-    let args = mail::cmds::SendArgs { mailbox: "operator", from: Some("landing <landing@spira>"), subject: &leg.cause, kind: "question", default: "", class: "", bead: &leg.id, urgent: false, digest: false, dry_run: false, requested_by: "" };
+    let args = mail::cmds::SendArgs { mailbox: "concierge", from: Some("landing <landing@spira>"), subject: &leg.cause, kind: "question", default: ROUND_LOSER_DEFAULT, class: "", bead: &leg.id, urgent: false, digest: false, dry_run: false, requested_by: "" };
     let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
-    let body = format!("## Question\n{}. Its pull request keeps falling behind {} without landing. Rebase it by hand, or let it go?\n", leg.cause, leg.base_fq);
+    let body = format!("## Question\n{}. Its pull request keeps falling behind {} without landing. Rebase it by hand, or let it go?\n\n## Default\n{ROUND_LOSER_DEFAULT}\n", leg.cause, leg.base_fq);
     mail::cmds::send(&bd, env, &args, body).map(|o| o.delivered_path.display().to_string())
 }
 
@@ -798,5 +800,49 @@ impl Handler for Landing {
             on_outcome(&carry, &spec.name, &spec.input, ev.kind.tag == EFFECT_SUCCEEDED, &ev.kind.body)
         };
         kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn the_refresh_loop_ask_reaches_the_concierge_and_passes_the_question_lint() {
+        let tmp = testkit::TempDir::new("landing-ask");
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join("run")).unwrap();
+        let env = mail::env::Env {
+            mail_root: root.join("mail"),
+            kinds_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../spira/mail/kinds"),
+            index_file: root.join("index"),
+            mute: false,
+            loom_budget_ms: 1000,
+            repeat_window_s: 0,
+            tidy_fresh_s: 0,
+            id_prefix: "sp".into(),
+            ask_label: String::new(),
+            db: String::new(),
+            bd_conn_retries: 1,
+            operator_actor: "operator".into(),
+            run_dir: root.join("run"),
+            home: root.clone(),
+            mail_from: None,
+            lint_considered: None,
+            repeat_considered: None,
+            operator_considered: None,
+            statute_guards: String::new(),
+            statute_considered: None,
+            allow_blocking: false,
+            bead_id: None,
+            lock_timeout_ms: 1000,
+            condition: None,
+        };
+        let e = crate::Effects { concierge_mail: Some(std::sync::Arc::new(env)), ..crate::Effects::default() };
+        let leg = Leg { id: "sp-x".into(), cause: "The PR for sp-x keeps falling behind".into(), base_fq: "local/main".into(), ..Leg::default() };
+        ask(&e, &serde_json::to_string(&leg).unwrap()).unwrap();
+        assert_eq!(std::fs::read_dir(root.join("mail/concierge/new")).unwrap().count(), 1);
+        assert!(!root.join("mail/operator/new").exists());
     }
 }
