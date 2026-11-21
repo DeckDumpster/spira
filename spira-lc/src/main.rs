@@ -128,7 +128,7 @@ fn main() {
                 }
                 spira_store::lc_state::parse_show(&out).ok().flatten().map(|r| r.state)
             };
-            std::process::exit(close_on_land::run(&args[1..], &mut state, &mut record, &mut close_on_land::show_row))
+            std::process::exit(close_on_land::run(&args[1..], &mut state, &mut record, &mut |id| close_on_land::show_row_via(id, &mut |a| Some(client::try_socket(a).unwrap_or_else(|| dispatch(a))))))
         }
         // The operator's restore and the drill read local files only, never the live store.
         Some("admin-restore") => {
