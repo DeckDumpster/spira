@@ -80,6 +80,7 @@ impl Store {
 
     /// A statement on the fixture's server as its root user: how a test plants state bd itself
     /// would never write, such as a stale `is_blocked` flag, and settles it into a Dolt commit.
+    /// `run_committer` commits this branch concurrently, so a test-side commit passes `--allow-empty`.
     fn sql(&self, statement: &str) {
         let dolt = std::env::var("TESTDB_DOLT").ok().filter(|b| !b.is_empty()).or_else(|| tool("dolt")).expect("dolt, as the store came up with it");
         let out = Command::new(dolt).args(["--host", "127.0.0.1", "--port", &self.port, "--no-tls", "-u", "root", "-p", "", "--use-db", "sptest", "sql", "-q", statement]).output().expect("dolt runs");
@@ -723,7 +724,7 @@ fn purge_alerts_deletes_the_alerts_rows_in_sql_and_unblocks_what_they_blocked() 
 fn stale_pair(store: &Store) -> (String, String, String) {
     let (blocked, blocker, free) = (store.create_bead(), store.create_bead(), store.create_bead());
     store.bd(&["dep", "add", &blocked, &blocker, "--type", "blocks"], None);
-    store.sql(&format!("UPDATE issues SET is_blocked = 0 WHERE id = '{blocked}'; UPDATE issues SET is_blocked = 1 WHERE id = '{free}'; CALL DOLT_COMMIT('-Am', 'plant stale flags')"));
+    store.sql(&format!("UPDATE issues SET is_blocked = 0 WHERE id = '{blocked}'; UPDATE issues SET is_blocked = 1 WHERE id = '{free}'; CALL DOLT_COMMIT('--allow-empty', '-Am', 'plant stale flags')"));
     (blocked, blocker, free)
 }
 
@@ -736,7 +737,7 @@ fn recompute_blocked_repairs_stale_flags_and_says_what_bd_says_in_sql_and_starts
     let (out, children) = lc.children_of("content", &["content", "recompute-blocked"], None);
     assert_eq!(children, 0, "the recompute started a process: {out}");
     assert!(store.bd(&["blocked", "--json"], None).contains(&blocked), "{blocked} is blocked once the service recomputed");
-    store.sql("CALL DOLT_COMMIT('-Am', 'settle')");
+    store.sql("CALL DOLT_COMMIT('--allow-empty', '-Am', 'settle')");
     let (blocked2, ..) = stale_pair(&store);
     let theirs = store.bd(&["recompute-blocked"], None);
     assert_eq!(out, theirs, "the words the recompute prints");
