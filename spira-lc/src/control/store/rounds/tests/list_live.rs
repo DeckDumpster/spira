@@ -119,7 +119,7 @@ fn list_ids_read_transactions_do_not_grow_with_the_ids_on_the_real_store() {
     let dir = testkit::TempDir::new("lc-ids-reads");
     let b = SqliteBackend::open(
         &dir.path().join("c.db"),
-        state_store_sqlite::Options { max_read_ms: 120_000, ..Default::default() },
+        state_store_sqlite::Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Default::default() },
     )
     .unwrap();
     let r = Rig::on(b, &clock());

@@ -383,11 +383,11 @@ mod tests {
     fn steps_to_open(tag: &str, keys: usize) -> (u64, testkit::TempDir, Contract<Served>) {
         let dir = testkit::TempDir::new(tag);
         let path = dir.join("control.db");
-        let seed = SqliteBackend::open(&path, Options::default()).unwrap();
+        let seed = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let rows: Vec<_> = (0..keys).map(|i| (format!("{}sp-{i:05}", crate::control::keys::LIFECYCLE), b"{}".to_vec())).collect();
         seed.bulk_load(2, rows).unwrap();
         drop(seed);
-        let backend = backend_at(path.to_str().unwrap(), Options::default()).unwrap();
+        let backend = backend_at(path.to_str().unwrap(), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let clock = runtime::ports::VirtualClock::new(0);
         let contract = Contract::open(backend, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
         (contract.backend().take_read_steps(), dir, contract)
@@ -405,7 +405,7 @@ mod tests {
     fn a_read_of_150_ms_is_ended_for_every_verb_on_the_store_as_served() {
         let dir = testkit::TempDir::new("lc-served-limit");
         let path = dir.join("control.db");
-        drop(SqliteBackend::open(&path, Options::default()).unwrap());
+        drop(SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap());
         let clock = Arc::new(Steered(AtomicU64::new(0)));
         let (probe_clock, armed) = (clock.clone(), Arc::new(std::sync::atomic::AtomicBool::new(false)));
         let probe_armed = armed.clone();

@@ -37,7 +37,7 @@ fn rss_anon(pid: u32) -> u64 {
 
 /// A control store whose log holds a fortnight of bulky audits.
 fn seed(path: &std::path::Path) {
-    let b = SqliteBackend::open(path, Options::default()).unwrap();
+    let b = SqliteBackend::open(path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
     let now = spira_config::vtime::now_epoch() as i64;
     let bulk = "x".repeat(2_000);
     let states = ["READY", "WORKING", "SUBMITTED", "CERTIFIED"];

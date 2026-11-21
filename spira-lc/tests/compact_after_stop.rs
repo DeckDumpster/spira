@@ -22,7 +22,7 @@ fn seed(path: &std::path::Path) {
         }
         conn.execute_batch("DROP TABLE junk").unwrap();
     }
-    let b = SqliteBackend::open(path, Options::default()).unwrap();
+    let b = SqliteBackend::open(path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
     let mut head = b.head().unwrap();
     for n in 0..ROWS {
         let write = Write::Put { key: format!("seed/{n}"), value: Object::new(serde_json::json!({ "n": n })).encode(), create_rev: Rev::new(head + 1, 0), prev: None };
@@ -78,7 +78,7 @@ fn start_server() -> Server {
 #[test]
 fn compact_folds_the_wal_a_sigterm_stopped_server_leaves_and_loses_no_row() {
     let Server { mut child, store, _dir } = start_server();
-    let head_before = SqliteBackend::open(&store, Options::default()).ok().map(|_| ());
+    let head_before = SqliteBackend::open(&store, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).ok().map(|_| ());
     assert!(head_before.is_none(), "the running server holds the opener lock");
     assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
     child.wait().unwrap();
@@ -92,7 +92,7 @@ fn compact_folds_the_wal_a_sigterm_stopped_server_leaves_and_loses_no_row() {
     assert!(report.wal_bytes_before > 0);
     
 
-    let b = SqliteBackend::open(&store, Options::default()).unwrap();
+    let b = SqliteBackend::open(&store, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
     let head = b.head().unwrap();
     for n in 0..ROWS {
         assert!(b.get(&format!("seed/{n}"), head).unwrap().is_some(), "seed/{n}");
