@@ -11,11 +11,11 @@ use spira_runtime::tasks::e::watch_testenv_cap::*;
 use spira_runtime::watchers::INBOX_APPEND;
 
 fn config() -> Config {
-    Config { suite_cap_s: 600, gate_cap_s: 300, load_wait_s: 60, slot_wait_s: 30, inbox: "q/inbox".into() }
+    Config { suite_cap_s: 600, gate_cap_s: 300, load_wait_s: 60, slot_wait_s: 30, inbox: "q/inbox".into(), run: "q/run".into() }
 }
 
 fn run(pid: u32, age: u64, argv: &[&str]) -> Proc {
-    Proc { pid, start_ticks: 1000 + u64::from(pid), argv: argv.iter().map(|s| s.to_string()).collect(), age_secs: age }
+    Proc { pid, start_ticks: 1000 + u64::from(pid), argv: argv.iter().map(|s| s.to_string()).collect(), age_secs: age, ledgered: false }
 }
 
 const SUITE: &[&str] = &["r/bin/testenv", "--suites", "test-a.sh", "spira"];
@@ -125,4 +125,39 @@ fn a_cap_that_carries_nothing_keeps_no_row_after_killing() {
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(over_cap, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+}
+
+fn live(pid: u32, ticks: u64, age: u64, argv: &[&str]) -> testenv::cap::Proc {
+    testenv::cap::Proc { pid, start_ticks: ticks, argv: argv.iter().map(|s| s.to_string()).collect(), age_secs: age, ledgered: false }
+}
+
+fn production() -> Config {
+    Config { suite_cap_s: 600, gate_cap_s: 300, load_wait_s: 0, slot_wait_s: 600, inbox: "q/inbox".into(), run: "q/run".into() }
+}
+
+fn judged(run: &std::path::Path, procs: Vec<testenv::cap::Proc>) -> Vec<u32> {
+    let snap: Snapshot = serde_json::from_str(&observe_procs(run, procs).unwrap()).unwrap();
+    decide(&snap, &production()).iter().map(|e| serde_json::from_str::<Kill>(&e.input).unwrap().proc.pid).collect()
+}
+
+fn ledger(run: &std::path::Path, pid: u32, body: &str) {
+    let d = run.join("testenv-slot-wait");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join(pid.to_string()), body).unwrap();
+}
+
+#[test]
+fn a_run_that_spent_its_age_waiting_for_a_slot_is_not_killed() {
+    let dir = testkit::TempDir::new("cap-waiter");
+    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() - 1265;
+    ledger(dir.path(), 7, &format!("77 0 {since}"));
+    assert!(judged(dir.path(), vec![live(7, 77, 1271, SUITE)]).is_empty());
+}
+
+#[test]
+fn a_ledgered_run_that_never_waited_is_killed_at_its_cap_plus_grace() {
+    let dir = testkit::TempDir::new("cap-holder");
+    ledger(dir.path(), 7, "77 0 0");
+    assert!(judged(dir.path(), vec![live(7, 77, 660, SUITE)]).is_empty());
+    assert_eq!(judged(dir.path(), vec![live(7, 77, 661, SUITE)]), [7]);
 }

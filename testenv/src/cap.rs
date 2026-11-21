@@ -4,9 +4,10 @@
 //! deadline; any other run carries the suite cap. At the cap the run cancels itself (killing its containers through the same path a
 //! signal takes) and finishes `FAULT reason=over-cap`, naming what was running. `testenv-cap`
 //! scans live runs and kills any that outlive their cap plus [`GRACE`], plus the load-wait
-//! bound for a suite-tier run, whose cap starts only once load admission lets it in, plus the
-//! slot-wait bound. The run's own clock stands still for the whole of every admission-slot
-//! wait ([`hold`]); the scan, which cannot see the waits, bounds the run's total age instead.
+//! bound for a suite-tier run, whose cap starts only once load admission lets it in. The run's
+//! own clock stands still for the whole of every admission-slot wait ([`hold`]) and it
+//! publishes the waits in a ledger the scan subtracts ([`uncounted`]); a run with no ledger
+//! gets the flat slot-wait bound instead.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -180,11 +181,49 @@ fn publish(k: &Clock) {
 /// Seconds of `p`'s age that were slot waiting, as it published them; 0 when unpublished or
 /// when the ledger belongs to an earlier process that had the same pid.
 pub fn excused_secs(run: &Path, p: &Proc) -> u64 {
-    let Ok(text) = std::fs::read_to_string(ledger_path(run, p.pid)) else { return 0 };
+    ledgered_secs(run, p).unwrap_or(0)
+}
+
+fn ledger_fields(text: &str) -> Option<(u64, u64, u64)> {
     let f: Vec<u64> = text.split_whitespace().filter_map(|v| v.parse().ok()).collect();
     match f.as_slice() {
-        [ticks, done, since] if *ticks == p.start_ticks => done + if *since > 0 { epoch().saturating_sub(*since) } else { 0 },
-        _ => 0,
+        [ticks, done, since] => Some((*ticks, *done, *since)),
+        _ => None,
+    }
+}
+
+/// Excused seconds from `p`'s own ledger; `None` when it has none.
+fn ledgered_secs(run: &Path, p: &Proc) -> Option<u64> {
+    let text = std::fs::read_to_string(ledger_path(run, p.pid)).ok()?;
+    let (ticks, done, since) = ledger_fields(&text)?;
+    (ticks == p.start_ticks).then(|| done + if since > 0 { epoch().saturating_sub(since) } else { 0 })
+}
+
+/// Each run's age less its published slot waits. A run with no ledger keeps its age and is
+/// marked unledgered, so [`breaches`] gives it the flat slot-wait bound instead.
+pub fn uncounted(run: &Path, procs: Vec<Proc>) -> Vec<Proc> {
+    procs
+        .into_iter()
+        .map(|p| match ledgered_secs(run, &p) {
+            Some(x) => Proc { age_secs: p.age_secs.saturating_sub(x), ledgered: true, ..p },
+            None => p,
+        })
+        .collect()
+}
+
+/// Removes ledgers whose pid is gone or now belongs to another process.
+fn sweep_ledgers(dir: &Path) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let alive = e
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+            .zip(std::fs::read_to_string(e.path()).ok().and_then(|t| ledger_fields(&t)))
+            .is_some_and(|(pid, (ticks, ..))| start_ticks(pid) == Some(ticks));
+        if !alive {
+            let _ = std::fs::remove_file(e.path());
+        }
     }
 }
 
@@ -269,6 +308,10 @@ pub fn arm(cap: Cap, ledger: Option<PathBuf>) -> Armed {
         ledger,
     }));
     let shared = clock.clone();
+    if let Some(dir) = clock.lock().unwrap().ledger.as_ref().and_then(|l| l.parent()) {
+        sweep_ledgers(dir);
+    }
+    publish(&clock.lock().unwrap());
     CURRENT.with(|c| *c.borrow_mut() = Some(clock.clone()));
     std::thread::spawn(move || {
         let wait = |more: &dyn Fn() -> bool| {
@@ -332,6 +375,8 @@ pub struct Proc {
     pub start_ticks: u64,
     pub argv: Vec<String>,
     pub age_secs: u64,
+    /// `age_secs` already excludes the run's published slot waits.
+    pub ledgered: bool,
 }
 
 /// A live `testenv` invocation that is a run (not one of its subcommands).
@@ -355,8 +400,8 @@ pub struct Breach {
 }
 
 /// A suite-tier run may first wait up to `load_wait` on host load before its cap starts; a
-/// gate-tier run never waits on load. Any run's cap stands still for up to `slot_wait` while
-/// it waits for admission slots.
+/// gate-tier run never waits on load. A run with no ledger may have waited up to `slot_wait`
+/// for admission slots; a ledgered run's age already excludes its waits.
 pub fn breaches(
     procs: &[Proc],
     suite_cap: u64,
@@ -372,7 +417,7 @@ pub fn breaches(
         .filter_map(|p| {
             let gate = has_deadline(&p.argv);
             let cap = limit(suite_cap, gate_cap, gate.then(|| deadline_of(&p.argv).unwrap_or(0))).secs;
-            let waited = if gate { 0 } else { load_wait } + slot_wait;
+            let waited = if gate { 0 } else { load_wait } + if p.ledgered { 0 } else { slot_wait };
             (p.age_secs > cap + waited + grace).then(|| Breach { proc: p.clone(), tier: if gate { "gate" } else { "suite" }, cap })
         })
         .collect()
@@ -401,7 +446,7 @@ pub fn live() -> Vec<Proc> {
             let argv = argv_of(pid)?;
             let t = start_ticks(pid)?;
             let age = (up - t as f64 / hz as f64).max(0.0) as u64;
-            Some(Proc { pid, start_ticks: t, argv, age_secs: age })
+            Some(Proc { pid, start_ticks: t, argv, age_secs: age, ledgered: false })
         })
         .collect()
 }
@@ -421,7 +466,7 @@ mod tests {
     use super::*;
 
     fn p(pid: u32, age: u64, argv: &[&str]) -> Proc {
-        Proc { pid, start_ticks: 1, argv: argv.iter().map(|s| s.to_string()).collect(), age_secs: age }
+        Proc { pid, start_ticks: 1, argv: argv.iter().map(|s| s.to_string()).collect(), age_secs: age, ledgered: false }
     }
 
     #[test]
@@ -532,6 +577,49 @@ mod tests {
         assert_eq!(excused_secs(&run, &mine), 0, "another process's ledger under a reused pid");
         armed.finish();
         assert!(!ledger_path(&run, me).exists(), "a finished run leaves none");
+    }
+
+    #[test]
+    fn arm_leaves_a_ledger_before_any_hold() {
+        let dir = testkit::TempDir::new("testenv-cap-arm-ledger");
+        let run = dir.path().to_path_buf();
+        let me = std::process::id();
+        let mine = live().into_iter().find(|q| q.pid == me).unwrap();
+        assert!(!ledger_path(&run, me).exists());
+        let armed = arm(Cap { secs: 9_999, source: "test" }, Some(ledger_path(&run, me)));
+        assert_eq!(std::fs::read_to_string(ledger_path(&run, me)).unwrap(), format!("{} 0 0", mine.start_ticks));
+        let got = uncounted(&run, vec![mine.clone()]);
+        assert!(got[0].ledgered);
+        armed.finish();
+        assert!(!uncounted(&run, vec![mine])[0].ledgered);
+    }
+
+    #[test]
+    fn arm_removes_the_ledgers_of_runs_that_died() {
+        let dir = testkit::TempDir::new("testenv-cap-sweep");
+        let run = dir.path().to_path_buf();
+        let me = std::process::id();
+        let mine = live().into_iter().find(|q| q.pid == me).unwrap();
+        let dead = ledger_path(&run, 4_000_000);
+        let reused = ledger_path(&run, me + 1_000_000);
+        let other = ledger_path(&run, 1);
+        std::fs::create_dir_all(dead.parent().unwrap()).unwrap();
+        std::fs::write(&dead, "5 0 0").unwrap();
+        std::fs::write(&reused, "5 0 0").unwrap();
+        std::fs::write(&other, format!("{} 0 0", mine.start_ticks + 12345)).unwrap();
+        let armed = arm(Cap { secs: 9_999, source: "test" }, Some(ledger_path(&run, me)));
+        assert!(!dead.exists() && !reused.exists() && !other.exists());
+        assert!(ledger_path(&run, me).exists());
+        armed.finish();
+    }
+
+    #[test]
+    fn a_ledgered_run_is_not_given_the_flat_slot_wait() {
+        let mut never = p(1, 660, &["testenv", "b"]);
+        never.ledgered = true;
+        assert!(breaches(std::slice::from_ref(&never), 600, 300, 0, 600, GRACE, None).is_empty());
+        never.age_secs = 661;
+        assert_eq!(breaches(&[never], 600, 300, 0, 600, GRACE, None).len(), 1);
     }
 
     #[test]
