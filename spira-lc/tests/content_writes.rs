@@ -132,18 +132,10 @@ impl Lc {
         assert!(out.status.success(), "{verb}: {}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     }
 
-    /// bd under load can pass the service's 3 s deadline; the request is retried, not the test failed.
     fn ok(&self, args: &[&str], stdin: Option<&str>) -> String {
-        let mut last = String::new();
-        for _ in 0..3 {
-            let (rc, out) = self.run(args, stdin);
-            if rc == 0 {
-                return out;
-            }
-            assert!(out.contains("deadline"), "{args:?}: {out}");
-            last = out;
-        }
-        panic!("{args:?}: {last}");
+        let (rc, out) = self.run(args, stdin);
+        assert_eq!(rc, 0, "{args:?}: {out}");
+        out
     }
 
     fn serve(&mut self) {
@@ -183,7 +175,8 @@ impl Lc {
     /// The `spira.children` of the span the request `args` makes.
     fn children_of(&self, method: &str, args: &[&str], stdin: Option<&str>) -> (String, i64) {
         let before = self.spans(method).len();
-        let out = self.ok(args, stdin);
+        let (rc, out) = self.run(args, stdin);
+        assert!(rc == 0 || out.contains("deadline"), "{args:?}: {out}");
         let mut polls = 0;
         loop {
             let now = self.spans(method);
@@ -232,16 +225,29 @@ fn verbs(id: &str) -> Vec<Verb> {
     ]
 }
 
+/// bd can outlast the service's 3 s deadline and still land the write: poll for the bead to
+/// show it, one `content show` at a time.
+fn settles(lc: &Lc, id: &str, holds: impl Fn(&str) -> bool) -> String {
+    for _ in 0..600 {
+        let shown = lc.shows(id);
+        if holds(&shown) {
+            return shown;
+        }
+        std::thread::sleep(Duration::from_millis(50)); // clock-safe: polls the store, the signal waited on
+    }
+    panic!("the write never showed on {id}: {}", lc.shows(id));
+}
+
 fn drive(lc: &Lc, id: &str) -> Vec<(&'static str, i64)> {
     let mut children = vec![];
     for verb in verbs(id) {
         let args: Vec<&str> = verb.args.iter().map(String::as_str).collect();
         children.push((verb.name, lc.children_of(verb.method, &args, verb.stdin).1));
-        let shown = lc.shows(id);
         if verb.name == "work label-remove" {
-            assert!(!shown.contains("writes:added"), "{}: the label is still there: {shown}", verb.name);
+            settles(lc, id, |shown| !shown.contains("writes:added"));
         } else {
-            assert!(shown.contains(verb.seen), "{}: {:?} is not on the bead: {shown}", verb.name, verb.seen);
+            let shown = settles(lc, id, |shown| shown.contains(verb.seen));
+            assert_eq!(shown.matches(verb.seen).count(), 1, "{}: {:?} is not on the bead exactly once: {shown}", verb.name, verb.seen);
         }
     }
     children
