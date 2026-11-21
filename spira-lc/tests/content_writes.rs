@@ -132,12 +132,6 @@ impl Lc {
         assert!(out.status.success(), "{verb}: {}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     }
 
-    fn ok(&self, args: &[&str], stdin: Option<&str>) -> String {
-        let (rc, out) = self.run(args, stdin);
-        assert_eq!(rc, 0, "{args:?}: {out}");
-        out
-    }
-
     fn serve(&mut self) {
         let mut child = self.command().arg("serve").stderr(Stdio::piped()).spawn().expect("spira-lc serve runs");
         let mut stderr = BufReader::new(child.stderr.take().unwrap());
