@@ -1269,7 +1269,7 @@ pub fn brokers_tool(verb: &str) -> bool {
     is_tool(verb) || LANE_VERBS.contains(&verb) || matches!(verb, "file-followup" | "split" | "submit" | "ack")
 }
 
-/// The brokered verbs answered in the service: a content read, a config lookup, or a note or label write that goes to SQL (or one bd call without a writer).
+/// The brokered verbs answered in the service: reads, and the note and label writes.
 const ANSWERED_IN_SERVICE: &[&str] = &["read", "list", "search", "fence", "note-on", "label-add", "label-remove"];
 
 /// The verbs lc-serve records as a request instead of running: every one that starts a program.
