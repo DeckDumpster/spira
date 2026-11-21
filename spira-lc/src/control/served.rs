@@ -405,7 +405,7 @@ mod tests {
     fn a_read_of_150_ms_is_ended_for_every_verb_on_the_store_as_served() {
         let dir = testkit::TempDir::new("lc-served-limit");
         let path = dir.join("control.db");
-        drop(SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap());
+        drop(SqliteBackend::open(&path, Options::default()).unwrap());
         let clock = Arc::new(Steered(AtomicU64::new(0)));
         let (probe_clock, armed) = (clock.clone(), Arc::new(std::sync::atomic::AtomicBool::new(false)));
         let probe_armed = armed.clone();
