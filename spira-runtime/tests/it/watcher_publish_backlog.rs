@@ -31,6 +31,7 @@ fn blind_then_measurable() -> TaskRig {
 fn over_then_under() -> TaskRig {
     let world = Arc::new(Mutex::new(read(Read::Measured { count: 60, arrival: Some(0), forge_tip_age_secs: None })));
     let mut r = rig_reading(world.clone());
+    r.clock.advance(1_900_000);
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     *world.lock().unwrap() = read(Read::Measured { count: 1, arrival: Some(0), forge_tip_age_secs: None });
     r.clock.advance(1);
