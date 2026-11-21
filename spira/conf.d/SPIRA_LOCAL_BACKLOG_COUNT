@@ -1,6 +1,6 @@
 TYPE=u32
 GROUP=local
-DOC=THE UNPUBLISHED-BACKLOG ALARM (publish-backlog.sh, row 5 of the local/main design):
+DOC=Unpublished commits on a queue.local repo past which the backlog alarm fires, once the oldest of them is older than one publish cycle (30 min).
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # THE UNPUBLISHED-BACKLOG ALARM (publish-backlog.sh, row 5 of the local/main design):
     # a queue.local repo's local/main is alarmed to the concierge when it holds more than
