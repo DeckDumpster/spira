@@ -64,7 +64,6 @@ const OBSERVE_DEADLINE_MS: u64 = 10_000;
 const STALE_GRACE_MS: u64 = 60_000;
 /// What the effect's deadline allows beyond the verb's bound: the kill grace and the final read.
 const MARGIN_MS: u64 = 20_000;
-const KILL_GRACE_SECS: u64 = 5;
 const REASON_TAIL: usize = 1_500;
 const STORE_WAIT: Duration = Duration::from_secs(10);
 
@@ -123,7 +122,7 @@ pub fn observe(e: &crate::Effects, _key: &str, _spec: &EffectSpec) -> Result<Str
 pub fn run(e: &crate::Effects, key: &str, spec: &EffectSpec) -> Result<String, String> {
     let job: Job = serde_json::from_str(&spec.input).map_err(|e| format!("{RUN}: bad input: {e}"))?;
     let lc = LcClient::socket(&e.world.lc_socket).within(STORE_WAIT);
-    e.once(key, || run_job(&lc, &job, &exec_program))
+    e.once(key, || run_job(&lc, &job, &crate::broker_host::exec_program))
 }
 
 /// How the runner ended: its exit code and what it printed. 124 is the bound.
@@ -164,18 +163,6 @@ fn finish(lc: &LcClient, id: &str, reason: &str) -> Result<(), String> {
         Ok(r) => Err(format!("{id}: finish: {}", r.text())),
         Err(e) => Err(format!("{id}: finish: {e}")),
     }
-}
-
-/// `timeout -k 5 <bound> spira-lc work-exec <id>`, held to a little over the bound here too.
-fn exec_program(id: &str, bound_ms: u64) -> (i32, String) {
-    let bin = match spira_store::lc_call::lc_bin() {
-        Ok(b) => b,
-        Err(e) => return (2, e),
-    };
-    let secs = bound_ms.div_ceil(1000).max(1);
-    let mut cmd = std::process::Command::new("timeout");
-    cmd.args(["-k", &KILL_GRACE_SECS.to_string(), &secs.to_string()]).arg(&bin).args(["work-exec", id]);
-    spira_store::lc_call::run_bounded(cmd, Duration::from_secs(secs + KILL_GRACE_SECS + 5))
 }
 
 pub struct BrokerExec;
