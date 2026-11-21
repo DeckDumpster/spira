@@ -686,6 +686,8 @@ fn code_writes_the_book_the_store_holds_when_a_statute_was_renamed_and_the_old_n
     put("retired-law-aeon-x", &retired_record("law-dwarf-x")); // ffx-ok
     let stale = run(&["--check"]);
     assert_eq!(stale.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&stale.stderr);
+    assert!(said.contains("toc.toml: lists statutes the store lacks") && said.contains("retirements in the store not yet recorded"), "{said}");
     let out = run(&[]);
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
 

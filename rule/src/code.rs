@@ -245,10 +245,10 @@ pub fn store_pointers(book: &BTreeMap<String, String>) -> Vec<Retired> {
         .collect()
 }
 
-/// `pointers` plus the store's retirement records, for each slug no pointer row already names.
+/// `pointers` plus the store's retirement records, for each slug no pointer row already names and the store does not hold again.
 pub fn with_store_pointers(mut pointers: Pointers, book: &BTreeMap<String, String>) -> Pointers {
     for r in store_pointers(book) {
-        let named = pointers.retired.iter().any(|p| p.slug == r.slug) || pointers.merged.iter().any(|m| m.from == r.slug);
+        let named = book.contains_key(&r.slug) || pointers.retired.iter().any(|p| p.slug == r.slug) || pointers.merged.iter().any(|m| m.from == r.slug);
         if !named {
             pointers.retired.push(r);
         }
