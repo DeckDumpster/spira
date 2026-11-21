@@ -1684,6 +1684,7 @@ fn wal_conn(path: &Path) -> rusqlite::Connection {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)]
 fn compact_folds_a_crash_image_wal_into_the_main_file_before_it_rewrites() {
     let dir = TempDir::new("sqlite-compact-wal");
     let live = dir.path().join("live.db");
@@ -1703,6 +1704,7 @@ fn compact_folds_a_crash_image_wal_into_the_main_file_before_it_rewrites() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)]
 fn compact_refuses_naming_the_wal_when_a_reader_keeps_it_from_folding_and_writes_nothing() {
     let dir = TempDir::new("sqlite-compact-wal-held");
     let path = dir.path().join("s.db");
