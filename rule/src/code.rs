@@ -653,6 +653,13 @@ fn add_worktree(repo_path: &Path, branch: &str, wt: &str, base: &str) -> Result<
 /// removes the worktree. The caller's directory and the repo's own checkout are never touched.
 #[allow(clippy::too_many_arguments)]
 pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &str, key: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<String, String> {
+    commit_law_cut(repo_path, base, wt_root, verb, key, toc, pointers, book).map(|(branch, _)| branch)
+}
+
+/// [`commit_law`], also naming the ref the commit was cut from: the newest book-only unlanded
+/// tip (`refs/heads/...`), or `None` when it was cut from the base.
+#[allow(clippy::too_many_arguments)]
+pub fn commit_law_cut(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &str, key: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<(String, Option<String>), String> {
     std::fs::create_dir_all(wt_root).map_err(|e| format!("rule: {}: {e}", wt_root.display()))?;
     let stamp = format!("{}-{}", SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0), std::process::id());
     let branch = format!("law/{}-{stamp}", key.trim_start_matches("law-"));
@@ -663,7 +670,8 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &s
         spira_config::repos::landref(&reg, &repo_path.display().to_string())
     });
     let base = base.ok_or_else(|| format!("rule: no landing ref resolves for {} — refusing to cut law/ from its checkout's HEAD", repo_path.display()))?;
-    let cut_from = newest_book_only_tip(repo_path, &base).unwrap_or(base);
+    let tip = newest_book_only_tip(repo_path, &base);
+    let cut_from = tip.clone().unwrap_or(base);
     if let Err(e) = add_worktree(repo_path, &branch, &wt_s, &cut_from) {
         let _ = git_in(repo_path, &["worktree", "remove", "--force", &wt_s]);
         let _ = git_in(repo_path, &["branch", "-D", &branch]);
@@ -700,7 +708,7 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &s
     if done.is_err() {
         let _ = git_in(repo_path, &["branch", "-D", &branch]);
     }
-    done.map(|()| branch)
+    done.map(|()| (branch, tip))
 }
 
 /// The home repository: its checkout, the ref `law/` is cut from, and its name in the repo map.
@@ -714,8 +722,56 @@ pub struct LawRepo<'a> {
 /// bead, so the next round lands it. Returns the bead id and the branch the queue holds.
 pub fn land_law(repo: &LawRepo, wt_root: &Path, verb: &str, key: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<(String, String), String> {
     let (repo_path, repo_name) = (repo.path, repo.name);
-    let law_branch = commit_law(repo_path, repo.base, wt_root, verb, key, toc, pointers, book)?;
-    submit_law(repo_path, repo_name, wt_root, &law_branch, verb, key)
+    let (law_branch, cut_from) = commit_law_cut(repo_path, repo.base, wt_root, verb, key, toc, pointers, book)?;
+    let carrier = carrier_of(cut_from.as_deref(), bead_state);
+    match carrier {
+        Some(id) => carry_on(repo_path, repo_name, &law_branch, &id).map(|branch| (id, branch)),
+        None => submit_law(repo_path, repo_name, wt_root, &law_branch, verb, key),
+    }
+}
+
+/// The bead an unlanded law/ stack already rides: the id of the `spira/<id>` ref a commit was
+/// cut from when the store holds that bead SUBMITTED. A base cut, a `law/*` cut, or a bead in
+/// any other state files a new item.
+pub fn carrier_of(cut_from: Option<&str>, state_of: impl Fn(&str) -> Option<String>) -> Option<String> {
+    let id = cut_from?.strip_prefix("refs/heads/spira/")?;
+    (state_of(id).as_deref() == Some("SUBMITTED")).then(|| id.to_string())
+}
+
+/// The lifecycle state of bead `id` through the store's own client; `None` when unreadable.
+fn bead_state(id: &str) -> Option<String> {
+    let lc = spira_store::lc_call::LcClient::configured().ok()?;
+    let r = lc.call(&["show", id]).ok().filter(|r| r.code == 0)?;
+    state_in_show(&r.out)
+}
+
+/// The `bead.state` of a `spira-lc show` reply.
+pub fn state_in_show(out: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(out).ok()?;
+    v.get("bead")?.get("state")?.as_str().map(str::to_string)
+}
+
+/// Moves `spira/<id>` to the tip of `law_branch` and deletes `law_branch`. Refuses when that is
+/// not a fast-forward, leaving both branches as they were.
+pub fn fast_forward_onto(repo_path: &Path, law_branch: &str, carrier_branch: &str) -> Result<(), String> {
+    if git_in(repo_path, &["merge-base", "--is-ancestor", carrier_branch, law_branch]).is_err() {
+        return Err(format!("rule: {law_branch} does not fast-forward {carrier_branch}; the law/ commit is kept on {law_branch}"));
+    }
+    git_in(repo_path, &["branch", "-f", carrier_branch, law_branch])?;
+    git_in(repo_path, &["branch", "-D", law_branch])?;
+    Ok(())
+}
+
+fn carry_on(repo_path: &Path, repo_name: &str, law_branch: &str, id: &str) -> Result<String, String> {
+    let branch = format!("spira/{id}");
+    fast_forward_onto(repo_path, law_branch, &branch)?;
+    let queue = spira_config::release_env::tool("queue").map_err(|e| format!("rule: {e}\nrule: the law/ commit is on {branch}"))?;
+    let submit = queue_submit_command(&queue, &branch, repo_name).stdin(Stdio::null()).output().map_err(|e| format!("rule: queue: {e}"))?;
+    if !submit.status.success() {
+        return Err(format!("rule: queue submit {branch} (bead {id}): {}", String::from_utf8_lossy(&submit.stderr).trim()));
+    }
+    println!("law/: committed on {branch}, carried by {id} (SUBMITTED).");
+    Ok(branch)
 }
 
 /// Store slugs the landing-ref toc does not list and no pointer accounts for: the statute
