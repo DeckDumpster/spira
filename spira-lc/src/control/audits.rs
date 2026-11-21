@@ -235,7 +235,7 @@ mod tests {
     #[test_id(tjm4yf7)]
     #[test]
     fn a_limited_read_from_zero_reads_the_imported_rows_through_the_seq_index_and_stops_at_its_limit() {
-        use super::super::store::counting::Counting;
+        use super::super::super::store::counting::Counting;
         use serde_json::json;
         use state_store::{Object, Txn};
         let c = Contract::open(Counting::default(), Ports::virtual_clock(&VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
@@ -247,13 +247,13 @@ mod tests {
                 s.contract().txn(&txn, &Request::new(&format!("{tag}-{n}"), "t", "t")).unwrap();
             }
         };
-        put((1..=300u64).map(|n| (super::super::keys::history_entry(&format!("imp-{n:04}"), 0, "import"), json!({ "seq": n, "audit": audit(n) }))).collect(), "import");
-        put((0..3_000u64).map(|n| (super::super::keys::history_entry(&format!("txn-{n:05}"), 7, "claim"), json!({ "audit": audit(n) }))).collect(), "txn");
+        put((1..=300u64).map(|n| (super::super::super::keys::history_entry(&format!("imp-{n:04}"), 0, "import"), json!({ "seq": n, "audit": audit(n) }))).collect(), "import");
+        put((0..3_000u64).map(|n| (super::super::super::keys::history_entry(&format!("txn-{n:05}"), 7, "claim"), json!({ "audit": audit(n) }))).collect(), "txn");
         s.contract().backend().take();
         let got = s.audits_after_upto(0, 50).unwrap().audits;
         assert_eq!(got.iter().map(|l| l.rev).collect::<Vec<_>>(), (1..=50).collect::<Vec<_>>());
         let reads = s.contract().backend().take();
-        assert!(reads.iter().all(|(k, p, _)| !(*k == "range" && p.starts_with(super::super::keys::HISTORY))), "{reads:?}");
+        assert!(reads.iter().all(|(k, p, _)| !(*k == "range" && p.starts_with(super::super::super::keys::HISTORY))), "{reads:?}");
         let indexed: usize = reads.iter().filter(|(k, _, _)| *k == "range_by_seq").map(|(_, _, n)| n).sum();
         assert!(indexed > 0 && indexed <= 50 + PAGE, "{reads:?}");
         assert!(reads.iter().all(|(k, _, _)| *k != "range"), "a filled limit reads no events: {reads:?}");
