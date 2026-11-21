@@ -149,6 +149,9 @@ fn the_closeout_sorts_comments_into_agreed_only_you_and_only_the_concierge() {
     assert!(group("Agreed").contains("C-agreed") && group("Agreed").contains("H-agreed"), "{}", o.stdout);
     assert!(group("Only you").contains("H-alone") && !group("Only you").contains("B-bot"), "{}", o.stdout);
     assert!(group("Only the Concierge").contains("C-alone"), "{}", o.stdout);
+    assert!(group("Agreed").contains("Concierge (lens): C-agreed"), "{}", o.stdout);
+    assert!(group("Only the Concierge").contains("(lens) C-alone"), "{}", o.stdout);
+    assert!(group("Only the Concierge").contains("(fresh) C-fresh"), "{}", o.stdout);
     assert!(o.stdout.contains("001-1 [condemn] A lock is not held across a send. → statute law-no-lock-across-send"), "{}", o.stdout);
 }
 
