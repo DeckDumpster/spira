@@ -89,8 +89,8 @@ The store is down for the whole of this entry. Announce the stop first.
 
 ```sh
 systemctl --user stop lc-serve.service
-test ! -e "$STORE-wal"
 mv "$STORE" "${STORE%.db}-old-layout.db"
+for s in -wal -shm; do test ! -e "$STORE$s" || mv "$STORE$s" "${STORE%.db}-old-layout.db$s"; done
 spira-lc admin-store-relayout --from "${STORE%.db}-old-layout.db" --to "$STORE"
 systemctl --user start lc-serve.service
 ```
@@ -102,8 +102,8 @@ only on a release that reads the new layout. Report the sizes from the report, a
 **Success:** the report says `certified`; the store starts; `$STORE` and its `*.events-*.db` and
 `*.receipts-*.db` files sit beside each other.
 **If it fails:** `the store is open` means a service is still up; stop it and run the command
-again. A non-empty `-wal` means the store did not close cleanly: move the old file back to
-`$STORE`, start the store once and stop it, then repeat. Any other refusal left nothing at
+again. A refusal naming the `-wal` means another process has the old file open: find it with
+`fuser "${STORE%.db}-old-layout.db"`, stop it, and run again. Any other refusal left nothing at
 `--to`: fix the cause and repeat, or take the rollback.
 
 ## Rollback
