@@ -396,6 +396,8 @@ mod tests {
             assert!(turn_of(&bad).unwrap_err().starts_with("journal:"), "{bad}");
         }
         assert!(turn_of(&wide("ekey", 255)).is_ok(), "the limit itself is accepted");
+        let sent = serde_json::to_value(runtime::journal::Turn { cleared: vec![("t".into(), "k".into())], ..Default::default() }).unwrap();
+        assert_eq!(turn_of(&sent).unwrap().cleared, vec![("t".to_string(), "k".to_string())], "a cleared key the runtime sends is read as sent");
         assert_eq!(turn_of(&json!({})).unwrap(), Turn::default(), "an empty turn writes nothing");
     }
 

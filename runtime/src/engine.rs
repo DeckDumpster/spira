@@ -1184,7 +1184,7 @@ impl Engine {
             if let Some(codec) = self.codecs.get(&task).copied() {
                 let body = std::iter::once(codec.stream).chain(codec.also.iter().copied()).filter_map(|s| self.carries.get(&task)?.get(&(s.to_string(), codec.tag.to_string()))).max_by_key(|e| e.at).map(|e| e.kind.body.clone()).unwrap_or_default();
                 let mut rows = (codec.split)(&body);
-                let held = self.kept.iter().filter(|(_, sig)| !sig.is_empty() && *sig != LEGACY_SPENT).map(|(key, _)| key).chain(self.staged.keys());
+                let held = self.kept.iter().filter(|(_, sig)| !sig.is_empty() && *sig != LEGACY_SPENT).map(|(key, _)| key);
                 dropped.extend(held.filter(|(t, k)| t == &task && k != CARRY_KEY && !rows.contains_key(k)).cloned());
                 if self.kept.get(&(task.clone(), CARRY_KEY.into())).is_some_and(|s| s != LEGACY_SPENT) {
                     rows.insert(CARRY_KEY.into(), LEGACY_SPENT.into());

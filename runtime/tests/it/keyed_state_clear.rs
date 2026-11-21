@@ -43,6 +43,10 @@ fn task_keys(j: &MemJournal) -> Vec<(String, String)> {
     j.state().into_iter().filter(|((t, _), _)| t == "task").map(|((_, k), v)| (k, v)).collect()
 }
 
+fn restored(e: &Engine) -> String {
+    format!("{:?}", e.projection())
+}
+
 #[test]
 fn a_key_the_carry_drops_is_deleted_from_the_store() {
     let j = MemJournal::new();
@@ -81,6 +85,9 @@ fn rows_left_empty_by_an_earlier_release_are_deleted_by_the_first_turn_after_boo
     assert_eq!(after.len(), 3, "{after:?}");
     assert_eq!(j.commits()[1].cleared.len(), 50);
     drop(e);
+    let plain = MemJournal::new();
+    plain.commit(&Turn { state: (50..53).map(|i| row(i, &format!("v{i}"))).collect(), ..Turn::default() }).unwrap();
+    assert_eq!(restored(&open(&j)), restored(&open(&plain)), "the restored carry is what a store without the empty rows gives");
     let before = j.commits().len();
     let mut e = open(&j);
     look(&mut e, "l2", 50..53);
