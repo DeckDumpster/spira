@@ -169,7 +169,7 @@ mod tests {
 
         fn file() -> (testkit::TempDir, Contract<SqliteBackend>) {
             let dir = testkit::TempDir::new("rc-sqlite");
-            let backend = SqliteBackend::open(&dir.join("store.db"), Options::default()).unwrap();
+            let backend = SqliteBackend::open(&dir.join("store.db"), Options { max_read_ms: 120_000, ..Options::default() }).unwrap();
             let ports = Ports { mono: Arc::new(MonotonicClock::new()), wall: Arc::new(MonotonicClock::new()) };
             let s = Contract::open(backend, ports, Config { min_lock_ttl_ms: 1 }).unwrap();
             (dir, s)

@@ -3017,7 +3017,7 @@ mod tests {
 
     /// Keys under `a/` (one rewritten five times), `b/` and `events/`, one commit each.
     fn usage_store(dir: &testkit::TempDir) -> SqliteBackend {
-        let b = SqliteBackend::open(&dir.path().join("u.db"), Options { day_receipts: false, ..Options::default() }).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("u.db"), Options { day_receipts: false, max_read_ms: 120_000, ..Options::default() }).unwrap();
         let put = |key: &str, value: &[u8], prev: Option<Rev>| {
             let head = b.head().unwrap();
             b.commit(
