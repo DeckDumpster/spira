@@ -646,7 +646,7 @@ const RUNNER_PID: &str = "lc-run.pid";
 /// process takes each request lc-serve recorded and runs it, as the scheduler does.
 fn start_runner(world: &Path, lc: &str, port: &str) -> Result<(), String> {
     let log = std::fs::File::create(world.join("lc-run.log")).map_err(at(world))?;
-    let child = Command::new(lc)
+    let child = Command::new(lc) // batch-job: the world's request runner lives as long as the world, and is killed with it
         .arg("work-run")
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
