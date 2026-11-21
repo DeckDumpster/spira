@@ -928,4 +928,22 @@ mod tests {
         assert_eq!(code, REFUSED);
         assert!(msg.contains("is not schedule:<key>, legacy:<key> or effect:<key>"), "{msg}");
     }
+
+    #[test]
+    fn a_sweep_malformed_flag_is_refused_and_a_stop_names_the_command_that_resumes_it() {
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        for bad in [&["--from"][..], &["--from", "effect:x", "--from", "effect:y"], &["--bogus"]] {
+            let mut a = vec!["journal", "sweep"];
+            a.extend_from_slice(bad);
+            let Some(Err((code, _))) = parse_sweep_args(&argv(&a)) else { panic!("accepted {bad:?}") };
+            assert_eq!(code, REFUSED, "{bad:?}");
+        }
+        let (code, out) = sweep_until_done(&mut |_| (CANNOT_TELL, "cannot tell: deadline".into()), true, None);
+        assert_eq!(code, CANNOT_TELL);
+        let head: Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+        assert_eq!((head["steps"].clone(), head["resume"].clone(), head["complete"].clone()), (json!(0), Value::Null, json!(false)), "{out}");
+        assert!(out.ends_with("resume: spira-lc journal sweep --dry-run"), "{out}");
+        let (_, out) = sweep_until_done(&mut |_| (CANNOT_TELL, "x".into()), true, Some("effect:k".into()));
+        assert!(out.ends_with("resume: spira-lc journal sweep --dry-run --from effect:k"), "{out}");
+    }
 }
