@@ -517,7 +517,7 @@ mod tests {
         assert_eq!(remaining(), None);
         let ago = |s| Instant::now() - Duration::from_secs(s);
         let queued = Clock { start: ago(1_000), limit: Duration::from_secs(1_600), held_since: Some(ago(1_000)), excused: Duration::ZERO, ledger: None };
-        assert_eq!(queued.left().as_secs(), 1_600);
+        assert!((1_599..=1_600).contains(&queued.left().as_secs()), "{:?}", queued.left());
     }
 
     #[test]
