@@ -131,6 +131,7 @@ struct Lc {
     dir: PathBuf,
     otel: PathBuf,
     child: Option<Child>,
+    runner: Option<Child>,
 }
 
 impl Lc {
@@ -161,7 +162,7 @@ impl Lc {
         );
         let home = spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
         let otel = spira_otel::dir_of(&run);
-        Lc { toml, home, dir, otel, child: None }
+        Lc { toml, home, dir, otel, child: None, runner: None }
     }
 
     fn command(&self) -> Command {
@@ -195,6 +196,8 @@ impl Lc {
         }
         std::thread::spawn(move || std::io::copy(&mut stderr, &mut std::io::sink()));
         self.child = Some(child);
+        // the scheduler's stand-in: the service records a `work` request and a runner runs it
+        self.runner = Some(self.command().arg("work-run").stdout(Stdio::null()).stderr(Stdio::null()).spawn().expect("spira-lc work-run runs"));
     }
 
     /// The children (count, programs) of every span the service has written for `method`.
@@ -244,6 +247,10 @@ impl Lc {
 
 impl Drop for Lc {
     fn drop(&mut self) {
+        if let Some(c) = self.runner.as_mut() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
         if let Some(c) = self.child.as_mut() {
             let _ = c.kill();
             let _ = c.wait();
@@ -329,7 +336,8 @@ fn without_a_writer_credential_the_same_verbs_still_write_through_bd() {
     provision(&lc);
     lc.serve();
     for (verb, children) in drive(&lc, &id) {
-        assert_eq!(children, 1, "{verb} should have forked bd once");
+        let forks = i64::from(!verb.starts_with("work ") || verb == "work note -");
+        assert_eq!(children, forks, "{verb}: the service forks bd itself except for a `work` verb it records for the runner");
     }
 }
 
