@@ -14,8 +14,14 @@ use crate::{flag, CANNOT_TELL, REFUSED};
 
 pub const VERB: &str = "git-fact";
 
-/// The programs (a caller is `<program>` or `<program>/<subcommand>`) that may record a fact.
-pub const WRITERS: &[&str] = &["spira-runtime", "batcher", "batcher-cut", "queue"];
+/// The programs (a caller is `<program>` or `<program>/<subcommand>`) that may record a kind of fact:
+/// the scheduler measures `unpublished`; the scheduler, the batcher and the queue it runs record `range`.
+fn writers(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "unpublished" => &["spira-runtime"],
+        _ => &["spira-runtime", "batcher", "queue"],
+    }
+}
 
 fn unpublished_key(repo: &str) -> String {
     format!("{}unpublished/{}", keys::GIT_FACTS, keys::component(repo))
@@ -58,8 +64,8 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], request: &str, caller:
     match (args.get(1).map(String::as_str), args.get(2).map(String::as_str)) {
         (Some("put"), Some(kind)) => {
             let program = caller.split('/').next().unwrap_or("");
-            if !WRITERS.contains(&program) {
-                return (REFUSED, format!("git-fact put: {caller} may not record a git fact; only {} do", WRITERS.join(", ")));
+            if !writers(kind).contains(&program) {
+                return (REFUSED, format!("git-fact put {kind}: {caller} may not record it; only {} do", writers(kind).join(", ")));
             }
             let Some(body) = flag(args, "--json") else { return cannot("git-fact put: --json <body> is required".into()) };
             let Ok(v) = serde_json::from_str::<Value>(&body) else { return cannot("git-fact put: the body is not JSON".into()) };
@@ -146,8 +152,23 @@ mod tests {
             assert_eq!(code, REFUSED, "{caller}: {out}");
         }
         assert_eq!(s.git_fact_unpublished("r").unwrap(), None);
-        for caller in WRITERS.iter().map(|w| format!("{w}/task")) {
-            assert_eq!(git_fact(&s, &caller, &["git-fact", "put", "unpublished", "--json", &body]).0, 0, "{caller}");
+        assert_eq!(git_fact(&s, "spira-runtime/publish-backlog", &["git-fact", "put", "unpublished", "--json", &body]).0, 0);
+    }
+
+    #[test]
+    fn each_kind_is_recorded_only_by_the_programs_that_measure_it() {
+        let s = store();
+        let unpublished = json!({ "repo": "r", "declared_unpublished": true }).to_string();
+        let range = json!({ "repo": "r", "base": "b", "tip": "t", "commits": [] }).to_string();
+        for (caller, kind, body, code) in [
+            ("batcher", "unpublished", &unpublished, REFUSED),
+            ("queue", "unpublished", &unpublished, REFUSED),
+            ("batcher", "range", &range, 0),
+            ("queue/round", "range", &range, 0),
+            ("spira-runtime", "range", &range, 0),
+            ("dwarf", "range", &range, REFUSED),
+        ] {
+            assert_eq!(git_fact(&s, caller, &["git-fact", "put", kind, "--json", body]).0, code, "{caller} {kind}");
         }
     }
 

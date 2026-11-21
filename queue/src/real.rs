@@ -2687,6 +2687,43 @@ mod tests {
     }
 
     #[test]
+    fn a_cut_and_a_stage_record_each_members_range_with_git_before_they_send() {
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            let out = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args).output().unwrap();
+            assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        let dir = testkit::TempDir::new("queue-record-ranges");
+        let repo = dir.path().join("alpha");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        let base = git(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "prereq"]);
+        let prereq = git(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "dependent"]);
+        let dependent = git(&repo, &["rev-parse", "HEAD"]);
+        let env = spira_config::process::fixture_world_env(dir.path(), &dir.path().join("run"), &["spira", "alpha"]);
+        let edits: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        let _env = testkit::env(&edits);
+        let members = format!("sp-pre:{prereq},sp-dep:{dependent}");
+        let sent = sent_by(|lc| {
+            let _ = lc.cut("b-1", "alpha", "H", &base, &members, "queue", None);
+            let _ = lc.stage("b-2", "alpha", "H", &base, &members, "b-1", "queue");
+        });
+        let verb_at = |verb: &str| sent.iter().position(|a| a[0] == verb).unwrap();
+        let recorded: Vec<serde_json::Value> = sent.iter().filter(|a| a.starts_with(&["git-fact".to_string(), "put".to_string(), "range".to_string()])).map(|a| serde_json::from_str(&a[4]).unwrap()).collect();
+        assert_eq!(recorded.len(), 4, "two members, for each of the cut and the stage: {sent:?}");
+        let of_dep = recorded.iter().find(|r| r["tip"] == dependent.as_str()).unwrap();
+        assert_eq!((of_dep["repo"].as_str(), of_dep["base"].as_str()), (Some("alpha"), Some(base.as_str())));
+        assert_eq!(of_dep["commits"], serde_json::json!([dependent, prereq]));
+        let of_pre = recorded.iter().find(|r| r["tip"] == prereq.as_str()).unwrap();
+        assert_eq!(of_pre["commits"], serde_json::json!([prereq]));
+        assert!(sent[..verb_at("cut")].iter().filter(|a| a[0] == "git-fact").count() == 2, "the ranges go before the cut: {sent:?}");
+        assert!(sent[..verb_at("stage")].iter().filter(|a| a[0] == "git-fact").count() == 4, "and before the stage: {sent:?}");
+    }
+
+    #[test]
     fn probe_asks_for_the_head_revision_not_a_listing() {
         let mut result = Ok(());
         let sent = sent_by(|lc| result = lc.probe());
