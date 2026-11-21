@@ -20,8 +20,7 @@ path = "tests/fixture.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration", "system-paths/integration", "testkit/integration"]
-
+integration = ["spira-config/integration", "spira-otel/integration", "system-paths/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 spira-config = { path = "../spira-config" }
