@@ -62,12 +62,6 @@ pub fn ref_resolves(repo: &Path, name: &str) -> bool {
     git_output(repo, &["rev-parse", "--verify", "--quiet", &format!("{name}^{{commit}}")]).is_some()
 }
 
-/// The commits reachable from `tip` and not from `base`; `None` when git cannot resolve either.
-pub fn commits_above(repo: &Path, base: &str, tip: &str) -> Option<std::collections::BTreeSet<String>> {
-    let out = git_output(repo, &["rev-list", tip, &format!("^{base}")])?;
-    Some(out.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
-}
-
 /// Ports lib.sh's old bash content check's two-step proof: ancestor first (cheap, and correct whenever
 /// the exact commit is still reachable), then `merge-tree --write-tree` compared against
 /// base's own tree — the check that survives a squash merge or a rebase that rewrote every

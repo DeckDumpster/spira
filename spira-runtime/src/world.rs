@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use runtime::socket::{lc_call, lc_call_within};
+use runtime::socket::lc_call;
 use spira_config::nonwork::{status_args, Kind, Which};
 use serde_json::Value;
 
@@ -33,8 +33,6 @@ const STORE_ATTEMPTS: u32 = 3;
 /// Ids per `plan items` call when the flow pass reads the live beads' type and labels.
 const FLOW_CONTENT_CHUNK: usize = 200;
 const REFRESH_FETCH: std::time::Duration = std::time::Duration::from_secs(20);
-// batch-job: the call deadline; the verb answers inside 4s on its own
-const UNPUBLISHED_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 const TMUX_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3);
 const STORE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
 
@@ -1022,10 +1020,21 @@ impl World {
         publish_backlog_snapshot_from(&rows, &|r| reg.iter().for_each(|reg| refresh_forge_tip(reg, r)), &|name| self.unpublished(name))
     }
 
-    /// `Err` carries the verb's own refusal; `Ok(None)` is a repo declared to publish nowhere.
+    /// Measures the repo here and records the measurement for lc-serve; a record that cannot be
+    /// written is logged and the snapshot still carries what was read. `Ok(None)` is a repo declared to publish nowhere.
     fn unpublished(&self, name: &str) -> Result<Option<Read>, String> {
-        let out = lc_call_within(&self.lc_socket, &["unpublished", name], UNPUBLISHED_WAIT);
-        publish_backlog::read_of(out.as_deref().map_err(|e| e.0.as_str()))
+        let now = spira_config::vtime::now_epoch() as u64;
+        let measurement = crate::unpublished::measure(name, now)?;
+        if let Err(e) = lc_call(&self.lc_socket, &["git-fact", "put", "unpublished", "--json", &measurement.record(name)]) {
+            eprintln!("publish-backlog: the measurement of {name} was not recorded: {}", e.0);
+        }
+        Ok(match measurement {
+            crate::unpublished::Measurement::Declared => None,
+            crate::unpublished::Measurement::Measured(m) => {
+                let age = now.saturating_sub(m.read_at);
+                Some(Read::Measured { count: m.count, arrival: m.oldest_arrival, forge_tip_age_secs: (age >= spira_store::lc_call::UNPUBLISHED_STALE_AFTER_SECS).then_some(age) })
+            }
+        })
     }
 
     pub fn view_snapshot(&self, input: &str) -> Result<String, String> {

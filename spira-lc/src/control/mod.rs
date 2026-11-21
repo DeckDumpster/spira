@@ -7,6 +7,7 @@ pub mod edges;
 pub mod facts;
 pub mod feed;
 pub mod gh_closeout;
+pub mod git_facts;
 pub mod journal;
 pub mod landed;
 pub use spira_lc::keys;

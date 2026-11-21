@@ -278,8 +278,9 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
         return Some(dispatch_sections(args));
     }
     let closeout = verb == super::gh_closeout::VERB;
+    let git_fact = verb == super::git_facts::VERB;
     let lifecycle = state::is_verb(verb) || readiness::VERBS.contains(&verb.as_str()) || claimable::VERBS.contains(&verb.as_str());
-    if !lifecycle && !closeout && !verbs::VERBS.contains(&verb.as_str()) {
+    if !lifecycle && !closeout && !git_fact && !verbs::VERBS.contains(&verb.as_str()) {
         return None;
     }
     let path = match store_path() {
@@ -308,6 +309,7 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
             }
         }
         Ok(store) if closeout => super::gh_closeout::run(&store, args, &call_request_id()),
+        Ok(store) if git_fact => super::git_facts::run(&store, args, &call_request_id(), &crate::slow::current_caller()),
         Ok(store) if args.iter().any(|a| a == "--rows") => {
             let request = call_request_id();
             let call = state::Call { now: crate::db::now_epoch(), request: &request, inputs: &*crate::control::claimable::LIVE };

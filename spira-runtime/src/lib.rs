@@ -17,6 +17,7 @@ pub mod sources;
 pub mod status;
 pub mod store;
 pub mod tasks;
+pub mod unpublished;
 pub mod wake;
 pub mod watchers;
 pub mod wiki_git;
