@@ -103,7 +103,8 @@ pub fn firing_noverdict(repo: &str, s: &NoVerdictStreak) -> Firing {
 pub fn hold(raised: &[String], firing: &mut Vec<Firing>) {
     for key in raised.iter().filter(|k| k.starts_with(KEY_PREFIX) || k.starts_with(NOVERDICT_PREFIX)) {
         if !firing.iter().any(|f| &f.key == key) {
-            firing.push(Firing { key: key.clone(), title: format!("{key}: landing is stopped by a red shared across branches (the gate rows are unreadable; holding)"), evidence: "The Gate section could not be read; this holds until a PASS is seen.".into() });
+            let what = if key.starts_with(NOVERDICT_PREFIX) { "the gate has passed nothing" } else { "landing is stopped by a red shared across branches" };
+            firing.push(Firing { key: key.clone(), title: format!("{key}: {what} (the gate rows are unreadable; holding)"), evidence: "The Gate section could not be read; this holds until a PASS is seen.".into() });
         }
     }
 }

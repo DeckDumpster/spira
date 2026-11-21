@@ -423,6 +423,17 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn a_no_verdict_streak_fires_at_the_threshold_the_observation_carries() {
+        let rows: Vec<Value> = ["a", "b", "c"].iter().map(|b| json!({"bead": b, "status": "NO_VERDICT", "reason": "x"})).collect();
+        let keys = |n: i64| {
+            let obs = json!({"now": 1800000000, "sentinel_log_readable": true, "thresholds": {"noverdict_streak": n}, "gate_runs": [{"repo": "spira", "rows": rows}]});
+            classify(&obs).unwrap().into_iter().map(|f| f.key).filter(|k| k.starts_with("gate-")).collect::<Vec<_>>()
+        };
+        assert_eq!(keys(3), vec!["gate-noverdict-streak/spira".to_string()]);
+        assert!(keys(4).is_empty());
+    }
+
+    #[test]
     fn epoch_matches_the_known_value() {
         assert_eq!(iso_to_epoch("2026-09-06T18:26:32"), 1788719192);
         assert_eq!(iso_to_epoch("1970-01-01T00:00:01"), 1);

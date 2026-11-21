@@ -346,6 +346,20 @@ mod tests {
     }
 
     #[test]
+    fn a_no_verdict_streak_holds_through_an_unreadable_section_and_a_failed_append_leaves_the_raise() {
+        let mut r = Rig::new();
+        std::fs::create_dir(r.dir.join("inbox.log")).unwrap();
+        r.gate_rows = no_verdicts(&["a", "b", "c", "d"], "x");
+        r.passes(1);
+        let rep = r.pass();
+        assert!(rep.err.iter().any(|l| l.contains("could not write the inbox line")), "{:?}", rep.err);
+        assert_eq!(r.status_and_flaps(NOVERDICT), Some(("True".into(), 1)));
+        r.gate_unread = true;
+        r.passes(3);
+        assert_eq!(r.status_and_flaps(NOVERDICT), Some(("True".into(), 1)));
+    }
+
+    #[test]
     fn no_verdicts_that_do_not_share_a_reason_or_four_beads_page_nothing() {
         let mut r = Rig::new();
         r.gate_rows = no_verdicts(&["a", "b", "c"], "x");

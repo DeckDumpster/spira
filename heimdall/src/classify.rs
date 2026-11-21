@@ -163,6 +163,7 @@ mod tests {
         assert_eq!(v["now"], 1000);
         assert_eq!(v["heimdall_first"], 500);
         assert_eq!(v["thresholds"]["pass_stale"], 600);
+        assert_eq!(v["thresholds"]["noverdict_streak"], 4);
         assert_eq!(v["mirror"]["configured"], false);
         assert_eq!(v["restart_alerts"], serde_json::json!([]));
     }
