@@ -189,7 +189,7 @@ fn a_persona_unit_groups_hooks_by_prefix_with_the_prompt() {
 fn a_large_file_is_drawn_whole() {
     let p = ports();
     let o = go(&p, &["pick", "--aim", "demo/src/big.rs", "--seed", "3"]);
-    let line = o.stdout.lines().find(|l| l.contains("demo/src/big.rs")).unwrap();
+    let line = o.stdout.lines().find(|l| l.starts_with("  demo/src/big.rs")).unwrap();
     assert!(line.starts_with("  demo/src/big.rs (") && line.ends_with(" lines)"), "{}", o.stdout);
     let (_, v) = json(&p, &["pick", "--aim", "demo/src/big.rs", "--seed", "3"]);
     for f in v["unit"]["files"].as_array().unwrap() {
