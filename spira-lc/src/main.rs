@@ -313,11 +313,7 @@ pub fn dispatch(args: &[String]) -> (i32, String) {
         }
     }
     if let Some(answer) = control::served::dispatch(args) {
-        return match args.first().map(String::as_str) {
-            Some("list") if plan::joins_planning(args) => plan::with_planning_fields(answer),
-            Some("list-asks") => plan::with_ask_titles(answer),
-            _ => answer,
-        };
+        return plan::join_answer(args, answer, &|ids| plan::titled(ids).map(|t| t.into_iter().collect()));
     }
     match args.first().map(|s| s.as_str()) {
         Some("stats") => (0, slow::stats_json()),

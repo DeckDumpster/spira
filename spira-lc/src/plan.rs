@@ -303,6 +303,16 @@ pub fn joins_planning(args: &[String]) -> bool {
     args.first().is_some_and(|v| v == "list") && !args.iter().any(|a| a == "--delivery")
 }
 
+/// A control-plane answer to `args` with the planning fields its verb's rows lack.
+pub fn join_answer(args: &[String], answer: (i32, String), lookup: &TitleLookup) -> (i32, String) {
+    match args.first().map(String::as_str) {
+        Some("list") if joins_planning(args) => join_planning(answer, lookup),
+        Some("list-asks") => with_ask_titles(answer),
+        Some("watch") if args.iter().any(|a| a == "--rows") => join_watch_rows(answer, lookup),
+        _ => answer,
+    }
+}
+
 pub fn with_planning_fields(answer: (i32, String)) -> (i32, String) {
     join_planning(answer, &|ids| titled(ids).map(|t| t.into_iter().collect()))
 }
@@ -446,6 +456,18 @@ pub fn join_planning(answer: (i32, String), lookup: &TitleLookup) -> (i32, Strin
     }
     let out = Value::Array(rows);
     (0, if pretty { serde_json::to_string_pretty(&out).unwrap_or_default() } else { out.to_string() })
+}
+
+/// A `watch --rows` answer with its carried rows titled as a `list` row is; every other key stays.
+fn join_watch_rows(answer: (i32, String), lookup: &TitleLookup) -> (i32, String) {
+    let (0, text) = &answer else { return answer };
+    let Ok(Value::Object(mut watch)) = serde_json::from_str::<Value>(text) else { return answer };
+    let Some(Value::Array(rows)) = watch.get_mut("rows") else { return answer };
+    if rows.is_empty() {
+        return answer;
+    }
+    join_rows(rows, lookup);
+    (0, Value::Object(watch).to_string())
 }
 
 fn join_rows(rows: &mut [Value], lookup: &TitleLookup) {
@@ -1033,6 +1055,35 @@ mod tests {
 #[cfg(test)]
 mod merge_tests {
     use super::*;
+
+    #[test]
+    fn a_watch_with_rows_takes_the_title_and_priority_a_list_row_does() {
+        let lookup: &TitleLookup = &|ids| Ok(ids.iter().filter(|i| **i == "sp-a").map(|i| (i.to_string(), (json!("the title"), json!(1)))).collect());
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let rows = json!([{"bead_id": "sp-a", "state": "READY"}, {"bead_id": "sp-gone", "state": "READY"}]);
+        let watch = json!({"events": [{"rev": 3}], "through": 3, "progress_rev": 3, "rows": rows}).to_string();
+        let (code, out) = join_answer(&args(&["watch", "lifecycle", "--rows"]), (0, watch), lookup);
+        assert_eq!(code, 0);
+        let out: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!((out["rows"][0]["title"].clone(), out["rows"][0]["priority"].clone()), (json!("the title"), json!(1)), "{out}");
+        assert_eq!((out["rows"][1]["title"].clone(), out["rows"][1]["priority"].clone()), (Value::Null, Value::Null), "{out}");
+        assert_eq!((&out["events"], &out["through"], &out["progress_rev"]), (&json!([{"rev": 3}]), &json!(3), &json!(3)));
+        let (_, listed) = join_answer(&args(&["list", "--ids", "sp-a,sp-gone"]), (0, rows.to_string()), lookup);
+        assert_eq!(out["rows"], serde_json::from_str::<Value>(&listed).unwrap(), "the same rows a list prints");
+    }
+
+    #[test]
+    fn a_watch_without_rows_or_a_failed_one_passes_through_unchanged() {
+        let lookup: &TitleLookup = &|_| panic!("no lookup for an answer without rows to join");
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let plain = r#"{"events":[],"through":3,"progress_rev":3}"#.to_string();
+        assert_eq!(join_answer(&args(&["watch", "lifecycle"]), (0, plain.clone()), lookup), (0, plain.clone()));
+        assert_eq!(join_answer(&args(&["watch", "lifecycle", "--rows"]), (0, plain.clone()), lookup), (0, plain));
+        let failed = (2, r#"{"rows":[{"bead_id":"sp-a"}]}"#.to_string());
+        assert_eq!(join_answer(&args(&["watch", "lifecycle", "--rows"]), failed.clone(), lookup), failed);
+        let garbled = (0, "not json".to_string());
+        assert_eq!(join_answer(&args(&["watch", "lifecycle", "--rows"]), garbled.clone(), lookup), garbled);
+    }
 
     #[test]
     fn a_listed_record_takes_its_title_and_priority_from_bd_in_the_dolt_listings_place() {
