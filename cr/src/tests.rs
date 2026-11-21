@@ -372,7 +372,7 @@ fn a_bare_positional_exits_two_naming_aim() {
 fn help_documents_every_flag_and_the_exit_codes() {
     let o = go(&ports(), &["-h"]);
     assert_eq!(o.code, 0);
-    for want in ["--aim", "--seed", "--json", "Exit codes", "  0 ", "  1 ", "  2 "] {
+    for want in ["--aim", "--seed", "--json", "--pr", "--sha256", "--unit", "--commit", "cr adopt", "Exit codes", "  0 ", "  1 ", "  2 "] {
         assert!(o.stdout.contains(want), "{want}");
     }
 }

@@ -581,6 +581,173 @@ fn push_branch(p: &mut Progress, dir: &Path, r: &Review, files: &[(String, Vec<u
     Ok(p.pr.clone().expect("pr was just set"))
 }
 
+// ───────────────────────────── adopt ─────────────────────────────
+
+pub enum AdoptTarget {
+    Review(u32),
+    OnDemand { unit: String, commit: String },
+}
+
+pub struct AdoptArgs {
+    pub target: AdoptTarget,
+    pub pr: u64,
+    pub sha256: String,
+}
+
+fn pull_request_files(ports: &Ports, repo: &str, pr: u64) -> Result<Vec<(String, String)>, String> {
+    let mut out = Vec::new();
+    for page in 1.. {
+        let ep = format!("{repo}/pulls/{pr}/files?per_page=100&page={page}");
+        let v = gh(ports, "GET", &ep, None)?;
+        let entries = v.as_array().ok_or_else(|| format!("forge call {ep}: reply is not an array"))?;
+        for e in entries {
+            out.push((text_field(e, &["filename"], &ep)?, text_field(e, &["sha"], &ep)?));
+        }
+        if entries.len() < 100 {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+pub fn adopt(a: &AdoptArgs, ports: &Ports) -> Outcome {
+    let run = &ports.run_dir;
+    let sealed_bytes = ports.stdin.as_bytes();
+    let sha = sha256_hex(sealed_bytes);
+    if sha != a.sha256 {
+        return refuse(2, &format!("stdin hashes to {sha}, not the --sha256 {}", a.sha256));
+    }
+    let comments: Vec<Comment> = match serde_json::from_slice(sealed_bytes) {
+        Ok(c) => c,
+        Err(e) => return refuse(2, &format!("stdin is not a JSON array of {{path, line, body}}: {e}")),
+    };
+    if comments.is_empty() {
+        return refuse(2, "the sealed review is empty: it needs at least one comment");
+    }
+    if let Some(o) = repo_refusal(ports) {
+        return o;
+    }
+    let adopted = |r: &Review| r.state == State::Open && r.pr == Some(a.pr) && r.sealed_sha256.as_deref() == Some(sha.as_str());
+    let (mut r, source) = match &a.target {
+        AdoptTarget::Review(n) => {
+            let r = match record::load(run, *n) {
+                Ok(r) => r,
+                Err(e) => return refuse(2, &e),
+            };
+            if adopted(&r) {
+                return done(format!("{}\n", r.pr_url.as_deref().unwrap_or("-")));
+            }
+            if r.state != State::Staged {
+                return refuse(2, &format!("review {n:03} is {}, not staged; only a staged review can adopt a pull request", r.state.as_str()));
+            }
+            let source = match ports.tree.at(&r.source_sha) {
+                Ok(t) => t,
+                Err(e) => return refuse(1, &e),
+            };
+            (r, source)
+        }
+        AdoptTarget::OnDemand { unit, commit } => {
+            let source = match ports.tree.at(commit) {
+                Ok(t) => t,
+                Err(e) => return refuse(2, &e),
+            };
+            let full = match source.commit() {
+                Ok(c) => c,
+                Err(e) => return refuse(1, &e),
+            };
+            let ix = match Index::build(source.as_ref()) {
+                Ok(i) => i,
+                Err(e) => return refuse(1, &e),
+            };
+            let Some(unit) = units::all(&ix).into_iter().find(|u| u.id == *unit) else {
+                return refuse(2, &format!("{unit:?} is not a unit at commit {full}"));
+            };
+            let known = match record::all(run) {
+                Ok(all) => all,
+                Err(e) => return refuse(1, &e),
+            };
+            if let Some(r) = known.iter().find(|r| adopted(r) && r.unit.id == unit.id && r.source_sha == full) {
+                return done(format!("{}\n", r.pr_url.as_deref().unwrap_or("-")));
+            }
+            let now = ports.clock.now_ms();
+            let r = Review { number: 0, kind: Kind::OnDemand, state: State::Staged, source_repo: ports.source_repo.clone(), source_sha: full, branch: String::new(), pr: None, pr_url: None, unit, sealed_sha256: None, staged_at: now, opened_at: None, published_at: None, closed_at: None };
+            (r, source)
+        }
+    };
+
+    let repo = format!("repos/{}/{}", ports.repo_owner, ports.repo_name);
+    let pr_ep = format!("{repo}/pulls/{}", a.pr);
+    let pull = match gh(ports, "GET", &pr_ep, None) {
+        Ok(v) => v,
+        Err(e) => return refuse(1, &e),
+    };
+    let fields = text_field(&pull, &["state"], &pr_ep).and_then(|st| Ok((st, text_field(&pull, &["html_url"], &pr_ep)?, text_field(&pull, &["head", "ref"], &pr_ep)?)));
+    let (state, url, head) = match fields {
+        Ok(f) => f,
+        Err(e) => return refuse(1, &e),
+    };
+    if state != "open" {
+        return refuse(2, &format!("pull request {} is {state}, not open", a.pr));
+    }
+    let forge_files = match pull_request_files(ports, &repo, a.pr) {
+        Ok(f) => f,
+        Err(e) => return refuse(1, &e),
+    };
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut blobs: BTreeMap<String, String> = BTreeMap::new();
+    for (path, forge_sha) in &forge_files {
+        let (Some(bytes), Some(source_sha)) = (source.read(path), source.blob(path)) else {
+            return refuse(2, &format!("pull request {} carries {path}, which does not exist at source commit {}", a.pr, r.source_sha));
+        };
+        if *forge_sha != source_sha {
+            return refuse(2, &format!("pull request {} carries {path} at blob {forge_sha}, but source commit {} has {source_sha}", a.pr, r.source_sha));
+        }
+        files.push((path.clone(), bytes));
+        blobs.insert(path.clone(), source_sha);
+    }
+    let primary = r.unit.files[0].path.clone();
+    if !blobs.contains_key(&primary) {
+        return refuse(2, &format!("pull request {} does not carry the unit's primary file {primary}", a.pr));
+    }
+    if let Err(e) = validate("sealed", &comments, &files) {
+        return refuse(2, &e);
+    }
+
+    let now = ports.clock.now_ms();
+    if matches!(a.target, AdoptTarget::OnDemand { .. }) {
+        r.number = match record::allocate(run) {
+            Ok(n) => n,
+            Err(e) => return refuse(1, &e),
+        };
+    }
+    let mut paths: Vec<String> = vec![primary.clone()];
+    paths.extend(forge_files.iter().map(|(p, _)| p.clone()).filter(|p| *p != primary));
+    paths.dedup();
+    r.unit.files = paths.iter().map(|path| units::UnitFile { path: path.clone() }).collect();
+    let row = Row {
+        review: format!("{:03}", r.number),
+        kind: r.unit.kind.as_str().to_string(),
+        unit_id: r.unit.id.clone(),
+        commit: r.source_sha.clone(),
+        files: paths.iter().map(|path| LedgerFile { path: path.clone(), blob: blobs[path].clone() }).collect(),
+        opened_at: now,
+        closed_at: None,
+        closed_as: None,
+        attention: None,
+    };
+    r.pr = Some(a.pr);
+    r.pr_url = Some(url.clone());
+    r.branch = head;
+    r.sealed_sha256 = Some(sha);
+    r.state = State::Open;
+    r.opened_at = Some(now);
+    let written = record::write_atomic(&record::dir(run, r.number).join("sealed.json"), sealed_bytes).and_then(|()| ledger::put_review(ports, &row)).and_then(|()| record::save(run, &r));
+    match written {
+        Ok(()) => done(format!("{url}\n")),
+        Err(e) => refuse(1, &e),
+    }
+}
+
 // ───────────────────────────── unseal ─────────────────────────────
 
 pub fn unseal(number: u32, said: Option<&str>, ports: &Ports) -> Outcome {
