@@ -2693,7 +2693,7 @@ mod tests {
 
     #[test]
     fn the_release_build_cleans_what_differs_from_the_directorys_record_before_building_and_still_reports_a_failed_build() {
-        let (d, env, base, log, home) = release_world("kcuvbg-clean", "[ ! -e \"$(dirname \"$0\")/fail\" ] || case \"$1\" in build) echo boom; exit 3;; esac\n");
+        let (d, env, base, log, home) = release_world("kcuvbg-clean", "d=\"$(dirname \"$0\")\"; [ ! -e \"$d/fail\" ] || case \"$1\" in build) echo boom; exit 3;; esac; [ ! -e \"$d/failclean\" ] || case \"$1\" in clean) echo no; exit 4;; esac\n");
         let _env = with_env(&env);
         let (old, tip) = (d.path().join("old"), d.path().join("tip"));
         crate_tree(&old, "pub fn f() {}\n");
@@ -2714,8 +2714,16 @@ mod tests {
         assert!(wt.join("target/release").is_symlink(), "the release symlink is made");
         drop(held);
         fs::write(d.path().join("bin/fail"), "").unwrap();
-        let err = RealScripts { home }.build_release(&wt, "hand-2").expect_err("a failing build fails");
+        let err = RealScripts { home: home.clone() }.build_release(&wt, "hand-2").expect_err("a failing build fails");
         assert!(err.contains("cargo build --profile release failed (rc=3)"), "{err}");
+        fs::remove_file(d.path().join("bin/fail")).unwrap();
+        fs::write(d.path().join("bin/failclean"), "").unwrap();
+        fs::write(wt.join("a/src/lib.rs"), "pub fn f() { let _ = 2; }\n").unwrap();
+        let builds = fs::read_to_string(&log).unwrap().matches("build -q").count();
+        let err = RealScripts { home }.build_release(&wt, "hand-3").expect_err("a failing clean fails");
+        assert!(err.contains("selective clean") && err.contains("emptied"), "{err}");
+        assert!(!slot.join(".unit-tests-built-manifest").exists(), "the untrusted directory is emptied");
+        assert_eq!(fs::read_to_string(&log).unwrap().matches("build -q").count(), builds, "nothing is built after a failed clean");
     }
 
     #[test]
