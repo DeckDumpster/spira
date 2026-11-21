@@ -1307,7 +1307,7 @@ impl RoundRunner for VmRunner<'_> {
                 }
                 self.corpus_runs += 1;
                 if let Some(batch) = self.batch.as_deref() {
-                    io::round_pass_start(self.env, self.repo, batch);
+                    io::try_round_pass_start(self.env, self.repo, batch)?;
                     self.pass_open = self.subset;
                 }
                 self.spawn_round_vm(Some(suites))?;

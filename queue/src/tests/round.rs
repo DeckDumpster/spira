@@ -9416,6 +9416,51 @@ fn open_two_and_eject_without_rebuild(t: &T) -> String {
     batch
 }
 
+fn an_ejected_member_still_in_the_worktree(t: &T) -> String {
+    let batch = open_two_and_eject_without_rebuild(t);
+    declare_own_testenv(t);
+    let head = kv_of(t, "round")["head"].clone();
+    t.git.ancestor("tb", &head);
+    batch
+}
+
+#[test]
+fn certify_refuses_a_worktree_that_still_holds_an_ejected_member() {
+    let t = round_world();
+    let batch = an_ejected_member_still_in_the_worktree(&t);
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 1);
+    assert!(t.err().contains("sp-b") && t.err().contains("no pass ran"), "{}", t.err());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.contains("round-vm")), "{:?}", t.scripts.calls.borrow());
+    assert!(!events_of(&t, &batch).iter().any(|e| e.contains("PassStarted")));
+}
+
+#[test]
+fn certify_attest_and_rehead_refuse_a_worktree_that_still_holds_an_ejected_member() {
+    let t = round_world();
+    let batch = an_ejected_member_still_in_the_worktree(&t);
+    let head = kv_of(&t, "round")["head"].clone();
+
+    for argv in [
+        vec!["round", "certify", &batch, "--rehead", &head],
+        vec!["round", "certify", &batch, "--attest", &head, "--ran", "1"],
+    ] {
+        assert_eq!(t.run(&argv), 1, "{argv:?}");
+        assert!(t.err().contains("sp-b") && t.err().contains("no pass ran"), "{argv:?}: {}", t.err());
+    }
+    assert!(!events_of(&t, &batch).iter().any(|e| e.contains("PassStarted")));
+}
+
+#[test]
+fn pass_start_refuses_a_worktree_that_still_holds_an_ejected_member() {
+    let t = round_world();
+    let batch = an_ejected_member_still_in_the_worktree(&t);
+
+    assert_eq!(t.run(&["round", "pass-start", &batch, "--resume"]), 1);
+    assert!(t.err().contains("sp-b") && t.err().contains("no pass ran"), "{}", t.err());
+    assert!(!events_of(&t, &batch).iter().any(|e| e.contains("PassStarted")));
+}
+
 #[test]
 fn an_eject_that_rebuilds_records_the_rebuilt_tree_as_the_rounds_head() {
     let t = round_world();
