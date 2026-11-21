@@ -186,6 +186,7 @@ pub fn classify(o: &Value) -> Result<Vec<Firing>, String> {
     let ghost_stale = thv("ghost_stale", 1800);
     let restart_threshold = thv("restart_threshold", 5);
     let red_streak = thv("red_streak", 4);
+    let noverdict_streak = thv("noverdict_streak", 4);
     let mut out: Vec<Firing> = Vec::new();
     let mut alert = |key: &str, title: String, evidence: String| {
         out.push(Firing { key: key.to_string(), title, evidence: evidence.trim().to_string() });
@@ -404,9 +405,14 @@ pub fn classify(o: &Value) -> Result<Vec<Firing>, String> {
     for repo_runs in obj.get("gate_runs").and_then(Value::as_array).into_iter().flatten() {
         let repo = text_of(repo_runs.get("repo"));
         let rows = repo_runs.get("rows").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
-        let Some(s) = crate::streak::find(rows, red_streak.max(0) as usize) else { continue };
-        let f = crate::streak::firing(&repo, &s);
-        alert(&f.key, f.title, f.evidence);
+        if let Some(s) = crate::streak::find(rows, red_streak.max(0) as usize) {
+            let f = crate::streak::firing(&repo, &s);
+            alert(&f.key, f.title, f.evidence);
+        }
+        if let Some(s) = crate::streak::find_noverdict(rows, noverdict_streak.max(0) as usize) {
+            let f = crate::streak::firing_noverdict(&repo, &s);
+            alert(&f.key, f.title, f.evidence);
+        }
     }
     Ok(out)
 }
@@ -415,6 +421,17 @@ pub fn classify(o: &Value) -> Result<Vec<Firing>, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_no_verdict_streak_fires_at_the_threshold_the_observation_carries() {
+        let rows: Vec<Value> = ["a", "b", "c"].iter().map(|b| json!({"bead": b, "status": "NO_VERDICT", "reason": "x"})).collect();
+        let keys = |n: i64| {
+            let obs = json!({"now": 1800000000, "sentinel_log_readable": true, "thresholds": {"noverdict_streak": n}, "gate_runs": [{"repo": "spira", "rows": rows}]});
+            classify(&obs).unwrap().into_iter().map(|f| f.key).filter(|k| k.starts_with("gate-")).collect::<Vec<_>>()
+        };
+        assert_eq!(keys(3), vec!["gate-noverdict-streak/spira".to_string()]);
+        assert!(keys(4).is_empty());
+    }
 
     #[test]
     fn epoch_matches_the_known_value() {

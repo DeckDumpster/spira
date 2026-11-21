@@ -128,6 +128,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_HEIMDALL_MIRROR_STALE",
     "SPIRA_HEIMDALL_GHOST_STALE",
     "SPIRA_HEIMDALL_RED_STREAK",
+    "SPIRA_HEIMDALL_NOVERDICT_STREAK",
 ];
 
 pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: Some(CONTROL_SOCKET_KEY), jitter_key: None };
@@ -291,7 +292,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         Input::Ran(r) => return Err(format!("{NAME}: no unit is expected, got {r:?}")),
     };
     let (confirm, clear_n, refresh) = (num(cfg, "SPIRA_HEIMDALL_CONFIRM")?, num(cfg, "SPIRA_HEIMDALL_CLEAR")?, num(cfg, "SPIRA_HEIMDALL_REFRESH")?);
-    let th = heimdall::hosted::Thresholds { pass_stale: num(cfg, "SPIRA_HEIMDALL_PASS_STALE")?, mirror_stale: optional(cfg, "SPIRA_HEIMDALL_MIRROR_STALE").unwrap_or(i64::MAX), restart_threshold: optional(cfg, "SPIRA_HEIMDALL_RESTARTS").unwrap_or(i64::MAX), restart_window: optional(cfg, "SPIRA_HEIMDALL_RESTART_WINDOW").unwrap_or(3600), red_streak: optional(cfg, "SPIRA_HEIMDALL_RED_STREAK").unwrap_or(4) };
+    let th = heimdall::hosted::Thresholds { pass_stale: num(cfg, "SPIRA_HEIMDALL_PASS_STALE")?, mirror_stale: optional(cfg, "SPIRA_HEIMDALL_MIRROR_STALE").unwrap_or(i64::MAX), restart_threshold: optional(cfg, "SPIRA_HEIMDALL_RESTARTS").unwrap_or(i64::MAX), restart_window: optional(cfg, "SPIRA_HEIMDALL_RESTART_WINDOW").unwrap_or(3600), red_streak: optional(cfg, "SPIRA_HEIMDALL_RED_STREAK").unwrap_or(4), noverdict_streak: optional(cfg, "SPIRA_HEIMDALL_NOVERDICT_STREAK").unwrap_or(4) };
     let now = (now_ms / 1000) as i64;
     let mut firing = heimdall::hosted::classify(&readings(cfg, snap, now), &th);
     if snap.gate_runs_unread {

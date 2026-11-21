@@ -30,6 +30,10 @@ pub struct PassInput {
 pub struct PassPaths {
     pub fallback: PathBuf,
     pub heartbeat: PathBuf,
+    /// The Concierge inbox, and the wake and pattern that decide whether a line pushes.
+    pub inbox: PathBuf,
+    pub push_wake: String,
+    pub push_pattern: String,
 }
 
 pub struct PassReport {
@@ -105,6 +109,11 @@ pub fn run(inp: &PassInput, ops: &dyn Conditions, state: &mut State, paths: &Pas
                     k.bead = id;
                     state.keys.insert(key.clone(), k);
                     acted += 1;
+                    if key.starts_with(crate::streak::NOVERDICT_PREFIX) {
+                        if let Err(e) = page_inbox(paths, now, title, &evidence_of(key)) {
+                            err.push(util::log_line(now, &format!("HEIMDALL could not write the inbox line for {key}: {e}")));
+                        }
+                    }
                 }
                 Err(_) => {
                     err.push(util::log_line(now, &format!("HEIMDALL could not raise the alert condition for {key}")));
@@ -174,6 +183,13 @@ pub fn run(inp: &PassInput, ops: &dyn Conditions, state: &mut State, paths: &Pas
     rep
 }
 
+fn page_inbox(paths: &PassPaths, now: i64, title: &str, evidence: &str) -> Result<(), String> {
+    let beads = evidence.lines().find_map(|l| l.strip_prefix("BEADS")).map(str::trim).unwrap_or_default();
+    let line = inbox_rules::line(&util::iso_utc(now), &format!("[heimdall] {title}; beads {beads}"));
+    let flusher = || spira_config::release_env::tool("inbox-triage").map(PathBuf::from);
+    inbox_rules::record(&paths.inbox, &line, &paths.push_wake, &paths.push_pattern, flusher).map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,7 +229,7 @@ mod tests {
             Rig { dir: testkit::TempDir::new("heimdall-pass"), ops: Fake::default(), state: State::default(), now: 1_800_000_000, wedged: false, halted: false, restart_delta: None, refresh: 3600, gate_rows: Vec::new(), gate_unread: false }
         }
         fn paths(&self) -> PassPaths {
-            PassPaths { fallback: self.dir.join("heimdall.alerts.json"), heartbeat: self.dir.join("heimdall.status") }
+            PassPaths { fallback: self.dir.join("heimdall.alerts.json"), heartbeat: self.dir.join("heimdall.status"), inbox: self.dir.join("inbox.log"), push_wake: String::new(), push_pattern: String::new() }
         }
         fn pass(&mut self) -> PassReport {
             self.now += 120;
@@ -228,7 +244,7 @@ mod tests {
                 strands: serde_json::json!({}),
                 restart_alerts,
                 world_halted: self.halted,
-                thresholds: Thresholds { pass_stale: 600, starve_passes: 5, mirror_stale: 90_000, ghost_stale: 1800, restart_threshold: 3, restart_window: 3600, red_streak: 4 },
+                thresholds: Thresholds { pass_stale: 600, starve_passes: 5, mirror_stale: 90_000, ghost_stale: 1800, restart_threshold: 3, restart_window: 3600, red_streak: 4, noverdict_streak: 4 },
                 gate_runs: if self.gate_unread { vec![] } else { vec![("spira".into(), self.gate_rows.clone())] },
                 gate_runs_unread: self.gate_unread,
                 ..Observation::default()
@@ -255,6 +271,9 @@ mod tests {
         }
         fn heartbeat(&self) -> String {
             std::fs::read_to_string(self.dir.join("heimdall.status")).unwrap_or_default()
+        }
+        fn inbox(&self) -> Vec<String> {
+            std::fs::read_to_string(self.dir.join("inbox.log")).unwrap_or_default().lines().map(String::from).collect()
         }
         fn fallback_exists(&self) -> bool {
             self.dir.join("heimdall.alerts.json").exists()
@@ -293,6 +312,71 @@ mod tests {
         r.gate_rows.insert(0, gate_row("f", "PASS", "", "", ""));
         r.passes(2);
         assert_eq!(r.status_and_flaps(STREAK), Some(("False".into(), 1)));
+    }
+
+    const NOVERDICT: &str = "gate-noverdict-streak/spira";
+
+    fn no_verdicts(beads: &[&str], reason: &str) -> Vec<serde_json::Value> {
+        beads.iter().map(|b| gate_row(b, "NO_VERDICT", reason, "", "")).collect()
+    }
+
+    #[test]
+    fn four_no_verdicts_with_one_reason_on_four_beads_page_once_and_a_pass_clears_it() {
+        let mut r = Rig::new();
+        r.gate_rows = no_verdicts(&["a", "b", "c", "d"], "fence-silent");
+        r.passes(2);
+        assert_eq!(r.status_and_flaps(NOVERDICT), Some(("True".into(), 1)));
+        let inbox = r.inbox();
+        assert_eq!(inbox.len(), 1, "{inbox:?}");
+        for needle in ["reason=fence-silent", "a, b, c, d", "[heimdall]"] {
+            assert!(inbox[0].contains(needle), "{needle} missing from {}", inbox[0]);
+        }
+        let alerts = r.ops.count_of_kind(ALERT);
+        r.gate_rows.insert(0, gate_row("e", "NO_VERDICT", "fence-silent", "", ""));
+        r.passes(2);
+        assert_eq!(r.inbox().len(), 1, "a fifth does not page again");
+        assert_eq!(r.ops.count_of_kind(ALERT), alerts);
+        r.gate_rows.insert(0, gate_row("p", "PASS", "", "", ""));
+        r.passes(2);
+        assert_eq!(r.status_and_flaps(NOVERDICT), Some(("False".into(), 1)));
+        assert_eq!(r.inbox().len(), 1, "a clear writes no line");
+        r.gate_rows = no_verdicts(&["f", "g", "h", "i"], "fence-silent");
+        r.passes(2);
+        assert_eq!(r.inbox().len(), 2);
+    }
+
+    #[test]
+    fn a_no_verdict_streak_holds_through_an_unreadable_section_and_a_failed_append_leaves_the_raise() {
+        let mut r = Rig::new();
+        std::fs::create_dir(r.dir.join("inbox.log")).unwrap();
+        r.gate_rows = no_verdicts(&["a", "b", "c", "d"], "x");
+        r.passes(1);
+        let rep = r.pass();
+        assert!(rep.err.iter().any(|l| l.contains("could not write the inbox line")), "{:?}", rep.err);
+        assert_eq!(r.status_and_flaps(NOVERDICT), Some(("True".into(), 1)));
+        r.gate_unread = true;
+        r.passes(3);
+        assert_eq!(r.status_and_flaps(NOVERDICT), Some(("True".into(), 1)));
+    }
+
+    #[test]
+    fn no_verdicts_that_do_not_share_a_reason_or_four_beads_page_nothing() {
+        let mut r = Rig::new();
+        r.gate_rows = no_verdicts(&["a", "b", "c"], "x");
+        r.passes(3);
+        let mut rows = no_verdicts(&["a", "b", "c", "d"], "x");
+        rows[1] = gate_row("c", "NO_VERDICT", "y", "", "");
+        r.gate_rows = rows;
+        r.passes(3);
+        r.gate_rows = no_verdicts(&["a", "a", "a", "a"], "x");
+        r.passes(3);
+        assert_eq!(r.ops.row(NOVERDICT), None);
+        assert!(r.inbox().is_empty());
+        let mut rows = no_verdicts(&["a", "b", "c", "d"], "x");
+        rows.insert(2, gate_row("z", "FAIL", "branch-red", "u", "l"));
+        r.gate_rows = rows;
+        r.passes(2);
+        assert_eq!(r.status_and_flaps(NOVERDICT), Some(("True".into(), 1)), "a FAIL between does not break it");
     }
 
     #[test]

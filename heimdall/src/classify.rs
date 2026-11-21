@@ -32,6 +32,7 @@ pub struct Thresholds {
     pub restart_threshold: i64,
     pub restart_window: i64,
     pub red_streak: i64,
+    pub noverdict_streak: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -104,6 +105,7 @@ impl Observation {
                 "restart_threshold": self.thresholds.restart_threshold,
                 "restart_window": self.thresholds.restart_window,
                 "red_streak": self.thresholds.red_streak,
+                "noverdict_streak": self.thresholds.noverdict_streak,
             },
         })
     }
@@ -156,11 +158,12 @@ mod tests {
 
     #[test]
     fn observation_json_shape_matches_the_classifier_contract() {
-        let obs = Observation { now: 1000, heimdall_first: 500, thresholds: Thresholds { pass_stale: 600, starve_passes: 5, mirror_stale: 90000, ghost_stale: 1800, restart_threshold: 5, restart_window: 3600, red_streak: 4 }, ..Default::default() };
+        let obs = Observation { now: 1000, heimdall_first: 500, thresholds: Thresholds { pass_stale: 600, starve_passes: 5, mirror_stale: 90000, ghost_stale: 1800, restart_threshold: 5, restart_window: 3600, red_streak: 4, noverdict_streak: 4 }, ..Default::default() };
         let v = obs.to_json();
         assert_eq!(v["now"], 1000);
         assert_eq!(v["heimdall_first"], 500);
         assert_eq!(v["thresholds"]["pass_stale"], 600);
+        assert_eq!(v["thresholds"]["noverdict_streak"], 4);
         assert_eq!(v["mirror"]["configured"], false);
         assert_eq!(v["restart_alerts"], serde_json::json!([]));
     }
