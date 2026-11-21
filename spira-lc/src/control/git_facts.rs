@@ -156,6 +156,16 @@ mod tests {
     }
 
     #[test]
+    fn a_permitted_writer_putting_an_unknown_kind_is_told_the_kinds_and_a_stranger_is_refused() {
+        let s = store();
+        let argv = |caller: &str| git_fact(&s, caller, &["git-fact", "put", "bogus", "--json", "{}"]);
+        let (code, out) = argv("batcher");
+        assert_eq!(code, CANNOT_TELL);
+        assert!(out.contains("no kind"), "{out}");
+        assert_eq!(argv("dwarf").0, REFUSED);
+    }
+
+    #[test]
     fn each_kind_is_recorded_only_by_the_programs_that_measure_it() {
         let s = store();
         let unpublished = json!({ "repo": "r", "declared_unpublished": true }).to_string();
