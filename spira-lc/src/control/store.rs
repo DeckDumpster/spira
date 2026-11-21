@@ -78,7 +78,7 @@ const PASS_CHUNK: usize = state_store::limits::MAX_TXN_OPS - 2;
 /// How often a read-merge-write is re-planned after losing its compare before it gives up.
 const MERGE_ATTEMPTS: usize = 5;
 /// Records a page read holds at once.
-const RECORD_CHUNK: usize = 200;
+pub(crate) const RECORD_CHUNK: usize = 200;
 
 fn sub_request(req: &Request, part: &str, evidence: Value) -> Request {
     Request {
