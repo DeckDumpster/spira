@@ -714,6 +714,39 @@
       ]
     },
     {
+      "id": 23,
+      "type": "timeseries",
+      "title": "reads ended or held at the gate: what the caller did next",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 72,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (caller, outcome) (sum_over_time(spira_lc_read_followups[$__interval]))",
+          "legendFormat": "{{outcome}} {{caller}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "id": 16,
       "type": "timeseries",
       "title": "control store file: bytes and free bytes",
@@ -723,7 +756,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 72,
+        "y": 80,
         "w": 12,
         "h": 8
       },
@@ -764,7 +797,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 72,
+        "y": 80,
         "w": 12,
         "h": 8
       },
@@ -796,7 +829,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 80,
+        "y": 88,
         "w": 12,
         "h": 8
       },
@@ -828,7 +861,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 80,
+        "y": 88,
         "w": 12,
         "h": 8
       },

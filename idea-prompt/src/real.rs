@@ -172,3 +172,68 @@ mod real_tests {
         assert_eq!(*sent.lock().unwrap(), vec!["operator Spira Ideas <ideas@spira> which idea? question design none|the body".to_string()]);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{render_body, Idea, Ports, DEFAULT_ANSWER};
+    use mail::bead::{Bd, BdOut};
+    use std::path::PathBuf;
+
+    struct NoStore;
+
+    impl Bd for NoStore {
+        fn run(&self, _args: &[String], _stdin: Option<&str>) -> BdOut {
+            BdOut::ok("")
+        }
+        fn close(&self, _id: &str, _reason: &str) -> Result<(), spira_store::lc_call::LcError> {
+            Ok(())
+        }
+        fn ensure_ask(&self, _id: &str, _work_bead: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn env(root: &std::path::Path) -> mail::env::Env {
+        mail::env::Env {
+            mail_root: root.join("mail"),
+            kinds_dir: testkit::manifest_dir().join("../spira/mail/kinds"),
+            index_file: root.join("index"),
+            mute: false,
+            loom_budget_ms: 1000,
+            repeat_window_s: 0,
+            tidy_fresh_s: 0,
+            id_prefix: "sp".into(),
+            ask_label: String::new(),
+            db: String::new(),
+            bd_conn_retries: 1,
+            operator_actor: "operator".into(),
+            run_dir: root.join("run"),
+            home: PathBuf::from(root),
+            mail_from: None,
+            lint_considered: None,
+            repeat_considered: None,
+            operator_considered: None,
+            statute_guards: String::new(),
+            statute_considered: None,
+            allow_blocking: false,
+            bead_id: None,
+            lock_timeout_ms: 1000,
+            condition: None,
+        }
+    }
+
+    #[test_id(tap0ivg)]
+    #[test]
+    fn the_idle_prompt_is_delivered_to_the_operator() {
+        let tmp = testkit::TempDir::new("idea-prompt-send");
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join("run")).unwrap();
+        let env = env(&root);
+        let send_fn: SendFn = Box::new(move |args, body| mail::cmds::send(&NoStore, &env, args, body).map(|_| ()));
+        let real = Real::with("UTC".into(), Err("no store".into()), send_fn);
+        let body = render_body(&[Idea { id: "sp-a".into(), title: "an idea".into() }]);
+        real.send("1 parked idea(s) — start any?", DEFAULT_ANSWER, &body).unwrap();
+        assert_eq!(std::fs::read_dir(root.join("mail/operator/new")).unwrap().count(), 1);
+    }
+}

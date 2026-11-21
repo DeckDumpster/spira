@@ -69,7 +69,8 @@ fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
 
     let r = record::load(run_dir.path(), 1).unwrap();
     assert_eq!(r.source_sha, sha);
-    let comment = format!(r#"{{"does":"d","look_first":"l","comments":[{{"path":"{}","line":1,"body":"b"}}]}}"#, r.unit.files[0].path);
+    let half = format!(r#"[{{"path":"{}","line":1,"body":"b"}}]"#, r.unit.files[0].path);
+    let comment = format!(r#"{{"does":"d","look_first":"l","lens":{half},"fresh":{half}}}"#);
     let mut sealing = ports;
     sealing.stdin = comment;
     let o = run(&args(&["seal", "--review", "001"]), &sealing);

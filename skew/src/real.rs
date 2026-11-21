@@ -45,14 +45,18 @@ pub fn stamp_of(epoch: u64) -> String {
     tsd::iso_utc(epoch).replace(['-', ':'], "")
 }
 
-/// One question to the operator through the mail library, in-process, under the same
-/// environment and bead store `mail send` loads.
+/// One question to the concierge, who operates the loop every skew default acts on, through
+/// the mail library in-process, under the same environment and bead store `mail send` loads.
 fn send_question(subject: &str, body: &str, default_action: &str) -> Result<(), String> {
     let env = mail::env::Env::load()?;
     // The ask's bead is filed through the store's content door (mail's BdCli).
     let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
+    send_question_with(&bd, &env, subject, body, default_action)
+}
+
+pub(crate) fn send_question_with(bd: &dyn mail::bead::Bd, env: &mail::env::Env, subject: &str, body: &str, default_action: &str) -> Result<(), String> {
     let args = mail::cmds::SendArgs {
-        mailbox: "operator",
+        mailbox: "concierge",
         from: Some("Skew check <skew@spira>"),
         subject,
         kind: "question",
@@ -64,7 +68,7 @@ fn send_question(subject: &str, body: &str, default_action: &str) -> Result<(), 
         dry_run: false,
         requested_by: "",
     };
-    let result = mail::cmds::send(&bd, &env, &args, body.to_string());
+    let result = mail::cmds::send(bd, env, &args, body.to_string());
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     if let Some(a) = mail::cmds::attempt_of_send(&args, body, &result, now) {
         if let Err(e) = a.write(&env.run_dir, &tsd::default_host()) {
@@ -534,6 +538,70 @@ mod gh_tests {
         let series: Vec<_> = got.iter().filter(|s| s.name == forge::spend::CALLS).collect();
         assert_eq!(series.len(), 1, "{got:?}");
         assert_eq!((series[0].label("caller"), series[0].label("outcome"), series[0].value as u64), (Some("skew:release-list"), Some("fresh"), 1));
+    }
+}
+
+#[cfg(test)]
+mod send_tests {
+    use super::*;
+    use mail::bead::{Bd, BdOut};
+
+    struct NoStore;
+
+    impl Bd for NoStore {
+        fn run(&self, _args: &[String], _stdin: Option<&str>) -> BdOut {
+            BdOut::ok("")
+        }
+        fn close(&self, _id: &str, _reason: &str) -> Result<(), spira_store::lc_call::LcError> {
+            Ok(())
+        }
+        fn ensure_ask(&self, _id: &str, _work_bead: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn env(root: &Path) -> mail::env::Env {
+        mail::env::Env {
+            mail_root: root.join("mail"),
+            kinds_dir: testkit::manifest_dir().join("../spira/mail/kinds"),
+            index_file: root.join("index"),
+            mute: false,
+            loom_budget_ms: 1000,
+            repeat_window_s: 0,
+            tidy_fresh_s: 0,
+            id_prefix: "sp".into(),
+            ask_label: String::new(),
+            db: String::new(),
+            bd_conn_retries: 1,
+            operator_actor: "operator".into(),
+            run_dir: root.join("run"),
+            home: PathBuf::from(root),
+            mail_from: None,
+            lint_considered: None,
+            repeat_considered: None,
+            operator_considered: None,
+            statute_guards: String::new(),
+            statute_considered: None,
+            allow_blocking: false,
+            bead_id: None,
+            lock_timeout_ms: 1000,
+            condition: None,
+        }
+    }
+
+    #[test_id(tvlbvev)]
+    #[test]
+    fn an_escalation_is_delivered_to_the_concierge_and_never_the_operator() {
+        let f = crate::tests::Fake::default();
+        *f.mail_ok.borrow_mut() = true;
+        crate::escalate(&f, "v2:LOCAL-BEHIND=1 LOCAL-TAMPERED=0", "LOCAL-BEHIND x\n");
+        let (subject, body, default) = f.mail_calls.borrow()[0].clone();
+
+        let tmp = testkit::TempDir::new("skew-send");
+        std::fs::create_dir_all(tmp.path().join("run")).unwrap();
+        send_question_with(&NoStore, &env(tmp.path()), &subject, &body, &default).unwrap();
+        assert_eq!(std::fs::read_dir(tmp.path().join("mail/concierge/new")).unwrap().count(), 1);
+        assert!(!tmp.path().join("mail/operator/new").exists());
     }
 }
 

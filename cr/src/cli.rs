@@ -34,7 +34,7 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   cr status [--json]
 
   finding records one verdict of a review (JSON: {id?, words, comment_id?, exemplar: {path, line},
-  kind, rule, scope, became, generalised_by?}) and prints its id; an id already recorded is
+  kind, rule, scope, became, generalised_by?, endorses?}) and prints its id; an id already recorded is
   replaced. kind is question|fix|refactor|condemn|replicate|style|other; fix is for this unit
   only (scope unit, no statute or catalogue), other names one only with generalised_by. findings
   regenerates the review's page and the pattern catalogue in SPIRA_CR_FINDINGS_DIR, commits those
@@ -42,14 +42,16 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
 
   open stages N units (default 1) as reviews and makes no forge call. seal reads the
   Concierge's own review as one JSON object
-  {does, look_first, comments: [{path, line, body}]}, stores the comments hashed, and opens the
+  {does, look_first, lens: [{path, line, body}], fresh: [{path, line, body}]}, stores both halves hashed, and opens the
   pull request in the review repository with does and look_first in its description. unseal posts it once the operator has published.
 
   status prints the open reviews, then coverage at the landing-ref commit: the share of files a
   published review has reached, by area (first path component) and by unit kind, the oldest
   never-reviewed files, and the files changed since their review with lines changed and the review
-  that covered them. Both lists are cut to SPIRA_CR_STATUS_LIMIT and end `… <k> more`. --json
-  prints {reviews, coverage}. Coverage is reported, never a target.
+  that covered them. Both lists are cut to SPIRA_CR_STATUS_LIMIT and end `… <k> more`. It also
+  scores each published or closed review, oldest first: his lens by how many of his comments it
+  predicted, the fresh read by how many of its points he endorsed. --json prints
+  {reviews, scores, coverage}. Coverage is reported, never a target.
 
   The coverage ledger is ledger.jsonl on the review repository's default branch; seal appends a
   review's open row. ledger-close appends its close row once, as published if the operator

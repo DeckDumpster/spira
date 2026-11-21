@@ -402,14 +402,14 @@ impl RealMail {
     }
 }
 
-fn operator_args<'a>(from: &'a str, subject: &'a str, kind: &'a str, default: &'a str, bead: &'a str) -> mail::cmds::SendArgs<'a> {
+fn operator_args<'a>(from: &'a str, subject: &'a str, kind: &'a str, default: &'a str, class: &'a str, bead: &'a str) -> mail::cmds::SendArgs<'a> {
     mail::cmds::SendArgs {
         mailbox: "operator",
         from: Some(from),
         subject,
         kind,
         default,
-        class: "",
+        class,
         bead,
         urgent: false,
         digest: false,
@@ -422,14 +422,14 @@ impl Mail for RealMail {
     fn send_operator_note(&self, subject: &str, body: &[u8]) -> bool {
         let from = "gh-intake <intake@spira>";
         let flags = ["--from", from, "--subject", subject, "--kind", "note"];
-        self.deliver(&operator_args(from, subject, "note", "", ""), &flags, body).is_ok()
+        self.deliver(&operator_args(from, subject, "note", "", "", ""), &flags, body).is_ok()
     }
 
     /// lib.sh `gh_issue_ask_unlanded`'s mail call (sp-j3fim): the error text is what
     /// `mail send` says on stderr when it refuses.
     fn send_question(&self, from: &str, subject: &str, default: &str, bead_id: &str, body: &[u8]) -> Result<String, String> {
         let flags = ["--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id];
-        self.deliver(&operator_args(from, subject, "question", default, bead_id), &flags, body)
+        self.deliver(&operator_args(from, subject, "question", default, "policy", bead_id), &flags, body)
     }
 }
 
@@ -724,5 +724,72 @@ mod http_tests {
         let http = RealHttp::new(Box::new(|| Err("no creds".into())));
         let err = http.get("http://127.0.0.1:1/x", 5).unwrap_err();
         assert!(err.contains("no App token") && err.contains("no creds"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mail::bead::{Bd, BdOut};
+    use std::path::PathBuf;
+
+    struct NoStore;
+
+    impl Bd for NoStore {
+        fn run(&self, _args: &[String], _stdin: Option<&str>) -> BdOut {
+            BdOut::ok("")
+        }
+        fn close(&self, _id: &str, _reason: &str) -> Result<(), spira_store::lc_call::LcError> {
+            Ok(())
+        }
+        fn ensure_ask(&self, _id: &str, _work_bead: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn env(root: &Path) -> mail::env::Env {
+        mail::env::Env {
+            mail_root: root.join("mail"),
+            kinds_dir: testkit::manifest_dir().join("../spira/mail/kinds"),
+            index_file: root.join("index"),
+            mute: false,
+            loom_budget_ms: 1000,
+            repeat_window_s: 0,
+            tidy_fresh_s: 0,
+            id_prefix: "sp".into(),
+            ask_label: String::new(),
+            db: String::new(),
+            bd_conn_retries: 1,
+            operator_actor: "operator".into(),
+            run_dir: root.join("run"),
+            home: PathBuf::from(root),
+            mail_from: None,
+            lint_considered: None,
+            repeat_considered: None,
+            operator_considered: None,
+            statute_guards: String::new(),
+            statute_considered: None,
+            allow_blocking: false,
+            bead_id: None,
+            lock_timeout_ms: 1000,
+            condition: None,
+        }
+    }
+
+    #[test_id(t7u3y5m)]
+    #[test]
+    fn the_unlanded_issue_ask_is_delivered_to_the_operator() {
+        let tmp = testkit::TempDir::new("gh-intake-ask");
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join("run")).unwrap();
+        let env = env(&root);
+        let send: SendFn = Box::new(move |args, body| {
+            let sent = mail::cmds::send_recorded(&NoStore, &env, args, body).map_err(|e| format!("mail: send: {e}"))?;
+            Ok(sent.x_bead.unwrap_or_default())
+        });
+        let mail = RealMail::with(None, send);
+        let body = crate::closeout::ask_unlanded_body("Reply on the issue?", "close it with a note", "sp-x", "gh:o/r#1");
+        mail.send_question("gh-intake <intake@spira>", "Reply on the issue?", "close it with a note", "sp-x", body.as_bytes()).unwrap();
+        assert_eq!(std::fs::read_dir(root.join("mail/operator/new")).unwrap().count(), 1);
     }
 }

@@ -8,45 +8,10 @@ extern crate spira_test_id;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
-
-fn testenv() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("TESTDB_TESTENV") {
-        return Some(p.into());
-    }
-    match std::env::var("SPIRA_RELEASE").map(|r| Path::new(&r).join("bin/testenv")) {
-        Ok(p) if p.is_file() => Some(p),
-        _ => built_testenv(),
-    }
-}
-
-fn built_testenv() -> Option<PathBuf> {
-    static BUILT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
-    BUILT
-        .get_or_init(|| {
-            let exe = std::env::current_exe().expect("current_exe");
-            let profile = exe.parent().and_then(Path::parent).expect("test executable under <target>/<profile>/deps");
-            let target = profile.parent().expect("target dir");
-            let bin = profile.join("testenv");
-            if !bin.is_file() {
-                let mut build = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
-                build.args(["build", "-p", "testenv", "--bin", "testenv"]);
-                if profile.file_name().is_some_and(|n| n == "release") {
-                    build.arg("--release");
-                }
-                if !build.env("CARGO_TARGET_DIR", target).status().is_ok_and(|st| st.success()) {
-                    eprintln!("SKIP: testenv is not built and cannot be built here");
-                    return None;
-                }
-            }
-            assert!(bin.is_file(), "testenv not built at {}", bin.display());
-            Some(bin)
-        })
-        .clone()
-}
 
 /// The tool on this process's PATH, else on the harness's declared tool path (`spira.path`) or
 /// the round VM's `~/spira-env/bin`. A tool found nowhere is `None`: the caller skips, as the
@@ -57,6 +22,11 @@ fn tool(name: &str) -> Option<String> {
     let env_bin = std::env::var("HOME").map(|h| format!("{h}/spira-env/bin")).unwrap_or_default();
     let found = on(&std::env::var("PATH").unwrap_or_default()).or_else(|| on(&declared)).or_else(|| on(&env_bin));
     found.map(|p| p.display().to_string())
+}
+
+fn fresh_request_id() -> String {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    format!("content-writes-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
 }
 
 fn report(text: &str, key: &str) -> String {
@@ -79,8 +49,7 @@ impl Store {
             eprintln!("SKIP: no bd and dolt on PATH, spira.path or ~/spira-env/bin");
             return None;
         };
-        let testenv = testenv()?;
-        let mut up = Command::new(testenv);
+        let mut up = Command::new(testkit::bin_exe("testenv"));
         up.args(["testdb", "up", "--tag", "content-writes", "--bd", &bd, "--dolt", &dolt]);
         let root = std::env::var("TESTDB_ROOT").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| dir.join("db").display().to_string());
         up.args(["--root", &root]);
@@ -127,7 +96,7 @@ impl Store {
 
 impl Drop for Store {
     fn drop(&mut self) {
-        let _ = Command::new(testenv().expect("testenv, as the store came up with it")).args(["testdb", "down", "--fixture", &self.fixture]).output();
+        let _ = Command::new(testkit::bin_exe("testenv")).args(["testdb", "down", "--fixture", &self.fixture]).output();
     }
 }
 
@@ -138,6 +107,9 @@ struct Lc {
     otel: PathBuf,
     child: Option<Child>,
     runner: Option<Child>,
+    /// Whether the last settled request was answered the deadline first: the span of a request
+    /// cut at its deadline is written before its worker's children are counted.
+    cut: std::sync::atomic::AtomicBool,
 }
 
 impl Lc {
@@ -168,7 +140,7 @@ impl Lc {
         );
         let home = spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
         let otel = spira_otel::dir_of(&run);
-        Lc { toml, home, dir, otel, child: None, runner: None }
+        Lc { toml, home, dir, otel, child: None, runner: None, cut: Default::default() }
     }
 
     fn command(&self) -> Command {
@@ -177,13 +149,46 @@ impl Lc {
         c
     }
 
-    /// The request over the service's socket, as the `work` client sends it.
-    fn run(&self, args: &[&str], stdin: Option<&str>) -> (i32, String) {
+    /// One send of the request under `id`, as the `work` client sends it.
+    fn send(&self, id: &str, args: &[&str], stdin: Option<&str>) -> (i32, String) {
         let argv: Vec<String> = args.iter().map(|a| a.to_string()).collect();
         let stream = spira_store::lc_call::connect(&self.dir.join("s")).expect("the service answers");
         stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
-        let reply = spira_store::lc_call::exchange_once(stream, &argv, stdin).unwrap_or_else(|_| panic!("no answer to {args:?}"));
+        let reply = spira_store::lc_call::as_request(id, || spira_store::lc_call::exchange_once(stream, &argv, stdin)).unwrap_or_else(|_| panic!("no answer to {args:?}"));
         (reply.code, format!("{}{}", reply.out, reply.err))
+    }
+
+    /// The request under a fresh id, sent once.
+    fn run(&self, args: &[&str], stdin: Option<&str>) -> (i32, String) {
+        self.send(&fresh_request_id(), args, stdin)
+    }
+
+    /// The request's own answer: while the reply is the deadline, the same request is sent again,
+    /// and the service's ledger holds each send until the first send's worker records its answer.
+    fn settled(&self, args: &[&str], stdin: Option<&str>) -> (i32, String) {
+        let id = fresh_request_id();
+        let end = Instant::now() + Duration::from_secs(120);
+        self.cut.store(false, std::sync::atomic::Ordering::Relaxed);
+        loop {
+            let (rc, out) = self.send(&id, args, stdin);
+            if out.contains("deadline") {
+                self.cut.store(true, std::sync::atomic::Ordering::Relaxed);
+                assert!(Instant::now() < end, "{args:?} not answered within 120 s: last reply {out}"); // clock-safe: caps the re-send loop; each send blocks on the service ledger, the signal waited on
+                continue;
+            }
+            return (rc, out);
+        }
+    }
+
+    /// The record's own answer to a verb the service recorded for the runner; any other answer as it stands.
+    fn finished(&self, rc: i32, out: String) -> (i32, String) {
+        match spira_store::lc_call::queued_id(&out).filter(|_| rc == 0) {
+            Some(recorded) => {
+                let done = spira_store::lc_call::LcClient::socket(self.dir.join("s")).await_record(recorded).unwrap_or_else(|_| panic!("no record of {recorded}"));
+                (done.code, format!("{}{}", done.out, done.err))
+            }
+            None => (rc, out),
+        }
     }
 
     fn admin(&self, verb: &str) {
@@ -230,13 +235,15 @@ impl Lc {
     /// The `spira.children` of the span the request `args` makes.
     fn children_of(&self, method: &str, args: &[&str], stdin: Option<&str>) -> (String, i64) {
         let before = self.spans(method).len();
-        let (rc, out) = self.run(args, stdin);
-        assert!(rc == 0 || out.contains("deadline"), "{args:?}: {out}");
+        let (rc, said) = self.settled(args, stdin);
         let mut polls = 0;
         loop {
             let now = self.spans(method);
             if now.len() > before {
-                return (out, now[before..].iter().copied().max().unwrap_or(0));
+                let children = now[before..].iter().copied().max().unwrap_or(0);
+                let (rc, out) = self.finished(rc, said);
+                assert!(rc == 0, "{args:?}: {out}");
+                return (out, children);
             }
             polls += 1;
             assert!(polls < 3_000, "no {method} span after {args:?}");
@@ -284,31 +291,19 @@ fn verbs(id: &str) -> Vec<Verb> {
     ]
 }
 
-/// bd can outlast the service's 3 s deadline and still land the write: poll for the bead to
-/// show it, one `content show` at a time.
-fn settles(lc: &Lc, id: &str, holds: impl Fn(&str) -> bool) -> String {
-    for _ in 0..600 {
-        let shown = lc.shows(id);
-        if holds(&shown) {
-            return shown;
-        }
-        std::thread::sleep(Duration::from_millis(50)); // clock-safe: polls the store, the signal waited on
-    }
-    panic!("the write never showed on {id}: {}", lc.shows(id));
-}
-
-fn drive(lc: &Lc, id: &str) -> Vec<(&'static str, i64)> {
+fn drive(lc: &Lc, id: &str) -> Vec<(&'static str, i64, bool)> {
     let mut children = vec![];
     for verb in verbs(id) {
         let args: Vec<&str> = verb.args.iter().map(String::as_str).collect();
         if verb.name == "work label-remove" {
             assert!(lc.shows(id).contains("writes:added"), "label-add did not land before label-remove");
         }
-        children.push((verb.name, lc.children_of(verb.method, &args, verb.stdin).1));
+        children.push((verb.name, lc.children_of(verb.method, &args, verb.stdin).1, lc.cut.load(std::sync::atomic::Ordering::Relaxed)));
+        let shown = lc.shows(id);
         if verb.name == "work label-remove" {
-            settles(lc, id, |shown| !shown.contains("writes:added"));
+            assert!(!shown.contains("writes:added"), "label-remove settled but the label is on {id}: {shown}");
         } else {
-            let shown = settles(lc, id, |shown| shown.contains(verb.seen));
+            assert!(shown.contains(verb.seen), "{}: settled but {:?} is not on {id}: {shown}", verb.name, verb.seen);
             assert_eq!(shown.matches(verb.seen).count(), 1, "{}: {:?} is not on the bead exactly once: {shown}", verb.name, verb.seen);
         }
     }
@@ -330,7 +325,7 @@ fn with_a_provisioned_writer_every_note_and_label_verb_writes_in_sql_and_starts_
     provision(&lc);
     lc.admin("admin-provision-writer");
     lc.serve();
-    for (verb, children) in drive(&lc, &id) {
+    for (verb, children, _) in drive(&lc, &id) {
         assert_eq!(children, 0, "{verb} started a process");
     }
 }
@@ -343,7 +338,7 @@ fn without_a_writer_credential_the_same_verbs_still_write_through_bd() {
     let mut lc = Lc::new(&store, "u", "");
     provision(&lc);
     lc.serve();
-    for (verb, children) in drive(&lc, &id) {
+    for (verb, children, _) in drive(&lc, &id) {
         let forks = i64::from(!verb.starts_with("work ") || matches!(verb, "work note -" | "work note-on" | "work label-add" | "work label-remove"));
         assert_eq!(children, forks, "{verb}: the service forks bd itself except for a `work` verb it records for the runner");
     }
@@ -480,6 +475,7 @@ fn twins(store: &Store, lc: &Lc) -> Vec<(&'static str, i64, String)> {
         }
         let request = fill(t.request, &a, &b);
         let (out, n) = lc.children_of(t.method, &request.iter().map(String::as_str).collect::<Vec<_>>(), t.stdin);
+        let out = if lc.cut.load(std::sync::atomic::Ordering::Relaxed) { format!("{out} (cut at its deadline first)") } else { out };
         children.push((t.name, n, out.clone()));
         let argv = fill(t.bd, &a2, &b2);
         store.bd(&argv.iter().map(String::as_str).collect::<Vec<_>>(), t.stdin);

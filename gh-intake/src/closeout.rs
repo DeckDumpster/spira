@@ -76,7 +76,7 @@ pub fn comment_body(sha_short: &str, subject: &str, gh_repo: &str, sha: &str) ->
 
 pub fn ask_unlanded_body(subj: &str, dflt: &str, id: &str, ext_ref: &str) -> String {
     format!(
-        "## Question\n{subj}\n\n## Default\n{dflt}\n\n{id} reached a terminal state without a commit landing on the base branch, but it links to GitHub issue {ext_ref} which is still open.\n\nSuggested public reply: \"{dflt}\"\n"
+        "## Question\n{subj}\n\n## Default\n{dflt}\n\n{id} reached a terminal state without a commit landing on the base branch, but it links to GitHub issue {ext_ref} which is still open.\n\nSuggested public reply: \"{dflt}\"\n\n## Class basis\npolicy: the reply is what Spira says in public, on a reporter's issue, about work it did not land.\n"
     )
 }
 

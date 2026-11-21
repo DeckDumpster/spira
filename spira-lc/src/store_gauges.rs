@@ -207,6 +207,7 @@ mod tests {
         assert!(reads.contains(READS_ENDED) && reads.contains(READS_OVERRAN), "{reads}");
         let gate = panel("control store longest gate wait by verb");
         assert!(exprs("control store longest gate wait by verb").contains(GATE_WAIT_MAX_SECONDS));
+        assert!(exprs("reads ended or held at the gate: what the caller did next").contains(crate::followups::READ_FOLLOWUPS));
         let line = |p: &serde_json::Value| -> Vec<f64> { p["fieldConfig"]["defaults"]["thresholds"]["steps"].as_array().unwrap().iter().filter_map(|s| s["value"].as_f64()).collect() };
         assert_eq!(line(gate), [0.1]);
         let wal = panel("control store WAL size");
