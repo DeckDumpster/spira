@@ -11,7 +11,8 @@ use state_store_sqlite::{Options, SqliteBackend};
 
 const ROWS: u64 = 20;
 
-/// A control store with free pages and committed rows.
+/// A control store with free pages and committed rows; the free pages need raw SQL beside the store.
+#[allow(clippy::disallowed_methods)]
 fn seed(path: &std::path::Path) {
     {
         let conn = rusqlite::Connection::open(path).unwrap();
