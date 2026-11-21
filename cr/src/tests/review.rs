@@ -361,12 +361,97 @@ fn status_lists_every_review_with_state_age_url_and_title() {
     assert_eq!(w.seal_with("001", &c).code, 0);
     assert_eq!(w.cr(&["open", "--seed", "4"]).code, 0);
     let o = w.cr(&["status"]);
-    let lines: Vec<&str> = o.stdout.lines().collect();
-    assert_eq!(lines.len(), 2, "{}", o.stdout);
-    assert!(lines[0].starts_with("001 on-demand open 0h https://forge.invalid/"), "{}", lines[0]);
-    assert!(lines[1].starts_with("002 on-demand staged 0h - "), "{}", lines[1]);
+    let (reviews, _) = o.stdout.split_once("coverage at ").expect("a coverage section");
+    let lines: Vec<&str> = reviews.lines().collect();
+    assert_eq!(lines[0], "open reviews", "{}", o.stdout);
+    assert!(lines[1].starts_with("001 on-demand open 0h https://forge.invalid/"), "{}", lines[1]);
+    assert!(lines[2].starts_with("002 on-demand staged 0h - "), "{}", lines[2]);
     let j: serde_json::Value = serde_json::from_str(&w.cr(&["status", "--json"]).stdout).unwrap();
-    assert_eq!(j.as_array().unwrap().len(), 2);
+    assert_eq!(j["reviews"].as_array().unwrap().len(), 2);
+}
+
+fn store_unit_files() -> Vec<String> {
+    let ix = crate::index::Index::build(&fixture()).unwrap();
+    let u = crate::units::all(&ix).into_iter().find(|u| u.id == "module:demo/src/store.rs").unwrap();
+    u.files.into_iter().map(|f| f.path).collect()
+}
+
+fn published(review: &str, unit_id: &str, files: &[(String, String)], closed_as: ClosedAs) -> Vec<Row> {
+    let open = Row { review: review.into(), kind: unit_id.split(':').next().unwrap().into(), unit_id: unit_id.into(), commit: "old".into(), files: files.iter().map(|(p, b)| LedgerFile { path: p.clone(), blob: b.clone() }).collect(), opened_at: NOW - 10 * DAY, closed_at: None, closed_as: None };
+    vec![open.clone(), open.closing(NOW - 5 * DAY, closed_as)]
+}
+
+fn at_today(tree: &crate::ports::FixtureTree, paths: &[String]) -> Vec<(String, String)> {
+    use crate::ports::SourceTree;
+    paths.iter().map(|p| (p.clone(), tree.blob(p).unwrap())).collect()
+}
+
+fn status_json(p: &Ports) -> serde_json::Value {
+    let o = go(p, &["status", "--json"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    serde_json::from_str(&o.stdout).unwrap()
+}
+
+fn coverage_ports(tree: crate::ports::FixtureTree, rows: Vec<Row>, limit: usize) -> (TempDir, Ports) {
+    let run = TempDir::new("cr-status");
+    let mut p = ports_with(tree, rows, crate::ports::Config { status_limit: limit, ..cfg() });
+    p.run_dir = run.path().to_path_buf();
+    (run, p)
+}
+
+#[test]
+fn status_reports_coverage_by_area_and_kind() {
+    let files = store_unit_files();
+    let rows = published("001", "module:demo/src/store.rs", &at_today(&fixture(), &files), ClosedAs::Published);
+    let (_run, p) = coverage_ports(fixture(), rows, 10);
+    let c = &status_json(&p)["coverage"];
+    assert_eq!(c["commit"], "c0ffee");
+    assert_eq!(c["files"]["reviewed"], files.len());
+    assert_eq!(c["files"]["current"], files.len());
+    let area = |name: &str| c["areas"].as_array().unwrap().iter().find(|a| a["area"] == name).unwrap_or_else(|| panic!("no area {name}: {c}")).clone();
+    assert!(area("demo")["reviewed"].as_u64().unwrap() > 0);
+    assert_eq!(area("other")["reviewed"], 0);
+    let module = c["kinds"].as_array().unwrap().iter().find(|k| k["kind"] == "module").unwrap().clone();
+    assert_eq!(module["reviewed"], 1);
+    let text = go(&p, &["status"]).stdout;
+    assert!(text.contains("coverage at c0ffee: "), "{text}");
+}
+
+#[test]
+fn status_lists_the_oldest_never_reviewed_files_first_and_counts_the_rest() {
+    let tree = fixture().with_commits("demo/src/net.rs", &[NOW - 50 * DAY, NOW - DAY]).with_commits("other/src/util.rs", &[NOW - 80 * DAY]);
+    let (_run, p) = coverage_ports(tree, vec![], 2);
+    let c = &status_json(&p)["coverage"];
+    let listed = &c["never_reviewed"]["files"];
+    let paths: Vec<&str> = listed.as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+    assert_eq!(paths, ["demo/src/store.rs", "other/src/util.rs"]);
+    assert_eq!(listed[0]["first_commit_ms"], NOW - 90 * DAY);
+    let total = c["files"]["total"].as_u64().unwrap();
+    assert_eq!(c["never_reviewed"]["more"], total - 2);
+    assert!(go(&p, &["status"]).stdout.contains(&format!("… {} more", total - 2)));
+}
+
+#[test]
+fn status_lists_files_changed_since_review_with_lines_changed() {
+    let files = store_unit_files();
+    let old: Vec<(String, String)> = at_today(&fixture(), &files).into_iter().map(|(p, b)| if p == "demo/src/store.rs" { (p, "oldblob".to_string()) } else { (p, b) }).collect();
+    let rows = published("001", "module:demo/src/store.rs", &old, ClosedAs::Published);
+    let tree = fixture().with_changed("demo/src/store.rs", "oldblob", 4);
+    let (_run, p) = coverage_ports(tree, rows, 10);
+    let c = &status_json(&p)["coverage"];
+    assert_eq!(c["changed"]["files"][0], serde_json::json!({"path": "demo/src/store.rs", "review": "001", "changed_lines": 4}));
+    assert_eq!(c["files"]["reviewed"], files.len());
+    assert_eq!(c["files"]["current"], files.len() - 1);
+}
+
+#[test]
+fn a_review_closed_unpublished_adds_no_coverage() {
+    let files = store_unit_files();
+    let rows = published("001", "module:demo/src/store.rs", &at_today(&fixture(), &files), ClosedAs::Unpublished);
+    let (_run, p) = coverage_ports(fixture(), rows, 10);
+    let c = &status_json(&p)["coverage"];
+    assert_eq!(c["files"]["reviewed"], 0);
+    assert_eq!(c["kinds"].as_array().unwrap().iter().find(|k| k["kind"] == "module").unwrap()["reviewed"], 0);
 }
 
 #[test]

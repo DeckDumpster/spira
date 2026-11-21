@@ -20,6 +20,7 @@ fn build_ports() -> Result<Ports, String> {
         churn_days: cfg_parse("SPIRA_CR_CHURN_DAYS")?,
         rewrite_days: cfg_parse("SPIRA_CR_REWRITE_DAYS")?,
         count_limit: cfg_parse::<u32>("SPIRA_CR_COUNT_LIMIT")? as usize,
+        status_limit: cfg_parse::<u32>("SPIRA_CR_STATUS_LIMIT")? as usize,
         exclude: exclude.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect(),
     };
     let clock: Box<dyn Clock> = match spira_config::vtime::override_epoch() {

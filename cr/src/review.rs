@@ -1,6 +1,7 @@
 //! `cr open`, `cr seal`, `cr unseal` and `cr status`: a review's life from staged to published.
 
 use crate::cli::Outcome;
+use crate::coverage::{self, Coverage, Tally};
 use crate::history;
 use crate::index::Index;
 use crate::ledger::{self, LedgerFile, Row};
@@ -626,16 +627,62 @@ pub fn status(json_out: bool, ports: &Ports) -> Outcome {
         Err(e) => return refuse(1, &e),
     };
     let now = ports.clock.now_ms();
+    let cov = match status_coverage(ports) {
+        Ok(c) => c,
+        Err(e) => return refuse(1, &e),
+    };
+    let limit = ports.config.status_limit;
+    let cut = |n: usize| n.saturating_sub(limit);
     if json_out {
-        let v: Vec<Value> = rs
+        let reviews: Vec<Value> = rs
             .iter()
             .map(|r| json!({"number": format!("{:03}", r.number), "kind": r.kind.as_str(), "state": r.state.as_str(), "age": age(r.staged_at, now), "pr": r.pr, "url": r.pr_url, "title": r.unit.title}))
             .collect();
-        return done(format!("{}\n", Value::Array(v)));
+        let tally = |a: &str, t: &Tally| json!({"area": a, "reviewed": t.reviewed, "current": t.current, "total": t.total});
+        return done(format!(
+            "{}\n",
+            json!({"reviews": reviews, "coverage": {
+                "commit": cov.commit,
+                "files": {"reviewed": cov.files.reviewed, "current": cov.files.current, "total": cov.files.total},
+                "areas": cov.areas.iter().map(|(a, t)| tally(a, t)).collect::<Vec<_>>(),
+                "kinds": cov.kinds.iter().map(|(k, r, t)| json!({"kind": k, "reviewed": r, "total": t})).collect::<Vec<_>>(),
+                "never_reviewed": {"files": cov.never_reviewed.iter().take(limit).map(|n| json!({"path": n.path, "first_commit_ms": n.first_commit_ms})).collect::<Vec<_>>(), "more": cut(cov.never_reviewed.len())},
+                "changed": {"files": cov.changed.iter().take(limit).map(|c| json!({"path": c.path, "review": c.review, "changed_lines": c.changed_lines})).collect::<Vec<_>>(), "more": cut(cov.changed.len())},
+            }})
+        ));
     }
-    let mut out = String::new();
+    let pct = |r: u32, t: u32| if t == 0 { 0 } else { u64::from(r) * 100 / u64::from(t) };
+    let mut out = String::from("open reviews\n");
     for r in rs {
         out.push_str(&format!("{:03} {} {} {} {} {}\n", r.number, r.kind.as_str(), r.state.as_str(), age(r.staged_at, now), r.pr_url.as_deref().unwrap_or("-"), r.unit.title));
     }
+    out.push_str(&format!("\ncoverage at {}: {}/{} files ({}%), {} at their current blob\n", cov.commit, cov.files.reviewed, cov.files.total, pct(cov.files.reviewed, cov.files.total), cov.files.current));
+    for (a, t) in &cov.areas {
+        out.push_str(&format!("  area {a}: {}/{} ({}%), {} current\n", t.reviewed, t.total, pct(t.reviewed, t.total), t.current));
+    }
+    for (k, r, t) in &cov.kinds {
+        out.push_str(&format!("  kind {k}: {r}/{t} units ({}%)\n", pct(*r, *t)));
+    }
+    out.push_str("\noldest never-reviewed files\n");
+    for n in cov.never_reviewed.iter().take(limit) {
+        out.push_str(&format!("  {} first committed {}\n", n.path, n.first_commit_ms.map_or("unknown".to_string(), |m| format!("{} ago", age(m, now)))));
+    }
+    if cut(cov.never_reviewed.len()) > 0 {
+        out.push_str(&format!("  … {} more\n", cut(cov.never_reviewed.len())));
+    }
+    out.push_str("\nchanged since review\n");
+    for c in cov.changed.iter().take(limit) {
+        out.push_str(&format!("  {} {} lines since review {}\n", c.path, c.changed_lines, c.review));
+    }
+    if cut(cov.changed.len()) > 0 {
+        out.push_str(&format!("  … {} more\n", cut(cov.changed.len())));
+    }
     done(out)
+}
+
+fn status_coverage(ports: &Ports) -> Result<Coverage, String> {
+    let ix = Index::build(ports.tree.as_ref())?;
+    let (ledger, _) = ledger::load(ports)?;
+    let ledger = ledger.at_tree(ports.tree.as_ref())?;
+    Ok(coverage::coverage(&ix, ports.tree.as_ref(), &ledger, &ports.config))
 }

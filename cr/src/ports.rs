@@ -62,6 +62,7 @@ pub struct Config {
     pub churn_days: u32,
     pub rewrite_days: u32,
     pub count_limit: usize,
+    pub status_limit: usize,
 }
 
 /// The `issue_type` of each bead named, read through spira-lc; a bead the store lacks is absent.
