@@ -548,11 +548,11 @@ mod tests {
     #[test]
     fn brokered_batch_methods_are_not_alarmed() {
         let (lim, t0, mut l) = (limits(&[]), std::time::Instant::now(), Latency::default());
-        feed(&mut l, &lim, "work:groom", "x", t0, &[4000; 20]);
-        feed(&mut l, &lim, "work:submit", "x", t0, &[40000; 20]);
+        feed(&mut l, &lim, "work:read", "x", t0, &[4000; 20]);
+        feed(&mut l, &lim, "work:search", "x", t0, &[40000; 20]);
         assert!(l.transitions(&lim, t0, 1).is_empty());
-        feed(&mut l, &lim, "work:note", "x", t0, &[4000]);
-        assert_eq!(l.transitions(&lim, t0, 2).len(), 1, "a store-only lane verb is held to the limit");
+        feed(&mut l, &lim, "work:submit", "x", t0, &[4000]);
+        assert_eq!(l.transitions(&lim, t0, 2).len(), 1, "a verb recorded for the scheduler is a store write, held to the limit");
     }
 
     #[test]
@@ -668,7 +668,7 @@ mod tests {
         request_done("probe-verb", "probe-verb", "probe\tcaller", None, Duration::from_millis(40));
         request_done("other-verb", "other-verb", "other", None, Duration::from_millis(7));
         request_done("probe-verb", "probe-verb", "probe\tcaller", None, Duration::from_millis(60));
-        request_done("work", "work:submit", "probe\tcaller", None, Duration::from_millis(9000));
+        request_done("work", "work:read", "probe\tcaller", None, Duration::from_millis(9000));
         let got: String = std::fs::read_to_string(&log).unwrap().lines().filter(|l| l.contains("\tprobe-verb\t")).map(|l| format!("{l}\n")).collect();
         assert_eq!(got.lines().count(), 2, "{got}");
         let all = std::fs::read_to_string(&log).unwrap();

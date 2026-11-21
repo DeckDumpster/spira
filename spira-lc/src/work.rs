@@ -2317,6 +2317,17 @@ mod store_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_verb_that_starts_a_program_is_recorded_and_the_reads_stay_in_the_service() {
+        for verb in ["submit", "ack", "file-followup", "split", "blocked", "superseded-by", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand", "hel", "mender", "forge", "file", "ask"] {
+            assert!(super::exec_verb(verb), "{verb} starts a program, so the scheduler runs it");
+        }
+        for verb in ["show", "note", "done", "logs", "cite-check", "read", "list", "search", "fence", "no-such-verb"] {
+            assert!(!super::exec_verb(verb), "{verb} starts no program in the service");
+        }
+        assert!(super::exec_bound_ms("groom") >= super::exec_bound_ms("submit") && super::exec_bound_ms("submit") == super::TOOL_SECS * 1000);
+    }
+
     fn cite_check_of(msg: &str, held: &[&str], store_down: bool) -> (i32, String) {
         let held: Vec<String> = held.iter().map(|h| h.to_string()).collect();
         let mut known = |ids: &[String]| if store_down { Err("down".to_string()) } else { Ok(ids.iter().filter(|i| held.contains(i)).cloned().collect()) };

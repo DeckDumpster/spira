@@ -144,7 +144,7 @@ fn run_job(lc: &LcClient, job: &Job, exec: Exec) -> Result<String, String> {
     if recorded(lc, &job.id)? {
         return Ok(format!("{}: ran, exit {code}", job.id));
     }
-    let how = if code == 124 { "cut off at its bound".to_string() } else { format!("exited {code} before recording an answer") };
+    let how = if code == 124 { "cut off at its bound".to_string() } else { format!("ended with exit {code} (a signal reads as 2) before recording an answer") };
     let tail: String = said.chars().rev().take(REASON_TAIL).collect::<Vec<_>>().into_iter().rev().collect();
     let reason = format!("work-exec {how} (stage: running); {}", if tail.trim().is_empty() { "it printed nothing".to_string() } else { format!("it printed:\n{}", tail.trim_end()) });
     finish(lc, &job.id, &reason).map(|()| format!("{}: finished 124, runner {how}", job.id))
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn a_runner_that_died_or_hit_its_bound_leaves_the_request_finished_124_with_a_reason() {
-        for (code, said, want) in [(124, "", "cut off at its bound"), (137, "killed", "exited 137")] {
+        for (code, said, want) in [(124, "", "cut off at its bound"), (137, "killed", "ended with exit 137")] {
             let lc = lc("running", 0);
             run_job(&lc.client, &job(), &|_, _| (code, said.to_string())).unwrap();
             let f = finished(&lc);

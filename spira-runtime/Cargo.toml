@@ -6,7 +6,7 @@ autotests = false
 description = "spira-runtime — the long-running service that hosts the loop's workflows: pinned config, wide events as OTLP logs, a heartbeat schedule, a loop-kicked systemd watchdog and stall quarantine."
 
 [package.metadata.spira]
-test-bins = ["spira-config", "spira-lc", "reconciler", "tsd"]
+test-bins = ["spira-config", "spira-lc", "reconciler", "tsd", "work"]
 
 [lib]
 name = "spira_runtime"
@@ -20,6 +20,11 @@ test = false
 [[test]]
 name = "it"
 path = "tests/it/main.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "task_d_broker_exec"
+path = "tests/task_d_broker_exec.rs"
 required-features = ["integration"]
 
 [[test]]
@@ -168,6 +173,7 @@ mimir-trigger = { path = "../mimir-trigger" }
 inotify = { version = "0.11", default-features = false }
 
 [dev-dependencies]
+state-store-sqlite = { path = "../state-store-sqlite" }
 forge = { path = "../forge" }
 # dwarves.sh's live count, held to sentinel-call's on the same unit list.
 spira-world = { path = "../spira-world" }

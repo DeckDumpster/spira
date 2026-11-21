@@ -39,11 +39,16 @@ fn a_store_call_is_abandoned_at_the_configured_default_and_only_declared_and_bat
     assert_eq!(watch(&["--wait-ms", "x"]), std::time::Duration::from_secs(3));
     assert_eq!(d("work"), crate::db::QUERY_DEADLINE);
     let w = |v: &str| dl(&["work".to_string(), "sp-x".to_string(), v.to_string()]);
-    for verb in ["show", "note", "done", "blocked", "superseded-by"] {
+    for verb in ["show", "note", "done"] {
         assert_eq!(w(verb), crate::db::QUERY_DEADLINE, "{verb}");
     }
-    for verb in ["submit", "file-followup", "split"] {
-        assert_eq!(w(verb), super::TOOL_DEADLINE, "{verb}");
+    for verb in ["submit", "file-followup", "split", "ack", "blocked", "superseded-by", "groom", "queue", "forge", "ask", "file"] {
+        assert!(crate::work::exec_verb(verb), "{verb}: a program-running verb is recorded for the scheduler");
+        assert_eq!(w(verb), crate::db::QUERY_DEADLINE, "{verb}: recording is a plain store write, so it keeps the store-call deadline");
+    }
+    for verb in ["read", "list", "search", "fence"] {
+        assert!(!crate::work::exec_verb(verb), "{verb}");
+        assert_eq!(w(verb), super::TOOL_DEADLINE, "{verb}: answered in the service, with the bound it had");
     }
 }
 

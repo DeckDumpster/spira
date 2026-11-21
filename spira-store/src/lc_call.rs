@@ -609,6 +609,14 @@ pub fn run_bounded(mut cmd: Command, limit: Duration) -> (i32, String) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_the_services_queued_line_names_a_request() {
+        assert_eq!(queued_id("queued wr-12\n"), Some("wr-12"));
+        for not in ["queued wr-", "queued wr-1x", "queued 12", "queued wr-1 and more", "SUBMITTED", ""] {
+            assert_eq!(queued_id(not), None, "{not:?}");
+        }
+    }
+
     use super::*;
 
     #[test]
