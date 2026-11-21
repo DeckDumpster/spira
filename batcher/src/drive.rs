@@ -934,7 +934,15 @@ fn probe_filter_owners<R: RoundRunner>(
                     String::new(),
                 )
             }
-            Alone::Base(said) => return (actions, "base", said),
+            Alone::Base(said) if unitattr::scope_is_exact(scope) => return (actions, "base", said),
+            Alone::Base(_) => {
+                let ran = if scope.is_empty() { "workspace".to_string() } else { scope.join(" ") };
+                return (
+                    actions,
+                    "unattributed",
+                    format!("base red on a wider run than the failing tests (scope: {ran})"),
+                );
+            }
             Alone::Unconverged => return (actions, "unattributed", String::new()),
             Alone::Cleared(said) => return (actions, "unattributed", said),
             Alone::Flipped(said) => return (actions, "unattributed", said),
@@ -4155,6 +4163,38 @@ pub(crate) mod tests {
         );
     }
 
+    fn base_red_filter_round(failed: &str) -> (RoundEnd, Ops) {
+        let mut f = Fake::new(|_, _| false);
+        f.runs_alone = true;
+        let failed = failed.to_string();
+        f.filter = Some(Box::new(move |_| {
+            Some(FilterRed {
+                harness: vec![],
+                name: "spira-lint".into(),
+                named: vec![],
+                failed: vec![failed.clone()],
+                ..Default::default()
+            })
+        }));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        (end, ops)
+    }
+
+    #[test]
+    fn a_filter_red_the_base_fails_only_on_a_wider_run_than_the_failing_tests_is_unattributed_not_base_red() {
+        let (end, ops) = base_red_filter_round("FAIL test:nowhere x::y");
+        assert!(ops.incidents.iter().all(|(k, _)| k != "base"), "{:?}", ops.incidents);
+        assert!(matches!(&end, RoundEnd::Blocked(why) if why.contains("wider run than the failing tests")), "{end:?}");
+    }
+
+    #[test]
+    fn a_filter_red_naming_its_exact_test_whose_base_is_red_still_ends_base_red() {
+        let (end, ops) = base_red_filter_round("FAIL spira-lc::bin/spira-lc a::b");
+        assert_eq!(ops.incidents.first().map(|(k, _)| k.as_str()), Some("base"));
+        assert!(matches!(end, RoundEnd::BaseRed { .. }), "{end:?}");
+    }
+
     #[test]
     fn a_filter_red_naming_no_member_whose_base_is_red_is_filed_as_the_base() {
         let mut f = Fake::new(|_, _| false);
@@ -4164,7 +4204,7 @@ pub(crate) mod tests {
                 harness: vec![],
                 name: "spira-lint".into(),
                 named: vec![],
-                failed: vec![], ..Default::default() })
+                failed: vec!["FAIL spira-lc::bin/spira-lc a::b".into()], ..Default::default() })
         }));
         let mut ops = Ops::default();
         let end = attribute_round(
