@@ -55,13 +55,15 @@ pub fn proof(sha: &str) -> String {
 }
 
 pub fn show_row(id: &str) -> Option<Row> {
-    // One source of config (per Ryan 2026-10-05): spira.db/spira.bd from $SPIRA_TOML, never
-    // this process's own environment. Empty (either key) means "nothing to show" here, the
-    // same best-effort bail this whole module already uses.
-    let db = spira_config::process::cfg("SPIRA_DB").ok().filter(|d| !d.is_empty())?;
-    let bd = spira_config::process::cfg("SPIRA_BD").ok().filter(|b| !b.is_empty())?;
-    let out = state_store::phases::child("bd", || Command::new("timeout").arg(CALL_SECS).arg(&bd).args(["-C", &db, "show", id, "--json"]).stdin(Stdio::null()).stderr(Stdio::null()).output()).ok()?;
-    out.status.success().then(|| parse_row(&String::from_utf8_lossy(&out.stdout))).flatten()
+    show_row_via(id, &mut |args| crate::client::try_socket(args))
+}
+
+/// The labels of `id` as the content door's `content show <id> --json` answers; `call` is the
+/// door. Anything but a clean answer is the module's usual best-effort bail.
+pub fn show_row_via(id: &str, call: &mut dyn FnMut(&[String]) -> Option<(i32, String)>) -> Option<Row> {
+    let args: Vec<String> = ["content", "show", id, "--json"].map(String::from).to_vec();
+    let (code, out) = call(&args)?;
+    (code == 0).then(|| parse_row(&out)).flatten()
 }
 
 fn branch_exists(root: &str, branch: &str) -> bool {
@@ -137,6 +139,20 @@ mod tests {
 
     /// sp-mve9i: whether to close is the lifecycle row's call, never bd's status or the
     /// retired submitted label.
+    #[test]
+    fn show_row_asks_the_content_door_for_the_bead_and_reads_its_labels() {
+        let mut sent = vec![];
+        let row = show_row_via("sp-x", &mut |a| {
+            sent.push(a.to_vec());
+            Some((0, r#"{"id":"sp-x","labels":["repo:r","branch:b"]}"#.to_string()))
+        })
+        .expect("a row");
+        assert_eq!(sent, [["content", "show", "sp-x", "--json"].map(String::from).to_vec()]);
+        assert_eq!(row.labels, ["repo:r", "branch:b"]);
+        assert!(show_row_via("sp-x", &mut |_| Some((1, "no".into()))).is_none());
+        assert!(show_row_via("sp-x", &mut |_| None).is_none());
+    }
+
     #[test]
     fn only_a_handed_on_bead_that_did_not_end_otherwise_is_closed() {
         for s in ["SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"] {

@@ -111,6 +111,10 @@ struct Lc {
 
 impl Lc {
     fn new(store: &Store, name: &str, writer_file: &str) -> Lc {
+        Lc::with_bd(store, name, writer_file, &store.bd)
+    }
+
+    fn with_bd(store: &Store, name: &str, writer_file: &str, bd_program: &str) -> Lc {
         let dir = store.dir.join(name);
         let run = dir.join("run");
         std::fs::create_dir_all(&run).unwrap();
@@ -127,7 +131,7 @@ impl Lc {
                 ("SPIRA_LC_SOCKET", &sock),
                 ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9"),
                 ("SPIRA_DB", &db),
-                ("SPIRA_BD", &store.bd),
+                ("SPIRA_BD", bd_program),
                 ("SPIRA_BEADS_SQL_HOST", "127.0.0.1"),
                 ("SPIRA_BEADS_SQL_PORT", &store.port),
                 ("SPIRA_BEADS_SQL_USER", "spira_lc_ro"),
@@ -747,4 +751,40 @@ fn a_gate_check_over_a_github_gate_is_left_to_bd() {
     gate_for(&store, &a, &["--type=gh:run", "--await-id=1"]);
     let (out, children) = lc.children_of("content", &["content", "gate", "check", "--type=gh:run"], None);
     assert!(children > 0 || out.contains("deadline"), "bd asks GitHub, so it must have run: {out}");
+}
+
+/// A `bd` that records every argv it is run with, then is the real one.
+fn recording_bd(store: &Store, log: &Path) -> String {
+    let path = store.dir.join("recording-bd");
+    std::fs::write(&path, format!("#!/bin/sh\necho \"$@\" >> '{}'\nexec '{}' \"$@\"\n", log.display(), store.bd)).unwrap();
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&path, perms).unwrap();
+    path.display().to_string()
+}
+
+#[test]
+fn a_planning_write_moves_the_kv_watermark_in_sql_and_starts_no_bd_kv() {
+    let Some(store) = Store::up() else { return };
+    let writer = store.dir.join("writer.credential");
+    let log = store.dir.join("bd-argv.log");
+    let bd = recording_bd(&store, &log);
+    let mut lc = Lc::with_bd(&store, "k", &writer.display().to_string(), &bd);
+    provision(&lc);
+    lc.admin("admin-provision-writer");
+    lc.serve();
+    let (rc, out) = lc.run(&["plan", "stamp"], None);
+    assert_eq!(rc, 0, "{out}");
+    let want = serde_json::from_str::<serde_json::Value>(out.trim()).unwrap()["watermark"].as_u64().expect("a watermark");
+    let mut last = String::new();
+    for _ in 0..600 {
+        last = lc.run(&["content", "kv", "get", "spira.planning_watermark"], None).1;
+        if last.trim() == want.to_string() {
+            let argv = std::fs::read_to_string(&log).unwrap_or_default();
+            assert!(!argv.lines().any(|l| l.starts_with("-C") && l.contains(" kv ") || l.starts_with("kv ")), "lc-serve ran bd kv: {argv}");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50)); // clock-safe: polls the store, the signal waited on
+    }
+    panic!("kv never reached {want}: {last}");
 }
