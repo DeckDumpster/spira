@@ -7205,7 +7205,7 @@ pub(crate) mod tests {
     fn a_base_red_filter_end_names_where_the_base_probe_kept_its_output() {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(Box::new(|_| {
-            Some(FilterRed { harness: vec![], name: "unit-tests".into(), named: vec![], failed: vec![], ..Default::default() })
+            Some(FilterRed { harness: vec![], name: "unit-tests".into(), named: vec![], failed: vec!["FAIL spira-lc::bin/spira-lc a::b".into()], ..Default::default() })
         }));
         f.bisects = true;
         f.probe_kept = "r-1/probes/b1".into();
