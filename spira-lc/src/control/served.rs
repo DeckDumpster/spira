@@ -75,12 +75,16 @@ fn backend_at(path: &str, opts: Options) -> Result<Served, String> {
     Ok(backend)
 }
 
+fn served_options(history_bytes: usize, wal_line_bytes: u64, metrics: Option<spira_otel::metrics::MetricsSink>) -> Options {
+    Options { history_bytes, wal_line_bytes, wall: Arc::new(Wall), metrics, readers: READERS, ..Options::default() }
+}
+
 fn open(path: &str) -> Result<Store<Served>, String> {
     let history_bytes = spira_config::process::cfg_parse::<usize>("SPIRA_LC_HISTORY_RING_BYTES")?;
     let wal_line_bytes = spira_config::process::cfg_parse::<u64>("SPIRA_LC_WAL_LINE_BYTES")?;
     let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
     let metrics = Some(spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", std::time::Duration::from_millis(250)));
-    let backend = backend_at(path, Options { history_bytes, wal_line_bytes, wall: Arc::new(Wall), metrics, readers: READERS, ..Options::default() })?;
+    let backend = backend_at(path, served_options(history_bytes, wal_line_bytes, metrics))?;
     let floor = lock_floor_ms()?;
     let ports = Ports {
         mono: Arc::new(MonotonicClock::new()),
@@ -385,6 +389,50 @@ mod tests {
         let clock = runtime::ports::VirtualClock::new(0);
         let contract = Contract::open(backend, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
         (contract.backend().take_read_steps(), dir, contract)
+    }
+
+    struct Steered(AtomicU64);
+
+    impl Clock for Steered {
+        fn now_ms(&self) -> u64 {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    #[test]
+    fn a_read_of_150_ms_is_ended_for_every_verb_on_the_store_as_served() {
+        let dir = testkit::TempDir::new("lc-served-limit");
+        let path = dir.join("control.db");
+        drop(SqliteBackend::open(&path, Options::default()).unwrap());
+        let clock = Arc::new(Steered(AtomicU64::new(0)));
+        let (probe_clock, armed) = (clock.clone(), Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        let probe_armed = armed.clone();
+        let opts = Options {
+            clock: clock.clone(),
+            read_probe: Some(Arc::new(move || {
+                if probe_armed.load(Ordering::SeqCst) {
+                    probe_clock.0.fetch_add(150, Ordering::SeqCst);
+                }
+            })),
+            ..served_options(1 << 20, 8 << 20, None)
+        };
+        let backend = backend_at(path.to_str().unwrap(), opts).unwrap();
+        let vclock = runtime::ports::VirtualClock::new(0);
+        let contract = Contract::open(backend, Ports::virtual_clock(&vclock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let store = Store::new(contract, 1_000);
+        armed.store(true, Ordering::SeqCst);
+        let call = state::Call { now: 0, request: "r", inputs: &claimable::FIXED };
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let answers = [
+            ("audits", verbs::run(&store, &argv(&["audits", "--limit", "5"]))),
+            ("history", verbs::run(&store, &argv(&["history", "p/"]))),
+            ("list", state::run(&store, &argv(&["list", "--ids", "sp-a"]), &call)),
+            ("show", state::run(&store, &argv(&["show", "sp-a"]), &call)),
+        ];
+        for (verb, (code, out)) in answers {
+            assert_eq!(code, CANNOT_TELL, "{verb}: {out}");
+            assert!(out.contains(state_store::READ_ENDED), "{verb}: {out}");
+        }
     }
 
     #[test]

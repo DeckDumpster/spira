@@ -10,7 +10,6 @@ use crate::{CANNOT_TELL, REFUSED};
 const ANSWER_US: &str = "spira.answer_us";
 const CUT_MS: &str = "spira.deadline_cut_ms";
 const DEADLINE_PATH: &str = "spira.lc_request_deadline_ms";
-const SLOW_PATH: &str = "spira.lc_slow_verb_deadlines";
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum Scope {
@@ -157,19 +156,14 @@ fn parse(args: &[String]) -> Result<Parsed, String> {
     Ok(Parsed { ms: Some(ms), verb, hours, file, configured })
 }
 
-fn default_scope(slow: &str) -> Result<Scope, String> {
-    Ok(default_scope_without(crate::serve::parse_slow_entries(slow)?.into_iter().map(|(v, _, _)| v)))
-}
-
-fn default_scope_without(slow_verbs: impl Iterator<Item = String>) -> Scope {
+fn default_scope() -> Scope {
     let mut excluded: BTreeSet<String> = ["work", "watch"].iter().map(|v| v.to_string()).collect();
     excluded.extend(crate::composed::SWEEPS.iter().map(|v| v.to_string()));
-    excluded.extend(slow_verbs);
     Scope::Default { excluded }
 }
 
 fn usage(why: &str) -> (i32, String) {
-    (CANNOT_TELL, format!("spira-lc deadline: {why}\nusage: deadline-check (--ms N [--verb V] | --configured) [--hours H]\n       deadline lower --ms N --file F [--verb V]"))
+    (CANNOT_TELL, format!("spira-lc deadline: {why}\nusage: deadline-check (--ms N [--verb V] | --configured) [--hours H]\n       deadline lower --ms N --file F"))
 }
 
 fn window(p: &Parsed, dir: &Path, now: SystemTime) -> (u64, Vec<(String, String)>) {
@@ -178,13 +172,10 @@ fn window(p: &Parsed, dir: &Path, now: SystemTime) -> (u64, Vec<(String, String)
     (since_ns, window_files(dir, &spira_otel::utc_date(since)))
 }
 
-fn run_check(p: &Parsed, ms: u64, slow: &str, dir: &Path, now: SystemTime) -> (i32, String) {
+fn run_check(p: &Parsed, ms: u64, dir: &Path, now: SystemTime) -> (i32, String) {
     let scope = match &p.verb {
         Some(v) => Scope::Verb(v.clone()),
-        None => match default_scope(slow) {
-            Ok(s) => s,
-            Err(e) => return (CANNOT_TELL, e),
-        },
+        None => default_scope(),
     };
     let (since_ns, files) = window(p, dir, now);
     match judge(&files, ms, &scope, since_ns, p.hours) {
@@ -193,61 +184,40 @@ fn run_check(p: &Parsed, ms: u64, slow: &str, dir: &Path, now: SystemTime) -> (i
     }
 }
 
-/// The configured default over the verbs that get it, then each slow-list entry over its own verb, each at its own value.
+/// The one configured default over every verb that gets it.
 fn run_configured(p: &Parsed, d: &crate::serve::Deadlines, dir: &Path, now: SystemTime) -> (i32, String) {
-    let default = default_scope_without(d.slow.keys().cloned());
     let (since_ns, files) = window(p, dir, now);
-    let mut checks = vec![(default, d.default.as_millis() as u64)];
-    checks.extend(d.slow.iter().map(|(v, (ms, _))| (Scope::Verb(v.clone()), ms.as_millis() as u64)));
-    let (mut ok, mut refused) = (Vec::new(), Vec::new());
-    for (scope, ms) in &checks {
-        match judge(&files, *ms, scope, since_ns, p.hours) {
-            Ok(line) => ok.push(line),
-            Err(lines) => refused.push(lines),
-        }
+    match judge(&files, d.default.as_millis() as u64, &default_scope(), since_ns, p.hours) {
+        Ok(line) => (0, line),
+        Err(lines) => (REFUSED, lines),
     }
-    if refused.is_empty() { (0, ok.join("\n")) } else { (REFUSED, refused.join("\n")) }
 }
 
 /// `args` after `deadline-check`.
-pub(crate) fn deadline_check(args: &[String], slow: &str, dir: &Path, now: SystemTime) -> (i32, String) {
+pub(crate) fn deadline_check(args: &[String], dir: &Path, now: SystemTime) -> (i32, String) {
     match parse(args) {
         Ok(p) if p.configured => match crate::serve::deadlines_from(spira_config::process::cfg) {
             Ok(d) => run_configured(&p, &d, dir, now),
             Err(e) => (CANNOT_TELL, e),
         },
-        Ok(p) => run_check(&p, p.ms.unwrap_or_default(), slow, dir, now),
+        Ok(p) => run_check(&p, p.ms.unwrap_or_default(), dir, now),
         Err(e) => usage(&e),
     }
 }
 
-/// The entries with `verb`'s deadline set to `ms`; `None` when the list has no such entry.
-fn rewrite_entry(slow: &str, verb: &str, ms: u64) -> Result<Option<String>, String> {
-    let entries = crate::serve::parse_slow_entries(slow)?;
-    if !entries.iter().any(|(v, _, _)| v == verb) {
-        return Ok(None);
-    }
-    let joined = entries.iter().map(|(v, old, bead)| format!("{v}={}@{bead}", if v == verb { ms } else { *old })).collect::<Vec<_>>().join(",");
-    Ok(Some(joined))
-}
-
 /// `args` after `deadline lower`: runs the check, and only on a pass the `spira-config` command through `config`.
-pub(crate) fn deadline_lower(args: &[String], slow: &str, dir: &Path, now: SystemTime, config: &mut dyn FnMut(&[String]) -> i32) -> (i32, String) {
+pub(crate) fn deadline_lower(args: &[String], dir: &Path, now: SystemTime, config: &mut dyn FnMut(&[String]) -> i32) -> (i32, String) {
     let p = match parse(args) {
         Ok(p) => p,
         Err(e) => return usage(&e),
     };
     let Some(ms) = p.ms else { return usage("--configured is for deadline-check; lowering takes --ms") };
     let Some(file) = &p.file else { return usage("--file is required") };
-    let (key, value) = match &p.verb {
-        None => (DEADLINE_PATH, ms.to_string()),
-        Some(v) => match rewrite_entry(slow, v, ms) {
-            Ok(Some(joined)) => (SLOW_PATH, joined),
-            Ok(None) => return (CANNOT_TELL, format!("spira-lc deadline: {SLOW_PATH} has no entry for `{v}`")),
-            Err(e) => return (CANNOT_TELL, e),
-        },
-    };
-    let (code, text) = run_check(&p, ms, slow, dir, now);
+    if p.verb.is_some() {
+        return usage("--verb is for deadline-check; every verb's deadline is the one default");
+    }
+    let (key, value) = (DEADLINE_PATH, ms.to_string());
+    let (code, text) = run_check(&p, ms, dir, now);
     if code != 0 {
         return (code, text);
     }
@@ -297,8 +267,8 @@ mod tests {
     }
 
     #[test]
-    fn a_declared_slow_verb_is_out_of_the_default_scope_but_in_scope_by_name() {
-        assert!(check(&lists(), 1000, &default_scope_with(&["list"])).is_ok());
+    fn a_verb_named_in_scope_is_judged_on_its_own() {
+        assert!(check(&lists(), 1000, &Scope::Verb("show".into())).is_ok());
         assert_eq!(check(&lists(), 1000, &Scope::Verb("list".into())).unwrap_err(), "list max=1200ms over=1/3");
     }
 
@@ -313,7 +283,7 @@ mod tests {
     #[test]
     fn two_second_watch_spans_pass_the_default_scope_check_at_one_second() {
         let t = text(&[("watch", Some(2000)), ("watch", Some(2001)), ("show", Some(5))]);
-        let Scope::Default { excluded } = default_scope("").unwrap() else { panic!() };
+        let Scope::Default { excluded } = default_scope() else { panic!() };
         assert!(check(&t, 1000, &Scope::Default { excluded }).is_ok());
     }
 
@@ -341,7 +311,7 @@ mod tests {
     fn lower_with_a_failing_check_runs_no_spira_config_command() {
         let dir = day_dir(&lists());
         let mut calls = Vec::new();
-        let (code, out) = deadline_lower(&args(&["--ms", "1000", "--file", "f.toml"]), "", dir.path(), now(), &mut |a| {
+        let (code, out) = deadline_lower(&args(&["--ms", "1000", "--file", "f.toml"]), dir.path(), now(), &mut |a| {
             calls.push(a.to_vec());
             0
         });
@@ -353,7 +323,7 @@ mod tests {
     fn lower_with_a_passing_check_sets_the_key_through_spira_config() {
         let dir = day_dir(&lists());
         let mut calls = Vec::new();
-        let (code, _) = deadline_lower(&args(&["--ms", "1500", "--file", "f.toml"]), "", dir.path(), now(), &mut |a| {
+        let (code, _) = deadline_lower(&args(&["--ms", "1500", "--file", "f.toml"]), dir.path(), now(), &mut |a| {
             calls.push(a.to_vec());
             0
         });
@@ -362,22 +332,21 @@ mod tests {
     }
 
     #[test]
-    fn lower_for_a_verb_rewrites_only_its_entry_and_keeps_its_bead() {
+    fn lower_for_a_verb_is_refused_because_no_verb_has_its_own_deadline() {
         let dir = day_dir(&lists());
         let mut calls = Vec::new();
-        let slow = "list=3000@sp-a,rc=3000@sp-b";
-        let (code, _) = deadline_lower(&args(&["--ms", "1500", "--verb", "list", "--file", "f.toml"]), slow, dir.path(), now(), &mut |a| {
+        let (code, _) = deadline_lower(&args(&["--ms", "1500", "--verb", "list", "--file", "f.toml"]), dir.path(), now(), &mut |a| {
             calls.push(a.to_vec());
             0
         });
-        assert_eq!(code, 0);
-        assert_eq!(calls, vec![args(&["set", "spira.lc_slow_verb_deadlines", "list=1500@sp-a,rc=3000@sp-b", "f.toml"])]);
+        assert_eq!(code, CANNOT_TELL);
+        assert!(calls.is_empty());
     }
 
     #[test]
     fn the_default_scope_leaves_out_work_sweeps_and_declared_verbs() {
-        let Scope::Default { excluded } = default_scope("rc=3000@sp-b").unwrap() else { panic!() };
-        for v in ["work", "watch", "reconcile-content", "rc"] {
+        let Scope::Default { excluded } = default_scope() else { panic!() };
+        for v in ["work", "watch", "reconcile-content"] {
             assert!(excluded.contains(v), "{v}");
         }
         assert!(!excluded.contains("show"));
@@ -395,7 +364,7 @@ mod tests {
     fn lower_over_a_cut_call_runs_no_spira_config_command() {
         let dir = day_dir(&cut_span("show", 1000, 1000));
         let mut calls = Vec::new();
-        let (code, out) = deadline_lower(&args(&["--ms", "1000", "--file", "f.toml"]), "", dir.path(), now(), &mut |a| {
+        let (code, out) = deadline_lower(&args(&["--ms", "1000", "--file", "f.toml"]), dir.path(), now(), &mut |a| {
             calls.push(a.to_vec());
             0
         });
@@ -407,27 +376,24 @@ mod tests {
     fn configured_excludes_ms_and_verb_and_is_not_a_lowering() {
         let dir = day_dir("");
         for bad in [&["--configured", "--ms", "900"][..], &["--configured", "--verb", "list"][..]] {
-            assert_eq!(deadline_check(&args(bad), "", dir.path(), now()).0, CANNOT_TELL);
+            assert_eq!(deadline_check(&args(bad), dir.path(), now()).0, CANNOT_TELL);
         }
         let mut none = |_: &[String]| 0;
-        assert_eq!(deadline_lower(&args(&["--configured", "--file", "f"]), "", dir.path(), now(), &mut none).0, CANNOT_TELL);
+        assert_eq!(deadline_lower(&args(&["--configured", "--file", "f"]), dir.path(), now(), &mut none).0, CANNOT_TELL);
     }
 
     fn configured(body: &str) -> (i32, String) {
         let dir = day_dir(body);
-        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_LC_REQUEST_DEADLINE_MS", "1000"), ("SPIRA_LC_SLOW_VERB_DEADLINES", "list=3000@sp-a")]);
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_LC_REQUEST_DEADLINE_MS", "1000")]);
         let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
-        deadline_check(&args(&["--configured"]), "", dir.path(), now())
+        deadline_check(&args(&["--configured"]), dir.path(), now())
     }
 
     #[test]
-    fn configured_judges_the_default_and_each_slow_entry_at_its_own_value() {
-        let (code, out) = configured(&text(&[("list", Some(2000)), ("show", Some(20))]));
+    fn configured_judges_every_verb_at_the_one_default() {
+        let (code, out) = configured(&text(&[("list", Some(900)), ("show", Some(20))]));
         assert_eq!(code, 0, "{out}");
-        assert_eq!(out.lines().count(), 2, "one line per check: {out}");
-        let (code, out) = configured(&text(&[("list", Some(3500)), ("show", Some(20))]));
-        assert_eq!((code, out.as_str()), (3, "list max=3500ms over=1/1"));
-        let (code, out) = configured(&text(&[("list", Some(2000)), ("show", Some(1200))]));
-        assert_eq!((code, out.as_str()), (3, "show max=1200ms over=1/1"));
+        let (code, out) = configured(&text(&[("list", Some(2000)), ("show", Some(20))]));
+        assert_eq!((code, out.as_str()), (3, "list max=2000ms over=1/1"));
     }
 }

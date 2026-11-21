@@ -23,15 +23,13 @@ fn a_write_held_past_its_request_deadline_answers_cannot_tell_and_never_commits(
     assert!(c.get("late").unwrap().is_none(), "the abandoned write never commits");
 }
 
-/// law-calls-have-deadlines: a store call is abandoned at the configured default or its declared
-/// slow deadline; only the brokered batch verbs keep the longer bound.
+/// law-calls-have-deadlines: a store call is abandoned at the configured default; only the brokered batch verbs keep the longer bound.
 #[test]
-fn a_store_call_is_abandoned_at_the_configured_default_and_only_declared_and_batch_verbs_wait_longer() {
+fn a_store_call_is_abandoned_at_the_configured_default_and_only_batch_verbs_wait_longer() {
     let d = |v: &str| dl(&[v.to_string(), "x".to_string()]);
-    for verb in ["show", "list", "event", "fact", "cut", "land", "stats", ""] {
+    for verb in ["show", "list", "event", "fact", "cut", "land", "stats", "content", "audits", "ops-view", ""] {
         assert_eq!(d(verb), std::time::Duration::from_millis(1000), "{verb}");
     }
-    assert_eq!(d("ops-view"), std::time::Duration::from_secs(3));
     let watch = |wait: &[&str]| dl(&["watch", "p/", "--from-rev", "0"].iter().chain(wait).map(|s| s.to_string()).collect::<Vec<_>>());
     assert_eq!(watch(&["--wait-ms", "2000"]), std::time::Duration::from_millis(2500));
     assert_eq!(watch(&[]), std::time::Duration::from_secs(3));
@@ -52,7 +50,7 @@ fn watch_door(held: Duration) -> Arc<super::Door> {
         std::thread::sleep(held); // clock-safe: the deadline under test is a real recv_timeout; the sleep only outlasts it
         crate::callers::Answer { code: 0, stdout: "idle".into(), stderr: String::new(), cert_log: None, owed: Default::default() }
     });
-    let deadlines = super::Deadlines { default: Duration::from_millis(1000), slow: Default::default() };
+    let deadlines = super::Deadlines { default: Duration::from_millis(1000) };
     Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadlines })
 }
 
@@ -72,22 +70,12 @@ fn a_zero_wait_watch_is_cut_at_the_margin() {
 
 #[test]
 fn deadlines_come_from_config_and_bad_config_refuses_naming_its_key() {
-    let ok = super::deadlines_from(config(Some("1000"), "")).unwrap();
-    assert_eq!((ok.default, ok.slow.len()), (Duration::from_millis(1000), 0), "an empty slow list is accepted");
-    let ok = super::deadlines_from(config(Some("800"), "list=3000@sp-a, rc=2000@sp-b")).unwrap();
-    assert_eq!(ok.slow["rc"], (Duration::from_millis(2000), "sp-b".to_string()));
-    for (deadline, slow, names) in [
-        (None, "", "spira.lc_request_deadline_ms"),
-        (Some("4000"), "", "spira.lc_request_deadline_ms"),
-        (Some("1000"), "list=3000", "spira.lc_slow_verb_deadlines"),
-        (Some("1000"), "list=fast@sp-a", "spira.lc_slow_verb_deadlines"),
-        (Some("1000"), "list=4000@sp-a", "spira.lc_slow_verb_deadlines"),
-    ] {
-        let err = super::deadlines_from(config(deadline, slow)).unwrap_err();
-        assert!(err.contains(names), "{err}");
+    let ok = super::deadlines_from(config(Some("800"))).unwrap();
+    assert_eq!(ok.default, Duration::from_millis(800));
+    for deadline in [None, Some("4000"), Some("0")] {
+        let err = super::deadlines_from(config(deadline)).unwrap_err();
+        assert!(err.contains("spira.lc_request_deadline_ms"), "{err}");
     }
-    let err = super::deadlines_from(config(Some("1000"), "list=fast@sp-a")).unwrap_err();
-    assert!(err.contains("list=fast@sp-a"), "the entry is named: {err}");
 }
 
 #[test]

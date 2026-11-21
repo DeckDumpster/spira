@@ -418,7 +418,7 @@ pub type CommitProbe = Arc<dyn Fn() -> Result<()> + Send + Sync>;
 impl Default for Options {
     fn default() -> Self {
         Options {
-            max_read_ms: 1_000,
+            max_read_ms: 100,
             readers: 4,
             clock: Arc::new(state_store::MonotonicClock::new()),
             read_probe: None,
@@ -3017,7 +3017,7 @@ mod tests {
 
     /// Keys under `a/` (one rewritten five times), `b/` and `events/`, one commit each.
     fn usage_store(dir: &testkit::TempDir) -> SqliteBackend {
-        let b = SqliteBackend::open(&dir.path().join("u.db"), Options { day_receipts: false, ..Options::default() }).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("u.db"), Options { day_receipts: false, max_read_ms: 120_000, ..Options::default() }).unwrap();
         let put = |key: &str, value: &[u8], prev: Option<Rev>| {
             let head = b.head().unwrap();
             b.commit(

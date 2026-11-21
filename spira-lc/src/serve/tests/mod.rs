@@ -181,23 +181,22 @@ fn rig(held: bool, deadlines: super::Deadlines) -> Rig {
 }
 
 fn three_seconds() -> super::Deadlines {
-    super::Deadlines { default: Duration::from_secs(3), slow: Default::default() }
+    super::Deadlines { default: Duration::from_secs(3) }
 }
 
 fn test_deadlines() -> super::Deadlines {
-    let slow = [("ops-view".to_string(), (Duration::from_secs(3), "sp-x".to_string()))].into();
-    super::Deadlines { default: Duration::from_millis(1000), slow }
+    super::Deadlines { default: Duration::from_millis(1000) }
 }
 
 fn dl(argv: &[String]) -> Duration {
     super::request_deadline(argv, &test_deadlines())
 }
 
-fn config(deadline: Option<&str>, slow: &str) -> impl Fn(&str) -> Result<String, String> {
-    let (deadline, slow) = (deadline.map(str::to_string), slow.to_string());
+fn config(deadline: Option<&str>) -> impl Fn(&str) -> Result<String, String> {
+    let deadline = deadline.map(str::to_string);
     move |k| match k {
         "SPIRA_LC_REQUEST_DEADLINE_MS" => deadline.clone().ok_or_else(|| "missing".to_string()),
-        _ => Ok(slow.clone()),
+        other => Err(format!("{other} is not read")),
     }
 }
 
@@ -241,7 +240,7 @@ fn drop_argv(r: &Rig, id: &str) -> Vec<String> {
 }
 
 fn fifty_ms() -> super::Deadlines {
-    super::Deadlines { default: Duration::from_millis(50), slow: Default::default() }
+    super::Deadlines { default: Duration::from_millis(50) }
 }
 
 /// bd as the content door writes it, over `World`'s planning plane: a create files the
