@@ -2692,8 +2692,8 @@ mod tests {
     }
 
     #[test]
-    fn the_release_build_cleans_what_differs_from_the_directorys_record_before_building() {
-        let (d, env, base, log, home) = release_world("kcuvbg-clean", "");
+    fn the_release_build_cleans_what_differs_from_the_directorys_record_before_building_and_still_reports_a_failed_build() {
+        let (d, env, base, log, home) = release_world("kcuvbg-clean", "[ ! -e \"$(dirname \"$0\")/fail\" ] || case \"$1\" in build) echo boom; exit 3;; esac\n");
         let _env = with_env(&env);
         let (old, tip) = (d.path().join("old"), d.path().join("tip"));
         crate_tree(&old, "pub fn f() {}\n");
@@ -2713,16 +2713,8 @@ mod tests {
         assert!(clean < build, "clean runs before the build: {lines:?}");
         assert!(wt.join("target/release").is_symlink(), "the release symlink is made");
         drop(held);
-    }
-
-    #[test]
-    fn a_failing_release_build_still_reports_its_rc() {
-        let (d, env, _base, _log, home) = release_world("kcuvbg-fail", "case \"$1\" in build) echo boom; exit 3;; esac\n");
-        let _env = with_env(&env);
-        let wt = d.path().join("wt");
-        fs::create_dir_all(&wt).unwrap();
-        crate_tree(&wt, "pub fn f() {}\n");
-        let err = RealScripts { home }.build_release(&wt, "hand-1").expect_err("fails");
+        fs::write(d.path().join("bin/fail"), "").unwrap();
+        let err = RealScripts { home }.build_release(&wt, "hand-2").expect_err("a failing build fails");
         assert!(err.contains("cargo build --profile release failed (rc=3)"), "{err}");
     }
 
