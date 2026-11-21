@@ -57,12 +57,31 @@ fn a_review_pull_request_is_opened_commented_on_replied_to_closed_and_read_back(
     assert_eq!(comments[1]["in_reply_to_id"].as_u64(), Some(id));
     assert_eq!(comments[1]["user"]["type"], "Bot");
 
-    call(dir, cwd, "POST", &format!("pulls/{n}/reviews"), Some(json!({"event": "COMMENT", "comments": [{"path": "a.rs", "line": 1, "side": "RIGHT", "body": "x"}]})));
+    call(dir, cwd, "POST", &format!("pulls/{n}/reviews"), Some(json!({"event": "REQUEST_CHANGES", "comments": [{"path": "a.rs", "line": 1, "side": "RIGHT", "body": "x"}]})));
+    let reviews = call(dir, cwd, "GET", &format!("pulls/{n}/reviews"), None);
+    assert_eq!(reviews[1]["state"], "CHANGES_REQUESTED");
+    let comments = call(dir, cwd, "GET", &format!("pulls/{n}/comments"), None);
+    assert_eq!((comments[2]["body"].as_str(), comments[2]["pull_request_review_id"].clone()), (Some("x"), reviews[1]["id"].clone()));
+    let nested = call(dir, cwd, "POST", &format!("pulls/{n}/comments/{}/replies", reply["id"]), Some(json!({"body": "again"})));
+    assert_eq!(nested["in_reply_to_id"].as_u64(), Some(id));
+    let dup = ["api", "--method", "POST", &format!("{REPO}/pulls")].map(String::from).to_vec();
+    let f = dir.join("dup");
+    std::fs::write(&f, json!({"title": "t", "head": "review/001", "base": "main"}).to_string()).unwrap();
+    let dup = [dup, vec!["--input".into(), f.display().to_string()]].concat();
+    assert_eq!(gh::run(dir, cwd, &dup).unwrap().code, 1);
+    ctl(dir, &["pr-review", &n.to_string(), "approved", "--author", "sam"]);
+    let reviews = call(dir, cwd, "GET", &format!("pulls/{n}/reviews"), None);
+    assert_eq!((reviews[2]["state"].as_str(), reviews[2]["user"]["login"].as_str()), (Some("APPROVED"), Some("sam")));
+    assert!(gh::ctl(dir, &["pr-review".to_string(), n.to_string(), "bogus".to_string()]).is_err());
+    let said: u64 = ctl(dir, &["pr-comment", &n.to_string(), "published"]).trim().parse().unwrap();
+    assert_eq!(call(dir, cwd, "GET", &format!("issues/comments/{said}"), None)["user"]["login"], "operator");
     let issue = call(dir, cwd, "POST", &format!("issues/{n}/comments"), Some(json!({"body": "closeout"})));
-    assert_eq!(call(dir, cwd, "GET", &format!("issues/{n}/comments"), None)[0]["body"], "closeout");
+    assert_eq!(call(dir, cwd, "GET", &format!("issues/{n}/comments"), None)[1]["body"], "closeout");
     let one = call(dir, cwd, "GET", &format!("issues/comments/{}", issue["id"]), None);
     assert!(one["issue_url"].as_str().unwrap().ends_with(&format!("{n}")));
 
+    let missing = ["api", &format!("{REPO}/issues/comments/99999")].map(String::from).to_vec();
+    assert_eq!(gh::run(dir, cwd, &missing).unwrap().code, 1);
     assert_eq!(call(dir, cwd, "GET", &format!("pulls/{n}"), None)["state"], "open");
     ctl(dir, &["pr-close", &n.to_string()]);
     let closed = call(dir, cwd, "GET", &format!("pulls/{n}"), None);

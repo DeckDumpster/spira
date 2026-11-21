@@ -496,13 +496,11 @@ fn pr_target(st: &mut State, f: &Flags) -> R<u64> {
 fn pr_close(st: &mut State, args: &[String]) -> R<Out> {
     let f = parse(args, &[("--comment", "-c")], &["--delete-branch", "-d"])?;
     let n = pr_target(st, &f)?;
-    let now = st.now();
     let p = st.find("prs", "number", &json!(n)).ok_or("no such pull request")?;
     if p["state"] != "OPEN" {
         return Ok(Out { code: 1, stdout: Vec::new(), stderr: format!("Pull request #{n} is already {}\n", p["state"].as_str().unwrap_or("").to_lowercase()) });
     }
-    p["state"] = json!("CLOSED");
-    p["closedAt"] = json!(now);
+    st.pr_close(n)?;
     Ok(Out { code: 0, stdout: Vec::new(), stderr: format!("✓ Closed pull request #{n}\n") })
 }
 
