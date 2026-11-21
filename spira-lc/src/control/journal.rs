@@ -131,6 +131,8 @@ pub struct Carried {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Turn {
     pub state: Vec<StateRow>,
+    /// (task, skey) of state rows to delete.
+    pub cleared: Vec<(String, String)>,
     pub effects: Vec<EffectRow>,
     pub schedules: Vec<ScheduleRow>,
     pub resolved: Vec<String>,
@@ -195,6 +197,9 @@ impl<B: Backend> Store<B> {
             };
             for r in &turn.state {
                 one(vec![], vec![(keys::runtime(STATE, &[&r.task, &r.skey]), Some(Object::new(json!({ "task": r.task, "skey": r.skey, "value": r.value, "at": r.at }))))]);
+            }
+            for (task, skey) in &turn.cleared {
+                one(vec![], vec![(keys::runtime(STATE, &[task, skey]), None)]);
             }
             for e in &turn.effects {
                 let row = json!({ "task": e.task, "ekey": e.ekey, "request_id": e.request_id, "stream": e.stream, "spec": e.spec, "requested_at": e.requested_at, "deadline_at": e.deadline_at });

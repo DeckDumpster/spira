@@ -47,6 +47,10 @@ pub(crate) fn within_widths(turn: &Turn) -> Result<()> {
             return Err(RuntimeError::refused(format!("journal: state {}/{} holds a NUL", s.task, s.skey)));
         }
     }
+    for (task, skey) in &turn.cleared {
+        within("state task", task, TASK_MAX)?;
+        within("state key", skey, KEY_MAX)?;
+    }
     for e in &turn.effects {
         within("effect task", &e.task, TASK_MAX)?;
         within("effect key", &e.ekey, KEY_MAX)?;

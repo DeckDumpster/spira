@@ -406,7 +406,11 @@ impl Engine {
                 if row.skey == CARRY_KEY {
                     legacy.insert(row.task.clone(), row);
                 } else {
-                    keyed.entry(row.task.clone()).or_default().insert(row.skey, row.value);
+                    if row.value.is_empty() {
+                        e.turn.cleared.push((row.task.clone(), row.skey));
+                    } else {
+                        keyed.entry(row.task.clone()).or_default().insert(row.skey, row.value);
+                    }
                 }
                 continue;
             }
@@ -1175,15 +1179,13 @@ impl Engine {
     fn stage_state(&mut self) {
         let at = self.clock.now_ms();
         let mut changed: Vec<(String, String, String, String)> = vec![];
+        let mut dropped: Vec<(String, String)> = vec![];
         for task in std::mem::take(&mut self.dirty_carry) {
             if let Some(codec) = self.codecs.get(&task).copied() {
                 let body = std::iter::once(codec.stream).chain(codec.also.iter().copied()).filter_map(|s| self.carries.get(&task)?.get(&(s.to_string(), codec.tag.to_string()))).max_by_key(|e| e.at).map(|e| e.kind.body.clone()).unwrap_or_default();
                 let mut rows = (codec.split)(&body);
-                for ((t, k), sig) in &self.kept {
-                    if t == &task && !sig.is_empty() && sig != LEGACY_SPENT && k != CARRY_KEY && !rows.contains_key(k) {
-                        rows.insert(k.clone(), String::new());
-                    }
-                }
+                let held = self.kept.iter().filter(|(_, sig)| !sig.is_empty() && *sig != LEGACY_SPENT).map(|(key, _)| key).chain(self.staged.keys());
+                dropped.extend(held.filter(|(t, k)| t == &task && k != CARRY_KEY && !rows.contains_key(k)).cloned());
                 if self.kept.get(&(task.clone(), CARRY_KEY.into())).is_some_and(|s| s != LEGACY_SPENT) {
                     rows.insert(CARRY_KEY.into(), LEGACY_SPENT.into());
                 }
@@ -1200,8 +1202,16 @@ impl Engine {
             changed.push((SCHEDULER_TASK.into(), HALTED_KEY.into(), halted.clone(), halted));
             changed.push((SCHEDULER_TASK.into(), HELD_KEY.into(), held.clone(), held));
         }
+        for key in dropped {
+            self.turn.state.retain(|r| !(r.task == key.0 && r.skey == key.1));
+            self.staged.remove(&key);
+            if !self.turn.cleared.contains(&key) {
+                self.turn.cleared.push(key);
+            }
+        }
         for (task, skey, value, sig) in changed {
             let key = (task.clone(), skey.clone());
+            self.turn.cleared.retain(|c| c != &key);
             self.turn.state.retain(|r| !(r.task == task && r.skey == skey));
             self.staged.remove(&key);
             if self.kept.get(&key) != Some(&sig) {
@@ -1237,6 +1247,10 @@ impl Engine {
         self.journal.commit(&self.turn)?;
         let turn = std::mem::take(&mut self.turn);
         self.committed.extend(turn.effects.iter().map(|e| e.request_id.clone()));
+        for key in turn.cleared {
+            self.kept.remove(&key);
+            self.staged.remove(&key);
+        }
         for s in turn.state {
             let key = (s.task, s.skey);
             if let Some(sig) = self.staged.remove(&key) {

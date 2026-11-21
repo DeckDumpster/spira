@@ -154,6 +154,13 @@ pub fn turn_of(turn: &Value) -> Result<Turn, String> {
     for r in list(turn, "state")? {
         out.state.push(state_row(r)?);
     }
+    for r in list(turn, "cleared")? {
+        let pair = r.as_array().filter(|a| a.len() == 2).and_then(|a| Some((a[0].as_str()?, a[1].as_str()?)));
+        let (task, skey) = pair.ok_or_else(|| format!("journal: turn refused: a cleared key is not a [task, skey] pair: {}", clip(&r.to_string())))?;
+        check_text("turn", "task", task, TASK_MAX)?;
+        check_text("turn", "skey", skey, KEY_MAX)?;
+        out.cleared.push((task.into(), skey.into()));
+    }
     for r in list(turn, "effects")? {
         out.effects.push(effect_row(r)?);
     }
@@ -382,6 +389,8 @@ mod tests {
             json!({"resolved": [""]}),
             json!({"fired": [7]}),
             json!({"state": {"task": "t"}}),
+            json!({"cleared": [["t"]]}),
+            json!({"cleared": [["t", "k".repeat(256)]]}),
             json!({"state": [{"task": "t", "skey": "carry", "value": "v", "at": 1}], "fired": [""]}),
         ] {
             assert!(turn_of(&bad).unwrap_err().starts_with("journal:"), "{bad}");

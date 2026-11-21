@@ -66,6 +66,9 @@ pub struct Turn {
     /// Only the keys whose value changed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub state: Vec<StateRow>,
+    /// (task, skey) of state rows to delete: keys a task's carry no longer holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cleared: Vec<(String, String)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<EffectRow>,
     /// Request ids whose outcome this turn handled.
@@ -79,7 +82,7 @@ pub struct Turn {
 
 impl Turn {
     pub fn is_empty(&self) -> bool {
-        self.state.is_empty() && self.effects.is_empty() && self.resolved.is_empty() && self.schedules.is_empty() && self.fired.is_empty()
+        self.state.is_empty() && self.cleared.is_empty() && self.effects.is_empty() && self.resolved.is_empty() && self.schedules.is_empty() && self.fired.is_empty()
     }
 }
 
@@ -170,6 +173,9 @@ impl Journal for MemJournal {
         let mut m = self.lock();
         for s in &turn.state {
             m.state.insert((s.task.clone(), s.skey.clone()), s.clone());
+        }
+        for key in &turn.cleared {
+            m.state.remove(key);
         }
         for e in &turn.effects {
             m.effects.insert((e.task.clone(), e.ekey.clone()), (e.clone(), false));
