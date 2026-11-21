@@ -286,7 +286,7 @@ mod tests {
         let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
         let t = std::thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            answer_one(stream, &|_| Ok("[]".into())).unwrap();
+            answer_one(stream, &|_| Ok(r#"{"rows":[],"next":null}"#.into())).unwrap();
             drop(listener.accept().unwrap());
         });
         let j = SocketJournal::new(&path, Shipper::start("http://127.0.0.1:9"));
