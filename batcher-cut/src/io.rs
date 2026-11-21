@@ -3259,7 +3259,7 @@ pub fn round_argv(args: &[&str]) -> Vec<String> {
         .map(String::from)
         .collect();
     if args.first().is_some_and(|v| ACTED_VERBS.contains(v)) && !args.contains(&"--by") {
-        all.extend(["--by".to_string(), "batcher".to_string()]);
+        all.extend(["--by".to_string(), BATCHER_ACTOR.to_string()]);
     }
     all
 }
@@ -3800,6 +3800,9 @@ pub fn open_round_id(env: &Env, repo: &Repo) -> Result<Option<String>, String> {
     ))
 }
 
+/// The actor the batcher passes as `--by` to the queue verbs it acts with.
+pub const BATCHER_ACTOR: &str = "batcher";
+
 /// One round `queue round status` lists as open.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OpenRound {
@@ -3815,6 +3818,8 @@ pub struct OpenRound {
     pub red_suites: Vec<String>,
     /// The beads `queue round eject` has taken out of the round, from the record's `ejected` key.
     pub ejected: Vec<String>,
+    /// Who ejected each bead of `ejected`, in the same order, from the record's `ejected_by` key.
+    pub ejected_by: Vec<String>,
     pub age_secs: u64,
 }
 
@@ -3864,6 +3869,7 @@ fn open_round_of(r: &store_view::Round, now: u64) -> OpenRound {
         red: !get("red").is_empty(),
         red_suites: red_suites_of(get("red")),
         ejected: ejected_of(get("ejected")),
+        ejected_by: ejected_of(get("ejected_by")),
         age_secs: get("opened").parse().map_or(0, |t: u64| now.saturating_sub(t)),
     }
 }
@@ -3889,6 +3895,7 @@ fn open_rounds_of(out: &str) -> Vec<OpenRound> {
                 red: !get("red").is_empty(),
                 red_suites: red_suites_of(&get("red")),
                 ejected: ejected_of(&get("ejected")),
+                ejected_by: ejected_of(&get("ejected_by")),
                 age_secs: get("wall_secs").parse().unwrap_or(0),
             })
         })
@@ -6033,7 +6040,7 @@ mod land_exit_tests {
         let round = store_view::Round { phase: "certifying".into(), record };
         assert_eq!(
             open_round_of(&round, 1090),
-            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], tips: vec!["tc".into(), "td".into()], head: "bbb".into(), worktree: "w2".into(), phase: "certifying".into(), red: true, red_suites: vec!["test-x.sh".into()], ejected: vec![], age_secs: 90 }
+            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], tips: vec!["tc".into(), "td".into()], head: "bbb".into(), worktree: "w2".into(), phase: "certifying".into(), red: true, red_suites: vec!["test-x.sh".into()], ejected: vec![], ejected_by: vec![], age_secs: 90 }
         );
     }
 
@@ -6059,6 +6066,12 @@ mod land_exit_tests {
         let out = "round=open\nbatch_id=r1\nejected=sp-a sp-b \nround2=open\nround2_batch_id=r2\nround2_ejected=sp-c \n";
         let rounds = open_rounds_of(out);
         assert_eq!((rounds[0].ejected.clone(), rounds[1].ejected.clone()), (vec!["sp-a".to_string(), "sp-b".to_string()], vec!["sp-c".to_string()]));
+    }
+
+    #[test]
+    fn status_lists_who_ejected_each_ejected_bead_in_order() {
+        let out = "round=open\nbatch_id=r1\nejected=sp-a sp-b \nejected_by=batcher concierge \n";
+        assert_eq!(open_rounds_of(out)[0].ejected_by, ["batcher", "concierge"]);
     }
 }
 

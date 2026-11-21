@@ -5033,6 +5033,9 @@ fn eject(
         |acc, m| format!("{acc}{} ", m.id),
     );
     set(&mut kv, "ejected", &ejected);
+    let owed = ejected.split_whitespace().count() - kv.get("ejected_by").unwrap_or("").split_whitespace().count();
+    let ejected_by = format!("{}{}", kv.get("ejected_by").unwrap_or(""), format!("{by} ").repeat(owed));
+    set(&mut kv, "ejected_by", &ejected_by);
     if !rebuild {
         let tips = stacked.iter().fold(
             format!("{}{id}:{ejected_tip} ", kv.get(EJECTED_TIPS).unwrap_or("")),
