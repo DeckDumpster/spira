@@ -293,6 +293,26 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 [ "$rc" -eq 0 ]
 "#;
 
+/// The round's cargo environment, spliced into the round's phases and the attribution probes
+/// alike so a probe cannot lack a tool the phase it re-runs has.
+macro_rules! unit_env_fn {
+    () => {
+        r#"unit_env() {
+    env -i HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+        CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="${RUSTC_WRAPPER:-}" SCCACHE_IGNORE_SERVER_IO_ERROR=1 SCCACHE_SERVER_PORT="${SCCACHE_SERVER_PORT:-4226}" \
+        SCCACHE_WEBDAV_ENDPOINT="${SCCACHE_WEBDAV_ENDPOINT:-}" SCCACHE_WEBDAV_KEY_PREFIX="${SCCACHE_WEBDAV_KEY_PREFIX:-}" \
+        ${CARGO_TARGET_DIR:+CARGO_TARGET_DIR="$CARGO_TARGET_DIR"} \
+        GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
+        cargo "$@"
+}
+"#
+    };
+}
+pub(crate) use unit_env_fn;
+
+#[cfg(test)]
+pub(crate) const UNIT_ENV_FN: &str = unit_env_fn!();
+
 /// The VM side of a round. The VM is a LAUNCHER (design runtime-is-a-release, sp-dvfea): it
 /// builds the round's tree, stages that build as a release (`release build --bin-dir`, the
 /// same layout production and GitHub CI run, sp-6cbna) and sets `SPIRA_RELEASE` and `PATH`
@@ -601,14 +621,7 @@ echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
 # THE UNIT-TEST BINARIES COMPILE HERE, in the build phase and outside the suite clock; the unit
 # run below is the same command, which then compiles nothing. A scrubbed environment: the
 # launcher's SPIRA_RELEASE/SPIRA_REPO/PATH leak into tests that resolve configuration.
-unit_env() {
-    env -i HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
-        CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 SCCACHE_SERVER_PORT="${SCCACHE_SERVER_PORT:-4226}" \
-        SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
-        GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
-        cargo "$@"
-}
-unit_cargo() {
+"#, unit_env_fn!(), r#"unit_cargo() {
     unit_env "#, spira_config::unit_tier_build!("unittest", "--workspace"), r#"
 }
 write_unit_nextest_config() {
@@ -808,7 +821,7 @@ if [ "$got" != "$SPIRA_RELEASE/bin/spira-config" ]; then
 fi
 # The attribution reruns (spool.rs REMOTE_ATTR_SCRIPT) source this and run the batch, which
 # refuses without the round's config: SPIRA_TOML rides with the release (sp-anhnd6).
-printf 'export SPIRA_RELEASE=%q\nexport SPIRA_HOME=%q\nexport SPIRA_REPO=%q\nexport SPIRA_TOML=%q\nexport PATH=%q\n' "$SPIRA_RELEASE" "$SPIRA_HOME" "$SPIRA_REPO" "$SPIRA_TOML" "$PATH" > ~/round-launcher.env
+printf 'export SPIRA_RELEASE=%q\nexport SPIRA_HOME=%q\nexport SPIRA_REPO=%q\nexport SPIRA_TOML=%q\nexport PATH=%q\nexport CARGO_HOME=%q\nexport RUSTC_WRAPPER=%q\nexport SCCACHE_SERVER_PORT=%q\nexport SCCACHE_WEBDAV_ENDPOINT=%q\nexport SCCACHE_WEBDAV_KEY_PREFIX=%q\n' "$SPIRA_RELEASE" "$SPIRA_HOME" "$SPIRA_REPO" "$SPIRA_TOML" "$PATH" "${CARGO_HOME:-}" "${RUSTC_WRAPPER:-}" "${SCCACHE_SERVER_PORT:-4226}" "${SCCACHE_WEBDAV_ENDPOINT:-}" "${SCCACHE_WEBDAV_KEY_PREFIX:-}" > ~/round-launcher.env
 printf '%s' "$deny_list" > ~/round-deny-list
 export SPIRA_TEST_DENY_LIST="$HOME/round-deny-list"
 printf 'export SPIRA_TEST_DENY_LIST=%q\n' "$SPIRA_TEST_DENY_LIST" >> ~/round-launcher.env
