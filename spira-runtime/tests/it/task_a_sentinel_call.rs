@@ -258,24 +258,21 @@ fn the_carry_keeps_room_since_across_passes_with_room_and_a_full_pass_clears_it(
 // ---------------------------------------------------------------------------------------------
 // sp-yui1x5: a session is held only by the bound classes its rune declares.
 
-/// Each named rune's call settings read from the shipped rune files, as `observe` reads them.
+/// Each named rune's call settings parsed from the checkout's rune files. Parsed by path, never
+/// through `runes_dir`: that resolves `SPIRA_TOML`, which a sibling test in this process may have
+/// pointed at the complete fixture, whose runes directory does not exist.
 fn shipped_runes(names: &[&str]) -> BTreeMap<String, RuneCfg> {
-    let home = testkit::TempDir::new("sentinel-call-shipped-runes");
-    let dir = spira_config::runes::runes_dir(&home);
-    std::fs::create_dir_all(&dir).unwrap();
-    for n in names {
-        std::fs::copy(testkit::manifest_dir().join("../spira/runes").join(format!("{n}.rune")), dir.join(format!("{n}.rune"))).unwrap();
-    }
-    let get = |n: &str, k: &str, d: &str| spira_config::runes::rune_get(&home, n, k, d);
+    let dir = testkit::manifest_dir().join("../spira/runes");
     names
         .iter()
         .map(|n| {
-            let cfg = RuneCfg {
-                single_flight: get(n, "RUNE_SINGLE_FLIGHT", "0") == "1",
-                elastic: get(n, "RUNE_ELASTIC", "0") == "1",
-                uses: spira_config::runes::rune_uses(&home, n).unwrap(),
-                reactive: get(n, "RUNE_REACTIVE", "0") == "1",
-            };
+            let f = dir.join(format!("{n}.rune"));
+            let text = std::fs::read_to_string(&f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
+            let vars = spira_config::rune_file::parse(&f.to_string_lossy(), &text, &|_| None).unwrap();
+            let get = |k: &str| vars.get(k).cloned().unwrap_or_default();
+            let uses: Vec<String> = get("RUNE_USES").split_whitespace().map(str::to_string).collect();
+            assert!(uses.iter().all(|u| spira_config::runes::RESOURCE_CLASSES.contains(&u.as_str())), "{n}: {uses:?}");
+            let cfg = RuneCfg { single_flight: get("RUNE_SINGLE_FLIGHT") == "1", elastic: get("RUNE_ELASTIC") == "1", uses, reactive: get("RUNE_REACTIVE") == "1" };
             (n.to_string(), cfg)
         })
         .collect()

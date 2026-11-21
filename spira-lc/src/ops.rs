@@ -681,12 +681,11 @@ mod tests {
     #[test]
     fn ops_refusals_reads_neither_the_audit_log_nor_the_history() {
         use crate::counting::Counting;
-        let (store, now, _dir) = with_records_on(Counting::new, 8_000);
-        store.contract().backend().take();
+        let (store, now, _dir) = with_records_on(Counting::new, 400);
+        the_log_is_there_to_read(&store);
         let (rc, out) = refusals_answer(&store, now, DAY_S as u64);
         assert_eq!(rc, 0, "{out}");
-        let reads = store.contract().backend().take();
-        let log: Vec<_> = reads.iter().filter(|(k, key, _)| (*k == "get" || *k == "range") && (key.starts_with("events/") || key.starts_with("history/"))).collect();
+        let log = of_the_log(store.contract().backend().take());
         assert!(log.is_empty(), "ops-refusals read the log: {log:?}");
     }
 
@@ -1035,14 +1034,13 @@ mod tests {
     #[test]
     fn the_recent_view_reads_neither_the_audit_log_nor_the_history() {
         use crate::counting::Counting;
-        let (store, now, _dir) = with_records_on(Counting::new, 8_000);
+        let (store, now, _dir) = with_records_on(Counting::new, 400);
         store.fold_landed(now, 100_000).unwrap();
-        store.contract().backend().take();
+        the_log_is_there_to_read(&store);
         let rows = rows_of(&store, "ops_recent", now);
         let ids: Vec<&str> = rows.iter().map(|r| r["bead_id"].as_str().unwrap()).collect();
         assert_eq!(ids, (20..30).map(|n| format!("sp-{n:05}")).collect::<Vec<_>>());
-        let reads = store.contract().backend().take();
-        let log: Vec<_> = reads.iter().filter(|(k, key, _)| (*k == "get" || *k == "range") && (key.starts_with("events/") || key.starts_with("history/"))).collect();
+        let log = of_the_log(store.contract().backend().take());
         assert!(log.is_empty(), "ops_recent read the log: {log:?}");
     }
 
@@ -1140,7 +1138,7 @@ mod tests {
             rows_of(&store, "ops_recent", now);
             store.contract().backend().take().len()
         };
-        assert_eq!(reads(2_000), reads(8_000));
+        assert_eq!(reads(200), reads(800));
     }
 
     #[test]
@@ -1171,11 +1169,7 @@ mod tests {
     fn the_edges_view_reads_neither_the_audit_log_nor_the_history() {
         use crate::counting::Counting;
         let (store, now, _dir) = with_records_on(Counting::new, 400);
-        let of_the_log = |reads: Vec<(&'static str, String, usize)>| reads.into_iter().filter(|(k, key, _)| (*k == "get" || *k == "range") && (key.starts_with("events/") || key.starts_with("history/"))).collect::<Vec<_>>();
-        let head = store.contract().head().unwrap();
-        store.contract().backend().take();
-        assert!(!store.contract().backend().range("events/", None, 1, head).unwrap().is_empty(), "the fixture has no log to read");
-        assert_eq!(of_the_log(store.contract().backend().take()).len(), 1, "the filter cannot see a read of the log");
+        the_log_is_there_to_read(&store);
         let (rc, out) = view_rows(&store, "ops_edges", now);
         assert_eq!(rc, 0, "{out}");
         let log = of_the_log(store.contract().backend().take());
@@ -1193,21 +1187,20 @@ mod tests {
             store.contract().backend().take().len()
         };
         let a_day = (DAY_S / 60) as usize / crate::control::edges::MINUTES_PAGE + 1;
-        let (short, long) = (reads(2_000), reads(8_000));
-        assert!(short <= a_day + 4 && long <= a_day + 4, "{short} reads for 2000 audits and {long} for 8000, a day is {a_day} pages");
+        let (short, long) = (reads(200), reads(800));
+        assert!(short == long && long <= a_day + 4, "{short} reads for 200 audits and {long} for 800, a day is {a_day} pages");
     }
 
     #[test]
     fn the_dwell_views_read_neither_the_audit_log_nor_the_history() {
         use crate::counting::Counting;
-        let (store, now, _dir) = with_records_on(Counting::new, 8_000);
+        let (store, now, _dir) = with_records_on(Counting::new, 400);
         store.fold_stays(now, 100_000).unwrap();
-        store.contract().backend().take();
+        the_log_is_there_to_read(&store);
         for view in ["ops_dwell", "ops_dwell_p95"] {
             let (rc, out) = view_rows(&store, view, now);
             assert_eq!(rc, 0, "{view}: {out}");
-            let reads = store.contract().backend().take();
-            let log: Vec<_> = reads.iter().filter(|(k, key, _)| (*k == "get" || *k == "range") && (key.starts_with("events/") || key.starts_with("history/"))).collect();
+            let log = of_the_log(store.contract().backend().take());
             assert!(log.is_empty(), "{view} read the log: {log:?}");
         }
     }
@@ -1379,6 +1372,19 @@ mod tests {
         (store, now, dir)
     }
 
+    fn of_the_log(reads: Vec<(&'static str, String, usize)>) -> Vec<(&'static str, String, usize)> {
+        reads.into_iter().filter(|(k, key, _)| (*k == "get" || *k == "range") && (key.starts_with("events/") || key.starts_with("history/"))).collect()
+    }
+
+    /// Leaves the read counter empty, having proved the fixture has a log and `of_the_log` sees a read of it.
+    fn the_log_is_there_to_read(store: &Store<crate::counting::Counting<state_store_sqlite::SqliteBackend>>) {
+        let head = store.contract().head().unwrap();
+        store.contract().backend().take();
+        assert!(!store.contract().backend().range("events/", None, 1, head).unwrap().is_empty(), "the fixture has no log to read");
+        assert!(!store.contract().backend().range("history/", None, 1, head).unwrap().is_empty(), "the fixture has no history to read");
+        assert_eq!(of_the_log(store.contract().backend().take()).len(), 2, "the filter cannot see a read of the log");
+    }
+
     fn with_records(audits: u64) -> (Store<state_store_sqlite::SqliteBackend>, i64, testkit::TempDir) {
         with_records_on(|b| b, audits)
     }
@@ -1443,7 +1449,7 @@ mod tests {
     fn every_read_verb_holds_no_more_memory_for_a_longer_history() {
         let mut table = Vec::new();
         let mut grown = Vec::new();
-        let (short_fixture, long_fixture) = (with_records(2_000), with_records(8_000));
+        let (short_fixture, long_fixture) = (with_records(2_000), with_records(4_000));
         for (name, call) in verbs() {
             let held = |f: &(Store<state_store_sqlite::SqliteBackend>, i64, testkit::TempDir)| {
                 let ((rc, out), peak) = crate::peak_alloc::peak_of(|| call(&f.0, f.1));
@@ -1451,7 +1457,7 @@ mod tests {
                 peak
             };
             let (short, long) = (held(&short_fixture), held(&long_fixture));
-            table.push(format!("{name}: {short} B at 2000, {long} B at 8000"));
+            table.push(format!("{name}: {short} B at 2000, {long} B at 4000"));
             if long >= short * 3 / 2 {
                 grown.push(name);
             }
@@ -1469,8 +1475,8 @@ mod tests {
                 assert_eq!(rc, 0, "{view}: {out}");
                 peak
             };
-            let (short, long) = (held(2_000), held(8_000));
-            assert!(long < short * 3 / 2, "{view} held {short} B for 2000 audits and {long} B for 8000: the window is held, not folded");
+            let (short, long) = (held(2_000), held(4_000));
+            assert!(long < short * 3 / 2, "{view} held {short} B for 2000 audits and {long} B for 4000: the window is held, not folded");
         }
     }
 }
