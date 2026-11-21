@@ -160,31 +160,34 @@ fn gate_environment_runner(fixture_home: &Path, release: &Path, tail: &str, args
         .expect("the runner spawns")
 }
 
+const AROUND_CMD: &str = "spira-sandbox-fixture-cmd";
+
+fn fixture_command(home: &Path) {
+    let stub = home.join("toolchain/bin").join(AROUND_CMD);
+    fs::create_dir_all(stub.parent().unwrap()).unwrap();
+    fs::create_dir_all(home.join(".cargo/bin")).unwrap();
+    testkit::write_exe(&stub, "#!/bin/sh\nexit 0\n");
+    std::os::unix::fs::symlink(&stub, home.join(".cargo/bin").join(AROUND_CMD)).unwrap();
+}
+
 #[test]
-fn around_finds_the_cargo_the_gate_path_names_and_binds_its_toolchain_under_a_hidden_home() {
-    let real = PathBuf::from(std::env::var("CARGO").expect("cargo sets CARGO for a test"));
+fn around_finds_the_command_the_gate_path_names_and_binds_its_toolchain_under_a_hidden_home() {
     let tmp = testkit::TempDir::new("around-gate-env");
     let home = fs::canonicalize(tmp.path()).unwrap().join("home");
     let release = tmp.path().join("release");
-    fs::create_dir_all(home.join(".cargo/bin")).unwrap();
     fs::create_dir_all(&release).unwrap();
-    std::os::unix::fs::symlink(&real, home.join(".cargo/bin/cargo")).unwrap();
+    fixture_command(&home);
     let tail = format!("{}/.cargo/bin", home.display());
-    let out = gate_environment_runner(&home, &release, &tail, &["--print-args", "--around", "cargo", "--version"]);
+    let out = gate_environment_runner(&home, &release, &tail, &["--print-args", "--around", AROUND_CMD, "--version"]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let args: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect();
-    let cargo = format!("{}/.cargo/bin/cargo", home.display());
-    assert_eq!(&args[args.len() - 3..], ["--", cargo.as_str(), "--version"], "{args:?}");
+    let cmd = format!("{}/.cargo/bin/{AROUND_CMD}", home.display());
+    assert_eq!(&args[args.len() - 3..], ["--", cmd.as_str(), "--version"], "{args:?}");
     let hidden = home.display().to_string();
-    let shadow = args.iter().position(|a| a == "--tmpfs").and_then(|_| args.windows(2).position(|w| w[0] == "--tmpfs" && w[1] == hidden)).expect("the home is shadowed");
-    let toolchain = fs::canonicalize(&real).unwrap();
-    let bound = |dir: &str| args.windows(3).enumerate().any(|(i, w)| i > shadow && w[0] == "--ro-bind" && w[1] == dir && w[2] == dir);
-    let bin = format!("{hidden}/.cargo/bin");
-    let root = toolchain.parent().unwrap().parent().unwrap().display().to_string();
-    assert!(bound(&bin) || bound(&root), "cargo's directory is bound back after the home tmpfs: {args:?}");
-    if toolchain.file_name().is_some_and(|n| n == "cargo") {
-        assert!(bound(&root), "the toolchain cargo links to is bound back: {args:?}");
-    }
+    let shadow = args.windows(2).position(|w| w[0] == "--tmpfs" && w[1] == hidden).expect("the home is shadowed");
+    let root = format!("{hidden}/toolchain");
+    let at = args.windows(3).position(|w| w[0] == "--ro-bind" && w[1] == root && w[2] == root).expect("the toolchain is bound back");
+    assert!(at > shadow, "{args:?}");
 }
 
 fn cargo_config_fixture(name: &str) -> (testkit::TempDir, PathBuf) {
@@ -217,9 +220,9 @@ fn around_binds_the_cargo_config_back_read_only_and_never_the_credentials() {
     let (tmp, home) = cargo_config_fixture("around-cargo-config");
     let release = tmp.path().join("release");
     fs::create_dir_all(&release).unwrap();
-    std::os::unix::fs::symlink(std::env::var("CARGO").unwrap(), home.join(".cargo/bin/cargo")).unwrap();
+    fixture_command(&home);
     let tail = format!("{}/.cargo/bin", home.display());
-    let out = gate_environment_runner(&home, &release, &tail, &["--print-args", "--around", "cargo", "--version"]);
+    let out = gate_environment_runner(&home, &release, &tail, &["--print-args", "--around", AROUND_CMD, "--version"]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let args: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect();
     assert_config_bound_after_shadow_and_credentials_not(&args, &home);
@@ -249,10 +252,10 @@ fn around_without_the_command_on_path_is_no_verdict_and_names_the_path() {
     let release = tmp.path().join("release");
     fs::create_dir_all(&home).unwrap();
     fs::create_dir_all(&release).unwrap();
-    let out = gate_environment_runner(&home, &release, "", &["--around", "cargo", "--version"]);
+    let out = gate_environment_runner(&home, &release, "", &["--around", AROUND_CMD, "--version"]);
     assert_eq!(out.status.code(), Some(75), "{}", String::from_utf8_lossy(&out.stderr));
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("cargo is not on PATH") && err.contains(&release.display().to_string()), "{err}");
+    assert!(err.contains(&format!("{AROUND_CMD} is not on PATH")) && err.contains(&release.display().to_string()), "{err}");
 }
 
 #[test]
