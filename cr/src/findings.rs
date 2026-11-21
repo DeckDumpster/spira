@@ -107,7 +107,7 @@ fn findings_path(run: &Path, number: u32) -> PathBuf {
     record::dir(run, number).join("findings.jsonl")
 }
 
-fn load(run: &Path, number: u32) -> Result<Vec<Finding>, String> {
+pub(crate) fn load(run: &Path, number: u32) -> Result<Vec<Finding>, String> {
     let path = findings_path(run, number);
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -115,10 +115,6 @@ fn load(run: &Path, number: u32) -> Result<Vec<Finding>, String> {
         Err(e) => return Err(format!("reading {}: {e}", path.display())),
     };
     text.lines().filter(|l| !l.trim().is_empty()).map(|l| serde_json::from_str(l).map_err(|e| format!("{}: {e}", path.display()))).collect()
-}
-
-pub(crate) fn kept(run: &Path, number: u32) -> Result<Vec<Finding>, String> {
-    load(run, number)
 }
 
 fn save(run: &Path, number: u32, rows: &[Finding]) -> Result<(), String> {

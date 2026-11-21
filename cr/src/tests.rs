@@ -635,3 +635,10 @@ fn attention_does_not_move_the_rotation_of_kinds() {
         assert_eq!(v["stratum"]["kind"], "trait");
     }
 }
+
+#[test]
+fn the_weight_line_names_his_comments_in_the_candidates_area() {
+    let p = ports_with(fixture(), attended(&[("demo/src/old.rs", 3)]), cfg());
+    let o = go(&p, &["pick", "--aim", "demo/src/store.rs"]);
+    assert!(o.stdout.contains("x attention 2.000 (3 of his 3 comments in demo)"), "{}", o.stdout);
+}

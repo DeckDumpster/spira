@@ -251,7 +251,7 @@ fn attention_of(ports: &Ports, number: u32) -> Result<Attention, String> {
             *a.comments_by_path.entry(p.clone()).or_default() += 1;
         }
     }
-    for f in crate::findings::kept(&ports.run_dir, number)? {
+    for f in crate::findings::load(&ports.run_dir, number)? {
         *a.finding_kinds.entry(f.kind.as_str().to_string()).or_default() += 1;
     }
     Ok(a)
