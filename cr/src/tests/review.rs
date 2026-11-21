@@ -914,3 +914,13 @@ fn an_unreadable_incident_lookup_says_unknown_not_none() {
     let body = sealed_body(&mut w);
     assert!(body.contains("Incidents: unknown (store down)") && !body.contains("None found.\n\n## Tests"), "{body}");
 }
+
+#[test]
+fn a_unit_whose_commits_name_no_bead_says_none_found_without_asking_the_store() {
+    let mut w = world();
+    w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", vec![commit("a1", "tidy", false)]));
+    w.ports.beads = Box::new(FixtureBeads(Ok(Default::default()), Err("store down".into())));
+    let body = sealed_body(&mut w);
+    let section = body.split("## Incidents that touched it").nth(1).unwrap().split("\n## ").next().unwrap();
+    assert!(section.contains("None found.") && !body.contains("Incidents: unknown"), "{body}");
+}
