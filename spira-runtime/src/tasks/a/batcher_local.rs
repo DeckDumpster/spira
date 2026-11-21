@@ -56,7 +56,6 @@
 //! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
 //! | Corpus, Attributing, Certifying | observe: the round's open round is green on the carried head | Landing (`land`), or Certified when stacked; the carried leg is stopped in the same tick |
 //! | Attributing | observe: the round's record no longer holds a member the leg carries (ejected by another actor; the batcher's own ejects are the leg's work and leave it running) | Certifying for the record's survivors at its head, certify held until no pass runs; the attribution leg is stopped |
-//! | Attributing | observe: the round's record no longer holds a member the leg carries (ejected by another actor; the batcher's own ejects are the leg's work and leave it running) | Certifying for the record's survivors at its head, certify held until no pass runs; the attribution leg is stopped |
 //! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
