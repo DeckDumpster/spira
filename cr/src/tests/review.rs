@@ -967,7 +967,7 @@ impl World {
 }
 
 fn staged_sink_world() -> (World, String, String) {
-    let mut w = world();
+    let w = world();
     assert_eq!(w.cr(&["open", "--aim", "Sink", "--seed", "3"]).code, 0);
     w.good_pr();
     let stdin = comments_on(SINK);
