@@ -152,6 +152,14 @@ mod tests {
     }
 
     #[test]
+    fn a_touched_success_after_a_pending_failure_counts_both_requests() {
+        let mut f = Followups::default();
+        f.observe(S(0), "work", "plan", true, 2);
+        f.observe(S(1), "work", "plan", true, 0);
+        assert_eq!(f.answered["work"], 2);
+    }
+
+    #[test]
     fn an_untouched_request_counts_nothing() {
         let mut f = Followups::default();
         f.observe(S(0), "work", "plan", false, 0);
