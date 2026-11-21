@@ -171,7 +171,7 @@ pub fn draft_trailer_refusals(notes: &str) -> Vec<String> {
             let (title, body) = d.split_once('\n').unwrap_or((d, ""));
             let after_open = body.lines().skip_while(|l| !l.starts_with("Open:")).skip(1);
             let line = after_open.map(str::trim).find(|l| !l.is_empty() && !l.starts_with(HARNESS_SUBMIT_NOTE))?;
-            Some(format!("draft \"{}\": after its Open: line comes `{line}`; a correction is the whole draft again as a new note, never a paragraph after one", title.trim()))
+            Some(format!("draft \"{}\": after its Open: line comes `{line}`; a correction is the whole draft again as a new note, never a paragraph after one; keep `Open:` on one line", title.trim()))
         })
         .collect()
 }
@@ -368,8 +368,10 @@ pub fn skuld_drafted(title: &str, body: &str, skuld_label: &str, request: &str, 
     });
     if held {
         Ok(())
-    } else if let Some(at) = notes.find(&wanted) {
-        let line = notes[at + wanted.len()..].lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    } else if let Some(line) = notes.match_indices(&wanted).find_map(|(at, m)| {
+        let rest = &notes[at + m.len()..];
+        rest.starts_with('\n').then(|| rest.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string)).flatten()
+    }) {
         Err(format!("a `### Draft: {}` note on {request} holds this body, but the note continues with `{line}`; ask Skuld to resend the whole draft; {how}", title.trim()))
     } else {
         Err(format!("no `### Draft: {}` note on {request} holds this body verbatim; {how}", title.trim()))
@@ -1028,6 +1030,8 @@ mod tests {
         let notes = "### Draft: T\n\nbody\n\nCorrection to T: fixed.\n";
         let err = skuld_drafted("T", "body", "draft", "sp-r", &l, notes).unwrap_err();
         assert!(err.contains("continues with `Correction to"), "{err}");
+        let err = skuld_drafted("T", "body", "draft", "sp-r", &l, "### Draft: T\n\nbody line\n").unwrap_err();
+        assert!(err.contains("holds this body verbatim"), "{err}");
     }
 
     #[test]
