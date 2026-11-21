@@ -67,7 +67,7 @@ fn the_verb_reads_a_real_diff_into_a_plan() {
     std::fs::write(d.join("round-vm/ami-setup.sh"), "apt-get install -y curl git\nsystemctl enable ssh\n").unwrap();
     git(d, &["commit", "-qam", "apt"]);
     let verb = |base: &str| {
-        let o = std::process::Command::new(env!("CARGO_BIN_EXE_round-vm")).args(["preflight-plan", "--tree"]).arg(d).args(["--base", base, "--head", "HEAD"]).output().unwrap();
+        let o = std::process::Command::new(testkit::bin_exe("round-vm")).args(["preflight-plan", "--tree"]).arg(d).args(["--base", base, "--head", "HEAD"]).output().unwrap();
         (o.status.code(), String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned())
     };
     let (rc, out, _) = verb("HEAD~1");
