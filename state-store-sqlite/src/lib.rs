@@ -104,6 +104,14 @@ pub const CHECKPOINT_EVERY: u64 = JUMP / 4;
 pub const UNCHECKPOINTED_GAUGE: &str = "spira_state_store_uncheckpointed_commits";
 /// The control store's WAL file size in bytes, pushed beside [`UNCHECKPOINTED_GAUGE`].
 pub const WAL_BYTES_GAUGE: &str = "spira_state_store_wal_bytes";
+/// Restarts of the WAL that finished, counted per push (sum over a window to count).
+pub const WAL_RESETS_COMPLETED: &str = "spira_state_store_wal_resets_completed";
+/// Restarts that gave up with a read still in flight.
+pub const WAL_RESETS_GIVEN_UP: &str = "spira_state_store_wal_resets_given_up";
+/// Restarts that finished having held the read gate past the WAL line.
+pub const WAL_FORCED_RESETS: &str = "spira_state_store_wal_forced_resets";
+/// Restarts past the WAL line that gave up with a read still in flight.
+pub const WAL_FORCED_GIVEN_UP: &str = "spira_state_store_wal_forced_given_up";
 const GAUGE_EVERY: Duration = Duration::from_secs(60);
 const RESTART_POLL: Duration = Duration::from_millis(1);
 const GATE_HOLD: Duration = Duration::from_millis(50);
@@ -155,10 +163,11 @@ struct RestartTerms<'a> {
 /// to drain with `gate` held, so no new read starts meanwhile: for `GATE_HOLD` while the WAL
 /// holds at most `line` bytes, and past `line` until every read in flight has ended, so the WAL
 /// is bounded by `line` plus the commits of one `max_read_ms`. Commits never wait either way.
+/// The flag returned with the pass is whether it was forced, found busy past `line`.
 /// The hold is timed on `clock`, the one the readers' deadlines run on.
-fn restart_wal(writer: &Mutex<Writer>, gate: &Mutex<()>, terms: &RestartTerms) -> std::result::Result<Checkpoint, String> {
+fn restart_wal(writer: &Mutex<Writer>, gate: &Mutex<()>, terms: &RestartTerms) -> std::result::Result<(Checkpoint, bool), String> {
     let RestartTerms { clock, max_read_ms, line } = *terms;
-    static OVERRUN: Mutex<Option<(String, std::time::Instant)>> = Mutex::new(None);
+    let mut forced = false;
     let started = clock.now_ms();
     let _gate = lock(gate);
     loop {
@@ -173,22 +182,19 @@ fn restart_wal(writer: &Mutex<Writer>, gate: &Mutex<()>, terms: &RestartTerms) -
             (pass, page_size.max(0) as u64)
         };
         if !pass.busy {
-            return Ok(pass);
+            return Ok((pass, forced));
         }
         let held = clock.now_ms().saturating_sub(started);
         let wal_bytes = (pass.wal_frames.max(0) as u64).saturating_mul(page_size);
         if wal_bytes <= line {
             if held >= (GATE_HOLD.as_millis() as u64).min(max_read_ms) {
-                return Ok(pass);
+                return Ok((pass, forced));
             }
-        } else if held > max_read_ms {
-            let text = format!(
-                "a WAL restart past {line} bytes ({wal_bytes} in the log) found a read still in flight after max_read_ms ({max_read_ms} ms)"
-            );
-            if report_due(&mut lock(&OVERRUN), &text, std::time::Instant::now()) {
-                eprintln!("sqlite-checkpoint: {text}");
+        } else {
+            forced = true;
+            if held > max_read_ms {
+                return Ok((pass, forced));
             }
-            return Ok(pass);
         }
         std::thread::sleep(RESTART_POLL);
     }
@@ -204,7 +210,7 @@ fn checkpoint_step(
     terms: &RestartTerms,
     passive: bool,
     on_passive: impl FnOnce(bool),
-) -> std::result::Result<Checkpoint, String> {
+) -> std::result::Result<(Checkpoint, bool), String> {
     if passive {
         on_passive(passive_complete(conn)?);
     }
@@ -215,36 +221,50 @@ fn checkpoint_row(r: &rusqlite::Row) -> rusqlite::Result<Checkpoint> {
     Ok(Checkpoint { busy: r.get::<_, i64>(0)? != 0, wal_frames: r.get(1)?, checkpointed: r.get(2)? })
 }
 
-/// Checkpoint passes since the last summary line.
+/// Restarts since the last push.
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 struct PassCounts {
-    passive_complete: u64,
-    passive_incomplete: u64,
-    restart_done: u64,
-    restart_busy: u64,
-    errors: u64,
-    wal_frames: i64,
+    completed: u64,
+    given_up: u64,
+    forced: u64,
+    forced_given_up: u64,
 }
 
 impl PassCounts {
-    fn passes(&self) -> u64 {
-        self.passive_complete + self.passive_incomplete + self.restart_done + self.restart_busy + self.errors
+    fn record(&mut self, pass: &Checkpoint, forced: bool) {
+        match (pass.busy, forced) {
+            (false, false) => self.completed += 1,
+            (false, true) => {
+                self.completed += 1;
+                self.forced += 1;
+            }
+            (true, false) => self.given_up += 1,
+            (true, true) => {
+                self.given_up += 1;
+                self.forced_given_up += 1;
+            }
+        }
+    }
+
+    fn points(&self) -> [spira_otel::metrics::Point<'static>; 4] {
+        use spira_otel::metrics::Point::Count;
+        [
+            Count { name: WAL_RESETS_COMPLETED, value: self.completed },
+            Count { name: WAL_RESETS_GIVEN_UP, value: self.given_up },
+            Count { name: WAL_FORCED_RESETS, value: self.forced },
+            Count { name: WAL_FORCED_GIVEN_UP, value: self.forced_given_up },
+        ]
     }
 }
 
-fn pass_summary(path: &Path, c: &PassCounts, wal_bytes: u64) -> String {
-    format!(
-        "sqlite-checkpoint: {}: {} passes: passive complete {}, incomplete {}; restart done {}, busy {}; errors {}; wal {} frames {} B",
-        path.display(),
-        c.passes(),
-        c.passive_complete,
-        c.passive_incomplete,
-        c.restart_done,
-        c.restart_busy,
-        c.errors,
-        c.wal_frames,
-        wal_bytes
-    )
+/// The gauges and the restart counts one push carries; the counts start over after it.
+fn take_points(pending: u64, wal_bytes: u64, counts: &mut PassCounts) -> Vec<spira_otel::metrics::Point<'static>> {
+    let mut points = vec![
+        spira_otel::metrics::Point::Gauge { name: UNCHECKPOINTED_GAUGE, value: pending as f64 },
+        spira_otel::metrics::Point::Gauge { name: WAL_BYTES_GAUGE, value: wal_bytes as f64 },
+    ];
+    points.extend(std::mem::take(counts).points());
+    points
 }
 
 /// What a commit hands the checkpointer thread: a count and a wake-up, no I/O.
@@ -279,19 +299,12 @@ impl Checkpointer {
         let wal_path = format!("{}-wal", path.display());
         let wal_bytes = || std::fs::metadata(&wal_path).map(|m| m.len()).unwrap_or(0);
         let mut counts = PassCounts::default();
-        let mut last_summary = std::time::Instant::now();
         let mut last_pushed = None;
         let mut last_failure = None;
         let mut owed = false;
-        let push = |pending: u64, last: &mut Option<std::time::Instant>| {
+        let push = |pending: u64, counts: &mut PassCounts, last: &mut Option<std::time::Instant>| {
             if let Some(m) = &metrics {
-                m.push(
-                    &[
-                        spira_otel::metrics::Point::Gauge { name: UNCHECKPOINTED_GAUGE, value: pending as f64 },
-                        spira_otel::metrics::Point::Gauge { name: WAL_BYTES_GAUGE, value: wal_bytes() as f64 },
-                    ],
-                    &[],
-                );
+                m.push(&take_points(pending, wal_bytes(), counts), &[]);
                 *last = Some(std::time::Instant::now());
             }
         };
@@ -313,23 +326,15 @@ impl Checkpointer {
                 let step = checkpoint_step(&conn, &writer, &gate, &RestartTerms { clock: &*self.clock, max_read_ms: max_read_ms.load(Ordering::SeqCst), line: self.line }, seen >= self.every, |done| {
                     passive_done = Some(done);
                     if done {
-                        counts.passive_complete += 1;
                         lock(&self.state).pending -= seen;
-                    } else {
-                        counts.passive_incomplete += 1;
                     }
                 })
-                .map(|p| {
-                    counts.wal_frames = p.wal_frames;
+                .map(|(p, forced)| {
+                    counts.record(&p, forced);
                     owed = p.busy;
-                    if p.busy {
-                        counts.restart_busy += 1;
-                    } else {
-                        counts.restart_done += 1;
-                        if passive_done == Some(false) {
-                            let mut st = lock(&self.state);
-                            st.pending = st.pending.saturating_sub(seen);
-                        }
+                    if !p.busy && passive_done == Some(false) {
+                        let mut st = lock(&self.state);
+                        st.pending = st.pending.saturating_sub(seen);
                     }
                     !p.busy
                 });
@@ -340,7 +345,6 @@ impl Checkpointer {
                     }
                     Ok(false) => wait = RETRY_AFTER,
                     Err(e) => {
-                        counts.errors += 1;
                         wait = RETRY_AFTER;
                         if report_due(&mut last_failure, &e, std::time::Instant::now()) {
                             eprintln!("sqlite-checkpoint: {}: {e}", path.display());
@@ -349,13 +353,8 @@ impl Checkpointer {
                 }
                 last_pushed = None;
             }
-            if last_summary.elapsed() >= GAUGE_EVERY && counts.passes() > 0 {
-                eprintln!("{}", pass_summary(path, &counts, wal_bytes()));
-                counts = PassCounts::default();
-                last_summary = std::time::Instant::now();
-            }
             if last_pushed.is_none_or(|t: std::time::Instant| t.elapsed() >= GAUGE_EVERY) {
-                push(lock(&self.state).pending, &mut last_pushed);
+                push(lock(&self.state).pending, &mut counts, &mut last_pushed);
             }
         }
     }
@@ -2728,20 +2727,111 @@ mod tests {
         }
     }
 
+    /// Reads `Clock` that, on its second reading (the first after a restart found a read in
+    /// flight), lets the held read end, then reads `late` from then on.
+    struct ReleasingClock {
+        calls: AtomicUsize,
+        release: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+        late: u64,
+    }
+
+    impl Clock for ReleasingClock {
+        fn now_ms(&self) -> u64 {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                if let Some(tx) = lock(&self.release).take() {
+                    let _ = tx.send(());
+                }
+                return self.late;
+            }
+            0
+        }
+    }
+
+    fn hold_a_read(b: &SqliteBackend, armed: &AtomicBool, held: &std::sync::mpsc::Receiver<()>) -> std::thread::JoinHandle<()> {
+        armed.store(true, Ordering::SeqCst);
+        let b = b.clone();
+        let reader = std::thread::spawn(move || {
+            let head = b.head().unwrap();
+            let _ = b.range("", None, 10, head);
+        });
+        held.recv_timeout(Duration::from_secs(60)).expect("the reader never opened");
+        reader
+    }
+
     #[test]
-    fn a_pass_summary_names_every_count_and_the_wal_size() {
-        let c = PassCounts {
-            passive_complete: 3,
-            passive_incomplete: 1,
-            restart_done: 2,
-            restart_busy: 4,
-            errors: 5,
-            wal_frames: 77,
+    fn a_push_carries_the_gauges_and_the_counts_and_starts_the_counts_over() {
+        let mut counts = PassCounts::default();
+        counts.record(&Checkpoint { busy: false, wal_frames: 0, checkpointed: 0 }, true);
+        let first = take_points(3, 4096, &mut counts);
+        assert_eq!(first.len(), 6);
+        let sink = spira_otel::metrics::MetricsSink::new(None, "t", Duration::from_secs(1));
+        let sent = format!("{:?}", sink.encode(&first, &[], std::time::SystemTime::now()));
+        for name in [UNCHECKPOINTED_GAUGE, WAL_BYTES_GAUGE, WAL_FORCED_RESETS] {
+            assert!(sent.contains(name), "{name} missing from {sent}");
+        }
+        assert_eq!(counts, PassCounts::default());
+    }
+
+    #[test]
+    fn restarts_are_counted_as_completed_given_up_and_forced_and_pushed_under_their_names() {
+        use std::sync::mpsc::channel;
+        let dir = testkit::TempDir::new("sqlite-restart-counts");
+        let path = dir.path().join("s.db");
+        let (held_tx, held_rx) = channel::<()>();
+        let (release_tx, release_rx) = channel::<()>();
+        let armed = Arc::new(AtomicBool::new(false));
+        let probe = {
+            let (armed, held_tx, release_rx) = (armed.clone(), Mutex::new(held_tx), Mutex::new(release_rx));
+            Arc::new(move || {
+                if armed.swap(false, Ordering::SeqCst) {
+                    held_tx.lock().unwrap().send(()).unwrap();
+                    let _ = release_rx.lock().unwrap().recv();
+                }
+            }) as Arc<dyn Fn() + Send + Sync>
         };
-        assert_eq!(
-            pass_summary(Path::new("d/c.db"), &c, 4096),
-            "sqlite-checkpoint: d/c.db: 15 passes: passive complete 3, incomplete 1; restart done 2, busy 4; errors 5; wal 77 frames 4096 B"
-        );
+        let line = 8 * 4096;
+        let opts = Options { max_read_ms: 120_000, readers: 1, checkpoint_every: u64::MAX, wal_line_bytes: line, read_probe: Some(probe), ..Options::default() };
+        let b = SqliteBackend::open(&path, opts).unwrap();
+        let wal = format!("{}-wal", path.display());
+        let put = |b: &SqliteBackend| {
+            let head = b.head().unwrap();
+            let prev = (head > 0).then(|| Rev::new(head, 0));
+            b.commit(head, &[Write::Put { key: "k".into(), value: vec![7u8; 4096], create_rev: Rev::new(head + 1, 0), prev }]).unwrap();
+        };
+        put(&b);
+        let conn = connect(&path).unwrap();
+        conn.busy_timeout(Duration::ZERO).unwrap();
+        let mut counts = PassCounts::default();
+        let restart = |clock: &ReleasingClock, counts: &mut PassCounts| {
+            let terms = RestartTerms { clock, max_read_ms: 120_000, line };
+            let (pass, forced) = checkpoint_step(&conn, &b.0.writer, &b.0.read_gate, &terms, false, |_| {}).unwrap();
+            counts.record(&pass, forced);
+        };
+
+        let reader = hold_a_read(&b, &armed, &held_rx);
+        while std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0) <= line {
+            put(&b);
+        }
+        restart(&ReleasingClock { calls: AtomicUsize::new(0), release: Mutex::new(Some(release_tx.clone())), late: 0 }, &mut counts);
+        reader.join().unwrap();
+
+        let reader = hold_a_read(&b, &armed, &held_rx);
+        put(&b);
+        restart(&ReleasingClock { calls: AtomicUsize::new(0), release: Mutex::new(None), late: 1_000 }, &mut counts);
+        release_tx.send(()).unwrap();
+        reader.join().unwrap();
+
+        let sink = spira_otel::metrics::MetricsSink::new(None, "t", Duration::from_secs(1));
+        let req = sink.encode(&counts.points(), &[], std::time::SystemTime::now());
+        let debug = format!("{req:?}");
+        let sent: Vec<(&str, &str)> = debug
+            .split("name: \"")
+            .skip(1)
+            .filter_map(|seg| Some((seg.split('"').next()?, seg.split("AsInt(").nth(1)?.split(')').next()?)))
+            .collect();
+        for (name, value) in [(WAL_FORCED_RESETS, 1), (WAL_RESETS_COMPLETED, 1), (WAL_RESETS_GIVEN_UP, 1), (WAL_FORCED_GIVEN_UP, 0)] {
+            assert!(sent.contains(&(name, value.to_string().as_str())), "{name} is not {value}: {sent:?}");
+        }
     }
 
     #[test]

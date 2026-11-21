@@ -184,4 +184,27 @@ mod tests {
         assert!(exprs("control store largest keyspaces").contains(KEYSPACE_BYTES_GAUGE));
         assert!(exprs("control store day-file bytes by family").contains(FAMILY_BYTES_GAUGE));
     }
+
+    #[test]
+    fn the_checkpointing_row_queries_each_metric_by_its_const_and_the_wal_panel_carries_its_lines() {
+        use crate::slow::{GATE_WAIT_MAX_SECONDS, READS_ENDED, READS_OVERRAN};
+        use state_store_sqlite::{WAL_FORCED_GIVEN_UP, WAL_FORCED_RESETS, WAL_RESETS_COMPLETED, WAL_RESETS_GIVEN_UP};
+        let board: serde_json::Value = serde_json::from_str(include_str!("../../spira/metrics/grafana/dashboards/bead-store.json")).unwrap();
+        let panels = board["panels"].as_array().unwrap();
+        let panel = |title: &str| panels.iter().find(|p| p["title"] == title).unwrap_or_else(|| panic!("no panel {title}"));
+        let exprs = |title: &str| -> String { panel(title)["targets"].as_array().unwrap().iter().map(|t| t["expr"].as_str().unwrap().to_string()).collect::<Vec<_>>().join(" ") };
+        let resets = exprs("control store WAL resets per hour");
+        for name in [WAL_RESETS_COMPLETED, WAL_RESETS_GIVEN_UP, WAL_FORCED_RESETS, WAL_FORCED_GIVEN_UP] {
+            assert!(resets.contains(name), "{name} missing from {resets}");
+        }
+        let reads = exprs("control store reads ended at the limit by verb");
+        assert!(reads.contains(READS_ENDED) && reads.contains(READS_OVERRAN), "{reads}");
+        let gate = panel("control store longest gate wait by verb");
+        assert!(exprs("control store longest gate wait by verb").contains(GATE_WAIT_MAX_SECONDS));
+        let line = |p: &serde_json::Value| -> Vec<f64> { p["fieldConfig"]["defaults"]["thresholds"]["steps"].as_array().unwrap().iter().filter_map(|s| s["value"].as_f64()).collect() };
+        assert_eq!(line(gate), [0.1]);
+        let wal = panel("control store WAL size");
+        assert_eq!(line(wal), [8.0 * 1048576.0, 9.0 * 1048576.0]);
+        assert!(exprs("control store WAL size").contains(state_store_sqlite::WAL_BYTES_GAUGE));
+    }
 }
