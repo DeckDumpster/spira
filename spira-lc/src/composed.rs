@@ -116,15 +116,7 @@ impl Content for LiveContent {
         crate::bd::write_stdin_in(args, stdin, cwd)
     }
     fn mutate(&self, m: &crate::content_write::Mutation) -> Result<String, String> {
-        let started = std::time::Instant::now();
-        match crate::content_write::run(m) {
-            Some(res) => {
-                let words: Vec<&str> = m.argv.iter().map(String::as_str).collect();
-                crate::bd::record_call(&words, started, res.is_ok());
-                crate::bd::stamped(&m.argv, res)
-            }
-            None => crate::bd::write_stdin(&m.argv, m.body.as_deref()),
-        }
+        crate::bd::write_stdin(&m.argv, m.body.as_deref())
     }
     fn delete(&self, ids: &[String]) -> Result<(), String> {
         match crate::bd::tool("bdq", &[&["delete".to_string()][..], ids, &["--force".to_string()]].concat(), None, "purge-alerts", 120) {

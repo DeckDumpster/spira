@@ -101,7 +101,22 @@ const WRITE_SECS: u64 = 60;
 
 // A write runs the schema gate and a Dolt commit; the 5 s read cap kills it mid-commit though it lands.
 fn run_write(args: &[&str]) -> Result<String, String> {
+    let owned: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    if let Some(res) = sql_write(&owned, None) {
+        return stamped(args, res);
+    }
     stamped(args, write_unstamped(args))
+}
+
+/// The write as one SQL transaction, when it is a verb the SQL writer serves and a writer is
+/// provisioned; `None` leaves it to bd.
+fn sql_write(args: &[String], stdin: Option<&str>) -> Option<Result<String, String>> {
+    let m = crate::content_write::Mutation::of(args, stdin)?;
+    let started = std::time::Instant::now();
+    let res = crate::content_write::run(&m)?;
+    let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    record_call(&words, started, res.is_ok());
+    Some(res)
 }
 
 /// A write that is not a planning write: the watermark's own copy in bd's kv.
@@ -140,6 +155,11 @@ pub fn write_stdin(args: &[String], stdin: Option<&str>) -> Result<String, Strin
 
 /// [`write_stdin`] run in `cwd`: the one verb (`gate discover`) that reads the repo it is run in.
 pub fn write_stdin_in(args: &[String], stdin: Option<&str>, cwd: Option<&std::path::Path>) -> Result<String, String> {
+    if cwd.is_none() {
+        if let Some(res) = sql_write(args, stdin) {
+            return stamped(args, res);
+        }
+    }
     let started = std::time::Instant::now();
     let res = write_stdin_unrecorded(args, stdin, cwd);
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -401,6 +421,9 @@ pub fn ask_operator_classed(from: &str, subject: &str, default: &str, class: Opt
 /// `bd <args>` with `stdin` piped in when given — the lane verbs' one door to bd
 /// (sp-st0mm). Same `SPIRA_BD`/`SPIRA_DB` resolution as [`run`].
 pub fn run_stdin(args: &[String], stdin: Option<&str>) -> Result<String, String> {
+    if let Some(res) = sql_write(args, stdin) {
+        return stamped(args, res);
+    }
     let started = std::time::Instant::now();
     let res = run_stdin_unrecorded(args, stdin);
     let words: Vec<&str> = args.iter().map(String::as_str).collect();

@@ -11,6 +11,11 @@ path = "tests/compact_after_stop.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "content_writes"
+path = "tests/content_writes.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "e2e_goodput_20d"
 path = "tests/e2e_goodput_20d.rs"
 required-features = ["integration"]
