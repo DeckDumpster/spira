@@ -235,6 +235,9 @@ fn drive(lc: &Lc, id: &str) -> Vec<(&'static str, i64)> {
     let mut children = vec![];
     for verb in verbs(id) {
         let args: Vec<&str> = verb.args.iter().map(String::as_str).collect();
+        if verb.name == "work label-remove" {
+            assert!(lc.shows(id).contains("writes:added"), "label-add did not land before label-remove");
+        }
         children.push((verb.name, lc.children_of(verb.method, &args, verb.stdin).1));
         if verb.name == "work label-remove" {
             settles(lc, id, |shown| !shown.contains("writes:added"));
@@ -246,10 +249,9 @@ fn drive(lc: &Lc, id: &str) -> Vec<(&'static str, i64)> {
     children
 }
 
-fn provision(store: &Store, lc: &Lc) {
+fn provision(lc: &Lc) {
     lc.admin("admin-create-store");
     lc.admin("admin-provision-reader");
-    let _ = store;
 }
 
 #[test]
@@ -258,7 +260,7 @@ fn with_a_provisioned_writer_every_note_and_label_verb_writes_in_sql_and_starts_
     let id = store.create_bead();
     let writer = store.dir.join("writer.credential");
     let mut lc = Lc::new(&store, "p", &writer.display().to_string());
-    provision(&store, &lc);
+    provision(&lc);
     lc.admin("admin-provision-writer");
     lc.serve();
     for (verb, children) in drive(&lc, &id) {
@@ -271,7 +273,7 @@ fn without_a_writer_credential_the_same_verbs_still_write_through_bd() {
     let store = Store::up();
     let id = store.create_bead();
     let mut lc = Lc::new(&store, "u", "");
-    provision(&store, &lc);
+    provision(&lc);
     lc.serve();
     for (verb, children) in drive(&lc, &id) {
         assert_eq!(children, 1, "{verb} should have forked bd once");
