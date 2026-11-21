@@ -1151,6 +1151,12 @@ impl Scripts for RealScripts {
         let lease = bd::lease(&bases, who).map_err(|e| format!("cannot lease a build directory under {base}: {e}"))?;
         let held = HeldBuild(Some(lease));
         let dir = held.0.as_ref().map(|l| l.dir().to_path_buf()).unwrap_or_default();
+        let script = spira_config::resolve::locate_home_for_process()?.join(bd::CLEAN_SCRIPT);
+        let path = std::env::var("PATH").unwrap_or_default();
+        if let Err(e) = bd::clean(&script, wt, &dir, &path, false) {
+            bd::empty(&dir);
+            return Err(format!("selective clean of {} failed ({e}) — emptied, nothing was built", dir.display()));
+        }
         // FORK-EDGE: machine leg cargo (release build)
         let (rc, out) = run_combined(
             Command::new("cargo")
@@ -2650,6 +2656,76 @@ impl Emit for StdEmit {
 
 #[cfg(test)]
 mod tests {
+    fn crate_tree(root: &Path, a_bytes: &str) {
+        for c in ["a", "b"] {
+            fs::create_dir_all(root.join(c).join("src")).unwrap();
+            fs::write(root.join(c).join("Cargo.toml"), format!("[package]\nname = \"crate-{c}\"\n")).unwrap();
+            fs::write(root.join(c).join("src/lib.rs"), if c == "a" { a_bytes } else { "pub fn f() {}\n" }).unwrap();
+        }
+        fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = [\"a\", \"b\"]\n").unwrap();
+        fs::write(root.join("Cargo.lock"), "# lock\n").unwrap();
+    }
+
+    type World = (testkit::TempDir, Vec<(&'static str, Option<String>)>, PathBuf, PathBuf, PathBuf);
+
+    fn release_world(name: &str, cargo_body: &str) -> World {
+        let d = testkit::TempDir::new(name);
+        let base = d.path().join("pool");
+        let toml = spira_config::process::fixture_toml(d.path(), &[("SPIRA_DWARF_BUILD_BASE", base.to_str().unwrap())]);
+        let bindir = d.path().join("bin");
+        let log = d.path().join("cargo.log");
+        fs::create_dir_all(&bindir).unwrap();
+        testkit::write_exe(bindir.join("cargo"), &format!("#!/bin/sh\necho \"$*\" >> {}\n{cargo_body}", log.display()));
+        let home = spira_config::resolve::locate_home_for_process().unwrap();
+        let path = format!("{}:{}", bindir.display(), std::env::var("PATH").unwrap_or_default());
+        let env = vec![
+            ("SPIRA_TOML", Some(toml.display().to_string())),
+            ("SPIRA_HOME", Some(home.display().to_string())),
+            ("PATH", Some(path)),
+        ];
+        (d, env, base, log, home)
+    }
+
+    fn with_env(env: &[(&'static str, Option<String>)]) -> testkit::EnvGuard {
+        let edits: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        testkit::env(&edits)
+    }
+
+    #[test]
+    fn the_release_build_cleans_what_differs_from_the_directorys_record_before_building_and_still_reports_a_failed_build() {
+        let (d, env, base, log, home) = release_world("kcuvbg-clean", "d=\"$(dirname \"$0\")\"; [ ! -e \"$d/fail\" ] || case \"$1\" in build) echo boom; exit 3;; esac; [ ! -e \"$d/failclean\" ] || case \"$1\" in clean) echo no; exit 4;; esac\n");
+        let _env = with_env(&env);
+        let (old, tip) = (d.path().join("old"), d.path().join("tip"));
+        crate_tree(&old, "pub fn f() {}\n");
+        crate_tree(&tip, "pub fn f() { let _ = 1; }\n");
+        let slot = base.join("dir.1");
+        fs::create_dir_all(&slot).unwrap();
+        fs::write(base.join("dir.1.lock"), "").unwrap();
+        let path = std::env::var("PATH").unwrap();
+        spira_config::build_dir::clean(&home.join("target-clean.sh"), &old, &slot, &path, true).unwrap();
+        let wt = d.path().join("wt");
+        fs::create_dir_all(&wt).unwrap();
+        crate_tree(&wt, "pub fn f() { let _ = 1; }\n");
+        let held = RealScripts { home: home.clone() }.build_release(&wt, "hand-1").expect("builds");
+        let lines: Vec<String> = fs::read_to_string(&log).unwrap().lines().map(String::from).collect();
+        let clean = lines.iter().position(|l| l == "clean -q -p crate-a").unwrap_or_else(|| panic!("no clean of crate-a: {lines:?}"));
+        let build = lines.iter().position(|l| l.starts_with("build -q --profile release")).expect("built");
+        assert!(clean < build, "clean runs before the build: {lines:?}");
+        assert!(wt.join("target/release").is_symlink(), "the release symlink is made");
+        drop(held);
+        fs::write(d.path().join("bin/fail"), "").unwrap();
+        let err = RealScripts { home: home.clone() }.build_release(&wt, "hand-2").expect_err("a failing build fails");
+        assert!(err.contains("cargo build --profile release failed (rc=3)"), "{err}");
+        fs::remove_file(d.path().join("bin/fail")).unwrap();
+        fs::write(d.path().join("bin/failclean"), "").unwrap();
+        fs::write(wt.join("a/src/lib.rs"), "pub fn f() { let _ = 2; }\n").unwrap();
+        let builds = fs::read_to_string(&log).unwrap().matches("build -q").count();
+        let err = RealScripts { home }.build_release(&wt, "hand-3").expect_err("a failing clean fails");
+        assert!(err.contains("selective clean") && err.contains("emptied"), "{err}");
+        assert!(!slot.join(".unit-tests-built-manifest").exists(), "the untrusted directory is emptied");
+        assert_eq!(fs::read_to_string(&log).unwrap().matches("build -q").count(), builds, "nothing is built after a failed clean");
+    }
+
     #[test]
     fn update_ref_is_the_sanctioned_writer() {
         let c = super::update_ref_cmd(std::path::Path::new("r"), "refs/heads/x", "new", Some("old"));
