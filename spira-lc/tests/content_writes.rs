@@ -39,9 +39,8 @@ impl Store {
         let dolt = std::env::var("TESTDB_DOLT").unwrap_or_else(|_| "dolt".into());
         let mut up = Command::new(testenv());
         up.args(["testdb", "up", "--tag", "content-writes", "--bd", &bd, "--dolt", &dolt]);
-        if let Ok(root) = std::env::var("TESTDB_ROOT") {
-            up.args(["--root", &root]);
-        }
+        let root = std::env::var("TESTDB_ROOT").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| dir.join("db").display().to_string());
+        up.args(["--root", &root]);
         let out = up.output().expect("testenv runs");
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         assert!(out.status.success(), "testdb up: {text}{}", String::from_utf8_lossy(&out.stderr));
