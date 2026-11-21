@@ -225,13 +225,15 @@ pub struct ProbeFacts {
     pub members: Vec<String>,
     pub verdict: &'static str,
     pub why: String,
+    pub kept: String,
 }
 
 impl ProbeFacts {
     fn line(&self) -> String {
         let on = if self.members.is_empty() { "base".to_string() } else { self.members.join(",") };
         let why = if self.verdict == "cannot-tell" { format!(": {}", self.why) } else { String::new() };
-        format!("batcher: probe {} {} scope={} on {on} → {}{why}", self.job, self.build, self.scope, self.verdict)
+        let kept = if self.kept.is_empty() { String::new() } else { format!(" output: {}", self.kept) };
+        format!("batcher: probe {} {} scope={} on {on} → {}{why}{kept}", self.job, self.build, self.scope, self.verdict)
     }
 }
 
@@ -483,6 +485,8 @@ pub struct VmRunner<'a> {
     verify_n: u32,
     build_n: u32,
     probe_said: String,
+    probe_kept: String,
+    probes_dir: PathBuf,
     corpus_runs: u32,
     pass_open: bool,
     batch: Option<String>,
@@ -494,6 +498,20 @@ pub struct VmRunner<'a> {
     /// The round's deny list, handed to every round-vm the runner starts.
     deny: Option<DenySnapshot>,
     trace: AttributionTrace,
+}
+
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for e in fs::read_dir(from)? {
+        let e = e?;
+        let dest = to.join(e.file_name());
+        if e.file_type()?.is_dir() {
+            copy_dir(&e.path(), &dest)?;
+        } else {
+            fs::copy(e.path(), dest)?;
+        }
+    }
+    Ok(())
 }
 
 /// A number that changes when anything under `path` is added, grown or touched.
@@ -755,6 +773,7 @@ impl<'a> VmRunner<'a> {
         verdict: fn(i32) -> Option<bool>,
     ) -> Option<bool> {
         let (job, ran) = self.run_probe(subset, build, scope);
+        self.keep_probe_output(&job, build);
         let (found, why) = match ran {
             Ok(rc) => match verdict(rc) {
                 Some(green) => (Some(green), String::new()),
@@ -802,6 +821,27 @@ impl<'a> VmRunner<'a> {
         }
     }
 
+    /// Keeps a unit or integration probe's results under the round root, which outlives the spool,
+    /// and reads its cargo output as what the probe said.
+    fn keep_probe_output(&mut self, job: &str, build: &str) {
+        self.probe_kept.clear();
+        if !matches!(build, "unit" | INTEGRATION_BUILD) {
+            return;
+        }
+        let (from, to) = (self.spool.join("res").join(job), self.probes_dir.join(job));
+        if !from.is_dir() {
+            return;
+        }
+        if let Err(e) = copy_dir(&from, &to) {
+            eprintln!("batcher: probe {job} output not kept: {e}");
+            return;
+        }
+        self.probe_kept = to.display().to_string();
+        if let Ok(text) = fs::read_to_string(to.join(format!("{build}-tests.out"))) {
+            self.probe_said = text;
+        }
+    }
+
     /// Prints what a probe ran and found, and writes it to the round's progress record.
     fn report_probe(&mut self, job: &str, build: &str, scope: &str, subset: &[Member], found: Option<bool>, why: String) {
         let facts = ProbeFacts {
@@ -815,6 +855,7 @@ impl<'a> VmRunner<'a> {
                 None => "cannot-tell",
             },
             why,
+            kept: self.probe_kept.clone(),
         };
         println!("{}", facts.line());
         if found.is_none() {
@@ -975,6 +1016,8 @@ impl<'a> VmRunner<'a> {
             verify_n: 0,
             build_n: 0,
             probe_said: String::new(),
+            probe_kept: String::new(),
+            probes_dir: root.join("probes"),
             corpus_runs: 0,
             pass_open: false,
             batch: None,
@@ -1420,8 +1463,13 @@ impl RoundRunner for VmRunner<'_> {
         std::mem::take(&mut self.probe_said)
     }
 
+    fn probe_kept(&self) -> String {
+        self.probe_kept.clone()
+    }
+
     fn filter_green_in(&mut self, name: &str, scope: &[String], subset: &[Member]) -> Option<bool> {
         self.probe_said.clear();
+        self.probe_kept.clear();
         self.trace.aim(name);
         match probe_of(name)? {
             Probe::Lint => self.probe_subset(subset, "lint", &[], unit_probe_result),
@@ -1814,7 +1862,7 @@ mod tests {
     fn a_red_probe_names_its_members_as_suspects_and_a_smaller_red_replaces_them() {
         let mut t = AttributionTrace::default();
         t.aim("unit-tests");
-        let probe = |ids: &[&str], verdict| ProbeFacts { job: "b1".into(), build: "unit".into(), scope: "unit".into(), members: ids.iter().map(|s| s.to_string()).collect(), verdict, why: String::new() };
+        let probe = |ids: &[&str], verdict| ProbeFacts { job: "b1".into(), build: "unit".into(), scope: "unit".into(), members: ids.iter().map(|s| s.to_string()).collect(), verdict, why: String::new(), kept: String::new() };
         t.record(probe(&["m1", "m2", "m3"], "red"));
         t.record(probe(&["m1"], "green"));
         t.record(probe(&["m2", "m3"], "red"));
@@ -2533,6 +2581,27 @@ mod abandon_tests {
         assert!(none.windows(2).any(|w| w[0] == "--attr-spool" && w[1] == spool), "{none:?}");
         let some = words(r.round_vm_run_args(Some(&["a.sh".to_string()])));
         assert!(some.windows(2).any(|w| w[0] == "--suites" && w[1] == "a.sh") && !some.contains(&"--no-corpus".to_string()), "{some:?}");
+    }
+
+    #[test]
+    fn an_integration_probes_output_is_kept_under_the_round_and_survives_the_spool() {
+        let d = testkit::TempDir::new("vm-probe-kept");
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        let res = r.spool.join("res/b1");
+        fs::create_dir_all(&res).unwrap();
+        fs::write(res.join("integration-tests.out"), "test x ... FAILED\n").unwrap();
+        fs::write(res.join("integration-tests.result"), "red 0 0 - - - 101\n").unwrap();
+        r.keep_probe_output("b1", "integration");
+        let kept = r.probes_dir.join("b1");
+        assert_eq!(RoundRunner::probe_kept(&r), kept.display().to_string());
+        assert_eq!(RoundRunner::probe_output(&mut r), "test x ... FAILED\n");
+        r.child = Some(Command::new("sleep").arg("5").spawn().unwrap());
+        RoundRunner::stop_main(&mut r).unwrap();
+        assert!(kept.join("integration-tests.out").exists() && !r.spool.join("res/b1").exists());
+        r.keep_probe_output("b2", "workspace");
+        assert!(RoundRunner::probe_kept(&r).is_empty());
     }
 
     #[test]
