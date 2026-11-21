@@ -489,6 +489,7 @@ mod tests {
         assert_eq!(opts.max_read_ms, testkit::LOADED_HOST_MAX_READ_MS);
     }
 
+    #[test_id(ts2crs5)]
     #[test]
     fn open_refuses_a_config_that_lacks_the_read_limit_naming_the_key() {
         let dir = testkit::TempDir::new("lc-served-read-limit-absent");
@@ -502,6 +503,7 @@ mod tests {
         assert!(err.contains("SPIRA_LC_MAX_READ_MS"), "{err}");
     }
 
+    #[test_id(tab8s4z)]
     #[test]
     fn a_zero_read_limit_is_refused_naming_the_key() {
         let err = nonzero_read_limit(0).unwrap_err();
@@ -509,6 +511,7 @@ mod tests {
         assert_eq!(nonzero_read_limit(100), Ok(100));
     }
 
+    #[test_id(t2odk9h)]
     #[test]
     fn a_call_under_a_client_id_spends_it_on_its_first_txn_and_suffixes_each_further_one() {
         let _bound = client_request_scoped(Some("req-1".to_string()));
