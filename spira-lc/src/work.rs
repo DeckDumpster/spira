@@ -550,11 +550,7 @@ fn branch_evidence(root: &std::path::Path, landref: &str, tip: &str, stack_tips:
     let fork = crate::git_evidence::git_output(root, &["merge-base", landref, tip]).map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
     let mut args = vec!["log".to_string(), "--no-merges".to_string(), "--format=%H%x1f%s%x1f%B%x1e".to_string(), tip.to_string(), format!("^{landref}")];
     args.extend(stack_tips.iter().map(|t| format!("^{t}")));
-    let commits = spira_config::bounded::bounded("git")
-        .arg("-C")
-        .arg(root)
-        .args(&args)
-        .output()
+    let commits = state_store::phases::child("git", || spira_config::bounded::bounded("git").arg("-C").arg(root).args(&args).output())
         .ok()
         .filter(|o| o.status.success())
         .map(|out| {
@@ -1202,12 +1198,14 @@ fn landing_commit(id: &str) -> Option<String> {
     let reg = spira_config::repos::Registry::from_env(env, std::path::Path::new(&home));
     let root = reg.root(&repo)?;
     let landref = spira_config::repos::landref(&reg, &root)?;
-    let out = spira_config::bounded::bounded("git")
-        .arg("-C")
-        .arg(&root)
-        .args(["log", "-n", "50", "--fixed-strings", &format!("--grep={id}"), "--format=%h%x1f%s%x1f%B%x1e", &landref])
-        .output()
-        .ok()
+    let out = state_store::phases::child("git", || {
+        spira_config::bounded::bounded("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["log", "-n", "50", "--fixed-strings", &format!("--grep={id}"), "--format=%h%x1f%s%x1f%B%x1e", &landref])
+            .output()
+    })
+    .ok()
         .filter(|o| o.status.success())?;
     String::from_utf8_lossy(&out.stdout).split('\x1e').map(|r| r.trim_start_matches('\n')).find_map(|rec| {
         let mut f = rec.splitn(3, '\x1f');
@@ -1926,7 +1924,7 @@ fn forge_refspec(repo: &std::path::Path, verb: &str, actor: &str, refspec: &str)
 /// A refusal names the verb, the persona and what git said, and says so when git said
 /// nothing (a run cut off at its deadline).
 fn forge_git(repo: &std::path::Path, remote: &str, refspec: &str, verb: &str, actor: &str, secs: &str) -> (i32, String) {
-    let o = match spira_config::bounded::bounded_for("git", secs).args(["push", "--", remote, refspec]).current_dir(repo).output() {
+    let o = match state_store::phases::child("git", || spira_config::bounded::bounded_for("git", secs).args(["push", "--", remote, refspec]).current_dir(repo).output()) {
         Ok(o) => o,
         Err(e) => return (CANNOT_TELL, format!("work forge {verb}: persona {actor}: git: {e}")),
     };

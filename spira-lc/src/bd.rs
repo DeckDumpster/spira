@@ -120,7 +120,7 @@ fn run_write_unrecorded(args: &[&str]) -> Result<String, String> {
         cmd.args(["-C", &db]);
     }
     cmd.args(args);
-    let out = cmd.output().map_err(|e| format!("running bd {args:?}: {e}"))?;
+    let out = state_store::phases::child("bd", || cmd.output()).map_err(|e| format!("running bd {args:?}: {e}"))?;
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     if !out.status.success() {
         return Err(format!("{stdout}{}", String::from_utf8_lossy(&out.stderr)));
@@ -319,7 +319,7 @@ fn file_child_via((program, secs): (&str, &str), title: &str, persona: &str, rep
     if let Some(why) = contract_considered {
         cmd.env(bead::filing::CONTRACT_OVERRIDE_ENV, why);
     }
-    let out = match body {
+    let out = state_store::phases::child(program, || match body {
         None => cmd.output(),
         Some(b) => {
             use std::io::Write;
@@ -331,7 +331,7 @@ fn file_child_via((program, secs): (&str, &str), title: &str, persona: &str, rep
                 child.wait_with_output()
             })
         }
-    }
+    })
     .map_err(|e| format!("running {program}: {e}"))?;
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     if !out.status.success() {
@@ -345,7 +345,7 @@ fn bead_sh(args: &[&str]) -> Result<(), String> {
 }
 
 fn bead_sh_via(program: &str, secs: &str, args: &[&str]) -> Result<(), String> {
-    let out = spira_config::bounded::bounded_for(program, secs).args(args).output().map_err(|e| format!("running {program}: {e}"))?;
+    let out = state_store::phases::child(program, || spira_config::bounded::bounded_for(program, secs).args(args).output()).map_err(|e| format!("running {program}: {e}"))?;
     if !out.status.success() {
         return Err(failed(program, secs, args, &out));
     }
@@ -380,15 +380,17 @@ pub fn ask_operator_classed(from: &str, subject: &str, default: &str, class: Opt
     if let Some(c) = class {
         cmd.args(["--class", c]);
     }
-    let mut child = cmd
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("running {mail_sh}: {e}"))?;
     use std::io::Write;
-    child.stdin.take().expect("piped stdin").write_all(body.as_bytes()).map_err(|e| format!("writing to {mail_sh}: {e}"))?;
-    let out = child.wait_with_output().map_err(|e| format!("waiting on {mail_sh}: {e}"))?;
+    let out = state_store::phases::child(&mail_sh, || {
+        let mut child = cmd
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("running {mail_sh}: {e}"))?;
+        child.stdin.take().expect("piped stdin").write_all(body.as_bytes()).map_err(|e| format!("writing to {mail_sh}: {e}"))?;
+        child.wait_with_output().map_err(|e| format!("waiting on {mail_sh}: {e}"))
+    })?;
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     if !out.status.success() {
         return Err(format!("{stdout}{}", String::from_utf8_lossy(&out.stderr)));
@@ -476,12 +478,16 @@ fn spawn(cmd: Command, stdin: Option<&str>, what: &str) -> (i32, String) {
 const ACTIVATION_ENV: [&str; 4] = ["LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES", "LISTEN_PIDFDID"];
 
 fn spawn_with(mut cmd: Command, stdin: Option<&str>, what: &str, keep_stderr: bool) -> (i32, String) {
-    use std::io::Write;
     use std::process::Stdio;
     for k in ACTIVATION_ENV {
         cmd.env_remove(k);
     }
     cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
+    state_store::phases::child(what, || wait_for(cmd, stdin, what, keep_stderr))
+}
+
+fn wait_for(mut cmd: Command, stdin: Option<&str>, what: &str, keep_stderr: bool) -> (i32, String) {
+    use std::io::Write;
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => return (2, format!("running {what}: {e}")),
@@ -637,5 +643,24 @@ mod no_read_fork_tests {
         for read in ["\"show\"", "\"list\"", "\"kv\"", "\"dep\", \"list\"", "fn run("] {
             assert!(!code.contains(read), "bd.rs forks bd for {read}");
         }
+    }
+}
+
+#[cfg(test)]
+mod child_phase_tests {
+    use super::*;
+
+    #[test]
+    fn a_brokered_tool_is_one_child_named_by_its_program() {
+        let dir = testkit::TempDir::new("bd-child-phase");
+        let stub = dir.join("testenv");
+        testkit::write_exe(&stub, "#!/bin/sh\necho ran\n");
+        let rec = std::sync::Arc::new(state_store::phases::Recorder::default());
+        state_store::phases::track(rec.clone());
+        let (code, out) = tool(stub.to_str().unwrap(), &[], None, "builder", 10);
+        state_store::phases::untrack();
+        assert_eq!((code, out.trim()), (0, "ran"));
+        let s = rec.snapshot();
+        assert_eq!((s.children, s.programs), (1, vec!["testenv".to_string()]));
     }
 }

@@ -17,6 +17,8 @@ mod backfill_repo;
 mod bd;
 mod callers;
 mod cite_check;
+#[cfg(test)]
+mod child_spans;
 mod claim_sync;
 mod composed;
 mod content;

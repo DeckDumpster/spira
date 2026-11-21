@@ -262,7 +262,7 @@ pub(crate) fn deadline_lower(args: &[String], slow: &str, dir: &Path, now: Syste
 pub(crate) fn spira_config(args: &[String]) -> i32 {
     let Ok(program) = spira_config::release_env::tool("spira-config") else { return CANNOT_TELL };
     // batch-job: `set` waits on the scheduler's own bounded answer; it is an operator's local verb, not a store call.
-    std::process::Command::new(program).args(args).status().map_or(CANNOT_TELL, |s| s.code().unwrap_or(CANNOT_TELL))
+    state_store::phases::child("spira-config", || std::process::Command::new(program).args(args).status()).map_or(CANNOT_TELL, |s| s.code().unwrap_or(CANNOT_TELL))
 }
 
 #[cfg(test)]

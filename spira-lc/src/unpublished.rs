@@ -134,14 +134,16 @@ fn refresh_in_background(repo: &Path, remote: &str, branch: &str) {
     if !claim_refresh(repo) {
         return;
     }
-    let spawned = spira_config::bounded::bounded_for("git", BACKGROUND_FETCH_SECS)
-        .arg("-C")
-        .arg(repo)
-        .args(["fetch", "-q", remote, branch])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+    let spawned = state_store::phases::child("git", || {
+        spira_config::bounded::bounded_for("git", BACKGROUND_FETCH_SECS)
+            .arg("-C")
+            .arg(repo)
+            .args(["fetch", "-q", remote, branch])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+    });
     if let Ok(mut child) = spawned {
         std::thread::spawn(move || {
             let _ = child.wait();
@@ -169,11 +171,7 @@ fn tip_age_of(last: Option<String>, now: u64) -> Result<u64, String> {
 }
 
 fn fetch(repo: &Path, remote: &str, branch: &str) -> Result<(), Fetch> {
-    let out = spira_config::bounded::bounded_for("git", FETCH_SECS)
-        .arg("-C")
-        .arg(repo)
-        .args(["fetch", "-q", remote, branch])
-        .output()
+    let out = state_store::phases::child("git", || spira_config::bounded::bounded_for("git", FETCH_SECS).arg("-C").arg(repo).args(["fetch", "-q", remote, branch]).output())
         .map_err(|e| Fetch::Failed(format!("cannot run git: {e}")))?;
     if out.status.success() {
         return Ok(());

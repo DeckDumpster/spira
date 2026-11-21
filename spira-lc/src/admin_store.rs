@@ -97,7 +97,7 @@ pub fn run(args: &[String]) -> i32 {
     };
     let mut cmd = command(&p, &bd, &db);
     if p.with_path {
-        return match cmd.output() {
+        return match state_store::phases::child(&bd, || cmd.output()) {
             Ok(o) => {
                 let first = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").to_string();
                 println!("{first}\n{}", resolved_path(&bd));
