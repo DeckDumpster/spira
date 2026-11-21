@@ -135,7 +135,7 @@ fn a_second_run_with_no_new_findings_commits_nothing() {
 fn the_closeout_sorts_comments_into_agreed_only_you_and_only_the_concierge() {
     let mut w = world();
     w.finding(&condemn(""));
-    w.write("sealed.json", &format!(r#"[{{"path":"{SRC}","line":3,"body":"C-agreed"}},{{"path":"{SRC}","line":8,"body":"C-alone"}}]"#));
+    w.write("sealed.json", &format!(r#"{{"lens":[{{"path":"{SRC}","line":3,"body":"C-agreed"}},{{"path":"{SRC}","line":8,"body":"C-alone"}}],"fresh":[{{"path":"{SRC}","line":9,"body":"C-fresh"}}]}}"#));
     w.write(
         "comments.json",
         &format!(r#"[{{"path":"{SRC}","line":5,"body":"H-agreed","user":{{"type":"User"}}}},{{"path":"{SRC}","line":1,"body":"H-alone","user":{{"type":"User"}}}},{{"path":"{SRC}","line":3,"body":"B-bot","user":{{"type":"Bot"}}}}]"#),
@@ -149,6 +149,9 @@ fn the_closeout_sorts_comments_into_agreed_only_you_and_only_the_concierge() {
     assert!(group("Agreed").contains("C-agreed") && group("Agreed").contains("H-agreed"), "{}", o.stdout);
     assert!(group("Only you").contains("H-alone") && !group("Only you").contains("B-bot"), "{}", o.stdout);
     assert!(group("Only the Concierge").contains("C-alone"), "{}", o.stdout);
+    assert!(group("Agreed").contains("Concierge (lens): C-agreed"), "{}", o.stdout);
+    assert!(group("Only the Concierge").contains("(lens) C-alone"), "{}", o.stdout);
+    assert!(group("Only the Concierge").contains("(fresh) C-fresh"), "{}", o.stdout);
     assert!(o.stdout.contains("001-1 [condemn] A lock is not held across a send. → statute law-no-lock-across-send"), "{}", o.stdout);
 }
 
@@ -191,7 +194,7 @@ fn comments_on_a_large_modules_branch_lines_are_compared_as_source_lines() {
     let w = world();
     assert_eq!(w.cr(&["open", "--aim", "demo/src/big.rs", "--seed", "2"]).code, 0);
     let put = |n: &str, text: &str| std::fs::write(record::dir(w.run.path(), 2).join(n), text).unwrap();
-    put("sealed.json", r#"[{"path":"demo/src/big.rs","line":80,"body":"C-near"},{"path":"demo/src/big.rs","line":20,"body":"C-far"}]"#);
+    put("sealed.json", r#"{"lens":[{"path":"demo/src/big.rs","line":80,"body":"C-near"},{"path":"demo/src/big.rs","line":20,"body":"C-far"}],"fresh":[]}"#);
     put("comments.json", r#"[{"path":"demo/src/big.rs","line":82,"body":"H-near","user":{"type":"User"}}]"#);
     let o = w.cr(&["findings", "--review", "002"]);
     assert_eq!(o.code, 0, "{}", o.stderr);
@@ -259,4 +262,42 @@ fn an_other_finding_keeps_his_words_and_generalises_only_with_his_comment() {
     assert_eq!(cat.matches("### Fix the lock.").count(), 1, "{cat}");
     assert!(cat.contains("law-y") && cat.contains("demo/src/store.rs:6 @ c0ffee"), "{cat}");
     assert!(w.page("cr-001.md").contains("generalised_by: 123"));
+}
+
+fn seal_halves(w: &World) {
+    let at = |l: u32, b: &str| format!(r#"{{"path":"{SRC}","line":{l},"body":"{b}"}}"#);
+    w.write("sealed.json", &format!(r#"{{"lens":[{},{}],"fresh":[{},{},{}]}}"#, at(3, "L1"), at(30, "L2"), at(1, "F1"), at(2, "F2"), at(4, "F3")));
+}
+
+fn endorsing(n: u32) -> String {
+    format!(r#"{{"words":"w","exemplar":{{"path":"{SRC}","line":3}},"kind":"question","rule":"r","scope":"unit","endorses":{n}}}"#)
+}
+
+#[test]
+fn the_closeout_scores_both_halves() {
+    let mut w = world();
+    seal_halves(&w);
+    let his = |l: u32| format!(r#"{{"path":"{SRC}","line":{l},"body":"H","user":{{"type":"User"}}}}"#);
+    w.write("comments.json", &format!("[{},{},{}]", his(5), his(20), his(25)));
+    for n in [1, 1, 3] {
+        assert_eq!(w.finding(&endorsing(n)).code, 0);
+    }
+    let o = w.cr(&["findings", "--review", "001"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let at = o.stdout.find("## The Concierge's review").expect("a scores section");
+    assert!(at < o.stdout.find("## Agreement").unwrap(), "{}", o.stdout);
+    assert!(o.stdout.contains("- His lens: predicted 1 of your 3 comments"), "{}", o.stdout);
+    assert!(o.stdout.contains("- Fresh read: you endorsed 2 of its 3 points"), "{}", o.stdout);
+}
+
+#[test]
+fn an_endorses_index_past_the_fresh_read_is_refused() {
+    let mut w = world();
+    seal_halves(&w);
+    assert_eq!(w.finding(&endorsing(3)).code, 0);
+    for n in [4, 0] {
+        let o = w.finding(&endorsing(n));
+        assert_eq!(o.code, 2, "{}", o.stderr);
+        assert!(o.stderr.contains("endorses"), "{}", o.stderr);
+    }
 }
