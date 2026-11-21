@@ -2,9 +2,9 @@
 //! review repository and a temp run directory.
 
 use super::gh::{unbase64, FakeGh, Shared, NAME, OWNER};
-use super::{cfg, fixture, go, ports_with, NOW};
+use super::{cfg, fixture, go, ports_with, DAY, NOW};
 use crate::cli::Outcome;
-use crate::ports::Ports;
+use crate::ports::{CommitInfo, FixtureBeads, FixtureRegistry, Ports};
 use crate::record::{self, State};
 use sha2::{Digest, Sha256};
 use std::rc::Rc;
@@ -453,4 +453,68 @@ fn seal_refuses_a_prose_field_carrying_a_heading_line_and_a_bare_array_on_a_reru
     w.gh.heal();
     let o = w.seal_with("001", r#"[{"path":"x","line":1,"body":"y"}]"#);
     assert_eq!(o.code, 2, "{}", o.stderr);
+}
+
+fn commit(sha: &str, subject: &str, reverts: bool) -> CommitInfo {
+    CommitInfo { sha: sha.into(), at_ms: NOW - DAY, subject: subject.into(), reverts }
+}
+
+fn sealed_body(w: &mut World) -> String {
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "1"]).code, 0);
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn the_cover_counts_every_commit_and_its_reverts_and_fixes() {
+    let mut w = world();
+    let log = vec![
+        commit("a1", "spira: land sp-bug001 — stop the store losing a write", false),
+        commit("a2", "sp-feat02: add a handle", false),
+        commit("a3", "Revert \"tidy\"", true),
+        commit("a4", "tidy", false),
+        commit("a5", "wip", false),
+    ];
+    w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", log));
+    w.ports.beads = Box::new(FixtureBeads(Ok([("sp-bug001", "bug"), ("sp-feat02", "feature")].map(|(a, b)| (a.to_string(), b.to_string())).into())));
+    let body = sealed_body(&mut w);
+    assert!(body.contains("- Commits: 5 ever, 1 reverts, 1 fixes"), "{body}");
+}
+
+#[test]
+fn the_cover_gives_the_rewritten_share_and_median_line_age() {
+    let mut w = world();
+    let now = 1000 * DAY;
+    w.ports.clock = Box::new(crate::ports::VirtualClock::new(now));
+    w.ports.tree = Box::new(fixture().with_line_times("demo/src/store.rs", &[now - 10 * DAY, now - 10 * DAY, now - 200 * DAY, now - 400 * DAY]));
+    let body = sealed_body(&mut w);
+    assert!(body.contains("50% of"), "{body}");
+    assert!(body.contains("Rewritten in the last 90 days: 50% of"), "{body}");
+    assert!(body.contains("median line age 105 days"), "{body}");
+}
+
+#[test]
+fn the_cover_names_tests_deleted_later_and_disabled_as_flaky() {
+    let mut w = world();
+    w.ports.tree = Box::new(fixture().with_removed_test("demo/src/store/tests.rs", "closes", "deadbeefcafe", NOW - 5 * DAY));
+    w.ports.registry = Box::new(FixtureRegistry(Ok(vec![("unit:demo store::tests::opens".into(), 0)])));
+    let body = sealed_body(&mut w);
+    assert!(body.contains("- Deleted later: 1"), "{body}");
+    assert!(body.contains("`demo/src/store/tests.rs::closes`") && body.contains("deadbee"), "{body}");
+    assert!(body.contains("- Disabled as flaky: 1"), "{body}");
+    assert!(body.contains("`unit:demo store::tests::opens` 1970-01-01"), "{body}");
+}
+
+#[test]
+fn an_unreadable_bead_store_or_registry_says_unknown_not_zero() {
+    let mut w = world();
+    w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", vec![commit("a1", "sp-bug001: fix", false)]));
+    w.ports.beads = Box::new(FixtureBeads(Err("store down".into())));
+    w.ports.registry = Box::new(FixtureRegistry(Err("registry locked".into())));
+    let body = sealed_body(&mut w);
+    assert!(body.contains("fixes: unknown (store down)"), "{body}");
+    assert!(body.contains("Disabled as flaky: unknown (registry locked)"), "{body}");
+    assert!(!body.contains("0 fixes") && !body.contains("Disabled as flaky: 0"), "{body}");
 }

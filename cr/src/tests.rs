@@ -14,7 +14,7 @@ const DAY: u64 = 86_400_000;
 pub(crate) const NOW: u64 = 100 * DAY;
 
 pub(crate) fn cfg() -> Config {
-    Config { page_lines: 10, oversize_pages: 3, exclude: ["**/fixtures/**", "**/*.generated.*", "**/vendor/**", "Cargo.lock"].map(String::from).to_vec(), churn_days: 60, count_limit: 7 }
+    Config { page_lines: 10, oversize_pages: 3, exclude: ["**/fixtures/**", "**/*.generated.*", "**/vendor/**", "Cargo.lock"].map(String::from).to_vec(), churn_days: 60, rewrite_days: 90, count_limit: 7 }
 }
 
 fn big_source() -> String {
@@ -58,7 +58,7 @@ fn ports_with(tree: FixtureTree, ledger: Vec<Row>, config: Config) -> Ports {
 }
 
 fn ports_with_tree(tree: Box<dyn SourceTree>) -> Ports {
-    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), gh: Box::new(gh::FakeGh::default()), repo_owner: String::new(), repo_name: String::new(), findings_dir: String::new(), committer: Box::new(NoCommit), source_repo: "src".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree, ledger: Ledger::from_rows(vec![]), config: cfg(), env_seed: None }
+    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), gh: Box::new(gh::FakeGh::default()), repo_owner: String::new(), repo_name: String::new(), findings_dir: String::new(), committer: Box::new(NoCommit), source_repo: "src".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree, beads: Box::new(crate::ports::FixtureBeads::default()), registry: Box::new(crate::ports::FixtureRegistry::default()), ledger: Ledger::from_rows(vec![]), config: cfg(), env_seed: None }
 }
 
 fn ports() -> Ports {
@@ -422,6 +422,15 @@ impl SourceTree for Unreadable {
         History::default()
     }
     fn authors(&self, _: &str) -> Vec<String> {
+        Vec::new()
+    }
+    fn log(&self, _: &str) -> Vec<crate::ports::CommitInfo> {
+        Vec::new()
+    }
+    fn line_times(&self, _: &str) -> Vec<u64> {
+        Vec::new()
+    }
+    fn removed_tests(&self, _: &[String]) -> Vec<crate::ports::RemovedTest> {
         Vec::new()
     }
     fn at(&self, _: &str) -> Result<Box<dyn SourceTree>, String> {

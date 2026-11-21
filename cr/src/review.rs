@@ -1,6 +1,7 @@
 //! `cr open`, `cr seal`, `cr unseal` and `cr status`: a review's life from staged to published.
 
 use crate::cli::Outcome;
+use crate::history;
 use crate::index::Index;
 use crate::ledger::{Ledger, LedgerFile, Row};
 use crate::pick;
@@ -10,6 +11,7 @@ use crate::rustsrc;
 use crate::units;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -281,7 +283,8 @@ fn test_search_files(ix: &Index, u: &units::Unit, dependents: &[String]) -> Vec<
     out
 }
 
-fn tests_by_call_path(ix: &Index, u: &units::Unit, dependents: &[String]) -> Vec<String> {
+/// `(file, test fn, callee used)` for each test whose body calls a `pub` item of the unit.
+fn tests_by_call_path(ix: &Index, u: &units::Unit, dependents: &[String]) -> Vec<(String, String, String)> {
     let mut callees: Vec<String> = Vec::new();
     for f in &u.files {
         if let Some(t) = ix.text.get(&f.path) {
@@ -298,7 +301,7 @@ fn tests_by_call_path(ix: &Index, u: &units::Unit, dependents: &[String]) -> Vec
         for (test, body) in rustsrc::test_fns(&raw, &rustsrc::code_lines(t)) {
             for c in &callees {
                 if let Some(used) = used_callee(&body, c) {
-                    found.push(format!("- `{path}::{test}` calls `{used}`\n"));
+                    found.push((path.clone(), test.clone(), used));
                     break;
                 }
             }
@@ -363,15 +366,25 @@ fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, V
         None => m.push_str("- First commit: unknown\n"),
     }
     m.push_str(&format!("- Commits in the last {} days: {commits}\n", ports.config.churn_days));
+    let paths: Vec<String> = u.files.iter().map(|f| f.path.clone()).collect();
+    m.push_str(&history::commits_line(&paths, tree, ports.beads.as_ref()));
+    m.push_str(&history::rewritten_line(&paths, tree, now, ports.config.rewrite_days));
     m.push_str(&format!("- Authors: {}\n", if authors.is_empty() { "none recorded".to_string() } else { authors.join(", ") }));
     m.push_str(&format!("\n{}\n\n", SECTIONS[5]));
     let tests = tests_by_call_path(ix, u, &dependents);
     if tests.is_empty() {
         m.push_str("None found by call path.\n");
     }
-    for t in tests {
-        m.push_str(&t);
+    let mut test_fns: BTreeSet<String> = BTreeSet::new();
+    for (path, test, used) in &tests {
+        m.push_str(&format!("- `{path}::{test}` calls `{used}`\n"));
+        test_fns.insert(test.clone());
     }
+    let removed = tree.removed_tests(&test_search_files(ix, u, &[]));
+    test_fns.extend(removed.iter().map(|r| r.name.clone()));
+    m.push('\n');
+    m.push_str(&history::deleted_lines(&removed));
+    m.push_str(&history::disabled_lines(ports.registry.as_ref(), &test_fns));
     m
 }
 
