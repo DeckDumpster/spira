@@ -124,7 +124,7 @@ pub(crate) mod verdict_run {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn with_run_launching<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: Dirty, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &dyn Seam, sink: &dyn Sink, launcher: &dyn Launcher, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
+    fn with_run_launching<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: impl Git, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &dyn Seam, sink: &dyn Sink, launcher: &dyn Launcher, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
         let original = vars.clone();
         let conf = Conf::new(&Snapshot { vars, ..Default::default() }, Path::new("h/spira"));
         let rune = Rune::from_vars("builder", &Default::default());
@@ -263,6 +263,7 @@ pub(crate) mod verdict_run {
 
     #[test]
     fn the_env_the_session_port_receives_carries_the_worktree_tmpdir() {
+        let _otel = OTEL.lock().unwrap_or_else(|e| e.into_inner());
         let work = testkit::TempDir::new("dwarf-tmpdir-spec");
         let w = work.path().to_path_buf();
         let cap = Capture(Default::default());
@@ -288,6 +289,7 @@ pub(crate) mod verdict_run {
 
     #[test]
     fn the_env_the_session_port_receives_carries_the_forge_fences_and_no_token() {
+        let _otel = OTEL.lock().unwrap_or_else(|e| e.into_inner());
         let work = testkit::TempDir::new("dwarf-fences-spec");
         let w = work.path().to_path_buf();
         let cap = Capture(Default::default());
@@ -716,5 +718,123 @@ pub(crate) mod verdict_run {
     fn a_blocker_the_store_cannot_read_is_named_in_the_task_brief_not_dropped() {
         let task = task_brief_over(&BlockedLc("sp-gone"));
         assert!(task.contains("- sp-gone state cannot tell (rc=2: down)"), "{task}");
+    }
+
+    static OTEL: Mutex<()> = Mutex::new(());
+
+    struct NoCommits;
+    impl Git for NoCommits {
+        fn git(&self, _: &Path, _: &[&str]) -> Out {
+            Out { code: 1, stdout: String::new(), stderr: String::new() }
+        }
+    }
+
+    struct SubmittedAt(Option<i64>);
+    impl Exec for SubmittedAt {
+        fn exec(&self, prog: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            if prog == "spira-lc" && args.first().map(String::as_str) == Some("show") {
+                return match self.0 {
+                    Some(at) => Out::ok(format!(r#"{{"bead":{{"bead_id":"{}","state":"SUBMITTED","since":{at}}}}}"#, args[1])),
+                    None => Out::ok(format!(r#"{{"bead":{{"bead_id":"{}","state":"WORKING","since":1}}}}"#, args[1])),
+                };
+            }
+            Out::ok("")
+        }
+    }
+
+    struct ExitsAt<'a>(&'a std::sync::atomic::AtomicI64, i64);
+    impl Launcher for ExitsAt<'_> {
+        fn run(&self, _: &SessionSpec, _: &Stop) -> i32 {
+            self.0.store(self.1, std::sync::atomic::Ordering::SeqCst);
+            0
+        }
+    }
+
+    /// A loopback sink answering pushes until the run's closing push (`finish`'s run
+    /// count) or a minute; yields each request's raw bytes. Other tests' events may land here.
+    fn sink_until_finish() -> (String, std::thread::JoinHandle<Vec<Vec<u8>>>) {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        l.set_nonblocking(true).unwrap();
+        let h = std::thread::spawn(move || {
+            let give_up = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            let mut pushes: Vec<Vec<u8>> = Vec::new();
+            while std::time::Instant::now() < give_up && !pushes.last().is_some_and(|p| has(p, b"spira_component_runs")) {
+                let Ok((mut c, _)) = l.accept() else {
+                    std::thread::yield_now();
+                    continue;
+                };
+                c.set_nonblocking(false).unwrap();
+                let (mut buf, mut chunk) = (Vec::new(), [0u8; 4096]);
+                loop {
+                    let got = c.read(&mut chunk).unwrap();
+                    buf.extend_from_slice(&chunk[..got]);
+                    let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                    let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                    let len: usize = head.split("content-length: ").nth(1).unwrap().split("\r\n").next().unwrap().parse().unwrap();
+                    if buf.len() >= i + 4 + len {
+                        break;
+                    }
+                }
+                c.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").unwrap();
+                pushes.push(buf);
+            }
+            pushes
+        });
+        (addr, h)
+    }
+
+    fn has(hay: &[u8], needle: &[u8]) -> bool {
+        hay.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// The pushes a run makes when its session exits at `T0 + 300` and its
+    /// teardown ends at `T0 + 354`, the lifecycle row saying SUBMITTED since `submitted_at`.
+    fn pushed_after_submit(submitted_at: Option<i64>) -> Vec<Vec<u8>> {
+        use std::sync::atomic::{AtomicI64, Ordering};
+        let _g = OTEL.lock().unwrap_or_else(|e| e.into_inner());
+        let work = testkit::TempDir::new("dwarf-after-submit");
+        let w = work.path().to_path_buf();
+        let now = AtomicI64::new(T0);
+        let launcher = ExitsAt(&now, T0 + 300);
+        let (addr, sink) = sink_until_finish();
+        spira_otel::run::begin("dwarf", Some(&addr));
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_REPO".into(), "shared".into());
+        let cwd = std::env::current_dir().unwrap();
+        let clock = || now.load(Ordering::SeqCst);
+        with_run_launching(vars, &NoBd, NoCommits, &SubmittedAt(submitted_at), &clock, &Seams(Default::default()), &Mute::default(), &launcher, "", |r| {
+            r.s.logf = Some(w.join("log"));
+            let bin = w.join("model-bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            testkit::write_exe(bin.join("work"), "#!/bin/sh\n");
+            r.d.env.set(spira_config::release_env::MODEL_BIN_OVERRIDE_ENV, &bin.display().to_string());
+            r.session(&w).map_err(|a| format!("{a:?}")).unwrap();
+            now.store(T0 + 354, Ordering::SeqCst);
+            r.teardown(0);
+        });
+        std::env::set_current_dir(cwd).unwrap();
+        spira_otel::run::finish(0);
+        sink.join().unwrap()
+    }
+
+    #[test]
+    fn a_submitted_run_pushes_how_long_its_session_and_its_teardown_held_the_slot_after_submit() {
+        let pushes = pushed_after_submit(Some(T0));
+        for (part, secs) in [("session", 300.0f64), ("teardown", 54.0)] {
+            let one = pushes.iter().find(|p| has(p, part.as_bytes())).unwrap_or_else(|| panic!("no push for {part}: {:?}", pushes.iter().map(|p| String::from_utf8_lossy(p).into_owned()).collect::<Vec<_>>()));
+            for want in ["dwarf_after_submit_seconds", "builder", "submitted"] {
+                assert!(has(one, want.as_bytes()), "{want} missing from the {part} push: {}", String::from_utf8_lossy(one));
+            }
+            assert!(has(one, &secs.to_le_bytes()), "{part} should be {secs}");
+        }
+    }
+
+    #[test]
+    fn a_run_that_never_submitted_pushes_no_after_submit_seconds() {
+        let pushes = pushed_after_submit(None);
+        assert!(pushes.iter().any(|p| has(p, b"spira_component_runs")), "positive control: the run's own closing push arrived");
+        assert!(!pushes.iter().any(|p| has(p, b"dwarf_after_submit_seconds")));
     }
 }

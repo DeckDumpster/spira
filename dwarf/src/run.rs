@@ -97,6 +97,10 @@ pub struct State {
     /// The launcher call's own wall time; `None` when no session launched, where
     /// [`State::claimed_at`] stands in.
     pub session_wall_s: Option<i64>,
+    /// The clock when the launcher returned; `None` when no session launched.
+    pub session_exited_at: Option<i64>,
+    /// When this run's bead reached SUBMITTED, as the lifecycle row recorded it at teardown.
+    pub submitted_at: Option<i64>,
     /// The clock at the claim; the wall time of a run that ended before any launch.
     pub claimed_at: Option<i64>,
     /// The verdict's `committed`; false until the verdict block ran.
@@ -296,8 +300,18 @@ impl<'a> Run<'a> {
         let mut fields = ledger::session_result_fields(self.s.logf.as_deref(), &self.conf.trace_mark());
         fields.fill_wall(self.s.session_wall_s.or_else(|| self.s.claimed_at.map(|t| (self.now() - t).max(0))));
         self.ledger.done(self.now(), self.f(), &self.s.bead, rc, status, &fields);
+        self.meter_after_submit(status);
         trace::tsd_dwarf_session(self.d.exec, &self.run_dir().display().to_string(), &self.s.bead, self.f(), rc, status, &fields);
         self.rapid_recur_check();
+    }
+
+    /// A submitted run's two holds on its build slot after `work submit`: the session still
+    /// running, then the teardown. A run that never submitted pushes neither.
+    fn meter_after_submit(&self, status: &str) {
+        let (Some(submitted), Some(exited)) = (self.s.submitted_at, self.s.session_exited_at) else { return };
+        let labels = |part: &'static str| [("part", part), ("rune", self.f()), ("status", status)];
+        spira_otel::run::seconds("dwarf_after_submit_seconds", (exited - submitted).max(0) as f64, &labels("session"));
+        spira_otel::run::seconds("dwarf_after_submit_seconds", (self.now() - exited).max(0) as f64, &labels("teardown"));
     }
 
     /// The last `n` `done` lines this bead has in the ledger, a held worktree excluded.
@@ -1549,7 +1563,9 @@ impl<'a> Run<'a> {
         if let Some((sim, world)) = &pilgrim {
             pilgrim_world::down(self.d.exec, sim, world);
         }
-        self.s.session_wall_s = Some((self.now() - launched).max(0));
+        let exited = self.now();
+        self.s.session_exited_at = Some(exited);
+        self.s.session_wall_s = Some((exited - launched).max(0));
         // Interrupted: bash's trap ran before `SESSION_RC=$rc`, so SESSION_RC stays 0.
         self.check_stop()?;
         self.s.session_rc = rc;

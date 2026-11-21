@@ -68,6 +68,8 @@ pub struct Row {
     pub version: Option<String>,
     /// Why the row is in its state; a SUPERSEDED bead's is its successor's id.
     pub reason: Option<String>,
+    /// When the row entered its current state, epoch seconds.
+    pub since: Option<i64>,
 }
 
 impl Row {
@@ -184,6 +186,7 @@ pub fn row_of(r: &Value) -> Result<Row, String> {
         disposition_note: scalar(r.get("disposition_note")),
         version: scalar(r.get("version")).filter(|v| !v.is_empty()),
         reason: scalar(r.get("reason")).filter(|x| !x.is_empty()),
+        since: scalar(r.get("since")).and_then(|x| x.trim().parse().ok()),
         bead_id: id,
     })
 }

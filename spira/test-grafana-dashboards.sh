@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: spira/metrics/grafana/** spira-config/src/build_dir.rs work/src/main.rs habits/src/lib.rs gate/src/telemetry.rs queue/src/ops/round.rs spira/testlib.sh
+# covers: spira/metrics/grafana/** dwarf/src/run.rs spira-config/src/build_dir.rs work/src/main.rs habits/src/lib.rs gate/src/telemetry.rs queue/src/ops/round.rs spira/testlib.sh
 #
 # The gate-tooling dashboard's check panels (the yield meter and the unit-tests check seconds)
 # parse clean and query only series something pushes.
@@ -67,4 +67,17 @@ want "positive control: an unprovisioned receiver is not found" "" "$(grep -x ' 
 want "the alert's datasource uid is the provisioned one" "spira-vm" "$(grep -o 'datasourceUid: spira-vm' "$ALERT" | head -1 | cut -d' ' -f2)"
 is "that uid is declared by the datasource" "uid: spira-vm" "$(grep -h "uid: spira-vm" "$ROOT/spira/metrics/grafana/provisioning/datasources/victoriametrics.yaml" | sed "s/^ *//")"
 want "the alert pages by the repo label" "group_by: [repo]" "$(grep group_by "$ALERT" | sed 's/^ *//')"
+RUNS_DASH="$ROOT/spira/metrics/grafana/dashboards/runs.json"
+after_submit_panel() {
+  python3 -I - "$1" <<'PY'
+import json, sys
+for p in json.load(open(sys.argv[1]))["panels"]:
+    if p["title"] == "After work submit: session and teardown seconds by rune":
+        print("\n".join(t["expr"] for t in p["targets"]))
+PY
+}
+panel="$(after_submit_panel "$RUNS_DASH")"
+want "the runs dashboard's after-submit panel queries the pushed series" "dwarf_after_submit_seconds" "$panel"
+want "the after-submit panel shows p50, p90 and max" "3" "$(printf '%s\n' "$panel" | grep -c 'quantile_over_time(0.5\|quantile_over_time(0.9\|max_over_time')"
+want "the series is pushed by the dwarf" "1" "$(grep -c '"dwarf_after_submit_seconds"' "$ROOT/dwarf/src/run.rs" | sed 's/^[1-9][0-9]*$/1/')"
 tl_summary
