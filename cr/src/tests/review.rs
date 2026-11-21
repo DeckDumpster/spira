@@ -47,7 +47,7 @@ impl World {
     fn comments(&self, n: u32) -> String {
         let r = record::load(self.run.path(), n).unwrap();
         let path = &r.unit.files[0].path;
-        format!(r#"{{"does":"{DOES}","look_first":"{LOOK}","comments":[{{"path":"{path}","line":1,"body":"first look"}}]}}"#)
+        format!(r#"{{"does":"{DOES}","look_first":"{LOOK}","lens":[{{"path":"{path}","line":1,"body":"first look"}}],"fresh":[{{"path":"{path}","line":2,"body":"fresh look"}}]}}"#)
     }
     fn sealed_path(&self, n: u32) -> std::path::PathBuf {
         record::dir(self.run.path(), n).join("sealed.json")
@@ -151,12 +151,12 @@ fn seal_puts_the_cover_note_in_the_pull_request_description_and_only_unit_files_
 fn seal_refuses_a_cover_missing_does_or_look_first_before_any_forge_call() {
     let mut w = world();
     assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
-    let c = r#"[{"path":"demo/src/store.rs","line":1,"body":"x"}]"#.to_string();
+    let c = r#""lens":[{"path":"demo/src/store.rs","line":1,"body":"x"}],"fresh":[{"path":"demo/src/store.rs","line":1,"body":"y"}]"#.to_string();
     for (bad, field) in [
-        (c.clone(), "does"),
-        (format!(r#"{{"look_first":"{LOOK}","comments":{c}}}"#), "does"),
-        (format!(r#"{{"does":"{DOES}","look_first":"  ","comments":{c}}}"#), "look_first"),
-        (format!(r#"{{"does":"","look_first":"{LOOK}","comments":{c}}}"#), "does"),
+        (format!("[{c}]"), "does"),
+        (format!(r#"{{"look_first":"{LOOK}",{c}}}"#), "does"),
+        (format!(r#"{{"does":"{DOES}","look_first":"  ",{c}}}"#), "look_first"),
+        (format!(r#"{{"does":"","look_first":"{LOOK}",{c}}}"#), "does"),
     ] {
         let o = w.seal_with("001", &bad);
         assert_eq!(o.code, 2, "{bad}: {}", o.stderr);
@@ -241,7 +241,7 @@ fn seal_refuses_an_empty_array_a_foreign_path_and_a_line_past_the_end_before_any
     let mut w = world();
     assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
     let path = record::load(w.run.path(), 1).unwrap().unit.files[0].path.clone();
-    let wrap = |comments: String| format!(r#"{{"does":"{DOES}","look_first":"{LOOK}","comments":{comments}}}"#);
+    let wrap = |comments: String| format!(r#"{{"does":"{DOES}","look_first":"{LOOK}","lens":{comments},"fresh":{comments}}}"#);
     for bad in [
         wrap("[]".to_string()),
         wrap(r#"[{"path":"nowhere/else.rs","line":1,"body":"x"}]"#.to_string()),
@@ -315,7 +315,7 @@ fn unseal_on_a_published_review_posts_the_sealed_comments_as_one_review_once() {
     assert_eq!(posts.len(), 1);
     assert_eq!(posts[0]["event"], "COMMENT");
     let sealed: serde_json::Value = serde_json::from_slice(&std::fs::read(w.sealed_path(1)).unwrap()).unwrap();
-    let want: Vec<serde_json::Value> = sealed.as_array().unwrap().iter().map(|c| serde_json::json!({"path": c["path"], "line": c["line"], "side": "RIGHT", "body": c["body"]})).collect();
+    let want: Vec<serde_json::Value> = sealed["lens"].as_array().unwrap().iter().chain(sealed["fresh"].as_array().unwrap()).map(|c| serde_json::json!({"path": c["path"], "line": c["line"], "side": "RIGHT", "body": format!("{}{}", if sealed["lens"].as_array().unwrap().contains(c) { "**His lens:** " } else { "**Fresh read:** " }, c["body"].as_str().unwrap())})).collect();
     assert_eq!(posts[0]["comments"].as_array().unwrap(), &want);
     assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 2);
     assert_eq!(w.gh.posted("pulls/7/reviews").len(), 1);
@@ -736,4 +736,54 @@ fn closing_a_review_that_was_never_sealed_writes_nothing_and_succeeds() {
     let o = w.cr(&["ledger-close", "--review", "001", "--at", "5"]);
     assert_eq!(o.code, 0, "{}", o.stderr);
     assert!(w.gh.put("contents/ledger.jsonl").is_empty());
+}
+
+#[test]
+fn seal_refuses_a_sealed_review_missing_either_half_before_any_forge_call() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    let one = r#"[{"path":"demo/src/store.rs","line":1,"body":"x"}]"#;
+    let head = format!(r#""does":"{DOES}","look_first":"{LOOK}""#);
+    for (bad, half) in [
+        (format!(r#"{{{head},"lens":[],"fresh":{one}}}"#), "lens"),
+        (format!(r#"{{{head},"fresh":{one}}}"#), "lens"),
+        (format!(r#"{{{head},"lens":{one}}}"#), "fresh"),
+        (format!(r#"{{{head},"lens":{one},"fresh":[]}}"#), "fresh"),
+    ] {
+        let o = w.seal_with("001", &bad);
+        assert_eq!(o.code, 2, "{bad}: {}", o.stderr);
+        assert!(o.stderr.contains(half), "{}", o.stderr);
+    }
+    assert_eq!(w.gh.count(), 0);
+    assert!(!w.sealed_path(1).exists());
+}
+
+#[test]
+fn unseal_labels_each_comment_with_its_half() {
+    let mut w = world();
+    assert_eq!(w.open_and_seal().code, 0);
+    record::set_state(w.run.path(), 1, State::Published, NOW).unwrap();
+    assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 0);
+    let posts = w.gh.posted("pulls/7/reviews");
+    let bodies: Vec<&str> = posts[0]["comments"].as_array().unwrap().iter().map(|c| c["body"].as_str().unwrap()).collect();
+    assert_eq!(bodies, ["**His lens:** first look", "**Fresh read:** fresh look"]);
+}
+
+#[test]
+fn status_shows_each_published_reviews_two_scores_in_order() {
+    let mut w = world();
+    for (n, seed) in [("001", "3"), ("002", "4")] {
+        assert_eq!(w.cr(&["open", "--seed", seed]).code, 0);
+        let c = w.comments(n.parse().unwrap());
+        assert_eq!(w.seal_with(n, &c).code, 0);
+    }
+    record::set_state(w.run.path(), 2, State::Published, NOW).unwrap();
+    record::set_state(w.run.path(), 1, State::Closed, NOW).unwrap();
+    let j: serde_json::Value = serde_json::from_str(&w.cr(&["status", "--json"]).stdout).unwrap();
+    let rows: Vec<(&str, u64, u64, u64, u64)> = j["scores"].as_array().unwrap().iter().map(|r| (r["review"].as_str().unwrap(), r["lens_predicted"].as_u64().unwrap(), r["his_comments"].as_u64().unwrap(), r["fresh_endorsed"].as_u64().unwrap(), r["fresh_points"].as_u64().unwrap())).collect();
+    assert_eq!(rows, [("001", 0, 0, 0, 1), ("002", 0, 0, 0, 1)]);
+    let text = w.cr(&["status"]).stdout;
+    let at = text.find("scores\n").expect("a scores section");
+    let lines: Vec<&str> = text[at..].lines().skip(1).take(2).collect();
+    assert_eq!(lines, ["  001 lens 0/0 fresh 0/1", "  002 lens 0/0 fresh 0/1"]);
 }

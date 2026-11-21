@@ -2,6 +2,7 @@
 
 use crate::cli::Outcome;
 use crate::coverage::{self, Coverage, Tally};
+use crate::findings;
 use crate::history;
 use crate::index::Index;
 use crate::ledger::{self, LedgerFile, Row};
@@ -27,6 +28,35 @@ pub struct Comment {
     pub path: String,
     pub line: u32,
     pub body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Sealed {
+    pub lens: Vec<Comment>,
+    pub fresh: Vec<Comment>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredSeal {
+    Halves { lens: Vec<Comment>, fresh: Vec<Comment> },
+    Single(Vec<Comment>),
+}
+
+impl Sealed {
+    /// `None` when the review was never sealed. A review sealed as one undivided array is all lens.
+    pub(crate) fn load(run: &Path, number: u32) -> Result<Option<Sealed>, String> {
+        let path = record::dir(run, number).join("sealed.json");
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("reading sealed.json: {e}")),
+        };
+        match serde_json::from_slice(&bytes).map_err(|e| format!("sealed.json: {e}"))? {
+            StoredSeal::Halves { lens, fresh } => Ok(Some(Sealed { lens, fresh })),
+            StoredSeal::Single(lens) => Ok(Some(Sealed { lens, fresh: Vec::new() })),
+        }
+    }
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -165,10 +195,10 @@ struct Cover {
 
 struct SealInput {
     cover: Cover,
-    comments: Vec<Comment>,
+    sealed: Sealed,
 }
 
-const SHAPE: &str = "stdin is one JSON object {\"does\": \"<sentences>\", \"look_first\": \"<sentences>\", \"comments\": [{path, line, body}, ...]}";
+const SHAPE: &str = "stdin is one JSON object {\"does\": \"<sentences>\", \"look_first\": \"<sentences>\", \"lens\": [{path, line, body}, ...], \"fresh\": [{path, line, body}, ...]}";
 
 fn parse_input(stdin: &str) -> Result<SealInput, String> {
     let v: Value = serde_json::from_str(stdin).map_err(|e| format!("{SHAPE}: {e}"))?;
@@ -181,13 +211,15 @@ fn parse_input(stdin: &str) -> Result<SealInput, String> {
         _ => Err(format!("`{key}` is missing or blank; {SHAPE}")),
     };
     let cover = Cover { does: prose("does")?, look_first: prose("look_first")? };
-    let comments: Vec<Comment> = serde_json::from_value(obj.get("comments").cloned().unwrap_or(Value::Null)).map_err(|e| format!("`comments` is not a JSON array of {{path, line, body}}: {e}"))?;
-    Ok(SealInput { cover, comments })
+    let half = |key: &str| -> Result<Vec<Comment>, String> {
+        serde_json::from_value(obj.get(key).cloned().unwrap_or(Value::Null)).map_err(|e| format!("`{key}` is missing or not a JSON array of {{path, line, body}}: {e}"))
+    };
+    Ok(SealInput { cover, sealed: Sealed { lens: half("lens")?, fresh: half("fresh")? } })
 }
 
-fn validate(comments: &[Comment], files: &[(String, Vec<u8>)]) -> Result<(), String> {
+fn validate(half: &str, comments: &[Comment], files: &[(String, Vec<u8>)]) -> Result<(), String> {
     if comments.is_empty() {
-        return Err("the sealed review is empty: an empty array is refused".to_string());
+        return Err(format!("the `{half}` half of the sealed review is empty: each half needs at least one comment"));
     }
     for c in comments {
         let Some((_, bytes)) = files.iter().find(|(p, _)| *p == c.path) else {
@@ -402,8 +434,8 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
     }
     if sealed_path.exists() {
         if let Some(Ok(input)) = &supplied {
-            let stored: Option<Vec<Comment>> = std::fs::read(&sealed_path).ok().and_then(|b| serde_json::from_slice(&b).ok());
-            if Some(&input.comments) != stored.as_ref() {
+            let stored = Sealed::load(run, number).ok().flatten();
+            if Some(&input.sealed) != stored.as_ref() {
                 return refuse(2, &format!("review {number:03} is already sealed with different comments; a sealed review is not replaced"));
             }
             if stored_cover.as_ref().is_some_and(|c| *c != input.cover) {
@@ -417,10 +449,12 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
             Some(Err(e)) => return refuse(2, e),
             None => return refuse(2, &format!("stdin is empty; {SHAPE}")),
         };
-        if let Err(e) = validate(&input.comments, &files) {
-            return refuse(2, &e);
+        for (half, comments) in [("lens", &input.sealed.lens), ("fresh", &input.sealed.fresh)] {
+            if let Err(e) = validate(half, comments, &files) {
+                return refuse(2, &e);
+            }
         }
-        let bytes = serde_json::to_string_pretty(&input.comments).expect("comments serialise").into_bytes();
+        let bytes = serde_json::to_string_pretty(&input.sealed).expect("comments serialise").into_bytes();
         let cover_bytes = serde_json::to_string_pretty(&input.cover).expect("cover serialises").into_bytes();
         r.sealed_sha256 = Some(sha256_hex(&bytes));
         if let Err(e) = record::write_atomic(&cover_path, &cover_bytes).and_then(|()| record::write_atomic(&sealed_path, &bytes)).and_then(|()| record::save(run, &r)) {
@@ -595,11 +629,13 @@ pub fn unseal(number: u32, said: Option<&str>, ports: &Ports) -> Outcome {
     if r.sealed_sha256.as_deref() != Some(sha256_hex(&sealed).as_str()) {
         return refuse(2, &format!("sealed.json no longer hashes to the sha256 recorded when review {number:03} was sealed; nothing is posted"));
     }
-    let comments: Vec<Comment> = match serde_json::from_slice(&sealed) {
-        Ok(c) => c,
-        Err(e) => return refuse(1, &format!("sealed.json: {e}")),
+    let halves = match Sealed::load(run, number) {
+        Ok(Some(h)) => h,
+        Ok(None) => return refuse(1, "sealed.json is missing"),
+        Err(e) => return refuse(1, &e),
     };
-    let payload: Vec<Value> = comments.iter().map(|c| json!({"path": c.path, "line": c.line, "side": "RIGHT", "body": c.body})).collect();
+    let labelled = halves.lens.iter().map(|c| ("**His lens:** ", c)).chain(halves.fresh.iter().map(|c| ("**Fresh read:** ", c)));
+    let payload: Vec<Value> = labelled.map(|(label, c)| json!({"path": c.path, "line": c.line, "side": "RIGHT", "body": format!("{label}{}", c.body)})).collect();
     let ep = format!("{repo}/pulls/{pr}/reviews");
     if let Err(e) = gh(ports, "POST", &ep, Some(&json!({"event": "COMMENT", "comments": payload}))) {
         return refuse(1, &e);
@@ -607,7 +643,7 @@ pub fn unseal(number: u32, said: Option<&str>, ports: &Ports) -> Outcome {
     if let Err(e) = record::write_atomic(&dir.join("posted"), b"") {
         return refuse(1, &e);
     }
-    done(format!("posted {} comments on pull request {pr}\n", comments.len()))
+    done(format!("posted {} comments on pull request {pr}\n", payload.len()))
 }
 
 // ───────────────────────────── status ─────────────────────────────
@@ -631,6 +667,10 @@ pub fn status(json_out: bool, ports: &Ports) -> Outcome {
         Ok(c) => c,
         Err(e) => return refuse(1, &e),
     };
+    let scores = match review_scores(&rs, ports) {
+        Ok(s) => s,
+        Err(e) => return refuse(1, &e),
+    };
     let limit = ports.config.status_limit;
     let cut = |n: usize| n.saturating_sub(limit);
     if json_out {
@@ -641,7 +681,7 @@ pub fn status(json_out: bool, ports: &Ports) -> Outcome {
         let tally = |a: &str, t: &Tally| json!({"area": a, "reviewed": t.reviewed, "current": t.current, "total": t.total});
         return done(format!(
             "{}\n",
-            json!({"reviews": reviews, "coverage": {
+            json!({"reviews": reviews, "scores": scores.iter().map(|(n, s)| json!({"review": format!("{n:03}"), "lens_predicted": s.lens_predicted, "his_comments": s.his_comments, "fresh_endorsed": s.fresh_endorsed, "fresh_points": s.fresh_points})).collect::<Vec<_>>(), "coverage": {
                 "commit": cov.commit,
                 "files": {"reviewed": cov.files.reviewed, "current": cov.files.current, "total": cov.files.total},
                 "areas": cov.areas.iter().map(|(a, t)| tally(a, t)).collect::<Vec<_>>(),
@@ -655,6 +695,10 @@ pub fn status(json_out: bool, ports: &Ports) -> Outcome {
     let mut out = String::from("open reviews\n");
     for r in rs {
         out.push_str(&format!("{:03} {} {} {} {} {}\n", r.number, r.kind.as_str(), r.state.as_str(), age(r.staged_at, now), r.pr_url.as_deref().unwrap_or("-"), r.unit.title));
+    }
+    out.push_str("\nscores\n");
+    for (n, s) in &scores {
+        out.push_str(&format!("  {n:03} lens {}/{} fresh {}/{}\n", s.lens_predicted, s.his_comments, s.fresh_endorsed, s.fresh_points));
     }
     out.push_str(&format!("\ncoverage at {}: {}/{} files ({}%), {} at their current blob\n", cov.commit, cov.files.reviewed, cov.files.total, pct(cov.files.reviewed, cov.files.total), cov.files.current));
     for (a, t) in &cov.areas {
@@ -678,6 +722,16 @@ pub fn status(json_out: bool, ports: &Ports) -> Outcome {
         out.push_str(&format!("  … {} more\n", cut(cov.changed.len())));
     }
     done(out)
+}
+
+fn review_scores(rs: &[Review], ports: &Ports) -> Result<Vec<(u32, findings::Scores)>, String> {
+    let mut out = Vec::new();
+    for r in rs.iter().filter(|r| matches!(r.state, State::Published | State::Closed)) {
+        if record::dir(&ports.run_dir, r.number).join("sealed.json").exists() {
+            out.push((r.number, findings::scores(r, ports)?));
+        }
+    }
+    Ok(out)
 }
 
 fn status_coverage(ports: &Ports) -> Result<Coverage, String> {
