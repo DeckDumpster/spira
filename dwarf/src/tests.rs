@@ -760,7 +760,7 @@ pub(crate) mod verdict_run {
         let h = std::thread::spawn(move || {
             let give_up = std::time::Instant::now() + std::time::Duration::from_secs(60);
             let mut pushes: Vec<Vec<u8>> = Vec::new();
-            while std::time::Instant::now() < give_up && !pushes.last().is_some_and(|p| has(p, b"spira_component_runs")) {
+            while std::time::Instant::now() < give_up && !pushes.last().is_some_and(|p| has(p, b"spira_component_runs")) { // clock-safe: caps the wait for the run's closing push
                 let Ok((mut c, _)) = l.accept() else {
                     std::thread::yield_now();
                     continue;
