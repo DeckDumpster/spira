@@ -1041,6 +1041,7 @@ pub fn local_time(t: i64) -> Option<LocalTime> {
 mod tests {
     use super::*;
 
+    #[test_id(taxmfqr)]
     #[test]
     fn local_time_formats_as_date_did() {
         let t = local_time(1_762_171_200).expect("localtime_r answers");
@@ -1051,6 +1052,7 @@ mod tests {
         assert!(iso.starts_with("2025-11-0"), "{iso}");
     }
 
+    #[test_id(t3lb0yt)]
     #[test]
     fn classify_argv_matches_health_by_script_suffix_never_substring() {
         assert_eq!(classify_argv("bash", "opt/spira/cockpit/health.sh", None), Some(Role::Health));
@@ -1063,17 +1065,20 @@ mod tests {
         assert_eq!(classify_argv("claude", "", None), None);
     }
 
+    #[test_id(tnzowy2)]
     #[test]
     fn classify_argv_matches_mail_by_basename_only() {
         assert_eq!(classify_argv("usr/bin/aerc", "", Some("aerc")), Some(Role::Mail));
         assert_eq!(classify_argv("usr/bin/aerclike", "", Some("aerc")), None);
     }
 
+    #[test_id(tyeyn1s)]
     #[test]
     fn classify_argv_neither() {
         assert_eq!(classify_argv("zsh", "", Some("aerc")), None);
     }
 
+    #[test_id(tvc3lrs)]
     #[test]
     fn stale_clients_filters_by_idle_secs() {
         let lines = "dev/pts/0 1000\ndev/pts/1 500\n";
@@ -1083,16 +1088,19 @@ mod tests {
         assert_eq!(out[0].0, "dev/pts/0");
     }
 
+    #[test_id(toi8exw)]
     #[test]
     fn stale_clients_disabled_at_zero() {
         assert!(stale_clients("dev/pts/0 0\n", 100_000, 0).is_empty());
     }
 
+    #[test_id(t4ozn73)]
     #[test]
     fn stale_clients_ignores_malformed_lines() {
         assert!(stale_clients("garbage\n\n", 100_000, 10).is_empty());
     }
 
+    #[test_id(trvyd23)]
     #[test]
     fn cockpit_window_targets_dedups_by_window_id() {
         let panes = "@1|cockpit:2|health\n@1|cockpit:2|mail\n";
@@ -1119,12 +1127,14 @@ mod tests {
         }
     }
 
+    #[test_id(twjzh8l)]
     #[test]
     fn concierge_script_with_neither_set_names_both() {
         let e = conf_with("", "").concierge_script().unwrap_err();
         assert!(e.contains("SPIRA_RELEASE") && e.contains("SPIRA_REPO"), "{e}");
     }
 
+    #[test_id(tayks1e)]
     #[test]
     fn concierge_script_missing_file_names_the_path_tried() {
         let root = testkit::TempDir::new("layout-concierge-missing");
@@ -1133,6 +1143,7 @@ mod tests {
         assert!(e.contains(&format!("{}/concierge.sh", rel.display())), "{e}");
     }
 
+    #[test_id(tishc0f)]
     #[test]
     fn rel_prefix_carries_release_and_conf() {
         let c = Conf {

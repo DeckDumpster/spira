@@ -3,6 +3,8 @@
 //! the one gate (S14). Plane membership is each shipped unit's own `[X-Spira] Plane=`; this
 //! suite reads the real shipped unit files, so a unit that loses its declaration fails here.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::PathBuf;
 
 use spira_world::scheduler::{is_kept, keep_units};
@@ -41,6 +43,7 @@ fn halt_guard_lines(unit: &str) -> Vec<String> {
         .collect()
 }
 
+#[test_id(tc3h3er)]
 #[test]
 fn no_shipped_unit_is_left_on_the_work_plane_or_carries_the_old_halt_guard() {
     let services = shipped_units();
@@ -51,6 +54,7 @@ fn no_shipped_unit_is_left_on_the_work_plane_or_carries_the_old_halt_guard() {
     assert!(guarded.is_empty(), "the scheduler's halt is the one gate (S14); no unit re-implements it: {guarded:?}");
 }
 
+#[test_id(t4wuxb6)]
 #[test]
 fn the_scheduler_ships_and_is_on_the_keep_list() {
     assert!(unit_dir().join("spira-runtime.service").is_file());
@@ -63,6 +67,7 @@ fn the_scheduler_ships_and_is_on_the_keep_list() {
 
 /// Mail delivery is the scheduler's (`mail.arrived` and `mail.wake`): world starts no
 /// `spira-mail-deliver` unit, and the template is not shipped.
+#[test_id(tncjjg8)]
 #[test]
 fn world_names_no_mail_delivery_unit() {
     let src = std::fs::read_to_string(testkit::manifest_dir().join("src/bin/world.rs")).unwrap();

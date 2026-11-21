@@ -191,6 +191,7 @@ mod tests {
         SERIAL.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    #[test_id(t46s03p)]
     #[test]
     fn only_the_submission_source_reloads() {
         let _serial = serial();
@@ -201,6 +202,7 @@ mod tests {
         assert_eq!(reloads(), before + 1, "its own reload, and only that");
     }
 
+    #[test_id(tw1b2hy)]
     #[test]
     fn a_reload_ends_the_serve_and_the_next_one_reads_the_config_anew() {
         let _serial = serial();
@@ -228,6 +230,7 @@ mod tests {
         assert_eq!(*served.borrow(), vec![1, 2], "the second serve has the config read after the reload");
     }
 
+    #[test_id(tiv23by)]
     #[test]
     fn the_provision_tasks_restart_is_this_sources_reload_not_a_unit() {
         let _serial = serial();

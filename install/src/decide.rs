@@ -65,38 +65,45 @@ mod tests {
         State { changed, masked, suspended, disabled, halted, active }
     }
 
+    #[test_id(t2p8c65)]
     #[test]
     fn a_mask_outranks_every_other_signal() {
         assert_eq!(decide(s(true, true, true, true, true, true)), Action::Masked);
         assert_eq!(decide(s(false, true, false, false, false, false)), Action::Masked);
     }
 
+    #[test_id(tqco7e3)]
     #[test]
     fn suspended_outranks_disabled_and_halted() {
         assert_eq!(decide(s(true, false, true, true, true, true)), Action::Suspended);
     }
 
+    #[test_id(tl8yutw)]
     #[test]
     fn operator_disabled_outranks_halted() {
         assert_eq!(decide(s(true, false, false, true, true, true)), Action::OperatorDisabled);
     }
 
+    #[test_id(t9dyc6d)]
     #[test]
     fn a_halted_world_enables_without_starting() {
         assert_eq!(decide(s(true, false, false, false, true, false)), Action::Enable);
         assert_eq!(decide(s(false, false, false, false, true, true)), Action::Enable);
     }
 
+    #[test_id(twhul5b)]
     #[test]
     fn unchanged_and_active_is_skipped() {
         assert_eq!(decide(s(false, false, false, false, false, true)), Action::Skip);
     }
 
+    #[test_id(t9f7vp2)]
     #[test]
     fn changed_and_active_is_restarted() {
         assert_eq!(decide(s(true, false, false, false, false, true)), Action::Restart);
     }
 
+    #[test_id(t54kpac)]
     #[test]
     fn everything_else_is_enable_now() {
         assert_eq!(decide(s(false, false, false, false, false, false)), Action::EnableNow);

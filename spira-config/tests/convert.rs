@@ -1,5 +1,7 @@
 //! The converter on inline documents: land-mode spellings, lanes and refusals.
 
+#[macro_use]
+extern crate spira_test_id;
 use spira_config::convert::convert;
 use spira_config::{LandMode, Lane};
 
@@ -8,6 +10,7 @@ use spira_config::{LandMode, Lane};
 // `queue.local` is the new local-landing mode with its ref in the `base` column. Before this
 // change both words hit the `other` arm and were dropped with a warning rather than
 // converted — this is the regression test for that (law-a-regression-test-must-be-seen-to-fail).
+#[test_id(t0lchjp)]
 #[test]
 fn queue_forge_and_queue_local_land_modes_convert() {
     let repo_map = "alpha | /tmp/alpha | queue.forge | origin/main | | |\n\
@@ -34,6 +37,7 @@ fn queue_forge_and_queue_local_land_modes_convert() {
 // POSITIVE CONTROL for the two refusal tests below: a valid mode word and a valid explicit
 // lane list both still convert, so a check pointed at the wrong thing and a check that found
 // nothing look different (law-absence-needs-a-positive-control).
+#[test_id(tmqboo1)]
 #[test]
 fn valid_lane_mode_and_label_convert() {
     let repo_map = "alpha | /tmp/alpha | push | origin/main | | true | develop\n\
@@ -50,6 +54,7 @@ fn valid_lane_mode_and_label_convert() {
     );
 }
 
+#[test_id(t302phq)]
 #[test]
 fn an_empty_lanes_column_admits_every_lane() {
     let repo_map = "blank | /tmp/blank | push | origin/main | | true |\n\
@@ -72,6 +77,7 @@ fn an_empty_lanes_column_admits_every_lane() {
     }
 }
 
+#[test_id(t4l5tra)]
 #[test]
 fn unknown_lane_mode_is_refused_not_warned() {
     let repo_map = "alpha | /tmp/alpha | push | origin/main | | true | fullaccess\n";
@@ -83,6 +89,7 @@ fn unknown_lane_mode_is_refused_not_warned() {
     );
 }
 
+#[test_id(tpevef9)]
 #[test]
 fn unknown_lane_label_is_refused_not_warned() {
     let repo_map = "alpha | /tmp/alpha | push | origin/main | | true | plan,bogus-lane\n";
@@ -116,6 +123,7 @@ fn unknown_lane_label_is_refused_not_warned() {
 // warning naming each — rather than being refused as unknown, and neither key reaches the
 // converted document. Positive control for the refusal path is
 // conf_key_parity::a_planted_unmapped_key_is_refused_not_dropped.
+#[test_id(tl6rys2)]
 #[test]
 fn retired_cpu_quota_keys_convert_with_a_warning() {
     let conf = "SPIRA_DWARF_CPU_QUOTA=400\nSPIRA_LAND_CPU_QUOTA=70\n";
@@ -134,6 +142,7 @@ fn retired_cpu_quota_keys_convert_with_a_warning() {
 
 // sp-gypjk: a legacy SPIRA_*_BIN converts with a warning, never refused; a non-batcher
 // SPIRA_BATCHER_BIN keeps the cuts off as batcher_enable = "0".
+#[test_id(tn5c52d)]
 #[test]
 fn retired_tool_path_keys_convert_with_a_warning() {
     let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_BATCHER_BIN = /bin/true\nSPIRA_LC_BIN = /x/spira-lc\n", "opt/fixture-home", "", &[])
@@ -145,6 +154,7 @@ fn retired_tool_path_keys_convert_with_a_warning() {
 // sp-9hwim: the mail-mute override becomes a typed key. A legacy SPIRA_MAIL_MUTE=1 converts
 // to spira.mail_mute = true (the same 0/1 spelling every other bool key here uses); an
 // unset conf carries no mail_mute at all, matching "default off, mail flows normally".
+#[test_id(tjy4rno)]
 #[test]
 fn legacy_mail_mute_converts_to_the_typed_key() {
     let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=1\n", "opt/fixture-home", "", &[])
@@ -153,6 +163,7 @@ fn legacy_mail_mute_converts_to_the_typed_key() {
     assert_eq!(doc.spira.as_ref().unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), Some(true));
 }
 
+#[test_id(tqqw9k2)]
 #[test]
 fn mail_mute_absent_by_default() {
     let (doc, warnings) =
@@ -161,6 +172,7 @@ fn mail_mute_absent_by_default() {
     assert_eq!(doc.spira.as_ref().unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), None);
 }
 
+#[test_id(tof0542)]
 #[test]
 fn mail_mute_bad_value_warns_not_a_spelling_the_key_accepts() {
     let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=maybe\n", "opt/fixture-home", "", &[])
@@ -175,6 +187,7 @@ fn mail_mute_bad_value_warns_not_a_spelling_the_key_accepts() {
 
 // sp-op2c2: a spira.conf still setting the retired quarantine-reactivation key converts with a
 // warning naming the bead, never refused, and the key does not reach the converted document.
+#[test_id(trkb2wd)]
 #[test]
 fn retired_quarantine_clean_runs_converts_with_a_warning() {
     let (doc, warnings) = convert("SPIRA_QUARANTINE_CLEAN_RUNS=10\n", "opt/fixture-home", "", &[])

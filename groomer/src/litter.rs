@@ -71,6 +71,7 @@ pub fn judge_text(raw: &str) -> Verdict {
 mod litter_tests {
     use super::*;
 
+    #[test_id(tun0z4i)]
     #[test]
     fn described_bead_has_content() {
         let v = judge_text(r#"[{"description": "fix the thing", "created_at": "2026-09-01T00:00:00Z", "assignee": "ryan"}]"#);
@@ -78,12 +79,14 @@ mod litter_tests {
         assert_eq!(v.meta, "created_at: 2026-09-01T00:00:00Z, assignee: ryan");
     }
 
+    #[test_id(ttbe9lu)]
     #[test]
     fn blank_description_is_not_content() {
         let v = judge_text(r#"[{"description": "   "}]"#);
         assert!(!v.has_content);
     }
 
+    #[test_id(tvlus2w)]
     #[test]
     fn missing_description_is_not_content() {
         let v = judge_text(r#"[{}]"#);
@@ -91,12 +94,14 @@ mod litter_tests {
         assert_eq!(v.meta, "created_at: unknown, assignee: unknown");
     }
 
+    #[test_id(tf18yl3)]
     #[test]
     fn bare_object_is_accepted_like_a_one_element_array() {
         let v = judge_text(r#"{"description": "x"}"#);
         assert!(v.has_content);
     }
 
+    #[test_id(tuossd1)]
     #[test]
     fn malformed_json_fails_open_to_no_content_and_empty_meta() {
         let v = judge_text("not json");
@@ -104,6 +109,7 @@ mod litter_tests {
         assert_eq!(v.meta, "");
     }
 
+    #[test_id(tv8ug5o)]
     #[test]
     fn empty_array_fails_open() {
         let v = judge_text("[]");
@@ -111,6 +117,7 @@ mod litter_tests {
         assert_eq!(v.meta, "");
     }
 
+    #[test_id(tn29l1x)]
     #[test]
     fn dangerous_characters_in_metadata_are_sanitised() {
         let v = judge_text(r#"[{"created_at": "2026-09-01; rm -rf /", "assignee": "a$(b)"}]"#);
@@ -120,6 +127,7 @@ mod litter_tests {
         assert!(v.meta.starts_with("created_at: 2026-09-01"));
     }
 
+    #[test_id(tpn977a)]
     #[test]
     fn allowed_punctuation_survives_sanitising() {
         let v = judge_text(r#"[{"created_at": "2026-09-01T00:00:00Z", "assignee": "a.b@c-d_e"}]"#);

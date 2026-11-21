@@ -58,6 +58,7 @@ fn gap_already_escalated() -> TaskRig {
     passes_then(escalating(), &[1000, 2900], 4700)
 }
 
+#[test_id(trgm48k)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&passes_then(escalating(), &[1000, 2900], 4700), NAME);
@@ -68,16 +69,19 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     assert!(rows.iter().any(|r| r == "pending/disk:/"), "{rows:?}");
 }
 
+#[test_id(t2p2nkm)]
 #[test]
 fn a_boot_escalates_a_gap_whose_grace_began_before_it() {
     kit::assert_boot_matches_an_unstopped_run(gap_inside_its_grace, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(twb86fk)]
 #[test]
 fn a_boot_does_not_escalate_a_gap_that_was_already_escalated() {
     kit::assert_boot_matches_an_unstopped_run(gap_already_escalated, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(t504lau)]
 #[test]
 fn a_repinned_cap_reaches_the_observation_the_next_tick_asks_for() {
     let build = |pool: &str| {
@@ -96,6 +100,7 @@ fn a_repinned_cap_reaches_the_observation_the_next_tick_asks_for() {
     assert_eq!(input.values["SPIRA_MAX_DWARVES"], "3");
 }
 
+#[test_id(tbdjfg6)]
 #[test]
 fn a_fleet_gap_past_grace_wakes_the_sentinel_call_pass_instead_of_mailing() {
     let mut rig = passes_then(Remedy::CallWanted, &[1000, 2900], 4700);
@@ -107,6 +112,7 @@ fn a_fleet_gap_past_grace_wakes_the_sentinel_call_pass_instead_of_mailing() {
     assert!(!rig.requested().iter().any(|r| r.name == MAIL && r.input.contains("last remedy tried: none attempted")));
 }
 
+#[test_id(tnevcsz)]
 #[test]
 fn a_tick_asks_the_observation_with_the_starts_the_sentinel_has_in_flight() {
     use spira_runtime::tasks::a::sentinel_call;

@@ -80,6 +80,7 @@ mod tests {
         (found, rule.checked())
     }
 
+    #[test_id(t7m3f51)]
     #[test]
     fn an_unstamped_test_is_one_finding_naming_the_stamp_command() {
         let (got, checked) = run("#[test]\nfn a() {}\n");
@@ -89,6 +90,7 @@ mod tests {
         assert_eq!(checked, Some((1, "tests".into())));
     }
 
+    #[test_id(t7oybn5)]
     #[test]
     fn a_stamped_test_is_no_finding() {
         let (got, checked) = run("#[test_id(t0aaaaa)]\n#[test]\nfn a() {}\n");
@@ -96,6 +98,7 @@ mod tests {
         assert_eq!(checked.map(|c| c.0), Some(1), "the matcher saw the site");
     }
 
+    #[test_id(tdi9d99)]
     #[test]
     fn a_test_attribute_in_a_string_is_no_finding() {
         let (got, checked) = run("const S: &str = \"#[test]\\nfn a() {}\";\n");
@@ -103,6 +106,7 @@ mod tests {
         assert_eq!(checked.map(|c| c.0), Some(0));
     }
 
+    #[test_id(t9wp1fu)]
     #[test]
     fn a_macro_body_test_counts_as_stamped_only_with_a_fragment_id() {
         let ok = "macro_rules! m { ($( #[test_id($id:ident)] $n:ident ),*) => { $( #[test_id($id)] #[test] fn $n() {} )* } }\n";

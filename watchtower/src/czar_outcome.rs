@@ -218,6 +218,7 @@ mod tests {
     use super::*;
 
     // covers: UC-ops-detection-remediation-25
+    #[test_id(tcxjbyx)]
     #[test]
     fn trigger_beads_are_read_through_the_content_door() {
         let (t, lc) = crate::lc::scripted::scripted(0, r#"[{"id":"sp-a","external_ref":"czar:deadlock"}]"#);
@@ -249,6 +250,7 @@ mod tests {
     /// sp-mve9i: a trigger's state is its lifecycle row's. bd may say closed while the czar
     /// still holds it (WORKING): that is unclaimed-or-pending work, not a closure; and a
     /// bead the machine has no row for is neither.
+    #[test_id(t1z0uej)]
     #[test]
     fn the_trigger_state_is_the_lifecycle_row_not_bd_status() {
         let raw: Vec<TriggerBead> = serde_json::from_str(&format!(
@@ -274,6 +276,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-25
+    #[test_id(tya4uh1)]
     #[test]
     fn positive_control_unclaimed_open_bead_past_threshold_fires() {
         let beads = vec![bead(
@@ -294,6 +297,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-25
+    #[test_id(t8j4ek1)]
     #[test]
     fn positive_control_not_cleared_condition_returned_after_czar_closed_its_bead() {
         let beads = vec![
@@ -323,6 +327,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-25
+    #[test_id(tg1qtri)]
     #[test]
     fn open_bead_younger_than_unclaimed_threshold_is_silent() {
         let beads = vec![bead(
@@ -336,6 +341,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-25
+    #[test_id(tk2gvm1)]
     #[test]
     fn closed_with_no_recurrence_is_silent() {
         let beads = vec![bead(
@@ -349,6 +355,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-25
+    #[test_id(tjbi8ji)]
     #[test]
     fn outcome_window_not_yet_elapsed_is_silent() {
         let beads = vec![
@@ -371,6 +378,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-25
+    #[test_id(tkkeg1w)]
     #[test]
     fn a_non_queue_ref_is_ignored_but_queue_prefixed_still_fires() {
         let beads = vec![bead(
@@ -404,6 +412,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-25
+    #[test_id(tc1soq0)]
     #[test]
     fn an_unclaimed_trigger_is_raised_under_a_per_bead_ref_that_is_the_same_every_pass() {
         let rows = format!(r#"[{{"id":"sp-czoc1","external_ref":"incident:queue-deadlock-batch-open","created_at":"{}"}}]"#, minsago(15));
@@ -419,6 +428,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-25
+    #[test_id(t5tmcvx)]
     #[test]
     fn a_trigger_younger_than_the_configured_threshold_is_not_raised() {
         let rows = format!(r#"[{{"id":"sp-czoc1","external_ref":"incident:queue-deadlock-batch-open","created_at":"{}"}}]"#, minsago(15));
@@ -428,6 +438,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-25
+    #[test_id(tre3trm)]
     #[test]
     fn a_recurrence_after_the_outcome_window_is_raised_as_not_cleared_under_its_own_ref() {
         let rows = format!(
@@ -446,6 +457,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-25
+    #[test_id(ts80tzf)]
     #[test]
     fn an_unreadable_lifecycle_state_raises_nothing() {
         let rows = format!(r#"[{{"id":"sp-czoc1","external_ref":"incident:queue-x","created_at":"{}"}}]"#, minsago(15));

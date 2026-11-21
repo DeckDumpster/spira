@@ -163,6 +163,7 @@ mod tests {
         a.iter().map(|x| x.to_string()).collect()
     }
 
+    #[test_id(t4drcjk)]
     #[test]
     fn backfill_repo_sets_the_label_repo_on_rows_without_one_and_leaves_working_and_unlabelled_rows() {
         let mut m = fixture();
@@ -177,6 +178,7 @@ mod tests {
         assert!(a.stdout.contains("2 set, 1 kept while WORKING, 1 without"), "{}", a.stdout);
     }
 
+    #[test_id(tn5e1yk)]
     #[test]
     fn backfill_repo_writes_nothing_without_apply() {
         let mut m = fixture();
@@ -186,6 +188,7 @@ mod tests {
         assert!(a.stdout.contains("would set sp-ready -> deck"), "{}", a.stdout);
     }
 
+    #[test_id(tz3kb6l)]
     #[test]
     fn backfill_repo_named_ids_limit_the_sweep() {
         let mut m = fixture();
@@ -193,6 +196,7 @@ mod tests {
         assert_eq!(m.sets, [v(&["set-repo", "sp-landed", "harness"])]);
     }
 
+    #[test_id(t5k848n)]
     #[test]
     fn backfill_repo_dry_run_does_not_promise_to_set_a_working_row() {
         let a = backfill_repo(&[], &mut fixture());
@@ -200,6 +204,7 @@ mod tests {
         assert!(a.stdout.contains("2 would set (dry run; --apply to write), 1 kept"), "{}", a.stdout);
     }
 
+    #[test_id(tbo0p2l)]
     #[test]
     fn backfill_repo_stops_at_the_per_call_bound_and_says_to_run_again() {
         let mut m = Lc::default();
@@ -220,6 +225,7 @@ mod tests {
         }
     }
 
+    #[test_id(tpsxrvo)]
     #[test]
     fn backfill_repo_cannot_tell_when_the_rows_or_the_labels_are_unreadable() {
         assert_eq!(backfill_repo(&[], &mut Down("list")).code, CANNOT_TELL);
@@ -233,6 +239,7 @@ mod tests {
         assert_eq!(backfill_repo(&[], &mut Both(&mut lc)).code, CANNOT_TELL);
     }
 
+    #[test_id(t4qbb3y)]
     #[test]
     fn backfill_repo_reports_a_failed_set_and_goes_on() {
         struct Fails(Lc);
@@ -248,6 +255,7 @@ mod tests {
         assert!(m.0.sets.iter().any(|s| s[1] == "sp-landed"), "the sweep goes on past a failure");
     }
 
+    #[test_id(tjayhn7)]
     #[test]
     fn backfill_repo_refuses_an_unknown_flag() {
         assert_eq!(backfill_repo(&v(&["--force"]), &mut fixture()).code, CANNOT_TELL);

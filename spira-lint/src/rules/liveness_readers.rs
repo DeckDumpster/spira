@@ -128,6 +128,7 @@ mod tests {
         LivenessReaders::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tvcaw8r)]
     #[test]
     fn a_planted_process_scan_or_pidfile_read_is_caught() {
         let t = TempDir::new("lr");
@@ -138,6 +139,7 @@ mod tests {
         assert_eq!(got.len(), 3, "{got:?}");
     }
 
+    #[test_id(thwu8ed)]
     #[test]
     fn comments_other_trees_and_listed_files_are_silent() {
         let t = TempDir::new("lr-ok");
@@ -148,6 +150,7 @@ mod tests {
         assert_eq!(run(&t, &["cockpit/a.rs", "dwarf/y.rs", "spira-world/old.rs", ALLOW_FILE]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(t3p75u3)]
     #[test]
     fn a_listed_file_that_no_longer_reads_is_a_finding() {
         let t = TempDir::new("lr-stale");
@@ -156,6 +159,7 @@ mod tests {
         assert_eq!(run(&t, &["cockpit/a.rs", ALLOW_FILE]).unwrap().len(), 1);
     }
 
+    #[test_id(twbtglg)]
     #[test]
     fn an_integration_test_that_bans_pgrep_is_out_of_scope() {
         let t = TempDir::new("lr-tests");
@@ -166,6 +170,7 @@ mod tests {
         assert!(got[0].contains("cockpit/a.rs"), "{got:?}");
     }
 
+    #[test_id(tzu8zzt)]
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("lr-none");

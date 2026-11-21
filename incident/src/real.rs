@@ -321,6 +321,7 @@ mod tests {
 
     /// sp-jgjvh: the dedup's open/closed is the lifecycle row's, whatever bd's status says;
     /// a rowless bead is in neither pass.
+    #[test_id(ta28r18)]
     #[test]
     fn join_lc_reads_state_from_the_lifecycle_row_not_bd_status() {
         use spira_store::lc_state::Row;
@@ -347,6 +348,7 @@ mod tests {
     }
 
     /// sp-ipwlic: facts are written and counted through the store client, never a program.
+    #[test_id(tg8dfto)]
     #[test]
     fn facts_go_through_the_store_client() {
         let t = std::sync::Arc::new(Scripted(Default::default(), "[{\"kind\":\"k\"},{\"kind\":\"k\"}]".into()));
@@ -357,6 +359,7 @@ mod tests {
         assert_eq!(verbs, vec!["fact add", "fact list"]);
     }
 
+    #[test_id(tiw6za9)]
     #[test]
     fn incident_writes_go_through_the_door() {
         let t = std::sync::Arc::new(Scripted(Default::default(), "sp-new\n".into()));
@@ -379,6 +382,7 @@ mod tests {
 
     /// The question carries what the `mail send` argv did: operator, the incident sender, a
     /// question with its default, the body framed under Question and Default.
+    #[test_id(twlqx2q)]
     #[test]
     fn an_operator_question_keeps_the_cli_sends_fields() {
         let (a, body) = question("disk full", "prune", "detail");
@@ -390,6 +394,7 @@ mod tests {
     }
 
     /// sp-7crdc8: the payload-hash label survives the read through the door, and no program is spawned.
+    #[test_id(tua31q0)]
     #[test]
     fn label_list_reads_payload_hash_labels_through_the_door() {
         let rows = vec![serde_json::json!({"id": "sp-1", "labels": ["payload-hash:abc", "incident"]})];
@@ -401,6 +406,7 @@ mod tests {
     }
 
     /// sp-7crdc8: unfinished beads are read a request per 100 live ids, every one bounded by `--id`.
+    #[test_id(ttp21wp)]
     #[test]
     fn a_list_of_many_live_beads_is_chunked_by_id() {
         let live: Vec<_> = (0..250).map(|i| serde_json::json!({"bead_id": format!("sp-{i:03}"), "state": "READY"})).collect();
@@ -414,6 +420,7 @@ mod tests {
     }
 
     /// sp-7crdc8: a closed-after list is one bounded request.
+    #[test_id(tsgaylk)]
     #[test]
     fn a_closed_after_list_is_one_bounded_request() {
         let rows = vec![serde_json::json!({"id": "sp-1", "labels": ["incident"]})];
@@ -426,6 +433,7 @@ mod tests {
         assert_eq!(lists.len(), 1, "{seen:?}");
     }
 
+    #[test_id(t6823r3)]
     #[test]
     fn a_reply_that_is_not_json_is_an_error_never_no_incident() {
         let t = std::sync::Arc::new(Scripted(Default::default(), "garbled".into()));
@@ -433,6 +441,7 @@ mod tests {
         assert!(bd.list_json(&["--id", "sp-1"]).is_err());
     }
 
+    #[test_id(twvkbrd)]
     #[test]
     fn live_successor_follows_a_supersedes_edge_to_a_live_bead() {
         let edge = |to: &str| serde_json::json!([{"type": "supersedes", "depends_on_id": to}]);
@@ -450,12 +459,14 @@ mod tests {
         assert_eq!(bd.live_successor("", "sp-b"), None);
     }
 
+    #[test_id(te1i1ka)]
     #[test]
     fn json_only_strips_a_leading_warning_line() {
         let input = "\u{1f4a1} some warning\n[{\"id\":\"sp-a\"}]\n";
         assert_eq!(json_only(input), "[{\"id\":\"sp-a\"}]\n");
     }
 
+    #[test_id(tqrr5do)]
     #[test]
     fn json_only_leaves_clean_output_untouched() {
         // Regression: a naive "check positions right after '\n' before position 0" scan
@@ -468,11 +479,13 @@ mod tests {
         assert_eq!(json_only(input), input);
     }
 
+    #[test_id(tfaz0gb)]
     #[test]
     fn json_only_empty_array_round_trips() {
         assert_eq!(json_only("[]\n"), "[]\n");
     }
 
+    #[test_id(tjg80zc)]
     #[test]
     fn rows_from_json_parses_a_real_multi_element_bd_shape() {
         let input = "[\n  {\n    \"id\": \"sp-a\",\n    \"status\": \"open\",\n    \"external_ref\": \"incident:x\",\n    \"labels\": [\"ref:aa\", \"spira\"]\n  },\n  {\n    \"id\": \"sp-b\",\n    \"status\": \"closed\",\n    \"closed_at\": \"2026-09-01T00:00:00Z\"\n  }\n]\n";
@@ -485,6 +498,7 @@ mod tests {
         assert_eq!(rows[1].closed_at.as_deref(), Some("2026-09-01T00:00:00Z"));
     }
 
+    #[test_id(t2b4fsw)]
     #[test]
     fn rows_from_json_empty_array_is_empty_vec() {
         assert_eq!(rows_from_json("[]\n").len(), 0);
@@ -496,6 +510,7 @@ mod vtime_tests {
     use super::*;
     use crate::ports::Clock;
 
+    #[test_id(tk0lllf)]
     #[test]
     fn real_clock_honours_spira_now() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealClock.now() as u64);

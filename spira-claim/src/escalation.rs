@@ -41,6 +41,7 @@ mod tests {
         EventRow::new("sp-a", kind, cause, "2026-10-16T10:00:00Z")
     }
 
+    #[test_id(t0b3222)]
     #[test]
     fn only_judged_reopens_count_and_sequencing_ejects_and_gate_faults_do_not() {
         let rows = [f("reopen", "eject"), f("reopen", "gate-no-verdict"), f("reopen", "gate-base-red"), f("reopen", "queue-eject"), f("claimed", ""), f("reopen", "eject-red")];
@@ -48,6 +49,7 @@ mod tests {
         assert_eq!((st.rejections, escalation::tier(&st)), (1, Tier::Normal));
     }
 
+    #[test_id(tfychck)]
     #[test]
     fn two_rejections_escalate_and_a_recorded_hold_restarts_the_count() {
         let mut rows = vec![f("claimed", ""), f("reopen", "eject-red"), f("claimed", ""), f("reopen", "gate-red")];
@@ -59,6 +61,7 @@ mod tests {
         assert_eq!(standing(&rows), Standing::default());
     }
 
+    #[test_id(t83zuvk)]
     #[test]
     fn two_plain_rejections_and_one_stronger_do_not_hold_and_the_next_claim_stays_stronger() {
         let rows = [f("claimed", ""), f("reopen", "eject-red"), f("claimed", ""), f("reopen", "eject-red"), f("claimed", ""), f("escalated", "model=big rejections=2"), f("reopen", "gate-red")];
@@ -66,6 +69,7 @@ mod tests {
         assert_eq!((st.rejections, st.stronger_rejections, escalation::tier(&st)), (3, 1, Tier::Stronger));
     }
 
+    #[test_id(teipmq0)]
     #[test]
     fn three_rejections_on_the_stronger_model_hold() {
         let mut rows = vec![f("claimed", ""), f("reopen", "eject-red"), f("claimed", ""), f("reopen", "eject-red")];
@@ -76,6 +80,7 @@ mod tests {
         assert_eq!((st.stronger_rejections, escalation::tier(&st)), (3, Tier::Hold));
     }
 
+    #[test_id(t0os83l)]
     #[test]
     fn an_eject_and_a_batch_close_of_the_same_red_count_once() {
         let rows = [f("claimed", ""), f("reopen", "eject-red"), f("reopen", "gate-red")];

@@ -186,6 +186,7 @@ pub fn status_fields(text: &str, prefix: &str) -> Vec<(String, String)> {
 mod tests {
     use super::*;
 
+    #[test_id(tt5l24u)]
     #[test]
     fn beads_tolerate_nulls_warnings_and_single_objects() {
         let s = "warning: something\n[{\"id\":\"a\",\"labels\":null,\"status\":\"open\",\"dependencies\":null},{\"id\":\"b\",\"dependencies\":[{\"issue_id\":\"b\",\"depends_on_id\":\"a\",\"type\":\"blocks\"}]}]";
@@ -204,6 +205,7 @@ mod tests {
         assert!(parse_beads("").is_err());
     }
 
+    #[test_id(tvlstwc)]
     #[test]
     fn lc_rows_accept_strings_and_encoded_holds() {
         let s = r#"[{"bead_id":"a","state":"WORKING","holder":"","lease_until":"1700","holds":"[\"wait\"]","version":"4"},
@@ -217,6 +219,7 @@ mod tests {
         assert!(parse_lc_rows("cannot tell").is_err());
     }
 
+    #[test_id(tu4ti2h)]
     #[test]
     fn status_fields_only_take_digit_values() {
         let f = status_fields(

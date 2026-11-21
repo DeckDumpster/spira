@@ -1,6 +1,9 @@
 //! dwarf — the runner called to claim one bead, build its worktree, render its brief, run
 //! the model session and account for the outcome. See DESIGN.md.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod bd;
 pub mod brief;
 pub mod capacity;

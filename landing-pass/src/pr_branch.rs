@@ -541,6 +541,7 @@ mod tests {
         }
     }
 
+    #[test_id(t39wjzw)]
     #[test]
     fn a_fresh_branch_opens_a_pull_request() {
         let f = Fixture::new();
@@ -552,6 +553,7 @@ mod tests {
         assert!(f.logs.borrow().iter().any(|l| l.contains("opened a pull request")));
     }
 
+    #[test_id(tdohmp9)]
     #[test]
     fn a_conflicting_rebase_reopens_and_marks_red() {
         let f = Fixture::new();
@@ -566,6 +568,7 @@ mod tests {
     /// only ask. The historical bug called `spira_ask_rebase_loop` without ever calling
     /// `bead_reopen`, leaving the bead closed with an unlandable branch no dwarf could claim.
     /// Ported from test-landing-pass.sh TEST 4, retired with pr-pass-branch.sh (sp-t4y60).
+    #[test_id(tpd6mog)]
     #[test]
     fn escalating_past_the_rebase_threshold_still_reopens_the_bead() {
         let f = Fixture::new();
@@ -580,6 +583,7 @@ mod tests {
     /// Ported from test-landing-pass.sh TEST 2 (retired with pr-pass-branch.sh, sp-t4y60):
     /// the PR opens against the repository's own base branch, never the literal `main` —
     /// three repositories in this tree default to `master`.
+    #[test_id(tpswahz)]
     #[test]
     fn opens_the_pull_request_against_the_repositorys_own_base_branch_not_a_literal_main() {
         let f = Fixture::new();
@@ -605,6 +609,7 @@ mod tests {
         PrRed { head: head.into(), jobs: vec!["suites".into()], fail_lines: vec!["not ok 2 - thing".into()] }
     }
 
+    #[test_id(tj3d9i1)]
     #[test]
     fn a_dirty_pr_is_rebased_and_a_conflict_returns_the_bead_to_rework_with_the_files() {
         let f = Fixture::new();
@@ -620,6 +625,7 @@ mod tests {
         assert!(!f.tools.forge_calls.borrow().iter().any(|c| c.starts_with("pr-red")), "a PR with no checks has no red to read");
     }
 
+    #[test_id(t2603g6)]
     #[test]
     fn a_red_check_at_the_current_tip_reopens_the_bead_with_the_failing_text() {
         let f = Fixture::new();
@@ -635,6 +641,7 @@ mod tests {
         assert!(!f.lib.has("force_push"), "a red PR is handed back, not refreshed");
     }
 
+    #[test_id(tljag8x)]
     #[test]
     fn a_red_check_on_a_stale_base_updates_the_branch_instead_of_reopening() {
         let f = Fixture::new();
@@ -648,6 +655,7 @@ mod tests {
         assert!(!f.lib.has("reopen"));
     }
 
+    #[test_id(tnwy1v7)]
     #[test]
     fn a_merged_pr_whose_change_is_not_in_force_is_reopened_not_called_delivered() {
         let f = Fixture::new();
@@ -659,6 +667,7 @@ mod tests {
         assert!(!f.logs.borrow().iter().any(|l| l.contains("— delivered")));
     }
 
+    #[test_id(tazjkc3)]
     #[test]
     fn a_red_check_at_an_older_head_than_the_branch_tip_waits_for_the_new_run() {
         let f = Fixture::new();
@@ -671,6 +680,7 @@ mod tests {
         assert!(!f.lib.has("reopen"));
     }
 
+    #[test_id(tfk4gni)]
     #[test]
     fn a_conflicting_rebase_whose_pr_already_merged_is_not_reopened() {
         let f = Fixture::new();
@@ -681,6 +691,7 @@ mod tests {
         assert!(!f.lib.has("reopen"), "a merged PR's stuck rebase is landed, not a defect");
     }
 
+    #[test_id(t6hgv3p)]
     #[test]
     fn a_rebase_refusal_asks_rather_than_reopens() {
         let f = Fixture::new();
@@ -691,6 +702,7 @@ mod tests {
         assert!(!f.lib.has("reopen"), "not a conflict — the bead stays closed");
     }
 
+    #[test_id(tkfe8by)]
     #[test]
     fn a_confine_violation_reopens_and_never_lands() {
         let f = Fixture::new();
@@ -701,6 +713,7 @@ mod tests {
         assert!(f.lib.has("reopen sp-a confine-fail"));
     }
 
+    #[test_id(txrus1y)]
     #[test]
     fn a_confine_that_cannot_evaluate_is_deferred_not_a_violation() {
         let f = Fixture::new();
@@ -710,6 +723,7 @@ mod tests {
         assert!(!f.lib.has("reopen"), "inconclusive is deferred, never charged to the bead");
     }
 
+    #[test_id(trn2opj)]
     #[test]
     fn a_bead_reclaimed_since_the_scan_is_not_landed() {
         let f = Fixture::new();
@@ -718,6 +732,7 @@ mod tests {
         assert_eq!(rc, 4);
     }
 
+    #[test_id(tgsm30k)]
     #[test]
     fn a_duplicate_pull_request_is_noted_and_not_reopened_as_a_second_pr() {
         let f = Fixture::new();

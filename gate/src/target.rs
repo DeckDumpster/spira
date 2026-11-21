@@ -352,6 +352,7 @@ pub fn free_mib(p: &Path) -> Option<u64> {
 mod tests {
     use super::*;
 
+    #[test_id(tb7sphs)]
     #[test]
     fn a_bound_is_a_share_of_the_stale_set_by_count_and_never_zero_while_any_is_stale() {
         assert_eq!([bound(20, 0.1), bound(5, 0.1), bound(1, 0.1), bound(0, 0.1), bound(10, 1.0)], [2, 1, 1, 0, 10]);
@@ -378,6 +379,7 @@ mod tests {
         fs::write(p, vec![7u8; mib * 1024 * 1024]).unwrap();
     }
 
+    #[test_id(t691zb1)]
     #[test]
     fn links_every_build_dir_and_frees_a_real_one_from_before() {
         let s = Scratch::new("link");
@@ -401,6 +403,7 @@ mod tests {
         assert!(fs::symlink_metadata(tree.join("target")).unwrap().is_dir());
     }
 
+    #[test_id(t7a27tj)]
     #[test]
     fn the_retired_dwarf_profile_pool_is_removed_by_prepare() {
         let s = Scratch::new("retired-pool");
@@ -413,6 +416,7 @@ mod tests {
         assert!(p.orphans.is_empty(), "removed as the retired pool, not reported as an orphan: {:?}", p.orphans);
     }
 
+    #[test_id(tx5ry3x)]
     #[test]
     fn the_warm_pool_is_not_swept_as_an_orphan_and_is_shed_over_the_cap() {
         let s = Scratch::new("pool");
@@ -426,6 +430,7 @@ mod tests {
         assert!(!root.join(crate::warm::POOL).exists());
     }
 
+    #[test_id(ts24qfb)]
     #[test]
     fn a_binary_built_on_the_tmpfs_finds_the_tree_home_by_walking_up_from_itself() {
         let s = Scratch::new("home");
@@ -443,6 +448,7 @@ mod tests {
         assert_eq!(fs::read_link(p.dir.join("spira")).unwrap(), tree.join("spira"));
     }
 
+    #[test_id(tyh2iyf)]
     #[test]
     fn a_target_symlink_is_replaced_by_a_directory_and_a_dangling_link_is_restored() {
         let s = Scratch::new("dangle");
@@ -456,6 +462,7 @@ mod tests {
         assert!(tree.join("target/debug").is_dir(), "the link resolves again");
     }
 
+    #[test_id(tkj3yhr)]
     #[test]
     fn orphans_go_and_the_least_recently_used_unlocked_tree_is_evicted_over_the_cap() {
         let s = Scratch::new("cap");
@@ -483,6 +490,7 @@ mod tests {
         drop(f);
     }
 
+    #[test_id(tlfmv0n)]
     #[test]
     fn a_trial_starts_on_a_root_reporting_less_free_space_than_the_old_4096_mib_floor() {
         let s = Scratch::new("short");
@@ -496,6 +504,7 @@ mod tests {
         prepare(&root, &trees, &tree, &lim, &|_| None, &|_| false).unwrap();
     }
 
+    #[test_id(tphk9t2)]
     #[test]
     fn the_root_is_explicit_else_a_run_keyed_tmp_dir_else_none() {
         assert_eq!(root("x/y", "run", false), Some(PathBuf::from("x/y")));
@@ -515,6 +524,7 @@ mod tests {
     /// unlocked tree first, and a held tree is never touched. The same low reading against
     /// a floor it already clears evicts nothing — proof the floor, not the fake itself,
     /// drives it.
+    #[test_id(tjxyfza)]
     #[test]
     fn the_floor_evicts_further_than_the_cap_but_never_a_held_tree() {
         let s = Scratch::new("floor");
@@ -560,6 +570,7 @@ mod tests {
         assert!(p2.evicted.is_empty(), "50 MiB free already clears a 10 MiB floor — nothing to shed");
         drop(f);
     }
+    #[test_id(tfyw8r5)]
     #[test]
     fn a_finished_gate_drops_its_target_but_can_spare_release() {
         let s = Scratch::new("release");
@@ -576,6 +587,7 @@ mod tests {
         assert!(!root.join(".gate.harness.b").exists(), "nothing left: the dir goes too");
     }
 
+    #[test_id(trfhk4o)]
     #[test]
     fn stale_unheld_dirs_are_reaped_and_held_or_fresh_ones_are_not() {
         let s = Scratch::new("stale");
@@ -610,6 +622,7 @@ mod tests {
         }
     }
 
+    #[test_id(tozc9sq)]
     #[test]
     fn a_target_a_live_gate_slot_names_is_never_reaped_or_evicted_whatever_its_lock_says() {
         use std::os::unix::io::AsRawFd;
@@ -641,6 +654,7 @@ mod tests {
         drop(f);
     }
 
+    #[test_id(t294jls)]
     #[test]
     fn a_sweep_that_cannot_find_the_trees_dir_removes_nothing() {
         let s = Scratch::new("notrees");
@@ -651,6 +665,7 @@ mod tests {
         assert!(root.join("stale/debug/x").is_file());
     }
 
+    #[test_id(t90zdog)]
     #[test]
     fn intact_sees_a_build_dir_whose_tmpfs_side_was_removed() {
         let s = Scratch::new("intact");
@@ -664,6 +679,7 @@ mod tests {
         assert!(!intact(&tree));
     }
 
+    #[test_id(tlky5lv)]
     #[test]
     fn a_pinned_release_survives_eviction_over_the_cap_and_an_unpinned_one_does_not() {
         let s = Scratch::new("pin");
@@ -692,6 +708,7 @@ mod tests {
         assert!(!pinned(&root.join(".gate.harness.pin")), "an old pin expires");
     }
 
+    #[test_id(tip0uj8)]
     #[test]
     fn a_tree_linked_into_a_builders_pool_directory_is_unlinked_never_cleared() {
         let s = Scratch::new("pooled");
@@ -709,6 +726,7 @@ mod tests {
         assert!(fs::symlink_metadata(tree.join("target/debug")).is_err(), "the link itself is gone");
     }
 
+    #[test_id(tgti9bl)]
     #[test]
     fn a_tree_left_linked_into_a_retired_warm_slot_is_relinked_and_never_clears_the_slot() {
         let s = Scratch::new("retired-warm");

@@ -77,6 +77,7 @@ fn clean(_: &str) -> Option<String> {
     None
 }
 
+#[test_id(tccw4yw)]
 #[test]
 fn only_this_worlds_serve_command_line_matches() {
     let w = Path::new("tmp/w1");
@@ -94,6 +95,7 @@ fn only_this_worlds_serve_command_line_matches() {
     }
 }
 
+#[test_id(tgo3m7n)]
 #[test]
 fn down_refuses_a_directory_that_is_not_a_world() {
     let t = testkit::TempDir::new("simw");
@@ -118,6 +120,7 @@ fn env_of(pairs: Vec<(&'static str, String)>) -> impl Fn(&str) -> Option<String>
     move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone())
 }
 
+#[test_id(tx2wnwv)]
 #[test]
 fn a_set_release_resolves_to_that_directory_and_nothing_else() {
     let t = testkit::TempDir::new("simrel");
@@ -129,6 +132,7 @@ fn a_set_release_resolves_to_that_directory_and_nothing_else() {
     assert_eq!(release_source(&env).unwrap(), ReleaseSource::Prebuilt(r.canonicalize().unwrap()));
 }
 
+#[test_id(tvff3qn)]
 #[test]
 fn an_unset_release_builds_on_the_host_only() {
     assert_eq!(release_source(&clean).unwrap(), ReleaseSource::Build);
@@ -137,6 +141,7 @@ fn an_unset_release_builds_on_the_host_only() {
     assert_eq!(release_source(&env).unwrap(), ReleaseSource::Build);
 }
 
+#[test_id(tmzee3u)]
 #[test]
 fn inside_testenv_an_unset_release_is_refused_and_names_the_variable() {
     for v in [None, Some(String::new())] {
@@ -149,6 +154,7 @@ fn inside_testenv_an_unset_release_is_refused_and_names_the_variable() {
     }
 }
 
+#[test_id(tofveif)]
 #[test]
 fn the_db_root_is_testenvs_tmpfs_root_when_nested_and_the_worlds_own_otherwise() {
     let w = Path::new("w");
@@ -157,6 +163,7 @@ fn the_db_root_is_testenvs_tmpfs_root_when_nested_and_the_worlds_own_otherwise()
     assert_eq!(db_root(w, &env_of(vec![("TESTDB_ROOT", "tmp/spira-testdb".into())])), PathBuf::from("tmp/spira-testdb"));
 }
 
+#[test_id(ty045gk)]
 #[test]
 fn a_pilgrim_world_is_marked_beside_its_own_socket_and_a_plain_world_is_not() {
     let t = testkit::TempDir::new("simw");

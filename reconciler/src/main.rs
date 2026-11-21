@@ -3,6 +3,9 @@
 // reconciler goodput-pass: one pass of the goodput loop (see goodput_pass.rs).
 // reconciler arm-check <kind> [--disarm]: the shadow list that arms one kind (see arm_check.rs).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 mod arm_check;
 mod goodput_pass;
 

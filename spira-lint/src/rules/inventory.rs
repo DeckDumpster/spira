@@ -138,6 +138,7 @@ mod tests {
     use super::*;
 
 
+    #[test_id(tjq06g7)]
     #[test]
     fn scan_is_sorted_and_deduplicated() {
         let pat = pattern_re(&[]).unwrap();

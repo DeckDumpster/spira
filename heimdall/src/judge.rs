@@ -416,12 +416,14 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test_id(tzp3ivn)]
     #[test]
     fn epoch_matches_the_known_value() {
         assert_eq!(iso_to_epoch("2026-09-06T18:26:32"), 1788719192);
         assert_eq!(iso_to_epoch("1970-01-01T00:00:01"), 1);
     }
 
+    #[test_id(tx2fc9v)]
     #[test]
     fn an_unreadable_log_alerts_and_a_halted_stale_one_does_not() {
         let f = classify(&json!({"now": 1800000000, "sentinel_log_readable": false})).unwrap();
@@ -433,11 +435,13 @@ mod tests {
         assert_eq!(classify(&o).unwrap()[0].key, "sentinel-stalled");
     }
 
+    #[test_id(tu4hax6)]
     #[test]
     fn a_missing_now_is_an_error() {
         assert!(classify(&json!({})).is_err());
     }
 
+    #[test_id(tm58fu9)]
     #[test]
     fn splitlines_matches_the_python_definition() {
         assert_eq!(splitlines("a\r\nb\rc\n"), ["a", "b", "c"]);

@@ -107,6 +107,7 @@ mod tests {
     use super::{activation_window, iso8601, last_activation};
     use release::machine::{enter, ReleaseState};
 
+    #[test_id(tnxw39b)]
     #[test]
     fn the_last_activation_is_the_activated_record_under_run_dir_and_nothing_else() {
         let t = testkit::TempDir::new("last-activation");
@@ -126,6 +127,7 @@ mod tests {
         (t, at)
     }
 
+    #[test_id(t939xhq)]
     #[test]
     fn a_published_record_is_a_window_while_within_the_bound() {
         let (t, at) = window_with(ReleaseState::Published);
@@ -134,6 +136,7 @@ mod tests {
         assert_eq!(activation_window(t.path(), at + 100, 90), None, "past the bound");
     }
 
+    #[test_id(t64rl03)]
     #[test]
     fn an_activated_record_is_a_window_and_a_rolled_back_one_is_not() {
         let (t, at) = window_with(ReleaseState::Activated);
@@ -142,6 +145,7 @@ mod tests {
         assert_eq!(activation_window(t.path(), at + 10, 90), None);
     }
 
+    #[test_id(ti53on6)]
     #[test]
     fn epoch_seconds_render_as_utc() {
         assert_eq!(iso8601(0), "1970-01-01T00:00:00Z");

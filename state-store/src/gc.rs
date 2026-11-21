@@ -180,6 +180,7 @@ mod tests {
             .len()
     }
 
+    #[test_id(tgrn0sd)]
     #[test]
     fn a_gc_pass_leaves_every_audit_event_in_place_however_old() {
         let clock = VirtualClock::new(10 * DAY_MS);
@@ -302,6 +303,7 @@ mod tests {
         }
     }
 
+    #[test_id(tcpz9dp)]
     #[test]
     fn a_pass_with_nothing_queued_reads_no_key_page() {
         let clock = VirtualClock::new(0);
@@ -320,6 +322,7 @@ mod tests {
         assert_eq!(c.backend().key_space_reads.load(Ordering::SeqCst), before);
     }
 
+    #[test_id(trzr19a)]
     #[test]
     fn a_head_that_moves_under_an_owner_read_replans_the_write_and_the_drain() {
         let clock = VirtualClock::new(0);
@@ -336,6 +339,7 @@ mod tests {
         assert_eq!((pass.orphans, pass.failed), (vec!["rec/a".to_string()], vec![]));
     }
 
+    #[test_id(tw6xnhy)]
     #[test]
     fn a_failed_orphan_drain_is_one_failure_and_expiry_still_runs() {
         let clock = VirtualClock::new(10 * DAY_MS);
@@ -354,6 +358,7 @@ mod tests {
         c.txn(&t, &Request::new(&format!("w{key}"), "t", "test.write")).unwrap();
     }
 
+    #[test_id(tg759tt)]
     #[test]
     fn one_pass_expires_at_most_the_per_pass_cap_of_due_keys() {
         let clock = VirtualClock::new(0);
@@ -367,6 +372,7 @@ mod tests {
         assert_eq!(passes, [1_024, 1_024, 952, 0]);
     }
 
+    #[test_id(tg9t8if)]
     #[test]
     fn open_reads_only_the_locks_and_the_receipts() {
         let clock = VirtualClock::new(0);
@@ -387,6 +393,7 @@ mod tests {
         assert!(!seen.is_empty() && seen.iter().all(|p| p == "locks/" || p == "requests/"), "{seen:?}");
     }
 
+    #[test_id(trcmuah)]
     #[test]
     fn a_failed_due_read_is_one_failure_and_the_other_steps_still_run() {
         let clock = VirtualClock::new(10 * DAY_MS);
@@ -398,6 +405,7 @@ mod tests {
         assert_eq!(pass.failed[0].step, "due");
     }
 
+    #[test_id(tapo9bk)]
     #[test]
     fn a_key_rewritten_after_it_was_listed_due_is_not_expired() {
         let clock = VirtualClock::new(0);
@@ -412,6 +420,7 @@ mod tests {
         assert!(c.get("telemetry/a").unwrap().is_some());
     }
 
+    #[test_id(tv9s7i3)]
     #[test]
     fn a_key_marked_for_deletion_carries_no_expiry() {
         let clock = VirtualClock::new(0);

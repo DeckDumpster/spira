@@ -293,6 +293,7 @@ fn age(created_at: Option<&str>, now: i64) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(t2h6oln)]
     #[test]
     fn rebase_loop_mail_picks_the_generated_file_suggestion_over_decompose_and_duplicate() {
         let ctx = RebaseLoopCtx { bead_title: Some("Do the thing"), bead_status: Some("open"), tip_short: Some("abc123"), ahead: Some("3"), nfiles: 10 };
@@ -304,6 +305,7 @@ mod tests {
         assert!(body.contains("The conflicted files were also changed on the base by sp-b."));
     }
 
+    #[test_id(teg0et8)]
     #[test]
     fn rebase_loop_mail_falls_back_to_decompose_then_duplicate_then_plain_rebase() {
         let ctx = RebaseLoopCtx { nfiles: 10, ..Default::default() };
@@ -320,6 +322,7 @@ mod tests {
         assert!(body.contains("rebase spira/sp-a by hand and push, or close it"), "{body}");
     }
 
+    #[test_id(tvn33tc)]
     #[test]
     fn red_recurring_matches_lib_sh() {
         assert_eq!(red_recurring_subject("spira/sp-a", "no-rebase"), "spira/sp-a red recurring no-rebase");
@@ -329,6 +332,7 @@ mod tests {
         assert!(body.contains("Elapsed since first RED: 5h."));
     }
 
+    #[test_id(tovncvp)]
     #[test]
     fn rebase_refused_matches_lib_sh() {
         assert_eq!(rebase_refused_subject("spira/sp-a"), "spira/sp-a rebase refused");
@@ -338,6 +342,7 @@ mod tests {
         assert!(body.contains("Reason: dirty worktree."));
     }
 
+    #[test_id(t2pp497)]
     #[test]
     fn budget_deferred_has_no_default_and_is_an_alert() {
         assert_eq!(budget_deferred_subject("spira/sp-a"), "spira/sp-a budget-deferred");
@@ -346,6 +351,7 @@ mod tests {
         assert!(body.starts_with("## Alert\n"));
     }
 
+    #[test_id(taorv65)]
     #[test]
     fn refresh_loop_matches_lib_sh() {
         assert_eq!(refresh_loop_subject("sp-a"), "sp-a refresh cap");
@@ -357,6 +363,7 @@ mod tests {
         assert!(body.contains("the cap is 5\n\nBEAD ...\n"));
     }
 
+    #[test_id(t03exfr)]
     #[test]
     fn machinery_mails_match_lib_sh() {
         assert!(is_host_wide_reason("deadline-up") && is_host_wide_reason("budget") && is_host_wide_reason("harness-fault"));

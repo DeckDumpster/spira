@@ -1,6 +1,7 @@
     use super::declared_value;
     use std::collections::BTreeMap;
 
+    #[test_id(tf79c5a)]
     #[test]
     fn a_declared_key_answers_the_same_as_the_full_resolve_and_the_full_resolve_owns_the_rest() {
         let dir = testkit::TempDir::new("spira-config-declared-value");
@@ -25,6 +26,7 @@
         assert_eq!(declared_value(&merged, "SPIRA_NO_SUCH_KEY_ANYWHERE"), None, "an undeclared key is the full resolve's refusal");
     }
 
+    #[test_id(tue2ki7)]
     #[test]
     fn a_confined_instance_takes_the_full_resolve_so_containment_still_runs() {
         let dir = testkit::TempDir::new("spira-config-declared-value-confined");
@@ -34,6 +36,7 @@
         assert_eq!(declared_value(&merged, "SPIRA_ASK_LABEL"), None);
     }
 
+    #[test_id(t7im92e)]
     #[test]
     fn declared_value_leaves_the_registry_check_to_cfg() {
         let dir = testkit::TempDir::new("spira-config-declared-unregistered");

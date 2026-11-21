@@ -787,6 +787,7 @@ mod slot_row_tests {
         Slot { started_ms: Some(ms), ..Slot::default() }
     }
 
+    #[test_id(tttxe90)]
     #[test]
     fn a_carry_with_a_gap_and_idle_tail_comes_back_from_its_rows_at_the_same_width() {
         let carry = Carry { slots: vec![Slot::default(), busy(7), Slot::default(), busy(9), Slot::default(), Slot::default()] };
@@ -797,6 +798,7 @@ mod slot_row_tests {
         assert_eq!(back, carry);
     }
 
+    #[test_id(tqaubbd)]
     #[test]
     fn dropping_the_width_row_loses_the_idle_tail() {
         let carry = Carry { slots: vec![busy(1), Slot::default(), Slot::default()] };
@@ -816,6 +818,7 @@ mod hold_tests {
         landing_pass::gateq::Hold { bead: "sp-a".into(), reason: "gate: no verdict twice on t1 (build-stall)".into(), line: "gate: sp-a ended without a verdict twice on t1".into() }
     }
 
+    #[test_id(tt91yvt)]
     #[test]
     fn a_second_verdictless_run_places_the_wait_hold_and_writes_one_inbox_line() {
         let holds = RefCell::new(Vec::new());
@@ -826,6 +829,7 @@ mod hold_tests {
         assert!(word.contains("hold placed"), "{word}");
     }
 
+    #[test_id(tqfhyfv)]
     #[test]
     fn a_hold_that_could_not_be_placed_is_named_in_the_inbox_line() {
         let lines = RefCell::new(Vec::new());
@@ -844,6 +848,7 @@ mod pick_order_tests {
         Job { repo: repo.into(), branch: format!("spira/{bead}"), bead: bead.into(), express, priority, ..Job::default() }
     }
 
+    #[test_id(ti4mrat)]
     #[test]
     fn pick_takes_express_before_a_lower_priority_number_and_priority_before_repo_fairness() {
         let mut snap = Snapshot::default();

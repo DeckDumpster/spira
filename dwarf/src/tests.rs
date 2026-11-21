@@ -165,6 +165,7 @@ pub(crate) mod verdict_run {
         a
     }
 
+    #[test_id(tito0p4)]
     #[test]
     fn ready_set_sends_express_only_when_the_requirement_is_set_and_non_empty() {
         assert_eq!(ready_set_call(None), crate::seam::ready_set_argv("builder", false));
@@ -196,6 +197,7 @@ pub(crate) mod verdict_run {
         got
     }
 
+    #[test_id(ttzu41x)]
     #[test]
     fn the_end_of_a_session_removes_its_tmpdir_and_nothing_beside_it() {
         let work = testkit::TempDir::new("dwarf-tmpdir");
@@ -212,6 +214,7 @@ pub(crate) mod verdict_run {
         assert!(sibling.is_file());
     }
 
+    #[test_id(ttqtqp2)]
     #[test]
     fn a_session_exports_its_worktree_tmpdir_to_what_it_starts() {
         let work = testkit::TempDir::new("dwarf-tmpdir-export");
@@ -253,6 +256,7 @@ pub(crate) mod verdict_run {
         })
     }
 
+    #[test_id(t3ttyv4)]
     #[test]
     fn a_claim_stacked_on_a_prerequisite_tells_the_builder_in_its_task_text() {
         let lead = lead_for_proposal(r#"{"claimable":true,"stack":{"sp-a":"tipA"},"stack_depth":1,"stack_max_depth":4}"#);
@@ -261,12 +265,13 @@ pub(crate) mod verdict_run {
         assert!(!plain.contains("Stacked on"), "{plain}");
     }
 
+    #[test_id(tav6yvb)]
     #[test]
     fn the_env_the_session_port_receives_carries_the_worktree_tmpdir() {
         let work = testkit::TempDir::new("dwarf-tmpdir-spec");
         let w = work.path().to_path_buf();
         let cap = Capture(Default::default());
-        let mut vars = super::complete_vars();
+        let mut vars = super::super::complete_vars();
         vars.insert("SPIRA_REPO".into(), "shared".into());
         let cwd = std::env::current_dir().unwrap();
         let res = with_run_launching(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &Mute::default(), &cap, "", |r| {
@@ -286,12 +291,13 @@ pub(crate) mod verdict_run {
         assert_eq!(envs[0].get("TMPDIR"), Some(&want));
     }
 
+    #[test_id(tpl1fti)]
     #[test]
     fn the_env_the_session_port_receives_carries_the_forge_fences_and_no_token() {
         let work = testkit::TempDir::new("dwarf-fences-spec");
         let w = work.path().to_path_buf();
         let cap = Capture(Default::default());
-        let mut vars = super::complete_vars();
+        let mut vars = super::super::complete_vars();
         vars.insert("SPIRA_REPO".into(), "shared".into());
         let cwd = std::env::current_dir().unwrap();
         let (res, gh) = with_run_launching(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &Mute::default(), &cap, "", |r| {
@@ -318,6 +324,7 @@ pub(crate) mod verdict_run {
     const REFUSED: &str = "The work is finished and checked, but work submit refuses: spira-lc content: cannot tell\nmore";
     const T0: i64 = 1_700_000_000;
 
+    #[test_id(tkuu7yj)]
     #[test]
     fn a_no_progress_end_on_a_refused_submit_says_so_in_the_inbox() {
         let lines = refused_submit("sp-a", T0, "", REFUSED);
@@ -326,11 +333,13 @@ pub(crate) mod verdict_run {
         assert!(!lines[0].contains("more"), "the first line only: {lines:?}");
     }
 
+    #[test_id(tbdfyme)]
     #[test]
     fn a_no_progress_end_for_any_other_reason_says_nothing() {
         assert!(refused_submit("sp-a", T0, "", "I could not decide how to split this").is_empty());
     }
 
+    #[test_id(tpdv1wr)]
     #[test]
     fn two_beads_refused_inside_ten_minutes_are_one_p0_page() {
         let first = format!("{} [dwarf] SUBMIT REFUSED sp-b: work submit refuses\n", crate::util::iso_utc(T0 - 300));
@@ -341,6 +350,7 @@ pub(crate) mod verdict_run {
         assert_eq!(refused_submit("sp-c", T0, &paged, REFUSED).len(), 1, "one page for the stall");
     }
 
+    #[test_id(txjv53k)]
     #[test]
     fn the_same_bead_or_an_old_line_is_not_a_second_bead() {
         let same = format!("{} [dwarf] SUBMIT REFUSED sp-a: work submit refuses\n", crate::util::iso_utc(T0 - 300));
@@ -368,11 +378,12 @@ pub(crate) mod verdict_run {
         }
     }
 
+    #[test_id(t9v2wkr)]
     #[test]
     fn the_teardown_reads_the_blocks_targets_in_one_list() {
         let seam = Seams(Default::default());
         let blocked = with_run(&AskBd, &seam, Dirty(vec![]), "", |r| {
-            r.conf = Conf::new(&Snapshot { vars: { let mut v = super::complete_vars(); v.insert("SPIRA_ASK_LABEL".into(), "fixture-ask".into()); v }, ..Default::default() }, Path::new("h/spira"));
+            r.conf = Conf::new(&Snapshot { vars: { let mut v = super::super::complete_vars(); v.insert("SPIRA_ASK_LABEL".into(), "fixture-ask".into()); v }, ..Default::default() }, Path::new("h/spira"));
             r.ask_blocked("sp-x")
         });
         assert!(blocked);
@@ -386,6 +397,7 @@ pub(crate) mod verdict_run {
         }
     }
 
+    #[test_id(tmhbe3v)]
     #[test]
     fn a_session_sent_back_after_submit_leaves_one_note_and_releases_and_charges_nothing() {
         let (seam, bd) = (Seams(Default::default()), Notes(Default::default()));
@@ -439,6 +451,7 @@ pub(crate) mod verdict_run {
         (mails, holds, notes)
     }
 
+    #[test_id(ton58d9)]
     #[test]
     fn a_third_harness_red_start_in_a_row_asks_the_concierge_once_and_holds_the_bead() {
         let (mails, holds, note) = red_start_after(2);
@@ -455,6 +468,7 @@ pub(crate) mod verdict_run {
         assert!(note.contains("held"), "{note}");
     }
 
+    #[test_id(t37vt77)]
     #[test]
     fn a_second_harness_red_start_only_releases() {
         let (mails, holds, note) = red_start_after(1);
@@ -482,6 +496,7 @@ pub(crate) mod verdict_run {
         (proceeds, lines)
     }
 
+    #[test_id(tkxr5z0)]
     #[test]
     fn a_run_whose_row_was_released_does_not_start_its_session() {
         let (proceeds, lines) = at_session_boundary(r#"{"bead":{"bead_id":"sp-x","state":"READY","holder":null}}"#);
@@ -489,12 +504,14 @@ pub(crate) mod verdict_run {
         assert!(lines.iter().any(|l| l.contains("sp-x is no longer held by fjalar-1 (row reads state=READY holder=null) — not starting a session")), "{lines:?}");
     }
 
+    #[test_id(tjkv03c)]
     #[test]
     fn a_run_whose_row_names_another_holder_does_not_start_its_session() {
         let (proceeds, _) = at_session_boundary(r#"{"bead":{"bead_id":"sp-x","state":"WORKING","holder":"other-2"}}"#);
         assert!(!proceeds);
     }
 
+    #[test_id(tm3o74g)]
     #[test]
     fn a_run_still_holding_its_row_starts_its_session() {
         let (proceeds, lines) = at_session_boundary(r#"{"bead":{"bead_id":"sp-x","state":"WORKING","holder":"fjalar-1"}}"#);
@@ -502,12 +519,14 @@ pub(crate) mod verdict_run {
         assert!(!lines.iter().any(|l| l.contains("no longer held")), "{lines:?}");
     }
 
+    #[test_id(tcz8jvk)]
     #[test]
     fn a_row_the_store_cannot_read_does_not_stop_a_session() {
         let (proceeds, _) = at_session_boundary("");
         assert!(proceeds, "an unreadable row is not evidence the claim was lost");
     }
 
+    #[test_id(txrr5le)]
     #[test]
     fn the_claimed_bead_is_read_once_however_many_steps_ask_for_it() {
         let (seam, bd) = (Seams(Default::default()), CountingBd(Default::default()));
@@ -569,12 +588,14 @@ pub(crate) mod verdict_run {
         (rc, lines)
     }
 
+    #[test_id(tnzkoi3)]
     #[test]
     fn a_persona_without_single_flight_does_not_decline_for_capacity() {
         let (rc, lines) = at_live("mender", &[], 9, false);
         assert!(!lines.iter().any(|l| l.contains("at capacity")), "{lines:?} {rc:?}");
     }
 
+    #[test_id(te12u6o)]
     #[test]
     fn a_single_flight_persona_with_one_live_declines_at_capacity() {
         let (rc, lines) = at_live("warden", &[("RUNE_SINGLE_FLIGHT", "1")], 1, false);
@@ -584,6 +605,7 @@ pub(crate) mod verdict_run {
         assert!(!lines.iter().any(|l| l.contains("at capacity")), "{lines:?}");
     }
 
+    #[test_id(tizj5hw)]
     #[test]
     fn a_second_sweep_of_one_persona_declines_while_one_is_live() {
         let (rc, lines) = at_live("ops", &[], 1, true);
@@ -595,12 +617,13 @@ pub(crate) mod verdict_run {
         spira_config::scoped_stop::pause_repo(run, repo, &[lane.to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
     }
 
+    #[test_id(t5b1c9d)]
     #[test]
     fn a_slain_session_is_held_by_the_halt_stamp_and_not_by_a_dwarves_lane_stop() {
         let d = testkit::TempDir::new("dwarf-checkpoint-stamp");
         stop_lane(d.path(), "fixture", "dwarves");
         let held = || {
-            let mut vars = super::complete_vars();
+            let mut vars = super::super::complete_vars();
             vars.insert("SPIRA_REPO".into(), "shared".into());
             vars.insert("SPIRA_RUN".into(), d.path().display().to_string());
             with_run_over(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), "", |r| {
@@ -613,6 +636,7 @@ pub(crate) mod verdict_run {
         assert!(held(), "the halt stamp holds a slain session");
     }
 
+    #[test_id(tao9mrp)]
     #[test]
     fn a_dwarf_declines_only_when_the_dwarves_lane_is_stopped_on_every_registered_repo() {
         let d = testkit::TempDir::new("dwarf-dwarves-lane");
@@ -630,6 +654,7 @@ pub(crate) mod verdict_run {
     }
 
     // covers: UC-dwarf-execution-16
+    #[test_id(tmhpotq)]
     #[test]
     fn own_dirty_hand_on_is_refused_and_requeued_with_the_note() {
         let (reopens, cause) = run(vec!["w/own"]);
@@ -640,6 +665,7 @@ pub(crate) mod verdict_run {
     }
 
     // covers: UC-dwarf-execution-16
+    #[test_id(tax0hgt)]
     #[test]
     fn dirty_shared_checkout_lets_the_hand_on_stand() {
         let (reopens, cause) = run(vec!["shared"]);
@@ -705,6 +731,7 @@ pub(crate) mod verdict_run {
         std::fs::read_to_string(dir.path().join("sp-x.task.md")).unwrap()
     }
 
+    #[test_id(txcfrj4)]
     #[test]
     fn a_claimed_beads_task_brief_opens_with_the_state_of_its_landed_blocker_before_the_notes() {
         let task = task_brief_over(&BlockedLc("sp-dep"));
@@ -712,6 +739,7 @@ pub(crate) mod verdict_run {
         assert!(line < task.find("waits on sp-dep").expect("the notes are in the brief"), "{task}");
     }
 
+    #[test_id(tmprw7d)]
     #[test]
     fn a_blocker_the_store_cannot_read_is_named_in_the_task_brief_not_dropped() {
         let task = task_brief_over(&BlockedLc("sp-gone"));

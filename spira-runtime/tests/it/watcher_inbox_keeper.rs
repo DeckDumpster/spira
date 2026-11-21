@@ -41,6 +41,7 @@ fn monitor_gone_and_a_wake_just_sent() -> TaskRig {
     r
 }
 
+#[test_id(t8krp25)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&monitor_gone_and_a_wake_just_sent(), NAME);
@@ -49,11 +50,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(tyvnwmz)]
 #[test]
 fn a_boot_wakes_the_pane_when_the_stall_began_before_it() {
     kit::assert_boot_matches_an_unstopped_run(monitor_gone_and_the_stall_window_just_passed, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(tgpjbwo)]
 #[test]
 fn a_boot_does_not_wake_the_pane_again_inside_the_backoff() {
     kit::assert_boot_matches_an_unstopped_run(monitor_gone_and_a_wake_just_sent, registration, STREAM, EventKind::new(TICK, ""));
@@ -111,6 +114,7 @@ mod real_world {
         r.requested().iter().filter(|q| q.name == CONCIERGE_WAKE).map(|q| q.input.clone()).collect()
     }
 
+    #[test_id(tc0dp3f)]
     #[test]
     fn a_killed_waiter_with_lines_unread_is_woken_with_the_real_rearm_command_within_a_stall_and_a_tick() {
         let (dir, world) = fixture(2, Some(0));
@@ -126,6 +130,7 @@ mod real_world {
         assert!(!sent[0].contains("inbox-triage"));
     }
 
+    #[test_id(tf3lm0y)]
     #[test]
     fn a_held_lock_with_lines_unread_never_wakes() {
         let (dir, world) = fixture(2, Some(0));
@@ -136,6 +141,7 @@ mod real_world {
         assert_eq!(outcome(&r), Some(LastOutcome::Succeeded));
     }
 
+    #[test_id(t22utow)]
     #[test]
     fn a_free_lock_with_the_cursor_at_the_line_count_never_wakes() {
         let (_dir, world) = fixture(2, Some(2));
@@ -144,6 +150,7 @@ mod real_world {
         assert!(wakes(&r).is_empty());
     }
 
+    #[test_id(t8a5kfm)]
     #[test]
     fn a_missing_watchd_dir_fails_the_observe_and_the_task_reads_failed() {
         let (dir, world) = fixture(2, Some(0));
@@ -152,6 +159,7 @@ mod real_world {
         assert_eq!(outcome(&r), Some(LastOutcome::Failed));
     }
 
+    #[test_id(tj1ofzv)]
     #[test]
     fn an_unreadable_inbox_fails_the_observe_and_the_task_reads_failed() {
         use std::os::unix::fs::PermissionsExt;
@@ -164,6 +172,7 @@ mod real_world {
         assert_eq!(outcome(&r), Some(LastOutcome::Failed));
     }
 
+    #[test_id(trpyxmx)]
     #[test]
     fn a_wake_that_failed_keeps_the_task_failed_until_a_waiter_is_seen_again() {
         let (dir, world) = fixture(2, Some(0));

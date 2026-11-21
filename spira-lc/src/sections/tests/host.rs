@@ -152,6 +152,7 @@ fn condition(s: &Value, type_: &str) -> String {
     s["status"]["conditions"].as_array().unwrap().iter().find(|c| c["type"] == type_).unwrap()["status"].as_str().unwrap().to_string()
 }
 
+#[test_id(t5viedw)]
 #[test]
 fn the_1031_samples_read_as_the_manifest_levels_and_distance_and_no_24h_field_enters_it() {
     let w = world(2, 20, 20);
@@ -186,6 +187,7 @@ fn the_1031_samples_read_as_the_manifest_levels_and_distance_and_no_24h_field_en
     );
 }
 
+#[test_id(txihs15)]
 #[test]
 fn a_term_that_cannot_be_read_publishes_nothing_and_the_section_ages_into_stale() {
     let w = world(2, 0, 0);
@@ -201,6 +203,7 @@ fn a_term_that_cannot_be_read_publishes_nothing_and_the_section_ages_into_stale(
     assert!(hs::distance(&blind, &hs::targets_of(None).unwrap_or(hs::Targets { scratch: 0.3, worktrees: 0.2, io: 40.0 })).is_none());
 }
 
+#[test_id(tdjjght)]
 #[test]
 fn a_shed_lowers_certify_par_by_one_from_to_and_raises_host_shedding_with_shed_from_recorded() {
     let w = world(3, 0, 0);
@@ -226,6 +229,7 @@ fn a_shed_lowers_certify_par_by_one_from_to_and_raises_host_shedding_with_shed_f
     assert_eq!(w.par.par.get(), 1);
 }
 
+#[test_id(thm3m4x)]
 #[test]
 fn a_restore_undoes_only_a_shed_and_clears_shed_from_when_the_shed_is_undone() {
     let w = world(2, 0, 0);
@@ -248,6 +252,7 @@ fn a_restore_undoes_only_a_shed_and_clears_shed_from_when_the_shed_is_undone() {
     assert_eq!(condition(&s, host::HOST_SHEDDING), "False");
 }
 
+#[test_id(typn60p)]
 #[test]
 fn a_restore_above_where_the_shed_began_is_refused() {
     let i = |from: u64, to: u64| {
@@ -266,6 +271,7 @@ fn a_restore_above_where_the_shed_began_is_refused() {
     assert_eq!(hs::decide(&i(1, 2), 2, Some(2)), hs::Step::AlreadyApplied);
 }
 
+#[test_id(tz45ysz)]
 #[test]
 fn a_reap_takes_a_tenth_of_the_stale_set_and_a_rerun_after_a_lost_ack_is_already_applied() {
     let w = world(2, 20, 20);
@@ -289,6 +295,7 @@ fn a_reap_takes_a_tenth_of_the_stale_set_and_a_rerun_after_a_lost_ack_is_already
     assert!(w.ack(&grows)["result"]["refused"]["reason"].as_str().unwrap().contains("does not shrink"));
 }
 
+#[test_id(t3bojdv)]
 #[test]
 fn an_unchanged_section_is_published_again_only_at_its_keepalive_and_a_silent_watchtower_reads_stale() {
     let w = world(2, 0, 0);
@@ -307,6 +314,7 @@ fn an_unchanged_section_is_published_again_only_at_its_keepalive_and_a_silent_wa
     assert_eq!(freshness(&w.r), json!("Stale"), "when the watchtower stops publishing");
 }
 
+#[test_id(trukshm)]
 #[test]
 fn a_config_that_cannot_state_certify_par_stops_the_pass_before_it_acks_anything() {
     struct Unreadable;
@@ -325,6 +333,7 @@ fn a_config_that_cannot_state_certify_par_stops_the_pass_before_it_acks_anything
     assert!(e.contains("unreadable"), "{e}");
 }
 
+#[test_id(tqql15y)]
 #[test]
 fn a_shed_the_host_has_recovered_from_is_planned_back_by_the_selector() {
     use reconciler_engine::goodput_pass::{run as pass, Outcome, PassConfig};

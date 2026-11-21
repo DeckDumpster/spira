@@ -233,6 +233,7 @@ pub fn loom_counts(floor: &serde_json::Value) -> Option<(u64, u64)> {
 mod tests {
     use super::*;
 
+    #[test_id(t8cfjpj)]
     #[test]
     fn the_fixture_is_a_scenario_with_a_claimable_bead_for_the_pilgrim_to_stand_beside() {
         let seeds = parse_scenario(FIXTURE).unwrap().seeds;
@@ -240,6 +241,7 @@ mod tests {
         assert_eq!(seed_steps(&seeds).unwrap().len(), 1);
     }
 
+    #[test_id(tvgh0bq)]
     #[test]
     fn the_counts_are_read_from_the_summary_and_a_missing_part_is_zero() {
         assert_eq!(
@@ -250,6 +252,7 @@ mod tests {
         assert_eq!(view_counts("nothing"), (0, 0));
     }
 
+    #[test_id(txemdxu)]
     #[test]
     fn the_ready_belts_parts_are_found_wherever_the_floor_nests_them() {
         let floor = serde_json::json!({"factory": {"belts": [{"id": "bead.DONE", "parts": {"claimable": 9, "blocked": 9}}, {"id": "bead.READY", "parts": {"claimable": 1, "blocked": 2}}]}});

@@ -28,6 +28,7 @@ fn a_review_seeded_then_ended() -> TaskRig {
     r
 }
 
+#[test_id(txlarfw)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&a_review_seeded_then_ended(), NAME);
@@ -36,6 +37,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(tuhvtfz)]
 #[test]
 fn a_boot_flips_the_cockpit_when_the_review_it_was_showing_ends_and_keeps_the_absence_clock() {
     kit::assert_boot_matches_an_unstopped_run(a_review_seeded_then_ended, registration, STREAM, EventKind::new(TICK, ""));

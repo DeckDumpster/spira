@@ -110,6 +110,7 @@ impl State {
 mod tests {
     use super::*;
 
+    #[test_id(tcvwtsl)]
     #[test]
     fn empty_text_parses_to_defaults() {
         let s = State::parse("");
@@ -118,6 +119,7 @@ mod tests {
         assert!(s.keys.is_empty());
     }
 
+    #[test_id(tds13px)]
     #[test]
     fn round_trips_a_full_key_line() {
         let mut s = State { first_run: 1000, probe_id: "sp-probe1".to_string(), ..State::default() };
@@ -129,6 +131,7 @@ mod tests {
         assert_eq!(back.keys["sentinel-stalled"], s.keys["sentinel-stalled"]);
     }
 
+    #[test_id(ttb30ol)]
     #[test]
     fn round_trips_restart_baselines() {
         let mut s = State::default();
@@ -137,6 +140,7 @@ mod tests {
         assert_eq!(back.restarts["spira-sentinel.service"], s.restarts["spira-sentinel.service"]);
     }
 
+    #[test_id(t3owc8i)]
     #[test]
     fn older_short_line_spelling_still_parses_with_defaults() {
         // Only through `bead` — no `refreshed` column, the shape before it was added.
@@ -149,6 +153,7 @@ mod tests {
         assert_eq!(k.refreshed, 0, "a missing trailing column defaults to 0, exactly bash's parameter-expansion default");
     }
 
+    #[test_id(t69xmnf)]
     #[test]
     fn a_bare_key_with_no_other_fields_defaults_everything() {
         let s = State::parse("some-key\n");
@@ -156,6 +161,7 @@ mod tests {
         assert_eq!(*k, KeyState::default());
     }
 
+    #[test_id(tk207fh)]
     #[test]
     fn comment_lines_other_than_the_three_headers_are_ignored() {
         let s = State::parse("# a stray human comment\nreal-key\tfiring\n");

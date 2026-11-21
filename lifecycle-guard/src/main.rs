@@ -1,3 +1,6 @@
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 mod bd_close;
 mod bd_reopen;
 mod bd_read;

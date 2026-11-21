@@ -79,6 +79,7 @@ mod tests {
         testkit::TempDir::new(&format!("dwarf-naming-{name}"))
     }
 
+    #[test_id(thl9jbb)]
     #[test]
     fn a_pristine_run_dir_takes_the_name_right_after_the_cursor() {
         let run = fresh("fresh");
@@ -87,6 +88,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(run.join(".dwarf-name-cursor")).unwrap(), "1");
     }
 
+    #[test_id(tidzeih)]
     #[test]
     fn the_cursor_advances_and_never_repeats_the_previous_dwarves_name() {
         let run = fresh("advance");
@@ -97,6 +99,7 @@ mod tests {
         assert_eq!(second, "dvalin");
     }
 
+    #[test_id(tf1wxc3)]
     #[test]
     fn a_name_held_by_a_dead_pid_is_free_immediately() {
         let run = fresh("dead");
@@ -107,6 +110,7 @@ mod tests {
         assert_eq!(dwarf_name_take(&run, "builder"), "eitri");
     }
 
+    #[test_id(tl8hsbm)]
     #[test]
     fn a_name_held_by_a_live_dwarf_is_skipped() {
         let run = fresh("live");
@@ -119,6 +123,7 @@ mod tests {
         assert_eq!(name, "dvalin");
     }
 
+    #[test_id(tehhwff)]
     #[test]
     fn named_reads_the_sibling_name_file_or_a_question_mark() {
         let run = fresh("named");

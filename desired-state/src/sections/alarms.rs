@@ -108,6 +108,7 @@ mod tests {
 
     use super::*;
 
+    #[test_id(tbiseez)]
     #[test]
     fn the_shipped_alarms_spec_seeds_zero_undelivered_under_its_statute() {
         let fragment = crate::producer::parse_fragment(include_str!("../../examples/alarms.toml")).unwrap();

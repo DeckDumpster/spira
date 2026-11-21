@@ -227,6 +227,7 @@ mod tests {
         tree_with(&[("rust-toolchain.toml", RUST_B_TOOLCHAIN)])
     }
 
+    #[test_id(tp9m4xg)]
     #[test]
     fn an_unresolvable_into_is_refused_rather_than_passed() {
         let root = tree_with(&[]);
@@ -234,12 +235,14 @@ mod tests {
         assert!(r.unwrap_err().contains("pass --into"));
     }
 
+    #[test_id(tiysm7k)]
     #[test]
     fn a_bad_python_version_is_refused_by_render_flake() {
         let p = Pins { python: Some("system".into()), uv_lock: true, ..Pins::default() };
         assert!(render_flake(&p, &table(), REV).is_err());
     }
 
+    #[test_id(t1uhjun)]
     #[test]
     fn python_uv_gets_python312_and_uv_and_its_row_program_from_the_table() {
         let p = pins(&python_uv()).unwrap();
@@ -249,6 +252,7 @@ mod tests {
         assert!(flake.contains(&format!("github:NixOS/nixpkgs/{REV}")) && !flake.contains("rust-overlay"));
     }
 
+    #[test_id(t2a6lyt)]
     #[test]
     fn rust_repos_get_the_toolchain_file_through_a_pinned_overlay() {
         for tree in [rust_a(), rust_b()] {
@@ -260,6 +264,7 @@ mod tests {
         }
     }
 
+    #[test_id(tz15zhw)]
     #[test]
     fn a_program_the_table_does_not_map_is_refused_by_name() {
         let p = Pins { programs: vec!["frobnicate".into()], ..Pins::default() };
@@ -267,6 +272,7 @@ mod tests {
         assert_eq!(e.to_string(), "not mapped: frobnicate — add it to repo-contract/tools.toml");
     }
 
+    #[test_id(tfgpfzz)]
     #[test]
     fn the_nixpkgs_revision_is_read_from_a_lock_never_written_in_code() {
         let lock = r#"{"nodes":{"nixpkgs":{"locked":{"rev":"abc123"}}}}"#;
@@ -276,6 +282,7 @@ mod tests {
         assert!(flake.contains("github:NixOS/nixpkgs/abc123"));
     }
 
+    #[test_id(tphiapt)]
     #[test]
     fn an_existing_flake_is_never_overwritten() {
         let d = rust_a();
@@ -289,6 +296,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(d.join("flake.nix")).unwrap(), "mine");
     }
 
+    #[test_id(tbfrxjt)]
     #[test]
     fn a_missing_checks_file_is_written_without_rows_and_deploy_follows_the_workflow() {
         let d = rust_a();
@@ -304,6 +312,7 @@ mod tests {
         assert!(p.notes.iter().any(|n| n.contains(".spira/deploy.toml not written")));
     }
 
+    #[test_id(temmyil)]
     #[test]
     fn into_the_registered_checkout_or_the_landing_branch_is_refused_naming_the_exit() {
         let a = testkit::TempDir::new("repo-contract-root");
@@ -315,6 +324,7 @@ mod tests {
         assert!(guard_target(&b, &a, Some("spira/x"), "main").is_ok());
     }
 
+    #[test_id(trbcsen)]
     #[test]
     fn a_bad_python_pin_is_refused() {
         assert!(python_attr("system").is_err());

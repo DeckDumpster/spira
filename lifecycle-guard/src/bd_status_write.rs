@@ -75,6 +75,7 @@ mod tests {
         scan_text(rel, src).into_iter().map(|f| f.line).collect()
     }
 
+    #[test_id(tbkfbiy)]
     #[test]
     fn a_port_status_write_outside_reconcile_content_is_found_and_its_writer_and_tests_are_not() {
         let src = "fn a() { bd.close(&id, &reason) }\nfn b() { let _ = bd . reopen(id); }\nfn e() { crate::callers::Bd::close(&mut bd::LiveBd, id, r) }\nfn c() { bd.closed(&ids) }\nfn d() { // bd.close(x)\n}\n#[cfg(test)]\nmod tests {\n    fn t() { bd.close(\"sp-1\", \"r\"); }\n}\n";

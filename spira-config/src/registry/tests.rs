@@ -1,3 +1,4 @@
+    #[test_id(tswr4nd)]
     #[test]
     fn a_home_missing_either_directory_is_refused_by_path() {
         let dir = testkit::TempDir::new("spira-config-registry-home");
@@ -9,6 +10,7 @@
         assert_eq!(Registry::load(dir.path()).unwrap_err(), format!("no config registry at {}", conf_d.display()));
     }
 
+    #[test_id(t1qamcv)]
     #[test]
     fn an_unknown_type_is_refused() {
         let dir = testkit::TempDir::new("spira-config-registry-type");
@@ -19,6 +21,7 @@
     use super::*;
     use std::collections::BTreeMap;
 
+    #[test_id(tij4a4h)]
     #[test]
     fn declares_key_sees_a_source_in_either_directory_and_not_an_absent_one() {
         let dir = testkit::TempDir::new("declares-key");
@@ -51,6 +54,7 @@
     /// (sp-8qm8g, sp-1cdgq) came from a test fixture's `--home` lacking `conf.d`, and
     /// `resolve()` quietly proceeding on the ~29 hand-written keys alone masked both until
     /// something that specifically needed a registry-resolved key went looking.
+    #[test_id(th52tfh)]
     #[test]
     fn missing_directory_is_a_named_error_not_an_empty_registry() {
         let dir = testkit::TempDir::new("spira-config-registry-missing");
@@ -62,6 +66,7 @@
     /// An EXISTING but empty directory is still not an error — a release that genuinely
     /// ships zero registry files (or a fixture that only cares about the hand-written keys)
     /// keeps working. Only "cannot even read this path" is refused.
+    #[test_id(tojqbxy)]
     #[test]
     fn existing_empty_directory_is_still_an_empty_registry() {
         let dir = testkit::TempDir::new("spira-config-registry-empty");
@@ -70,6 +75,7 @@
         assert_eq!(load(&empty).unwrap(), BTreeMap::new());
     }
 
+    #[test_id(tngeplq)]
     #[test]
     fn parses_type_group_doc_and_default_body() {
         let dir = testkit::TempDir::new("spira-config-registry-parse");
@@ -86,6 +92,7 @@
         assert_eq!(k.default_expr(), Some("7"));
     }
 
+    #[test_id(ts22a6q)]
     #[test]
     fn a_lowercase_or_dotfile_name_is_skipped() {
         let dir = testkit::TempDir::new("spira-config-registry-skip");
@@ -95,6 +102,7 @@
         assert!(reg.is_empty());
     }
 
+    #[test_id(t2tl61h)]
     #[test]
     fn unterminated_heredoc_is_refused() {
         let dir = testkit::TempDir::new("spira-config-registry-unterminated");
@@ -102,6 +110,7 @@
         assert!(load(dir.path()).is_err());
     }
 
+    #[test_id(ttcdqgb)]
     #[test]
     fn procedural_and_no_default_stubs_have_no_expr() {
         let k1 = key("SPIRA_X", "    # PROCEDURAL — ...\n");
@@ -110,6 +119,7 @@
         assert_eq!(k2.default_expr(), None);
     }
 
+    #[test_id(tq007we)]
     #[test]
     fn default_expr_is_brace_balanced_for_a_nested_substitution() {
         let k = key(
@@ -122,6 +132,7 @@
         );
     }
 
+    #[test_id(tslb67e)]
     #[test]
     fn topo_order_runs_a_dependency_after_what_it_names() {
         let mut reg = BTreeMap::new();
@@ -133,6 +144,7 @@
         assert!(pos_a < pos_b, "{order:?}");
     }
 
+    #[test_id(tqg460i)]
     #[test]
     fn topo_order_refuses_a_cycle() {
         let mut reg = BTreeMap::new();
@@ -141,6 +153,7 @@
         assert!(topo_order(&reg).is_err());
     }
 
+    #[test_id(th6ateu)]
     #[test]
     fn stub_keys_are_excluded_from_topo_order() {
         let mut reg = BTreeMap::new();

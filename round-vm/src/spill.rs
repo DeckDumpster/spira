@@ -140,6 +140,7 @@ mod tests {
         Pressure { value }
     }
 
+    #[test_id(t0uhznp)]
     #[test]
     fn psi_reads_the_named_line_and_field() {
         assert_eq!(parse_psi(PSI, "full", "avg10"), Some(0.5));
@@ -147,6 +148,7 @@ mod tests {
         assert_eq!(parse_psi("nonsense", "full", "avg10"), None);
     }
 
+    #[test_id(t706yul)]
     #[test]
     fn pressure_above_the_threshold_spills_and_below_it_stays_local() {
         assert!(
@@ -157,6 +159,7 @@ mod tests {
         assert_eq!(decide(&RULE, false, None, None), Place::Local);
     }
 
+    #[test_id(t0uyike)]
     #[test]
     fn a_local_pool_that_cannot_lease_within_the_wait_spills() {
         assert!(
@@ -168,6 +171,7 @@ mod tests {
         );
     }
 
+    #[test_id(t1zetlx)]
     #[test]
     fn a_second_pass_while_a_local_vm_is_leased_spills_at_once() {
         assert!(
@@ -176,6 +180,7 @@ mod tests {
         assert!(matches!(decide(&RULE, true, None, None), Place::Ec2(_)));
         assert_eq!(decide(&RULE, false, None, Some(tm(0.0))), Place::Local);
     }
+    #[test_id(tljh0ex)]
     #[test]
     fn ec2_always_places_on_ec2_with_a_free_local_vm_and_unreadable_pressure() {
         assert!(
@@ -188,6 +193,7 @@ mod tests {
     const HOST: HostRule = HostRule { io_full_5m_tm90: 50.0, cpu_some_5m_tm90: 60.0 };
     const CALM: HostLoad = HostLoad { io_full: Some(Pressure { value: 1.0 }), cpu_some: Some(Pressure { value: 2.0 }) };
 
+    #[test_id(tofs7hv)]
     #[test]
     fn a_free_host_slot_under_both_thresholds_runs_the_round_on_the_host() {
         assert!(matches!(decide_host(&HOST, true, CALM), HostPlace::Host(_)));
@@ -196,6 +202,7 @@ mod tests {
         assert!(matches!(decide_host(&HOST, true, at_limit), HostPlace::Host(_)));
     }
 
+    #[test_id(t6t5vsq)]
     #[test]
     fn the_host_line_names_the_kernels_five_minute_average() {
         assert_eq!(
@@ -208,12 +215,14 @@ mod tests {
         );
     }
 
+    #[test_id(t76jic4)]
     #[test]
     fn a_busy_host_slot_spills_whatever_the_pressure() {
         assert!(matches!(decide_host(&HOST, false, CALM), HostPlace::Ec2(r) if r.contains("slot")));
         assert!(matches!(decide_host(&HOST, false, HostLoad::default()), HostPlace::Ec2(_)));
     }
 
+    #[test_id(t23qrvu)]
     #[test]
     fn host_pressure_over_either_threshold_spills() {
         let io = HostLoad { io_full: Some(tm(61.25)), ..CALM };

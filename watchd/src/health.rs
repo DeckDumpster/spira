@@ -90,6 +90,7 @@ fn truncate(s: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tfjn32n)]
     #[test]
     fn no_command_is_not_asserted() {
         assert_eq!(probe("", Duration::from_secs(5)), Health::NotAsserted);

@@ -3542,6 +3542,7 @@ pub(crate) mod tests {
         f
     }
 
+    #[test_id(teh5ape)]
     #[test]
     fn an_attribution_leg_with_no_progress_for_the_stall_bound_stops_and_names_what_it_waited_on() {
         let mut f = stalling_fake(Some(300));
@@ -3570,6 +3571,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(t57a9le)]
     #[test]
     fn a_run_whose_results_keep_coming_inside_the_stall_bound_is_not_stalled() {
         let mut f = Fake::new(|_, _| false);
@@ -3589,6 +3591,7 @@ pub(crate) mod tests {
         assert!(ops.incidents.is_empty());
     }
 
+    #[test_id(tztbvxx)]
     #[test]
     fn a_rerun_against_a_stalled_job_gives_up_within_the_stall_bound() {
         let mut f = stalling_fake(Some(300));
@@ -3597,6 +3600,7 @@ pub(crate) mod tests {
         assert!(f.t <= 301, "gave up at t={}", f.t);
     }
 
+    #[test_id(t84oehg)]
     #[test]
     fn flip_proof_jobs_that_stall_are_unproven_within_the_stall_bound() {
         let mut f = stalling_fake(Some(300));
@@ -3616,6 +3620,7 @@ pub(crate) mod tests {
         assert!(f.t <= 301, "gave up at t={}", f.t);
     }
 
+    #[test_id(t25c6xu)]
     #[test]
     fn an_unbounded_runner_waits_as_before() {
         let mut f = stalling_fake(None);
@@ -3629,6 +3634,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Land { .. }), "{end:?}");
     }
 
+    #[test_id(tu7qfir)]
     #[test]
     fn attribution_starts_on_the_first_streamed_red_and_settles_before_the_corpus_ends() {
         let mut f = Fake::new(breaks("m2", "test-00.sh"));
@@ -3664,6 +3670,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tnud4yl)]
     #[test]
     fn a_red_that_also_fails_on_the_base_ejects_no_one() {
         let mut f = Fake::new(|s, _| s == "test-00.sh");
@@ -3698,6 +3705,7 @@ pub(crate) mod tests {
     }
 
     // covers: UC-landing-merge-queue-48
+    #[test_id(tv7g9wh)]
     #[test]
     fn a_red_suite_only_one_member_adds_ejects_that_member_and_is_never_run_without_it() {
         let mut f = Fake::new(breaks("m1", "test-01.sh"));
@@ -3742,6 +3750,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(toiarsr)]
     #[test]
     fn a_three_member_round_whose_only_red_suite_member_b_adds_ejects_b_with_no_subset_run_and_no_pause(
     ) {
@@ -3782,6 +3791,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tpxyb7h)]
     #[test]
     fn a_member_that_leaves_for_a_lint_red_takes_the_suite_it_adds_out_of_the_next_corpus() {
         let mut f = Fake::new(|_, _| false);
@@ -3813,6 +3823,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tn709ol)]
     #[test]
     fn a_member_that_leaves_for_a_build_red_takes_the_suite_it_adds_out_of_the_next_corpus() {
         let mut f = Fake::new(|_, _| false);
@@ -3844,6 +3855,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tbmk931)]
     #[test]
     fn a_red_suite_no_member_adds_is_still_attributed_by_rerun_after_an_adder_is_ejected() {
         let mut f = Fake::new(|s, tree| {
@@ -3869,6 +3881,7 @@ pub(crate) mod tests {
         assert_eq!(ejected, ["m1", "m2"], "{:?}", ops.ejected);
     }
 
+    #[test_id(tjxi2t0)]
     #[test]
     fn a_stacked_dependent_carrying_the_added_suite_does_not_share_the_blame_with_its_prerequisite()
     {
@@ -3904,6 +3917,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(ttapzmh)]
     #[test]
     fn a_red_suite_two_members_add_is_bisected_between_those_two_only() {
         let mut f = Fake::new(breaks("m2", "test-01.sh"));
@@ -3940,6 +3954,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tg76gu1)]
     #[test]
     fn a_red_attribution_could_not_rerun_is_owned_by_the_one_member_whose_diff_the_suite_covers() {
         let mut f = Fake::new(breaks("m2", "test-01.sh"));
@@ -3970,6 +3985,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tyr6zea)]
     #[test]
     fn a_two_member_round_with_one_red_member_ejects_it_and_certifies_the_other() {
         let mut f = Fake::new(breaks("m2", "test-01.sh"));
@@ -3995,6 +4011,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tfxsw4y)]
     #[test]
     fn a_named_two_suite_list_out_of_a_43_suite_tree_ejects_the_member_red_on_both_and_lands_the_other(
     ) {
@@ -4021,6 +4038,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(t25qxg6)]
     #[test]
     fn a_red_whose_attribution_reruns_faulted_is_a_fault_when_two_members_touch_the_suite() {
         let mut f = Fake::new(breaks("m2", "test-01.sh"));
@@ -4048,6 +4066,7 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty() && ops.judged.is_empty());
     }
 
+    #[test_id(t9nf2m3)]
     #[test]
     fn a_one_member_round_whose_attribution_reruns_faulted_charges_nobody() {
         let mut f = Fake::new(breaks("m1", "test-01.sh"));
@@ -4068,6 +4087,7 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty() && ops.judged.is_empty());
     }
 
+    #[test_id(tquzt57)]
     #[test]
     fn a_red_no_single_member_owns_ejects_no_one() {
         let mut f = Fake::new(|s, tree| s == "test-00.sh" && tree.len() >= 2);
@@ -4094,6 +4114,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(t1crind)]
     #[test]
     fn a_red_no_rerun_attributes_is_run_on_the_base_and_each_member_alone_and_every_red_member_is_ejected(
     ) {
@@ -4134,6 +4155,7 @@ pub(crate) mod tests {
         assert!(ops.judged.is_empty());
     }
 
+    #[test_id(tga2uxq)]
     #[test]
     fn a_red_every_member_is_green_alone_for_is_judged_with_the_per_member_verdicts_in_the_reason()
     {
@@ -4181,6 +4203,7 @@ pub(crate) mod tests {
         (end, ops)
     }
 
+    #[test_id(tqwz4xp)]
     #[test]
     fn a_filter_red_the_base_fails_only_on_a_wider_run_than_the_failing_tests_is_unattributed_not_base_red() {
         let (end, ops) = base_red_filter_round("FAIL test:nowhere x::y");
@@ -4188,6 +4211,7 @@ pub(crate) mod tests {
         assert!(matches!(&end, RoundEnd::Blocked(why) if why.contains("wider run than the failing tests")), "{end:?}");
     }
 
+    #[test_id(t6qve5b)]
     #[test]
     fn a_filter_red_naming_its_exact_test_whose_base_is_red_still_ends_base_red() {
         let (end, ops) = base_red_filter_round("FAIL spira-lc::bin/spira-lc a::b");
@@ -4195,6 +4219,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::BaseRed { .. }), "{end:?}");
     }
 
+    #[test_id(tcrj0lo)]
     #[test]
     fn a_filter_red_naming_no_member_whose_base_is_red_is_filed_as_the_base() {
         let mut f = Fake::new(|_, _| false);
@@ -4228,6 +4253,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::BaseRed { .. }), "{end:?}");
     }
 
+    #[test_id(tc59tkv)]
     #[test]
     fn a_sole_owner_found_after_the_corpus_ended_is_ejected_and_only_its_suites_are_verified() {
         let mut f = Fake::new(breaks("m2", "test-03.sh"));
@@ -4257,6 +4283,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Land { .. }));
     }
 
+    #[test_id(tqm0ukn)]
     #[test]
     fn a_pass_red_only_on_suites_is_attributed_by_verifying_those_suites_alone() {
         let mut f = Fake::new(breaks("m2", "test-03.sh"));
@@ -4293,6 +4320,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Land { .. }));
     }
 
+    #[test_id(tqufjsf)]
     #[test]
     fn a_settled_owner_s_suite_is_rerun_on_the_full_tree_before_it_is_ejected() {
         let mut f = Fake::new(breaks("m2", "test-00.sh"));
@@ -4319,6 +4347,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(teqzu5e)]
     #[test]
     fn the_slot_budget_holds_at_every_tick_and_the_corpus_is_never_starved() {
         let mut f = Fake::new(|s, tree| {
@@ -4345,6 +4374,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tfknlno)]
     #[test]
     fn a_flip_is_proven_green_alone_and_deleted_from_the_round_never_landed() {
         let mut f = Fake::new(|_, _| false);
@@ -4385,6 +4415,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(th4ciq7)]
     #[test]
     fn a_flip_that_flips_again_in_one_proof_run_is_still_a_flip_and_does_not_block_the_round() {
         let mut f = Fake::new(|_, _| false);
@@ -4410,6 +4441,7 @@ pub(crate) mod tests {
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
+    #[test_id(twlli2z)]
     #[test]
     fn a_round_whose_every_member_is_ejected_ends_emptied_not_blocked() {
         let mut f = Fake::new(breaks("m1", "test-01.sh"));
@@ -4431,6 +4463,7 @@ pub(crate) mod tests {
 
     const RERUNS_GREEN: i32 = 6;
 
+    #[test_id(tul0pnv)]
     #[test]
     fn a_one_member_round_red_on_a_suite_that_reproduces_ejects_the_member_and_never_blocks() {
         let calls = std::cell::Cell::new(0);
@@ -4464,6 +4497,7 @@ pub(crate) mod tests {
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
+    #[test_id(tf77jv8)]
     #[test]
     fn a_one_member_round_red_in_a_prior_filter_ejects_its_member_without_a_probe() {
         let red = FilterRed {
@@ -4520,6 +4554,7 @@ pub(crate) mod tests {
         (f, ops)
     }
 
+    #[test_id(txot9x4)]
     #[test]
     fn a_fence_red_ejects_the_sole_member_under_the_fence_name_without_a_pass() {
         let (mut f, mut ops) = fence_only_round(None);
@@ -4545,6 +4580,7 @@ pub(crate) mod tests {
         assert!(f.main_kind.is_empty(), "{:?}", f.main_kind);
     }
 
+    #[test_id(t818ner)]
     #[test]
     fn a_refused_eject_blocks_the_round_with_the_refusal_and_starts_no_pass() {
         let (mut f, mut ops) =
@@ -4581,6 +4617,7 @@ pub(crate) mod tests {
         ops
     }
 
+    #[test_id(tw6kay2)]
     #[test]
     fn a_confirmed_red_whose_suites_only_one_member_touches_ejects_it_without_a_probe_or_a_mender() {
         let mut f = Fake::new(|_, _| false);
@@ -4597,6 +4634,7 @@ pub(crate) mod tests {
         assert_eq!(ops.menders.len(), 1, "no mender settled");
     }
 
+    #[test_id(t48tlhd)]
     #[test]
     fn a_confirmed_red_with_two_suspects_ejects_only_the_one_red_alone() {
         let mut f = Fake::new(|s, tree| s.starts_with("test-0") && tree.contains("m2"));
@@ -4612,6 +4650,7 @@ pub(crate) mod tests {
         assert!(f.alone.iter().all(|(_, t)| !t.contains(&"m3".to_string())), "m3 is no suspect: {:?}", f.alone);
     }
 
+    #[test_id(tsibuun)]
     #[test]
     fn a_confirmed_red_no_member_reproduces_alone_is_blocked() {
         let mut f = Fake::new(|s, tree| s.starts_with("test-0") && tree.len() >= 2);
@@ -4624,6 +4663,7 @@ pub(crate) mod tests {
         assert!(matches!(&end, RoundEnd::Blocked(why) if why.starts_with("unattributed red: test-00.sh,test-01.sh,test-02.sh")), "{end:?}");
     }
 
+    #[test_id(tmrrtcl)]
     #[test]
     fn a_confirmed_red_no_suspect_reproduces_alone_runs_every_member_alone() {
         let mut f = Fake::new(|s, tree| s.starts_with("test-0") && tree.contains("m3"));
@@ -4638,6 +4678,7 @@ pub(crate) mod tests {
         assert!(matches!(&end, RoundEnd::Land { members, .. } if members.len() == 2), "{end:?}");
     }
 
+    #[test_id(tig5ioo)]
     #[test]
     fn a_confirmed_suite_red_the_full_membership_probe_does_not_reproduce_runs_no_member_alone() {
         let mut f = Fake::new(|_, _| false);
@@ -4651,6 +4692,7 @@ pub(crate) mod tests {
         assert!(matches!(&end, RoundEnd::Blocked(why) if why.contains(NOT_IN_PROBE)), "{end:?}");
     }
 
+    #[test_id(tov3n50)]
     #[test]
     fn a_confirmed_red_the_base_reproduces_is_base_red() {
         let mut f = Fake::new(|s, _| s.starts_with("test-0"));
@@ -4663,6 +4705,7 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty());
     }
 
+    #[test_id(thafyr1)]
     #[test]
     fn an_unconfirmed_red_in_prior_suites_still_runs_the_attribution_not_the_suspect_path() {
         let mut f = Fake::new(|_, tree| tree.contains("m1"));
@@ -4673,6 +4716,7 @@ pub(crate) mod tests {
         assert!(!f.main_kind.is_empty(), "the corpus attribution ran");
     }
 
+    #[test_id(tt8x3f8)]
     #[test]
     fn a_one_member_round_red_in_prior_suites_ejects_its_member_without_a_run() {
         let mut f = Fake::new(|_, _| false);
@@ -4697,6 +4741,7 @@ pub(crate) mod tests {
         assert!(f.main_kind.is_empty(), "{:?}", f.main_kind);
     }
 
+    #[test_id(t10q4mf)]
     #[test]
     fn a_one_member_round_red_in_two_prior_suites_ejects_its_member_on_each_suite() {
         let mut f = Fake::new(|_, _| false);
@@ -4735,6 +4780,7 @@ pub(crate) mod tests {
         attribute_round(f, ops, &deadline_corpus(), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap()
     }
 
+    #[test_id(trxhy00)]
     #[test]
     fn a_sole_member_deadline_red_its_diff_does_not_reach_faults_the_round_and_ejects_no_one() {
         let mut f = Fake::new(|_, _| false);
@@ -4750,6 +4796,7 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty());
     }
 
+    #[test_id(t0wa3jv)]
     #[test]
     fn a_sole_member_deadline_red_its_diff_reaches_still_ejects_it() {
         let mut f = Fake::new(|_, _| false);
@@ -4761,6 +4808,7 @@ pub(crate) mod tests {
         assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-spike.sh".to_string()])]);
     }
 
+    #[test_id(t353gfj)]
     #[test]
     fn a_sole_member_with_an_untouched_deadline_red_and_an_ordinary_red_is_ejected_on_the_ordinary_one_only() {
         let mut f = Fake::new(|_, _| false);
@@ -4772,6 +4820,7 @@ pub(crate) mod tests {
         assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-01.sh".to_string()])]);
     }
 
+    #[test_id(t32bd4p)]
     #[test]
     fn a_sole_member_non_deadline_red_on_an_untouched_suite_is_still_ejected() {
         let mut f = Fake::new(|_, _| false);
@@ -4782,6 +4831,7 @@ pub(crate) mod tests {
         assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-01.sh".to_string()])]);
     }
 
+    #[test_id(t8w4snn)]
     #[test]
     fn a_one_member_round_red_on_the_base_too_blocks_instead_of_ejecting() {
         let mut f = Fake::new(|s, tree| s == "test-04.sh" && tree.is_empty());
@@ -4802,6 +4852,7 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty());
     }
 
+    #[test_id(tbfpbis)]
     #[test]
     fn an_unattributed_suite_red_the_base_reproduces_ends_base_red() {
         let bases = std::cell::Cell::new(0u32);
@@ -4837,6 +4888,7 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty());
     }
 
+    #[test_id(tfuljld)]
     #[test]
     fn a_red_on_the_base_is_not_a_flip_and_blocks_the_round() {
         let mut f = Fake::new(|s, tree| s == "test-04.sh" && tree.is_empty());
@@ -4861,6 +4913,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tufw03x)]
     #[test]
     fn owner_and_base_are_told_apart() {
         let mut f = Fake::new(|s, tree| match s {
@@ -4896,6 +4949,7 @@ pub(crate) mod tests {
     }
 
     // covers: UC-landing-merge-queue-48
+    #[test_id(t4v6xte)]
     #[test]
     fn a_flaky_red_ejects_no_one() {
         let mut f = Fake::new(|_, _| false);
@@ -4918,6 +4972,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3));
     }
 
+    #[test_id(t2a0ozu)]
     #[test]
     fn every_owner_is_ejected_with_its_suites() {
         let mut f = Fake::new(|s, tree| match s {
@@ -4949,6 +5004,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2));
     }
 
+    #[test_id(t5vu5h2)]
     #[test]
     fn a_red_pass_with_menders_takes_its_next_pass_from_their_outcomes_and_ejects_only_the_returned(
     ) {
@@ -5015,6 +5071,7 @@ pub(crate) mod tests {
         (f, ops, round)
     }
 
+    #[test_id(t5rpykh)]
     #[test]
     fn a_returned_member_is_ejected_on_one_green_probe_without_it() {
         let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
@@ -5033,6 +5090,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[test_id(taga44x)]
     #[test]
     fn a_returned_member_whose_probe_stays_red_costs_one_probe_before_the_search() {
         let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
@@ -5045,6 +5103,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Land { .. }), "{end:?}");
     }
 
+    #[test_id(ttdgqwk)]
     #[test]
     fn a_returned_member_whose_probe_cannot_tell_leaves_the_search_to_run() {
         let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
@@ -5054,6 +5113,7 @@ pub(crate) mod tests {
         assert!(ops.returned.is_empty(), "{:?}", ops.returned);
     }
 
+    #[test_id(tl3r3ep)]
     #[test]
     fn a_return_naming_a_member_outside_the_round_is_not_probed() {
         let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
@@ -5063,6 +5123,7 @@ pub(crate) mod tests {
         assert!(f.alone.iter().all(|(_, t)| t.len() != 6 - 1 || t.contains(&"m3".to_string())), "{:?}", f.alone);
     }
 
+    #[test_id(tjjuc1a)]
     #[test]
     fn a_returned_member_of_a_filter_is_probed_through_the_filter() {
         let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
@@ -5086,6 +5147,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Land { members, .. } if members.len() == 5));
     }
 
+    #[test_id(tzdz7qb)]
     #[test]
     fn a_returned_filter_that_was_not_red_is_not_probed() {
         let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
@@ -5121,6 +5183,7 @@ pub(crate) mod tests {
         (f, ops, end)
     }
 
+    #[test_id(tahzb3y)]
     #[test]
     fn a_return_that_settles_while_the_pass_runs_ejects_its_member_and_verifies_the_survivors() {
         let (f, ops, end) = slow_a_and_a_return_at_30("m2", vec![member("m1"), member("m2")]);
@@ -5148,6 +5211,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[test_id(tsbysg9)]
     #[test]
     fn a_return_naming_a_member_others_are_stacked_on_ejects_the_dependents_too() {
         let mut m1 = member("m1");
@@ -5170,6 +5234,7 @@ pub(crate) mod tests {
         assert_eq!(ops.rebuilt[0], vec!["m3".to_string()]);
     }
 
+    #[test_id(trnbq3l)]
     #[test]
     fn the_pass_after_a_mid_pass_return_verifies_every_suite_already_red_and_each_return_leaves_its_member(
     ) {
@@ -5207,6 +5272,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(t1f6b56)]
     #[test]
     fn a_return_naming_no_round_member_leaves_the_pass_running() {
         let (f, ops, _) = slow_a_and_a_return_at_30("stranger", vec![member("m1"), member("m2")]);
@@ -5214,6 +5280,7 @@ pub(crate) mod tests {
         assert_eq!(f.main_kind.len(), 1);
     }
 
+    #[test_id(to2ff1w)]
     #[test]
     fn a_member_a_mender_returned_is_ejected_with_the_diagnosis_though_attribution_did_not_own_it()
     {
@@ -5255,6 +5322,7 @@ pub(crate) mod tests {
         assert_eq!(ops.rebuilt[0], vec!["m1".to_string()]);
     }
 
+    #[test_id(th64yar)]
     #[test]
     fn a_mender_pass_that_returns_the_adder_does_not_verify_the_suite_it_adds_on_the_tree_without_it(
     ) {
@@ -5292,6 +5360,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tfw9n3i)]
     #[test]
     fn a_page_from_the_menders_stops_the_round() {
         use crate::mender::Next;
@@ -5317,6 +5386,7 @@ pub(crate) mod tests {
         assert_eq!(ops.incidents.len(), 1);
     }
 
+    #[test_id(t71xmyv)]
     #[test]
     fn a_stacked_dependent_leaves_with_its_owner() {
         let mut f = Fake::new(breaks("m1", "test-02.sh"));
@@ -5344,6 +5414,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(thwhsqf)]
     #[test]
     fn nothing_is_ejected_when_every_red_is_a_flake_or_the_base_s() {
         let mut f = Fake::new(|s, _| s == "test-06.sh");
@@ -5368,6 +5439,7 @@ pub(crate) mod tests {
 
     // Two members each fine alone, red together until the round-level fix lands (stale
     // coverage.json shape): both would be named owners today and the round emptied.
+    #[test_id(tzwvz3d)]
     #[test]
     fn an_integration_red_is_fixed_in_the_round_and_every_member_lands() {
         let fixed = std::rc::Rc::new(std::cell::Cell::new(false));
@@ -5400,6 +5472,7 @@ pub(crate) mod tests {
         assert!(ops.incidents.is_empty());
     }
 
+    #[test_id(t4axpqe)]
     #[test]
     fn an_integration_red_the_fix_does_not_clear_is_held_not_ejected() {
         let mut f =
@@ -5488,6 +5561,7 @@ pub(crate) mod tests {
         vec![member("m1"), member("m2"), member("m3"), member("m4")]
     }
 
+    #[test_id(td7x11v)]
     #[test]
     fn a_unit_red_in_a_package_only_the_last_members_dependency_touches_ejects_that_member_and_no_other(
     ) {
@@ -5571,6 +5645,7 @@ pub(crate) mod tests {
         (ops, f, end)
     }
 
+    #[test_id(t8hrpgb)]
     #[test]
     fn mapped_suspects_cleared_by_their_probes_stay_and_the_unmapped_culprit_alone_is_ejected() {
         let (ops, _f, end) = run_config_red(
@@ -5593,6 +5668,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tk08xe9)]
     #[test]
     fn a_member_deleting_a_shipped_rune_is_mapped_and_convicted_by_a_probe_and_no_other_leaves() {
         let (ops, f, end) = run_config_red(
@@ -5620,6 +5696,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tcwhsbe)]
     #[test]
     fn a_lone_mapped_member_the_red_does_not_follow_is_not_ejected_on_the_mapping() {
         let (ops, f, end) = run_config_red(
@@ -5682,6 +5759,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[test_id(tugna77)]
     #[test]
     fn a_unit_red_in_a_crate_that_reads_a_file_outside_its_dir_ejects_the_member_touching_that_file_and_no_other(
     ) {
@@ -5729,6 +5807,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tfv4upt)]
     #[test]
     fn a_unit_red_pinned_on_one_member_ejects_it_with_the_failing_test_lines() {
         let mut f = Fake::new(|_, _| false);
@@ -5763,6 +5842,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[test_id(tugnq7p)]
     #[test]
     fn two_members_touching_what_the_failing_crate_reads_are_probed_and_only_the_red_one_leaves() {
         let mut f = Fake::new(|_, _| false);
@@ -5785,6 +5865,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(t6k4k0s)]
     #[test]
     fn two_suspects_the_probes_cannot_tell_apart_are_not_ejected_on_the_mapping() {
         let mut f = Fake::new(|_, _| false);
@@ -5821,6 +5902,7 @@ pub(crate) mod tests {
         (end, ops)
     }
 
+    #[test_id(t52uvsc)]
     #[test]
     fn a_faulted_control_charges_the_one_member_whose_diff_adds_the_assertions_line() {
         let (end, ops) = faulted_unit_red_adding("+other = 1\n", &format!("+{SKIP_LINE}\n"));
@@ -5830,6 +5912,7 @@ pub(crate) mod tests {
         assert!(!matches!(end, RoundEnd::Faulted(_)), "{end:?}");
     }
 
+    #[test_id(tjmca9t)]
     #[test]
     fn a_faulted_control_charges_no_member_on_a_substring_of_the_assertions_line() {
         let (end, ops) = faulted_unit_red_adding("+status-level = \"skip-all\"\n", "+other = 1\n");
@@ -5837,6 +5920,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Faulted(_)), "{end:?}");
     }
 
+    #[test_id(t334y9p)]
     #[test]
     fn a_faulted_control_with_two_adders_pages_with_each_members_files_and_the_eject_command() {
         let line = format!("+{SKIP_LINE}\n");
@@ -5851,6 +5935,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[test_id(tg6ytb2)]
     #[test]
     fn a_control_probe_with_no_verdict_names_each_probes_own_reason_in_the_fault() {
         let mut f = Fake::new(|_, _| false);
@@ -5865,6 +5950,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[test_id(t68vqvy)]
     #[test]
     fn a_unit_red_no_member_maps_to_runs_the_failing_packages_on_subsets_and_ejects_only_the_red_one(
     ) {
@@ -5919,6 +6005,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tjde81c)]
     #[test]
     fn a_unit_red_the_base_has_too_ejects_nobody_by_list_position() {
         let mut f = Fake::new(|_, _| false);
@@ -5954,6 +6041,7 @@ pub(crate) mod tests {
         assert!(why.contains("last change touching it: c0de fixes"), "{why}");
     }
 
+    #[test_id(tgzkg3a)]
     #[test]
     fn an_integration_red_the_base_reproduces_ends_base_red() {
         let mut f = Fake::new(|_, _| false);
@@ -5984,6 +6072,7 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty());
     }
 
+    #[test_id(tj2l0cq)]
     #[test]
     fn a_filter_red_whose_control_probe_cannot_answer_faults_and_charges_no_one() {
         let mut f = Fake::new(|_, _| false);
@@ -6012,6 +6101,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Faulted(_)), "{end:?}");
     }
 
+    #[test_id(tzyz347)]
     #[test]
     fn a_lint_red_naming_one_member_ejects_it_with_that_line_and_certifies_the_rest() {
         let mut f = Fake::new(|_, _| false);
@@ -6053,6 +6143,7 @@ pub(crate) mod tests {
         assert_eq!(f.main_kind[1], (MainKind::Corpus, corpus(3)));
     }
 
+    #[test_id(taslnvs)]
     #[test]
     fn a_member_stacked_on_the_one_a_lint_red_names_leaves_with_it() {
         let mut f = Fake::new(|_, _| false);
@@ -6113,6 +6204,7 @@ pub(crate) mod tests {
         (f, ops, end)
     }
 
+    #[test_id(tqck1oj)]
     #[test]
     fn a_prior_build_red_at_a_file_one_member_changes_ejects_it_without_a_main_run() {
         let (f, ops, end) = run_prior_build(
@@ -6127,6 +6219,7 @@ pub(crate) mod tests {
         assert!(f.main_kind.is_empty(), "{:?}", f.main_kind);
     }
 
+    #[test_id(tp3zy4t)]
     #[test]
     fn a_prior_manifest_error_at_a_file_two_members_change_ejects_the_later_and_lands_the_rest() {
         let prior = "error: duplicate key\n  --> spira-lc/Cargo.toml:44:1\n   |\n44 | libc = \"0.2\"\n   | ^^^^\n";
@@ -6145,6 +6238,7 @@ pub(crate) mod tests {
         assert!(f.main_kind.is_empty(), "{:?}", f.main_kind);
     }
 
+    #[test_id(tjtbxhp)]
     #[test]
     fn a_prior_build_red_naming_a_file_no_member_changes_runs_the_corpus_as_before() {
         let (f, ops, _) = run_prior_build(
@@ -6156,6 +6250,7 @@ pub(crate) mod tests {
         assert!(!f.main_kind.is_empty(), "the corpus runs");
     }
 
+    #[test_id(tftfalw)]
     #[test]
     fn a_prior_build_red_that_is_an_image_build_ejects_the_one_member_changing_the_recipe() {
         let out = "round image build failed\n";
@@ -6169,6 +6264,7 @@ pub(crate) mod tests {
         assert!(f.main_kind.is_empty());
     }
 
+    #[test_id(te2hv4y)]
     #[test]
     fn a_one_member_round_with_a_prior_build_red_ejects_it_on_the_first_error() {
         let (f, ops, end) = run_prior_build(E0004, vec![], vec![member("m1")]);
@@ -6177,6 +6273,7 @@ pub(crate) mod tests {
         assert!(f.main_kind.is_empty());
     }
 
+    #[test_id(tx1poyt)]
     #[test]
     fn a_workspace_build_red_at_a_file_one_member_touches_ejects_it_and_recuts_without_a_pause() {
         let mut f = Fake::new(|_, _| false);
@@ -6223,6 +6320,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tlcmcs8)]
     #[test]
     fn a_merged_config_delta_that_does_not_apply_ejects_the_member_whose_merge_breaks_it() {
         let mut f = Fake::new(|_, _| false);
@@ -6263,6 +6361,7 @@ pub(crate) mod tests {
 
     const ABORT: &str = "round-vm: PHASE-FAILED phase=suites rc=134\nround-vm run: the remote runner exited 134, outside testenv's contract (0-4) — no verdict";
 
+    #[test_id(thp58j4)]
     #[test]
     fn testenv_killed_by_a_signal_ejects_the_one_member_that_changes_the_round_vm() {
         let mut f = Fake::new(|_, _| false);
@@ -6298,6 +6397,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(t8t6kz7)]
     #[test]
     fn a_pass_that_found_the_base_moved_rebuilds_once_on_the_new_base_and_lands() {
         let mut f = Fake::new(|_, _| false);
@@ -6326,6 +6426,7 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty() && ops.incidents.is_empty());
     }
 
+    #[test_id(tf7skey)]
     #[test]
     fn a_base_that_moved_again_after_the_one_rebuild_is_an_error_not_a_loop() {
         let mut f = Fake::new(|_, _| false);
@@ -6383,6 +6484,7 @@ pub(crate) mod tests {
 
     const UNDECLARED: &str = "round-vm: harness fault — install failed\ntestenv container: SPIRA_X_SECS is not declared: the config has no x_secs — every key is required; refusing";
 
+    #[test_id(tzvpxnn)]
     #[test]
     fn an_undeclared_key_fault_ejects_the_member_whose_diff_retires_a_config_key_with_the_fault_lines(
     ) {
@@ -6418,6 +6520,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tt1hyts)]
     #[test]
     fn an_undeclared_key_fault_with_no_member_changing_a_key_stays_a_harness_fault() {
         let mut f = Fake::new(|_, _| false);
@@ -6440,6 +6543,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tdg7d4f)]
     #[test]
     fn a_member_that_leaves_for_a_runner_abort_takes_the_suite_it_adds_out_of_the_next_corpus() {
         let mut f = Fake::new(|_, _| false);
@@ -6468,6 +6572,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
     }
 
+    #[test_id(tbexmwr)]
     #[test]
     fn testenv_killed_by_a_signal_with_no_or_several_runner_touching_members_stays_a_harness_fault()
     {
@@ -6500,6 +6605,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[test_id(t79vpvx)]
     #[test]
     fn a_testenv_abort_no_member_touches_the_runner_for_ejects_the_member_whose_tree_alone_aborts_it(
     ) {
@@ -6540,6 +6646,7 @@ pub(crate) mod tests {
         assert!(ops.judged.is_empty() && ops.incidents.is_empty());
     }
 
+    #[test_id(tuyh0t1)]
     #[test]
     fn a_testenv_abort_several_members_touch_the_runner_for_is_bisected_to_the_member_that_aborts_it(
     ) {
@@ -6572,6 +6679,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tffwrc1)]
     #[test]
     fn a_testenv_abort_in_a_one_member_round_ejects_that_member_without_a_probe() {
         let mut f = Fake::new(|_, _| false);
@@ -6593,6 +6701,7 @@ pub(crate) mod tests {
         assert!(f.probes.is_empty());
     }
 
+    #[test_id(t48atj1)]
     #[test]
     fn an_abandoned_round_ends_within_one_poll_and_launches_no_further_leg() {
         let mut f = Fake::new(breaks("m2", "test-00.sh"));
@@ -6619,6 +6728,7 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty() && ops.recorded.is_empty());
     }
 
+    #[test_id(tz45sty)]
     #[test]
     fn a_round_abandoned_while_its_image_build_is_retried_starts_no_second_run() {
         let mut f = Fake::new(|_, _| false);
@@ -6641,6 +6751,7 @@ pub(crate) mod tests {
         assert!(ops.incidents.is_empty(), "an abandoned round files nothing");
     }
 
+    #[test_id(tpeqjp4)]
     #[test]
     fn a_runner_fault_on_an_abandoned_round_is_not_probed_for_a_culprit() {
         let mut f = Fake::new(|_, _| false);
@@ -6663,6 +6774,7 @@ pub(crate) mod tests {
         assert!(f.probes.is_empty(), "no probe leg launched");
     }
 
+    #[test_id(twgwmuy)]
     #[test]
     fn an_image_build_red_ejects_the_one_member_whose_diff_touches_the_image_recipe_without_a_pause(
     ) {
@@ -6702,6 +6814,7 @@ pub(crate) mod tests {
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
+    #[test_id(taji26r)]
     #[test]
     fn an_image_build_red_no_member_touches_the_recipe_for_is_retried_once_then_filed() {
         let mut f = Fake::new(|_, _| false);
@@ -6733,6 +6846,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tjiwavt)]
     #[test]
     fn an_image_build_red_with_two_recipe_touching_members_ejects_neither_and_files() {
         let mut f = Fake::new(|_, _| false);
@@ -6760,6 +6874,7 @@ pub(crate) mod tests {
         assert_eq!(ops.incidents.len(), 1);
     }
 
+    #[test_id(tjweeii)]
     #[test]
     fn an_image_build_red_whose_recipe_toucher_is_the_only_member_ejects_it_and_files() {
         let mut f = Fake::new(|_, _| false);
@@ -6784,6 +6899,7 @@ pub(crate) mod tests {
         assert_eq!(ops.ejected.len(), 1);
     }
 
+    #[test_id(tfdo6bq)]
     #[test]
     fn an_image_build_red_that_clears_on_the_retry_lands_every_member() {
         let mut f = Fake::new(|_, _| false);
@@ -6810,6 +6926,7 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty() && ops.incidents.is_empty());
     }
 
+    #[test_id(t7i9smz)]
     #[test]
     fn a_workspace_build_red_naming_what_another_member_adds_sequences_the_caller_behind_it() {
         let mut f = Fake::new(|_, _| false);
@@ -6847,6 +6964,7 @@ pub(crate) mod tests {
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
+    #[test_id(t7zoo2g)]
     #[test]
     fn a_workspace_build_red_that_maps_to_no_member_still_files_the_incident() {
         let mut f = Fake::new(|_, _| false);
@@ -6897,6 +7015,7 @@ pub(crate) mod tests {
         members.iter().map(|m| m.id.clone()).collect()
     }
 
+    #[test_id(txnht4t)]
     #[test]
     fn an_unmapped_workspace_build_red_that_one_member_breaks_alone_ejects_that_member_by_bisection(
     ) {
@@ -6925,6 +7044,7 @@ pub(crate) mod tests {
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
+    #[test_id(tyuigu4)]
     #[test]
     fn an_unmapped_workspace_build_red_that_only_a_pair_breaks_holds_the_later_member_behind_the_earlier(
     ) {
@@ -6955,6 +7075,7 @@ pub(crate) mod tests {
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
+    #[test_id(t1woxxo)]
     #[test]
     fn an_unmapped_workspace_build_red_that_needs_three_members_is_still_filed() {
         let (mut f, mut ops) = unmapped_build_red(&["m1", "m2", "m3"], 3);
@@ -6980,6 +7101,7 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty() && ops.sequenced.is_empty());
     }
 
+    #[test_id(tqa7das)]
     #[test]
     fn bisecting_an_unmapped_workspace_build_red_builds_few_subsets() {
         let (mut f, mut ops) = unmapped_build_red(&["m7"], 8);
@@ -7007,6 +7129,7 @@ pub(crate) mod tests {
         assert!(f.probes.len() <= 4, "{:?}", f.probes);
     }
 
+    #[test_id(tmw62yi)]
     #[test]
     fn bisecting_an_unmapped_pair_in_eight_members_builds_at_most_two_searches_and_a_check() {
         let (mut f, mut ops) = unmapped_build_red(&["m2", "m7"], 8);
@@ -7047,6 +7170,7 @@ pub(crate) mod tests {
         })
     }
 
+    #[test_id(tlcp4uc)]
     #[test]
     fn a_unit_test_red_only_a_pair_causes_holds_the_later_member_behind_the_earlier_and_lands_the_rest(
     ) {
@@ -7078,6 +7202,7 @@ pub(crate) mod tests {
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
+    #[test_id(ta0d88b)]
     #[test]
     fn a_filter_red_whose_culprit_is_a_round_commit_is_a_harness_fault_that_charges_no_member() {
         let sha = "488e83c393bf";
@@ -7115,6 +7240,7 @@ pub(crate) mod tests {
         assert!(f.probes.is_empty(), "{:?}", f.probes);
     }
 
+    #[test_id(t2io1la)]
     #[test]
     fn a_prior_red_whose_culprit_is_a_round_commit_is_a_harness_fault_that_charges_no_member() {
         let sha = "488e83c393bf";
@@ -7150,6 +7276,7 @@ pub(crate) mod tests {
         assert!(f.probes.is_empty(), "{:?}", f.probes);
     }
 
+    #[test_id(tv8ocdy)]
     #[test]
     fn a_filter_red_ejection_carries_what_the_red_probe_printed() {
         let mut f = Fake::new(|_, _| false);
@@ -7175,6 +7302,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tnynlka)]
     #[test]
     fn an_ejection_carries_the_probe_of_that_member_alone_and_only_the_tail_of_a_long_one() {
         let said = vec![
@@ -7212,6 +7340,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(t5sj4sf)]
     #[test]
     fn a_unit_test_red_one_member_causes_alone_ejects_that_member() {
         let mut f = Fake::new(|_, _| false);
@@ -7237,6 +7366,7 @@ pub(crate) mod tests {
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
+    #[test_id(tdtcnoq)]
     #[test]
     fn a_unit_test_red_that_does_not_reproduce_on_the_lone_first_member_is_filed_not_a_panic() {
         let seen = std::cell::Cell::new(0);
@@ -7324,6 +7454,7 @@ pub(crate) mod tests {
         member(id).tip
     }
 
+    #[test_id(th9dqk1)]
     #[test]
     fn a_red_recurring_on_the_same_tests_ejects_the_member_whose_removal_turns_the_round_green() {
         let prior = prior_red_of(&[RECUR], &[("m2", &tip("m2")), ("m3", &tip("m3"))]);
@@ -7338,6 +7469,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(to4e2st)]
     #[test]
     fn a_red_whose_failing_tests_differ_from_the_kept_red_blocks_and_replaces_the_record() {
         let prior = prior_red_of(&["FAIL other x"], &[("m2", &tip("m2")), ("m3", &tip("m3"))]);
@@ -7348,6 +7480,7 @@ pub(crate) mod tests {
         assert_eq!(kept.batch, "b-now");
     }
 
+    #[test_id(tfgmf0f)]
     #[test]
     fn a_member_whose_tip_changed_since_the_kept_red_is_not_a_recurring_member() {
         let prior = prior_red_of(&[RECUR], &[("m2", &tip("m2")), ("m3", "other-tip")]);
@@ -7355,6 +7488,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Unconverged { .. }), "{end:?}");
     }
 
+    #[test_id(tofpfyb)]
     #[test]
     fn a_round_still_red_without_the_recurring_members_ejects_none_of_them() {
         let prior = prior_red_of(&[RECUR], &[("m2", &tip("m2")), ("m3", &tip("m3"))]);
@@ -7367,6 +7501,7 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
     }
 
+    #[test_id(tzgumj1)]
     #[test]
     fn when_only_one_of_several_recurring_members_turns_the_round_green_alone_only_it_is_ejected() {
         let prior = prior_red_of(
@@ -7379,6 +7514,7 @@ pub(crate) mod tests {
         assert_eq!(ops.eject_evidence[0].0, "m3");
     }
 
+    #[test_id(t6ea4jh)]
     #[test]
     fn when_no_single_recurring_member_turns_the_round_green_alone_they_are_ejected_together() {
         let prior = prior_red_of(&[RECUR], &[("m2", &tip("m2")), ("m3", &tip("m3"))]);
@@ -7392,6 +7528,7 @@ pub(crate) mod tests {
         assert_eq!(gone, vec!["m2", "m3"]);
     }
 
+    #[test_id(tu3duvs)]
     #[test]
     fn a_round_that_lands_clears_the_kept_unnamed_red() {
         let prior = prior_red_of(&[RECUR], &[("m2", &tip("m2"))]);
@@ -7413,6 +7550,7 @@ pub(crate) mod tests {
         attribute_round(f, ops, &corpus(3), three(), budget6()).unwrap()
     }
 
+    #[test_id(td64me5)]
     #[test]
     fn a_lifted_suite_green_on_the_round_tree_lands_every_member_and_keeps_nothing() {
         let mut f = Fake::new(|_, _| false);
@@ -7422,6 +7560,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 
+    #[test_id(tqyeaiw)]
     #[test]
     fn a_lifted_suite_red_on_the_round_tree_and_the_base_keeps_its_row_and_lands_the_owner_whose_diff_touches_it() {
         let mut f = Fake::new(|s, _| s == LIFTED_SUITE);
@@ -7434,6 +7573,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 
+    #[test_id(tb8nboh)]
     #[test]
     fn a_lifted_suite_red_on_the_round_tree_green_on_the_base_and_alone_ejects_the_owner_for_not_fixing_its_flip() {
         let mut f = Fake::new(|s, tree| s == LIFTED_SUITE && tree.len() == 3);
@@ -7447,6 +7587,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
     }
 
+    #[test_id(t8jp17e)]
     #[test]
     fn a_lifted_suite_red_with_another_member_alone_ejects_that_member_not_the_owner() {
         let mut f = Fake::new(|s, tree| s == LIFTED_SUITE && tree.contains("m3"));
@@ -7457,6 +7598,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2"]);
     }
 
+    #[test_id(t8qza38)]
     #[test]
     fn a_lifted_suite_in_the_corpus_pass_red_is_judged_on_the_base_before_any_member_is_named() {
         let mut f = Fake::new(|s, _| s == LIFTED_SUITE);
@@ -7468,6 +7610,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 
+    #[test_id(tjff67k)]
     #[test]
     fn a_refused_keep_blocks_the_round_with_the_refusal() {
         let mut f = Fake::new(|s, _| s == LIFTED_SUITE);
@@ -7477,6 +7620,7 @@ pub(crate) mod tests {
         assert!(matches!(&end, RoundEnd::Blocked(w) if w.contains("registry busy")), "{end:?}");
     }
 
+    #[test_id(t9prrkp)]
     #[test]
     fn a_lifted_suite_red_in_the_corpus_pass_and_green_on_the_base_ejects_the_owner() {
         let mut f = Fake::new(|s, tree| s == LIFTED_SUITE && tree.len() == 3);
@@ -7489,6 +7633,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
     }
 
+    #[test_id(t0qaahm)]
     #[test]
     fn a_lifted_unit_red_in_the_round_pass_and_green_on_the_base_ejects_the_owner() {
         let mut f = Fake::new(|_, _| false);
@@ -7519,6 +7664,7 @@ pub(crate) mod tests {
         (end, ops)
     }
 
+    #[test_id(tgwtxz8)]
     #[test]
     fn a_lifted_unit_green_on_the_round_tree_lands_every_member_and_keeps_nothing() {
         let (end, ops) = lifted_unit_round(None, false);
@@ -7526,6 +7672,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 
+    #[test_id(tjdmpnd)]
     #[test]
     fn a_lifted_unit_red_on_the_round_tree_and_the_base_keeps_its_row_and_lands_the_owner() {
         let red: FilterFn = Box::new(|_| Some(flip_red(&[FLIP_UNIT])));
@@ -7538,6 +7685,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 
+    #[test_id(tnj8anm)]
     #[test]
     fn a_lifted_unit_red_in_the_round_pass_and_on_the_base_keeps_its_row_and_the_corpus_runs_again() {
         let mut f = Fake::new(|_, _| false);
@@ -7553,6 +7701,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 
+    #[test_id(tob0vah)]
     #[test]
     fn a_lifted_unit_red_on_the_round_tree_green_on_the_base_and_alone_ejects_the_owner() {
         let red: FilterFn = Box::new(|tree| (tree.len() == 3).then(|| flip_red(&[FLIP_UNIT])));
@@ -7565,6 +7714,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
     }
 
+    #[test_id(tcndhej)]
     #[test]
     fn a_suite_that_is_not_lifted_and_red_on_the_base_still_ends_the_round_base_red() {
         let mut f = Fake::new(|s, _| s.starts_with("test-0"));
@@ -7592,6 +7742,7 @@ pub(crate) mod tests {
         .unwrap()
     }
 
+    #[test_id(t6ffo1k)]
     #[test]
     fn a_unit_red_green_on_the_base_on_every_member_alone_and_on_a_full_tree_rerun_is_disabled_and_the_round_lands_every_member(
     ) {
@@ -7620,6 +7771,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 
+    #[test_id(tgbqnot)]
     #[test]
     fn a_flip_in_the_corpus_pass_red_is_disabled_and_the_round_runs_its_own_pass_without_it() {
         let mut f = Fake::new(|_, _| false);
@@ -7641,6 +7793,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 
+    #[test_id(tf7fo3m)]
     #[test]
     fn a_unit_red_that_reproduces_on_the_full_tree_rerun_is_not_a_flip_and_blocks() {
         let mut f = Fake::new(|_, _| false);
@@ -7652,6 +7805,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Unconverged { .. }), "{end:?}");
     }
 
+    #[test_id(t1ajsep)]
     #[test]
     fn a_filter_red_whose_full_membership_probe_is_green_ends_after_one_probe_as_flipped() {
         let mut f = Fake::new(|_, _| false);
@@ -7669,6 +7823,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 
+    #[test_id(tgbmdkz)]
     #[test]
     fn a_red_naming_more_than_the_flip_limit_of_tests_is_not_a_flip() {
         let lines: Vec<String> = (0..=MAX_FLIP_TESTS)
@@ -7685,6 +7840,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
     }
 
+    #[test_id(tns2qtc)]
     #[test]
     fn an_integration_flip_is_named_by_the_package_its_directory_resolves_to() {
         let mut f = Fake::new(|_, _| false);
@@ -7712,6 +7868,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 
+    #[test_id(t3buhez)]
     #[test]
     fn an_integration_flip_is_named_by_the_package_its_test_target_resolves_to() {
         let mut f = Fake::new(|_, _| false);
@@ -7739,6 +7896,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 
+    #[test_id(turnuxw)]
     #[test]
     fn a_red_named_only_by_a_test_target_several_packages_share_is_probed_on_that_test_in_each_owner() {
         let red = FilterRed {
@@ -7789,6 +7947,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2", "m4"]);
     }
 
+    #[test_id(t69wdg9)]
     #[test]
     fn a_path_attribution_line_is_no_failing_test_id_and_a_failing_line_is() {
         assert_eq!(
@@ -7801,6 +7960,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tk88cxb)]
     #[test]
     fn a_flip_in_a_test_target_two_packages_or_none_own_is_not_a_flip() {
         let graph = PackageGraph {
@@ -7812,6 +7972,7 @@ pub(crate) mod tests {
         assert_eq!(flip_ids(&["FAIL test:none t".into()], Some(&graph)), None);
     }
 
+    #[test_id(tqmiqs5)]
     #[test]
     fn a_flip_in_a_directory_no_package_owns_is_not_a_flip() {
         let mut f = Fake::new(|_, _| false);
@@ -7826,6 +7987,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
     }
 
+    #[test_id(tnk53ke)]
     #[test]
     fn a_failure_to_disable_a_flip_blocks_the_round_naming_it() {
         let mut f = Fake::new(|_, _| false);
@@ -7845,6 +8007,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[test_id(trg14wc)]
     #[test]
     fn a_unit_test_red_that_needs_three_members_is_still_filed() {
         let mut f = Fake::new(|_, _| false);
@@ -7890,6 +8053,7 @@ pub(crate) mod tests {
         })
     }
 
+    #[test_id(tqd9mf2)]
     #[test]
     fn an_integration_red_in_a_crate_dir_only_one_members_diff_touches_ejects_that_member_and_certifies_the_rest(
     ) {
@@ -7923,6 +8087,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m2"]);
     }
 
+    #[test_id(tqlg6dl)]
     #[test]
     fn a_two_member_round_red_on_one_integration_test_runs_only_that_test_per_member_ejects_its_owner_and_lands_the_other_without_the_corpus_again(
     ) {
@@ -7979,6 +8144,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1"]);
     }
 
+    #[test_id(tydztu8)]
     #[test]
     fn a_red_its_named_tests_do_not_reproduce_alone_is_attributed_on_the_whole_package() {
         let red = FilterRed {
@@ -8027,6 +8193,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1"]);
     }
 
+    #[test_id(tcwcwii)]
     #[test]
     fn a_named_test_red_no_probe_can_reproduce_faults_the_round_without_running_the_corpus() {
         let red = FilterRed {
@@ -8052,6 +8219,7 @@ pub(crate) mod tests {
         assert!(f.main_kind.is_empty());
     }
 
+    #[test_id(th8pzv4)]
     #[test]
     fn a_round_that_loses_its_only_member_to_a_named_test_red_says_who_left() {
         let red = FilterRed {
@@ -8079,6 +8247,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(t5ou5fz)]
     #[test]
     fn a_red_that_ejects_one_of_two_members_names_who_left_and_who_stayed_when_the_rest_cannot_be_re_cut(
     ) {
@@ -8105,6 +8274,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[test_id(tecw40h)]
     #[test]
     fn an_integration_red_no_member_maps_to_is_bisected_on_the_failing_crate_alone() {
         let mut f = Fake::new(|_, _| false);
@@ -8139,6 +8309,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
     }
 
+    #[test_id(tsata0l)]
     #[test]
     fn an_integration_red_no_single_removal_fixes_is_left_open_and_pages_with_the_failing_test_names(
     ) {
@@ -8170,6 +8341,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tlbbdnb)]
     #[test]
     fn sp_56d3l3_a_lint_red_that_ejects_the_only_member_ends_emptied_not_blocked() {
         let mut f = Fake::new(|_, _| false);
@@ -8193,6 +8365,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tfjefkt)]
     #[test]
     fn sp_evwve7_a_filter_red_naming_no_member_ejects_the_only_member_of_the_round() {
         let mut f = Fake::new(|_, _| false);
@@ -8224,6 +8397,7 @@ pub(crate) mod tests {
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
+    #[test_id(tgedtm8)]
     #[test]
     fn a_lint_red_naming_no_member_is_run_alone_and_ejects_the_member_whose_tree_is_red() {
         let mut f = Fake::new(|_, _| false);
@@ -8255,6 +8429,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[test_id(tcwq3j1)]
     #[test]
     fn a_fence_red_naming_no_member_ejects_the_member_whose_tree_fails_the_fence_and_lands_the_rest(
     ) {
@@ -8292,6 +8467,7 @@ pub(crate) mod tests {
         ["m1", "m2", "m3", "m4", "m5", "m6"].map(member).to_vec()
     }
 
+    #[test_id(tvww93u)]
     #[test]
     fn a_reproducible_red_whose_probes_never_isolate_an_owner_ends_unconverged_at_the_probe_ceiling() {
         let mut f = Fake::new(|_, _| false);
@@ -8314,6 +8490,7 @@ pub(crate) mod tests {
     }
 
 
+    #[test_id(tvpofbe)]
     #[test]
     fn a_lint_red_naming_no_member_is_filed_once_and_does_not_run_the_corpus_again() {
         let mut f = Fake::new(|_, _| false);
@@ -8346,6 +8523,7 @@ pub(crate) mod tests {
         assert_eq!(f.main_kind.len(), 1);
     }
 
+    #[test_id(tngvmwr)]
     #[test]
     fn a_sole_member_red_on_suites_no_one_owns_is_ejected_on_each_suite_and_the_round_ends_emptied()
     {
@@ -8365,6 +8543,7 @@ pub(crate) mod tests {
         assert_eq!(ops.ejected, vec![("m1".to_string(), suites)]);
     }
 
+    #[test_id(tvf7eni)]
     #[test]
     fn an_unattributed_red_with_the_base_unmoved_goes_straight_to_the_judge() {
         let mut f =
@@ -8394,6 +8573,7 @@ pub(crate) mod tests {
         assert_eq!(f.main_kind.len(), 1, "no retry: the base did not move");
     }
 
+    #[test_id(ticm5n1)]
     #[test]
     fn an_unattributed_red_is_retried_once_on_the_moved_base_then_judged() {
         let mut f =
@@ -8427,6 +8607,7 @@ pub(crate) mod tests {
         assert_eq!(ops.judged.len(), 1);
     }
 
+    #[test_id(trwt5qk)]
     #[test]
     fn an_unattributed_red_that_clears_on_the_moved_base_lands() {
         let moved = std::rc::Rc::new(std::cell::Cell::new(false));
@@ -8458,6 +8639,7 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty());
     }
 
+    #[test_id(t1vu8fh)]
     #[test]
     fn a_suite_with_no_result_at_the_end_is_red_not_green() {
         struct Silent(Fake);

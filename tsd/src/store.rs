@@ -287,6 +287,7 @@ mod tests {
             .collect()
     }
 
+    #[test_id(twpxklh)]
     #[test]
     fn a_row_survives_the_trip_with_its_types() {
         let line = crate::build_row(
@@ -313,6 +314,7 @@ mod tests {
         assert_eq!(r["ts"], crate::iso_utc(1_792_000_000));
     }
 
+    #[test_id(tpbxrx7)]
     #[test]
     fn a_row_with_no_number_still_exists() {
         let Value::Object(row) = serde_json::from_str(r#"{"ts":"2026-10-22T10:00:00Z","key":"k","status":"gap"}"#).unwrap() else { panic!() };
@@ -321,6 +323,7 @@ mod tests {
         assert_eq!(back[0]["status"], "gap");
     }
 
+    #[test_id(tt7249i)]
     #[test]
     fn two_rows_in_one_second_with_the_same_labels_stay_two() {
         let Value::Object(row) = serde_json::from_str(r#"{"ts":"2026-10-22T10:00:00Z","check":"C1","secs":3}"#).unwrap() else { panic!() };
@@ -330,6 +333,7 @@ mod tests {
         assert_eq!(back.len(), 2);
     }
 
+    #[test_id(txbcqdr)]
     #[test]
     fn a_stopped_store_is_a_named_refusal_and_never_an_empty_answer() {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -341,6 +345,7 @@ mod tests {
         assert_eq!(Reader::new(None).err().map(|e| e.name()), Some("metrics-store-not-configured"));
     }
 
+    #[test_id(tpngrs5)]
     #[test]
     fn the_same_row_pushed_twice_is_one_row_and_different_rows_in_one_second_are_two() {
         let store = spira_otel::fixture::FakeStore::start();
@@ -354,12 +359,14 @@ mod tests {
         assert_eq!(secs, [3, 4]);
     }
 
+    #[test_id(trglbtu)]
     #[test]
     fn a_family_is_a_name_not_a_selector() {
         let r = Reader::new(Some("127.0.0.1:1")).unwrap();
         assert_eq!(r.rows("x\"}", 0).unwrap_err().name(), "metrics-store-malformed");
     }
 
+    #[test_id(tu0k6cb)]
     #[test]
     fn the_moved_families_are_exactly_the_ones_listed() {
         assert!(moved("bead-stage") && moved("unit-run-dbus"));

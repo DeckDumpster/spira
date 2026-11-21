@@ -366,6 +366,7 @@ mod tests {
     use super::*;
     use crate::fixture::{complete_fixture, lookup};
 
+    #[test_id(tgsa4qc)]
     #[test]
     fn every_key_a_pending_row_declares_is_registered_and_the_fixture_resolves_it() {
         assert_eq!(complete_fixture("SPIRA_POOL_CAP_CONTAINER").as_deref(), Some("2"), "the fixture reader must find a known key");
@@ -381,6 +382,7 @@ mod tests {
         assert!(unresolved.is_empty(), "keys of CORE and the pending rows the settings fixture does not resolve: {unresolved:?}");
     }
 
+    #[test_id(tmppqhn)]
     #[test]
     fn every_key_a_ported_or_pending_row_declares_resolves_in_the_fixture() {
         let get = lookup("7");
@@ -390,6 +392,7 @@ mod tests {
         assert!(unresolved.is_empty(), "keys of rows in tasks::all() or tasks::pending() the settings fixture does not resolve: {unresolved:?}");
     }
 
+    #[test_id(trefqx3)]
     #[test]
     fn the_reconciler_pins_the_keys_its_observers_read_and_its_own_cadence() {
         let s = Settings::from_lookup(&lookup("7")).unwrap().reconciler;
@@ -400,6 +403,7 @@ mod tests {
         }
     }
 
+    #[test_id(tkjhw17)]
     #[test]
     fn every_key_read_is_registered_in_conf_d() {
         let conf_d = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
@@ -407,6 +411,7 @@ mod tests {
         assert!(missing.is_empty(), "keys the runtime reads but spira/conf.d does not register: {missing:?}");
     }
 
+    #[test_id(ti3ulti)]
     #[test]
     fn the_gh_binary_key_reaches_the_forge() {
         let base = lookup("7");
@@ -414,6 +419,7 @@ mod tests {
         assert_eq!(Settings::from_lookup(&gh).unwrap().forge.gh, "opt/gh");
     }
 
+    #[test_id(ttb7no7)]
     #[test]
     fn the_gh_config_dir_key_reaches_the_forge() {
         let base = lookup("7");
@@ -421,6 +427,7 @@ mod tests {
         assert_eq!(Settings::from_lookup(&dir).unwrap().forge.gh_config_dir, "gh/conf");
     }
 
+    #[test_id(tfekkkx)]
     #[test]
     fn each_bead_sweep_key_reaches_its_own_field() {
         let base = lookup("7");
@@ -433,6 +440,7 @@ mod tests {
         assert_eq!((b.ask_label.as_str(), b.home_repo.as_str()), ("q", "spira"));
     }
 
+    #[test_id(tfwb7jc)]
     #[test]
     fn the_view_follower_finds_hunk_and_the_cockpit_state_where_the_environment_puts_them() {
         let s = Settings::from_lookup(&lookup("7")).unwrap();
@@ -446,6 +454,7 @@ mod tests {
         assert!(s.with_environment(&env(&[("COCKPIT_FORGET_SECS", "0")])).unwrap_err().contains("positive"));
     }
 
+    #[test_id(thnyk79)]
     #[test]
     fn a_view_follower_that_is_on_needs_a_session_and_an_empty_program_turns_it_off() {
         let with = |key: &'static str, val: &'static str| {
@@ -456,6 +465,7 @@ mod tests {
         assert!(!Settings::from_lookup(&with("SPIRA_VIEW", "")).unwrap().view.enabled);
     }
 
+    #[test_id(tok4d9p)]
     #[test]
     fn each_publish_backlog_key_reaches_its_own_field() {
         let base = lookup("7");
@@ -469,6 +479,7 @@ mod tests {
         assert_eq!((s.publish_backlog.interval_ms, s.publish_backlog.max_count, s.publish_backlog.max_age_secs), (21_000, 22, 23));
     }
 
+    #[test_id(tczn6nb)]
     #[test]
     fn each_reconciler_flow_key_reaches_its_own_field() {
         let base = lookup("7");
@@ -480,6 +491,7 @@ mod tests {
         assert_eq!((s.world.scope_label.as_str(), s.world.desired_dir.to_str(), s.world.export_bin.as_str()), ("v7", Some("v8"), "tsd-lifecycle-export"));
     }
 
+    #[test_id(t37yx8u)]
     #[test]
     fn a_window_that_is_not_a_positive_number_of_hours_is_refused() {
         let base = lookup("7");
@@ -487,6 +499,7 @@ mod tests {
         assert!(Settings::from_lookup(&zero).unwrap_err().contains("SPIRA_FLOW_WINDOW_HOURS"));
     }
 
+    #[test_id(tr53nnj)]
     #[test]
     fn each_task_takes_the_mode_the_table_gives_it_and_a_task_left_out_refuses_the_load() {
         let s = Settings::from_lookup(&lookup("7")).unwrap();
@@ -499,6 +512,7 @@ mod tests {
         assert!(e.contains(crate::modes::KEY) && e.contains("round-duty"), "{e}");
     }
 
+    #[test_id(ttlktrm)]
     #[test]
     fn each_pool_cap_reaches_its_class_and_a_container_cap_over_the_ceiling_is_refused() {
         let s = Settings::from_lookup(&lookup("7")).unwrap();
@@ -514,6 +528,7 @@ mod tests {
         assert_ne!(s.hash(), Settings::from_lookup(&with("SPIRA_POOL_CAP_HOST", "9")).unwrap().hash(), "the caps are part of the pinned configuration");
     }
 
+    #[test_id(t2cgtis)]
     #[test]
     fn every_unresolved_key_is_named_at_once() {
         let base = lookup("7");
@@ -522,6 +537,7 @@ mod tests {
         assert!(e.contains("SPIRA_HOME_REPO") && e.contains("SPIRA_QUEUE_DIR"), "{e}");
     }
 
+    #[test_id(tme91uc)]
     #[test]
     fn a_runtime_with_no_victorialogs_url_refuses_to_start() {
         for empty in ["", "  "] {
@@ -532,6 +548,7 @@ mod tests {
         assert_eq!(s.victorialogs_url, "http://127.0.0.1:19428", "the configured value, not the shipped default");
     }
 
+    #[test_id(ta6h4rp)]
     #[test]
     fn every_value_comes_from_the_lookup_and_a_bad_number_is_refused() {
         let s = Settings::from_lookup(&lookup("7")).unwrap();

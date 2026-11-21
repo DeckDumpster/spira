@@ -168,6 +168,7 @@ mod tests {
         kv.iter().find(|(key, _)| key == k).map(|(_, v)| v.as_str()).unwrap_or("<absent>")
     }
 
+    #[test_id(t6y9k31)]
     #[test]
     fn one_dwarf_one_round_one_gate_all_show_with_progress() {
         let src = [
@@ -181,12 +182,14 @@ mod tests {
         assert_eq!(get(&kv, "SP_INFLIGHT_ROW1"), "round|spira/b1|certifying|100|412|475");
     }
 
+    #[test_id(t5ppfxr)]
     #[test]
     fn everything_stopped_is_idle() {
         let src = [Some(vec![]), Some(vec![]), Some(vec![])];
         assert_eq!(get(&compose(&src, Some(World::Running)), "SP_INFLIGHT_SEG"), "\u{2699} idle");
     }
 
+    #[test_id(t9aqgqp)]
     #[test]
     fn an_unreadable_source_is_a_question_mark_never_idle() {
         let src = [Some(vec![]), None, Some(vec![])];
@@ -198,6 +201,7 @@ mod tests {
         assert!(get(&compose(&src, None), "SP_INFLIGHT_SEG").contains("?world"));
     }
 
+    #[test_id(tjjsrzp)]
     #[test]
     fn drain_reads_draining_with_work_and_drained_without() {
         let busy = [Some(vec![row("sp-1", "g", None)]), Some(vec![]), Some(vec![])];
@@ -206,6 +210,7 @@ mod tests {
         assert_eq!(get(&compose(&idle, Some(World::Draining)), "SP_INFLIGHT_SEG"), "\u{2699} drained");
     }
 
+    #[test_id(tf58mjn)]
     #[test]
     fn an_unknown_total_is_shown_as_unknown() {
         let src = [Some(vec![]), Some(vec![row("a", "certifying", Some((3, None)))]), Some(vec![])];

@@ -163,6 +163,7 @@ mod tests {
         decide(&cfg(), carry, s, now).1
     }
 
+    #[test_id(tc3yjth)]
     #[test]
     fn an_open_scheduled_review_is_never_followed_by_another() {
         let s = snap(vec![rev(1, Kind::Scheduled, State::Open)]);
@@ -174,6 +175,7 @@ mod tests {
         }
     }
 
+    #[test_id(tcx3t16)]
     #[test]
     fn a_closed_scheduled_review_is_followed_at_the_due_epoch_and_once() {
         let s = snap(vec![rev(1, Kind::Scheduled, State::Closed)]);
@@ -183,6 +185,7 @@ mod tests {
         assert!(!opens(&carry, &s, DUE + 300), "the same snapshot at the next tick opens nothing");
     }
 
+    #[test_id(tc9ash9)]
     #[test]
     fn an_on_demand_review_neither_counts_toward_the_one_nor_delays_it() {
         let s = snap(vec![rev(1, Kind::OnDemand, State::Open)]);
@@ -191,6 +194,7 @@ mod tests {
         assert!(opens(&Carry::default(), &s, DUE));
     }
 
+    #[test_id(t40pwn3)]
     #[test]
     fn a_review_past_the_stale_days_is_reported_once() {
         let mut r = rev(4, Kind::OnDemand, State::Open);
@@ -201,6 +205,7 @@ mod tests {
         assert!(decide(&cfg(), &carry, &s, 100 * DAY + 300).2.is_empty());
     }
 
+    #[test_id(tx0mq28)]
     #[test]
     fn a_closed_or_young_review_is_not_reported() {
         let mut old_closed = rev(1, Kind::OnDemand, State::Closed);
@@ -210,6 +215,7 @@ mod tests {
         assert!(decide(&cfg(), &Carry::default(), &snap(vec![old_closed, young]), 100 * DAY).2.is_empty());
     }
 
+    #[test_id(t337tcl)]
     #[test]
     fn the_staged_line_names_the_review_cr_printed() {
         assert_eq!(staged_line("007 mod:cr\nseal with: cr seal --review 007 < comments.json\n"), "CR 007 staged (scheduled): seal with cr seal --review 007");

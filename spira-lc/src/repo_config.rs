@@ -37,18 +37,21 @@ mod tests {
         (dir, map, guard)
     }
 
+    #[test_id(tr6s6fu)]
     #[test]
     fn registered_root_resolves_a_product_repository_the_map_holds() {
         let (dir, _map, _env) = registry_world("root-product");
         assert_eq!(registered_root("dumpstar").unwrap(), dir.join("dumpstar"));
     }
 
+    #[test_id(tbq1xv8)]
     #[test]
     fn registered_root_still_resolves_the_home_repository() {
         let (dir, _map, _env) = registry_world("root-home");
         assert_eq!(registered_root("spira").unwrap(), dir.join("spira"));
     }
 
+    #[test_id(t0tg9y0)]
     #[test]
     fn registered_root_refusal_names_the_repo_map() {
         let (_dir, map, _env) = registry_world("root-refuse");
@@ -57,12 +60,14 @@ mod tests {
         assert!(e.contains(&map.display().to_string()), "{e}");
     }
 
+    #[test_id(t10jcpf)]
     #[test]
     fn registered_root_refuses_an_empty_name_rather_than_the_home_checkout() {
         let (_dir, _map, _env) = registry_world("root-empty");
         assert!(registered_root("").unwrap_err().contains("empty name"));
     }
 
+    #[test_id(tkeg2ub)]
     #[test]
     fn registered_root_refusal_names_the_toml_table_when_no_map_is_declared() {
         let dir = scratch("root-nomap");

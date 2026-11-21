@@ -43,6 +43,7 @@ fn valid_size(rows: u16, cols: u16) -> Option<(i64, i64)> {
 mod tests {
     use super::*;
 
+    #[test_id(thhfre7)]
     #[test]
     fn zero_row_or_col_is_rejected() {
         assert_eq!(valid_size(0, 168), None);
@@ -50,12 +51,14 @@ mod tests {
         assert_eq!(valid_size(0, 0), None);
     }
 
+    #[test_id(tjtxy6c)]
     #[test]
     fn a_real_reading_passes_through_as_is() {
         assert_eq!(valid_size(81, 168), Some((81, 168)));
         assert_eq!(valid_size(24, 80), Some((24, 80)));
     }
 
+    #[test_id(terwv8s)]
     #[test]
     fn winsize_of_fd_on_a_definitely_non_tty_fd_is_none_not_a_panic() {
         // A plain file is never a tty; -1 is never a valid fd either. Neither must panic —

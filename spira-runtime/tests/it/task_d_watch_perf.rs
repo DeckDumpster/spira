@@ -55,6 +55,7 @@ fn carry(r: &TaskRig) -> Carry {
     r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap_or_default()
 }
 
+#[test_id(tffzych)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_five_minute_tick() {
     let row = acc::row(NAME);
@@ -70,6 +71,7 @@ fn t1_the_row_is_registered_and_its_boot_arms_the_five_minute_tick() {
 }
 
 /// The contract's silence: the probe, one metrics push and the state Emit, never an inbox line.
+#[test_id(tlt5nuf)]
 #[test]
 fn t2_an_idle_pass_pushes_metrics_and_its_state_and_says_nothing() {
     let mut r = rig(1, Arc::new(Mutex::new(idle())));
@@ -83,6 +85,7 @@ fn t2_an_idle_pass_pushes_metrics_and_its_state_and_says_nothing() {
     assert!(said(&r).is_empty());
 }
 
+#[test_id(tmoovo8)]
 #[test]
 fn t3_an_alarm_is_printed_reminded_after_the_window_and_forgotten_when_it_clears() {
     let world = Arc::new(Mutex::new(slow("lc-list", 900)));
@@ -99,6 +102,7 @@ fn t3_an_alarm_is_printed_reminded_after_the_window_and_forgotten_when_it_clears
     assert!(!carry(&r).alarms.contains_key("PERF SLOW lc-list"), "printed → forgotten when it clears");
 }
 
+#[test_id(tskhdj7)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("d/watch_perf.rs")), None);
@@ -110,6 +114,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 }
 
 /// `perf-watch/src/lib.rs` `alarms` and `inbox_line` on the same timings.
+#[test_id(t2e3szg)]
 #[test]
 fn t5_the_lines_are_the_ones_perf_watch_wrote() {
     let r = rig(1, Arc::new(Mutex::new(slow("lc-list", 900))));
@@ -128,6 +133,7 @@ fn standing_alarm() -> TaskRig {
     r
 }
 
+#[test_id(t62vqx5)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&standing_alarm(), NAME);
@@ -135,6 +141,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     assert!(!rows.iter().any(|k| k == "record"), "{rows:?}");
 }
 
+#[test_id(tiu14cq)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(standing_alarm, || WatchPerf::new(config()).registration(), STREAM, WatchPerf::boot().2);

@@ -1,6 +1,9 @@
 //! `watchd` — the watcher manifest, and the face over the logs and cursors systemd fills.
 //! See `DESIGN.md` for the contract. Replaces `spira/watchd.sh` (sp-48f6g).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use watchd::{commands, context, filter, manifest, next, notify, ops, tail};
 
 use manifest::Row;
@@ -326,6 +329,7 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(t7zjcpx)]
     #[test]
     fn a_bare_name_parses() {
         let r = parse_reader_args(&a(&["pool"]), false).unwrap();
@@ -333,37 +337,44 @@ mod tests {
         assert!(!r.all && !r.peek);
     }
 
+    #[test_id(ttldi6h)]
     #[test]
     fn two_names_is_refused() {
         assert!(parse_reader_args(&a(&["pool", "mail"]), false).is_err());
     }
 
+    #[test_id(tw7gwt8)]
     #[test]
     fn an_unknown_option_is_refused() {
         assert!(parse_reader_args(&a(&["--nope"]), false).is_err());
     }
 
+    #[test_id(t4o5n1k)]
     #[test]
     fn limit_without_peek_is_refused() {
         assert!(parse_reader_args(&a(&["--limit", "5"]), false).is_err());
     }
 
+    #[test_id(t84ni73)]
     #[test]
     fn limit_with_peek_is_accepted() {
         let r = parse_reader_args(&a(&["--limit", "5"]), true).unwrap();
         assert_eq!(r.limit, 5);
     }
 
+    #[test_id(t0k15z7)]
     #[test]
     fn takeover_with_peek_is_refused() {
         assert!(parse_reader_args(&a(&["--takeover"]), true).is_err());
     }
 
+    #[test_id(tfhcfy1)]
     #[test]
     fn from_start_with_peek_is_refused() {
         assert!(parse_reader_args(&a(&["--from-start"]), true).is_err());
     }
 
+    #[test_id(t9f73hp)]
     #[test]
     fn limit_equals_form_parses() {
         let r = parse_reader_args(&a(&["--limit=3"]), true).unwrap();

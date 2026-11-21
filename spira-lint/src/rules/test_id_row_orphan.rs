@@ -129,6 +129,7 @@ mod tests {
 
     const WITH_ID: &str = "#[test_id(t0aaaaa)]\n#[test]\nfn a() {}\n";
 
+    #[test_id(tzzin2i)]
     #[test]
     fn a_row_whose_id_the_tip_removed_is_a_finding_at_the_file_the_base_carried_it_in() {
         let t = TempDir::new("tidorphan");
@@ -141,6 +142,7 @@ mod tests {
         assert_eq!(r.checked(), Some((1, "registry rows".into())));
     }
 
+    #[test_id(tiasoef)]
     #[test]
     fn a_row_whose_id_the_tip_still_carries_is_no_finding() {
         let t = TempDir::new("tidorphan-kept");
@@ -149,6 +151,7 @@ mod tests {
         assert!(r.check(&tree(&t, WITH_ID, Some(WITH_ID))).unwrap().is_empty());
     }
 
+    #[test_id(trxjoco)]
     #[test]
     fn the_gates_own_bead_may_delete_its_disabled_test() {
         let t = TempDir::new("tidorphan-own");
@@ -157,6 +160,7 @@ mod tests {
         assert!(r.check(&tree(&t, "fn a() {}\n", Some(WITH_ID))).unwrap().is_empty());
     }
 
+    #[test_id(t482td6)]
     #[test]
     fn an_empty_deny_file_checks_zero_rows_and_refuses_nothing() {
         let t = TempDir::new("tidorphan-empty");
@@ -166,6 +170,7 @@ mod tests {
         assert_eq!(r.checked(), Some((0, "registry rows".into())));
     }
 
+    #[test_id(tf5pirx)]
     #[test]
     fn test_rows_with_no_base_are_refused() {
         let t = TempDir::new("tidorphan-nobase");

@@ -602,6 +602,7 @@ mod tests {
         gh_intake::store::KnownRef { id: id.into(), ext_ref: ext.into(), labels: vec![] }
     }
 
+    #[test_id(tnj050b)]
     #[test]
     fn known_for_asks_one_point_lookup_per_ref_of_each_unseen_issue_and_lists_nothing() {
         let asked = std::cell::RefCell::new(vec![]);
@@ -614,6 +615,7 @@ mod tests {
         assert_eq!(got.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["b-1"]);
     }
 
+    #[test_id(t89f2j6)]
     #[test]
     fn decide_over_known_for_notes_a_tracked_ref_and_refiles_no_untrusted_record() {
         let by_ref = |r: &str| Ok(match r {
@@ -631,18 +633,21 @@ mod tests {
         assert_eq!(acts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), [NOTE_SEEN]);
     }
 
+    #[test_id(tbmv4vd)]
     #[test]
     fn known_for_asks_nothing_on_a_slugs_first_read() {
         let by_ref = |_: &str| -> Result<Vec<gh_intake::store::KnownRef>, String> { panic!("asked") };
         assert!(known_for("acme/widgets", &[issue(1)], None, &by_ref).unwrap().is_empty());
     }
 
+    #[test_id(t0e15x4)]
     #[test]
     fn known_for_surfaces_a_failed_lookup() {
         let by_ref = |_: &str| Err("deadline".to_string());
         assert_eq!(known_for("acme/widgets", &[issue(1)], Some(&vec![]), &by_ref).unwrap_err(), "deadline");
     }
 
+    #[test_id(tbikrn7)]
     #[test]
     fn a_contributor_with_write_access_is_admitted_as_an_author() {
         let api = "https://api.example";
@@ -656,6 +661,7 @@ mod tests {
         assert!(hidden.is_empty());
     }
 
+    #[test_id(t0lniff)]
     #[test]
     fn a_contributor_without_access_stays_a_hidden_member_question() {
         let api = "https://api.example";

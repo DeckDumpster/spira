@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(tqcpy2t)]
 #[test]
 fn the_store_sweep_expires_an_overdue_mending_row_and_leaves_a_live_one() {
     use state_store::{Config, Contract, MemBackend, Ports};
@@ -29,6 +30,7 @@ fn the_store_sweep_expires_an_overdue_mending_row_and_leaves_a_live_one() {
     assert_eq!(super::store_sweep(&store, AT + 61), Ok(0), "a second sweep finds nothing overdue");
 }
 
+#[test_id(tjnghcv)]
 #[test]
 fn the_journal_sweep_finishes_on_a_production_sized_store_in_bounded_steps() {
     use crate::control::journal::SWEEP_STEP;

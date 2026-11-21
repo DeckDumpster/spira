@@ -226,12 +226,14 @@ impl OpsSnapshot {
 mod tests {
     use super::*;
 
+    #[test_id(t9fuy86)]
     #[test]
     fn parse_plain_value() {
         assert_eq!(parse_shell_value("'hello'"), Some("hello".into()));
         assert_eq!(parse_shell_value("''"), Some("".into()));
     }
 
+    #[test_id(t1emwq0)]
     #[test]
     fn parse_embedded_apostrophe() {
         // 'a'\''b' encodes a'b — close-quote, backslash-apostrophe, open-quote.
@@ -240,6 +242,7 @@ mod tests {
         assert_ne!(parse_shell_value("'a'"), Some("a'b".into()));
     }
 
+    #[test_id(tt2aq20)]
     #[test]
     fn parse_single_apostrophe_value() {
         // Python encode("'") = "''\\'''" (6 chars: ' ' \ ' ' ')
@@ -255,6 +258,7 @@ mod tests {
         assert_eq!(parse_shell_value("''"), Some("".into()));
     }
 
+    #[test_id(tu1110m)]
     #[test]
     fn parse_two_apostrophes_roundtrips() {
         // Python encode("''") = "''\\'''\\'''" (10 chars: ' ' \ ' ' ' \ ' ' ')
@@ -273,6 +277,7 @@ mod tests {
         );
     }
 
+    #[test_id(t46464e)]
     #[test]
     fn non_sp_keys_are_skipped() {
         let d = testkit::TempDir::new("loom-ops");
@@ -290,6 +295,7 @@ mod tests {
         );
     }
 
+    #[test_id(tifb2e5)]
     #[test]
     fn absent_key_not_in_map() {
         // A key absent from the file must be absent from the map. The renderer prints ?
@@ -307,6 +313,7 @@ mod tests {
         );
     }
 
+    #[test_id(tpw3w3h)]
     #[test]
     fn unreadable_file_returns_error() {
         let (_, _, err) = parse_env_file("nonexistent/path/cockpit.env");
@@ -334,6 +341,7 @@ mod tests {
         (0..10).filter(|i| o.contains_key(&format!("SP_NEXT{i}"))).count()
     }
 
+    #[test_id(tmoni08)]
     #[tokio::test]
     async fn ops_answers_claimable_keys_from_the_claim_view_not_the_collectors_copy() {
         let d = testkit::TempDir::new("loom-ops-claim");

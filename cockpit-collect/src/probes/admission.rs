@@ -49,6 +49,7 @@ mod tests {
         if p == Pool::Gate { 3 } else { 2 }
     }
 
+    #[test_id(t5gfkcd)]
     #[test]
     fn an_empty_pool_reads_zero_and_the_configured_size() {
         let run = testkit::TempDir::new("cc-adm-empty");
@@ -58,6 +59,7 @@ mod tests {
         assert_eq!(get(&kv, "SP_ADM_TEST_OLDEST"), "0");
     }
 
+    #[test_id(ttnpcrk)]
     #[test]
     fn a_pool_whose_mutex_cannot_be_taken_reads_question_marks() {
         let run = testkit::TempDir::new("cc-adm-unreadable");

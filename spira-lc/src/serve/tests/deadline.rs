@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(trztch4)]
 #[test]
 fn a_write_held_past_its_request_deadline_answers_cannot_tell_and_never_commits() {
     use state_store::{contract::{Config, Contract, Ports}, MemBackend, Object, Request, Txn};
@@ -25,6 +26,7 @@ fn a_write_held_past_its_request_deadline_answers_cannot_tell_and_never_commits(
 
 /// law-calls-have-deadlines: a store call is abandoned at the configured default or its declared
 /// slow deadline; only the brokered batch verbs keep the longer bound.
+#[test_id(ts2t8vg)]
 #[test]
 fn a_store_call_is_abandoned_at_the_configured_default_and_only_declared_and_batch_verbs_wait_longer() {
     let d = |v: &str| dl(&[v.to_string(), "x".to_string()]);
@@ -56,6 +58,7 @@ fn watch_door(held: Duration) -> Arc<super::Door> {
     Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadlines })
 }
 
+#[test_id(tlv64af)]
 #[test]
 fn a_watch_holding_two_seconds_is_not_cut_by_a_one_second_request_cutoff() {
     let door = watch_door(Duration::from_secs(2));
@@ -63,6 +66,7 @@ fn a_watch_holding_two_seconds_is_not_cut_by_a_one_second_request_cutoff() {
     assert_eq!((code, out.as_str()), (0, "idle"));
 }
 
+#[test_id(tqvecu8)]
 #[test]
 fn a_zero_wait_watch_is_cut_at_the_margin() {
     let door = watch_door(Duration::from_millis(1500));
@@ -70,6 +74,7 @@ fn a_zero_wait_watch_is_cut_at_the_margin() {
     assert_eq!(got, (2, "cannot tell: deadline".to_string()));
 }
 
+#[test_id(t5bw0o8)]
 #[test]
 fn deadlines_come_from_config_and_bad_config_refuses_naming_its_key() {
     let ok = super::deadlines_from(config(Some("1000"), "")).unwrap();
@@ -90,6 +95,7 @@ fn deadlines_come_from_config_and_bad_config_refuses_naming_its_key() {
     assert!(err.contains("list=fast@sp-a"), "the entry is named: {err}");
 }
 
+#[test_id(tnfn8dy)]
 #[test]
 fn a_composed_verb_keeps_the_configured_default_and_only_its_sweeps_are_batch_jobs() {
     let d = |v: &str| dl(&[v.to_string(), "x".to_string()]);
@@ -101,6 +107,7 @@ fn a_composed_verb_keeps_the_configured_default_and_only_its_sweeps_are_batch_jo
     }
 }
 
+#[test_id(tm9q4t5)]
 #[test]
 fn a_write_the_server_cut_at_its_deadline_is_resent_under_its_id_and_applied_once() {
     use std::io::{BufRead, Read, Write};

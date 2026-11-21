@@ -99,6 +99,7 @@ mod tests {
         FenceScripts.check(&tree).unwrap().iter().map(|f| f.to_string()).collect()
     }
 
+    #[test_id(tqtp058)]
     #[test]
     fn scope_is_direct_children_of_spira() {
         assert!(is_fence_script("spira/foo-fence.sh"));
@@ -108,6 +109,7 @@ mod tests {
         assert!(!is_fence_script("other/foo-lint.sh"));
     }
 
+    #[test_id(t675r04)]
     #[test]
     fn a_new_script_is_refused_a_listed_one_is_not() {
         let t = TempDir::new("fs");
@@ -122,6 +124,7 @@ mod tests {
         assert!(run(&t, &["spira/old-fence.sh"], &[]).is_empty());
     }
 
+    #[test_id(tmp0v2x)]
     #[test]
     fn a_stale_entry_is_refused_so_the_list_shrinks() {
         let t = TempDir::new("fs-stale");

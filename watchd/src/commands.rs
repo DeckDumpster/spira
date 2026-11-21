@@ -521,6 +521,7 @@ mod tests {
     /// out with the instance suffix (and the "spira-watch-" prefix) doubled. Caught only by
     /// running a real install inside a testenv container; this is the regression test that
     /// should have caught it first.
+    #[test_id(t8hvwth)]
     #[test]
     fn units_prints_the_template_form_never_the_instance_qualified_one() {
         let rows = vec![
@@ -532,6 +533,7 @@ mod tests {
         assert_eq!(out, "spira-watch@pool.service\n", "only daemon rows, and never instance-qualified: {out}");
     }
 
+    #[test_id(te1j3ky)]
     #[test]
     fn status_marks_off_rows_with_dashes_and_lists_them_not_installed() {
         let d = TempDir::new("watchd-cmd");
@@ -544,6 +546,7 @@ mod tests {
         assert!(out.contains("@SPIRA_VIEW@ is not set"), "{out}");
     }
 
+    #[test_id(tflhapv)]
     #[test]
     fn status_reports_degraded_when_the_unit_is_down_and_the_world_is_not_halted() {
         let d = TempDir::new("watchd-cmd");
@@ -555,6 +558,7 @@ mod tests {
         assert!(out.contains("DEGRADED\n  pool: unit is inactive"), "{out}");
     }
 
+    #[test_id(tmo0zsy)]
     #[test]
     fn status_reports_halted_instead_of_degraded_when_the_world_is_halted() {
         let d = TempDir::new("watchd-cmd");
@@ -568,6 +572,7 @@ mod tests {
         assert!(row_line.contains("HALTED"), "{row_line}");
     }
 
+    #[test_id(t62fsds)]
     #[test]
     fn peek_does_not_move_the_cursor() {
         let d = TempDir::new("watchd-cmd");
@@ -582,6 +587,7 @@ mod tests {
         assert!(out2.contains("FAIL suite x"), "peek must not have advanced the cursor: {out2}");
     }
 
+    #[test_id(txaxit9)]
     #[test]
     fn restart_bumps_the_meter_only_for_daemon_rows_that_were_actually_restarted() {
         let d = TempDir::new("watchd-cmd");
@@ -594,6 +600,7 @@ mod tests {
         assert_eq!(fs_ops::read_u64_file(&paths::restartfile(&c.run, "pool")), Some(1));
     }
 
+    #[test_id(t2ce69f)]
     #[test]
     fn restarting_one_extern_row_by_name_is_refused_with_the_systemctl_hint() {
         let d = TempDir::new("watchd-cmd");
@@ -608,6 +615,7 @@ mod tests {
     /// the real `$HOME/.config/systemd/user`, even when `unit_dir` holds actual unit files —
     /// everything about units goes through `Fake`, and the directory it scans is the
     /// TempDir given to it, never `$HOME` (scar 2026-09-30).
+    #[test_id(ti5j06b)]
     #[test]
     fn prune_touches_only_the_injected_unit_dir_never_a_real_one() {
         let d = TempDir::new("watchd-cmd");
@@ -638,6 +646,7 @@ mod tests {
             c
         }
 
+        #[test_id(tw5k71g)]
         #[test]
         fn the_fallback_prefix_can_also_be_wrong() {
             let d = TempDir::new("watchd-health-ids");

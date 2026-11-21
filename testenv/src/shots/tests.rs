@@ -20,6 +20,7 @@ fn writes_all(out: &Path) -> (i32, String) {
     (0, String::new())
 }
 
+#[test_id(tj9dfih)]
 #[test]
 fn a_capture_leaves_one_png_per_page_and_width() {
     let tmp = dir("ok");
@@ -31,6 +32,7 @@ fn a_capture_leaves_one_png_per_page_and_width() {
     }
 }
 
+#[test_id(tzxz47j)]
 #[test]
 fn a_page_that_fails_to_capture_is_named_and_leaves_nothing() {
     let tmp = dir("fail");
@@ -45,6 +47,7 @@ fn a_page_that_fails_to_capture_is_named_and_leaves_nothing() {
     assert!(!shot_dir(tmp.path(), "sp-b", TIP).exists());
 }
 
+#[test_id(tdzc0xq)]
 #[test]
 fn an_empty_file_is_no_capture() {
     let tmp = dir("empty");
@@ -59,6 +62,7 @@ fn an_empty_file_is_no_capture() {
     assert_eq!(capture(tmp.path(), "sp-b", TIP, &pages(), &[390, 1280], &empty).0, 1);
 }
 
+#[test_id(tsxg17j)]
 #[test]
 fn a_prior_image_is_cleared_and_never_stands_in_for_a_capture() {
     let tmp = dir("stale");
@@ -74,18 +78,21 @@ fn a_prior_image_is_cleared_and_never_stands_in_for_a_capture() {
     assert_eq!(capture(tmp.path(), "sp-b", TIP, &["/".to_string()], &[390, 1280], &nothing).0, 1);
 }
 
+#[test_id(t8xfk3q)]
 #[test]
 fn a_changed_page_is_named_by_its_url_and_assets_fall_back_to_the_index() {
     assert_eq!(pages_for("README.md\nfrontend/cards/index.html\nfrontend/about.html\nfrontend/index.html\nfrontend/a.css\n"), ["/", "/about.html", "/cards/"]); // not a path: a page URL
     assert_eq!(pages_for("frontend/a.css\nsrc/x.rs\n"), ["/"]);
 }
 
+#[test_id(tk0qo4x)]
 #[test]
 fn only_a_top_level_frontend_change_is_a_site_change() {
     assert!(touches_frontend("README.md\nfrontend/a.ts\n"));
     assert!(!touches_frontend("docs/frontend/x.md\nsrc/a.rs\n"));
 }
 
+#[test_id(tjk57f4)]
 #[test]
 fn nothing_in_the_tool_opens_an_image() {
     let src = include_str!("../shots.rs");
@@ -97,6 +104,7 @@ fn nothing_in_the_tool_opens_an_image() {
     }
 }
 
+#[test_id(t9rglur)]
 #[test]
 fn slugs_are_plain_filenames() {
     assert_eq!(slug("/"), "index");

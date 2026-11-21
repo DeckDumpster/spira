@@ -16,17 +16,20 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(towr4kg)]
 #[test]
 fn t1_registered_boots_and_arms_a_5min_tick() {
     t::t1_registered_and_boots::<H>(SET, TICK);
 }
 
+#[test_id(ttmmmbl)]
 #[test]
 fn t2_no_ready_vm_and_a_young_one_are_the_probe_alone() {
     t::t2_silent::<H>(SET, &json(&pool(None, &[])));
     t::t2_silent::<H>(SET, &json(&pool(Some(10), &[])));
 }
 
+#[test_id(tofwfok)]
 #[test]
 fn t3_an_aged_vm_is_released_and_a_release_of_a_leased_vm_is_refused_naming_the_lease() {
     let h = t::handler::<H>(SET);
@@ -38,12 +41,14 @@ fn t3_an_aged_vm_is_released_and_a_release_of_a_leased_vm_is_refused_naming_the_
     assert!(refused.contains("lease"), "{refused}");
 }
 
+#[test_id(tq324x0)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_nothing() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/c/roundvm_drain.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(tpggjiq)]
 #[test]
 fn t5_draining_never_touches_a_vm_a_live_round_holds_and_ec2_always_releases_at_once() {
     let h = t::handler::<H>(SET);
@@ -70,12 +75,14 @@ fn releasing_a_refused_release() -> TaskRig {
     r
 }
 
+#[test_id(tfx58kb)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&releasing_a_refused_release(), task::NAME);
     assert!(rows.iter().any(|k| k == "phase"), "{rows:?}");
 }
 
+#[test_id(t00rb6c)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(releasing_a_refused_release, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));

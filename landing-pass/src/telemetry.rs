@@ -28,6 +28,7 @@ mod tests {
     use super::*;
     use spira_otel::metrics::fixture;
 
+    #[test_id(tm9kz1t)]
     #[test]
     fn a_run_pushes_its_count_and_seconds_labelled_by_component_operation_and_outcome() {
         let (code, got) = fixture::capture(|s| run(s, Some("pass"), || 1));
@@ -37,17 +38,20 @@ mod tests {
         assert!(got.iter().any(|c| c.name == metrics::RUN_DURATION), "run seconds pushed");
     }
 
+    #[test_id(tmi05hp)]
     #[test]
     fn an_argument_that_is_no_operation_is_other() {
         assert_eq!(operation(Some("sp-abc123")), "other");
         assert_eq!(operation(None), "other");
     }
 
+    #[test_id(tu79ybn)]
     #[test]
     fn the_pr_flag_is_the_pass_operation() {
         assert_eq!(operation(Some("--pass")), "pass");
     }
 
+    #[test_id(t7i9t3s)]
     #[test]
     fn landing_movements_are_counted_by_the_beads_moved() {
         let (_, got) = fixture::capture(|s| moved(s, 3));

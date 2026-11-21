@@ -422,12 +422,14 @@ fn classify_invalid_closed(raw: &str, cfg: &Config) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(teqxerl)]
     #[test]
     fn sanitize_title_replaces_disallowed_characters_and_cuts_at_max() {
         assert_eq!(sanitize_title("hi \"there\" <x>", 20), "hi  there   x ");
         assert_eq!(sanitize_title(&"x".repeat(100), 5), "xxxxx");
     }
 
+    #[test_id(tfwb95u)]
     #[test]
     fn label_value_finds_the_first_match() {
         let labels = vec!["repo:spira".to_string(), "branch:sp-1".to_string()];
@@ -438,6 +440,7 @@ mod tests {
 
     /// sp-mve9i: a partition's members are the beads whose lifecycle row is unfinished —
     /// READY, WORKING, REWORK — deduplicated in first-seen order; no row, no member.
+    #[test_id(t3b7snc)]
     #[test]
     fn partition_members_are_the_unfinished_lifecycle_rows() {
         use spira_store::lc_state::Row;
@@ -451,6 +454,7 @@ mod tests {
 
     /// sp-jgjvh: an incident is unfinished by its lifecycle row, whatever bd's status says;
     /// a rowless bead is not live work.
+    #[test_id(term2ps)]
     #[test]
     fn incidents_needing_a_builder_are_the_unfinished_lifecycle_rows() {
         use spira_store::lc_state::Row;
@@ -475,6 +479,7 @@ mod tests {
         }
     }
 
+    #[test_id(t6ppvvt)]
     #[test]
     fn detect_invalid_closed_reads_only_closes_after_its_watermark() {
         let run = testkit::TempDir::new("strand-ic-watermark");
@@ -494,6 +499,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "2026-11-03T00:00:00Z", "an empty read leaves the watermark");
     }
 
+    #[test_id(ttbw9m6)]
     #[test]
     fn the_invalid_closed_read_asks_for_no_free_text_and_classifies_as_before() {
         let rows = r#"[{"id":"sp-a","title":"A","status":"closed","closed_at":"2026-11-03T00:00:00Z","close_reason":"done"},{"id":"sp-b","title":"B","status":"closed","closed_at":"2026-11-03T00:00:00Z","close_reason":"TODO later"},{"id":"sp-c","title":"C","status":"closed","closed_at":"2026-11-03T00:00:00Z","close_reason":"the real fix is pending"}]"#;
@@ -506,6 +512,7 @@ mod tests {
         );
     }
 
+    #[test_id(twph9vg)]
     #[test]
     fn list_beads_asks_for_no_free_text_and_parses_the_rows_as_before() {
         let door = std::sync::Arc::new(Closes(Default::default(), r#"[{"id":"sp-a","status":"open"}]"#, 0));
@@ -514,6 +521,7 @@ mod tests {
         assert_eq!((beads.len(), beads[0].id.as_str(), beads[0].status.as_str()), (1, "sp-a", "open"));
     }
 
+    #[test_id(tju6olc)]
     #[test]
     fn a_refused_read_leaves_the_watermark_where_it_was() {
         let run = testkit::TempDir::new("strand-ic-refused");
@@ -526,6 +534,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "2026-11-03T00:00:00Z");
     }
 
+    #[test_id(t1ap5ot)]
     #[test]
     fn the_listings_go_to_the_content_door_with_no_bound_but_their_label() {
         let door = std::sync::Arc::new(Closes(Default::default(), "[]", 0));
@@ -533,6 +542,7 @@ mod tests {
         assert_eq!(door.0.lock().unwrap()[0], ["content", "list", "--all", "--label", "incident", "--limit", "0", "--brief", "--json"]);
     }
 
+    #[test_id(twhf0l9)]
     #[test]
     fn invalid_closed_reads_the_rows_that_carry_a_close_reason() {
         let out = with_close_reason(r#"[{"id":"a","status":"open","close_reason":"done"},{"id":"b","status":"closed","close_reason":""},{"id":"c","status":"closed"}]"#);
@@ -559,6 +569,7 @@ mod tests {
         classify_invalid_closed(&raw, &cfg)
     }
 
+    #[test_id(tdl5j5d)]
     #[test]
     fn an_allowlisted_unfiled_follow_id_is_reported_allowed_not_unfiled() {
         let reason = "The real fix is a proper guard. Deployed the stopgap.";
@@ -579,12 +590,14 @@ mod tests {
     const MAP: &str = "pushrepo | /opt/pushrepo | push | origin/main | | \nprerepo | /opt/prerepo | pr | origin/main | | \n";
 
     // covers: UC-ops-detection-remediation-29
+    #[test_id(tko4dyt)]
     #[test]
     fn an_empty_store_reports_no_livelock() {
         assert_eq!(livelock_report(MAP, &[], "", "[]", "[]", "[]"), "");
     }
 
     // covers: UC-ops-detection-remediation-29
+    #[test_id(tw2krei)]
     #[test]
     fn an_unclaimable_ready_bead_is_reported_by_id_and_category() {
         let out = livelock_report(MAP, &[], "UNCLAIMABLE sp-u1 — no persona matches\n", "[]", "[]", "[]");
@@ -592,6 +605,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-29
+    #[test_id(t1gz7qz)]
     #[test]
     fn an_ask_without_overseer_is_reported_and_one_with_it_is_not() {
         // literal-ok: fixture bead labelled with the fixture config's own ask label
@@ -602,6 +616,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-29
+    #[test_id(tiju6fy)]
     #[test]
     fn a_ci_wait_is_stuck_on_a_push_repo_and_waiting_on_a_pr_repo() {
         let ci = r#"[{"id":"sp-c1","status":"open","labels":["ci-wait","repo:pushrepo"]},{"id":"sp-c2","status":"open","labels":["ci-wait","repo:prerepo"]},{"id":"sp-c3","status":"closed","labels":["ci-wait","repo:pushrepo"]}]"#;
@@ -611,6 +626,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-29
+    #[test_id(tu91alm)]
     #[test]
     fn a_repo_label_outside_the_map_is_unmapped_unless_the_bead_is_held_or_groom_asked() {
         let all = r#"[
@@ -625,6 +641,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-29
+    #[test_id(twx1x0z)]
     #[test]
     fn with_no_repo_map_no_bead_is_unmapped() {
         let cfg = Config::test_fixture();
@@ -640,6 +657,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-30
+    #[test_id(tzepolc)]
     #[test]
     fn a_permanent_fix_needed_or_temporary_workaround_close_is_invalid_closed() {
         for r in ["PERMANENT FIX NEEDED: add real detection", "Applied a temporary workaround, real fix still needed.", "mitigated-only", "TODO wire it"] {
@@ -648,6 +666,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-30
+    #[test_id(t0k9993)]
     #[test]
     fn implied_follow_on_work_with_no_tracking_reference_is_unfiled_follow() {
         for r in ["Builders should add external_ref to the list output.", "The real fix requires a migration.", "Needs a follow-up."] {
@@ -656,6 +675,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-30
+    #[test_id(tpxnvqz)]
     #[test]
     fn a_tracking_reference_acquits_a_follow_on_but_only_under_the_configured_id_prefix() {
         assert_eq!(classify("Follow-up filed as zz-abc12."), "");
@@ -665,6 +685,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-30
+    #[test_id(tiw3553)]
     #[test]
     fn a_clean_close_and_the_word_temporary_describing_something_else_are_not_flagged() {
         for r in ["fixed: zz-c commit abc123 landed on main", "Removed the temporary directory after the run.", "Pulled the change from upstream.", "temporary", ""] {
@@ -673,6 +694,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-29
+    #[test_id(tubtjky)]
     #[test]
     fn claimable_and_blocked_beads_beside_the_flagged_ones_are_never_reported() {
         let all = r#"[

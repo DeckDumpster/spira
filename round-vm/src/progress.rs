@@ -404,6 +404,7 @@ mod tests {
         serde_json::from_str(&fs::read_to_string(p.join(FILE)).unwrap()).unwrap()
     }
 
+    #[test_id(t737zug)]
     #[test]
     fn an_infrastructure_refusal_finishes_with_its_own_verdict_and_names_the_refusal() {
         let d = TempDir::new();
@@ -416,6 +417,7 @@ mod tests {
         assert!(v["detail"].as_str().unwrap().contains("RequestLimitExceeded"));
     }
 
+    #[test_id(tfb2yoq)]
     #[test]
     fn the_file_names_where_the_pass_was_leased_once_it_is() {
         let d = TempDir::new();
@@ -427,6 +429,7 @@ mod tests {
         assert_eq!(read(&run)["place"], "ec2");
     }
 
+    #[test_id(t523so8)]
     #[test]
     fn the_file_follows_the_pass_through_build_suites_and_done() {
         let d = TempDir::new();
@@ -469,6 +472,7 @@ mod tests {
         assert_eq!(read(&run)["round"], "r1");
     }
 
+    #[test_id(tqrbm9a)]
     #[test]
     fn a_pass_first_seen_past_its_build_in_salvage_still_began_its_suites() {
         let d = TempDir::new();
@@ -484,6 +488,7 @@ mod tests {
         assert!(!p.take_suites_began());
     }
 
+    #[test_id(tfhu9j1)]
     #[test]
     fn a_failing_hook_is_reported_with_its_suite_and_rc() {
         assert_eq!(hook_failure("test-a.sh", Some(0), b""), None);
@@ -492,6 +497,7 @@ mod tests {
         assert!(hook_failure("test-a.sh", None, b"").unwrap().contains("rc=signal"));
     }
 
+    #[test_id(trbz99i)]
     #[test]
     fn a_killed_run_is_left_done_with_its_verdict() {
         let d = TempDir::new();
@@ -506,6 +512,7 @@ mod tests {
         assert_eq!(read(&run)["verdict"], "killed");
     }
 
+    #[test_id(tlu3r0u)]
     #[test]
     fn verdicts_follow_the_exit_code() {
         assert_eq!((verdict_for(0), verdict_for(1), verdict_for(2), verdict_for(4)), ("green", "red", "fault", "fault"));
@@ -522,6 +529,7 @@ mod tests {
         t.store(v, std::sync::atomic::Ordering::SeqCst);
     }
 
+    #[test_id(t0j8w6h)]
     #[test]
     fn every_phase_of_a_pass_carries_its_own_start() {
         let d = TempDir::new();
@@ -565,6 +573,7 @@ mod tests {
         );
     }
 
+    #[test_id(tc12c7x)]
     #[test]
     fn a_wedged_vm_phase_reports_stalled_when_its_budget_runs_out() {
         let d = TempDir::new();
@@ -583,6 +592,7 @@ mod tests {
         assert_eq!(read(&run)["detail"], "VM 109 ready", "a new detail is progress");
     }
 
+    #[test_id(tk9y9su)]
     #[test]
     fn a_wedged_build_reports_stalled_on_its_own_budget() {
         let d = TempDir::new();
@@ -598,6 +608,7 @@ mod tests {
         assert_eq!(read(&run)["detail"], "stalled: no progress in 600s");
     }
 
+    #[test_id(tm8umhl)]
     #[test]
     fn no_suite_count_is_written_before_the_suites_phase() {
         let d = TempDir::new();

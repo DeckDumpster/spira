@@ -174,18 +174,21 @@ mod tests {
         }
     }
 
+    #[test_id(tgdcjox)]
     #[test]
     fn a_verb_the_script_names_passes() {
         let r = extract_refs("run bead.sh file \"title\" for it");
         assert!(missing_refs(&r, &release).is_empty());
     }
 
+    #[test_id(tki9opp)]
     #[test]
     fn an_unresolved_bare_tool_is_not_ours_to_judge() {
         let r = extract_refs("run `cargo build` first");
         assert!(missing_refs(&r, &release).is_empty());
     }
 
+    #[test_id(twosl4r)]
     #[test]
     fn audit_reports_one_finding_per_offending_statute() {
         let m: BTreeMap<String, serde_json::Value> = [
@@ -199,6 +202,7 @@ mod tests {
         assert_eq!(f[0].slug, "law-bad");
     }
 
+    #[test_id(ty0gnv0)]
     #[test]
     fn a_statute_naming_statute_check_is_clean_once_the_release_ships_the_binary() {
         let m: BTreeMap<String, serde_json::Value> =

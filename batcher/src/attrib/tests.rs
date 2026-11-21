@@ -67,6 +67,7 @@ fn owned_by(culprit: &'static str) -> impl Fn(&Job) -> JobResult {
     }
 }
 
+#[test_id(t5qgso4)]
 #[test]
 fn case_glob_matches_like_a_bash_case_pattern() {
     assert!(case_glob("batcher-cut/src/*.rs", "batcher-cut/src/io.rs"));
@@ -80,6 +81,7 @@ fn case_glob_matches_like_a_bash_case_pattern() {
     assert!(!case_glob("spira/lib.sh", "spira/lib.shx"));
 }
 
+#[test_id(tljrj1m)]
 #[test]
 fn suspects_that_touch_the_covered_paths_come_first_in_round_order() {
     let members = ids(&["m1", "m2", "m3"]);
@@ -110,6 +112,7 @@ fn suspects_that_touch_the_covered_paths_come_first_in_round_order() {
     );
 }
 
+#[test_id(tfxba88)]
 #[test]
 fn stacked_dependents_leave_with_their_prerequisite() {
     let mut pre = BTreeMap::new();
@@ -121,6 +124,7 @@ fn stacked_dependents_leave_with_their_prerequisite() {
     assert_eq!(s.closure["d"], ids(&["d"]));
 }
 
+#[test_id(tqj6b3u)]
 #[test]
 fn attribution_starts_on_the_first_red_before_the_main_run_ends() {
     let b = Budget {
@@ -157,6 +161,7 @@ fn attribution_starts_on_the_first_red_before_the_main_run_ends() {
     assert_eq!(r.red_at, 7);
 }
 
+#[test_id(tv29syr)]
 #[test]
 fn attribution_never_takes_a_slot_from_the_main_run() {
     let b = Budget {
@@ -192,6 +197,7 @@ fn attribution_never_takes_a_slot_from_the_main_run() {
     assert_eq!(a.decision().owners.get("m4"), Some(&ids(&["a", "b"])));
 }
 
+#[test_id(tfeqiul)]
 #[test]
 fn a_zero_slot_budget_waits_for_the_corpus_tail() {
     let b = Budget {
@@ -209,6 +215,7 @@ fn a_zero_slot_budget_waits_for_the_corpus_tail() {
 }
 
 // covers: UC-landing-merge-queue-48
+#[test_id(t99fjki)]
 #[test]
 fn a_plain_green_is_flaky_and_nothing_else_runs() {
     let (a, _) = replay(
@@ -235,6 +242,7 @@ fn a_plain_green_is_flaky_and_nothing_else_runs() {
     assert_eq!(d.records[0].reruns, 1);
 }
 
+#[test_id(txk27vf)]
 #[test]
 fn a_red_with_every_member_removed_is_the_base_s() {
     let (a, _) = replay(
@@ -254,6 +262,7 @@ fn a_red_with_every_member_removed_is_the_base_s() {
     assert_eq!(d.records[0].outcome, Some(Outcome::Base));
 }
 
+#[test_id(t38xsig)]
 #[test]
 fn a_one_member_round_needs_no_separate_base_run() {
     let (a, _) = replay(
@@ -283,6 +292,7 @@ fn a_one_member_round_needs_no_separate_base_run() {
     assert_eq!(a.decision().base, ids(&["s"]));
 }
 
+#[test_id(t8dz0fi)]
 #[test]
 fn every_owner_is_named_with_its_own_suites() {
     let main = vec![
@@ -319,6 +329,7 @@ fn every_owner_is_named_with_its_own_suites() {
     assert_eq!(d.owned_suites(), ids(&["s1", "s2", "s3"]));
 }
 
+#[test_id(tca318x)]
 #[test]
 fn two_members_each_breaking_a_suite_alone_is_unattributed() {
     let verdict = |j: &Job| {
@@ -349,6 +360,7 @@ fn two_members_each_breaking_a_suite_alone_is_unattributed() {
     );
 }
 
+#[test_id(tcb3sp8)]
 #[test]
 fn the_touching_suspect_runs_first_and_its_green_cancels_the_rest() {
     let mut a = Attributor::new(
@@ -380,6 +392,7 @@ fn the_touching_suspect_runs_first_and_its_green_cancels_the_rest() {
     assert_eq!(a.decision().owners.get("m3"), Some(&ids(&["s"])));
 }
 
+#[test_id(tip9zx7)]
 #[test]
 fn an_in_flight_green_is_a_co_owner_but_a_prerequisite_is_not_blamed_for_its_dependent() {
     let mut pre = BTreeMap::new();
@@ -419,6 +432,7 @@ fn an_in_flight_green_is_a_co_owner_but_a_prerequisite_is_not_blamed_for_its_dep
     );
 }
 
+#[test_id(twaudno)]
 #[test]
 fn a_fault_is_retried_once_and_never_read_as_a_result() {
     let mut a = Attributor::new(
@@ -443,6 +457,7 @@ fn a_fault_is_retried_once_and_never_read_as_a_result() {
     assert_eq!(d.records[0].outcome, Some(Outcome::Faulted));
 }
 
+#[test_id(tvas9ry)]
 #[test]
 fn a_removal_rerun_that_faults_past_its_retry_leaves_the_suite_faulted_not_unattributed() {
     let mut a = Attributor::new(
@@ -473,6 +488,7 @@ fn a_removal_rerun_that_faults_past_its_retry_leaves_the_suite_faulted_not_unatt
     assert_eq!(a.decision().faulted, ids(&["s"]));
 }
 
+#[test_id(tgo7m74)]
 #[test]
 fn nothing_is_owned_when_every_red_is_a_flake_or_the_base_s() {
     let main = vec![("flake", false, 1), ("basered", false, 2), ("ok", true, 3)];
@@ -500,6 +516,7 @@ fn nothing_is_owned_when_every_red_is_a_flake_or_the_base_s() {
     assert!(d.unattributed.is_empty());
 }
 
+#[test_id(tjfaif5)]
 #[test]
 fn a_green_main_run_settles_with_no_reruns() {
     let mut a = Attributor::new(Budget::with_default(16, None), flat(&["m1"]), 2);
@@ -512,6 +529,7 @@ fn a_green_main_run_settles_with_no_reruns() {
     assert_eq!(Budget::with_default(16, None).slots, 20);
 }
 
+#[test_id(tfj20du)]
 #[test]
 fn the_round_attribution_row_names_owners_and_leaves_unsettled_time_empty() {
     let owned = RedRecord {
@@ -544,6 +562,7 @@ fn the_round_attribution_row_names_owners_and_leaves_unsettled_time_empty() {
     );
 }
 
+#[test_id(tafcoe0)]
 #[test]
 fn an_install_fault_names_the_planted_member_and_costs_a_logarithmic_ladder() {
     let members = ["m1", "m2", "m3", "m4", "m5", "m6", "m7"];
@@ -566,6 +585,7 @@ fn an_install_fault_names_the_planted_member_and_costs_a_logarithmic_ladder() {
     }
 }
 
+#[test_id(tuwyzd7)]
 #[test]
 fn an_install_fault_that_survives_removing_everything_is_the_bases() {
     assert_eq!(
@@ -574,6 +594,7 @@ fn an_install_fault_that_survives_removing_everything_is_the_bases() {
     );
 }
 
+#[test_id(t7kvbd4)]
 #[test]
 fn a_faulting_install_probe_is_retried_once_and_never_exonerates() {
     let shape = flat(&["m1", "m2"]);
@@ -595,6 +616,7 @@ fn a_faulting_install_probe_is_retried_once_and_never_exonerates() {
     );
 }
 
+#[test_id(ta1byqg)]
 #[test]
 fn two_members_that_each_break_install_are_not_pinned_on_one() {
     let shape = flat(&["m1", "m2", "m3"]);
@@ -608,6 +630,7 @@ fn two_members_that_each_break_install_are_not_pinned_on_one() {
     assert_eq!(got, InstallFault::Unattributed);
 }
 
+#[test_id(t0e2xlw)]
 #[test]
 fn a_dependent_s_install_fault_is_confirmed_by_removing_its_prerequisite_set() {
     let prereqs = BTreeMap::from([("m2".to_string(), vec!["m1".to_string()])]);

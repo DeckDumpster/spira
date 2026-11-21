@@ -4,6 +4,8 @@
 //! contract opendal's webdav client actually drives (confirmed by reading sccache 0.18.0's
 //! and opendal-service-webdav 0.56.0's own source — see sccache-dav/DESIGN.md).
 
+#[macro_use]
+extern crate spira_test_id;
 use sccache_dav::{router, AppState};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -67,6 +69,7 @@ async fn req(addr: SocketAddr, method: &str, path: &str, auth: Option<&str>, bod
     Resp { code, headers, body: body_bytes }
 }
 
+#[test_id(tdrj3mk)]
 #[tokio::test]
 async fn put_then_get_round_trips_the_sharded_key_sccache_actually_uses() {
     // sccache's own normalize_key: "abcdef" -> "a/b/c/abcdef" (src/cache/utils.rs). The
@@ -83,6 +86,7 @@ async fn put_then_get_round_trips_the_sharded_key_sccache_actually_uses() {
     assert!(dir.path().join("a/b/c/abcdef0123456789").is_file(), "the file landed on disk, not just in memory");
 }
 
+#[test_id(tba8asn)]
 #[tokio::test]
 async fn propfind_depth0_reports_a_file_with_its_size_and_a_directory_as_a_collection() {
     let dir = scratch();
@@ -105,6 +109,7 @@ async fn propfind_depth0_reports_a_file_with_its_size_and_a_directory_as_a_colle
     assert_eq!(missing.code, 404, "{}", missing.headers);
 }
 
+#[test_id(tknxg8r)]
 #[tokio::test]
 async fn mkcol_is_idempotent_and_makes_every_missing_ancestor() {
     let dir = scratch();
@@ -118,6 +123,7 @@ async fn mkcol_is_idempotent_and_makes_every_missing_ancestor() {
     assert_eq!(second.code, 201, "{}", second.headers);
 }
 
+#[test_id(ty932nc)]
 #[tokio::test]
 async fn path_traversal_is_refused_not_resolved() {
     let dir = scratch();
@@ -131,6 +137,7 @@ async fn path_traversal_is_refused_not_resolved() {
     assert_eq!(escape.code, 400, "{}", escape.headers);
 }
 
+#[test_id(tl1uqmf)]
 #[test]
 fn listen_addrs_maps_config_to_listeners() {
     let lan = "192.168.1.56:9431";
@@ -150,6 +157,7 @@ fn put_aged(root: &std::path::Path, rel: &str, bytes: usize, age_secs: u64) {
     std::fs::File::options().write(true).open(&p).unwrap().set_modified(t).unwrap();
 }
 
+#[test_id(toh4psc)]
 #[test]
 fn eviction_removes_the_least_recently_used_until_under_the_cap() {
     let d = scratch();
@@ -167,6 +175,7 @@ fn eviction_removes_the_least_recently_used_until_under_the_cap() {
     assert!(d.path().join("a").is_dir(), "shard directories stay");
 }
 
+#[test_id(t759ehy)]
 #[test]
 fn eviction_under_the_cap_deletes_nothing() {
     let d = scratch();
@@ -175,6 +184,7 @@ fn eviction_under_the_cap_deletes_nothing() {
     assert!(d.path().join("a/f").exists());
 }
 
+#[test_id(tlst0ji)]
 #[tokio::test]
 async fn served_requests_are_tallied_and_flushed_as_hits_and_misses() {
     let t = scratch();

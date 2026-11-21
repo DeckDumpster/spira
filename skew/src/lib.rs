@@ -8,6 +8,9 @@
 //! (exit codes, what goes to stdout vs stderr — callers such as `deploy.sh` capture only
 //! stdout from `check`, so that split is load-bearing, not cosmetic).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod ports;
 pub mod real;
 pub mod telemetry;

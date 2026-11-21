@@ -153,6 +153,7 @@ mod tests {
         Envelope { peer: "10.0.0.2:5555", user: "ryan", from: "me@example.org", to, message_id: "<m1@x>", in_reply_to: "" }
     }
 
+    #[test_id(t0ndsz1)]
     #[test]
     fn an_accepted_message_is_delivered_then_answered_once_the_event_is_journaled() {
         let dir = testkit::TempDir::new("submission-sink");
@@ -174,6 +175,7 @@ mod tests {
         assert!(mail::sendmail::find_message_by_id(&mail_root, "<m1@x>").is_some(), "delivered in-process");
     }
 
+    #[test_id(tyai4mj)]
     #[test]
     fn a_submission_the_loop_refuses_is_a_451_and_a_dropped_one_too() {
         let dir = testkit::TempDir::new("submission-refuse");
@@ -194,6 +196,7 @@ mod tests {
         assert!(mail::sendmail::find_message_by_id(&mail_root, "<m1@x>").is_some(), "the retry did not deliver a second copy, and the first is kept");
     }
 
+    #[test_id(tnjzxn2)]
     #[test]
     fn a_refusal_is_submitted_with_its_reason() {
         let (tx, mut rx) = mpsc::channel::<Submit>(4);
@@ -204,6 +207,7 @@ mod tests {
         assert!(s.id.starts_with("submission/10.0.0.3:6666+"), "{}", s.id);
     }
 
+    #[test_id(ti36rq1)]
     #[test]
     fn an_unconfigured_listener_is_dormant_until_its_channel_closes() {
         let (tx, rx) = mpsc::channel(1);

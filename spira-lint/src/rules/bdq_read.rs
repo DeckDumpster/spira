@@ -237,6 +237,7 @@ mod tests {
         violations(&tree).unwrap().len()
     }
 
+    #[test_id(t389t78)]
     #[test]
     fn a_read_asked_of_the_held_view_or_the_socket_is_the_doors_not_bdqs() {
         let t = TempDir::new("br-held");
@@ -246,6 +247,7 @@ mod tests {
         assert_eq!(hits(&t, &["b/src/y.rs"]), 1, "the matcher still finds a bare read");
     }
 
+    #[test_id(td383la)]
     #[test]
     fn shell_reads_are_hits_and_writes_are_not() {
         let t = TempDir::new("br-sh");
@@ -253,6 +255,7 @@ mod tests {
         assert_eq!(hits(&t, &["spira/x.sh"]), 4);
     }
 
+    #[test_id(tx5hejl)]
     #[test]
     fn a_shell_comment_and_a_suite_are_not_hits() {
         let t = TempDir::new("br-shc");
@@ -261,6 +264,7 @@ mod tests {
         assert_eq!(hits(&t, &["spira/x.sh", "spira/test-x.sh"]), 0);
     }
 
+    #[test_id(tfkejux)]
     #[test]
     fn rust_argv_in_a_bdq_crate_is_a_hit() {
         let t = TempDir::new("br-rs");
@@ -268,6 +272,7 @@ mod tests {
         assert_eq!(hits(&t, &["c/src/a.rs"]), 2);
     }
 
+    #[test_id(t0q4f6h)]
     #[test]
     fn door_calls_and_crates_without_bdq_are_not_hits() {
         let t = TempDir::new("br-door");
@@ -276,6 +281,7 @@ mod tests {
         assert_eq!(hits(&t, &["c/src/a.rs", "d/src/a.rs"]), 0);
     }
 
+    #[test_id(txiphxl)]
     #[test]
     fn a_crates_tests_dir_is_exempt() {
         let t = TempDir::new("br-tests");
@@ -284,6 +290,7 @@ mod tests {
         assert_eq!(hits(&t, &["c/src/a.rs", "c/tests/b.rs"]), 0);
     }
 
+    #[test_id(tj8jnsw)]
     #[test]
     fn a_comment_naming_the_read_is_not_a_hit_with_or_without_the_door_call() {
         let t = TempDir::new("br-mut");
@@ -297,6 +304,7 @@ mod tests {
         assert_eq!(hits(&t, &["spira/x.sh"]), 0);
     }
 
+    #[test_id(tnt2bqa)]
     #[test]
     fn the_allow_list_counts_and_only_shrinks() {
         let t = TempDir::new("br-allow");
@@ -316,6 +324,7 @@ mod tests {
         assert_eq!(run(&t, &["spira/x.sh"]).unwrap(), vec!["bdq-read: spira/x.sh:1: bdq read outside the store"]);
     }
 
+    #[test_id(tebn4p1)]
     #[test]
     fn a_considered_line_passes() {
         let t = TempDir::new("br-considered");
@@ -324,6 +333,7 @@ mod tests {
         assert_eq!(run(&t, &["spira/x.sh"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(t2nrs1u)]
     #[test]
     fn render_allow_round_trips() {
         let t = TempDir::new("br-render");
@@ -335,6 +345,7 @@ mod tests {
         assert_eq!(run(&t, &["spira/x.sh"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tkle53y)]
     #[test]
     fn the_shipped_list_counts_the_known_forks() {
         let list = parse_count_allow(ALLOW_FILE, include_str!("../../bdq-read-allow")).unwrap();

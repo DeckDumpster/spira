@@ -30,6 +30,7 @@ mod tests {
         p.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(thx62md)]
     #[test]
     fn the_fence_judges_the_four_clauses_that_read_the_tree() {
         use repo_contract::clause::Clause;
@@ -37,6 +38,7 @@ mod tests {
         assert_eq!(got, [Clause::Environment, Clause::SubmitChecks, Clause::TestTiers, Clause::Deploy]);
     }
 
+    #[test_id(t6wehmo)]
     #[test]
     fn touches_contract_covers_the_five_paths_and_nothing_else() {
         for p in CONTRACT_PATHS {
@@ -47,6 +49,7 @@ mod tests {
         assert!(!touches_contract(&[]));
     }
 
+    #[test_id(ta7y3jb)]
     #[test]
     fn only_exit_one_refuses_and_it_names_the_not_met_lines() {
         let out = "met deploy: x\nnot met environment: check \"lint\" runs \"uv\", which the flake's dev shell does not provide\n";

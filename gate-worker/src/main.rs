@@ -1,3 +1,6 @@
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use gate_worker::{acquire_slot, release_is_current, lock_wait, worker_count, Branches, Clock, Gate, Worker};
 use landing_pass::gateq::GateQueue;
 use landing_pass::model::RepoRow;
@@ -175,6 +178,7 @@ mod vtime_tests {
     use super::*;
 
 
+    #[test_id(t7md7mb)]
     #[test]
     fn wall_honours_spira_now_in_ms() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, || Wall.now_ms() / 1000);

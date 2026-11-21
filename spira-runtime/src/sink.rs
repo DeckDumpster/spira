@@ -89,6 +89,7 @@ mod tests {
         pairs.iter().map(|(k, v)| (k.to_string(), Value::Str(v.to_string()))).collect()
     }
 
+    #[test_id(txvl7rl)]
     #[test]
     fn successful_turns_are_routine_and_failures_and_anomalies_are_not() {
         for routine in [
@@ -113,6 +114,7 @@ mod tests {
         }
     }
 
+    #[test_id(tl9y8i6)]
     #[test]
     fn routine_records_reach_the_file_only_in_debug() {
         for (debug, want) in [(false, 0), (true, 1)] {

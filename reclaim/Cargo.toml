@@ -15,6 +15,7 @@ integration = ["testkit/integration", "system-paths/integration"]
 system-paths = { path = "../system-paths" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [profile.release]

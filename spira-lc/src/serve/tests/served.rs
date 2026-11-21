@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(treyxbz)]
 #[test]
 fn content_is_served_and_keeps_its_refusal_text() {
     let (w, c) = (World::new(), Content::default());
@@ -12,6 +13,7 @@ fn content_is_served_and_keeps_its_refusal_text() {
     assert_eq!(*c.0.borrow(), ["note sp-a hello"]);
 }
 
+#[test_id(tjpc09m)]
 #[test]
 fn a_scheduler_task_is_refused_the_whole_history_over_the_served_door() {
     let (w, c) = (World::new(), Content::default());
@@ -27,6 +29,7 @@ fn a_scheduler_task_is_refused_the_whole_history_over_the_served_door() {
 
 /// A content write's guard variables ride the request to the server, which refuses the
 /// czar's shadow-stage mutation with bdq's exit code and text, and writes nothing.
+#[test_id(tw6xe3d)]
 #[test]
 fn a_czar_content_write_is_judged_on_the_callers_variables_on_the_server() {
     let (w, c) = (World::new(), Content::default());
@@ -57,6 +60,7 @@ fn a_czar_content_write_is_judged_on_the_callers_variables_on_the_server() {
     assert!(super::read_request(&mut wire).is_err(), "an object with neither len nor caller is still refused");
 }
 
+#[test_id(ta6rw4g)]
 #[test]
 fn a_tasked_request_is_counted_under_its_task() {
     let w = World::new();
@@ -75,6 +79,7 @@ fn a_tasked_request_is_counted_under_its_task() {
     }
 }
 
+#[test_id(ta1j0k2)]
 #[test]
 fn a_min_rev_key_is_ignored_and_the_reply_header_names_no_revision() {
     use std::io::Read;

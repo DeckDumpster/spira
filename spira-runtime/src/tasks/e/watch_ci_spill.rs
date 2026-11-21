@@ -326,6 +326,7 @@ mod tests {
 
     const W: &str = ".github/workflows/ci.yml";
 
+    #[test_id(tznjvha)]
     #[test]
     fn the_scan_reads_each_provision_step_as_the_awk_did() {
         let ok = "jobs:\n  a:\n    steps:\n      - uses: o/a/provision@v1\n        with:\n          spill: ec2-only # pinned\n";
@@ -341,6 +342,7 @@ mod tests {
         assert!(violations(W, "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n").is_empty());
     }
 
+    #[test_id(txpnbj7)]
     #[test]
     fn an_unreadable_tree_keeps_its_old_seen_and_a_missing_ref_is_said_once() {
         let cfg = Config { repo_map: String::new(), inbox: String::new() };

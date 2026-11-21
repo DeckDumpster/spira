@@ -313,6 +313,7 @@ fn failed_units_disp(d: &SweepData) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tqzoo45)]
     #[test]
     fn the_sweep_names_the_scheduler_not_a_sentinel_timer() {
         let out = render(&SweepData::fixture_nominal(1_700_000_000));
@@ -321,6 +322,7 @@ mod tests {
         assert!(line.contains("last fired") && !line.contains('{'), "{line}");
     }
 
+    #[test_id(tbnhc9t)]
     #[test]
     fn the_task_files_through_work_with_search_first_and_a_cap() {
         let out = render(&SweepData::fixture_nominal(1_700_000_000));
@@ -332,12 +334,14 @@ mod tests {
         assert!(!task.contains("bd create") && !task.contains("bdq create"));
     }
 
+    #[test_id(to4fcmk)]
     #[test]
     fn the_green_fixture_is_nominal() {
         let d = SweepData::fixture_nominal(1_700_000_000);
         assert!(is_nominal(&d, 60, 3));
     }
 
+    #[test_id(tabxrnt)]
     #[test]
     fn a_lapse_since_the_last_sweep_makes_it_not_nominal() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
@@ -345,6 +349,7 @@ mod tests {
         assert!(!is_nominal(&d, 60, 3));
     }
 
+    #[test_id(tujaeqq)]
     #[test]
     fn a_stale_snapshot_makes_it_not_nominal() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
@@ -352,6 +357,7 @@ mod tests {
         assert!(!is_nominal(&d, 60, 3));
     }
 
+    #[test_id(tcko3g9)]
     #[test]
     fn snapshot_age_is_judged_against_the_given_threshold() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
@@ -361,6 +367,7 @@ mod tests {
         assert!(is_nominal(&d, 7, 3));
     }
 
+    #[test_id(tnwag29)]
     #[test]
     fn an_unreadable_snapshot_age_makes_it_not_nominal() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
@@ -368,6 +375,7 @@ mod tests {
         assert!(!is_nominal(&d, 60, 3));
     }
 
+    #[test_id(t1mx39h)]
     #[test]
     fn a_no_verdict_streak_below_the_escalation_bar_is_nominal_and_at_the_bar_is_not() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
@@ -377,12 +385,14 @@ mod tests {
         assert!(!is_nominal(&d, 60, 3));
     }
 
+    #[test_id(td24nkr)]
     #[test]
     fn the_no_verdict_line_names_the_window_it_reads() {
         let out = render(&SweepData::fixture_nominal(1_700_000_000));
         assert!(out.contains("worst no-verdict streak, last 2d"), "{out}");
     }
 
+    #[test_id(tvfs2hw)]
     #[test]
     fn draining_throttled_disk_and_mem_breach_and_failed_units_each_make_it_not_nominal() {
         let base = SweepData::fixture_nominal(1_700_000_000);
@@ -417,10 +427,11 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(t4rd7vx)]
     #[test]
     fn render_includes_every_section_header_and_the_halt_banner_when_halted() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
-        d.halt = Some(super::super::collect::Halt {
+        d.halt = Some(super::super::super::collect::Halt {
             since: "2026-09-30T00:00:00Z".into(),
             why: Some("maintenance".into()),
         });
@@ -441,6 +452,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(tqxyjz7)]
     #[test]
     fn render_never_folds_an_unknown_field_into_a_zero() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
@@ -449,6 +461,7 @@ mod tests {
         assert!(out.contains("branches finished but not landed    ?"));
     }
 
+    #[test_id(ty3cajt)]
     #[test]
     fn a_slow_probe_is_named_and_breaks_nominal() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
@@ -483,6 +496,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(t7r7ih7)]
     #[test]
     fn each_hel_field_renders_the_value_its_key_holds() {
         let pairs: Vec<(&str, &str)> = HEL.iter().map(|(k, _)| (*k, "7")).collect();
@@ -497,6 +511,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(t4z46ci)]
     #[test]
     fn each_hel_field_with_no_key_renders_a_question_mark() {
         let out = rendered(&[]);
@@ -507,6 +522,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(ttex5hp)]
     #[test]
     fn a_zero_in_a_hel_field_renders_as_zero_never_a_question_mark() {
         let pairs: Vec<(&str, &str)> = HEL.iter().map(|(k, _)| (*k, "0")).collect();
@@ -517,6 +533,7 @@ mod tests {
         }
     }
 
+    #[test_id(tkcszrr)]
     #[test]
     fn the_repo_label_signs_render_a_value_a_zero_and_an_unread_key_distinctly() {
         let out = rendered(&[("SP_REPO_UNMAPPED", "3"), ("SP_REPO_ABSENT", "7")]);
@@ -527,6 +544,7 @@ mod tests {
         assert!(out.contains("repo: unmapped ? \u{b7} absent ?"));
     }
 
+    #[test_id(tep9cvp)]
     #[test]
     fn the_duplicate_ref_signs_render_a_value_a_zero_and_an_unread_key_distinctly() {
         let out = rendered(&[("SP_DUP_REFS", "3"), ("SP_DUP_BEADS", "5")]);
@@ -538,12 +556,14 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(tfdewxv)]
     #[test]
     fn an_old_snapshot_without_the_ghost_key_renders_it_unread_not_clear() {
         let out = rendered(&[("SP_STRANDS", "7")]);
         assert!(out.contains("stranded (claimed, nobody home)     ?"));
     }
 
+    #[test_id(t0llejw)]
     #[test]
     fn a_drain_renders_its_banner_a_minutes_field_and_not_a_halt() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
@@ -555,6 +575,7 @@ mod tests {
         assert!(out.contains("draining since (? = cannot read)    5      minutes"));
     }
 
+    #[test_id(tb37qvq)]
     #[test]
     fn an_unreadable_drain_age_renders_a_question_mark_and_no_drain_renders_zero() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
@@ -567,10 +588,11 @@ mod tests {
         assert!(out.contains("draining since (? = cannot read)    0      minutes"));
     }
 
+    #[test_id(t6qny2c)]
     #[test]
     fn a_halted_render_still_carries_the_body_and_says_no_incidents_are_filed() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
-        d.halt = Some(super::super::collect::Halt { since: "2026-09-08T01:23:45Z".into(), why: None });
+        d.halt = Some(super::super::super::collect::Halt { since: "2026-09-08T01:23:45Z".into(), why: None });
         let out = render(&d);
         assert!(out.contains("No incidents are filed"));
         assert!(out.contains("N workers pull"));

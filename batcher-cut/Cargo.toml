@@ -40,6 +40,7 @@ path = "tests/fence_green.rs"
 required-features = ["integration"]
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [profile.release]

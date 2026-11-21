@@ -2,6 +2,7 @@ use super::*;
 
 /// law-hot-reads-answer-in-500ms: an unfiltered `list` reads its rows' readiness by key in
 /// batched reads, never by ranging `readiness/`, and the rows are the ones a read by key answers.
+#[test_id(tjgd74j)]
 #[test]
 fn a_whole_table_list_reads_readiness_by_key_never_by_range() {
     const BEADS: usize = 600;
@@ -56,6 +57,7 @@ fn seed_readiness(r: &Rig<impl Backend>, ids: impl Iterator<Item = String>) {
 
 /// law-list-reads-paginate-in-the-database: the readiness of a few hundred ids spread across a
 /// large `readiness/` prefix is read by their keys, never by ranging the prefix.
+#[test_id(tubc0be)]
 #[test]
 fn readiness_of_spread_ids_reads_their_keys_and_never_ranges_the_table() {
     let r = Rig::on(Counting::default(), &clock());
@@ -77,6 +79,7 @@ fn readiness_of_spread_ids_reads_their_keys_and_never_ranges_the_table() {
 
 /// On the real store, `list --live` costs what its rows cost, not what the readiness table behind
 /// them holds.
+#[test_id(tys75ow)]
 #[test]
 fn list_live_costs_the_same_over_a_larger_readiness_table_on_the_real_store() {
     let dir = testkit::TempDir::new("lc-live-steps");

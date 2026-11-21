@@ -7,6 +7,9 @@
 //! pages the Concierge inbox once when the starts have not brought it back, with the unit's own
 //! last log lines, and reports the scheduler down rather than success.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod render;
 
 use std::path::{Path, PathBuf};
@@ -417,6 +420,7 @@ mod tests {
 
     const UNIT: &str = "spira-runtime.service";
 
+    #[test_id(tkys3i8)]
     #[test]
     fn every_key_the_watchdog_and_its_timer_read_is_registered_in_conf_d() {
         let conf_d = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
@@ -479,6 +483,7 @@ mod tests {
         }
     }
 
+    #[test_id(twdbagu)]
     #[test]
     fn every_key_is_required_and_the_bound_must_be_positive() {
         let full: HashMap<&str, &str> = [(KEY_BOUND, "90"), (KEY_SOCKET, "s"), (KEY_UNIT, "u"), (KEY_RUN, "r"), (KEY_UNIT_LOG, "r/u.log")].into();
@@ -502,6 +507,7 @@ mod tests {
         }
     }
 
+    #[test_id(t914ap0)]
     #[test]
     fn a_wedged_scheduler_is_restarted_with_backoff_and_paged_once_per_incident() {
         let tmp = testkit::TempDir::new("watchdog");
@@ -522,6 +528,7 @@ mod tests {
         assert!(!w.pass(&c).scheduler_down());
     }
 
+    #[test_id(ta9y2ag)]
     #[test]
     fn a_healthy_scheduler_is_left_alone() {
         let tmp = testkit::TempDir::new("watchdog");
@@ -533,6 +540,7 @@ mod tests {
         assert!(!c.incident.exists());
     }
 
+    #[test_id(te6s903)]
     #[test]
     fn a_healthy_pass_closes_the_incident_and_the_next_one_starts_fresh() {
         let tmp = testkit::TempDir::new("watchdog");
@@ -548,6 +556,7 @@ mod tests {
         assert_eq!(w.units.calls().last(), Some(&format!("restart {UNIT}")));
     }
 
+    #[test_id(tyqx2mo)]
     #[test]
     fn a_failed_page_is_retried_and_never_counted_as_paged() {
         let tmp = testkit::TempDir::new("watchdog");
@@ -569,6 +578,7 @@ mod tests {
         assert_eq!(w.pages.0.borrow().len(), 1);
     }
 
+    #[test_id(t8h3cmj)]
     #[test]
     fn the_backoff_doubles_to_its_cap_and_the_log_tail_is_bounded() {
         assert_eq!((1..=7).map(backoff_ms).collect::<Vec<_>>(), vec![60_000, 120_000, 240_000, 480_000, 900_000, 900_000, 900_000]);
@@ -583,6 +593,7 @@ mod tests {
         assert_eq!(t[1].chars().count(), LOG_LINE_MAX + 1);
     }
 
+    #[test_id(t3n1qhc)]
     #[test]
     fn the_verdict_reads_the_turn_the_start_and_the_marker() {
         let b = 90_000;
@@ -682,6 +693,7 @@ mod tests {
         pass(c, &Deps { clock, units, status, marker: &Marker(None), pager: pages }).unwrap()
     }
 
+    #[test_id(td6hl7d)]
     #[test]
     fn a_unit_failed_at_its_start_limit_is_reset_then_started() {
         let tmp = testkit::TempDir::new("watchdog");
@@ -702,6 +714,7 @@ mod tests {
         assert!(pages.0.borrow().is_empty(), "a start that worked first time pages no one: {:?}", pages.0.borrow());
     }
 
+    #[test_id(tj20iaj)]
     #[test]
     fn a_unit_that_keeps_failing_is_retried_with_backoff_and_paged_once_with_its_log() {
         let tmp = testkit::TempDir::new("watchdog");
@@ -772,6 +785,7 @@ mod tests {
         }
     }
 
+    #[test_id(tjxzbmk)]
     #[test]
     fn a_unit_cycling_through_activating_and_failing_is_one_incident_and_pages_once() {
         let tmp = testkit::TempDir::new("watchdog");
@@ -793,6 +807,7 @@ mod tests {
         assert_eq!(pages.0.borrow().len(), 1, "exactly one page: {:?}", pages.0.borrow());
     }
 
+    #[test_id(tf94h4d)]
     #[test]
     fn an_activating_unit_whose_restart_count_rose_is_down_and_a_first_start_is_healthy() {
         let b = 300_000;
@@ -806,6 +821,7 @@ mod tests {
         }
     }
 
+    #[test_id(tzjz5nn)]
     #[test]
     fn an_open_incident_closes_only_on_an_active_unit_with_a_fresh_turn_and_the_next_starts_fresh() {
         let tmp = testkit::TempDir::new("watchdog");
@@ -825,6 +841,7 @@ mod tests {
         assert!(matches!(w.pass(&c), Outcome::Down { since_ms, starts: 1, .. } if since_ms == w.clock.now_ms()));
     }
 
+    #[test_id(tr4v73h)]
     #[test]
     fn a_status_document_yields_its_turn_time() {
         assert_eq!(turn_of(r#"{"schema":1,"at":1234,"halted":false,"tasks":[]}"#), Ok(1234));
@@ -832,6 +849,7 @@ mod tests {
         assert!(turn_of("nope").is_err());
     }
 
+    #[test_id(tbw2cdw)]
     #[test]
     fn the_marker_age_is_the_files_mtime() {
         let tmp = testkit::TempDir::new("watchdog");
@@ -843,6 +861,7 @@ mod tests {
         assert_eq!(FileMarkerAge(p).in_flight_since(), Some(1_700_000_000_000));
     }
 
+    #[test_id(to9pkpn)]
     #[test]
     fn an_unanswering_socket_reads_unreachable() {
         assert!(matches!(SocketStatus(PathBuf::from("nonexistent/control.sock")).read(), Reading::Unreachable(_)));

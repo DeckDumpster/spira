@@ -61,6 +61,7 @@ fn many_deliveries(b: &Counting) -> Vec<(String, i64)> {
 /// law: a list reads its page from the current record, in the store. `list --delivery` over
 /// 3k deliveries of 50 audits each reads the deliveries alone, a page at a time, and never a
 /// delivery's history; a page of 100 is one bounded read.
+#[test_id(tgm9ss2)]
 #[test]
 fn list_delivery_reads_entered_at_from_the_record_never_history() {
     let r = Rig::on(Counting::default(), &clock());
@@ -95,6 +96,7 @@ fn list_delivery_reads_entered_at_from_the_record_never_history() {
 
 /// Every txn that moves a delivery keeps its `entered` current, so the record answers
 /// `entered_at` as its history does.
+#[test_id(th7dllm)]
 #[test]
 fn a_deliverys_entered_at_from_its_record_matches_its_history() {
     let r = Rig::new();

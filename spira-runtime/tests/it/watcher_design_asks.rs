@@ -29,17 +29,20 @@ fn told_once(world: Snapshot) -> TaskRig {
     r
 }
 
+#[test_id(twut94k)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&told_once(uncovered_draft()), NAME);
     assert!(rows.iter().any(|k| k == &format!("since/{REL}")), "{rows:?}");
 }
 
+#[test_id(t7r3x1d)]
 #[test]
 fn a_boot_does_not_tell_a_page_again_inside_its_repeat_window() {
     kit::assert_boot_matches_an_unstopped_run(|| told_once(uncovered_draft()), registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(tbv3xfu)]
 #[test]
 fn a_boot_does_not_say_a_failure_again_that_was_already_said() {
     kit::assert_boot_matches_an_unstopped_run(|| told_once(failing()), registration, STREAM, EventKind::new(TICK, ""));

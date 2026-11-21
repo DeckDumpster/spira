@@ -78,6 +78,7 @@ fn forge_calls(t: &T) -> Vec<String> {
     t.forge.calls.borrow().clone()
 }
 
+#[test_id(t9etgud)]
 #[test]
 fn batch_open_records_the_batch_then_opens_and_arms_its_pr_with_no_open_file() {
     let t = forge_world();
@@ -124,6 +125,7 @@ fn batch_open_records_the_batch_then_opens_and_arms_its_pr_with_no_open_file() {
     );
 }
 
+#[test_id(tctl0k9)]
 #[test]
 fn a_batch_open_whose_record_cannot_be_written_pushes_nothing_and_opens_no_pr() {
     let t = forge_world();
@@ -141,6 +143,7 @@ fn a_batch_open_whose_record_cannot_be_written_pushes_nothing_and_opens_no_pr() 
     );
 }
 
+#[test_id(tqvgovv)]
 #[test]
 fn a_crash_after_the_pr_and_before_open_leaves_an_opening_record_the_sweep_adopts() {
     let t = forge_world();
@@ -194,6 +197,7 @@ fn a_crash_after_the_pr_and_before_open_leaves_an_opening_record_the_sweep_adopt
     );
 }
 
+#[test_id(tikgv5p)]
 #[test]
 fn a_queue_pr_no_record_names_is_closed_and_its_branch_deleted_never_merged() {
     let t = forge_world();
@@ -227,6 +231,7 @@ fn a_queue_pr_no_record_names_is_closed_and_its_branch_deleted_never_merged() {
         .contains(&"branch -D sanctioned spira/queue/stray".to_string()));
 }
 
+#[test_id(teg208e)]
 #[test]
 fn an_opening_record_whose_pr_does_not_exist_is_released_past_one_ttl_unless_leased() {
     let t = forge_world();
@@ -263,6 +268,7 @@ fn an_opening_record_whose_pr_does_not_exist_is_released_past_one_ttl_unless_lea
         .contains(&"branch -D sanctioned spira/queue/lost".to_string()));
 }
 
+#[test_id(tkw60po)]
 #[test]
 fn verdict_finds_the_open_batch_in_the_store_with_no_open_file() {
     let t = forge_world();
@@ -281,6 +287,7 @@ fn verdict_finds_the_open_batch_in_the_store_with_no_open_file() {
     );
 }
 
+#[test_id(t87p1lr)]
 #[test]
 fn verdict_leaves_an_opening_record_to_the_sweep() {
     let t = forge_world();
@@ -304,6 +311,7 @@ fn verdict_leaves_an_opening_record_to_the_sweep() {
     );
 }
 
+#[test_id(tt8u6c2)]
 #[test]
 fn abandon_and_claim_act_on_the_store_record() {
     let t = forge_world();
@@ -323,6 +331,7 @@ fn abandon_and_claim_act_on_the_store_record() {
     assert!(t.err().contains("no open batch for spira"), "{}", t.err());
 }
 
+#[test_id(tdisuo9)]
 #[test]
 fn batch_open_refuses_while_a_record_is_opening_or_the_store_cannot_say() {
     let t = forge_world();
@@ -346,6 +355,7 @@ fn batch_open_refuses_while_a_record_is_opening_or_the_store_cannot_say() {
     assert!(!forge_calls(&t).iter().any(|c| c.starts_with("pr-create")));
 }
 
+#[test_id(tg9fpb0)]
 #[test]
 fn the_sweep_refuses_while_the_open_file_of_before_the_store_remains() {
     let t = forge_world();
@@ -363,6 +373,7 @@ fn the_sweep_refuses_while_the_open_file_of_before_the_store_remains() {
     assert!(!forge_calls(&t).iter().any(|c| c.starts_with("pr-close")));
 }
 
+#[test_id(tzefenq)]
 #[test]
 fn batch_show_prints_the_store_record_and_refuses_when_the_store_cannot_say() {
     let t = forge_world();
@@ -396,6 +407,7 @@ fn batch_show_prints_the_store_record_and_refuses_when_the_store_cannot_say() {
     );
 }
 
+#[test_id(t81egz5)]
 #[test]
 fn batch_show_ended_lists_the_closed_forge_batches_on_the_store_and_the_archives_newest_first() {
     let t = forge_world();
@@ -492,6 +504,7 @@ fn batch_show_ended_lists_the_closed_forge_batches_on_the_store_and_the_archives
     );
 }
 
+#[test_id(tdocae2)]
 #[test]
 fn batch_show_carries_the_forge_state_file_as_forge_fields_while_the_batch_is_the_file() {
     let t = T::new(LandMode::Queue);
@@ -543,6 +556,7 @@ fn batch_show_carries_the_forge_state_file_as_forge_fields_while_the_batch_is_th
     );
 }
 
+#[test_id(tsa78xr)]
 #[test]
 fn a_failed_push_or_create_leaves_the_record_opening_and_a_create_the_forge_misreported_is_adopted()
 {
@@ -580,6 +594,7 @@ fn a_failed_push_or_create_leaves_the_record_opening_and_a_create_the_forge_misr
     );
 }
 
+#[test_id(t6x3eb4)]
 #[test]
 fn a_pr_whose_auto_merge_cannot_be_armed_stays_open_and_the_open_fails_naming_it() {
     let t = forge_world();
@@ -597,6 +612,7 @@ fn a_pr_whose_auto_merge_cannot_be_armed_stays_open_and_the_open_fails_naming_it
     );
 }
 
+#[test_id(td2mlwd)]
 #[test]
 fn a_named_batch_open_is_refused_while_another_holder_leases_it() {
     let t = forge_world();
@@ -626,6 +642,7 @@ fn a_named_batch_open_is_refused_while_another_holder_leases_it() {
     );
 }
 
+#[test_id(tbljd19)]
 #[test]
 fn the_sweep_refuses_when_it_cannot_tell_and_names_a_refused_release() {
     let t = forge_world();
@@ -675,6 +692,7 @@ fn the_sweep_refuses_when_it_cannot_tell_and_names_a_refused_release() {
     assert!(t.err().contains("repo is not in queue mode"), "{}", t.err());
 }
 
+#[test_id(to7mjlj)]
 #[test]
 fn the_sweep_is_refused_while_the_batch_machine_is_not_on_the_store() {
     let t = T::new(LandMode::Queue);
@@ -686,6 +704,7 @@ fn the_sweep_is_refused_while_the_batch_machine_is_not_on_the_store() {
     );
 }
 
+#[test_id(ticimhi)]
 #[test]
 fn a_settled_batch_the_machine_has_not_ended_is_ended_on_its_record_and_reads_as_none() {
     let t = forge_world();
@@ -708,6 +727,7 @@ fn a_settled_batch_the_machine_has_not_ended_is_ended_on_its_record_and_reads_as
     );
 }
 
+#[test_id(tck1drx)]
 #[test]
 fn a_queue_local_verdict_releases_a_stale_forge_batch_still_opening_when_no_pr_exists() {
     let t = forge_world();
@@ -718,6 +738,7 @@ fn a_queue_local_verdict_releases_a_stale_forge_batch_still_opening_when_no_pr_e
     assert!(t.lc.has("abandon-batch left"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tu1vgnn)]
 #[test]
 fn a_queue_local_verdict_adopts_a_stale_opening_record_whose_pr_the_forge_lists() {
     let t = forge_world();
@@ -733,6 +754,7 @@ fn a_queue_local_verdict_adopts_a_stale_opening_record_whose_pr_the_forge_lists(
     assert_eq!(record(&t, "left").1.get("forge.phase"), Some("open"));
 }
 
+#[test_id(tlmqjhj)]
 #[test]
 fn a_queue_local_verdict_leaves_a_stale_opening_record_when_the_forge_cannot_list_its_prs() {
     let t = forge_world();
@@ -751,6 +773,7 @@ fn a_queue_local_verdict_leaves_a_stale_opening_record_when_the_forge_cannot_lis
     assert!(!t.lc.has("abandon-batch"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tfdmq12)]
 #[test]
 fn the_sweep_changes_nothing_when_the_forge_cannot_list_its_prs() {
     let t = forge_world();
@@ -768,6 +791,7 @@ fn the_sweep_changes_nothing_when_the_forge_cannot_list_its_prs() {
     assert!(!t.lc.has("abandon-batch"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tkbbhvp)]
 #[test]
 fn the_sweep_changes_nothing_when_the_lease_ttl_does_not_resolve() {
     let t = forge_world();
@@ -782,6 +806,7 @@ fn the_sweep_changes_nothing_when_the_lease_ttl_does_not_resolve() {
     assert_eq!(record(&t, "lost").0, "OPEN");
 }
 
+#[test_id(tieythd)]
 #[test]
 fn an_adoption_another_writer_beat_is_left_and_one_that_cannot_be_written_fails_the_sweep() {
     let t = forge_world();
@@ -828,6 +853,7 @@ fn local_world() -> T {
     t
 }
 
+#[test_id(t6c3htc)]
 #[test]
 fn a_stale_opening_record_on_a_queue_local_repo_is_released_by_the_verdict() {
     let t = local_world();
@@ -837,6 +863,7 @@ fn a_stale_opening_record_on_a_queue_local_repo_is_released_by_the_verdict() {
     assert_eq!(record(&t, "stale").0, "ABANDONED", "{}{}", t.out(), t.err());
 }
 
+#[test_id(trog39y)]
 #[test]
 fn an_opening_record_inside_one_lease_ttl_on_a_queue_local_repo_is_left_to_its_opener() {
     let t = local_world();
@@ -846,6 +873,7 @@ fn an_opening_record_inside_one_lease_ttl_on_a_queue_local_repo_is_left_to_its_o
     assert_eq!(record(&t, "fresh").0, "OPEN", "{}{}", t.out(), t.err());
 }
 
+#[test_id(top5nze)]
 #[test]
 fn a_queue_local_verdict_releases_every_stale_opening_record_but_a_leased_one() {
     let t = local_world();
@@ -875,6 +903,7 @@ fn a_queue_local_verdict_releases_every_stale_opening_record_but_a_leased_one() 
     );
 }
 
+#[test_id(tiljlh0)]
 #[test]
 fn a_queue_local_verdict_with_an_unparsable_lease_ttl_releases_nothing_and_says_which_command() {
     let t = local_world();
@@ -891,6 +920,7 @@ fn a_queue_local_verdict_with_an_unparsable_lease_ttl_releases_nothing_and_says_
     );
 }
 
+#[test_id(tdvbq69)]
 #[test]
 fn a_queue_local_verdict_on_a_repo_with_no_batch_store_does_not_consult_the_forge_or_records() {
     let t = T::new(LandMode::QueueLocal);
@@ -902,6 +932,7 @@ fn a_queue_local_verdict_on_a_repo_with_no_batch_store_does_not_consult_the_forg
     assert!(!t.lc.has("abandon-batch"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tvhhzue)]
 #[test]
 fn settling_forge_leftovers_never_releases_a_stale_opening_record_whose_pr_the_forge_may_hold() {
     let t = local_world();
@@ -916,6 +947,7 @@ fn settling_forge_leftovers_never_releases_a_stale_opening_record_whose_pr_the_f
     assert_eq!(record(&t, "lost").0, "OPEN");
 }
 
+#[test_id(tf7tb26)]
 #[test]
 fn a_queue_local_verdict_ignores_an_unreadable_forge_while_every_opening_record_is_inside_its_ttl()
 {
@@ -928,6 +960,7 @@ fn a_queue_local_verdict_ignores_an_unreadable_forge_while_every_opening_record_
     assert_eq!(record(&t, "fresh").0, "OPEN");
 }
 
+#[test_id(taksj8k)]
 #[test]
 fn a_store_batch_setup_red_is_rerun_once_across_verdict_passes() {
     let t = forge_world();

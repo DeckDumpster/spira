@@ -13,6 +13,7 @@ spira_runtime::family_a_acceptance! {
     registration: Publish::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
+    test_ids: [ #[test_id(t116j9f)] #[test_id(t95x84v)] #[test_id(tnyrdg7)] #[test_id(tuvqza5)] #[test_id(tvme2zj)] ],
 }
 
 fn repo(pr: Pr) -> Repo {
@@ -47,6 +48,7 @@ fn effects(acts: &[Act]) -> Vec<&str> {
     acts.iter().map(|a| a.effect.as_str()).collect()
 }
 
+#[test_id(twhjkd5)]
 #[test]
 fn t3_every_row_of_the_state_table_is_taken() {
     for (from, on, to) in TABLE {
@@ -54,12 +56,14 @@ fn t3_every_row_of_the_state_table_is_taken() {
     }
 }
 
+#[test_id(tlw4qd0)]
 #[test]
 fn t3_opening_x_tick_is_refused_naming_opening() {
     let refused = step(State::Opening, Trigger::Tick).expect_err("opening × tick is illegal");
     assert!(refused.contains("Opening"), "{refused}");
 }
 
+#[test_id(tgfbjab)]
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
     let mut r = rig(1, busy());
@@ -69,6 +73,7 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 }
 
 /// The `decide` table tests (`ops/publish.rs:391`).
+#[test_id(tgo9l0e)]
 #[test]
 fn t5_the_settle_table() {
     assert_eq!(settle(Some(&Pr::Gone)), Settle::Retire);
@@ -100,6 +105,7 @@ fn no_run_repo(behind: bool, ci_started: u64) -> Snapshot {
 }
 
 /// No run past the bound, local not ahead: CI started once, one page, then parked.
+#[test_id(teicjen)]
 #[test]
 fn t5_no_run_past_the_bound_starts_ci_once_then_parks() {
     let (carry, first) = decide_with(&bound(), &Carry::default(), &no_run_repo(false, 0));
@@ -110,6 +116,7 @@ fn t5_no_run_past_the_bound_starts_ci_once_then_parks() {
     assert!(!effects(&then).contains(&START_CI), "{then:?}");
 }
 
+#[test_id(t3ltg3p)]
 #[test]
 fn t5_no_run_past_the_bound_and_behind_supersedes() {
     let (_, acts) = decide_with(&bound(), &Carry::default(), &no_run_repo(true, 0));
@@ -117,6 +124,7 @@ fn t5_no_run_past_the_bound_and_behind_supersedes() {
     assert!(acts[1].input.contains("no_run_paged"), "{acts:?}");
 }
 
+#[test_id(tx4u2yu)]
 #[test]
 fn t5_no_run_with_an_unresolved_bound_waits_and_names_the_key() {
     let policy = Policy { no_run_secs: None, ..Policy::default() };
@@ -129,6 +137,7 @@ fn t5_no_run_with_an_unresolved_bound_waits_and_names_the_key() {
 }
 
 /// A gone PR's record is retired and the next PR opens on the same tick, without closing it again.
+#[test_id(txa3qt0)]
 #[test]
 fn t5_gone_retires_and_opens_on_one_tick() {
     let (_, acts) = decide(&Carry::default(), &busy());
@@ -138,6 +147,7 @@ fn t5_gone_retires_and_opens_on_one_tick() {
     assert_eq!((retire.pr, retire.subject.as_str(), push.head.as_str()), (31, "Retire", "h1"));
 }
 
+#[test_id(top9ct8)]
 #[test]
 fn a_gone_publish_pr_is_retired_and_pushed_by_the_engine_in_one_tick() {
     let mut r = rig(1, busy());
@@ -148,6 +158,7 @@ fn a_gone_publish_pr_is_retired_and_pushed_by_the_engine_in_one_tick() {
 }
 
 /// A close that succeeded and an open step that failed must not leave the stale record in charge.
+#[test_id(t8hg37g)]
 #[test]
 fn a_failed_open_after_a_close_does_not_wedge_the_stale_record() {
     let superseding = Carry { repos: [("spira".to_string(), RepoCarry { state: State::Superseding, ..RepoCarry::default() })].into() };
@@ -159,6 +170,7 @@ fn a_failed_open_after_a_close_does_not_wedge_the_stale_record() {
     assert_eq!(effects(&acts), [RETIRE, PUSH_BRANCH], "{acts:?}");
 }
 
+#[test_id(t0zp2df)]
 #[test]
 fn a_gone_pr_whose_forge_is_already_at_head_retires_and_pushes_nothing() {
     let at_head = with(Repo { forge_sha: Some("h1".into()), ..busy().repos["spira"].clone() });
@@ -167,6 +179,7 @@ fn a_gone_pr_whose_forge_is_already_at_head_retires_and_pushes_nothing() {
     assert_eq!(carry.repos.get("spira").map(|c| c.state).unwrap_or_default(), State::Idle);
 }
 
+#[test_id(tbqrbol)]
 #[test]
 fn a_failed_retire_is_noted_for_the_operator() {
     let opening = Carry { repos: [("spira".to_string(), RepoCarry { state: State::Opening, ..RepoCarry::default() })].into() };
@@ -176,6 +189,7 @@ fn a_failed_retire_is_noted_for_the_operator() {
     assert_eq!(after.repos["spira"].state, State::Opening, "a failed retire does not disturb the open in flight");
 }
 
+#[test_id(tzhyygz)]
 #[test]
 fn a_closed_supersede_retires_its_record_before_pushing() {
     let superseding = Carry { repos: [("spira".to_string(), RepoCarry { state: State::Superseding, ..RepoCarry::default() })].into() };
@@ -186,6 +200,7 @@ fn a_closed_supersede_retires_its_record_before_pushing() {
     assert_eq!((retire.pr, retire.subject.as_str()), (31, "Supersede"));
 }
 
+#[test_id(tj4psn5)]
 #[test]
 fn a_saved_repo_carry_with_the_retired_pr_field_still_loads() {
     let rc: RepoCarry = serde_json::from_str(r#"{"state":"Idle","deferred_ticks":0,"retired":1125}"#).expect("an old carry loads");
@@ -206,6 +221,7 @@ fn retire_world(dir: &testkit::TempDir, recorded: Option<u64>, retiring: u64) ->
     (dir.path().join("spira").join("publish").exists(), out.map(|_| log))
 }
 
+#[test_id(ttx3ps5)]
 #[test]
 fn retire_removes_the_record_naming_its_pr() {
     let dir = testkit::TempDir::new("publish-retire");
@@ -214,6 +230,7 @@ fn retire_removes_the_record_naming_its_pr() {
     assert!(!left && log.contains("QUEUE PUBLISH_SUPERSEDED") && log.contains("repo=spira pr=42 action=Retire"), "{left} {log}");
 }
 
+#[test_id(tebyyvo)]
 #[test]
 fn retire_leaves_a_record_naming_another_pr() {
     let dir = testkit::TempDir::new("publish-retire");
@@ -221,6 +238,7 @@ fn retire_leaves_a_record_naming_another_pr() {
     assert!(left && out.expect("retire answers Ok").is_empty());
 }
 
+#[test_id(t60g8rw)]
 #[test]
 fn retire_with_the_queue_lock_held_is_an_error_and_keeps_the_record() {
     let dir = testkit::TempDir::new("publish-retire");
@@ -229,6 +247,7 @@ fn retire_with_the_queue_lock_held_is_an_error_and_keeps_the_record() {
     assert!(left && out.is_err(), "{left} {out:?}");
 }
 
+#[test_id(tlxxuye)]
 #[test]
 fn retire_logs_the_action_word_it_was_given() {
     let dir = testkit::TempDir::new("publish-retire");
@@ -242,6 +261,7 @@ fn retire_logs_the_action_word_it_was_given() {
     assert!(log.contains("repo=spira pr=42 action=Supersede"), "{log}");
 }
 
+#[test_id(txifzh8)]
 #[test]
 fn retire_with_no_record_is_ok() {
     let dir = testkit::TempDir::new("publish-retire");
@@ -250,6 +270,7 @@ fn retire_with_no_record_is_ok() {
 }
 
 /// Red and behind supersedes: cancel the runs, close the PR.
+#[test_id(tl2q2mi)]
 #[test]
 fn t5_red_and_behind_supersedes() {
     let (_, acts) = decide(&Carry::default(), &with(repo(Pr::Open { ci: "red".into(), behind: true, tries: 0 })));
@@ -257,6 +278,7 @@ fn t5_red_and_behind_supersedes() {
 }
 
 /// Untested reruns once; after the rerun it alarms with a record.
+#[test_id(tq2sesl)]
 #[test]
 fn t5_untested_reruns_then_alarms() {
     let (_, first) = decide(&Carry::default(), &with(repo(Pr::Open { ci: "untested".into(), behind: false, tries: 0 })));
@@ -266,6 +288,7 @@ fn t5_untested_reruns_then_alarms() {
 }
 
 /// `:506-527`: a round holding the hypervisor defers the act and counts the tick.
+#[test_id(tjw6j9b)]
 #[test]
 fn t5_a_round_on_the_hypervisor_defers() {
     let held = with(Repo { round_holds_hypervisor: true, ..busy().repos["spira"].clone() });
@@ -277,6 +300,7 @@ fn t5_a_round_on_the_hypervisor_defers() {
 /// The record a PR's creation writes is the one queue's `settle_publish` reads: every field it
 /// refuses a record without is there, and the red path (`settle_publish_red`, `kv.members()`)
 /// finds the range's members.
+#[test_id(tzyjyt1)]
 #[test]
 fn the_record_a_created_pr_writes_passes_settle_publish_and_names_its_members() {
     let opening = Carry { repos: [("spira".to_string(), RepoCarry { state: State::Opening, ..RepoCarry::default() })].into() };
@@ -301,6 +325,7 @@ fn the_record_a_created_pr_writes_passes_settle_publish_and_names_its_members() 
 /// law-lifecycle-state-is-not-text (sp-mijstw): the fix-forward bead is live only while its typed
 /// row is not terminal. A DROPPED or SUPERSEDED fix-forward read as live left the publish red
 /// with no live fix, never filed again.
+#[test_id(tlto3je)]
 #[test]
 fn t7_a_terminal_fix_forward_is_not_live() {
     let show = |state: &str| format!(r#"{{"bead":{{"bead_id":"sp-ff","state":"{state}"}},"delivery":null}}"#);
@@ -317,6 +342,7 @@ fn t7_a_terminal_fix_forward_is_not_live() {
 /// had failed, and sat open 16 h: `decide` answered Wait and left it to queue.step, which only
 /// settles batches. One publish pass now settles it: the probe sees it green and asks
 /// `publish.settle`, whose success leaves the repo idle for the next publish.
+#[test_id(te8e9oh)]
 #[test]
 fn a_green_open_publish_pr_settles_in_one_pass() {
     let green = with(repo(Pr::Open { ci: "green".into(), behind: false, tries: 0 }));
@@ -334,6 +360,7 @@ fn a_green_open_publish_pr_settles_in_one_pass() {
 
 /// The PR #989 path: no record, one publish PR open. Adopting it settles it in the same pass;
 /// a failed or timed-out adoption is retried on the next tick instead of wedging in Adopting.
+#[test_id(tejgdjv)]
 #[test]
 fn an_adopted_publish_pr_settles_and_a_failed_adoption_is_retried() {
     let orphan = with(Repo { publish_rec: None, pr: Pr::Unknown, open_publish_prs: vec![989], ..repo(Pr::Unknown) });
@@ -351,6 +378,7 @@ fn an_adopted_publish_pr_settles_and_a_failed_adoption_is_retried() {
     assert!(deadline >= OBSERVE_DEADLINE_MS, "an adoption fetches and reads the range's members: {deadline} ms is too short");
 }
 
+#[test_id(t0i9upv)]
 #[test]
 fn the_carry_stays_under_the_journal_column_for_the_longest_repo_names_and_the_rest_wait() {
     let held = Repo { round_holds_hypervisor: true, ..busy().repos["spira"].clone() };
@@ -370,6 +398,7 @@ fn at_work() -> TaskRig {
     r
 }
 
+#[test_id(t8tv5os)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let mut held = rig(1, with(Repo { round_holds_hypervisor: true, ..busy().repos["spira"].clone() }));
@@ -378,11 +407,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     assert!(rows.iter().any(|k| k.starts_with("repos/")), "{rows:?}");
 }
 
+#[test_id(t2kp827)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(ts0ami2)]
 #[test]
 fn t5_the_probe_reads_a_no_run_status_and_the_record_fields() {
     assert_eq!(edge::ci_label("pending\nno-run: Gate\n"), "no_run");

@@ -165,6 +165,7 @@ impl Busy {
 mod tests {
     use super::*;
 
+    #[test_id(t0l6gny)]
     #[test]
     fn busy_reads_zero_until_entered() {
         let b = Busy::default();

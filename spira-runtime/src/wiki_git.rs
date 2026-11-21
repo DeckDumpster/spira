@@ -120,6 +120,7 @@ mod exporter_tests {
         p.display().to_string()
     }
 
+    #[test_id(tqq2s2q)]
     #[test]
     fn the_exporter_is_run_in_the_mode_asked_and_its_refusal_is_carried() {
         let d = testkit::TempDir::new("exporter-run");
@@ -142,6 +143,7 @@ mod bounded_tests {
         Command::new(p)
     }
 
+    #[test_id(teq48wa)]
     #[test]
     fn a_process_past_its_deadline_is_reported_with_the_elapsed_milliseconds() {
         let d = testkit::TempDir::new("bounded-timeout");
@@ -150,6 +152,7 @@ mod bounded_tests {
         assert!(e.trim_start_matches("timed out after ").chars().next().unwrap().is_ascii_digit(), "{e}");
     }
 
+    #[test_id(tv7i2y3)]
     #[test]
     fn a_program_that_cannot_start_is_reported_as_a_spawn_error() {
         let d = testkit::TempDir::new("bounded-spawn");
@@ -157,6 +160,7 @@ mod bounded_tests {
         assert!(e.starts_with("spawn:"), "{e}");
     }
 
+    #[test_id(ttos16a)]
     #[test]
     fn a_chatty_stderr_does_not_stall_the_process_and_is_returned() {
         let d = testkit::TempDir::new("bounded-stderr");
@@ -165,18 +169,20 @@ mod bounded_tests {
         assert_eq!(err.len(), 204800);
     }
 
+    #[test_id(tvh3zn3)]
     #[test]
     fn git_ok_carries_gits_stderr_in_its_exit_message() {
         let d = testkit::TempDir::new("git-ok-exit");
         testkit::git(d.path(), &["init", "-q"]);
-        let e = super::git_ok(d.path(), &["log", "no-such-ref"]).unwrap_err();
+        let e = super::super::git_ok(d.path(), &["log", "no-such-ref"]).unwrap_err();
         assert!(e.starts_with("exit 128: ") && e.contains("unknown revision"), "{e}");
     }
 
+    #[test_id(t4qkwt8)]
     #[test]
     fn a_process_killed_by_a_signal_is_named_with_its_stderr_by_git_ok_s_cause_by_a_signal() {
         let d = testkit::TempDir::new("git-ok-signal");
-        let e = super::ok_or_cause(script(d.path(), "echo cut short >&2; kill -9 $$"), Duration::from_secs(5)).unwrap_err();
+        let e = super::super::ok_or_cause(script(d.path(), "echo cut short >&2; kill -9 $$"), Duration::from_secs(5)).unwrap_err();
         assert_eq!(e, "killed by signal: cut short");
     }
 }

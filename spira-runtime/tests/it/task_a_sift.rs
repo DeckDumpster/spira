@@ -12,6 +12,7 @@ spira_runtime::family_a_acceptance! {
     registration: Sift::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
+    test_ids: [ #[test_id(txinj2e)] #[test_id(tbx3n40)] #[test_id(t5amf7d)] #[test_id(txnwxcn)] #[test_id(tk5kn95)] ],
 }
 
 /// The contract's idle fixture: no SUBMITTED or CERTIFIED rows in any repo.
@@ -39,6 +40,7 @@ fn busy() -> Snapshot {
     Snapshot { repos: [("spira".to_string(), repo)].into() }
 }
 
+#[test_id(t8qgbtc)]
 #[test]
 fn t3_every_legal_move_of_the_sifted_machine_is_taken() {
     for (from, to) in MOVES {
@@ -46,6 +48,7 @@ fn t3_every_legal_move_of_the_sifted_machine_is_taken() {
     }
 }
 
+#[test_id(tkxwefz)]
 #[test]
 fn t3_capped_to_sent_back_and_a_skipped_count_are_refused_naming_the_state() {
     let capped = record("sp-a", Sifted::Capped, Sifted::SentBack(1)).expect_err("capped never sends back");
@@ -54,6 +57,7 @@ fn t3_capped_to_sent_back_and_a_skipped_count_are_refused_naming_the_state() {
     assert!(skipped.to_lowercase().contains("sent_back") || skipped.to_lowercase().contains("sentback"), "{skipped}");
 }
 
+#[test_id(t0rk2rb)]
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
     let mut r = rig(1, busy());
@@ -63,6 +67,7 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 }
 
 /// `rs:138-141`: an empty pool fetches nothing; the fetch follows the pool read.
+#[test_id(timdnxw)]
 #[test]
 fn t5_an_empty_pool_fetches_nothing() {
     let (_, acts) = decide(&Carry::default(), &idle());
@@ -70,6 +75,7 @@ fn t5_an_empty_pool_fetches_nothing() {
 }
 
 /// `sl:133-262`: a clean candidate records a pass at its tip; one already sifted at that tip records none.
+#[test_id(tpetem7)]
 #[test]
 fn t5_a_clean_candidate_records_one_pass_at_its_tip() {
     let (_, acts) = decide(&Carry::default(), &busy());
@@ -80,6 +86,7 @@ fn t5_a_clean_candidate_records_one_pass_at_its_tip() {
 }
 
 /// `sl:158-170`: a duplicate patch-id supersedes, the keeper preferring the open-round member.
+#[test_id(tvtsy8r)]
 #[test]
 fn t5_a_duplicate_patch_is_superseded_by_the_open_round_member() {
     let mut s = busy();
@@ -93,6 +100,7 @@ fn t5_a_duplicate_patch_is_superseded_by_the_open_round_member() {
 }
 
 /// `sl:229-249`: a conflict sends back after its note and is never counted toward the cap.
+#[test_id(t1isows)]
 #[test]
 fn t5_a_conflict_is_noted_then_sent_back_and_not_counted() {
     let mut s = busy();
@@ -125,6 +133,7 @@ fn sent_back_twice() -> TaskRig {
     r
 }
 
+#[test_id(twfhnvk)]
 #[test]
 fn the_sifted_machines_and_the_waiting_notes_are_kept_a_row_each() {
     let r = sent_back_twice();
@@ -133,11 +142,13 @@ fn the_sifted_machines_and_the_waiting_notes_are_kept_a_row_each() {
     assert!(rows.iter().any(|k| k == "sent/sp-a"), "{rows:?}");
 }
 
+#[test_id(tz575z8)]
 #[test]
 fn a_boot_repeats_no_send_back_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(sent_back_twice, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(trqpkfl)]
 #[test]
 fn a_boot_does_not_start_the_send_back_count_again() {
     let mut r = sent_back_twice();
@@ -176,6 +187,7 @@ fn told(r: &TaskRig, what: &str) -> Vec<String> {
     asked(r, INBOX_APPEND).into_iter().filter(|l| l.contains(what)).collect()
 }
 
+#[test_id(t2jv87n)]
 #[test]
 fn a_certified_conflict_is_sent_back_once_and_told_after_the_store_applied_it() {
     let mut r = sending(certified_conflict(), Ok("sent sp-a back".into()));
@@ -193,6 +205,7 @@ fn a_certified_conflict_is_sent_back_once_and_told_after_the_store_applied_it() 
     assert!(later.is_empty(), "{later:?}");
 }
 
+#[test_id(tpzkqgp)]
 #[test]
 fn a_send_back_the_store_refused_is_reported_once_and_never_as_sent() {
     let mut r = sending(certified_conflict(), Err("sp-a moved since screening (state CERTIFIED)".into()));
@@ -205,6 +218,7 @@ fn a_send_back_the_store_refused_is_reported_once_and_never_as_sent() {
     assert_eq!(asked(&r, NOTE).len(), 1);
 }
 
+#[test_id(tl6jnfh)]
 #[test]
 fn a_failed_evidence_note_holds_the_send_back_and_says_so_once() {
     let world = std::sync::Arc::new(std::sync::Mutex::new(certified_conflict()));
@@ -220,6 +234,7 @@ fn a_failed_evidence_note_holds_the_send_back_and_says_so_once() {
     assert_eq!(asked(&r, NOTE).len(), 1);
 }
 
+#[test_id(t2y5v3b)]
 #[test]
 fn a_moved_base_is_attempted_again_after_a_failed_send_back() {
     let world = std::sync::Arc::new(std::sync::Mutex::new(certified_conflict()));
@@ -236,6 +251,7 @@ fn a_moved_base_is_attempted_again_after_a_failed_send_back() {
     assert_eq!((asked(&r, NOTE).len(), asked(&r, SEND_BACK).len()), (2, 2));
 }
 
+#[test_id(t6kkiiq)]
 #[test]
 fn an_attempt_is_forgotten_once_its_bead_leaves_the_pool() {
     let (carry, _) = decide(&Carry::default(), &certified_conflict());

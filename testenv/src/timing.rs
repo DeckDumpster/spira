@@ -262,6 +262,7 @@ mod tests {
         }
     }
 
+    #[test_id(tt2vhi9)]
     #[test]
     fn the_batch_row_carries_its_phases_and_a_suite_row_does_not() {
         let plain = render(
@@ -287,6 +288,7 @@ mod tests {
         assert!(mean_wall_by_suite(&line).is_empty());
     }
 
+    #[test_id(tx4vq25)]
     #[test]
     fn rows_carry_the_envelope_and_typed_fields() {
         let line = render(
@@ -306,6 +308,7 @@ mod tests {
         assert_eq!(v["tier"], "");
     }
 
+    #[test_id(t1lpn7e)]
     #[test]
     fn append_writes_jsonl_under_run_tsd() {
         let dir = testkit::TempDir::new("testenv-timing");
@@ -316,6 +319,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[test_id(tf88rew)]
     #[test]
     fn means_skip_batch_rows_and_garbage() {
         let text = "{\"suite\":\"a\",\"wall_secs\":10}\n{\"suite\":\"a\",\"wall_secs\":20}\nnot json\n{\"suite\":\"__batch__\",\"wall_secs\":999}\n{\"suite\":\"b\"}\n";
@@ -325,6 +329,7 @@ mod tests {
         assert!(!m.contains_key("b"));
     }
 
+    #[test_id(tk0sjs2)]
     #[test]
     fn medians_take_the_newest_n_rows() {
         let text = "{\"ts\":\"2026-01-01T00:00:01Z\",\"suite\":\"a\",\"wall_secs\":100}\n\
@@ -349,6 +354,7 @@ mod tests {
         );
     }
 
+    #[test_id(t9nn2n4)]
     #[test]
     fn bd_totals_sum_the_first_field() {
         assert_eq!(bd_totals("12 bd list\n30 bd show\n"), (2, 42));

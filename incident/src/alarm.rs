@@ -39,6 +39,7 @@ pub fn line(title: &str, reference: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(te7cza3)]
     #[test]
     fn a_new_condition_notes_once_and_a_repeat_is_silent() {
         let (a, s) = decide("", "incident:x", 1000);
@@ -47,6 +48,7 @@ mod tests {
         assert!(!b);
     }
 
+    #[test_id(tnl54uz)]
     #[test]
     fn a_persisting_condition_reminds_once_per_interval() {
         let (_, s) = decide("", "incident:x", 1000);
@@ -56,6 +58,7 @@ mod tests {
         assert!(!again);
     }
 
+    #[test_id(ts0usbq)]
     #[test]
     fn another_condition_is_not_silenced_by_the_first() {
         let (_, s) = decide("", "incident:x", 1000);
@@ -64,6 +67,7 @@ mod tests {
         assert!(s.contains("incident:x\t1000") && s.contains("incident:y\t1001"));
     }
 
+    #[test_id(tr4pe04)]
     #[test]
     fn a_line_is_one_line() {
         assert_eq!(line("A\nB  C", "r"), "ALARM A B C [r]");

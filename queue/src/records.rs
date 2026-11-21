@@ -147,6 +147,7 @@ mod tests {
     use super::*;
     use crate::testutil::tmpdir;
 
+    #[test_id(t44qk4x)]
     #[test]
     fn kv_roundtrip_keeps_order_and_unknown_keys() {
         let t = "pr=12\nhead=abc\nmembers=a:1 b:2\nretries=0\nowner=batcher\n";
@@ -156,6 +157,7 @@ mod tests {
         assert_eq!(kv.members().len(), 2);
     }
 
+    #[test_id(t9vsvn3)]
     #[test]
     fn claim_then_release_restores_the_owner() {
         let kv = Kv::parse("pr=1\nowner=batcher\n");
@@ -169,6 +171,7 @@ mod tests {
         assert_eq!(r.render(), "pr=1\nowner=batcher\n");
     }
 
+    #[test_id(tf6d9vt)]
     #[test]
     fn owner_is_the_last_occurrence() {
         let kv = Kv::parse("owner=a\nx=1\nowner=b\n");
@@ -176,6 +179,7 @@ mod tests {
         assert_eq!(kv.get_first("owner"), Some("a"));
     }
 
+    #[test_id(tas1c8y)]
     #[test]
     fn seq_defaults_to_zero() {
         let d = tmpdir("seq");

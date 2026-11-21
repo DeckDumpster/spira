@@ -385,6 +385,7 @@ mod tests {
         b.iter().map(|x| format!("{x:02x}")).collect::<Vec<_>>().concat()
     }
 
+    #[test_id(tkjmkcv)]
     #[test]
     fn sha1_matches_the_published_vectors() {
         assert_eq!(hex(&sha1(b"abc")), "a9993e364706816aba3e25717850c26c9cd0d89d");
@@ -393,12 +394,14 @@ mod tests {
         assert_eq!(hex(&sha1(long)), "84983e441c3bd26ebaae4aa1f95129e5e54670f1");
     }
 
+    #[test_id(tcqncnv)]
     #[test]
     fn an_empty_password_sends_no_token_and_a_set_one_sends_twenty_bytes() {
         assert!(native_password_token("", b"01234567890123456789").is_empty());
         assert_eq!(native_password_token("pw", b"01234567890123456789").len(), 20);
     }
 
+    #[test_id(thiwh6o)]
     #[test]
     fn a_serialization_failure_is_a_lost_race_and_any_other_error_is_not() {
         let mut p = vec![0xff];
@@ -411,6 +414,7 @@ mod tests {
         assert!(matches!(err_packet(&q), ScriptFailure::CannotTell(_)));
     }
 
+    #[test_id(tyi0mc0)]
     #[test]
     fn length_encoded_integers_round_trip_every_width() {
         assert_eq!(lenenc_int(&[5]), Some((5, 1)));

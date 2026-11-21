@@ -123,6 +123,7 @@ pub fn self_quote(s: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tqqyrt7)]
     #[test]
     fn sanitize_strips_and_collapses() {
         assert_eq!(sanitize("hello\tworld\n\"x\""), "hello world x");
@@ -130,6 +131,7 @@ mod tests {
         assert_eq!(sanitize(""), "");
     }
 
+    #[test_id(twolof2)]
     #[test]
     fn sanitize_title_truncates_and_never_leaves_a_literal_equals() {
         // The allowlist already maps '=' to ' ' before the trailing `.replace("=", "-")`
@@ -141,6 +143,7 @@ mod tests {
         assert_eq!(sanitize_title(&long, 5), "xxxxx");
     }
 
+    #[test_id(tv38hpr)]
     #[test]
     fn rel_age_buckets() {
         assert_eq!(rel_age(5), "5s");
@@ -152,6 +155,7 @@ mod tests {
         assert_eq!(rel_age(172800), "2d");
     }
 
+    #[test_id(t4k1jco)]
     #[test]
     fn epoch_to_age_now_bucket_and_missing() {
         assert_eq!(epoch_to_age(None, 100), "?");
@@ -159,6 +163,7 @@ mod tests {
         assert_eq!(epoch_to_age(Some(0), 200), "3m");
     }
 
+    #[test_id(tp7ur48)]
     #[test]
     fn parse_iso8601_known_epoch() {
         // 2026-09-30T00:00:00Z — cross-checked against `date -u -d ... +%s`.
@@ -170,6 +175,7 @@ mod tests {
         assert_eq!(parse_iso8601("not-a-date"), None);
     }
 
+    #[test_id(thuy4m1)]
     #[test]
     fn self_quote_escapes_embedded_quotes() {
         assert_eq!(self_quote("plain"), "'plain'");

@@ -1935,6 +1935,7 @@ fn dispatch(args: &[String]) -> ExitCode {
 mod contract_tests {
     use super::contract_hint;
 
+    #[test_id(t2jnedn)]
     #[test]
     fn a_clause_not_met_prints_the_scaffold_hint_and_all_met_prints_none() {
         let red = "met landing: ok\nnot met deploy: no deploy.toml\n";
@@ -1949,6 +1950,7 @@ mod tests {
     use super::exit_for_told;
     use std::process::ExitCode;
 
+    #[test_id(tpm8ifr)]
     #[test]
     fn only_a_connected_but_silent_scheduler_exits_non_zero() {
         assert_eq!(format!("{:?}", exit_for_told(false)), format!("{:?}", ExitCode::FAILURE));

@@ -2369,6 +2369,7 @@ pub fn package_graph(metadata_json: &str) -> Option<batcher::unitattr::PackageGr
 mod local_red_ref_tests {
     use super::local_red_ref;
 
+    #[test_id(tdzjkl3)]
     #[test]
     fn key_is_bounded_and_distinguishes_detail() {
         let long = format!(
@@ -4933,12 +4934,14 @@ pub fn wait_lock(env: &Env, repo: &str, wait_secs: u64) -> Result<Option<Lock>, 
 mod land_tests {
     use super::*;
 
+    #[test_id(t01lexs)]
     #[test]
     fn a_full_host_filesystem_files_its_incident_under_the_host_disk_cause() {
         assert_eq!(local_red_cause("host-disk"), "host-disk");
         assert_eq!(local_red_cause("unattributed"), "local-round-red");
     }
 
+    #[test_id(tdlfbv2)]
     #[test]
     fn foreign_in_names_only_non_members() {
         let subj = |s: &str| s.to_string();
@@ -4965,6 +4968,7 @@ mod pool_parity_tests {
     /// a final refusal whose words mention a lock is not retried, and a busy exit is retried
     /// whatever its words. A final refusal misread as busy re-ran it; a busy lock misread as
     /// final abandoned the round as land-refused.
+    #[test_id(t9svmkb)]
     #[test]
     fn a_busy_lock_is_its_exit_code_never_its_words() {
         assert!(lock_busy(Some(QUEUE_LOCK_BUSY_EXIT)));
@@ -4973,6 +4977,7 @@ mod pool_parity_tests {
         assert!(!lock_busy(None));
     }
 
+    #[test_id(ts535y8)]
     #[test]
     fn an_eject_refused_for_a_running_pass_is_held_with_what_it_takes_to_issue_it_again() {
         let run = |code| VerbRun { code: Some(code), out: String::new(), err: "queue.sh round eject: a pass of round b is running (x.scope)\n".into() };
@@ -4985,6 +4990,7 @@ mod pool_parity_tests {
         assert!(eject_result(&run(0), "sp-a", "r", "").is_ok());
     }
 
+    #[test_id(tou71if)]
     #[test]
     fn the_pool_takes_a_submitted_unheld_bead_as_provisional_and_a_certified_one_as_not() {
         let rows = vec![
@@ -4996,6 +5002,7 @@ mod pool_parity_tests {
         assert_eq!(flags, [("sp-c", false), ("sp-s", true)]);
     }
 
+    #[test_id(tikkw37)]
     #[test]
     fn a_submitted_bead_held_or_at_its_ejected_red_tip_is_left_out_naming_its_cause() {
         let held = |kind: &str| serde_json::json!({"bead_id": "sp-h", "state": "SUBMITTED", "tip": "th", "holds": [kind]});
@@ -5010,6 +5017,7 @@ mod pool_parity_tests {
         assert_eq!(left[0].cause, Cause::EjectedRed);
     }
 
+    #[test_id(t6ohgxl)]
     #[test]
     fn another_repos_rows_never_enter_this_repos_pool_or_its_left_out_list() {
         let row = |id: &str, repo: &str, state: &str, holds: &[&str]| serde_json::json!({"bead_id": id, "repo": repo, "state": state, "tip": "t", "holds": holds});
@@ -5026,6 +5034,7 @@ mod pool_parity_tests {
         assert!(moved_tips(&pool, &branches).is_empty());
     }
 
+    #[test_id(t7vx0o2)]
     #[test]
     fn only_an_in_delivery_red_mark_that_bars_the_tip_and_follows_no_gate_pass_is_ejectable() {
         let row = |reason: &str, gate_key: serde_json::Value| serde_json::json!({"state": "IN_DELIVERY", "tip": "t", "reason": reason, "gate_key": gate_key});
@@ -5037,6 +5046,7 @@ mod pool_parity_tests {
         assert_eq!(gate_red_of("sp-a", &row("delivered-from-submitted", null)), None);
     }
 
+    #[test_id(tolbuup)]
     #[test]
     fn a_blocked_bead_is_named_with_its_dependency_once_per_tip() {
         let run = testkit::TempDir::new("batcher-cut-blocked");
@@ -5049,6 +5059,7 @@ mod pool_parity_tests {
         assert!(announce(&left).is_empty());
     }
 
+    #[test_id(t6d9dch)]
     #[test]
     fn the_cut_names_every_bead_it_refuses_with_its_own_cause() {
         let pool_left = vec![
@@ -5069,6 +5080,7 @@ mod pool_parity_tests {
         );
     }
 
+    #[test_id(to522kc)]
     #[test]
     fn the_pool_takes_a_certified_unheld_bead() {
         let rows = vec![
@@ -5079,6 +5091,7 @@ mod pool_parity_tests {
         assert_eq!((pool[0].0.as_str(), pool[0].1.as_str()), ("sp-c", "tc"));
     }
 
+    #[test_id(t44ky6q)]
     #[test]
     fn a_certified_bead_the_pool_leaves_out_is_named_once_per_cause() {
         let rows = vec![
@@ -5120,6 +5133,7 @@ mod pool_parity_tests {
         );
     }
 
+    #[test_id(tbgxy5x)]
     #[test]
     fn a_certified_tip_the_branch_moved_past_is_left_out_naming_the_branch_tip() {
         let row = |id: &str, tip: &str| (id.to_string(), tip.to_string(), 0, false, vec![], false);
@@ -5136,6 +5150,7 @@ mod pool_parity_tests {
         );
     }
 
+    #[test_id(t0knoks)]
     #[test]
     fn tip_current_admits_the_live_tip_and_excludes_a_moved_one() {
         let mut branches = BTreeMap::new();
@@ -5155,6 +5170,7 @@ mod pool_parity_tests {
             "no branch at all is not current"
         );
     }
+    #[test_id(t3wks9c)]
     #[test]
     fn a_member_stacked_on_a_held_bead_is_left_out_of_the_pool_and_returns_when_the_hold_lifts() {
         let member = |id: &str, prereq: Option<&str>| Member {
@@ -5201,6 +5217,7 @@ mod pool_parity_tests {
 mod result_path_tests {
     use super::*;
 
+    #[test_id(txs9lhr)]
     #[test]
     fn a_rounds_send_back_files_name_the_pass_and_the_attribution_and_two_ejects_share_one_entry() {
         let (ev, pass) = (tmpdir("sb-ev"), tmpdir("sb-pass"));
@@ -5223,6 +5240,7 @@ mod result_path_tests {
         testkit::TempDir::new(&format!("batcher-cut-results-{tag}"))
     }
 
+    #[test_id(tfbxxy0)]
     #[test]
     fn reads_result_one_level_down_under_the_batch_key() {
         let d = tmpdir("nested");
@@ -5231,6 +5249,7 @@ mod result_path_tests {
         assert_eq!(result_status(&d, "test-x.sh"), Some(true));
     }
 
+    #[test_id(tzg4e4x)]
     #[test]
     fn top_level_result_still_read() {
         let d = tmpdir("top");
@@ -5252,6 +5271,7 @@ mod result_path_tests {
         );
     }
 
+    #[test_id(tphuunp)]
     #[test]
     fn absent_result_is_not_final_and_never_green() {
         let d = tmpdir("absent");
@@ -5261,6 +5281,7 @@ mod result_path_tests {
     /// sp-gjx1b (testenv DESIGN.md §3.7): an undeclared SKIP/SKIP-REQ is reclassified to a
     /// plain `red` status — this reader keys on field 1 only, so it needs no change to block
     /// on it, exactly like any other red. A *declared* skip/skip-req still passes.
+    #[test_id(tjwvdm9)]
     #[test]
     fn an_undeclared_skip_reclassified_by_testenv_blocks_like_any_other_red() {
         let d = tmpdir("skip-contract");
@@ -5293,6 +5314,7 @@ mod result_path_tests {
     /// line — never "not final yet" (the `None` a half-written or absent file gets), and
     /// never a pass. This reader must say so on its own, not rely only on the caller's
     /// cross-check against the job's testenv exit code (vm.rs's own belt-and-suspenders).
+    #[test_id(thsrx1y)]
     #[test]
     fn a_fault_result_is_final_and_never_green() {
         let d = tmpdir("fault");
@@ -5322,6 +5344,7 @@ mod open_batch_tests {
         ]
     }
 
+    #[test_id(tb2urdj)]
     #[test]
     fn the_open_batch_is_what_queue_batch_show_printed_and_none_when_it_printed_nothing() {
         assert!(open_batch_from("").is_none());
@@ -5335,6 +5358,7 @@ mod open_batch_tests {
         );
     }
 
+    #[test_id(t1gaoyx)]
     #[test]
     fn queue_batch_open_answers_its_pr_and_whether_the_open_finished() {
         let run = |code, out: &str| VerbRun {
@@ -5358,6 +5382,7 @@ mod open_batch_tests {
 mod sifted_state_tests {
     use super::sifted_accepts;
 
+    #[test_id(t6djrau)]
     #[test]
     fn a_pass_is_recorded_only_where_the_machine_accepts_it() {
         assert!(sifted_accepts("SUBMITTED") && sifted_accepts("CERTIFIED"));
@@ -5369,6 +5394,7 @@ mod sifted_state_tests {
 mod fail_line_tests {
     use super::*;
 
+    #[test_id(tl82fvk)]
     #[test]
     fn a_red_rounds_suites_and_first_fail_lines_are_kept_on_disk_and_in_the_reason() {
         let run = testkit::TempDir::new("batcher-cut-red-evidence");
@@ -5396,6 +5422,7 @@ mod fail_line_tests {
         }
     }
 
+    #[test_id(tbucgnt)]
     #[test]
     fn keeping_a_rounds_results_prunes_only_its_repos_old_closed_rounds() {
         let run = testkit::TempDir::new("batcher-cut-prune-results");
@@ -5420,6 +5447,7 @@ mod fail_line_tests {
         assert!(kept.join("test-red.sh.out").exists());
     }
 
+    #[test_id(t3x0c4o)]
     #[test]
     fn a_red_rounds_suite_output_is_copied_under_the_rounds_results_and_named_in_the_reason() {
         let run = testkit::TempDir::new("batcher-cut-keep-results");
@@ -5452,6 +5480,7 @@ mod fail_line_tests {
         assert!(why.contains("evidence kept: "), "{why}");
     }
 
+    #[test_id(tlbh2e1)]
     #[test]
     fn kept_red_evidence_names_the_failed_tests_of_a_phase_and_outlives_the_next_passs_wipe() {
         let run = testkit::TempDir::new("batcher-cut-evidence-outlives");
@@ -5482,6 +5511,7 @@ mod fail_line_tests {
         (pass, corpus)
     }
 
+    #[test_id(tdjbyzs)]
     #[test]
     fn a_rerun_suites_output_is_laid_over_the_passs_after_the_round_tree_is_gone() {
         let run = testkit::TempDir::new("batcher-cut-overlay");
@@ -5494,6 +5524,7 @@ mod fail_line_tests {
         assert_eq!(fs::read_to_string(kept.join("test-a.sh.result")).unwrap(), "red\n");
     }
 
+    #[test_id(twayf3s)]
     #[test]
     fn an_attribution_without_a_pass_replaces_the_kept_results_and_one_with_a_pass_keeps_them() {
         let run = testkit::TempDir::new("batcher-cut-attr-end");
@@ -5506,6 +5537,7 @@ mod fail_line_tests {
         assert_eq!(fs::read_to_string(kept.join("test-b.sh.out")).unwrap(), "new");
     }
 
+    #[test_id(t92tr1z)]
     #[test]
     fn an_attribution_after_the_kept_pass_itself_leaves_its_results_in_place() {
         let run = testkit::TempDir::new("batcher-cut-attr-kept");
@@ -5516,6 +5548,7 @@ mod fail_line_tests {
         assert_eq!(fs::read_to_string(kept.join("test-a.sh.result")).unwrap(), "red\n");
     }
 
+    #[test_id(t0jjrkx)]
     #[test]
     fn an_attribution_after_the_kept_pass_under_another_spelling_leaves_its_results_in_place() {
         let run = testkit::TempDir::new("batcher-cut-attr-kept-spelling");
@@ -5526,6 +5559,7 @@ mod fail_line_tests {
         assert_eq!(fs::read_to_string(kept.join("test-a.sh.result")).unwrap(), "red\n");
     }
 
+    #[test_id(tnilu09)]
     #[test]
     fn an_attribution_that_ran_nothing_leaves_the_passs_output_kept_and_cited() {
         let run = testkit::TempDir::new("batcher-cut-overlay-empty");
@@ -5538,6 +5572,7 @@ mod fail_line_tests {
         assert!(why.contains("test-a.sh: not ok 1 - broke"), "{why}");
     }
 
+    #[test_id(tw13cks)]
     #[test]
     fn an_ejected_members_digest_is_built_from_its_red_suites_output_alone() {
         let d = testkit::TempDir::new("batcher-cut-ejection");
@@ -5548,6 +5583,7 @@ mod fail_line_tests {
         assert!(digest.contains("FAIL t::boom at x/y.rs:7") && digest.contains("it broke") && !digest.contains("all fine"), "{digest}");
     }
 
+    #[test_id(thmsrbv)]
     #[test]
     fn an_attributions_ejection_reads_the_red_from_the_pass_results() {
         let results = testkit::TempDir::new("batcher-cut-results");
@@ -5561,6 +5597,7 @@ mod fail_line_tests {
         assert!(red_suite_steps(results.path(), None, &suites[..1]).is_empty());
     }
 
+    #[test_id(te988qj)]
     #[test]
     fn a_sole_members_record_has_a_step_per_red_suite_only_when_the_suites_are_named_separately() {
         let results = testkit::TempDir::new("batcher-cut-sole-results");
@@ -5578,6 +5615,7 @@ mod fail_line_tests {
         assert!(!joined.contains("not ok"), "{joined}");
     }
 
+    #[test_id(tljv5r6)]
     #[test]
     fn each_open_round_carries_its_own_phase() {
         let out = "round=open\nphase=opened\nbatch_id=b1\nround2=open\nround2_phase=certifying\nround2_batch_id=b2\n";
@@ -5594,6 +5632,7 @@ mod fail_line_tests {
         );
     }
 
+    #[test_id(tcji1ce)]
     #[test]
     fn the_first_fail_line_is_found_and_absence_is_none() {
         assert_eq!(
@@ -5630,6 +5669,7 @@ mod fail_line_tests {
 mod land_exit_tests {
     use super::*;
 
+    #[test_id(tfor5k8)]
     #[test]
     fn a_deploy_fault_is_not_a_refusal() {
         assert_eq!(classify_land_exit(Some(0)), LandOutcome::Landed);
@@ -5644,6 +5684,7 @@ mod land_exit_tests {
     }
 
     /// sp-tjrjca: a base-moved refusal is told by its exit, never by its words.
+    #[test_id(tdltj8l)]
     #[test]
     fn a_base_moved_land_refusal_is_read_from_its_exit() {
         assert!(land_base_moved(Some(LAND_BASE_MOVED_EXIT)));
@@ -5651,6 +5692,7 @@ mod land_exit_tests {
     }
 
     /// sp-822b8l: the typed records of a refused open, one member each; other lines are not.
+    #[test_id(ti4ubny)]
     #[test]
     fn a_refused_open_names_each_member_by_its_typed_record() {
         let out = "refused=sp-1mspuc kind=integration why=sp-1mspuc: carried by integration sp-ggdrzb — lands with it, not admitted\nnoise\nrefused=sp-zr6wdz kind=round-conflict why=sp-zr6wdz: conflicts with the round — paths: a.rs\n";
@@ -5678,6 +5720,7 @@ mod land_exit_tests {
         }
     }
 
+    #[test_id(tg3tlix)]
     #[test]
     fn last_touching_names_the_newest_commit_on_the_paths_and_nothing_for_none() {
         let t = testkit::TempDir::new("batcher-cut-last-touching");
@@ -5709,6 +5752,7 @@ mod land_exit_tests {
         assert_eq!(last_touching(&repo, "HEAD", &[]), None);
     }
 
+    #[test_id(tb7u376)]
     #[test]
     fn a_red_ci_implicates_only_the_member_whose_changed_file_it_names() {
         let changed = vec![
@@ -5724,6 +5768,7 @@ mod land_exit_tests {
         assert_eq!(implicated("boom", &changed[..1]), vec!["sp-a".to_string()]);
     }
 
+    #[test_id(tju3g39)]
     #[test]
     fn a_filed_incident_is_the_id_in_the_typed_answer_not_the_last_line() {
         assert_eq!(filed_id("{\"id\":\"sp-abc\"}\n"), Ok("sp-abc".to_string()));
@@ -5736,6 +5781,7 @@ mod land_exit_tests {
         assert!(filed_id("").is_err());
     }
 
+    #[test_id(tawaqbu)]
     #[test]
     fn a_promotion_names_its_round_head_members_and_whether_it_was_attested() {
         let p = parse_promotion("pass ran\n{\"batch\":\"r2\",\"head\":\"abc\",\"members\":[{\"id\":\"sp-a\",\"tip\":\"t1\"},{\"id\":\"sp-b\",\"tip\":\"t2\"}],\"attested\":true}\n").unwrap();
@@ -5760,6 +5806,7 @@ mod land_exit_tests {
         );
     }
 
+    #[test_id(ttcppsv)]
     #[test]
     fn a_landing_clears_a_loop_pause_but_never_a_deliberate_hold() {
         let d = testkit::TempDir::new("batcher-cut-unpause");
@@ -5782,6 +5829,7 @@ mod land_exit_tests {
         assert!(pause.exists(), "a deliberate hold survives a landing");
     }
 
+    #[test_id(th805e4)]
     #[test]
     fn rounds_stacked_on_one_unlanded_head_share_one_incident_key() {
         let d = testkit::TempDir::new("batcher-cut-stacked-key");
@@ -5805,6 +5853,7 @@ mod land_exit_tests {
         );
     }
 
+    #[test_id(tyl34h2)]
     #[test]
     fn a_round_of_the_stores_view_is_listed_as_round_status_lists_it() {
         let record = store_view::Record {
@@ -5819,6 +5868,7 @@ mod land_exit_tests {
         );
     }
 
+    #[test_id(tu9esdp)]
     #[test]
     fn status_lists_every_open_round_with_its_head_and_age() {
         let out = "rounds=2\nround=open\nbatch_id=r1\nhead=h1\nmembers=sp-a:ta sp-b:tb\nworktree=/w/1\nwall_secs=90\nround2=open\nround2_batch_id=r2\nround2_head=h2\nround2_members=sp-c:tc\nround2_worktree=/w/2\nround2_red=test-x.sh\nround2_wall_secs=30\nstaged_members=sp-z\n";
@@ -5836,6 +5886,7 @@ mod land_exit_tests {
         assert!(open_rounds_of("round=none\nrepo=spira\n").is_empty());
     }
 
+    #[test_id(tj64txc)]
     #[test]
     fn status_lists_the_beads_a_round_has_had_ejected() {
         let out = "round=open\nbatch_id=r1\nejected=sp-a sp-b \nround2=open\nround2_batch_id=r2\nround2_ejected=sp-c \n";
@@ -5848,6 +5899,7 @@ mod land_exit_tests {
 mod wait_lock_tests {
     use super::*;
 
+    #[test_id(tf2kdhd)]
     #[test]
     fn a_held_queue_lock_beats_until_it_drops() {
         let d = testkit::TempDir::new("batcher-cut-beat");
@@ -5862,6 +5914,7 @@ mod wait_lock_tests {
         assert!(!beat.exists(), "the beat goes with the lock");
     }
 
+    #[test_id(tb57yj6)]
     #[test]
     fn a_leg_keeps_its_result_when_another_operation_holds_the_lock_past_the_wait() {
         let d = testkit::TempDir::new("batcher-cut-retake");
@@ -5888,6 +5941,7 @@ mod wait_lock_tests {
         );
     }
 
+    #[test_id(tuot37n)]
     #[test]
     fn touch_refreshes_a_stale_beat_file() {
         let d = testkit::TempDir::new("batcher-cut-beat2");
@@ -5956,12 +6010,14 @@ mod hypervisor_tests {
         }
     }
 
+    #[test_id(tt9ur8e)]
     #[test]
     fn two_round_vms_and_a_runner_must_fit() {
         assert!(hv(2 * 65536 + 16384, 65536).fits_a_staged_round());
         assert!(!hv(2 * 65536 + 16383, 65536).fits_a_staged_round());
     }
 
+    #[test_id(t3x416o)]
     #[test]
     fn an_unknown_size_never_fits() {
         assert!(!hv(0, 65536).fits_a_staged_round());
@@ -5973,6 +6029,7 @@ mod hypervisor_tests {
 mod shots_tests {
     use super::*;
 
+    #[test_id(tgxn6df)]
     #[test]
     fn a_members_pngs_are_linked_and_a_member_without_any_adds_nothing() {
         let tmp = testkit::TempDir::new("pr-shots");
@@ -6003,6 +6060,7 @@ mod round_status_tests {
 
     const STATUS: &str = "rounds=2\nopen_batches=old new\nround=open\nbatch_id=old\nmembers=a:1 b:2\nround2=open\nround2_batch_id=new\nround2_members=c:3\n";
 
+    #[test_id(tk1lv9r)]
     #[test]
     fn the_members_are_those_of_the_named_round_not_the_first_open_one() {
         assert_eq!(members_of_batch(STATUS, "new"), Some(vec!["c".to_string()]));
@@ -6018,6 +6076,7 @@ mod round_status_tests {
 mod forge_release_tests {
     use super::*;
 
+    #[test_id(tmh5ivt)]
     #[test]
     fn a_declared_forge_script_is_a_stand_in_run_with_bash_and_the_default_runs_in_process() {
         let dir = testkit::TempDir::new("batcher-forge-stand-in");
@@ -6038,6 +6097,7 @@ mod forge_release_tests {
         );
     }
 
+    #[test_id(tmj5xp0)]
     #[test]
     fn arming_reports_the_forges_lines_and_its_failure() {
         let r = |code| forge::client::Reply {
@@ -6049,6 +6109,7 @@ mod forge_release_tests {
         assert_eq!(armed("r", r(1)), Err("forge pr-arm-queue exited 1".into()));
     }
 
+    #[test_id(toc4tzu)]
     #[test]
     fn a_lifecycle_answer_reads_as_the_childs_did() {
         use spira_store::lc_call::{LcError, Reply};
@@ -6073,6 +6134,7 @@ mod forge_release_tests {
             .contains("cannot tell"));
     }
 
+    #[test_id(td9icok)]
     #[test]
     fn an_open_batch_the_store_cannot_vouch_for_could_not_say() {
         use spira_store::lc_call::LcError;
@@ -6107,6 +6169,7 @@ mod forge_release_tests {
         );
     }
 
+    #[test_id(ttdfsmt)]
     #[test]
     fn a_certify_failure_is_typed_by_its_exit_code_and_stale_image_never_by_the_code() {
         let kind = |code, err: &str| {
@@ -6142,12 +6205,14 @@ mod ci_red_suites_tests {
         d
     }
 
+    #[test_id(touifsv)]
     #[test]
     fn a_ci_red_names_the_suites_the_repos_testenv_declares_not_a_literal_ci() {
         let d = tree(Some("[tier.gate]\ncommand = \"true\"\n"));
         assert_eq!(ci_red_suites(d.path()), vec!["gate".to_string()]);
     }
 
+    #[test_id(tprhfzm)]
     #[test]
     fn a_ci_red_on_a_tree_declaring_no_suite_names_the_whole_testenv_run() {
         assert_eq!(
@@ -6165,6 +6230,7 @@ mod ci_red_suites_tests {
 mod adds_path_tests {
     use super::adds_path;
 
+    #[test_id(t88iwrx)]
     #[test]
     fn a_tip_adds_only_the_file_it_creates_not_one_it_edits() {
         let root = testkit::TempDir::new("adds-path");
@@ -6239,6 +6305,7 @@ mod abandon_hold_tests {
         }
     }
 
+    #[test_id(t50nz1o)]
     #[test]
     fn an_abandon_after_zero_ejects_does_not_claim_an_ejection() {
         let unknown = abandon_considered("red", None);
@@ -6250,6 +6317,7 @@ mod abandon_hold_tests {
         assert!(some.contains("after ejecting 2 member(s)"), "{some}");
     }
 
+    #[test_id(tse5clv)]
     #[test]
     fn a_refused_abandon_holds_the_next_cut_until_the_round_is_abandoned() {
         let d = testkit::TempDir::new("abandon-hold");
@@ -6266,6 +6334,7 @@ mod abandon_hold_tests {
         );
     }
 
+    #[test_id(t3xy3as)]
     #[test]
     fn an_unconverged_abandon_carries_its_cause_and_the_probe_summary_as_considered() {
         let d = testkit::TempDir::new("abandon-considered");
@@ -6290,6 +6359,7 @@ mod abandon_hold_tests {
         }
     }
 
+    #[test_id(tuco7uf)]
     #[test]
     fn the_attribution_progress_is_written_beside_the_pass_counts_already_stored() {
         let lc = std::sync::Arc::new(Lc(Default::default()));
@@ -6306,6 +6376,7 @@ mod abandon_hold_tests {
         assert_eq!(body["attribution"]["probes"], 3);
     }
 
+    #[test_id(tlzoa7b)]
     #[test]
     fn an_already_ended_round_clears_its_refusal_record() {
         let d = testkit::TempDir::new("abandon-hold-ended");
@@ -6319,6 +6390,7 @@ mod abandon_hold_tests {
         assert!(files.abandon_refused().is_none());
     }
 
+    #[test_id(t3itpu6)]
     #[test]
     fn a_refused_round_that_was_abandoned_by_hand_stops_holding() {
         let d = testkit::TempDir::new("abandon-hold-hand");
@@ -6328,6 +6400,7 @@ mod abandon_hold_tests {
         fs::remove_file(d.path().join("live")).unwrap();
         assert_eq!(abandon_hold(&e, &r), None);
     }
+    #[test_id(t5bmhli)]
     #[test]
     fn the_package_graph_holds_each_dir_relative_to_the_root_and_only_workspace_dependencies() {
         let meta = r#"{"workspace_root":"/w","packages":[
@@ -6339,6 +6412,7 @@ mod abandon_hold_tests {
         assert!(package_graph("not json").is_none());
     }
 
+    #[test_id(tbm873w)]
     #[test]
     fn the_package_graph_maps_each_test_target_to_the_packages_that_have_it() {
         let meta = r#"{"workspace_root":"/w","packages":[
@@ -6376,6 +6450,7 @@ mod leftover_path_tests {
         wt
     }
 
+    #[test_id(ta0ptym)]
     #[test]
     fn a_leftover_directory_at_the_worktree_path_is_cleared_and_the_outcome_says_so() {
         let root = testkit::TempDir::new("leftover-clear");
@@ -6387,6 +6462,7 @@ mod leftover_path_tests {
         assert!(!wt.join("target").exists(), "the leftover files are gone");
     }
 
+    #[test_id(tezxcbg)]
     #[test]
     fn a_registered_worktree_is_reset_not_cleared() {
         let root = testkit::TempDir::new("leftover-registered");
@@ -6397,6 +6473,7 @@ mod leftover_path_tests {
         assert_eq!(worktree_reset(&repo, &wt, &sha), Ok(None));
     }
 
+    #[test_id(tikfwbz)]
     #[test]
     fn a_leftover_directory_a_process_works_in_is_refused_naming_the_process() {
         let root = testkit::TempDir::new("leftover-held");
@@ -6422,6 +6499,7 @@ mod config_key_tests {
         testkit::git(d, &["rev-parse", "HEAD"]).trim().to_string()
     }
 
+    #[test_id(t8cwr6r)]
     #[test]
     fn a_tip_that_retires_a_fixture_key_and_adds_a_registry_key_reports_both_and_a_bystander_none() {
         let root = testkit::TempDir::new("config-keys");
@@ -6446,6 +6524,7 @@ mod config_key_tests {
         assert_eq!(config_key_changes(&repo, &base, &by), (vec![], vec![]));
     }
 
+    #[test_id(t3tb7o2)]
     #[test]
     fn two_clean_merged_removed_lines_are_a_delta_that_does_not_parse_and_one_alone_is_not() {
         let root = testkit::TempDir::new("config-delta-merge");
@@ -6470,6 +6549,7 @@ mod config_key_tests {
         assert!(!parses("HEAD"), "git merged both lines without a conflict, and the result is not TOML");
     }
 
+    #[test_id(twj1x9f)]
     #[test]
     fn two_merged_fragments_are_a_delta_that_parses_with_both_retirements() {
         let root = testkit::TempDir::new("config-delta-fragments");
@@ -6498,6 +6578,7 @@ mod config_key_tests {
 mod eject_args_tests {
     use super::{eject_args, round_argv};
 
+    #[test_id(t1qvuvz)]
     #[test]
     fn the_batchers_eject_names_the_batcher() {
         let a = eject_args("r9", "spira", "sp-a", "");
@@ -6505,6 +6586,7 @@ mod eject_args_tests {
         assert_eq!(a[i + 1], "batcher", "{a:?}");
     }
 
+    #[test_id(tvckgo0)]
     #[test]
     fn open_land_and_abandon_are_run_as_the_batcher_and_status_is_left_alone() {
         for verb in ["open", "land", "abandon"] {
@@ -6524,12 +6606,14 @@ mod eject_args_tests {
         assert_eq!(e.iter().filter(|x| *x == "--by").count(), 1, "{e:?}");
     }
 
+    #[test_id(t3lcb66)]
     #[test]
     fn an_eject_naming_no_suite_sends_neither_red_nor_suites() {
         let a = eject_args("r9", "spira", "sp-a", "");
         assert!(!a.iter().any(|x| x == "--red" || x == "--suites"), "{a:?}");
     }
 
+    #[test_id(tli6tv6)]
     #[test]
     fn an_eject_naming_a_suite_sends_it_as_suites() {
         let a = eject_args("r9", "spira", "sp-a", "test-b.sh");
@@ -6537,6 +6621,7 @@ mod eject_args_tests {
         assert_eq!(a[i + 1], "test-b.sh");
     }
 
+    #[test_id(tvgahvt)]
     #[test]
     fn a_returned_members_reason_leads_with_the_mender_and_keeps_the_first_fail_line() {
         let fails = [("test-x.sh".to_string(), "boom at x.rs:9".to_string())];
@@ -6553,6 +6638,7 @@ mod eject_args_tests {
 mod reap_attribution_tests {
     use super::*;
 
+    #[test_id(t8fjfud)]
     #[test]
     fn reaping_takes_only_this_repositorys_attribution_branches() {
         let t = testkit::TempDir::new("batcher-cut-reap-attr");
@@ -6567,6 +6653,7 @@ mod reap_attribution_tests {
         assert_eq!(testkit::git(d, &["for-each-ref", "--format=%(refname:short)", "refs/heads/spira/"]), "spira/batcher-attr/other-1");
     }
 
+    #[test_id(t46gbwr)]
     #[test]
     fn a_branch_git_will_not_delete_comes_back_with_its_reason() {
         let t = testkit::TempDir::new("batcher-cut-reap-fail");

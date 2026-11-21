@@ -42,5 +42,6 @@ spira-lint = { path = "../spira-lint" }
 sop = { path = "../sop" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 bead = { path = "../bead" }

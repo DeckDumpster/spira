@@ -14,6 +14,7 @@ spira_runtime::family_a_acceptance! {
     // The row's 2-min cadence: the row has no first-boot delay, so the boot tick arms the pass
     // one cadence later (the old timer's OnBootSec=180 s is not modelled).
     first_timer_ms: CADENCE_MS,
+    test_ids: [ #[test_id(tmjol7w)] #[test_id(t74m7gn)] #[test_id(tzqbw3l)] #[test_id(tcws2mk)] #[test_id(t0jyubx)] ],
 }
 
 const NOW: u64 = 1_793_000_000_000;
@@ -44,6 +45,7 @@ fn busy() -> Snapshot {
     Snapshot { rows: Some(vec![Row { id: "sp-a".into(), state: "WORKING".into(), version: 3, holder: Some("dwarf-1".into()), lease_until_ms: Some(NOW - 3_600_000), ..Row::default() }]), ..idle() }
 }
 
+#[test_id(tpfx617)]
 #[test]
 fn t3_every_row_of_the_state_table_is_taken() {
     for (from, on, to) in TABLE {
@@ -51,6 +53,7 @@ fn t3_every_row_of_the_state_table_is_taken() {
     }
 }
 
+#[test_id(thh29x0)]
 #[test]
 fn t3_another_unit_while_awaiting_landing_is_ignored_and_acting_x_tick_is_refused_naming_acting() {
     assert_eq!(step(State::AwaitingLanding, Trigger::OtherUnitRan), Ok(State::AwaitingLanding));
@@ -58,6 +61,7 @@ fn t3_another_unit_while_awaiting_landing_is_ignored_and_acting_x_tick_is_refuse
     assert!(refused.to_lowercase().contains("acting"), "{refused}");
 }
 
+#[test_id(t57wkc7)]
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
     let mut r = rig(1, Snapshot { plan_ready: Some(2), ..busy() });
@@ -68,6 +72,7 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 
 /// `tests.rs` `check2_stops_a_live_holder_before_reclaiming_and_refuses_when_it_will_not_stop`:
 /// a stale lease with a live holder stops the holder; no reclaim rides the same pass.
+#[test_id(t3o1goo)]
 #[test]
 fn t5_check2_stops_a_live_holder_before_reclaiming() {
     let (_, acts) = decide(&Carry::default(), &busy());
@@ -78,6 +83,7 @@ fn t5_check2_stops_a_live_holder_before_reclaiming() {
 /// `tests.rs` `close_landed_queue_waiters_reads_the_label_not_bd_status`: a labeled waiter whose
 /// own row is LANDED is closed and released by its label and row, whatever bd says (sp-w is
 /// LANDED with bd status open); a labeled WORKING one (sp-x) is not closed.
+#[test_id(tihr1wi)]
 #[test]
 fn t5_check3b_releases_a_landed_queue_waiter_by_its_label() {
     let snap = Snapshot {
@@ -99,6 +105,7 @@ fn t5_check3b_releases_a_landed_queue_waiter_by_its_label() {
 /// `waiters.rs` `labeled_set_is_claimable_by_the_lifecycle_row`: the waiter set is the labeled
 /// beads whose row is claimable; a labeled bead with no lifecycle row is left alone, whatever
 /// its content status.
+#[test_id(tapbn54)]
 #[test]
 fn t5_check3b_leaves_a_waiter_with_no_lifecycle_row_alone() {
     let snap = Snapshot { beads: Some(vec![Bead { id: "sp-n".into(), title: "no row".into(), labels: vec![QUEUE_WAIT.into()], deps: vec![], status: "open".into(), ..Bead::default() }]), ..idle() };
@@ -108,6 +115,7 @@ fn t5_check3b_leaves_a_waiter_with_no_lifecycle_row_alone() {
 
 /// The production spellings only: `WORKING` is the leased state (a `CLAIMED` row is not one),
 /// and the waiting label has no default — it is the pinned `SPIRA_QUEUE_WAIT_LABEL`.
+#[test_id(ts6zydl)]
 #[test]
 fn t5_the_checks_read_the_production_spellings_only() {
     assert_eq!(Labels::default().queue_wait, "", "no fixture default for the label");
@@ -119,6 +127,7 @@ fn t5_the_checks_read_the_production_spellings_only() {
 }
 
 /// CHECK 7 (`pass.rs:520`): plan beads ready hand off to the call as `call.wanted`, never a fork.
+#[test_id(t9afhkw)]
 #[test]
 fn t5_check7_hands_off_to_the_call() {
     let (_, acts) = decide(&Carry::default(), &Snapshot { plan_ready: Some(3), ..idle() });
@@ -126,6 +135,7 @@ fn t5_check7_hands_off_to_the_call() {
 }
 
 /// `pass.rs:421-426`, `lifecycle.rs:192-199`: unreadable rows make no lifecycle decision.
+#[test_id(t87k3mw)]
 #[test]
 fn t5_unreadable_rows_decide_nothing_about_leases() {
     let (_, acts) = decide(&Carry::default(), &Snapshot { rows: None, ..busy() });
@@ -134,6 +144,7 @@ fn t5_unreadable_rows_decide_nothing_about_leases() {
 
 /// CHECK 7's hand-off lands on sentinel-call's own stream (`Command::EmitTo`), where its handler
 /// hears it; on this task's stream nobody would.
+#[test_id(tvom4fm)]
 #[test]
 fn t5_check7_call_wanted_is_delivered_to_the_call() {
     let r = rig(1, Snapshot { plan_ready: Some(3), ..idle() });
@@ -144,6 +155,7 @@ fn t5_check7_call_wanted_is_delivered_to_the_call() {
 
 /// CHECK 6's leg starts under the properties `systemd-run` gave it (`dispatch.rs`): the pinned
 /// `SPIRA_LAND_MAXSEC` as `RuntimeMaxSec`, both streams appended to `landing.log`.
+#[test_id(t1ztxqn)]
 #[test]
 fn t5_check6_the_landing_leg_carries_its_runtime_bound_and_its_log() {
     let (_, acts) = decide(&Carry::default(), &Snapshot { landing_active: false, land_maxsec: 900, ..idle() });
@@ -163,6 +175,7 @@ fn asks(acts: &[Act]) -> Vec<Act> {
     effects(acts, ASK)
 }
 
+#[test_id(tuy6li3)]
 #[test]
 fn t5_check6_a_leg_that_completed_nothing_within_the_stale_window_asks_the_concierge_once() {
     let (next, acts) = decide(&Carry::default(), &stale());
@@ -175,6 +188,7 @@ fn t5_check6_a_leg_that_completed_nothing_within_the_stale_window_asks_the_conci
     assert_eq!(next.land_escalated_at_ms, Some(NOW));
 }
 
+#[test_id(tmr8f04)]
 #[test]
 fn t5_check6_the_land_escalation_waits_out_its_cooldown() {
     let carry = Carry { land_escalated_at_ms: Some(NOW - 3_599_000), ..Carry::default() };
@@ -185,6 +199,7 @@ fn t5_check6_the_land_escalation_waits_out_its_cooldown() {
     assert_eq!(asks(&decide(&carry, &stale()).1).len(), 1, "at the cooldown it asks again");
 }
 
+#[test_id(t8u1ahi)]
 #[test]
 fn t5_check6_no_land_escalation_while_the_leg_runs_or_a_landing_is_fresh() {
     assert!(asks(&decide(&Carry::default(), &Snapshot { landing_active: true, ..stale() }).1).is_empty());
@@ -219,6 +234,7 @@ fn pilgrimage_world() -> Snapshot {
 /// CHECK 1 (`pilgrimage.sh check`): a complete epic of the partition is announced once and
 /// closed; one outside the partition is not; a live unlanded child branch defers it; one that
 /// grew again loses its marker.
+#[test_id(thmdzbk)]
 #[test]
 fn t5_check1_a_complete_pilgrimage_is_announced_once_and_closed() {
     let (carry, acts) = decide(&Carry::default(), &pilgrimage_world());
@@ -236,6 +252,7 @@ fn t5_check1_a_complete_pilgrimage_is_announced_once_and_closed() {
 }
 
 /// CHECK 2b: strand's classification names stranded work, so strand acts this pass.
+#[test_id(trtupls)]
 #[test]
 fn t5_check2b_stranded_work_runs_strand() {
     assert!(effects(&decide(&Carry::default(), &idle()).1, STRAND).is_empty(), "nothing stranded, no act");
@@ -245,6 +262,7 @@ fn t5_check2b_stranded_work_runs_strand() {
 
 /// CHECK 2c (`lifecycle.rs` check2c): rows whose holder and state disagree are detected,
 /// recorded in the carry (journaled when the finding changes), and nothing is written.
+#[test_id(thzwuar)]
 #[test]
 fn t5_check2c_inconsistent_rows_are_recorded_not_acted_on() {
     let snap = Snapshot { rows: Some(vec![row("sp-i", "WORKING"), Row { holder: Some("dwarf-9".into()), ..row("sp-l", "LANDED") }]), ..idle() };
@@ -255,6 +273,7 @@ fn t5_check2c_inconsistent_rows_are_recorded_not_acted_on() {
 
 /// CHECK 2d (`holds.rs`): an ask hold whose ask is gone is withdrawn after the grace; a held
 /// share of READY over a quarter is announced; a stale stack-conflict marker is announced.
+#[test_id(tqzbhd7)]
 #[test]
 fn t5_check2d_stale_ask_holds_starvation_and_stack_conflicts() {
     let held = |id: &str| Row { holds: vec!["ask".into()], updated_at_ms: Some(NOW - 20_000_000), ..row(id, "READY") };
@@ -277,6 +296,7 @@ fn starved_plan() -> Snapshot {
 }
 
 /// CHECK 3: a starved plan recomputes the stale blocked flags; a moving one does not.
+#[test_id(tph3z1i)]
 #[test]
 fn t5_check3_a_starved_plan_recomputes_blocked() {
     assert_eq!(effects(&decide(&Carry::default(), &starved_plan()).1, RECOMPUTE_BLOCKED).len(), 1);
@@ -286,6 +306,7 @@ fn t5_check3_a_starved_plan_recomputes_blocked() {
 
 /// CHECK 3c (`open_children.rs`, `red_trackers.rs`): a ready parent with an open child takes
 /// the open-children label; a red tracker whose fixes all landed is closed.
+#[test_id(t77kv8z)]
 #[test]
 fn t5_check3c_open_children_and_landed_red_trackers() {
     let snap = Snapshot {
@@ -302,6 +323,7 @@ fn t5_check3c_open_children_and_landed_red_trackers() {
 
 /// CHECK 8 (`judge.rs`): a starved plan where nothing moved is judged once per cooldown, with
 /// the open plan beads it is shown; inside the cooldown it is not.
+#[test_id(tffxvzt)]
 #[test]
 fn t5_check8_a_starved_plan_is_judged_once_per_cooldown() {
     // CHECK 3's recompute rides the same pass; it is not progress until it frees a bead.
@@ -317,6 +339,7 @@ fn t5_check8_a_starved_plan_is_judged_once_per_cooldown() {
 }
 
 /// T3: a pilgrimage close that failed drops its marker, so the next pass retries it.
+#[test_id(tap7n4v)]
 #[test]
 fn t3_a_failed_pilgrimage_close_is_retried() {
     let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, |_| Ok(serde_json::to_string(&pilgrimage_world()).unwrap())).double(PILGRIMAGE_CLOSE, |_| Err("a subscriber could not be reached".into()));
@@ -335,12 +358,14 @@ fn at_work() -> TaskRig {
     r
 }
 
+#[test_id(t7737z9)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&at_work(), NAME);
     assert!(rows.iter().any(|k| k == "state"), "{rows:?}");
 }
 
+#[test_id(tl3vdas)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));

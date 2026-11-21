@@ -78,6 +78,7 @@ mod tests {
     use super::*;
     use crate::testing::{Fake, Mode};
 
+    #[test_id(tp3wtuu)]
     #[test]
     fn a_clear_with_nothing_firing_writes_nothing() {
         let ops = Fake::default();
@@ -87,11 +88,13 @@ mod tests {
         assert!(ops.calls().is_empty());
     }
 
+    #[test_id(timh041)]
     #[test]
     fn the_message_leads_with_the_title() {
         assert_eq!(message_of("Loop stalled\nmore", "evidence"), "Loop stalled\n\nevidence");
     }
 
+    #[test_id(t2dwaag)]
     #[test]
     fn the_probe_writes_a_condition_that_never_fires_and_a_timeout_is_saturation() {
         let ops = Fake::default();

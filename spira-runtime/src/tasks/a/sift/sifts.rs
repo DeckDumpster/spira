@@ -645,6 +645,7 @@ pub fn lc_note(lc: &LcClient, id: &str, text: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test_id(tnvtcuj)]
     #[test]
     fn a_row_held_only_manual_is_screened_and_any_other_hold_keeps_it_out() {
         let row = |holds: serde_json::Value| serde_json::json!({"bead_id": "sp-a", "state": "SUBMITTED", "tip": "t1", "holds": holds});
@@ -677,6 +678,7 @@ mod tests {
         }
     }
 
+    #[test_id(t52ommm)]
     #[test]
     fn an_empty_evidence_text_is_refused_before_any_store_call() {
         let lc = spira_store::lc_call::LcClient::over(std::sync::Arc::new(NeverCalled), true);
@@ -684,6 +686,7 @@ mod tests {
         assert!(e.contains("sp-a") && e.contains("no evidence"), "{e}");
     }
 
+    #[test_id(td6mc4t)]
     #[test]
     fn the_open_round_is_the_store_record_the_queue_shows() {
         let show = |repo: &str| -> Result<String, String> {
@@ -719,6 +722,7 @@ mod tests {
         store_view::Projection::new(client, stale, std::sync::Arc::new(clock))
     }
 
+    #[test_id(tlex74n)]
     #[test]
     fn the_open_batch_is_read_from_the_store_views_and_a_refused_read_could_not_say() {
         let listed = serde_json::json!({"ok": {"list_rev": 4, "items": [
@@ -739,6 +743,7 @@ mod tests {
         assert!(e.starts_with("could not say:") && e.contains("stale past"), "{e}");
     }
 
+    #[test_id(tderzi2)]
     #[test]
     fn a_pool_row_held_ejected_at_its_tip_or_out_of_the_pool_states_is_not_screened() {
         let rows: Vec<Value> = serde_json::from_str(
@@ -759,6 +764,7 @@ mod tests {
         );
     }
 
+    #[test_id(tlxb0c3)]
     #[test]
     fn a_member_stacked_on_a_dropped_member_is_dropped_too() {
         let m = |id: &str, on: &[&str]| Member {

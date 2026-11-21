@@ -1,6 +1,8 @@
 //! The shell script is the subject (the binary-spawning exception): its drill functions are
 //! extracted and run under `bash` against stub `dolt` and `spira-lc`. No shell suite may grow.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::process::Command;
 
 const SCRIPT: &str = include_str!("../../spira/lc-backup.sh");
@@ -109,6 +111,7 @@ fn drill_with(args: &str, restored: &str, contains: &str, contains_err: &str, he
     }
 }
 
+#[test_id(tt9uyw8)]
 #[test]
 fn a_restored_head_newer_than_the_stamped_head_that_contains_it_passes_naming_both() {
     let r = drill("--db alpha", "rrrr", "1", "", "", "");
@@ -116,6 +119,7 @@ fn a_restored_head_newer_than_the_stamped_head_that_contains_it_passes_naming_bo
     assert!(r.verdict.contains("restored head rrrr is newer than the stamped head hhhh"), "{}", r.verdict);
 }
 
+#[test_id(tvpf22g)]
 #[test]
 fn a_stamped_head_absent_from_the_restored_history_fails_naming_both_heads_and_the_manifest() {
     let r = drill("--db alpha", "rrrr", "0", "", "", "");
@@ -126,6 +130,7 @@ fn a_stamped_head_absent_from_the_restored_history_fails_naming_both_heads_and_t
     assert!(r.verdict.lines().all(|l| !l.trim_end().ends_with(':')), "{}", r.verdict);
 }
 
+#[test_id(todwyl8)]
 #[test]
 fn a_failing_restored_query_carries_its_stderr_and_exit_code() {
     let r = drill("--db alpha", "rrrr", "", "boom", "", "");
@@ -133,6 +138,7 @@ fn a_failing_restored_query_carries_its_stderr_and_exit_code() {
     assert!(r.verdict.contains("boom") && r.verdict.contains("exit 3"), "{}", r.verdict);
 }
 
+#[test_id(tweqrbr)]
 #[test]
 fn a_named_manifest_is_assembled_by_name_and_its_head_comes_from_the_file_name() {
     let r = drill("--db alpha --manifest \"$MANIFEST\"", "hhhh", "1", "", "", "");
@@ -140,12 +146,14 @@ fn a_named_manifest_is_assembled_by_name_and_its_head_comes_from_the_file_name()
     assert!(r.assembled.contains("--manifest ") && r.assembled.contains("20261120T164737186Z-hhhh") && !r.assembled.contains("--state"), "{}", r.assembled);
 }
 
+#[test_id(tr9u3ul)]
 #[test]
 fn a_manifest_without_a_database_is_refused() {
     let r = drill("--manifest \"$MANIFEST\"", "hhhh", "1", "", "", "");
     assert_eq!(r.code, Some(2), "{}", r.out);
 }
 
+#[test_id(t3dq5yl)]
 #[test]
 fn a_failing_head_query_is_a_failure_carrying_its_stderr_even_when_containment_answers_one() {
     let r = drill("--db alpha", "", "1", "", "headboom", "");
@@ -153,6 +161,7 @@ fn a_failing_head_query_is_a_failure_carrying_its_stderr_even_when_containment_a
     assert!(r.verdict.contains("headboom") && r.verdict.contains("exit 4"), "{}", r.verdict);
 }
 
+#[test_id(tmc49dy)]
 #[test]
 fn a_silent_restore_failure_still_explains_itself() {
     let r = drill("--db alpha", "rrrr", "1", "", "", "fail");
@@ -160,6 +169,7 @@ fn a_silent_restore_failure_still_explains_itself() {
     assert!(r.verdict.contains("restore of 20261120T164737186Z-hhhh failed: (no output)"), "{}", r.verdict);
 }
 
+#[test_id(tcmvs0j)]
 #[test]
 fn only_a_drill_of_the_newest_backup_records_drill_ok() {
     assert!(drill("--db alpha", "hhhh", "1", "", "", "").drill_ok);
@@ -173,6 +183,7 @@ fn seconds_of(verdict: &str, phase: &str) -> bool {
     !n.is_empty() && rest[n.len()..].starts_with('s')
 }
 
+#[test_id(tm7d3h0)]
 #[test]
 fn a_passing_dolt_drill_verdict_carries_the_seconds_of_each_phase() {
     let r = drill("--db alpha", "hhhh", "1", "", "", "");
@@ -182,6 +193,7 @@ fn a_passing_dolt_drill_verdict_carries_the_seconds_of_each_phase() {
     }
 }
 
+#[test_id(tszwx7v)]
 #[test]
 fn a_failing_dolt_drill_carries_the_phases_that_ran_before_the_failure() {
     let r = drill("--db alpha", "rrrr", "1", "", "", "fail");
@@ -190,6 +202,7 @@ fn a_failing_dolt_drill_carries_the_phases_that_ran_before_the_failure() {
     assert!(!r.verdict.contains("head check"), "{}", r.verdict);
 }
 
+#[test_id(tzhqh1x)]
 #[test]
 fn the_control_verdict_keeps_the_drill_ok_line_and_its_seconds() {
     let r = drill("--db control", "hhhh", "1", "", "", "");
@@ -203,6 +216,7 @@ fn phase_seconds(verdict: &str, phase: &str) -> u64 {
     verdict[at..].chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap()
 }
 
+#[test_id(tjruezk)]
 #[test]
 fn a_phase_clock_counts_the_seconds_the_phase_took() {
     let r = drill_with("--db alpha", "hhhh", "1", "", "", "", DRILL_OUT, "1");
@@ -213,6 +227,7 @@ fn a_phase_clock_counts_the_seconds_the_phase_took() {
     assert_eq!(phase_seconds(&r.verdict, "assemble"), 0, "{}", r.verdict);
 }
 
+#[test_id(tqjk9s9)]
 #[test]
 fn a_control_drill_without_a_drill_ok_line_fails_rather_than_passing_on_another_line() {
     let r = drill_with("--db control", "hhhh", "1", "", "", "", "sqlite-checkpoint: fine", "");

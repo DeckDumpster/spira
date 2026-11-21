@@ -59,24 +59,28 @@ pub fn lc_bin() -> Result<String, String> {
 mod tests {
     use super::*;
 
+    #[test_id(tlychht)]
     #[test]
     fn cockpit_db_env_used_when_present_and_valid() {
         let r = resolve_db(Some("db1"), Some("db2"), |p| p == Path::new("db1/.beads"));
         assert_eq!(r.unwrap(), PathBuf::from("db1"));
     }
 
+    #[test_id(t1l6yt6)]
     #[test]
     fn falls_back_to_spira_db_when_cockpit_db_unset() {
         let r = resolve_db(None, Some("db2"), |p| p == Path::new("db2/.beads"));
         assert_eq!(r.unwrap(), PathBuf::from("db2"));
     }
 
+    #[test_id(twykcgk)]
     #[test]
     fn falls_back_to_spira_db_when_cockpit_db_empty() {
         let r = resolve_db(Some(""), Some("db2"), |p| p == Path::new("db2/.beads"));
         assert_eq!(r.unwrap(), PathBuf::from("db2"));
     }
 
+    #[test_id(td7hlsp)]
     #[test]
     fn refuses_with_named_path_when_no_beads_dir() {
         let r = resolve_db(Some("nope"), None, |_| false);
@@ -86,6 +90,7 @@ mod tests {
         );
     }
 
+    #[test_id(tsdf992)]
     #[test]
     fn refuses_with_empty_path_when_neither_set() {
         let r = resolve_db(None, None, |_| false);
@@ -95,6 +100,7 @@ mod tests {
         );
     }
 
+    #[test_id(t7shg4r)]
     #[test]
     fn cockpit_db_takes_precedence_over_spira_db_even_when_spira_db_would_validate() {
         // COCKPIT_DB set (even if it won't validate) must not silently fall through to

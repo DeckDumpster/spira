@@ -36,6 +36,7 @@ pub fn check_test_id(id: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test_id(tqccdgg)]
     #[test]
     fn the_three_shapes_are_accepted() {
         for ok in [
@@ -48,6 +49,7 @@ mod tests {
         }
     }
 
+    #[test_id(tgwfflh)]
     #[test]
     fn other_shapes_are_refused() {
         for bad in [
@@ -68,6 +70,7 @@ mod tests {
         }
     }
 
+    #[test_id(t5iy9xd)]
     #[test]
     fn bead_ids_are_plain_ref_components() {
         assert!(valid_bead_id("sp-zr8wi1") && valid_bead_id("a_b.c"));

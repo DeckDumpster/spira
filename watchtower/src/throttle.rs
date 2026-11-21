@@ -262,6 +262,7 @@ mod tests {
     // --- the critical pair -----------------------------------------------------------
 
     // covers: UC-landing-merge-queue-12
+    #[test_id(tgxfhax)]
     #[test]
     fn engage_when_depth_high_and_drain_active() {
         assert_eq!(
@@ -273,12 +274,14 @@ mod tests {
     }
 
     // covers: UC-landing-merge-queue-12
+    #[test_id(t1wsmrb)]
     #[test]
     fn stall_not_engage_when_depth_high_and_drain_zero() {
         assert_eq!(decide(16, None, false, &cfg()), Primary::HighDepthDrainZero);
         assert_eq!(decide(16, Some(51), false, &cfg()), Primary::HighDepthDrainZero);
     }
 
+    #[test_id(t74giqv)]
     #[test]
     fn deliberate_stall_is_false_only_at_an_exact_match_on_two() {
         // Both async-gate commits on the land ref: the freeze has no excuse left. Real fault.
@@ -293,12 +296,14 @@ mod tests {
     // --- hysteresis --------------------------------------------------------------------
 
     // covers: UC-landing-merge-queue-12
+    #[test_id(twakst5)]
     #[test]
     fn lift_when_depth_drops_below_release_threshold_while_throttled() {
         assert_eq!(decide(7, Some(2), true, &cfg()), Primary::Lift);
     }
 
     // covers: UC-landing-merge-queue-12
+    #[test_id(tbm8wcq)]
     #[test]
     fn no_lift_in_the_hysteresis_band_between_release_and_depth_thresholds() {
         // depth 10 is below depth_at(16) but not below release_at(8): stays throttled,
@@ -309,6 +314,7 @@ mod tests {
         );
     }
 
+    #[test_id(tvi1v2y)]
     #[test]
     fn depth_below_threshold_and_not_throttled_is_clear() {
         assert_eq!(
@@ -317,6 +323,7 @@ mod tests {
         );
     }
 
+    #[test_id(ttu3ie5)]
     #[test]
     fn already_throttled_and_still_high_depth_drain_ok_is_a_noop_not_a_reengage() {
         assert_eq!(
@@ -334,6 +341,7 @@ mod tests {
     }
 
     // covers: UC-landing-merge-queue-12
+    #[test_id(tburak7)]
     #[test]
     fn depth_counts_only_certified_rows_with_a_live_branch_and_a_tip_not_yet_landed() {
         let rows = [
@@ -348,6 +356,7 @@ mod tests {
     }
 
     // covers: UC-landing-merge-queue-12
+    #[test_id(trawq28)]
     #[test]
     fn the_off_override_clears_an_engaged_throttle() {
         let dir = testkit::TempDir::new("throttle-off");

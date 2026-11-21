@@ -182,6 +182,7 @@ mod tests {
         TestRealClock.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tzxyo60)]
     #[test]
     fn a_test_sleep_and_a_clock_comparison_are_flagged() {
         let t = TempDir::new("trc-fail");
@@ -195,6 +196,7 @@ mod tests {
         );
     }
 
+    #[test_id(tuuy1lq)]
     #[test]
     fn marked_lines_production_code_and_plain_clock_reads_pass() {
         let t = TempDir::new("trc-pass");
@@ -212,6 +214,7 @@ mod tests {
         run(&t, &["a/src/lib.rs"]).unwrap()
     }
 
+    #[test_id(tdnjpd8)]
     #[test]
     fn a_system_time_bound_then_asserted_on_flags_the_sleep_and_the_assert() {
         let got = one("#[test]\nfn t() {\n    let t0 = SystemTime::now();\n    std::thread::sleep(Duration::from_millis(50));\n    let took = t0.elapsed().unwrap();\n    assert!(took >= Duration::from_millis(50));\n}");
@@ -224,24 +227,28 @@ mod tests {
         );
     }
 
+    #[test_id(t7qabqs)]
     #[test]
     fn a_retry_loop_that_sleeps_between_attempts_is_flagged() {
         let got = one("#[test]\nfn t() {\n    for _ in 0..3 { attempt(); std::thread::sleep(D); }\n    assert_eq!(calls(), 2);\n}");
         assert_eq!(got, vec![format!("test-real-clock: a/src/lib.rs:5: {SLEEP}")]);
     }
 
+    #[test_id(tsapy6k)]
     #[test]
     fn the_same_behaviour_on_an_injected_clock_or_a_signal_passes() {
         let got = one("#[test]\nfn t() {\n    let clock = VirtualClock::new();\n    let t0 = clock.now();\n    clock.advance(50);\n    assert!(clock.now() - t0 >= 50);\n}\n#[test]\nfn u() {\n    let (tx, rx) = channel();\n    spawn(move || tx.send(()));\n    rx.recv().unwrap();\n}");
         assert_eq!(got, Vec::<String>::new());
     }
 
+    #[test_id(t8p7bcx)]
     #[test]
     fn a_clock_read_that_only_stamps_fixture_data_passes() {
         let got = one("#[test]\nfn t() {\n    let now = SystemTime::now();\n    set_mtime(&p, now);\n    assert!(p.exists());\n}");
         assert_eq!(got, Vec::<String>::new());
     }
 
+    #[test_id(t43y5x8)]
     #[test]
     fn a_sleep_under_a_paused_tokio_clock_passes() {
         let got = one("#[tokio::test(start_paused = true)]\nasync fn t() {\n    tokio::time::sleep(D).await;\n}\n#[tokio::test]\nasync fn u() {\n    tokio::time::pause();\n    tokio::time::sleep(D).await;\n}");
@@ -250,12 +257,14 @@ mod tests {
         assert_eq!(unpaused, vec![format!("test-real-clock: a/src/lib.rs:5: {SLEEP}")]);
     }
 
+    #[test_id(tyn6n7t)]
     #[test]
     fn a_clock_safe_marker_exempts_a_sleep_and_a_bound_assert() {
         let got = one("#[test]\nfn t() {\n    // clock-safe: polls the marker file the child writes\n    std::thread::sleep(D);\n    let t0 = Instant::now();\n    // clock-safe: cap on the wait for the marker\n    assert!(t0.elapsed() < CAP);\n}");
         assert_eq!(got, Vec::<String>::new());
     }
 
+    #[test_id(tb27d61)]
     #[test]
     fn the_message_names_the_sim_crate_and_the_virtual_clock() {
         for m in [SLEEP, COMPARE, TestRealClock.hint()] {
@@ -263,6 +272,7 @@ mod tests {
         }
     }
 
+    #[test_id(t687gs4)]
     #[test]
     fn an_out_of_line_test_module_is_judged_as_test_code() {
         let t = TempDir::new("trc-mod");
@@ -271,12 +281,14 @@ mod tests {
         assert_eq!(run(&t, &["a/src/lib.rs", "a/src/t.rs"]).unwrap(), vec![format!("test-real-clock: a/src/t.rs:2: {SLEEP}")]);
     }
 
+    #[test_id(tgrdijh)]
     #[test]
     fn a_marked_bound_assert_passes_and_an_assert_in_another_fn_is_not_judged() {
         let got = one("#[test]\nfn t() {\n    let took = Instant::now().elapsed();\n    // clock-safe: cap on the wait for the marker\n    assert!(took < CAP);\n}\n#[test]\nfn u() {\n    let took = 3;\n    assert!(took < 5);\n}");
         assert_eq!(got, Vec::<String>::new());
     }
 
+    #[test_id(t1ari26)]
     #[test]
     fn no_candidate_files_is_a_refusal() {
         let t = TempDir::new("trc-empty");

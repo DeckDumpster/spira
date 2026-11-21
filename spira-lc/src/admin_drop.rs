@@ -258,6 +258,7 @@ mod tests {
         }
     }
 
+    #[test_id(tdtmedr)]
     #[test]
     fn a_carry_leaves_the_store_holding_everything_the_database_held_and_a_second_adds_nothing() {
         let s = store();
@@ -270,6 +271,7 @@ mod tests {
         assert_eq!(s.journal_open_effects().unwrap().len(), 1, "the resolved effect carried over resolved");
     }
 
+    #[test_id(t61ybim)]
     #[test]
     fn a_carry_never_overwrites_what_the_runtime_wrote_since() {
         let s = store();
@@ -319,6 +321,7 @@ mod tests {
         }
     }
 
+    #[test_id(tesvnnt)]
     #[test]
     fn the_database_is_read_whole_carried_and_dropped_in_that_order() {
         let (s, server) = (store(), Scripted::new());
@@ -335,6 +338,7 @@ mod tests {
         assert_eq!(s.journal_open_effects().unwrap().len(), 1);
     }
 
+    #[test_id(thid990)]
     #[test]
     fn a_dry_run_reads_and_reports_and_changes_nothing() {
         let (s, server) = (store(), Scripted::new());
@@ -344,6 +348,7 @@ mod tests {
         assert!(s.facts(&[]).unwrap().is_empty() && !server.seen.borrow().iter().any(|q| q.starts_with("DROP")));
     }
 
+    #[test_id(tbr6hfp)]
     #[test]
     fn a_database_already_gone_is_nothing_to_do_and_a_server_that_fails_the_drop_says_so() {
         let s = store();
@@ -360,6 +365,7 @@ mod tests {
         assert_eq!(s.facts(&[]).unwrap().len(), 2);
     }
 
+    #[test_id(t68g2wo)]
     #[test]
     fn an_unreadable_table_keeps_the_database() {
         let (s, mut server) = (store(), Scripted::new());
@@ -370,6 +376,7 @@ mod tests {
         assert!(s.facts(&[]).unwrap().is_empty(), "nothing is carried from a database that could not be read whole");
     }
 
+    #[test_id(t2n51x0)]
     #[test]
     fn the_carried_facts_sort_before_newer_ones_of_the_same_bead() {
         let s = store();
@@ -379,6 +386,7 @@ mod tests {
         assert_eq!(kinds, ["claimed", "requeued", "reclaimed"]);
     }
 
+    #[test_id(t0281xq)]
     #[test]
     fn a_missing_row_keeps_the_database() {
         let s = store();
@@ -389,6 +397,7 @@ mod tests {
         assert_eq!(missing(&s, &more).unwrap(), ["poison of stream other"]);
     }
 
+    #[test_id(tw0c2s4)]
     #[test]
     fn the_administrator_is_the_environments_or_what_install_provisioned_and_never_a_guess() {
         let env = |pairs: &'static [(&str, &str)]| move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string());
@@ -397,6 +406,7 @@ mod tests {
         assert!(administrator(env(&[("SPIRA_LC_ADMIN_USER", "")]), || Ok(None)).unwrap_err().contains("SPIRA_LC_ADMIN_USER"));
     }
 
+    #[test_id(tuozoem)]
     #[test]
     fn only_a_plain_database_name_is_dropped_and_an_unarchived_one_is_refused_first() {
         assert!(plain_name("db_1") && !plain_name("") && !plain_name("a`; DROP DATABASE spira; --") && !plain_name("a b"));

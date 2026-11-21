@@ -315,6 +315,7 @@ mod tests {
         }
     }
 
+    #[test_id(tfmdm8c)]
     #[test]
     fn a_sandbox_run_has_its_own_key_and_a_container_run_keeps_the_old_one() {
         let container = inputs();
@@ -323,6 +324,7 @@ mod tests {
         assert!(!format!("{:?}", container.tests_suffix()).contains("runner"), "the container's key line is unchanged");
     }
 
+    #[test_id(tfixef7)]
     #[test]
     fn a_run_that_leaves_tests_out_has_its_own_key() {
         let denied = KeyInputs { deny: Some("a::t".into()), ..inputs() };
@@ -330,6 +332,7 @@ mod tests {
         assert_ne!(denied.key(), KeyInputs { deny: Some("a::u".into()), ..inputs() }.key());
     }
 
+    #[test_id(tp03ru5)]
     #[test]
     fn a_test_filter_makes_a_new_key() {
         let full = inputs();
@@ -339,6 +342,7 @@ mod tests {
         assert_ne!(filtered.key(), other.key());
     }
 
+    #[test_id(th6oqcs)]
     #[test]
     fn key_is_stable_and_order_insensitive_in_selection() {
         let a = inputs();
@@ -348,6 +352,7 @@ mod tests {
         assert_eq!(a.key().len(), 64);
     }
 
+    #[test_id(t7q28ox)]
     #[test]
     fn every_component_moves_the_key() {
         let base = inputs().key();
@@ -368,6 +373,7 @@ mod tests {
         assert_ne!(base, v.key());
     }
 
+    #[test_id(tq733p1)]
     #[test]
     fn a_prebuilt_set_moves_the_key_and_its_absence_does_not() {
         // the default key is the pre-D8 line, byte for byte
@@ -385,6 +391,7 @@ mod tests {
         assert_ne!(p.key(), q.key());
     }
 
+    #[test_id(tk2f65i)]
     #[test]
     fn a_unit_selection_moves_the_key_by_base_and_crate_set_and_not_by_crate_order() {
         let v = inputs();
@@ -399,6 +406,7 @@ mod tests {
         assert_eq!(unit("b1", &["a", "b"]).key(), unit("b1", &["b", "a"]).key());
     }
 
+    #[test_id(t3uz3aw)]
     #[test]
     fn a_rerun_runs_a_cached_green_again_and_carries_its_reason() {
         let f = VerdictFile::parse("verdict=green
@@ -413,6 +421,7 @@ at=100
         assert_eq!(decide(Some(&f), 150, 86400, Some("a long enough reason"), false), CacheDecision::Green { when: "w".into() });
     }
 
+    #[test_id(tnb3lmo)]
     #[test]
     fn selection_hash_matches_sha256sum_of_sorted_lines() {
         // printf 'test-a.sh\ntest-b.sh\n' | sha256sum
@@ -422,6 +431,7 @@ at=100
         );
     }
 
+    #[test_id(tmmif07)]
     #[test]
     fn verdict_file_round_trips() {
         let f = VerdictFile::new(
@@ -436,6 +446,7 @@ at=100
         assert_eq!(VerdictFile::parse(&text), f);
     }
 
+    #[test_id(t7yn0n3)]
     #[test]
     fn a_partial_green_round_trips_and_is_never_a_cache_hit() {
         let mut f = VerdictFile::new(Verdict::Partial, "w".into(), 100, None, None);
@@ -451,6 +462,7 @@ at=100
         );
     }
 
+    #[test_id(tlqtiyy)]
     #[test]
     fn old_green_only_files_read_green() {
         let f = VerdictFile::parse("when=x\nat=100\n");
@@ -460,6 +472,7 @@ at=100
         );
     }
 
+    #[test_id(tq138k2)]
     #[test]
     fn ttl_zero_or_expired_or_missing_is_a_miss() {
         let f = VerdictFile::parse("verdict=green\nat=100\n");
@@ -481,6 +494,7 @@ at=100
         );
     }
 
+    #[test_id(tg3iqlc)]
     #[test]
     fn red_is_refused_without_a_sentence_and_allowed_with_one() {
         let f = VerdictFile::parse(
@@ -507,6 +521,7 @@ at=100
         );
     }
 
+    #[test_id(tjzss4k)]
     #[test]
     fn an_attribution_rerun_of_a_red_key_is_allowed_every_time_and_refused_without_its_reason() {
         let f = VerdictFile::parse("verdict=red\nwhen=w\nat=100\nred_suites=test-a.sh\n");

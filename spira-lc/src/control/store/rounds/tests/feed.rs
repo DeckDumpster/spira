@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(tnh9ubm)]
 #[test]
 fn a_watch_past_compacted_history_answers_with_the_resume_revision_and_reads_no_row() {
     let r = Rig::on(Counting::default(), &clock());

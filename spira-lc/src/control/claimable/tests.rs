@@ -41,6 +41,7 @@ fn seen(j: &Judgement) -> (Verdict, Option<String>) {
     (j.verdict, j.blocker.clone())
 }
 
+#[test_id(tpsmwlw)]
 #[test]
 fn a_member_of_an_open_integration_is_carried_and_the_integration_is_not() {
     let int = rec("I", BeadState::Ready);
@@ -50,6 +51,7 @@ fn a_member_of_an_open_integration_is_carried_and_the_integration_is_not() {
     assert_eq!(verdict(&int, &[], &ctx()).verdict, Verdict::Claimable);
 }
 
+#[test_id(t7x1b43)]
 #[test]
 fn a_member_carried_by_a_landed_integration_is_claimable_and_one_carried_by_no_record_is_carried() {
     let landed = rec("I", BeadState::Landed);
@@ -59,6 +61,7 @@ fn a_member_carried_by_a_landed_integration_is_claimable_and_one_carried_by_no_r
     assert_eq!(verdict(&member, &[], &ctx()).verdict, Verdict::Carried);
 }
 
+#[test_id(tkre5ds)]
 #[test]
 fn an_incident_never_stacks_on_a_certified_fix_but_claims_once_it_lands() {
     let certified = rec("A", BeadState::Certified);
@@ -73,6 +76,7 @@ fn an_incident_never_stacks_on_a_certified_fix_but_claims_once_it_lands() {
     assert_eq!((j.verdict, j.depth), (Verdict::Claimable, 0));
 }
 
+#[test_id(tbgaxm3)]
 #[test]
 fn a_pilgrimage_never_stacks_on_an_in_delivery_feature_but_claims_once_it_lands() {
     let mut pilgrim = blocked_on("B", BeadState::Ready, "A");
@@ -87,12 +91,14 @@ fn a_pilgrimage_never_stacks_on_an_in_delivery_feature_but_claims_once_it_lands(
     assert_eq!((j.verdict, j.depth), (Verdict::Claimable, 0));
 }
 
+#[test_id(tttvcvt)]
 #[test]
 fn stacked_blocker_certified_is_claimable() {
     let j = verdict(&blocked_on("B", BeadState::Ready, "A"), &[&rec("A", BeadState::Certified)], &ctx());
     assert_eq!((j.verdict, j.depth), (Verdict::Claimable, 1));
 }
 
+#[test_id(tqlwxev)]
 #[test]
 fn a_rework_on_the_stack_the_gate_went_red_on_is_not_claimable_until_the_tip_moves() {
     let mut a = rec("A", BeadState::Certified);
@@ -107,6 +113,7 @@ fn a_rework_on_the_stack_the_gate_went_red_on_is_not_claimable_until_the_tip_mov
     assert_eq!(verdict(&b, &[&a], &ctx()).verdict, Verdict::Claimable, "only a gate-red reason repeats");
 }
 
+#[test_id(tqmmqpy)]
 #[test]
 fn stack_plan_names_the_stacked_prerequisites_tip() {
     let j = verdict(&blocked_on("B", BeadState::Ready, "A"), &[&rec("A", BeadState::Certified)], &ctx());
@@ -114,6 +121,7 @@ fn stack_plan_names_the_stacked_prerequisites_tip() {
     assert_eq!(j.stack.get("A").map(String::as_str), Some("tip-A"));
 }
 
+#[test_id(t82x51w)]
 #[test]
 fn stack_plan_omits_a_landed_blocker_it_does_not_stack_on() {
     let j = verdict(&blocked_on("B", BeadState::Ready, "A"), &[&rec("A", BeadState::Landed)], &ctx());
@@ -121,6 +129,7 @@ fn stack_plan_omits_a_landed_blocker_it_does_not_stack_on() {
     assert!(j.stack.is_empty(), "a landed prerequisite is satisfied, not stacked on");
 }
 
+#[test_id(thkjzfs)]
 #[test]
 fn stack_plan_too_deep_still_reports_the_attempted_stack() {
     let mut a = rec("A", BeadState::InDelivery);
@@ -134,6 +143,7 @@ fn conflict(id: &str, tip: &str) -> Ctx {
     Ctx { conflicts: BTreeSet::from([(id.to_string(), tip.to_string())]), ..ctx() }
 }
 
+#[test_id(tz3fnjb)]
 #[test]
 fn a_dependent_of_a_conflicting_parent_is_blocked_until_the_parent_rebases() {
     let mut a = rec("A", BeadState::Certified);
@@ -144,6 +154,7 @@ fn a_dependent_of_a_conflicting_parent_is_blocked_until_the_parent_rebases() {
     assert_eq!(verdict(&b, &[&a], &conflict("A", "tip-A")).verdict, Verdict::Claimable, "the parent's tip moved");
 }
 
+#[test_id(t0s9op6)]
 #[test]
 fn an_old_marker_on_an_in_delivery_parent_does_not_block_its_dependent() {
     let a = rec("A", BeadState::InDelivery);
@@ -152,6 +163,7 @@ fn an_old_marker_on_an_in_delivery_parent_does_not_block_its_dependent() {
     assert_eq!(verdict(&b, &[&a], &ctx()).verdict, Verdict::Claimable, "a lapsed marker is not in the context");
 }
 
+#[test_id(tnlwvpe)]
 #[test]
 fn a_dependent_waiting_on_a_conflicting_blocker_is_released_when_the_blocker_lands() {
     let mut a = rec("A", BeadState::Certified);
@@ -162,12 +174,14 @@ fn a_dependent_waiting_on_a_conflicting_blocker_is_released_when_the_blocker_lan
     assert_eq!((j.verdict, j.depth), (Verdict::Claimable, 0), "landed: one rebase, no stack");
 }
 
+#[test_id(t2tu70b)]
 #[test]
 fn stacked_blocker_only_submitted_waits() {
     let j = verdict(&blocked_on("B", BeadState::Ready, "A"), &[&rec("A", BeadState::Submitted)], &ctx());
     assert_eq!(seen(&j), blocked("A"));
 }
 
+#[test_id(t8e179m)]
 #[test]
 fn a_blocker_landing_releases_its_dependent_with_no_hand_step_but_a_manual_hold_never_lifts() {
     let dep = blocked_on("B", BeadState::Ready, "A");
@@ -182,6 +196,7 @@ fn a_blocker_landing_releases_its_dependent_with_no_hand_step_but_a_manual_hold_
     assert_eq!(verdict(&parked, &[&landed], &no_stack).verdict, Verdict::Held);
 }
 
+#[test_id(tdc1fbi)]
 #[test]
 fn a_record_whose_claim_inputs_were_never_written_cannot_be_told_and_is_never_claimable() {
     let mut r = rec("A", BeadState::Ready);
@@ -194,6 +209,7 @@ fn a_record_whose_claim_inputs_were_never_written_cannot_be_told_and_is_never_cl
     assert_eq!((j.verdict, j.missing), (Verdict::CannotTell, vec!["repo"]));
 }
 
+#[test_id(t8jlexa)]
 #[test]
 fn a_held_record_with_no_claim_inputs_is_held_not_cannot_tell() {
     let mut r = rec("A", BeadState::Ready);
@@ -202,6 +218,7 @@ fn a_held_record_with_no_claim_inputs_is_held_not_cannot_tell() {
     assert_eq!(verdict(&r, &[], &ctx()).verdict, Verdict::Held);
 }
 
+#[test_id(txbcuce)]
 #[test]
 fn a_wait_hold_with_a_snooze_in_the_future_is_snoozed_and_a_lapsed_one_is_not() {
     let mut r = rec("A", BeadState::Ready);
@@ -212,6 +229,7 @@ fn a_wait_hold_with_a_snooze_in_the_future_is_snoozed_and_a_lapsed_one_is_not() 
     assert_eq!(verdict(&r, &[], &ctx()).verdict, Verdict::Claimable);
 }
 
+#[test_id(tsdqa3v)]
 #[test]
 fn a_no_loop_labelled_record_is_out_of_scope_and_a_missing_scope_label_is_too() {
     let mut r = rec("A", BeadState::Ready);
@@ -223,6 +241,7 @@ fn a_no_loop_labelled_record_is_out_of_scope_and_a_missing_scope_label_is_too() 
     assert_eq!(verdict(&plain, &[], &c).verdict, Verdict::OutOfScope);
 }
 
+#[test_id(ttdcz21)]
 #[test]
 fn a_reserved_id_or_a_stopped_repo_is_stopped_but_a_blocked_record_there_stays_blocked() {
     let r = rec("A", BeadState::Ready);
@@ -234,6 +253,7 @@ fn a_reserved_id_or_a_stopped_repo_is_stopped_but_a_blocked_record_there_stays_b
     assert_eq!(seen(&verdict(&b, &[&rec("A", BeadState::Working)], &stopped)), blocked("A"));
 }
 
+#[test_id(tl5n71n)]
 #[test]
 fn a_rowless_gate_blocks_while_open_and_releases_when_closed() {
     let b = blocked_on("B", BeadState::Ready, "G");
@@ -247,6 +267,7 @@ fn a_rowless_gate_blocks_while_open_and_releases_when_closed() {
     assert_eq!(judged("closed").verdict, Verdict::Claimable);
 }
 
+#[test_id(t5porwg)]
 #[test]
 fn gates_name_every_blocker_read_with_its_gate() {
     let b = blocked_on("B", BeadState::Ready, "A");
@@ -315,6 +336,7 @@ mod pinned {
         view(s, 1, vec![cand], inputs, 1_000)
     }
 
+    #[test_id(tso2e9r)]
     #[test]
     fn fifty_views_read_the_config_and_the_partitions_once() {
         let nofail = Cell::new(false);
@@ -332,6 +354,7 @@ mod pinned {
         assert_eq!((configs.load(Ordering::SeqCst), parts.load(Ordering::SeqCst)), (51, 51), "unpinned inputs read every call");
     }
 
+    #[test_id(ti746b8)]
     #[test]
     fn a_rune_edit_between_calls_takes_effect_on_the_next() {
         let home = testkit::TempDir::new("claimable-pinned-rune-edit");
@@ -351,6 +374,7 @@ mod pinned {
         assert_eq!(parts.load(Ordering::SeqCst), 2);
     }
 
+    #[test_id(tfrghd1)]
     #[test]
     fn a_failed_config_read_is_not_kept() {
         let nofail = Cell::new(false);
@@ -363,6 +387,7 @@ mod pinned {
         assert_eq!(configs.load(Ordering::SeqCst), 2);
     }
 
+    #[test_id(tbnmmli)]
     #[test]
     fn a_failed_partitions_read_is_not_kept() {
         let (configs, parts, fail, fail_parts) = (AtomicUsize::new(0), AtomicUsize::new(0), Cell::new(false), Cell::new(true));

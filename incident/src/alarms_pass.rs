@@ -881,6 +881,7 @@ mod tests {
 
     /// sp-ipwlic: the alarms pass reaches the store through the client, with the program's
     /// answer shapes kept: JSON out, non-JSON as cannot_tell, no answer as -1.
+    #[test_id(t5006y5)]
     #[test]
     fn lc_json_carries_the_clients_answer_and_its_failures() {
         let reply = |code, out: &str| Ok(spira_store::lc_call::Reply { code, out: out.into(), err: String::new() });
@@ -895,6 +896,7 @@ mod tests {
         assert_eq!((code, v["cannot_tell"].as_str()), (-1, Some("not answering")));
     }
 
+    #[test_id(t0dhksm)]
     #[test]
     fn the_floor_proposal_is_read_from_the_causal_maps_floor_table_or_is_none() {
         assert_eq!(floor_proposal("[floor]\nproposal = \" add a slot \"\n").as_deref(), Some("add a slot"));

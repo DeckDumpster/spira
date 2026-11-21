@@ -625,6 +625,7 @@ pub mod kit {
         /// Every family-B and family-C row (both build through this kit) builds from the
         /// `Settings` it is handed, with no config door resolved: a planted value there is the
         /// value pinned, and a key the settings lack refuses the build.
+        #[test_id(t08phlq)]
         #[test]
         fn built_reads_the_settings_it_is_given_not_the_process_config() {
             use crate::tasks::b::reconcile_section::{ReconcileSection, CADENCE_KEY};

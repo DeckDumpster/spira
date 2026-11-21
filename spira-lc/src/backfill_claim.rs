@@ -201,6 +201,7 @@ mod tests {
         a.iter().map(|x| x.to_string()).collect()
     }
 
+    #[test_id(tolenzj)]
     #[test]
     fn a_dry_run_names_each_null_row_with_per_state_counts_and_writes_nothing() {
         let mut m = fixture();
@@ -211,6 +212,7 @@ mod tests {
         assert!(a.stdout.contains("3 would set (dry run; --apply to write): LANDED 1, READY 1, REWORK 1"), "{}", a.stdout);
     }
 
+    #[test_id(tetvnqz)]
     #[test]
     fn apply_writes_exactly_the_null_rows_live_states_first_with_only_if_unset() {
         let mut m = fixture();
@@ -221,6 +223,7 @@ mod tests {
         assert!(a.stdout.contains("3 set, 0 kept, 0 failed"), "{}", a.stdout);
     }
 
+    #[test_id(t7yljtv)]
     #[test]
     fn a_record_the_store_kept_is_reported_kept_not_set() {
         let mut m = fixture();
@@ -230,6 +233,7 @@ mod tests {
         assert!(a.stdout.contains("kept sp-ready: already written") && a.stdout.contains("2 set, 1 kept, 0 failed"), "{}", a.stdout);
     }
 
+    #[test_id(thvtytx)]
     #[test]
     fn named_ids_limit_the_sweep() {
         let mut m = fixture();
@@ -237,6 +241,7 @@ mod tests {
         assert_eq!(m.writes, [v(&["set-claim-inputs", "sp-landed", "--only-if-unset"])]);
     }
 
+    #[test_id(t5qts8c)]
     #[test]
     fn apply_stops_at_the_per_call_bound_and_says_to_run_again() {
         let mut m = Lc::default();
@@ -248,6 +253,7 @@ mod tests {
         assert!(a.stdout.contains("run again"), "{}", a.stdout);
     }
 
+    #[test_id(tg7axh9)]
     #[test]
     fn a_list_failure_cannot_tell_and_a_store_fault_names_every_id() {
         struct Down;
@@ -264,6 +270,7 @@ mod tests {
         assert!(a.stdout.contains("failed sp-ready: store down") && a.stdout.contains("0 set, 0 kept, 3 failed"), "{}", a.stdout);
     }
 
+    #[test_id(tk9426q)]
     #[test]
     fn a_refusal_that_names_no_id_cannot_tell_and_writes_nothing() {
         let mut m = fixture();
@@ -273,6 +280,7 @@ mod tests {
         assert!(a.stderr.contains("sync-claim-inputs failed: usage:") && m.writes.is_empty(), "{}", a.stderr);
     }
 
+    #[test_id(ts9ohv0)]
     #[test]
     fn a_failure_on_one_id_is_refused_and_the_sweep_goes_on() {
         let mut m = fixture();
@@ -282,6 +290,7 @@ mod tests {
         assert!(a.stdout.contains("failed sp-ready: boom") && a.stdout.contains("set sp-landed") && a.stdout.contains("2 set, 0 kept, 1 failed"), "{}", a.stdout);
     }
 
+    #[test_id(t6g20j5)]
     #[test]
     fn an_unknown_flag_is_refused() {
         let mut m = fixture();
@@ -290,6 +299,7 @@ mod tests {
         assert!(m.writes.is_empty());
     }
 
+    #[test_id(t4zk8vj)]
     #[test]
     fn apply_writes_nothing_when_the_skew_guard_refuses() {
         struct Skewed(Lc);
@@ -304,6 +314,7 @@ mod tests {
         assert!(m.0.writes.is_empty());
     }
 
+    #[test_id(taj326r)]
     #[test]
     fn a_failure_in_the_first_chunk_does_not_stop_the_second() {
         let mut m = Lc::default();
@@ -316,6 +327,7 @@ mod tests {
         assert!(a.stdout.contains(&format!("{} set, 0 kept, 1 failed", CHUNK + 4)), "{}", a.stdout);
     }
 
+    #[test_id(t1lrv4b)]
     #[test]
     fn the_world_sets_keeps_and_names_a_bead_it_cannot_read() {
         use crate::callers::world::World;

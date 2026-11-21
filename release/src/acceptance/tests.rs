@@ -12,6 +12,7 @@ fn s(v: &[&str]) -> Vec<String> {
 
 // ---- pure readers ------------------------------------------------------------------------
 
+#[test_id(todqfoo)]
 #[test]
 fn extract_bead_id_reads_past_a_warning_prefix() {
     let out = "warning: beads.role not configured (GH#2950)\nFix: git config beads.role maintainer\n✓ Created issue: sp-xxxx — acceptance test probe title\n  Priority: P2";
@@ -25,6 +26,7 @@ fn extract_bead_id_reads_past_a_warning_prefix() {
 /// Local acceptance on d40bbb589: under the lifecycle cutover the model finishes with `work
 /// submit` and never closes the bead, so a bd-only stage 4 read "not closed" while the
 /// history already said SUBMITTED.
+#[test_id(t56u2rn)]
 #[test]
 fn lifecycle_submitted_is_any_state_past_the_model() {
     let st = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
@@ -34,6 +36,7 @@ fn lifecycle_submitted_is_any_state_past_the_model() {
     assert!(!lifecycle_submitted(&[]));
 }
 
+#[test_id(ty91rfv)]
 #[test]
 fn ready_has_finds_the_probe_and_unreadable_is_not_claimable() {
     assert!(ready_has(r#"[{"id":"sp-a"},{"id":"sp-b"}]"#, "sp-b"));
@@ -45,18 +48,21 @@ fn files(rows: &str) -> Vec<UnitFile> {
     unit_files_of(rows).unwrap()
 }
 
+#[test_id(tx6cv5o)]
 #[test]
 fn unit_set_is_sorted_spira_units_without_transient_ones() {
     let t = r#"[{"unit_file":"spira-z.timer","state":"enabled"},{"unit_file":"spira-landing.service","state":"transient"},{"unit_file":"spira-a.service","state":"static"}]"#;
     assert_eq!(unit_set(&files(t)), s(&["spira-a.service static", "spira-z.timer enabled"]));
 }
 
+#[test_id(tgrmbe3)]
 #[test]
 fn unit_set_leaves_out_units_a_release_directory_render_never_keeps() {
     let t = r#"[{"unit_file":"spira-round-template-prod.service","state":"static"},{"unit_file":"spira-a.service","state":"static"}]"#;
     assert_eq!(unit_set(&files(t)), s(&["spira-a.service static"]));
 }
 
+#[test_id(tcegwly)]
 #[test]
 fn systemctl_text_is_never_read_as_a_unit_list() {
     assert!(unit_files_of("spira-a.service static -\n").is_err());
@@ -65,6 +71,7 @@ fn systemctl_text_is_never_read_as_a_unit_list() {
     assert_eq!(unit_names_of(r#"[{"unit":"spira-a.service","active":"failed"}]"#), Ok(s(&["spira-a.service"])));
 }
 
+#[test_id(tw4elwn)]
 #[test]
 fn a_service_type_is_oneshot_only_when_the_manager_said_so() {
     assert_eq!(ServiceType::of(0, "oneshot\n"), ServiceType::Oneshot);
@@ -73,6 +80,7 @@ fn a_service_type_is_oneshot_only_when_the_manager_said_so() {
     assert_eq!(ServiceType::of(0, "Failed to connect to bus\n"), ServiceType::Unknown);
 }
 
+#[test_id(ti52laz)]
 #[test]
 fn release_assets_are_read_from_the_json_not_from_names_on_lines() {
     assert_eq!(tarball_assets_of(r#"{"assets":[{"name":"spira-1.tar.gz"},{"name":"notes.txt"}]}"#), Ok(s(&["spira-1.tar.gz"])));
@@ -80,6 +88,7 @@ fn release_assets_are_read_from_the_json_not_from_names_on_lines() {
     assert_eq!(tarball_assets_of(r#"{"assets":[]}"#), Ok(vec![]));
 }
 
+#[test_id(trsnl4o)]
 #[test]
 fn gh_repo_prefers_env_then_a_github_origin() {
     assert_eq!(gh_repo_from([None, Some("a/b".into()), Some("c/d".into())], None).as_deref(), Some("a/b"));
@@ -88,12 +97,14 @@ fn gh_repo_prefers_env_then_a_github_origin() {
     assert_eq!(gh_repo_from([None, None, None], Some("r/git/spira.git".into())), None);
 }
 
+#[test_id(tjizv4v)]
 #[test]
 fn json_line_escapes_and_orders_fields() {
     assert_eq!(json_line("phase-A", "a \"q\"\nb", None, "T", 3), r#"{"phase":"phase-A","check":"a \"q\"\nb","verdict":"ok","ts":"T","elapsed":3}"#);
     assert_eq!(json_line("p", "c", Some("r"), "T", 0), r#"{"phase":"p","check":"c","verdict":"fail","reason":"r","ts":"T","elapsed":0}"#);
 }
 
+#[test_id(t8gmphp)]
 #[test]
 fn note_carries_tarball_upgrade_path_and_waiver() {
     let n = Note { verdict: "PASS", date: "D", tag: "t", pass: 3, fail: 0, tarball: Some(("abc", "spira-1.tar.gz")), prev_tag: Some("p"), waived: false, standing: false };
@@ -102,6 +113,7 @@ fn note_carries_tarball_upgrade_path_and_waiver() {
     assert_eq!(n.text(), "FAIL\nD t  1 passed, 2 failed\nupgrade phases waived by operator");
 }
 
+#[test_id(t8p4r6b)]
 #[test]
 fn the_override_key_is_one_conf_sh_honours() {
     // conf.sh's allowlist is generated from spira/conf.d/, one file per key (sp-g3uwp): a key
@@ -110,6 +122,7 @@ fn the_override_key_is_one_conf_sh_honours() {
     assert!(key.is_file(), "{OVERRIDE_KEY} has no spira/conf.d entry: conf.sh would refuse it and the override would never be in force");
 }
 
+#[test_id(tq6icrc)]
 #[test]
 fn fired_at_reads_one_tasks_last_fired_time_from_scheduler_status() {
     let doc = r#"{"schema":1,"at":9,"halted":false,"held":0,"tasks":[{"name":"sentinel-call","last_fired_at":7},{"name":"landing","last_fired_at":null}],"classes":[]}"#;
@@ -119,6 +132,7 @@ fn fired_at_reads_one_tasks_last_fired_time_from_scheduler_status() {
     assert_eq!(fired_at("not json", "sentinel-call"), None);
 }
 
+#[test_id(tji6kco)]
 #[test]
 fn lifecycle_states_keep_applied_events_in_order_without_repeats() {
     let h = r#"[{"to_state":"READY","applied":1},{"to_state":"READY","applied":1},{"to_state":"WORKING","applied":0},{"to_state":"WORKING","applied":true},{"to_state":"LANDED","applied":1}]"#;
@@ -126,6 +140,7 @@ fn lifecycle_states_keep_applied_events_in_order_without_repeats() {
     assert!(lifecycle_states("not json").is_empty());
 }
 
+#[test_id(txmkguy)]
 #[test]
 fn the_expected_sequence_adds_delivery_only_for_delivery_queue_modes() {
     let full = s(&["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "QUEUED", "BATCHED", "LANDED"]);
@@ -136,6 +151,7 @@ fn the_expected_sequence_adds_delivery_only_for_delivery_queue_modes() {
     assert_eq!(missing_in_order(&expected_lifecycle("push"), &s(&["READY", "LANDED", "WORKING"])), Some("SUBMITTED"));
 }
 
+#[test_id(t78ab5f)]
 #[test]
 fn all_three_land_modes_are_required_with_either_queue_spelling() {
     assert_eq!(land_modes_missing(&s(&["push", "queue.forge"])), vec!["pr"]);
@@ -145,6 +161,7 @@ fn all_three_land_modes_are_required_with_either_queue_spelling() {
 
 // ---- arguments ---------------------------------------------------------------------------
 
+#[test_id(t6qgh77)]
 #[test]
 fn usage_errors() {
     assert!(parse_args(&[]).is_err(), "no tag");
@@ -154,6 +171,7 @@ fn usage_errors() {
     assert!(parse_args(&s(&["t", "--scratch-repo"])).unwrap_err().contains("needs a value"));
 }
 
+#[test_id(tjyaw5g)]
 #[test]
 fn flags_in_both_forms_and_the_waiver_clears_prev_tag() {
     let a = parse_args(&s(&["t", "--scratch-repo=r", "--prev-tag", "p", "--tarball=x.tar.gz", "--record", "--agent", "ag"])).unwrap();
@@ -451,6 +469,7 @@ impl Box_ {
     }
 }
 
+#[test_id(t8dbdmg)]
 #[test]
 fn a_missing_prerequisite_stops_before_any_phase_with_exit_2() {
     let b = Box_::new();
@@ -461,6 +480,7 @@ fn a_missing_prerequisite_stops_before_any_phase_with_exit_2() {
     assert!(!f.log.borrow().iter().any(|c| c.args.first().map(String::as_str) == Some("install-tarball")));
 }
 
+#[test_id(t3dhpwo)]
 #[test]
 fn record_without_a_notes_repo_is_a_usage_error() {
     let a = s(&["t", "--scratch-repo", "nonexistent", "--record"]);
@@ -478,6 +498,7 @@ fn registry() -> spira_config::init::Registry<'static> {
     spira_config::init::Registry { conf_d: Box::leak(Box::new(spira_config::resolve::locate_home_for_process().unwrap().join("conf.d"))), env }
 }
 
+#[test_id(twolxkk)]
 #[test]
 fn lifecycle_states_reads_the_store_s_real_history_shape() {
     // As production's spira-lc history prints it (2026-10-04): applied is the string "1",
@@ -493,6 +514,7 @@ fn lifecycle_states_reads_the_store_s_real_history_shape() {
     assert!(crate::acceptance::lifecycle_states(r#"[{"from_state":"READY","to_state":"WORKING","applied":"0"}]"#).is_empty(), "nothing applied, nothing passed through");
 }
 
+#[test_id(thfuoma)]
 #[test]
 fn an_aged_flag_without_its_anchor_is_a_usage_error() {
     let base = s(&["t", "--scratch-repo", "r"]);
@@ -507,6 +529,7 @@ fn an_aged_flag_without_its_anchor_is_a_usage_error() {
     assert_eq!(parse_args(&a).unwrap().aged_tag, None, "the waiver clears the aged base too");
 }
 
+#[test_id(t1uo4hm)]
 #[test]
 fn exec_failures_names_the_log_and_line_of_every_unexecable_tool() {
     let root = testkit::TempDir::new("exec-failures");
@@ -524,6 +547,7 @@ fn exec_failures_names_the_log_and_line_of_every_unexecable_tool() {
     assert!(got[2].starts_with("watchd.log:1: "), "{got:?}");
 }
 
+#[test_id(tcvm6ba)]
 #[test]
 fn exec_failures_is_empty_for_a_clean_run_dir() {
     let root = testkit::TempDir::new("exec-clean");
@@ -531,6 +555,7 @@ fn exec_failures_is_empty_for_a_clean_run_dir() {
     assert!(exec_failures(root.path()).is_empty());
 }
 
+#[test_id(t3jx7om)]
 #[test]
 fn skipped_upgrade_phases_without_a_waiver_are_partial() {
     use super::phases::verdict_for;
@@ -549,6 +574,7 @@ fn lines(f: &Fake) -> Vec<String> {
 
 /// The release under test has no sentinel unit: a kick starts the scheduler and waits on
 /// `scheduler status` until the task has fired since the kick.
+#[test_id(t3p4ti9)]
 #[test]
 fn a_kick_starts_the_scheduler_and_waits_for_the_task_to_fire() {
     let b = Box_::new();
@@ -564,6 +590,7 @@ fn a_kick_starts_the_scheduler_and_waits_for_the_task_to_fire() {
 }
 
 /// A predecessor release still ships the sentinel unit; its kick starts that unit as before.
+#[test_id(tisalag)]
 #[test]
 fn a_predecessor_with_the_sentinel_unit_is_kicked_as_before() {
     let b = Box_::new();
@@ -575,6 +602,7 @@ fn a_predecessor_with_the_sentinel_unit_is_kicked_as_before() {
     assert!(!log.iter().any(|l| l.contains("scheduler-status")), "{log:?}");
 }
 
+#[test_id(t2hcqkp)]
 #[test]
 fn a_bead_whose_lifecycle_row_is_late_is_still_filed() {
     let b = Box_::new();
@@ -587,6 +615,7 @@ fn a_bead_whose_lifecycle_row_is_late_is_still_filed() {
     assert_eq!(f.rows.borrow().len(), 1);
 }
 
+#[test_id(t967sgu)]
 #[test]
 fn a_bead_whose_lifecycle_row_never_comes_is_not_filed_and_says_why() {
     let b = Box_::new();
@@ -599,6 +628,7 @@ fn a_bead_whose_lifecycle_row_never_comes_is_not_filed_and_says_why() {
     assert!(out.contains("Connection refused"), "{out}");
 }
 
+#[test_id(t1kl5ed)]
 #[test]
 fn no_matching_unit_files_is_an_empty_list_not_an_error() {
     let b = Box_::new();

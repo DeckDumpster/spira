@@ -620,6 +620,7 @@ mod tests {
     // ---- trace_last / trace_stats (test-cockpit-*.sh had no dedicated bash suite for
     // these two; this is their first direct test) ----
 
+    #[test_id(tlmolzr)]
     #[test]
     fn trace_last_reports_the_last_tool_call_or_text() {
         let d = tmp("last");
@@ -634,6 +635,7 @@ mod tests {
         assert_eq!(trace_last(&d.join("missing"), MARK), "");
     }
 
+    #[test_id(tmcw4ck)]
     #[test]
     fn trace_last_strips_unsafe_characters() {
         let d = tmp("last-clean");
@@ -643,6 +645,7 @@ mod tests {
         assert!(!last.contains('='), "got [{last}]");
     }
 
+    #[test_id(ttmdzni)]
     #[test]
     fn trace_stats_unreadable_file_is_all_question_marks() {
         let d = tmp("stats-missing");
@@ -650,6 +653,7 @@ mod tests {
         assert_eq!(out, "TURNS=?\nCTX=?\nTOOLS=?\nFILES=?\nQUIET=?\nACT=?\nSAID=?\nMODEL=?\n");
     }
 
+    #[test_id(txx1qpv)]
     #[test]
     fn trace_stats_readable_with_no_assistant_event_is_dashes_not_zero() {
         let d = tmp("stats-empty");
@@ -663,6 +667,7 @@ mod tests {
         assert!(!out.contains('?'), "a readable, event-free trace must not render ?: {out}");
     }
 
+    #[test_id(ts6f3pq)]
     #[test]
     fn trace_stats_counts_turns_tools_files_and_last_usage_wins() {
         let d = tmp("stats-full");
@@ -685,6 +690,7 @@ mod tests {
 
     // ---- trace_tail (test-cockpit-fuse.sh Part 4) ----
 
+    #[test_id(t81yprp)]
     #[test]
     fn trace_tail_renders_result_as_a_turn_index_not_session_ended() {
         let d = tmp("tail");
@@ -703,6 +709,7 @@ mod tests {
         assert!(out.contains("turn 2"), "{out}");
     }
 
+    #[test_id(tdrmcs7)]
     #[test]
     fn trace_tail_missing_file_renders_no_session_log() {
         let d = tmp("tail-missing");
@@ -712,6 +719,7 @@ mod tests {
     // ---- wiki_write_paths / wiki_commit_paths ----
 
     // covers: UC-dwarf-execution-17
+    #[test_id(to9lycl)]
     #[test]
     fn wiki_commit_paths_selects_own_dirty_writes_never_tasks_md() {
         let writes = vec!["wiki/notes/new.md".to_string()];
@@ -750,6 +758,7 @@ mod tests {
         assert_eq!(wiki_commit_paths(&[], &["wiki/notes/concurrent-other.md".to_string()]), Vec::<String>::new());
     }
 
+    #[test_id(tci8joy)]
     #[test]
     fn wiki_write_paths_reads_edit_write_notebookedit_under_the_wiki_dir() {
         let d = tmp("wiki-write");
@@ -775,6 +784,7 @@ mod tests {
 
     // ---- groom_claims_verified (test-groom-escalation-check.sh T1) ----
 
+    #[test_id(t825ehc)]
     #[test]
     fn groom_claims_verified_table() {
         let epoch = 1_900_000_000i64;
@@ -800,6 +810,7 @@ mod tests {
 
     // ---- bead_named_paths ----
 
+    #[test_id(t575lh7)]
     #[test]
     fn bead_named_paths_matches_only_tracked_files_sorted() {
         let tracked = "spira/lib.sh\ndwarf/src/run.rs\nREADME.md\n";
@@ -808,6 +819,7 @@ mod tests {
         assert_eq!(got, vec!["dwarf/src/run.rs".to_string(), "spira/lib.sh".to_string()]);
     }
 
+    #[test_id(tju5n3x)]
     #[test]
     fn bead_named_paths_empty_tracked_is_empty_output() {
         assert_eq!(bead_named_paths("spira/lib.sh", ""), Vec::<String>::new());
@@ -816,6 +828,7 @@ mod tests {
     // ---- dwarf_fuse_minutes ----
 
     // covers: UC-cockpit-observability-15
+    #[test_id(ttsje29)]
     #[test]
     fn dwarf_fuse_minutes_no_worktree_is_question_mark() {
         let d = tmp("fuse-nowt");
@@ -825,6 +838,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-15
+    #[test_id(t08iyov)]
     #[test]
     fn dwarf_fuse_minutes_stale_worktree_is_a_positive_number() {
         let d = tmp("fuse-stale");
@@ -842,6 +856,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-15
+    #[test_id(t5g2bse)]
     #[test]
     fn dwarf_fuse_minutes_live_gate_suppresses_it_dead_gate_does_not() {
         let d = tmp("fuse-gate");
@@ -869,6 +884,7 @@ mod tests {
         assert_ne!(dead, "gate");
     }
 
+    #[test_id(t1zd72y)]
     #[test]
     fn cmdline_names_gate_reads_nul_joined_argv() {
         assert!(cmdline_names_gate(b"gate.sh\0sleep\09999\0"));
@@ -876,6 +892,7 @@ mod tests {
         assert!(!cmdline_names_gate(b""));
     }
 
+    #[test_id(tnsmi2r)]
     #[test]
     fn dwarf_fuse_minutes_a_gate_that_just_finished_resets_it() {
         let d = tmp("fuse-gatefin");
@@ -916,6 +933,7 @@ mod tests {
 
     // ---- dwarf_lease_minutes (test-dwarf-lease.sh) ----
 
+    #[test_id(tnafcys)]
     #[test]
     fn dwarf_lease_minutes_table() {
         let d = tmp("lease");
@@ -943,6 +961,7 @@ mod tests {
 
     // ---- _tsd_dwarf_session ----
 
+    #[test_id(tuef3kc)]
     #[test]
     fn tsd_dwarf_session_is_best_effort_and_never_panics_without_tsd_write() {
         struct NoExec;

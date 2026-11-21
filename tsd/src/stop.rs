@@ -131,6 +131,7 @@ mod tests {
         StopRecord { kind: Kind::Halt, reason: Reason::Incident, actor: "world".into(), repo: None, bead: None, detail: "free text".into() }
     }
 
+    #[test_id(tzh9j9o)]
     #[test]
     fn a_reason_or_kind_outside_the_closed_set_is_refused() {
         assert!(Reason::parse("because").is_err());
@@ -143,6 +144,7 @@ mod tests {
         }
     }
 
+    #[test_id(tq1446c)]
     #[test]
     fn a_record_round_trips_through_its_row_and_a_pause_needs_its_repo() {
         let tmp = testkit::TempDir::new("stop-record");

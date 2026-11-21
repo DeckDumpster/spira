@@ -168,6 +168,7 @@ mimir-trigger = { path = "../mimir-trigger" }
 inotify = { version = "0.11", default-features = false }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 forge = { path = "../forge" }
 # dwarves.sh's live count, held to sentinel-call's on the same unit list.
 spira-world = { path = "../spira-world" }

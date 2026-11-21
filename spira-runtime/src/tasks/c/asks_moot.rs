@@ -422,6 +422,7 @@ mod tests {
         serde_json::json!({"id": id, "status": status, "issue_type": "task", "labels": ["needs-x"], "description": "MOOT-WHEN: true"})
     }
 
+    #[test_id(tsags72)]
     #[test]
     fn the_observe_mootness_candidates_are_the_open_asks_and_no_history_is_read() {
         let store = Arc::new(fake::Content::new(vec![ask("sp-open", "open"), ask("sp-done", "closed")]));

@@ -4,6 +4,8 @@
 //! its line or the line above.
 
 /// Programs that are Spira (or a unit manager) and must not be a child of this crate.
+#[macro_use]
+extern crate spira_test_id;
 const BANNED: &[&str] = &["\"spira-lc\"", "\"systemctl\"", "\"systemd-run\"", "\"slay\"", "\"tsd-write\"", "\"mail\"", "\"bash\"", "\"bd\"", "\"bdq\""];
 /// The same programs held in a field or a variable: `Command::new(&self.lc)`, `&systemctl`.
 const BANNED_HOLDERS: &[&str] = &[".lc)", ".lc_bin)", "lc)", "lc_bin)", "systemctl)", "slay)", "systemd_run)"];
@@ -26,6 +28,7 @@ fn unmarked(file: &str, src: &str) -> Vec<String> {
     bad
 }
 
+#[test_id(t34zori)]
 #[test]
 fn no_spira_child_is_forked_without_a_fork_edge_mark() {
     let dir = testkit::manifest_dir().join("src");
@@ -40,6 +43,7 @@ fn no_spira_child_is_forked_without_a_fork_edge_mark() {
     assert!(bad.is_empty(), "Spira children forked without a FORK-EDGE mark:\n{}", bad.join("\n"));
 }
 
+#[test_id(tkceih7)]
 #[test]
 fn the_scan_catches_a_planted_site_and_honours_the_mark() {
     let planted = "fn f() {\n    let mut c = Command::new(&self.store.lc);\n    let _ = std::process::Command::new(\"systemctl\").status();\n    let _ = Command::new(&systemctl);\n    let _ = Command::new(\"git\");\n}\n";

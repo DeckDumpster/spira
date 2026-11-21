@@ -117,6 +117,7 @@ mod tests {
         ReleaseSpawnEnv.check(&tree).unwrap().iter().map(|f| f.to_string()).collect()
     }
 
+    #[test_id(tiu7i3d)]
     #[test]
     fn a_planted_bare_spawn_is_caught_and_the_routed_one_passes() {
         let t = TempDir::new("rse");
@@ -131,6 +132,7 @@ mod tests {
         assert!(got[1].starts_with("release-spawn-env: b/src/main.rs:1:"));
     }
 
+    #[test_id(tte2tqx)]
     #[test]
     fn a_listed_exception_passes_and_a_stale_one_is_refused() {
         let t = TempDir::new("rse-allow");

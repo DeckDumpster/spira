@@ -1,6 +1,8 @@
 //! Every verb that once read or wrote the dolt lifecycle database, run as the binary against a
 //! real control store file: what a caller gets.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::process::Command;
 
 use serde_json::Value;
@@ -56,6 +58,7 @@ impl World {
     }
 }
 
+#[test_id(tplmupn)]
 #[test]
 fn the_ported_verbs_answer_from_the_control_store() {
     let w = World::new();

@@ -1,5 +1,8 @@
 //! `dwarf [--home DIR] <rune> [--dry-run | --sweep [--prompt <text>|-]]` — DESIGN.md §2.1.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
@@ -324,6 +327,7 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(tlsm2vw)]
     #[test]
     fn sp_li4zys_a_dwarf_the_scheduler_started_finds_its_own_unit() {
         let own = "spira-run-sentinel_2dcall-builder_2d1794009721297_2d1.service";
@@ -334,6 +338,7 @@ mod tests {
         assert_eq!(own_unit_in("0::/user.slice/user-1000.slice/user@1000.service/app.slice/spira-run-sentinel_2dpass-landing.service\n"), "", "a landing pass is not a dwarf");
     }
 
+    #[test_id(tzgvsao)]
     #[test]
     fn argv_grammar() {
         assert!(parse(&[]).is_err());
@@ -348,6 +353,7 @@ mod tests {
         assert_eq!(parse(&a(&["ops", "--sweep"])).unwrap().mode, Mode::Sweep { prompt: None });
     }
 
+    #[test_id(t5ufg04)]
     #[test]
     fn direct_grammar() {
         let c = parse(&a(&["--home", "h", "direct", "builder", "sp-x", "--by", "concierge", "--reason", "loop fix"])).unwrap();
@@ -359,6 +365,7 @@ mod tests {
         assert_eq!(operation_of(&a(&["direct", "builder", "sp-x"])), "direct");
     }
 
+    #[test_id(tvovn3o)]
     #[test]
     fn escape_grammar() {
         let c = parse(&a(&["--escape", "stretchy"])).unwrap();

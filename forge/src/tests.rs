@@ -64,6 +64,7 @@ fn repo() -> &'static Path {
 
 // ── check-status ─────────────────────────────────────────────────────────────────────────
 
+#[test_id(tt9f7r9)]
 #[test]
 fn check_status_with_no_branch_is_pending_never_a_guess() {
     let gh = FakeGh::default();
@@ -75,6 +76,7 @@ fn check_status_with_no_branch_is_pending_never_a_guess() {
     );
 }
 
+#[test_id(tl6mqmh)]
 #[test]
 fn check_status_no_run_is_pending() {
     let gh = FakeGh::default();
@@ -98,6 +100,7 @@ fn check_status_no_run_is_pending() {
     assert_eq!(out.lines, vec!["pending", "no-run: Gate"]);
 }
 
+#[test_id(tcsi470)]
 #[test]
 fn check_status_failed_listing_is_pending_without_no_run() {
     let gh = FakeGh::default();
@@ -121,6 +124,7 @@ fn check_status_failed_listing_is_pending_without_no_run() {
     assert_eq!(out.lines, vec!["pending"]);
 }
 
+#[test_id(tk2rp5u)]
 #[test]
 fn check_status_runs_of_another_workflow_only_is_a_fault_naming_the_missing_one() {
     let gh = FakeGh::default();
@@ -165,6 +169,7 @@ fn check_status_runs_of_another_workflow_only_is_a_fault_naming_the_missing_one(
     assert_eq!(out.lines, vec!["harness_fault", "missing-workflow: Gate"]);
 }
 
+#[test_id(tzjpto5)]
 #[test]
 fn check_status_other_workflow_ran_but_mapped_one_exists_is_pending() {
     let gh = FakeGh::default();
@@ -209,6 +214,7 @@ fn check_status_other_workflow_ran_but_mapped_one_exists_is_pending() {
     assert_eq!(out.lines, vec!["pending", "no-run: Gate"]);
 }
 
+#[test_id(tuyrqdz)]
 #[test]
 fn check_status_failed_run_list_is_never_a_mapping_fault() {
     let gh = FakeGh::default();
@@ -246,6 +252,7 @@ fn check_status_failed_run_list_is_never_a_mapping_fault() {
     assert_eq!(out.lines, vec!["pending"]);
 }
 
+#[test_id(tt3lkg4)]
 #[test]
 fn check_status_green_on_success() {
     let gh = FakeGh::default();
@@ -265,6 +272,7 @@ fn check_status_green_on_success() {
     assert!(out.lines.contains(&"run-url: https://x/42".to_string()));
 }
 
+#[test_id(tkgnpto)]
 #[test]
 fn check_status_cancelled_conclusion_is_harness_fault_not_red() {
     let gh = FakeGh::default();
@@ -293,6 +301,7 @@ fn check_status_cancelled_conclusion_is_harness_fault_not_red() {
     assert_eq!(out.lines[0], "harness_fault");
 }
 
+#[test_id(t6xq3uf)]
 #[test]
 fn check_status_provision_job_failure_overrides_red() {
     let gh = FakeGh::default();
@@ -321,6 +330,7 @@ fn check_status_provision_job_failure_overrides_red() {
     assert_eq!(out.lines[0], "provision_fault");
 }
 
+#[test_id(tu2mg70)]
 #[test]
 fn check_status_provision_fault_names_a_capacity_marker_from_the_provision_log() {
     let gh = FakeGh::default();
@@ -393,6 +403,7 @@ fn check_status_provision_fault_names_a_capacity_marker_from_the_provision_log()
     );
 }
 
+#[test_id(tkj60dw)]
 #[test]
 fn check_status_red_with_only_a_non_suite_step_names_the_step_and_its_log_tail() {
     let gh = FakeGh::default();
@@ -456,6 +467,7 @@ fn check_status_red_with_only_a_non_suite_step_names_the_step_and_its_log_tail()
     );
 }
 
+#[test_id(t2p1vrh)]
 #[test]
 fn check_status_red_carries_every_failing_line_with_context_counts_and_no_secrets() {
     let gh = FakeGh::default();
@@ -559,6 +571,7 @@ fn red_gate_evidence(log: &str) -> Vec<String> {
         .collect()
 }
 
+#[test_id(tks1emu)]
 #[test]
 fn check_status_red_evidence_carries_each_repos_failure_shape() {
     let ev = red_gate_evidence("2026-10-26T15:00:00Z running 3b backup-check\n2026-10-26T15:00:01Z FAIL  and no replica-sync message is needed by backup-check (expected no, got yes)\n2026-10-26T15:00:02Z FAILED: litestream\n2026-10-26T15:00:03Z !! CI FAILED during step: suites\n");
@@ -586,6 +599,7 @@ fn check_status_red_evidence_carries_each_repos_failure_shape() {
     );
 }
 
+#[test_id(tbntg07)]
 #[test]
 fn check_status_red_with_no_failing_lines_says_so_and_carries_the_log_tail() {
     let ev = red_gate_evidence("2026-10-26T15:00:00Z doing a thing\n2026-10-26T15:00:01Z exited quietly\n2026-10-26T15:00:02Z ##[error]Process completed with exit code 1.\n");
@@ -596,6 +610,7 @@ fn check_status_red_with_no_failing_lines_says_so_and_carries_the_log_tail() {
     assert!(ev.contains(&"exited quietly".to_string()), "{ev:?}");
 }
 
+#[test_id(tcvd3jp)]
 #[test]
 fn redact_keeps_file_line_tokens_and_blanks_credentials() {
     assert_eq!(
@@ -609,6 +624,7 @@ fn redact_keeps_file_line_tokens_and_blanks_credentials() {
     assert_eq!(redact_line("password=s3cret ok"), "password=*** ok");
 }
 
+#[test_id(t832v5c)]
 #[test]
 fn check_status_suites_job_cancelled_is_harness_fault_not_a_verdict() {
     let gh = FakeGh::default();
@@ -637,6 +653,7 @@ fn check_status_suites_job_cancelled_is_harness_fault_not_a_verdict() {
     assert_eq!(out.lines[0], "harness_fault");
 }
 
+#[test_id(tnb6xhd)]
 #[test]
 fn check_status_run_ci_cancelled_by_a_runner_loss_is_harness_fault_with_its_market() {
     let gh = FakeGh::default();
@@ -685,6 +702,7 @@ fn check_status_run_ci_cancelled_by_a_runner_loss_is_harness_fault_with_its_mark
     );
 }
 
+#[test_id(tzuanxh)]
 #[test]
 fn check_status_gate_declared_fault_in_a_failed_step_is_harness_fault_not_red() {
     let gh = FakeGh::default();
@@ -754,6 +772,7 @@ fn check_status_gate_declared_fault_in_a_failed_step_is_harness_fault_not_red() 
     );
 }
 
+#[test_id(tke7ar5)]
 #[test]
 fn check_status_build_failure_extracts_deduped_capped_error_lines() {
     let gh = FakeGh::default();
@@ -800,6 +819,7 @@ fn check_status_build_failure_extracts_deduped_capped_error_lines() {
     );
 }
 
+#[test_id(tl30uu5)]
 #[test]
 fn pr_merge_commit_prints_the_sha_and_fails_closed_when_there_is_none() {
     let gh = FakeGh::default();
@@ -838,6 +858,7 @@ fn pr_merge_commit_prints_the_sha_and_fails_closed_when_there_is_none() {
 
 // ── pr-mergeability / pr-state ───────────────────────────────────────────────────────────
 
+#[test_id(tslh0ay)]
 #[test]
 fn pr_mergeability_maps_conflicting_and_dirty_to_dirty() {
     let gh = FakeGh::default();
@@ -849,12 +870,14 @@ fn pr_mergeability_maps_conflicting_and_dirty_to_dirty() {
     assert_eq!(pr_mergeability(&gh, repo(), "5").lines, vec!["DIRTY"]);
 }
 
+#[test_id(t5bm3nh)]
 #[test]
 fn pr_mergeability_unreadable_is_unknown_not_a_guess() {
     let gh = FakeGh::default();
     assert_eq!(pr_mergeability(&gh, repo(), "5").lines, vec!["UNKNOWN"]);
 }
 
+#[test_id(tos7rok)]
 #[test]
 fn pr_state_maps_every_github_state_and_falls_closed_to_unknown() {
     let gh = FakeGh::default();
@@ -876,6 +899,7 @@ fn pr_state_maps_every_github_state_and_falls_closed_to_unknown() {
     assert_eq!(pr_state(&gh2, repo(), "spira/sp-b").lines, vec!["unknown"]);
 }
 
+#[test_id(thuylgm)]
 #[test]
 fn pr_checks_lists_status_and_conclusion_for_runs_and_commit_statuses() {
     let gh = FakeGh::default();
@@ -898,6 +922,7 @@ fn pr_checks_lists_status_and_conclusion_for_runs_and_commit_statuses() {
     assert!(pr_checks(&FakeGh::default(), repo(), "6").lines.is_empty());
 }
 
+#[test_id(tw7ghhu)]
 #[test]
 fn pr_red_names_the_failing_job_and_its_fail_lines_and_is_silent_otherwise() {
     let gh = FakeGh::default();
@@ -941,12 +966,14 @@ fn pr_red_names_the_failing_job_and_its_fail_lines_and_is_silent_otherwise() {
 
 // ── runs-active: fail-closed '?', never 0 ───────────────────────────────────────────────
 
+#[test_id(tmjc4k2)]
 #[test]
 fn runs_active_prints_question_mark_when_the_api_call_fails() {
     let gh = FakeGh::default();
     assert_eq!(runs_active(&gh, repo()).lines, vec!["?"]);
 }
 
+#[test_id(tiv6lpg)]
 #[test]
 fn runs_active_counts_only_pull_request_runs_belonging_to_an_open_pr() {
     let gh = FakeGh::default();
@@ -970,6 +997,7 @@ fn runs_active_counts_only_pull_request_runs_belonging_to_an_open_pr() {
     assert_eq!(runs_active(&gh, repo()).lines, vec!["1"]);
 }
 
+#[test_id(tmv7py9)]
 #[test]
 fn runs_active_a_run_with_no_linked_pr_counts_as_active() {
     let gh = FakeGh::default();
@@ -988,6 +1016,7 @@ fn runs_active_a_run_with_no_linked_pr_counts_as_active() {
 
 // ── branch-protection-status: fail closed to unprotected ────────────────────────────────
 
+#[test_id(tmarn0t)]
 #[test]
 fn branch_protection_status_unreadable_is_unprotected_not_a_guess() {
     let gh = FakeGh::default();
@@ -997,6 +1026,7 @@ fn branch_protection_status_unreadable_is_unprotected_not_a_guess() {
     );
 }
 
+#[test_id(tt4xh6v)]
 #[test]
 fn branch_protection_status_reads_the_protected_field() {
     let gh = FakeGh::default();
@@ -1013,6 +1043,7 @@ fn branch_protection_status_reads_the_protected_field() {
 
 // ── pr-list-queue / pr-list-open (new) ───────────────────────────────────────────────────
 
+#[test_id(tmvvf14)]
 #[test]
 fn pr_list_queue_filters_to_the_queue_prefix() {
     let gh = FakeGh::default();
@@ -1031,6 +1062,7 @@ fn pr_list_queue_filters_to_the_queue_prefix() {
     assert_eq!(pr_list_queue(&gh, repo()).lines, vec!["1"]);
 }
 
+#[test_id(tz9dxj6)]
 #[test]
 fn pr_list_open_lists_every_open_pr_with_its_branch() {
     let gh = FakeGh::default();
@@ -1057,6 +1089,7 @@ fn pr_list_open_lists_every_open_pr_with_its_branch() {
 const ARMED: &str = r#"{"autoMergeRequest":{"mergeMethod":"MERGE"},"state":"OPEN"}"#;
 const UNARMED: &str = r#"{"autoMergeRequest":null,"state":"OPEN"}"#;
 
+#[test_id(tvhujs8)]
 #[test]
 fn pr_automerge_arms_squash_and_reports_gh_s_exit() {
     let gh = FakeGh::default();
@@ -1086,6 +1119,7 @@ fn pr_automerge_arms_squash_and_reports_gh_s_exit() {
     assert_eq!(pr_automerge(&gh3, repo(), "7", "bogus").code, 1);
 }
 
+#[test_id(t5lppia)]
 #[test]
 fn pr_automerge_is_not_armed_until_the_pr_shows_the_request() {
     let gh = FakeGh::default();
@@ -1106,6 +1140,7 @@ fn pr_automerge_is_not_armed_until_the_pr_shows_the_request() {
     assert_eq!(pr_automerge(&gh2, repo(), "7", "merge").code, 0);
 }
 
+#[test_id(tvnzvu5)]
 #[test]
 fn pr_arm_queue_arms_only_unarmed_batch_prs() {
     let gh = FakeGh::default();
@@ -1150,6 +1185,7 @@ fn pr_arm_queue_arms_only_unarmed_batch_prs() {
 
 // ── run-metadata: both last-activity lines, per forge.sh's own double-print ─────────────
 
+#[test_id(t32961w)]
 #[test]
 fn run_metadata_prints_started_at_then_both_last_activity_lines() {
     let gh = FakeGh::default();
@@ -1173,6 +1209,7 @@ fn run_metadata_prints_started_at_then_both_last_activity_lines() {
     assert!(out.lines[0].starts_with("started-at:"));
 }
 
+#[test_id(tb58pqe)]
 #[test]
 fn run_metadata_reports_the_runs_own_status() {
     let gh = FakeGh::default();
@@ -1189,6 +1226,7 @@ fn run_metadata_reports_the_runs_own_status() {
     );
 }
 
+#[test_id(tbk77vw)]
 #[test]
 fn run_metadata_names_the_job_and_step_in_progress() {
     let gh = FakeGh::default();
@@ -1211,6 +1249,7 @@ fn run_metadata_names_the_job_and_step_in_progress() {
     );
 }
 
+#[test_id(toass2n)]
 #[test]
 fn run_metadata_reads_declared_timeout_and_live_job_log_activity() {
     let gh = FakeGh::default();
@@ -1250,6 +1289,7 @@ fn run_metadata_reads_declared_timeout_and_live_job_log_activity() {
 
 // ── batch-ci-status ───────────────────────────────────────────────────────────────────────
 
+#[test_id(tcm9kjx)]
 #[test]
 fn batch_ci_status_no_run_says_runs_zero() {
     let gh = FakeGh::default();
@@ -1273,6 +1313,7 @@ fn batch_ci_status_no_run_says_runs_zero() {
     assert_eq!((out.code, out.lines), (0, vec!["runs: 0".to_string()]));
 }
 
+#[test_id(txrvuf9)]
 #[test]
 fn batch_ci_status_failed_run_list_fails() {
     let gh = FakeGh::default();
@@ -1297,6 +1338,7 @@ fn batch_ci_status_failed_run_list_fails() {
     assert!(out.lines.iter().any(|l| l.contains("HTTP 403")), "{:?}", out.lines);
 }
 
+#[test_id(tivb4t9)]
 #[test]
 fn batch_ci_status_reports_queued_since_from_jobs() {
     let gh = FakeGh::default();
@@ -1326,6 +1368,7 @@ fn batch_ci_status_reports_queued_since_from_jobs() {
     assert!(out.lines.iter().any(|l| l.starts_with("queued-since:")));
 }
 
+#[test_id(tajx19e)]
 #[test]
 fn run_id_picks_the_gate_run_not_the_newest_run_of_another_workflow() {
     let gh = FakeGh::default();
@@ -1352,6 +1395,7 @@ fn run_id_picks_the_gate_run_not_the_newest_run_of_another_workflow() {
 
 // ── dispatch requires a ref ──────────────────────────────────────────────────────────────
 
+#[test_id(thrc10d)]
 #[test]
 fn dispatch_refuses_without_a_ref() {
     let gh = FakeGh::default();
@@ -1361,6 +1405,7 @@ fn dispatch_refuses_without_a_ref() {
 
 // ── force-cancel names the VM it orphans ─────────────────────────────────────────────────
 
+#[test_id(tef9eu8)]
 #[test]
 fn force_cancel_posts_the_force_cancel_endpoint_after_reading_the_jobs() {
     let gh = FakeGh::default();
@@ -1390,6 +1435,7 @@ fn force_cancel_posts_the_force_cancel_endpoint_after_reading_the_jobs() {
     assert!(calls[1].last().unwrap().ends_with("/force-cancel"));
 }
 
+#[test_id(tguoxfh)]
 #[test]
 fn force_cancel_still_cancels_when_the_jobs_are_unreadable_and_refuses_without_a_run() {
     let gh = FakeGh::default();
@@ -1435,6 +1481,7 @@ fn rerun_called(gh: &FakeGh) -> bool {
     })
 }
 
+#[test_id(tqsyoqs)]
 #[test]
 fn workflow_rerun_of_a_decided_run_is_refused_with_the_unchanged_inputs() {
     for concl in ["success", "failure"] {
@@ -1452,6 +1499,7 @@ fn workflow_rerun_of_a_decided_run_is_refused_with_the_unchanged_inputs() {
     }
 }
 
+#[test_id(t0ux8uz)]
 #[test]
 fn workflow_rerun_still_serves_a_fault_and_an_unreadable_run() {
     let faulted = rerun_gh(
@@ -1468,6 +1516,7 @@ fn workflow_rerun_still_serves_a_fault_and_an_unreadable_run() {
     assert!(rerun_called(&unreadable));
 }
 
+#[test_id(tyrjxll)]
 #[test]
 fn workflow_rerun_serves_a_suites_job_killed_acquiring_the_image_not_a_failed_suite() {
     let killed = rerun_gh(
@@ -1513,6 +1562,7 @@ fn stranded_fixture(age: u64, labels: &str, runners: &str) -> FakeGh {
     gh
 }
 
+#[test_id(tzhc040)]
 #[test]
 fn stranded_unregistered_runner_fires_without_waiting_for_the_clock() {
     let gh = stranded_fixture(
@@ -1529,6 +1579,7 @@ fn stranded_unregistered_runner_fires_without_waiting_for_the_clock() {
     );
 }
 
+#[test_id(tkbwwk4)]
 #[test]
 fn stranded_offline_runner_names_runner_and_vmid() {
     let gh = stranded_fixture(
@@ -1545,6 +1596,7 @@ fn stranded_offline_runner_names_runner_and_vmid() {
     );
 }
 
+#[test_id(tyd4eh8)]
 #[test]
 fn stranded_is_silent_for_online_young_or_hosted_jobs() {
     let online = r#"{"runners":[{"name":"eph-1337","status":"online","labels":[{"name":"spira-run-9001"}]}]}"#;
@@ -1560,6 +1612,7 @@ fn stranded_is_silent_for_online_young_or_hosted_jobs() {
     assert!(stranded_runners(&g, repo(), NOW, 300).lines.is_empty());
 }
 
+#[test_id(txcjxky)]
 #[test]
 fn stranded_unreadable_runs_is_silent_not_a_guess() {
     assert!(stranded_runners(&FakeGh::default(), repo(), NOW, 300)
@@ -1569,6 +1622,7 @@ fn stranded_unreadable_runs_is_silent_not_a_guess() {
 
 // ── per-repo gate workflow ───────────────────────────────────────────────────────────────
 
+#[test_id(tl3fw65)]
 #[test]
 fn check_status_reads_the_named_workflow_so_a_ci_repo_goes_green() {
     let gh = FakeGh::default();
@@ -1603,6 +1657,7 @@ fn check_status_reads_the_named_workflow_so_a_ci_repo_goes_green() {
     );
 }
 
+#[test_id(tzrvjqv)]
 #[test]
 fn every_run_list_verb_filters_on_the_workflow_it_is_given() {
     let gh = FakeGh::default();
@@ -1618,6 +1673,7 @@ fn every_run_list_verb_filters_on_the_workflow_it_is_given() {
     }
 }
 
+#[test_id(tqc2jhf)]
 #[test]
 fn workflow_for_picks_the_repos_pair_else_the_default() {
     let t = "deck=CI pokedumpster=CI2";
@@ -1681,6 +1737,7 @@ fn created(gh: &FakeGh) -> bool {
         .any(|c| c.iter().map(String::as_str).eq(CREATE.iter().copied()))
 }
 
+#[test_id(t091mdr)]
 #[test]
 fn pr_create_refuses_a_second_open_installation_pr_and_opens_nothing() {
     let gh = creatable(r#"[{"number":22,"headRefName":"spira/queue/a"}]"#);
@@ -1690,6 +1747,7 @@ fn pr_create_refuses_a_second_open_installation_pr_and_opens_nothing() {
     assert!(!created(&gh));
 }
 
+#[test_id(t5upgj2)]
 #[test]
 fn pr_create_with_the_override_opens_the_second_pr() {
     let gh = creatable(r#"[{"number":22,"headRefName":"spira/queue/a"}]"#);
@@ -1706,6 +1764,7 @@ fn pr_create_with_the_override_opens_the_second_pr() {
     assert!(created(&gh));
 }
 
+#[test_id(tkpmu05)]
 #[test]
 fn pr_create_opens_when_the_only_open_prs_are_another_authors() {
     let gh = creatable("[]");
@@ -1716,6 +1775,7 @@ fn pr_create_opens_when_the_only_open_prs_are_another_authors() {
     assert!(created(&gh));
 }
 
+#[test_id(t9h8cdf)]
 #[test]
 fn pr_create_refuses_when_the_listing_cannot_be_read() {
     let gh = FakeGh::default();
@@ -1727,6 +1787,7 @@ fn pr_create_refuses_when_the_listing_cannot_be_read() {
     assert!(!created(&gh));
 }
 
+#[test_id(ta8fbtu)]
 #[test]
 fn pr_create_names_a_missing_gh_as_the_cause() {
     let gh = FakeGh::default();
@@ -1736,6 +1797,7 @@ fn pr_create_names_a_missing_gh_as_the_cause() {
     assert!(!created(&gh));
 }
 
+#[test_id(tu8xije)]
 #[test]
 fn pr_preflight_makes_no_create_call() {
     let gh = creatable("[]");
@@ -1743,6 +1805,7 @@ fn pr_preflight_makes_no_create_call() {
     assert!(!created(&gh));
 }
 
+#[test_id(tuusend)]
 #[test]
 fn ami_runs_lists_only_unfinished_runs_and_says_so_when_unreadable() {
     let gh = FakeGh::default();
@@ -1767,6 +1830,7 @@ fn ami_runs_lists_only_unfinished_runs_and_says_so_when_unreadable() {
     );
 }
 
+#[test_id(t6ylfir)]
 #[test]
 fn ami_result_names_the_failing_step_of_a_failed_candidate_build() {
     let list = [
@@ -1824,6 +1888,7 @@ fn ami_result_names_the_failing_step_of_a_failed_candidate_build() {
     );
 }
 
+#[test_id(tu13oah)]
 #[test]
 fn ami_log_is_the_tail_of_the_failed_steps_log() {
     let gh = FakeGh::default();
@@ -1844,6 +1909,7 @@ fn ami_log_is_the_tail_of_the_failed_steps_log() {
 
 // ── the library seam ─────────────────────────────────────────────────────────────────────
 
+#[test_id(t7tzy8a)]
 #[test]
 fn what_a_verb_says_on_stderr_reaches_the_in_process_caller() {
     let _ = crate::diag::take();
@@ -1853,6 +1919,7 @@ fn what_a_verb_says_on_stderr_reaches_the_in_process_caller() {
     assert!(crate::diag::take().is_empty(), "a take empties the buffer");
 }
 
+#[test_id(trkhv8u)]
 #[test]
 fn a_refused_rerun_names_its_reason_on_stderr() {
     let _ = crate::diag::take();
@@ -1865,6 +1932,7 @@ fn a_refused_rerun_names_its_reason_on_stderr() {
     assert!(err[0].starts_with("forge: workflow-rerun refused: run 7 concluded success"), "{err:?}");
 }
 
+#[test_id(ti8ezub)]
 #[test]
 fn only_the_default_name_runs_in_process_and_any_declared_path_is_a_stand_in() {
     use crate::client::{route_of, Route};
@@ -1874,6 +1942,7 @@ fn only_the_default_name_runs_in_process_and_any_declared_path_is_a_stand_in() {
     assert_eq!(route_of(Path::new("fx/forge")), Route::Program("fx/forge".into()));
 }
 
+#[test_id(t4p3j2o)]
 #[test]
 fn a_stand_in_answers_with_its_code_stdout_stderr_and_reads_the_input() {
     let dir = testkit::TempDir::new("forge-stand-in");

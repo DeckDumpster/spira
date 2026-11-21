@@ -2,11 +2,14 @@
 //! the old `bead-stage.jsonl` gave: the same fixture goes down both paths.
 
 
+#[macro_use]
+extern crate spira_test_id;
 use reconciler_flow::io::sentinel_wall;
 use serde_json::json;
 use tsd::store::{push_row, Reader};
 
 const NOW: u64 = 1_792_700_000;
+#[test_id(t849tou)]
 #[test]
 fn the_sentinel_wall_is_the_summed_latest_pass_as_it_was() {
     let mut rows = Vec::new();
@@ -28,6 +31,7 @@ fn the_sentinel_wall_is_the_summed_latest_pass_as_it_was() {
     assert_eq!(file_answer, 60);
 }
 
+#[test_id(tadgjzf)]
 #[test]
 fn a_stopped_store_makes_every_stage_query_a_named_error() {
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

@@ -134,6 +134,7 @@ mod tests {
         files.iter().find(|(n, _)| n == name).map(|(_, t)| t.clone()).unwrap_or_else(|| panic!("no {name}"))
     }
 
+    #[test_id(t5j9gn1)]
     #[test]
     fn linux_gets_a_oneshot_service_and_its_timer() {
         let files = render(Platform::for_os("linux"), &spec()).unwrap();
@@ -148,6 +149,7 @@ mod tests {
         );
     }
 
+    #[test_id(tml3zq3)]
     #[test]
     fn macos_gets_a_launchd_plist_on_a_start_interval() {
         let files = render(Platform::for_os("macos"), &spec()).unwrap();
@@ -157,6 +159,7 @@ mod tests {
         );
     }
 
+    #[test_id(tzsms56)]
     #[test]
     fn anywhere_else_gets_one_crontab_line() {
         let files = render(Platform::for_os("freebsd"), &spec()).unwrap();
@@ -167,6 +170,7 @@ mod tests {
         assert_eq!(file(&render(Platform::Cron, &every_minute).unwrap(), "spira-watchdog.crontab"), "* * * * * opt/spira/bin/spira-watchdog pass # spira-watchdog\n");
     }
 
+    #[test_id(t41wquv)]
     #[test]
     fn an_interval_a_platform_cannot_keep_is_refused() {
         for every in [0, 90, 420] {
@@ -179,6 +183,7 @@ mod tests {
         assert!(render(Platform::Systemd, &t).is_err());
     }
 
+    #[test_id(thnk6i8)]
     #[test]
     fn values_are_quoted_for_each_format() {
         let t = TimerSpec { label: "w".into(), program: PathBuf::from("b/w"), args: vec!["50%".into(), "a&b".into(), "it's".into()], env: vec![], every_s: 60 };

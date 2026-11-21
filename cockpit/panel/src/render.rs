@@ -1180,6 +1180,7 @@ mod tests {
 
     /// Rule 1, as a check rather than a comment. `\x1b[2m` is faint grey on black, and it
     /// was on the BODY OF THE BEAD — the one thing in this pane that exists to be read.
+    #[test_id(tazeyf2)]
     #[test]
     fn content_is_never_dim() {
         let it = item("a title", "a paragraph
@@ -1196,6 +1197,7 @@ and another");
 
     /// Rule 2: the first and last rows are bands, and no other row is. If a third band
     /// appears, chrome has grown a row at the body's expense.
+    #[test_id(tg48jco)]
     #[test]
     fn the_frame_is_exactly_two_bands() {
         let items = Ok(vec![item("t", "one
@@ -1214,6 +1216,7 @@ three")]);
     /// dismissed toggle — one sweep replacing the three that each repeated the same
     /// geometries (cluster 11: `every_row_fits_the_pane`, `a_threaded_item_fits_the_pane`,
     /// `the_alerts_view_fits_every_geometry`).
+    #[test_id(tj5j0fn)]
     #[test]
     fn every_view_fits_every_geometry() {
         let long = "word ".repeat(400);
@@ -1280,6 +1283,7 @@ three")]);
 
     /// The empty and error frames are the same height as a full one — a short frame leaves
     /// the footer floating in the middle of the pane.
+    #[test_id(tjsdoc3)]
     #[test]
     fn the_empty_and_error_frames_are_full_height() {
         let empty: Result<Vec<Item>, String> = Ok(Vec::new());
@@ -1292,6 +1296,7 @@ three")]);
 
     /// A paragraph break on the last visible row separates nothing, because what it was
     /// separating is below the fold. It must not cost the body a row.
+    #[test_id(tjc3p61)]
     #[test]
     fn a_trailing_paragraph_break_never_costs_a_row() {
         // Ten rows of detail; put a blank exactly where the fold falls.
@@ -1308,6 +1313,7 @@ three")]);
 
     /// the operator's capture: a four-line body in a ten-row detail area painted six blank rows,
     /// while items they could have seen sat below the fold of a three-row list.
+    #[test_id(t6w4lis)]
     #[test]
     fn a_short_body_gives_its_surplus_rows_to_the_list() {
         // 19 rows, 12 items waiting, detail needs 4.
@@ -1319,6 +1325,7 @@ three")]);
 
     /// The surplus is capped by the queue. Two items cannot fill eleven rows either, so the
     /// blanks stay — but nothing is being hidden behind them.
+    #[test_id(t68krwg)]
     #[test]
     fn the_list_never_grows_past_the_items_it_has() {
         let (list, _) = split(19, 0, 2, 1);
@@ -1327,6 +1334,7 @@ three")]);
 
     /// A body longer than its share is unaffected: the split is unchanged from the 40/60
     /// rule when there is no surplus to hand back.
+    #[test_id(t50siga)]
     #[test]
     fn a_long_body_keeps_the_reading_share() {
         let (list, detail) = split(19, 0, 12, 99);
@@ -1335,6 +1343,7 @@ three")]);
     }
 
     /// The input row is taken out of the content, not out of the bands.
+    #[test_id(tnf4r1y)]
     #[test]
     fn the_input_row_costs_one_content_row() {
         let (l0, d0) = split(19, 0, 12, 99);
@@ -1345,6 +1354,7 @@ three")]);
     /// A reply longer than the pane is wide is still visible: it wraps, and it wraps to the
     /// END of the buffer so the cursor is on screen. This is the defect that had the operator
     /// typing blind past one line.
+    #[test_id(tx6zt80)]
     #[test]
     fn a_long_reply_wraps_and_keeps_the_cursor_visible() {
         let long = "x".repeat(400);
@@ -1359,6 +1369,7 @@ three")]);
     }
 
     /// And the rows it needs are the rows the split reserves, or the editor runs off the pane.
+    #[test_id(tqiotxm)]
     #[test]
     fn the_split_reserves_exactly_the_rows_the_editor_draws() {
         for n in [0usize, 1, 40, 400, 4000] {
@@ -1369,6 +1380,7 @@ three")]);
 
     /// An empty buffer is one row carrying just the cursor — not zero rows, which would make
     /// the editor invisible the moment it opened.
+    #[test_id(td7ypbt)]
     #[test]
     fn an_empty_reply_still_shows_a_cursor() {
         let rows = input_rows("", "verdict", 60);
@@ -1379,6 +1391,7 @@ three")]);
     /// And a field that wrapped to three rows costs three. The reservation was a hard-coded
     /// single row, so a wrapping field would have painted over content the layout still
     /// believed it owned.
+    #[test_id(tfrrjqr)]
     #[test]
     fn a_wrapped_input_costs_every_row_it_takes() {
         let (l0, d0) = split(19, 0, 12, 99);
@@ -1393,6 +1406,7 @@ three")]);
     /// showing what was actually typed cannot swallow a doubled or a trailing space, which is
     /// what `wrap` — the PROSE wrapper, which splits on whitespace and rejoins with single
     /// spaces — would have done had it been reached for here.
+    #[test_id(tnz6ioz)]
     #[test]
     fn the_wrap_is_lossless_while_the_answer_fits() {
         let cases: Vec<String> = vec![
@@ -1423,6 +1437,7 @@ three")]);
     /// the edge the field is one row, at the edge the caret still has its cell, and past it
     /// the text wraps and the caret goes with it. Before this, all three drew as one row and
     /// the last two ran off the pane into whatever the terminal felt like doing.
+    #[test_id(to0co5f)]
     #[test]
     fn the_wrap_threshold_moves_the_caret_down_not_off_the_edge() {
         let avail = 107 - ("verdict".chars().count() + 3); // 97 cells, cursor included
@@ -1452,6 +1467,7 @@ three")]);
     /// invariant — not that all the text is visible — and it is asserted through the drawn
     /// frame, because the defect was never in the wrapping alone but in the field and the
     /// layout disagreeing about how many rows there were.
+    #[test_id(tf074n9)]
     #[test]
     fn the_caret_is_always_on_screen() {
         let items = Ok(vec![item("t", "a body")]);
@@ -1474,6 +1490,7 @@ three")]);
     /// A long answer keeps its TAIL on screen, because that is where the operator is typing.
     /// What the field shows is the end of what was typed, exactly — a window that slid, not a
     /// paraphrase.
+    #[test_id(tyiqof2)]
     #[test]
     fn a_long_answer_shows_its_tail() {
         let items = Ok(vec![item("t", "a body")]);
@@ -1500,6 +1517,7 @@ three")]);
 
     /// And chrome has still not grown a band. A four-row field comes out of the content
     /// budget; the header and footer are where they always were.
+    #[test_id(tgahcyt)]
     #[test]
     fn the_field_does_not_grow_a_third_band() {
         let items = Ok(vec![item("t", "a body")]);
@@ -1513,6 +1531,7 @@ three")]);
     }
 
     /// A pane squeezed to nothing still renders both halves rather than panicking.
+    #[test_id(tsc83hg)]
     #[test]
     fn a_tiny_pane_still_has_both_halves() {
         for h in 0..8 {
@@ -1561,6 +1580,7 @@ three")]);
     /// (the operator's call) "i want threaded replies at the top." The thread is the newest
     /// content on the item and the ask is what they have already read, so a body long enough to
     /// run past the fold must not be what stands between them and the latest reply.
+    #[test_id(tuxj4qv)]
     #[test]
     fn the_thread_is_above_the_ask_on_both_surfaces() {
         let it = threaded();
@@ -1578,6 +1598,7 @@ three")]);
 
     /// The thread reads newest first, so where the conversation got to is the first thing
     /// seen rather than something to scroll for.
+    #[test_id(tjhi433)]
     #[test]
     fn the_thread_reads_newest_first() {
         let it = threaded();
@@ -1589,6 +1610,7 @@ three")]);
 
     /// The recommended default keeps the top of the strip. It is the one line that lets an
     /// item be answered without opening it, so the thread goes under it, not over it.
+    #[test_id(tixh453)]
     #[test]
     fn the_default_still_leads_the_detail_strip() {
         let d = detail_lines(&threaded(), 107);
@@ -1597,6 +1619,7 @@ three")]);
     }
 
     /// The reader's rule names the ask beneath it, so the ask cannot read as one more reply.
+    #[test_id(tzhc8vt)]
     #[test]
     fn the_reader_names_the_ask_below_the_thread() {
         let it = threaded();
@@ -1607,6 +1630,7 @@ three")]);
 
     /// And that rule is never trailing chrome: with nothing beneath it to name, it is not
     /// spent. Rule 3 — every row is earned.
+    #[test_id(t2afrqw)]
     #[test]
     fn no_rule_when_there_is_nothing_to_separate() {
         let mut it = threaded();
@@ -1619,6 +1643,7 @@ three")]);
     }
 
     /// An item with no thread renders exactly as it did before any of this.
+    #[test_id(tkh7lab)]
     #[test]
     fn an_unthreaded_item_is_untouched() {
         let it = item("a title", "one\n\ntwo");
@@ -1627,6 +1652,7 @@ three")]);
     }
 
     /// The thread is content, so rule 1 covers it too: no `\x1b[2m` on anything anyone reads.
+    #[test_id(te40bxi)]
     #[test]
     fn the_thread_is_never_dim() {
         let it = threaded();
@@ -1642,6 +1668,7 @@ three")]);
     /// The parser is checked against the system clock's own answer, not against itself.
     /// Every value here came from `date -u -d <stamp> +%s` on this box; a date arithmetic
     /// that agrees only with its own tests is how an age is confidently wrong.
+    #[test_id(tnuwc6j)]
     #[test]
     fn epoch_agrees_with_date() {
         assert_eq!(epoch("1970-01-01T00:00:00Z"), Some(0));
@@ -1661,6 +1688,7 @@ three")]);
     /// (the operator's call) "i want to know how long the item has been open, not the
     /// wallclock time it was opened." Buckets, and only three units — an exact age would
     /// tick every second and repaint the pane forever.
+    #[test_id(t2xrale)]
     #[test]
     fn age_is_a_duration_in_coarse_buckets() {
         let ago = |s: i64| age_since("2026-09-05T16:20:00Z", NOW + s);
@@ -1687,6 +1715,7 @@ three")]);
     /// The list column is an age. It used to be a wallclock time that changed units at
     /// midnight — "16:04" for today's rows against "Sep02" for the rest — so the two rows
     /// most worth comparing were the two that could not be.
+    #[test_id(ttup5j6)]
     #[test]
     fn the_list_says_how_long_not_when() {
         let mut old = item("three days old", "b");
@@ -1708,6 +1737,7 @@ three")]);
     /// And the absolute timestamp is still reachable — on the rule and in the reader's
     /// header, one keypress from the list. It is not what the list is for; it is what
     /// correlates a bead with a log line.
+    #[test_id(tqyahea)]
     #[test]
     fn the_absolute_timestamp_stays_reachable() {
         let items = Ok(vec![item("t", "b")]);
@@ -1725,6 +1755,7 @@ three")]);
 
     /// Rows are cut from the right, so a pane too narrow for both loses the timestamp and
     /// keeps the age. That is the point of the order, not a side effect of it.
+    #[test_id(tp80wxr)]
     #[test]
     fn a_narrow_pane_keeps_the_age_and_drops_the_timestamp() {
         let items = Ok(vec![item("t", "b")]);
@@ -1742,6 +1773,7 @@ three")]);
     /// `frame()` applies the detail_scroll and the split, so a test through `detail_lines`
     /// alone does not prove the full pipeline. At default scroll the thread must be in the
     /// visible window before the ask.
+    #[test_id(tbbjht7)]
     #[test]
     fn the_thread_precedes_the_body_in_the_frame() {
         let items = Ok(vec![threaded()]);
@@ -1762,6 +1794,7 @@ three")]);
 
     /// The tab names the view, and the view is FYI. The label the beads carry is `insight`;
     /// what they need to know at a glance is that nothing here is owed.
+    #[test_id(t9rzqt4)]
     #[test]
     fn the_tab_says_fyi_not_insights() {
         let items = Ok(vec![insight("a finding", "a body")]);
@@ -1772,6 +1805,7 @@ three")]);
 
     /// The destructive key on an FYI dismisses, and there is no `⏎ decide` and no
     /// `a accept default` anywhere on the footer. Those two are what made it read as a queue.
+    #[test_id(tibn13h)]
     #[test]
     fn the_fyi_footer_offers_no_verdict() {
         let mut it = insight("a finding", "a body");
@@ -1788,6 +1822,7 @@ three")]);
     /// The reader's footer used to advertise `⏎ decide` in every view, including one where
     /// the key was not bound — the loudest "this wants an answer" signal in the pane, on a
     /// record, doing nothing when pressed.
+    #[test_id(t04zpor)]
     #[test]
     fn the_fyi_reader_offers_no_verdict_either() {
         let it = insight("a finding", "a body");
@@ -1812,6 +1847,7 @@ three")]);
     /// from config (`SPIRA_OPERATOR_ACTOR`) — so this fixture uses the same `OPERATOR`
     /// constant `a_frame` hands to `Frame`, rather than asserting about whatever one
     /// installation's config happens to say (law-gates-run-in-a-clean-environment).
+    #[test_id(th3m3re)]
     #[test]
     fn an_fyi_row_carries_no_turn_marker() {
         let mut it = insight("a finding", "a body");
@@ -1828,6 +1864,7 @@ three")]);
 
     /// The rule beneath the thread names what is under it. "The insight" invites an answer;
     /// the body of a record is the reason it was kept.
+    #[test_id(tlxvdad)]
     #[test]
     fn the_reader_names_an_insights_body_why_it_matters() {
         let mut it = insight("a finding", "a body");
@@ -1840,6 +1877,7 @@ three")]);
 
     /// Browsing the dismissed set renames the tab and renames the key, because the count
     /// beside it now means something else and `d` there does the opposite thing.
+    #[test_id(tomihi1)]
     #[test]
     fn the_dismissed_view_says_so_and_restores() {
         let items = Ok(vec![insight("an old finding", "a body")]);
@@ -1851,6 +1889,7 @@ three")]);
     }
 
     /// An empty FYI view describes a record already read, not a queue drained.
+    #[test_id(t0lkazn)]
     #[test]
     fn an_empty_fyi_view_asks_for_nothing() {
         let none: Result<Vec<Item>, String> = Ok(vec![]);
@@ -1871,6 +1910,7 @@ three")]);
     /// The tab exists, it is fourth, and it is named ALERTS. Not ESCALATIONS: that word
     /// already means a bead carrying the escalation label, a decision and a default, in
     /// the escalation policy and in several statutes.
+    #[test_id(t962gpc)]
     #[test]
     fn the_fourth_tab_is_called_alerts() {
         assert_eq!(View::ALL.len(), 4);
@@ -1888,6 +1928,7 @@ three")]);
     /// The footer's verbs are the alert's own. "close" is a decision's — the reason IS the
     /// verdict — and "dismiss" is an insight's; neither fits a condition that will retract
     /// itself. An alert is acknowledged, or silenced for a period.
+    #[test_id(t8mvg02)]
     #[test]
     fn the_alert_footer_acknowledges_and_silences_and_never_decides() {
         let mut it = alert("the loop is wedged", "no pass in 40m");
@@ -1905,6 +1946,7 @@ three")]);
 
     /// And the reader's footer agrees with it. The two surfaces advertised different keys
     /// once already — `⏎ decide` on an insight, where the key was not even bound.
+    #[test_id(t0zaudo)]
     #[test]
     fn the_alert_reader_offers_no_verdict_either() {
         let (lines, _) = reader(&alert("wedged", "no pass in 40m"), View::Alerts, NOW, 0, 107, 19);
@@ -1916,6 +1958,7 @@ three")]);
     /// `s` is not offered over the history: silencing something that has already cleared is a
     /// key that appears to work on the wrong thing, and the history holds both kinds side by
     /// side. There `d` lifts a silence instead.
+    #[test_id(tmjidjh)]
     #[test]
     fn the_cleared_view_says_so_and_unsilences() {
         let items = Ok(vec![alert("was wedged", "cleared at 04:10")]);
@@ -1931,6 +1974,7 @@ three")]);
     /// the two — it lifts a silence, and refuses a cleared one. So the row says which it is
     /// before the key is pressed. A `!` there would be the one claim this tab must never make
     /// falsely: that a condition which went away by itself is still firing.
+    #[test_id(t14a1s3)]
     #[test]
     fn the_history_tells_cleared_from_silenced() {
         let mut quiet = alert("still wedged, quietened", "no pass in 40m");
@@ -1945,6 +1989,7 @@ three")]);
     /// The marker column carries the only state a reader can change here. It is NOT a turn
     /// marker: `●` claims somebody owes somebody a reply, which about a condition is false —
     /// the same claim the FYI view had to stop making.
+    #[test_id(tal6wmf)]
     #[test]
     fn an_alert_row_says_unseen_or_acknowledged_and_never_whose_turn() {
         let mut it = alert("the loop is wedged", "no pass in 40m");
@@ -1963,6 +2008,7 @@ three")]);
     /// "with the flap count visible where there is one" — on the row, because a condition
     /// that keeps coming back is a property of the row rather than of the selection. And not
     /// on one that has only fired once: a "×1" everywhere makes a real "×7" harder to see.
+    #[test_id(t5dgqti)]
     #[test]
     fn a_flapping_alert_shows_its_count_on_the_row() {
         let mut it = alert("the loop is wedged", "no pass in 40m");
@@ -1977,6 +2023,7 @@ three")]);
     /// could not see the database" are the same pixels otherwise, and the wrong one reads as
     /// all-clear (law-absence-needs-a-positive-control). The refusal is in `store::alerts`;
     /// this is the half of it a reader actually sees.
+    #[test_id(thnftzr)]
     #[test]
     fn an_empty_alerts_tab_is_distinguishable_from_a_broken_reader() {
         let none: Result<Vec<Item>, String> = Ok(vec![]);
@@ -2000,6 +2047,7 @@ three")]);
 
     /// The rule beneath the thread names what is under it. "The alert" names the message; the
     /// body says what is TRUE, and calling it a question invites an answer there is none of.
+    #[test_id(t2wvpoq)]
     #[test]
     fn the_reader_names_an_alerts_body_the_condition() {
         let mut it = alert("wedged", "no pass in 40m");
@@ -2017,6 +2065,7 @@ three")]);
     /// `iso` is the exact inverse of `epoch`, and `epoch` is checked against the system
     /// `date` above. An arithmetic that agrees only with its own inverse can be wrong in both
     /// directions at once and still pass, which is why both halves are here.
+    #[test_id(tgunbzr)]
     #[test]
     fn iso_round_trips_through_epoch() {
         for stamp in [
@@ -2040,6 +2089,7 @@ three")]);
     /// The acceptance criterion, on the surface it is read from: a promoted insight and a
     /// dismissed one must not render the same. They differed by nothing at all before —
     /// both carried `archived` and were filed side by side under `h`.
+    #[test_id(tiouu4q)]
     #[test]
     fn a_promoted_row_is_visibly_not_a_dismissed_one() {
         let promoted = vec![enacted_insight("closed over a red PR", "b", "law-closed-is-not-landed")];
@@ -2053,6 +2103,7 @@ three")]);
 
     /// And the citation itself is on screen, addressable — `rule.sh show` takes exactly the
     /// string rendered, so the rule can be read from the case in one step.
+    #[test_id(t8ohsv4)]
     #[test]
     fn the_citation_names_the_statute_on_both_surfaces() {
         let it = enacted_insight("t", "body", "law-closed-is-not-landed");
@@ -2066,6 +2117,7 @@ three")]);
 
     /// The mark is FYI's alone. A decision is not a case for a statute, so the column it
     /// would cost is not spent there.
+    #[test_id(t2kxxnx)]
     #[test]
     fn the_mark_never_appears_outside_fyi() {
         let mut it = enacted_insight("t", "b", "law-x");
@@ -2080,6 +2132,7 @@ three")]);
 
     /// An advertised key that does nothing is how a footer stops being believed — and an
     /// unadvertised one is never found at all.
+    #[test_id(tii1a25)]
     #[test]
     fn both_footers_offer_the_key_in_fyi_and_nowhere_else() {
         let items = Ok(vec![insight("t", "b")]);
@@ -2105,6 +2158,7 @@ three")]);
     /// The DECISIONS footer must offer `p reject` — a key that is not advertised is one that
     /// is never found. This fails to compile against the unfixed tree, satisfying
     /// law-a-regression-test-must-be-seen-to-fail.
+    #[test_id(t9a9u14)]
     #[test]
     fn the_decisions_footer_offers_p_reject() {
         let items = Ok(vec![item("should I mute this check?", "it pages every hour")]);
@@ -2114,6 +2168,7 @@ three")]);
 
     /// `p` must not appear on FYI, NOTIFICATIONS or ALERTS footers — those are record views
     /// whose dismiss semantics are already correct.
+    #[test_id(t8nxt0z)]
     #[test]
     fn p_reject_is_absent_from_non_decision_footers() {
         let insight_items = Ok(vec![insight("a finding", "why it matters")]);
@@ -2130,6 +2185,7 @@ three")]);
     /// The original FYI defect shipped because the list advertised ⏎ decide and the reader
     /// advertised it too — but on DECISIONS, where both were wrong. The two surfaces must
     /// never diverge for the same view.
+    #[test_id(teq7fl6)]
     #[test]
     fn the_decisions_reader_footer_also_offers_p_reject() {
         let it = item("should I mute this check?", "it pages every hour");
@@ -2140,6 +2196,7 @@ three")]);
 
     /// The input label for "premise" mode distinguishes the training signal from a verdict.
     /// A label that says "reason" over a rejection reads the same as the verdict prompt.
+    #[test_id(tn1gehs)]
     #[test]
     fn the_input_label_for_premise_says_training_signal() {
         assert_eq!(input_label(Some("premise")), Some("why (training signal)"));
@@ -2151,6 +2208,7 @@ three")]);
 
     /// The compose row names what is being typed. "reason" over a statute would be the same
     /// class of lie as `⏎ decide` over an insight.
+    #[test_id(txyu1gj)]
     #[test]
     fn the_input_row_says_statute() {
         let items = Ok(vec![insight("t", "b")]);
@@ -2165,6 +2223,7 @@ three")]);
 
     /// A STATUTE IS LONGER THAN THE PANE. The multi-row input keeps the caret on screen by
     /// wrapping; no row may exceed the pane width.
+    #[test_id(t44mae1)]
     #[test]
     fn a_long_statute_keeps_its_caret_on_screen() {
         let long = format!("slug: {}", "word ".repeat(60));

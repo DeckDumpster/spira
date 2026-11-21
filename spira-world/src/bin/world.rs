@@ -1159,6 +1159,7 @@ fn main() {
 mod tests {
     use super::*;
 
+    #[test_id(tgg0ls5)]
     #[test]
     fn store_verbs_refuse_help_and_unknown_arguments_without_acting() {
         for name in ["freeze-store", "thaw-store"] {

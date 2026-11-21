@@ -124,6 +124,7 @@ mod tests {
     use super::*;
     use crate::testutil::TempDir;
 
+    #[test_id(tdjpsf1)]
     #[test]
     fn a_key_missing_from_the_fixture_is_reported_at_its_own_registry_file() {
         let t = TempDir::new("cfx");
@@ -139,6 +140,7 @@ mod tests {
         assert!(got[0].message.contains("SPIRA_X") && got[0].message.contains("complete.toml"), "{}", got[0].message);
     }
 
+    #[test_id(t6l94nm)]
     #[test]
     fn a_key_missing_only_from_the_history_is_reported_at_its_own_registry_file() {
         let t = TempDir::new("cfx");

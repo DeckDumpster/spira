@@ -235,6 +235,7 @@ mod tests {
         parse(&text).expect("the tree's gate.steps parses")
     }
 
+    #[test_id(tu6v55h)]
     #[test]
     fn the_checked_in_gate_expects_spira_lint_not_the_wrapper_that_runs_it() {
         let d = checked_in();
@@ -253,6 +254,7 @@ mod tests {
         assert_eq!(d.key_text(), "bash a.sh && \"$SPIRA_LINT_BIN\" --only x\n# bin SPIRA_LINT_BIN spira-lint");
     }
 
+    #[test_id(tbnlznv)]
     #[test]
     fn fences_only_keeps_the_fences_and_only_the_bins_they_read() {
         let d = parse("bin SPIRA_LINT_BIN spira-lint\nbin SPIRA_GUARD_BIN lifecycle-guard\nbin SPIRA_SELECT_BIN suite-select\nbin SPIRA_TESTENV_BIN testenv\nstep \"$SPIRA_LINT_BIN\"\nstep \"${SPIRA_GUARD_BIN}\" --gate .\nstep bash spira/build-fence.sh\nstep { \"$SPIRA_SELECT_BIN\" gate x && \"$SPIRA_TESTENV_BIN\" --suites y; }\n").unwrap();
@@ -267,6 +269,7 @@ mod tests {
         assert_eq!((only.command(), only.bins.len()), ("true".to_string(), 0));
     }
 
+    #[test_id(trqcloy)]
     #[test]
     fn parse_refuses_what_it_cannot_read() {
         for bad in [
@@ -284,6 +287,7 @@ mod tests {
         }
     }
 
+    #[test_id(thcysks)]
     #[test]
     fn tools_command_builds_each_bin_and_proves_it() {
         let d = parse("bin SPIRA_LINT_BIN spira-lint\nstep a\n").unwrap();
@@ -299,6 +303,7 @@ mod tests {
         );
     }
 
+    #[test_id(trz6ip5)]
     #[test]
     fn resolution_falls_to_the_column_only_for_a_repository_that_never_adopted() {
         let good = b"step bash a.sh\n".as_slice();
@@ -319,6 +324,7 @@ mod tests {
     /// Every `bash <path>` the tree's definition names is a file the tree carries, and every
     /// `bin` is a workspace package: a branch that deletes a fence script removes its step in
     /// the same commit, or this (and the gate) refuses it.
+    #[test_id(th4rr5f)]
     #[test]
     fn the_checked_in_definition_names_only_files_it_carries() {
         let d = checked_in();
@@ -335,6 +341,7 @@ mod tests {
     /// The compile check stays reachable (doctor's sp-1hmrm check, now on the tree): a
     /// suites composition runs the build fence; a unit composition drops it for its own
     /// build phase (sp-aprxm).
+    #[test_id(ttasfs3)]
     #[test]
     fn the_checked_in_definition_keeps_a_compile_check_and_proves_its_fences() {
         let d = checked_in();
@@ -352,6 +359,7 @@ mod tests {
     /// machine §3.6(3), §3.8(2)): the tree builds its own lifecycle-guard, runs it over the
     /// whole gate tree in gate mode, and the gate expects its fence line. The step carries no
     /// `--rules` file and no path but the tree's root: there is no allow-list to hand it.
+    #[test_id(tk3oya7)]
     #[test]
     fn the_checked_in_definition_runs_the_lifecycle_guard_over_the_whole_tree() {
         let d = checked_in();

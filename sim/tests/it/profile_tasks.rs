@@ -24,6 +24,7 @@ impl Handler for Timed {
     }
 }
 
+#[test_id(tsrbuzr)]
 #[test]
 #[ignore]
 fn profile() {

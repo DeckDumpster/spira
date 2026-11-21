@@ -318,6 +318,7 @@ pub struct ReportStrand {
 mod tests {
     use super::*;
 
+    #[test_id(tjrsqgy)]
     #[test]
     fn parses_list_shape_and_null_fields() {
         let raw = r#"[{"id":"a","status":"open","labels":null,"dependencies":[
@@ -329,6 +330,7 @@ mod tests {
         assert_eq!(b[0].blocks_targets().collect::<Vec<_>>(), vec!["b"]);
     }
 
+    #[test_id(tjkyg97)]
     #[test]
     fn parses_show_shape() {
         let raw = r#"{"id":"a","status":"in_progress","notes":"x\n\ny",
@@ -339,6 +341,7 @@ mod tests {
         assert_eq!(b[0].notes.as_ref().unwrap().0, vec!["x", "y"]);
     }
 
+    #[test_id(th0tahv)]
     #[test]
     fn preamble_is_skipped_and_garbage_is_an_error() {
         assert_eq!(parse_beads("warning: x\n[]").unwrap().len(), 0);
@@ -346,6 +349,7 @@ mod tests {
         assert!(parse_beads("Error: no database").is_err());
     }
 
+    #[test_id(tbhlid4)]
     #[test]
     fn tsv_round_trip() {
         let r = Row::new("stuck", "sp-1", Disposition::Escalate, "a\tb".into(), "fix".into());

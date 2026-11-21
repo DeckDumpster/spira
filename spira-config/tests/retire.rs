@@ -1,5 +1,7 @@
 //! `spira-config retire` on a fixture tree: the retirement leaves the three rules that read it satisfied.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -34,6 +36,7 @@ fn read(root: &Path, rel: &str) -> String {
     std::fs::read_to_string(root.join(rel)).unwrap()
 }
 
+#[test_id(t6cix8g)]
 #[test]
 fn retiring_a_key_removes_its_registry_file_names_it_in_the_delta_and_keeps_the_fixture_line() {
     let t = tree();
@@ -53,6 +56,7 @@ fn retiring_a_key_removes_its_registry_file_names_it_in_the_delta_and_keeps_the_
     assert!(said.contains("code that reads"), "{said}");
 }
 
+#[test_id(tu97ajm)]
 #[test]
 fn a_registry_key_declared_only_in_the_toml_directory_is_retired_too() {
     let t = tree();
@@ -60,6 +64,7 @@ fn a_registry_key_declared_only_in_the_toml_directory_is_retired_too() {
     assert!(!t.path().join("spira/conf.toml.d/SPIRA_ONLY_TOML").exists());
 }
 
+#[test_id(tfd6uo8)]
 #[test]
 fn retiring_a_task_drops_it_from_the_default_and_names_it_in_removed_tasks() {
     let t = tree();
@@ -75,6 +80,7 @@ fn retiring_a_task_drops_it_from_the_default_and_names_it_in_removed_tasks() {
     assert!(String::from_utf8_lossy(&out.stdout).contains("registers"), "names the code left to the builder");
 }
 
+#[test_id(txhlz5r)]
 #[test]
 fn an_unknown_key_or_task_is_refused_and_changes_nothing() {
     let t = tree();
@@ -87,6 +93,7 @@ fn an_unknown_key_or_task_is_refused_and_changes_nothing() {
     assert!(!t.path().join("spira/config-delta.d").exists());
 }
 
+#[test_id(t4ys8hm)]
 #[test]
 fn retiring_a_key_twice_is_refused() {
     let t = tree();
@@ -94,6 +101,7 @@ fn retiring_a_key_twice_is_refused() {
     assert!(!retire(t.path(), &["spira.old_knob"]).status.success());
 }
 
+#[test_id(t14as44)]
 #[test]
 fn retire_without_a_bead_exits_non_zero_and_prints_the_usage() {
     let t = tree();
@@ -103,6 +111,7 @@ fn retire_without_a_bead_exits_non_zero_and_prints_the_usage() {
     assert!(t.path().join("spira/conf.d/SPIRA_OLD_KNOB").exists());
 }
 
+#[test_id(tuv7vik)]
 #[test]
 fn two_branches_each_retiring_a_key_merge_clean_and_the_delta_lists_both() {
     let t = tree();
@@ -124,6 +133,7 @@ fn two_branches_each_retiring_a_key_merge_clean_and_the_delta_lists_both() {
     assert!(removed.contains(&"spira.old_knob".to_string()) && removed.contains(&"spira.kept".to_string()), "{removed:?}");
 }
 
+#[test_id(tbv6flj)]
 #[test]
 fn a_bead_that_is_not_an_id_is_refused_and_writes_nothing() {
     let t = tree();

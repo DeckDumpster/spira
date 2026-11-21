@@ -47,6 +47,9 @@
 //!
 //! `FILE|-` means "read from stdin when the value is `-`".
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
@@ -653,6 +656,7 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
+    #[test_id(tnzrxze)]
     #[test]
     fn write_matrix_without_out_paths_is_a_usage_error() {
         let rc = cmd_write_matrix(&["--catalogue-dir".into(), "x".into(), "--suites".into(), "-".into()]);

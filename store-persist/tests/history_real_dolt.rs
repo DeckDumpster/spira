@@ -1,5 +1,7 @@
 //! The history bound against a real Dolt database, opened with no server.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use store_persist::history::{self, Sql};
@@ -96,6 +98,7 @@ fn squash_and_collect(r: &Repo, keep: u64) {
     r.run("CALL DOLT_GC('--full');\n", false).unwrap();
 }
 
+#[test_id(tevy2v3)]
 #[test]
 fn a_squash_leaves_keep_plus_one_commits_the_same_data_and_the_uncommitted_write() {
     need_dolt!();
@@ -111,6 +114,7 @@ fn a_squash_leaves_keep_plus_one_commits_the_same_data_and_the_uncommitted_write
     assert_eq!(branches.trim(), "name\nmain", "no side branch is left");
 }
 
+#[test_id(t1d7q02)]
 #[test]
 fn a_squash_catches_up_commits_made_while_the_side_branch_was_built() {
     need_dolt!();
@@ -125,6 +129,7 @@ fn a_squash_catches_up_commits_made_while_the_side_branch_was_built() {
     assert_eq!(history::len(&r).unwrap(), history::length_after(KEEP) + 2, "the two late commits follow the bounded history");
 }
 
+#[test_id(td3pxzy)]
 #[test]
 fn an_interrupted_rewrite_is_cleared_before_the_next_one_starts() {
     need_dolt!();
@@ -138,6 +143,7 @@ fn an_interrupted_rewrite_is_cleared_before_the_next_one_starts() {
     history::squash(&r, KEEP).unwrap();
 }
 
+#[test_id(tb3qkql)]
 #[test]
 fn the_store_after_a_squash_fits_the_depth_curve_within_twice() {
     need_dolt!();

@@ -25,6 +25,7 @@ fn rs_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+#[test_id(tuh4ie3)]
 #[test]
 fn the_matcher_sees_every_launcher_and_ignores_test_code() {
     for l in LAUNCHERS {
@@ -33,6 +34,7 @@ fn the_matcher_sees_every_launcher_and_ignores_test_code() {
     assert_eq!(launcher("fn f() {}\n#[cfg(test)]\nmod t { fn g() { std::process::Command::new(\"x\"); } }"), None);
 }
 
+#[test_id(tutpwlx)]
 #[test]
 fn no_task_module_launches_a_process() {
     let src = testkit::manifest_dir().join("src");

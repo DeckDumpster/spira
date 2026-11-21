@@ -841,6 +841,7 @@ crate::tasks::b::hosted!(HelSweep, catch_up = catch_up);
 mod tests {
     use super::*;
 
+    #[test_id(tqon8fj)]
     #[test]
     fn a_cut_observe_parks_the_cursor_on_the_last_branch_it_judged_and_a_walk_to_the_end_moves_it_to_the_last_branch() {
         use hel::ports::World;
@@ -854,6 +855,7 @@ mod tests {
         assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-z"));
     }
 
+    #[test_id(t8oa3r8)]
     #[test]
     fn a_prune_keeps_the_cursor_while_a_branch_sorts_after_it_and_clears_it_at_the_end() {
         use hel::ports::World;
@@ -877,6 +879,7 @@ mod tests {
         assert_eq!(real.resume_after("spira"), None);
     }
 
+    #[test_id(t35gqtj)]
     #[test]
     fn a_landed_rows_branch_with_its_diff_on_the_base_and_no_naming_commit_is_planned_for_sending_and_a_live_rows_is_kept() {
         let branch = |id: &str| Branch { id: id.into(), br: format!("spira/{id}"), tip: "t".into(), ahead: 2, content_on_base: true, merges_clean: true, ..Default::default() };
@@ -928,6 +931,7 @@ mod tests {
         Send { repo: "spira".into(), id: "sp-a".into(), br: "spira/sp-a".into(), tip: "abc".into(), why: "landed".into(), caller: "hel.sweep".into(), proof: false }
     }
 
+    #[test_id(t799xm9)]
     #[test]
     fn the_leg_execs_hel_from_the_release_by_absolute_path_with_the_env_hel_reads() {
         let release = testkit::TempDir::new("hel-sweep-release");
@@ -948,6 +952,7 @@ mod tests {
         assert!(started[0].env.iter().any(|(k, _)| k == "HOME"));
     }
 
+    #[test_id(t46wqil)]
     #[test]
     fn a_release_without_hel_refuses_naming_the_path_and_starts_no_unit() {
         let release = testkit::TempDir::new("hel-sweep-no-hel");
@@ -958,6 +963,7 @@ mod tests {
         assert!(rec.0.lock().unwrap().is_empty());
     }
 
+    #[test_id(t9vjqa9)]
     #[test]
     fn content_on_base_is_sent_as_a_bead_event_the_socket_serves() {
         let store = std::sync::Arc::new(Store(Default::default()));

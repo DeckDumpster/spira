@@ -51,6 +51,7 @@ fn go(w: &Fake, st: &mut State) -> Outcome {
     pass(w, &[host()], st, &mut |_| Ok(()))
 }
 
+#[test_id(ttcqkl2)]
 #[test]
 fn an_unacknowledged_filing_is_never_applied_twice() {
     let w = Fake { ack_fails: true, ..Fake::default() };
@@ -63,6 +64,7 @@ fn an_unacknowledged_filing_is_never_applied_twice() {
     assert_eq!((w.filed.borrow().len(), w.appended.borrow().len()), (1, 0), "{second:?}");
 }
 
+#[test_id(tqzocmb)]
 #[test]
 fn a_closed_bead_is_not_appended_to_and_the_next_filing_opens_a_new_one() {
     let w = Fake::default();
@@ -76,6 +78,7 @@ fn a_closed_bead_is_not_appended_to_and_the_next_filing_opens_a_new_one() {
     assert_eq!(st.beads["prod/c"], "sp-b1");
 }
 
+#[test_id(tr3bjj6)]
 #[test]
 fn state_round_trips() {
     let mut s = State::default();
@@ -84,6 +87,7 @@ fn state_round_trips() {
     assert_eq!(State::parse(&s.render()), s);
 }
 
+#[test_id(tqd725w)]
 #[test]
 fn hosts_parse_and_refuse_malformed_entries() {
     let root = testkit::TempDir::new("filings-collect-hosts");
@@ -95,6 +99,7 @@ fn hosts_parse_and_refuse_malformed_entries() {
     }
 }
 
+#[test_id(tbzohpw)]
 #[test]
 fn a_filing_missing_a_field_or_naming_an_unknown_action_is_refused() {
     assert!(parse_filing(&js("open")).is_ok());

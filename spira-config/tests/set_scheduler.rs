@@ -1,6 +1,8 @@
 //! `spira-config set|unset` says whether the running scheduler took the change, and
 //! `get --running` reads what it holds. The scheduler is a socket answering the control wire.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::path::Path;
@@ -62,6 +64,7 @@ fn out(o: &Output) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
+#[test_id(t4pirh9)]
 #[test]
 fn a_set_the_scheduler_takes_says_it_re_pinned_the_key() {
     let d = testkit::TempDir::new("set-sched-ok");
@@ -75,6 +78,7 @@ fn a_set_the_scheduler_takes_says_it_re_pinned_the_key() {
     drop(b.dir);
 }
 
+#[test_id(tmhnlj4)]
 #[test]
 fn a_set_the_scheduler_has_not_taken_says_what_it_still_holds_and_what_it_waits_for() {
     let d = testkit::TempDir::new("set-sched-wait");
@@ -86,6 +90,7 @@ fn a_set_the_scheduler_has_not_taken_says_what_it_still_holds_and_what_it_waits_
     assert!(out(&o).contains(&format!("written; the scheduler still holds 0 for {KEY} and takes 4 at its next safe point (the batcher to finish the round it is driving)")), "{}", out(&o));
 }
 
+#[test_id(tufyllm)]
 #[test]
 fn get_running_prints_the_value_the_scheduler_holds_and_not_the_files() {
     let d = testkit::TempDir::new("get-running");
@@ -96,6 +101,7 @@ fn get_running_prints_the_value_the_scheduler_holds_and_not_the_files() {
     assert_eq!(out(&o).trim(), "0");
 }
 
+#[test_id(t4f1uh8)]
 #[test]
 fn a_set_with_no_scheduler_listening_still_writes_and_says_so() {
     let d = testkit::TempDir::new("set-sched-down");
@@ -106,6 +112,7 @@ fn a_set_with_no_scheduler_listening_still_writes_and_says_so() {
     assert!(std::fs::read_to_string(&b.toml).unwrap().contains("max_dwarves = 4") || std::fs::read_to_string(&b.toml).unwrap().contains("max_dwarves = \"4\""));
 }
 
+#[test_id(tk1a3ia)]
 #[test]
 fn a_set_the_scheduler_accepts_and_never_answers_writes_and_exits_non_zero() {
     let d = testkit::TempDir::new("set-sched-silent");
@@ -126,6 +133,7 @@ fn a_set_the_scheduler_accepts_and_never_answers_writes_and_exits_non_zero() {
     assert!(std::fs::read_to_string(&b.toml).unwrap().contains("max_dwarves"));
 }
 
+#[test_id(trze3ff)]
 #[test]
 fn a_write_typed_against_a_staged_release_says_nothing_about_the_scheduler() {
     let d = testkit::TempDir::new("set-sched-release");
@@ -138,6 +146,7 @@ fn a_write_typed_against_a_staged_release_says_nothing_about_the_scheduler() {
     assert!(!out(&o).contains("scheduler") && seen.lock().unwrap().is_empty(), "{}", out(&o));
 }
 
+#[test_id(tf138q5)]
 #[test]
 fn an_unset_reports_the_scheduler_the_same_way() {
     let d = testkit::TempDir::new("unset-sched");

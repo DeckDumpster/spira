@@ -19,6 +19,7 @@ fn tgt(root: &Path, rel: &str, secs: u64) -> PathBuf {
     d
 }
 
+#[test_id(t1wk95a)]
 #[test]
 fn the_cache_is_chosen_oldest_first_to_its_cap_and_fresh_tmp_is_never_a_candidate() {
     let t = testkit::TempDir::new("reclaim-g");
@@ -46,6 +47,7 @@ fn verdict_of(plan: &[Candidate], d: &Path) -> String {
     format!("{:?}", c.verdict)
 }
 
+#[test_id(tpq6qfj)]
 #[test]
 fn tmp_plan_reclaims_an_idle_unheld_dir_and_skips_held_young_socket_and_symlink() {
     let t = testkit::TempDir::new("reclaim-tmp-a");
@@ -70,6 +72,7 @@ fn tmp_plan_reclaims_an_idle_unheld_dir_and_skips_held_young_socket_and_symlink(
     assert!(plan.iter().all(|c| c.path != root.join("plain-file")));
 }
 
+#[test_id(twe791v)]
 #[test]
 fn tmp_plan_leaves_a_dir_another_uid_owns() {
     let t = testkit::TempDir::new("reclaim-tmp-uid");
@@ -77,6 +80,7 @@ fn tmp_plan_leaves_a_dir_another_uid_owns() {
     assert!(tmp_plan(t.path(), own_uid().wrapping_add(1), now(), 6 * HOUR, &[]).is_empty());
 }
 
+#[test_id(t35r0na)]
 #[test]
 fn an_unreadable_subdirectory_keeps_its_tmp_dir() {
     use std::os::unix::fs::PermissionsExt;

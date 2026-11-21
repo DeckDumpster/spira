@@ -110,6 +110,7 @@ mod tests {
         Snapshot { open: ids.iter().map(|(i, t)| (i.to_string(), t.to_string())).collect(), held: vec![] }
     }
 
+    #[test_id(tccxq97)]
     #[test]
     fn the_first_answer_is_the_baseline_and_a_later_ask_is_announced_once() {
         let (c, say) = decide(&Carry::default(), &open(&[("sp-old", "already open")]));
@@ -119,6 +120,7 @@ mod tests {
         assert!(decide(&c, &open(&[("sp-new", "decide X")])).1.is_empty());
     }
 
+    #[test_id(tc8lj6q)]
     #[test]
     fn a_hold_is_announced_by_the_line_the_world_composed_and_not_twice_when_also_open() {
         let (c, _) = decide(&Carry::default(), &open(&[]));
@@ -126,6 +128,7 @@ mod tests {
         assert_eq!(decide(&c, &snap).1, ["NEW ASK sp-a: t", "NEW ASK HOLD sp-h"]);
     }
 
+    #[test_id(tg7fpv0)]
     #[test]
     fn the_id_and_title_together_are_cut_to_170_characters() {
         let (c, _) = decide(&Carry::default(), &open(&[]));
@@ -149,12 +152,14 @@ mod tests {
             r
         }
 
+        #[test_id(tronpc3)]
         #[test]
         fn an_idle_tick_is_silent() {
             let mut r = rig(1, Arc::new(Mutex::new(open(&[("sp-old", "already open")]))));
             assert_silent_tick(&mut r, STREAM);
         }
 
+        #[test_id(tt7gv8n)]
         #[test]
         fn a_new_ask_is_appended_to_the_inbox_once_across_ticks() {
             let world = Arc::new(Mutex::new(open(&[("sp-old", "t")])));
@@ -167,6 +172,7 @@ mod tests {
             assert!(r.refused().is_empty());
         }
 
+        #[test_id(twgz7uv)]
         #[test]
         fn a_day_is_deterministic() {
             assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(open(&[("sp-a", "t")])))), 1, 1);

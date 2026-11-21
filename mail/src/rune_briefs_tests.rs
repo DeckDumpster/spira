@@ -44,6 +44,7 @@ fn names_the_retired_ask_script(text: &str) -> bool {
 }
 
 // covers: UC-operator-channel-13
+#[test_id(tykvg2k)]
 #[test]
 fn the_option_check_flags_a_planted_unknown_option_and_passes_the_real_ones() {
     let accepted = accepted_send_options();
@@ -55,6 +56,7 @@ fn the_option_check_flags_a_planted_unknown_option_and_passes_the_real_ones() {
 }
 
 // covers: UC-operator-channel-13
+#[test_id(tih6zyy)]
 #[test]
 fn no_brief_tells_an_agent_to_pass_mail_send_an_option_it_refuses() {
     let accepted = accepted_send_options();
@@ -68,6 +70,7 @@ fn no_brief_tells_an_agent_to_pass_mail_send_an_option_it_refuses() {
 }
 
 // covers: UC-operator-channel-13
+#[test_id(t3097qy)]
 #[test]
 fn no_caller_of_the_retired_ask_script_remains() {
     assert!(names_the_retired_ask_script("bash cockpit/ask.sh add \"q\""), "the matcher must fire on a planted caller");

@@ -15,23 +15,23 @@ mod conformance {
         super::rig()
     }
     macro_rules! s {
-        ($($name:ident),*) => { $( #[test] fn $name() { super_::$name(&rig()); } )* };
+        ($( #[test_id($id:ident)] $name:ident ),*) => { $( #[test_id($id)] #[test] fn $name() { super_::$name(&rig()); } )* };
     }
     s!(
-        a_duplicate_submit_dispatches_once,
-        a_failed_commit_is_sent_again_and_the_turn_lands_once,
-        a_restart_never_relaunches_an_unresolved_effect_and_delivers_timed_out,
-        determinism_under_one_seed,
-        a_fired_schedule_row_is_not_fired_by_the_next_process,
-        out_of_order_effect_outcomes,
-        effect_deadline_times_out,
-        handler_panic_quarantines_its_stream_only,
-        schedule_rows_survive_restart_and_fire_once,
-        observe_shadows_writes_and_runs_probes,
-        halt_holds_writes_runs_probes_and_resume_releases_once_in_order,
-        a_handlers_writes_are_seen_before_its_streams_next_event,
-        an_outcome_is_offered_only_to_the_task_that_asked,
-        a_halt_holds_work_and_lets_signals_through
+        #[test_id(tz4g1lb)] a_duplicate_submit_dispatches_once,
+        #[test_id(twz7bif)] a_failed_commit_is_sent_again_and_the_turn_lands_once,
+        #[test_id(ttc2dum)] a_restart_never_relaunches_an_unresolved_effect_and_delivers_timed_out,
+        #[test_id(tk8pf8f)] determinism_under_one_seed,
+        #[test_id(t8vvykm)] a_fired_schedule_row_is_not_fired_by_the_next_process,
+        #[test_id(tbtt9mk)] out_of_order_effect_outcomes,
+        #[test_id(tjp3kt7)] effect_deadline_times_out,
+        #[test_id(t63szu3)] handler_panic_quarantines_its_stream_only,
+        #[test_id(tkvi3k3)] schedule_rows_survive_restart_and_fire_once,
+        #[test_id(t8kecv9)] observe_shadows_writes_and_runs_probes,
+        #[test_id(t8p5ebz)] halt_holds_writes_runs_probes_and_resume_releases_once_in_order,
+        #[test_id(tkkj5pm)] a_handlers_writes_are_seen_before_its_streams_next_event,
+        #[test_id(tvn1zqa)] an_outcome_is_offered_only_to_the_task_that_asked,
+        #[test_id(txe79so)] a_halt_holds_work_and_lets_signals_through
     );
 }
 
@@ -50,6 +50,7 @@ mod ids {
         }
     }
 
+    #[test_id(tf1gdye)]
     #[test]
     fn forty_heartbeats_keep_every_id_within_the_column_and_keep_firing() {
         let journal = MemJournal::new();
@@ -68,6 +69,7 @@ mod ids {
         assert!(journal.boot().unwrap().schedules.iter().all(|r| r.id.chars().count() <= EVENT_ID_MAX));
     }
 
+    #[test_id(tfrk9yq)]
     #[test]
     fn an_id_that_fits_is_unchanged_and_a_longer_one_is_fixed_width_and_stable() {
         assert_eq!(derive_id("sched/heartbeat/boot/heartbeat/0".into()), "sched/heartbeat/boot/heartbeat/0");
@@ -90,6 +92,7 @@ mod ids {
         }
     }
 
+    #[test_id(twytiv3)]
     #[test]
     fn a_plain_ticker_has_its_next_tick_armed_after_the_boot_tick_and_every_later_one() {
         let clock = VirtualClock::new(1_000);
@@ -106,6 +109,7 @@ mod ids {
         }
     }
 
+    #[test_id(t33bqdn)]
     #[test]
     fn a_tick_on_a_stream_with_a_standing_poison_row_is_parked_for_the_recheck_not_dropped() {
         let clock = VirtualClock::new(1_000);
@@ -122,6 +126,7 @@ mod ids {
         assert!(after > before, "the parked tick is later than the one it replaces");
     }
 
+    #[test_id(tt65af0)]
     #[test]
     fn a_tick_on_a_stream_whose_standing_poison_came_from_a_refused_commit_runs_and_one_a_handler_wrote_stays_parked() {
         let run = |handler: &str| {
@@ -147,6 +152,7 @@ mod ids {
         }
     }
 
+    #[test_id(t50oooi)]
     #[test]
     fn the_status_counts_the_commands_a_fire_returned_and_the_ones_the_engine_admitted() {
         let mut e = Engine::open(MemJournal::new(), Arc::new(VirtualClock::new(1)), vec![Registration::new("twice", Twice)], 0).unwrap();
@@ -165,6 +171,7 @@ mod ids {
         }
     }
 
+    #[test_id(tq1x509)]
     #[test]
     fn a_probe_asked_again_while_the_one_before_is_unanswered_is_admitted_again() {
         let mut e = Engine::open(MemJournal::new(), Arc::new(VirtualClock::new(1)), vec![Registration::new("probes", Probes)], 0).unwrap();
@@ -176,6 +183,7 @@ mod ids {
         }
     }
 
+    #[test_id(tacx9bv)]
     #[test]
     fn a_fire_whose_effects_are_held_by_a_halt_counts_as_returned_and_not_admitted() {
         let mut e = Engine::open(MemJournal::new(), Arc::new(VirtualClock::new(1)), vec![Registration::new("twice", Twice)], 0).unwrap();
@@ -195,6 +203,7 @@ mod ids {
         }
     }
 
+    #[test_id(tthcop0)]
     #[test]
     fn a_refused_command_quarantines_its_stream_and_a_fault_is_still_fatal() {
         let run = |refuse: bool| {
@@ -238,6 +247,7 @@ mod wide {
         }
     }
 
+    #[test_id(tww4tk3)]
     #[test]
     fn a_call_that_does_nothing_leaves_no_wide_event_and_one_that_does_leaves_its_fields() {
         let sink = MemSink::new();

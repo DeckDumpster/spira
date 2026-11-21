@@ -17,16 +17,19 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(tjj88lr)]
 #[test]
 fn t1_registered_boots_and_arms_an_hourly_tick() {
     t::t1_registered_and_boots::<H>(SET, HOUR);
 }
 
+#[test_id(tquf34z)]
 #[test]
 fn t2_a_cache_under_its_cap_and_nothing_idle_is_the_probe_alone() {
     t::t2_silent::<H>(SET, &json(&idle()));
 }
 
+#[test_id(tg7fzrr)]
 #[test]
 fn t3_a_pass_reclaims_and_a_tick_while_reclaiming_is_refused() {
     let h = t::handler::<H>(SET);
@@ -38,12 +41,14 @@ fn t3_a_pass_reclaims_and_a_tick_while_reclaiming_is_refused() {
     assert!(refused.contains("reclaiming"), "{refused}");
 }
 
+#[test_id(tgjgqkc)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_nothing() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/c/sweep_reclaim.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(twxthpl)]
 #[test]
 fn low_free_space_and_a_fat_podman_request_only_the_kept_cleanups() {
     let world = r#"{"free_mib":1024,"candidates":[{"path":"r/worktree/a/target","bytes":53687091200,"age":9,"verdict":"reclaim"}],"podman_bytes":53687091200,"cache":[],"tmp":[{"path":"tmp/tmp.a","bytes":1,"age":9,"verdict":"reclaim"}]}"#;
@@ -55,6 +60,7 @@ fn low_free_space_and_a_fat_podman_request_only_the_kept_cleanups() {
     assert_eq!(asked, [task::OBSERVE, task::REMOVE_TMP], "{asked:?}");
 }
 
+#[test_id(tc5dklc)]
 #[test]
 fn a_cache_over_its_cap_is_trimmed_oldest_first() {
     let h = t::handler::<H>(SET);
@@ -66,6 +72,7 @@ fn a_cache_over_its_cap_is_trimmed_oldest_first() {
     assert_eq!(acts[0].input, r#"["c/old","c/mid"]"#, "90 GiB over a 40 GiB cap drops the two oldest");
 }
 
+#[test_id(tblkglc)]
 #[test]
 fn t5b_an_idle_tmp_directory_is_removed_at_any_free_space_and_a_held_one_is_not() {
     let h = t::handler::<H>(SET);
@@ -90,6 +97,7 @@ fn reclaiming_one_tmp_dir() -> TaskRig {
     r
 }
 
+#[test_id(t9f9y4e)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&reclaiming_one_tmp_dir(), task::NAME);
@@ -98,6 +106,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(t3nlsav)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(reclaiming_one_tmp_dir, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
@@ -135,6 +144,7 @@ fn input(name: &str, path: &std::path::Path) -> String {
     serde_json::to_string(&task::Repo { name: name.into(), path: path.display().to_string(), ..Default::default() }).unwrap()
 }
 
+#[test_id(tmjk02x)]
 #[test]
 fn a_maintained_repo_reports_its_loose_objects_before_and_after_and_git_agrees() {
     let d = testkit::TempDir::new("reclaim-maintain");
@@ -147,6 +157,7 @@ fn a_maintained_repo_reports_its_loose_objects_before_and_after_and_git_agrees()
     assert_eq!(git(d.path(), &["rev-list", "--objects", "main"]).lines().count() as u64, before, "every object is still reachable");
 }
 
+#[test_id(tcico0l)]
 #[test]
 fn a_row_that_is_not_a_repo_is_named_with_gits_stderr() {
     let d = testkit::TempDir::new("reclaim-maintain");
@@ -154,6 +165,7 @@ fn a_row_that_is_not_a_repo_is_named_with_gits_stderr() {
     assert!(err.starts_with("ghost (") && err.contains("not a git repository"), "{err}");
 }
 
+#[test_id(t8kbv8g)]
 #[test]
 fn every_row_of_the_map_is_a_maintain_of_its_own_so_one_failure_stops_no_other() {
     let world = json(&Snapshot { repos: vec![task::Repo { name: "ghost".into(), path: "nowhere".into(), ..Default::default() }, task::Repo { name: "alpha".into(), path: "a".into(), ..Default::default() }], ..idle() });
@@ -166,6 +178,7 @@ fn every_row_of_the_map_is_a_maintain_of_its_own_so_one_failure_stops_no_other()
     r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE)).expect("a failed row leaves the pass settled, so the next tick is not refused");
 }
 
+#[test_id(tgzg1xs)]
 #[test]
 fn the_world_reads_its_repos_from_the_map_and_the_leg_is_registered_on_the_task() {
     let d = testkit::TempDir::new("reclaim-maintain");
@@ -187,6 +200,7 @@ fn plant_lock(dir: &std::path::Path, age_s: u64) -> std::path::PathBuf {
     lock
 }
 
+#[test_id(trko3jj)]
 #[test]
 fn a_stale_maintenance_lock_is_removed_and_said_so_rather_than_a_silent_no_op() {
     let d = testkit::TempDir::new("reclaim-lock");
@@ -197,6 +211,7 @@ fn a_stale_maintenance_lock_is_removed_and_said_so_rather_than_a_silent_no_op() 
     assert!(!lock.exists());
 }
 
+#[test_id(tj9g5xu)]
 #[test]
 fn a_fresh_maintenance_lock_is_an_error_naming_the_repo_and_is_left_alone() {
     let d = testkit::TempDir::new("reclaim-lock");

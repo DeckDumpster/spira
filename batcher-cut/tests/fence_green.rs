@@ -1,5 +1,7 @@
 //! `VmRunner`'s fence probe against a real git tree and the real `gate fence-run`.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -19,6 +21,7 @@ fn member(id: &str, tip: &str) -> Member {
     Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![], provisional: false }
 }
 
+#[test_id(trlrl8c)]
 #[test]
 fn a_red_fence_on_a_member_subset_leaves_its_own_output_and_a_green_one_leaves_none() {
     let d = testkit::TempDir::new("fence-green");

@@ -270,6 +270,7 @@ mod tests {
         scan_text("x/src/a.rs", src).into_iter().map(|f| (f.line, f.callee.unwrap())).collect()
     }
 
+    #[test_id(tg2m27b)]
     #[test]
     fn each_shape_is_found() {
         let src = r#"fn a(b: &Bead) -> bool { b.status == "closed" }
@@ -301,6 +302,7 @@ fn h(b: &Bead) -> bool { if b.assignee.is_some() { true } else { false } }
         );
     }
 
+    #[test_id(teg36ud)]
     #[test]
     fn prose_other_states_and_tests_are_not_bd_status_reads() {
         let src = r#"// b.status == "closed" was the old check
@@ -319,6 +321,7 @@ mod tests {
         assert_eq!(shapes(src), Vec::<(usize, String)>::new());
     }
 
+    #[test_id(t62bsvq)]
     #[test]
     fn a_match_closes_with_its_braces() {
         let src = r#"fn e(status: &str) -> u8 {
@@ -337,6 +340,7 @@ mod tests {
 
     /// The rowless controls are exempt by file and function, and only there: the same body
     /// in another function, or in another file, is a finding.
+    #[test_id(tci4pfv)]
     #[test]
     fn the_rowless_controls_are_named_exceptions_and_nothing_else_is() {
         let body = |name: &str| {
@@ -350,6 +354,7 @@ mod tests {
         assert_eq!(lines("sentinel/src/store.rs", "rowless"), vec![2, 4], "the same name in another file");
     }
 
+    #[test_id(tcjysww)]
     #[test]
     fn rowless_controls_match_the_design() {
         let design = include_str!("../DESIGN.md");
@@ -368,6 +373,7 @@ mod tests {
         assert_eq!(named, coded, "an exception not named in the design is refused");
     }
 
+    #[test_id(tbah8pq)]
     #[test]
     fn test_files_and_the_machine_are_out_of_scope() {
         assert!(is_test_file("sentinel/src/tests.rs"));

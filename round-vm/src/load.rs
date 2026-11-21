@@ -204,6 +204,7 @@ mod tests {
         fs::write(root.join("stat"), format!("cpu  {total} 0 0 0 0 0 0 0 0 0\n")).unwrap();
     }
 
+    #[test_id(t9yhy4p)]
     #[test]
     fn parsers_read_the_proc_formats() {
         assert_eq!(parse_total("cpu  1 2 3 4 5 6 7 8 9 10\ncpu0 1\n"), Some(36));
@@ -213,6 +214,7 @@ mod tests {
         assert!(!is_round_vm(&["kvm".into(), "-id".into(), "1200".into()], "120"));
     }
 
+    #[test_id(tnsdzyc)]
     #[test]
     fn a_quiet_host_is_not_contended_and_a_missing_vm_is_not_judged() {
         let d = TempDir::new("load-quiet");

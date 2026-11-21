@@ -163,6 +163,7 @@ pub fn parse_kv0(answer: &str) -> std::collections::BTreeMap<String, String> {
 mod tests {
     use super::*;
 
+    #[test_id(t36ap2z)]
     #[test]
     fn every_script_is_one_braced_command_with_no_nul() {
         for op in [
@@ -186,6 +187,7 @@ mod tests {
         }
     }
 
+    #[test_id(twxmmxt)]
     #[test]
     fn answer_follows_the_last_mark() {
         let (logs, ans) = split_answer("2026 spira: log\n\u{1e}spira: land sp-a");

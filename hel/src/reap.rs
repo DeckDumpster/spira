@@ -670,6 +670,7 @@ mod tests {
 
     // ---- hold_alive / holder_alive -----------------------------------------------------
 
+    #[test_id(t3i6wcd)]
     #[test]
     fn hold_alive_sees_a_live_pid_and_rejects_dead_or_missing() {
         let t = tempdir();
@@ -684,6 +685,7 @@ mod tests {
         assert!(!hold_alive(&t.join("missing.pid")));
     }
 
+    #[test_id(tls83gw)]
     #[test]
     fn holder_alive_checks_the_hold_pidfile_by_pid_only() {
         let run = tempdir();
@@ -692,6 +694,7 @@ mod tests {
         assert!(!holder_alive(&run, "sp-h2"));
     }
 
+    #[test_id(t6oh8cz)]
     #[test]
     fn holder_alive_requires_dwarf_argv_for_an_dwarf_pidfile() {
         let run = tempdir();
@@ -703,6 +706,7 @@ mod tests {
 
     // ---- reaplog -------------------------------------------------------------------------
 
+    #[test_id(tedyy2k)]
     #[test]
     fn reaplog_appends_one_line_naming_verb_id_and_detail() {
         let run = tempdir();
@@ -719,6 +723,7 @@ mod tests {
 
     // ---- destroy_branch --------------------------------------------------------------------
 
+    #[test_id(ts2nvej)]
     #[test]
     fn only_certified_and_in_delivery_are_queued_states() {
         assert!(is_queued_state("CERTIFIED") && is_queued_state("IN_DELIVERY"));
@@ -745,6 +750,7 @@ mod tests {
         repo
     }
 
+    #[test_id(tlhajc6)]
     #[test]
     fn destroying_a_branch_removes_its_noverdict_counters_and_not_a_longer_names() {
         let run = tempdir();
@@ -762,6 +768,7 @@ mod tests {
         assert!(logged.contains("spira-sp-gone-conflict.asked"), "{logged}");
     }
 
+    #[test_id(twjh0nr)]
     #[test]
     fn a_branch_already_gone_still_has_its_noverdict_counters_removed() {
         let run = tempdir();
@@ -773,6 +780,7 @@ mod tests {
         assert!(!nv.join("spira-sp-vanished-conflict").exists());
     }
 
+    #[test_id(tiz7mr4)]
     #[test]
     fn destroy_branch_deletes_the_local_ref_and_the_ref_is_gone_after() {
         let run = tempdir();
@@ -782,6 +790,7 @@ mod tests {
     }
 
     // covers: UC-landed-audit-reaping-15
+    #[test_id(th9orjy)]
     #[test]
     fn destroy_branch_refuses_queued_held_checked_out_and_unlanded_and_deletes_only_after_the_fences() {
         let git = |repo: &Path, args: &[&str]| {
@@ -845,6 +854,7 @@ mod tests {
     }
 
     // covers: UC-landed-audit-reaping-15
+    #[test_id(tvch3m3)]
     #[test]
     fn destroy_branch_logs_failed_when_the_ref_survives_the_delete() {
         let run = tempdir();
@@ -858,6 +868,7 @@ mod tests {
         assert_eq!(counted["SP_SENT_FAILED"], "1", "the cockpit's parser must read the line the chokepoint writes: {text}");
     }
 
+    #[test_id(ti98zmk)]
     #[test]
     fn destroy_branch_on_a_path_that_is_no_repository_fails_rather_than_report_success() {
         let run = tempdir();
@@ -867,6 +878,7 @@ mod tests {
         assert!(matches!(r, Err(DestroyBranchErr::Failed(ref m)) if m.contains("not a git repository")), "{r:?}");
     }
 
+    #[test_id(tpiu1gi)]
     #[test]
     fn destroy_branch_a_hook_refuses_fails_with_the_hooks_reason_and_the_ref_stays() {
         let run = tempdir();
@@ -878,6 +890,7 @@ mod tests {
         assert!(Git(&repo).branch_exists("spira/sp-gone"));
     }
 
+    #[test_id(t5kzd1h)]
     #[test]
     fn resolve_repo_takes_a_directory_as_is_and_a_name_through_the_registry() {
         let t = tempdir();
@@ -888,6 +901,7 @@ mod tests {
         assert!(resolve_repo(&reg, "nowhere").is_err());
     }
 
+    #[test_id(tbmhn89)]
     #[test]
     fn a_registered_name_wins_over_a_same_named_directory_in_the_cwd_and_the_destroy_acts_on_its_root() {
         let run = tempdir();
@@ -902,6 +916,7 @@ mod tests {
 
     // ---- holder_witnesses ------------------------------------------------------------------
 
+    #[test_id(tysx8zm)]
     #[test]
     fn holder_witnesses_reads_the_lifecycle_claim_and_reflects_the_outage() {
         let run = tempdir();
@@ -924,6 +939,7 @@ mod tests {
     /// A terminal row admits no event at all, so an Unhold there is refused and a `manual`
     /// hold it still lists can never be lifted: read as somebody home it hoards the branch
     /// and the worktree for ever. Terminal is nobody home, holds or not.
+    #[test_id(t1lylt3)]
     #[test]
     fn a_manual_hold_on_a_terminal_row_is_nobody_home() {
         struct Row(&'static str, Vec<String>);
@@ -943,6 +959,7 @@ mod tests {
         }
     }
 
+    #[test_id(tolznws)]
     #[test]
     fn a_manual_hold_is_somebody_home_though_the_bead_is_unclaimed() {
         struct Held(Vec<String>);
@@ -964,6 +981,7 @@ mod tests {
         assert_eq!(holder_witnesses(&run, "sp-m4", &Dropped), None);
     }
 
+    #[test_id(t74m1kb)]
     #[test]
     fn destroy_worktree_refuses_a_manually_held_bead_and_leaves_the_directory() {
         struct Held(bool);
@@ -985,6 +1003,7 @@ mod tests {
         assert!(!std::fs::read_to_string(&log).unwrap().lines().last().unwrap().contains("manual hold"));
     }
 
+    #[test_id(tuzgmb6)]
     #[test]
     fn stop_occupants_stops_the_unit_of_a_process_in_the_worktree_and_waits_for_it_to_leave() {
         let t = tempdir();
@@ -1004,6 +1023,7 @@ mod tests {
         assert!(stop_occupants(&proc, &work, &mut |_| panic!("nothing to stop"), 3, &|| {}).is_ok());
     }
 
+    #[test_id(tvj0s1s)]
     #[test]
     fn sp_li4zys_the_unit_of_a_scheduler_started_dwarf_is_found_and_stopped() {
         let t = tempdir();
@@ -1019,6 +1039,7 @@ mod tests {
         assert_eq!(dwarf_units(&proc, &[100, 101]), vec![own.to_string()], "the scheduler-named dwarf is a dwarf; the landing pass is not");
     }
 
+    #[test_id(tjdnal6)]
     #[test]
     fn stop_occupants_reports_a_process_that_will_not_leave() {
         let t = tempdir();
@@ -1055,6 +1076,7 @@ mod tests {
         (out, logged.into_inner())
     }
 
+    #[test_id(ty814xa)]
     #[test]
     fn a_terminal_beads_clean_worktree_outside_the_root_is_reported_once_and_its_branch_still_sent() {
         let (run, scratch) = (tempdir(), tempdir());
@@ -1067,6 +1089,7 @@ mod tests {
         assert_eq!(logged.iter().filter(|l| l.contains(&finding) && l.contains(&wt.display().to_string())).count(), 1, "{logged:?}");
     }
 
+    #[test_id(tlnqtsh)]
     #[test]
     fn a_dirty_worktree_outside_the_root_keeps_its_branch_and_is_reported_once_across_passes() {
         let (run, scratch) = (tempdir(), tempdir());
@@ -1079,6 +1102,7 @@ mod tests {
         assert!(again.is_empty(), "the second pass does not repeat the finding: {again:?}");
     }
 
+    #[test_id(t6fx3hw)]
     #[test]
     fn a_terminal_beads_tree_outside_the_root_that_somebody_holds_is_not_detached() {
         let (run, scratch) = (tempdir(), tempdir());
@@ -1090,6 +1114,7 @@ mod tests {
         assert_eq!(Git(&wt).out(&["symbolic-ref", "-q", "HEAD"]).unwrap().trim(), "refs/heads/spira/sp-out");
     }
 
+    #[test_id(t07huhf)]
     #[test]
     fn a_live_beads_worktree_outside_the_root_is_left_alone() {
         let (run, scratch) = (tempdir(), tempdir());

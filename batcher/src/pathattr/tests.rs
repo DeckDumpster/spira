@@ -44,6 +44,7 @@ fn eject_ids(v: &Verdict) -> Vec<&str> {
     }
 }
 
+#[test_id(t4auii7)]
 #[test]
 fn r_auto_58_fence_names_check4() {
     let r = red(
@@ -54,12 +55,14 @@ fn r_auto_58_fence_names_check4() {
     assert_eq!(eject_ids(&attribute(&[r], &round())), ["sp-2yclhz"]);
 }
 
+#[test_id(t5zshhv)]
 #[test]
 fn r_auto_58_recert_names_units() {
     let r = red("doctor", "world_planes.rs:39 units with no valid Plane=: [\"spira-nix-gc.service\", ...] and doctor spira-nix-gc-prod.service's ExecStart", &[]);
     assert_eq!(eject_ids(&attribute(&[r], &round())), ["sp-73vuz3"]);
 }
 
+#[test_id(t9dlr5b)]
 #[test]
 fn r_auto_59_two_reds_two_owners() {
     let a = red(
@@ -76,6 +79,7 @@ fn r_auto_59_two_reds_two_owners() {
     assert_eq!(eject_ids(&v), ["sp-2yclhz", "sp-38qf5k"]);
 }
 
+#[test_id(trigmcv)]
 #[test]
 fn a_red_naming_two_members_is_ambiguous_with_both_listed() {
     let r = red(
@@ -92,6 +96,7 @@ fn a_red_naming_two_members_is_ambiguous_with_both_listed() {
     }
 }
 
+#[test_id(tl1yktf)]
 #[test]
 fn a_red_naming_no_member_pauses() {
     let r = red(
@@ -102,6 +107,7 @@ fn a_red_naming_no_member_pauses() {
     assert!(matches!(attribute(&[r], &round()), Verdict::Ambiguous(_)));
 }
 
+#[test_id(t44uosr)]
 #[test]
 fn one_ambiguous_red_pauses_the_round_even_if_another_is_owned() {
     let a = red("a", "sentinel/src/check4.rs", &[]);
@@ -112,23 +118,27 @@ fn one_ambiguous_red_pauses_the_round_even_if_another_is_owned() {
     ));
 }
 
+#[test_id(ty2bvho)]
 #[test]
 fn no_reds_is_ambiguous() {
     assert!(matches!(attribute(&[], &round()), Verdict::Ambiguous(_)));
 }
 
+#[test_id(txpwoua)]
 #[test]
 fn generic_bare_basenames_implicate_nobody() {
     let r = red("s", "error in lib.rs:12", &[]);
     assert!(matches!(attribute(&[r], &round()), Verdict::Ambiguous(_)));
 }
 
+#[test_id(tiav27v)]
 #[test]
 fn evidence_outranks_own_paths() {
     let r = red("s", "sentinel/src/check4.rs missing", &["batcher-cut/"]);
     assert_eq!(eject_ids(&attribute(&[r], &round())), ["sp-2yclhz"]);
 }
 
+#[test_id(tlj7kji)]
 #[test]
 fn parses_reds_file() {
     let t = "@@ a own=x/,y*.sh\nline 1\n@@ b\nline 2\n";
@@ -139,6 +149,7 @@ fn parses_reds_file() {
     assert!(parse_reds("stray\n").is_err());
 }
 
+#[test_id(t018zyo)]
 #[test]
 fn glob_matches() {
     assert!(glob("test-*.sh", "test-a.sh"));
@@ -149,6 +160,7 @@ fn glob_matches() {
 
 const FEATURE_PANIC: &str = "thread 'x' panicked at round-vm/tests/unit_deadline_real.rs:39:5:\nerror: the package 'tiny' does not contain this feature: integration\n";
 
+#[test_id(th7mpkg)]
 #[test]
 fn a_red_naming_a_test_file_no_member_touched_is_owned_by_the_one_member_that_touches_its_crate() {
     let members = vec![
@@ -159,6 +171,7 @@ fn a_red_naming_a_test_file_no_member_touched_is_owned_by_the_one_member_that_to
     assert_eq!(eject_ids(&v), ["sp-a"]);
 }
 
+#[test_id(tgtatju)]
 #[test]
 fn a_red_naming_a_crate_two_members_touch_stays_ambiguous() {
     let members = vec![
@@ -171,6 +184,7 @@ fn a_red_naming_a_crate_two_members_touch_stays_ambiguous() {
     ));
 }
 
+#[test_id(t0a7ifv)]
 #[test]
 fn the_exact_file_outranks_its_crate() {
     let members = vec![
@@ -186,6 +200,7 @@ fn the_exact_file_outranks_its_crate() {
     );
 }
 
+#[test_id(t55i3ub)]
 #[test]
 fn a_top_level_directory_that_is_not_a_crate_does_not_stand_for_its_crate() {
     let members = vec![m("sp-a", &["spira/test-other.sh"])];

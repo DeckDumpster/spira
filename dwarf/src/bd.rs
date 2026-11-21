@@ -206,6 +206,7 @@ mod tests {
         (BdCli { fixture: None, env, lc }, fake)
     }
 
+    #[test_id(t6sdn5q)]
     #[test]
     fn reads_go_through_the_door_and_spawn_no_bdq() {
         let (bd, fake) = door(vec![serde_json::json!({"id":"sp-a","status":"open"})]);
@@ -218,6 +219,7 @@ mod tests {
         assert_eq!(seen[2], args(&["content", "memories", "--json"]));
     }
 
+    #[test_id(to72o1v)]
     #[test]
     fn the_bead_text_is_one_work_show_through_the_door() {
         let (bd, fake) = door(vec![]);
@@ -225,6 +227,7 @@ mod tests {
         assert_eq!(fake.requests(), vec![args(&["work", "sp-a", "show"])]);
     }
 
+    #[test_id(tbyrkls)]
     #[test]
     fn writes_go_through_the_door_and_spawn_no_bdq() {
         let (bd, fake) = door(vec![]);
@@ -243,6 +246,7 @@ mod tests {
         assert_eq!(seen[3], args(&["content", "label", "add", "sp-a", "overseer"]));
     }
 
+    #[test_id(tfmhx7z)]
     #[test]
     fn recording_a_branch_adds_its_label_and_drops_the_one_it_replaces() {
         assert_eq!(record_branch("sp-a", "", "spira/sp-a"), args(&["update", "sp-a", "--add-label", "branch:spira/sp-a"]));
@@ -252,6 +256,7 @@ mod tests {
         assert_eq!(fake.requests()[0], args(&["content", "update", "sp-a", "--add-label", "branch:spira/sp-a"]));
     }
 
+    #[test_id(t63wtp2)]
     #[test]
     fn a_verb_the_door_does_not_serve_is_refused_and_named() {
         let (bd, fake) = door(vec![]);
@@ -261,12 +266,14 @@ mod tests {
         assert!(fake.requests().is_empty());
     }
 
+    #[test_id(txl3rqt)]
     #[test]
     fn dwarf_main_resolves_no_bdq() {
         let main = include_str!("main.rs");
         assert!(!main.contains(concat!("tool(\"", "bdq", "\")")));
     }
 
+    #[test_id(t76nl6n)]
     #[test]
     fn first_row_accepts_object_or_list() {
         assert_eq!(first_row(r#"[{"id":"sp-a","status":"open"}]"#).unwrap().id, "sp-a");
@@ -275,6 +282,7 @@ mod tests {
         assert!(first_row("not json").is_none());
     }
 
+    #[test_id(tsdm4bz)]
     #[test]
     fn supersedes_in_either_spelling() {
         let a = first_row(r#"{"id":"a","dependencies":[{"dependency_type":"supersedes"}]}"#).unwrap();
@@ -283,6 +291,7 @@ mod tests {
         assert!(a.superseded() && b.superseded() && !c.superseded());
     }
 
+    #[test_id(to5r8vh)]
     #[test]
     fn delivers_joins_types() {
         let r = first_row(r#"{"id":"a","labels":["delivers:note","x","delivers:beads"]}"#).unwrap();
@@ -290,6 +299,7 @@ mod tests {
         assert_eq!(r.label_value("delivers:").as_deref(), Some("note"));
     }
 
+    #[test_id(tgqyl00)]
     #[test]
     fn child_work_count_excludes_event_records() {
         let j = r#"[{"id":"sp-a","issue_type":"task"},{"id":"sp-b","issue_type":"event"},{"id":"","issue_type":"task"}]"#;

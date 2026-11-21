@@ -57,6 +57,7 @@ mod tests {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
+    #[test_id(tzkj80w)]
     #[test]
     fn a_match_regex_scores_by_distinct_lines_hit() {
         let s = shelf(&[("sop-disk-full", "MATCH: disk.*full\nSYMPTOM: x\nCHECK: y\nFIX: z")]);
@@ -66,6 +67,7 @@ mod tests {
         assert!(hits[0].score >= 1);
     }
 
+    #[test_id(t0i6roz)]
     #[test]
     fn no_match_line_falls_back_to_key_tokens() {
         let s = shelf(&[("sop-template-apt-drift", "SYMPTOM: x\nCHECK: y\nFIX: z")]);
@@ -76,6 +78,7 @@ mod tests {
         assert_eq!(hits[0].score, 2);
     }
 
+    #[test_id(t7146gl)]
     #[test]
     fn an_unrelated_payload_does_not_fire() {
         let s = shelf(&[("sop-disk-full", "MATCH: disk.*full\nSYMPTOM: x\nCHECK: y\nFIX: z")]);
@@ -83,6 +86,7 @@ mod tests {
         assert!(hits.is_empty());
     }
 
+    #[test_id(thfiwpm)]
     #[test]
     fn a_bad_match_regex_never_fires() {
         let s = shelf(&[("sop-bad", "MATCH: [unterminated\nSYMPTOM: x\nCHECK: y\nFIX: z")]);
@@ -90,6 +94,7 @@ mod tests {
         assert!(hits.is_empty(), "a BAD-REGEX entry must score 0, not crash or match literally");
     }
 
+    #[test_id(ttktc6r)]
     #[test]
     fn higher_score_sorts_first() {
         let s = shelf(&[

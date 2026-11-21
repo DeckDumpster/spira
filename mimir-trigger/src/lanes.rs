@@ -103,6 +103,7 @@ mod tests {
         }
     }
 
+    #[test_id(t0fd9a0)]
     #[test]
     fn no_lanes_column_admits_every_lane() {
         let out = repo_lanes("alpha", None, &labels()).unwrap();
@@ -111,32 +112,38 @@ mod tests {
         }
     }
 
+    #[test_id(tjdh0c0)]
     #[test]
     fn empty_lanes_field_admits_every_lane() {
         let out = repo_lanes("alpha", Some(""), &labels()).unwrap();
         assert_eq!(out.split(' ').count(), 6);
     }
 
+    #[test_id(ty4ckv6)]
     #[test]
     fn consume_mode_yields_plan_only() {
         assert_eq!(repo_lanes("alpha", Some("consume"), &labels()).unwrap(), "plan");
     }
 
+    #[test_id(ts6tm9u)]
     #[test]
     fn develop_mode_yields_four_lanes_in_order() {
         assert_eq!(repo_lanes("beta", Some("develop"), &labels()).unwrap(), "plan incident groom spike");
     }
 
+    #[test_id(ttol96b)]
     #[test]
     fn self_mode_yields_all_six_in_order() {
         assert_eq!(repo_lanes("gamma", Some("self"), &labels()).unwrap(), "plan incident groom spike mimir-sweep czar-trigger"); // literal-ok: test fixture
     }
 
+    #[test_id(tnw70og)]
     #[test]
     fn lane_admitted_checks_the_home_repo_first() {
         assert!(lane_admitted("plan", "home", &[], |_| None, &labels()));
     }
 
+    #[test_id(t5qdg0a)]
     #[test]
     fn lane_admitted_falls_back_to_the_repo_map_when_the_home_repo_does_not_admit() {
         let names = vec!["satellite".to_string()];

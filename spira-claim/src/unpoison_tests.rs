@@ -162,6 +162,7 @@ fn poisoned_a() -> Fake {
 // ---------------------------------------------------------------------------------------
 
 // covers: UC-dwarf-execution-21
+#[test_id(teo5bpl)]
 #[test]
 fn clear_then_verify_ok_with_zero_events() {
     // sp-r66qd: right after the floor there are NO events to count. The count must be 0,
@@ -182,6 +183,7 @@ fn clear_then_verify_ok_with_zero_events() {
     assert_eq!(l.attempts, 0);
 }
 
+#[test_id(t0huusa)]
 #[test]
 fn clear_a_bead_that_never_had_events() {
     // Poisoned by hand with no events at all: still 0, still OK.
@@ -191,6 +193,7 @@ fn clear_a_bead_that_never_had_events() {
     assert!(out.contains("attempts 0 -> 0"), "{out}");
 }
 
+#[test_id(t5k542m)]
 #[test]
 fn floor_is_written_before_the_hold_is_released() {
     let mut f = poisoned_a();
@@ -203,6 +206,7 @@ fn floor_is_written_before_the_hold_is_released() {
 
 /// sp-mve9i: on, the claim is the lifecycle row — bd's in_progress and assignee are not a
 /// holder (no on-mode claim writes them), and a READY row is nobody's.
+#[test_id(tj4ksi5)]
 #[test]
 fn on_bd_in_progress_is_not_a_holder() {
     let mut f = Fake::new()
@@ -217,6 +221,7 @@ fn on_bd_in_progress_is_not_a_holder() {
 
 /// The refusal names the holder and the exit.
 // covers: UC-dwarf-execution-21
+#[test_id(twffmqr)]
 #[test]
 fn refuse_when_held_names_the_exit() {
     let mut f = Fake::new()
@@ -232,6 +237,7 @@ fn refuse_when_held_names_the_exit() {
     assert!(f.lc["pz3"].poisoned());
 }
 
+#[test_id(teb0636)]
 #[test]
 fn refuse_when_lifecycle_holder() {
     let mut f = Fake::new()
@@ -245,6 +251,7 @@ fn refuse_when_lifecycle_holder() {
 }
 
 // covers: UC-dwarf-execution-21
+#[test_id(t7hatcm)]
 #[test]
 fn skip_when_not_poisoned_and_below_threshold() {
     let mut f = Fake::new().bead("pz4", "open", None, &["spira"]).claims("pz4", 2);
@@ -254,6 +261,7 @@ fn skip_when_not_poisoned_and_below_threshold() {
     assert_eq!(f.writes(), 0);
 }
 
+#[test_id(td7myid)]
 #[test]
 fn at_threshold_without_hold_is_cleared() {
     // No lifecycle row, but attempts at the threshold: the next pass would poison — clear it.
@@ -264,6 +272,7 @@ fn at_threshold_without_hold_is_cleared() {
     assert!(!f.trail.contains(&"unhold".to_string()));
 }
 
+#[test_id(t638070)]
 #[test]
 fn cannot_tell_writes_nothing() {
     let mut f = poisoned_a();
@@ -286,6 +295,7 @@ fn cannot_tell_writes_nothing() {
     assert!(out.contains("FAIL sp-nope: no such bead"), "{out}");
 }
 
+#[test_id(tfudc9r)]
 #[test]
 fn floor_write_failure_stops_before_unhold() {
     let mut f = poisoned_a();
@@ -297,6 +307,7 @@ fn floor_write_failure_stops_before_unhold() {
     assert!(f.lc["sp-a"].poisoned(), "the hold stays when the floor could not be written");
 }
 
+#[test_id(tniw52d)]
 #[test]
 fn unhold_refused_retries_once() {
     let mut f = poisoned_a();
@@ -306,6 +317,7 @@ fn unhold_refused_retries_once() {
     assert!(!f.lc["sp-a"].poisoned());
 }
 
+#[test_id(t7zguob)]
 #[test]
 fn verify_fails_when_hold_remains() {
     let mut f = poisoned_a();
@@ -315,6 +327,7 @@ fn verify_fails_when_hold_remains() {
     assert!(out.contains("FAIL sp-a: did not verify: lifecycle-hold-still-present"), "{out}");
 }
 
+#[test_id(tj34v6g)]
 #[test]
 fn verify_fails_when_count_does_not_drop() {
     // A claim stamped after the floor (a racing dwarf) keeps the count; 3 of them re-poison.
@@ -327,6 +340,7 @@ fn verify_fails_when_count_does_not_drop() {
     assert!(out.contains("attempts-still-3"), "{out}");
 }
 
+#[test_id(tq3lx8g)]
 #[test]
 fn dry_run_writes_nothing() {
     let mut f = poisoned_a();
@@ -338,6 +352,7 @@ fn dry_run_writes_nothing() {
     assert_eq!(f.writes(), 0);
 }
 
+#[test_id(tzy8o9w)]
 #[test]
 fn credit_written_before_floor_and_not_counted() {
     let mut f = poisoned_a();
@@ -365,6 +380,7 @@ fn o_with_credit(b: &[&str]) -> Opts {
     o
 }
 
+#[test_id(t9w2pxe)]
 #[test]
 fn several_beads_one_failure_fails_the_run() {
     let mut f = poisoned_a().bead("pz3", "in_progress", Some("dwarf-test"), &[]).claims("pz3", 3).lc("pz3", BeadState::Working, &[], Some("dwarf-test"));
@@ -373,6 +389,7 @@ fn several_beads_one_failure_fails_the_run() {
     assert!(out.contains("OK   sp-a:") && out.contains("FAIL pz3:"), "{out}");
 }
 
+#[test_id(tbac286)]
 #[test]
 fn bounded_cause_strips_quotes_and_bounds() {
     let c = bounded_cause(&format!("it's \"quoted\" \\ and\nnew {}", "x".repeat(400)));
@@ -381,6 +398,7 @@ fn bounded_cause_strips_quotes_and_bounds() {
     assert!(c.starts_with("its quoted  andnew x"));
 }
 
+#[test_id(tm3tvpk)]
 #[test]
 fn fmt_utc_formats_epoch() {
     assert_eq!(fmt_utc(T0), "2026-09-28T12:00:00Z");
@@ -406,6 +424,7 @@ fn fmt_utc(epoch: i64) -> String {
 // ---------------------------------------------------------------------------------------
 // parsing the stores
 
+#[test_id(t9sb8ke)]
 #[test]
 fn parse_store_outputs() {
     let b = parse_bead("warning: something\n[{\"id\":\"sp-a\",\"status\":\"in_progress\",\"assignee\":\"dwarf-x\",\"labels\":[\"spira\",\"spira-poison\"]}]").unwrap().unwrap();
@@ -428,6 +447,7 @@ fn parse_store_outputs() {
     assert!(parse_open_asks("").is_err());
 }
 
+#[test_id(t5rzpv0)]
 #[test]
 fn ids_and_slugs() {
     assert!(valid_id("sp-a.1_x"));
@@ -438,6 +458,7 @@ fn ids_and_slugs() {
 // ---------------------------------------------------------------------------------------
 // the live world's seams: argv and stdin of the bdq / spira-lc calls
 
+#[test_id(t0v3rfg)]
 #[test]
 fn an_unreachable_machine_is_a_loud_fail() {
     let mut f = poisoned_a();
@@ -450,6 +471,7 @@ fn an_unreachable_machine_is_a_loud_fail() {
 
 /// A worktree occupant's unit is stopped through the `Units` port by name, never by pid or
 /// a `systemctl` child.
+#[test_id(t9ninm2)]
 #[test]
 fn stop_occupants_stops_the_occupants_unit_through_the_port() {
     use runtime::units::ScriptedUnits;
@@ -501,6 +523,7 @@ fn reply(code: i32, out: &str) -> spira_store::lc_call::Reply {
 
 const ROW: &str = r#"{"bead":{"bead_id":"sp-a","state":"READY","holds":[],"version":1}}"#;
 
+#[test_id(tfubiyx)]
 #[test]
 fn no_lifecycle_row_is_exit_one_whatever_the_machine_printed() {
     let mut w = live_over(reply(0, "[]"), reply(1, "no such bead sp-a"));
@@ -509,6 +532,7 @@ fn no_lifecycle_row_is_exit_one_whatever_the_machine_printed() {
     assert!(w.lc_row("sp-a").is_err(), "exit 2 is cannot-tell even when it prints {{}}");
 }
 
+#[test_id(t8rnyb1)]
 #[test]
 fn a_content_failure_is_absence_only_when_the_machine_has_no_row() {
     let mut w = live_over(reply(1, "wording changed: bead missing"), reply(1, ""));
@@ -521,6 +545,7 @@ fn a_content_failure_is_absence_only_when_the_machine_has_no_row() {
     assert!(w.bead("sp-a").is_err(), "only exit 1 can mean absent; a deadline or crash cannot tell");
 }
 
+#[test_id(txi3t6w)]
 #[test]
 fn an_unpoison_note_is_a_door_note_from_the_body() {
     use spira_store::lc_call::{LcClient, Reply, Transport};
@@ -540,6 +565,7 @@ fn an_unpoison_note_is_a_door_note_from_the_body() {
     assert_eq!(seen, [(vec!["content".to_string(), "note".into(), "sp-a".into(), "--stdin".into()], Some("unpoisoned: why".to_string()))]);
 }
 
+#[test_id(thcm9oq)]
 #[test]
 fn a_refused_door_note_keeps_the_exit_and_first_stderr_line() {
     let w = live_over(reply(0, ""), reply(0, ""));

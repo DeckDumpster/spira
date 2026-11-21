@@ -283,6 +283,7 @@ mod tests {
     /// (never `Cancelled`) or simply takes ~10s instead of under 5 — either is the
     /// regression this guards: a signalled build sitting until cargo finishes on its own.
 
+    #[test_id(tmi73wq)]
     #[test]
     fn enospc_is_read_from_cargos_stderr_and_a_plain_error_is_not() {
         assert!(is_enospc("failed to write /x/.fingerprint/a: No space left on device (os error 28)"));
@@ -290,6 +291,7 @@ mod tests {
         assert!(!is_enospc("error[E0308]: mismatched types"));
     }
 
+    #[test_id(tv9p4sl)]
     #[test]
     fn oom_needs_both_a_sigkill_and_a_cgroup_oom_event() {
         assert!(is_oom(Some(9), Some(1), Some(2)));
@@ -298,6 +300,7 @@ mod tests {
         assert!(!is_oom(Some(9), None, Some(2)));
     }
 
+    #[test_id(t7wh6i5)]
     #[test]
     fn a_warm_slot_is_passed_as_target_dir_never_as_an_environment_variable() {
         let args = |c: &Command| c.get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>();
@@ -308,6 +311,7 @@ mod tests {
         assert!(!args(&cold).iter().any(|a| a == "--target-dir"));
     }
 
+    #[test_id(t1ktmfh)]
     #[test]
     fn only_a_warm_slot_is_honoured_as_the_target() {
         let d = testkit::TempDir::new("warm-target");
@@ -323,6 +327,7 @@ mod tests {
         assert_eq!(warm_target(None, std::slice::from_ref(&base)), None);
     }
 
+    #[test_id(tsy0vys)]
     #[test]
     fn artifacts_resolve_into_the_warm_slot_replacing_a_stale_dir() {
         let d = testkit::TempDir::new("warm-link");
@@ -339,6 +344,7 @@ mod tests {
         assert!(!artifacts_dir(&wt, "dev").join("stale").exists());
     }
 
+    #[test_id(tif4thf)]
     #[test]
     fn artifacts_stay_when_the_warm_slot_is_spilled_onto_the_worktrees_own_target() {
         let d = testkit::TempDir::new("warm-spilled");
@@ -354,6 +360,7 @@ mod tests {
         assert!(artifacts_dir(&wt, "dev").join("tool").is_file());
     }
 
+    #[test_id(tsaomtn)]
     #[test]
     fn a_dangling_artifacts_link_is_cleared_so_the_build_can_recreate_it() {
         let d = testkit::TempDir::new("dangling-link");
@@ -369,6 +376,7 @@ mod tests {
         assert!(wt.join("target/debug/keep").is_file());
     }
 
+    #[test_id(tub9b0x)]
     #[test]
     fn profile_directories() {
         assert_eq!(profile_dir("release"), "release");

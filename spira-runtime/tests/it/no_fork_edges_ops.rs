@@ -54,6 +54,7 @@ fn unmarked(name: &str, text: &str) -> Vec<String> {
     found
 }
 
+#[test_id(toyzday)]
 #[test]
 fn no_unmarked_fork_edge_remains() {
     let mut found = Vec::new();
@@ -69,6 +70,7 @@ fn no_unmarked_fork_edge_remains() {
     assert!(found.is_empty(), "unmarked fork edges:\n{}", found.join("\n"));
 }
 
+#[test_id(t8v20dl)]
 #[test]
 fn the_scan_catches_a_planted_site_and_passes_a_marked_one() {
     let planted = "fn f() {\n    let _ = std::process::Command::new(\"spira-lc\").arg(\"show\");\n}\n";

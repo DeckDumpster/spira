@@ -229,6 +229,7 @@ mod tests {
         s
     }
 
+    #[test_id(t0ro428)]
     #[test]
     fn empty_message_is_refused_and_leaves_every_mailbox_untouched() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -245,12 +246,14 @@ mod tests {
         assert_eq!((snap("tmp"), snap("new"), snap("cur")), before);
     }
 
+    #[test_id(t81q3bg)]
     #[test]
     fn first_paragraph_stops_at_the_next_blank_line() {
         let raw = "From: A\nSubject: S\n\n\nFirst line.\nSecond line.\n\nIgnored third paragraph.\n";
         assert_eq!(first_paragraph(raw), "First line.\nSecond line.");
     }
 
+    #[test_id(t2j4ej6)]
     #[test]
     fn a_spooled_message_is_readable_back() {
         let d = testkit::TempDir::new("mail-spool");
@@ -258,6 +261,7 @@ mod tests {
         assert_eq!(fs::read_to_string(p).unwrap(), "hello");
     }
 
+    #[test_id(t44ltkv)]
     #[test]
     fn a_crlf_reply_body_is_found() {
         let raw = "From: A\r\nSubject: S\r\n\r\nApprove it.\r\nMore.\r\n\r\nIgnored.\r\n";
@@ -266,6 +270,7 @@ mod tests {
 
     // covers: UC-operator-channel-17
 
+    #[test_id(tp0jp21)]
     #[test]
     fn reply_routes_to_the_senders_mailbox_when_one_exists() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -279,6 +284,7 @@ mod tests {
 
     // covers: UC-operator-channel-17
 
+    #[test_id(tp3jefs)]
     #[test]
     fn reply_to_a_runes_persona_routes_to_concierge_even_with_a_same_named_mailbox() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -293,6 +299,7 @@ mod tests {
 
     // covers: UC-operator-channel-17
 
+    #[test_id(ttswmoh)]
     #[test]
     fn reply_with_no_sender_mailbox_and_no_persona_routes_to_concierge() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -305,6 +312,7 @@ mod tests {
 
     // covers: UC-operator-channel-17
 
+    #[test_id(tc6khhx)]
     #[test]
     fn reply_with_no_in_reply_to_routes_to_concierge() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -314,6 +322,7 @@ mod tests {
         assert_eq!(out.dest_mailbox, "concierge");
     }
 
+    #[test_id(tw78bfu)]
     #[test]
     fn a_reply_routed_to_its_own_senders_mailbox_is_filed_read() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -332,6 +341,7 @@ mod tests {
         assert_eq!(names("builder", "cur"), vec![format!("{msgid}:2,RS")]);
     }
 
+    #[test_id(ttkk0bp)]
     #[test]
     fn a_reply_from_another_sender_routed_to_concierge_stays_new() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -345,6 +355,7 @@ mod tests {
 
     // covers: UC-operator-channel-07
 
+    #[test_id(t7t0k0z)]
     #[test]
     fn a_reply_marks_the_original_seen_and_replied_in_cur_and_touches_no_bead() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -361,6 +372,7 @@ mod tests {
 
     // covers: UC-operator-channel-07
 
+    #[test_id(teyc660)]
     #[test]
     fn a_reply_to_an_already_seen_original_keeps_it_in_cur_with_s_and_gains_r() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -375,6 +387,7 @@ mod tests {
         assert_eq!(fs::read_dir(gate.join("new")).unwrap().count(), 1);
     }
 
+    #[test_id(tqts9sw)]
     #[test]
     fn a_named_destination_overrides_routing_and_leaves_the_original_unflagged() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -387,6 +400,7 @@ mod tests {
         assert!(d.path().join("gate").join("new").join(&msgid).is_file());
     }
 
+    #[test_id(t876kmc)]
     #[test]
     fn mute_sendmail_delivers_straight_into_cur_already_seen() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -404,6 +418,7 @@ mod tests {
 mod empty_stdin_tests {
     use super::*;
 
+    #[test_id(t8sfc0c)]
     #[test]
     fn sendmail_of_an_empty_message_delivers_nothing() {
         let d = testkit::TempDir::new("sendmail-empty");

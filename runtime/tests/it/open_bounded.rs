@@ -22,6 +22,7 @@ fn note(i: usize, stream: &str) -> Event {
     Event { id: EventId(format!("n{i}")), stream: StreamKey(stream.into()), kind: EventKind::new("note", ""), at: 1, cause: None, correlation: CorrelationId("c".into()) }
 }
 
+#[test_id(t77wcio)]
 #[test]
 fn what_a_restart_reads_does_not_grow_with_the_turns_before_it() {
     let j = MemJournal::new();
@@ -36,6 +37,7 @@ fn what_a_restart_reads_does_not_grow_with_the_turns_before_it() {
     assert!(carry.value.contains("1999") && !carry.value.contains("\"1998\""), "and it holds the newest state only: {}", carry.value);
 }
 
+#[test_id(t5epuzv)]
 #[test]
 fn trimming_a_busy_stream_never_lowers_what_the_heartbeat_counts() {
     use runtime::heartbeat::{Heartbeat, HEARTBEAT};

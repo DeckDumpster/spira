@@ -430,6 +430,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test_id(tox9wxo)]
     #[test]
     fn a_shipped_record_reaches_the_listener_on_the_insert_path_with_the_stream_fields() {
         let f = FakeLogs::start();
@@ -438,6 +439,7 @@ mod tests {
         assert_eq!(f.insert_targets(), vec![INSERT_PATH.to_string()]);
     }
 
+    #[test_id(tbe41yz)]
     #[test]
     fn a_full_queue_drops_and_counts_without_blocking() {
         let hung = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -456,6 +458,7 @@ mod tests {
 
     use std::net::TcpListener;
 
+    #[test_id(t3epc80)]
     #[test]
     fn a_failed_post_is_counted_and_not_retried() {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -476,6 +479,7 @@ mod tests {
         assert_eq!(s.counts().dropped(), 0);
     }
 
+    #[test_id(txn05bz)]
     #[test]
     fn the_bead_id_is_the_first_sp_id_with_its_child_suffix() {
         assert_eq!(bead_id("watch.sp-abcde1.x").as_deref(), Some("sp-abcde1"));
@@ -484,6 +488,7 @@ mod tests {
         assert_eq!(bead_id("no id, just sp- and spiral"), None);
     }
 
+    #[test_id(tfy4tv7)]
     #[test]
     fn a_count_reads_the_stats_row_and_an_unreadable_store_is_an_error_not_zero() {
         let f = FakeLogs::start();
@@ -498,6 +503,7 @@ mod tests {
         assert_eq!(Logs::new("").err(), Some(LogsError::NotConfigured));
     }
 
+    #[test_id(tdt6imv)]
     #[test]
     fn a_transition_filter_quotes_its_values_and_a_record_carries_the_fields_it_filters_on() {
         assert_eq!(transitions_filter("bead", Some("CLOSED"), 86_400), "_time:86400s _msg:transition machine:\"bead\" to:\"CLOSED\"");
@@ -511,6 +517,7 @@ mod tests {
         assert_eq!(transition_record("batch", "Cut", "OPEN", "CI_RUNNING", "", 7, "a")["stream"], "lifecycle.batch");
     }
 
+    #[test_id(tcbobve)]
     #[test]
     fn a_transition_filter_names_the_message_field_not_the_field_the_insert_path_renames() {
         let msg_field = INSERT_PATH.split("_msg_field=").nth(1).unwrap();
@@ -520,6 +527,7 @@ mod tests {
         }
     }
 
+    #[test_id(t5oh3ys)]
     #[test]
     fn a_refusal_and_a_garbled_row_are_named() {
         let f = FakeLogs::start();

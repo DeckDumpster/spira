@@ -75,6 +75,7 @@ mod tests {
         Outcome::Failed { reason: "x".into() }
     }
 
+    #[test_id(t75v4ub)]
     #[test]
     fn an_alarm_is_undelivered_until_a_later_attempt_delivers_it() {
         let now = 10 * DAY_S;
@@ -95,6 +96,7 @@ mod tests {
         assert_eq!(c, Counts { attempts: 4, delivered: 1, failed: 3, pages: 1 });
     }
 
+    #[test_id(tdsxtsb)]
     #[test]
     fn a_filing_with_no_id_is_a_failure_and_skew_is_no_attempt() {
         assert_eq!(of_file(&FileOutcome::Filed("sp-1".into())), Some(Outcome::Delivered { id: "sp-1".into() }));

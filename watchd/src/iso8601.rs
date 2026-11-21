@@ -37,22 +37,26 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 mod tests {
     use super::*;
 
+    #[test_id(tqqehbf)]
     #[test]
     fn the_epoch_itself() {
         assert_eq!(parse_utc("1970-01-01T00:00:00Z"), Some(0));
     }
 
+    #[test_id(tdryo47)]
     #[test]
     fn a_known_date() {
         // 2026-09-30T00:00:00Z — cross-checked against `date -u -d ... +%s`.
         assert_eq!(parse_utc("2026-09-30T00:00:00Z"), Some(1790726400));
     }
 
+    #[test_id(t4g2nfi)]
     #[test]
     fn one_second_later() {
         assert_eq!(parse_utc("2026-09-30T00:00:01Z"), Some(1790726401));
     }
 
+    #[test_id(tv0ktpw)]
     #[test]
     fn a_handful_more_cross_checked_dates() {
         for (s, want) in [
@@ -64,6 +68,7 @@ mod tests {
         }
     }
 
+    #[test_id(toligc0)]
     #[test]
     fn the_shared_formatter_round_trips_through_parse() {
         for s in ["1970-01-01T00:00:00Z", "2026-09-30T00:00:00Z", "2024-02-29T12:34:56Z"] {
@@ -72,6 +77,7 @@ mod tests {
         }
     }
 
+    #[test_id(thbfw7j)]
     #[test]
     fn a_malformed_stamp_is_none() {
         assert_eq!(parse_utc(""), None);

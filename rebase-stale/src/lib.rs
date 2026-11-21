@@ -2,6 +2,9 @@
 //! mechanically, so a bead reaches a dwarf only for a real content conflict or a red gate.
 //! See DESIGN.md for the contract this implements.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod telemetry;
 pub mod branch;
 pub mod engine;

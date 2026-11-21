@@ -204,52 +204,61 @@ mod tests {
         Facts { world_gate_ok: true, capacity_left: None, ready: Ok(3), dwarf_path: Some("rel/bin/dwarf".into()) }
     }
 
+    #[test_id(tt51epy)]
     #[test]
     fn halted_or_draining_gates_before_anything_else() {
         let f = Facts { world_gate_ok: false, ..ok() };
         assert_eq!(decide(&f), Outcome::Gated);
     }
 
+    #[test_id(to4zjft)]
     #[test]
     fn capacity_paused_gates() {
         let f = Facts { capacity_left: Some("120".into()), ..ok() };
         assert_eq!(decide(&f), Outcome::Gated);
     }
 
+    #[test_id(texcj93)]
     #[test]
     fn unreadable_partition_is_fatal_not_a_decline() {
         let f = Facts { ready: Err(()), ..ok() };
         assert_eq!(decide(&f), Outcome::CannotReadPartition);
     }
 
+    #[test_id(t66cg77)]
     #[test]
     fn zero_ready_declines_cleanly_exit_0() {
         let f = Facts { ready: Ok(0), ..ok() };
         assert_eq!(decide(&f), Outcome::NothingReady);
     }
 
+    #[test_id(tm38kbk)]
     #[test]
     fn positive_control_ready_and_ungated_calls() {
         assert!(matches!(decide(&ok()), Outcome::Called(_)));
     }
 
+    #[test_id(tk2cj86)]
     #[test]
     fn dwarf_missing_from_path_is_fatal() {
         let f = Facts { dwarf_path: None, ..ok() };
         assert_eq!(decide(&f), Outcome::DwarfMissing);
     }
 
+    #[test_id(tscq0ve)]
     #[test]
     fn find_on_path_returns_first_hit() {
         let hit = |p: &Path| p == Path::new("b/dwarf");
         assert_eq!(find_on_path("a:b:c", "dwarf", hit), Some("b/dwarf".to_string()));
     }
 
+    #[test_id(t3u4b6z)]
     #[test]
     fn find_on_path_none_when_absent() {
         assert_eq!(find_on_path("a:b", "dwarf", |_| false), None);
     }
 
+    #[test_id(tep3775)]
     #[test]
     fn build_argv_shape_matches_escape_sh() {
         let a = build_argv("stretchy", Path::new("h/spira"), "rel/bin/dwarf", &["--setenv=HOME=/h".to_string()], 1000, false);
@@ -259,6 +268,7 @@ mod tests {
         );
     }
 
+    #[test_id(t413f9g)]
     #[test]
     fn build_argv_appends_dry_run_last() {
         let a = build_argv("f", Path::new("h"), "bin/dwarf", &[], 1, true);
@@ -312,6 +322,7 @@ mod tests {
         run(seam, exec, &env_with_dwarf_on_path(dir), sink, &conf_at(dir), "systemd-run", argv, Path::new("h/spira"), "stretchy", false, 1000)
     }
 
+    #[test_id(t6o0qs2)]
     #[test]
     fn run_halted_does_not_call_and_exits_1() {
         let dir = testkit::TempDir::new("escape-run");
@@ -324,6 +335,7 @@ mod tests {
         assert!(sink.all().contains("escape.sh stretchy: halted — not calling"));
     }
 
+    #[test_id(tlgb0sw)]
     #[test]
     fn run_draining_does_not_call_and_exits_1() {
         let dir = testkit::TempDir::new("escape-run");
@@ -335,6 +347,7 @@ mod tests {
         assert!(sink.all().contains("draining — not calling"));
     }
 
+    #[test_id(tjw517y)]
     #[test]
     fn run_ungated_calls_with_the_unit_properties_it_was_given() {
         let dir = testkit::TempDir::new("escape-run");
@@ -347,6 +360,7 @@ mod tests {
         assert!(argv.contains(&"--property=IOWeight=10".to_string()), "{argv:?}");
     }
 
+    #[test_id(tm5qcfh)]
     #[test]
     fn world_gate_refuses_when_the_claims_lane_is_stopped_on_every_repo() {
         let dir = testkit::TempDir::new("escape-gate");
@@ -357,6 +371,7 @@ mod tests {
         assert_eq!(world_gate(&dir, &["r1", "r2"], "stretchy", "escape.sh"), None);
     }
 
+    #[test_id(tmpeei1)]
     #[test]
     fn call_argv_carries_the_dwarf_unit_properties_and_environment() {
         let dir = testkit::TempDir::new("escape-argv");
@@ -369,6 +384,7 @@ mod tests {
         assert!(a.iter().any(|f| f.starts_with("--setenv=SPIRA_RELEASE=")), "{a:?}");
     }
 
+    #[test_id(tfptylr)]
     #[test]
     fn run_capacity_paused_does_not_call_and_exits_1() {
         let dir = testkit::TempDir::new("escape-run");

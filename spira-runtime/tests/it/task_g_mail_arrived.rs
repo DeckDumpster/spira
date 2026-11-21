@@ -47,6 +47,7 @@ fn scripted(clock: &VirtualClock, script: Vec<(u64, Submit)>) -> Sources {
     s
 }
 
+#[test_id(t1zyad5)]
 #[test]
 fn the_declared_event_reaches_a_consumer_on_the_mailboxs_stream_at_its_virtual_time() {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
@@ -59,6 +60,7 @@ fn the_declared_event_reaches_a_consumer_on_the_mailboxs_stream_at_its_virtual_t
     assert_eq!(stream("concierge"), "mail/concierge");
 }
 
+#[test_id(tl3sf3v)]
 #[test]
 fn the_real_source_is_refused_under_virtual_time_naming_it() {
     let clock = VirtualClock::new(0);
@@ -69,6 +71,7 @@ fn the_real_source_is_refused_under_virtual_time_naming_it() {
     assert_eq!(BACKEND, "inotify");
 }
 
+#[test_id(tvwgq6x)]
 #[test]
 fn the_real_source_submits_one_catch_up_per_mailbox_with_mail_already_unread() {
     let dir = testkit::TempDir::new("mail-arrived");
@@ -87,6 +90,7 @@ fn the_real_source_submits_one_catch_up_per_mailbox_with_mail_already_unread() {
     assert_eq!((first.stream.as_str(), Arrived::from_event_kind(&first.kind).map(|a| a.mailbox)), ("mail/concierge", Some("concierge".to_string())));
 }
 
+#[test_id(t84wbnw)]
 #[test]
 fn the_real_source_returns_once_its_channel_is_closed() {
     let (tx, rx) = mpsc::channel(1);

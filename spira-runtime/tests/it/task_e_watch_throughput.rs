@@ -92,6 +92,7 @@ fn halts(r: &TaskRig) -> usize {
     r.journaled().iter().filter(|e| e.stream.0 == HALT_STREAM && e.kind.tag == SCHEDULER_HALTED).count()
 }
 
+#[test_id(tqapu1m)]
 #[test]
 fn the_row_is_registered_and_its_boot_arms_the_one_minute_tick() {
     let t = acc::row(NAME);
@@ -108,6 +109,7 @@ fn episodes(r: &TaskRig) -> Vec<std::collections::BTreeMap<String, u64>> {
     r.journaled().iter().filter(|e| e.kind.tag == STATE).filter_map(|e| serde_json::from_str::<Carry>(&e.kind.body).ok()).map(|c| c.stalled).collect()
 }
 
+#[test_id(tmmgt3k)]
 #[test]
 fn fifty_five_landings_in_a_day_with_steady_landings_file_no_incident_and_halt_nothing() {
     let w = Arc::new(Mutex::new(waiting(landed(55), 4, Last::Ago(60))));
@@ -117,6 +119,7 @@ fn fifty_five_landings_in_a_day_with_steady_landings_file_no_incident_and_halt_n
     assert_silent_tick(&mut r, STREAM);
 }
 
+#[test_id(tsthgw8)]
 #[test]
 fn no_landing_for_ten_minutes_with_beads_waiting_files_exactly_one_incident_and_halts_nothing() {
     let w = Arc::new(Mutex::new(waiting(landed(55), 3, Last::FirstSight)));
@@ -137,6 +140,7 @@ fn no_landing_for_ten_minutes_with_beads_waiting_files_exactly_one_incident_and_
     assert_eq!(halts(&r), 0, "a stall starts a repair, never a halt");
 }
 
+#[test_id(t0t0f8v)]
 #[test]
 fn a_waiting_bead_with_no_entry_time_files_no_stall_and_pages_the_data_defect_once() {
     let w = Arc::new(Mutex::new(waiting(landed(55), 3, Last::Undated)));
@@ -148,6 +152,7 @@ fn a_waiting_bead_with_no_entry_time_files_no_stall_and_pages_the_data_defect_on
     assert!(pages[0].contains("] P2 ") && !pages[0].contains("P0") && pages[0].contains("`since`"), "{pages:?}");
 }
 
+#[test_id(t0ssrfa)]
 #[test]
 fn a_stall_with_nothing_waiting_files_nothing() {
     let w = Arc::new(Mutex::new(waiting(landed(55), 0, Last::Never)));
@@ -155,6 +160,7 @@ fn a_stall_with_nothing_waiting_files_nothing() {
     assert_eq!((named(&r, FILE).len(), named(&r, INBOX_APPEND).len()), (0, 0));
 }
 
+#[test_id(ty8r6dv)]
 #[test]
 fn a_landing_clears_the_episode_and_the_next_stall_files_again() {
     let w = Arc::new(Mutex::new(waiting(landed(55), 3, Last::Never)));
@@ -171,6 +177,7 @@ fn a_landing_clears_the_episode_and_the_next_stall_files_again() {
     assert_eq!(named(&r, FILE).len(), 2, "a new stall is a new episode");
 }
 
+#[test_id(tqhw6sl)]
 #[test]
 fn a_filing_that_failed_is_asked_again_and_pages_nothing_until_it_succeeds() {
     let w = Arc::new(Mutex::new(waiting(landed(55), 3, Last::Never)));
@@ -198,6 +205,7 @@ fn a_filing_that_failed_is_asked_again_and_pages_nothing_until_it_succeeds() {
     assert_eq!(named(&r, INBOX_APPEND).len(), 1);
 }
 
+#[test_id(tk3wnjq)]
 #[test]
 fn five_abandoned_rounds_and_no_landing_page_the_repo_by_name_without_stopping_the_world() {
     let mut s = landed(400);
@@ -210,6 +218,7 @@ fn five_abandoned_rounds_and_no_landing_page_the_repo_by_name_without_stopping_t
     assert_eq!(named(&r, INBOX_APPEND).len(), 1, "a standing condition pages once");
 }
 
+#[test_id(t55nlmn)]
 #[test]
 fn a_repo_that_lands_again_and_starves_again_is_paged_again() {
     let mut s = landed(400);
@@ -229,6 +238,7 @@ fn repo_with_runs(repo: &str, green_runs: u64, landed: u64) -> RepoRounds {
     RepoRounds { repo: repo.into(), cut: green_runs, landed, green_runs, ..Default::default() }
 }
 
+#[test_id(tfj4ohf)]
 #[test]
 fn a_repo_whose_passing_runs_mostly_do_not_land_is_paged_once_and_a_healthy_or_thin_one_is_not() {
     let mut s = landed(400);
@@ -245,6 +255,7 @@ fn unlanded(batch: &str, state: &str, age_s: u64) -> Unlanded {
     Unlanded { repo: "alpha".into(), batch: batch.into(), state: state.into(), age_s }
 }
 
+#[test_id(toecaby)]
 #[test]
 fn a_round_that_passed_and_has_not_landed_in_five_minutes_pages_once_and_a_fresh_one_does_not() {
     let mut s = landed(400);
@@ -261,6 +272,7 @@ fn a_round_that_passed_and_has_not_landed_in_five_minutes_pages_once_and_a_fresh
     assert_eq!(named(&r, INBOX_APPEND).len(), 2, "the fresh one is paged when it crosses five minutes");
 }
 
+#[test_id(t7dmlgx)]
 #[test]
 fn leftover_round_records_are_cleared_and_the_ones_refused_are_paged_by_name_once() {
     let mut s = landed(400);
@@ -273,6 +285,7 @@ fn leftover_round_records_are_cleared_and_the_ones_refused_are_paged_by_name_onc
     assert_eq!(named(&r, INBOX_APPEND).len(), 1, "a standing refusal pages once");
 }
 
+#[test_id(t1fzog6)]
 #[test]
 fn a_snapshot_whose_records_are_all_live_clears_and_pages_nothing() {
     let mut s = landed(400);
@@ -282,12 +295,14 @@ fn a_snapshot_whose_records_are_all_live_clears_and_pages_nothing() {
     assert!(named(&r, INBOX_APPEND).is_empty());
 }
 
+#[test_id(tci5cqy)]
 #[test]
 fn no_leftover_records_means_no_clear_effect() {
     let r = rig(Arc::new(Mutex::new(landed(400))));
     assert!(named(&r, CLEAR).is_empty());
 }
 
+#[test_id(ta2tgkp)]
 #[test]
 fn green_runs_are_counted_from_each_rounds_passes_and_unlanded_means_green_or_landing_with_its_age() {
     use spira_runtime::world::{round_counts, unlanded_rounds};
@@ -298,6 +313,7 @@ fn green_runs_are_counted_from_each_rounds_passes_and_unlanded_means_green_or_la
     assert_eq!(got, [Unlanded { repo: "a".into(), batch: "x".into(), state: "GREEN".into(), age_s: 1_000 }, Unlanded { repo: "a".into(), batch: "z".into(), state: "LANDING".into(), age_s: 100 }]);
 }
 
+#[test_id(tqyf5c7)]
 #[test]
 fn every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("e/watch_throughput.rs")), None);
@@ -307,6 +323,7 @@ fn every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
+#[test_id(tt7nic9)]
 #[test]
 fn two_days_replay_identically_inside_the_budget() {
     let r = assert_deterministic(|_| rig(Arc::new(Mutex::new(landed(300)))), 7, 2);
@@ -314,6 +331,7 @@ fn two_days_replay_identically_inside_the_budget() {
     assert_journal_budget(&r, 1);
 }
 
+#[test_id(tsp93bm)]
 #[test]
 fn bead_ids_are_the_prefixed_words_in_commit_subjects_and_nothing_near_them() {
     use spira_runtime::world::bead_ids;
@@ -322,6 +340,7 @@ fn bead_ids_are_the_prefixed_words_in_commit_subjects_and_nothing_near_them() {
     assert!(bead_ids("sp-ipwlic: x", "zz").is_empty(), "a configured prefix, not a literal");
 }
 
+#[test_id(tl014f2)]
 #[test]
 fn round_counts_split_a_repos_rounds_by_how_they_ended_and_how_recently() {
     use spira_runtime::world::round_counts;
@@ -364,6 +383,7 @@ fn landing_repo(n: usize, now: u64) -> testkit::TempDir {
     d
 }
 
+#[test_id(tbt7ekx)]
 #[test]
 fn the_landing_count_reads_the_resolved_landing_ref_not_the_lane_name() {
     use spira_runtime::world::World;
@@ -382,6 +402,7 @@ fn the_landing_count_reads_the_resolved_landing_ref_not_the_lane_name() {
     assert_eq!((hourly[23], hourly[22], hourly[21]), (1, 1, 1), "half an hour ago, then each hour before: {hourly:?}");
 }
 
+#[test_id(toenbo7)]
 #[test]
 fn a_repo_whose_landing_ref_cannot_be_resolved_is_unreadable() {
     use spira_runtime::world::World;
@@ -392,6 +413,7 @@ fn a_repo_whose_landing_ref_cannot_be_resolved_is_unreadable() {
     assert!(w.landed_on_refs(1_000_000, "sp").is_err(), "no landing ref is a blind count, not zero");
 }
 
+#[test_id(te0oe00)]
 #[test]
 fn a_missing_landing_ref_names_the_repo_the_ref_tried_and_gits_status() {
     use spira_runtime::world::World;
@@ -440,6 +462,7 @@ fn flaky_git_repo(name: &str, pat: &str, fix: bool, now: u64) -> (testkit::TempD
     (dir, w)
 }
 
+#[test_id(tt5aqm0)]
 #[test]
 fn a_landing_ref_that_fails_once_and_resolves_on_the_second_read_is_read() {
     let now = 1_700_000_000u64;
@@ -449,6 +472,7 @@ fn a_landing_ref_that_fails_once_and_resolves_on_the_second_read_is_read() {
     assert_eq!(landings[0].hourly.iter().sum::<u64>(), 1);
 }
 
+#[test_id(trby1x3)]
 #[test]
 fn a_git_log_that_fails_once_is_read_again() {
     let now = 1_700_000_000u64;
@@ -459,6 +483,7 @@ fn a_git_log_that_fails_once_is_read_again() {
     assert_eq!(landings[0].hourly.iter().sum::<u64>(), 1);
 }
 
+#[test_id(thqgsxz)]
 #[test]
 fn an_unreadable_landing_ref_names_gits_own_exit_and_stderr() {
     use spira_runtime::world::World;
@@ -493,17 +518,20 @@ fn filed_and_said() -> TaskRig {
     r
 }
 
+#[test_id(tve51q7)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_and_said(), NAME);
     assert_eq!(rows, ["blind", "diluted", "halted", "held", "resumed_at", "stalled/alpha", "starved", "undated", "unlanded"]);
 }
 
+#[test_id(t94hd7b)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed_and_said, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
 }
 
+#[test_id(to9lv4p)]
 #[test]
 fn the_last_landing_is_when_the_round_landed_not_when_it_was_cut() {
     use spira_runtime::world::stamp_landings;
@@ -530,6 +558,7 @@ fn halt(since: u64) -> Option<spira_runtime::watchers::halt::Halt> {
     Some(spira_runtime::watchers::halt::Halt { since, why: "operator order: freeze".into() })
 }
 
+#[test_id(torrxyk)]
 #[test]
 fn a_landing_stall_while_the_work_plane_is_halted_files_nothing_and_the_row_names_the_halt() {
     let now = 3 * DAY_MS;
@@ -539,6 +568,7 @@ fn a_landing_stall_while_the_work_plane_is_halted_files_nothing_and_the_row_name
     assert!(v.carry.halted.contains("operator order: freeze") && v.carry.halted.contains("600s"), "{}", v.carry.halted);
 }
 
+#[test_id(tm5dwzt)]
 #[test]
 fn the_same_landing_stall_with_the_plane_running_files_the_incident() {
     let now = 3 * DAY_MS;
@@ -547,6 +577,7 @@ fn the_same_landing_stall_with_the_plane_running_files_the_incident() {
     assert!(v.carry.halted.is_empty());
 }
 
+#[test_id(t8iv477)]
 #[test]
 fn after_a_halt_lifts_the_stall_clock_restarts() {
     let now = 3 * DAY_MS;
@@ -573,6 +604,7 @@ fn blind_after_activation(host: Arc<Mutex<Host>>) -> TaskRig {
     r
 }
 
+#[test_id(tymwgua)]
 #[test]
 fn the_first_unreadable_landings_tick_just_after_an_activation_pages_blind() {
     let host = Arc::new(Mutex::new(Host { snap: Snapshot { why: REFUSAL.into(), ..Default::default() }, ..landed(24) }));
@@ -582,6 +614,7 @@ fn the_first_unreadable_landings_tick_just_after_an_activation_pages_blind() {
     assert!(pages[0].contains("P0 BLIND") && !pages[0].contains("activation"), "{pages:?}");
 }
 
+#[test_id(t657hor)]
 #[test]
 fn a_second_unreadable_landings_tick_pages_nothing_more_and_a_readable_one_rearms_the_page() {
     let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
@@ -597,6 +630,7 @@ fn a_second_unreadable_landings_tick_pages_nothing_more_and_a_readable_one_rearm
 
 const REFUSAL: &str = "store unavailable: store not running: nothing was sent; waited 50 s for run/lc.sock";
 
+#[test_id(t667tdb)]
 #[test]
 fn a_blind_page_carries_the_stores_reason_and_says_nothing_of_restarts_or_activations() {
     let snap = Snapshot { why: REFUSAL.into(), activated_at: Some(1_794_686_201), ..Default::default() };
@@ -612,6 +646,7 @@ fn one_waiting(now_s: u64, last_landing_ago: u64, bead: &str, waited: u64) -> Sn
     Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly: vec![0; 24], last_landing: now_s - last_landing_ago, waiting: 1, oldest, undated: None, beads: vec![] }], ..Default::default() }
 }
 
+#[test_id(tpez4x2)]
 #[test]
 fn a_bead_that_arrived_a_minute_ago_on_a_repo_idle_for_hours_files_and_pages_nothing() {
     let now = 3 * DAY_MS;
@@ -619,6 +654,7 @@ fn a_bead_that_arrived_a_minute_ago_on_a_repo_idle_for_hours_files_and_pages_not
     assert!(!v.acts.iter().any(|a| a.name == FILE || a.name == INBOX_APPEND), "{:?}", v.acts.iter().map(|a| &a.name).collect::<Vec<_>>());
 }
 
+#[test_id(tnqkov2)]
 #[test]
 fn a_stall_names_the_oldest_waiting_bead_and_how_long_it_has_waited() {
     let now = 3 * DAY_MS;
@@ -631,6 +667,7 @@ fn a_stall_names_the_oldest_waiting_bead_and_how_long_it_has_waited() {
     assert!(f.body.contains("CERTIFIED"), "{}", f.body);
 }
 
+#[test_id(tlxilwb)]
 #[test]
 fn a_long_waiting_bead_with_a_landing_five_minutes_ago_is_silent() {
     let now = 3 * DAY_MS;
@@ -638,6 +675,7 @@ fn a_long_waiting_bead_with_a_landing_five_minutes_ago_is_silent() {
     assert!(!v.acts.iter().any(|a| a.name == FILE || a.name == INBOX_APPEND));
 }
 
+#[test_id(tnuva7o)]
 #[test]
 fn stamp_waiting_counts_all_three_states_and_picks_the_oldest_dated_with_a_null_since_undated() {
     use spira_runtime::world::stamp_waiting;
@@ -659,6 +697,7 @@ fn printed_row(bead: &str, since: u64) -> serde_json::Value {
     serde_json::json!({ "bead_id": bead, "repo": "alpha", "state": "SUBMITTED", "since": since.to_string(), "updated_at": (since + 77).to_string(), "lease_until": null })
 }
 
+#[test_id(t1i2pdk)]
 #[test]
 fn rows_as_spira_lc_prints_them_read_their_since_from_the_digit_string() {
     use spira_runtime::world::stamp_waiting;
@@ -669,6 +708,7 @@ fn rows_as_spira_lc_prints_them_read_their_since_from_the_digit_string() {
     assert_eq!(landings[0].undated, None);
 }
 
+#[test_id(t3inslb)]
 #[test]
 fn a_bead_submitted_five_seconds_ago_as_the_store_prints_it_pages_and_files_nothing() {
     use spira_runtime::world::stamp_waiting;
@@ -679,6 +719,7 @@ fn a_bead_submitted_five_seconds_ago_as_the_store_prints_it_pages_and_files_noth
     assert!(!v.acts.iter().any(|a| a.name == FILE || a.name == INBOX_APPEND), "{:?}", v.acts);
 }
 
+#[test_id(t2bz6nc)]
 #[test]
 fn a_string_since_older_than_the_stall_threshold_files_exactly_one_stall() {
     use spira_runtime::world::stamp_waiting;
@@ -689,6 +730,7 @@ fn a_string_since_older_than_the_stall_threshold_files_exactly_one_stall() {
     assert_eq!(v.acts.iter().filter(|a| a.name == FILE).count(), 1, "{:?}", v.acts);
 }
 
+#[test_id(tvg4vwj)]
 #[test]
 fn a_null_since_beside_a_stalled_dated_row_pages_p2_naming_it_and_still_files_the_stall() {
     use spira_runtime::world::stamp_waiting;
@@ -728,6 +770,7 @@ fn inbox(r: &TaskRig) -> Vec<String> {
     named(r, INBOX_APPEND)
 }
 
+#[test_id(tljpr5x)]
 #[test]
 fn a_stall_whose_only_waiting_bead_has_a_working_blocker_files_nothing_and_says_so_once() {
     let h = dependency_world(&["sp-j9ci07"], &[("sp-tec2pp", "WORKING"), ("sp-j9ci07", "CERTIFIED")]);
@@ -742,6 +785,7 @@ fn a_stall_whose_only_waiting_bead_has_a_working_blocker_files_nothing_and_says_
     assert!(carry.waiting_on.contains_key(REPO), "{carry:?}");
 }
 
+#[test_id(tdw6u5r)]
 #[test]
 fn a_stall_whose_blocker_is_idle_files_and_pages_as_before() {
     let h = dependency_world(&["sp-j9ci07"], &[("sp-j9ci07", "CERTIFIED")]);
@@ -750,6 +794,7 @@ fn a_stall_whose_blocker_is_idle_files_and_pages_as_before() {
     assert!(inbox(&r).iter().any(|l| l.contains("P0 remarkable-pipeline: landing stalled")), "{:?}", inbox(&r));
 }
 
+#[test_id(tsozuv2)]
 #[test]
 fn a_repo_with_one_blocked_and_one_unblocked_waiting_bead_still_files() {
     let h = dependency_world(&["sp-j9ci07", "sp-other"], &[("sp-tec2pp", "WORKING")]);
@@ -757,6 +802,7 @@ fn a_repo_with_one_blocked_and_one_unblocked_waiting_bead_still_files() {
     assert_eq!(named(&r, FILE).len(), 1);
 }
 
+#[test_id(tvkerv9)]
 #[test]
 fn the_forge_batchers_blocked_map_excuses_the_stall_too() {
     let h = dependency_world(&["sp-j9ci07"], &[("sp-tec2pp", "WORKING")]);
@@ -765,6 +811,7 @@ fn the_forge_batchers_blocked_map_excuses_the_stall_too() {
     assert!(inbox(&r).iter().any(|l| l.contains("sp-j9ci07 waiting on sp-tec2pp (WORKING)")), "{:?}", inbox(&r));
 }
 
+#[test_id(tx7f01m)]
 #[test]
 fn the_row_names_the_repo_a_dependency_wait_excuses() {
     let h = dependency_world(&["sp-j9ci07"], &[("sp-tec2pp", "WORKING")]);
@@ -773,6 +820,7 @@ fn the_row_names_the_repo_a_dependency_wait_excuses() {
     assert!(rows.contains(&format!("waiting_on/{REPO}")), "{rows:?}");
 }
 
+#[test_id(tcabs6n)]
 #[test]
 fn a_blocker_that_goes_idle_inside_one_episode_files_that_episode_then() {
     let now = 3 * DAY_MS;
@@ -786,6 +834,7 @@ fn a_blocker_that_goes_idle_inside_one_episode_files_that_episode_then() {
     assert!(second.carry.waiting_on.is_empty());
 }
 
+#[test_id(tkfvg6g)]
 #[test]
 fn one_bead_held_by_a_live_blocker_and_one_by_an_idle_one_files() {
     let now = 3 * DAY_MS;
@@ -794,6 +843,7 @@ fn one_bead_held_by_a_live_blocker_and_one_by_an_idle_one_files() {
     assert_eq!(decide(&Carry::default(), &snap, now, &config()).acts.iter().filter(|a| a.name == FILE).count(), 1);
 }
 
+#[test_id(t07j7sf)]
 #[test]
 fn a_spent_observe_bound_skips_the_ref_reread_and_a_fresh_one_allows_it() {
     let now = 1_700_000_000u64;
@@ -811,6 +861,7 @@ fn unreadable_during(activation: Option<spira_runtime::watchers::Activation>) ->
     Snapshot { readable: false, why: "spira-lc show: cannot tell: deadline".into(), activation, ..Default::default() }
 }
 
+#[test_id(tx163bs)]
 #[test]
 fn an_unreadable_store_inside_an_activation_window_waits_and_does_not_page() {
     let a = spira_runtime::watchers::Activation { sha: "0123456789abcdef0123".into(), since: 1_000_000 };
@@ -821,6 +872,7 @@ fn an_unreadable_store_inside_an_activation_window_waits_and_does_not_page() {
     assert!(!v.carry.blind, "the first unreadable tick after the window pages");
 }
 
+#[test_id(tviqb2b)]
 #[test]
 fn an_unreadable_store_outside_any_activation_window_pages_blind() {
     let v = decide(&Carry::default(), &unreadable_during(None), 1_000_030_000, &config());

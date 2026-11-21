@@ -85,6 +85,7 @@ const GOOD: &str = "SYMPTOM: disk is full\nCHECK: df -h\nFIX: clear /tmp\n";
 
 // ───────────────────────────── write ─────────────────────────────
 
+#[test_id(tc52la7)]
 #[test]
 fn write_refuses_empty_text() {
     let bd = FakeBd::default();
@@ -94,6 +95,7 @@ fn write_refuses_empty_text() {
     assert!(r.err.iter().any(|l| l.contains("empty SOP")));
 }
 
+#[test_id(tpba2hb)]
 #[test]
 fn write_failure_surfaces_the_cause() {
     let bd = FakeBd::default();
@@ -105,6 +107,7 @@ fn write_failure_surfaces_the_cause() {
     assert!(r.err.iter().any(|l| l.contains("fence: blocked") && l.contains("exit=3")), "{:?}", r.err);
 }
 
+#[test_id(t4smhj6)]
 #[test]
 fn write_refuses_missing_fields() {
     let bd = FakeBd::default();
@@ -116,6 +119,7 @@ fn write_refuses_missing_fields() {
 }
 
 // covers: UC-operator-channel-44
+#[test_id(to6j5ou)]
 #[test]
 fn write_refuses_operator_infrastructure() {
     let bd = FakeBd::default();
@@ -127,6 +131,7 @@ fn write_refuses_operator_infrastructure() {
     assert!(bd.shelf.borrow().is_empty());
 }
 
+#[test_id(tb81orf)]
 #[test]
 fn write_stores_a_clean_sop_and_slugifies_the_key() {
     let bd = FakeBd::default();
@@ -137,6 +142,7 @@ fn write_stores_a_clean_sop_and_slugifies_the_key() {
     assert!(r.out.iter().any(|l| l.contains("wrote sop-disk-full")));
 }
 
+#[test_id(tzrundl)]
 #[test]
 fn write_is_idempotent_on_the_prefix() {
     let bd = FakeBd::default();
@@ -149,6 +155,7 @@ fn write_is_idempotent_on_the_prefix() {
 
 // ───────────────────────────── show / list / match ─────────────────────────────
 
+#[test_id(tu4l6tk)]
 #[test]
 fn show_prints_the_text_or_refuses() {
     let bd = FakeBd::default();
@@ -159,6 +166,7 @@ fn show_prints_the_text_or_refuses() {
     assert!(r.err.iter().any(|l| l.contains("no such SOP: sop-missing")));
 }
 
+#[test_id(ta605cb)]
 #[test]
 fn list_counts_and_shows_symptom() {
     let bd = FakeBd::default();
@@ -168,6 +176,7 @@ fn list_counts_and_shows_symptom() {
     assert!(r.out.last().unwrap().contains("1 SOP(s) on the shelf"));
 }
 
+#[test_id(td60j7o)]
 #[test]
 fn match_refuses_on_an_unreadable_shelf() {
     let bd = FakeBd::default();
@@ -183,6 +192,7 @@ fn applied_args<'a>(key: &'a str, bead: Option<&'a str>, check: &'a str, held: &
     AppliedArgs { key, bead, pass: None, check, held, why: None }
 }
 
+#[test_id(txdwa1a)]
 #[test]
 fn applied_needs_bead_or_pass() {
     let bd = FakeBd::default();
@@ -196,6 +206,7 @@ fn applied_needs_bead_or_pass() {
     assert!(r.err.iter().any(|l| l.contains("needs --bead")));
 }
 
+#[test_id(t9id0lo)]
 #[test]
 fn applied_refuses_check_fail_held_yes() {
     let bd = FakeBd::default();
@@ -209,6 +220,7 @@ fn applied_refuses_check_fail_held_yes() {
     assert!(r.err.iter().any(|l| l.contains("check fail --held yes")));
 }
 
+#[test_id(tcg8x8k)]
 #[test]
 fn applied_refuses_an_unknown_slug_when_the_shelf_is_readable() {
     let bd = FakeBd::default();
@@ -223,6 +235,7 @@ fn applied_refuses_an_unknown_slug_when_the_shelf_is_readable() {
     assert!(r.err.iter().any(|l| l.contains("no such SOP")));
 }
 
+#[test_id(tt622lp)]
 #[test]
 fn applied_records_a_ledger_line_and_a_bead_note() {
     let bd = FakeBd::default();
@@ -243,6 +256,7 @@ fn applied_records_a_ledger_line_and_a_bead_note() {
     assert_eq!(bd.notes.borrow()[0].0, "sp-1");
 }
 
+#[test_id(t9d5qp6)]
 #[test]
 fn applied_accepts_a_pass_record_with_no_bead() {
     let bd = FakeBd::default();
@@ -261,6 +275,7 @@ fn applied_accepts_a_pass_record_with_no_bead() {
     assert!(v.get("bead").is_none());
 }
 
+#[test_id(t8fp5bj)]
 #[test]
 fn applied_on_an_unreadable_shelf_still_records_marked_unreadable() {
     let bd = FakeBd::default();
@@ -283,6 +298,7 @@ fn empty_filter() -> crate::ledger::LogFilter {
     crate::ledger::LogFilter { bead: None, pass: None, sop: None, check: None, since: None }
 }
 
+#[test_id(tshmnae)]
 #[test]
 fn log_distinguishes_absent_empty_and_corrupt() {
     let f = empty_filter();
@@ -291,6 +307,7 @@ fn log_distinguishes_absent_empty_and_corrupt() {
     assert_eq!(log(Some("not json\n"), &f).code, 2);
 }
 
+#[test_id(tcslkq8)]
 #[test]
 fn digest_distinguishes_unreadable_from_empty() {
     let bd = FakeBd::default();
@@ -302,6 +319,7 @@ fn digest_distinguishes_unreadable_from_empty() {
     assert!(r.out.is_empty());
 }
 
+#[test_id(t8h44cd)]
 #[test]
 fn ledger_init_creates_once_and_says_present_after() {
     let dir = testkit::TempDir::new("sop-test");
@@ -323,6 +341,7 @@ fn retire_x(bd: &FakeBd, reason: &str) -> Report {
     retire(bd, &FakeClock, &env(), "x", reason)
 }
 
+#[test_id(tdhlwd4)]
 #[test]
 fn retire_without_a_reason_removes_nothing() {
     let bd = FakeBd::default();
@@ -336,6 +355,7 @@ fn retire_without_a_reason_removes_nothing() {
     assert!(bd.shelf.borrow().keys().all(|k| !k.starts_with("retired-")));
 }
 
+#[test_id(tuvc8v6)]
 #[test]
 fn retire_records_actor_time_reason_and_last_text() {
     let bd = FakeBd::default();
@@ -352,6 +372,7 @@ fn retire_records_actor_time_reason_and_last_text() {
     );
 }
 
+#[test_id(tz3igmn)]
 #[test]
 fn show_of_a_retired_slug_says_who_and_why() {
     let bd = FakeBd::default();
@@ -368,6 +389,7 @@ fn rename_record(replaced_by: Option<&str>) -> String {
     shelf::Retired { by: "t".into(), at: "a".into(), epoch: 1, reason: "renamed".into(), text: "old".into(), replaced_by: replaced_by.map(String::from) }.to_json()
 }
 
+#[test_id(tat2rmm)]
 #[test]
 fn show_of_a_renamed_runbook_prints_the_rename_line_and_the_new_text() {
     let bd = FakeBd::default();
@@ -378,6 +400,7 @@ fn show_of_a_renamed_runbook_prints_the_rename_line_and_the_new_text() {
     assert_eq!(r.out, vec!["sop-aeon-x was renamed to sop-dwarf-x".to_string(), GOOD.trim_end().to_string()]); // ffx-ok
 }
 
+#[test_id(t9yb85p)]
 #[test]
 fn show_of_a_retired_runbook_with_no_successor_still_fails() {
     let bd = FakeBd::default();
@@ -387,6 +410,7 @@ fn show_of_a_retired_runbook_with_no_successor_still_fails() {
     assert!(r.err.join("\n").contains("is retired"));
 }
 
+#[test_id(t1mgy26)]
 #[test]
 fn write_over_a_retired_slug_needs_revive() {
     let bd = FakeBd::default();
@@ -404,6 +428,7 @@ fn write_over_a_retired_slug_needs_revive() {
     assert!(!bd.shelf.borrow().contains_key("retired-sop-x"));
 }
 
+#[test_id(t0gugfs)]
 #[test]
 fn a_second_retire_names_the_first() {
     let bd = FakeBd::default();
@@ -416,6 +441,7 @@ fn a_second_retire_names_the_first() {
     assert_eq!(retire(&bd, &FakeClock, &env(), "never", "r").err[0], "sop: no such SOP: sop-never");
 }
 
+#[test_id(t8bpeez)]
 #[test]
 fn retire_of_an_unreadable_shelf_writes_nothing() {
     let bd = FakeBd::default();
@@ -427,6 +453,7 @@ fn retire_of_an_unreadable_shelf_writes_nothing() {
     assert_eq!(bd.shelf.borrow().len(), 1);
 }
 
+#[test_id(tz0dgs4)]
 #[test]
 fn a_failed_forget_rolls_the_record_back() {
     let bd = FakeBd::default();
@@ -438,6 +465,7 @@ fn a_failed_forget_rolls_the_record_back() {
     assert_eq!(bd.shelf.borrow().keys().collect::<Vec<_>>(), vec!["sop-x"]);
 }
 
+#[test_id(tyrvsjr)]
 #[test]
 fn write_on_an_unreadable_shelf_refuses_rather_than_skip_the_retired_guard() {
     let bd = FakeBd::default();
@@ -448,6 +476,7 @@ fn write_on_an_unreadable_shelf_refuses_rather_than_skip_the_retired_guard() {
     assert!(bd.shelf.borrow().is_empty());
 }
 
+#[test_id(tn796dm)]
 #[test]
 fn a_failed_record_write_leaves_the_sop_in_place() {
     let bd = FakeBd::default();
@@ -459,6 +488,7 @@ fn a_failed_record_write_leaves_the_sop_in_place() {
     assert!(bd.shelf.borrow().contains_key("sop-x"));
 }
 
+#[test_id(tpc6007)]
 #[test]
 fn synth_with_no_out_path_says_so_and_does_not_fail() {
     let bd = FakeBd::default();
@@ -468,6 +498,7 @@ fn synth_with_no_out_path_says_so_and_does_not_fail() {
     assert!(r.out.iter().any(|l| l.contains("no wiki configured")));
 }
 
+#[test_id(tuexyzo)]
 #[test]
 fn synth_writes_the_page() {
     let bd = FakeBd::default();
@@ -482,6 +513,7 @@ fn synth_writes_the_page() {
 }
 
 // covers: UC-operator-channel-44
+#[test_id(tizo58n)]
 #[test]
 fn lint_reports_failures_and_refuses_an_unreadable_shelf() {
     let bd = FakeBd::default();
@@ -497,6 +529,7 @@ fn lint_reports_failures_and_refuses_an_unreadable_shelf() {
     assert!(r2.err.iter().any(|l| l.contains("could not read the shelf")));
 }
 
+#[test_id(tcm16ed)]
 #[test]
 fn validate_cmd_reports_ok_and_scans_for_infrastructure() {
     let proc = FakeProc::default();

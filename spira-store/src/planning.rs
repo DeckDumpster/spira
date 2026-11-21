@@ -77,6 +77,7 @@ pub fn stamp_after(caller: &str) {
 mod tests {
     use super::{claim_input_change, claim_inputs_changed, is_planning_write};
 
+    #[test_id(t6fxhj6)]
     #[test]
     fn a_dependency_a_priority_or_the_split_label_change_a_beads_claim_inputs_and_a_note_does_not() {
         let got = |a: &[&str]| claim_input_change(a);
@@ -89,6 +90,7 @@ mod tests {
         }
     }
 
+    #[test_id(t88r55e)]
     #[test]
     fn a_write_that_moves_a_parent_a_label_or_an_edge_names_the_bead_whose_claim_inputs_it_changed() {
         let got = |a: &[&str], out: &str| claim_inputs_changed(a, out);
@@ -104,6 +106,7 @@ mod tests {
         }
     }
 
+    #[test_id(tnbvpsc)]
     #[test]
     fn a_write_to_a_bead_an_edge_or_a_label_is_a_planning_write_and_a_read_is_not() {
         for w in [&["create", "t"][..], &["update", "sp-a", "--status", "open"], &["close", "sp-a"], &["note", "sp-a", "x"], &["dep", "add", "a", "b"], &["dep", "relate", "a", "b"], &["label", "add", "a", "l"], &["comments", "add", "a", "x"], &["supersede", "a", "--with", "b"], &["remember", "--key", "k", "v"], &["set-state", "a", "k=v"], &["gate", "resolve", "g"], &["dolt", "pull"], &["sync"]] {

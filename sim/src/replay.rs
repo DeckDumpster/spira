@@ -766,6 +766,7 @@ impl Replay {
 mod tests {
     use super::*;
 
+    #[test_id(txx6fz1)]
     #[test]
     fn fixtures_root_is_the_checkout_spira_home_sits_in_not_the_build_tree() {
         let tmp = testkit::TempDir::new("replay-root");

@@ -95,30 +95,33 @@ pub fn sha_of_tree(root: &std::path::Path) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tqmrp6w)]
     #[test]
     fn the_hash_is_a_stable_sha256_hex_digest() {
-        let s = super::sha();
+        let s = super::super::sha();
         assert_eq!(s.len(), 64);
         assert!(s.chars().all(|c| c.is_ascii_hexdigit()));
-        assert_eq!(s, super::sha());
+        assert_eq!(s, super::super::sha());
     }
 
+    #[test_id(tz86os2)]
     #[test]
     fn a_tree_missing_a_recipe_input_is_refused_naming_it() {
         let root = testkit::TempDir::new("recipe-missing-tree");
-        let e = super::sha_of_tree(&root.join("nonexistent-recipe-tree")).unwrap_err();
+        let e = super::super::sha_of_tree(&root.join("nonexistent-recipe-tree")).unwrap_err();
         assert!(e.contains("template.sh"), "{e}");
     }
 
+    #[test_id(temd32h)]
     #[test]
     fn the_tree_channel_follows_the_file_and_ignores_a_floating_one() {
         let tmp = testkit::TempDir::new("tc-pin");
         let d = tmp.path();
-        assert_eq!(super::tree_channel(d), None);
+        assert_eq!(super::super::tree_channel(d), None);
         std::fs::write(d.join("rust-toolchain.toml"), "[toolchain]\nchannel = \"9.8.7\"\n").unwrap();
-        assert_eq!(super::tree_channel(d).as_deref(), Some("9.8.7"));
+        assert_eq!(super::super::tree_channel(d).as_deref(), Some("9.8.7"));
         std::fs::write(d.join("rust-toolchain.toml"), "[toolchain]\nchannel = \"stable\"\n").unwrap();
-        assert_eq!(super::tree_channel(d), None);
+        assert_eq!(super::super::tree_channel(d), None);
     }
 
     const APT: &str = "apt-get install -y -qq podman git bubblewrap";
@@ -131,61 +134,71 @@ mod tests {
     }
 
     // covers: UC-test-infrastructure-44
+    #[test_id(ta0ijhe)]
     #[test]
     fn an_apt_line_only_change_installs_the_package_list() {
-        assert_eq!(plan(&[AMI], APT_DIFF, HEAD), super::PreflightPlan::PackageList { apt_line: APT.into() });
+        assert_eq!(plan(&[AMI], APT_DIFF, HEAD), super::super::PreflightPlan::PackageList { apt_line: APT.into() });
     }
 
+    #[test_id(tobyxuz)]
     #[test]
     fn an_apt_line_plus_another_line_runs_the_full_setup() {
         let diff = format!("{APT_DIFF}-systemctl enable ssh\n+systemctl enable --now ssh\n");
-        assert_eq!(plan(&[AMI], &diff, HEAD), super::PreflightPlan::FullSetup);
+        assert_eq!(plan(&[AMI], &diff, HEAD), super::super::PreflightPlan::FullSetup);
     }
 
+    #[test_id(tjilywy)]
     #[test]
     fn a_second_apt_line_runs_the_full_setup() {
         let head = format!("{HEAD}apt-get install -y -qq vim\n");
-        assert_eq!(plan(&[AMI], "+apt-get install -y -qq vim\n", &head), super::PreflightPlan::FullSetup);
+        assert_eq!(plan(&[AMI], "+apt-get install -y -qq vim\n", &head), super::super::PreflightPlan::FullSetup);
     }
 
+    #[test_id(tq1dk02)]
     #[test]
     fn a_removed_apt_line_runs_the_full_setup() {
         let head = "#!/bin/bash\nsystemctl enable ssh\n";
-        assert_eq!(plan(&[AMI], "-apt-get install -y -qq podman git\n", head), super::PreflightPlan::FullSetup);
+        assert_eq!(plan(&[AMI], "-apt-get install -y -qq podman git\n", head), super::super::PreflightPlan::FullSetup);
     }
 
+    #[test_id(t2dqs33)]
     #[test]
     fn another_line_only_runs_the_full_setup() {
         let diff = "-systemctl enable ssh\n+systemctl enable --now ssh\n";
-        assert_eq!(plan(&[AMI], diff, HEAD), super::PreflightPlan::FullSetup);
+        assert_eq!(plan(&[AMI], diff, HEAD), super::super::PreflightPlan::FullSetup);
     }
 
+    #[test_id(tt8t9ze)]
     #[test]
     fn an_empty_ami_setup_diff_runs_the_full_setup() {
-        assert_eq!(plan(&[AMI], "", HEAD), super::PreflightPlan::FullSetup);
+        assert_eq!(plan(&[AMI], "", HEAD), super::super::PreflightPlan::FullSetup);
     }
 
+    #[test_id(tdx6gni)]
     #[test]
     fn a_touched_flake_lock_runs_the_full_setup() {
-        assert_eq!(plan(&["flake.lock"], "", HEAD), super::PreflightPlan::FullSetup);
+        assert_eq!(plan(&["flake.lock"], "", HEAD), super::super::PreflightPlan::FullSetup);
     }
 
+    #[test_id(t3ikkwt)]
     #[test]
     fn ami_setup_and_flake_lock_together_run_the_full_setup() {
-        assert_eq!(plan(&[AMI, "flake.lock"], APT_DIFF, HEAD), super::PreflightPlan::FullSetup);
+        assert_eq!(plan(&[AMI, "flake.lock"], APT_DIFF, HEAD), super::super::PreflightPlan::FullSetup);
     }
 
+    #[test_id(tjxsoke)]
     #[test]
     fn an_unrelated_file_skips() {
-        assert_eq!(plan(&["unrelated", "round-vm/src/other.rs"], "", ""), super::PreflightPlan::Skip);
+        assert_eq!(plan(&["unrelated", "round-vm/src/other.rs"], "", ""), super::super::PreflightPlan::Skip);
     }
 
+    #[test_id(te8ipc0)]
     #[test]
     fn every_tree_path_is_a_recipe_input_and_nothing_else_is() {
-        for p in super::tree_paths() {
-            assert_ne!(plan(&[p], "", ""), super::PreflightPlan::Skip, "{p}");
+        for p in super::super::tree_paths() {
+            assert_ne!(plan(&[p], "", ""), super::super::PreflightPlan::Skip, "{p}");
         }
-        assert_eq!(super::tree_paths().len(), super::INPUTS.len());
-        assert_eq!(plan(&["round-vm/src/recipe.rs"], "", ""), super::PreflightPlan::Skip);
+        assert_eq!(super::super::tree_paths().len(), super::super::INPUTS.len());
+        assert_eq!(plan(&["round-vm/src/recipe.rs"], "", ""), super::super::PreflightPlan::Skip);
     }
 }

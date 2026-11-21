@@ -83,6 +83,7 @@ mod tests {
         xs.iter().map(|x| x.to_string()).collect()
     }
 
+    #[test_id(t89kj33)]
     #[test]
     fn both_flags_by_name_are_taken_in_either_order() {
         let want = Asked::Run { from: "a.db".into(), to: "b.db".into() };
@@ -90,6 +91,7 @@ mod tests {
         assert_eq!(parse(&s(&["--to", "b.db", "--from", "a.db"])), Ok(Asked::Run { from: "a.db".into(), to: "b.db".into() }));
     }
 
+    #[test_id(tzg9l4u)]
     #[test]
     fn a_missing_flag_is_named() {
         assert!(parse(&s(&["--to", "b.db"])).unwrap_err().contains("--from"));
@@ -97,17 +99,20 @@ mod tests {
         assert!(parse(&s(&[])).unwrap_err().contains("--from"));
     }
 
+    #[test_id(toa778o)]
     #[test]
     fn a_bare_word_is_refused_naming_the_flag_it_should_have_been() {
         assert!(parse(&s(&["a.db", "b.db"])).unwrap_err().contains("--from a.db"));
         assert!(parse(&s(&["--from", "a.db", "b.db"])).unwrap_err().contains("--to b.db"));
     }
 
+    #[test_id(t76hreb)]
     #[test]
     fn a_flag_with_no_path_is_refused() {
         assert!(parse(&s(&["--from", "--to", "b.db"])).unwrap_err().contains("--from needs a path"));
     }
 
+    #[test_id(t5od5gw)]
     #[test]
     fn a_usage_error_exits_2_with_json_and_help_lists_both_flags_and_the_exits() {
         let (code, out) = admin_store_relayout(&s(&["a.db"]), &Fixed(0));
@@ -120,6 +125,7 @@ mod tests {
         }
     }
 
+    #[test_id(tvz3wp0)]
     #[test]
     fn a_refusal_exits_3_with_json_on_stdout_and_leaves_no_new_file() {
         let dir = testkit::TempDir::new("lc-relayout-refused");

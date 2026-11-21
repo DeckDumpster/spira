@@ -161,6 +161,7 @@ impl Credential {
 mod tests {
     use super::*;
 
+    #[test_id(tup576n)]
     #[test]
     fn a_plain_password_verifies_exactly() {
         let c = Credential::parse("hunter2\n", "operator").unwrap();
@@ -169,12 +170,14 @@ mod tests {
         assert!(!c.verify("hunter"));
     }
 
+    #[test_id(tjn5mh3)]
     #[test]
     fn refuses_empty_and_malformed() {
         assert!(Credential::parse("\n", "operator").is_err());
         assert!(Credential::parse("$6$onlysalt", "operator").is_err());
     }
 
+    #[test_id(ttqhysg)]
     #[test]
     fn a_world_readable_file_is_refused() {
         let d = testkit::TempDir::new("submission-cred");

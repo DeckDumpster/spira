@@ -580,6 +580,7 @@ mod tests {
         Store::new(c, 1_000)
     }
 
+    #[test_id(tqd2qnu)]
     #[test]
     fn the_graph_is_json_edges_with_state_names_and_events() {
         let out = graph_json("bead");
@@ -592,6 +593,7 @@ mod tests {
         assert!(!edges.iter().any(|e| terminal.iter().any(|t| e["from"] == *t)), "no exit from a terminal state: {out}");
     }
 
+    #[test_id(twtwfip)]
     #[test]
     fn ops_graph_machine_answers_that_machines_edges() {
         let edges = |args: &[&str]| -> Vec<Value> {
@@ -610,6 +612,7 @@ mod tests {
         assert_eq!(rc, 2, "{out}");
     }
 
+    #[test_id(t6nvk34)]
     #[test]
     fn the_transitions_machine_is_one_the_log_carries_bead_facts_for() {
         assert_eq!(machine_arg("ops-transitions", &[], &TRANSITION_MACHINES), Ok("bead"));
@@ -620,6 +623,7 @@ mod tests {
         assert!(refused.1.starts_with("ops-transitions:"), "{}", refused.1);
     }
 
+    #[test_id(tqg6j0i)]
     #[test]
     fn ops_view_refuses_anything_but_its_views() {
         for v in VIEWS {
@@ -629,6 +633,7 @@ mod tests {
         assert_eq!(view_arg(&[]).unwrap_err().0, 2);
     }
 
+    #[test_id(tifobli)]
     #[test]
     fn the_transitions_list_the_days_applied_state_changes_of_the_machine_asked_for() {
         let now = 1_000_000;
@@ -644,6 +649,7 @@ mod tests {
         assert!(transitions(&s, "batch", now).unwrap().is_empty());
     }
 
+    #[test_id(tx2pkjy)]
     #[test]
     fn refusals_group_by_who_asked_and_name_the_newest_five_examples() {
         let now = 1_000_000;
@@ -678,6 +684,7 @@ mod tests {
     }
 
 
+    #[test_id(t3uo1aw)]
     #[test]
     fn ops_refusals_reads_neither_the_audit_log_nor_the_history() {
         use crate::counting::Counting;
@@ -703,6 +710,7 @@ mod tests {
         v["classes"].clone()
     }
 
+    #[test_id(t6ojl1q)]
     #[test]
     fn the_refusal_tally_answers_what_a_fold_of_the_days_audits_answers() {
         let now = 1_000_020;
@@ -739,6 +747,7 @@ mod tests {
         items.into_iter().filter(|i| i.key != crate::control::keys::REFUSALS_CURSOR).map(|i| (i.key, i.value.data)).collect()
     }
 
+    #[test_id(ton0krc)]
     #[test]
     fn while_the_refusal_tally_fills_ops_refusals_cannot_tell() {
         let now = 1_000_020;
@@ -758,6 +767,7 @@ mod tests {
         assert_eq!(refusal_rows(&empty, now, 3_600), json!([]));
     }
 
+    #[test_id(txv59hq)]
     #[test]
     fn a_window_over_a_day_is_not_answered_from_the_refusal_tally() {
         let store = logged_store(&[]);
@@ -766,6 +776,7 @@ mod tests {
         assert_eq!((rc, out.as_str()), (2, "cannot tell: ops-refusals reads at most 86400 s from the refusal tally; asked 1209600"));
     }
 
+    #[test_id(tpk7q5k)]
     #[test]
     fn folding_the_refusals_twice_or_in_small_steps_gives_the_tally_of_one_fold() {
         let now = 1_000_000_000;
@@ -794,6 +805,7 @@ mod tests {
         items.into_iter().filter(|i| i.key != crate::control::keys::EDGES_CURSOR).map(|i| (i.key, i.value.data)).collect()
     }
 
+    #[test_id(tuspb85)]
     #[test]
     fn the_edge_tally_answers_what_a_fold_of_the_days_audits_answers() {
         let now = 1_000_020;
@@ -821,6 +833,7 @@ mod tests {
         assert_eq!(refusals.len(), 2, "{refusals:?}");
     }
 
+    #[test_id(t36vbi3)]
     #[test]
     fn the_edge_tally_counts_the_hour_and_the_day_and_keeps_refusals_apart() {
         let now = 1_000_020;
@@ -838,6 +851,7 @@ mod tests {
         assert_eq!((refused["to_state"].clone(), refused["refusal"].as_str()), (Value::Null, Some("IllegalTransition")));
     }
 
+    #[test_id(tacolss)]
     #[test]
     fn folding_the_edges_twice_or_in_small_steps_gives_the_tally_of_one_fold() {
         let now = 1_000_000_000;
@@ -861,6 +875,7 @@ mod tests {
         assert_eq!(edge_keys(&stepped), edge_keys(&whole), "a repeated step changes nothing");
     }
 
+    #[test_id(tfqeoox)]
     #[test]
     fn while_the_edge_tally_fills_ops_edges_cannot_tell() {
         let now = 1_000_020;
@@ -878,6 +893,7 @@ mod tests {
         assert_eq!(edge_rows(&empty, now), json!([]));
     }
 
+    #[test_id(tobhjcv)]
     #[test]
     fn a_minute_older_than_a_day_is_not_counted_and_the_next_fold_deletes_it() {
         use state_store::{Object, Txn};
@@ -922,6 +938,7 @@ mod tests {
         items.into_iter().filter(|i| i.key != crate::control::keys::STAYS_CURSOR).map(|i| (i.key, i.value.data)).collect()
     }
 
+    #[test_id(tw7j1yn)]
     #[test]
     fn the_p95_of_a_state_is_the_stay_at_the_95th_percentile_rank_of_the_stays_that_ended_in_it() {
         let now = 1_000_000_000;
@@ -936,6 +953,7 @@ mod tests {
         }
     }
 
+    #[test_id(tgh4r3p)]
     #[test]
     fn folding_twice_or_in_small_steps_gives_the_tally_of_one_uninterrupted_fold() {
         let now = 1_000_000_000;
@@ -959,6 +977,7 @@ mod tests {
         assert_eq!(day_keys(&stepped), day_keys(&whole), "a repeated step changes nothing");
     }
 
+    #[test_id(tvjj7ho)]
     #[test]
     fn a_first_fill_starts_inside_the_window_and_counts_a_stay_that_began_before_it() {
         let now = 2_000_000_000;
@@ -987,6 +1006,7 @@ mod tests {
         assert!(p["WORKING"].0 >= 10 * DAY_S);
     }
 
+    #[test_id(tkv9bxd)]
     #[test]
     fn a_day_before_the_window_is_not_counted_and_the_next_fold_deletes_it() {
         use state_store::{Object, Txn};
@@ -1031,6 +1051,7 @@ mod tests {
         s.contract().create(&keys::lifecycle(id), state_store::Object::new(encode(&rec).unwrap()), &Request::new(&format!("rec-{id}"), "t", "t")).unwrap();
     }
 
+    #[test_id(tkbb0yt)]
     #[test]
     fn the_recent_view_reads_neither_the_audit_log_nor_the_history() {
         use crate::counting::Counting;
@@ -1044,6 +1065,7 @@ mod tests {
         assert!(log.is_empty(), "ops_recent read the log: {log:?}");
     }
 
+    #[test_id(ts79064)]
     #[test]
     fn the_landed_list_answers_what_a_fold_of_the_days_audits_answers() {
         let now = 1_000_000;
@@ -1071,6 +1093,7 @@ mod tests {
         assert_eq!(listed, recent_by_fold(&s, now).unwrap());
     }
 
+    #[test_id(t6kpzmo)]
     #[test]
     fn folding_the_landed_list_twice_or_in_small_steps_gives_the_list_of_one_fold() {
         let now = 1_000_000;
@@ -1094,6 +1117,7 @@ mod tests {
         assert_eq!(keys(&stepped), keys(&whole), "a repeated step changes nothing");
     }
 
+    #[test_id(tmocnpa)]
     #[test]
     fn while_the_landed_list_fills_ops_recent_cannot_tell() {
         let now = 1_000_000;
@@ -1111,6 +1135,7 @@ mod tests {
         assert_eq!(view_rows(&empty, "ops_recent", now), (0, "[]".to_string()));
     }
 
+    #[test_id(tnd2iqs)]
     #[test]
     fn a_landing_older_than_a_day_is_not_listed_and_the_next_fold_deletes_it() {
         use state_store::{Object, Txn};
@@ -1129,6 +1154,7 @@ mod tests {
         assert_eq!(listed(), ["sp-a"]);
     }
 
+    #[test_id(t1kac28)]
     #[test]
     fn the_recent_view_reads_as_many_keys_for_a_longer_history() {
         use crate::counting::Counting;
@@ -1141,6 +1167,7 @@ mod tests {
         assert_eq!(reads(200), reads(800));
     }
 
+    #[test_id(tdrvk8j)]
     #[test]
     fn a_bare_list_page_reads_only_lifecycle_rows() {
         use crate::control::{claimable, keys, state};
@@ -1165,6 +1192,7 @@ mod tests {
         assert!(reads.iter().any(|(_, key, _)| key.starts_with(keys::READINESS)), "the full page did not read readiness, so the bare page proves nothing");
     }
 
+    #[test_id(tq6yvp2)]
     #[test]
     fn the_edges_view_reads_neither_the_audit_log_nor_the_history() {
         use crate::counting::Counting;
@@ -1176,6 +1204,7 @@ mod tests {
         assert!(log.is_empty(), "ops_edges read the log: {log:?}");
     }
 
+    #[test_id(tvrk235)]
     #[test]
     fn the_edges_view_reads_as_many_keys_for_a_longer_history() {
         use crate::counting::Counting;
@@ -1191,6 +1220,7 @@ mod tests {
         assert!(short == long && long <= a_day + 4, "{short} reads for 200 audits and {long} for 800, a day is {a_day} pages");
     }
 
+    #[test_id(tslxytf)]
     #[test]
     fn the_dwell_views_read_neither_the_audit_log_nor_the_history() {
         use crate::counting::Counting;
@@ -1205,6 +1235,7 @@ mod tests {
         }
     }
 
+    #[test_id(to0yu7m)]
     #[test]
     fn a_live_beads_entry_older_than_the_window_is_its_row_since_and_reads_no_history() {
         use crate::counting::Counting;
@@ -1222,6 +1253,7 @@ mod tests {
         assert!(s.contract().backend().take().iter().all(|(_, key, _)| !key.starts_with("history/") && !key.starts_with("events/")));
     }
 
+    #[test_id(tjipoph)]
     #[test]
     fn while_the_fill_is_short_of_the_window_p95_cannot_tell_and_dwell_has_null_p95() {
         let now = 2_000_000_000;
@@ -1243,6 +1275,7 @@ mod tests {
         assert!(rows.iter().all(|r| r["p95_s"].is_null() && r["samples"].is_null()), "{out}");
     }
 
+    #[test_id(t7n34g6)]
     #[test]
     fn a_beads_timeline_carries_its_row_and_the_refused_event_beside_the_applied_one() {
         let s = store();
@@ -1260,6 +1293,7 @@ mod tests {
         assert!(events.iter().all(|e| e["seq"].as_str().unwrap().parse::<u64>().is_ok()));
     }
 
+    #[test_id(tt9xewe)]
     #[test]
     fn the_live_view_names_what_keeps_a_ready_bead_from_being_claimed() {
         let s = store();
@@ -1305,6 +1339,7 @@ mod tests {
         (b, now, dir)
     }
 
+    #[test_id(twebfct)]
     #[test]
     fn a_fixture_store_ends_no_read_for_the_time_it_took() {
         let (b, now, _dir) = fortnight_backend(2_000);
@@ -1437,6 +1472,7 @@ mod tests {
         out
     }
 
+    #[test_id(tod0922)]
     #[test]
     fn ops_recent_lists_the_beads_landed_in_the_last_day_and_no_others() {
         let (store, now, _dir) = with_records(400);
@@ -1445,6 +1481,7 @@ mod tests {
         assert_eq!(ids, (20..30).map(|n| format!("sp-{n:05}")).collect::<Vec<_>>());
     }
 
+    #[test_id(t4fqhcn)]
     #[test]
     fn every_read_verb_holds_no_more_memory_for_a_longer_history() {
         let mut table = Vec::new();
@@ -1466,6 +1503,7 @@ mod tests {
         eprintln!("{}", table.join("\n"));
     }
 
+    #[test_id(tl43oaa)]
     #[test]
     fn the_dwell_views_hold_no_more_memory_for_a_longer_history() {
         for view in ["ops_dwell_p95", "ops_edges", "ops_dwell"] {

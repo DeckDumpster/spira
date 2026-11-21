@@ -150,6 +150,7 @@ mod tests {
 
     const PIPE_TAR: &str = "#!/bin/sh\necho start\ncurl -fsSL https://get.example.invalid/linux | tar -xz -C /tmp\n";
 
+    #[test_id(tp3zik6)]
     #[test]
     fn a_planted_download_install_is_caught_and_named_by_line() {
         let t = TempDir::new("nodl-fail");
@@ -175,6 +176,7 @@ mod tests {
         );
     }
 
+    #[test_id(tpgrejx)]
     #[test]
     fn manifest_declared_installs_and_innocent_curl_pass() {
         let t = TempDir::new("nodl-pass");
@@ -192,6 +194,7 @@ curl -fsS -o /tmp/out.json https://x.invalid/data\njq . /tmp/out.json\n",
         assert_eq!(run(&t, &["ci.sh", "test-fixture.sh", "docs/runbook.md"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(teo5baf)]
     #[test]
     fn only_the_checksummed_nix_bootstrap_is_waived() {
         let t = TempDir::new("nodl-nix");
@@ -206,6 +209,7 @@ curl -fsS -o /tmp/out.json https://x.invalid/data\njq . /tmp/out.json\n",
         assert_eq!(hits, vec!["gz.sh:1", "other.sh:1", "piped.sh:1", "unverified.sh:1"]);
     }
 
+    #[test_id(tqc7ft7)]
     #[test]
     fn no_scripts_is_a_refusal() {
         let t = TempDir::new("nodl-empty");

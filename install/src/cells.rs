@@ -49,6 +49,7 @@ fn rendered(instance: &str, manifest: &Manifest) -> Vec<(String, String, String)
 }
 
 // covers: UC-instance-lifecycle-24
+#[test_id(ttxxoni)]
 #[test]
 fn rendering_names_every_unit_for_its_instance_and_leaves_no_placeholder() {
     let m = build(&inputs("beta")).unwrap();
@@ -73,6 +74,7 @@ fn rendering_names_every_unit_for_its_instance_and_leaves_no_placeholder() {
 }
 
 // covers: UC-instance-lifecycle-25
+#[test_id(twsxgjk)]
 #[test]
 fn an_optional_unit_is_declined_with_a_note_until_its_prerequisite_is_present() {
     let without = build(&Inputs { dolt_data_set: false, ..inputs("beta") }).unwrap();
@@ -93,6 +95,7 @@ fn an_optional_unit_is_declined_with_a_note_until_its_prerequisite_is_present() 
 }
 
 // covers: UC-instance-lifecycle-26
+#[test_id(tfuc1vx)]
 #[test]
 fn a_dolt_template_is_refused_without_dolt_and_an_empty_prod_falls_back_to_home() {
     let tmpl = std::fs::read_to_string(templates().join("dolt-beads.service")).unwrap();
@@ -151,6 +154,7 @@ fn ctx<'a>(b: &'a Box_, h: &'a HostValues, m: &'a Manifest, sc: &'a FakeSystemct
 }
 
 // covers: UC-instance-lifecycle-27
+#[test_id(ta1qlw4)]
 #[test]
 fn prune_retires_an_orphaned_unit_and_watcher_and_spares_the_manifest_and_other_instances() {
     let b = box_with("[Service]\nExecStart=/bin/true\n", true);
@@ -174,6 +178,7 @@ fn prune_retires_an_orphaned_unit_and_watcher_and_spares_the_manifest_and_other_
 }
 
 // covers: UC-instance-lifecycle-21
+#[test_id(t94e3m8)]
 #[test]
 fn install_refuses_while_dwarves_are_live_and_when_an_exec_target_is_not_executable() {
     let sc = FakeSystemctl::default();
@@ -200,6 +205,7 @@ fn install_refuses_while_dwarves_are_live_and_when_an_exec_target_is_not_executa
 }
 
 // covers: UC-instance-lifecycle-23
+#[test_id(t5ghgdo)]
 #[test]
 fn a_changed_timer_waits_for_its_running_oneshot_and_a_dead_enabled_unit_fails_the_install() {
     let b = box_with("[Service]\nType=oneshot\nExecStart=/bin/true\n", false);
@@ -224,6 +230,7 @@ fn a_changed_timer_waits_for_its_running_oneshot_and_a_dead_enabled_unit_fails_t
 }
 
 // covers: UC-instance-lifecycle-30
+#[test_id(t0vmm7m)]
 #[test]
 fn ensure_reloads_only_when_a_unit_changed_and_reports_a_missing_target_without_enabling() {
     let scratch = testkit::TempDir::new("cells-ensure");
@@ -303,6 +310,7 @@ fn execstart_target(text: &str) -> String {
 }
 
 // covers: UC-instance-lifecycle-31
+#[test_id(tjkgppm)]
 #[test]
 fn shipped_unit_files_are_listed_enabled_periodic_limited_and_watchdogged_correctly() {
     let units = unit_texts();
@@ -402,6 +410,7 @@ fn workspace_binaries() -> std::collections::BTreeSet<String> {
 }
 
 // covers: UC-instance-lifecycle-03
+#[test_id(t8ainv2)]
 #[test]
 fn every_release_binary_a_non_optional_unit_runs_is_built_by_the_workspace() {
     let always = build(&Inputs { dolt_data_set: false, ..inputs("t") }).unwrap();
@@ -423,6 +432,7 @@ fn every_release_binary_a_non_optional_unit_runs_is_built_by_the_workspace() {
 }
 
 // covers: UC-instance-lifecycle-34
+#[test_id(t7es1mn)]
 #[test]
 fn diff_is_empty_when_installed_units_match_and_names_missing_and_differing_ones() {
     let b = box_with("[Service]\nExecStart=/bin/true\n", false);

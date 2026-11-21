@@ -34,6 +34,7 @@ fn count(j: &dyn Journal, tag: &str) -> usize {
     trace(j).iter().filter(|e| e.2 == tag).count()
 }
 
+#[test_id(tx3h4dk)]
 #[test]
 fn act_mode_requests_the_write() {
     let (j, clock) = (MemJournal::new(), VirtualClock::new(0));

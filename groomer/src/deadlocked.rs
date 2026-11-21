@@ -164,6 +164,7 @@ mod tests {
     use super::*;
     use crate::seam::fake::FakeSeam;
 
+    #[test_id(t31w9a2)]
     #[test]
     fn candidate_json_round_trips_the_shape_spira_claim_expects() {
         let c = Candidate { id: "sp-1".into(), ok: true, why: String::new(), branch: "spira/sp-1".into(), base: "origin/main".into() };
@@ -175,6 +176,7 @@ mod tests {
         assert_eq!(v[0]["base"], "origin/main");
     }
 
+    #[test_id(twwcay9)]
     #[test]
     fn candidate_json_escapes_quotes_and_backslashes_in_why() {
         let c = Candidate { id: "sp-1".into(), ok: false, why: "does not merge into \"base\" — a \\ person".into(), branch: "spira/sp-1".into(), base: String::new() };
@@ -183,11 +185,13 @@ mod tests {
         assert_eq!(v[0]["why"], "does not merge into \"base\" — a \\ person");
     }
 
+    #[test_id(tz58ufz)]
     #[test]
     fn empty_candidate_list_is_a_bare_empty_array() {
         assert_eq!(candidates_json(&[]), "[]");
     }
 
+    #[test_id(t6u3ggg)]
     #[test]
     fn judge_one_refuses_a_bead_whose_repo_is_unmapped() {
         let seam = FakeSeam::new();

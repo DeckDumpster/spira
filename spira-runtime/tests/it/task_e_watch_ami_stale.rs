@@ -40,6 +40,7 @@ fn carry(r: &TaskRig) -> Carry {
     r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap_or_default()
 }
 
+#[test_id(tqfzkhv)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_five_minute_tick() {
     let t = acc::row(NAME);
@@ -54,6 +55,7 @@ fn t1_the_row_is_registered_and_its_boot_arms_the_five_minute_tick() {
     assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
 }
 
+#[test_id(teu52bi)]
 #[test]
 fn t2_spill_off_and_a_fresh_image_journal_nothing() {
     let mut r = rig(1, Arc::new(Mutex::new(Snapshot { spill: String::new(), verdict: Verdict::Fresh })));
@@ -65,6 +67,7 @@ fn t2_spill_off_and_a_fresh_image_journal_nothing() {
 }
 
 /// The latch: said once, said again only for a different line, cleared on falling back to fresh.
+#[test_id(tybnbkd)]
 #[test]
 fn t3_a_stale_line_is_said_once_a_new_line_again_and_fresh_clears_the_latch() {
     let w = Arc::new(Mutex::new(stale(STALE)));
@@ -84,6 +87,7 @@ fn t3_a_stale_line_is_said_once_a_new_line_again_and_fresh_clears_the_latch() {
     assert_eq!(said(&r).len(), 3, "after clearing, the first line is said again");
 }
 
+#[test_id(tryeww6)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("e/watch_ami_stale.rs")), None);
@@ -95,6 +99,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 }
 
 /// `spira/round-ami-stale.sh:285,296,299`, exactly.
+#[test_id(tb7nkxq)]
 #[test]
 fn t5_the_lines_are_the_ones_round_ami_stale_wrote() {
     let r = rig(1, Arc::new(Mutex::new(stale(STALE))));
@@ -111,12 +116,14 @@ fn registration() -> runtime::event::Registration {
     WatchAmiStale::new(config()).registration()
 }
 
+#[test_id(trtd6m7)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&said_once(), NAME);
     assert_eq!(rows, ["said"]);
 }
 
+#[test_id(tbywgnz)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(said_once, registration, STREAM, runtime::event::EventKind::new(TICK, ""));

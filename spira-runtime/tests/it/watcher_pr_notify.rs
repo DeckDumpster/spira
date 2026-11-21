@@ -33,12 +33,14 @@ fn pr_tracked_then_merged() -> TaskRig {
     r
 }
 
+#[test_id(t6xehpl)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&pr_tracked_then_merged(), NAME);
     assert!(rows.iter().any(|k| k == "repos/r"), "{rows:?}");
 }
 
+#[test_id(t52kgxc)]
 #[test]
 fn a_boot_reports_the_merge_of_a_pr_tracked_before_it() {
     kit::assert_boot_matches_an_unstopped_run(pr_tracked_then_merged, registration, STREAM, EventKind::new(TICK, ""));

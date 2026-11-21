@@ -30,6 +30,7 @@ mod tests {
         RepoRow { name: name.into(), path: "r".into(), mode: LandMode::QueueLocal, landref: None, base_fq: None, base_remote: None, base_branch: "main".into(), forge_ref: None }
     }
 
+    #[test_id(txuwzjb)]
     #[test]
     fn a_repo_whose_land_lane_is_stopped_is_skipped_and_named() {
         let d = testkit::TempDir::new("landing-pass-land-lane");

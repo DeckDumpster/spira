@@ -135,6 +135,7 @@ mod tests {
     }
 
     /// The failing fixture: the leak in each place test code lives.
+    #[test_id(tgv489z)]
     #[test]
     fn a_planted_chmod_exec_in_test_code_is_caught_wherever_test_code_lives() {
         let t = TempDir::new("chmodleak-fail");
@@ -167,6 +168,7 @@ mod tests {
     /// The passing fixture: testkit::write_exe in test code, production code even with the
     /// literal mode, a non-executable mode (0o555/0o644), a variable mode (not a literal),
     /// and the pattern sitting in a comment or a string.
+    #[test_id(tpwmscz)]
     #[test]
     fn write_exe_and_non_matching_modes_pass() {
         let t = TempDir::new("chmodleak-pass");
@@ -182,6 +184,7 @@ mod tests {
         assert_eq!(run(&t, &["a/src/lib.rs", "testkit/src/lib.rs"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tnwh2il)]
     #[test]
     fn a_listed_exception_passes_and_a_stale_one_is_refused() {
         let t = TempDir::new("chmodleak-allow");
@@ -194,6 +197,7 @@ mod tests {
         );
     }
 
+    #[test_id(t3x18nd)]
     #[test]
     fn no_rust_files_is_a_refusal() {
         let t = TempDir::new("chmodleak-empty");

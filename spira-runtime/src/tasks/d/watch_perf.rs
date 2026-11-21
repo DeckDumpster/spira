@@ -341,6 +341,7 @@ mod tests {
         }
     }
 
+    #[test_id(tla8uk2)]
     #[test]
     fn a_forked_probe_is_given_its_start_stamp() {
         let proc = Records(Default::default());
@@ -351,6 +352,7 @@ mod tests {
         assert!(spec.args.contains(&"PERFWATCH_PHASES=1".to_string()));
     }
 
+    #[test_id(t7xu3i2)]
     #[test]
     fn exit_is_the_time_from_the_probes_end_stamp_to_the_reap() {
         let phases = Some("spawn=100,load=400,config=100,reply=30,client=18,push=2".to_string());
@@ -365,6 +367,7 @@ mod tests {
         time_one(&Err("no store".to_string()), &["claim-check".to_string()], &Fails, deadline)
     }
 
+    #[test_id(tmy8m71)]
     #[test]
     fn a_failed_probe_that_reached_its_deadline_is_timed_out_and_stays_an_error() {
         let t = probe(std::time::Duration::ZERO);
@@ -372,6 +375,7 @@ mod tests {
         assert!(t.error.is_some());
     }
 
+    #[test_id(t8fnuig)]
     #[test]
     fn a_failed_probe_inside_its_deadline_is_not_timed_out() {
         let t = probe(std::time::Duration::from_secs(3600));
@@ -379,6 +383,7 @@ mod tests {
         assert!(t.error.is_some());
     }
 
+    #[test_id(tx36594)]
     #[test]
     fn timed_out_probes_survive_the_carry_rows() {
         let carry = Carry { last_pass: 5, timed_out: ["claim-check".to_string()].into(), ..Carry::default() };
@@ -387,6 +392,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<Carry>(&back).unwrap().timed_out, carry.timed_out);
     }
 
+    #[test_id(tvmboo0)]
     #[test]
     fn decide_pages_a_timeout_on_the_second_pass_and_not_the_first() {
         let cfg = Config { budget_ms: 500, interval_secs: 0, remind_secs: 1800, inbox: String::new(), metrics_endpoint: String::new(), run: String::new() };

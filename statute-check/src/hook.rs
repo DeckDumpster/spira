@@ -345,6 +345,7 @@ mod tests {
         classify(cmd).0
     }
 
+    #[test_id(tl8yq77)]
     #[test]
     fn decision_verbs_are_classified_through_wrappers_and_chains() {
         assert_eq!(c("queue rework sp-abc"), ["queue rework"]);
@@ -355,6 +356,7 @@ mod tests {
         assert_eq!(c("batcher cut x | tee log"), ["batcher cut"]);
     }
 
+    #[test_id(t98vskq)]
     #[test]
     fn a_pause_file_is_caught_when_written_moved_or_removed_and_not_when_read() {
         assert_eq!(c("touch run/rounds-pace/r/pause"), ["pause file"]);
@@ -366,6 +368,7 @@ mod tests {
         assert!(c("echo queue rework").is_empty());
     }
 
+    #[test_id(tgvw50u)]
     #[test]
     fn a_prefix_override_is_read_from_the_command() {
         let (cl, ov) = classify("STATUTE_CHECK_CONSIDERED=\"law-x read; complies\" queue rework sp-1");
@@ -378,6 +381,7 @@ mod tests {
         find(cmd, Some(&reg)).classes.into_iter().filter(|c| c.starts_with("door:")).collect()
     }
 
+    #[test_id(tn3p2pa)]
     #[test]
     fn a_command_that_moves_the_landing_ref_is_stopped_whatever_it_is() {
         for cmd in [
@@ -401,6 +405,7 @@ mod tests {
         }
     }
 
+    #[test_id(tfmcr8f)]
     #[test]
     fn round_state_is_stopped_when_written_and_not_when_read() {
         assert_eq!(d("mv /r/run/rounds-pace/spira/pause /tmp/x"), ["door:round-state"]);
@@ -409,6 +414,7 @@ mod tests {
         assert!(d("queue round stop spira --by me --reason r --until u").is_empty());
     }
 
+    #[test_id(tpllixl)]
     #[test]
     fn tracing_or_reading_a_store_process_is_stopped_even_though_it_only_reads() {
         assert_eq!(d("strace -f spira-lc list"), ["door:store-trace"]);
@@ -418,6 +424,7 @@ mod tests {
         assert!(d("store-trace.sh --pid 4242").is_empty());
     }
 
+    #[test_id(tb06y3i)]
     #[test]
     fn a_raw_store_client_is_stopped_and_the_stores_tool_is_not() {
         assert_eq!(d("bd list"), ["door:store"]);
@@ -427,6 +434,7 @@ mod tests {
         assert!(d("work show").is_empty());
     }
 
+    #[test_id(tahemx6)]
     #[test]
     fn builders_bead_branches_and_the_other_resources_each_have_their_pointer() {
         assert_eq!(d("systemctl --user stop dwarf-sp-1.service"), ["door:builder"]);
@@ -459,6 +467,7 @@ mod tests {
         Ok(Vec::new())
     }
 
+    #[test_id(ttadzfk)]
     #[test]
     fn the_block_names_the_tool_with_its_usage_once_and_the_retry_passes() {
         let reg = crate::doors::parse(include_str!("../../spira/doors.toml")).unwrap();
@@ -475,6 +484,7 @@ mod tests {
         assert!(!log.contains("deadbeef") && !log.contains("update-ref"), "no command arguments in the log: {log}");
     }
 
+    #[test_id(tvg3dhj)]
     #[test]
     fn using_the_door_after_a_block_is_recorded_and_an_override_is_logged_with_its_reason() {
         let reg = crate::doors::parse(include_str!("../../spira/doors.toml")).unwrap();

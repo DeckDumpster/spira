@@ -313,6 +313,7 @@ mod tests {
         rec
     }
 
+    #[test_id(tl4o56u)]
     #[test]
     fn with_no_recorder_installed_time_records_nothing() {
         untrack();
@@ -323,6 +324,7 @@ mod tests {
         assert_eq!(time(Phase::Read, || 7), 7);
     }
 
+    #[test_id(tp15uyo)]
     #[test]
     fn an_unconfirmed_phase_dropped_records_nothing_and_closes() {
         let rec = tracked();
@@ -334,6 +336,7 @@ mod tests {
         assert_eq!(s.open, None);
     }
 
+    #[test_id(tcb1lhi)]
     #[test]
     fn two_timed_commits_are_two_entries_in_order() {
         let rec = tracked();
@@ -346,6 +349,7 @@ mod tests {
         assert_eq!(s.open, None);
     }
 
+    #[test_id(ttzzzjv)]
     #[test]
     fn a_begin_that_is_never_ended_is_the_open_phase() {
         let rec = tracked();
@@ -354,6 +358,7 @@ mod tests {
         assert_eq!(rec.snapshot().open, Some("writer_wait"));
     }
 
+    #[test_id(taptz66)]
     #[test]
     fn a_commit_the_backend_recorded_is_not_recorded_twice() {
         let rec = tracked();
@@ -363,6 +368,7 @@ mod tests {
         assert_eq!(rec.snapshot().commits_us.len(), 2);
     }
 
+    #[test_id(t81uj1i)]
     #[test]
     fn a_child_is_counted_and_named_by_its_basename() {
         let rec = tracked();
@@ -373,6 +379,7 @@ mod tests {
         assert_eq!((s.children, s.programs), (2, vec!["bd".to_string(), "git".to_string()]));
     }
 
+    #[test_id(tuckkfy)]
     #[test]
     fn a_read_is_counted() {
         let rec = tracked();
@@ -381,6 +388,7 @@ mod tests {
         assert_eq!(rec.snapshot().reads, 1);
     }
 
+    #[test_id(t9aokrj)]
     #[test]
     fn a_refused_commit_is_not_recorded_as_a_commit() {
         let rec = tracked();
@@ -390,6 +398,7 @@ mod tests {
         assert_eq!(rec.snapshot().commits_us.len(), 0);
     }
 
+    #[test_id(tnkgbqx)]
     #[test]
     fn the_longest_single_read_is_kept_beside_the_sum() {
         let rec = Arc::new(Recorder::default());
@@ -407,6 +416,7 @@ mod tests {
         assert_eq!((s.reads_ended, s.reads_overran), (1, 1));
     }
 
+    #[test_id(t0pt99i)]
     #[test]
     fn recording_a_read_with_no_recorder_installed_does_nothing() {
         record_read(Duration::from_micros(1), ReadEnd::Overran);

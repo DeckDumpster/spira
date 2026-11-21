@@ -67,6 +67,7 @@ mod tests {
     use runtime::ports::VirtualClock;
     use runtime::units::{Exit, ScriptedUnits, UnitHandle, UnitRan, Units, UnitSpec, UNIT_RAN};
 
+    #[test_id(tnnols7)]
     #[test]
     fn a_run_the_manager_ends_is_submitted_once_on_its_tasks_stream_or_on_units() {
         let task = crate::tasks::all().find(|t| t.name != "heartbeat").expect("a booted task");

@@ -462,6 +462,7 @@ mod cost {
         (steps.load(Ordering::Relaxed), start.elapsed().as_millis())
     }
 
+    #[test_id(t2cqwt4)]
     #[test]
     fn no_migration_does_work_that_grows_faster_than_the_store() {
         let mut red = Vec::new();
@@ -484,6 +485,7 @@ mod cost {
         assert!(red.is_empty(), "{}", red.join("\n"));
     }
 
+    #[test_id(t9zs294)]
     #[test]
     fn a_correlated_subquery_over_an_unindexed_temp_table_is_over_the_bound() {
         let planted = [

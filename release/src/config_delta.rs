@@ -736,6 +736,7 @@ impl Txn {
 mod retire_tests {
     use super::*;
 
+    #[test_id(t8vudot)]
     #[test]
     fn a_task_retired_by_the_command_is_dropped_from_the_hosts_modes_not_refused() {
         let t = testkit::TempDir::new("retire-task-activation");
@@ -759,6 +760,7 @@ mod retire_tests {
         (reg["SPIRA_TASK_MODES"].default_expr().unwrap().to_string(), delta)
     }
 
+    #[test_id(twzti7v)]
     #[test]
     fn the_shipped_delta_removes_the_retired_tasks() {
         let (_, delta) = shipped();
@@ -767,6 +769,7 @@ mod retire_tests {
         }
     }
 
+    #[test_id(txf8u3x)]
     #[test]
     fn the_host_cert_sweep_modes_are_dropped() {
         let (default, delta) = shipped();

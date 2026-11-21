@@ -153,6 +153,7 @@ impl Tier {
 mod tests {
     use super::*;
 
+    #[test_id(trqhhqo)]
     #[test]
     fn covers_folds_continuations_and_stops_at_a_directive() {
         let t = "#!/bin/bash\n# covers: a.sh b.sh\n#   c/* UC-x-01\n# tier: T1\n#   d.sh\nset -u\n";
@@ -166,6 +167,7 @@ mod tests {
         assert_eq!(covers_of("#covers: x\n").unwrap(), ["x"]);
     }
 
+    #[test_id(tckx9h5)]
     #[test]
     fn tier_and_selects_on_stop_at_set_dash() {
         let t = "# tier: T2\n# selects-on: added,mode\nset -uo pipefail\n# tier: T0\n";
@@ -178,6 +180,7 @@ mod tests {
         assert_eq!(tier_of("# tier:\n").as_deref(), Some(""));
     }
 
+    #[test_id(tkcf4d0)]
     #[test]
     fn tiers_parse_exactly() {
         assert_eq!(Tier::parse("T3"), Some(Tier::T3));
@@ -188,6 +191,7 @@ mod tests {
 
     // Mirrors spira/test-requires.sh Part A: requires_of parses, comma or blank delimited,
     // empty when undeclared, and stops at `set -` like every other directive.
+    #[test_id(t91utzp)]
     #[test]
     fn requires_parses_commas_and_blanks_and_stops_at_set_dash() {
         assert_eq!(requires_of("# requires: claude, bd\n"), ["claude", "bd"]);
@@ -199,6 +203,7 @@ mod tests {
 
     // Mirrors spira/test-dummy.sh's exclusive_of coverage and the "stops at set -" guard
     // suite_exclusive_of shares with suite_requires_of / suite_selects_on_of.
+    #[test_id(tnlwewg)]
     #[test]
     fn exclusive_is_the_reason_string_or_none() {
         assert_eq!(exclusive_of("# exclusive: touches the live store\n").as_deref(), Some("touches the live store"));
@@ -208,6 +213,7 @@ mod tests {
     }
 
     // Mirrors plan-lint.sh's suite_uc_of use: UC ids on # covers:, path globs never match.
+    #[test_id(ty8yg8n)]
     #[test]
     fn uc_of_picks_only_uc_shaped_tokens_off_covers() {
         let t = "# covers: a.sh b/*.sh UC-covers-01 UC-plan-02\n";
@@ -224,6 +230,7 @@ mod tests {
 
     // testenv_unmet is the AND/NOT composition
     // of "declares requires: testenv" with the caller's own (in_testenv, in_container) pair.
+    #[test_id(tpwai48)]
     #[test]
     fn testenv_unmet_is_the_and_not_of_requires_and_evidence() {
         let reqs = requires_of("# requires: testenv\n");

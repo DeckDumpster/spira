@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate spira_test_id;
 use spira_submission::clock;
 use spira_submission::provision::*;
 use std::cell::RefCell;
@@ -105,6 +107,7 @@ fn count(f: &Fake, prefix: &str) -> usize {
     f.calls.borrow().iter().filter(|c| c.starts_with(prefix)).count()
 }
 
+#[test_id(tg74h53)]
 #[test]
 fn the_certificate_expiry_is_read_from_the_der() {
     let _env = testkit::env_read();
@@ -116,6 +119,7 @@ fn the_certificate_expiry_is_read_from_the_der() {
     assert_eq!(clock::iso(NOT_AFTER), "2126-09-20T02:58:40Z");
 }
 
+#[test_id(tlt4g45)]
 #[test]
 fn a_renewal_that_changes_nothing_does_not_restart() {
     let _env = testkit::env_read();
@@ -128,6 +132,7 @@ fn a_renewal_that_changes_nothing_does_not_restart() {
     assert_eq!(count(&f, "systemctl"), 0, "{r:?}");
 }
 
+#[test_id(tbb6ick)]
 #[test]
 fn a_missing_certificate_is_fetched() {
     let _env = testkit::env_read();
@@ -138,6 +143,7 @@ fn a_missing_certificate_is_fetched() {
     assert!(Path::new(&b.plan.cert).exists());
 }
 
+#[test_id(twu84ge)]
 #[test]
 fn an_unconfigured_install_gets_the_tailnet_address_and_its_files_configured() {
     let _env = testkit::env_read();
@@ -162,6 +168,7 @@ fn an_unconfigured_install_gets_the_tailnet_address_and_its_files_configured() {
     assert_eq!(std::fs::read_to_string(format!("{d}/password")).unwrap(), format!("operator:{HASH}\n"));
 }
 
+#[test_id(ty9y3pv)]
 #[test]
 fn an_address_the_operator_chose_is_not_overwritten() {
     let _env = testkit::env_read();
@@ -173,6 +180,7 @@ fn an_address_the_operator_chose_is_not_overwritten() {
     assert_eq!(count(&f, "spira-config set"), 0, "{:?}", f.calls);
 }
 
+#[test_id(tmwtuf9)]
 #[test]
 fn without_tailscale_nothing_is_configured() {
     let _env = testkit::env_read();
@@ -185,6 +193,7 @@ fn without_tailscale_nothing_is_configured() {
     assert!(r.errors.is_empty(), "{r:?}");
 }
 
+#[test_id(tp5mcb5)]
 #[test]
 fn the_password_file_follows_the_users_file_and_drift_is_seen() {
     let _env = testkit::env_read();
@@ -213,6 +222,7 @@ fn the_password_file_follows_the_users_file_and_drift_is_seen() {
     assert!(matches!(password_state(&b.plan, &pw), Password::NoSource(_)));
 }
 
+#[test_id(thnw7z6)]
 #[test]
 fn the_derived_line_is_a_credential_the_server_accepts() {
     let _env = testkit::env_read();
@@ -222,6 +232,7 @@ fn the_derived_line_is_a_credential_the_server_accepts() {
     assert_eq!(derive_line("operator::1:1\n", "operator"), None);
 }
 
+#[test_id(ts5b914)]
 #[test]
 fn a_firewall_that_cannot_be_opened_is_an_error_carrying_the_root_command() {
     let _env = testkit::env_read();
@@ -233,6 +244,7 @@ fn a_firewall_that_cannot_be_opened_is_an_error_carrying_the_root_command() {
     assert!(r.errors.iter().any(|e| e.contains("ufw allow in on tailscale0 to any port 2587 proto tcp")), "{r:?}");
 }
 
+#[test_id(tipq3i6)]
 #[test]
 fn ufw_rules_are_matched_by_port_and_interface() {
     let _env = testkit::env_read();
@@ -244,6 +256,7 @@ fn ufw_rules_are_matched_by_port_and_interface() {
     assert!(!ufw_allows("2587/tcp on tailscale0  DENY  Anywhere\n", 2587, "tailscale0"));
 }
 
+#[test_id(t5oibl9)]
 #[test]
 fn the_firewall_state_distinguishes_absent_closed_open_and_unreadable() {
     let _env = testkit::env_read();
@@ -279,6 +292,7 @@ impl Host for NoOperator<'_> {
     }
 }
 
+#[test_id(teq91w9)]
 #[test]
 fn the_address_is_written_last() {
     let _env = testkit::env_read();
@@ -290,6 +304,7 @@ fn the_address_is_written_last() {
     assert!(sets[4].contains("spira.submission_addr"), "{sets:?}");
 }
 
+#[test_id(ttpnu29)]
 #[test]
 fn status_reports_a_missing_operator_grant() {
     let b = plan(false);

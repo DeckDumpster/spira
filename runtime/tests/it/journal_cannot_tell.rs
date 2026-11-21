@@ -32,6 +32,7 @@ fn pongs(j: &dyn Journal) -> usize {
     runtime::conformance::trace(j).into_iter().filter(|t| t.2 == "pong").count()
 }
 
+#[test_id(tpkal4m)]
 #[tokio::test]
 async fn a_journal_read_that_cannot_tell_is_retried_not_returned_as_an_exit() {
     let mem: Arc<dyn Journal> = MemJournal::new();
@@ -57,6 +58,7 @@ async fn a_journal_read_that_cannot_tell_is_retried_not_returned_as_an_exit() {
     assert_eq!(retries.len(), 1, "each retry is counted: {retries:?}");
 }
 
+#[test_id(t3wtsso)]
 #[test]
 fn a_dropped_spira_lc_reply_is_a_cannot_tell_and_a_missing_socket_is_too() {
     let dir = testkit::TempDir::new("cannot-tell");
@@ -70,6 +72,7 @@ fn a_dropped_spira_lc_reply_is_a_cannot_tell_and_a_missing_socket_is_too() {
     assert!(down.is_cannot_tell(), "{down}");
 }
 
+#[test_id(tm2wccz)]
 #[test]
 fn a_spira_lc_reply_that_says_cannot_tell_is_a_cannot_tell_and_survives_the_wire_both_ways() {
     let dir = testkit::TempDir::new("cannot-tell-reply");
@@ -85,6 +88,7 @@ fn a_spira_lc_reply_that_says_cannot_tell_is_a_cannot_tell_and_survives_the_wire
     assert!(err.0.contains("deadline"), "{err}");
 }
 
+#[test_id(tbbtfbz)]
 #[tokio::test]
 async fn a_spira_lc_deadline_on_the_socket_journal_is_retried_by_serve_not_returned() {
     let (store, path, _dir) = crate::journal_calls::serve();

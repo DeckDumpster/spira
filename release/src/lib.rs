@@ -3,6 +3,9 @@
 //! Builds, verifies, activates, rolls back and prunes `spira-releases/<sha>/`: the one thing
 //! the running system executes.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod acceptance;
 pub mod activate;
 pub mod artifacts;

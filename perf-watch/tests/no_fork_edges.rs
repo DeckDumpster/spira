@@ -3,6 +3,8 @@
 //! law-a-loops-hot-read-is-in-process. The positive control plants an unmarked site and
 //! requires the scan to catch it, so a scan that matches nothing cannot pass.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::{Path, PathBuf};
 
 const BANNED: [&str; 10] = ["spira-lc", "bd", "bdq", "bash", "systemctl", "systemd-run", "tsd-write", "mail", "queue", "pgrep"];
@@ -51,6 +53,7 @@ fn unmarked(name: &str, text: &str) -> Vec<String> {
     found
 }
 
+#[test_id(twizxbv)]
 #[test]
 fn no_unmarked_spira_fork_edge_remains_in_src() {
     let mut files = Vec::new();
@@ -60,6 +63,7 @@ fn no_unmarked_spira_fork_edge_remains_in_src() {
     assert!(found.is_empty(), "Spira fork edges with no FORK-EDGE reason:\n{}", found.join("\n"));
 }
 
+#[test_id(to81jw3)]
 #[test]
 fn the_scan_catches_a_planted_site_and_passes_a_marked_one() {
     let planted = "fn f() {\n    let o = Command::new(\"spira-lc\").arg(\"list\");\n}\n";

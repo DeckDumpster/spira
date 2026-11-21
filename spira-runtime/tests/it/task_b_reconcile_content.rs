@@ -22,16 +22,19 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(tkusxr6)]
 #[test]
 fn t1_registered_boots_and_arms_a_10min_tick() {
     t::t1_registered_and_boots::<H>(SET, TICK);
 }
 
+#[test_id(tikvys7)]
 #[test]
 fn t2_nothing_to_close_journals_nothing() {
     t::t2_silent::<H>(SET, &json(&idle()));
 }
 
+#[test_id(t9m7x3c)]
 #[test]
 fn t3_a_bead_goes_open_close_requested_closed_and_a_second_close_is_refused_by_name() {
     let h = t::handler::<H>(SET);
@@ -47,12 +50,14 @@ fn t3_a_bead_goes_open_close_requested_closed_and_a_second_close_is_refused_by_n
     assert!(later.through_seq >= Some(40), "the carried seq is monotone");
 }
 
+#[test_id(t962jp4)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_nothing() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/b/reconcile_content.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(tbfbg2i)]
 #[test]
 fn t5_terminal_records_and_complete_epics_close_behind_the_skew_gate() {
     let h = t::handler::<H>(SET);
@@ -93,6 +98,7 @@ fn tick() -> runtime::event::EventKind {
     runtime::event::EventKind::new(task::TICK, "")
 }
 
+#[test_id(tekp588)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&closed(), task::NAME);
@@ -102,11 +108,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     assert!(rows.iter().any(|k| k == "skew_red_at"), "{rows:?}");
 }
 
+#[test_id(tqvm4ct)]
 #[test]
 fn a_boot_closes_no_listed_bead_a_second_time() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(closed, registration, task::STREAM, tick());
 }
 
+#[test_id(tmxftm1)]
 #[test]
 fn a_boot_does_not_ask_the_skew_check_again_inside_its_red_window() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(skew_red, registration, task::STREAM, tick());
@@ -120,6 +128,7 @@ fn carried_at(seq: u64, full_at: u64) -> Carry {
     Carry { through_seq: Some(seq), full_at, ..Carry::default() }
 }
 
+#[test_id(tdunfox)]
 #[test]
 fn an_unchanged_head_inside_the_full_pass_window_asks_for_nothing() {
     let h = t::handler::<H>(SET);
@@ -127,6 +136,7 @@ fn an_unchanged_head_inside_the_full_pass_window_asks_for_nothing() {
     assert_eq!((c, names(&acts)), (carried_at(40, TICK), Vec::<&str>::new()));
 }
 
+#[test_id(tcukjmt)]
 #[test]
 fn a_head_the_store_could_not_read_asks_for_no_scan_so_a_scan_answered_with_a_head_cannot_loop() {
     let h = t::handler::<H>(SET);
@@ -134,6 +144,7 @@ fn a_head_the_store_could_not_read_asks_for_no_scan_so_a_scan_answered_with_a_he
     assert_eq!((c, names(&acts)), (Carry::default(), Vec::<&str>::new()));
 }
 
+#[test_id(t0z5mxp)]
 #[test]
 fn a_moved_head_asks_for_an_incremental_scan_from_the_carried_seq() {
     let h = t::handler::<H>(SET);
@@ -142,6 +153,7 @@ fn a_moved_head_asks_for_an_incremental_scan_from_the_carried_seq() {
     assert_eq!((acts[0].input.as_str(), acts[0].probe), ("since:40", true));
 }
 
+#[test_id(ta10jxo)]
 #[test]
 fn a_stale_full_pass_or_no_carried_seq_asks_for_a_full_scan() {
     let h = t::handler::<H>(SET);
@@ -151,6 +163,7 @@ fn a_stale_full_pass_or_no_carried_seq_asks_for_a_full_scan() {
     assert_eq!(acts[0].input, "full");
 }
 
+#[test_id(tc8cb9o)]
 #[test]
 fn a_scan_with_no_closes_still_moves_the_cursor_and_a_full_one_the_clock() {
     let h = t::handler::<H>(SET);
@@ -162,6 +175,7 @@ fn a_scan_with_no_closes_still_moves_the_cursor_and_a_full_one_the_clock() {
     assert_eq!((c.through_seq, c.full_at), (Some(52), 3 * TICK));
 }
 
+#[test_id(t5w4s0m)]
 #[test]
 fn a_changed_head_runs_an_incremental_scan_through_the_handler_and_closes_what_it_lists() {
     use std::sync::{Arc, Mutex};
@@ -188,6 +202,7 @@ fn a_changed_head_runs_an_incremental_scan_through_the_handler_and_closes_what_i
     assert!(rig.requested().iter().any(|q| q.name == task::CLOSE && q.input.contains("sp-a")), "{:?}", rig.requested());
 }
 
+#[test_id(t4aey2l)]
 #[test]
 fn a_scan_that_could_not_tell_holds_the_cursor() {
     let h = t::handler::<H>(SET);
@@ -196,6 +211,7 @@ fn a_scan_that_could_not_tell_holds_the_cursor() {
     assert_eq!(later.through_seq, Some(40));
 }
 
+#[test_id(t9xj4uw)]
 #[test]
 fn a_full_pass_that_could_not_tell_stays_due() {
     let h = t::handler::<H>(SET);
@@ -204,6 +220,7 @@ fn a_full_pass_that_could_not_tell_stays_due() {
     assert_eq!(later.full_at, 7);
 }
 
+#[test_id(tse632y)]
 #[test]
 fn a_skew_red_or_failed_close_makes_the_next_scan_a_full_pass_so_the_bead_is_listed_again() {
     let h = t::handler::<H>(SET);

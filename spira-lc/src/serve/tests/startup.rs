@@ -1,3 +1,4 @@
+#[test_id(tyf5d40)]
 #[test]
 fn notify_ready_reaches_an_abstract_namespace_socket() {
     let _env = testkit::env_read();
@@ -5,12 +6,13 @@ fn notify_ready_reaches_an_abstract_namespace_socket() {
     let name = format!("spira-lc-notify-{}", std::process::id());
     let addr = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes()).unwrap();
     let rx = std::os::unix::net::UnixDatagram::bind_addr(&addr).unwrap();
-    super::notify_ready(Some(&format!("@{name}"))).unwrap();
+    super::super::notify_ready(Some(&format!("@{name}"))).unwrap();
     let mut buf = [0u8; 64];
     let n = rx.recv(&mut buf).unwrap();
     assert_eq!(&buf[..n], b"READY=1");
 }
 
+#[test_id(tjmsutf)]
 #[test]
 fn notify_ready_sends_one_ready_datagram_to_the_notify_socket_and_nothing_when_unset() {
     let _env = testkit::env_read();
@@ -18,22 +20,23 @@ fn notify_ready_sends_one_ready_datagram_to_the_notify_socket_and_nothing_when_u
     let path = dir.join("notify.sock");
     let rx = std::os::unix::net::UnixDatagram::bind(&path).unwrap();
     rx.set_nonblocking(true).unwrap();
-    super::notify_ready(None).unwrap();
-    super::notify_ready(Some("")).unwrap();
+    super::super::notify_ready(None).unwrap();
+    super::super::notify_ready(Some("")).unwrap();
     let mut buf = [0u8; 64];
     assert!(rx.recv(&mut buf).is_err(), "nothing sent while unset");
-    super::notify_ready(Some(path.to_str().unwrap())).unwrap();
+    super::super::notify_ready(Some(path.to_str().unwrap())).unwrap();
     let n = rx.recv(&mut buf).unwrap();
     assert_eq!(&buf[..n], b"READY=1");
-    assert!(super::notify_ready(Some(dir.join("absent").to_str().unwrap())).is_err());
+    assert!(super::super::notify_ready(Some(dir.join("absent").to_str().unwrap())).is_err());
 }
 
+#[test_id(t6rukdc)]
 #[test]
 fn start_up_logs_one_line_per_phase_in_order_and_ready_after_their_sum() {
     let _env = testkit::env_read();
     use std::time::Duration;
     let phases = [("config", Duration::from_millis(3)), ("open-sqlite", Duration::from_millis(52)), ("bind", Duration::from_millis(5))];
-    let lines = super::startup_lines(&phases, 0);
+    let lines = super::super::startup_lines(&phases, 0);
     assert_eq!(lines.len(), 4, "{lines:?}");
     assert!(lines[0].ends_with("start-up config 3 ms"), "{}", lines[0]);
     assert!(lines[1].ends_with("start-up open-sqlite 52 ms"), "{}", lines[1]);
@@ -42,6 +45,7 @@ fn start_up_logs_one_line_per_phase_in_order_and_ready_after_their_sum() {
     assert!(lines[3].starts_with("spira-lc serve: 1970-01-01T00:00:00"), "{}", lines[3]);
 }
 
+#[test_id(tu7ixlx)]
 #[test]
 fn serve_refuses_to_start_naming_the_ledger_key_when_it_is_absent() {
     let dir = testkit::TempDir::new("lc-ledger-key");
@@ -52,6 +56,6 @@ fn serve_refuses_to_start_naming_the_ledger_key_when_it_is_absent() {
     std::fs::write(&toml, kept).unwrap();
     let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
     let fresh = |k: &str| spira_config::process::fresh(&[k.to_string()]).map(|mut m| m.remove(k).unwrap());
-    let err = super::ledger_ttl_from(fresh).unwrap_err();
+    let err = super::super::ledger_ttl_from(fresh).unwrap_err();
     assert!(err.contains("lc_request_ledger_secs"), "{err}");
 }

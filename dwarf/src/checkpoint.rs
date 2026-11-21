@@ -199,6 +199,7 @@ fn duration(secs: i64) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(th4a1hd)]
     #[test]
     fn facts_carry_their_actor_and_time() {
         let f = parse_facts(r#"[{"issue_id":"sp-a","event_type":"send-back","new_value":"tip t\n\nwhy","actor":"concierge","created_at":"2001-09-09T01:46:40Z"}]"#);
@@ -215,12 +216,14 @@ mod tests {
         Fact { kind: CHECKPOINTED.into(), cause: at.to_string(), ..Fact::default() }
     }
 
+    #[test_id(t5yn76f)]
     #[test]
     fn a_session_id_is_a_v4_uuid_and_differs_each_time() {
         let (a, b) = (new_session_id(), new_session_id());
         assert!(is_uuid(&a) && a.as_bytes()[14] == b'4' && a != b, "{a} {b}");
     }
 
+    #[test_id(t5eckyn)]
     #[test]
     fn the_session_fact_round_trips_and_keeps_a_worktree_with_spaces() {
         let f = SessionFact { id: ID.into(), rune: "builder".into(), persona: "abc123".into(), worktree: "a b/c".into() };
@@ -228,6 +231,7 @@ mod tests {
         assert_eq!(SessionFact::parse("not-a-uuid builder x /w"), None);
     }
 
+    #[test_id(t60uml8)]
     #[test]
     fn facts_parse_from_the_lc_listing() {
         let j = format!(r#"[{{"issue_id":"sp-a","event_type":"session","new_value":"{ID} b p /w","actor":"x"}},{{"issue_id":"sp-a","event_type":"checkpointed","new_value":"100"}}]"#);
@@ -240,6 +244,7 @@ mod tests {
         plan(facts, rune, persona, wt, |_| tr)
     }
 
+    #[test_id(ts3rlsb)]
     #[test]
     fn a_pending_checkpoint_resumes_its_session() {
         let facts = [session("builder", "p1"), ck(100)];
@@ -249,6 +254,7 @@ mod tests {
         );
     }
 
+    #[test_id(tibw4r4)]
     #[test]
     fn no_checkpoint_or_an_already_consumed_one_is_a_fresh_claim() {
         assert_eq!(decide(&[], "builder", "p1", true, true), Plan::Fresh);
@@ -256,6 +262,7 @@ mod tests {
         assert_eq!(decide(&[session("builder", "p1"), ck(100), session("builder", "p1")], "builder", "p1", true, true), Plan::Fresh);
     }
 
+    #[test_id(t3nus6o)]
     #[test]
     fn every_unresumable_session_falls_back_cold_and_says_why() {
         let facts = [session("builder", "p1"), ck(100)];
@@ -273,6 +280,7 @@ mod tests {
         assert!(matches!(decide(&[ck(100)], "builder", "p1", true, true), Plan::Cold { .. }));
     }
 
+    #[test_id(tv0gmu0)]
     #[test]
     fn the_transcript_is_found_under_any_encoded_cwd() {
         let d = testkit::TempDir::new("ckpt-transcript");
@@ -282,6 +290,7 @@ mod tests {
         assert!(transcript_exists(&d, ID));
     }
 
+    #[test_id(t1lqlzd)]
     #[test]
     fn a_stop_waits_only_while_a_tool_is_in_flight() {
         let tool = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"x"},{"type":"tool_use","id":"t","name":"Bash","input":{}}]}}"#;
@@ -294,6 +303,7 @@ mod tests {
         assert!(at_boundary(""));
     }
 
+    #[test_id(t48jmbh)]
     #[test]
     fn the_resume_message_says_the_world_was_down_and_for_how_long() {
         let m = resume_message(Some(1000), 1000 + 3 * 3600 + 120, "spira/sp-a");

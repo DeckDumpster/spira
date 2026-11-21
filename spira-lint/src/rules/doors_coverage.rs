@@ -122,6 +122,7 @@ mod tests {
         DoorsCoverage.check(&tree).unwrap().iter().map(|f| f.to_string()).collect()
     }
 
+    #[test_id(t4jd91t)]
     #[test]
     fn a_tool_claiming_to_be_the_only_path_without_a_row_is_flagged_and_one_with_a_row_is_not() {
         let t = TempDir::new("dc");
@@ -136,6 +137,7 @@ mod tests {
         assert!(got[0].starts_with("doors-coverage: spira/orphan.sh:2:"), "{got:?}");
     }
 
+    #[test_id(tr3qby6)]
     #[test]
     fn a_listed_tool_is_allowed_and_a_stale_entry_is_refused() {
         let t = TempDir::new("dc-allow");

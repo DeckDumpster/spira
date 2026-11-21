@@ -54,6 +54,7 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
     r
 }
 
+#[test_id(tdutsif)]
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_nine_probes() {
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::PENDING"));
@@ -66,6 +67,7 @@ fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_nine_probes() {
     assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
 }
 
+#[test_id(t2ohp2y)]
 #[test]
 fn t2_a_clean_checkout_shipped_units_and_no_livelocks_publish_nothing_and_journal_nothing() {
     let mut r = rig(1, |_| snap("clean"));
@@ -74,6 +76,7 @@ fn t2_a_clean_checkout_shipped_units_and_no_livelocks_publish_nothing_and_journa
     running(&r);
 }
 
+#[test_id(t71a24x)]
 #[test]
 fn t3_fragment_states_move_as_the_5s_tier_and_stale_before_ok_is_refused_naming_the_state() {
     for t in TRANSITIONS {
@@ -86,6 +89,7 @@ fn t3_fragment_states_move_as_the_5s_tier_and_stale_before_ok_is_refused_naming_
     assert_eq!(back, next, "the carry read is the carry recorded");
 }
 
+#[test_id(tj1cv1x)]
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     let row = tasks::all().find(|t| t.name == NAME).expect("the row is ported");
@@ -97,6 +101,7 @@ fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
+#[test_id(tcls4mv)]
 #[test]
 fn t4_the_module_launches_no_process() {
     for l in LAUNCHERS {
@@ -105,6 +110,7 @@ fn t4_the_module_launches_no_process() {
     assert_eq!(launcher(MODULE), None);
 }
 
+#[test_id(tgu3le0)]
 #[test]
 fn t5_parity_the_drift_and_livelock_keys_reach_the_merged_kv() {
     let (_, acts) = decide(&Carry::default(), &snap("dirty:2")).unwrap();
@@ -114,6 +120,7 @@ fn t5_parity_the_drift_and_livelock_keys_reach_the_merged_kv() {
     }
 }
 
+#[test_id(th4m6du)]
 #[test]
 fn t5_parity_a_detector_that_answers_while_the_store_does_not_reads_unknown_not_zero() {
     let mut s = snap("clean");
@@ -123,6 +130,7 @@ fn t5_parity_a_detector_that_answers_while_the_store_does_not_reads_unknown_not_
     assert!(publish.input.contains("SP_LIVELOCK=?"), "{}", publish.input);
 }
 
+#[test_id(tnqmld4)]
 #[test]
 fn t6_a_dirty_file_on_day_two_publishes_once_then_and_two_days_are_deterministic() {
     let per_day = DAY_MS / CADENCE_MS;
@@ -145,6 +153,7 @@ fn boot_matches(make: impl Fn() -> TaskRig) {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(make, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
 }
 
+#[test_id(trquho3)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig(1, |_| with_clock(snap(""))), NAME);
@@ -153,11 +162,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(t3jftfl)]
 #[test]
 fn a_boot_does_not_republish_a_snapshot_whose_digest_it_published() {
     boot_matches(|| rig(1, |_| snap("")));
 }
 
+#[test_id(trcj31z)]
 #[test]
 fn a_boot_does_not_refresh_a_snapshot_no_newer_than_the_last_read() {
     boot_matches(|| rig(1, |_| with_clock(snap(""))));

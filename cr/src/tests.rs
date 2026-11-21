@@ -92,6 +92,7 @@ fn row(kind: &str, unit_id: &str, at: u64, files: &[(&str, &str)]) -> Row {
     }
 }
 
+#[test_id(t5m1rlq)]
 #[test]
 fn a_fixed_seed_draws_the_same_unit_with_the_same_terms() {
     let p = ports();
@@ -112,6 +113,7 @@ fn a_fixed_seed_draws_the_same_unit_with_the_same_terms() {
     assert_eq!(v["weight"]["total"], 2.0);
 }
 
+#[test_id(tuimd7d)]
 #[test]
 fn text_form_names_unit_weight_stratum_seed_and_commit() {
     let o = go(&ports(), &["pick", "--seed", "7"]);
@@ -121,6 +123,7 @@ fn text_form_names_unit_weight_stratum_seed_and_commit() {
     }
 }
 
+#[test_id(tjluksu)]
 #[test]
 fn the_seed_defaults_to_the_environment_then_the_clock_and_is_printed() {
     let mut p = ports();
@@ -130,6 +133,7 @@ fn the_seed_defaults_to_the_environment_then_the_clock_and_is_printed() {
     assert_eq!(json(&p, &["pick"]).1["seed"], NOW);
 }
 
+#[test_id(tskdcih)]
 #[test]
 fn a_module_unit_holds_the_source_its_test_sibling_and_the_integration_test() {
     let (_, v) = json(&ports(), &["pick", "--aim", "demo/src/store.rs"]);
@@ -138,6 +142,7 @@ fn a_module_unit_holds_the_source_its_test_sibling_and_the_integration_test() {
     assert_eq!(v["weight"]["commits"], 2);
 }
 
+#[test_id(tc3gqpl)]
 #[test]
 fn a_trait_unit_holds_the_trait_its_impls_and_the_dyn_caller() {
     let (_, v) = json(&ports(), &["pick", "--aim", "Sink"]);
@@ -145,6 +150,7 @@ fn a_trait_unit_holds_the_trait_its_impls_and_the_dyn_caller() {
     assert_eq!(unit_files(&v), ["demo/src/sink.rs", "demo/src/file_sink.rs", "demo/src/mem_sink.rs", "demo/src/router.rs"]);
 }
 
+#[test_id(tnhcahw)]
 #[test]
 fn a_boundary_unit_holds_the_caller_and_the_module_it_uses() {
     let p = ports_with(fixture(), vec![row("module", "module:elsewhere", NOW, &[("elsewhere.rs", "x")])], cfg());
@@ -153,6 +159,7 @@ fn a_boundary_unit_holds_the_caller_and_the_module_it_uses() {
     assert_eq!(unit_files(&v), ["demo/src/net.rs", "other/src/util.rs"]);
 }
 
+#[test_id(to06934)]
 #[test]
 fn aim_followed_by_json_takes_json_as_the_aim_and_help_as_a_value_is_no_help() {
     let o = go(&ports(), &["pick", "--aim", "--json"]);
@@ -161,6 +168,7 @@ fn aim_followed_by_json_takes_json_as_the_aim_and_help_as_a_value_is_no_help() {
     assert!(go(&ports(), &["pick", "--aim", "-h"]).stdout.is_empty());
 }
 
+#[test_id(tdyn3mj)]
 #[test]
 fn every_default_exclude_form_weighs_zero() {
     for path in ["a/fixtures/x.rs", "fixtures/x.rs", "a/b.generated.rs", "x/vendor/y/z.rs", "Cargo.lock", "sub/Cargo.lock"] {
@@ -171,6 +179,7 @@ fn every_default_exclude_form_weighs_zero() {
     }
 }
 
+#[test_id(tvs5p3z)]
 #[test]
 fn a_script_unit_holds_the_script_and_the_binary_it_runs() {
     let (_, v) = json(&ports(), &["pick", "--aim", "spira/run.sh"]);
@@ -178,6 +187,7 @@ fn a_script_unit_holds_the_script_and_the_binary_it_runs() {
     assert_eq!(unit_files(&v), ["spira/run.sh", "demo/src/main.rs"]);
 }
 
+#[test_id(tntdgur)]
 #[test]
 fn a_persona_unit_groups_hooks_by_prefix_with_the_prompt() {
     let (_, v) = json(&ports(), &["pick", "--aim", "spira/hooks/alpha-stop.sh"]);
@@ -185,6 +195,7 @@ fn a_persona_unit_groups_hooks_by_prefix_with_the_prompt() {
     assert_eq!(unit_files(&v), ["spira/hooks/alpha-fence.sh", "spira/hooks/alpha-stop.sh", "spira/runes/alpha.md"]);
 }
 
+#[test_id(t9l7dip)]
 #[test]
 fn an_oversized_file_goes_as_surface_plus_one_item_and_a_small_file_whole() {
     let p = ports();
@@ -202,6 +213,7 @@ fn an_oversized_file_goes_as_surface_plus_one_item_and_a_small_file_whole() {
     assert!(small["unit"]["files"][0]["oversized"].is_null());
 }
 
+#[test_id(txr1pdj)]
 #[test]
 fn a_chosen_function_part_brings_the_private_helpers_it_calls() {
     let mut text = String::from("pub struct S;\n\nfn helper() -> u32 {\n    1\n}\n\nfn driver() -> u32 {\n    helper()\n}\n");
@@ -223,6 +235,7 @@ fn a_chosen_function_part_brings_the_private_helpers_it_calls() {
     assert!(saw, "no seed chose the function part");
 }
 
+#[test_id(tytpry6)]
 #[test]
 fn excluded_paths_are_never_drawn_across_a_hundred_seeds() {
     let loose = Config { exclude: vec![], ..cfg() };
@@ -241,6 +254,7 @@ fn excluded_paths_are_never_drawn_across_a_hundred_seeds() {
     assert_eq!(code, 1, "{v}");
 }
 
+#[test_id(tmjputt)]
 #[test]
 fn a_unit_sent_at_its_current_blob_is_not_drawn_until_the_file_changes() {
     let store = "//! The store.\n\npub struct Store;\n\nimpl Store {\n    pub fn open() -> Store {\n        Store\n    }\n}\n";
@@ -256,6 +270,7 @@ fn a_unit_sent_at_its_current_blob_is_not_drawn_until_the_file_changes() {
     assert!(v["weight"]["review_factor"].as_f64().unwrap() < 4.0);
 }
 
+#[test_id(t6s6kfc)]
 #[test]
 fn with_only_modules_in_the_ledger_the_next_pick_is_not_a_module() {
     let p = ports_with(fixture(), vec![row("module", "module:elsewhere", NOW - DAY, &[("elsewhere.rs", "x")])], cfg());
@@ -266,6 +281,7 @@ fn with_only_modules_in_the_ledger_the_next_pick_is_not_a_module() {
     }
 }
 
+#[test_id(tu2rv3x)]
 #[test]
 fn an_empty_kind_falls_through_to_the_next() {
     let tree = FixtureTree::new("c").with_file("Cargo.toml", "[workspace]\nmembers = [\"k\"]\n").with_file("k/Cargo.toml", "[package]\nname = \"k\"\n").with_file("k/src/lib.rs", "pub fn a() {}\n");
@@ -277,6 +293,7 @@ fn an_empty_kind_falls_through_to_the_next() {
     assert_eq!(v["stratum"]["kind"], "module");
 }
 
+#[test_id(t088b68)]
 #[test]
 fn aim_resolves_a_path_a_crate_a_type_and_words() {
     let p = ports();
@@ -296,6 +313,7 @@ fn aim_resolves_a_path_a_crate_a_type_and_words() {
     assert!(unit_files(&v).contains(&"other/src/util.rs".to_string()));
 }
 
+#[test_id(tpy94i5)]
 #[test]
 fn an_aim_that_matches_nothing_exits_two_and_names_each_resolution() {
     let o = go(&ports(), &["pick", "--aim", "nothing-matches-this"]);
@@ -307,6 +325,7 @@ fn an_aim_that_matches_nothing_exits_two_and_names_each_resolution() {
     assert_eq!((code, v["ok"].clone(), v["tried"].as_array().unwrap().len()), (2, Value::Bool(false), 4));
 }
 
+#[test_id(tu1t120)]
 #[test]
 fn a_bare_positional_exits_two_naming_aim() {
     let o = go(&ports(), &["pick", "store"]);
@@ -317,6 +336,7 @@ fn a_bare_positional_exits_two_naming_aim() {
     assert!(v["error"].as_str().unwrap().contains("--aim"));
 }
 
+#[test_id(ti2u32t)]
 #[test]
 fn help_documents_every_flag_and_the_exit_codes() {
     let o = go(&ports(), &["-h"]);
@@ -326,6 +346,7 @@ fn help_documents_every_flag_and_the_exit_codes() {
     }
 }
 
+#[test_id(tgehsvw)]
 #[test]
 fn the_ledger_round_trips_through_a_file() {
     let dir = testkit::TempDir::new("cr-ledger");
@@ -355,6 +376,7 @@ fn count_ports() -> Ports {
     ports_with(count_tree(), vec![], cfg())
 }
 
+#[test_id(timart3)]
 #[test]
 fn count_totals_every_code_line_skips_comments_and_cuts_the_list_at_the_limit() {
     let o = go(&count_ports(), &["count", "--regex", "hit_", "--limit", "5"]);
@@ -366,6 +388,7 @@ fn count_totals_every_code_line_skips_comments_and_cuts_the_list_at_the_limit() 
     assert_eq!(out.len(), 7);
 }
 
+#[test_id(tfyaha9)]
 #[test]
 fn count_lists_everything_without_a_closing_line_when_nothing_is_cut() {
     let o = go(&count_ports(), &["count", "--regex", "hit_c", "--limit", "5"]);
@@ -375,6 +398,7 @@ fn count_lists_everything_without_a_closing_line_when_nothing_is_cut() {
     assert_eq!(o.stdout.lines().collect::<Vec<_>>(), ["total 2 lines in 2 files (4 files searched, 0 comment lines skipped) at beef01", "a/one.rs:41: let hit_39 = 1;", "a/two.rs:40: let hit_39 = 1;"]);
 }
 
+#[test_id(tsc8ege)]
 #[test]
 fn count_path_globs_narrow_the_search_and_may_repeat() {
     let (_, v) = json(&count_ports(), &["count", "--regex", "hit_", "--path", "a/**"]);
@@ -383,6 +407,7 @@ fn count_path_globs_narrow_the_search_and_may_repeat() {
     assert_eq!((v["total"].clone(), v["files"].clone()), (70.into(), 2.into()));
 }
 
+#[test_id(tcx57yq)]
 #[test]
 fn count_ignores_excluded_paths_and_prose_files() {
     let (_, v) = json(&count_ports(), &["count", "--regex", "hit_8$|hit_md", "--limit", "50"]);
@@ -390,6 +415,7 @@ fn count_ignores_excluded_paths_and_prose_files() {
     assert!(!paths.iter().any(|p| p.contains("fixtures") || p.ends_with(".md")), "{paths:?}");
 }
 
+#[test_id(tcen9xx)]
 #[test]
 fn count_of_nothing_is_zero_and_shows_it_looked() {
     let o = go(&count_ports(), &["count", "--regex", "zzz_absent"]);
@@ -429,6 +455,7 @@ impl SourceTree for Unreadable {
     }
 }
 
+#[test_id(tj25jav)]
 #[test]
 fn count_on_an_unreadable_tree_exits_one_and_prints_no_total() {
     let p = ports_with_tree(Box::new(Unreadable));
@@ -440,6 +467,7 @@ fn count_on_an_unreadable_tree_exits_one_and_prints_no_total() {
     assert!(v["error"].as_str().unwrap().contains("object store"));
 }
 
+#[test_id(t4ei6in)]
 #[test]
 fn count_with_a_bad_regex_or_a_bare_positional_exits_two() {
     let o = go(&count_ports(), &["count", "--regex", "("]);
@@ -452,12 +480,14 @@ fn count_with_a_bad_regex_or_a_bare_positional_exits_two() {
     assert_eq!(go(&count_ports(), &["count"]).code, 2);
 }
 
+#[test_id(toahdix)]
 #[test]
 fn count_limit_defaults_to_the_configured_key() {
     let (_, v) = json(&count_ports(), &["count", "--regex", "hit_"]);
     assert_eq!((v["sites"].as_array().unwrap().len(), v["more"].clone()), (7, 112.into()));
 }
 
+#[test_id(t1t63x3)]
 #[test]
 fn count_json_matches_the_text_totals_and_names_the_commit() {
     let (code, v) = json(&count_ports(), &["count", "--regex", "hit_", "--limit", "2"]);
@@ -467,6 +497,7 @@ fn count_json_matches_the_text_totals_and_names_the_commit() {
     assert_eq!(v["sites"][1], serde_json::json!({"path": "a/one.rs", "line": 3, "text": "let hit_1 = 1;"}));
 }
 
+#[test_id(tzqu5tt)]
 #[test]
 fn count_comment_markers_follow_the_file_type() {
     let t = FixtureTree::new("c1").with_file("x.sh", "# hit\n  hit\n").with_file("y.py", "# hit\nhit\n").with_file("z.toml", "# hit\n").with_file("w.rs", "# hit\n// hit\n");
@@ -474,6 +505,7 @@ fn count_comment_markers_follow_the_file_type() {
     assert_eq!((v["total"].clone(), v["skipped_comments"].clone()), (3.into(), 4.into()));
 }
 
+#[test_id(tga2kco)]
 #[test]
 fn help_documents_count_and_its_exit_codes() {
     let o = go(&count_ports(), &["-h"]);

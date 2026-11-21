@@ -171,6 +171,7 @@ mod tests {
         (tmp, root)
     }
 
+    #[test_id(tkomtzc)]
     #[test]
     fn seam_vars_derive_home_and_repo_from_the_conf_dir_when_the_caller_names_neither() {
         let (_tmp, root) = tree();
@@ -180,6 +181,7 @@ mod tests {
         assert_eq!(v["SPIRA_CONF_FILE"], "");
     }
 
+    #[test_id(tu4ve1k)]
     #[test]
     fn seam_vars_keep_what_the_caller_set() {
         let (_tmp, root) = tree();

@@ -184,6 +184,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-16
+    #[test_id(txtkmov)]
     #[test]
     fn ratelim_reads_the_newest_rate_limit_event_and_is_unknown_without_a_trace() {
         let run = testkit::TempDir::new("ratelim-trace");
@@ -208,6 +209,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4pqp0k)]
     #[test]
     fn win_vals_rejects_bool_and_out_of_range() {
         let w = win_vals(&serde_json::json!({"utilization": true, "resetsAt": 100}), 50);
@@ -219,6 +221,7 @@ mod tests {
         assert_eq!(w.reset, Some(100));
     }
 
+    #[test_id(tixmj0t)]
     #[test]
     fn win_vals_rejects_a_window_that_already_reset() {
         let w = win_vals(&serde_json::json!({"utilization": 0.96, "resetsAt": 100}), 100);

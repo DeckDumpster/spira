@@ -3,6 +3,9 @@
 //! A caller that needs the current time or a git fact computes it and passes it in as
 //! evidence on the event; nothing in this crate ever reaches out for one.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod ask;
 pub mod batch;
 pub mod bead;

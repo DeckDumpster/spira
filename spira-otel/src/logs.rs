@@ -232,6 +232,7 @@ pub fn read_all(dir: &std::path::Path, service: &str) -> Vec<Vec<(String, serde_
 mod tests {
     use super::*;
 
+    #[test_id(tuzwc75)]
     #[test]
     fn a_record_carries_every_attribute_it_was_given_with_its_type() {
         let d = testkit::TempDir::new("otel-logs");
@@ -252,6 +253,7 @@ mod tests {
         v
     }
 
+    #[test_id(tm16tef)]
     #[test]
     fn the_live_file_rotates_at_the_cap_and_only_keep_files_remain() {
         let d = testkit::TempDir::new("otel-logs-cap");
@@ -270,6 +272,7 @@ mod tests {
         }
     }
 
+    #[test_id(tsnuk6y)]
     #[test]
     fn a_new_days_file_pushes_the_oldest_files_out_of_the_keep_count() {
         let d = testkit::TempDir::new("otel-logs-days");
@@ -281,6 +284,7 @@ mod tests {
         assert_eq!(files(d.path()), vec!["other.logs.1999-01-01.jsonl".to_string(), "svc.logs.2000-01-01.jsonl".to_string(), format!("svc.logs.{day}.jsonl")]);
     }
 
+    #[test_id(to5rmyy)]
     #[test]
     fn an_uncapped_sink_never_rotates() {
         let d = testkit::TempDir::new("otel-logs-uncapped");

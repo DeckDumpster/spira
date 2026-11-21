@@ -2,6 +2,8 @@
 //! §2): every spawn of a Spira program or a store/unit tool named below is either gone or
 //! carries a `FORK-EDGE:` comment on its line or one of the two above, saying why it stays.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::Path;
 
 const BANNED: &[&str] = &["spira-lc", "bd", "bdq", "bash", "systemctl", "systemd-run", "tsd-write", "mail", "queue", "pgrep"];
@@ -57,6 +59,7 @@ fn scan(dir: &Path, out: &mut Vec<String>) {
     }
 }
 
+#[test_id(tkz0hoe)]
 #[test]
 fn no_unmarked_fork_edge_remains() {
     let mut found = Vec::new();
@@ -64,6 +67,7 @@ fn no_unmarked_fork_edge_remains() {
     assert!(found.is_empty(), "unmarked fork edges:\n{}", found.join("\n"));
 }
 
+#[test_id(tiwpnr1)]
 #[test]
 fn the_scan_catches_a_planted_site_and_passes_a_marked_one() {
     let planted = "fn f() {\n    let _ = std::process::Command::new(\"spira-lc\").arg(\"show\");\n}\n";

@@ -404,24 +404,28 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(tmrt8av)]
     #[test]
     fn an_unfiltered_unit_only_sandbox_run_is_sandboxed_with_the_listed_names_as_its_skip_list() {
         let listed = names(&["a_run_pushes"]);
         assert_eq!(route(None, true, Runner::Sandbox, &listed), Route::Sandbox { skip: listed.clone() });
     }
 
+    #[test_id(tnuw5b6)]
     #[test]
     fn a_filtered_run_naming_a_listed_test_goes_to_the_container() {
         let t = names(&["a_run_pushes"]);
         assert_eq!(route(Some(&t), true, Runner::Sandbox, &t), Route::Container { because: "a_run_pushes".into() });
     }
 
+    #[test_id(tjv88qk)]
     #[test]
     fn a_filtered_run_naming_no_listed_test_is_sandboxed_with_nothing_skipped() {
         let t = names(&["other"]);
         assert_eq!(route(Some(&t), true, Runner::Sandbox, &names(&["a_run_pushes"])), Route::Sandbox { skip: vec![] });
     }
 
+    #[test_id(ttk8fjn)]
     #[test]
     fn the_container_runner_and_a_run_of_other_suites_go_to_the_container() {
         let listed = names(&["a_run_pushes"]);
@@ -455,6 +459,7 @@ mod tests {
         a.windows(3).filter(|w| w[0] == flag).map(|w| (w[1].clone(), w[2].clone())).collect()
     }
 
+    #[test_id(ttblogv)]
     #[test]
     fn the_runner_is_container_or_sandbox_and_nothing_else() {
         assert_eq!(Runner::parse("sandbox"), Ok(Runner::Sandbox));
@@ -463,6 +468,7 @@ mod tests {
         assert!(Runner::parse("").is_err());
     }
 
+    #[test_id(tgs4yn9)]
     #[test]
     fn the_sandbox_root_is_read_only_and_only_the_tree_target_and_registry_are_writable() {
         let a = profile().bwrap_args();
@@ -473,6 +479,7 @@ mod tests {
         assert!(pairs(&a, "--ro-bind").contains(&("h/u/repo/.git".into(), "h/u/repo/.git".into())), "the repo's git dir is read-only: {a:?}");
     }
 
+    #[test_id(tsupdwx)]
     #[test]
     fn the_sandbox_has_no_network_and_its_own_process_namespace() {
         let a = profile().bwrap_args();
@@ -481,6 +488,7 @@ mod tests {
         }
     }
 
+    #[test_id(tekb5m0)]
     #[test]
     fn the_environment_is_cleared_to_the_allow_list_and_names_no_spira_key() {
         let a = profile().bwrap_args();
@@ -493,6 +501,7 @@ mod tests {
         }
     }
 
+    #[test_id(tqyq5h8)]
     #[test]
     fn a_worktree_names_its_repositorys_common_git_dir() {
         let d = testkit::TempDir::new("sandbox-gitdir");
@@ -504,6 +513,7 @@ mod tests {
         assert_eq!(worktree_gitdir(plain.path()), None);
     }
 
+    #[test_id(tse3x8n)]
     #[test]
     fn a_sandboxed_unit_run_resolves_to_the_sessions_owned_build_directory() {
         let owned = PathBuf::from("srv/ssd-b/dwarf-build/dir.2");
@@ -513,6 +523,7 @@ mod tests {
         assert_eq!(unit_target(None, " ", "v-b"), None);
     }
 
+    #[test_id(t8gtibj)]
     #[test]
     fn pruning_keeps_the_most_recent_targets_and_never_the_current_one() {
         let d = testkit::TempDir::new("sandbox-prune");
@@ -531,6 +542,7 @@ mod tests {
         assert!(current.exists() && newest.exists() && !middle.exists() && !oldest.exists());
     }
 
+    #[test_id(t5bwiu5)]
     #[test]
     fn the_sandbox_carries_the_images_system_git_identity_and_never_overrides_a_tests_own() {
         let p = profile();
@@ -545,6 +557,7 @@ mod tests {
         assert!(text.contains("name = spirauser") && text.contains("email = spirauser@localhost"), "{text}");
     }
 
+    #[test_id(tpcx64v)]
     #[test]
     fn two_branches_see_the_same_target_path_so_their_compiled_dependencies_share_cache_keys() {
         let other = Profile { target: "r/t/spira-unit-cargo-target-c".into(), ..cached() };
@@ -554,6 +567,7 @@ mod tests {
         }
     }
 
+    #[test_id(t7exhzf)]
     #[test]
     fn a_cached_run_compiles_through_the_shared_store_and_may_write_only_that_store() {
         let p = cached();
@@ -564,6 +578,7 @@ mod tests {
         assert!(pairs(&p.bwrap_args(), "--bind").contains(&("srv/t/.sccache".into(), "srv/t/.sccache".into())));
     }
 
+    #[test_id(tj4qm4a)]
     #[test]
     fn an_uncached_run_sets_no_wrapper_and_binds_no_store() {
         let p = profile();
@@ -571,6 +586,7 @@ mod tests {
         assert!(pairs(&p.bwrap_args(), "--bind").iter().all(|(s, _)| !s.contains("sccache")));
     }
 
+    #[test_id(tcfr4cc)]
     #[test]
     fn the_store_is_found_beside_the_toolchain_and_absent_without_an_sccache() {
         let home = testkit::TempDir::new("sandbox-cache-home");
@@ -584,6 +600,7 @@ mod tests {
         assert_eq!(Cache::under(Path::new(""), home.path()), None, "an empty root must not make a store in the cwd");
     }
 
+    #[test_id(ttc2c7f)]
     #[test]
     fn pruning_never_removes_the_shared_store() {
         let d = testkit::TempDir::new("sandbox-prune-store");
@@ -598,6 +615,7 @@ mod tests {
         assert!(store.exists());
     }
 
+    #[test_id(tcrivjq)]
     #[test]
     fn a_run_profile_gets_the_store_in_the_target_root_and_the_sccache_it_finds() {
         let home = testkit::TempDir::new("sandbox-run-home");
@@ -609,6 +627,7 @@ mod tests {
         assert_eq!(value(&p.env(), "RUSTC_WRAPPER"), Some(home.path().join(".cargo/bin/sccache").display().to_string()));
     }
 
+    #[test_id(t03hfky)]
     #[test]
     fn the_script_in_a_real_sandbox_sees_the_wrapper_the_store_and_the_fixed_target() {
         if usable("bwrap").is_err() {

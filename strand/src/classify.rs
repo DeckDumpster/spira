@@ -675,6 +675,7 @@ mod tests {
 
     // ---- the bead's own four, plus empty ----
 
+    #[test_id(tsqh9jl)]
     #[test]
     fn closed_blocker_is_not_reported() {
         // A child blocked only by a closed bead — a bead outside the partition's open list,
@@ -689,6 +690,7 @@ mod tests {
         assert_eq!(kinds(&run(&s, &[])), vec![("stale-blocked".into(), "E".into())]);
     }
 
+    #[test_id(tyoc8fq)]
     #[test]
     fn sp_yf8lf0_a_blocker_absent_from_the_store_is_unknown_never_closed() {
         let s = store(vec![epic("E", PLAN), bead("c", "open", PLAN, Some("E"), &["gone"])]);
@@ -697,6 +699,7 @@ mod tests {
         assert!(rows[0].detail.contains("not in the store: gone"), "{rows:?}");
     }
 
+    #[test_id(tuoxqy0)]
     #[test]
     fn submitted_dependent_is_not_reported() {
         let s = store(vec![
@@ -707,6 +710,7 @@ mod tests {
         assert!(run(&s, &[]).is_empty());
     }
 
+    #[test_id(tk5kvuz)]
     #[test]
     fn working_dependent_is_not_reported() {
         let s = store(vec![
@@ -718,6 +722,7 @@ mod tests {
         assert!(!run(&s, &[]).is_empty(), "bd status in_progress alone no longer means moving");
     }
 
+    #[test_id(to72zms)]
     #[test]
     fn open_external_blocker_on_unstarted_dependent_is_reported() {
         let s = store(vec![
@@ -731,6 +736,7 @@ mod tests {
         assert_eq!(rows[0].detail, "blocked by bead(s) outside the partition: c->x");
     }
 
+    #[test_id(tyih2th)]
     #[test]
     fn empty_epic_is_reported_as_empty() {
         let s = store(vec![epic("E", PLAN)]);
@@ -740,6 +746,7 @@ mod tests {
         assert_eq!(rows[0].action, "decompose it, or close it");
     }
 
+    #[test_id(tkshoqv)]
     #[test]
     fn all_closed_epic_is_complete_not_empty() {
         let s = store(vec![epic("E", PLAN), bead("c", "closed", PLAN, Some("E"), &[])]);
@@ -748,6 +755,7 @@ mod tests {
 
     // ---- tonight's false asks, from the real edges (bd show, 2026-09-29) ----
 
+    #[test_id(tt0v5we)]
     #[test]
     fn fixture_sp_vvt04_yyltf_blocked_only_by_closed_beads() {
         // sp-vvt04: "sp-f3af9->sp-lno75 sp-f0qhr->sp-xethq/sp-a0zvh/sp-i2m7y sp-s9675->sp-lno75";
@@ -767,6 +775,7 @@ mod tests {
         assert!(run(&s, &[]).is_empty());
     }
 
+    #[test_id(tnob1aa)]
     #[test]
     fn fixture_sp_cxlmq_closed_blockers_without_the_epic_level_skip() {
         // sp-cxlmq's edges with the dependents NOT submitted: the blockers are still closed,
@@ -783,6 +792,7 @@ mod tests {
         assert!(rows.iter().all(|r| r.kind != "blocked-external"), "{rows:?}");
     }
 
+    #[test_id(tiasafd)]
     #[test]
     fn fixture_sp_bpe4n_msk4h_closed_blocker_and_worked_dependent() {
         // sp-bpe4n: "sp-o3o6z->sp-7tw9h sp-o4wu7->sp-7tw9h"; sp-7tw9h landed, sp-o3o6z worked.
@@ -795,6 +805,7 @@ mod tests {
         assert!(run_working(&s, &[], &["sp-o3o6z"], &Facts { live: 1, ..Facts::default() }).is_empty());
     }
 
+    #[test_id(tkdslfz)]
     #[test]
     fn fixture_sp_7jail_msk4h_submitted_head_is_not_stuck() {
         // sp-7jail: "blocked by work that is itself not moving: sp-7tw9h sp-o3o6z" while
@@ -808,6 +819,7 @@ mod tests {
         assert!(run(&s, &[]).is_empty());
     }
 
+    #[test_id(tlw744u)]
     #[test]
     fn submitted_blocker_outside_the_epic_is_progress_not_stuck() {
         // The stuck rule without the epic-level skip: the head of the chain is another
@@ -820,6 +832,7 @@ mod tests {
         assert!(run(&s, &[]).is_empty());
     }
 
+    #[test_id(tzsc6cq)]
     #[test]
     fn fixture_sp_srdjc_yyltf_submitted_entry_beads() {
         // sp-srdjc: stuck on sp-1z10t sp-a0zvh sp-f0qhr sp-f3af9 sp-falao while the entry
@@ -837,6 +850,7 @@ mod tests {
         assert!(run(&s, &[]).is_empty());
     }
 
+    #[test_id(t9g53pg)]
     #[test]
     fn fixture_sp_mf03u_zs04v_ordered_behind_an_epic_is_sequenced() {
         // sp-mf03u: "sp-zs04v.5->sp-pswer sp-zs04v.5->sp-zs04v.4 sp-zs04v.6->sp-zs04v.4
@@ -857,6 +871,7 @@ mod tests {
 
     // ---- what must still be reported ----
 
+    #[test_id(t6bz6qo)]
     #[test]
     fn foreign_blocker_that_is_itself_moving_is_not_external() {
         let s = store(vec![
@@ -867,6 +882,7 @@ mod tests {
         assert!(run_working(&s, &[], &["x"], &Facts { live: 1, ..Facts::default() }).is_empty());
     }
 
+    #[test_id(tfvb1dk)]
     #[test]
     fn dead_internal_chain_is_stuck() {
         // h is open, unclaimable (say, a dead assignee) and blocked by nothing: not moving.
@@ -882,6 +898,7 @@ mod tests {
         assert!(run(&s, &["h"]).is_empty());
     }
 
+    #[test_id(t27j184)]
     #[test]
     fn parked_and_poisoned_children_are_info() {
         let s = store(vec![
@@ -898,6 +915,7 @@ mod tests {
         assert_eq!(rows[0].disp, Disposition::Info);
     }
 
+    #[test_id(tq4wqxr)]
     #[test]
     fn open_children_outside_the_partition_are_not_analysed_here() {
         let s = store(vec![
@@ -908,6 +926,7 @@ mod tests {
         assert!(run(&s, &[]).is_empty());
     }
 
+    #[test_id(txalmhe)]
     #[test]
     fn deferred_exemption_sees_foreign_blockers() {
         let s = store(vec![
@@ -921,6 +940,7 @@ mod tests {
         assert_eq!(rows[0].detail, "deferred with no ask held: title of d");
     }
 
+    #[test_id(tp9q4c9)]
     #[test]
     fn timed_hold_is_held_not_stranded() {
         let now = crate::timefmt::parse_rfc3339("2026-10-02T09:00:00Z").unwrap();
@@ -941,6 +961,7 @@ mod tests {
         }
     }
 
+    #[test_id(t30zp70)]
     #[test]
     fn starved_and_its_correct_refusals() {
         let s = store(vec![bead("r", "open", PLAN, None, &[])]);
@@ -979,6 +1000,7 @@ mod tests {
         assert!(run_with(&s, &["r"], &f).is_empty());
     }
 
+    #[test_id(temr38c)]
     #[test]
     fn starved_appends_the_schedulers_last_pass_or_says_it_is_unknown() {
         let s = store(vec![bead("r", "open", PLAN, None, &[])]);
@@ -991,6 +1013,7 @@ mod tests {
         assert!(detail(Ok("no refusal recorded for skuld".into())).ends_with("; scheduler's last pass: no refusal recorded for skuld"));
     }
 
+    #[test_id(tf0wu5w)]
     #[test]
     fn cycle_is_reported_once() {
         let s = store(vec![
@@ -1004,6 +1027,7 @@ mod tests {
         assert_eq!(rows[0].detail, "dependency cycle, permanently unclaimable: a -> b -> c");
     }
 
+    #[test_id(ts8aifu)]
     #[test]
     fn partition_membership_is_all_labels() {
         let s = store(vec![epic("E", &["spira"])]); // not in spira,plan

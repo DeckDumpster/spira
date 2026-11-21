@@ -281,6 +281,7 @@ fn tag_of(f: &Fake, c: &Conf) -> Option<String> {
 
 // ---- tag: the build closure (was test-testenv-image-tag.sh) ------------------------------
 
+#[test_id(tu39drr)]
 #[test]
 fn the_tag_is_the_scripts_hash_of_the_closure_by_content() {
     let f = Fake::new();
@@ -303,6 +304,7 @@ fn the_tag_is_the_scripts_hash_of_the_closure_by_content() {
     assert_eq!(tag_of(&f, &c), Some(want));
 }
 
+#[test_id(tatp8tz)]
 #[test]
 fn every_closure_input_moves_the_tag_and_nothing_else_does() {
     let f = Fake::new();
@@ -331,6 +333,7 @@ fn every_closure_input_moves_the_tag_and_nothing_else_does() {
 // ---- tag: deps.toml only counts what doctor-check.sh's build-time check reads
 // (sp-ehj2t) ---------------------------------------------------------------------------
 
+#[test_id(tzur80x)]
 #[test]
 fn adding_a_release_tier_entry_leaves_the_tag_unchanged() {
     // Every rewrite branch adds its own new binary to deps.toml as tier "release"
@@ -348,6 +351,7 @@ fn adding_a_release_tier_entry_leaves_the_tag_unchanged() {
     assert_eq!(tag_of(&f, &c).unwrap(), base, "a release-tier addition");
 }
 
+#[test_id(tqalevq)]
 #[test]
 fn two_manifests_differing_only_in_release_entries_share_one_tag() {
     let f = Fake::new();
@@ -368,6 +372,7 @@ fn two_manifests_differing_only_in_release_entries_share_one_tag() {
     );
 }
 
+#[test_id(t0voozq)]
 #[test]
 fn changing_a_runtime_tier_entry_changes_the_tag() {
     let f = Fake::new();
@@ -385,6 +390,7 @@ fn changing_a_runtime_tier_entry_changes_the_tag() {
     );
 }
 
+#[test_id(tyldnpc)]
 #[test]
 fn an_operator_tier_entry_moves_the_tag_like_optional_does() {
     // doctor-check.sh buckets "optional" and "operator" into the same WARN arm
@@ -402,6 +408,7 @@ fn an_operator_tier_entry_moves_the_tag_like_optional_does() {
     assert_ne!(tag_of(&f, &c).unwrap(), base, "an operator-tier addition");
 }
 
+#[test_id(twdte8f)]
 #[test]
 fn a_dev_tier_entry_never_moves_the_tag() {
     // dev-tier programs (podman, bd-embedded, rustup) are what tests need to exist, not
@@ -418,6 +425,7 @@ fn a_dev_tier_entry_never_moves_the_tag() {
     assert_eq!(tag_of(&f, &c).unwrap(), base, "a dev-tier addition");
 }
 
+#[test_id(tssrm5p)]
 #[test]
 fn an_unparseable_manifest_refuses_instead_of_naming_an_image() {
     let f = Fake::new();
@@ -428,6 +436,7 @@ fn an_unparseable_manifest_refuses_instead_of_naming_an_image() {
     assert!(f.errs().contains("deps.toml"));
 }
 
+#[test_id(t8y7zyf)]
 #[test]
 fn two_checkouts_of_one_commit_compute_one_tag() {
     let f = Fake::new();
@@ -436,6 +445,7 @@ fn two_checkouts_of_one_commit_compute_one_tag() {
     assert_eq!(tag_of(&f, &conf("a")), tag_of(&f, &conf("b/deeper")));
 }
 
+#[test_id(te7k1yr)]
 #[test]
 fn an_unreadable_closure_refuses_instead_of_naming_an_image() {
     let f = Fake::new();
@@ -467,6 +477,7 @@ fn an_unreadable_closure_refuses_instead_of_naming_an_image() {
 
 // ---- image acquisition and publish (was test-testenv-registry.sh) ------------------------
 
+#[test_id(trv6ixn)]
 #[test]
 fn a_local_image_is_used_as_is() {
     let f = Fake::new();
@@ -479,6 +490,7 @@ fn a_local_image_is_used_as_is() {
     assert!(f.calls_with("pull").is_empty() && f.calls_with("build").is_empty());
 }
 
+#[test_id(tnb1ad6)]
 #[test]
 fn no_registry_means_nothing_is_pulled() {
     let f = Fake::new();
@@ -503,6 +515,7 @@ fn no_registry_means_nothing_is_pulled() {
     );
 }
 
+#[test_id(t4op8hr)]
 #[test]
 fn a_registry_hit_pulls_the_closure_tag_retags_it_and_builds_nothing() {
     let f = Fake::new();
@@ -526,6 +539,7 @@ fn a_registry_hit_pulls_the_closure_tag_retags_it_and_builds_nothing() {
     );
 }
 
+#[test_id(tggmqey)]
 #[test]
 fn a_registry_miss_is_slow_never_fatal() {
     let f = Fake::new();
@@ -541,6 +555,7 @@ fn a_registry_miss_is_slow_never_fatal() {
     assert!(f.errs().contains("is not in the registry — building it"));
 }
 
+#[test_id(t7ozn9p)]
 #[test]
 fn publish_pushes_the_closure_tag_and_nothing_floating() {
     let f = Fake::new();
@@ -563,6 +578,7 @@ fn publish_pushes_the_closure_tag_and_nothing_floating() {
     assert_eq!(*f.out.borrow(), vec![remote]);
 }
 
+#[test_id(t5ri1l3)]
 #[test]
 fn publish_without_a_registry_or_after_a_failed_push_fails() {
     let f = Fake::new();
@@ -600,6 +616,7 @@ fn store_with_superseded(f: &Fake, current: &str, stale: &str) {
     );
 }
 
+#[test_id(tlb9jow)]
 #[test]
 fn a_green_build_or_a_pull_removes_the_images_it_supersedes_and_a_red_build_removes_nothing() {
     let f = Fake::new();
@@ -640,6 +657,7 @@ fn a_green_build_or_a_pull_removes_the_images_it_supersedes_and_a_red_build_remo
 
 // ---- cold build heartbeat (was test-testenv-image-heartbeat.sh) --------------------------
 
+#[test_id(tbpoked)]
 #[test]
 fn a_slow_build_beats_every_interval_naming_its_multistage_step() {
     let f = Fake::new();
@@ -676,6 +694,7 @@ fn a_slow_build_beats_every_interval_naming_its_multistage_step() {
     );
 }
 
+#[test_id(t5h2yut)]
 #[test]
 fn a_silent_build_says_so_rather_than_naming_no_step() {
     let f = Fake::new();
@@ -687,6 +706,7 @@ fn a_silent_build_says_so_rather_than_naming_no_step() {
     assert!(f.errs().contains("building — (no build output yet) —"));
 }
 
+#[test_id(t0opegp)]
 #[test]
 fn a_failed_build_names_disk_exhaustion_or_shows_its_tail() {
     let f = Fake::new();
@@ -716,6 +736,7 @@ fn a_failed_build_names_disk_exhaustion_or_shows_its_tail() {
 
 // ---- sp-xjnzl: staging spira-config into the build context for doctor-check -------------
 
+#[test_id(tqgypgi)]
 #[test]
 fn a_cold_build_stages_its_sibling_spira_config_and_removes_it_either_way() {
     let dest = PathBuf::from("t/ctx/testenv/.doctor-check-spira-config");
@@ -748,6 +769,7 @@ fn a_cold_build_stages_its_sibling_spira_config_and_removes_it_either_way() {
     assert!(!f.is_file(&dest), "left behind in the checkout after a red build");
 }
 
+#[test_id(tbbq7sw)]
 #[test]
 fn a_cold_build_with_no_sibling_builds_spira_config_on_demand() {
     let f = Fake::new();
@@ -766,6 +788,7 @@ fn a_cold_build_with_no_sibling_builds_spira_config_on_demand() {
     assert!(!f.is_file(&PathBuf::from("t/ctx/testenv/.doctor-check-spira-config")), "cleaned up after the build");
 }
 
+#[test_id(taqp47k)]
 #[test]
 fn a_cold_build_refuses_rather_than_run_podman_when_spira_config_cannot_be_had_at_all() {
     let f = Fake::new();
@@ -790,6 +813,7 @@ fn booting(f: &Fake) {
     f.when(&["container", "exists"], 1, "");
 }
 
+#[test_id(txsl9xs)]
 #[test]
 fn up_passes_the_configured_cpu_cap_to_podman_run() {
     let f = Fake::new();
@@ -801,6 +825,7 @@ fn up_passes_the_configured_cpu_cap_to_podman_run() {
     assert_eq!(run[i + 1], "12.5");
 }
 
+#[test_id(t7ryyk3)]
 #[test]
 fn up_passes_the_configured_pids_limit_to_podman_run() {
     let f = Fake::new();
@@ -812,6 +837,7 @@ fn up_passes_the_configured_pids_limit_to_podman_run() {
     assert_eq!(run[i + 1], "12345");
 }
 
+#[test_id(t23vovm)]
 #[test]
 fn up_refuses_when_a_kernel_task_ceiling_is_below_the_pids_limit() {
     for (path, key) in [
@@ -834,6 +860,7 @@ fn up_refuses_when_a_kernel_task_ceiling_is_below_the_pids_limit() {
     assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 0);
 }
 
+#[test_id(t2y82qd)]
 #[test]
 fn up_gives_a_container_its_own_pids_limit_and_memory() {
     let f = Fake::new();
@@ -847,6 +874,7 @@ fn up_gives_a_container_its_own_pids_limit_and_memory() {
     assert_eq!(at("--memory"), "7g");
 }
 
+#[test_id(tdx54mh)]
 #[test]
 fn up_binds_the_testdb_template_cache_read_only_and_only_when_given() {
     let f = Fake::new();
@@ -868,6 +896,7 @@ fn up_binds_the_testdb_template_cache_read_only_and_only_when_given() {
     );
 }
 
+#[test_id(t2wn1hx)]
 #[test]
 fn up_refuses_a_non_numeric_pids_limit() {
     let f = Fake::new();
@@ -876,6 +905,7 @@ fn up_refuses_a_non_numeric_pids_limit() {
     assert_ne!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--pids-limit", "lots"])), 0);
 }
 
+#[test_id(twwpd4h)]
 #[test]
 fn cpu_cap_is_unset_unless_a_positive_number_is_configured() {
     assert_eq!(valid_cpus(""), None);
@@ -884,6 +914,7 @@ fn cpu_cap_is_unset_unless_a_positive_number_is_configured() {
     assert_eq!(valid_cpus("16"), Some("16".into()));
 }
 
+#[test_id(t6fa9wi)]
 #[test]
 fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
     let f = Fake::new();
@@ -950,6 +981,7 @@ fn network_of_run(f: &Fake) -> String {
     run[i + 1].clone()
 }
 
+#[test_id(t5swlse)]
 #[test]
 fn up_uses_the_bridge_when_podman_is_rootful() {
     let f = Fake::new();
@@ -958,6 +990,7 @@ fn up_uses_the_bridge_when_podman_is_rootful() {
     assert_eq!(network_of_run(&f), "bridge");
 }
 
+#[test_id(te6epah)]
 #[test]
 fn proc_is_unmasked_and_apparmor_lifted_for_the_test_sandbox_under_either_podman() {
     let unmasked = |rootless: &str| {
@@ -973,6 +1006,7 @@ fn proc_is_unmasked_and_apparmor_lifted_for_the_test_sandbox_under_either_podman
     assert!(unmasked("false\n"), "rootful (the round VMs): a masked /proc refused bwrap's in round spira-20261103T165709Z, and containers-default denies its mounts");
 }
 
+#[test_id(t13p546)]
 #[test]
 fn up_refuses_to_start_when_the_podman_mode_is_unknown() {
     let f = Fake::new();
@@ -997,6 +1031,7 @@ fn up_refuses_to_start_when_the_podman_mode_is_unknown() {
 ///
 /// Fix: `up` now also mounts whatever `symlinked_targets` names, at the same absolute path,
 /// so the symlink resolves inside the container too.
+#[test_id(tqfjraj)]
 #[test]
 fn up_also_mounts_a_checkouts_symlinked_target_directories() {
     let f = Fake::new();
@@ -1024,6 +1059,7 @@ fn up_also_mounts_a_checkouts_symlinked_target_directories() {
     assert!(run[0].windows(2).any(|w| w == ["--volume".to_string(), "wt:/workspace:z".to_string()]));
 }
 
+#[test_id(top1x47)]
 #[test]
 fn up_mounts_a_linked_worktrees_git_common_dir_at_its_host_path() {
     let f = Fake::new();
@@ -1040,6 +1076,7 @@ fn up_mounts_a_linked_worktrees_git_common_dir_at_its_host_path() {
         .any(|w| w == ["--volume".to_string(), "repo/.git:repo/.git:ro".to_string()]));
 }
 
+#[test_id(t0qr64t)]
 #[test]
 fn up_adds_no_git_mount_for_an_ordinary_clone() {
     let f = Fake::new();
@@ -1052,6 +1089,7 @@ fn up_adds_no_git_mount_for_an_ordinary_clone() {
     assert!(!f.calls_with("run")[0].iter().any(|a| a.ends_with(":ro")));
 }
 
+#[test_id(tfcvuc8)]
 #[test]
 fn linked_git_common_dir_follows_the_dot_git_file_to_the_common_dir() {
     let d = testkit::TempDir::new("testenv-linked-common");
@@ -1067,6 +1105,7 @@ fn linked_git_common_dir_follows_the_dot_git_file_to_the_common_dir() {
     assert_eq!(RealHost.linked_git_common_dir(&d.join("clone")), None);
 }
 
+#[test_id(tw8r3rd)]
 #[test]
 fn up_defaults_to_the_harness_checkout_and_keeps_an_existing_owner() {
     let f = Fake::new();
@@ -1081,6 +1120,7 @@ fn up_defaults_to_the_harness_checkout_and_keeps_an_existing_owner() {
     );
 }
 
+#[test_id(tzgrq25)]
 #[test]
 fn up_on_an_existing_container_does_nothing() {
     let f = Fake::new();
@@ -1094,6 +1134,7 @@ fn up_on_an_existing_container_does_nothing() {
     assert!(f.errs().contains("x already exists; nothing to do"));
 }
 
+#[test_id(tqpqssk)]
 #[test]
 fn a_failed_podman_run_refuses_at_once() {
     let f = Fake::new();
@@ -1111,6 +1152,7 @@ fn a_failed_podman_run_refuses_at_once() {
     );
 }
 
+#[test_id(th2508s)]
 #[test]
 fn the_bare_failure_message_is_not_mistaken_for_an_attribution() {
     // Seen red first: the pre-sp-cvle7 output names no resource.
@@ -1120,6 +1162,7 @@ fn the_bare_failure_message_is_not_mistaken_for_an_attribution() {
     assert!(named.is_match("testenv: exhausted resource for n — pids (8100/8192, 98%)"));
 }
 
+#[test_id(txkle2x)]
 #[test]
 fn an_unreachable_container_reads_question_marks_and_inotify_still_runs() {
     let f = Fake::new();
@@ -1144,6 +1187,7 @@ fn an_unreachable_container_reads_question_marks_and_inotify_still_runs() {
         .contains("could not measure any candidate resource for gone — container unreachable"));
 }
 
+#[test_id(tivrdeq)]
 #[test]
 fn up_queues_while_the_host_is_full_and_starts_when_a_slot_frees() {
     let f = Fake::new();
@@ -1176,6 +1220,7 @@ fn up_queues_while_the_host_is_full_and_starts_when_a_slot_frees() {
     );
 }
 
+#[test_id(te8ugz4)]
 #[test]
 fn a_full_host_gives_up_after_the_queue_timeout_and_zero_disables_the_gate() {
     let f = Fake::new();
@@ -1228,6 +1273,7 @@ fn down(f: &Fake, a: &[&str]) -> i32 {
     Driver { host: f, conf: &c }.cmd_down(&args(a))
 }
 
+#[test_id(t53d26c)]
 #[test]
 fn a_live_foreign_owner_blocks_down() {
     let f = Fake::new();
@@ -1241,6 +1287,7 @@ fn a_live_foreign_owner_blocks_down() {
     assert!(f.is_file(Path::new("tmp/c.owner")));
 }
 
+#[test_id(t04rk1t)]
 #[test]
 fn the_owner_or_its_descendant_tears_down_and_releases_the_owner_file() {
     for owner in ["500", "400", "1"] {
@@ -1253,6 +1300,7 @@ fn the_owner_or_its_descendant_tears_down_and_releases_the_owner_file() {
     }
 }
 
+#[test_id(thuwxto)]
 #[test]
 fn a_dead_owner_force_foreign_and_no_owner_file_do_not_block() {
     let f = Fake::new();
@@ -1268,6 +1316,7 @@ fn a_dead_owner_force_foreign_and_no_owner_file_do_not_block() {
     assert!(f.called(&["rm", "c"]));
 }
 
+#[test_id(tjpvf5f)]
 #[test]
 fn a_failed_teardown_keeps_the_owner_file_and_volumes_go_only_when_asked() {
     let f = Fake::new();
@@ -1288,6 +1337,7 @@ fn a_failed_teardown_keeps_the_owner_file_and_volumes_go_only_when_asked() {
     assert_eq!(down(&f, &["--bogus"]), 1);
 }
 
+#[test_id(t3q2ryn)]
 #[test]
 fn a_no_grace_down_force_removes_with_no_stop_and_drops_the_original_names_volumes() {
     let f = Fake::new();
@@ -1308,6 +1358,7 @@ fn a_no_grace_down_force_removes_with_no_stop_and_drops_the_original_names_volum
     );
 }
 
+#[test_id(tj83x1z)]
 #[test]
 fn a_detached_teardown_leaves_the_testdb_template_cache_alone() {
     let f = Fake::new();
@@ -1329,6 +1380,7 @@ fn a_detached_teardown_leaves_the_testdb_template_cache_alone() {
 
 // ---- exec, probe, usage ------------------------------------------------------------------
 
+#[test_id(tp412tb)]
 #[test]
 fn exec_as_spirauser_carries_the_session_and_cargo_environment() {
     let f = Fake::new();
@@ -1376,6 +1428,7 @@ fn exec_as_spirauser_carries_the_session_and_cargo_environment() {
     assert!(f.errs().contains("testenv exec: unknown option: -x"));
 }
 
+#[test_id(te234d2)]
 #[test]
 fn probe_needs_the_user_manager_and_its_bus() {
     let f = Fake::new();
@@ -1400,6 +1453,7 @@ fn probe_needs_the_user_manager_and_its_bus() {
     assert_eq!(d.cmd_probe(&args(&["--name", "p"])), 1);
 }
 
+#[test_id(tx1l6sx)]
 #[test]
 fn an_unknown_subcommand_prints_usage_and_fails() {
     let f = Fake::new();
@@ -1418,6 +1472,7 @@ fn an_unknown_subcommand_prints_usage_and_fails() {
 // can drive per-case. That behavior is spira-config's to test; `cpu_cap_is_unset_unless_a_
 // positive_number_is_configured` above still covers this crate's own pure validation.
 
+#[test_id(tlm20fn)]
 #[test]
 fn sizes_read_like_df_h() {
     assert_eq!(human(512), "512B");
@@ -1427,6 +1482,7 @@ fn sizes_read_like_df_h() {
 
 // ---- RealHost::symlinked_targets, against a real filesystem (sp-e5v53-3) -----------------
 
+#[test_id(tut6cad)]
 #[test]
 fn symlinked_targets_finds_a_real_symlinked_build_dir_and_collapses_a_shared_root() {
     let d = testkit::TempDir::new("testenv-symlinked-targets");
@@ -1451,6 +1507,7 @@ fn symlinked_targets_finds_a_real_symlinked_build_dir_and_collapses_a_shared_roo
     );
 }
 
+#[test_id(tb8c33n)]
 #[test]
 fn symlinked_targets_is_empty_for_an_ordinary_non_symlinked_target_dir() {
     let d = testkit::TempDir::new("testenv-symlinked-targets-plain");
@@ -1459,6 +1516,7 @@ fn symlinked_targets_is_empty_for_an_ordinary_non_symlinked_target_dir() {
     assert_eq!(RealHost.symlinked_targets(&target), Vec::<PathBuf>::new());
 }
 
+#[test_id(t9dmwyw)]
 #[test]
 fn symlinked_targets_is_empty_for_a_target_dir_that_does_not_exist() {
     assert_eq!(
@@ -1467,6 +1525,7 @@ fn symlinked_targets_is_empty_for_a_target_dir_that_does_not_exist() {
     );
 }
 
+#[test_id(totkt39)]
 #[test]
 fn real_copy_file_follows_a_symlinked_source_and_refuses_a_dangling_one() {
     let tmp = testkit::TempDir::new("testenv-copy");
@@ -1486,6 +1545,7 @@ fn real_copy_file_follows_a_symlinked_source_and_refuses_a_dangling_one() {
     assert!(RealHost.copy_file(&root.join("bin/dangling"), &dest).is_err());
 }
 
+#[test_id(tgb0brv)]
 #[test]
 fn up_no_build_with_an_absent_image_is_image_not_ready_and_never_builds() {
     let f = Fake::new();
@@ -1500,6 +1560,7 @@ fn up_no_build_with_an_absent_image_is_image_not_ready_and_never_builds() {
     assert!(f.calls_with("run").is_empty());
 }
 
+#[test_id(toiqskn)]
 #[test]
 fn up_no_build_with_the_image_present_boots() {
     let f = Fake::new();
@@ -1513,6 +1574,7 @@ fn up_no_build_with_the_image_present_boots() {
 
 // ---- the build context is a temp copy, never the (possibly read-only) release tree -----
 
+#[test_id(t31u11n)]
 #[test]
 fn a_cold_build_runs_in_a_temp_copy_of_the_harness_and_removes_it_either_way() {
     for rc in [0, 1] {
@@ -1529,6 +1591,7 @@ fn a_cold_build_runs_in_a_temp_copy_of_the_harness_and_removes_it_either_way() {
     }
 }
 
+#[test_id(ttubcw1)]
 #[test]
 fn an_absent_image_in_a_bounded_trial_names_itself_and_the_build_command() {
     let f = Fake::new();
@@ -1549,6 +1612,7 @@ fn tree_tag(f: &Fake, c: &Conf, tree: &str) -> String {
     f.out.borrow().last().cloned().expect("tag printed")
 }
 
+#[test_id(tcm7ff3)]
 #[test]
 fn two_trees_with_different_containerfiles_yield_different_image_tags() {
     let f = Fake::new();
@@ -1562,6 +1626,7 @@ fn two_trees_with_different_containerfiles_yield_different_image_tags() {
     assert_eq!(a, tag_of(&f, &c).unwrap(), "an identical Containerfile is the installed tag");
 }
 
+#[test_id(t7eddy3)]
 #[test]
 fn a_tree_without_a_containerfile_falls_back_to_the_installed_harness() {
     let f = Fake::new();
@@ -1570,6 +1635,7 @@ fn a_tree_without_a_containerfile_falls_back_to_the_installed_harness() {
     assert_eq!(tree_tag(&f, &c, "other-repo"), tag_of(&f, &c).unwrap());
 }
 
+#[test_id(t0zxj8x)]
 #[test]
 fn up_runs_the_image_of_the_checkouts_own_containerfile() {
     let f = Fake::new();
@@ -1590,6 +1656,7 @@ fn up_runs_the_image_of_the_checkouts_own_containerfile() {
     );
 }
 
+#[test_id(t6rrhdb)]
 #[test]
 fn image_builds_the_trees_own_tag_and_a_malformed_tree_flag_is_usage() {
     let f = Fake::new();

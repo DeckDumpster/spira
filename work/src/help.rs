@@ -471,6 +471,7 @@ mod tests {
     use super::*;
     use crate::{BOUND_VERBS, LANE_VERBS};
 
+    #[test_id(t0k34rg)]
     #[test]
     fn the_file_entry_names_both_forms_with_the_repo() {
         let e = ENTRIES.iter().find(|e| e.verb == "file").unwrap();
@@ -478,6 +479,7 @@ mod tests {
         assert!(args.contains("--for <persona> --repo <name>") && args.contains("--kind <kind>"), "{args}");
     }
 
+    #[test_id(t5ltr8x)]
     #[test]
     fn no_entry_is_listed_twice() {
         for e in ENTRIES {
@@ -485,6 +487,7 @@ mod tests {
         }
     }
 
+    #[test_id(t44uqpy)]
     #[test]
     fn the_broker_serves_the_verbs_the_client_names() {
         let src = include_str!("../../spira-lc/src/work.rs");
@@ -498,6 +501,7 @@ mod tests {
         assert_eq!(list("LANE_VERBS"), LANE_VERBS);
     }
 
+    #[test_id(tcb3rkj)]
     #[test]
     fn prime_matches_its_golden() {
         assert_eq!(prime(), include_str!("../tests/prime.golden"));

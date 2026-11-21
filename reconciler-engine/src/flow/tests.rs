@@ -21,6 +21,7 @@ fn flow(sections: Vec<serde_json::Value>) -> Flow {
     Flow::of(&assemble(&snap, T0))
 }
 
+#[test_id(tdd1u0w)]
 #[test]
 fn a_producer_of_landed_reaches_goodput_in_one_edge_and_a_section_that_produces_nothing_never_does() {
     let f = flow(vec![
@@ -32,6 +33,7 @@ fn a_producer_of_landed_reaches_goodput_in_one_edge_and_a_section_that_produces_
     assert!(f.path_to_goodput("Nonesuch/x").is_empty());
 }
 
+#[test_id(t8ldkan)]
 #[test]
 fn a_path_follows_produces_through_the_sections_that_consume_each_resource() {
     let f = flow(vec![
@@ -46,6 +48,7 @@ fn a_path_follows_produces_through_the_sections_that_consume_each_resource() {
     );
 }
 
+#[test_id(tfg6c8o)]
 #[test]
 fn upstream_names_the_sections_that_produce_a_resource() {
     let f = flow(vec![section("Probe", "feed", &[], &["host/scratch"]), section("Probe", "other", &[], &["host/scratch"])]);
@@ -61,6 +64,7 @@ fn two_controllers() -> Flow {
     ])
 }
 
+#[test_id(tlds0h3)]
 #[test]
 fn two_controllers_consuming_one_pool_share_a_capacity_neighbourhood_and_their_holds_do_not() {
     let f = two_controllers();
@@ -74,6 +78,7 @@ fn two_controllers_consuming_one_pool_share_a_capacity_neighbourhood_and_their_h
     assert_eq!(ha.members.len(), 1, "a local step's neighbourhood is its target alone");
 }
 
+#[test_id(tee8r3m)]
 #[test]
 fn a_consumed_resource_no_section_produces_is_reported_absent_upstream() {
     let f = two_controllers();
@@ -83,6 +88,7 @@ fn a_consumed_resource_no_section_produces_is_reported_absent_upstream() {
     assert!(f.neighbourhood("DwarfFleet/a", ActionClass::Local, "k").absent_upstream.is_empty());
 }
 
+#[test_id(tahovj5)]
 #[test]
 fn only_a_capacity_step_depends_on_upstream_sections() {
     let f = two_controllers();

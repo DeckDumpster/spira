@@ -86,6 +86,7 @@ mod tests {
 
     /// Every type `bd dep add --type` accepts, its two aliases, and the empty type a row may
     /// carry: only the blocking three block.
+    #[test_id(tx9snxk)]
     #[test]
     fn blocks_counts_the_blocking_types_and_no_other_type_bd_emits() {
         let table = [
@@ -108,6 +109,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4ljt9y)]
     #[test]
     fn a_parent_blocks_unless_it_is_a_container_or_a_coordination_bead_of_an_unsplit_child() {
         let parent = |p, split| blocks(Edge::Parent { parent: p, split });
@@ -120,6 +122,7 @@ mod tests {
         assert!(parent(Some((BeadState::Landed, true)), false));
     }
 
+    #[test_id(tckeb0e)]
     #[test]
     fn the_gate_moves_with_the_class_and_a_stackable_tip_and_nothing_else() {
         let tip = Some("t1");

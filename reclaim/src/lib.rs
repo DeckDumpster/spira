@@ -1,5 +1,8 @@
 //! Lossless reclamation of idle tmp directories and the shared compilation cache. Everything removed here is rebuildable.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};

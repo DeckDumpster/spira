@@ -2,6 +2,9 @@
 //! `external_ref`, with a write-ahead spool so an event that arrives while the store is
 //! down is never lost. DESIGN.md has the contract, the scar and what was retired.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod alarm;
 pub mod alarms_pass;
 pub mod attempts;

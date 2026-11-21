@@ -125,6 +125,7 @@ mod tests {
         TestenvResultReaders::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tjlzt5p)]
     #[test]
     fn a_planted_result_read_is_caught() {
         let t = TempDir::new("trr");
@@ -136,6 +137,7 @@ mod tests {
         assert_eq!(got.len(), 4, "{got:?}");
     }
 
+    #[test_id(tkwh3zu)]
     #[test]
     fn comments_field_reads_other_trees_and_listed_files_are_silent() {
         let t = TempDir::new("trr-ok");
@@ -146,6 +148,7 @@ mod tests {
         assert_eq!(run(&t, &["watchtower/p.rs", "batcher-cut/y.rs", "spira-world/old.rs", ALLOW_FILE]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tcnjzof)]
     #[test]
     fn a_listed_file_that_no_longer_reads_is_a_finding() {
         let t = TempDir::new("trr-stale");
@@ -154,6 +157,7 @@ mod tests {
         assert_eq!(run(&t, &["cockpit/a.rs", ALLOW_FILE]).unwrap().len(), 1);
     }
 
+    #[test_id(t1ank1g)]
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("trr-none");

@@ -37,12 +37,14 @@ pub fn scope_argv(quota: &str, exe: &Path, args: &[String]) -> Result<Vec<String
 mod tests {
     use super::*;
 
+    #[test_id(tr5bnrc)]
     #[test]
     fn quota_reads_with_or_without_percent() {
         assert_eq!(quota_percent("400"), Ok(400));
         assert_eq!(quota_percent("250%"), Ok(250));
     }
 
+    #[test_id(tp3uy7r)]
     #[test]
     fn quota_refuses_what_is_not_a_positive_percent() {
         for bad in ["", "0", "%", "-5", "4.5", "x%", "10%%", "+3"] {

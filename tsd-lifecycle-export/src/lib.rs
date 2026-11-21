@@ -5,6 +5,9 @@
 //! reads bd, and appends what this module builds. (The landing
 //! ledger it once also read is deleted, sp-2c1n0.)
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 
 use lifecycle::bead::BeadState;
@@ -358,6 +361,7 @@ mod tests {
 
     const ROW: &str = r#"{"seq":7,"machine":"bead","lc_key":"sp-a","event":"Claim","from_state":"READY","to_state":"WORKING","applied":true,"refusal":null,"evidence":{"cause":"ask"},"actor":"d","at":86400}"#;
 
+    #[test_id(t20clfp)]
     #[test]
     fn the_control_store_audits_drain_into_stage_rows_and_resume_past_the_last_revision() {
         let first = format!(r#"{{"rows":[{ROW}]}}"#);
@@ -372,6 +376,7 @@ mod tests {
         assert_eq!(*wire.0.lock().unwrap(), ["audits --after 3 --limit 500", "audits --after 7 --limit 500"]);
     }
 
+    #[test_id(tvxlv5f)]
     #[test]
     fn a_refused_audit_keeps_its_refusal_and_a_store_that_cannot_answer_is_an_error_not_an_empty_log() {
         let refused = ROW.replace(r#""applied":true,"refusal":null"#, r#""applied":false,"refusal":"stale""#);
@@ -384,6 +389,7 @@ mod tests {
         assert!(parse_audits("{}").is_err());
     }
 
+    #[test_id(t0eh5e4)]
     #[test]
     fn the_newest_event_comes_from_the_audits_verb() {
         let (lc, wire) = scripted(&[r#"{"newest_at":99}"#, r#"{"newest_at":null}"#]);
@@ -405,6 +411,7 @@ mod tests {
 
     // ── legacy fold: every event maps to exactly one row, with lifecycle state names ──────
 
+    #[test_id(twvbd30)]
     #[test]
     fn claim_then_close_maps_ready_to_working_to_dropped() {
         let events = vec![
@@ -425,6 +432,7 @@ mod tests {
         assert_eq!(rows[1].seq, 2);
     }
 
+    #[test_id(t5ar0fg)]
     #[test]
     fn reopened_returns_to_ready() {
         let events = vec![
@@ -435,6 +443,7 @@ mod tests {
         assert_eq!(rows[1].to_state, "READY");
     }
 
+    #[test_id(tg1tcr6)]
     #[test]
     fn an_event_type_with_no_fact_effect_still_emits_one_row_with_from_equal_to_to() {
         let events = vec![ev("1", "sp-d", "recurred", "harness", Some("closed-not-landed"), "2026-09-15T00:00:00Z")];
@@ -444,6 +453,7 @@ mod tests {
         assert_eq!(rows[0].reason.as_deref(), Some("closed-not-landed"));
     }
 
+    #[test_id(tr5qz57)]
     #[test]
     fn two_beads_interleaved_do_not_share_state() {
         let events = vec![
@@ -456,6 +466,7 @@ mod tests {
         assert_eq!(rows[2].from_state, "WORKING", "sp-e's close follows sp-e's own claim");
     }
 
+    #[test_id(tvr1trl)]
     #[test]
     fn seq_is_assigned_in_order_starting_from_next_seq() {
         let events = vec![
@@ -469,6 +480,7 @@ mod tests {
 
     // ── the checkpoint: re-running exports nothing new ────────────────────────────────────
 
+    #[test_id(t6seln4)]
     #[test]
     fn advancing_past_every_event_leaves_nothing_fresh_on_a_second_call() {
         let events = vec![
@@ -483,6 +495,7 @@ mod tests {
         assert_eq!(cp1, cp2, "a no-op run must not perturb the checkpoint");
     }
 
+    #[test_id(tjcev4g)]
     #[test]
     fn a_tie_at_the_boundary_instant_is_deduped_by_id_not_dropped_wholesale() {
         let cp0 = LegacyCheckpoint::starting_at("2026-09-15T00:00:00Z");
@@ -504,6 +517,7 @@ mod tests {
         assert_eq!(fresh2[0].id, "3");
     }
 
+    #[test_id(tmz0etb)]
     #[test]
     fn next_seq_advances_by_exactly_the_number_of_fresh_rows() {
         let cp0 = LegacyCheckpoint::starting_at("2026-09-15T00:00:00Z");
@@ -520,6 +534,7 @@ mod tests {
 
     // ── lifecycle source: a straight column mapping, refusals included ────────────────────
 
+    #[test_id(t8ruyl9)]
     #[test]
     fn an_applied_lifecycle_event_maps_with_reason_from_evidence() {
         let row = LifecycleEventRow {
@@ -546,6 +561,7 @@ mod tests {
         assert_eq!(out.source, "lifecycle");
     }
 
+    #[test_id(tgx8rhv)]
     #[test]
     fn an_attempt_history_fact_exports_with_its_cause_as_the_reason() {
         let row = LifecycleEventRow {
@@ -566,6 +582,7 @@ mod tests {
         assert_eq!(out.reason.as_deref(), Some("gate-red"));
     }
 
+    #[test_id(t4w36h8)]
     #[test]
     fn a_refused_lifecycle_event_still_yields_one_row_with_applied_false() {
         let row = LifecycleEventRow {
@@ -591,6 +608,7 @@ mod tests {
         LifecycleEventRow { seq, machine: "bead".into(), lc_key: "sp-x".into(), event: "Claim".into(), from_state: "READY".into(), to_state: "WORKING".into(), applied: true, refusal: None, evidence: serde_json::Value::Null, actor: "a".into(), at: 1758000000 + seq }
     }
 
+    #[test_id(twbu0hy)]
     #[test]
     fn a_run_cut_short_keeps_the_checkpoint_of_the_batches_it_finished() {
         let log: Vec<i64> = (1..=9).collect();
@@ -612,6 +630,7 @@ mod tests {
         assert_eq!(saved, vec![3, 6], "the batches before the cut are not exported again");
     }
 
+    #[test_id(t1r9a6z)]
     #[test]
     fn a_drained_log_ends_at_its_last_seq_and_a_stuck_source_is_refused() {
         let all: Vec<i64> = (1..=5).collect();
@@ -621,6 +640,7 @@ mod tests {
         assert!(drain(LifecycleCheckpoint { last_seq: 4 }, |_| Ok(vec![logged(2)]), |_| Ok(()), |_| Ok(())).is_err());
     }
 
+    #[test_id(tpwjbqp)]
     #[test]
     fn the_export_is_behind_when_its_newest_row_trails_the_newest_event_by_over_the_limit() {
         assert!(lag_verdict(Some(1000), 1600, 600).is_ok());
@@ -628,6 +648,7 @@ mod tests {
         assert!(lag_verdict(None, 1600, 600).is_err());
     }
 
+    #[test_id(tjh3fm4)]
     #[test]
     fn epoch_to_iso_matches_a_known_instant() {
         assert_eq!(epoch_to_iso(1758758400), "2025-09-25T00:00:00Z");

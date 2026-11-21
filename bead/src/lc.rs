@@ -92,6 +92,7 @@ mod tests {
         (LcClient::over(t.clone(), true), t)
     }
 
+    #[test_id(tvkue7j)]
     #[test]
     fn create_row_sends_the_cli_argv_over_the_socket_and_reports_a_refusal() {
         let (lc, t) = client(0, "");
@@ -103,6 +104,7 @@ mod tests {
         assert!(create_row(&lc, "sp-1", None, None).is_err());
     }
 
+    #[test_id(tfvzwo0)]
     #[test]
     fn the_row_a_filed_bead_gets_carries_no_planning_field() {
         let argv = create_bead_argv("sp-1", Some("abc"), Some("spira"));
@@ -111,6 +113,7 @@ mod tests {
         assert_eq!(create_bead_argv("sp-1", None, None), ["create-bead", "sp-1"], "the control: the bare row still builds");
     }
 
+    #[test_id(tzmathc)]
     #[test]
     fn set_repo_tells_a_refusal_from_a_failure() {
         let (lc, t) = client(0, "");

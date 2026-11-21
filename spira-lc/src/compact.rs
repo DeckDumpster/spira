@@ -60,11 +60,13 @@ mod tests {
         xs.iter().map(|x| x.to_string()).collect()
     }
 
+    #[test_id(tnv3b7d)]
     #[test]
     fn the_store_flag_is_taken_by_name() {
         assert_eq!(parse(&s(&["--store", "a.db"])), Ok(Asked::Run { store: "a.db".into() }));
     }
 
+    #[test_id(tx5j4um)]
     #[test]
     fn a_missing_flag_a_bare_word_and_a_flag_with_no_path_are_refused() {
         assert!(parse(&s(&[])).unwrap_err().contains("--store"));
@@ -72,6 +74,7 @@ mod tests {
         assert!(parse(&s(&["--store", "--x"])).unwrap_err().contains("needs a path"));
     }
 
+    #[test_id(tzh0ss5)]
     #[test]
     fn a_usage_error_exits_2_with_json_and_help_lists_the_flag_and_the_exits() {
         let (code, out) = admin_store_compact(&s(&["a.db"]));
@@ -84,6 +87,7 @@ mod tests {
         }
     }
 
+    #[test_id(tmmb1mu)]
     #[test]
     fn a_refusal_exits_3_with_json_on_stdout() {
         let dir = testkit::TempDir::new("lc-compact-refused");

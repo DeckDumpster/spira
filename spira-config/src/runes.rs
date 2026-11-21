@@ -648,6 +648,7 @@ mod tests {
         std::fs::write(dir.join(format!("{name}.rune")), body).unwrap();
     }
 
+    #[test_id(tk1o013)]
     #[test]
     fn partitions_stamp_moves_with_the_roster_a_deletion_and_a_rewrite() {
         let ws = testkit::TempDir::new("spira-config-runes-stamp");
@@ -664,6 +665,7 @@ mod tests {
         assert_ne!(rewritten, partitions_stamp(&ws, None));
     }
 
+    #[test_id(twd6s2t)]
     #[test]
     fn rune_names_sorts_and_strips_extension() {
         let ws = testkit::TempDir::new("spira-config-runes-names");
@@ -672,6 +674,7 @@ mod tests {
         assert_eq!(rune_names(&ws), vec!["builder".to_string(), "ops".to_string()]);
     }
 
+    #[test_id(tee6r6m)]
     #[test]
     fn runes_dir_follows_configured_runes_outside_home() {
         let ws = testkit::TempDir::new("spira-config-runes-configured");
@@ -681,6 +684,7 @@ mod tests {
         assert_eq!(runes_dir_with(&ws, &env), elsewhere);
     }
 
+    #[test_id(tut0wh5)]
     #[test]
     fn working_exits_are_declared_never_defaulted() {
         let ws = testkit::TempDir::new("spira-config-runes-exits");
@@ -694,6 +698,7 @@ mod tests {
         assert!(working_exits_in(&dir, "ghost").is_err());
     }
 
+    #[test_id(tim22a1)]
     #[test]
     fn a_follow_up_takes_the_persona_its_rune_names_else_the_filers_own() {
         let ws = testkit::TempDir::new("spira-config-runes-followup");
@@ -705,12 +710,14 @@ mod tests {
         assert_eq!(followup_persona_in(&dir, "ghost").unwrap(), "ghost", "a persona with no rune file files as itself");
     }
 
+    #[test_id(t8qau84)]
     #[test]
     fn rune_names_empty_when_runes_is_absent() {
         let ws = testkit::TempDir::new("spira-config-runes-names-absent");
         assert!(rune_names(&ws).is_empty());
     }
 
+    #[test_id(t7zvfw7)]
     #[test]
     fn rune_get_reads_a_var_and_falls_back_to_default() {
         let ws = testkit::TempDir::new("spira-config-runes-get");
@@ -720,6 +727,7 @@ mod tests {
         assert_eq!(rune_get(&ws, "ghost", "RUNE_LABELS", "fallback"), "fallback");
     }
 
+    #[test_id(tc4nb39)]
     #[test]
     fn rune_get_evaluates_shell_parameter_expansion() {
         // A rune file is a shell fragment, not a key=value format — this is exactly the
@@ -729,6 +737,7 @@ mod tests {
         assert_eq!(rune_get(&ws, "scoped", "RUNE_LABELS", ""), "spira,plan");
     }
 
+    #[test_id(tzfqs1y)]
     #[test]
     fn rune_get_spawns_no_process_for_a_plain_read_and_refuses_a_command_substitution() {
         let ws = testkit::TempDir::new("spira-config-runes-get-refuse");
@@ -736,6 +745,7 @@ mod tests {
         assert_eq!(rune_get(&ws, "bad", "RUNE_LABELS", "dflt"), "dflt");
     }
 
+    #[test_id(txiouqm)]
     #[test]
     fn spira_runes_env_override_wins_outright() {
         let ws = testkit::TempDir::new("spira-config-runes-roster-override");
@@ -743,6 +753,7 @@ mod tests {
         assert_eq!(spira_runes(&ws, Some("only-this")), "only-this");
     }
 
+    #[test_id(t7snex4)]
     #[test]
     fn spira_runes_sorts_elastic_last() {
         let ws = testkit::TempDir::new("spira-config-runes-roster-elastic");
@@ -752,6 +763,7 @@ mod tests {
         assert_eq!(spira_runes(&ws, None), "builder ops batcher");
     }
 
+    #[test_id(tj8mxe3)]
     #[test]
     fn spira_task_runes_excludes_party_and_reactive_and_uncallable() {
         let ws = testkit::TempDir::new("spira-config-runes-task");
@@ -762,6 +774,7 @@ mod tests {
         assert_eq!(spira_task_runes(&ws, None), "builder");
     }
 
+    #[test_id(tgtn9ir)]
     #[test]
     fn spira_reactive_runes_is_the_declared_reactive_rune_only() {
         let ws = testkit::TempDir::new("spira-config-runes-reactive");
@@ -772,6 +785,7 @@ mod tests {
         assert_eq!(spira_reactive_runes(&ws, None), "warden");
     }
 
+    #[test_id(tfxe9bx)]
     #[test]
     fn rune_partitions_dedupes_and_skips_unlabelled() {
         let ws = testkit::TempDir::new("spira-config-runes-partitions");
@@ -789,6 +803,7 @@ mod tests {
         );
     }
 
+    #[test_id(t8dndzb)]
     #[test]
     fn runes_for_labels_reads_every_runes_rune_not_just_the_active_roster() {
         let ws = testkit::TempDir::new("spira-config-runes-for-labels");
@@ -798,12 +813,14 @@ mod tests {
         assert_eq!(runes_for_labels(&ws, "spira,plan"), vec!["builder".to_string(), "shadow".to_string()]);
     }
 
+    #[test_id(tgv7u3e)]
     #[test]
     fn persona_model_from_doc_falls_back_with_no_document() {
         assert_eq!(persona_model_from_doc(None, "builder", "claude-opus-5"), "claude-opus-5");
         assert_eq!(persona_model_from_doc(None, "builder", "claude-x"), "claude-x");
     }
 
+    #[test_id(ty8np9u)]
     #[test]
     fn persona_model_from_doc_falls_back_with_no_persona_table_or_empty_model() {
         let mut doc = SpiraToml::default();
@@ -822,6 +839,7 @@ mod tests {
         assert_eq!(persona_model_from_doc(Some(&doc), "ops", "claude-opus-5"), "claude-opus-5");
     }
 
+    #[test_id(tbk8ktt)]
     #[test]
     fn persona_model_from_doc_reads_the_configured_model() {
         let mut doc = SpiraToml::default();
@@ -847,6 +865,7 @@ mod tests {
     /// `discover()` and so needs the crate-wide `testkit::env` serialization any REAL test of
     /// it would require — see `persona_model`/`persona_model_from_doc`'s identical split
     /// for why that half is exercised only by the end-to-end proof, not a unit test here).
+    #[test_id(tm0l83u)]
     #[test]
     fn extract_label_overlay_picks_known_keys_and_drops_the_rest() {
         let mut resolved = crate::resolve::Resolved::default();
@@ -868,6 +887,7 @@ mod tests {
         assert_eq!(overlay.get("SPIRA_SOME_OTHER_KEY").map(String::as_str), Some("irrelevant"));
     }
 
+    #[test_id(tf61jxi)]
     #[test]
     fn bare_references_skips_guarded_names_but_keeps_required_ones() {
         // SPIRA_SCOPE_LABEL appears TWICE — once as the `:+` condition, once bare INSIDE
@@ -877,12 +897,14 @@ mod tests {
         assert_eq!(refs, vec!["SPIRA_INCIDENT_LABEL".to_string()]);
     }
 
+    #[test_id(tne5qvl)]
     #[test]
     fn bare_references_is_empty_for_a_declared_literal() {
         // concierge.rune's own RUNE_LABELS="" — no `$` at all, nothing to require.
         assert_eq!(bare_references(""), Vec::<String>::new());
     }
 
+    #[test_id(t83vasw)]
     #[test]
     fn assigned_value_strips_quotes_and_takes_the_last_assignment() {
         let text = "RUNE_LABELS=\"first\"\nRUNE_LABELS=\"${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_X_LABEL\"\n";
@@ -895,6 +917,7 @@ mod tests {
     /// `rune_label_overlay`'s own split): a rune whose `RUNE_LABELS` references a
     /// variable this overlay never supplies refuses, naming the exact reference, rather
     /// than handing back an empty string a caller would read as "match everything".
+    #[test_id(tbwqjqp)]
     #[test]
     fn rune_predicate_refuses_rather_than_widen_on_an_unresolved_bare_reference() {
         let dir = testkit::TempDir::new("rune-predicate-refuse");
@@ -918,6 +941,7 @@ mod tests {
     /// process's own ambient environment. That failure must not be read as "the variable
     /// itself is unresolved": [`rune_predicate`] must fall back to the ambient value
     /// `rune_get`'s own bash subshell would actually inherit, not refuse.
+    #[test_id(tue1eas)]
     #[test]
     fn rune_predicate_falls_back_to_the_ambient_environment_when_in_process_resolution_fails() {
         let dir = testkit::TempDir::new("rune-predicate-ambient-fallback");
@@ -928,6 +952,7 @@ mod tests {
         assert_eq!(got.unwrap().labels, "research");
     }
 
+    #[test_id(tu9dlq1)]
     #[test]
     fn rune_predicate_accepts_a_declared_literal_empty_with_no_reference() {
         let dir = testkit::TempDir::new("rune-predicate-literal");
@@ -936,6 +961,7 @@ mod tests {
         assert_eq!(p, Predicate { labels: String::new(), exclude_labels: String::new() });
     }
 
+    #[test_id(t36gb6d)]
     #[test]
     fn rune_predicate_missing_file_is_empty_not_a_refusal() {
         let dir = testkit::TempDir::new("rune-predicate-missing");
@@ -961,6 +987,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-07
+    #[test_id(t4nu11s)]
     #[test]
     fn the_roster_is_the_rune_files_and_no_persona_is_two_of_planned_reactive_and_operator() {
         let ws = testkit::TempDir::new("spira-config-runes-exclusive");
@@ -986,6 +1013,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-08
+    #[test_id(t56j159)]
     #[test]
     fn every_auto_called_predicate_is_built_from_a_label_variable_and_follows_its_configured_value() {
         let offender = r#"RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan""#;
@@ -1021,6 +1049,7 @@ mod tests {
         }
     }
 
+    #[test_id(tqkpwzu)]
     #[test]
     fn rune_uses_reads_declared_classes_refuses_a_stranger_and_reads_absent_as_empty() {
         let ws = testkit::TempDir::new("spira-config-runes-uses");
@@ -1033,6 +1062,7 @@ mod tests {
         assert!(rune_uses(&ws, "none").unwrap().is_empty());
     }
 
+    #[test_id(t6j7uvy)]
     #[test]
     fn the_shipped_runes_declare_build_disk_for_exactly_the_builder_mender_and_pilgrim() {
         let ws = testkit::TempDir::new("spira-config-runes-shipped");
@@ -1052,6 +1082,7 @@ mod tests {
         assert_eq!(uses, ["builder", "mender", "pilgrim"]);
     }
 
+    #[test_id(twas3nm)]
     #[test]
     fn the_reactive_set_is_exactly_the_shipped_personas_that_were_lanes_and_no_rune_sets_rune_lane() {
         let src = shipped_home().join("runes");
@@ -1073,6 +1104,7 @@ mod tests {
         assert_eq!(reactive, ["czar", "groomer", "mender", "mimir", "ops", "pilgrim", "skuld", "warden"]);
     }
 
+    #[test_id(t8pyws0)]
     #[test]
     fn the_shipped_runes_declare_single_flight_for_exactly_the_sweeps_over_shared_state() {
         let dir = shipped_home().join("runes");

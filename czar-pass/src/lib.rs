@@ -3,6 +3,9 @@
 //! scheduler's `czar` task read the world their own way and judge it here; the hysteresis is
 //! `reconciler_engine::core::step` for both.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use reconciler_engine::core::{RawStatus, Verdict};
 
 /// The landing line that is a deadlock: the verdict left the batch open with no suite to blame.
@@ -265,6 +268,7 @@ pub fn parse_iso_to_epoch(ts: &str) -> Option<u64> {
 mod tests {
     use super::*;
 
+    #[test_id(ttq4ir0)]
     #[test]
     fn a_requeue_of_zero_is_not_a_failed_attribution() {
         assert!(requeued_all("x ejected 0, requeued 3 y"));
@@ -272,6 +276,7 @@ mod tests {
         assert!(!requeued_all("x ejected 1, requeued 3"));
     }
 
+    #[test_id(tt61hhr)]
     #[test]
     fn thresholds_are_strict_and_absent_inputs_read_as_their_own_case() {
         assert_eq!(loop_stalled(100, None, 10), RawStatus::Satisfied);
@@ -284,6 +289,7 @@ mod tests {
         assert_eq!(pool_idle("r", true, 9, 2), RawStatus::Satisfied);
     }
 
+    #[test_id(t7lsiw0)]
     #[test]
     fn the_suite_key_is_sorted_and_unknown_when_empty() {
         assert_eq!(suite_key(&["lint".into(), "a".into(), "lint".into()]), "a,lint");

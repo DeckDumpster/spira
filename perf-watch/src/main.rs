@@ -171,6 +171,7 @@ fn run() -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test_id(tgv46ef)]
     #[test]
     fn a_probe_that_exits_non_zero_is_an_error_not_an_answer() {
         let mut spawn = Spawn { scoped: false, measured: None, phases: None };

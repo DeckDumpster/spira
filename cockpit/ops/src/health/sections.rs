@@ -1264,6 +1264,7 @@ fn now_placeholder() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(toryh81)]
     #[test]
     fn a_store_that_is_not_running_is_said_so_with_the_age_of_the_data() {
         let line = |env: &str| lifecycle_line(&Snapshot::parse(env)).unwrap_or_default();
@@ -1273,6 +1274,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-25
+    #[test_id(tmyzgl1)]
     #[test]
     fn no_snapshot_anywhere_says_so_and_a_snapshot_at_the_other_path_is_a_path_mismatch_naming_both() {
         let none = snap_absent_banner(80, "repo/.runtime/spira", None).join("\n");
@@ -1283,6 +1285,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-25
+    #[test_id(ty3bcno)]
     #[test]
     fn the_alternative_run_dir_is_reported_only_when_it_holds_a_snapshot_the_reader_lacks() {
         let home = testkit::TempDir::new("alt-home");
@@ -1296,6 +1299,7 @@ mod tests {
         assert_eq!(mismatch_alt_of(&xdg_run.display().to_string(), "prod", Some(&format!("{h}/repo")), None, h), None, "the reader's own path is not an alternative");
     }
 
+    #[test_id(ta6wdzn)]
     #[test]
     fn the_sentinel_is_armed_only_when_the_scheduler_says_so() {
         let armed = |v: &str| sentinel_armed(&Snapshot::parse(&format!("SP_SENTINEL_TIMER={v}\n")));
@@ -1307,6 +1311,7 @@ mod tests {
         assert!(halt_banner(&h).iter().any(|l| l.contains("the sentinel task is not armed")));
     }
 
+    #[test_id(tdrly7l)]
     #[test]
     fn config_failure_renders_a_refusal_not_a_path() {
         let out = refusal_lines("SPIRA_TOML is not set").join("\n");
@@ -1321,6 +1326,7 @@ mod tests {
         Snapshot::parse(&text)
     }
 
+    #[test_id(tsfvxkn)]
     #[test]
     fn win_renders_question_mark_when_ratelim_is_stale() {
         let extra = TokensExtra { renderer_rev: "", collector_rev: "", tok_win_spark: "" };
@@ -1337,6 +1343,7 @@ mod tests {
         assert!(!unknown.contains("23%") && !unknown.contains("96%"));
     }
 
+    #[test_id(t8mzqi0)]
     #[test]
     fn pools_row_shows_held_of_size_waiting_and_question_marks() {
         let s = snap(&[
@@ -1351,6 +1358,7 @@ mod tests {
         assert!(at("test") < at("gate") && at("gate") < at("cold"), "{row}");
     }
 
+    #[test_id(tna8vu5)]
     #[test]
     fn now_section_unread_when_the_lifecycle_store_cannot_answer() {
         let s = snap(&[]);
@@ -1359,12 +1367,14 @@ mod tests {
         assert!(out[0].contains("cannot read the dwarf roster"));
     }
 
+    #[test_id(txqha54)]
     #[test]
     fn now_section_says_idle_from_the_store_even_with_no_snapshot() {
         let out = now_section(&snap(&[]), 80, Some(&[]), 2);
         assert!(out[0].contains("no dwarf working"), "{out:?}");
     }
 
+    #[test_id(tkx1dcn)]
     #[test]
     fn now_section_names_the_phase_the_row_records_for_a_snapshotted_dwarf() {
         let s = snap(&[("SP_DWARF_N", "1"), ("SP_DWARF0_BEAD", "sp-a"), ("SP_DWARF0_NAME", "dwarf-x"), ("SP_DWARF0_RUNE", "builder")]);
@@ -1373,6 +1383,7 @@ mod tests {
         assert!(out.contains("\u{b7} session \u{b7}"), "{out}");
     }
 
+    #[test_id(tq4hi10)]
     #[test]
     fn now_section_names_a_working_row_the_snapshot_has_not_caught_up_to() {
         let s = snap(&[("SP_DWARF_N", "0")]);
@@ -1381,6 +1392,7 @@ mod tests {
         assert!(out.contains("1 dwarf(s) live") && out.contains("sp-new building"), "{out}");
     }
 
+    #[test_id(tzqb48z)]
     #[test]
     fn now_section_idle_when_both_zero() {
         let s = snap(&[("SP_DWARF_N", "0")]);
@@ -1388,6 +1400,7 @@ mod tests {
         assert_eq!(out, vec![format!(" {DIM}NOW{RST}    {DIM}no dwarf working{RST}")]);
     }
 
+    #[test_id(tw9qnmo)]
     #[test]
     fn next_section_nothing_to_claim() {
         let s = snap(&[("SP_NEXT_N", "0"), ("SP_REACHABLE", "0")]);
@@ -1396,6 +1409,7 @@ mod tests {
         assert!(out[0].contains("nothing to claim"));
     }
 
+    #[test_id(tzswsc2)]
     #[test]
     fn recent_row_parses_bead_id_and_colours_it() {
         let line = recent_row(80, "52s builder landed sp-abcd Fixed the thing", 8, "");
@@ -1403,6 +1417,7 @@ mod tests {
         assert!(line.contains(ACC));
     }
 
+    #[test_id(to3je3q)]
     #[test]
     fn recent_row_unparseable_prints_as_is_dimmed_and_cut() {
         let line = recent_row(20, "not the expected shape at all, quite long", 8, "");
@@ -1410,6 +1425,7 @@ mod tests {
         assert!(line.contains('\u{2026}'));
     }
 
+    #[test_id(t33iti5)]
     #[test]
     fn recent_row_aggregate_verb_does_not_colour_the_count_as_a_bead() {
         let line = recent_row(80, "3m sentinel reaped 1 landed branch(es)", 8, "");
@@ -1417,6 +1433,7 @@ mod tests {
         assert!(!line.contains(&format!("{ACC}1")));
     }
 
+    #[test_id(txx2kf8)]
     #[test]
     fn inflow_row_renders_the_repo_tag() {
         let line = inflow_row(100, "5m task P2 sp-xyz9 multi-tenancy 4", "deckdumpster");
@@ -1428,6 +1445,7 @@ mod tests {
         assert!(line.contains("deckdump"), "{line}");
     }
 
+    #[test_id(tpi0af2)]
     #[test]
     fn inflow_row_parses_kind_and_priority() {
         let line = inflow_row(80, "5m bug P0 sp-xyz9 Something broke", "");
@@ -1435,12 +1453,14 @@ mod tests {
         assert!(line.contains(BAD)); // bug is coloured BAD
     }
 
+    #[test_id(tgvw1kd)]
     #[test]
     fn ci_section_prints_even_at_zero() {
         let s = snap(&[("SP_AWAITING_N", "0"), ("SP_AWAITING_STUCK", "0")]);
         assert_eq!(ci_section(&s, 80), vec![format!(" {DIM}CI{RST}     {DIM}nothing parked on CI{RST}")]);
     }
 
+    #[test_id(tc0h5gh)]
     #[test]
     fn flow_lines_render_the_headlines_and_question_marks_never_zero() {
         let ok = flow_lines(&snap(&[("SP_TSD_WHERE", "WORKING 3 (12m)"), ("SP_TSD_REWORK", "1 reopened / 9 landed")])).join("\n");
@@ -1450,12 +1470,14 @@ mod tests {
         assert!(!bad.contains(" 0"), "{bad}");
     }
 
+    #[test_id(tg6ewjc)]
     #[test]
     fn halt_banner_silent_when_no_stamp_and_sentinel_active() {
         let h = HaltState { stamp_exists: false, since: String::new(), why: String::new(), sentinel_active: Some(true) };
         assert!(halt_banner(&h).is_empty());
     }
 
+    #[test_id(tdm0z1u)]
     #[test]
     fn halt_banner_shown_when_stamp_present_even_if_sentinel_active() {
         let h = HaltState {
@@ -1470,6 +1492,7 @@ mod tests {
         assert!(out.iter().any(|l| l.contains("fixing the gate")));
     }
 
+    #[test_id(t1ptlqo)]
     #[test]
     fn halt_banner_shown_with_no_stamp_and_sentinel_not_active() {
         let h = HaltState { stamp_exists: false, since: String::new(), why: String::new(), sentinel_active: Some(false) };
@@ -1478,11 +1501,13 @@ mod tests {
         assert!(out.iter().any(|l| l.contains("the sentinel task is not armed")));
     }
 
+    #[test_id(t3yxx3h)]
     #[test]
     fn drain_banner_absent_when_no_stamp() {
         assert!(drain_banner(&DrainState { stamp_mtime: None }, 1000).is_empty());
     }
 
+    #[test_id(trhznwb)]
     #[test]
     fn drain_banner_shows_minutes_gated() {
         let out = drain_banner(&DrainState { stamp_mtime: Some(1000) }, 1000 + 125);
@@ -1490,11 +1515,12 @@ mod tests {
         assert!(out[0].contains('2')); // 125s -> 2 minutes
     }
 
+    #[test_id(t8os2wg)]
     #[test]
     fn share_specs_from_next_and_recent_bases_cap_at_rendered_want() {
         // A base above what the section actually rendered would hand it rows it has no
         // content for; frame.rs is responsible for capping nb/rb/ib by `want`, tested there.
-        use super::super::share::Spec;
+        use super::super::super::share::Spec;
         let s = Spec::new(NEXT_BASE_ROWS + 1, 3, false);
         assert_eq!(s.base, 6);
     }
@@ -1503,6 +1529,7 @@ mod tests {
         queue_section(&Snapshot::parse(snap), 120).join("\n")
     }
 
+    #[test_id(tmzo1ro)]
     #[test]
     fn queue_pane_lists_each_held_test_with_bead_and_expiry_within_the_columns() {
         let held = "SP_QUEUE_DEPTH='1'\nSP_TESTREG_N='1'\nSP_TESTREG0_STATE='disabled'\n\
@@ -1529,6 +1556,7 @@ mod tests {
         assert!(unread.contains("cannot read the test registry"), "{unread:?}");
     }
 
+    #[test_id(tzww78s)]
     #[test]
     fn queue_pane_renders_funnel_stages_and_red_breakdown() {
         let t = queue_text(
@@ -1541,6 +1569,7 @@ mod tests {
         assert!(!t.contains("anomaly"));
     }
 
+    #[test_id(tsrnogb)]
     #[test]
     fn queue_pane_renders_question_marks_never_zero_for_unread_or_absent_funnel() {
         let unread = queue_text("SP_QUEUE_DEPTH='?'\nSP_FUNNEL_CERTIFY_N='?'\nSP_FUNNEL_RED_N='?'\n");

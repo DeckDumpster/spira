@@ -152,6 +152,7 @@ mod real_tests {
         (Real::with("UTC".into(), Ok(LcClient::over(t.clone(), true)), send), t)
     }
 
+    #[test_id(tkaq4mq)]
     #[test]
     fn busy_is_read_through_the_store_client() {
         let (r, t) = real(r#"[{"bead_id":"a","holds":"[]"}]"#, Arc::default());
@@ -161,6 +162,7 @@ mod real_tests {
         assert_eq!(r.busy(), Ok(false));
     }
 
+    #[test_id(tqhe93q)]
     #[test]
     fn the_prompt_is_mailed_in_process_with_the_cli_flags() {
         let _env = testkit::env(&[("IDEA_PROMPT_MAIL", None)]);

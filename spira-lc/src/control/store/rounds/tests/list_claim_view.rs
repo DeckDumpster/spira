@@ -1,6 +1,7 @@
 use super::*;
 
 
+#[test_id(txu5hjh)]
 #[test]
 fn list_answers_a_beads_claimability_from_its_prerequisite_when_it_is_read() {
     let r = Rig::new();
@@ -20,6 +21,7 @@ fn list_answers_a_beads_claimability_from_its_prerequisite_when_it_is_read() {
     assert!(claim_view_of(&r, "sp-a").is_null(), "a LANDED record has no claim view");
 }
 
+#[test_id(tuxylj4)]
 #[test]
 fn a_ready_record_without_a_repo_says_the_repo_is_what_its_claim_view_lacks() {
     let r = Rig::new();
@@ -30,6 +32,7 @@ fn a_ready_record_without_a_repo_says_the_repo_is_what_its_claim_view_lacks() {
     assert_eq!(v["missing"], serde_json::json!(["repo"]));
 }
 
+#[test_id(tmbbbhv)]
 #[test]
 fn list_keeps_a_pilgrimage_blocked_while_its_blocker_is_in_delivery_and_claimable_once_it_lands() {
     let r = Rig::new();
@@ -47,6 +50,7 @@ fn list_keeps_a_pilgrimage_blocked_while_its_blocker_is_in_delivery_and_claimabl
     assert_eq!(claim_view_of(&r, "sp-b")["verdict"], "claimable");
 }
 
+#[test_id(tqezht8)]
 #[test]
 fn list_with_unreadable_view_inputs_still_lists_and_each_ready_row_says_it_cannot_tell() {
     let r = Rig::new();

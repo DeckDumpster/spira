@@ -1,5 +1,7 @@
 //! `spira-config repo set` / `repo rm` through the binary a caller runs, against a throwaway repo-map.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -33,6 +35,7 @@ fn fixture() -> (testkit::TempDir, std::path::PathBuf) {
     (d, map)
 }
 
+#[test_id(te0m3j7)]
 #[test]
 fn set_gate_to_empty_reads_back_empty_through_repo_field() {
     let (_d, map) = fixture();
@@ -44,6 +47,7 @@ fn set_gate_to_empty_reads_back_empty_through_repo_field() {
     assert_eq!(field(&map, "fx", "format"), "fmt");
 }
 
+#[test_id(tcnyva3)]
 #[test]
 fn set_with_an_unknown_field_refuses_and_changes_nothing() {
     let (_d, map) = fixture();
@@ -52,6 +56,7 @@ fn set_with_an_unknown_field_refuses_and_changes_nothing() {
     assert_eq!(field(&map, "fx", "gate"), "bash gate.sh");
 }
 
+#[test_id(t93klmq)]
 #[test]
 fn rm_unregisters_the_repo() {
     let (_d, map) = fixture();

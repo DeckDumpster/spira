@@ -298,18 +298,19 @@ mod tests {
     /// Every family-F and family-G row builds from the `Settings` it is handed, with no config
     /// door resolved: a planted value there is the cadence pinned, and a key the settings lack
     /// refuses.
+    #[test_id(tg5srec)]
     #[test]
     fn the_helpers_read_the_settings_they_are_given_not_the_process_config() {
         let mut s = crate::settings::fixture();
-        s.task_config.insert(super::asks_ideas::CADENCE_KEY.into(), "42".into());
-        assert_eq!(super::cadence(&s, super::asks_ideas::CADENCE_KEY), 42_000);
-        assert_eq!(super::asks_ideas::AsksIdeas::from_settings(&s).map(|t| t.interval_ms), Ok(42_000), "the row pins what the settings hold");
-        for row in super::TASKS.iter().chain(super::super::g::TASKS) {
+        s.task_config.insert(super::super::asks_ideas::CADENCE_KEY.into(), "42".into());
+        assert_eq!(super::super::cadence(&s, super::super::asks_ideas::CADENCE_KEY), 42_000);
+        assert_eq!(super::super::asks_ideas::AsksIdeas::from_settings(&s).map(|t| t.interval_ms), Ok(42_000), "the row pins what the settings hold");
+        for row in super::super::TASKS.iter().chain(super::super::super::g::TASKS) {
             let _ = (row.build)(&s);
             let _ = (row.cadence_ms)(&s);
         }
-        assert!(super::pinned(&s, &["SPIRA_PLANTED_NOT_A_KEY"]).is_err(), "a key the settings lack refuses");
-        s.task_config.insert(super::asks_ideas::CADENCE_KEY.into(), "0".into());
-        assert!(super::cadence_ms(&s, super::asks_ideas::CADENCE_KEY).is_err());
+        assert!(super::super::pinned(&s, &["SPIRA_PLANTED_NOT_A_KEY"]).is_err(), "a key the settings lack refuses");
+        s.task_config.insert(super::super::asks_ideas::CADENCE_KEY.into(), "0".into());
+        assert!(super::super::cadence_ms(&s, super::super::asks_ideas::CADENCE_KEY).is_err());
     }
 }

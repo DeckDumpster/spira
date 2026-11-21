@@ -79,6 +79,7 @@ mod tests {
         BTreeMap::from([("SPIRA_HOME".to_string(), dir.join("rel/spira").display().to_string())])
     }
 
+    #[test_id(tfs3kuc)]
     #[test]
     fn the_script_is_the_releases_not_the_repo_maps_home_row() {
         let dir = testkit::TempDir::new("wake-script");
@@ -89,6 +90,7 @@ mod tests {
         assert_eq!(concierge_script(&release_env(&dir)).unwrap(), dir.join("rel/concierge.sh"));
     }
 
+    #[test_id(t3ttj7w)]
     #[test]
     fn a_release_without_the_script_fails_naming_the_path() {
         let dir = testkit::TempDir::new("wake-noscript");
@@ -99,6 +101,7 @@ mod tests {
         assert!(err.contains(&dir.join("rel/concierge.sh").display().to_string()), "{err}");
     }
 
+    #[test_id(tjfbqog)]
     #[test]
     fn the_release_script_runs_and_the_home_row_script_never_does() {
         let dir = testkit::TempDir::new("wake-run");
@@ -111,6 +114,7 @@ mod tests {
         assert!(rel_marker.exists() && !home_marker.exists());
     }
 
+    #[test_id(tpa9zvj)]
     #[test]
     fn a_wake_that_outlives_its_deadline_is_killed_and_reported_failed() {
         let dir = testkit::TempDir::new("wake-deadline");

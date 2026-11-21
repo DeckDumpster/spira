@@ -432,6 +432,7 @@ mod tests {
         }
     }
 
+    #[test_id(t1lt813)]
     #[test]
     fn every_registered_effect_names_a_class() {
         let tables = act_tables();
@@ -446,6 +447,7 @@ mod tests {
         assert!(missing.is_empty(), "effects with no class row; add them to CLASSES:\n{}", missing.join("\n"));
     }
 
+    #[test_id(tit1sov)]
     #[test]
     fn every_act_table_row_agrees_with_the_class_table() {
         let tables = act_tables();
@@ -461,6 +463,7 @@ mod tests {
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
+    #[test_id(tylmq6x)]
     #[test]
     fn the_class_table_names_only_registered_effects_once() {
         let reg = registered();
@@ -472,6 +475,7 @@ mod tests {
     }
 
     /// The contract's own example: a dwarf start is a unit verb, its metric a host write.
+    #[test_id(to9gv0e)]
     #[test]
     fn sentinel_call_runs_unit_start_as_unit_and_metric_as_host() {
         use crate::tasks::a::sentinel_call::{METRIC, UNIT_START};
@@ -480,6 +484,7 @@ mod tests {
         assert_eq!(class_of(runtime::units::UNIT_START), Some(Unit));
     }
 
+    #[test_id(trmfh6v)]
     #[test]
     fn with_the_host_class_full_a_unit_start_still_takes_a_permit() {
         use crate::tasks::a::sentinel_call::{METRIC, UNIT_START};

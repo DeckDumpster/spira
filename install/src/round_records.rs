@@ -139,6 +139,7 @@ mod tests {
         }
     }
 
+    #[test_id(tsblixa)]
     #[test]
     fn round_files_naming_ended_or_unknown_rounds_are_deleted_and_nothing_else_is() {
         let d = queue_dir("ended");
@@ -149,6 +150,7 @@ mod tests {
         assert_eq!(gone, files.iter().map(|f| f.path.clone()).collect::<Vec<_>>());
     }
 
+    #[test_id(t77d1es)]
     #[test]
     fn the_forge_batch_files_are_removed_too_and_one_naming_an_open_batch_is_refused() {
         let d = testkit::TempDir::new("install-round-records-forge");
@@ -175,6 +177,7 @@ mod tests {
         assert!(e.contains("poke/open names batch PR 44, recorded by no batch on the store"), "{e}");
     }
 
+    #[test_id(tbmiztd)]
     #[test]
     fn a_round_file_naming_an_open_round_is_refused_by_name_with_the_drain_step() {
         let d = queue_dir("open");
@@ -186,6 +189,7 @@ mod tests {
         assert!(e.contains("whose state the store cannot tell: lc-serve is down"), "{e}");
     }
 
+    #[test_id(tch38ek)]
     #[test]
     fn a_partition_clears_what_the_store_has_ended_and_holds_the_rest_by_name() {
         let d = queue_dir("partition");

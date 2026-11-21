@@ -137,12 +137,14 @@ mod tests {
         steps.iter().find(|s| s.key == key).unwrap()
     }
 
+    #[test_id(tlck0eo)]
     #[test]
     fn a_key_neither_firing_nor_known_never_appears() {
         let steps = step_keys(100, 2, 2, 3600, true, &keys(&[]), &BTreeMap::new());
         assert!(steps.is_empty());
     }
 
+    #[test_id(t6g45at)]
     #[test]
     fn one_sighting_does_not_fire_a_condition_must_be_confirmed() {
         let steps = step_keys(100, 2, 2, 3600, true, &keys(&["k"]), &BTreeMap::new());
@@ -151,6 +153,7 @@ mod tests {
         assert_eq!(s.counters.seen, 1);
     }
 
+    #[test_id(txzbozy)]
     #[test]
     fn a_confirmed_condition_raises() {
         let prior = prior_with("k", KeyState { seen: 1, ..Default::default() });
@@ -162,6 +165,7 @@ mod tests {
         assert_eq!(s.counters.flaps, 1);
     }
 
+    #[test_id(t4lfevk)]
     #[test]
     fn raise_success_sets_firing_since_and_refreshed() {
         let prior = prior_with("k", KeyState { seen: 1, ..Default::default() });
@@ -174,6 +178,7 @@ mod tests {
         assert_eq!(k.flaps, 1);
     }
 
+    #[test_id(tjcfoxh)]
     #[test]
     fn raise_failure_rolls_back_the_flap_but_not_first() {
         let prior = prior_with("k", KeyState { seen: 1, flaps: 4, ..Default::default() });
@@ -186,6 +191,7 @@ mod tests {
         assert_eq!(k.state, "clear", "never transitioned on a failed write");
     }
 
+    #[test_id(tz4rhjr)]
     #[test]
     fn a_flap_does_not_accumulate_beads_reraise_still_one_bead() {
         // Already firing, still firing: no new confirm, no flap bump, no trigger.
@@ -196,6 +202,7 @@ mod tests {
         assert_eq!(s.counters.flaps, 0);
     }
 
+    #[test_id(tppyt8j)]
     #[test]
     fn one_clear_sighting_does_not_retract_it() {
         let prior = prior_with("k", KeyState { state: "firing".into(), refreshed: 100, ..Default::default() });
@@ -205,6 +212,7 @@ mod tests {
         assert_eq!(s.counters.unseen, 1);
     }
 
+    #[test_id(t0rtt8c)]
     #[test]
     fn confirmed_clear_transitions_on_success() {
         let prior = prior_with("k", KeyState { state: "firing".into(), unseen: 1, refreshed: 100, ..Default::default() });
@@ -216,6 +224,7 @@ mod tests {
         assert_eq!(k.since, 200);
     }
 
+    #[test_id(tesyjou)]
     #[test]
     fn clear_failure_leaves_state_firing_for_a_retry_next_pass() {
         let prior = prior_with("k", KeyState { state: "firing".into(), unseen: 1, refreshed: 100, ..Default::default() });
@@ -225,6 +234,7 @@ mod tests {
         assert_eq!(k.state, "firing");
     }
 
+    #[test_id(tbxh44m)]
     #[test]
     fn refresh_fires_only_after_the_interval_elapses() {
         let prior = prior_with("k", KeyState { state: "firing".into(), refreshed: 100, ..Default::default() });
@@ -234,6 +244,7 @@ mod tests {
         assert_eq!(step_for(&steps, "k").trigger, Trigger::Refresh);
     }
 
+    #[test_id(tl32jv3)]
     #[test]
     fn refresh_success_bumps_refreshed_only() {
         let prior = prior_with("k", KeyState { state: "firing".into(), flaps: 2, refreshed: 100, ..Default::default() });
@@ -245,6 +256,7 @@ mod tests {
         assert_eq!(k.state, "firing");
     }
 
+    #[test_id(tv5pvbn)]
     #[test]
     fn refresh_skip_for_a_hand_closed_bead_still_bumps_refreshed() {
         let prior = prior_with("k", KeyState { state: "firing".into(), refreshed: 100, ..Default::default() });
@@ -255,6 +267,7 @@ mod tests {
         assert_eq!(k.state, "firing", "not reopened — an operator's close is an acknowledgement");
     }
 
+    #[test_id(t46wtkt)]
     #[test]
     fn conditions_do_not_mask_each_other() {
         let prior = prior_with("a", KeyState { seen: 1, ..Default::default() });
@@ -265,6 +278,7 @@ mod tests {
         assert_eq!(step_for(&steps, "b").counters.seen, 1);
     }
 
+    #[test_id(t2zheem)]
     #[test]
     fn an_unconfirmed_key_is_dropped_when_it_stops_firing_before_ever_raising() {
         // Seen once, never reaches CONFIRM, then stops — no bead, nothing to clear either.
@@ -275,6 +289,7 @@ mod tests {
         assert_eq!(s.counters.state, "clear");
     }
 
+    #[test_id(tg0juox)]
     #[test]
     fn an_unreachable_database_updates_counters_but_never_triggers() {
         // Confirmed twice over, but the database never answered this pass: seen/unseen
@@ -289,6 +304,7 @@ mod tests {
         assert_eq!(s.counters.first, 0);
     }
 
+    #[test_id(tfu0bbt)]
     #[test]
     fn a_confirmed_condition_reopens_after_a_full_clear_and_return() {
         // state=clear after a prior episode, flaps already at 1; firing again reaching

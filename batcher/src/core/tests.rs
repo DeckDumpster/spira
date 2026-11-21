@@ -52,6 +52,7 @@ fn suite(name: &str, outcome: SuiteOutcome, asserts: &[&str]) -> SuiteRun {
 
 // -- clean_title --------------------------------------------------------------------------
 
+#[test_id(t4umayn)]
 #[test]
 fn clean_title_drops_a_foreign_bead_prefix_never_mid_word() {
     assert_eq!(
@@ -71,6 +72,7 @@ fn clean_title_drops_a_foreign_bead_prefix_never_mid_word() {
 
 // ACCEPTANCE (sp-1oiokx): any non-empty pool with no batch open cuts at once — no count to
 // reach, no idle wait to sit out.
+#[test_id(tesxty7)]
 #[test]
 fn a_pool_of_one_cuts_at_once() {
     let pool = vec![m("sp-a", 2, false, 0)];
@@ -82,6 +84,7 @@ fn a_pool_of_one_cuts_at_once() {
     assert_eq!(should_cut(&t), Some(TriggerReason::PoolFull(1)));
 }
 
+#[test_id(tao8ikf)]
 #[test]
 fn no_shared_epic_is_a_catch_all_of_the_whole_pool() {
     let pool = vec![
@@ -94,6 +97,7 @@ fn no_shared_epic_is_a_catch_all_of_the_whole_pool() {
     assert_eq!(round_ids(&round), ["sp-a", "sp-b.1", "sp-c.1"]);
 }
 
+#[test_id(tzq6w7q)]
 #[test]
 fn two_members_of_one_epic_cut_that_feature_alone() {
     let pool = vec![
@@ -107,6 +111,7 @@ fn two_members_of_one_epic_cut_that_feature_alone() {
     assert_eq!(round_ids(&round), ["sp-f.1", "sp-f.2"]);
 }
 
+#[test_id(tx7en6a)]
 #[test]
 fn the_epic_parent_itself_belongs_to_its_feature() {
     let pool = vec![
@@ -119,6 +124,7 @@ fn the_epic_parent_itself_belongs_to_its_feature() {
     assert_eq!(round_ids(&round), ["sp-f", "sp-f.1"]);
 }
 
+#[test_id(t734vn5)]
 #[test]
 fn the_larger_feature_wins_and_a_tie_goes_to_the_lower_root() {
     let pool = vec![
@@ -138,6 +144,7 @@ fn the_larger_feature_wins_and_a_tie_goes_to_the_lower_root() {
     assert_eq!(select_round(pool).1, RoundKind::Feature("sp-b".into()));
 }
 
+#[test_id(t19bma1)]
 #[test]
 fn what_the_feature_stacks_on_and_what_stacks_on_it_ride_along() {
     let mut dep = m("sp-d", 2, false, 4);
@@ -162,6 +169,7 @@ fn what_the_feature_stacks_on_and_what_stacks_on_it_ride_along() {
     );
 }
 
+#[test_id(ts76wbs)]
 #[test]
 fn an_express_member_rides_in_a_feature_round() {
     let pool = vec![
@@ -174,6 +182,7 @@ fn an_express_member_rides_in_a_feature_round() {
     assert_eq!(round_ids(&round), ["sp-f.1", "sp-f.2", "sp-x"]);
 }
 
+#[test_id(tn2cme4)]
 #[test]
 fn pool_full_cuts_a_round() {
     let pool = vec![
@@ -190,6 +199,7 @@ fn pool_full_cuts_a_round() {
     assert_eq!(should_cut(&t), Some(TriggerReason::PoolFull(4)));
 }
 
+#[test_id(tdvvkrt)]
 #[test]
 fn empty_pool_never_cuts_on_idle() {
     let t = TriggerInputs {
@@ -200,6 +210,7 @@ fn empty_pool_never_cuts_on_idle() {
     assert_eq!(should_cut(&t), None);
 }
 
+#[test_id(tgeungd)]
 #[test]
 fn express_member_cuts_at_once_regardless_of_pool_size() {
     let pool = vec![m("sp-a", 2, false, 0), m("sp-x", 1, true, 5)];
@@ -211,6 +222,7 @@ fn express_member_cuts_at_once_regardless_of_pool_size() {
     assert_eq!(should_cut(&t), Some(TriggerReason::Express("sp-x".into())));
 }
 
+#[test_id(tucjdtl)]
 #[test]
 fn main_red_cuts_at_once_and_outranks_express() {
     let pool = vec![m("sp-x", 1, true, 0)];
@@ -224,6 +236,7 @@ fn main_red_cuts_at_once_and_outranks_express() {
 
 /// While a batch PR is open any non-empty pool prepares the next round on its head, so a
 /// round is ready the moment the PR lands (law-queue-back-pressure-is-an-open-pr).
+#[test_id(to4f6tw)]
 #[test]
 fn open_batch_pr_prepares_rather_than_cuts() {
     let pool = vec![
@@ -244,6 +257,7 @@ fn open_batch_pr_prepares_rather_than_cuts() {
 
 /// An express member while a batch is open still triggers, as a round of its own to build,
 /// never as a push into the open PR.
+#[test_id(td16bhc)]
 #[test]
 fn express_triggers_while_a_batch_pr_is_open() {
     let pool = vec![m("sp-x", 1, true, 0)];
@@ -257,6 +271,7 @@ fn express_triggers_while_a_batch_pr_is_open() {
 
 // -- B. Combine: merge, order, set-aside -----------------------------------------------------
 
+#[test_id(t5367rl)]
 #[test]
 fn combine_orders_express_first_then_rank_then_arrival() {
     let pool = vec![
@@ -283,6 +298,7 @@ fn combine_orders_express_first_then_rank_then_arrival() {
     assert!(combined.set_aside.is_empty());
 }
 
+#[test_id(tk4647i)]
 #[test]
 fn a_conflicting_member_is_set_aside_never_merged() {
     let pool = vec![m("sp-a", 1, false, 0), m("sp-b", 1, false, 0)];
@@ -320,6 +336,7 @@ fn a_conflicting_member_is_set_aside_never_merged() {
 /// Synthetic: an all-conflict round — every member set aside, nothing merged, and the
 /// round still produces a defined (empty) membership rather than panicking or defaulting
 /// to "merge everyone".
+#[test_id(t0dxxrp)]
 #[test]
 fn all_conflict_round_merges_nothing() {
     let pool = vec![
@@ -347,6 +364,7 @@ fn all_conflict_round_merges_nothing() {
 /// A member whose tip is already an ancestor of the round head (reset to an old base, or no
 /// commits of its own) is set aside as Empty, never merged, and never mixed in with a real
 /// conflict's reason — sp-5xki9's batcher parity fix.
+#[test_id(tdzjgle)]
 #[test]
 fn an_empty_member_is_set_aside_never_merged() {
     let pool = vec![m("sp-a", 1, false, 0), m("sp-b", 1, false, 0)];
@@ -384,6 +402,7 @@ fn an_empty_member_is_set_aside_never_merged() {
 /// The acceptance scenario itself, at the pure-core layer: A, B stacked on A, C stacked on
 /// B, handed to topo_order in the wrong order (C, A, B) — SEEN RED first against `order_key`
 /// alone, which sorts by (express, priority, certified_at) and has no idea B depends on A.
+#[test_id(tl6vwo7)]
 #[test]
 fn topo_order_sorts_a_stack_prerequisite_first_regardless_of_pool_order() {
     let a = m("sp-a", 1, false, 0);
@@ -404,6 +423,7 @@ fn blocked(id: &str, by: &[&str]) -> Member {
     }
 }
 
+#[test_id(tlfr6s6)]
 #[test]
 fn a_member_whose_blocker_has_not_landed_is_not_cut_and_the_refusal_names_it() {
     let (kept, refused) =
@@ -419,6 +439,7 @@ fn a_member_whose_blocker_has_not_landed_is_not_cut_and_the_refusal_names_it() {
     );
 }
 
+#[test_id(t5h2nag)]
 #[test]
 fn a_refusal_carries_the_member_and_blocker_ids_and_prints_the_stdout_line() {
     let (_, refused) = refuse_blocked(vec![blocked("sp-c", &["sp-p"])]);
@@ -426,6 +447,7 @@ fn a_refusal_carries_the_member_and_blocker_ids_and_prints_the_stdout_line() {
     assert_eq!(refused[0].to_string(), "sp-c: depends on sp-p (unlanded) — not cut");
 }
 
+#[test_id(tiru19a)]
 #[test]
 fn a_member_whose_blocker_is_only_in_the_same_round_is_cut_after_its_blocker() {
     let (kept, refused) = refuse_blocked(vec![blocked("sp-b", &["sp-a"]), m("sp-a", 3, false, 0)]);
@@ -435,6 +457,7 @@ fn a_member_whose_blocker_is_only_in_the_same_round_is_cut_after_its_blocker() {
     assert_eq!(order, ["sp-a", "sp-b"]);
 }
 
+#[test_id(tmzhpu9)]
 #[test]
 fn a_cap_that_drops_the_blocker_refuses_its_dependant() {
     let (capped, full) = cap_round(topo_order(&[m("sp-x", 1, false, 0), m("sp-a", 3, false, 0), blocked("sp-b", &["sp-a"])]), 1);
@@ -446,6 +469,7 @@ fn a_cap_that_drops_the_blocker_refuses_its_dependant() {
     assert!(refused[0].to_string().contains("sp-b: depends on sp-a"), "{refused:?}");
 }
 
+#[test_id(twhslpf)]
 #[test]
 fn a_provisional_member_ranks_after_a_certified_one_of_equal_priority_and_the_cap_drops_it_first() {
     let provisional = |id: &str| Member { provisional: true, ..m(id, 1, false, 0) };
@@ -457,6 +481,7 @@ fn a_provisional_member_ranks_after_a_certified_one_of_equal_priority_and_the_ca
     assert!(order_key(&express) < order_key(&pool[1]), "express still outranks a certified member");
 }
 
+#[test_id(tfrswxx)]
 #[test]
 fn a_round_at_the_cap_is_cut_whole_and_one_more_member_is_refused_naming_it() {
     let pool = |n: usize| {
@@ -474,12 +499,14 @@ fn a_round_at_the_cap_is_cut_whole_and_one_more_member_is_refused_naming_it() {
     assert_eq!(refused, ["sp-3: the round is full at 3 members — not cut"]);
 }
 
+#[test_id(tnw4mwm)]
 #[test]
 fn a_member_whose_blocker_has_landed_is_cut() {
     let (kept, refused) = refuse_blocked(vec![blocked("sp-b", &[])]);
     assert_eq!((kept.len(), refused.len()), (1, 0));
 }
 
+#[test_id(tlhy3r2)]
 #[test]
 fn a_blocker_that_is_itself_refused_refuses_its_dependent_too() {
     let (kept, refused) = refuse_blocked(vec![
@@ -490,6 +517,7 @@ fn a_blocker_that_is_itself_refused_refuses_its_dependent_too() {
     assert_eq!(refused.len(), 2, "{refused:?}");
 }
 
+#[test_id(tu2uvf0)]
 #[test]
 fn a_feature_round_carries_the_in_pool_blocker_of_a_kept_member() {
     let pool = vec![
@@ -503,6 +531,7 @@ fn a_feature_round_carries_the_in_pool_blocker_of_a_kept_member() {
     assert!(ids.contains(&"sp-x") && !ids.contains(&"sp-y"), "{ids:?}");
 }
 
+#[test_id(thty64a)]
 #[test]
 fn topo_order_with_no_stacking_reduces_to_order_key() {
     let pool = vec![
@@ -518,6 +547,7 @@ fn topo_order_with_no_stacking_reduces_to_order_key() {
     );
 }
 
+#[test_id(tljegc5)]
 #[test]
 fn stack_sequencing_is_empty_when_every_stacked_prereq_is_in_the_pool_at_its_recorded_tip() {
     let a = m("sp-a", 1, false, 0);
@@ -529,6 +559,7 @@ fn stack_sequencing_is_empty_when_every_stacked_prereq_is_in_the_pool_at_its_rec
 /// The tip invariant, extended to round assembly (design §1, "Tip invariant, extended"): a
 /// member whose stack names a prerequisite tip that the pool does not currently certify at
 /// that exact tip is refused — member_added's stale-stack refusal.
+#[test_id(tcl5pln)]
 #[test]
 fn stack_sequencing_refuses_a_member_whose_prereq_tip_does_not_match_the_pool() {
     let a = m("sp-a", 1, false, 0);
@@ -540,6 +571,7 @@ fn stack_sequencing_refuses_a_member_whose_prereq_tip_does_not_match_the_pool() 
 /// A prerequisite absent from the pool entirely (reworked, ejected, or simply landed and
 /// already dropped from `stack` upstream) is the same refusal — no row to confirm the tip
 /// against.
+#[test_id(t6lc1mm)]
 #[test]
 fn stack_sequencing_refuses_a_member_whose_prereq_is_not_in_the_pool_at_all() {
     let b = stacked("sp-b", 1, 0, &[("sp-a", "sp-a-tip")]);
@@ -550,6 +582,7 @@ fn stack_sequencing_refuses_a_member_whose_prereq_is_not_in_the_pool_at_all() {
 /// Bullet 3 of the bead: a member whose tip is already an ancestor of the round head because
 /// a dependent carrying it merged first is still a member — recorded, never dropped as
 /// Empty — while a genuinely-empty member unrelated to any stack keeps today's behaviour.
+#[test_id(tupyd5l)]
 #[test]
 fn combine_keeps_a_stacked_prerequisite_whose_tip_merged_empty() {
     let a = m("sp-a", 1, false, 0);
@@ -586,6 +619,7 @@ fn combine_keeps_a_stacked_prerequisite_whose_tip_merged_empty() {
     );
 }
 
+#[test_id(tprbitz)]
 #[test]
 fn evicted_event_for_an_empty_member_names_it_not_a_member() {
     let sa = SetAside {
@@ -600,6 +634,7 @@ fn evicted_event_for_an_empty_member_names_it_not_a_member() {
 
 /// A member absent from the merge-results map (never attempted) is treated as a conflict,
 /// not silently merged — a missing lookup fails closed.
+#[test_id(t7z1d43)]
 #[test]
 fn a_member_missing_from_merge_results_fails_closed_to_set_aside() {
     let pool = vec![m("sp-a", 1, false, 0)];
@@ -619,6 +654,7 @@ fn a_member_missing_from_merge_results_fails_closed_to_set_aside() {
 
 /// A member already sequenced behind a dependency by an earlier round stays set aside
 /// even when it now merges cleanly — the dependency, not the merge, decides.
+#[test_id(t769a1o)]
 #[test]
 fn a_sequenced_member_stays_set_aside_even_if_it_now_merges() {
     let pool = vec![m("sp-a", 1, false, 0)];
@@ -652,6 +688,7 @@ fn a_sequenced_member_stays_set_aside_even_if_it_now_merges() {
 /// base head's own commit time never looks newer than a member certified moments earlier,
 /// and the retry never fires. Comparing against the fetch that observed the ref move fires
 /// it immediately instead.
+#[test_id(tgsdb6y)]
 #[test]
 fn stale_retry_fires_on_ref_move_even_when_commit_time_predates_certification() {
     let member_certified_at = 1_000;
@@ -664,6 +701,7 @@ fn stale_retry_fires_on_ref_move_even_when_commit_time_predates_certification() 
     assert!(stale_retry_due(member_certified_at, base_ref_moved_at));
 }
 
+#[test_id(t5vpzb1)]
 #[test]
 fn no_retry_when_the_base_has_not_moved_since_certification() {
     assert!(!stale_retry_due(1_000, 1_000));
@@ -673,6 +711,7 @@ fn no_retry_when_the_base_has_not_moved_since_certification() {
 /// Synthetic: a stale stacked base — the next round was building on an open batch PR's
 /// head, but that PR landed (or was superseded) meanwhile, so the stacked head is itself
 /// stale and must be treated as moved, same as any other base-ref move.
+#[test_id(t4985r8)]
 #[test]
 fn a_stacked_base_that_lands_counts_as_the_base_moving() {
     let member_certified_at = 1_000;
@@ -682,6 +721,7 @@ fn a_stacked_base_that_lands_counts_as_the_base_moving() {
 
 // -- Suite classification: green / flip / double-red -----------------------------------------
 
+#[test_id(trey9t3)]
 #[test]
 fn a_green_suite_stays_green() {
     let first = vec![suite("test-a", SuiteOutcome::Green, &[])];
@@ -691,6 +731,7 @@ fn a_green_suite_stays_green() {
 
 /// Synthetic: a flip on re-run — red once, green on the immediate re-run, so it is not
 /// attributed to any member.
+#[test_id(tixnbr3)]
 #[test]
 fn red_then_green_on_rerun_flips() {
     let first = vec![suite(
@@ -703,6 +744,7 @@ fn red_then_green_on_rerun_flips() {
     assert_eq!(v[0].classification, Classification::Flip);
 }
 
+#[test_id(t14psmd)]
 #[test]
 fn red_on_both_runs_is_double_red() {
     let first = vec![suite(
@@ -723,6 +765,7 @@ fn red_on_both_runs_is_double_red() {
 /// A suite red on the first run but absent from the re-run set (e.g. the re-run was never
 /// reached, or its result could not be read) fails closed to double-red rather than being
 /// assumed fixed.
+#[test_id(t9787lc)]
 #[test]
 fn a_red_suite_missing_from_the_rerun_fails_closed_to_double_red() {
     let first = vec![suite(
@@ -746,6 +789,7 @@ fn a_red_suite_missing_from_the_rerun_fails_closed_to_double_red() {
 /// like a test landing ahead of its code. sp-29g55's own real dependency (sp-qvjzb, round
 /// 1's occurrence of the same suite) is covered separately below as a negative case, not
 /// here — see `waits_on_finds_a_real_dependency_id_with_no_digit_in_its_suffix`.
+#[test_id(txyrqz6)]
 #[test]
 fn a_recorded_test_ahead_of_code_shape_sequences_behind_its_dependency() {
     let assertion =
@@ -765,6 +809,7 @@ fn a_recorded_test_ahead_of_code_shape_sequences_behind_its_dependency() {
 /// "What the first two rounds actually found": "`sp-29g55` adds a lint that cannot pass
 /// until `sp-qvjzb` lands"). The suffix is all letters, so `waits_on` accepts a five-letter
 /// suffix as well as one containing a digit.
+#[test_id(tiocb52)]
 #[test]
 fn waits_on_finds_a_real_dependency_id_with_no_digit_in_its_suffix() {
     assert_eq!(
@@ -774,6 +819,7 @@ fn waits_on_finds_a_real_dependency_id_with_no_digit_in_its_suffix() {
     assert_eq!(waits_on("see sp-ish thing"), None);
 }
 
+#[test_id(t2nxcc4)]
 #[test]
 fn a_double_red_naming_no_bead_is_not_test_ahead_of_code() {
     let own = vec![suite(
@@ -784,18 +830,21 @@ fn a_double_red_naming_no_bead_is_not_test_ahead_of_code() {
     assert_eq!(test_ahead_of_code(&"sp-a".to_string(), &own), None);
 }
 
+#[test_id(t7srqj3)]
 #[test]
 fn a_green_own_suite_is_never_test_ahead_of_code() {
     let own = vec![suite("test-own", SuiteOutcome::Green, &[])];
     assert_eq!(test_ahead_of_code(&"sp-a".to_string(), &own), None);
 }
 
+#[test_id(t5una07)]
 #[test]
 fn waits_on_ignores_a_bare_sp_dash_with_no_digits() {
     assert_eq!(waits_on("see sp- for details"), None);
     assert_eq!(waits_on("no bead named here"), None);
 }
 
+#[test_id(txnvxbl)]
 #[test]
 fn waits_on_strips_trailing_punctuation() {
     assert_eq!(
@@ -813,6 +862,7 @@ fn tips(pairs: &[(&str, &str)]) -> BTreeMap<Id, String> {
         .collect()
 }
 
+#[test_id(thygfuq)]
 #[test]
 fn bisect_state_is_not_expired_while_nothing_changed() {
     let state = BisectState {
@@ -826,6 +876,7 @@ fn bisect_state_is_not_expired_while_nothing_changed() {
 /// Synthetic: a stale bisect record — a member's tip moved (it was re-certified after a
 /// fix) since the bisect group was recorded, so the record is no longer evidence about the
 /// current branch and must be expired rather than reused.
+#[test_id(tyu19kd)]
 #[test]
 fn bisect_state_expires_when_a_members_tip_changes() {
     let state = BisectState {
@@ -836,6 +887,7 @@ fn bisect_state_expires_when_a_members_tip_changes() {
     assert!(bisect_expired(&state, &current, false));
 }
 
+#[test_id(t3q08lm)]
 #[test]
 fn bisect_state_expires_when_any_batch_lands_even_with_unchanged_tips() {
     let state = BisectState {
@@ -846,6 +898,7 @@ fn bisect_state_expires_when_any_batch_lands_even_with_unchanged_tips() {
     assert!(bisect_expired(&state, &current, true));
 }
 
+#[test_id(tza9imf)]
 #[test]
 fn bisect_next_halves_toward_the_bad_group_until_pinned() {
     let tips_all = tips(&[
@@ -865,6 +918,7 @@ fn bisect_next_halves_toward_the_bad_group_until_pinned() {
     assert_eq!(pinned, None, "a single member is pinned, not split further");
 }
 
+#[test_id(t18diy5)]
 #[test]
 fn bisect_split_divides_evenly_rounding_up_the_first_half() {
     let members = vec!["sp-a".to_string(), "sp-b".to_string(), "sp-c".to_string()];
@@ -876,6 +930,7 @@ fn bisect_split_divides_evenly_rounding_up_the_first_half() {
 
 // -- D. PR record: full titles, never cut mid-word, foreign prefix dropped, express first ----
 
+#[test_id(t94b21k)]
 #[test]
 fn pr_record_lists_full_titles_with_foreign_prefixes_dropped_and_express_first() {
     let members = vec![
@@ -913,6 +968,7 @@ fn pr_record_lists_full_titles_with_foreign_prefixes_dropped_and_express_first()
     assert!(pr.body.contains("express"));
 }
 
+#[test_id(tdhonwt)]
 #[test]
 fn combine_then_pr_record_puts_express_first_regardless_of_pool_order() {
     let pool = vec![m("sp-a", 1, false, 0), m("sp-x", 9, true, 5)];
@@ -935,6 +991,7 @@ fn combine_then_pr_record_puts_express_first_regardless_of_pool_order() {
 
 // -- Structured events: one per transition ---------------------------------------------------
 
+#[test_id(t4vvp4f)]
 #[test]
 fn cut_event_names_the_trigger_and_membership() {
     let combined = Combined {
@@ -947,6 +1004,7 @@ fn cut_event_names_the_trigger_and_membership() {
     assert!(e.text.contains("4 waiting, no round running"));
 }
 
+#[test_id(tzlsfnn)]
 #[test]
 fn skipped_event_carries_its_reason() {
     let e = skipped_event("under N and not yet idle");
@@ -954,6 +1012,7 @@ fn skipped_event_carries_its_reason() {
     assert!(e.text.contains("under N and not yet idle"));
 }
 
+#[test_id(tj6pqnf)]
 #[test]
 fn evicted_event_for_a_conflict_names_deleted_suites() {
     let sa = SetAside {
@@ -967,6 +1026,7 @@ fn evicted_event_for_a_conflict_names_deleted_suites() {
     assert!(e.text.contains("test-old.sh"));
 }
 
+#[test_id(tq98pdi)]
 #[test]
 fn opened_event_names_every_member() {
     let pr = pr_record(&[m("sp-a", 1, false, 0), m("sp-b", 2, false, 0)]);
@@ -975,6 +1035,7 @@ fn opened_event_names_every_member() {
     assert_eq!(e.ids, vec!["sp-a".to_string(), "sp-b".to_string()]);
 }
 
+#[test_id(tzjadyd)]
 #[test]
 fn abandoned_event_names_the_member_and_why() {
     let e = abandoned_event(
@@ -987,6 +1048,7 @@ fn abandoned_event_names_the_member_and_why() {
 
 // -- Local attribution: ejection and base-fail (sp-hqoap) -----------------------------------
 
+#[test_id(tetb630)]
 #[test]
 fn ejected_event_names_the_member_and_every_suite() {
     let e = ejected_event(&Ejection {
@@ -999,6 +1061,7 @@ fn ejected_event_names_the_member_and_every_suite() {
     assert!(e.text.contains("test-y.sh"));
 }
 
+#[test_id(tjrgpe5)]
 #[test]
 fn base_fail_event_names_no_member_and_every_suite() {
     let e = base_fail_event("spira", &["test-x.sh".to_string(), "test-y.sh".to_string()]);
@@ -1008,6 +1071,7 @@ fn base_fail_event_names_no_member_and_every_suite() {
     assert!(e.text.contains("test-y.sh"));
 }
 
+#[test_id(tmmgy7h)]
 #[test]
 fn base_fail_body_carries_repo_branch_suites_and_evidence() {
     let body = base_fail_body(
@@ -1029,6 +1093,7 @@ fn base_fail_body_carries_repo_branch_suites_and_evidence() {
 /// cut, one of the two non-express members conflicts (F: handed to the landing pass with
 /// its deleted suites), and the remaining pair's combined run has one flip and one E-shaped
 /// double-red that sequences behind its dependency rather than reaching judgement.
+#[test_id(t0eqf63)]
 #[test]
 fn a_full_round_from_trigger_through_pr_record() {
     let pool = vec![
@@ -1122,6 +1187,7 @@ fn a_full_round_from_trigger_through_pr_record() {
 
 // -- Judgement: when the crate cannot resolve a red mechanically, call the persona --------
 
+#[test_id(ted71zc)]
 #[test]
 fn judgement_for_is_none_when_nothing_survives_the_rerun_as_double_red() {
     let first = vec![
@@ -1133,6 +1199,7 @@ fn judgement_for_is_none_when_nothing_survives_the_rerun_as_double_red() {
     assert_eq!(judgement_for(&verdicts), None);
 }
 
+#[test_id(tyzbh18)]
 #[test]
 fn judgement_for_names_every_surviving_double_red() {
     let first = vec![
@@ -1146,11 +1213,13 @@ fn judgement_for_names_every_surviving_double_red() {
     assert_eq!(j.suites, vec!["test-a".to_string(), "test-b".to_string()]);
 }
 
+#[test_id(t08xolp)]
 #[test]
 fn judgement_for_ci_is_none_on_an_empty_red_list() {
     assert_eq!(judgement_for_ci(&[]), None);
 }
 
+#[test_id(tqp9nmi)]
 #[test]
 fn judgement_for_ci_wraps_the_suites_ci_reported_red() {
     let j = judgement_for_ci(&["test-x".to_string()]).expect("ci reported a red suite");
@@ -1158,6 +1227,7 @@ fn judgement_for_ci_wraps_the_suites_ci_reported_red() {
     assert_eq!(j.suites, vec!["test-x".to_string()]);
 }
 
+#[test_id(tif3067)]
 #[test]
 fn judgement_event_names_source_and_suites() {
     let j = Judgement {
@@ -1171,6 +1241,7 @@ fn judgement_event_names_source_and_suites() {
     assert!(e.text.contains("test-x,test-y"));
 }
 
+#[test_id(tnb9m3c)]
 #[test]
 fn judgement_body_carries_repo_suites_members_and_evidence() {
     let j = Judgement {
@@ -1190,6 +1261,7 @@ fn judgement_body_carries_repo_suites_members_and_evidence() {
     assert!(body.contains("run/batch-results/spira-123"));
 }
 
+#[test_id(t3yf7jy)]
 #[test]
 fn judgement_body_renders_no_members_explicitly() {
     let j = Judgement {
@@ -1217,6 +1289,7 @@ fn judgement_body_renders_no_members_explicitly() {
 /// `test_ahead_of_code` (design Section E) did not exist at the time — all three were
 /// resolved by a person. Replayed today, `judgement_for` still flags all three by name, and
 /// only the third names a dependency, which `test_ahead_of_code` now sequences behind.
+#[test_id(t5r904c)]
 #[test]
 fn round_1s_three_double_reds_are_flagged_for_judgement_and_resolve_like_what_was_done() {
     let round1 = [
@@ -1260,6 +1333,7 @@ fn round_1s_three_double_reds_are_flagged_for_judgement_and_resolve_like_what_wa
 
 // -- terminal_ready (sp-828tp): the one gate both queue.forge and queue.local finish through --
 
+#[test_id(t04yt5v)]
 #[test]
 fn terminal_ready_passes_when_named_and_binned() {
     let members = vec![m("sp-a", 2, false, 0), m("sp-b", 2, false, 10)];
@@ -1270,6 +1344,7 @@ fn terminal_ready_passes_when_named_and_binned() {
 // POSITIVE CONTROL for the whole suite of refusals below: the same inputs, ok=true, prove
 // the fixture itself is capable of passing before each case flips exactly one input bad.
 
+#[test_id(t62j0f5)]
 #[test]
 fn terminal_ready_refuses_a_member_no_commit_names() {
     let members = vec![m("sp-a", 2, false, 0), m("sp-b", 2, false, 10)];
@@ -1280,6 +1355,7 @@ fn terminal_ready_refuses_a_member_no_commit_names() {
     );
 }
 
+#[test_id(th062ex)]
 #[test]
 fn terminal_ready_refuses_missing_with_bins_artifacts() {
     let members = vec![m("sp-a", 2, false, 0)];
@@ -1290,6 +1366,7 @@ fn terminal_ready_refuses_missing_with_bins_artifacts() {
     );
 }
 
+#[test_id(th6l8ec)]
 #[test]
 fn terminal_ready_checks_membership_before_bins() {
     let members = vec![m("sp-a", 2, false, 0)];
@@ -1300,6 +1377,7 @@ fn terminal_ready_checks_membership_before_bins() {
     );
 }
 
+#[test_id(t5etrma)]
 #[test]
 fn base_fix_member_triggers_ahead_of_express_and_lands_alone() {
     let fix = Member {
@@ -1320,12 +1398,14 @@ fn base_fix_member_triggers_ahead_of_express_and_lands_alone() {
     assert_eq!(should_cut(&t), Some(TriggerReason::BaseFix("sp-f".into())));
 }
 
+#[test_id(tqbqkt9)]
 #[test]
 fn base_fix_lane_leaves_a_pool_without_a_fix_untouched() {
     let pool = vec![m("sp-a", 1, false, 0), m("sp-x", 1, true, 5)];
     assert_eq!(base_fix_lane(pool.clone()), pool);
 }
 
+#[test_id(t52bzxh)]
 #[test]
 fn a_sibling_loser_names_the_p0_it_lost_to_not_the_base() {
     let mut p0 = m("sp-p0", 0, false, 200);

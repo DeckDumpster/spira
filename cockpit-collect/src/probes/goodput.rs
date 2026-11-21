@@ -169,6 +169,7 @@ mod tests {
         keys_on(&c).into_iter().collect()
     }
 
+    #[test_id(tczwl22)]
     #[test]
     fn the_pass_record_becomes_goodput_age_binding_and_the_step_in_flight() {
         let k = keys(&snapshot());
@@ -186,6 +187,7 @@ mod tests {
         }
     }
 
+    #[test_id(tsu6riq)]
     #[test]
     fn each_section_carries_its_distance_age_and_freshness() {
         let k = keys(&snapshot());
@@ -196,6 +198,7 @@ mod tests {
         assert_eq!(row(2), [Some("Alarms/all".into()), None, None, Some("stale".into())], "an unpublished section has no age and no distance");
     }
 
+    #[test_id(tg0s58a)]
     #[test]
     fn landed_in_24h_is_the_lifecycle_sections_windowed_count() {
         assert_eq!(keys(&snapshot())["SP_LC_LANDED_24H"], "80");
@@ -203,6 +206,7 @@ mod tests {
         assert!(!keys(&warming).contains_key("SP_LC_LANDED_24H"), "a window still warming up is not a count");
     }
 
+    #[test_id(tuqoky1)]
     #[test]
     fn the_floor_is_the_goodput_target() {
         let with_floor = snapshot().replace(
@@ -213,6 +217,7 @@ mod tests {
         assert!(!keys(&snapshot()).contains_key("SP_GP_TARGET"));
     }
 
+    #[test_id(t0moi92)]
     #[test]
     fn without_a_pass_record_no_pass_key_is_written_and_no_zero_stands_in() {
         let mut snap: serde_json::Value = serde_json::from_str(&snapshot()).unwrap();
@@ -225,6 +230,7 @@ mod tests {
         assert!(k.keys().all(|key| !key.ends_with("_DIST") && !key.ends_with("_AGE")), "no distance or age without a pass record to measure them: {k:?}");
     }
 
+    #[test_id(ttnac8d)]
     #[test]
     fn a_snapshot_that_cannot_be_read_writes_nothing() {
         let (c, _) = client(&[("section snapshot", 1, "")]);
@@ -232,6 +238,7 @@ mod tests {
         assert!(keys("not json").is_empty());
     }
 
+    #[test_id(ts8j5ym)]
     #[test]
     fn a_pass_with_no_open_gap_has_no_binding_section() {
         let idle = snapshot().replace(r#""binding":"DwarfFleet/pokebot""#, r#""binding":null"#);
@@ -240,6 +247,7 @@ mod tests {
         assert!(!k.contains_key("SP_GP_STEP") && !k.contains_key("SP_GP_DISTANCE"), "{k:?}");
     }
 
+    #[test_id(ts6hzyf)]
     #[test]
     fn with_no_intent_in_flight_the_distance_comes_from_the_binding_sections_own_action() {
         let mut snap: serde_json::Value = serde_json::from_str(&snapshot()).unwrap();
@@ -249,6 +257,7 @@ mod tests {
         assert!(!k.contains_key("SP_GP_STEP"), "every intent is judged: {k:?}");
     }
 
+    #[test_id(t3m5kdz)]
     #[test]
     fn a_binding_the_snapshot_does_not_list_has_no_distance_and_an_unparseable_time_has_no_age() {
         let mut snap: serde_json::Value = serde_json::from_str(&snapshot()).unwrap();
@@ -263,6 +272,7 @@ mod tests {
         assert!(k.contains_key("SP_GP_STEP") && !k.contains_key("SP_GP_STEP_ACK"), "a step not yet acked names no ack time: {k:?}");
     }
 
+    #[test_id(t8u637d)]
     #[test]
     fn a_line_break_in_a_value_cannot_start_a_second_key() {
         assert_eq!(plain("a\nSP_X=1"), "a SP_X=1");

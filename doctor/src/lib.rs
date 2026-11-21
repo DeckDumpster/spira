@@ -4,6 +4,9 @@
 //! separable so `watchtower` could call them directly (a property this port preserves:
 //! every `doctor_check_*` is a free function over `&dyn World`, callable on its own).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod ports;
 pub mod real;
 #[cfg(test)]

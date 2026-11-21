@@ -12,6 +12,7 @@ fn world() -> (testkit::TempDir, testkit::EnvGuard) {
     (dir, env)
 }
 
+#[test_id(twnb3eb)]
 #[test]
 fn with_no_control_store_configured_every_ported_verb_is_cannot_tell_and_never_a_dolt_read() {
     let (_dir, _env) = world();
@@ -22,6 +23,7 @@ fn with_no_control_store_configured_every_ported_verb_is_cannot_tell_and_never_a
     }
 }
 
+#[test_id(t08nb2j)]
 #[test]
 fn the_deleted_verbs_answer_usage() {
     let (_dir, _env) = world();
@@ -34,6 +36,7 @@ fn the_deleted_verbs_answer_usage() {
     }
 }
 
+#[test_id(tz5ekl1)]
 #[test]
 fn facts_is_no_longer_a_verb_and_gets_the_general_usage() {
     let (_dir, _env) = world();
@@ -42,6 +45,7 @@ fn facts_is_no_longer_a_verb_and_gets_the_general_usage() {
     assert!(out.starts_with("usage: spira-lc"), "{out}");
 }
 
+#[test_id(tbi6u9o)]
 #[test]
 fn the_renamed_ops_gantt_answers_usage_and_the_usage_names_ops_transitions() {
     let (_dir, _env) = world();

@@ -85,6 +85,7 @@ mod tests {
         scan_text(rel, src).into_iter().map(|f| f.line).collect()
     }
 
+    #[test_id(t46remq)]
     #[test]
     fn gh_prose_a_claim_assign_the_door_and_tests_are_not_findings() {
         let src = r#"fn a() { gh.call(Some(repo), &["issue", "reopen", n]); }
@@ -105,6 +106,7 @@ mod tests {
     }
 
     /// `spira-claim reopen` and the lc-serve client are the machine's reopen; bd's is refused.
+    #[test_id(tzvcjdb)]
     #[test]
     fn a_bd_reopen_is_refused_and_the_machines_reopen_is_not() {
         let machine = r#"fn a() { match tool(REOPEN, "spira-claim", &["reopen", &leg.id, cause, &note], 5)? { _ => 0 } }

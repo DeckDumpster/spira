@@ -218,6 +218,7 @@ mod tests {
 
     const H: u64 = 3600;
 
+    #[test_id(t123wo6)]
     #[test]
     fn finished_bead_goes_whatever_its_age() {
         for s in ["closed", "LANDED", "DROPPED"] {
@@ -225,18 +226,21 @@ mod tests {
         }
     }
 
+    #[test_id(trcy6j4)]
     #[test]
     fn open_bead_young_tree_stays() {
         assert_eq!(decide(Some("open"), None, Duration::from_secs(47 * H), 48 * H), Verdict::Keep);
         assert_eq!(decide(None, None, Duration::from_secs(1), 48 * H), Verdict::Keep);
     }
 
+    #[test_id(t83vldd)]
     #[test]
     fn merged_branch_waits_out_the_grace() {
         assert_eq!(decide(Some("in_progress"), Some("main"), Duration::from_secs(60), 48 * H), Verdict::Keep);
         assert_eq!(decide(Some("in_progress"), Some("main"), Duration::from_secs(2 * H), 48 * H), Verdict::BranchMerged("main".into()));
     }
 
+    #[test_id(tav4zol)]
     #[test]
     fn idle_window_is_the_configured_one() {
         assert_eq!(decide(Some("open"), None, Duration::from_secs(48 * H), 48 * H), Verdict::Idle(48 * H));

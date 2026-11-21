@@ -261,6 +261,7 @@ mod tests {
 
 
 
+    #[test_id(tjwuf05)]
     #[test]
     fn the_lib_sh_seam_refuses_without_a_declared_path_naming_spira_release() {
         let mut orig = BTreeMap::new();
@@ -269,6 +270,7 @@ mod tests {
         assert!(e.contains("SPIRA_RELEASE"), "{e}");
     }
 
+    #[test_id(ta96cok)]
     #[test]
     fn the_claim_seam_sends_only_flags_spira_claim_accepts() {
         for express in [false, true] {
@@ -277,18 +279,21 @@ mod tests {
         }
     }
 
+    #[test_id(tnigb75)]
     #[test]
     fn ready_set_forwards_its_argv_unchanged() {
         let body = FIXED.split("_dwarf_ready_set() {\n").nth(1).and_then(|s| s.split("\n}").next()).expect("FIXED defines _dwarf_ready_set");
         assert_eq!(body.trim(), r#"_spira_claim "$@""#);
     }
 
+    #[test_id(tjs3lbf)]
     #[test]
     fn frame_is_nul_separated_records() {
         let f = frame("l", "f", "builder", "fn", &["a b".into(), "".into()]);
         assert_eq!(f, b"l\0f\0builder\0fn\0a b\0\0");
     }
 
+    #[test_id(tzrrmbh)]
     #[test]
     fn snapshot_parses_all_sections() {
         let raw = "PATH=bin\0HOME=h\0__DWARF_VARS__\0SPIRA_RUN\0run\0RUNE_LABELS\0spira,plan\0__DWARF_READY__\0ready\0--limit\0\u{30}\0__DWARF_EXCLUDE__\0spira-poison,rune:ops\0";
@@ -300,6 +305,7 @@ mod tests {
         assert_eq!(s.claim_exclude, "spira-poison,rune:ops");
     }
 
+    #[test_id(tinmtra)]
     #[test]
     fn snapshot_incomplete_is_an_error() {
         assert!(parse_snapshot("PATH=/bin\0").is_err());
@@ -312,6 +318,7 @@ mod tests {
     /// call itself must no longer carry it; `conf::tests::merge_resolved_config_reaches_
     /// a_retired_registry_key_env_can_still_override` (conf.rs) is the test that now
     /// proves the end-to-end guarantee sp-1cdgq's own test proved for the bash path.
+    #[test_id(tqdwrli)]
     #[test]
     fn call_jitter_is_no_longer_asked_of_the_bash_seam() {
         assert!(

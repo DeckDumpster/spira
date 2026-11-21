@@ -53,6 +53,7 @@ pub fn mount_of(mounts: &str, path: &Path) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[test_id(t2rew85)]
     #[test]
     fn a_quota_or_no_space_failure_is_a_full_filesystem() {
         assert!(is_full("tar: spira-install: Cannot write: Disk quota exceeded"));
@@ -60,6 +61,7 @@ mod tests {
         assert!(!is_full("tar: spira-install: Cannot open: Permission denied"));
     }
 
+    #[test_id(tjk1ul2)]
     #[test]
     fn the_longest_mount_prefix_names_the_filesystem() {
         let mounts = "tmpfs /tmp tmpfs rw 0 0\n/dev/sda1 / ext4 rw 0 0\ntmpfs /tmpx tmpfs rw 0 0\n";
@@ -67,12 +69,14 @@ mod tests {
         assert_eq!(mount_of(mounts, Path::new(&format!("{}/x", system_paths::VAR_TMP))).as_deref(), Some("/"));
     }
 
+    #[test_id(t9iyvwv)]
     #[test]
     fn a_full_filesystem_is_a_fault_even_when_only_the_writer_spoke() {
         assert_eq!(fault_of("tar: x: Cannot write: Disk quota exceeded").as_deref(), Some("filesystem not named"));
         assert_eq!(fault_of("tar: x: Cannot open").as_deref(), None);
     }
 
+    #[test_id(tmz2n3b)]
     #[test]
     fn the_named_filesystem_is_read_from_the_report_line() {
         let err = format!("noise\nround-vm run: {REPORT_MARK}/tmp is full; largest: /tmp/k5 6 GiB\n");

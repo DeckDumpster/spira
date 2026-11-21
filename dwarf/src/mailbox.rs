@@ -34,6 +34,7 @@ mod tests {
     use super::*;
 
     // covers: UC-operator-channel-12
+    #[test_id(tunnggc)]
     #[test]
     fn open_creates_new_cur_and_tmp() {
         let t = testkit::TempDir::new("mailbox-open");
@@ -45,6 +46,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-12
+    #[test_id(toyq468)]
     #[test]
     fn close_removes_the_mailbox_and_its_messages() {
         let t = testkit::TempDir::new("mailbox-close");
@@ -56,6 +58,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-12
+    #[test_id(tgmcgnj)]
     #[test]
     fn close_keeps_amend_and_so_the_directory() {
         let t = testkit::TempDir::new("mailbox-close-amend");
@@ -68,6 +71,7 @@ mod tests {
     }
 
     // covers: UC-operator-channel-12
+    #[test_id(t4w2w3v)]
     #[test]
     fn close_of_a_mailbox_never_opened_is_quiet() {
         let t = testkit::TempDir::new("mailbox-close-absent");

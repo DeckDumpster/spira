@@ -30,6 +30,7 @@ spira-otel = { path = "../spira-otel" }
 toml = "0.8"
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [[test]]

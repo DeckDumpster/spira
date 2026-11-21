@@ -335,6 +335,7 @@ mod tests {
         (crate::parse_ts("2026-10-12").unwrap(), crate::parse_ts("2026-10-13").unwrap())
     }
 
+    #[test_id(t9r57fn)]
     #[test]
     fn a_fixture_week_reproduces_the_hand_computed_numbers() {
         let (passes, bad) = parse_passes(&week());
@@ -378,6 +379,7 @@ mod tests {
         assert!(line.starts_with("cert 2026-10-12: pd/proxmox ") && line.contains("sp/c7i.4xlarge landed=3 (0.12/h)"), "{line}");
     }
 
+    #[test_id(t09oyib)]
     #[test]
     fn a_bead_lands_once_and_an_unreadable_row_is_counted_not_guessed() {
         let mut text = week();
@@ -395,6 +397,7 @@ mod tests {
         assert_eq!(r.cells[&("sp".to_string(), "c7i.4xlarge".to_string())].landed, 3);
     }
 
+    #[test_id(tnzxbvm)]
     #[test]
     fn an_empty_window_says_so_and_a_malformed_price_is_refused() {
         let r = compute(&[], 0, 86_400);

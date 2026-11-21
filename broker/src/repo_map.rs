@@ -40,6 +40,7 @@ pub fn lookup(repo: &str) -> Result<Option<String>, String> {
 mod tests {
     use super::*;
 
+    #[test_id(t6r9p0s)]
     #[test]
     fn finds_matching_repo() {
         let map = "test-repo | srv/checkouts/test-repo | push | origin/main | | \n";
@@ -49,6 +50,7 @@ mod tests {
         );
     }
 
+    #[test_id(thp9pin)]
     #[test]
     fn skips_comments_and_blank_lines() {
         let map = "# a comment\n\ntest-repo | srv/checkouts/test-repo | push | origin/main | | \n";
@@ -58,18 +60,21 @@ mod tests {
         );
     }
 
+    #[test_id(t4n3sfg)]
     #[test]
     fn missing_repo_is_none() {
         let map = "other | srv/checkouts/other | push | origin/main | | \n";
         assert_eq!(parse(map, "test-repo"), None);
     }
 
+    #[test_id(tn3w7sp)]
     #[test]
     fn picks_first_matching_row_when_duplicated() {
         let map = "test-repo | first | push | origin/main | | \ntest-repo | second | push | origin/main | | \n";
         assert_eq!(parse(map, "test-repo"), Some("first".to_string()));
     }
 
+    #[test_id(tkxoz5t)]
     #[test]
     fn a_short_row_with_no_path_column_is_skipped() {
         let map = "test-repo\n";

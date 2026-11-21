@@ -117,11 +117,13 @@ mod tests {
         judge(Some(T), &a(args), &lookup, "sp-me", ASK)
     }
 
+    #[test_id(t1j35ll)]
     #[test]
     fn a_bead_without_a_target_is_unaffected() {
         assert_eq!(judge(None, &a(&[]), &lookup, "sp-me", ASK), Ok(None));
     }
 
+    #[test_id(t2yyi1y)]
     #[test]
     fn no_verdict_is_refused_naming_all_three_exits() {
         let e = judged(&[]).unwrap_err();
@@ -130,6 +132,7 @@ mod tests {
         }
     }
 
+    #[test_id(t3wsq3p)]
     #[test]
     fn met_contradicted_and_short_with_a_follow_on_pass() {
         assert!(judged(&["--met", "9.2 s on the box"]).unwrap().unwrap().contains("MET"));
@@ -138,6 +141,7 @@ mod tests {
         assert!(judged(&["--short", "37 s", "--escalation", "sp-esc"]).unwrap().unwrap().contains("escalation: sp-esc"));
     }
 
+    #[test_id(tpfw178)]
     #[test]
     fn short_is_refused_without_a_real_matching_exit() {
         assert!(judged(&["--short", "37 s"]).is_err());
@@ -147,6 +151,7 @@ mod tests {
         assert!(judged(&["--short", "37 s", "--escalation", "sp-plain"]).unwrap_err().contains(ASK));
     }
 
+    #[test_id(tekddzc)]
     #[test]
     fn target_syntax() {
         assert!(valid_target(T).is_ok());
@@ -154,6 +159,7 @@ mod tests {
         assert!(valid_target("< 10").is_err());
     }
 
+    #[test_id(t6iq2xf)]
     #[test]
     fn sift_gap_reads_the_recorded_verdict() {
         let body = format!("{TARGET_PREFIX}{T}\n");

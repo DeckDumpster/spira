@@ -222,6 +222,7 @@ mod tests {
 
     // ── the bash suite's cases ─────────────────────────────────────────────────────────
 
+    #[test_id(to7p8x7)]
     #[test]
     fn name_is_refused_then_clean_when_withdrawn() {
         let t = TempDir::new("cf-name");
@@ -234,6 +235,7 @@ mod tests {
         assert!(run(&t, &["spira/planted.sh", "spira/other.sh"], &[]).unwrap().is_empty());
     }
 
+    #[test_id(toqejge)]
     #[test]
     fn parse_counts_only_beside_a_name() {
         let named = b"#!/bin/sh\n# reads spira.toml\npython3 -c \"import tomllib\"\n";
@@ -242,12 +244,14 @@ mod tests {
         assert!(!scan("spira/u.sh", unrelated).any(), "tomllib with no config reference is not this defect");
     }
 
+    #[test_id(tzto9no)]
     #[test]
     fn write_through_the_resolved_variable() {
         let k = scan("spira/w.sh", b"#!/bin/sh\nprintf \"[spira]\\n\" > \"$SPIRA_TOML\"\n");
         assert_eq!(k.render(), "write");
     }
 
+    #[test_id(tw1r2et)]
     #[test]
     fn allow_listed_file_is_skipped() {
         let t = TempDir::new("cf-allow");
@@ -258,6 +262,7 @@ mod tests {
         assert!(run(&t, &["spira/legacy.sh"], &[]).unwrap().is_empty());
     }
 
+    #[test_id(tvv0kin)]
     #[test]
     fn spira_config_is_exempt_by_directory() {
         let t = TempDir::new("cf-exempt");
@@ -268,6 +273,7 @@ mod tests {
 
     // ── scope and walk ────────────────────────────────────────────────────────────────
 
+    #[test_id(th4xtfg)]
     #[test]
     fn untracked_files_are_scanned_and_scope_is_pathspec() {
         let t = TempDir::new("cf-scope");
@@ -286,6 +292,7 @@ mod tests {
         );
     }
 
+    #[test_id(tcfpl4u)]
     #[test]
     fn empty_scope_refuses() {
         let t = TempDir::new("cf-empty");
@@ -294,6 +301,7 @@ mod tests {
 
     // ── parse: the construct, not the text ───────────────────────────────────────────
 
+    #[test_id(t4b9oz2)]
     #[test]
     fn rust_parse_is_a_crate_path_in_code() {
         let hit = b"// spira.toml\nfn f(s: &str) { let v: toml::Value = s.parse().unwrap(); }\n";
@@ -310,6 +318,7 @@ mod tests {
 
     // ── write: Rust ──────────────────────────────────────────────────────────────────
 
+    #[test_id(trsibn0)]
     #[test]
     fn rust_write_inspects_the_destination_argument() {
         // Every case names the config somewhere (a comment), so only the destination decides.
@@ -323,6 +332,7 @@ mod tests {
         assert!(!w("// fs::write(&toml_path, b)\nfn f(){}"), "a comment is not a call");
     }
 
+    #[test_id(ti4ncst)]
     #[test]
     fn rust_write_of_other_toml_is_not_the_config() {
         let other = b"fn t(){ fs::write(dir.join(\"a.toml\"), \"area = 1\").unwrap(); }";
@@ -334,6 +344,7 @@ mod tests {
 
     // ── write: shell ─────────────────────────────────────────────────────────────────
 
+    #[test_id(tdv73ga)]
     #[test]
     fn shell_write_is_the_construct_and_the_exact_variable() {
         let w = |s: &str| scan("spira/x.sh", s.as_bytes()).write;
@@ -351,6 +362,7 @@ mod tests {
         assert!(!w("cat <<'EOF'\nprintf x > \"$SPIRA_TOML\"\nEOF\n"), "heredoc body is data");
     }
 
+    #[test_id(ta5xpd1)]
     #[test]
     fn prose_gets_no_write_check() {
         assert!(!scan("spira/runes/a.md", b"run: printf x > \"$SPIRA_TOML\"\n").write);

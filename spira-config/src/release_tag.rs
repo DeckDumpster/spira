@@ -70,12 +70,14 @@ mod tests {
         v.iter().map(|x| x.to_string()).collect()
     }
 
+    #[test_id(t7x7o1f)]
     #[test]
     fn versioned_orders_numerically_after_every_stamp() {
         let got = sort_release_tags(s(&["spira-0.1.10", "spira-release-spira-20261001T000000Z", "spira-0.1.9", "spira-release-spira-20260901T000000Z-2", "spira-0.1.104"]));
         assert_eq!(got, s(&["spira-release-spira-20260901T000000Z-2", "spira-release-spira-20261001T000000Z", "spira-0.1.9", "spira-0.1.10", "spira-0.1.104"]));
     }
 
+    #[test_id(tqkofi1)]
     #[test]
     fn non_release_tags_are_dropped() {
         assert!(!is_release_tag("spira-release-foo"));

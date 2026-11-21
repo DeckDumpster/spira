@@ -179,6 +179,7 @@ mod tests {
 
     const T: u64 = 1_800_000_000;
 
+    #[test_id(tdubg5w)]
     #[test]
     fn a_stalled_waiter_with_lines_unread_wakes_once_per_backoff() {
         let (c, _) = decide(&cfg(), &Carry::default(), &waiting(0), T);
@@ -188,6 +189,7 @@ mod tests {
         assert!(decide(&cfg(), &c, &waiting(0), T + 600 + 3600).1.is_some());
     }
 
+    #[test_id(tv3ndo7)]
     #[test]
     fn a_live_waiter_or_a_read_inbox_never_wakes() {
         let alive = Snapshot { waiter_alive: true, unread: 5, cursor_mtime: 0 };
@@ -198,6 +200,7 @@ mod tests {
         assert!(decide(&cfg(), &c, &read, T + 5000).1.is_none());
     }
 
+    #[test_id(tubkfw6)]
     #[test]
     fn a_recent_cursor_advance_defers_the_wake_by_a_stall() {
         let (c, _) = decide(&cfg(), &Carry::default(), &waiting(0), T);
@@ -205,6 +208,7 @@ mod tests {
         assert!(decide(&cfg(), &c, &waiting(T + 500), T + 1100).1.is_some());
     }
 
+    #[test_id(trzgj6r)]
     #[test]
     fn an_observe_reports_failed_only_while_a_failed_wake_and_the_condition_hold() {
         let failed = Carry { wake_failed: true, ..Carry::default() };

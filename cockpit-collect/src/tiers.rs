@@ -260,6 +260,7 @@ mod tests {
         }
     }
 
+    #[test_id(tb23owa)]
     #[test]
     fn republishing_an_unchanged_tier_writes_no_snapshot_data() {
         let _env = testkit::env_read();
@@ -272,6 +273,7 @@ mod tests {
         assert_eq!(io::data_writes(), before + 2, "tier file and merged snapshot both changed");
     }
 
+    #[test_id(t98o5f7)]
     #[test]
     fn history_is_trimmed_only_past_its_slack_and_back_to_the_cap() {
         let run = testkit::TempDir::new("hist-trim");
@@ -288,6 +290,7 @@ mod tests {
         assert_eq!(rows(0), 20, "past cap + slack it is cut back to the cap");
     }
 
+    #[test_id(ttkrclv)]
     #[test]
     fn each_probe_answers_ok_timeout_or_error_and_an_overrun_is_skipped_then_stale() {
         let probes = |slow_ms| vec![("fast".to_string(), Duration::from_secs(5)), ("slow".to_string(), Duration::from_millis(slow_ms)), ("boom".to_string(), Duration::from_secs(5))];
@@ -317,6 +320,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-06
+    #[test_id(tn2k7qw)]
     #[test]
     fn startup_sweep_removes_orphaned_snapshot_temps_and_leaves_the_published_snapshot() {
         let dir = testkit::TempDir::new("cc-sweep");
@@ -332,6 +336,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-02
+    #[test_id(tqyo8x0)]
     #[test]
     fn publish_merges_every_tier_into_the_snapshot_and_appends_history() {
         let _env = testkit::env_read();

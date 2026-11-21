@@ -152,6 +152,7 @@ fn capitalize(s: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tta5hmr)]
     #[test]
     fn empty_shelf_renders_the_empty_notice() {
         let out = render(&BTreeMap::new(), "2026-09-30");
@@ -159,6 +160,7 @@ mod tests {
         assert!(out.contains("**0 SOP(s)**"));
     }
 
+    #[test_id(tgtn6gx)]
     #[test]
     fn one_sop_renders_its_fields() {
         let mut m = BTreeMap::new();
@@ -174,6 +176,7 @@ mod tests {
         assert!(out.contains("**1 SOP(s)**"));
     }
 
+    #[test_id(tdhkppi)]
     #[test]
     fn a_missing_match_line_says_so() {
         let mut m = BTreeMap::new();
@@ -182,6 +185,7 @@ mod tests {
         assert!(out.contains("no `MATCH:` line"));
     }
 
+    #[test_id(tqzp5xj)]
     #[test]
     fn a_multiline_fix_renders_as_a_code_block() {
         let mut m = BTreeMap::new();
@@ -190,6 +194,7 @@ mod tests {
         assert!(out.contains("```\nsystemctl restart foo\nsystemctl status foo\n```"));
     }
 
+    #[test_id(ttrcpti)]
     #[test]
     fn run_and_deadline_do_not_bleed_into_fix() {
         let f = fields("FIX: restart it\nRUN: tool {bead}\nDEADLINE: 30");
@@ -197,6 +202,7 @@ mod tests {
         assert_eq!(f.get("RUN").unwrap(), "tool {bead}");
     }
 
+    #[test_id(tx7a4dh)]
     #[test]
     fn fields_parses_out_of_order_and_multiline_bodies() {
         let text = "FIX: line one\nline two\nSYMPTOM: sym one";

@@ -260,6 +260,7 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(tugu4dw)]
     #[test]
     fn workspace_binary_targets_are_read_from_the_manifests() {
         let d = tmp("ws");

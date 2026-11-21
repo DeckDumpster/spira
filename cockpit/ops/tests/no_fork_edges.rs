@@ -1,6 +1,8 @@
 //! No Spira→Spira subprocess edge remains in this crate's source except a site marked
 //! `FORK-EDGE:` (on its line or the two above), which names what the library still lacks.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::{Path, PathBuf};
 
 const BANNED: &[&str] = &[
@@ -85,6 +87,7 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+#[test_id(tiwuqa0)]
 #[test]
 fn no_unmarked_fork_edge_remains_in_src() {
     let mut files = Vec::new();
@@ -107,6 +110,7 @@ fn no_unmarked_fork_edge_remains_in_src() {
     );
 }
 
+#[test_id(t6ump12)]
 #[test]
 fn the_scan_catches_a_planted_site_and_passes_a_marked_one() {
     let planted = "fn f() {\n    let _ = Command::new(\"spira-lc\").arg(\"show\");\n}\n";
@@ -142,6 +146,7 @@ fn marks(dir: &std::path::Path) -> usize {
     n
 }
 
+#[test_id(t53e0zi)]
 #[test]
 fn the_marked_fork_edges_only_shrink() {
     assert_eq!(marks(&testkit::manifest_dir().join("src")), MARKED_EDGES, "a FORK-EDGE mark was added or removed: move MARKED_EDGES with it");

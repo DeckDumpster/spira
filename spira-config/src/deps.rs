@@ -205,6 +205,7 @@ version_probe = ""
         p
     }
 
+    #[test_id(tyh9kkw)]
     #[test]
     fn provided_by_lists_only_the_marked_programs() {
         let m = parse("[[dep]]\nname = \"bd\"\nprovider = \"spira-env\"\n[[dep]]\nname = \"git\"\n[[dep]]\nname = \"dolt\"\nprovider = \"spira-env\"\n").unwrap();
@@ -212,6 +213,7 @@ version_probe = ""
         assert!(provided_by(&m.deps, "other").is_empty());
     }
 
+    #[test_id(t88lew3)]
     #[test]
     fn loads_in_file_order() {
         let dir = testkit::TempDir::new("spira-config-deps-order");
@@ -219,12 +221,14 @@ version_probe = ""
         assert_eq!(deps.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["bd", "duckdb", "bd-embedded"]);
     }
 
+    #[test_id(t14xm0a)]
     #[test]
     fn missing_file_is_an_empty_manifest_not_a_refusal() {
         let deps = load(Path::new("nonexistent-sp-wqj3o/deps.toml"));
         assert!(deps.is_empty());
     }
 
+    #[test_id(th7ygwa)]
     #[test]
     fn tier_and_purpose_fall_back_for_an_undeclared_name() {
         let dir = testkit::TempDir::new("spira-config-deps-fallback");
@@ -234,6 +238,7 @@ version_probe = ""
         assert_eq!(absent_of(&deps, "spira-no-such-program"), "");
     }
 
+    #[test_id(tkp1m0k)]
     #[test]
     fn declared_fields_read_back_exactly() {
         let dir = testkit::TempDir::new("spira-config-deps-fields");
@@ -243,6 +248,7 @@ version_probe = ""
         assert_eq!(absent_of(&deps, "bd"), "");
     }
 
+    #[test_id(tcxpwjy)]
     #[test]
     fn a_silent_downgrade_declares_what_it_downgrades_to() {
         let dir = testkit::TempDir::new("spira-config-deps-absent");
@@ -250,6 +256,7 @@ version_probe = ""
         assert!(absent_of(&deps, "bd-embedded").contains("shared Dolt server"));
     }
 
+    #[test_id(tggh4rz)]
     #[test]
     fn list_filters_by_tier() {
         let dir = testkit::TempDir::new("spira-config-deps-list");
@@ -258,6 +265,7 @@ version_probe = ""
         assert_eq!(list(&deps, Some("optional")), vec!["duckdb"]);
     }
 
+    #[test_id(tsxl6fy)]
     #[test]
     fn require_names_each_missing_program_and_its_purpose() {
         let dir = testkit::TempDir::new("spira-config-deps-require-missing");
@@ -270,6 +278,7 @@ version_probe = ""
         assert!(err.contains("set SPIRA_PATH in etc/spira/spira.conf"), "{err}");
     }
 
+    #[test_id(tva6qbf)]
     #[test]
     fn require_names_an_undeclared_missing_program_with_the_fallback_purpose() {
         let dir = testkit::TempDir::new("spira-config-deps-require-undeclared");
@@ -280,6 +289,7 @@ version_probe = ""
     }
 
     // covers: UC-config-store-preflight-08
+    #[test_id(tjzz1hq)]
     #[test]
     fn every_program_the_shipped_manifest_declares_has_a_tier_a_purpose_and_a_version_probe() {
         let text = std::fs::read_to_string(crate::resolve::locate_home_for_process().unwrap().join("deps.toml")).unwrap();

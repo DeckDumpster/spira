@@ -17,6 +17,7 @@ fn engine(journal: Arc<MemJournal>, clock: &VirtualClock, enabled: bool) -> Engi
     Engine::open(journal, Arc::new(clock.clone()), vec![reg], 0).unwrap()
 }
 
+#[test_id(ttglfr3)]
 #[test]
 fn without_a_view_program_the_handler_schedules_nothing() {
     let clock = VirtualClock::new(1_800_000_000 * SECOND);
@@ -27,6 +28,7 @@ fn without_a_view_program_the_handler_schedules_nothing() {
     assert!(e.pending_effects().is_empty() && e.next_timer_at().is_none());
 }
 
+#[test_id(tcys57z)]
 #[test]
 fn the_watchers_manifest_no_longer_carries_the_row() {
     let manifest = fs::read_to_string(testkit::manifest_dir().join("../spira/watchers")).unwrap();

@@ -112,6 +112,7 @@ pub fn row_closed(kind: Kind, row: &Value) -> bool {
 mod tests {
     use super::*;
 
+    #[test_id(tdbmhgy)]
     #[test]
     fn filters_and_predicates() {
         assert_eq!(status_args(Kind::Ask, Which::Live), ["--status".to_string(), "open,in_progress,blocked,deferred".to_string()]);

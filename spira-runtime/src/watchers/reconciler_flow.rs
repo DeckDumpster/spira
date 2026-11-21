@@ -363,6 +363,7 @@ mod tests {
         }
     }
 
+    #[test_id(tjwdvoi)]
     #[test]
     fn a_quiet_world_alerts_nobody_and_reads_the_same_twice() {
         let first = judge(&cfg(), 1_000, &Carry::default(), &quiet(), None);
@@ -379,6 +380,7 @@ mod tests {
         snap
     }
 
+    #[test_id(tqzurvl)]
     #[test]
     fn a_shadowed_velocity_or_round_health_gap_is_held_not_mailed_and_an_unshadowed_one_is_mailed() {
         let subjects = |m: &[Mail]| m.iter().map(|m| m.subject.clone()).collect::<Vec<_>>();
@@ -395,6 +397,7 @@ mod tests {
         assert_eq!(subjects(&after.mails), both, "a page held while shadowed is sent once the key is unshadowed");
     }
 
+    #[test_id(tk3b04c)]
     #[test]
     fn a_gap_alerts_once_after_its_grace_and_not_again_while_it_lasts() {
         let mut snap = quiet();
@@ -408,6 +411,7 @@ mod tests {
         assert!(after.mails.is_empty(), "one alert per gap streak");
     }
 
+    #[test_id(tb1uorz)]
     #[test]
     fn a_reading_that_could_not_be_taken_is_unobservable_not_satisfied() {
         let mut snap = quiet();
@@ -417,6 +421,7 @@ mod tests {
         assert_eq!(p.carry.words["flow:dwell-regression:ready"], "unobservable");
     }
 
+    #[test_id(tsse3qs)]
     #[test]
     fn a_failed_export_blinds_every_stage_invariant() {
         let mut snap = quiet();
@@ -428,6 +433,7 @@ mod tests {
         assert_eq!(p.carry.words["flow:backlog"], "satisfied");
     }
 
+    #[test_id(trvqxqi)]
     #[test]
     fn rework_is_report_only_until_the_history_covers_the_baseline() {
         let mut snap = quiet();
@@ -447,6 +453,7 @@ mod tests {
         TaskLimit { name: "pool".into(), limit: 6, held }
     }
 
+    #[test_id(tmquww1)]
     #[test]
     fn a_full_pool_under_a_roomy_ceiling_is_not_idle() {
         let cfg = ReconcilerFlow { grace_secs: 0, ..cfg() };
@@ -457,6 +464,7 @@ mod tests {
         assert!(first.mails.is_empty() && second.mails.is_empty(), "{:?}", second.mails);
     }
 
+    #[test_id(tvm3o78)]
     #[test]
     fn room_under_the_pool_with_work_waiting_mails_the_limit_it_compared() {
         let cfg = ReconcilerFlow { grace_secs: 0, ..cfg() };
@@ -469,6 +477,7 @@ mod tests {
         assert!(!mails[0].body.contains("ceiling"), "{}", mails[0].body);
     }
 
+    #[test_id(tywfz3t)]
     #[test]
     fn idle_capacity_is_unobservable_until_the_scheduler_has_judged_its_limit() {
         let p = judge(&cfg(), 1_000, &Carry::default(), &waiting_on_the_pool(), None);

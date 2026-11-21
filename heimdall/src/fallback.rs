@@ -34,6 +34,7 @@ pub fn remove(path: &Path) {
 mod tests {
     use super::*;
 
+    #[test_id(ty8eq1f)]
     #[test]
     fn build_carries_db_write_ok_as_a_tri_state() {
         let v = build(100, true, None, &[]);
@@ -42,6 +43,7 @@ mod tests {
         assert_eq!(v["db_write_ok"], false);
     }
 
+    #[test_id(t61266q)]
     #[test]
     fn build_carries_the_firing_alerts() {
         let firing = vec![Firing { key: "k".into(), title: "T".into(), evidence: "e".into() }];
@@ -50,6 +52,7 @@ mod tests {
         assert_eq!(v["db_reachable"], false);
     }
 
+    #[test_id(tgbat9k)]
     #[test]
     fn write_then_remove_round_trips() {
         let dir = testkit::TempDir::new("heimdall-fallback");
@@ -62,6 +65,7 @@ mod tests {
         assert!(!p.exists());
     }
 
+    #[test_id(tbx206f)]
     #[test]
     fn write_leaves_no_tmp_file_behind() {
         let dir = testkit::TempDir::new("heimdall-fallback");

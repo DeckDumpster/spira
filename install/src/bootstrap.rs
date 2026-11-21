@@ -351,6 +351,7 @@ fn halted_at(run: &Path) -> bool {
 mod templates_dir_tests {
     use super::*;
 
+    #[test_id(tvivmpo)]
     #[test]
     fn with_no_env_the_templates_are_found_beside_the_binarys_release() {
         let t = testkit::TempDir::new("tpl-dir");
@@ -362,6 +363,7 @@ mod templates_dir_tests {
         assert_eq!(got, rel.join("systemd").canonicalize().unwrap());
     }
 
+    #[test_id(ty7lrz2)]
     #[test]
     fn the_environment_still_wins_over_the_binarys_location() {
         let t = testkit::TempDir::new("tpl-dir-env");
@@ -374,12 +376,14 @@ mod templates_dir_tests {
 mod resolve_home_tests {
     use super::*;
 
+    #[test_id(triuurr)]
     #[test]
     fn spira_home_wins_over_everything() {
         let got = resolve_home(Some("explicit/spira".into()), Some("repo".into()), Some(Path::new("bin/x")));
         assert_eq!(got, Ok("explicit/spira".to_string()));
     }
 
+    #[test_id(t7x8m2f)]
     #[test]
     fn spira_repo_wins_over_the_binarys_location_when_home_is_unset() {
         let got = resolve_home(None, Some("repo".into()), Some(Path::new("nonexistent/bin/x")));
@@ -389,6 +393,7 @@ mod resolve_home_tests {
     /// NEITHER SET, exe resolves (sp-al35q): derives `<release>/spira` beside the binary's
     /// own location, verified by requiring conf.sh there — the same resolution
     /// `templates_dir()` uses for `systemd/`, applied to `spira/` instead.
+    #[test_id(tc1bg5q)]
     #[test]
     fn with_no_env_home_is_found_beside_the_binarys_release() {
         let t = testkit::TempDir::new("home-dir");
@@ -404,12 +409,14 @@ mod resolve_home_tests {
     /// returns Err, never the bare, unverified "/spira" string the bug rendered into every
     /// unit's substituted content before this fix (an empty SPIRA_REPO formatted straight
     /// into "{repo}/spira" with no existence check at all).
+    #[test_id(texgbj5)]
     #[test]
     fn with_no_env_and_no_resolvable_exe_it_refuses_rather_than_guessing() {
         let got = resolve_home(None, None, Some(Path::new("nonexistent/bin/units-install")));
         assert!(got.is_err(), "{got:?}");
     }
 
+    #[test_id(t8tqhyd)]
     #[test]
     fn with_no_env_and_no_exe_at_all_it_refuses() {
         let got = resolve_home(None, None, None);
@@ -421,6 +428,7 @@ mod resolve_home_tests {
 mod stale_release_tests {
     use super::*;
 
+    #[test_id(tkzemb9)]
     #[test]
     fn an_old_release_binary_refuses_to_write_units() {
         let t = testkit::TempDir::new("stale-rel");
@@ -450,12 +458,14 @@ mod stale_release_tests {
         line.replace("Environment=SCCACHE_DAV_ROOT=", "")
     }
 
+    #[test_id(tpi80ir)]
     #[test]
     fn the_cache_root_in_the_unit_is_the_configured_key_or_the_run_directory() {
         assert_eq!(rendered_cache_root("mnt/other-disk/store"), "mnt/other-disk/store");
         assert_eq!(rendered_cache_root(""), std::path::Path::new(std::path::MAIN_SEPARATOR_STR).join("fixture/userhome/spira/run/sccache-dav").display().to_string());
     }
 
+    #[test_id(thfj3gy)]
     #[test]
     fn units_repo_prefers_a_mapped_git_checkout_over_the_derived_release_dir() {
         let git = |p: &Path| p == Path::new("h/harness");
@@ -468,11 +478,12 @@ mod stale_release_tests {
 
 #[cfg(test)]
 mod halt_tests {
+    #[test_id(tf5avf1)]
     #[test]
     fn a_world_in_cutover_mode_installs_as_a_halted_one() {
         let d = testkit::TempDir::new("install-cutover-halted");
-        assert!(!super::halted_at(d.path()));
+        assert!(!super::super::halted_at(d.path()));
         std::fs::write(d.path().join("world.cutover-mode"), "{}").unwrap();
-        assert!(super::halted_at(d.path()), "the stamp is lifted for the window, the world is not running");
+        assert!(super::super::halted_at(d.path()), "the stamp is lifted for the window, the world is not running");
     }
 }

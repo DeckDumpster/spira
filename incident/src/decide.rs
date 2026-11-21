@@ -329,6 +329,7 @@ pub fn activation_skew(title: &str, payload: &str, removed: &[String]) -> Option
 mod tests {
     use super::*;
 
+    #[test_id(t7vjsis)]
     #[test]
     fn bound_ref_keeps_short_keys_and_hashes_long_ones() {
         assert_eq!(bound_ref("incident:foo"), "incident:foo");
@@ -340,6 +341,7 @@ mod tests {
         assert!(bound_ref(&a).starts_with("basefail-local:r:s:"));
     }
 
+    #[test_id(t51yuft)]
     #[test]
     fn ref_hash_is_deterministic_and_8_hex_chars() {
         let h1 = ref_hash("incident:foo");
@@ -350,6 +352,7 @@ mod tests {
         assert_ne!(h1, ref_hash("incident:bar"));
     }
 
+    #[test_id(t1noi6p)]
     #[test]
     fn sanitize_cause_collapses_and_trims_and_defaults() {
         assert_eq!(sanitize_cause("suite-red"), "suite-red");
@@ -361,6 +364,7 @@ mod tests {
         assert_eq!(sanitize_cause("---"), "unrecorded");
     }
 
+    #[test_id(t42jfzy)]
     #[test]
     fn reopen_cause_classifies_by_interval() {
         assert_eq!(reopen_cause(1000, 1100, 1800), "closed-while-live");
@@ -370,6 +374,7 @@ mod tests {
     }
 
     /// sp-jgjvh: an incident's open/closed is its lifecycle row's state.
+    #[test_id(tu3tt9b)]
     #[test]
     fn status_reads_the_lifecycle_row() {
         use spira_store::lc_state::Row;
@@ -396,12 +401,14 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-04
+    #[test_id(tc2vuf6)]
     #[test]
     fn dedup_scan_label_keyed_pass_finds_open_bead() {
         let rows = vec![row("sp-a", BeadStatus::Open, Some("incident:x"), &["ref:aa"], None)];
         assert_eq!(dedup_scan(&rows, true, false, "incident:x"), Some(DedupHit::Open { id: "sp-a".into() }));
     }
 
+    #[test_id(try1wg1)]
     #[test]
     fn dedup_scan_fallback_skips_ref_labeled_rows() {
         // A bead that already carries a ref: label was checked on the label-keyed pass;
@@ -411,12 +418,14 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-04
+    #[test_id(tctmyss)]
     #[test]
     fn dedup_scan_fallback_finds_unlabeled_bead() {
         let rows = vec![row("sp-a", BeadStatus::Open, Some("incident:x"), &[], None)];
         assert_eq!(dedup_scan(&rows, true, true, "incident:x"), Some(DedupHit::Open { id: "sp-a".into() }));
     }
 
+    #[test_id(tdvchwz)]
     #[test]
     fn dedup_scan_closed_pass_returns_closed_at() {
         let rows = vec![row("sp-a", BeadStatus::Closed, Some("incident:x"), &[], Some("2026-09-01T00:00:00Z"))];
@@ -427,6 +436,7 @@ mod tests {
     }
 
     /// sp-nmlna: a terminal row is its own hit, never `Closed` (which reopens).
+    #[test_id(tj7ttvu)]
     #[test]
     fn dedup_scan_terminal_row_is_a_terminal_hit() {
         let rows = vec![row("sp-a", BeadStatus::Terminal, Some("incident:x"), &[], Some("2026-09-01T00:00:00Z"))];
@@ -437,6 +447,7 @@ mod tests {
         assert_eq!(dedup_scan(&rows, true, false, "incident:x"), None, "never an open hit");
     }
 
+    #[test_id(tdu4fni)]
     #[test]
     fn dedup_scan_prefers_a_movable_row_then_the_latest_terminal_one() {
         let rows = vec![
@@ -453,12 +464,14 @@ mod tests {
         assert_eq!(dedup_scan(&with_sub, false, false, "incident:x"), Some(DedupHit::Closed { id: "sp-sub".into(), closed_at: None }));
     }
 
+    #[test_id(trcp7pv)]
     #[test]
     fn dedup_scan_no_match_returns_none() {
         let rows = vec![row("sp-a", BeadStatus::Open, Some("incident:y"), &[], None)];
         assert_eq!(dedup_scan(&rows, true, false, "incident:x"), None);
     }
 
+    #[test_id(t7g6x2z)]
     #[test]
     fn dedup_scan_wrong_status_bucket_returns_none() {
         // An in_progress bead is not found by the closed-status scan.
@@ -467,6 +480,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-06
+    #[test_id(t7olzx8)]
     #[test]
     fn recur_note_body_empty_when_payload_unchanged_and_not_reopened() {
         let payload = b"same payload";
@@ -478,6 +492,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-06
+    #[test_id(tlaziya)]
     #[test]
     fn recur_note_body_present_when_payload_changed() {
         let (note, _) = recur_note_body(Some("payload-hash:deadbeef"), b"new payload", false);
@@ -485,6 +500,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-06
+    #[test_id(tmb7qib)]
     #[test]
     fn recur_note_body_present_on_reopen_even_if_unchanged() {
         let payload = b"same payload";
@@ -494,6 +510,7 @@ mod tests {
         assert!(note.is_some(), "a reopen must carry the note even with an unchanged payload");
     }
 
+    #[test_id(t42a4sp)]
     #[test]
     fn recur_note_body_truncates_to_2000_bytes() {
         let payload = vec![b'x'; 5000];
@@ -503,6 +520,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-07
+    #[test_id(tgy051s)]
     #[test]
     fn fenrir_thresholds() {
         assert!(crosses_sin(5, 5, false, false, false));
@@ -512,27 +530,32 @@ mod tests {
         assert!(!crosses_sin(5, 5, false, false, true), "already labelled fenrir — no second page");
     }
 
+    #[test_id(tsa61tq)]
     #[test]
     fn home_repo_prefers_explicit_env() {
         assert_eq!(home_repo(Some("brain"), Some("whatever"), None), "brain");
     }
 
+    #[test_id(t1uh98r)]
     #[test]
     fn home_repo_falls_back_to_repo_basename() {
         assert_eq!(home_repo(None, Some("r/spira/harness"), None), "harness");
     }
 
+    #[test_id(tnbbd9h)]
     #[test]
     fn home_repo_falls_back_to_home_when_no_repo() {
         assert_eq!(home_repo(None, None, Some("r/spira/harness")), "harness");
     }
 
+    #[test_id(tsd3l7f)]
     #[test]
     fn repo_names_skips_comments_and_short_rows() {
         let text = "# comment\nbrain | /path/to/brain | push\nlonewolf\nspira | /path/to/spira | hold\n";
         assert_eq!(repo_names(text), vec!["brain".to_string(), "spira".to_string()]);
     }
 
+    #[test_id(tx0voz9)]
     #[test]
     fn provenance_format() {
         assert_eq!(provenance("spira-groom.service", "box1", "some/path"), "spira-groom.service on box1: some/path");
@@ -541,6 +564,7 @@ mod tests {
         assert_eq!(provenance("?", "h", "?"), "on h");
     }
 
+    #[test_id(tnbt9v4)]
     #[test]
     fn unit_from_cgroup_line_recognises_unit_suffixes() {
         assert_eq!(unit_from_cgroup_line("0::/user.slice/spira-groom.service"), "spira-groom.service");
@@ -550,6 +574,7 @@ mod tests {
         assert_eq!(unit_from_cgroup_line(""), "?");
     }
 
+    #[test_id(ta7gdxa)]
     #[test]
     fn incident_labels_always_carry_the_scope() {
         assert_eq!(incident_labels(None, Some("spira-ops"), "incident"), "spira-ops,incident");
@@ -559,6 +584,7 @@ mod tests {
         assert_eq!(incident_labels(None, Some(""), "incident"), "spira,incident");
     }
 
+    #[test_id(tfuazcd)]
     #[test]
     fn invalid_repo_label_allows_home_repo_and_known_repos() {
         let known = vec!["spira".to_string(), "brain".to_string()];
@@ -567,6 +593,7 @@ mod tests {
         assert_eq!(invalid_repo_label("plan", "spira", &known), None, "no repo: label at all is allowed");
     }
 
+    #[test_id(tz7nfgo)]
     #[test]
     fn invalid_repo_label_refuses_unknown_repo() {
         let known = vec!["spira".to_string()];
@@ -575,12 +602,14 @@ mod tests {
 
     // Pins the sp-pwmlj collapse: before it, a bare "repo:" (empty value) was refused here
     // but allowed by `bdq`'s real fence (`repo_val.is_empty()` short-circuits there).
+    #[test_id(th8ylij)]
     #[test]
     fn invalid_repo_label_empty_value_is_allowed_same_as_bdq() {
         let known = vec!["spira".to_string()];
         assert_eq!(invalid_repo_label("plan,repo:", "spira", &known), None);
     }
 
+    #[test_id(t2zt071)]
     #[test]
     fn schema_delete_is_detected_regardless_of_case_or_spacing() {
         assert!(contains_schema_delete("DELETE   FROM schema_migrations", ""));
@@ -588,6 +617,7 @@ mod tests {
         assert!(!contains_schema_delete("delete from somewhere_else", ""));
     }
 
+    #[test_id(t0yi21x)]
     #[test]
     fn a_not_declared_failure_for_a_removed_key_is_skew_and_any_other_is_not() {
         let removed = delta_removed_keys("removed = [\"spira.cert_prices\",\n \"spira.mirror\"]\n[added]\n\"spira.other\" = 1\n");

@@ -369,6 +369,7 @@ mod tests {
         .unwrap()
     }
 
+    #[test_id(tsbl36w)]
     #[test]
     fn answers_parse_bare_quoted_and_prefixed_keys() {
         let a = full();
@@ -377,6 +378,7 @@ mod tests {
         assert!(parse_answers("no equals here").is_err());
     }
 
+    #[test_id(txv3rnh)]
     #[test]
     fn missing_inputs_are_named_exactly() {
         let mut a = full();
@@ -385,6 +387,7 @@ mod tests {
         assert_eq!(missing(&a), vec!["db", "run"]);
     }
 
+    #[test_id(tl3ncpm)]
     #[test]
     fn an_existing_file_is_validated_and_never_overwritten() {
         let d = testkit::TempDir::new("spira-config-init-existing");
@@ -396,6 +399,7 @@ mod tests {
         assert!(ensure(&out, full(), None, &reg()).is_err());
     }
 
+    #[test_id(tdz9f29)]
     #[test]
     fn a_layered_spec_in_force_is_validated_and_used_and_one_with_a_missing_layer_refuses() {
         let d = testkit::TempDir::new("spira-config-init-layers");
@@ -411,6 +415,7 @@ mod tests {
         assert!(e.contains("nope.toml"), "{e}");
     }
 
+    #[test_id(t3kxl6t)]
     #[test]
     fn nobody_to_ask_refuses_naming_the_missing_inputs_and_writes_nothing() {
         let d = testkit::TempDir::new("spira-config-init-refuse");
@@ -423,6 +428,7 @@ mod tests {
         assert!(!out.exists());
     }
 
+    #[test_id(tszaca0)]
     #[test]
     fn a_fresh_config_declares_a_control_store_under_the_run_directory_unless_answered() {
         let text = render(&full(), Path::new("x/spira.toml"), &reg()).unwrap();
@@ -433,6 +439,7 @@ mod tests {
         assert!(text.contains("lc_store_path = \"b/run/elsewhere.db\""), "{text}");
     }
 
+    #[test_id(tjw3vwt)]
     #[test]
     fn an_unknown_answer_is_refused_by_name() {
         let mut a = full();
@@ -441,6 +448,7 @@ mod tests {
         assert!(e.contains("no_such_key"), "{e}");
     }
 
+    #[test_id(tyhy3th)]
     #[test]
     fn default_out_prefers_spira_toml_then_xdg_then_home() {
         let m = |p: &[(&str, &str)]| p.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<BTreeMap<_, _>>();
@@ -451,6 +459,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-07
+    #[test_id(tnles9o)]
     #[test]
     fn a_written_config_reads_back_what_was_answered_and_a_second_run_leaves_it_untouched() {
         let d = testkit::TempDir::new("spira-config-init-roundtrip");

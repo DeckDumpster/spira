@@ -474,6 +474,7 @@ pub fn detail_json(d: &Detail) -> Value {
 mod tests {
     use super::*;
 
+    #[test_id(topv4sd)]
     #[test]
     fn a_rounds_own_recorded_log_is_a_pass_log_even_when_vm_results_has_none() {
         let dir = testkit::TempDir::new("loom-own-log");
@@ -500,6 +501,7 @@ round-vm: BARE-SUITES: PASS\n\
 round-vm: UNIT-TESTS: PASS (211 test binaries)\n\
 round-vm: setup 42s, suites 158s\n";
 
+    #[test_id(tbxxs9l)]
     #[test]
     fn a_red_suite_sorts_first_with_its_first_fail_line_and_a_green_one_has_none() {
         let p = parse_pass_log(RED);
@@ -515,6 +517,7 @@ round-vm: setup 42s, suites 158s\n";
         assert_eq!((p.setup_s, p.suites_s, p.instance_type.as_str()), (Some(42), Some(158), "c7i.8xlarge"));
     }
 
+    #[test_id(tmvjiz9)]
     #[test]
     fn a_pass_logs_disk_peak_is_the_largest_total_or_peak_line_and_an_unread_one_is_none() {
         let p = parse_pass_log(
@@ -524,6 +527,7 @@ round-vm: setup 42s, suites 158s\n";
         assert_eq!(parse_pass_log("round-vm: DISK suites peak unread -\nround-vm: DISK start total unread -\n").disk_peak_b, None);
     }
 
+    #[test_id(tcilmet)]
     #[test]
     fn the_round_detail_shows_each_passs_disk_peak_in_html_and_json_and_nothing_when_unread() {
         let batch = json!({});
@@ -537,6 +541,7 @@ round-vm: setup 42s, suites 158s\n";
         assert!(j.contains("\"disk_peak_b\":3221225472") && j.contains("\"disk_peak_b\":null"), "{j}");
     }
 
+    #[test_id(t5450mm)]
     #[test]
     fn a_failed_unit_run_names_the_failing_tests() {
         let p = parse_pass_log("VERDICT GREEN ran=3 skipped=0\nround-vm: UNIT-TESTS: FAIL (unit run rc=101):\ntest a::b ... FAILED\ntest a::c ... ok\n");

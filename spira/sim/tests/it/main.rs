@@ -1,6 +1,8 @@
 //! The crate's integration tests, linked as one test binary (sp-qd5io5): each module is one
 //! former `tests/<name>.rs` file, which linked as its own executable carrying the whole crate.
 
+#[macro_use]
+extern crate spira_test_id;
 mod agent;
 mod callworld;
 mod ci;

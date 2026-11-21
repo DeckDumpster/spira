@@ -33,4 +33,5 @@ spira-otel = { path = "../spira-otel" }
 ureq = { version = "2", default-features = false, features = ["tls"] }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

@@ -253,6 +253,7 @@ mod tests {
         }
     }
 
+    #[test_id(tr5qq0m)]
     #[test]
     fn known_epoch_formats_correctly() {
         // 2026-09-25T00:00:00Z, cross-checked with `date -u -d @1790294400`.
@@ -260,6 +261,7 @@ mod tests {
         assert_eq!(format_rfc3339(0), "1970-01-01T00:00:00Z");
     }
 
+    #[test_id(tzlfnqt)]
     #[test]
     fn first_write_creates_version_one() {
         let dir = tempdir();
@@ -271,6 +273,7 @@ mod tests {
         assert_eq!(outcome, MaterializeOutcome::NewVersion { version: 1 });
     }
 
+    #[test_id(tkm9s7k)]
     #[test]
     fn read_current_with_nothing_materialised_is_none() {
         let dir = tempdir();
@@ -278,6 +281,7 @@ mod tests {
         assert!(store.read_current().unwrap().is_none());
     }
 
+    #[test_id(tc4xbyh)]
     #[test]
     fn read_current_round_trips_the_written_composite() {
         let dir = tempdir();
@@ -294,6 +298,7 @@ mod tests {
         assert_eq!(read_back.content_hash(), composite.content_hash());
     }
 
+    #[test_id(t7abzce)]
     #[test]
     fn unchanged_content_does_not_advance_the_version() {
         let dir = tempdir();
@@ -310,6 +315,7 @@ mod tests {
         assert_eq!(outcome, MaterializeOutcome::Unchanged { version: 1 });
     }
 
+    #[test_id(tka4x5i)]
     #[test]
     fn changed_content_advances_the_version_and_keeps_history() {
         let dir = tempdir();

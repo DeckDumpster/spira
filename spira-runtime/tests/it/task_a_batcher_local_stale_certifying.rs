@@ -23,6 +23,7 @@ fn names(acts: &[spira_runtime::tasks::a::kit::Act]) -> Vec<&str> {
     acts.iter().map(|a| a.effect.as_str()).collect()
 }
 
+#[test_id(txhenxt)]
 #[test]
 fn a_certifying_row_for_a_landed_batch_is_dropped_and_the_next_round_is_cut() {
     let (carry, acts) = decide(&stuck(), &waiting_pool(vec![BATCH.into()]));
@@ -37,6 +38,7 @@ fn a_certifying_row_for_a_landed_batch_is_dropped_and_the_next_round_is_cut() {
     assert_eq!(names(&acts), [ROUND_OPEN], "{acts:?}");
 }
 
+#[test_id(tduor54)]
 #[test]
 fn the_reconcile_is_told_in_the_pass_log() {
     let (next, _) = decide(&stuck(), &waiting_pool(vec![BATCH.into()]));
@@ -44,6 +46,7 @@ fn the_reconcile_is_told_in_the_pass_log() {
     assert!(lines.iter().any(|l| l.contains(BATCH) && l.contains("LANDED or ABANDONED")), "{lines:?}");
 }
 
+#[test_id(ty2uzbo)]
 #[test]
 fn a_certifying_row_whose_batch_the_lifecycle_does_not_call_settled_is_left_to_its_leg() {
     let (carry, acts) = decide(&stuck(), &waiting_pool(vec![]));
@@ -51,6 +54,7 @@ fn a_certifying_row_whose_batch_the_lifecycle_does_not_call_settled_is_left_to_i
     assert!(carry.repos["spira"].reconciled.is_none());
 }
 
+#[test_id(trcg3ns)]
 #[test]
 fn a_snapshot_that_could_not_list_units_does_not_reconcile() {
     let mut snap = waiting_pool(vec![BATCH.into()]);

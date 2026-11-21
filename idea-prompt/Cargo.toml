@@ -30,6 +30,7 @@ spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [profile.release]

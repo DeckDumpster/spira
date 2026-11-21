@@ -98,6 +98,7 @@ fn settle_boot(d: &mut VirtualDriver, clock: &VirtualClock) {
     run_for(d, clock, 60_000);
 }
 
+#[test_id(tyehz5m)]
 #[test]
 fn batcher_and_gate_worker_stay_armed_and_observe_every_cadence_after_a_boot_of_all_tasks() {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(1_000));
@@ -119,6 +120,7 @@ fn batcher_and_gate_worker_stay_armed_and_observe_every_cadence_after_a_boot_of_
     assert!(observes(&seen, GATE_OBSERVE) >= before.1 + 3, "gate.worker observes each cadence");
 }
 
+#[test_id(tluq2yl)]
 #[test]
 fn a_restart_onto_the_same_journal_arms_and_observes_again_even_after_a_long_downtime() {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(1_000));
@@ -140,6 +142,7 @@ fn a_restart_onto_the_same_journal_arms_and_observes_again_even_after_a_long_dow
 
 /// A handler fails on the batcher's stream while the store refuses the poison row: the stream is
 /// skipped in memory with no row, and the tick that would have followed is consumed.
+#[test_id(t2ajb7h)]
 #[test]
 fn a_tick_swallowed_by_a_stream_quarantine_that_could_not_be_stored_is_armed_again() {
     let (faulty, clock) = (FaultyJournal::new(MemJournal::new()), VirtualClock::new(1_000));
@@ -167,6 +170,7 @@ fn a_tick_swallowed_by_a_stream_quarantine_that_could_not_be_stored_is_armed_aga
 
 /// The stream is quarantined with a row; ticks that fall on it are not heard, and once the
 /// operator clears the row the stream ticks again without a restart.
+#[test_id(tozxqli)]
 #[test]
 fn a_quarantined_batcher_stream_ticks_again_once_its_row_is_cleared() {
     let (store, clock) = (Arc::new(Lifting { inner: MemJournal::new(), lifted: AtomicBool::new(false) }), VirtualClock::new(1_000));
@@ -196,6 +200,7 @@ fn a_quarantined_batcher_stream_ticks_again_once_its_row_is_cleared() {
 
 /// A restart onto a stream whose poison row stands: the boot tick lands on it, is parked, and
 /// the stream ticks again once the row is cleared.
+#[test_id(twlsdn7)]
 #[test]
 fn a_restart_onto_a_standing_poison_row_keeps_the_batcher_armed_and_resumes_when_it_is_cleared() {
     let (store, clock) = (Arc::new(Lifting { inner: MemJournal::new(), lifted: AtomicBool::new(false) }), VirtualClock::new(1_000));

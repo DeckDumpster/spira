@@ -19,16 +19,19 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(ti5dbo8)]
 #[test]
 fn t1_registered_boots_and_arms_an_hourly_tick() {
     t::t1_registered_and_boots::<H>(SET, HOUR);
 }
 
+#[test_id(t2aa1eh)]
 #[test]
 fn t2_a_2h_old_open_unmerged_worktree_is_the_probe_alone() {
     t::t2_silent::<H>(SET, &json(&repo(vec![tree("sp-a", Some("WORKING"), false, 7_200, None)])));
 }
 
+#[test_id(tbabkns)]
 #[test]
 fn t3_a_pass_observes_reaps_and_ends_a_halt_idles_and_a_tick_while_reaping_is_refused() {
     let h = t::handler::<H>(SET);
@@ -43,12 +46,14 @@ fn t3_a_pass_observes_reaps_and_ends_a_halt_idles_and_a_tick_while_reaping_is_re
     assert_eq!((c.phase, acts.len()), (Phase::Halted, 0));
 }
 
+#[test_id(tn25uup)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_neither_bash_nor_spira_lc() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/c/hel_reap_stale.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(tb70ck5)]
 #[test]
 fn t5_finished_merged_and_idle_trees_go_and_the_two_listed_divergences_hold() {
     let h = t::handler::<H>(SET);
@@ -79,12 +84,14 @@ fn reaping_a_refused_removal() -> TaskRig {
     r
 }
 
+#[test_id(tuxr84h)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&reaping_a_refused_removal(), task::NAME);
     assert!(rows.iter().any(|k| k == "phase"), "{rows:?}");
 }
 
+#[test_id(tbn9quu)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(reaping_a_refused_removal, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));

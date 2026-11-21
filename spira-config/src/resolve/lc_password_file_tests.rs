@@ -5,6 +5,7 @@
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
+    #[test_id(txxhmxl)]
     #[test]
     fn an_absent_variable_resolves_to_the_default_credential_when_it_exists() {
         let t = testkit::TempDir::new("lcpw");
@@ -17,6 +18,7 @@
         assert_eq!(empty, got);
     }
 
+    #[test_id(tqwomwi)]
     #[test]
     fn with_no_credential_anywhere_it_is_empty_and_an_explicit_value_wins() {
         assert_eq!(lc_password_file(&env(&[("XDG_CONFIG_HOME", "nonexistent-lcpw")])), "");

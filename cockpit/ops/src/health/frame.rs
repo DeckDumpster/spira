@@ -175,6 +175,7 @@ mod tests {
         render(rows, 80, &i).iter().map(|l| strip(l)).collect::<Vec<_>>().join("\n")
     }
 
+    #[test_id(tuamfgp)]
     #[test]
     fn slots_row_shows_live_ceiling_and_free_without_a_split() {
         let out = slots_frame("SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\nSP_SLOTS_POOL='8'\n", 0);
@@ -186,6 +187,7 @@ mod tests {
         slots_frame(Box::leak(format!("SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\nSP_BOUND='{bound}'\n").into_boxed_str()), 0)
     }
 
+    #[test_id(t0ljx5l)]
     #[test]
     fn the_bound_row_shows_held_limit_waiting_and_no_backfill_when_over() {
         assert!(bound_frame("build-disk 9 7 3 1").contains("BOUND   build-disk 9 of 7 held, 3 waiting, no backfill"));
@@ -194,12 +196,14 @@ mod tests {
         assert!(bound_frame("?").contains("BOUND   ? \u{2014} the scheduler did not answer"));
     }
 
+    #[test_id(tm1rgv8)]
     #[test]
     fn the_bound_row_is_absent_when_no_class_has_a_limit() {
         assert!(!bound_frame("").contains("BOUND"));
         assert!(!slots_frame("SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\n", 0).contains("BOUND"));
     }
 
+    #[test_id(tu0bl1r)]
     #[test]
     fn an_over_class_renders_in_warn() {
         let mut i = base_inputs();
@@ -209,6 +213,7 @@ mod tests {
         assert!(row.contains(&format!("{}build-disk 9 of 7", crate::health::colors::WARN)), "{row:?}");
     }
 
+    #[test_id(tn8qnip)]
     #[test]
     fn no_frame_from_a_full_snapshot_says_lane() {
         let snap = "SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\nSP_SLOTS_POOL='8'\nSP_BOUND='build-disk 9 7 3 1;memory 2 4 1 0'\nSP_SLOTS_PENDING='ceiling 9'\nSP_SLOTS_DIRECTED='2'\nSP_MAIL_UNREAD='1'\nSP_MAIL_OLDEST_AGE='60'\nSP_MAIL_N='1'\nSP_MAIL0='60|NEW|a message'\nSP_QUEUE_DEPTH='2'\nSP_DWARF_N='1'\nSP_DWARF0_NAME='ada'\nSP_DWARF0_BEAD='sp-w1'\n";
@@ -218,6 +223,7 @@ mod tests {
         }
     }
 
+    #[test_id(tjarv6h)]
     #[test]
     fn slots_row_shows_a_pending_re_pin_and_the_directed_count() {
         let out = slots_frame("SP_SLOTS_LIVE='7'\nSP_SLOTS_CEILING='7'\nSP_SLOTS_FREE='0'\nSP_SLOTS_PENDING='ceiling 9'\nSP_SLOTS_WAITS='the batcher to finish the round it is driving'\nSP_SLOTS_DIRECTED='2'\n", 0);
@@ -228,6 +234,7 @@ mod tests {
         assert!(!quiet.contains("pending") && !quiet.contains("directed"), "{quiet}");
     }
 
+    #[test_id(thmy1vs)]
     #[test]
     fn slots_row_shows_question_on_failed_probe() {
         let out = slots_frame("SP_SLOTS_LIVE='1'\nSP_SLOTS_CEILING='4'\nSP_SLOTS_FREE='3'\nSP_SLOTS_POOL='4'\n", 0);
@@ -237,6 +244,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-26
+    #[test_id(txhkzn0)]
     #[test]
     fn the_pane_renders_mail_queue_land_and_lease_keys_and_none_of_the_retired_labels() {
         let snap = "SP_AT='1000'\nSP_MAIL_UNREAD='1'\nSP_MAIL_OLDEST_AGE='60'\nSP_MAIL_N='3'\n\
@@ -253,6 +261,7 @@ mod tests {
         }
     }
 
+    #[test_id(tv3gian)]
     #[test]
     fn slots_row_survives_a_mail_section_longer_than_the_pane() {
         let mut snap = String::from("SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\nSP_MAIL_UNREAD='5'\nSP_MAIL_OLDEST_AGE='120'\nSP_MAIL_N='5'\n");
@@ -261,6 +270,7 @@ mod tests {
         assert!(out.contains("5 free"), "{out}");
     }
 
+    #[test_id(tb8cewz)]
     #[test]
     fn the_header_faults_above_a_non_default_threshold_and_not_at_it() {
         let mut stale = base_inputs();
@@ -277,12 +287,14 @@ mod tests {
         assert!(!frame(0, 80, &fresh)[0].contains("FAULT"));
     }
 
+    #[test_id(ttewqyw)]
     #[test]
     fn frame_with_no_snapshot_still_produces_a_header_and_standing_lines() {
         let out = frame(0, 80, &base_inputs());
         assert!(!out.is_empty());
     }
 
+    #[test_id(th921pp)]
     #[test]
     fn render_marks_drop_count_on_the_header_when_pane_is_too_short() {
         let out = render(3, 80, &base_inputs());
@@ -290,6 +302,7 @@ mod tests {
         assert!(out[0].contains('\u{25be}'));
     }
 
+    #[test_id(tnaewx6)]
     #[test]
     fn render_with_zero_rows_means_unlimited() {
         let unlimited = render(0, 80, &base_inputs());
@@ -305,6 +318,7 @@ mod tests {
     /// major body section is present, not just the header — i.e. a correctly-read 81 must
     /// actually render 81 rows' worth of content, never fold down to a handful regardless
     /// of `term_size`'s own correctness.
+    #[test_id(t2gt4pv)]
     #[test]
     fn a_correctly_read_81_row_pane_renders_every_body_section() {
         let mut inputs = base_inputs();
@@ -354,6 +368,7 @@ mod tests {
         render(40, cols, &inputs)
     }
 
+    #[test_id(tnnuv6o)]
     #[test]
     fn the_pane_shows_the_goodput_top_line_and_a_row_per_section() {
         let out = goodput_frame(GOODPUT_FIXTURE, 120).join("\n");
@@ -363,6 +378,7 @@ mod tests {
         }
     }
 
+    #[test_id(tf3pziq)]
     #[test]
     fn the_panes_goodput_lines_fit_a_phone_page() {
         let out = goodput_frame(GOODPUT_FIXTURE, 40);
@@ -382,19 +398,22 @@ mod tests {
         }
     }
 
+    #[test_id(to205i5)]
     #[test]
     fn the_pane_greys_a_stale_pass_and_says_how_old_it_is() {
         let out = goodput_frame(&*Box::leak(GOODPUT_FIXTURE.replace("PASS_AT='986'", "PASS_AT='1'").into_boxed_str()), 120);
         let line = out.iter().find(|l| l.contains("stale pass, 999s old")).expect("a stale-pass line");
-        assert!(line.starts_with(super::super::colors::DIM), "{line:?}");
+        assert!(line.starts_with(super::super::super::colors::DIM), "{line:?}");
     }
 
+    #[test_id(ttv5eog)]
     #[test]
     fn the_pane_shows_question_marks_when_no_pass_record_was_written() {
         let out = goodput_frame("SP_AT='1000000000'\n", 120).join("\n");
         assert!(out.contains("GOODPUT ?/day of ?") && out.contains("pass ?"), "{out}");
     }
 
+    #[test_id(tip9pq5)]
     #[test]
     fn landed_in_24h_is_the_lifecycle_sections_count_and_unread_is_a_question_mark() {
         let lands_line = |content: &'static str| {

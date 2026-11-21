@@ -84,6 +84,7 @@ pub fn render(stdin: &str, now: i64, counts: &Result<DayCounts, String>) -> Opti
 mod tests {
     use super::*;
 
+    #[test_id(t346squ)]
     #[test]
     fn spark_flat_rules() {
         assert_eq!(spark(&[0; 8]), "▁▁▁▁▁▁▁▁");
@@ -92,6 +93,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-19
+    #[test_id(temu5q5)]
     #[test]
     fn opened_and_closed_sparklines_bucket_by_timestamp_and_render_empty_buckets() {
         let now = 1_800_000_000;
@@ -130,6 +132,7 @@ mod tests {
         (yoe + era * 400 + (m <= 2) as i64, m, d)
     }
 
+    #[test_id(tocm4b5)]
     #[test]
     fn counts_and_no_landed_series() {
         let now = 1788998400 + 86400;
@@ -152,6 +155,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-19
+    #[test_id(tzwtkvj)]
     #[test]
     fn unreadable_counts_are_unknown_with_the_error_not_zero() {
         let out = render("[]", 1_000_000, &Err("victorialogs-unreachable: refused".into())).unwrap();

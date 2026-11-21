@@ -68,6 +68,7 @@ fn spec_for_supply(r: &Rig<MemBackend>) {
     }
 }
 
+#[test_id(tknn6mm)]
 #[test]
 fn the_day_reads_the_manifests_landable_and_dropped_figures_from_the_fixtures_transitions() {
     let r = at_midnight();
@@ -83,6 +84,7 @@ fn the_day_reads_the_manifests_landable_and_dropped_figures_from_the_fixtures_tr
     assert_eq!(s["metadata"]["max_age"], "86400s");
 }
 
+#[test_id(tj0t69l)]
 #[test]
 fn a_return_to_ready_is_no_filing_and_a_drop_after_ready_leaves_it_unlandable() {
     let r = at_midnight();
@@ -102,6 +104,7 @@ fn a_return_to_ready_is_no_filing_and_a_drop_after_ready_leaves_it_unlandable() 
     assert!((reading.dropped_share - 2.0 / 3.0).abs() < 1e-9);
 }
 
+#[test_id(tc8y40w)]
 #[test]
 fn a_day_with_no_filing_publishes_a_share_of_zero_so_its_distance_is_defined() {
     let r = at_midnight();
@@ -109,6 +112,7 @@ fn a_day_with_no_filing_publishes_a_share_of_zero_so_its_distance_is_defined() {
     assert_eq!((reading.filed, reading.landable, reading.dropped_share), (0, 0, 0.0));
 }
 
+#[test_id(tqxgzb3)]
 #[test]
 fn the_publisher_declares_no_action_and_the_selector_records_the_section_as_a_term() {
     let r = at_midnight();
@@ -126,6 +130,7 @@ fn the_publisher_declares_no_action_and_the_selector_records_the_section_as_a_te
     assert!(plan.steps.is_empty() && plan.would_step.is_empty());
 }
 
+#[test_id(tdlt1bd)]
 #[test]
 fn the_section_turns_stale_when_the_publisher_stops_for_longer_than_its_max_age() {
     let r = at_midnight();
@@ -143,6 +148,7 @@ fn the_section_turns_stale_when_the_publisher_stops_for_longer_than_its_max_age(
     assert_eq!(cannot_see(&r), None, "the next publish makes it fresh");
 }
 
+#[test_id(tourx3l)]
 #[test]
 fn a_second_publish_replaces_the_first_on_its_revision() {
     let r = at_midnight();
@@ -152,6 +158,7 @@ fn a_second_publish_replaces_the_first_on_its_revision() {
     assert_eq!(published(&r)["metadata"]["observedAt"], spira_desired_state::store::format_rfc3339(MIDNIGHT + 3_600));
 }
 
+#[test_id(tg1vepl)]
 #[test]
 fn a_store_that_refuses_the_write_is_an_error_naming_the_verb() {
     struct Refuses;
@@ -168,6 +175,7 @@ fn a_store_that_refuses_the_write_is_an_error_naming_the_verb() {
     assert!(e.contains("publish Supply/supply") && e.contains("exit 3"), "{e}");
 }
 
+#[test_id(tdg8mry)]
 #[test]
 fn a_store_that_cannot_answer_the_read_stops_the_publish_before_any_write() {
     struct Down;
@@ -180,6 +188,7 @@ fn a_store_that_cannot_answer_the_read_stops_the_publish_before_any_write() {
     assert!(section::run(&Down, MIDNIGHT, INTERVAL, &[], 0).unwrap_err().contains("section get Supply/supply"));
 }
 
+#[test_id(t1x864x)]
 #[test]
 fn the_groom_pass_reads_the_listed_rows_and_the_ready_sets_claimable_count() {
     struct Store;
@@ -209,6 +218,7 @@ fn the_groom_pass_reads_the_listed_rows_and_the_ready_sets_claimable_count() {
     assert_eq!(section::claimable_ready(&Store).unwrap(), 2);
 }
 
+#[test_id(tp27iv2)]
 #[test]
 fn a_list_or_claim_view_that_fails_stops_the_pass_before_any_write() {
     struct Down;
@@ -222,11 +232,13 @@ fn a_list_or_claim_view_that_fails_stops_the_pass_before_any_write() {
     assert!(section::claimable_ready(&Down).unwrap_err().starts_with("claimable: exit 2"));
 }
 
+#[test_id(th40qhl)]
 #[test]
 fn rows_that_are_not_a_list_are_no_transitions() {
     assert!(section::transitions_of_rows(&json!({ "error": "x" })).is_empty());
 }
 
+#[test_id(tyerzb2)]
 #[test]
 fn a_section_the_store_holds_but_the_schema_cannot_read_stops_the_publish() {
     struct Garbled;

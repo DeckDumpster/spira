@@ -485,6 +485,7 @@ mod tests {
         Snapshot { snap_age_s: Some(1), failed_units: Some(vec![]), noverdict: [("spira-sp-x".to_string(), streak)].into(), ..Snapshot::default() }
     }
 
+    #[test_id(tiqmzrp)]
     #[test]
     fn a_no_verdict_streak_below_the_escalation_bar_is_nominal_and_at_the_bar_is_not() {
         assert!(is_nominal(&nominal_with(2), 60, 3));

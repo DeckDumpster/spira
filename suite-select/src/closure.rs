@@ -125,6 +125,7 @@ mod tests {
     /// share its key; differing inside it — a covered file, its own text, a script it runs, a
     /// crate its binary is built from, the harness — they do not; and a suite with no declared
     /// inputs has no key, so it always runs.
+    #[test_id(tt4emct)]
     #[test]
     fn two_trees_share_a_suites_key_only_when_its_closure_is_byte_identical() {
         let ws = testkit::TempDir::new("suite-select-closure");
@@ -177,6 +178,7 @@ mod tests {
         assert_eq!(suite_inputs(&corpus, Some(&reach), None, &always)["test-a.sh"], None, "an unlisted tree keys nothing");
     }
 
+    #[test_id(t7wj6ip)]
     #[test]
     fn ls_tree_lines_parse_to_path_and_blob() {
         let t = parse_ls_tree("100644 blob abc\tspira/a b.sh\n040000 tree def\tx\n");

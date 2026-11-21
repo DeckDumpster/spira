@@ -58,12 +58,14 @@ fn tick_on_row(row: &str, settled: &str) -> Vec<String> {
     ran
 }
 
+#[test_id(turag6c)]
 #[test]
 fn a_tick_on_a_stored_landing_row_for_a_landed_batch_cuts_the_waiting_member() {
     let ran = tick_on_row(STORED, BATCH);
     assert!(ran.iter().any(|n| n == ROUND_OPEN), "the landed round was forgotten and the waiting member's round opened: {ran:?}");
 }
 
+#[test_id(t6od8gj)]
 #[test]
 fn a_tick_on_a_stored_landing_row_for_a_batch_the_lifecycle_has_not_settled_lands_it_before_cutting_another() {
     let ran = tick_on_row(STORED, "some-other-batch");
@@ -71,6 +73,7 @@ fn a_tick_on_a_stored_landing_row_for_a_batch_the_lifecycle_has_not_settled_land
     assert!(ran.iter().position(|n| n == ROUND_OPEN).is_none_or(|open| open > land), "{ran:?}");
 }
 
+#[test_id(t3ofc5a)]
 #[test]
 fn a_second_round_is_cut_after_the_first_lands_and_the_process_is_replaced() {
     let now = NOW;
@@ -92,6 +95,7 @@ fn a_second_round_is_cut_after_the_first_lands_and_the_process_is_replaced() {
     assert!(ran.iter().any(|n| n == ROUND_OPEN), "the second round was cut with no outside event: {ran:?}");
 }
 
+#[test_id(tb6sj58)]
 #[test]
 fn every_lifecycle_driven_state_drops_a_row_whose_batch_is_landed() {
     for state in ["Mending", "Certified", "Corpus", "Attributing", "Certifying"] {
@@ -114,18 +118,21 @@ fn land_acts_for_landing_row(in_flight: Option<Vec<String>>) -> Vec<String> {
     acts.iter().map(|a| a.effect.clone()).collect()
 }
 
+#[test_id(tprnegx)]
 #[test]
 fn a_landing_round_asks_to_land_again_only_when_the_scheduler_holds_other_effects_in_flight_and_no_land() {
     let asked = land_acts_for_landing_row(Some(vec![]));
     assert!(asked.iter().any(|e| e == LAND), "{asked:?}");
 }
 
+#[test_id(t8ncdrp)]
 #[test]
 fn a_landing_round_does_not_ask_again_while_its_land_is_in_flight() {
     let asked = land_acts_for_landing_row(Some(vec![LAND.to_string()]));
     assert!(!asked.iter().any(|e| e == LAND), "{asked:?}");
 }
 
+#[test_id(t12j019)]
 #[test]
 fn a_landing_round_does_not_ask_again_when_the_scheduler_reports_no_in_flight_view() {
     let asked = land_acts_for_landing_row(None);

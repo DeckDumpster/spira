@@ -114,22 +114,26 @@ mod tests {
         out
     }
 
+    #[test_id(t2jebr2)]
     #[test]
     fn the_old_rule_counted_fixture_ids() {
         assert_eq!(old_regex_hits("answers sp-a claimable and sp-b blocked"), ["sp-a", "sp-b"]);
     }
 
+    #[test_id(taamaqs)]
     #[test]
     fn fixture_ids_in_prose_are_not_citations() {
         assert!(citations("a claim view that answers sp-a claimable and sp-b blocked", "sp").is_empty());
     }
 
+    #[test_id(t1bxivt)]
     #[test]
     fn allocator_shaped_tokens_are_citations() {
         let got = citations("sp-zzzzzz and sp-abc, also sp-boo22.2 and sp-vx3oi. done", "sp");
         assert_eq!(got, ["sp-abc", "sp-boo22.2", "sp-vx3oi", "sp-zzzzzz"]);
     }
 
+    #[test_id(trvvvk9)]
     #[test]
     fn tokens_that_are_not_whole_ids_are_not_citations() {
         for m in ["sp-ow-mail", "xsp-abcdef", "SP-ABCDEF", "sp-ab", "sp-abcDEF", "sp-abc_x"] {
@@ -137,6 +141,7 @@ mod tests {
         }
     }
 
+    #[test_id(ta67rx9)]
     #[test]
     fn a_configured_prefix_is_used() {
         assert_eq!(citations("zz-abcd sp-abcd", "zz"), ["zz-abcd"]);
@@ -146,6 +151,7 @@ mod tests {
         vec![("0123456789abcdef".into(), "sp-real1: x\n\nsee sp-zzzzzz".into())]
     }
 
+    #[test_id(tds8zbm)]
     #[test]
     fn a_cited_id_the_store_lacks_is_a_phantom_with_its_sha() {
         let got = phantoms(&commits(), "sp", &mut |_| Ok(vec!["sp-real1".to_string()])).unwrap();
@@ -154,11 +160,13 @@ mod tests {
         assert!(text.contains("012345678 cites sp-zzzzzz, which does not exist in the bead store") && text.contains("Reword"), "{text}");
     }
 
+    #[test_id(tgqr7ts)]
     #[test]
     fn a_store_that_cannot_answer_is_an_error_not_a_pass() {
         assert!(phantoms(&commits(), "sp", &mut |_| Err("down".into())).is_err());
     }
 
+    #[test_id(tvgky5q)]
     #[test]
     fn a_message_citing_nothing_asks_the_store_nothing() {
         let c = vec![("a".to_string(), "no ids sp-a".to_string())];

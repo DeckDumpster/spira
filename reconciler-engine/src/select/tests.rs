@@ -2,6 +2,7 @@ use serde_json::json;
 
 use super::*;
 
+#[test_id(t32suqv)]
 #[test]
 fn a_closed_form_step_moves_from_to_and_keeps_an_integer_knob_an_integer() {
     assert_eq!(step_to("+1 slot", &json!(3)), Some(json!(4)));
@@ -17,6 +18,7 @@ fn a_closed_form_step_moves_from_to_and_keeps_an_integer_knob_an_integer() {
     assert_eq!(step_to("set to 4", &json!(1)), None);
 }
 
+#[test_id(t63nn0u)]
 #[test]
 fn back_off_doubles_per_consecutive_failure_and_stops_at_a_day() {
     assert_eq!(backoff_secs(600, 0), 600);
@@ -31,6 +33,7 @@ fn back_off_doubles_per_consecutive_failure_and_stops_at_a_day() {
     assert_eq!(ok.backoff_until(1300), None, "a fulfilment ends the streak");
 }
 
+#[test_id(tbsuq1h)]
 #[test]
 fn every_refusal_has_a_stable_code_and_a_reason_naming_what() {
     let all = [
@@ -111,6 +114,7 @@ fn refused(p: &Plan) -> Vec<&str> {
     p.refused.iter().map(|r| r.code.as_str()).collect()
 }
 
+#[test_id(t6grxm4)]
 #[test]
 fn a_pulled_cord_naming_the_target_refuses_its_step_and_a_present_andon_admits_a_destructive_one() {
     let knobs = json!({ "knobs/Probe/a/reap": 1, "knobs/Probe/b/reap": 1 });
@@ -122,6 +126,7 @@ fn a_pulled_cord_naming_the_target_refuses_its_step_and_a_present_andon_admits_a
     assert_eq!(refused(&p), ["no-andon"]);
 }
 
+#[test_id(th7snab)]
 #[test]
 fn a_stopping_action_is_never_stepped_even_past_admission() {
     let p = plan(vec![probe("a", json!([act("halt", "local", Some(true))]))], json!({ "knobs/Probe/a/halt": 0 }));
@@ -129,6 +134,7 @@ fn a_stopping_action_is_never_stepped_even_past_admission() {
     assert!(p.steps.is_empty());
 }
 
+#[test_id(tfv0yow)]
 #[test]
 fn a_baseline_needs_a_value_and_a_knob_needs_a_number() {
     let mut s = probe("a", json!([act("drain", "local", None)]));
@@ -139,6 +145,7 @@ fn a_baseline_needs_a_value_and_a_knob_needs_a_number() {
     assert_eq!(refused(&p), ["knob-not-numeric"]);
 }
 
+#[test_id(tdj1ilw)]
 #[test]
 fn among_candidates_the_one_attempted_longest_ago_goes_first_never_declaration_order() {
     let snap = crate::assemble::Snapshot::parse(&json!({
@@ -188,6 +195,7 @@ fn host_knobs() -> serde_json::Value {
     })
 }
 
+#[test_id(tg3nhav)]
 #[test]
 fn the_host_reaps_are_refused_while_no_andon_section_exists() {
     let p = plan(vec![host(&["DiskShort"], 80.0)], host_knobs());
@@ -197,6 +205,7 @@ fn the_host_reaps_are_refused_while_no_andon_section_exists() {
     assert_eq!(got, [("reap-stale-scratch", "no-andon"), ("reap-stale-targets", "no-andon")]);
 }
 
+#[test_id(tq4ogeq)]
 #[test]
 fn restore_gate_slot_is_a_candidate_only_under_shed() {
     let shedding = plan(vec![host(&["HostShedding"], 80.0)], host_knobs());
@@ -206,6 +215,7 @@ fn restore_gate_slot_is_a_candidate_only_under_shed() {
     assert_eq!((shed.steps[0].intent.from.clone(), shed.steps[0].intent.to.clone()), (json!(3), json!(4)));
 }
 
+#[test_id(t2q1nvp)]
 #[test]
 fn io_pressure_picks_the_shed_not_a_reap_and_steps_certify_par_down_by_one() {
     let p = plan(vec![host(&["IoPressure"], 80.0)], host_knobs());
@@ -213,6 +223,7 @@ fn io_pressure_picks_the_shed_not_a_reap_and_steps_certify_par_down_by_one() {
     assert_eq!((p.steps[0].intent.from.clone(), p.steps[0].intent.to.clone()), (json!(3), json!(2)));
 }
 
+#[test_id(tkhgjxe)]
 #[test]
 fn a_calm_host_under_shed_restores_a_gate_slot_though_its_gap_is_closed() {
     let calm = plan(vec![host(&["HostShedding", "Shed"], 0.0)], host_knobs());
@@ -220,6 +231,7 @@ fn a_calm_host_under_shed_restores_a_gate_slot_though_its_gap_is_closed() {
     assert_eq!((calm.steps[0].intent.from.clone(), calm.steps[0].intent.to.clone()), (json!(3), json!(4)));
 }
 
+#[test_id(tpzmv63)]
 #[test]
 fn a_closed_gap_takes_only_capacity_raise_steps_and_keeps_every_refusal() {
     let calm = plan(vec![host(&["HostShedding", "IoPressure"], 0.0)], host_knobs());
@@ -260,6 +272,7 @@ fn fleet_knobs() -> serde_json::Value {
     json!({ "knobs/DwarfFleet/fleet/max-live-dwarves-raise": 4, "knobs/DwarfFleet/fleet/max-live-dwarves-lower": 4 })
 }
 
+#[test_id(tq4p3kr)]
 #[test]
 fn the_fleet_lowers_on_host_shedding_only_while_its_gap_is_open() {
     let open = plan(vec![fleet(&["HostShedding"], 0.99, fleet_actions())], fleet_knobs());
@@ -268,12 +281,14 @@ fn the_fleet_lowers_on_host_shedding_only_while_its_gap_is_open() {
     assert!(closed.steps.is_empty() && closed.refused.is_empty() && closed.no_lever.is_empty(), "{closed:?}");
 }
 
+#[test_id(t8can4y)]
 #[test]
 fn a_closed_fleet_with_nothing_addressed_reports_neither_a_missing_lever_nor_a_term() {
     let p = plan(vec![fleet(&["HostShedding"], 0.5, json!([]))], json!({}));
     assert_eq!(p, Plan::default(), "{p:?}");
 }
 
+#[test_id(t164qwm)]
 #[test]
 fn a_closed_fleet_still_raises_for_a_saturated_condition_still_open_on_it() {
     let p = plan(vec![fleet(&["Saturated"], 0.5, fleet_actions())], fleet_knobs());

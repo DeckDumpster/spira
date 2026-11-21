@@ -35,4 +35,5 @@ spira-otel = { path = "../spira-otel" }
 runtime = { path = "../runtime" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
