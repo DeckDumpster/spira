@@ -14,8 +14,7 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = ["dwarf/integration", "spira-config/integration", "spira-store/integration", "strand/integration", "testkit/integration"]
-
+integration = ["dwarf/integration", "spira-config/integration", "spira-store/integration", "strand/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
 spira-config = { path = "../spira-config" }
 spira-store = { path = "../spira-store" }

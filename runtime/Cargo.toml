@@ -11,8 +11,7 @@ path = "tests/it/main.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["lifecycle/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "unit-run/integration", "system-paths/integration"]
-
+integration = ["lifecycle/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "unit-run/integration", "system-paths/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 lifecycle = { path = "../lifecycle" }

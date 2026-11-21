@@ -14,8 +14,7 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration", "spira-store/integration", "testkit/integration", "system-paths/integration"]
-
+integration = ["spira-config/integration", "spira-otel/integration", "spira-store/integration", "testkit/integration", "system-paths/integration", "spira-test-id/integration"]
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 serde_json = "1"

@@ -35,8 +35,7 @@ path = "tests/world_planes.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["hel/integration", "mail/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "spira-otel/integration", "testkit/integration", "tsd/integration", "system-paths/integration"]
-
+integration = ["hel/integration", "mail/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "spira-otel/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 spira-otel = { path = "../spira-otel" }

@@ -11,8 +11,7 @@ path = "tests/delivery_properties.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["testkit/integration"]
-
+integration = ["testkit/integration", "spira-test-id/integration"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

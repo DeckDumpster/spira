@@ -11,8 +11,7 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = ["incident/integration", "spira-config/integration", "spira-desired-state/integration", "spira-otel/integration", "suite-select/integration", "system-paths/integration", "testkit/integration", "tsd/integration"]
-
+integration = ["incident/integration", "spira-config/integration", "spira-desired-state/integration", "spira-otel/integration", "suite-select/integration", "system-paths/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
 [dependencies]
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }

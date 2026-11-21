@@ -10,8 +10,7 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = ["forge/integration", "habits/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration"]
-
+integration = ["forge/integration", "habits/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
 serde_json = "1"
 toml = "0.8"

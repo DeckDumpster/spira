@@ -11,8 +11,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["mail/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "system-paths/integration"]
-
+integration = ["mail/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "system-paths/integration", "spira-test-id/integration"]
 [dependencies]
 crossterm = "0.28"
 serde_json = "1"
