@@ -884,6 +884,7 @@ fn comments_recorded_at_close_weigh_the_next_pick_in_their_area() {
     assert_eq!(o.code, 0, "{} {}", o.stdout, o.stderr);
     let v: serde_json::Value = serde_json::from_str(&o.stdout).unwrap();
     assert!(v["weight"]["attention_share"].as_f64().unwrap() > 0.0, "{v}");
+}
 
 #[test]
 fn the_cover_lists_the_incidents_whose_commits_touched_the_unit() {
