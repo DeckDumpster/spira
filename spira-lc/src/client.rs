@@ -75,7 +75,10 @@ fn route_call(args: &[String], routed: Result<Route, String>) -> Option<(i32, St
 /// One request to the service on `socket_path`.
 pub(crate) fn forward(socket_path: &str, args: &[String]) -> (i32, String) {
     let (code, out, err) = forward_with(socket_path, args, None);
-    (code, format!("{out}{err}"))
+    match spira_store::lc_call::queued_id(&out) {
+        Some(id) if code == 0 => await_request(socket_path, id),
+        _ => (code, format!("{out}{err}")),
+    }
 }
 
 /// One request with `stdin` as its body; the answer's stdout and stderr apart. A refused or
