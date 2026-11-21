@@ -46,6 +46,7 @@ fn a_content_write_builds_the_writer_again_once_its_password_file_exists() {
             ("SPIRA_BEADS_SQL_HOST", "127.0.0.1"),
             ("SPIRA_BEADS_SQL_PORT", &port),
             ("SPIRA_BEADS_SQL_WRITER_PASSWORD_FILE", &pw),
+            ("SPIRA_LC_REQUEST_DEADLINE_MS", "1"),
         ],
     );
     std::fs::create_dir_all(dir.join("release/bin")).unwrap();
