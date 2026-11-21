@@ -13,14 +13,14 @@
 //! `watch.testenv_cap.observe` (host class) returns:
 //!
 //! ```text
-//! Snapshot { procs: Vec<Proc { pid, start_ticks, argv, age_secs }> }   // testenv runs only
+//! Snapshot { procs: Vec<Proc { pid, start_ticks, argv, age_secs, ledgered }> }   // testenv runs only; age_secs is less the slot waits the run's ledger publishes
 //! ```
 //!
-//! - From procfs: `cap::live()` (`testenv/src/cap.rs:320-337`) reads `/proc/<pid>/cmdline`, `/proc/<pid>/stat` field 22 and `/proc/uptime`; filtered to runs by `cap::is_run` (`:267-273`, basename `testenv`, not a subcommand). The kernel is the authority on which runs exist and how old they are; testenv's in-run cap (`cap::arm`, `:192`) is the primary and this task is its backstop (`cap_main.rs:1-4`).
+//! - From procfs: `cap::live()` (`testenv/src/cap.rs:320-337`) reads `/proc/<pid>/cmdline`, `/proc/<pid>/stat` field 22 and `/proc/uptime`; filtered to runs by `cap::is_run` (`:267-273`, basename `testenv`, not a subcommand). The kernel is the authority on which runs exist and their wall age; each run's ledger under `SPIRA_RUN/testenv-slot-wait` (the observe input) says how much of it was slot waiting (`cap::uncounted`); testenv's in-run cap (`cap::arm`, `:192`) is the primary and this task is its backstop (`cap_main.rs:1-4`).
 //!
 //! ## Decide
 //!
-//! - `cap::breaches(procs, suite_cap, gate_cap, load_wait, slot_wait, GRACE, None)` (`cap.rs:289-308`) — already pure. Gate tier when the argv carries `--deadline` (`:275-277`); suite tier gets `load_wait` on top; every run gets `slot_wait`; `GRACE = 60` (`:18`).
+//! - `cap::breaches(procs, suite_cap, gate_cap, load_wait, slot_wait, GRACE, None)` (`cap.rs:289-308`) — already pure. Gate tier when the argv carries `--deadline` (`:275-277`); suite tier gets `load_wait` on top; a run with a ledger is judged on its worked time and gets no `slot_wait`, one without gets the flat `slot_wait`; `GRACE = 60` (`:18`).
 //! - No carried state: a killed pid is gone, so the next tick cannot re-find it. No `state` event at all.
 //! - Fixtures to port: the `cap.rs` unit tests (`:356-447`): deadline run takes the gate cap; explicit deadline governs; only past cap+grace; suite load-wait allowance; slot-wait allowance; hold stops the clock; `--` branch named like a subcommand is still a run; a pid whose cmdline changed is not killed.
 //!
@@ -56,11 +56,13 @@
 //! - `spira-watch-testenv-cap-prod.service`; row `spira/watchers:175`.
 //! - Children: none forked; the in-process `kill(2)` calls move from the bin into the `kill` runner.
 //! - Files retired: `run/watchd/testenv-cap.{log,restarts}`.
-//! - Config pinned: `SPIRA_TESTENV_SUITE_CAP`, `SPIRA_TESTENV_GATE_CAP`, `SPIRA_TESTENV_LOAD_WAIT`, `SPIRA_TESTENV_SLOT_WAIT` (`cap_main.rs:15-18`), `SPIRA_CONCIERGE_INBOX` (`:45`).
+//! - Config pinned: `SPIRA_TESTENV_SUITE_CAP`, `SPIRA_TESTENV_GATE_CAP`, `SPIRA_TESTENV_LOAD_WAIT`, `SPIRA_TESTENV_SLOT_WAIT` (`cap_main.rs:15-18`), `SPIRA_CONCIERGE_INBOX` (`:45`), `SPIRA_RUN` (the ledger directory).
 //!
 //! ## Reverse
 //!
 //! Release rollback restores unit and row. `Observe` mode shadows `kill` (journaled as `effect.shadowed` with pid, tier, wall) — the safe first activation for a task that kills.
+
+use std::path::{Path, PathBuf};
 
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
@@ -78,7 +80,7 @@ pub const OBSERVE: &str = "watch.testenv_cap.observe";
 pub const KILL: &str = "watch.testenv_cap.kill";
 pub const METRIC: &str = "watch.testenv_cap.metric";
 pub const EFFECTS: &[&str] = &[OBSERVE, KILL, INBOX_APPEND, METRIC];
-pub const KEYS: &[&str] = &["SPIRA_TESTENV_SUITE_CAP", "SPIRA_TESTENV_GATE_CAP", "SPIRA_TESTENV_LOAD_WAIT", "SPIRA_TESTENV_SLOT_WAIT", "SPIRA_CONCIERGE_INBOX"];
+pub const KEYS: &[&str] = &["SPIRA_TESTENV_SUITE_CAP", "SPIRA_TESTENV_GATE_CAP", "SPIRA_TESTENV_LOAD_WAIT", "SPIRA_TESTENV_SLOT_WAIT", "SPIRA_CONCIERGE_INBOX", "SPIRA_RUN"];
 /// `--interval 15`.
 pub const CADENCE_MS: u64 = 15_000;
 const OBSERVE_DEADLINE_MS: u64 = 5_000;
@@ -92,6 +94,7 @@ pub struct Config {
     pub load_wait_s: u64,
     pub slot_wait_s: u64,
     pub inbox: String,
+    pub run: PathBuf,
 }
 
 impl Config {
@@ -102,6 +105,7 @@ impl Config {
             load_wait_s: cfg_parse("SPIRA_TESTENV_LOAD_WAIT")?,
             slot_wait_s: cfg_parse("SPIRA_TESTENV_SLOT_WAIT")?,
             inbox: cfg("SPIRA_CONCIERGE_INBOX")?,
+            run: PathBuf::from(cfg("SPIRA_RUN")?),
         })
     }
 }
@@ -113,6 +117,8 @@ pub struct Proc {
     pub start_ticks: u64,
     pub argv: Vec<String>,
     pub age_secs: u64,
+    #[serde(default)]
+    pub ledgered: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,11 +142,11 @@ const ACT_DEADLINE_MS: u64 = 5_000;
 const INBOX_DEADLINE_MS: u64 = 10_000;
 
 fn to_cap(p: &Proc) -> testenv::cap::Proc {
-    testenv::cap::Proc { pid: p.pid, start_ticks: p.start_ticks, argv: p.argv.clone(), age_secs: p.age_secs }
+    testenv::cap::Proc { pid: p.pid, start_ticks: p.start_ticks, argv: p.argv.clone(), age_secs: p.age_secs, ledgered: p.ledgered }
 }
 
 fn from_cap(p: &testenv::cap::Proc) -> Proc {
-    Proc { pid: p.pid, start_ticks: p.start_ticks, argv: p.argv.clone(), age_secs: p.age_secs }
+    Proc { pid: p.pid, start_ticks: p.start_ticks, argv: p.argv.clone(), age_secs: p.age_secs, ledgered: p.ledgered }
 }
 
 /// `cap::breaches` over the runs: one `kill` per breach, and nothing else.
@@ -169,8 +175,14 @@ pub fn killed(kill: &EffectSpec, outcome: &str, now_ms: u64, _cfg: &Config) -> V
 }
 
 /// The runs procfs shows, filtered to `testenv` runs (`cap::live`, `cap::is_run`).
-pub fn observe() -> Result<String, String> {
-    let procs = testenv::cap::live().into_iter().filter(|p| testenv::cap::is_run(&p.argv)).map(|p| from_cap(&p)).collect();
+pub fn observe(input: &str) -> Result<String, String> {
+    observe_procs(Path::new(input), testenv::cap::live())
+}
+
+/// The runs among `live`, each aged by its worked time: less the slot waits its ledger under `run` publishes.
+pub fn observe_procs(run: &Path, live: Vec<testenv::cap::Proc>) -> Result<String, String> {
+    let runs = live.into_iter().filter(|p| testenv::cap::is_run(&p.argv)).collect();
+    let procs = testenv::cap::uncounted(run, runs).iter().map(from_cap).collect();
     serde_json::to_string(&Snapshot { procs }).map_err(|e| e.to_string())
 }
 
@@ -218,7 +230,7 @@ impl Handler for WatchTestenvCap {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+            return pattern::tick(ev, OBSERVE, self.config.as_ref().map(|c| c.run.to_string_lossy().into_owned()).unwrap_or_default(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
         }
         if let (Some(kill), Ok(config)) = (answered_spec(view, ev).filter(|s| s.name == KILL && ev.kind.tag == EFFECT_SUCCEEDED), &self.config) {
             return killed(&kill, &ev.kind.body, ev.at, config).into_iter().map(Command::Effect).collect();
