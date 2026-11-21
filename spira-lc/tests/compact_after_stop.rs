@@ -3,6 +3,8 @@
 //! process exiting with its connections open, which no in-process call can show
 //! (law-a-unit-test-calls-no-binary).
 
+#[macro_use]
+extern crate spira_test_id;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
