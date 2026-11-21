@@ -49,7 +49,7 @@ pub fn compact(path: &Path) -> Result<Report> {
     let wal_bytes_before = std::fs::metadata(wal_of(path)).map_or(0, |m| m.len());
     let conn = Connection::open(path).map_err(db)?;
     conn.busy_timeout(Duration::ZERO).map_err(db)?;
-    let folded = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], checkpoint_row).map_err(db)?;
+    let folded = conn.prepare("PRAGMA wal_checkpoint(TRUNCATE)").and_then(|mut s| s.query_row([], checkpoint_row)).map_err(db)?;
     if folded.busy || folded.checkpointed < folded.wal_frames {
         return Err(Error::Backend(format!(
             "{}: could not fold the WAL into the main file ({} of {} frames): another process holds the file open",
