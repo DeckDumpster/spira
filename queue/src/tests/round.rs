@@ -10227,3 +10227,34 @@ fn a_deferred_landing_that_activates_is_a_landing_log_record_and_no_mail() {
     assert!(lines[0].contains(" round=") && lines[0].contains(" head=") && lines[0].contains(" release="), "{}", lines[0]);
     assert!(!lines[0].contains("release=none") && !lines[0].contains("not activated"), "{}", lines[0]);
 }
+
+#[test]
+fn a_green_round_clears_its_members_registry_rows_before_the_release_activates() {
+    let (t, batch) = certified_round();
+    *t.scripts.clear_landed.borrow_mut() = Some(Ok(vec!["unit:a::t".into()]));
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    let calls = t.scripts.calls.borrow();
+    let clears: Vec<_> = calls.iter().enumerate().filter(|(_, c)| c.starts_with("clear-landed ")).collect();
+    assert_eq!(clears.len(), 1, "{calls:?}");
+    assert_eq!(clears[0].1, "clear-landed sp-a,sp-b");
+    let activate = calls.iter().position(|c| c == "release activate").expect("the release activated");
+    assert!(clears[0].0 < activate, "{calls:?}");
+    assert!(t.out().contains("queue.sh land-local: landing cleared registry row(s) unit:a::t"), "{}", t.out());
+}
+
+#[test]
+fn a_landing_whose_registry_clear_fails_still_lands_and_says_so() {
+    let (t, batch) = certified_round();
+    *t.scripts.clear_landed.borrow_mut() = Some(Err("registry busy".into()));
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
+    assert!(t.err().contains("queue.sh land-local: landed but registry rows were not cleared: registry busy"), "{}", t.err());
+}
+
+#[test]
+fn a_landing_with_no_registry_rows_prints_no_clearing_line() {
+    let (t, batch) = certified_round();
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    assert!(!t.out().contains("registry row"), "{}", t.out());
+    assert!(!t.err().contains("registry row"), "{}", t.err());
+}

@@ -3351,17 +3351,12 @@ pub mod edge {
         io::file_orphan_round_incident(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.why)
     }
 
-    /// A round landed: the repo's open local-red incidents are over, and the landed head names the close;
-    /// the registry rows naming its members are cleared too. Neither failure blocks the landing.
+    /// A round landed: the repo's open local-red incidents are over, and the landed head names the close.
     pub fn supersede_reds(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         let repo = repo_of(&env, &leg)?;
         let head = io::resolve_base_sha(&repo)?;
         batcher_cut::io::close_superseded_reds(&repo, &head);
-        let beads: Vec<String> = leg.members.iter().map(|(id, _)| id.clone()).collect();
-        if let Some(line) = batcher_cut::io::registry_clearing_line(&env, &repo, &beads) {
-            println!("{line}");
-        }
         Ok("{}".into())
     }
 

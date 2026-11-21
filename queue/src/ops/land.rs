@@ -598,6 +598,17 @@ pub fn land_local_deferring(
         super::helpers::close_on_land(w, &c.s.submitted_label, &m.id, &head);
         w.out(format!("queue.sh land-local: {} landed at {head}", m.id));
     }
+    let landed_ids: Vec<String> = ms.iter().map(|m| m.id.clone()).collect();
+    match w.scripts.clear_landed(&landed_ids) {
+        Ok(ids) if ids.is_empty() => {}
+        Ok(ids) => w.out(format!(
+            "queue.sh land-local: landing cleared registry row(s) {}",
+            ids.join(" ")
+        )),
+        Err(e) => w.err(format!(
+            "queue.sh land-local: landed but registry rows were not cleared: {e}"
+        )),
+    }
     let lc_faults = ms
         .iter()
         .filter(|m| !lc_deliver(w, &path, &head, m, ungated.as_ref()))

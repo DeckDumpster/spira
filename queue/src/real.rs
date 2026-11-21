@@ -1336,6 +1336,34 @@ impl Scripts for RealScripts {
             String::from_utf8_lossy(&out.stderr).trim()
         ))
     }
+    fn clear_landed(&self, beads: &[String]) -> Result<Vec<String>, String> {
+        let bin = spira_config::release_env::tool("test-registry")?;
+        // FORK-EDGE: machine leg test-registry (clear-landed: the row delete and its history row are one transaction only the registry's binary makes)
+        let mut cmd = spira_config::bounded::bounded(&bin);
+        cmd.arg("clear-landed");
+        for b in beads {
+            cmd.args(["--bead", b]);
+        }
+        let out = cmd
+            .args(["--actor", "queue"])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("{bin} clear-landed: {e}"))?;
+        if out.status.success() {
+            return Ok(String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect());
+        }
+        Err(format!(
+            "{bin} clear-landed exited {}: {}{}",
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
     fn recipe_sha(&self, tree: Option<&Path>) -> Option<String> {
         // FORK-EDGE: machine leg round-vm (recipe-sha)
         let mut cmd = Command::new(spira_config::release_env::tool("round-vm").ok()?);

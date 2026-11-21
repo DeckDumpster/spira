@@ -513,6 +513,9 @@ struct FScripts {
     /// What `test-registry deny-list` answers.
     /// None answers an empty snapshot of that moment.
     deny_list: RefCell<Option<Result<String, String>>>,
+    /// What `test-registry clear-landed` answers: the cleared test ids, or its failure.
+    /// None answers that nothing was cleared.
+    clear_landed: RefCell<Option<Result<Vec<String>, String>>>,
     /// Answers `round_vm` gives before it falls back to `round_vm`.
     round_vm_queue: RefCell<Vec<RunOut>>,
     /// `round-vm recipe-sha` of the release and of the round tree; None is unreadable.
@@ -729,6 +732,10 @@ impl Scripts for FScripts {
         } else {
             queued.remove(0)
         }
+    }
+    fn clear_landed(&self, beads: &[String]) -> Result<Vec<String>, String> {
+        self.calls.borrow_mut().push(format!("clear-landed {}", beads.join(",")));
+        self.clear_landed.borrow().clone().unwrap_or(Ok(Vec::new()))
     }
     fn deny_list(&self, at: u64) -> Result<String, String> {
         self.calls.borrow_mut().push(format!("deny-list --at {at}"));
