@@ -2,6 +2,8 @@
 //! forge remote) in the scheduler's own process and records what it read for lc-serve; the body it
 //! sends is the one `git-fact put unpublished` accepts (spira-lc's `unpublished_record_*` tests).
 
+#[macro_use]
+extern crate spira_test_id;
 use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
 
