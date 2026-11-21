@@ -153,6 +153,7 @@ type Trip = Arc<Mutex<Option<(String, u64)>>>;
 /// Wall time since arming, less every slot wait: the cap meters work, not queueing.
 struct Clock {
     start: Instant,
+    limit: Duration,
     held_since: Option<Instant>,
     excused: Duration,
     ledger: Option<PathBuf>,
@@ -201,6 +202,13 @@ impl Clock {
     fn counting(&self) -> bool {
         self.held_since.is_none()
     }
+}
+
+/// Seconds left of the cap armed on this thread; `None` when nothing is armed.
+pub fn remaining() -> Option<u64> {
+    let k = CURRENT.with(|c| c.borrow().clone())?;
+    let k = k.lock().unwrap();
+    Some(k.limit.saturating_sub(k.counted()).as_secs())
 }
 
 /// While this lives the cap armed on this thread does not count.
@@ -264,6 +272,7 @@ pub fn arm(cap: Cap, ledger: Option<PathBuf>) -> Armed {
     let slot = trip.clone();
     let clock = Arc::new(Mutex::new(Clock {
         start: Instant::now(),
+        limit,
         held_since: None,
         excused: Duration::ZERO,
         ledger,
@@ -496,6 +505,19 @@ mod tests {
     }
 
     #[test]
+    fn remaining_is_the_armed_cap_less_counted_time_and_a_hold_does_not_spend_it() {
+        assert_eq!(remaining(), None);
+        let armed = arm(Cap { secs: 600, source: "test" }, None);
+        assert!(matches!(remaining(), Some(s) if (599..=600).contains(&s)), "{:?}", remaining());
+        let h = hold();
+        std::thread::sleep(Duration::from_millis(1_100));
+        assert!(matches!(remaining(), Some(s) if (599..=600).contains(&s)), "{:?}", remaining());
+        drop(h);
+        armed.finish();
+        assert_eq!(remaining(), None);
+    }
+
+    #[test]
     fn a_hold_stops_the_clock_until_it_is_released() {
         let armed = arm(Cap { secs: 9_999, source: "test" }, None);
         assert!(armed_here());
@@ -510,9 +532,9 @@ mod tests {
     #[test]
     fn a_run_admitted_after_a_slot_wait_longer_than_the_cap_gets_its_whole_cap() {
         let ago = |s| Instant::now() - Duration::from_secs(s);
-        let admitted = Clock { start: ago(1_212 + 5), held_since: None, excused: Duration::from_secs(1_212), ledger: None };
+        let admitted = Clock { start: ago(1_212 + 5), limit: Duration::ZERO, held_since: None, excused: Duration::from_secs(1_212), ledger: None };
         assert!(admitted.counted() < Duration::from_secs(10), "the wait is not the run's time");
-        let queued = Clock { start: ago(1_212), held_since: Some(ago(1_212)), excused: Duration::ZERO, ledger: None };
+        let queued = Clock { start: ago(1_212), limit: Duration::ZERO, held_since: Some(ago(1_212)), excused: Duration::ZERO, ledger: None };
         assert!(queued.counted() < Duration::from_secs(10));
     }
 

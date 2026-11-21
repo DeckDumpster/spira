@@ -22,7 +22,7 @@ impl DeadlineWaiting {
 
 /// The run pool's request for the process `holder_pid`.
 pub fn request<'a>(run: &'a Path, holder_pid: u32, who: &'a str) -> Request<'a> {
-    Request { run, pool: Pool::Run, holder_pid, who, inherit: None, weight: 1 }
+    Request { run, pool: Pool::Run, holder_pid, who, inherit: None, weight: 1, bound_secs: crate::cap::remaining() }
 }
 
 /// Blocks until a slot is free, saying the wait on `say`, or until `out_of_time`.
