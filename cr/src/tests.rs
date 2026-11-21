@@ -209,6 +209,25 @@ fn a_trait_is_reached_by_glob_rename_and_crate_root_reexport() {
 }
 
 #[test]
+fn a_local_trait_of_the_same_name_shadows_a_glob_and_pub_crate_use_reexports() {
+    let t = two_worlds()
+        .with_file("a/src/lib.rs", "pub mod ports;\npub mod real;\npub mod mid;\n")
+        .with_file("a/src/mid.rs", "pub(crate) use crate::ports::World;\n")
+        .with_file("a/src/shadow.rs", "use crate::ports::*;\n\ntrait World {}\n\nimpl World for X {}\n")
+        .with_file("a/src/viamid.rs", "use crate::mid::World;\n\nimpl World for M {}\n")
+        .with_file("a/src/arg.rs", "use crate::ports as p;\n\nfn f(w: impl p::World) {}\nfn g(w: &dyn p::World) {}\n")
+        .with_file("a/src/private.rs", "fn f(x: (u8)) {}\nuse crate::ports::World;\n")
+        .with_file("a/src/viaprivate.rs", "use crate::private::World;\n\nimpl World for N {}\n");
+    let ix = crate::index::Index::build(&t).unwrap();
+    let files = trait_unit_files(&crate::units::trait_units(&ix), "trait:a/src/ports.rs::World");
+    assert!(!files.contains(&"a/src/shadow.rs".to_string()), "{files:?}");
+    assert!(!files.contains(&"a/src/viaprivate.rs".to_string()), "{files:?}");
+    for f in ["a/src/viamid.rs", "a/src/arg.rs"] {
+        assert!(files.contains(&f.to_string()), "{f} missing from {files:?}");
+    }
+}
+
+#[test]
 fn a_boundary_unit_holds_the_caller_and_the_module_it_uses() {
     let p = ports_with(fixture(), vec![row("module", "module:elsewhere", NOW, &[("elsewhere.rs", "x")])], cfg());
     let (_, v) = json(&p, &["pick", "--aim", "other"]);

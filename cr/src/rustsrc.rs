@@ -429,7 +429,12 @@ pub fn uses(code_text: &str) -> Vec<Use> {
         if *t != Tok::Id("use".to_string()) || toks.get(k + 1) == Some(&Tok::Ch('<')) {
             continue;
         }
-        let public = k > 0 && matches!(toks[k - 1], Tok::Id(ref p) if p == "pub") || k > 0 && toks[k - 1] == Tok::Ch(')');
+        let is_pub = |end: usize| match toks[..end].last() {
+            Some(Tok::Id(p)) => p == "pub",
+            Some(Tok::Ch(')')) => toks[..end].iter().rposition(|t| *t == Tok::Ch('(')).is_some_and(|o| o > 0 && toks[o - 1] == Tok::Id("pub".to_string())),
+            _ => false,
+        };
+        let public = is_pub(k);
         let mut j = k + 1;
         use_tree(&toks, &mut j, &mut Vec::new(), public, &mut out);
     }
