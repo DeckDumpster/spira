@@ -729,3 +729,10 @@
         assert_eq!(std::fs::read_to_string(&backup).unwrap(), "before");
         std::fs::remove_dir_all(&dir).ok();
     }
+
+#[test]
+fn the_complete_fixture_reads_under_the_testkit_loaded_host_allowance() {
+    let doc = fixture_doc(&Default::default());
+    let read = doc.spira.as_ref().expect("the fixture has a spira section").get_u64("SPIRA_LC_MAX_READ_MS").unwrap();
+    assert_eq!(read, Some(testkit::LOADED_HOST_MAX_READ_MS));
+}
