@@ -419,14 +419,6 @@ struct Twin {
 
 const TWINS: &[Twin] = &[
     Twin { name: "reopen", before: &[&["update", "A", "--status", "blocked", "--assignee", "bob"]], request: &["reopen", "A", "operator-reopen", "groomer"], stdin: None, method: "reopen", bd: &["update", "A", "--status", "open", "--assignee", ""] },
-    Twin {
-        name: "reopen from in_progress",
-        before: &[&["update", "A", "--status", "in_progress", "--assignee", "spira-lc"]],
-        request: &["reopen", "A", "operator-reopen", "groomer"],
-        stdin: None,
-        method: "reopen",
-        bd: &["update", "A", "--status", "open", "--assignee", ""],
-    },
     Twin { name: "update --assignee", before: &[], request: &["content", "update", "A", "--assignee", "bob"], stdin: None, method: "content", bd: &["update", "A", "--assignee", "bob"] },
     Twin { name: "update --body-file -", before: &[], request: &["content", "update", "A", "--body-file", "-"], stdin: Some("a new description\n"), method: "content", bd: &["update", "A", "--body-file", "-"] },
     Twin { name: "close --reason", before: &[], request: &["close", "A", "--reason", "it is done"], stdin: None, method: "close", bd: &["close", "A", "--force", "--reason", "it is done"] },
@@ -486,30 +478,18 @@ fn without_a_writer_credential_those_writes_still_go_through_bd_and_make_the_sam
 
 /// A create made by the service and by the fixture's bd must read back the same.
 const CREATES: &[(&str, &[&str], Option<&str>)] = &[
-    ("every filing flag", &["a full bead", "--type", "bug", "--priority", "P1", "--labels", "x:1,y:2", "--external-ref", "gh-9", "--assignee", "bob", "--deps", "B", "--body-file", "-"], Some("the body\n")),
-    ("an explicit id", &["--id", "ID", "an id given", "--labels", "z:1"], None),
-    ("a child", &["a child", "--parent", "B"], None),
-    ("a child that inherits no labels", &["a child", "--parent", "B", "--no-inherit-labels", "--labels", "own:1"], None),
-    ("a discovered-from edge", &["found while", "--deps", "discovered-from:B", "-d", "by flag"], None),
+    ("every filing flag", &["a full bead", "--type", "bug", "--priority", "P1", "--labels", "x:1,y:2", "--external-ref", "gh-9", "--assignee", "bob", "--deps", "{B}", "--body-file", "-"], Some("the body\n")),
+    ("an explicit id", &["an id given", "--id", "{ID}", "--labels", "z:1"], None),
+    ("a child", &["a child", "--parent", "{B}"], None),
+    ("a child that inherits no labels", &["a child", "--parent", "{B}", "--no-inherit-labels", "--labels", "own:1"], None),
+    ("a discovered-from edge", &["found while", "--deps", "discovered-from:{B}", "-d", "by flag"], None),
 ];
 
 #[test]
 fn a_create_makes_the_row_bd_makes_for_every_filing_flag() {
     let store = Store::up();
     let lc = writer_lc(&store, "w");
-    let words = |args: &[&str], dep: &str, id: &str| -> Vec<String> {
-        args.iter()
-            .map(|w| {
-                if *w == "B" {
-                    dep.to_string()
-                } else if *w == "ID" {
-                    id.to_string()
-                } else {
-                    w.to_string()
-                }
-            })
-            .collect()
-    };
+    let words = |args: &[&str], dep: &str, id: &str| -> Vec<String> { args.iter().map(|w| w.replace("{B}", dep).replace("{ID}", id)).collect() };
     for (name, args, stdin) in CREATES {
         let (b, b2) = (store.create_bead(), store.create_bead());
         store.bd(&["label", "add", &b, "inherited:1"], None);

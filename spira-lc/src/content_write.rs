@@ -720,7 +720,7 @@ fn preflight(w: &Writer, m: &Mutation, me: &serde_json::Value) -> Result<Option<
             Op::Status(v) if *v == status => continue,
             Op::Assignee(v) if v.chars().count() > 255 => return Ok(None),
             Op::Assignee(v) if *v == holder => continue,
-            Op::Assignee(_) if !m.forced && !holder.is_empty() && holder != ACTOR && status == "in_progress" => return Ok(None),
+            Op::Assignee(_) if !m.forced && !holder.is_empty() && status == "in_progress" => return Ok(None),
             Op::Description(v) if *v == cell(me, "description") => continue,
             Op::Close { force: false, .. } if status != "closed" => {
                 let children = count(w, &format!("SELECT COUNT(DISTINCT d.issue_id) AS n FROM {db}.dependencies d JOIN {db}.issues c ON c.id = d.issue_id WHERE d.depends_on_issue_id = '{id}' AND d.type = 'parent-child' AND c.status <> 'closed'"))?;
