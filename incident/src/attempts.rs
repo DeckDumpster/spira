@@ -19,6 +19,7 @@ pub fn of_file(outcome: &FileOutcome) -> Option<Outcome> {
         FileOutcome::Filed(_) => Outcome::Failed { reason: "the filing returned no bead id".into() },
         FileOutcome::Unreachable => Outcome::Failed { reason: "the beads store could not be reached; the event stays spooled".into() },
         FileOutcome::Refused => Outcome::Failed { reason: "the filing was refused by its guards; the event stays spooled".into() },
+        FileOutcome::LaneRefused(reason) => Outcome::Failed { reason: format!("{reason}; the event stays spooled") },
         FileOutcome::Skew => return None,
     })
 }
