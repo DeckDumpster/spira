@@ -18,6 +18,7 @@ pub struct FakeGh {
     blobs: Cell<u32>,
     ledger: RefCell<Option<(String, u32)>>,
     conflict: RefCell<Option<String>>,
+    put_fails: Cell<bool>,
 }
 
 impl FakeGh {
@@ -48,6 +49,13 @@ impl FakeGh {
     /// The ledger text the forge holds now.
     pub fn ledger_text(&self) -> String {
         self.ledger.borrow().as_ref().expect("a ledger was seeded").0.clone()
+    }
+    /// Every ledger write fails, with the sha unmoved, until `heal_puts`.
+    pub fn fail_ledger_puts(&self) {
+        self.put_fails.set(true);
+    }
+    pub fn heal_puts(&self) {
+        self.put_fails.set(false);
     }
     /// The next ledger write fails as a conflict, and `line` is appended by someone else first.
     pub fn conflict_next_ledger_put(&self, line: &str) {
@@ -130,6 +138,9 @@ impl FakeGh {
                 text.push_str(&other);
                 *version += 1;
                 return GhOut { code: 1, stdout: b"gh: is at a different sha (HTTP 409)".to_vec() };
+            }
+            if self.put_fails.get() {
+                return GhOut { code: 1, stdout: b"gh: HTTP 500 ledger write refused".to_vec() };
             }
             let body: serde_json::Value = serde_json::from_slice(input.unwrap_or_default()).expect("payloads are JSON");
             if body["sha"] != format!("ledger-sha-{version}") {

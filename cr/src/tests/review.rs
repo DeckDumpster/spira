@@ -529,30 +529,33 @@ fn put_rows(body: &serde_json::Value) -> Vec<Row> {
 fn seal_appends_one_open_row_to_the_review_repositorys_ledger() {
     let mut w = world();
     assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
-    w.gh.fail("contents/ledger.jsonl");
+    w.gh.fail_ledger_puts();
     let c = w.comments(1);
     let o = w.seal_with("001", &c);
     assert_eq!(o.code, 1, "{}", o.stderr);
+    assert!(o.stderr.contains("ledger write refused"), "{}", o.stderr);
     assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged, "a failed append leaves the review staged");
-    w.gh.heal();
+    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 1, "an unmoved sha is not retried");
+    w.gh.heal_puts();
+    w.ports.clock = Box::new(crate::ports::VirtualClock::new(NOW + 5_000));
     let o = w.seal_with("001", &c);
     assert_eq!(o.code, 0, "{}", o.stderr);
     let puts = w.gh.put("contents/ledger.jsonl");
-    assert_eq!(puts.len(), 1, "the rerun wrote the row once");
-    let rows = put_rows(&puts[0]);
+    assert_eq!(puts.len(), 2, "one failed write, then the rerun's");
+    let rows = put_rows(&puts[1]);
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0], prior_row());
     let r = &rows[1];
     let store = fixture();
-    assert_eq!((r.review.as_str(), r.unit_id.as_str(), r.opened_at, r.closed_at, r.closed_as), ("001", "module:demo/src/store.rs", NOW, None, None));
+    assert_eq!((r.review.as_str(), r.unit_id.as_str(), r.opened_at, r.closed_at, r.closed_as), ("001", "module:demo/src/store.rs", NOW + 5_000, None, None));
     assert_eq!(r.commit, store.commit_id);
     let want: Vec<(String, String)> = record::load(w.run.path(), 1).unwrap().unit.files.iter().map(|f| (f.path.clone(), crate::ports::SourceTree::blob(&store, &f.path).unwrap())).collect();
     assert_eq!(r.files.iter().map(|f| (f.path.clone(), f.blob.clone())).collect::<Vec<_>>(), want);
-    assert_eq!(puts[0]["branch"], "main");
-    assert_eq!(put_rows(&puts[0]), ledger_rows(&w.gh));
+    assert_eq!(puts[1]["branch"], "main");
+    assert_eq!(put_rows(&puts[1]), ledger_rows(&w.gh));
     let again = w.cr(&["seal", "--review", "001"]);
     assert_eq!(again.code, 2, "{}", again.stderr);
-    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 1);
+    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 2);
 }
 
 #[test]
@@ -616,15 +619,4 @@ fn a_ledger_put_conflict_rereads_and_retries() {
     assert_ne!(puts[0]["sha"], puts[1]["sha"]);
     let rows = put_rows(&puts[1]);
     assert_eq!(rows.iter().map(|r| r.review.as_str()).collect::<Vec<_>>(), ["900", "901", "001"]);
-}
-
-#[test]
-fn a_ledger_write_that_fails_without_the_sha_moving_is_not_retried() {
-    let mut w = world();
-    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
-    let c = w.comments(1);
-    w.gh.fail("contents/ledger.jsonl");
-    let o = w.seal_with("001", &c);
-    assert_eq!(o.code, 1);
-    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 0, "the read failed first");
 }
