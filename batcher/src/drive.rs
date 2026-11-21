@@ -1260,7 +1260,7 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
             )));
         }
         if actions.is_empty() && kind == "flipped" {
-            let ids = flip_ids(&f.failed, graph.as_ref());
+            let ids = flip_ids(&f.failed);
             if let Some(ids) = ids.filter(|ids| ids.len() <= MAX_FLIP_TESTS) {
                 println!(
                     "batcher: {} red{tests} is red on the round tree, green on rerun, on the base and on every member alone — a flip",
@@ -1342,12 +1342,12 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
     })
 }
 
-/// The registry id of each failing test line, `None` when one cannot be named: a `dir:` or
-/// `test:` word no single package owns, or a line that is not `<STATUS> <binary> <test>`.
-pub fn flip_ids(failed: &[String], graph: Option<&PackageGraph>) -> Option<Vec<String>> {
+/// The registry id of each failing test line, `None` when one cannot be named: a line that is
+/// not `<STATUS> <binary> <test>`, or whose test name does not end in a test id.
+pub fn flip_ids(failed: &[String]) -> Option<Vec<String>> {
     let mut ids: Vec<String> = vec![];
     for line in failed {
-        let id = line_id(line, graph)?;
+        let id = line_id(line)?;
         if !ids.contains(&id) {
             ids.push(id);
         }
@@ -1355,23 +1355,25 @@ pub fn flip_ids(failed: &[String], graph: Option<&PackageGraph>) -> Option<Vec<S
     (!ids.is_empty()).then_some(ids)
 }
 
-fn line_id(line: &str, graph: Option<&PackageGraph>) -> Option<String> {
-    let [_, binary, test] = crate::unitattr::failing_words(line)?;
-    if binary.starts_with("dir:") || binary.starts_with("test:") {
-        let package = graph?.resolve(&[binary.to_string()]).remove(0);
-        if package.starts_with("dir:") || package.starts_with("test:") {
-            return None;
-        }
-        Some(format!("integration:{package} {test}"))
-    } else {
-        Some(format!("unit:{binary} {test}"))
-    }
+fn line_id(line: &str) -> Option<String> {
+    let [_, _, test] = crate::unitattr::failing_words(line)?;
+    let id = test.rsplit("::").next()?;
+    let id_shaped = id.len() == 7 && id.starts_with('t') && id[1..].bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase());
+    id_shaped.then(|| format!("test:{id}"))
 }
 
 /// How many failing tests an eject note lists before it counts the rest.
 const MAX_NOTED_TESTS: usize = 20;
 
 fn noted_tests(failed: &[String]) -> String {
+    let named: Vec<String> = failed
+        .iter()
+        .map(|l| match line_id(l) {
+            Some(id) => format!("{l} [{id}]"),
+            None => l.clone(),
+        })
+        .collect();
+    let failed = &named[..];
     match failed.len() {
         0 => String::new(),
         n if n <= MAX_NOTED_TESTS => format!(": {}", failed.join("; ")),
@@ -1999,7 +2001,7 @@ fn split_lifted_filter<O: RoundOps>(ops: &O, f: &FilterRed, members: &[Member]) 
     let mut rest = f.clone();
     rest.failed.clear();
     for line in &f.failed {
-        let hit = line_id(line, graph.as_ref()).and_then(|id| lifted.iter().find(|(t, _)| *t == id).cloned());
+        let hit = line_id(line).and_then(|id| lifted.iter().find(|(t, _)| *t == id).cloned());
         match hit {
             Some((test, owner)) => reds.push(LiftedRed {
                 check: Check::Filter {
@@ -7395,7 +7397,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
     }
 
-    const FLIP_UNIT: &str = "FAIL loom factory::tests::a";
+    const FLIP_UNIT: &str = "FAIL loom factory::tests::a::t0facta";
 
     fn flip_red(failed: &[&str]) -> FilterRed {
         FilterRed {
@@ -7649,7 +7651,7 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
     }
 
-    const LIFTED_UNIT: &str = "unit:loom factory::tests::a";
+    const LIFTED_UNIT: &str = "test:t0facta";
 
     fn lifted_unit_round(red: Option<FilterFn>, prior: bool) -> (RoundEnd, Ops) {
         let mut f = Fake::new(|_, _| false);
@@ -7754,7 +7756,7 @@ pub(crate) mod tests {
         let end = flip_round(&mut f, &mut ops);
         assert_eq!(
             ops.disabled,
-            vec![vec!["unit:loom factory::tests::a".to_string()]]
+            vec![vec!["test:t0facta".to_string()]]
         );
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
         assert_eq!(
@@ -7782,7 +7784,7 @@ pub(crate) mod tests {
         let end = flip_round(&mut f, &mut ops);
         assert_eq!(
             ops.disabled,
-            vec![vec!["unit:loom factory::tests::a".to_string()]]
+            vec![vec!["test:t0facta".to_string()]]
         );
         assert_eq!(
             f.main_kind.len(),
@@ -7817,7 +7819,7 @@ pub(crate) mod tests {
         let end = flip_round(&mut f, &mut ops);
         assert_eq!(
             ops.disabled,
-            vec![vec!["unit:loom factory::tests::a".to_string()]]
+            vec![vec!["test:t0facta".to_string()]]
         );
         assert_eq!(f.probes.len(), 1, "one probe, no search: {:?}", f.probes);
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
@@ -7842,13 +7844,13 @@ pub(crate) mod tests {
 
     #[test_id(tns2qtc)]
     #[test]
-    fn an_integration_flip_is_named_by_the_package_its_directory_resolves_to() {
+    fn an_integration_flip_in_a_directory_is_named_by_its_test_id() {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(red_once_on_the_whole_tree(FilterRed {
             harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
-            failed: vec!["FAIL dir:testenv lint_x".into()], ..Default::default() }));
+            failed: vec!["FAIL dir:testenv lint_x::t0lintx".into()], ..Default::default() }));
         f.bisects = true;
         f.rerun_green = true;
         let graph = PackageGraph {
@@ -7863,20 +7865,20 @@ pub(crate) mod tests {
         let end = flip_round(&mut f, &mut ops);
         assert_eq!(
             ops.disabled,
-            vec![vec!["integration:testenv lint_x".to_string()]]
+            vec![vec!["test:t0lintx".to_string()]]
         );
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 
     #[test_id(t3buhez)]
     #[test]
-    fn an_integration_flip_is_named_by_the_package_its_test_target_resolves_to() {
+    fn an_integration_flip_in_a_test_target_is_named_by_its_test_id() {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(red_once_on_the_whole_tree(FilterRed {
             harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
-            failed: vec!["FAIL test:conformance_sqlite the_wal_x".into()], ..Default::default() }));
+            failed: vec!["FAIL test:conformance_sqlite the_wal_x::t0walx0".into()], ..Default::default() }));
         f.bisects = true;
         f.rerun_green = true;
         let graph = PackageGraph {
@@ -7891,7 +7893,7 @@ pub(crate) mod tests {
         let end = flip_round(&mut f, &mut ops);
         assert_eq!(
             ops.disabled,
-            vec![vec!["integration:state-store-sqlite the_wal_x".to_string()]]
+            vec![vec!["test:t0walx0".to_string()]]
         );
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
@@ -7950,26 +7952,34 @@ pub(crate) mod tests {
     #[test_id(t69wdg9)]
     #[test]
     fn a_path_attribution_line_is_no_failing_test_id_and_a_failing_line_is() {
+        assert_eq!(flip_ids(&["unit-tests: names spira-lc/src/serve/tests/sweep.rs".into()]), None);
         assert_eq!(
-            flip_ids(&["unit-tests: names spira-lc/src/serve/tests/sweep.rs".into()], None),
-            None
+            flip_ids(&["FAIL spira-lc::bin/spira-lc serve::tests::sweep::t::t0aaaaa".into()]),
+            Some(vec!["test:t0aaaaa".to_string()])
         );
-        assert_eq!(
-            flip_ids(&["FAIL spira-lc::bin/spira-lc serve::tests::sweep::t".into()], None),
-            Some(vec!["unit:spira-lc::bin/spira-lc serve::tests::sweep::t".to_string()])
-        );
+    }
+
+    #[test_id(tl1d2e3)]
+    #[test]
+    fn line_id_is_the_last_segment_of_the_test_name_when_it_is_an_id() {
+        assert_eq!(line_id("FAIL tiny t::drop::t0aaaaa"), Some("test:t0aaaaa".to_string()));
+        assert_eq!(line_id("FAIL dir:x t::drop::t0aaaaa"), Some("test:t0aaaaa".to_string()));
+        assert_eq!(line_id("FAIL tiny t::drop"), None);
+        assert_eq!(line_id("FAIL tiny t::drop::T0aaaaa"), None);
+    }
+
+    #[test_id(tn2o3t4)]
+    #[test]
+    fn an_eject_note_names_the_id_beside_each_failing_line_that_has_one() {
+        let failed = ["FAIL tiny t::drop::t0aaaaa".to_string(), "FAIL tiny t::bare".to_string()];
+        assert_eq!(noted_tests(&failed), ": FAIL tiny t::drop::t0aaaaa [test:t0aaaaa]; FAIL tiny t::bare");
     }
 
     #[test_id(tk88cxb)]
     #[test]
-    fn a_flip_in_a_test_target_two_packages_or_none_own_is_not_a_flip() {
-        let graph = PackageGraph {
-            dirs: [("a".to_string(), "a".to_string()), ("b".to_string(), "b".to_string())].into(),
-            tests: [("it".to_string(), vec!["a".to_string(), "b".to_string()])].into(),
-            ..Default::default()
-        };
-        assert_eq!(flip_ids(&["FAIL test:it t".into()], Some(&graph)), None);
-        assert_eq!(flip_ids(&["FAIL test:none t".into()], Some(&graph)), None);
+    fn a_failing_line_whose_test_has_no_id_is_not_a_flip() {
+        assert_eq!(flip_ids(&["FAIL test:it t".into()]), None);
+        assert_eq!(flip_ids(&["FAIL test:none t".into()]), None);
     }
 
     #[test_id(tqmiqs5)]
@@ -8000,7 +8010,7 @@ pub(crate) mod tests {
         };
         match flip_round(&mut f, &mut ops) {
             RoundEnd::Blocked(why) => assert!(
-                why.contains("registry locked") && why.contains("unit:loom factory::tests::a"),
+                why.contains("registry locked") && why.contains("test:t0facta"),
                 "{why}"
             ),
             other => panic!("{other:?}"),

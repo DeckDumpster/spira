@@ -1015,13 +1015,13 @@ rdir="$HOME/round-work/.runtime/spira/batch-results"
 write_unit_timings() {
     { echo "unit_build_secs $unit_build_secs"; echo "unit_secs $unit_secs"; grep -E '"#, spira_config::unit_tier_timing_lines!(), r#"' ~/round-unit-tests.log; } > "$rdir/unit-timings" || true
 }
-# One line per `unit:` row of the deny list ($1) saying whether nextest ($2) reported that test skipped.
+# One line per `test:` row of the deny list ($1) saying whether nextest ($2) reported a test ending `::<id>` skipped.
 unit_registry_skips() {
     [ -r "$1" ] && [ -r "$2" ] || return 0
-    awk -F'\t' 'NR == FNR { if ($2 ~ /^unit:/) { split(substr($2, 6), w, " "); row[++n] = w[1] " " w[2]; state[n] = $1 } next }
-        /^ *SKIP +\[/ { n2 = split($0, f, " "); seen[f[n2-1] " " f[n2]] = 1 }
-        END { for (i = 1; i <= n; i++) if (row[i] in seen) printf "round-vm: UNIT-TESTS: SKIPPED (registry %s) %s\n", state[i], row[i] > "/dev/stderr"
-              else printf "round-vm: UNIT-TESTS: registry row %s matched no test in the run\n", row[i] > "/dev/stderr" }' "$1" "$2"
+    awk -F'\t' 'NR == FNR { if ($2 ~ /^test:/) { row[++n] = substr($2, 6); state[n] = $1 } next }
+        /^ *SKIP +\[/ { for (i = 1; i <= n; i++) { suffix = "::" row[i]; if (length($NF) > length(suffix) && substr($NF, length($NF) - length(suffix) + 1) == suffix) seen[row[i]] = 1 } }
+        END { for (i = 1; i <= n; i++) if (row[i] in seen) printf "round-vm: UNIT-TESTS: SKIPPED (registry %s) test:%s\n", state[i], row[i] > "/dev/stderr"
+              else printf "round-vm: UNIT-TESTS: registry row test:%s matched no test in the run\n", row[i] > "/dev/stderr" }' "$1" "$2"
 }
 unit_progress="$rdir/unit-progress"
 mkdir -p "$rdir"
@@ -4350,9 +4350,9 @@ mod tests {
     fn a_deny_list_file_is_read_at_parse_time_and_a_bad_or_missing_one_is_refused() {
         let d = crate::testutil::TempDir::new();
         let good = d.path().join("good");
-        std::fs::write(&good, "disabled\tunit:a b\t-\t-\n").unwrap();
+        std::fs::write(&good, "disabled\ttest:t0aaaaa\t-\t-\n").unwrap();
         let a = parse_run_args(&["t".into(), "--deny-list".into(), good.display().to_string()]).unwrap();
-        assert_eq!(a.deny_list.as_deref(), Some("disabled\tunit:a b\t-\t-\n"));
+        assert_eq!(a.deny_list.as_deref(), Some("disabled\ttest:t0aaaaa\t-\t-\n"));
         assert!(parse_run_args(&["t".into()]).unwrap().deny_list.is_none());
         let bad = d.path().join("bad");
         std::fs::write(&bad, "nonsense\n").unwrap();
@@ -4363,7 +4363,7 @@ mod tests {
     #[test_id(t10nz32)]
     #[test]
     fn remote_command_carries_the_deny_list_and_its_composed_words_last() {
-        let text = "disabled\tunit:a::b t::drop\tsp-1\t-\ndisabled\tintegration:p x::y\tsp-2\t-\n";
+        let text = "disabled\ttest:t0aaaaa\tsp-1\t-\ndisabled\ttest:t0bbbbb\tsp-2\t-\n";
         let deny = spira_config::unit_tier::DenyList::parse(text).unwrap();
         let mut job = BatchJob { deny_list: text.into(), ..sample_job() };
         let cmd = remote_command(&job);
@@ -4388,7 +4388,7 @@ mod tests {
     #[test_id(tlprmgr)]
     #[test]
     fn the_rounds_integration_command_is_the_gates_words_plus_the_skips() {
-        let deny = spira_config::unit_tier::DenyList::parse("disabled\tintegration:p x::y\t-\t-\n").unwrap();
+        let deny = spira_config::unit_tier::DenyList::parse("disabled\ttest:t0ccccc\t-\t-\n").unwrap();
         let body = script_fn("integ_cargo");
         let out = std::process::Command::new("bash")
             .args(["-c", &format!("unit_env() {{ echo \"$*\"; }}\ninteg_skips=\"$1\"\n{body}\ninteg_cargo", ), "bash", &deny.integration_skips()])
@@ -4402,7 +4402,7 @@ mod tests {
     #[test_id(tjqo63r)]
     #[test]
     fn the_config_the_script_writes_is_the_one_the_gate_writes() {
-        let deny = spira_config::unit_tier::DenyList::parse("disabled\tunit:a b::c\t-\t-\n").unwrap();
+        let deny = spira_config::unit_tier::DenyList::parse("disabled\ttest:t0aaaaa\t-\t-\n").unwrap();
         let d = crate::testutil::TempDir::new();
         let f = REMOTE_SCRIPT.find("write_unit_nextest_config() {").unwrap();
         let func = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap() + 3];

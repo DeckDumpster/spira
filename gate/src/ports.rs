@@ -58,6 +58,18 @@ pub struct Builder {
     pub path: String,
 }
 
+/// `test:<id>` for a test whose name ends in a test id, read from the last `::` segment of its last word.
+pub fn flip_test_id(test: &str) -> Option<String> {
+    let id = test.split_whitespace().next_back()?.rsplit("::").next()?;
+    let shaped = id.len() == 7 && id.starts_with('t') && id[1..].bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase());
+    shaped.then(|| format!("test:{id}"))
+}
+
+/// The incident reference of a flipping test: its id when it carries one, so a rename files no second incident.
+pub fn flip_reference(repo: &str, test: &str) -> String {
+    format!("test-flip:{repo}:{}", flip_test_id(test).as_deref().unwrap_or(test))
+}
+
 pub trait World {
     /// `. lib.sh` once, then the values the trial needs. Err when lib.sh would not source.
     fn context(&self, repo_name: Option<&str>) -> Result<Ctx, String>;
