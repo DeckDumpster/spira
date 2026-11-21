@@ -489,6 +489,19 @@ fn seal_rerun_with_different_comments_is_refused_not_silently_dropped() {
 }
 
 #[test]
+fn seal_rerun_with_a_different_fresh_read_is_refused() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
+    w.gh.fail("pulls");
+    let c = w.comments(1);
+    assert_eq!(w.seal_with("001", &c).code, 1);
+    w.gh.heal();
+    let o = w.seal_with("001", &c.replace("fresh look", "another fresh look"));
+    assert_eq!(o.code, 2, "{}", o.stderr);
+    assert!(o.stderr.contains("different comments"), "{}", o.stderr);
+}
+
+#[test]
 fn seal_rerun_with_a_different_cover_is_refused() {
     let mut w = world();
     assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
