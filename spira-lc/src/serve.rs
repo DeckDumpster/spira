@@ -363,6 +363,7 @@ pub fn run(args: &[String]) -> i32 {
                 std::thread::sleep(crate::slow::METRICS_EVERY);
                 crate::slow::push_counts(&metrics, &mut pushed);
                 crate::slow::push_reads(&metrics, &mut pushed_reads);
+                crate::slow::push_gate_waits(&metrics);
                 if let Some(Ok(store)) = crate::control::served::configured() {
                     match crate::store_gauges::file_series(store.contract().backend(), SystemTime::now()) {
                         Ok(series) => crate::slow::hold_gauges(series),
@@ -924,6 +925,9 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
     let store = recorder.snapshot();
     crate::slow::reads_done(measured, store.reads_ended, store.reads_overran);
+    if let Some((_, us)) = store.phases.iter().find(|p| p.0 == "gate_wait") {
+        crate::slow::gate_waited(measured, Duration::from_micros(*us));
+    }
     let (handed, returned) = worked;
     let before_span = Instant::now();
     let call = spira_otel::Call {
