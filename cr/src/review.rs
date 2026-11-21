@@ -3,7 +3,7 @@
 use crate::cli::Outcome;
 use crate::history;
 use crate::index::Index;
-use crate::ledger::{Ledger, LedgerFile, Row};
+use crate::ledger::{self, LedgerFile, Row};
 use crate::pick;
 use crate::ports::{Ports, SeededRng, SourceTree};
 use crate::record::{self, Kind, Review, State};
@@ -38,6 +38,7 @@ struct Progress {
     commit: Option<String>,
     ref_made: bool,
     pr: Option<(u64, String)>,
+    ledger_row: bool,
 }
 
 fn done(stdout: String) -> Outcome {
@@ -97,20 +98,21 @@ pub fn open(a: &OpenArgs, ports: &Ports) -> Outcome {
             Err(tried) => return refuse(2, &format!("--aim {aim:?} matched nothing at commit {}\n  tried {}", ix.commit, tried.join("\n  tried "))),
         },
     };
-    let scored = pick::score_all(&ix, ports.tree.as_ref(), pool, &ports.config, &ports.ledger, now);
+    let (scored, mut ledger) = match pick::candidates(ports, &ix, pool, now) {
+        Ok(c) => c,
+        Err(e) => return refuse(1, &e),
+    };
     let mut rng = SeededRng::new(seed);
-    let mut ledger = ports.ledger.clone();
     let mut chosen: Vec<units::Unit> = Vec::new();
     for _ in 0..a.count {
         let left: Vec<pick::Scored> = scored.iter().filter(|s| !chosen.iter().any(|u| u.id == s.unit.id)).cloned().collect();
         let Some((i, _)) = pick::draw(&left, &ledger, &mut rng) else {
-            return refuse(1, &format!("only {} of {} units are drawable: the rest are excluded or already reviewed at their current blobs", chosen.len(), a.count));
+            return refuse(1, &format!("only {} of {} units are drawable: the rest are excluded, in flight, or reviewed at their current blobs", chosen.len(), a.count));
         };
         let unit = left[i].unit.clone();
-        ledger.rows.push(Row { review: String::new(), at: now, commit: ix.commit.clone(), kind: unit.kind.as_str().to_string(), unit_id: unit.id.clone(), files: Vec::new() });
+        ledger.rows.push(Row { review: String::new(), kind: unit.kind.as_str().to_string(), unit_id: unit.id.clone(), commit: ix.commit.clone(), files: Vec::new(), opened_at: now, closed_at: None, closed_as: None });
         chosen.push(unit);
     }
-    let ledger_path = record::root(&ports.run_dir).join("ledger.jsonl");
     let mut out = String::new();
     for unit in chosen {
         let number = match record::allocate(&ports.run_dir) {
@@ -133,15 +135,7 @@ pub fn open(a: &OpenArgs, ports: &Ports) -> Outcome {
             published_at: None,
             closed_at: None,
         };
-        let row = Row {
-            review: format!("{number:03}"),
-            at: now,
-            commit: ix.commit.clone(),
-            kind: unit.kind.as_str().to_string(),
-            unit_id: unit.id.clone(),
-            files: unit.files.iter().map(|f| LedgerFile { path: f.path.clone(), blob: ix.blobs.get(&f.path).cloned().unwrap_or_default() }).collect(),
-        };
-        if let Err(e) = record::save(&ports.run_dir, &r).and_then(|()| Ledger::append(&ledger_path, &row)) {
+        if let Err(e) = record::save(&ports.run_dir, &r) {
             return refuse(1, &e);
         }
         out.push_str(&format!("{number:03} {}\nseal with: cr seal --review {number:03} < seal.json\n", unit.id));
@@ -369,13 +363,12 @@ fn save_progress(dir: &Path, p: &Progress) -> Result<(), String> {
     record::write_atomic(&dir.join("progress.json"), serde_json::to_string_pretty(p).map_err(|e| e.to_string())?.as_bytes())
 }
 
+pub(crate) fn repo_refusal_message(ports: &Ports) -> Option<String> {
+    [(OWNER_KEY, &ports.repo_owner), (NAME_KEY, &ports.repo_name)].into_iter().find(|(_, v)| v.trim().is_empty()).map(|(key, _)| format!("{key} is empty; name the review repository in the config, it has no default"))
+}
+
 pub(crate) fn repo_refusal(ports: &Ports) -> Option<Outcome> {
-    for (key, v) in [(OWNER_KEY, &ports.repo_owner), (NAME_KEY, &ports.repo_name)] {
-        if v.trim().is_empty() {
-            return Some(refuse(2, &format!("{key} is empty; name the review repository in the config, it has no default")));
-        }
-    }
-    None
+    repo_refusal_message(ports).map(|m| refuse(2, &m))
 }
 
 pub fn seal(number: u32, ports: &Ports) -> Outcome {
@@ -465,6 +458,24 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
     let mut p = load_progress(&dir);
     match push_branch(&mut p, &dir, &r, &files, &body, ports) {
         Ok((pr, url)) => {
+            if !p.ledger_row {
+                let row = Row {
+                    review: format!("{number:03}"),
+                    kind: r.unit.kind.as_str().to_string(),
+                    unit_id: r.unit.id.clone(),
+                    commit: r.source_sha.clone(),
+                    files: r.unit.files.iter().map(|f| LedgerFile { path: f.path.clone(), blob: ix.blobs.get(&f.path).cloned().unwrap_or_default() }).collect(),
+                    opened_at: ports.clock.now_ms(),
+                    closed_at: None,
+                    closed_as: None,
+                };
+                if let Err(e) = ledger::append(ports, &[row]).and_then(|()| {
+                    p.ledger_row = true;
+                    save_progress(&dir, &p)
+                }) {
+                    return refuse(1, &e);
+                }
+            }
             r.pr = Some(pr);
             r.pr_url = Some(url.clone());
             if let Err(e) = record::save(run, &r).and_then(|()| record::set_state(run, number, State::Open, ports.clock.now_ms()).map(|_| ())) {

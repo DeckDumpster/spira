@@ -16,6 +16,8 @@ pub struct FakeGh {
     fail_on: RefCell<Vec<String>>,
     canned: RefCell<Vec<(String, String)>>,
     blobs: Cell<u32>,
+    ledger: RefCell<Option<(String, u32)>>,
+    conflict: RefCell<Option<String>>,
 }
 
 impl FakeGh {
@@ -38,8 +40,30 @@ impl FakeGh {
             .map(|(_, s)| serde_json::from_slice(s).expect("payloads are JSON"))
             .collect()
     }
+    /// Seeds `ledger.jsonl` on the default branch with `text`.
+    pub fn with_ledger_text(self, text: &str) -> FakeGh {
+        *self.ledger.borrow_mut() = Some((text.to_string(), 1));
+        self
+    }
+    /// The ledger text the forge holds now.
+    pub fn ledger_text(&self) -> String {
+        self.ledger.borrow().as_ref().expect("a ledger was seeded").0.clone()
+    }
+    /// The next ledger write fails as a conflict, and `line` is appended by someone else first.
+    pub fn conflict_next_ledger_put(&self, line: &str) {
+        *self.conflict.borrow_mut() = Some(format!("{line}\n"));
+    }
+    pub fn put(&self, suffix: &str) -> Vec<serde_json::Value> {
+        self.calls
+            .borrow()
+            .iter()
+            .filter(|(a, _)| a.iter().any(|x| x == "PUT") && endpoint(a).ends_with(suffix))
+            .map(|(_, s)| serde_json::from_slice(s).expect("payloads are JSON"))
+            .collect()
+    }
+    /// Calls other than the ledger's own reads and writes.
     pub fn count(&self) -> usize {
-        self.calls.borrow().len()
+        self.calls.borrow().iter().filter(|(a, _)| !endpoint(a).ends_with("contents/ledger.jsonl")).count()
     }
 }
 
@@ -81,6 +105,9 @@ impl Gh for FakeGh {
         if self.fail_on.borrow().iter().any(|s| ep.ends_with(s.as_str())) {
             return GhOut { code: 1, stdout: b"HTTP 500".to_vec() };
         }
+        if ep.ends_with("contents/ledger.jsonl") {
+            return self.ledger_call(&args, input);
+        }
         if let Some((_, j)) = self.canned.borrow().iter().rev().find(|(s, _)| ep.ends_with(s.as_str())) {
             return GhOut { code: 0, stdout: j.clone().into_bytes() };
         }
@@ -88,6 +115,32 @@ impl Gh for FakeGh {
             self.blobs.set(self.blobs.get() + 1);
         }
         GhOut { code: 0, stdout: reply(&ep, self.blobs.get()).into_bytes() }
+    }
+}
+
+impl FakeGh {
+    fn ledger_call(&self, args: &[String], input: Option<&[u8]>) -> GhOut {
+        use base64::Engine;
+        let mut held = self.ledger.borrow_mut();
+        let Some((text, version)) = held.as_mut() else {
+            return GhOut { code: 1, stdout: b"gh: Not Found (HTTP 404)".to_vec() };
+        };
+        if args.iter().any(|a| a == "PUT") {
+            if let Some(other) = self.conflict.borrow_mut().take() {
+                text.push_str(&other);
+                *version += 1;
+                return GhOut { code: 1, stdout: b"gh: is at a different sha (HTTP 409)".to_vec() };
+            }
+            let body: serde_json::Value = serde_json::from_slice(input.unwrap_or_default()).expect("payloads are JSON");
+            if body["sha"] != format!("ledger-sha-{version}") {
+                return GhOut { code: 1, stdout: b"gh: sha does not match (HTTP 409)".to_vec() };
+            }
+            *text = String::from_utf8(unbase64(body["content"].as_str().unwrap())).unwrap();
+            *version += 1;
+            return GhOut { code: 0, stdout: b"{}".to_vec() };
+        }
+        let packed = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+        GhOut { code: 0, stdout: serde_json::json!({"content": packed, "sha": format!("ledger-sha-{version}")}).to_string().into_bytes() }
     }
 }
 

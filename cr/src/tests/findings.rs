@@ -2,7 +2,7 @@
 //! scripted review repository, and a committer that records instead of running git.
 
 use super::gh::{FakeGh, Shared, NAME, OWNER};
-use super::{cfg, fixture, go, ports_with};
+use super::{cfg, fixture, go, ports_with, seeded};
 use crate::cli::Outcome;
 use crate::ports::{Committer, Ports};
 use crate::record;
@@ -47,7 +47,7 @@ struct World {
 fn world() -> World {
     let run = TempDir::new("cr-find-run");
     let out = TempDir::new("cr-find-out");
-    let gh = Rc::new(FakeGh::default());
+    let gh = Rc::new(seeded(&[]));
     let commits = Rc::new(Commits::default());
     let mut ports = ports_with(fixture(), vec![], cfg());
     ports.run_dir = run.path().to_path_buf();

@@ -2,7 +2,8 @@
 //! review repository and a temp run directory.
 
 use super::gh::{unbase64, FakeGh, Shared, NAME, OWNER};
-use super::{cfg, fixture, go, ports_with, DAY, NOW};
+use super::{cfg, fixture, go, ledger_rows, ports_with, seeded, DAY, NOW};
+use crate::ledger::{ClosedAs, LedgerFile, Row};
 use crate::cli::Outcome;
 use crate::ports::{CommitInfo, FixtureBeads, FixtureRegistry, Ports};
 use crate::record::{self, State};
@@ -20,9 +21,13 @@ struct World {
     ports: Ports,
 }
 
+fn prior_row() -> Row {
+    Row { review: "900".into(), kind: "persona".into(), unit_id: "persona:other".into(), commit: "older".into(), files: vec![LedgerFile { path: "other.md".into(), blob: "b".into() }], opened_at: 5, closed_at: None, closed_as: None }
+}
+
 fn world() -> World {
     let run = TempDir::new("cr-review");
-    let gh = Rc::new(FakeGh::default());
+    let gh = Rc::new(seeded(&[prior_row()]));
     let mut ports = ports_with(fixture().with_authors("demo/src/store.rs", &["alpha", "beta", "alpha"]), vec![], cfg());
     ports.run_dir = run.path().to_path_buf();
     ports.gh = Box::new(Shared(gh.clone()));
@@ -59,7 +64,7 @@ fn sha256(bytes: &[u8]) -> String {
 }
 
 #[test]
-fn open_count_two_stages_two_distinct_reviews_and_two_ledger_rows_without_a_forge_call() {
+fn open_count_two_stages_two_distinct_reviews_and_no_ledger_row_and_no_forge_write() {
     let w = world();
     let o = w.cr(&["open", "--count", "2", "--seed", "5"]);
     assert_eq!(o.code, 0, "{}", o.stderr);
@@ -67,9 +72,8 @@ fn open_count_two_stages_two_distinct_reviews_and_two_ledger_rows_without_a_forg
     assert_eq!(all.iter().map(|r| r.number).collect::<Vec<_>>(), [1, 2]);
     assert!(all.iter().all(|r| r.state == State::Staged && r.kind == record::Kind::OnDemand));
     assert_ne!(all[0].unit.id, all[1].unit.id);
-    let ledger = std::fs::read_to_string(w.run.path().join("cr/ledger.jsonl")).unwrap();
-    assert_eq!(ledger.lines().count(), 2);
-    assert_eq!(w.gh.count(), 0);
+    assert!(w.gh.put("contents/ledger.jsonl").is_empty() && w.gh.posted("git/blobs").is_empty());
+    assert_eq!(ledger_rows(&w.gh), vec![prior_row()]);
     for n in ["001", "002"] {
         assert!(o.stdout.contains(&format!("seal with: cr seal --review {n} < seal.json")), "{}", o.stdout);
     }
@@ -265,13 +269,12 @@ fn seal_that_fails_at_the_pull_request_stays_staged_and_a_rerun_makes_only_the_p
     assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
     let blobs = w.gh.posted("git/blobs").len();
     w.gh.heal();
-    let before = w.gh.count();
     let o = w.seal_with("001", &c);
     assert_eq!(o.code, 0, "{}", o.stderr);
     assert_eq!(w.gh.posted("git/blobs").len(), blobs);
     assert_eq!(w.gh.posted("git/refs").len(), 1);
     assert_eq!(w.gh.posted("git/trees").len(), 1);
-    assert_eq!(w.gh.count() - before, 1);
+    assert_eq!(w.gh.posted("pulls").len(), 2, "the failed attempt and the retry");
     let r = record::load(w.run.path(), 1).unwrap();
     assert_eq!((r.state, r.pr), (State::Open, Some(7)));
 }
@@ -516,4 +519,112 @@ fn an_unreadable_bead_store_or_registry_says_unknown_not_zero() {
     assert!(body.contains("fixes: unknown (store down)"), "{body}");
     assert!(body.contains("Disabled as flaky: unknown (registry locked)"), "{body}");
     assert!(!body.contains("0 fixes") && !body.contains("Disabled as flaky: 0"), "{body}");
+}
+
+fn put_rows(body: &serde_json::Value) -> Vec<Row> {
+    crate::ledger::Ledger::parse(&String::from_utf8(unbase64(body["content"].as_str().unwrap())).unwrap()).unwrap().rows
+}
+
+#[test]
+fn seal_appends_one_open_row_to_the_review_repositorys_ledger() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    w.gh.fail("contents/ledger.jsonl");
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged, "a failed append leaves the review staged");
+    w.gh.heal();
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let puts = w.gh.put("contents/ledger.jsonl");
+    assert_eq!(puts.len(), 1, "the rerun wrote the row once");
+    let rows = put_rows(&puts[0]);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0], prior_row());
+    let r = &rows[1];
+    let store = fixture();
+    assert_eq!((r.review.as_str(), r.unit_id.as_str(), r.opened_at, r.closed_at, r.closed_as), ("001", "module:demo/src/store.rs", NOW, None, None));
+    assert_eq!(r.commit, store.commit_id);
+    let want: Vec<(String, String)> = record::load(w.run.path(), 1).unwrap().unit.files.iter().map(|f| (f.path.clone(), crate::ports::SourceTree::blob(&store, &f.path).unwrap())).collect();
+    assert_eq!(r.files.iter().map(|f| (f.path.clone(), f.blob.clone())).collect::<Vec<_>>(), want);
+    assert_eq!(puts[0]["branch"], "main");
+    assert_eq!(put_rows(&puts[0]), ledger_rows(&w.gh));
+    let again = w.cr(&["seal", "--review", "001"]);
+    assert_eq!(again.code, 2, "{}", again.stderr);
+    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 1);
+}
+
+#[test]
+fn a_staged_review_holds_its_unit_back_from_the_next_open() {
+    let w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    let o = w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+}
+
+#[test]
+fn ledger_close_writes_once_with_how_it_closed() {
+    let mut w = world();
+    assert_eq!(w.open_and_seal().code, 0);
+    record::set_state(w.run.path(), 1, State::Published, NOW + 1).unwrap();
+    let puts = w.gh.put("contents/ledger.jsonl").len();
+    let o = w.cr(&["ledger-close", "--review", "001", "--at", "777"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let rows = ledger_rows(&w.gh);
+    let last = rows.last().unwrap();
+    assert_eq!((last.review.as_str(), last.closed_at, last.closed_as), ("001", Some(777), Some(ClosedAs::Published)));
+    assert_eq!(rows.iter().filter(|r| r.review == "001").count(), 2);
+    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), puts + 1);
+    let o = w.cr(&["ledger-close", "--review", "001", "--at", "999"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), puts + 1, "a second close makes no PUT");
+}
+
+#[test]
+fn ledger_close_of_an_unpublished_review_says_unpublished() {
+    let mut w = world();
+    assert_eq!(w.open_and_seal().code, 0);
+    assert_eq!(w.cr(&["ledger-close", "--review", "001", "--at", "5"]).code, 0);
+    assert_eq!(ledger_rows(&w.gh).last().unwrap().closed_as, Some(ClosedAs::Unpublished));
+}
+
+#[test]
+fn a_missing_ledger_file_is_refused_naming_the_step() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    w.gh = Rc::new(FakeGh::default());
+    w.ports.gh = Box::new(Shared(w.gh.clone()));
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains("ledger.jsonl") && o.stderr.contains("create it empty"), "{}", o.stderr);
+    assert!(w.gh.put("contents/ledger.jsonl").is_empty());
+}
+
+#[test]
+fn a_ledger_put_conflict_rereads_and_retries() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    let other = Row { review: "901".into(), ..prior_row() };
+    w.gh.conflict_next_ledger_put(&serde_json::to_string(&other).unwrap());
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let puts = w.gh.put("contents/ledger.jsonl");
+    assert_eq!(puts.len(), 2);
+    assert_ne!(puts[0]["sha"], puts[1]["sha"]);
+    let rows = put_rows(&puts[1]);
+    assert_eq!(rows.iter().map(|r| r.review.as_str()).collect::<Vec<_>>(), ["900", "901", "001"]);
+}
+
+#[test]
+fn a_ledger_write_that_fails_without_the_sha_moving_is_not_retried() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    let c = w.comments(1);
+    w.gh.fail("contents/ledger.jsonl");
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 1);
+    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 0, "the read failed first");
 }
