@@ -47,6 +47,10 @@ pub(crate) fn within_widths(turn: &Turn) -> Result<()> {
             return Err(RuntimeError::refused(format!("journal: state {}/{} holds a NUL", s.task, s.skey)));
         }
     }
+    for (task, skey) in &turn.cleared {
+        within("state task", task, TASK_MAX)?;
+        within("state key", skey, KEY_MAX)?;
+    }
     for e in &turn.effects {
         within("effect task", &e.task, TASK_MAX)?;
         within("effect key", &e.ekey, KEY_MAX)?;
@@ -299,6 +303,8 @@ mod tests {
         let wide = Turn { state: vec![StateRow { task: "t".into(), skey: "k".repeat(KEY_MAX + 1), value: "v".into(), at: 1 }], ..Turn::default() };
         let e = j.commit(&wide).unwrap_err();
         assert!(e.is_refused() && e.0.contains("state key"), "{e}");
+        let cleared = Turn { cleared: vec![("t".into(), "k".repeat(KEY_MAX + 1))], ..Turn::default() };
+        assert!(within_widths(&cleared).is_err());
         let ok = Turn { state: vec![StateRow { task: "t".into(), skey: "k".repeat(KEY_MAX), value: "v".into(), at: 1 }], ..Turn::default() };
         assert!(j.commit(&ok).unwrap_err().is_cannot_tell(), "an in-width turn goes to the socket, which is absent");
     }

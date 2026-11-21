@@ -304,7 +304,7 @@ pub struct Registration {
 }
 
 /// A task's carry as keyed rows. `split` names the irreducible facts of a carry body, one row
-/// each; a row that stops being named is overwritten with an empty value, never deleted. `join`
+/// each; a row that stops being named is deleted from the store. `join`
 /// is its inverse over the rows a boot finds: whatever it leaves out is rebuilt by the first tick.
 #[derive(Clone, Copy)]
 pub struct RowCodec {
