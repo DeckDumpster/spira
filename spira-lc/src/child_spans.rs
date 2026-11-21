@@ -94,7 +94,7 @@ fn sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
 fn every_spawn_site_runs_inside_a_child_phase() {
     let mut files = Vec::new();
     sources(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &testkit::manifest_dir().join("src"),
         &mut files,
     );
     let mut bad = Vec::new();

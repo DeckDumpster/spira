@@ -535,7 +535,7 @@ mod session_pool_tests {
         let releaser = {
             let release = rig.release.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(Duration::from_millis(50)); // clock-safe: the session is held for a fixed span the recorded wait must cover
                 *release.0.lock().unwrap() += 1;
                 release.1.notify_all();
             })

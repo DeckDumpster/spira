@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn a_child_is_counted_and_named_by_its_basename() {
         let rec = tracked();
-        child("/usr/bin/bd", || ());
+        child("tools/bd", || ());
         child("git", || ());
         untrack();
         let s = rec.snapshot();
