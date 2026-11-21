@@ -2,7 +2,11 @@
 name = "spira-test-id"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "spira-test-id — #[test_id(<id>)]: pins a test's identity to an id that is not its name."
+
+[features]
+integration = []
 
 [lib]
 proc-macro = true
@@ -11,3 +15,13 @@ test = false
 [dev-dependencies]
 proptest = { version = "=1.5.0", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["macros", "rt"] }
+
+[[test]]
+name = "expand"
+path = "tests/expand.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "id"
+path = "tests/id.rs"
+required-features = ["integration"]
