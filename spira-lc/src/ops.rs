@@ -1364,7 +1364,7 @@ mod tests {
             let turn = crate::journal::turn_of(&json!({ "effects": [effect], "schedules": [schedule], "resolved": resolved, "fired": fired })).unwrap();
             store.journal_turn(&turn, "runtime").unwrap();
         }
-        let (rc, out) = crate::journal::sweep_until_done(&mut |argv| crate::journal::answer(crate::journal::run(&argv[1..], &store)), false);
+        let (rc, out) = crate::journal::sweep_until_done(&mut |argv| crate::journal::answer(crate::journal::run(&argv[1..], &store)), false, None);
         assert_eq!(rc, 0, "{out}");
         store.fold_stays(now, 100_000).unwrap();
         store.fold_edges(now, 100_000).unwrap();

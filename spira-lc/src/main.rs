@@ -264,8 +264,11 @@ fn main() {
         std::process::exit(code);
     }
     let args = cutover::inline_stdin_payload(args);
-    if args.len() >= 2 && args[0] == "journal" && args[1] == "sweep" && args[2..].iter().all(|a| a == "--dry-run") && args.len() <= 3 {
-        let (code, out) = journal::sweep_until_done(&mut |a| client::try_socket(a).unwrap_or_else(|| dispatch(a)), args.len() == 3);
+    if let Some(parsed) = journal::parse_sweep_args(&args) {
+        let (code, out) = match parsed {
+            Ok((dry_run, from)) => journal::sweep_until_done(&mut |a| client::try_socket(a).unwrap_or_else(|| dispatch(a)), dry_run, from),
+            Err(refused) => refused,
+        };
         spira_store::lc_call::print_answer(code, &out);
         std::process::exit(code);
     }
