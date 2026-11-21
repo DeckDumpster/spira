@@ -142,6 +142,19 @@ impl Ledger {
         Ledger(Arc::new(LedgerState { ttl, slots: Default::default(), changed: Default::default() }))
     }
 
+    #[cfg(test)]
+    pub(crate) fn await_done(&self, id: &str, limit: Duration) -> bool {
+        let end = Instant::now() + limit;
+        let mut slots = self.0.slots.lock().unwrap_or_else(|e| e.into_inner());
+        while !matches!(slots.get(id), Some(Entry::Done(..))) {
+            let Some(left) = end.checked_duration_since(Instant::now()) else {
+                return false;
+            };
+            slots = self.0.changed.wait_timeout(slots, left).unwrap_or_else(|e| e.into_inner()).0;
+        }
+        true
+    }
+
     /// The answer to the request `id`: the recorded one, the in-flight one's once it ends, or
     /// `work`'s own, run at most once however many sends arrive. No answer within `wait` is a
     /// `None` (the caller makes the deadline answer), and a worker still running keeps its slot until it has a real one.

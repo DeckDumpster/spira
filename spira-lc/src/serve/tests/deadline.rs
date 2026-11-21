@@ -112,6 +112,7 @@ fn a_write_the_server_cut_at_its_deadline_is_resent_under_its_id_and_applied_onc
     let ids = Arc::new(Mutex::new(Vec::<Option<String>>::new()));
     let seen = Arc::clone(&ids);
     std::thread::spawn(move || {
+        let mut first = true;
         for stream in listener.incoming().flatten() {
             let mut head = String::new();
             std::io::BufReader::new(&stream).read_line(&mut head).unwrap();
@@ -124,6 +125,15 @@ fn a_write_the_server_cut_at_its_deadline_is_resent_under_its_id_and_applied_onc
                 scope.spawn(|| super::serve_one(server, None, std::time::Instant::now(), &door));
                 (&client).read_to_end(&mut got).unwrap();
             });
+            if first {
+                notes.release();
+                let id = parsed["request_id"].as_str().unwrap();
+                assert!(
+                    door.ledger.await_done(id, Duration::from_secs(5)),
+                    "the released write never recorded its answer for {id}"
+                );
+            }
+            first = false;
             (&stream).write_all(&got).unwrap();
             notes.release();
         }
