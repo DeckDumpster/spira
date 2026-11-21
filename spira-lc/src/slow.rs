@@ -637,7 +637,7 @@ mod tests {
             let argv: Vec<String> = ["work", "sp-x", verb].map(String::from).to_vec();
             assert!(!is_batch_method(&method_of(&argv)), "{verb}");
         }
-        assert!(is_batch_method("work:submit"));
+        assert!(is_batch_method("work:read"));
     }
 
     #[test]
