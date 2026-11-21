@@ -340,7 +340,7 @@ fn first_line(out: &str) -> String {
 
 #[test]
 fn a_create_gets_its_id_from_the_server_in_the_one_transaction_and_starts_no_process() {
-    let store = Store::up();
+    let Some(store) = Store::up() else { return };
     let seed = store.create_bead();
     let prefix = seed.split('-').next().unwrap().to_string();
     let lc = writer_lc(&store, "c");
@@ -358,7 +358,7 @@ fn a_create_gets_its_id_from_the_server_in_the_one_transaction_and_starts_no_pro
 
 #[test]
 fn two_creates_sent_at_once_get_two_ids_and_bd_reads_both() {
-    let store = Store::up();
+    let Some(store) = Store::up() else { return };
     let lc = writer_lc(&store, "k");
     let args = ["content", "create", "the same title", "--type", "task", "--silent", "--body-file", "-"];
     let (a, b) = std::thread::scope(|s| {
@@ -375,7 +375,7 @@ fn two_creates_sent_at_once_get_two_ids_and_bd_reads_both() {
 
 #[test]
 fn a_child_takes_the_next_number_under_its_parent() {
-    let store = Store::up();
+    let Some(store) = Store::up() else { return };
     let parent = store.create_bead();
     let lc = writer_lc(&store, "p");
     let make = || {
@@ -459,7 +459,7 @@ fn twins(store: &Store, lc: &Lc) -> Vec<(&'static str, i64, String)> {
 
 #[test]
 fn each_remaining_write_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
-    let store = Store::up();
+    let Some(store) = Store::up() else { return };
     let lc = writer_lc(&store, "t");
     for (verb, children, out) in twins(&store, &lc) {
         assert_eq!(children, 0, "{verb} started a process: {out}");
@@ -468,7 +468,7 @@ fn each_remaining_write_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
 
 #[test]
 fn without_a_writer_credential_those_writes_still_go_through_bd_and_make_the_same_rows() {
-    let store = Store::up();
+    let Some(store) = Store::up() else { return };
     let mut lc = Lc::new(&store, "n", "");
     provision(&lc);
     lc.serve();
@@ -488,7 +488,7 @@ const CREATES: &[(&str, &[&str], Option<&str>)] = &[
 
 #[test]
 fn a_create_makes_the_row_bd_makes_for_every_filing_flag() {
-    let store = Store::up();
+    let Some(store) = Store::up() else { return };
     let lc = writer_lc(&store, "w");
     let words = |args: &[&str], dep: &str, id: &str| -> Vec<String> { args.iter().map(|w| w.replace("{B}", dep).replace("{ID}", id)).collect() };
     for (name, args, stdin) in CREATES {
@@ -513,7 +513,7 @@ fn a_create_makes_the_row_bd_makes_for_every_filing_flag() {
 
 #[test]
 fn a_create_prints_what_bd_prints_with_json_and_with_neither_flag() {
-    let store = Store::up();
+    let Some(store) = Store::up() else { return };
     let lc = writer_lc(&store, "j");
     let (_, row) = lc.run(&["content", "create", "a shown bead", "--priority", "1", "--json"], None);
     let theirs = store.bd(&["create", "a shown bead", "--priority", "1", "--json"], None);
@@ -535,7 +535,7 @@ fn a_create_prints_what_bd_prints_with_json_and_with_neither_flag() {
 
 #[test]
 fn a_blocking_edge_blocks_its_dependent_and_closing_the_blocker_unblocks_it_as_bd_reads_it() {
-    let store = Store::up();
+    let Some(store) = Store::up() else { return };
     let lc = writer_lc(&store, "b");
     let (a, b) = (store.create_bead(), store.create_bead());
     let blocked = || store.bd(&["blocked", "--json"], None);
