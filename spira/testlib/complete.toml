@@ -7,6 +7,7 @@ cr_page_lines = 60
 cr_oversize_pages = 6
 cr_churn_days = 60
 cr_count_limit = 50
+cr_rewrite_days = 90
 cr_repo_owner = "fixture-owner"
 cr_repo_name = "fixture-reviews"
 cr_findings_dir = "fixture-findings"

@@ -30,7 +30,7 @@ fn build_ports() -> Result<Ports, String> {
         None => Box::new(WallClock),
     };
     let run_dir = spira_config::resolve::run_dir_for_process()?;
-    let registry_path = test_registry::cli::with_run_default(|k| spira_config::process::cfg(k), || Ok(run_dir.to_string_lossy().into_owned()))(test_registry::cli::PATH_KEY)?;
+    let registry_path = test_registry::cli::with_run_default(spira_config::process::cfg, || Ok(run_dir.to_string_lossy().into_owned()))(test_registry::cli::PATH_KEY)?;
     let key = |k: &str| spira_config::process::cfg(k).unwrap_or_default();
     let stdin = if matches!(std::env::args().nth(1).as_deref(), Some("seal" | "finding" | "reply")) {
         use std::io::Read;

@@ -306,8 +306,11 @@ pub struct GitTree {
     listing: RefCell<Option<BTreeMap<String, String>>>,
     contents: RefCell<Option<HashMap<String, Vec<u8>>>>,
     log: RefCell<Option<HashMap<String, Vec<u64>>>>,
-    full_log: RefCell<Option<(Vec<CommitInfo>, HashMap<String, Vec<usize>>)>>,
+    full_log: RefCell<Option<FullLog>>,
 }
+
+/// Every commit, and for each path the indexes of the commits touching it.
+type FullLog = (Vec<CommitInfo>, HashMap<String, Vec<usize>>);
 
 const BATCH_EXTENSIONS: [&str; 4] = ["rs", "sh", "md", "toml"];
 
