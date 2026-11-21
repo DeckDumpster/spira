@@ -1385,9 +1385,9 @@ mod tests {
 
     #[test]
     fn the_unit_build_and_test_name_only_the_changed_crates() {
-        let [b, t] = unit_commands(&["spira-store".into()], ALL, 4, &Default::default());
+        let [b, t] = unit_commands(&["spira-runtime".into()], ALL, 4, &Default::default());
         assert!(!b.1.contains("--workspace") && !b.1.contains("&&"), "{}", b.1);
-        assert!(b.1.ends_with(" --features integration -p spira-store"), "{}", b.1);
+        assert!(b.1.ends_with(" --features integration -p spira-runtime -p work -p spira-lc"), "{}", b.1);
         assert!(!t.1.contains("--workspace") && !t.1.contains("spira-config"), "{}", t.1);
         let [b, _] = unit_commands(&["spira-sim".into()], ALL, 4, &Default::default());
         assert!(b.1.ends_with(" --features integration -p spira-sim"), "{}", b.1);
