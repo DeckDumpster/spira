@@ -60,7 +60,10 @@ pub fn show_row(id: &str) -> Option<Row> {
 
 /// The labels of `id` as the content door's `content show <id> --json` answers; `call` is the
 /// door. Anything but a clean answer is the module's usual best-effort bail.
-pub fn show_row_via(id: &str, call: &mut dyn FnMut(&[String]) -> Option<(i32, String)>) -> Option<Row> {
+/// The content door: argv in, `(exit code, output)` out, `None` when it cannot be reached.
+pub type Door<'a> = dyn FnMut(&[String]) -> Option<(i32, String)> + 'a;
+
+pub fn show_row_via(id: &str, call: &mut Door) -> Option<Row> {
     let args: Vec<String> = ["content", "show", id, "--json"].map(String::from).to_vec();
     let (code, out) = call(&args)?;
     (code == 0).then(|| parse_row(&out)).flatten()
