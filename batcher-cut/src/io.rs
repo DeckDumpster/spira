@@ -2007,30 +2007,25 @@ pub fn last_touching(repo: &Repo, at: &str, paths: &[String]) -> Option<String> 
     Some(out.trim().to_string()).filter(|l| !l.is_empty())
 }
 
-/// The paths `tip` changed since it forked from `base_sha` (`git diff base...tip`) — what
-/// attribution orders suspects by and decides a rerun's build by.
-pub fn changed_paths_checked(repo: &Repo, base_sha: &str, tip: &str) -> Result<Vec<String>, String> {
-    let out = run(
-        Command::new("git").arg("-C").arg(&repo.path).args(["diff", "--name-only", &format!("{base_sha}...{tip}")]),
-        "git diff changed paths",
-    )?;
+fn diff_names(repo: &Repo, base_sha: &str, tip: &str, no_renames: bool) -> Result<Vec<String>, String> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(&repo.path).args(["diff", "--name-only"]);
+    if no_renames {
+        cmd.arg("--no-renames");
+    }
+    let out = run(cmd.arg(format!("{base_sha}...{tip}")), "git diff changed paths")?;
     Ok(out.lines().filter(|l| !l.is_empty()).map(str::to_string).collect())
 }
 
+/// Like `changed_paths`, but a rename lists its old path too and a git failure is an error.
+pub fn changed_paths_checked(repo: &Repo, base_sha: &str, tip: &str) -> Result<Vec<String>, String> {
+    diff_names(repo, base_sha, tip, true)
+}
+
+/// The paths `tip` changed since it forked from `base_sha` (`git diff base...tip`) — what
+/// attribution orders suspects by and decides a rerun's build by.
 pub fn changed_paths(repo: &Repo, base_sha: &str, tip: &str) -> Vec<String> {
-    run(
-        Command::new("git").arg("-C").arg(&repo.path).args([
-            "diff",
-            "--name-only",
-            &format!("{base_sha}...{tip}"),
-        ]),
-        "git diff changed paths",
-    )
-    .unwrap_or_default()
-    .lines()
-    .filter(|l| !l.is_empty())
-    .map(str::to_string)
-    .collect()
+    diff_names(repo, base_sha, tip, false).unwrap_or_default()
 }
 
 fn patch_id(repo: &Repo, base_sha: &str, tip: &str) -> Option<String> {
@@ -6667,6 +6662,35 @@ mod config_key_tests {
         let (added, retired) = config_key_changes(&repo, &base, &tip);
         assert_eq!((added, retired), (vec!["NEW_SECS".to_string(), "new_secs".to_string()], vec!["retired_secs".to_string()]));
         assert_eq!(config_key_changes(&repo, &base, &by), (vec![], vec![]));
+    }
+
+    #[test]
+    fn gate_own_check_leaves_out_a_provisional_row_that_moves_an_owned_file_and_skips_an_ungated_ref() {
+        let root = testkit::TempDir::new("gate-own-git");
+        let d = root.path();
+        testkit::git(d, &["init", "-q", "-b", "main"]);
+        std::fs::create_dir_all(d.join("spira")).unwrap();
+        std::fs::write(d.join("gate.steps"), "own spira/fence.sh\nstep true\n").unwrap();
+        std::fs::write(d.join("spira/fence.sh"), "echo fence\n".repeat(20)).unwrap();
+        commit(d, "base");
+        testkit::git(d, &["checkout", "-q", "-b", "mover"]);
+        testkit::git(d, &["mv", "spira/fence.sh", "elsewhere.sh"]);
+        let mover = commit(d, "move");
+        testkit::git(d, &["checkout", "-q", "main"]);
+        testkit::git(d, &["checkout", "-q", "-b", "bystander"]);
+        std::fs::write(d.join("other"), "x\n").unwrap();
+        let by = commit(d, "other");
+        let repo = Repo { name: "alpha".into(), path: d.to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
+        let row = |id: &str, tip: &str| (id.to_string(), tip.to_string(), 0u64, false, Vec::<String>::new(), true);
+        let (kept, left) = gate_own_check(&repo, vec![row("sp-m", &mover), row("sp-b", &by)]).unwrap();
+        assert_eq!(kept.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), vec!["sp-b"]);
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].cause, Cause::GateUnjudged { paths: vec!["spira/fence.sh".into()] });
+        testkit::git(d, &["checkout", "-q", "main"]);
+        testkit::git(d, &["rm", "-q", "-f", "gate.steps"]);
+        commit(d, "ungated");
+        let (kept, left) = gate_own_check(&repo, vec![row("sp-m", &mover)]).unwrap();
+        assert_eq!((kept.len(), left.len()), (1, 0), "a landing ref with no gate.steps skips the check");
     }
 
     #[test]
