@@ -215,6 +215,10 @@ pub struct LifecycleRow {
     /// The newest applied manual `Hold`'s raise; cleared by a manual `Unhold`.
     #[serde(default)]
     pub manual_hold: Option<ManualHold>,
+    /// When the standing Ask hold was raised; a re-raise overwrites it, a reply, a withdrawal
+    /// or a terminal move clears it.
+    #[serde(default)]
+    pub ask_since: Option<i64>,
 }
 
 /// When and why the standing manual hold was raised.
@@ -254,6 +258,7 @@ impl LifecycleRow {
             worked_s: 0,
             sessions: 0,
             manual_hold: None,
+            ask_since: None,
         }
     }
 }
@@ -544,6 +549,7 @@ pub fn apply(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow> {
         out.row.lease_until = None;
         out.row.holds.clear();
         out.row.manual_hold = None;
+        out.row.ask_since = None;
     }
     out
 }
@@ -644,6 +650,9 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
             }
             let mut new = row.clone();
             new.holds.insert(*kind);
+            if *kind == HoldKind::Ask {
+                new.ask_since = ev.at;
+            }
             if *kind == HoldKind::Manual {
                 new.manual_hold = Some(ManualHold { at: ev.at, cause: *cause, detail: detail.clone() });
             }
@@ -753,6 +762,7 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
             }
             let mut new = row.clone();
             new.holds.remove(&HoldKind::Ask);
+            new.ask_since = None;
             new.reason = Some(format!("reply: {message_id}"));
             new.version += 1;
             Outcome::applied(new)
@@ -767,6 +777,7 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
             }
             let mut new = row.clone();
             new.holds.remove(&HoldKind::Ask);
+            new.ask_since = None;
             new.reason = Some("ask withdrawn".to_string());
             new.version += 1;
             Outcome::applied(new)
@@ -2709,6 +2720,29 @@ mod tests {
         let dropped = apply(&second.row, &ev(BeadState::Ready, 2, BeadEventKind::Drop { reason: DropReason::Unwanted }));
         assert!(dropped.applied && dropped.row.holds.is_empty(), "{dropped:?}");
         assert_eq!(dropped.row.manual_hold, None, "a terminal row keeps no raise with no hold behind it");
+    }
+
+    #[test]
+    fn an_ask_hold_records_its_raise_and_a_reply_a_withdrawal_or_a_terminal_move_clears_it() {
+        let hold = |r: &LifecycleRow, kind, at: i64| BeadEvent { at: Some(at), ..ev(BeadState::Ready, r.version, BeadEventKind::Hold { kind, cause: HoldCause::OperatorQuestion, detail: Some("why".into()) }) };
+        let first = apply(&row(BeadState::Ready), &hold(&row(BeadState::Ready), HoldKind::Ask, 10));
+        assert_eq!(first.row.ask_since, Some(10));
+        let second = apply(&first.row, &hold(&first.row, HoldKind::Ask, 20));
+        assert_eq!(second.row.ask_since, Some(20));
+        for kind in [HoldKind::Wait, HoldKind::Manual, HoldKind::Poison] {
+            assert_eq!(apply(&second.row, &hold(&second.row, kind, 30)).row.ask_since, Some(20), "{kind:?}");
+        }
+        let replied = apply(&second.row, &ev(BeadState::Ready, second.row.version, BeadEventKind::Reply { message_id: "m-1".into() }));
+        assert!(replied.applied, "{replied:?}");
+        assert_eq!(replied.row.ask_since, None);
+        let withdrawn = apply(&second.row, &ev(BeadState::Ready, second.row.version, BeadEventKind::AskWithdrawn));
+        assert!(withdrawn.applied, "{withdrawn:?}");
+        assert_eq!(withdrawn.row.ask_since, None);
+        let mut stale = second.row.clone();
+        stale.holds.clear();
+        let dropped = apply(&stale, &ev(BeadState::Ready, stale.version, BeadEventKind::Drop { reason: DropReason::Unwanted }));
+        assert!(dropped.applied, "{dropped:?}");
+        assert_eq!(dropped.row.ask_since, None, "a terminal row keeps no raise");
     }
 
     #[test]

@@ -28,7 +28,7 @@ use serde_json::Value;
 use state_store::{events_key, Backend, Item, Result, EVENTS_PREFIX};
 
 use super::keys;
-use super::records::{decode, Audit, LifecycleRecord};
+use super::records::{decode, LifecycleRecord};
 use super::store::Store;
 
 /// The states work waits in: every non-terminal state but OPEN, which is a container.
@@ -124,16 +124,6 @@ pub struct Transitions {
 
 fn repo_of(r: &LifecycleRecord) -> String {
     r.repo.clone().unwrap_or_else(|| "-".into())
-}
-
-/// The newest applied `Hold { kind: Ask }` among `audits`.
-fn ask_raised<'a>(audits: impl IntoIterator<Item = &'a Audit>) -> Option<i64> {
-    audits
-        .into_iter()
-        .filter(|a| a.applied && a.machine == "bead" && a.event == "Hold")
-        .filter(|a| a.evidence["Hold"]["kind"].as_str() == Some("Ask"))
-        .map(|a| a.at)
-        .max()
 }
 
 /// One audit of an `events/<rev>` key, read in place: `(event, bead, at)` when it is an applied
@@ -288,7 +278,11 @@ impl<B: Backend> Store<B> {
             let row = &r.value.row;
             repos.insert(row.bead_id.clone(), Some(repo_of(&r.value)));
             let ask_held = row.holds.contains(&HoldKind::Ask);
-            let ask_since = if ask_held { ask_raised(self.history(&row.bead_id, Some("bead"))?.iter().map(|c| &c.audit)) } else { None };
+            let ask_since = match (ask_held, row.ask_since) {
+                (true, None) => return Err(state_store::Error::Backend(format!("dwell: {} is held by an ask but its record has no ask_since; the store has not applied the ask_since migration", row.bead_id))),
+                (true, since) => since,
+                (false, _) => None,
+            };
             beads.push(Waiting { id: row.bead_id.clone(), repo: repo_of(&r.value), state: row.state.as_str().to_string(), since: row.since.unwrap_or(r.value.updated_at), ask_since, ask_held, held: !row.holds.is_empty(), tip: row.tip.clone() });
         }
         let floor = now.saturating_sub(window_s as i64);
