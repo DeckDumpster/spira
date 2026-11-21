@@ -29,14 +29,14 @@ pub fn fold(events: &[Value]) -> (Vec<Value>, Option<i64>) {
             "SuitesStarted" => set(&mut passes, n, |p| p["suites_at"] = json!(at)),
             "PassGreen" => set(&mut passes, n, |p| {
                 p["verdict"] = json!("green");
-                p["runner"] = body["runner"].clone();
+                keep_runner(p, &body);
                 p["build_s"] = body["build_s"].clone();
                 p["suites_s"] = body["suites_s"].clone();
                 p["ended_at"] = json!(at);
             }),
             "PassRed" => set(&mut passes, n, |p| {
                 p["verdict"] = json!("red");
-                p["runner"] = body["runner"].clone();
+                keep_runner(p, &body);
                 p["red_suites"] = body["red_suites"].clone();
                 p["build_s"] = body["build_s"].clone();
                 p["suites_s"] = body["suites_s"].clone();
@@ -63,6 +63,12 @@ pub fn fold(events: &[Value]) -> (Vec<Value>, Option<i64>) {
         }
     }
     (passes, since)
+}
+
+fn keep_runner(pass: &mut Value, body: &Value) {
+    if !body["runner"].is_null() {
+        pass["runner"] = body["runner"].clone();
+    }
 }
 
 fn set(passes: &mut [Value], n: Option<u64>, f: impl FnOnce(&mut Value)) {
@@ -137,7 +143,7 @@ mod tests {
         ];
         let (passes, _) = fold(&events);
         assert_eq!(passes[0]["runner"], runner);
-        assert_eq!(passes[1]["runner"], Value::Null);
+        assert!(passes[1].get("runner").is_none());
     }
 
     #[test]

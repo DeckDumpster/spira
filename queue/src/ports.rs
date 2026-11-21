@@ -561,6 +561,9 @@ pub trait Lc {
     fn batch_state(&self, batch_id: &str) -> Option<(String, String)>;
     /// `show-batch` → (pass, phase); phase is empty outside a CI_RUNNING pass.
     fn batch_pass(&self, batch_id: &str) -> Option<(u32, String)>;
+    /// `list --batches --batch` → the round's pass rows in pass order, as the lifecycle folded
+    /// them (`n`, `verdict`, `runner`); empty when the batch is unknown or unreadable.
+    fn batch_passes(&self, batch_id: &str) -> Vec<serde_json::Value>;
     /// `show-batch` → the round's `progress` record; None when absent or unreadable.
     fn batch_progress(&self, batch_id: &str) -> Option<serde_json::Value>;
     fn create_bead(&self, id: &str);

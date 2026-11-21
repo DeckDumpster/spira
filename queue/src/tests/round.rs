@@ -157,7 +157,12 @@ fn open_certify_land_is_one_round_the_whole_way() {
         "the corpus runs under the configured cap and reports each red to its round: {:?}",
         t.scripts.calls.borrow()
     );
-    assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 3 {{\"PassGreen\":{{\"n\":1,\"suites_s\":0,\"build_s\":0}}}}")), "{:?}", t.lc.calls.borrow());
+    assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 3 {{\"PassGreen\":{{\"n\":1,\"suites_s\":0,\"build_s\":0,\"runner\":{{\"place\":\"unrecorded\",\"why\":\"the pass left no runner.place\"}}}}}}")), "{:?}", t.lc.calls.borrow());
+    assert!(
+        t.out().lines().any(|l| l.contains(" is GREEN at ") && l.contains("runner=unrecorded (")),
+        "a results dir without runner.place is named unrecorded, never left out: {}",
+        t.out()
+    );
     assert!(
         certified_tree_exists(&t),
         "the round GREEN certificate is on the head's tree"
@@ -3472,7 +3477,7 @@ fn a_round_through_a_red_pass_an_eject_and_a_green_pass_records_both_passes() {
             "{\"PassStarted\":{\"n\":1,\"head\":\"merged-tc\"}}",
             "{\"SuitesStarted\":{\"n\":1}}",
             "{\"Failed\":{\"suite\":\"test-b.sh\",\"n\":1}}",
-            "{\"PassRed\":{\"n\":1,\"red_suites\":[\"test-b.sh\"],\"suites_s\":0,\"build_s\":30}}",
+            "{\"PassRed\":{\"n\":1,\"red_suites\":[\"test-b.sh\"],\"suites_s\":0,\"build_s\":30,\"runner\":{\"place\":\"unrecorded\",\"why\":\"the pass left no runner.place\"}}}",
         ],
         "pass 1 is started, enters its suites and ends red, naming the suite"
     );
@@ -3520,6 +3525,63 @@ fn a_round_through_a_red_pass_an_eject_and_a_green_pass_records_both_passes() {
             .starts_with("{\"PassGreen\":{\"n\":2"),
         "{events:?}"
     );
+}
+
+fn place_file(place: &str, why: &str) -> Vec<(String, String)> {
+    vec![("runner.place".into(), format!("place={place}\nwhy={why}\nio_full_avg300=\ncpu_some_avg300=\n"))]
+}
+
+#[test]
+fn every_pass_names_its_runner_and_a_move_between_runners_in_verdict_log_event_and_status() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    *t.scripts.round_vm_results.borrow_mut() = vec![
+        ("test-a.sh".into(), "ok".into()),
+        ("test-b.sh".into(), "red 1 2 fp p e 1".into()),
+    ];
+    *t.scripts.round_vm_files.borrow_mut() = place_file("host", "host io pressure full avg300 1.0 at or under 50.0 — on the host");
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 1);
+    assert!(
+        t.out().lines().any(|l| l.contains(" is RED at ") && l.contains("runner=host (host io pressure full avg300 1.0 at or under 50.0") && !l.contains("runner_changed")),
+        "{}",
+        t.out()
+    );
+    seed_suite(&t, "test-b.sh");
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red on test-b.sh", "--suites", "test-b.sh"]), 0, "{}", t.err());
+
+    *t.scripts.round_vm_files.borrow_mut() = place_file("ec2", "host io pressure full avg300 55.0 above 50.0");
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "red 1 2 fp p e 1".into()), ("test-b.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert!(
+        t.out().lines().any(|l| l.contains(" is RED at ") && l.contains("runner=ec2 (host io pressure full avg300 55.0 above 50.0)") && l.contains("runner_changed=host->ec2")),
+        "{}",
+        t.out()
+    );
+    let log = t.landing_log();
+    let red = log.lines().find(|l| l.starts_with("QUEUE ROUND-RED ") && l.contains("runner=ec2")).unwrap_or_else(|| panic!("{log}"));
+    assert!(red.contains("runner_changed=host->ec2") && red.contains("runner_why=host io pressure full avg300 55.0 above 50.0"), "{red}");
+    assert!(
+        events_of(&t, &batch).iter().any(|e| e.starts_with("{\"PassRed\":{\"n\":2") && e.contains("\"runner\":{\"place\":\"ec2\"") && e.contains("\"runner_changed\":\"host->ec2\"")),
+        "{:?}",
+        events_of(&t, &batch)
+    );
+
+    let before = t.out().len();
+    assert_eq!(t.run(&["round", "status"]), 0);
+    let status = t.out()[before..].to_string();
+    assert!(status.contains("pass1_runner=host") && status.contains("pass2_runner=ec2"), "{status}");
+    assert!(status.contains("pass2_runner_why=host io pressure full avg300 55.0 above 50.0"), "{status}");
+
+    seed_suite(&t, "test-a.sh");
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-a", "--reason", "red on test-a.sh", "--suites", "test-a.sh"]), 0, "{}", t.err());
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into()), ("test-b.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    let log = t.landing_log();
+    let green = log.lines().find(|l| l.starts_with("QUEUE ROUND-GREEN ")).unwrap_or_else(|| panic!("{log}"));
+    assert!(green.contains("runner=ec2") && !green.contains("runner_changed"), "{green}");
 }
 
 const TREE_WITH_B: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
