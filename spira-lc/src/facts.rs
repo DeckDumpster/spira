@@ -201,6 +201,18 @@ mod tests {
     }
 
     #[test]
+    fn fact_list_raw_answers_the_rows_unshaped_so_a_process_outside_the_service_reads_what_the_service_does() {
+        let s = store();
+        put(&s, "sp-a", "claimed", "first", 1_700_000_000);
+        let get: Get = &|i, k, t| read_on(&s, i, k, t);
+        let (rc, out) = cmd_with(&argv(&["list", "--ids", "sp-a", "--raw"]), &|f| append_on(&s, f), get);
+        assert_eq!(rc, 0, "{out}");
+        let rows: Vec<Value> = serde_json::from_str(&out).unwrap();
+        assert_eq!((rows[0]["event_type"].as_str(), rows[0]["at"].as_str()), (Some("claimed"), Some("1700000000")));
+        assert!(rows[0].get("created_at").is_none(), "shaped rows carry created_at, raw ones carry at");
+    }
+
+    #[test]
     fn fact_without_a_known_sub_verb_answers_the_usage() {
         for a in [&["frobnicate"][..], &[]] {
             let (rc, out) = cmd(&argv(a));

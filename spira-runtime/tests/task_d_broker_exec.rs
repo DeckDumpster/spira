@@ -168,9 +168,9 @@ fn a_tool_verb_is_recorded_by_the_service_and_run_by_the_scheduler_in_work_exec(
     assert!(ran.iter().any(|r| r.contains("ran, exit 0")), "the scheduler ran the request: {ran:?}");
     assert!(marker(&w, "ran-by").contains("work-exec"), "the program ran under work-exec, not the service: {}", marker(&w, "ran-by"));
     let spans = w.spans("work");
-    let seen: Vec<String> = w.spans("").iter().map(|s| s["name"].to_string()).collect();
-    let served = spans.iter().find(|s| attr(s, "spira.children").is_none()).unwrap_or_else(|| panic!("the service's span for the verb started no child: spans seen {seen:?}; files {:?}", std::fs::read_dir(w.dir.join("run/otel")).map(|d| d.flatten().map(|e| e.path()).collect::<Vec<_>>())));
-    assert!(nanos(served, "endTimeUnixNano") - nanos(served, "startTimeUnixNano") < 900_000_000, "the service answered inside the program's second");
+    assert_eq!(spans.len(), 1, "the service served the one verb: {spans:?}");
+    assert_eq!(attr(&spans[0], "spira.children"), None, "the service started no program for it: {:?}", spans[0]["attributes"]);
+    assert!(nanos(&spans[0], "endTimeUnixNano") - nanos(&spans[0], "startTimeUnixNano") < 900_000_000, "the service answered inside the program's second");
 }
 
 #[test]
@@ -189,11 +189,36 @@ fn a_request_the_ledger_has_run_is_not_run_again_after_the_scheduler_restarts() 
     let (code, _, ran) = w.work("groomer", &["groom", "sweep"]);
     assert_eq!(code, 0);
     assert_eq!(marker(&w, "ran.count").lines().count(), 1);
-    let first = ran.iter().find(|r| r.contains("ran, exit 0")).expect("it ran once").clone();
-    assert!(first.starts_with("wr-"), "{first}");
-    let restarted = w.effects();
-    let again = runtime::EffectSpec::keyed(broker_exec::RUN, format!("broker.exec:{}", first.split(':').next().unwrap()), serde_json::json!({ "id": first.split(':').next().unwrap(), "bound_ms": 300_000 }).to_string(), 320_000);
-    let out = restarted.run(&again.key, &again).unwrap();
+    let id = ran.iter().find(|r| r.contains("ran, exit 0")).and_then(|r| r.split(':').next()).expect("it ran once").to_string();
+    let replayed = broker_exec::decide(&Snapshot { queued: vec![broker_exec::Entry { id: id.clone(), bound_ms: 300_000 }], stale: vec![] });
+    let out = w.effects().run(&replayed[0].key, &replayed[0]).unwrap();
     assert!(out.contains("already ran"), "a restart replays the effect and the ledger answers: {out}");
     assert_eq!(marker(&w, "ran.count").lines().count(), 1, "the program did not run twice");
+}
+
+#[test]
+fn a_restart_while_a_request_is_running_leaves_it_to_its_runner_and_the_client_gets_that_runners_answer() {
+    let w = world();
+    w.stub("groomer", &who_ran_me(&w, "swept"));
+    let e = w.effects();
+    let client = w.command("work").env("SPIRA_RUNE", "groomer").args(["groom", "sweep"]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().expect("work runs");
+    let spec = runtime::EffectSpec::probe(broker_exec::OBSERVE, "", 10_000);
+    let snap = loop {
+        let snap: Snapshot = serde_json::from_str(&e.run(&spec.key, &spec).unwrap()).unwrap();
+        if !snap.queued.is_empty() {
+            break snap;
+        }
+        std::thread::sleep(Duration::from_millis(10)); // clock-safe: polls the service's queue, the recording being the signal waited on
+    };
+    let id = snap.queued[0].id.clone();
+    let lc = spira_store::lc_call::LcClient::socket(&w.socket);
+    lc.answer(&["work-request", "take", &id]).expect("a runner of the old scheduler takes it");
+    let restarted = w.effects();
+    let again = broker_exec::decide(&snap);
+    let out = restarted.run(&again[0].key, &again[0]).unwrap();
+    assert!(out.contains("not queued"), "the new scheduler finds it taken: {out}");
+    assert_eq!(marker(&w, "ran.count"), "", "the program has not run: the new scheduler did not run it a second time");
+    lc.call_stdin(&["work-request", "finish", &id, "--code", "0"], "from the old runner").unwrap();
+    let out = client.wait_with_output().unwrap();
+    assert_eq!((out.status.code(), String::from_utf8_lossy(&out.stdout).trim()), (Some(0), "from the old runner"));
 }

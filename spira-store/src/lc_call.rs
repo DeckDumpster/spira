@@ -540,6 +540,27 @@ pub fn queued_id(out: &str) -> Option<&str> {
     (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then_some(id)
 }
 
+/// How often a client asks whether a recorded request has finished.
+pub const RECORD_POLL: Duration = Duration::from_millis(500);
+/// How long a client waits for a recorded request: the broker's 300 s bound and a margin for the scheduler to pick it up.
+// batch-job: a recorded verb runs in the scheduler under the broker's own bound; this adds the pick-up margin.
+pub const RECORD_WAIT: Duration = Duration::from_secs(330);
+
+/// A recorded request's answer, from its `work-request show` record: `None` while it is queued or
+/// running, else the exit code and output the scheduler's runner left.
+pub fn record_answer(record: &str) -> Result<Option<(i32, String)>, String> {
+    let r: serde_json::Value = serde_json::from_str(record).map_err(|e| format!("malformed record: {e}"))?;
+    if r["state"] != "done" {
+        return Ok(None);
+    }
+    Ok(Some((r["code"].as_i64().map_or(CANNOT_TELL, |c| c as i32), r["output"].as_str().unwrap_or("").to_string())))
+}
+
+/// The text a client prints when a recorded request has not finished within [`RECORD_WAIT`].
+pub fn record_timeout(id: &str) -> String {
+    format!("cannot tell: request {id} had not finished after {}s; `spira-lc work-request show {id}` has its state", RECORD_WAIT.as_secs())
+}
+
 /// Print a service answer: a "cannot tell" refusal goes to stderr, so a caller capturing stdout
 /// as an id or a value gets nothing, never the refusal text (law-never-derive-an-id-from-output).
 pub fn print_answer(code: i32, out: &str) {
@@ -609,6 +630,14 @@ pub fn run_bounded(mut cmd: Command, limit: Duration) -> (i32, String) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_record_answers_only_once_it_is_done() {
+        assert_eq!(record_answer("{\"state\":\"queued\"}"), Ok(None));
+        assert_eq!(record_answer("{\"state\":\"running\",\"code\":null}"), Ok(None));
+        assert_eq!(record_answer("{\"state\":\"done\",\"code\":124,\"output\":\"killed\"}"), Ok(Some((124, "killed".to_string()))));
+        assert!(record_answer("not json").is_err());
+    }
+
     #[test]
     fn only_the_services_queued_line_names_a_request() {
         assert_eq!(queued_id("queued wr-12\n"), Some("wr-12"));

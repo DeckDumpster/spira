@@ -1278,8 +1278,11 @@ pub fn exec_verb(verb: &str) -> bool {
 }
 
 /// How long the scheduler lets a recorded verb run: the tool bound every program-running verb keeps.
-pub fn exec_bound_ms(_verb: &str) -> u64 {
-    TOOL_SECS * 1000
+pub fn exec_bound_ms(verb: &str) -> u64 {
+    match verb {
+        "submit" => TOOL_SECS.max(PROOF_BUDGET_SECS + 30) * 1000,
+        _ => TOOL_SECS * 1000,
+    }
 }
 
 /// The answer to a verb recorded for the scheduler: its id, on a line the client recognises.
@@ -1292,7 +1295,7 @@ fn record(bead_id: &str, args: &[String]) -> (i32, String) {
     let call = split_reserved(&args[2..]);
     let mut argv = vec!["work".to_string(), bead_id.to_string(), args[1].clone()];
     argv.extend(call.args.iter().cloned());
-    record_argv(bead_id, call.actor.as_deref().unwrap_or("-"), &argv, call.stdin.as_deref(), exec_bound_ms(&args[1]))
+    record_argv(bead_id, call.actor.as_deref().unwrap_or(""), &argv, call.stdin.as_deref(), exec_bound_ms(&args[1]))
 }
 
 /// Records an `argv` for the scheduler's `work-exec` and answers with the id the store allocated.
@@ -1333,7 +1336,9 @@ fn run_recorded(request: &crate::control::work_requests::WorkRequest) -> (i32, S
     if let Some(body) = &request.stdin {
         argv.extend(["--stdin".to_string(), body.clone()]);
     }
-    argv.extend(["--actor".to_string(), request.actor.clone()]);
+    if !request.actor.is_empty() {
+        argv.extend(["--actor".to_string(), request.actor.clone()]);
+    }
     let (Some(bead), Some(verb)) = (argv.get(1).cloned(), argv.get(2).cloned()) else {
         return (CANNOT_TELL, format!("work-exec {}: the recorded request names no verb", request.id));
     };
