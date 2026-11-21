@@ -440,9 +440,17 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         Err(e) => {
             eprintln!("{e}");
             log_law_book_failure("enact", &key, &e);
-            eprintln!("rule: {key} is in force but law/ was not submitted — run rule.sh code --land");
+            report_unlanded(&e, &format!("rule: {key} is in force but law/ was not submitted — run rule.sh code --land"));
             1
         }
+    }
+}
+
+fn report_unlanded(err: &str, not_submitted: &str) {
+    if err.contains(code::RED_AFTER_FILING) {
+        eprintln!("rule: the law/ item is submitted and red; the gate's verdict above stands — fix the branch it names, then resubmit it");
+    } else {
+        eprintln!("{not_submitted}");
     }
 }
 
@@ -1031,7 +1039,7 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         Err(e) => {
             eprintln!("{e}");
             log_law_book_failure("retire", &key, &e);
-            eprintln!("rule: {key} is retired but law/ was not submitted — run `rule.sh code --land`.");
+            report_unlanded(&e, &format!("rule: {key} is retired but law/ was not submitted — run `rule.sh code --land`."));
             1
         }
     }
@@ -1189,7 +1197,7 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
         Err(e) => {
             eprintln!("{e}");
             log_law_book_failure("rename-vocabulary", "book", &e);
-            eprintln!("rule: the store is rewritten but law/ was not submitted — run `rule.sh code --land`.");
+            report_unlanded(&e, "rule: the store is rewritten but law/ was not submitted — run `rule.sh code --land`.");
             return 1;
         }
     }

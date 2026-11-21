@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use rule::code::{append, drift, generate, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, Merged, Moved, Pointers, Retired};
+use rule::code::{append, drift, generate, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, submit_outcome, Merged, Moved, Pointers, Retired};
 
 const TOC: &str = r#"[[part]]
 number = 1
@@ -863,4 +863,33 @@ fn a_refiled_law_branch_replaces_the_beads_existing_branch_and_a_first_filing_ta
     testkit::git(p, &["branch", "law/second"]);
     rule::code::name_law_branch(p, "law/second", "spira/sp-y", false).unwrap();
     assert_eq!(testkit::git(p, &["rev-parse", "spira/sp-y"]), fresh);
+}
+
+const ADMISSION: &str = "gate: VERDICT=NO_VERDICT reason=admission-timeout all 3 host-wide gate admission slots busy for 0s\n";
+
+#[test]
+fn a_gate_with_no_verdict_leaves_the_law_item_submitted() {
+    let _env = testkit::env_read();
+    let note = submit_outcome(Some(75), ADMISSION, "sp-x", "spira/sp-x").unwrap().unwrap();
+    assert!(note.contains("admission-timeout") && note.contains("sp-x (SUBMITTED)"), "{note}");
+    assert!(!note.contains('\n'));
+}
+
+#[test]
+fn a_red_base_leaves_the_law_item_submitted() {
+    let _env = testkit::env_read();
+    assert!(submit_outcome(Some(76), "gate: VERDICT=BASE_FAIL reason=base\n", "sp-x", "spira/sp-x").unwrap().is_some());
+}
+
+#[test]
+fn a_red_gate_names_the_item_as_submitted_and_red() {
+    let _env = testkit::env_read();
+    let e = submit_outcome(Some(1), "gate: VERDICT=FAIL\n", "sp-x", "spira/sp-x").unwrap_err();
+    assert!(e.contains("SUBMITTED") && e.contains("sp-x") && e.contains(rule::code::RED_AFTER_FILING), "{e}");
+}
+
+#[test]
+fn a_passing_gate_has_nothing_to_say() {
+    let _env = testkit::env_read();
+    assert_eq!(submit_outcome(Some(0), "", "sp-x", "spira/sp-x"), Ok(None));
 }
