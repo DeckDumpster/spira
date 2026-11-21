@@ -3584,6 +3584,21 @@ fn every_pass_names_its_runner_and_a_move_between_runners_in_verdict_log_event_a
     assert!(green.contains("runner=ec2") && !green.contains("runner_changed"), "{green}");
 }
 
+#[test]
+fn a_green_pass_on_the_host_names_the_host_in_its_verdict_and_landing_log_line() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into()), ("test-b.sh".into(), "ok".into())];
+    *t.scripts.round_vm_files.borrow_mut() = place_file("host", "host io pressure full avg300 1.0 at or under 50.0 — on the host");
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(t.out().lines().any(|l| l.contains(" is GREEN at ") && l.contains("runner=host (")), "{}", t.out());
+    let log = t.landing_log();
+    let green = log.lines().find(|l| l.starts_with("QUEUE ROUND-GREEN ")).unwrap_or_else(|| panic!("{log}"));
+    assert!(green.contains("runner=host") && !green.contains("runner_changed"), "{green}");
+}
+
 const TREE_WITH_B: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TREE_WITHOUT_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
