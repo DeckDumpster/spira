@@ -648,19 +648,26 @@ fn without_reason(mut shown: serde_json::Value) -> serde_json::Value {
     shown
 }
 
+fn expire_gate(store: &Store, gate: &str) {
+    store.sql(&format!("UPDATE issues SET created_at = UTC_TIMESTAMP() - INTERVAL 1 HOUR WHERE id = '{gate}'; CALL DOLT_COMMIT('--allow-empty', '-Am', 'expire timer gate')"));
+}
+
 #[test]
 fn a_gate_check_closes_the_timer_gates_that_expired_as_bd_does_in_sql_and_starts_no_process() {
     let Some(store) = Store::up() else { return };
     let lc = writer_lc(&store, "gc");
     let (a, a2) = (store.create_bead(), store.create_bead());
     let g = gate_for(&store, &a, &["--type=timer", "--timeout=1ms"]);
+    expire_gate(&store, &g);
     let pending = gate_for(&store, &store.create_bead(), &["--type=timer", "--timeout=2h"]);
     let (out, children) = lc.children_of("content", &["content", "gate", "check", "--type=timer"], None);
     assert_eq!(children, 0, "the check started a process: {out}");
     assert!(out.contains(&format!("{g}: resolved - timer expired")) && (out.contains(&format!("{pending}: pending - expires in 1h59m")) || out.contains(&format!("{pending}: pending - expires in 2h0m0s"))), "{out}");
     assert!(out.contains("Checked 2 gates: 1 resolved, 0 escalated, 0 errors"), "{out}");
     let g2 = gate_for(&store, &a2, &["--type=timer", "--timeout=1ms"]);
-    store.bd(&["gate", "check", "--type=timer"], None);
+    expire_gate(&store, &g2);
+    let theirs = store.bd(&["gate", "check", "--type=timer"], None);
+    assert!(theirs.contains(&format!("{g2}: resolved - timer expired")), "bd left its twin gate pending: {theirs}");
     assert_eq!(without_reason(plain(&lc.shows(&a), &a, &g)), without_reason(plain(&lc.shows(&a2), &a2, &g2)), "the blocked bead reads differently");
     assert_eq!(without_reason(plain(&lc.shows(&g), &a, &g)), without_reason(plain(&lc.shows(&g2), &a2, &g2)), "the gate reads differently");
     assert!(lc.shows(&g).contains("timer expired"), "the close reason is bd's");
