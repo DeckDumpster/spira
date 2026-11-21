@@ -558,13 +558,15 @@ pub fn cut_left_out(
     left
 }
 
-pub fn announce_left_out(env: &Env, repo: &Repo, left: &[LeftOut]) {
+pub fn announce_left_out(env: &Env, repo: &Repo, left: &[LeftOut]) -> usize {
+    let mut failed = 0;
     let lines = announce_with(&env.run, &repo.name, left, &mut |id, text| {
-        bead_note(env, id, text)
+        bead_note(env, id, text).inspect_err(|_| failed += 1)
     });
     for l in lines {
         eprintln!("{l}");
     }
+    failed
 }
 
 fn moved_tips(pool: &[PoolRow], branches: &BTreeMap<String, String>) -> Vec<LeftOut> {

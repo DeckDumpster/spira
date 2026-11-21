@@ -1231,6 +1231,19 @@ fn sp_fssqg1_a_list_that_empties_is_pushed_once_to_clear_its_records() {
     assert!(!again.iter().any(|a| a.effect == NOTE_LEFT_OUT), "{again:?}");
 }
 
+/// A note that failed leaves the list unnamed, so the next decide pushes it again.
+#[test]
+fn sp_fssqg1_a_failed_left_out_note_is_pushed_again() {
+    let mut r = repo(vec![]);
+    r.left_out = vec![batcher_cut::io::LeftOut { id: "sp-d".into(), tip: "t4".into(), cause: batcher_cut::io::Cause::Held(vec!["manual".into()]) }];
+    let snap = Snapshot { repos: [("spira".to_string(), r)].into(), now_ms: NOW };
+    let (named, acts) = decide(&Carry::default(), &snap);
+    let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == NOTE_LEFT_OUT).expect("first push").input).unwrap();
+    let (failed, _) = on_outcome(&named, NOTE_LEFT_OUT, false, "bead down", &leg, NOW);
+    let (_, again) = decide(&failed, &snap);
+    assert!(again.iter().any(|a| a.effect == NOTE_LEFT_OUT), "{again:?}");
+}
+
 /// Every named member refused: no round, no abandon, and the repo is idle with the members out.
 #[test]
 fn sp_822b8l_an_open_refusing_every_member_abandons_nothing() {

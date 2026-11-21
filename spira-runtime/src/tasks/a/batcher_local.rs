@@ -2588,6 +2588,12 @@ fn replace_round(rc: &RepoCarry, at: usize, m: &Machine) -> RepoCarry {
 pub fn on_outcome(carry: &Carry, effect: &str, ok: bool, body: &str, leg: &Leg, now_ms: u64) -> (Carry, Vec<Act>) {
     let mut next = carry.clone();
     let rc = carry.repos.get(&leg.repo).cloned().unwrap_or_default();
+    if effect == NOTE_LEFT_OUT {
+        if !ok {
+            next.repos.entry(leg.repo.clone()).or_default().left_noted.clear();
+        }
+        return (next, vec![]);
+    }
     let Some(at) = round_of(&rc, leg) else { return (next, vec![]) };
     let mut m = Machine { repo: &leg.repo, rc: rc.holding(&rc.rounds()[at]), acts: vec![], now_ms, below: at > 0 };
     m.outcome(effect, ok, body, leg);
@@ -3349,8 +3355,10 @@ pub mod edge {
     pub fn note_left_out(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         let left: Vec<batcher_cut::io::LeftOut> = serde_json::from_str(&leg.why).map_err(|e| format!("{}: bad list: {e}", spec.name))?;
-        batcher_cut::io::announce_left_out(&env, &repo_of(&env, &leg)?, &left);
-        Ok("{}".into())
+        match batcher_cut::io::announce_left_out(&env, &repo_of(&env, &leg)?, &left) {
+            0 => Ok("{}".into()),
+            n => Err(format!("{n} left-out note(s) failed; they are tried again")),
+        }
     }
 
     /// Keeps a certify leg's full output where `leg.key` (relative to the run dir's parent) names it.
