@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod count;
+pub mod coverage;
 pub mod findings;
 pub mod history;
 pub mod glob;

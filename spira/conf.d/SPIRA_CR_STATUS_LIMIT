@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=cr
+DOC=Most files each of cr status's never-reviewed and changed-since-review lists shows; the totals are always the whole count.
+SCHEMA=Most files cr status lists per section.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_CR_STATUS_LIMIT:=10}"
+SPIRA_CONF_DEFAULT_EOF
