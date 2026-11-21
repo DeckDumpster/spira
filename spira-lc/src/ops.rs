@@ -1170,12 +1170,15 @@ mod tests {
     #[test]
     fn the_edges_view_reads_neither_the_audit_log_nor_the_history() {
         use crate::counting::Counting;
-        let (store, now, _dir) = with_records_on(Counting::new, 8_000);
+        let (store, now, _dir) = with_records_on(Counting::new, 400);
+        let of_the_log = |reads: Vec<(&'static str, String, usize)>| reads.into_iter().filter(|(k, key, _)| (*k == "get" || *k == "range") && (key.starts_with("events/") || key.starts_with("history/"))).collect::<Vec<_>>();
+        let head = store.contract().head().unwrap();
         store.contract().backend().take();
+        assert!(!store.contract().backend().range("events/", None, 1, head).unwrap().is_empty(), "the fixture has no log to read");
+        assert_eq!(of_the_log(store.contract().backend().take()).len(), 1, "the filter cannot see a read of the log");
         let (rc, out) = view_rows(&store, "ops_edges", now);
         assert_eq!(rc, 0, "{out}");
-        let reads = store.contract().backend().take();
-        let log: Vec<_> = reads.iter().filter(|(k, key, _)| (*k == "get" || *k == "range") && (key.starts_with("events/") || key.starts_with("history/"))).collect();
+        let log = of_the_log(store.contract().backend().take());
         assert!(log.is_empty(), "ops_edges read the log: {log:?}");
     }
 
