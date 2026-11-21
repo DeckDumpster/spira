@@ -1,20 +1,12 @@
 //! `GitTree` against a real throwaway repository, and `cr pick` over it.
 
+#[path = "../src/tests/gh.rs"]
+mod gh;
+
 use cr::cli::run;
-use cr::ledger::Ledger;
 use cr::ports::{Config, GitTree, Ports, SourceTree, VirtualClock};
 use std::path::Path;
 use std::process::Command;
-
-struct NoGh;
-impl forge::ports::Gh for NoGh {
-    fn call(&self, _: Option<&Path>, _: &[&str]) -> forge::ports::GhOut {
-        unreachable!("cr pick makes no forge call")
-    }
-    fn call_merged(&self, _: Option<&Path>, _: &[&str], _: Option<&[u8]>) -> forge::ports::GhOut {
-        unreachable!("cr pick makes no forge call")
-    }
-}
 
 fn git(dir: &Path, args: &[&str]) {
     let ok = Command::new("git")
@@ -64,7 +56,7 @@ fn cr_pick_runs_over_a_real_git_tree() {
     let dir = repo();
     let tree = GitTree::new(dir.path().to_str().unwrap(), "main").unwrap();
     let config = Config { page_lines: 60, exclude: vec![], churn_days: 60, rewrite_days: 90, count_limit: 50 };
-    let ports = Ports { run_dir: dir.path().join("unused-run"), gh: Box::new(NoGh), repo_owner: String::new(), repo_name: String::new(), findings_dir: String::new(), committer: Box::new(cr::ports::GitCommitter), source_repo: "k".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(1_700_000_000_000)), tree: Box::new(tree), beads: Box::new(cr::ports::FixtureBeads::default()), registry: Box::new(cr::ports::FixtureRegistry::default()), ledger: Ledger::default(), config, env_seed: None };
+    let ports = Ports { run_dir: dir.path().join("unused-run"), gh: Box::new(gh::FakeGh::default().with_ledger_text("")), repo_owner: gh::OWNER.into(), repo_name: gh::NAME.into(), findings_dir: String::new(), committer: Box::new(cr::ports::GitCommitter), source_repo: "k".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(1_700_000_000_000)), tree: Box::new(tree), beads: Box::new(cr::ports::FixtureBeads::default()), registry: Box::new(cr::ports::FixtureRegistry::default()), config, env_seed: None };
     let o = run(&["pick".into(), "--seed".into(), "1".into(), "--json".into()], &ports);
     assert_eq!(o.code, 0, "{}{}", o.stdout, o.stderr);
     let v: serde_json::Value = serde_json::from_str(&o.stdout).unwrap();
@@ -89,4 +81,23 @@ fn git_tree_reads_the_full_log_line_times_and_deleted_tests_of_a_real_history() 
     assert_eq!(t.line_times("lib.rs"), vec![1_700_000_000_000; 6]);
     let removed = t.removed_tests(&["lib.rs".to_string()]);
     assert_eq!(removed.iter().map(|r| (r.name.as_str(), r.sha.as_str())).collect::<Vec<_>>(), [("gone", log[0].sha.as_str())]);
+}
+
+#[test]
+fn renames_and_changed_lines_come_from_git() {
+    let dir = repo();
+    let p = dir.path();
+    let first = String::from_utf8(Command::new("git").arg("-C").arg(p).args(["rev-parse", "HEAD"]).output().unwrap().stdout).unwrap().trim().to_string();
+    let old_blob = GitTree::new(p.to_str().unwrap(), "main").unwrap().blob("k/src/lib.rs").unwrap();
+    git(p, &["mv", "k/src/lib.rs", "k/src/core.rs"]);
+    std::fs::write(p.join("k/src/core.rs"), "//! K.\npub fn a() {}\npub fn b() {}\npub fn c() {}\n").unwrap();
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-q", "-m", "rename and grow"]);
+    let t = GitTree::new(p.to_str().unwrap(), "main").unwrap();
+    let renames = t.renamed_since(&first).unwrap();
+    assert_eq!(renames.get("k/src/lib.rs").map(String::as_str), Some("k/src/core.rs"), "{renames:?}");
+    assert!(t.renamed_since("no-such-commit").is_err());
+    let changed = t.changed_lines(&old_blob, "k/src/core.rs").unwrap();
+    assert_eq!(changed, 1);
+    assert_eq!(t.changed_lines(&old_blob, "k/src/missing.rs"), None);
 }

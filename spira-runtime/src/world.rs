@@ -451,6 +451,19 @@ impl World {
         Err(format!("cr exited {}: {}", out.status, err.trim()))
     }
 
+    /// Has `cr` write the review's close row to the ledger on the review repository.
+    fn cr_ledger_close(&self, number: u32, at: u64) -> Result<(), String> {
+        let cr = spira_config::release_env::tool("cr")?;
+        let out = spira_config::bounded::bounded_for(cr, &cr_cadence::OPEN_CALL_SECS.to_string())
+            .args(["ledger-close", "--review", &format!("{number:03}"), "--at", &at.to_string()])
+            .output()
+            .map_err(|e| format!("cr: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(format!("cr ledger-close {number:03} exited {}: {}", out.status, String::from_utf8_lossy(&out.stderr).trim()))
+    }
+
     /// Applies the review state changes and keeps each review's comments where `cr thread` reads them.
     pub fn cr_record(&self, input: &str) -> Result<String, String> {
         let records: cr_comments::Records = serde_json::from_str(input).map_err(|e| e.to_string())?;
@@ -459,6 +472,9 @@ impl World {
             cr::record::write_atomic(&cr::thread::comments_path(&self.run_dir, *number), text.as_bytes())?;
         }
         for c in &records.changes {
+            if c.state == cr::record::State::Closed {
+                self.cr_ledger_close(c.number, c.at)?;
+            }
             cr::record::set_state(&self.run_dir, c.number, c.state, c.at)?;
         }
         Ok(format!("{} states, {} threads", records.changes.len(), records.threads.len()))
