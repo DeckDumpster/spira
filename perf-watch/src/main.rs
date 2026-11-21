@@ -2,6 +2,9 @@
 //! Budget, interval and reminder come from config. Alarm lines go to stdout; a quiet pass
 //! prints nothing. `--health` is rewritten each pass that probes.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use perf_watch::{parse_probes, SCOPED, run_pass, Clock, Health, Runner, Settings};
 use std::io::Read;
 use std::process::{Command, Stdio};

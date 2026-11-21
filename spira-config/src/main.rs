@@ -72,6 +72,9 @@
 //! (`NotFound`/`LegacyOnly`) instead of the prior fallback guesses — a `./spira.toml` that
 //! happened to be in the current directory, or blocking forever on stdin — fail-closed, sp-hconl.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
