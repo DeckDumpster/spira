@@ -60,10 +60,11 @@ if [ -z "$manifest" ] || [ ! -f "$BUILT" ]; then
 else
   changed="$(diff <(cat "$BUILT") <(printf '%s\n' "$manifest") | sed -n 's/^[<>] [0-9a-f]\{64\}  //p' | LC_ALL=C sort -u)"
   if [ -n "$release" ]; then
+    # A listing that fails names Cargo.toml: the whole workspace is cleaned.
     # A file touched since the record may have been built at a state the record does not name.
     touched="$({ for r in "${roots[@]}"; do [ "$r" -nt "$BUILT" ] && printf '%s\n' "$r"; done
-                 find "${members[@]}" -path '*/target' -prune -o -type f -newer "$BUILT" -print
-                 extras | tr '\0' '\n' | while IFS= read -r f; do [ "$f" -nt "$BUILT" ] && printf '%s\n' "$f"; done; } 2>/dev/null)"
+                 find "${members[@]}" -path '*/target' -prune -o -type f -newer "$BUILT" -print || echo Cargo.toml
+                 extras | tr '\0' '\n' | while IFS= read -r f; do [ "$f" -nt "$BUILT" ] && printf '%s\n' "$f"; done; })"
     changed="$(printf '%s\n%s\n' "$changed" "$touched" | sed '/^$/d' | LC_ALL=C sort -u)"
   fi
 fi

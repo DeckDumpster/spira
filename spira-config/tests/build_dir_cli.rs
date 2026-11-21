@@ -228,3 +228,26 @@ fn a_lockfile_change_during_the_lease_cleans_the_workspace_on_release() {
     release(&b, &mut p1);
     assert_eq!(cargo_log(&b), "clean --workspace -q");
 }
+
+#[test]
+fn a_file_outside_every_crate_that_a_crate_read_is_cleaned_on_release_when_touched() {
+    let b = setup("bdcli-extras");
+    let root = std::fs::canonicalize(&b.tree).unwrap();
+    std::fs::write(root.join("doc.txt"), "doc\n").unwrap();
+    let mut p1 = sleeper();
+    let (d1, _) = b.lease("hand-1", &p1);
+    std::fs::create_dir_all(d1.join("debug/deps")).unwrap();
+    std::fs::write(
+        d1.join("debug/deps/crate_a-1.d"),
+        format!("x: {0}/a/src/lib.rs {0}/doc.txt\n", root.display()),
+    )
+    .unwrap();
+    release(&b, &mut p1);
+
+    let mut p2 = sleeper();
+    b.lease("hand-2", &p2);
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::write(root.join("doc.txt"), "doc\n").unwrap();
+    release(&b, &mut p2);
+    assert_eq!(cargo_log(&b), "clean -q -p crate-a");
+}
