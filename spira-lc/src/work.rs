@@ -940,14 +940,15 @@ fn skuld_draft_refusal(bead_id: &str) -> Option<(i32, String)> {
 }
 
 fn skuld_draft_notes_refusal(bead_id: &str, notes: &str) -> Option<(i32, String)> {
-    let found = ::bead::draft_depends_refusals(notes);
+    let mut found = ::bead::draft_depends_refusals(notes);
+    found.extend(::bead::draft_trailer_refusals(notes));
     if found.is_empty() {
         return None;
     }
     Some((
         REFUSED,
         format!(
-            "refused: work done: {bead_id} holds a draft whose Depends line carries prose; a Depends line carries only bead ids, `draft N` or `none`; move the prose into Context.\n{}\nFix the note with `work note` and run `work done` again",
+            "refused: work done: {bead_id} holds a draft the filer would refuse: a Depends line carries only bead ids, `draft N` or `none` (move prose into Context), and nothing follows a draft's `Open:` line.\n{}\nFix the note with `work note` and run `work done` again",
             found.join("\n")
         ),
     ))
@@ -2802,6 +2803,15 @@ mod tests {
         assert_eq!(code, REFUSED);
         assert!(msg.contains("Fix it") && msg.contains("work note") && msg.contains("Context"), "{msg}");
         assert!(skuld_draft_notes_refusal("sp-r", "### Draft: Fix it\n\nDepends: sp-a, draft 1\n").is_none());
+    }
+
+    #[test]
+    fn a_skuld_draft_with_a_paragraph_after_its_open_line_is_refused_at_done() {
+        let notes = "### Draft: First\n\nbody\nOpen: q; default: d\nCorrection to \"First\": twelve, not eleven.\n### Draft: Second\n\nbody2\n";
+        let (code, msg) = skuld_draft_notes_refusal("sp-r", notes).expect("refused");
+        assert_eq!(code, REFUSED);
+        assert!(msg.contains("draft \"First\"") && msg.contains("Correction to") && msg.contains("work done"), "{msg}");
+        assert!(!msg.contains("Second"), "{msg}");
     }
 
     #[test]

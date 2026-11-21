@@ -160,6 +160,22 @@ pub fn draft_depends_refusals(notes: &str) -> Vec<String> {
         .collect()
 }
 
+/// One line per `### Draft:` note with a non-blank line after its `Open:` line other than the
+/// harness submit note: `Open:` ends a draft's note, and a correction is the whole draft again.
+pub fn draft_trailer_refusals(notes: &str) -> Vec<String> {
+    let notes = notes.replace("\r\n", "\n");
+    notes
+        .split("### Draft:")
+        .skip(1)
+        .filter_map(|d| {
+            let (title, body) = d.split_once('\n').unwrap_or((d, ""));
+            let after_open = body.lines().skip_while(|l| !l.starts_with("Open:")).skip(1);
+            let line = after_open.map(str::trim).find(|l| !l.is_empty() && !l.starts_with(HARNESS_SUBMIT_NOTE))?;
+            Some(format!("draft \"{}\": after its Open: line comes `{line}`; a correction is the whole draft again as a new note, never a paragraph after one", title.trim()))
+        })
+        .collect()
+}
+
 /// The `Depends: <id>[, <id>…]` line of a body; `none` names no one, and `draft N` is a draft
 /// the filer has since given an id.
 fn depends_line(body: &str) -> Option<Vec<String>> {
@@ -352,6 +368,9 @@ pub fn skuld_drafted(title: &str, body: &str, skuld_label: &str, request: &str, 
     });
     if held {
         Ok(())
+    } else if let Some(at) = notes.find(&wanted) {
+        let line = notes[at + wanted.len()..].lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+        Err(format!("a `### Draft: {}` note on {request} holds this body, but the note continues with `{line}`; ask Skuld to resend the whole draft; {how}", title.trim()))
     } else {
         Err(format!("no `### Draft: {}` note on {request} holds this body verbatim; {how}", title.trim()))
     }
@@ -990,6 +1009,25 @@ mod tests {
         assert!(skuld_fence_binds(true, true, b""));
         assert!(!skuld_fence_binds(false, true, b"bash\0"));
         assert!(SKULD_NEEDS_DRAFT.starts_with("a builder bead the Concierge files needs --drafted-by <request-id>"));
+    }
+
+    #[test]
+    fn draft_trailer_refusals_name_prose_after_an_open_line_only() {
+        let sp = "### Draft: First\n\nbody\nOpen: q; default: d\nCorrection to \"First\": 12, not 11.\n### Draft: Second\n\nbody2\n";
+        let found = draft_trailer_refusals(sp);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("draft \"First\"") && found[0].contains("Correction to"), "{found:?}");
+        assert!(draft_trailer_refusals("### Draft: T\n\nbody\nmore\n").is_empty());
+        assert!(draft_trailer_refusals("### Draft: T\n\nbody\nOpen: q\n").is_empty());
+        assert!(draft_trailer_refusals("### Draft: T\n\nbody\nOpen: q\n\nSubmitted: work committed on branch x\n").is_empty());
+    }
+
+    #[test]
+    fn skuld_drafted_names_the_line_that_follows_a_body() {
+        let l = vec!["draft".to_string()];
+        let notes = "### Draft: T\n\nbody\n\nCorrection to T: fixed.\n";
+        let err = skuld_drafted("T", "body", "draft", "sp-r", &l, notes).unwrap_err();
+        assert!(err.contains("continues with `Correction to"), "{err}");
     }
 
     #[test]
