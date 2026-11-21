@@ -229,6 +229,7 @@ fn parse_input(stdin: &str) -> Result<SealInput, String> {
         return Err(format!("{SHAPE}; a bare array is refused"));
     };
     let prose = |key: &str| match obj.get(key).and_then(Value::as_str).map(str::trim) {
+        Some(t) if t.lines().any(|l| l.starts_with("## ")) => Err(format!("`{key}` has a line starting `## `, which would be read as a section heading of the cover note")),
         Some(t) if !t.is_empty() => Ok(t.to_string()),
         _ => Err(format!("`{key}` is missing or blank; {SHAPE}")),
     };
@@ -259,7 +260,7 @@ fn age_days(from_ms: u64, to_ms: u64) -> u64 {
 
 const SECTIONS: [&str; 6] = ["## What it does", "## What to look at first", "## Files", "## Who calls it", "## How often it changed", "## Tests that exercise it"];
 
-fn missing_section(body: &str) -> Option<&'static str> {
+pub(crate) fn missing_section(body: &str) -> Option<&'static str> {
     SECTIONS.into_iter().find(|h| {
         let Some(at) = body.lines().position(|l| l.trim_end() == *h) else { return true };
         !body.lines().skip(at + 1).take_while(|l| !l.starts_with("## ")).any(|l| !l.trim().is_empty())
@@ -440,6 +441,9 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
     let cover_path = dir.join("cover.json");
     let stored_cover: Option<Cover> = std::fs::read(&cover_path).ok().and_then(|b| serde_json::from_slice(&b).ok());
     let supplied = if ports.stdin.trim().is_empty() { None } else { Some(parse_input(&ports.stdin)) };
+    if let Some(Err(e)) = &supplied {
+        return refuse(2, e);
+    }
     if sealed_path.exists() {
         if let Some(Ok(input)) = &supplied {
             let stored: Option<Vec<Comment>> = std::fs::read(&sealed_path).ok().and_then(|b| serde_json::from_slice(&b).ok());

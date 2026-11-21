@@ -430,3 +430,27 @@ fn unseal_with_a_failing_review_post_leaves_it_retryable() {
     w.gh.heal();
     assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 0);
 }
+
+#[test]
+fn the_section_guard_names_a_missing_heading_and_a_blank_section() {
+    use crate::review::missing_section;
+    let full: String = HEADINGS.iter().map(|h| format!("{h}\n\ntext\n\n")).collect();
+    assert_eq!(missing_section(&full), None);
+    assert_eq!(missing_section(&full.replace("## Files", "## Fils")), Some("## Files"));
+    assert_eq!(missing_section(&full.replace("## Who calls it\n\ntext", "## Who calls it\n\n")), Some("## Who calls it"));
+}
+
+#[test]
+fn seal_refuses_a_prose_field_carrying_a_heading_line_and_a_bare_array_on_a_rerun() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c.replace(DOES, "x\\n## Files\\ny"));
+    assert_eq!(o.code, 2, "{}", o.stderr);
+    assert!(o.stderr.contains("does"), "{}", o.stderr);
+    w.gh.fail("pulls");
+    assert_eq!(w.seal_with("001", &c).code, 1);
+    w.gh.heal();
+    let o = w.seal_with("001", r#"[{"path":"x","line":1,"body":"y"}]"#);
+    assert_eq!(o.code, 2, "{}", o.stderr);
+}
