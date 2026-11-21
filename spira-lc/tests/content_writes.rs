@@ -170,7 +170,7 @@ impl Lc {
             let (rc, out) = self.send(&id, args, stdin);
             if out.contains("deadline") {
                 self.cut.store(true, std::sync::atomic::Ordering::Relaxed);
-                assert!(Instant::now() < end, "{args:?} not answered within 120 s: last reply {out}");
+                assert!(Instant::now() < end, "{args:?} not answered within 120 s: last reply {out}"); // clock-safe: caps the re-send loop; each send blocks on the service ledger, the signal waited on
                 continue;
             }
             return (rc, out);
