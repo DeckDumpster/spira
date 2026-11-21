@@ -187,12 +187,12 @@ fn an_empty_findings_directory_is_refused_by_name() {
 }
 
 #[test]
-fn comments_on_nearby_lines_of_a_large_module_agree_as_source_lines() {
+fn comments_on_a_large_modules_branch_lines_are_compared_as_source_lines() {
     let w = world();
     assert_eq!(w.cr(&["open", "--aim", "demo/src/big.rs", "--seed", "2"]).code, 0);
     let put = |n: &str, text: &str| std::fs::write(record::dir(w.run.path(), 2).join(n), text).unwrap();
-    put("sealed.json", r#"[{"path":"demo/src/big.rs","line":3,"body":"C-near"},{"path":"demo/src/big.rs","line":20,"body":"C-far"}]"#);
-    put("comments.json", r#"[{"path":"demo/src/big.rs","line":5,"body":"H-near","user":{"type":"User"}}]"#);
+    put("sealed.json", r#"[{"path":"demo/src/big.rs","line":80,"body":"C-near"},{"path":"demo/src/big.rs","line":20,"body":"C-far"}]"#);
+    put("comments.json", r#"[{"path":"demo/src/big.rs","line":82,"body":"H-near","user":{"type":"User"}}]"#);
     let o = w.cr(&["findings", "--review", "002"]);
     assert_eq!(o.code, 0, "{}", o.stderr);
     let agreed = o.stdout.split("### Agreed").nth(1).unwrap().split("### Only you").next().unwrap();

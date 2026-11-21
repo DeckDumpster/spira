@@ -191,6 +191,7 @@ fn a_large_file_is_drawn_whole() {
     let o = go(&p, &["pick", "--aim", "demo/src/big.rs", "--seed", "3"]);
     let line = o.stdout.lines().find(|l| l.starts_with("  demo/src/big.rs")).unwrap();
     assert!(line.starts_with("  demo/src/big.rs (") && line.ends_with(" lines)"), "{}", o.stdout);
+    assert!(!o.stdout.contains("oversized"), "{}", o.stdout);
     let (_, v) = json(&p, &["pick", "--aim", "demo/src/big.rs", "--seed", "3"]);
     for f in v["unit"]["files"].as_array().unwrap() {
         let mut keys: Vec<&String> = f.as_object().unwrap().keys().collect();
