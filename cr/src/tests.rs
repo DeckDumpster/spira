@@ -160,6 +160,73 @@ fn a_trait_unit_holds_the_trait_its_impls_and_the_dyn_caller() {
     assert_eq!(unit_files(&v), ["demo/src/sink.rs", "demo/src/file_sink.rs", "demo/src/mem_sink.rs", "demo/src/router.rs"]);
 }
 
+fn two_worlds() -> FixtureTree {
+    FixtureTree::new("c0ffee")
+        .with_file("Cargo.toml", "[workspace]\nmembers = [\"a\", \"b\", \"c\"]\n")
+        .with_file("a/Cargo.toml", "[package]\nname = \"a\"\n\n[dependencies]\nc = { path = \"../c\" }\n")
+        .with_file("b/Cargo.toml", "[package]\nname = \"b\"\n\n[dependencies]\na = { path = \"../a\" }\n")
+        .with_file("c/Cargo.toml", "[package]\nname = \"c\"\n")
+        .with_file("c/src/lib.rs", "pub mod ports;\n")
+        .with_file("c/src/ports.rs", "pub trait World { fn far(&self); }\n")
+        .with_file("a/src/ports.rs", "pub trait World { fn go(&self); }\n")
+        .with_file("a/src/real.rs", "use crate::ports::World;\n\npub struct Real;\n\nimpl World for Real {\n    fn go(&self) {}\n}\n")
+        .with_file("a/src/far.rs", "use c::ports::World;\n\npub struct Far;\n\nimpl World for Far {\n    fn far(&self) {}\n}\n")
+        .with_file("a/src/lib.rs", "pub mod ports;\npub mod real;\n\npub fn run(w: &dyn ports::World) {}\n")
+        .with_file("b/src/ports.rs", "pub trait World { fn stop(&self); }\n")
+        .with_file("b/src/real.rs", "use crate::ports::World;\n\npub struct Real;\n\nimpl World for Real {\n    fn stop(&self) {}\n}\n")
+        .with_file("b/src/bridge.rs", "use a::ports::World;\n\npub struct Bridge;\n\nimpl World for Bridge {\n    fn go(&self) {}\n}\n")
+        .with_file("b/src/main.rs", "fn go(w: &dyn a::ports::World) {}\n")
+}
+
+fn trait_unit_files(units: &[crate::units::Unit], id: &str) -> Vec<String> {
+    units.iter().find(|u| u.id == id).unwrap_or_else(|| panic!("no unit {id}")).files.iter().map(|f| f.path.clone()).collect()
+}
+
+#[test]
+fn a_trait_unit_holds_only_what_resolves_to_that_trait_by_path() {
+    let ix = crate::index::Index::build(&two_worlds()).unwrap();
+    let units = crate::units::trait_units(&ix);
+    assert_eq!(trait_unit_files(&units, "trait:a/src/ports.rs::World"), ["a/src/ports.rs", "a/src/real.rs", "b/src/bridge.rs", "a/src/lib.rs", "b/src/main.rs"]);
+    assert_eq!(trait_unit_files(&units, "trait:b/src/ports.rs::World"), ["b/src/ports.rs", "b/src/real.rs"]);
+    assert_eq!(trait_unit_files(&units, "trait:c/src/ports.rs::World"), ["c/src/ports.rs", "a/src/far.rs"]);
+}
+
+#[test]
+fn a_trait_is_reached_by_glob_rename_and_crate_root_reexport() {
+    let t = two_worlds()
+        .with_file("a/src/lib.rs", "pub mod ports;\npub mod real;\npub use ports::World;\n")
+        .with_file("a/src/glob.rs", "use crate::ports::*;\n\nimpl World for G {}\n")
+        .with_file("a/src/renamed.rs", "use crate::ports::World as W;\n\nimpl W for R {}\n")
+        .with_file("b/src/root.rs", "use a::World;\n\nimpl World for Q {}\n")
+        .with_file("b/src/qualified.rs", "impl a::ports::World for P {}\n")
+        .with_file("b/src/sup.rs", "use super::ports::World;\n\nimpl World for S {}\n");
+    let ix = crate::index::Index::build(&t).unwrap();
+    let files = trait_unit_files(&crate::units::trait_units(&ix), "trait:a/src/ports.rs::World");
+    for f in ["a/src/glob.rs", "a/src/renamed.rs", "b/src/root.rs", "b/src/qualified.rs"] {
+        assert!(files.contains(&f.to_string()), "{f} missing from {files:?}");
+    }
+    assert!(!files.contains(&"b/src/sup.rs".to_string()), "{files:?}");
+}
+
+#[test]
+fn a_local_trait_of_the_same_name_shadows_a_glob_and_pub_crate_use_reexports() {
+    let t = two_worlds()
+        .with_file("a/src/lib.rs", "pub mod ports;\npub mod real;\npub mod mid;\n")
+        .with_file("a/src/mid.rs", "pub(crate) use crate::ports::World;\n")
+        .with_file("a/src/shadow.rs", "use crate::ports::*;\n\ntrait World {}\n\nimpl World for X {}\n")
+        .with_file("a/src/viamid.rs", "use crate::mid::World;\n\nimpl World for M {}\n")
+        .with_file("a/src/arg.rs", "use crate::ports as p;\n\nfn f(w: impl p::World) {}\nfn g(w: &dyn p::World) {}\n")
+        .with_file("a/src/private.rs", "fn f(x: (u8)) {}\nuse crate::ports::World;\n")
+        .with_file("a/src/viaprivate.rs", "use crate::private::World;\n\nimpl World for N {}\n");
+    let ix = crate::index::Index::build(&t).unwrap();
+    let files = trait_unit_files(&crate::units::trait_units(&ix), "trait:a/src/ports.rs::World");
+    assert!(!files.contains(&"a/src/shadow.rs".to_string()), "{files:?}");
+    assert!(!files.contains(&"a/src/viaprivate.rs".to_string()), "{files:?}");
+    for f in ["a/src/viamid.rs", "a/src/arg.rs"] {
+        assert!(files.contains(&f.to_string()), "{f} missing from {files:?}");
+    }
+}
+
 #[test]
 fn a_boundary_unit_holds_the_caller_and_the_module_it_uses() {
     let p = ports_with(fixture(), vec![row("module", "module:elsewhere", NOW, &[("elsewhere.rs", "x")])], cfg());
