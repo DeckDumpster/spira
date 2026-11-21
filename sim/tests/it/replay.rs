@@ -28,7 +28,7 @@ fn every_slice_check_is_named_for_its_test() {
     let names: Vec<_> = checks::CHECKS.iter().map(|(n, _)| *n).collect();
     let src = include_str!("replay.rs");
     for n in &names {
-        assert!(src.contains(&format!("    {n},\n")), "{n} has no ignored test here");
+        assert!(src.contains(&format!(" {n},\n")), "{n} has no ignored test here");
     }
     assert_eq!(names.len(), 1);
 }

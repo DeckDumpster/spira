@@ -1981,7 +1981,7 @@ fn run_child(spec: String, file_limit_blocks: Option<u64>) -> std::process::Outp
         }
     };
     let out = c
-        .args(["--exact", "child_work_when_asked", "--test-threads=1", "--nocapture"])
+        .args(["--exact", "child_work_when_asked::t2p98h7", "--test-threads=1", "--nocapture"])
         .env(CHILD_ENV, spec)
         .output()
         .unwrap();
