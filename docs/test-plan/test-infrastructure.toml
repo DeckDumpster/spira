@@ -362,6 +362,21 @@ date = "2026-09-26"
 bead = "sp-b99nj"
 
 [[use_case]]
+id = "UC-test-infrastructure-44"
+tier = "T0"
+statement = "The round image preflight skips when a diff touches no recipe input, installs only the package list when the sole touched input is ami-setup.sh and every changed line is its single `apt-get install` line, and runs the full setup otherwise. The decision is `round-vm`'s pure `preflight_plan`."
+
+[[use_case]]
+id = "UC-test-infrastructure-45"
+tier = "T1"
+statement = "The round image preflight script routes each plan to podman: a skip never runs it, a failing install exits 1 with the RED block, and each non-package-list diff shape reaches the full setup."
+
+[use_case.uncovered]
+reason = "the plan decision is round-vm's preflight_plan (UC-test-infrastructure-44) and the verb is run against a throwaway repo in round-vm/tests/image_preflight.rs; the script's text pins and test-round-image-preflight-root.sh cover the package-list and full-setup argv. The skip, RED-exit and per-shape podman routing are no longer driven end to end"
+date = "2026-11-20"
+bead = "sp-ek5ale"
+
+[[use_case]]
 id = "UC-covers-01"
 tier = "T1"
 statement = "test-dummy.sh's own id (never a catalogued use case — a probe token the suite put on its own # covers: line to exercise suite_uc_of/suite-select header uc end to end), covering spira/test-dummy.sh's demonstration of suite_covers_of/suite_requires_of over spira/suite-covers.sh."

@@ -6,8 +6,8 @@
 #
 # Runs only when the diff base...head touches a recipe input; every other branch pays one
 # git diff. A diff that only edits the apt-get install line of ami-setup.sh installs that
-# line alone. The inputs are read from round-vm/src/recipe.rs, the file the image hash is
-# computed from, never from a second list. A red prints the failing setup line and the last
+# line alone. Which check runs is decided by `round-vm preflight-plan`, from the same list the image hash is
+# computed from. A red prints the failing setup line and the last
 # 40 lines of output.
 #
 # Under SPIRA_PREFLIGHT_CACHE_ROOT it keeps cache/, storage/ (podman's graphroot), run/ (podman's
@@ -52,40 +52,26 @@ rotational_device() {   # rotational_device <sysfs-root> <path>: prints each rot
     printf '%s\n' "$leaves" | awk '$2 == 1 { print $1; found = 1 } END { exit !found }'
 }
 
-recipe_paths() {   # recipe_paths <tree> -> repo-relative path of every recipe input
-    local rs="$1/round-vm/src/recipe.rs" p
-    [ -f "$rs" ] || { echo "round-image-preflight: $rs is missing; the recipe inputs cannot be read" >&2; return 1; }
-    sed -n 's/.*include_str!("\([^"]*\)")).*/\1/p' "$rs" | while IFS= read -r p; do
-        realpath -m --relative-to="$1" "$1/round-vm/src/$p"
-    done
-}
-
-package_list_only() {   # package_list_only <tree> <base> <head> <hit> -> 0 iff only apt-get install lines of ami-setup.sh changed
-    local tree="$1" base="$2" head="$3" hit="$4" changed
-    [ "$hit" = "round-vm/ami-setup.sh" ] || return 1
-    changed="$(git -C "$tree" diff -U0 "$base...$head" -- round-vm/ami-setup.sh \
-        | grep -E '^[-+]' | grep -vE '^(---|\+\+\+) ')" || return 1
-    [ -n "$changed" ] || return 1
-    ! printf '%s\n' "$changed" | grep -qvE '^[-+]apt-get install '
-}
-
-paths="$(recipe_paths "$TREE")" || exit 1
-[ -n "$paths" ] || { echo "round-image-preflight: recipe.rs lists no inputs" >&2; exit 1; }
-npaths="$(printf '%s\n' "$paths" | wc -l)"
-
-hit=""
-if [ "$FORCE" = 0 ]; then
+plan="" npaths="" hit="" apt_line=""
+if [ "$FORCE" = 1 ]; then
+    plan_args=(--force)
+else
     [ -n "$BASE" ] || { echo "round-image-preflight: no base given (--base or SPIRA_GATE_BASE)" >&2; exit 2; }
-    touched="$(git -C "$TREE" diff --name-only "$BASE...$HEAD_REF")" \
-        || { echo "round-image-preflight: cannot diff $BASE...$HEAD_REF" >&2; exit 2; }
-    hit="$(printf '%s\n' "$touched" | grep -Fxf <(printf '%s\n' "$paths") || true)"
-    if [ -z "$hit" ]; then
-        echo "round-image-preflight: skipped; no recipe input in the diff"
-        echo "fence: round-image-preflight checked $npaths recipe paths against the diff (0 touched, setup not run)"
-        exit 0
-    fi
-    echo "round-image-preflight: recipe inputs touched: $(echo $hit)"
+    plan_args=(--tree "$TREE" --base "$BASE" --head "$HEAD_REF")
 fi
+if round-vm preflight-plan --force >/dev/null 2>&1; then plan_cmd=(round-vm)
+else plan_cmd=(timeout "$LIMIT" cargo run -q --manifest-path "$TREE/Cargo.toml" -p round-vm --); fi
+plan_out="$("${plan_cmd[@]}" preflight-plan "${plan_args[@]}")" || exit 2
+while IFS='=' read -r k v; do
+    case "$k" in plan) plan="$v" ;; npaths) npaths="$v" ;; touched) hit="$v" ;; apt_line) apt_line="$v" ;; esac
+done <<<"$plan_out"
+[ -n "$plan" ] && [ "${npaths:-0}" -gt 0 ] || { echo "round-image-preflight: round-vm preflight-plan gave no plan" >&2; exit 1; }
+if [ "$plan" = skip ]; then
+    echo "round-image-preflight: skipped; no recipe input in the diff"
+    echo "fence: round-image-preflight checked $npaths recipe paths against the diff (0 touched, setup not run)"
+    exit 0
+fi
+[ "$FORCE" = 1 ] || echo "round-image-preflight: recipe inputs touched: $hit"
 
 command -v podman >/dev/null 2>&1 || { echo "round-image-preflight: podman is not on PATH" >&2; exit 75; }
 
@@ -116,10 +102,7 @@ mounts=(-v "$TREE:/src:ro" -v "$list:/tree.list:ro" -v "$HERE/round-image-prefli
         -v "$CACHE/apt:/var/cache/apt/archives" -v "$CACHE/toolchains:/cache/toolchains")
 
 pkg_only=0
-if [ "$FORCE" = 0 ] && package_list_only "$TREE" "$BASE" "$HEAD_REF" "$hit"; then
-    apt_line="$(grep -E '^apt-get install ' "$TREE/round-vm/ami-setup.sh")"
-    [ "$(printf '%s\n' "$apt_line" | grep -c .)" = 1 ] && pkg_only=1
-fi
+[ "$plan" = package-list ] && pkg_only=1
 
 start=$SECONDS
 if [ "$pkg_only" = 1 ]; then
@@ -150,4 +133,4 @@ if [ "$pkg_only" = 1 ]; then
     exit 0
 fi
 echo "round-image-preflight: setup exited 0; wall ${wall}s"
-echo "fence: round-image-preflight checked $npaths recipe paths against the diff ($(printf "%s" "$hit" | grep -c .) touched, setup ran)"
+echo "fence: round-image-preflight checked $npaths recipe paths against the diff ($(echo $hit | wc -w) touched, setup ran)"

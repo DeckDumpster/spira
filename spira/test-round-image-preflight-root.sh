@@ -6,7 +6,7 @@
 # Podman is a stub that records its argv and the copy list the host mounts into the guest.
 #
 # tier: T1
-# covers: spira/round-image-preflight.sh spira/round-image-preflight-guest.sh spira/conf.d/SPIRA_PREFLIGHT_CACHE_ROOT
+# covers: spira/round-image-preflight.sh spira/round-image-preflight-guest.sh spira/conf.d/SPIRA_PREFLIGHT_CACHE_ROOT round-vm/ami-setup.sh round-vm/src/recipe.rs
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -33,7 +33,6 @@ chmod +x "$W/bin/podman"
 T="$W/tree"
 mkdir -p "$T/round-vm/src" "$T/target/debug" "$T/spira"
 git -C "$T" init -q
-echo 'const A: &str = f(include_str!("../ami-setup.sh"));' > "$T/round-vm/src/recipe.rs"
 echo x > "$T/round-vm/ami-setup.sh"
 printf '[toolchain]\nchannel = "1.90.0"\n' > "$T/rust-toolchain.toml"
 echo 'fn main() {}' > "$T/spira/a.rs"
