@@ -382,19 +382,19 @@ mod tests {
         }
     }
 
-    #[test_id(tk3ry4v)]
+    #[test_id(tgh5i1d)]
     #[test]
     fn ever_disabled_gives_each_test_once_at_its_first_disable_and_ignores_activate() {
         let c = db();
-        disable(&c, 100, 50, &s("unit:a x::one", None)).unwrap();
-        disable(&c, 200, 50, &s("unit:a x::two", None)).unwrap();
-        activate(&c, 300, "unit:a x::one", "fixed", "ryan").unwrap();
-        disable(&c, 400, 50, &s("unit:a x::one", None)).unwrap();
-        activate(&c, 500, "unit:a x::two", "fixed", "ryan").unwrap();
-        assert_eq!(ever_disabled(&c).unwrap(), vec![("unit:a x::one".to_string(), 100), ("unit:a x::two".to_string(), 200)]);
+        disable(&c, 100, 50, &s("test:t0oneaa", None)).unwrap();
+        disable(&c, 200, 50, &s("test:t0twoaa", None)).unwrap();
+        activate(&c, 300, "test:t0oneaa", "fixed", "ryan").unwrap();
+        disable(&c, 400, 50, &s("test:t0oneaa", None)).unwrap();
+        activate(&c, 500, "test:t0twoaa", "fixed", "ryan").unwrap();
+        assert_eq!(ever_disabled(&c).unwrap(), vec![("test:t0oneaa".to_string(), 100), ("test:t0twoaa".to_string(), 200)]);
     }
 
-    #[test_id(tgh5i1d)]
+    #[test_id(tk3ry4v)]
     #[test]
     fn deny_list_includes_a_live_row_and_excludes_an_expired_one() {
         let c = db();
