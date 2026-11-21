@@ -180,6 +180,7 @@ fn main() {
 }
 
 type Transport<'a> = &'a dyn Fn(&[String], Duration) -> Result<(i32, String), Unsent>;
+type OwnedTransport = Box<dyn Fn(&[String], Duration) -> Result<(i32, String), Unsent>>;
 
 /// Sends `req`; a queue receipt is followed to the recorded request's own answer, each poll a plain
 /// read of its record so no request is held open meanwhile. Any other reply is returned as-is.
@@ -563,7 +564,7 @@ struct ImagePorts {
     bound: String,
     actor: String,
     started: std::time::Instant,
-    transport: Box<dyn Fn(&[String], Duration) -> Result<(i32, String), Unsent>>,
+    transport: OwnedTransport,
 }
 
 impl ImagePorts {
