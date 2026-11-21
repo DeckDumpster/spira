@@ -2151,7 +2151,10 @@ impl Machine<'_> {
                 Some(Attribution::Blocked(why)) if batcher_cut::io::HeldEject::parse(&why).is_some() => {
                     self.hold_eject(batcher_cut::io::HeldEject::parse(&why).unwrap_or_default());
                 }
-                Some(Attribution::Abandoned) => self.finish(pace::Outcome::Quiet, ""),
+                Some(Attribution::Abandoned) => {
+                    self.go(Trigger::LegStopped);
+                    self.finish(pace::Outcome::Quiet, "");
+                }
                 Some(Attribution::Blocked(why)) => {
                     self.go(Trigger::RerunBlocked);
                     self.red(&format!("local corpus red — held before reaching CI: {why}"));
