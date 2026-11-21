@@ -773,6 +773,9 @@ fn a_planning_write_moves_the_kv_watermark_in_sql_and_starts_no_bd_kv() {
     provision(&lc);
     lc.admin("admin-provision-writer");
     lc.serve();
+    assert!(Command::new(&bd).args(["kv", "set", "planted", "1"]).output().is_ok());
+    assert!(std::fs::read_to_string(&log).unwrap_or_default().lines().any(|l| l.starts_with("kv ")), "the recorder must see a planted bd kv before its silence means anything");
+    std::fs::remove_file(&log).unwrap();
     let (rc, out) = lc.run(&["plan", "stamp"], None);
     assert_eq!(rc, 0, "{out}");
     let want = serde_json::from_str::<serde_json::Value>(out.trim()).unwrap()["watermark"].as_u64().expect("a watermark");
