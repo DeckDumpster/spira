@@ -3389,6 +3389,37 @@ mod cut_tests {
 
     #[test_id(ta0ngxn)]
     #[test]
+    fn registry_row_beads_names_each_bead_once_and_a_failing_registry_says_what_it_printed() {
+        let d = testkit::TempDir::new("batcher-cut-registry-beads");
+        let mut env = io::lifecycle_tests_env(&d);
+        let bin = d.join("test-registry");
+        env.test_registry_bin = Some(bin.clone());
+        let body = r#"{"ok":true,"rows":[{"test":"suite:a.sh","bead":"sp-two"},{"test":"unit:x t::y","bead":"sp-one"},{"test":"suite:b.sh","bead":"sp-two"},{"test":"suite:c.sh","bead":"-"}]}"#;
+        testkit::write_exe(&bin, &format!("#!/bin/sh\n[ \"$1 $2\" = \"list --json\" ] || exit 9\necho '{body}'\n"));
+        assert_eq!(io::registry_row_beads(&env).unwrap(), vec!["sp-one".to_string(), "sp-two".to_string()]);
+        testkit::write_exe(&bin, "#!/bin/sh\necho \"registry locked $*\" >&2\nexit 3\n");
+        let err = io::registry_row_beads(&env).unwrap_err();
+        assert!(err.contains("registry locked list --json") && err.contains("exited 3"), "{err}");
+    }
+
+    #[test_id(tpftdo6)]
+    #[test]
+    fn clear_landed_rows_passes_each_bead_and_returns_the_cleared_tests_or_the_registrys_words() {
+        let d = testkit::TempDir::new("batcher-cut-clear-landed-rows");
+        let mut env = io::lifecycle_tests_env(&d);
+        let bin = d.join("test-registry");
+        env.test_registry_bin = Some(bin.clone());
+        testkit::write_exe(&bin, "#!/bin/sh\necho \"$*\" > \"$0.args\"\necho 'suite:a.sh'\necho 'unit:x t::y'\n");
+        let beads = vec!["sp-one".to_string(), "sp-two".to_string()];
+        assert_eq!(io::clear_landed_rows(&env, &beads).unwrap(), vec!["suite:a.sh".to_string(), "unit:x t::y".to_string()]);
+        assert_eq!(std::fs::read_to_string(d.join("test-registry.args")).unwrap().trim(), "clear-landed --bead sp-one --bead sp-two --actor batcher");
+        testkit::write_exe(&bin, "#!/bin/sh\necho \"registry busy\" >&2\nexit 5\n");
+        let err = io::clear_landed_rows(&env, &beads).unwrap_err();
+        assert!(err.contains("exited 5") && err.contains("registry busy"), "{err}");
+    }
+
+    #[test_id(t2va2j5)]
+    #[test]
     fn a_failing_registry_cuts_no_round_and_says_what_it_printed() {
         let d = testkit::TempDir::new("batcher-cut-deny-fail");
         let env = io::lifecycle_tests_env(&d);

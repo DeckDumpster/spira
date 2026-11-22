@@ -26,7 +26,7 @@ impl EffectRunner for Runner {
         if spec.name == OBSERVE {
             let member = Member { id: "sp-olw42f".into(), state: "CERTIFIED".into(), version: 5, tip: "t1".into(), sifted_tip: Some("t1".into()), title: "work".into(), priority: 2, ..Member::default() };
             let repo = Repo { branch_tips: [("sp-olw42f".to_string(), "t1".to_string())].into(), pool: vec![member], base_sha: "b2".into(), settled: vec![BATCH.into()], live_legs: Some(vec![]), ..Repo::default() };
-            return Ok(serde_json::to_string(&Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: self.clock.now_ms() }).unwrap());
+            return Ok(serde_json::to_string(&Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: self.clock.now_ms(), ..Default::default() }).unwrap());
         }
         if spec.name == FETCH {
             return Ok("{}".into());

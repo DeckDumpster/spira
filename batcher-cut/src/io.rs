@@ -2854,6 +2854,55 @@ pub fn close_superseded_reds(repo: &Repo, head: &str) {
     }
 }
 
+/// The distinct beads the test registry's rows name.
+pub fn registry_row_beads(env: &Env) -> Result<Vec<String>, String> {
+    let bin = env.test_registry_bin.as_ref().ok_or("no test-registry configured")?;
+    // FORK-EDGE: machine leg test-registry (list --json: the registry's rows are read only through its binary)
+    let out = spira_config::bounded::bounded(bin)
+        .args(["list", "--json"])
+        .env("SPIRA_HOME", &env.home)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("{} list: {e}", bin.display()))?;
+    let said = format!("{}{}", String::from_utf8_lossy(&out.stdout).trim(), String::from_utf8_lossy(&out.stderr).trim());
+    if !out.status.success() {
+        return Err(format!("{} list --json exited {}: {said}", bin.display(), out.status.code().unwrap_or(-1)));
+    }
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("{} list --json: unparsed reply: {e}", bin.display()))?;
+    let rows = body.get("rows").and_then(|r| r.as_array()).ok_or_else(|| format!("{} list --json: no rows in {said}", bin.display()))?;
+    let mut beads: Vec<String> = rows.iter().filter_map(|r| r.get("bead").and_then(|b| b.as_str())).filter(|b| !b.is_empty() && *b != "-").map(String::from).collect();
+    beads.sort();
+    beads.dedup();
+    Ok(beads)
+}
+
+/// `test-registry clear-landed` for `beads`: the registry rows naming them are over. Returns the cleared test ids.
+pub fn clear_landed_rows(env: &Env, beads: &[String]) -> Result<Vec<String>, String> {
+    let bin = env.test_registry_bin.as_ref().ok_or("no test-registry configured")?;
+    // FORK-EDGE: machine leg test-registry (clear-landed: the row delete and its history row are one transaction only the registry's binary makes)
+    let mut cmd = spira_config::bounded::bounded(bin);
+    cmd.arg("clear-landed");
+    for b in beads {
+        cmd.args(["--bead", b]);
+    }
+    let out = cmd
+        .args(["--actor", "batcher"])
+        .env("SPIRA_HOME", &env.home)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("{} clear-landed: {e}", bin.display()))?;
+    if out.status.success() {
+        return Ok(String::from_utf8_lossy(&out.stdout).lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect());
+    }
+    Err(format!(
+        "{} clear-landed exited {}: {}{}",
+        bin.display(),
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).trim(),
+        String::from_utf8_lossy(&out.stderr).trim()
+    ))
+}
+
 fn local_red_cause(reason: &str) -> &'static str {
     if reason == spira_config::host_disk::CAUSE {
         spira_config::host_disk::CAUSE

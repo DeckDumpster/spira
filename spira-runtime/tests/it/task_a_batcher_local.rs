@@ -28,12 +28,12 @@ fn repo(pool: Vec<Member>) -> Repo {
 
 /// The contract's idle fixture: the pool empty and no open round.
 fn idle() -> Snapshot {
-    Snapshot { repos: [("spira".to_string(), repo(vec![]))].into(), now_ms: NOW }
+    Snapshot { repos: [("spira".to_string(), repo(vec![]))].into(), now_ms: NOW, ..Default::default() }
 }
 
 /// Two sifted submissions at their tips and no open round: a cut.
 fn busy() -> Snapshot {
-    Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-a", "t1"), member("sp-b", "t2")]))].into(), now_ms: NOW }
+    Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-a", "t1"), member("sp-b", "t2")]))].into(), now_ms: NOW, ..Default::default() }
 }
 
 #[test_id(t1oe1vk)]
@@ -64,8 +64,8 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 #[test_id(tmvpnil)]
 #[test]
 fn t2_a_held_repo_and_a_driven_round_are_silent() {
-    let held = Snapshot { repos: [("spira".to_string(), Repo { stopped: true, ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
-    let driven = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(Round { id: "r1".into(), members: vec!["sp-a".into()], head: "h".into(), worktree: "w".into(), driven: true, ..Round::default() }), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
+    let held = Snapshot { repos: [("spira".to_string(), Repo { stopped: true, ..busy().repos["spira"].clone() })].into(), now_ms: NOW, ..Default::default() };
+    let driven = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(Round { id: "r1".into(), members: vec!["sp-a".into()], head: "h".into(), worktree: "w".into(), driven: true, ..Round::default() }), ..busy().repos["spira"].clone() })].into(), now_ms: NOW, ..Default::default() };
     for snap in [held, driven] {
         let mut r = rig(1, snap);
         kit::assert_unpoisoned(&r, STREAM);
@@ -88,7 +88,7 @@ fn t5_a_sifted_pool_is_fetched_then_assembled() {
 #[test_id(tdxc2ti)]
 #[test]
 fn t5_a_stopped_repo_holds_without_a_write() {
-    let held = Snapshot { repos: [("spira".to_string(), Repo { stopped: true, ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
+    let held = Snapshot { repos: [("spira".to_string(), Repo { stopped: true, ..busy().repos["spira"].clone() })].into(), now_ms: NOW, ..Default::default() };
     let (carry, acts) = decide(&Carry::default(), &held);
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Held);
@@ -98,12 +98,12 @@ fn t5_a_stopped_repo_holds_without_a_write() {
 #[test_id(tzgvqvk)]
 #[test]
 fn t5_a_cut_held_repo_cuts_nothing_and_cuts_again_when_the_hold_lifts() {
-    let held = Snapshot { repos: [("spira".to_string(), Repo { cut_hold: Some("concierge (hand-landing) until 9".into()), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
+    let held = Snapshot { repos: [("spira".to_string(), Repo { cut_hold: Some("concierge (hand-landing) until 9".into()), ..busy().repos["spira"].clone() })].into(), now_ms: NOW, ..Default::default() };
     let (carry, acts) = decide(&Carry::default(), &held);
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Held);
     assert!(carry.repos["spira"].skip_why.as_deref().is_some_and(|w| w.contains("concierge")), "{:?}", carry.repos["spira"].skip_why);
-    let lifted = Snapshot { repos: [("spira".to_string(), Repo { cut_hold: None, ..held.repos["spira"].clone() })].into(), now_ms: NOW + 30_000 };
+    let lifted = Snapshot { repos: [("spira".to_string(), Repo { cut_hold: None, ..held.repos["spira"].clone() })].into(), now_ms: NOW + 30_000, ..Default::default() };
     let (_, acts) = decide(&carry, &lifted);
     let effects: Vec<_> = acts.iter().map(|a| a.effect.as_str()).collect();
     assert_eq!(effects, [FETCH, ASSEMBLE], "{acts:?}");
@@ -833,7 +833,7 @@ fn sp_b0lhx6_a_named_suite_red_after_attribution_abandons_without_claiming_eject
 
 /// `spira` with one admissible member, under the pause a red round wrote at base `b0`.
 fn paused(base: &str) -> Snapshot {
-    let mut s = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-a", "t1")]))].into(), now_ms: NOW };
+    let mut s = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-a", "t1")]))].into(), now_ms: NOW, ..Default::default() };
     let r = s.repos.get_mut("spira").unwrap();
     r.base_sha = base.into();
     r.paused = Some("local corpus red — the attribution leg ended (Code(2)) with no outcome".into());
@@ -1177,7 +1177,7 @@ fn sp_banzvc_the_landing_that_lifts_a_red_pause_leaves_an_owned_stop_in_force() 
     assert_eq!(rc.state, State::Held);
     let why = rc.skip_why.clone().expect("named");
     assert!(why.contains("concierge") && why.contains("bead:sp-x=LANDED") && why.contains("queue round start spira"), "{why}");
-    let (_, later) = decide(&carry, &Snapshot { repos: [("spira".to_string(), Repo { paused: None, ..s.repos["spira"].clone() })].into(), now_ms: NOW });
+    let (_, later) = decide(&carry, &Snapshot { repos: [("spira".to_string(), Repo { paused: None, ..s.repos["spira"].clone() })].into(), now_ms: NOW, ..Default::default() });
     assert!(later.is_empty(), "{later:?}");
 }
 
@@ -1192,7 +1192,7 @@ fn sp_8nlvra_a_blocked_feature_group_does_not_starve_the_catch_all() {
     x2.deps = vec!["sp-z".into()];
     let mut r = repo(vec![x1, x2, member("sp-c", "t3")]);
     r.blockers = vec!["sp-z".into()];
-    let s = Snapshot { repos: [("spira".to_string(), r)].into(), now_ms: NOW };
+    let s = Snapshot { repos: [("spira".to_string(), r)].into(), now_ms: NOW, ..Default::default() };
     let (carry, acts) = decide(&Carry::default(), &s);
     let assemble = acts.iter().find(|a| a.effect == ASSEMBLE).unwrap_or_else(|| panic!("the catch-all member cuts: {acts:?} {carry:?}"));
     let leg: Leg = serde_json::from_str(&assemble.input).unwrap();
@@ -1307,7 +1307,7 @@ fn sp_7der7t_a_cut_names_each_member_it_left_out() {
     unsifted.sifted_tip = None;
     let mut r = repo(vec![member("sp-a", "t1"), member("sp-b", "t2"), unsifted]);
     r.left_out = vec![batcher_cut::io::LeftOut { id: "sp-d".into(), tip: "t4".into(), cause: batcher_cut::io::Cause::Held(vec!["manual".into()]) }];
-    let snap = Snapshot { repos: [("spira".to_string(), r)].into(), now_ms: NOW };
+    let snap = Snapshot { repos: [("spira".to_string(), r)].into(), now_ms: NOW, ..Default::default() };
     let rc = RepoCarry { refused: [("sp-b".to_string(), ("t2".to_string(), "b1".to_string(), "integration".to_string()))].into(), ..RepoCarry::default() };
     let carry = Carry { repos: [("spira".to_string(), rc)].into() };
     let (next, acts) = decide(&carry, &snap);
@@ -1357,7 +1357,7 @@ fn sp_fssqg1_a_list_that_empties_is_pushed_once_to_clear_its_records() {
 fn sp_fssqg1_a_failed_left_out_note_is_pushed_again() {
     let mut r = repo(vec![]);
     r.left_out = vec![batcher_cut::io::LeftOut { id: "sp-d".into(), tip: "t4".into(), cause: batcher_cut::io::Cause::Held(vec!["manual".into()]) }];
-    let snap = Snapshot { repos: [("spira".to_string(), r)].into(), now_ms: NOW };
+    let snap = Snapshot { repos: [("spira".to_string(), r)].into(), now_ms: NOW, ..Default::default() };
     let (named, acts) = decide(&Carry::default(), &snap);
     let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == NOTE_LEFT_OUT).expect("first push").input).unwrap();
     let (failed, _) = on_outcome(&named, NOTE_LEFT_OUT, false, "bead down", &leg, NOW);
@@ -1649,7 +1649,7 @@ fn a_boot_repeats_no_side_effect_and_misses_none() {
 fn sp_lkm2fv_a_green_certify_of_a_wide_round_is_requested_not_refused_by_the_store() {
     use runtime::units::{Exit, UnitHandle, UnitRan};
     let members: Vec<Member> = (0..9).map(|i| Member { state: "CERTIFIED".into(), ..member(&format!("sp-wide{i:02}"), &format!("{:040x}", i + 1)) }).collect();
-    let world = Snapshot { repos: [("spira".to_string(), repo(members.clone()))].into(), now_ms: NOW };
+    let world = Snapshot { repos: [("spira".to_string(), repo(members.clone()))].into(), now_ms: NOW, ..Default::default() };
     let snaps = std::sync::Mutex::new(vec![world]);
     let assembled = Assembled { merged: members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), wt: "w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
     let mut r = TaskRig::new(1, registration())
@@ -1679,7 +1679,7 @@ fn opened_unadvanced() -> Carry {
 
 fn queue_holds(id: &str, members: &[&str]) -> Snapshot {
     let round = Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), head: "h1".into(), worktree: "w".into(), ..Round::default() };
-    Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), ..repo(vec![]) })].into(), now_ms: NOW }
+    Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), ..repo(vec![]) })].into(), now_ms: NOW, ..Default::default() }
 }
 
 #[test_id(t253iek)]
@@ -1932,7 +1932,7 @@ fn sp_byw57t_a_certify_legs_stderr_is_kept_with_its_stdout() {
 
 fn open_with(phase: &str, members: &[&str], worktree: &str) -> Snapshot {
     let round = Round { id: "r9".into(), members: members.iter().map(|m| m.to_string()).collect(), head: "h".into(), worktree: worktree.into(), phase: phase.into(), ..Round::default() };
-    Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), ..busy().repos["spira"].clone() })].into(), now_ms: NOW }
+    Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), ..busy().repos["spira"].clone() })].into(), now_ms: NOW, ..Default::default() }
 }
 
 fn opened_unanswered() -> Carry {
@@ -2089,7 +2089,7 @@ fn sp_k7ltss_a_green_round_above_another_open_round_waits() {
 #[test]
 fn sp_3uxw41_a_member_blocked_on_an_unlanded_dep_records_nothing_admissible() {
     let blocked = Member { deps: vec!["sp-base".into()], ..member("sp-a", "t1") };
-    let s = Snapshot { repos: [("spira".to_string(), Repo { blockers: vec!["sp-base".into()], ..repo(vec![blocked]) })].into(), now_ms: NOW };
+    let s = Snapshot { repos: [("spira".to_string(), Repo { blockers: vec!["sp-base".into()], ..repo(vec![blocked]) })].into(), now_ms: NOW, ..Default::default() };
     let (carry, acts) = decide(&Carry::default(), &s);
     assert!(!effects(&acts).contains(&ASSEMBLE), "{acts:?}");
     assert_eq!(carry.repos["spira"].admissible, Vec::<String>::new());
@@ -2100,7 +2100,7 @@ fn sp_3uxw41_a_member_blocked_on_an_unlanded_dep_records_nothing_admissible() {
 fn a_member_refused_for_an_unlanded_dep_is_carried_with_that_dep_and_one_whose_dep_is_not_a_blocker_is_not() {
     let blocked = Member { deps: vec!["sp-base".into()], ..member("sp-a", "t1") };
     let landed = Member { deps: vec!["sp-done".into()], ..member("sp-b", "t2") };
-    let s = Snapshot { repos: [("spira".to_string(), Repo { blockers: vec!["sp-base".into()], ..repo(vec![blocked, landed]) })].into(), now_ms: NOW };
+    let s = Snapshot { repos: [("spira".to_string(), Repo { blockers: vec!["sp-base".into()], ..repo(vec![blocked, landed]) })].into(), now_ms: NOW, ..Default::default() };
     let (carry, _) = decide(&Carry::default(), &s);
     let json = serde_json::to_value(&carry).unwrap();
     assert_eq!(json["repos"]["spira"]["blocked"]["sp-a"], "sp-base");
@@ -2111,10 +2111,10 @@ fn a_member_refused_for_an_unlanded_dep_is_carried_with_that_dep_and_one_whose_d
 #[test]
 fn a_pass_with_an_empty_pool_clears_the_carried_dependency_refusals() {
     let blocked = Member { deps: vec!["sp-base".into()], ..member("sp-a", "t1") };
-    let s = Snapshot { repos: [("spira".to_string(), Repo { blockers: vec!["sp-base".into()], ..repo(vec![blocked]) })].into(), now_ms: NOW };
+    let s = Snapshot { repos: [("spira".to_string(), Repo { blockers: vec!["sp-base".into()], ..repo(vec![blocked]) })].into(), now_ms: NOW, ..Default::default() };
     let (carry, _) = decide(&Carry::default(), &s);
     assert!(!carry.repos["spira"].blocked.is_empty());
-    let empty = Snapshot { repos: [("spira".to_string(), repo(vec![]))].into(), now_ms: NOW };
+    let empty = Snapshot { repos: [("spira".to_string(), repo(vec![]))].into(), now_ms: NOW, ..Default::default() };
     let (carry, _) = decide(&carry, &empty);
     assert!(carry.repos.get("spira").is_none_or(|rc| rc.blocked.is_empty()), "{:?}", carry.repos);
 }
@@ -2122,7 +2122,7 @@ fn a_pass_with_an_empty_pool_clears_the_carried_dependency_refusals() {
 #[test_id(txk164f)]
 #[test]
 fn sp_3uxw41_an_unblocked_sifted_member_with_no_round_open_is_admissible() {
-    let s = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-a", "t1")]))].into(), now_ms: NOW };
+    let s = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-a", "t1")]))].into(), now_ms: NOW, ..Default::default() };
     let (carry, _) = decide(&Carry::default(), &s);
     assert_eq!(carry.repos["spira"].admissible, ["sp-a"]);
 }
@@ -2130,7 +2130,7 @@ fn sp_3uxw41_an_unblocked_sifted_member_with_no_round_open_is_admissible() {
 #[test_id(t871cno)]
 #[test]
 fn sp_3uxw41_a_repo_with_its_rounds_at_max_open_records_nothing_admissible() {
-    let mut s = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-c", "t3")]))].into(), now_ms: NOW };
+    let mut s = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-c", "t3")]))].into(), now_ms: NOW, ..Default::default() };
     s.repos.get_mut("spira").unwrap().open_round = Some(Round { id: "r9".into(), members: vec!["sp-a".into()], head: "h0".into(), worktree: "w".into(), driven: true, phase: "certifying".into(), ..Round::default() });
     let mut before = driving(State::Certifying, "spira.c3");
     before.repos.get_mut("spira").unwrap().admissible = vec!["sp-c".into()];
@@ -2152,7 +2152,7 @@ fn driverless_carry() -> Carry {
 
 fn driverless_snap(driven: bool) -> Snapshot {
     let round = Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-b".into()], head: "new".into(), worktree: "w".into(), phase: "attributing".into(), driven, ..Round::default() };
-    Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec![]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW }
+    Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec![]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW, ..Default::default() }
 }
 
 #[test_id(tny9wnn)]
@@ -2173,7 +2173,7 @@ fn sp_29matj_a_driverless_round_with_no_verdict_is_abandoned_as_a_harness_fault(
 
 fn red_snap(id: &str, members: &[&str], suites: &[&str], now_ms: u64) -> Snapshot {
     let round = Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), head: "new".into(), worktree: "w".into(), phase: "attributing".into(), red: true, red_suites: suites.iter().map(|s| s.to_string()).collect(), ..Round::default() };
-    Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec![]), ..busy().repos["spira"].clone() })].into(), now_ms }
+    Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec![]), ..busy().repos["spira"].clone() })].into(), now_ms, ..Default::default() }
 }
 
 /// Plays a leg-less red round to the point where it used to be abandoned.
@@ -2280,7 +2280,7 @@ fn a_green_foreign_round_whose_bare_round_recert_unit_is_active_is_not_landed_by
     let driven = edge::recert_driven(Some(&units), "b1");
     let open = Round { id: "b1".into(), members: vec!["m1".into()], tips: vec!["t1".into()], head: "h1".into(), phase: "green".into(), driven, ..Round::default() };
     let repo = Repo { open_round: Some(open), base_sha: "base".into(), ..Repo::default() };
-    let snap = Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW };
+    let snap = Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW, ..Default::default() };
     assert!(!decide(&Carry::default(), &snap).1.iter().any(|a| a.effect == LAND));
 }
 
@@ -2293,7 +2293,7 @@ fn an_attribution_whose_record_lost_a_carried_member_is_stopped_and_certifies_th
     rc.head = "h0".into();
     rc.leg_at_ms = NOW;
     let round = Round { id: "r9".into(), members: vec!["sp-a".into()], tips: vec!["t1".into()], head: "h1".into(), worktree: "w".into(), phase: "attributing".into(), driven: true, ..Round::default() };
-    let snap = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec!["spira.a2".into()]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
+    let snap = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec!["spira.a2".into()]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW, ..Default::default() };
     let (next, acts) = decide(&carry, &snap);
     let stops = |acts: &[Act]| acts.iter().filter(|a| a.effect == runtime::units::UNIT_STOP).count();
     assert_eq!(stops(&acts), 1, "{acts:?}");
@@ -2346,7 +2346,7 @@ fn an_attribution_whose_member_was_ejected_by_the_concierge_is_stopped_and_certi
     rc.head = "h0".into();
     rc.leg_at_ms = NOW;
     let round = Round { id: "r9".into(), members: vec!["sp-a".into()], tips: vec!["t1".into()], head: "h1".into(), worktree: "w".into(), phase: "attributing".into(), driven: true, ejected: vec!["sp-b".into()], ejected_by: vec!["concierge".into()], ..Round::default() };
-    let snap = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec!["spira.a2".into()]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
+    let snap = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec!["spira.a2".into()]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW, ..Default::default() };
     let (next, acts) = decide(&carry, &snap);
     let stops = |acts: &[Act]| acts.iter().filter(|a| a.effect == runtime::units::UNIT_STOP).count();
     assert_eq!(stops(&acts), 1, "{acts:?}");
@@ -2365,7 +2365,7 @@ fn an_attribution_whose_member_the_batcher_itself_ejected_runs_on_and_certifies_
     rc.head = "h0".into();
     rc.leg_at_ms = NOW;
     let round = Round { id: "r9".into(), members: vec!["sp-a".into()], tips: vec!["t1".into()], head: "h0".into(), worktree: "w".into(), phase: "attributing".into(), driven: true, ejected: vec!["sp-b".into()], ejected_by: vec!["batcher".into()], ..Round::default() };
-    let snap = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec!["spira.a2".into()]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
+    let snap = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec!["spira.a2".into()]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW, ..Default::default() };
     let (next, acts) = decide(&carry, &snap);
     assert!(!acts.iter().any(|a| a.effect == runtime::units::UNIT_STOP), "{acts:?}");
     assert_eq!(next.repos["spira"].state, State::Attributing);
@@ -2394,7 +2394,7 @@ fn an_attribution_that_ejects_one_of_three_members_keeps_its_leg_and_certifies_t
     rc.head = "h0".into();
     rc.leg_at_ms = NOW;
     let round = Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-c".into()], tips: vec!["t1".into(), "t3".into()], head: "h1".into(), worktree: "w".into(), phase: "attributing".into(), driven: false, ejected: vec!["sp-b".into()], ejected_by: vec!["batcher".into()], ..Round::default() };
-    let at = |now_ms| Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round.clone()), live_legs: Some(vec!["spira.a2".into()]), ..busy().repos["spira"].clone() })].into(), now_ms };
+    let at = |now_ms| Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round.clone()), live_legs: Some(vec!["spira.a2".into()]), ..busy().repos["spira"].clone() })].into(), now_ms, ..Default::default() };
     let (next, acts) = decide(&carry, &at(NOW));
     let (later, more) = decide(&next, &at(NOW + LEG_START_GRACE_MS + 15_000));
     for a in acts.iter().chain(more.iter()) {

@@ -29,7 +29,7 @@ fn carried(head: &str, leg_head: &str) -> Carry {
 fn snapshot(head: &str, phase: &str) -> Snapshot {
     let round = Round { id: "r9".into(), members: vec!["sp-a".into()], head: head.into(), worktree: "w".into(), driven: true, phase: phase.into(), ..Round::default() };
     let repo = Repo { open_round: Some(round), base_sha: "b1".into(), live_legs: Some(vec![]), ..Repo::default() };
-    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW }
+    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW, ..Default::default() }
 }
 
 fn ran() -> UnitRan {

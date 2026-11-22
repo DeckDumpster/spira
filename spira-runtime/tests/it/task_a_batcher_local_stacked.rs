@@ -28,7 +28,7 @@ fn snap(open: Vec<Round>, now_ms: u64) -> Snapshot {
     let branch_tips = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     let mut open = open.into_iter();
     let repo = Repo { pool, branch_tips, base_sha: "b1".into(), open_round: open.next(), open_above: open.collect(), ..Repo::default() };
-    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms }
+    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms, ..Default::default() }
 }
 
 fn round(id: &str, members: &[&str], head: &str, age_secs: u64) -> Round {

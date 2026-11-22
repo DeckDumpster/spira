@@ -19,15 +19,20 @@ const STORED: &str = r#"{"state":"Landing","batch":"spira-20261110T220627Z","leg
 struct Runner {
     clock: VirtualClock,
     settled: String,
+    landed: bool,
     ran: Mutex<Vec<String>>,
+    supersede: Mutex<Vec<String>>,
 }
 
 impl EffectRunner for Runner {
     fn run(&self, _: &str, spec: &EffectSpec) -> Result<String, String> {
         self.ran.lock().unwrap().push(spec.name.clone());
+        if spec.name == SUPERSEDE_REDS {
+            self.supersede.lock().unwrap().push(spec.input.clone());
+        }
         match spec.name.as_str() {
-            OBSERVE => Ok(serde_json::to_string(&waiting_pool(&self.settled, self.clock.now_ms())).unwrap()),
-            FETCH | CERTIFY | LAND => Ok("{}".into()),
+            OBSERVE => Ok(observed(&self.settled, self.landed, self.clock.now_ms()).to_string()),
+            FETCH | CERTIFY | LAND | SUPERSEDE_REDS => Ok("{}".into()),
             ASSEMBLE => Ok(serde_json::to_string(&assembled()).unwrap()),
             ROUND_OPEN => Ok(serde_json::to_string(&Opened { batch: "next-round".into(), ..Opened::default() }).unwrap()),
             other => Err(format!("no double for {other}")),
@@ -38,7 +43,15 @@ impl EffectRunner for Runner {
 fn waiting_pool(settled: &str, now_ms: u64) -> Snapshot {
     let member = Member { id: "sp-ypesca".into(), state: "CERTIFIED".into(), version: 5, tip: "t1".into(), sifted_tip: Some("t1".into()), title: "work".into(), priority: 2, ..Member::default() };
     let repo = Repo { branch_tips: [("sp-ypesca".to_string(), "t1".to_string())].into(), pool: vec![member], base_sha: "b2".into(), settled: vec![settled.into()], live_legs: Some(vec![]), ..Repo::default() };
-    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms }
+    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms, ..Default::default() }
+}
+
+fn observed(settled: &str, landed: bool, now_ms: u64) -> serde_json::Value {
+    let mut snap = serde_json::to_value(waiting_pool(settled, now_ms)).unwrap();
+    if landed {
+        snap["repos"]["spira"]["landed"] = serde_json::json!([settled]);
+    }
+    snap
 }
 
 fn assembled() -> Assembled {
@@ -46,16 +59,21 @@ fn assembled() -> Assembled {
 }
 
 fn tick_on_row(row: &str, settled: &str) -> Vec<String> {
+    tick_on_row_landed(row, settled, false).0
+}
+
+fn tick_on_row_landed(row: &str, settled: &str, landed: bool) -> (Vec<String>, Vec<String>) {
     let journal = MemJournal::new();
     journal.commit(&Turn { state: vec![StateRow { task: "batcher.local".into(), skey: "repos/spira".into(), value: format!(r#"{{"key":"spira","value":{row}}}"#), at: NOW }], ..Turn::default() }).unwrap();
     let clock = VirtualClock::new(NOW);
-    let runner = Arc::new(Runner { clock: clock.clone(), settled: settled.into(), ran: Mutex::new(vec![]) });
+    let runner = Arc::new(Runner { clock: clock.clone(), settled: settled.into(), landed, ran: Mutex::new(vec![]), supersede: Mutex::new(vec![]) });
     let mut engine = open_engine(&fixture(), journal.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![], std::time::Duration::from_secs(10)).unwrap();
     start_tasks(&mut engine);
     let mut d = VirtualDriver::new(engine, clock, runner.clone());
     d.run_until(NOW + 180_000).unwrap();
     let ran = runner.ran.lock().unwrap().iter().filter(|n| n.starts_with("batcher.local")).cloned().collect();
-    ran
+    let supersede = runner.supersede.lock().unwrap().clone();
+    (ran, supersede)
 }
 
 #[test_id(turag6c)]
@@ -137,4 +155,29 @@ fn a_landing_round_does_not_ask_again_while_its_land_is_in_flight() {
 fn a_landing_round_does_not_ask_again_when_the_scheduler_reports_no_in_flight_view() {
     let asked = land_acts_for_landing_row(None);
     assert!(!asked.iter().any(|e| e == LAND), "{asked:?}");
+}
+
+const THREE_MEMBERS: &str = r#","members":[["sp-o82moc","t1"],["sp-msth37","t2"],["sp-vtnwny","t3"]]"#;
+
+fn three_member_row() -> String {
+    let row = STORED.replacen(r#","run":1"#, &format!(r#"{THREE_MEMBERS},"run":1"#), 1);
+    assert_ne!(row, STORED);
+    row
+}
+
+#[test_id(thezxlm)]
+#[test]
+fn a_landing_row_dropped_because_its_batch_is_landed_closes_the_reds_for_every_member() {
+    let (ran, supersede) = tick_on_row_landed(&three_member_row(), BATCH, true);
+    assert_eq!(ran.iter().filter(|n| *n == SUPERSEDE_REDS).count(), 1, "{ran:?}");
+    let leg: Leg = serde_json::from_str(&supersede[0]).unwrap();
+    let ids: Vec<&str> = leg.members.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(ids, ["sp-o82moc", "sp-msth37", "sp-vtnwny"]);
+}
+
+#[test_id(tm71pbt)]
+#[test]
+fn a_landing_row_dropped_because_its_batch_is_abandoned_closes_no_reds() {
+    let (ran, _) = tick_on_row_landed(&three_member_row(), BATCH, false);
+    assert!(!ran.iter().any(|n| n == SUPERSEDE_REDS), "{ran:?}");
 }

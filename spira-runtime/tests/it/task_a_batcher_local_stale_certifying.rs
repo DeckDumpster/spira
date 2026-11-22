@@ -16,7 +16,7 @@ fn stuck() -> Carry {
 fn waiting_pool(settled: Vec<String>) -> Snapshot {
     let member = Member { id: "sp-olw42f".into(), state: "CERTIFIED".into(), version: 5, tip: "t1".into(), sifted_tip: Some("t1".into()), title: "work".into(), priority: 2, ..Member::default() };
     let repo = Repo { branch_tips: [("sp-olw42f".to_string(), "t1".to_string())].into(), pool: vec![member], base_sha: "b2".into(), settled, live_legs: Some(vec![]), ..Repo::default() };
-    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW }
+    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW, ..Default::default() }
 }
 
 fn names(acts: &[spira_runtime::tasks::a::kit::Act]) -> Vec<&str> {

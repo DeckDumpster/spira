@@ -305,7 +305,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
         .collect();
     let open_round = lc.round.as_ref().map(|r| bl::Round { id: r.batch.clone(), members: r.members.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: r.wt.clone(), driven: held.as_ref() == Some(&r.batch), ..bl::Round::default() });
     let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), ..bl::Repo::default() };
-    json(&bl::Snapshot { repos: [(REPO.to_string(), repo)].into(), now_ms: w.now() })
+    json(&bl::Snapshot { repos: [(REPO.to_string(), repo)].into(), now_ms: w.now(), ..Default::default() })
 }
 
 /// The merge of every member on the base: clean, in the order given, with suites.
