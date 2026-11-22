@@ -51,7 +51,8 @@ fn ledger_ttl_from(read: impl FnOnce(&str) -> Result<String, String>) -> Result<
 
 const DEADLINE_KEY: &str = "SPIRA_LC_REQUEST_DEADLINE_MS";
 /// The receiver stops 3 s after receiving (law-calls-have-deadlines); no configured deadline may exceed it.
-const MAX_CONFIGURED_MS: u64 = 3000;
+/// `spira/testlib/complete.toml` carries it for every test-started serve; `a_test_started_serve_runs_under_the_ceiling_the_complete_fixture_carries` pins the two together.
+pub(crate) const MAX_CONFIGURED_MS: u64 = 3000;
 
 /// The deadlines a store call is served under, pinned at serve start.
 #[derive(Clone, Debug)]

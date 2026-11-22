@@ -195,8 +195,12 @@ fn run_configured(p: &Parsed, d: &crate::serve::Deadlines, dir: &Path, now: Syst
 
 /// `args` after `deadline-check`.
 pub(crate) fn deadline_check(args: &[String], dir: &Path, now: SystemTime) -> (i32, String) {
+    deadline_check_from(args, dir, now, spira_config::process::cfg)
+}
+
+fn deadline_check_from(args: &[String], dir: &Path, now: SystemTime, read: impl Fn(&str) -> Result<String, String>) -> (i32, String) {
     match parse(args) {
-        Ok(p) if p.configured => match crate::serve::deadlines_from(spira_config::process::cfg) {
+        Ok(p) if p.configured => match crate::serve::deadlines_from(read) {
             Ok(d) => run_configured(&p, &d, dir, now),
             Err(e) => (CANNOT_TELL, e),
         },
@@ -398,7 +402,8 @@ mod tests {
         let dir = day_dir(body);
         let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_LC_REQUEST_DEADLINE_MS", "1000")]);
         let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
-        deadline_check(&args(&["--configured"]), dir.path(), now())
+        let read = spira_config::process::fresh(&["SPIRA_LC_REQUEST_DEADLINE_MS".to_string()]).unwrap();
+        deadline_check_from(&args(&["--configured"]), dir.path(), now(), |k| read.get(k).cloned().ok_or_else(|| format!("{k} missing")))
     }
 
     #[test_id(tc725xe)]
