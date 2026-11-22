@@ -1,8 +1,11 @@
 //! `test-id-row-orphan` — a tip does not remove the last `#[test_id(<id>)]` an active registry
 //! `test:<id>` row names. The rows come from the file `SPIRA_TEST_DENY_LIST` names.
+//!
+//! The checked count is registries read, not rows: a registry with no `test:` row is a check
+//! that ran. No configured path reads nothing and counts 0, which the gate treats as silent.
 
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use spira_config::unit_tier::{DenyList, DENY_LIST_ENV};
 
@@ -16,7 +19,13 @@ type Cfg = Box<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
 
 pub struct TestIdRowOrphan {
     cfg: Cfg,
-    rows: AtomicUsize,
+    read: Mutex<Option<Read>>,
+}
+
+struct Read {
+    path: String,
+    rows: usize,
+    test_rows: usize,
 }
 
 impl TestIdRowOrphan {
@@ -43,7 +52,8 @@ impl Rule for TestIdRowOrphan {
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
         let (deny_path, list) = self.deny_list()?;
         let rows = list.test_rows();
-        self.rows.store(rows.len(), Ordering::Relaxed);
+        let read = (!deny_path.is_empty()).then(|| Read { path: deny_path.clone(), rows: list.len(), test_rows: rows.len() });
+        *self.read.lock().unwrap() = read;
         if rows.is_empty() {
             return Ok(Vec::new());
         }
@@ -80,7 +90,10 @@ test: its landing clears the row."
     }
 
     fn checked(&self) -> Option<(usize, String)> {
-        Some((self.rows.load(Ordering::Relaxed), "registry rows".into()))
+        Some(match &*self.read.lock().unwrap() {
+            Some(r) => (1, format!("registry ({}: {} rows, {} test rows)", r.path, r.rows, r.test_rows)),
+            None => (0, "registry (none configured)".into()),
+        })
     }
 }
 
@@ -97,7 +110,7 @@ impl TestIdRowOrphan {
 
 pub fn rules() -> Vec<Box<dyn crate::Rule>> {
     let cfg: Cfg = Box::new(|k| if k == GATE_BEAD { Ok(std::env::var(k).unwrap_or_default()) } else { spira_config::process::cfg(k) });
-    vec![Box::new(TestIdRowOrphan { cfg, rows: AtomicUsize::new(0) })]
+    vec![Box::new(TestIdRowOrphan { cfg, read: Mutex::new(None) })]
 }
 
 #[cfg(test)]
@@ -110,7 +123,7 @@ mod tests {
     fn rule(deny: &str, gate_bead: &str) -> TestIdRowOrphan {
         let (deny, bead) = (deny.to_string(), gate_bead.to_string());
         let cfg: Cfg = Box::new(move |k| Ok(if k == GATE_BEAD { bead.clone() } else { deny.clone() }));
-        TestIdRowOrphan { cfg, rows: AtomicUsize::new(0) }
+        TestIdRowOrphan { cfg, read: Mutex::new(None) }
     }
 
     fn tree(t: &TempDir, tip: &str, base: Option<&str>) -> Tree {
@@ -139,7 +152,9 @@ mod tests {
         assert_eq!(got.len(), 1, "{got:?}");
         assert_eq!(got[0].path, "c/src/old.rs");
         assert!(got[0].message.starts_with("test:t0aaaaa is disabled on sp-x and no test carries it any more: clear the row (test-registry activate"), "{got:?}");
-        assert_eq!(r.checked(), Some((1, "registry rows".into())));
+        let (n, unit) = r.checked().unwrap();
+        assert_eq!(n, 1);
+        assert!(unit.contains("1 rows, 1 test rows"), "{unit}");
     }
 
     #[test_id(tiasoef)]
@@ -162,12 +177,35 @@ mod tests {
 
     #[test_id(t482td6)]
     #[test]
-    fn an_empty_deny_file_checks_zero_rows_and_refuses_nothing() {
+    fn an_empty_deny_file_checks_one_registry_with_zero_test_rows() {
         let t = TempDir::new("tidorphan-empty");
         t.write("deny", "# test-registry deny-list at=1 rows=0\n");
         let r = rule(t.path().join("deny").to_str().unwrap(), "");
         assert!(r.check(&tree(&t, "fn a() {}\n", None)).unwrap().is_empty());
-        assert_eq!(r.checked(), Some((0, "registry rows".into())));
+        let (n, unit) = r.checked().unwrap();
+        assert_eq!(n, 1);
+        assert!(unit.contains("deny") && unit.contains("0 rows, 0 test rows"), "{unit}");
+    }
+
+    #[test_id(tfjba2u)]
+    #[test]
+    fn a_registry_of_only_a_suite_row_checks_one_registry_with_no_findings() {
+        let t = TempDir::new("tidorphan-suite");
+        t.write("deny", "disabled\tsuite:test-conf-watch.sh\tsp-x22nuk\t-\n");
+        let r = rule(t.path().join("deny").to_str().unwrap(), "");
+        assert!(r.check(&tree(&t, "fn a() {}\n", None)).unwrap().is_empty());
+        let (n, unit) = r.checked().unwrap();
+        assert_eq!(n, 1);
+        assert!(unit.contains("1 rows, 0 test rows"), "{unit}");
+    }
+
+    #[test_id(t2lo8we)]
+    #[test]
+    fn no_configured_path_reads_no_registry_and_checks_zero() {
+        let t = TempDir::new("tidorphan-none");
+        let r = rule("", "");
+        assert!(r.check(&tree(&t, "fn a() {}\n", None)).unwrap().is_empty());
+        assert_eq!(r.checked().unwrap().0, 0);
     }
 
     #[test_id(tf5pirx)]

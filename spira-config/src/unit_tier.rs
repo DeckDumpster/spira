@@ -152,6 +152,10 @@ impl DenyList {
         self.rows.is_empty()
     }
 
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
     /// Each `test:` row's state, id and owning bead.
     pub fn test_rows(&self) -> Vec<(&str, &str, &str)> {
         self.rows.iter().filter_map(|(s, t, b)| Some((s.as_str(), t.strip_prefix("test:")?, b.as_str()))).collect()
