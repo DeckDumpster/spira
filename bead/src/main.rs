@@ -187,10 +187,22 @@ fn parent_labels(id: &str) -> Vec<String> {
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
 #[allow(clippy::too_many_arguments)]
-fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
+fn door_create(out: &mut dyn std::io::Write, args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
     if incident.is_none() && blockers.is_empty() && lookup_title.is_none() && !express {
         return put(&args.iter().map(String::as_str).collect::<Vec<_>>(), body);
     }
+    let mut id_text = None;
+    let rc = door_create_writes(&mut id_text, args, body, incident, blockers, title, lookup_title, express, submitted_tip, repo);
+    if let Some(text) = id_text {
+        let _ = write!(out, "{text}");
+        let _ = out.flush();
+    }
+    rc
+}
+
+/// Every write of the filing; the id text goes to `id_text` for the caller to print once they are all sent.
+#[allow(clippy::too_many_arguments)]
+fn door_create_writes(id_text: &mut Option<String>, args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
     let argv_owned = args.to_vec();
     let argv: Vec<&str> = argv_owned.iter().map(String::as_str).collect();
     let window = match spira_config::process::cfg_parse::<u64>(FILE_WINDOW_KEY) {
@@ -227,7 +239,7 @@ fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[St
         eprintln!("bead: file: bead-sweep cannot restore these if the bead turns up{by_hand}");
     }
     if submitted_tip.is_none() {
-        print!("{stdout}");
+        *id_text = Some(stdout.clone());
     }
     if code != 0 {
         // bd may have written the content bead before it errored; without a row the loop cannot see it.
@@ -260,7 +272,7 @@ fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[St
                     eprintln!("bead: file: {new_id} filed but its lifecycle row was not created SUBMITTED: {e}; no id is printed. Once the lifecycle store answers: spira-lc create-bead {new_id} --submitted-tip {tip}");
                     return 1;
                 }
-                print!("{stdout}");
+                *id_text = Some(stdout.clone());
             }
             None => {
                 if let Err(e) = create_row_retrying(&new_id, None, repo) {
@@ -278,7 +290,7 @@ fn door_create(args: &[String], body: Option<&str>, incident: Option<(&str, &[St
     }
     if let Some((incident, labels)) = incident {
         if let Some((from, to)) = bead::remedy_edge(labels, &cfg_label("SPIRA_INCIDENT_LABEL"), &new_id, incident) {
-            let r = put(&["dep", "add", &from, &to, "--type", "blocks"], None);
+            let (r, _) = put_capture(&["dep", "add", &from, &to, "--type", "blocks"], None);
             if r != 0 {
                 eprintln!("bead: file: {new_id} filed but the blocks edge {from} -> {to} failed; add it: bd dep add {from} {to}");
             }
@@ -305,7 +317,7 @@ use bead::filing::CANNOT_TELL;
 /// An edge that rode the create is already in the content store, which is not a failure, but the
 /// lifecycle side is mirrored here because the add that would have mirrored it was refused.
 fn blocks_edge_present_ok(from: &str, to: &str) -> i32 {
-    let r = put(&["dep", "add", from, to, "--type", "blocks"], None);
+    let (r, _) = put_capture(&["dep", "add", from, to, "--type", "blocks"], None);
     if r == 0 {
         return 0;
     }
@@ -951,7 +963,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = door_create(&bd_args, create_body.as_deref(), incident_parent, &bead::filing::blockers(stack_after.as_deref(), &depends_on), Some(&title_for_row), Some(&title_for_row), express, tip.as_deref(), Some(repo.as_str()));
+        let rc = door_create(&mut std::io::stdout(), &bd_args, create_body.as_deref(), incident_parent, &bead::filing::blockers(stack_after.as_deref(), &depends_on), Some(&title_for_row), Some(&title_for_row), express, tip.as_deref(), Some(repo.as_str()));
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", &for_rune), ("repo", &repo), ("kind", "work")]);
         }
@@ -1012,7 +1024,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = door_create(&bd_args, create_body.as_deref(), incident_parent, &[], None, Some(&title_for_lookup), express, None, None);
+        let rc = door_create(&mut std::io::stdout(), &bd_args, create_body.as_deref(), incident_parent, &[], None, Some(&title_for_lookup), express, None, None);
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", ""), ("repo", repo.as_deref().unwrap_or("")), ("kind", &kind)]);
         }
@@ -2145,12 +2157,26 @@ mod tests {
         answers: Vec<(&'static str, i32, &'static str)>,
         first: Mutex<Vec<(&'static str, i32, &'static str)>>,
         request_ids: Mutex<Vec<Option<String>>>,
+        log: Arc<Mutex<Vec<String>>>,
+    }
+
+    struct LogOut(Arc<Mutex<Vec<String>>>);
+
+    impl std::io::Write for LogOut {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().push(format!("out:{}", String::from_utf8_lossy(b)));
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     impl Transport for Door {
         fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
             self.sent.lock().unwrap().push((argv.to_vec(), stdin.map(str::to_string)));
             let line = argv.join(" ");
+            self.log.lock().unwrap().push(line.clone());
             self.request_ids.lock().unwrap().push(spira_store::lc_call::current_request_id());
             let once = {
                 let mut first = self.first.lock().unwrap();
@@ -2164,7 +2190,7 @@ mod tests {
     const BEAD: &str = r#"[{"id":"sp-a","issue_type":"task","priority":2,"description":"old","labels":["repo:r"]}]"#;
 
     fn install(answers: Vec<(&'static str, i32, &'static str)>) -> Arc<Door> {
-        let d = Arc::new(Door { sent: Mutex::new(vec![]), answers, first: Mutex::new(vec![]), request_ids: Mutex::new(vec![]) });
+        let d = Arc::new(Door { sent: Mutex::new(vec![]), answers, first: Mutex::new(vec![]), request_ids: Mutex::new(vec![]), log: Arc::default() });
         TEST_DOOR.with(|t| *t.borrow_mut() = Some(LcClient::over(d.clone(), true)));
         d
     }
@@ -2230,7 +2256,7 @@ mod tests {
 
         let d = install(vec![("content create", 0, "sp-new\n")]);
         let args = argv(&["create", "T", "-l", "repo:r", "--silent", "--body-file", "-"]);
-        assert_eq!(door_create(&args, Some("the body"), None, &[], Some("T"), Some("T"), false, None, Some("r")), 0);
+        assert_eq!(door_create(&mut std::io::sink(), &args, Some("the body"), None, &[], Some("T"), Some("T"), false, None, Some("r")), 0);
         let w = writes(&d);
         assert_eq!(w[0], (argv(&["content", "create", "T", "-l", "repo:r", "--silent", "--body-file", "-"]), Some("the body".into())));
         assert_eq!(w[1].0[..2], argv(&["create-bead", "sp-new"])[..], "the lifecycle row is the store's own verb on the same client");
@@ -2292,7 +2318,7 @@ mod tests {
         let _env = configured(dir.path());
         let d = install(vec![("content create", 0, "sp-new\n")]);
         let args = argv(&["create", "T", "--silent"]);
-        assert_eq!(door_create(&args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r")), 0);
+        assert_eq!(door_create(&mut std::io::sink(), &args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r")), 0);
         let sent = writes(&d);
         assert_eq!(sent[0].0, argv(&["content", "create", "T", "--silent"]));
         assert!(sent.iter().any(|(a, _)| *a == argv(&["content", "dep", "add", "sp-new", "sp-a", "--type", "blocks"])), "{sent:?}");
@@ -2306,7 +2332,7 @@ mod tests {
         let d = install(vec![("content create", 0, "sp-new\n")]);
         *d.first.lock().unwrap() = vec![("content create", 2, "cannot tell: deadline")];
         let args = argv(&["create", "T", "--silent", "--body-file", "-"]);
-        assert_eq!(door_create(&args, Some("the body"), None, &[], Some("T"), Some("T"), false, None, Some("r")), 0);
+        assert_eq!(door_create(&mut std::io::sink(), &args, Some("the body"), None, &[], Some("T"), Some("T"), false, None, Some("r")), 0);
         let w = writes(&d);
         let creates: Vec<_> = w.iter().filter(|(a, _)| a[1] == "create").collect();
         assert_eq!(creates.len(), 2, "{w:?}");
@@ -2314,6 +2340,42 @@ mod tests {
         let ids: Vec<_> = d.sent.lock().unwrap().iter().zip(d.request_ids.lock().unwrap().iter()).filter(|((a, _), _)| a[1] == "create").map(|(_, id)| id.clone()).collect();
         assert!(ids[0].is_some() && ids[0] == ids[1], "{ids:?}");
         assert!(w.iter().any(|(a, _)| a[..2] == argv(&["create-bead", "sp-new"])[..]), "{w:?}");
+    }
+
+    fn id_after_every_write(answers: Vec<(&'static str, i32, &'static str)>, first: Vec<(&'static str, i32, &'static str)>) -> (i32, Arc<Door>, Vec<String>) {
+        let d = install(answers);
+        *d.first.lock().unwrap() = first;
+        let args = argv(&["create", "T", "--silent"]);
+        let rc = door_create(&mut LogOut(d.log.clone()), &args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r"));
+        let log = d.log.lock().unwrap().clone();
+        (rc, d, log)
+    }
+
+    #[test]
+    fn a_filing_whose_row_write_the_store_cuts_prints_the_id_after_every_write() {
+        let dir = testkit::TempDir::new("bead-door-id-last");
+        let _env = configured(dir.path());
+        let (rc, d, log) = id_after_every_write(vec![("content create", 0, "sp-new\n")], vec![("create-bead", 2, "cannot tell: deadline")]);
+        assert_eq!(rc, 0);
+        assert_eq!(sent(&d).iter().filter(|a| a[1] == "create").count(), 1);
+        let pos = |p: &str| log.iter().rposition(|l| l.starts_with(p));
+        assert_eq!(log.iter().filter(|l| l.starts_with("create-bead")).count(), 2, "{log:?}");
+        let out = log.len() - 1;
+        assert!(log[out].starts_with("out:") && log[out].trim_end().ends_with("sp-new"), "{log:?}");
+        assert!(pos("out:") > pos("create-bead") && pos("out:") > pos("content dep add"), "{log:?}");
+        if let Some(p) = pos("promote-filed") {
+            assert!(pos("out:") > Some(p), "{log:?}");
+        }
+    }
+
+    #[test]
+    fn a_filing_prints_only_the_id_though_its_edge_write_answers_with_text() {
+        let dir = testkit::TempDir::new("bead-door-id-only");
+        let _env = configured(dir.path());
+        let (rc, _, log) = id_after_every_write(vec![("content create", 0, "sp-new\n"), ("content dep add", 0, "added\n")], vec![]);
+        assert_eq!(rc, 0);
+        let outs: Vec<_> = log.iter().filter_map(|l| l.strip_prefix("out:")).collect();
+        assert_eq!(outs.concat(), "sp-new\n", "{log:?}");
     }
 
     const LISTED_NOW: &str = r#"[{"id":"sp-held","title":"T","issue_type":"task","created_at":"2999-01-01T00:00:00Z"}]"#;
@@ -2325,7 +2387,7 @@ mod tests {
         let _env = configured(dir.path());
         let d = install(vec![("content list", 0, LISTED_NOW), ("content create", 0, "sp-dup\n")]);
         let args = argv(&["create", "T", "--silent"]);
-        assert_eq!(door_create(&args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r")), 0);
+        assert_eq!(door_create(&mut std::io::sink(), &args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r")), 0);
         let w = sent(&d);
         assert!(w.iter().all(|a| a[1] != "create"), "{w:?}");
         assert_eq!(w, [argv(&["create-bead", "sp-held", "--repo", "r"]), argv(&["content", "dep", "add", "sp-held", "sp-a", "--type", "blocks"])]);
