@@ -680,6 +680,20 @@ regions is judged only where it is written. A closure passed out of an async bod
 lexically, where it is written. Receivers and types are matched by name, not resolved: a
 `Command::new` for `tokio::process` imported by `use` reads as the blocking one.
 
+## Rule `lc-serve-no-spawn`
+
+**Intent.** lc-serve starts no child process. spira-lc has one door for a start,
+`spira-lc/src/proc.rs`, which refuses while the process is serving; this rule keeps every other
+file from building a command around it.
+
+**Scope.** `spira-lc/src/**/*.rs` except `proc.rs`, test code as `tmp-leak` defines it skipped.
+
+**Violations** (code bytes only): `Command::new`, `std::process::Command` (named or imported),
+`bounded::bounded`, `bounded::bounded_for`, or a `bounded::{…}` import.
+
+**Exits.** None: no allow file and no override marker. The `Command` type is re-exported from
+`proc`.
+
 ## Rule `hash-iter-output`
 
 **Intent.** A `HashMap`/`HashSet` is seeded per process, so iterating one into anything

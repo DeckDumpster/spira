@@ -1,7 +1,7 @@
 //! The one door through which spira-lc starts a process. lc-serve starts none: the door refuses
 //! there, and spira-lint's `lc-serve-no-spawn` refuses a start anywhere else.
 
-use std::process::Command;
+pub(crate) use std::process::Command;
 
 use spira_config::bounded::Bounded;
 

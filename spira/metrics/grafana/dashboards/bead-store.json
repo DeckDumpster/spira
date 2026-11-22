@@ -915,6 +915,38 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "lc-serve child processes started, by verb",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 96,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (verb) (sum_over_time(spira_lc_children{verb=~\"$verb\"}[$__interval]))",
+          "legendFormat": "{{verb}}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

@@ -3,7 +3,7 @@
 //! stdout, stderr and exit code through unchanged so callers keep parsing bd's own text.
 
 use std::os::unix::process::CommandExt;
-use std::process::Command;
+use crate::proc::Command;
 
 use crate::CANNOT_TELL;
 

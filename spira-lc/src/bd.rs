@@ -5,7 +5,7 @@
 //! never this process's own environment. The content door's reads are not here: they are SQL
 //! (`content_sql`).
 
-use std::process::Command;
+use crate::proc::Command;
 
 use crate::content_sql::{self, Failure, Sql};
 use crate::content_sql::Bead;
