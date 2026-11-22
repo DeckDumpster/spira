@@ -124,7 +124,7 @@ impl Tree {
 
     /// The same tree, with the test deny-list file the caller handed (`--deny-list`).
     pub fn with_deny_list(mut self, path: Option<String>) -> Tree {
-        self.deny_list = path.filter(|p| !p.is_empty());
+        self.deny_list = path;
         self
     }
 

@@ -109,7 +109,7 @@ impl TestIdRowOrphan {
 }
 
 pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    let cfg: Cfg = Box::new(|k| if k == GATE_BEAD { Ok(std::env::var(k).unwrap_or_default()) } else { spira_config::process::cfg(k) });
+    let cfg: Cfg = Box::new(|k| Ok(std::env::var(k).unwrap_or_default()));
     vec![Box::new(TestIdRowOrphan { cfg, read: Mutex::new(None) })]
 }
 
