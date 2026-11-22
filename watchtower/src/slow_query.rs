@@ -158,10 +158,10 @@ mod tests {
         let home = spira_config::process::spira_home();
         let release = spira_config::process::fixture_release(&d, true);
         let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap())), ("SPIRA_HOME", home.to_str()), ("SPIRA_RELEASE", release.to_str())]);
-        std::fs::write(&log_path, "1\tlist-probe\tc\t40\tWAL-RESET-ENDED\n").unwrap();
+        std::fs::write(&log_path, "1\tlist-probe\tc\t40\tWAL-RESET-ENDED\n2\tclaim\tc\t3\tWAL-OVER-LINE\n").unwrap();
         run(&d, &log_path, "db", "spira", &inc, 1000);
         let got = std::fs::read_to_string(&calls).unwrap();
-        for want in ["incident:slow-query", "WAL PRESSURE: list-probe", "Verdict: WAL pressure", "shape: WAL-RESET-ENDED"] {
+        for want in ["incident:slow-query", "WAL PRESSURE: claim/list-probe", "Verdict: WAL pressure", "shape: WAL-RESET-ENDED", "shape: WAL-OVER-LINE"] {
             assert!(got.contains(want), "{want} missing from {got}");
         }
         assert!(!got.contains("query-attributable"), "{got}");
