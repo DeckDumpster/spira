@@ -159,11 +159,10 @@ fn a_bad_flag_cannot_tell() {
     assert_eq!(code, crate::CANNOT_TELL, "{out}");
 }
 
-/// Production's size: ~13k records (400 waiting) and ~300k audited txns, `recent` of them one a
-/// second inside the last day (more than a cold read's budget), over the 600 beads in flight.
-/// Written straight through the backend so the fixture builds in seconds. Returns the store, the
-/// clock it is read at, and the newest time per repo and kind (and every Delivered) at or after
-/// `now - 86_400`, as the audits say.
+/// `records` lifecycle rows (`waiting` of them waiting) and `txns` audited txns, `recent` of them
+/// one a second inside the last day, over the 600 beads in flight. Written straight through the
+/// backend. Holds the store, the clock it is read at, and the newest time per repo and kind (and
+/// every Delivered) at or after `now - 86_400`, as the audits say.
 struct Sized {
     store: Store<Counting<state_store_sqlite::SqliteBackend>>,
     now: i64,
@@ -254,7 +253,24 @@ impl<B: state_store::Backend> state_store::Backend for Counting<B> {
     }
 }
 
-fn production_sized(recent: u64) -> Sized {
+#[derive(Clone, Copy)]
+struct Shape {
+    records: u64,
+    waiting: u64,
+    txns: u64,
+    recent: u64,
+}
+
+/// Production's size, for the by-hand timing run only: one sqlite commit per txn makes it a
+/// minute's build, which a loaded gate host turns into a flip.
+const PRODUCTION: Shape = Shape { records: 13_000, waiting: 400, txns: 300_000, recent: 80_000 };
+
+/// The smallest store whose day outruns a cold read's chunk and a warm call's budget several times.
+const CHUNKED: Shape = Shape { records: 1_000, waiting: 100, txns: 20_000, recent: 12_000 };
+
+fn sized(shape: Shape) -> Sized {
+    let Shape { records, waiting, txns, recent } = shape;
+    assert!(recent > 2 * 10 * super::CHUNK_REVS && records >= 600 && records <= txns - recent, "the shape cannot exercise the chunked warm");
     use state_store::{events_key, Backend, Object, Rev, Write};
     use state_store_sqlite::{Options, SqliteBackend};
     let dir = testkit::TempDir::new("spira-lc-dwell-size");
@@ -263,7 +279,6 @@ fn production_sized(recent: u64) -> Sized {
     let put = |key: String, data: Value, main: u64| Write::Put { key, value: Object::new(data).encode(), create_rev: Rev::new(main, 0), prev: None };
     let audit = |id: &str, event: &str, at: i64| serde_json::json!({ "refused": false, "evidence": { "then": [{ "machine": "bead", "lc_key": id, "event": event, "expect": "READY", "from_state": "READY", "to_state": "READY", "applied": true, "refusal": null, "evidence": null, "actor": "a", "at": at }] } });
     const ASK_HELD: u64 = 9;
-    let (records, waiting, txns) = (13_000u64, 400u64, 300_000u64);
     let mut head = b.head().unwrap();
     let mut repo_of = std::collections::BTreeMap::new();
     let mut seen: Vec<(String, &str, i64)> = vec![];
@@ -379,7 +394,7 @@ fn an_ask_held_record_with_no_ask_since_cannot_tell_and_names_the_migration() {
 #[test]
 #[ignore]
 fn dwell_over_a_day_on_a_production_sized_store_answers_from_the_index_inside_200ms_and_matches_the_audits() {
-    let z = production_sized(80_000);
+    let z = sized(PRODUCTION);
     let (s, now) = (&z.store, z.now);
     let mark = now - 3_600;
     let mut complete = false;
@@ -678,8 +693,8 @@ fn a_correction_or_a_non_landing_is_not_a_delivery() {
 
 #[test_id(tce989z)]
 #[test]
-fn the_first_dwell_on_a_production_sized_store_reads_no_more_than_a_chunk_and_says_it_is_short_and_warming_then_completes_it() {
-    let z = production_sized(80_000);
+fn the_first_dwell_on_a_store_many_chunks_deep_reads_no_more_than_a_chunk_and_says_it_is_short_and_warming_then_completes_it() {
+    let z = sized(CHUNKED);
     let (s, now) = (&z.store, z.now);
     s.contract().backend().events_read();
     let (code, out) = verbs::run(s, &["dwell".into(), "--window".into(), "86400".into(), "--now".into(), now.to_string()]);
