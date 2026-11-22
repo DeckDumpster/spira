@@ -22,9 +22,6 @@ pub const GAUGE: &str = "spira_lc_ship_oldest_unshipped_seconds";
 /// The watchd `log` row's file, under `SPIRA_RUN`.
 pub const ALARM_LOG: &str = "lc-ship.log";
 const MAX_MAINS: usize = 10_000;
-// batch-job: one upload, bounded by the object's size, not a round trip
-#[cfg(test)]
-const PUT_DEADLINE: Duration = Duration::from_secs(300);
 
 pub struct Shipping {
     pub shipper: Shipper,
@@ -52,22 +49,26 @@ pub fn configured(backend: SqliteBackend, run: &Path) -> Option<Result<Shipping,
     let url = spira_config::process::cfg("SPIRA_LC_BACKUP_URL").ok().filter(|u| !u.is_empty())?;
     Some((|| {
         let every = cfg_u64("SPIRA_LC_SHIP_SECS")?;
-        if !(1..=5).contains(&every) {
-            return Err(format!("SPIRA_LC_SHIP_SECS is {every}; it ships every 1 to 5 seconds"));
-        }
-        Dest::parse(&url)?;
-        let cfg = ShipConfig {
-            dir: ship_dir(run),
-            max_mains: MAX_MAINS,
-            snapshot_every_ms: cfg_u64("SPIRA_LC_SHIP_SNAPSHOT_SECS")?.saturating_mul(1_000),
-        };
-        Ok(Shipping {
-            shipper: Shipper::open_staging(backend, cfg, Arc::new(WallClock))?,
-            every: Duration::from_secs(every),
-            max_age_ms: cfg_u64("SPIRA_LC_SHIP_MAX_AGE_SECS")?.saturating_mul(1_000),
-            alarm_log: run.join(ALARM_LOG),
-        })
+        let snapshot_secs = cfg_u64("SPIRA_LC_SHIP_SNAPSHOT_SECS")?;
+        let max_age_secs = cfg_u64("SPIRA_LC_SHIP_MAX_AGE_SECS")?;
+        staging(backend, ship_dir(run), &url, (every, snapshot_secs, max_age_secs), run)
     })())
+}
+
+/// The shipper for a destination: it stages in `dir` and uploads nothing, because lc-serve
+/// starts no process; `ship::drain`, run by the scheduler's `lc.ship` task, uploads.
+fn staging(backend: SqliteBackend, dir: PathBuf, url: &str, (every, snapshot_secs, max_age_secs): (u64, u64, u64), run: &Path) -> Result<Shipping, String> {
+    if !(1..=5).contains(&every) {
+        return Err(format!("SPIRA_LC_SHIP_SECS is {every}; it ships every 1 to 5 seconds"));
+    }
+    Dest::parse(url)?;
+    let cfg = ShipConfig { dir, max_mains: MAX_MAINS, snapshot_every_ms: snapshot_secs.saturating_mul(1_000) };
+    Ok(Shipping {
+        shipper: Shipper::open_staging(backend, cfg, Arc::new(WallClock))?,
+        every: Duration::from_secs(every),
+        max_age_ms: max_age_secs.saturating_mul(1_000),
+        alarm_log: run.join(ALARM_LOG),
+    })
 }
 
 /// One shipper tick as lc-serve runs it: the age gauge every tick, and a line in the alarm
@@ -260,6 +261,8 @@ mod tests {
     use state_store_sqlite::Options;
     use testkit::TempDir;
 
+    const PUT_DEADLINE: Duration = Duration::from_secs(300);
+
     fn s(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|x| x.to_string()).collect()
     }
@@ -300,6 +303,26 @@ mod tests {
         assert!(drained.failed.is_none() && drained.uploaded.len() == 2, "{drained:?}");
         assert!(off.join("revlog").is_dir());
         assert_eq!(sh.tick().unwrap().shipped_through, 1, "the staging shipper reads what the drain recorded");
+    }
+
+    #[test_id(tbd0vxr)]
+    #[test]
+    fn the_served_shippers_tick_leaves_a_queued_segment_for_the_scheduler() {
+        let dir = TempDir::new("lc-ship-served");
+        let clock = VirtualClock::new(1_000);
+        let b = SqliteBackend::open(&dir.path().join("live.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
+        let c = suite::open(b.clone(), &clock);
+        let off = dir.path().join("off");
+        let url = format!("file://{}", off.display());
+        let mut s = staging(b, dir.path().join("lc-ship"), &url, (1, 3_600, 600), dir.path()).unwrap();
+        let metrics = MetricsSink::new(None, "spira-lc", Duration::from_millis(10));
+        tick(&mut s, false, &metrics, &clock);
+        let t = Txn::new().put("lifecycle/sp-1", Object::new(json!(1)));
+        assert!(c.txn(&t, &Request::new("1", "t", "t.write")).unwrap().succeeded);
+        tick(&mut s, false, &metrics, &clock);
+        assert!(!ship::names(&s.shipper.dir().join("queue").join(REVLOG)).unwrap().is_empty());
+        assert!(!off.exists(), "lc-serve uploads nothing");
+        assert!(matches!(staging(SqliteBackend::open(&dir.path().join("x.db"), Options::default()).unwrap(), dir.path().join("s2"), &url, (9, 1, 1), dir.path()), Err(e) if e.contains("1 to 5")));
     }
 
     #[test_id(tsse27u)]

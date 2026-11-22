@@ -32,6 +32,8 @@ fn t3_a_queued_object_is_drained_and_a_refusal_keeps_it_queued_and_says_so() {
     assert_eq!(acts[0].input, "ship");
     let (c, _) = task::decide(&h.cfg, &c, &Input::Outcome { effect: task::DRAIN.into(), ok: true, body: String::new() }, NOW).unwrap();
     assert_eq!(c.phase, Phase::Idle);
+    let (again, none) = task::decide(&h.cfg, &Carry { phase: Phase::Draining }, &Input::Observed(queued(2)), NOW).unwrap();
+    assert_eq!((again.phase, none.len()), (Phase::Idle, 0), "a tick that finds the drain unanswered asks for nothing");
     let refused = task::decide(&h.cfg, &Carry { phase: Phase::Draining }, &Input::Outcome { effect: task::DRAIN.into(), ok: false, body: "403".into() }, NOW).unwrap_err();
     assert!(refused.contains("stays queued") && refused.contains("403"), "{refused}");
 }
