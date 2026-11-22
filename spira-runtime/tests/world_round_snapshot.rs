@@ -138,7 +138,7 @@ fn the_throughput_and_transitions_snapshots_carry_the_halt_even_when_unreadable(
     stamp(&dir);
     let t: spira_runtime::tasks::e::watch_throughput::Snapshot = serde_json::from_str(&w.throughput_snapshot(r#"{"now":1700000000,"abandon_window_s":3600}"#).unwrap()).unwrap();
     assert_eq!(t.halt.map(|h| h.why), Some("operator order: freeze".to_string()));
-    let input = format!(r#"{{"now":1700000000,"window_s":3600,"releases":"{}","release_repo":"alpha"}}"#, dir.path().join("rel").display());
+    let input = format!(r#"{{"now":1700000000,"window_s":3600,"certify_par":2,"releases":"{}","release_repo":"alpha"}}"#, dir.path().join("rel").display());
     let x: spira_runtime::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&w.transitions_snapshot(&input).unwrap()).unwrap();
     assert_eq!(x.halt.map(|h| h.why), Some("operator order: freeze".to_string()));
 }
