@@ -144,3 +144,43 @@ fn an_idle_repo_whose_pool_holds_only_submitted_beads_cuts_a_round_naming_them()
     let open: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ROUND_OPEN).unwrap_or_else(|| panic!("{acts:?}")).input).unwrap();
     assert_eq!(open.members.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["sp-s1", "sp-s2"]);
 }
+
+fn held_body(id: &str) -> String {
+    let held = batcher_cut::io::HeldEject { id: id.into(), reason: format!("gate red: {RED}"), csv: "test-a.sh".into(), said: "queue round eject exited 79: a pass of round r9 is running".into() };
+    format!("{}{}", batcher_cut::io::EJECT_HELD, serde_json::to_string(&held).unwrap())
+}
+
+#[test]
+fn a_gate_red_eject_held_for_a_running_pass_is_sent_again_when_the_pass_ends() {
+    let (carry, acts) = ended(&recorded(State::Certifying, "t1", RED), 1, "verdict=red\n");
+    let leg = legs_of(&acts, EJECT_GATE_RED).remove(0);
+    let (held, acts) = on_outcome(&carry, EJECT_GATE_RED, false, &held_body("sp-a"), &leg, NOW);
+    assert!(!names(&acts).contains(&ABANDON) && !names(&acts).contains(&PAUSE), "{acts:?}");
+    assert_eq!(held.repos["spira"].eject_held.as_ref().map(|h| h.eject.id.as_str()), Some("sp-a"));
+
+    let mut snap = snapshot_marked(vec![], RED);
+    snap.repos.get_mut("spira").unwrap().scoped_batches = Some(vec!["r9".into()]);
+    let (still, acts) = decide(&held, &snap);
+    assert!(!names(&acts).contains(&EJECT), "a live pass scope holds the eject: {acts:?}");
+    snap.repos.get_mut("spira").unwrap().scoped_batches = Some(vec![]);
+    let (issued, acts) = decide(&still, &snap);
+    let eject = legs_of(&acts, EJECT);
+    assert_eq!(eject.len(), 1, "{acts:?}");
+    assert!(eject[0].held.as_ref().is_some_and(|h| h.reason.contains("callers.rs:726")), "{:?}", eject[0].held);
+
+    let (done, _) = on_outcome(&issued, EJECT, true, "{}", &eject[0], NOW);
+    let rc = &done.repos["spira"];
+    assert_eq!(rc.members, vec![("sp-b".to_string(), "t2".to_string())]);
+    assert!(rc.eject_held.is_none() && rc.certify_held, "{rc:?}");
+}
+
+#[test]
+fn a_gate_red_eject_held_after_an_earlier_member_left_drops_only_that_member() {
+    let (carry, acts) = ended(&recorded(State::Certifying, "t1", RED), 1, "verdict=red\n");
+    let leg = Leg { bead: "sp-a,sp-b".into(), ..legs_of(&acts, EJECT_GATE_RED).remove(0) };
+    let (held, acts) = on_outcome(&carry, EJECT_GATE_RED, false, &held_body("sp-b"), &leg, NOW);
+    assert!(!names(&acts).contains(&ABANDON), "{acts:?}");
+    let rc = &held.repos["spira"];
+    assert!(rc.members.iter().all(|(id, _)| id != "sp-a"), "{rc:?}");
+    assert_eq!(rc.eject_held.as_ref().map(|h| h.eject.id.as_str()), Some("sp-b"));
+}

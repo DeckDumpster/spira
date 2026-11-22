@@ -2344,6 +2344,13 @@ impl Machine<'_> {
                 self.go(Trigger::RerunCertifying);
                 self.certify();
             }
+            (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) if !ok && self.rc.eject_held.as_ref().is_none_or(|h| !h.issued) && batcher_cut::io::HeldEject::parse(body).is_some() => {
+                let held = batcher_cut::io::HeldEject::parse(body).unwrap_or_default();
+                let gone: Vec<&str> = leg.bead.split(',').take_while(|b| *b != held.id).collect();
+                self.rc.members.retain(|(id, _)| !gone.contains(&id.as_str()));
+                self.rc.round_key = Some(core::round_key(&self.rc.members));
+                self.hold_eject(held);
+            }
             (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) => {
                 let why = format!("{} went red on its own gate ({}) and its eject was refused ({})", leg.bead, leg.reds.join(" "), body.trim());
                 self.go(Trigger::LegLost);
