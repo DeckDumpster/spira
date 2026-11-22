@@ -471,6 +471,95 @@ pub(crate) mod verdict_run {
         }
     }
 
+    struct FenceRed {
+        lc: Mutex<Vec<Vec<String>>>,
+        fact_fails: bool,
+        fence_rc: i32,
+        fence_out: String,
+    }
+    impl Exec for FenceRed {
+        fn exec(&self, prog: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            if prog == "spira-lc" {
+                if args[0] == "show" {
+                    return Out::ok(format!(r#"{{"bead":{{"bead_id":"{}","state":"SUBMITTED"}}}}"#, args[1]));
+                }
+                self.lc.lock().unwrap().push(args.to_vec());
+                if args[0] == "fact" && args[1] == "add" && self.fact_fails {
+                    return Out { code: 1, stdout: String::new(), stderr: "store locked\nsecond line".into() };
+                }
+                return Out::ok("");
+            }
+            if args.iter().any(|a| a == "spira/build-fence.sh") {
+                return Out { code: self.fence_rc, stdout: self.fence_out.clone(), stderr: String::new() };
+            }
+            Out::ok("")
+        }
+    }
+    struct CleanGit;
+    impl Git for CleanGit {
+        fn git(&self, _: &Path, args: &[&str]) -> Out {
+            match args[0] {
+                "log" => Out::ok("sp-a — the work\n"),
+                "rev-parse" => Out::ok("abc123\n"),
+                _ => Out::ok(""),
+            }
+        }
+    }
+
+    /// The reopen the teardown of a submitted session makes when its fast tier fails with a long output.
+    fn fast_tier_red_reopen(fact_fails: bool, fence_rc: i32) -> (String, Vec<Vec<String>>, std::path::PathBuf, String, testkit::TempDir) {
+        let dir = testkit::TempDir::new("dwarf-fast-tier-keep");
+        let work = dir.path().join("work");
+        std::fs::create_dir_all(work.join("spira")).unwrap();
+        std::fs::write(work.join("spira/build-fence.sh"), "").unwrap();
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_RUN".into(), dir.path().join("run").display().to_string());
+        vars.insert("SPIRA_SENDBACK_KEEP_DAYS".into(), "11".into());
+        let fence_out: String = (0..2000).map(|i| format!("line {i}\n")).collect();
+        let (seam, exec) = (Seams(Default::default()), FenceRed { lc: Default::default(), fact_fails, fence_rc, fence_out: fence_out.clone() });
+        let notes = Notes(Default::default());
+        with_run_launching(vars, &notes, CleanGit, &exec, &|| 0, &seam, &Mute::default(), &NoLaunch, "", |r| {
+            r.s.bead = "sp-a".into();
+            r.s.work = Some(work.clone());
+            r.s.repo = work.clone();
+            r.teardown(0);
+        });
+        let note = notes.0.lock().unwrap().iter().filter(|a| a[0] == "note").map(|a| a[2].clone()).collect::<Vec<_>>().join("\n");
+        let reopen = seam.0.lock().unwrap().iter().find(|(f, _)| f == "bead_reopen").map(|(_, a)| a.join("\n")).unwrap_or_default() + &note;
+        let lc = exec.lc.lock().unwrap().clone();
+        let text = format!("spira/build-fence.sh failed (rc=1):\n{fence_out}");
+        let text = if fence_rc == 1 { text } else { format!("spira/build-fence.sh killed by SIGKILL (rc={fence_rc}) before it judged the branch:\n{fence_out}") };
+        (reopen, lc, dir.path().join("run/sendback-logs"), text, dir)
+    }
+
+    #[test_id(tr6e7iy)]
+    #[test]
+    fn a_fast_tier_red_keeps_the_whole_output_references_it_and_names_it_in_the_reopen_note() {
+        let (reopen, lc, logs, text, _dir) = fast_tier_red_reopen(false, 1);
+        let entry = std::fs::read_dir(&logs).unwrap().next().unwrap().unwrap().file_name().into_string().unwrap();
+        assert_eq!(std::fs::read(logs.join(&entry).join("fast-tier.out")).unwrap(), text.as_bytes());
+        let want: Vec<String> = ["fact", "add", "sp-a", "--kind", "send-back-logs", "--actor", "fast-tier", "--cause", &entry].map(String::from).to_vec();
+        assert!(lc.contains(&want), "{lc:?}");
+        assert!(reopen.contains(&format!("work logs {entry} fast-tier.out")), "{reopen}");
+    }
+
+    #[test_id(ttqshpm)]
+    #[test]
+    fn a_fast_tier_red_whose_output_cannot_be_referenced_still_reopens_and_says_so() {
+        let (reopen, _, _, _, _dir) = fast_tier_red_reopen(true, 1);
+        assert!(reopen.contains("fast-tier-red"), "{reopen}");
+        assert!(reopen.contains("full output not kept: "), "{reopen}");
+    }
+
+    #[test_id(t0gq9ur)]
+    #[test]
+    fn a_fast_tier_step_killed_before_it_judged_is_kept_and_named_in_the_certification_note() {
+        let (notes, _, logs, text, _dir) = fast_tier_red_reopen(false, 137);
+        let entry = std::fs::read_dir(&logs).unwrap().next().unwrap().unwrap().file_name().into_string().unwrap();
+        assert_eq!(std::fs::read(logs.join(&entry).join("fast-tier.out")).unwrap(), text.as_bytes());
+        assert!(notes.contains("certification judges it") && notes.contains(&format!("work logs {entry} fast-tier.out")), "{notes}");
+    }
+
     const RED_WHY: &str = "pilgrim world did not come up (rc 1): sim world up failed: bd init (server) failed: connection refused";
 
     fn red_start_after(prior: usize) -> (Vec<String>, Vec<Vec<String>>, String) {

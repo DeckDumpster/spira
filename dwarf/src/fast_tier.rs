@@ -146,9 +146,14 @@ pub const DIGEST_MAX_LINES: usize = 60;
 pub fn digest(red: &str) -> String {
     let mut out: Vec<&str> = Vec::new();
     let mut in_error = false;
+    let mut in_cause = false;
     for (i, line) in red.lines().enumerate() {
         let t = line.trim_start();
-        let keep = if i == 0 {
+        let cause_line = i > 0 && (line.trim() == "Caused by:" || (in_cause && !t.is_empty() && t.len() < line.len()));
+        in_cause = cause_line;
+        let keep = if cause_line {
+            true
+        } else if i == 0 {
             in_error = false;
             true
         } else if t.starts_with("error") || t.contains("CONFLICT") {
@@ -406,6 +411,15 @@ mod tests {
             "  --> src/b.rs:9:1",
         ]);
         assert!(names_compile_error(&d));
+    }
+
+    #[test_id(tfjoyyj)]
+    #[test]
+    fn the_digest_keeps_cargos_caused_by_block_when_no_compiler_error_was_printed() {
+        let red = "spira/build-fence.sh failed (rc=1):\nbuild-fence: cargo check FAILED (rc=101) — RED certification, not a suite failure\n   Compiling sift v0.1.0 (/w/sift)\nerror: could not compile `sift` (lib)\n\nCaused by:\n  process didn't exit successfully: `sccache rustc --crate-name sift …` (signal: 9, SIGKILL: kill)\n";
+        let d = digest(red);
+        assert!(d.contains("could not compile") && d.contains("(signal: 9, SIGKILL: kill)") && d.contains("Caused by:"), "{d}");
+        assert!(!d.contains("Compiling"), "{d}");
     }
 
     #[test_id(tgip07z)]
