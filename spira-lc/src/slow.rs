@@ -26,14 +26,16 @@ struct Counters {
 /// Reads the store ended at its limit, reads that ran past it without being ended, and reads a WAL restart's gate hold ended.
 type ReadCounts = (u64, u64, u64);
 
-/// What a key has served: calls, milliseconds, and calls over the answer limit.
-type Counts = (u64, u64, u64);
+/// What a key has served: calls, milliseconds, calls over the answer limit, and child processes started.
+type Counts = (u64, u64, u64, u64);
 
 /// (verb, caller, task): what a request is counted under.
 type Key = (String, String, String);
 
 static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(), tasks: BTreeMap::new(), reads: BTreeMap::new(), gate_max: BTreeMap::new() });
 
+/// Child processes started by lc-serve requests, by verb, caller and task; expected 0.
+pub const CHILDREN: &str = "spira_lc_children";
 /// Reads the store ended at its limit, by verb.
 pub const READS_ENDED: &str = "spira_lc_reads_ended";
 /// Reads that ran past the limit without being ended, by verb; expected 0.
@@ -164,7 +166,7 @@ pub fn push_gate_waits(sink: &spira_otel::metrics::MetricsSink) {
     }
 }
 
-pub fn request_done(verb: &str, method: &str, caller: &str, task: Option<&str>, took: Duration) {
+pub fn request_done(verb: &str, method: &str, caller: &str, task: Option<&str>, took: Duration, children: u64) {
     let (verb, caller, task) = (clean(verb), clean(caller), clean(task.unwrap_or("")));
     let over = limits().is_some_and(|l| l.is_over(method, took.as_millis() as u64));
     if let Ok(mut c) = COUNTERS.lock() {
@@ -175,6 +177,7 @@ pub fn request_done(verb: &str, method: &str, caller: &str, task: Option<&str>, 
         t.0 += 1;
         t.1 += took.as_millis() as u64;
         t.2 += u64::from(over);
+        t.3 += children;
     }
     if !is_batch_method(method) && !limits().is_some_and(|l| l.waits(method)) {
         append(took, &verb, &caller, "REQUEST");
@@ -323,7 +326,7 @@ pub fn stats_json() -> String {
     let verbs: serde_json::Map<String, serde_json::Value> =
         c.verbs.iter().map(|(v, (n, ms))| (v.clone(), serde_json::json!({"count": n, "total_ms": ms}))).collect();
     let callers: Vec<serde_json::Value> =
-        c.tasks.iter().map(|((v, who, task), (n, ms, _))| serde_json::json!({"verb": v, "caller": who, "task": task, "count": n, "total_ms": ms})).collect();
+        c.tasks.iter().map(|((v, who, task), (n, ms, _, _))| serde_json::json!({"verb": v, "caller": who, "task": task, "count": n, "total_ms": ms})).collect();
     serde_json::json!({"verbs": verbs, "callers": callers}).to_string()
 }
 
@@ -331,8 +334,8 @@ pub fn stats_json() -> String {
 /// moved key, both holding the delta.
 fn series_since(c: &Counters, pushed: &BTreeMap<Key, Counts>, at: std::time::SystemTime) -> Vec<spira_otel::metrics::Series> {
     let mut out = Vec::new();
-    for (key, &(n, ms, over)) in &c.tasks {
-        let (pn, pms, pover) = pushed.get(key).copied().unwrap_or_default();
+    for (key, &(n, ms, over, kids)) in &c.tasks {
+        let (pn, pms, pover, pkids) = pushed.get(key).copied().unwrap_or_default();
         if n == pn {
             continue;
         }
@@ -342,6 +345,9 @@ fn series_since(c: &Counters, pushed: &BTreeMap<Key, Counts>, at: std::time::Sys
         out.push(series("spira_lc_request_seconds", (ms - pms) as f64 / 1000.0));
         if over > pover {
             out.push(series("spira_lc_requests_over", (over - pover) as f64));
+        }
+        if kids > pkids {
+            out.push(series(CHILDREN, (kids - pkids) as f64));
         }
     }
     out
@@ -658,9 +664,9 @@ mod tests {
     #[test_id(tlpkksv)]
     #[test]
     fn calls_over_the_limit_are_counted_by_verb_and_caller() {
-        request_done("over-probe", "over-probe", "over-probe-caller", None, Duration::from_millis(150));
-        request_done("over-probe", "over-probe", "over-probe-caller", None, Duration::from_millis(20));
-        request_done("over-probe-wait", "watch", "over-probe-caller", None, Duration::from_millis(5000));
+        request_done("over-probe", "over-probe", "over-probe-caller", None, Duration::from_millis(150), 0);
+        request_done("over-probe", "over-probe", "over-probe-caller", None, Duration::from_millis(20), 0);
+        request_done("over-probe-wait", "watch", "over-probe-caller", None, Duration::from_millis(5000), 0);
         let c = COUNTERS.lock().unwrap();
         let got = series_since(&c, &BTreeMap::new(), std::time::SystemTime::now());
         let over = |verb: &str| got.iter().find(|s| s.name == "spira_lc_requests_over" && s.labels.contains(&("verb".into(), verb.into())) && s.labels.contains(&("caller".into(), "over-probe-caller".into()))).map(|s| s.value);
@@ -776,10 +782,10 @@ mod tests {
         let log = d.join("s.log");
         let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap()))]);
         THRESHOLD_MS.with(|t| t.set(0));
-        request_done("probe-verb", "probe-verb", "probe\tcaller", None, Duration::from_millis(40));
-        request_done("other-verb", "other-verb", "other", None, Duration::from_millis(7));
-        request_done("probe-verb", "probe-verb", "probe\tcaller", None, Duration::from_millis(60));
-        request_done("work", "work:read", "probe\tcaller", None, Duration::from_millis(9000));
+        request_done("probe-verb", "probe-verb", "probe\tcaller", None, Duration::from_millis(40), 0);
+        request_done("other-verb", "other-verb", "other", None, Duration::from_millis(7), 0);
+        request_done("probe-verb", "probe-verb", "probe\tcaller", None, Duration::from_millis(60), 0);
+        request_done("work", "work:read", "probe\tcaller", None, Duration::from_millis(9000), 0);
         let got: String = std::fs::read_to_string(&log).unwrap().lines().filter(|l| l.contains("\tprobe-verb\t")).map(|l| format!("{l}\n")).collect();
         assert_eq!(got.lines().count(), 2, "{got}");
         let all = std::fs::read_to_string(&log).unwrap();
@@ -796,12 +802,12 @@ mod tests {
         let mut c = Counters::default();
         let key = ("v".to_string(), "who".to_string(), "asks".to_string());
         let idle = ("w".to_string(), "who".to_string(), "-".to_string());
-        c.tasks.insert(key.clone(), (3, 1500, 0));
-        c.tasks.insert(idle.clone(), (2, 40, 0));
+        c.tasks.insert(key.clone(), (3, 1500, 0, 0));
+        c.tasks.insert(idle.clone(), (2, 40, 0, 0));
         let sink = spira_otel::metrics::MetricsSink::new(None, "spira-lc", Duration::from_millis(1));
         let at = std::time::SystemTime::now();
         let mut pushed = BTreeMap::new();
-        pushed.insert(idle.clone(), (2, 40, 0));
+        pushed.insert(idle.clone(), (2, 40, 0, 0));
         let got = series_since(&c, &pushed, at);
         let flat: Vec<(String, f64)> = got.iter().map(|s| (s.name.clone(), s.value)).collect();
         assert_eq!(flat, [("spira_lc_requests".to_string(), 3.0), ("spira_lc_request_seconds".to_string(), 1.5)], "the unmoved key yields nothing");
@@ -809,14 +815,30 @@ mod tests {
         for l in ["verb", "caller", "task", "asks", "who", "spira_lc_requests", "spira_lc_request_seconds"] {
             assert!(encoded.contains(l), "{l} missing from {encoded}");
         }
-        pushed.insert(key.clone(), (3, 1500, 0));
-        c.tasks.insert(key, (4, 1700, 0));
+        pushed.insert(key.clone(), (3, 1500, 0, 0));
+        c.tasks.insert(key, (4, 1700, 0, 0));
         let got = series_since(&c, &pushed, at);
         let flat: Vec<f64> = got.iter().map(|s| s.value).collect();
         assert_eq!(flat, [1.0, 0.2]);
     }
 
     #[test_id(t3o0b28)]
+    #[test]
+    fn children_started_are_pushed_by_verb_caller_and_task_as_the_delta() {
+        request_done("kid-verb", "kid-verb", "kid-caller", None, Duration::from_millis(1), 2);
+        request_done("kid-verb", "kid-verb", "kid-caller", None, Duration::from_millis(1), 1);
+        let at = std::time::SystemTime::now();
+        let c = COUNTERS.lock().unwrap();
+        let mine = |series: Vec<spira_otel::metrics::Series>| series.into_iter().filter(|s| s.labels.contains(&("verb".to_string(), "kid-verb".to_string()))).collect::<Vec<_>>();
+        let got = mine(series_since(&c, &BTreeMap::new(), at));
+        let kids: Vec<_> = got.iter().filter(|s| s.name == CHILDREN).collect();
+        assert_eq!(kids.len(), 1, "{got:?}");
+        assert_eq!(kids[0].value, 3.0);
+        assert!(kids[0].labels.contains(&("caller".to_string(), "kid-caller".to_string())) && kids[0].labels.contains(&("task".to_string(), "-".to_string())));
+        let pushed = c.tasks.clone();
+        assert!(mine(series_since(&c, &pushed, at)).is_empty(), "nothing moved, nothing pushed");
+    }
+
     #[test]
     fn reads_ended_and_overran_are_pushed_by_verb_summed_over_requests() {
         let mut c = Counters::default();
@@ -967,7 +989,7 @@ mod tests {
     #[test_id(t4lq1md)]
     #[test]
     fn a_failed_push_keeps_the_delta_for_the_next_period() {
-        request_done("push-probe", "push-probe", "who", Some("t"), Duration::from_millis(3));
+        request_done("push-probe", "push-probe", "who", Some("t"), Duration::from_millis(3), 0);
         let unreachable = spira_otel::metrics::MetricsSink::new(None, "spira-lc", Duration::from_millis(1));
         let mut pushed = BTreeMap::new();
         push_counts(&unreachable, &mut pushed);

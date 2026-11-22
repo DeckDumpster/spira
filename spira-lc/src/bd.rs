@@ -102,10 +102,19 @@ const WRITE_SECS: u64 = 60;
 // A write runs the schema gate and a Dolt commit; the 5 s read cap kills it mid-commit though it lands.
 fn run_write(args: &[&str]) -> Result<String, String> {
     let owned: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-    if let Some(res) = sql_write(&owned, None) {
-        return stamped(args, res);
+    stamped(args, sql_only(&owned, None))
+}
+
+/// The one way a content write is made: the SQL writer. A store with no writer provisioned
+/// refuses the write by the key that provisions it; lc-serve has no bd to fall back on.
+fn sql_only(args: &[String], stdin: Option<&str>) -> Result<String, String> {
+    if let Some(res) = sql_write(args, stdin) {
+        return res;
     }
-    stamped(args, write_unstamped(args))
+    if !crate::content_write::configured()? {
+        return Err(format!("no content writer is provisioned: set spira.beads_sql_writer_password_file (refusing `bd {}`, which this process no longer forks)", args.first().map(String::as_str).unwrap_or("")));
+    }
+    Err(format!("`bd {}` is not a write the SQL writer serves", args.join(" ")))
 }
 
 /// The write as one SQL transaction, when it is a verb the SQL writer serves and a writer is
@@ -121,26 +130,8 @@ fn sql_write(args: &[String], stdin: Option<&str>) -> Option<Result<String, Stri
 
 /// A write that is not a planning write: the watermark's own copy in bd's kv.
 pub fn write_unstamped(args: &[&str]) -> Result<String, String> {
-    let started = std::time::Instant::now();
-    let res = run_write_unrecorded(args);
-    record_call(args, started, res.is_ok());
-    res
-}
-
-fn run_write_unrecorded(args: &[&str]) -> Result<String, String> {
-    let mut cmd = std::process::Command::new("timeout");
-    cmd.arg(WRITE_SECS.to_string()).arg(bd_bin()?);
-    let db = spira_config::process::cfg("SPIRA_DB")?;
-    if !db.is_empty() {
-        cmd.args(["-C", &db]);
-    }
-    cmd.args(args);
-    let out = state_store::phases::child("bd", || cmd.output()).map_err(|e| format!("running bd {args:?}: {e}"))?;
-    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    if !out.status.success() {
-        return Err(format!("{stdout}{}", String::from_utf8_lossy(&out.stderr)));
-    }
-    Ok(stdout)
+    let owned: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    sql_only(&owned, None)
 }
 
 pub fn write(args: &[&str]) -> Result<String, String> {
@@ -155,23 +146,19 @@ pub fn write_stdin(args: &[String], stdin: Option<&str>) -> Result<String, Strin
 
 /// [`write_stdin`] run in `cwd`: the one verb (`gate discover`) that reads the repo it is run in.
 pub fn write_stdin_in(args: &[String], stdin: Option<&str>, cwd: Option<&std::path::Path>) -> Result<String, String> {
-    if cwd.is_none() {
-        if let Some(res) = sql_write(args, stdin) {
-            return stamped(args, res);
-        }
-    }
+    let Some(dir) = cwd else {
+        return stamped(args, sql_only(args, stdin));
+    };
     let started = std::time::Instant::now();
-    let res = write_stdin_unrecorded(args, stdin, cwd);
+    let res = write_in_repo(args, stdin, dir);
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     record_call(&words, started, res.is_ok());
     stamped(args, res)
 }
 
-fn write_stdin_unrecorded(args: &[String], stdin: Option<&str>, cwd: Option<&std::path::Path>) -> Result<String, String> {
-    let mut cmd = Command::new("timeout");
-    if let Some(dir) = cwd {
-        cmd.current_dir(dir);
-    }
+fn write_in_repo(args: &[String], stdin: Option<&str>, dir: &std::path::Path) -> Result<String, String> {
+    let mut cmd = crate::proc::command("timeout")?;
+    cmd.current_dir(dir);
     cmd.arg(WRITE_SECS.to_string()).arg(bd_bin()?);
     let db = spira_config::process::cfg("SPIRA_DB")?;
     if !db.is_empty() {
@@ -334,7 +321,7 @@ fn file_child_via((program, secs): (&str, &str), title: &str, persona: &str, rep
     if let Some(parent) = parent {
         args.extend(["--parent", parent]);
     }
-    let mut cmd = spira_config::bounded::bounded_for(program, secs);
+    let mut cmd = crate::proc::bounded_for(program, secs)?;
     cmd.args(&args);
     if let Some(why) = contract_considered {
         cmd.env(bead::filing::CONTRACT_OVERRIDE_ENV, why);
@@ -365,7 +352,7 @@ fn bead_sh(args: &[&str]) -> Result<(), String> {
 }
 
 fn bead_sh_via(program: &str, secs: &str, args: &[&str]) -> Result<(), String> {
-    let out = state_store::phases::child(program, || spira_config::bounded::bounded_for(program, secs).args(args).output()).map_err(|e| format!("running {program}: {e}"))?;
+    let out = state_store::phases::child(program, || crate::proc::bounded_for(program, secs).map_err(std::io::Error::other)?.args(args).output()).map_err(|e| format!("running {program}: {e}"))?;
     if !out.status.success() {
         return Err(failed(program, secs, args, &out));
     }
@@ -395,7 +382,7 @@ pub fn ask_operator_classed(from: &str, subject: &str, default: &str, class: Opt
     // binary-override seam.
     let mail_sh = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string());
     // An ask files its decision bead, so it is a filing and waits as one.
-    let mut cmd = spira_config::bounded::bounded_for(&mail_sh, FILING_SECS);
+    let mut cmd = crate::proc::bounded_for(&mail_sh, FILING_SECS)?;
     cmd.args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id]);
     if let Some(c) = class {
         cmd.args(["--class", c]);
@@ -421,29 +408,7 @@ pub fn ask_operator_classed(from: &str, subject: &str, default: &str, class: Opt
 /// `bd <args>` with `stdin` piped in when given — the lane verbs' one door to bd
 /// (sp-st0mm). Same `SPIRA_BD`/`SPIRA_DB` resolution as [`run`].
 pub fn run_stdin(args: &[String], stdin: Option<&str>) -> Result<String, String> {
-    if let Some(res) = sql_write(args, stdin) {
-        return stamped(args, res);
-    }
-    let started = std::time::Instant::now();
-    let res = run_stdin_unrecorded(args, stdin);
-    let words: Vec<&str> = args.iter().map(String::as_str).collect();
-    record_call(&words, started, res.is_ok());
-    stamped(args, res)
-}
-
-fn run_stdin_unrecorded(args: &[String], stdin: Option<&str>) -> Result<String, String> {
-    let mut cmd = Command::new(bd_bin()?);
-    let db = spira_config::process::cfg("SPIRA_DB")?;
-    if !db.is_empty() {
-        cmd.args(["-C", &db]);
-    }
-    cmd.args(args);
-    let (code, out) = spawn(cmd, stdin, "bd");
-    if code == 0 {
-        Ok(out)
-    } else {
-        Err(out)
-    }
+    stamped(args, sql_only(args, stdin))
 }
 
 /// A harness tool by bare name on the launcher's PATH (sp-gypjk), run under `timeout` with
@@ -460,7 +425,10 @@ pub fn tool_env(program: &str, args: &[String], stdin: Option<&str>, actor: &str
         Ok(p) => p,
         Err(e) => return (2, e),
     };
-    let mut cmd = Command::new("timeout");
+    let mut cmd = match crate::proc::command("timeout") {
+        Ok(c) => c,
+        Err(e) => return (2, e),
+    };
     cmd.arg(secs.to_string()).arg(&exe).args(args).env("SPIRA_RUNE", actor);
     for (k, v) in env {
         cmd.env(k, v);
@@ -475,7 +443,10 @@ pub fn tool_env_noisy(program: &str, args: &[String], stdin: Option<&str>, actor
         Ok(p) => p,
         Err(e) => return (2, e),
     };
-    let mut cmd = Command::new("timeout");
+    let mut cmd = match crate::proc::command("timeout") {
+        Ok(c) => c,
+        Err(e) => return (2, e),
+    };
     cmd.arg(secs.to_string()).arg(&exe).args(args).env("SPIRA_RUNE", actor);
     for (k, v) in env {
         cmd.env(k, v);

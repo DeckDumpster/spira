@@ -8,8 +8,14 @@
 
 use std::path::Path;
 
+pub(crate) fn git_in(repo: &Path) -> std::io::Result<spira_config::bounded::Bounded> {
+    let mut c = crate::proc::bounded("git").map_err(std::io::Error::other)?;
+    c.arg("-C").arg(repo);
+    Ok(c)
+}
+
 pub(crate) fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
-    let out = state_store::phases::child("git", || spira_config::bounded::bounded("git").arg("-C").arg(repo).args(args).output()).ok()?;
+    let out = state_store::phases::child("git", || git_in(repo)?.args(args).output()).ok()?;
     if !out.status.success() {
         return None;
     }
@@ -18,7 +24,7 @@ pub(crate) fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
 
 /// A git command's exit code and stdout, whatever the exit; `-1` and the error text when git did not run.
 pub(crate) fn git_code_output(repo: &Path, args: &[&str]) -> (i32, String) {
-    match state_store::phases::child("git", || spira_config::bounded::bounded("git").arg("-C").arg(repo).args(args).output()) {
+    match state_store::phases::child("git", || git_in(repo)?.args(args).output()) {
         Ok(out) => (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string()),
         Err(e) => (-1, e.to_string()),
     }
@@ -53,7 +59,7 @@ pub fn message_names_bead(message: &str, bead_id: &str) -> bool {
 
 /// `git merge-base --is-ancestor <candidate> <base>` — the fast path in [`content_on_base`] below.
 pub fn is_ancestor(repo: &Path, candidate: &str, base: &str) -> bool {
-    state_store::phases::child("git", || spira_config::bounded::bounded("git").arg("-C").arg(repo).args(["merge-base", "--is-ancestor", candidate, base]).status())
+    state_store::phases::child("git", || git_in(repo)?.args(["merge-base", "--is-ancestor", candidate, base]).status())
         .map(|s| s.success())
         .unwrap_or(false)
 }
@@ -107,14 +113,14 @@ pub fn change_in_force(repo: &Path, branch: &str, base: &str) -> bool {
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let index = std::env::temp_dir().join(format!("spira-lc-in-force-{}-{seq}", std::process::id()));
     let with_index = |args: &[&str]| {
-        let mut c = spira_config::bounded::bounded("git");
-        c.arg("-C").arg(repo).env("GIT_INDEX_FILE", &index).args(args);
-        c
+        let mut c = git_in(repo)?;
+        c.env("GIT_INDEX_FILE", &index).args(args);
+        Ok::<_, std::io::Error>(c)
     };
-    let read = state_store::phases::child("git", || with_index(&["read-tree", base]).status()).map(|s| s.success()).unwrap_or(false);
+    let read = state_store::phases::child("git", || with_index(&["read-tree", base])?.status()).map(|s| s.success()).unwrap_or(false);
     let ok = read
         && state_store::phases::child("git", || {
-            with_index(&["apply", "-R", "--check", "--cached"])
+            with_index(&["apply", "-R", "--check", "--cached"])?
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())

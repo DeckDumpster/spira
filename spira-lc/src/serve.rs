@@ -924,7 +924,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
         ans.code != 0 && cut_at.is_none() && ended.reads_ended + ended.reads_overran + ended.reads_ended_by_reset > 0,
         || {
             answered = read_at.elapsed();
-            crate::slow::request_done(measured, &method, &caller, task.as_deref(), answered);
+            crate::slow::request_done(measured, &method, &caller, task.as_deref(), answered, ended.children);
             crate::slow::sample(&method, &caller, answered);
         },
         &mut |id, reason| crate::reconcile_content::settle_owed(&mut crate::bd::LiveBd, id, reason),

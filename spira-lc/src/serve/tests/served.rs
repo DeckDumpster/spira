@@ -72,7 +72,7 @@ fn a_tasked_request_is_counted_under_its_task() {
         let task_seen = req.task.clone();
         let (mut m, mut b) = (&w, &w);
         let _ = super::answer(req, &mut m, &mut b, &c, &|| Err("no run dir here".to_string()));
-        crate::slow::request_done("tasked-probe", "tasked-probe", "probe", task_seen.as_deref(), std::time::Duration::from_millis(5));
+        crate::slow::request_done("tasked-probe", "tasked-probe", "probe", task_seen.as_deref(), std::time::Duration::from_millis(5), 0);
         let s: serde_json::Value = serde_json::from_str(&crate::slow::stats_json()).unwrap();
         let row = s["callers"].as_array().unwrap().iter().find(|r| r["verb"] == "tasked-probe" && r["task"] == task).unwrap_or_else(|| panic!("no row for {task}: {s}"));
         assert_eq!((row["count"].as_u64(), row["total_ms"].as_u64()), (Some(1), Some(5)));

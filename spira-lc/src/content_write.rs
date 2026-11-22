@@ -702,8 +702,12 @@ fn build_writer(file: &str) -> Result<Writer, String> {
     Ok(Writer { conn, db })
 }
 
-/// The writer connection, or `None` when no writer credential is configured: the door then
-/// forks bd for these verbs as it always did.
+/// Whether a writer credential is configured.
+pub fn configured() -> Result<bool, String> {
+    spira_config::process::cfg("SPIRA_BEADS_SQL_WRITER_PASSWORD_FILE").map(|f| !f.trim().is_empty())
+}
+
+/// The writer connection, or `None` when no writer credential is configured.
 pub(crate) fn writer() -> Option<Result<&'static Writer, String>> {
     let file = match spira_config::process::cfg("SPIRA_BEADS_SQL_WRITER_PASSWORD_FILE") {
         Ok(f) => f,
@@ -716,8 +720,7 @@ pub(crate) fn writer() -> Option<Result<&'static Writer, String>> {
 }
 
 /// Applies `m` to the beads database in one transaction. `None` when no writer is configured,
-/// or when bd must answer: a write whose preconditions bd would refuse, or one the port does
-/// not cover, goes to bd, which refuses or makes it in its own words.
+/// or when the port does not cover the write.
 pub fn run(m: &Mutation) -> Option<Result<String, String>> {
     let w = match writer()? {
         Ok(w) => w,
