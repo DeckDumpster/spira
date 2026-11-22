@@ -735,6 +735,7 @@ fn run_prunes_the_spool_once_a_minute_not_on_every_pass() {
     let mut w = seeded();
     w.cfg.interval_secs = 30;
     w.cfg.max_lag_secs = 90;
+    w.cfg.tmp_pressure_pct = 101;
     live_server(&w, 4242);
     spill(&w.cfg.data, "planted-0", 1, 0);
     let clock = PlantingClock { now: Cell::new(NOW_MS), dir: w.cfg.data.join(".dolt/tmp"), sleeps: Cell::new(0), survived_first_gap: Cell::new(false) };
@@ -743,4 +744,16 @@ fn run_prunes_the_spool_once_a_minute_not_on_every_pass() {
     let pruned = |n: u32| log.iter().filter(|l| l.contains(&format!("planted-{n} "))).count();
     assert_eq!((pruned(0), pruned(1), pruned(2)), (1, 1, 1), "{log:?}");
     assert!(clock.survived_first_gap.get(), "the 30 s pass pruned");
+}
+
+#[test_id(tf8r3qd)]
+#[test]
+fn prune_tmp_reads_the_real_filesystem_and_cuts_the_largest_at_a_zero_threshold() {
+    let w = world();
+    let big = spill(&w.cfg.data, "big", 40_000, NOW_MS);
+    let small = spill(&w.cfg.data, "small", 10, NOW_MS);
+    let log = prune_tmp(&w.cfg.data, &w.cfg.proc_dir, 0, 3600, NOW_MS);
+    assert!(!big.exists() && !small.exists());
+    assert!(log[0].contains("big") && log[1].contains("small"), "{log:?}");
+    assert!(prune_tmp(&w.cfg.data, &w.cfg.proc_dir, 101, 3600, NOW_MS).is_empty());
 }
