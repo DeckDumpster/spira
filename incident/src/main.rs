@@ -22,7 +22,6 @@ extern crate spira_test_id;
 use std::io::Read;
 use std::process::ExitCode;
 
-use incident::decide;
 use incident::ports::{Bd, Clock, Mailer};
 use incident::real::{RealBd, RealClock, RealMailer};
 use incident::intake::*;
@@ -64,28 +63,14 @@ fn cmd_alarm(env: &Env, bd: Option<&dyn Bd>, mailer: &dyn Mailer, clock: &dyn Cl
     }
     if noted == Some(true) {
         if let (true, Some(bd), Some(_)) = (was_due.get(), bd, env.db.as_deref()) {
-            own_alarm(env, bd, mailer, clock, title, &reference);
+            let mut body = Vec::new();
+            let _ = std::io::stdin().read_to_end(&mut body);
+            own_alarm(env, bd, mailer, clock, title, &reference, &body);
         }
         println!("{}", if was_due.get() { "noted" } else { "deduped" });
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
-    }
-}
-
-fn own_alarm(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, title: &str, reference: &str) {
-    let mut body = Vec::new();
-    let _ = std::io::stdin().read_to_end(&mut body);
-    let provenance = decide::provenance(&env.unit, &hostname(), &env.path);
-    let cause = decide::sanitize_cause(&env.cause);
-    let mut cfg = env.file_config(&provenance);
-    cfg.cause = &cause;
-    let mut log = Vec::new();
-    let _ = with_incident_lock(&env.lock_path, env.lock_wait_s, || {
-        run::alarm_owner(bd, mailer, clock, &cfg, reference, title, &body, &env.labels, &mut log)
-    });
-    for l in &log {
-        ilog(env, l);
     }
 }
 

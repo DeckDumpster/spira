@@ -267,6 +267,37 @@ pub fn note_of(title: &str, body: &[u8]) -> tsd::alarm::Message {
     }
 }
 
+/// File the incident that owns an alarm. A filing that does not land is recorded as a failed
+/// alarm attempt carrying the finding text, since nothing is spooled for it.
+pub fn own_alarm(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, title: &str, reference: &str, body: &[u8]) {
+    let provenance = decide::provenance(&env.unit, &hostname(), &env.path);
+    let cause = decide::sanitize_cause(&env.cause);
+    let mut cfg = env.file_config(&provenance);
+    cfg.cause = &cause;
+    let mut log = Vec::new();
+    let outcome = with_incident_lock(&env.lock_path, env.lock_wait_s, || {
+        run::alarm_owner(bd, mailer, clock, &cfg, reference, title, body, &env.labels, &mut log)
+    })
+    .flatten();
+    for l in &log {
+        ilog(env, l);
+    }
+    let failed = match &outcome {
+        Some(FileOutcome::LaneRefused(reason)) => Some(reason.clone()),
+        Some(other) => match crate::attempts::of_file(other) {
+            Some(tsd::alarm::Outcome::Failed { reason }) => Some(reason),
+            _ => None,
+        },
+        None => None,
+    };
+    if let Some(reason) = failed {
+        let reason = reason.strip_suffix("; the event stays spooled").unwrap_or(&reason);
+        let reason = format!("{reason}; not spooled — the finding text is in this attempt's message");
+        record_attempt(env, "incident-alarm-owner", "incident", reference, tsd::alarm::Outcome::Failed { reason }, Some(note_of(title, body)));
+        ilog(env, &format!("incident: {reference} was not filed; its text was recorded as a failed alarm attempt"));
+    }
+}
+
 /// `drain_one`: process one spool entry — file it, and on success remove the spool file.
 /// `exec 8>>"$lock"; flock -w "$wait" 8`: one lock for the whole intake (not one per
 /// ref), so two callers racing the check-then-create pair on the SAME ref (the watchtower
@@ -537,7 +568,7 @@ pub fn spool_stamp() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{drain_report, drain_spool, filed_answer, with_incident_lock, Env};
+    use super::{drain_report, drain_spool, filed_answer, own_alarm, with_incident_lock, Env};
     use crate::fake::{FakeBd, FakeMailer, FixedClock};
     use crate::spool::{format_entry, SpoolEntry};
     use std::cell::RefCell;
@@ -584,6 +615,39 @@ mod tests {
     fn entry(reference: &str) -> String {
         let e = SpoolEntry { reference: reference.into(), title: "t".into(), unit: "u".into(), incident_path: "p".into(), cause: "c".into(), repo: None, body: b"payload".to_vec() };
         String::from_utf8(format_entry(&e)).unwrap()
+    }
+
+
+    #[test_id(tid9pph)]
+    #[test]
+    fn an_alarm_whose_owner_cannot_be_filed_records_its_text_as_a_failed_attempt() {
+        let dir = testkit::TempDir::new("own-alarm-refused");
+        let env = env_in(&dir);
+        let bd = FakeBd { create_error: Some("bead: repo:spira does not admit lane incident — refused by its admitted lanes (plan,groom,spike)".into()), ..FakeBd::new() };
+        bd.rows.borrow_mut().push(crate::decide::BeadRow {
+            id: "sp-old".into(),
+            status: crate::decide::BeadStatus::Terminal,
+            external_ref: Some("incident:unit-drift".into()),
+            labels: vec![format!("ref:{}", crate::decide::ref_hash("incident:unit-drift"))],
+            closed_at: Some("2026-10-08T00:00:00Z".into()),
+        });
+        own_alarm(&env, &bd, &FakeMailer::default(), &FixedClock(1_792_800_000), "UNIT DRIFT: x", "incident:unit-drift", b"UNSHIPPED /u/x.service (unit file this install does not ship)\n");
+        let rows = tsd::alarm::read(std::path::Path::new(&env.spira_run));
+        let row = rows.iter().find(|a| a.reference == "incident:unit-drift").expect("an attempt is recorded");
+        let tsd::alarm::Outcome::Failed { reason } = &row.outcome else { panic!("{row:?}") };
+        assert!(reason.contains("repo:spira"), "{reason}");
+        assert!(row.message.as_ref().unwrap().body.contains("UNSHIPPED /u/x.service"));
+        assert!(std::fs::read_to_string(&env.log_path).unwrap().contains("recorded as a failed alarm attempt"));
+    }
+
+
+    #[test_id(t56wsj2)]
+    #[test]
+    fn an_alarm_with_no_bead_history_records_no_owner_attempt() {
+        let dir = testkit::TempDir::new("own-alarm-none");
+        let env = env_in(&dir);
+        own_alarm(&env, &FakeBd::new(), &FakeMailer::default(), &FixedClock(1_792_800_000), "t", "incident:never-filed", b"p");
+        assert!(tsd::alarm::read(std::path::Path::new(&env.spira_run)).is_empty());
     }
 
     #[test_id(t34c4aj)]
