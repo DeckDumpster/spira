@@ -265,11 +265,40 @@ pub(crate) fn answer(r: Result<String, String>) -> (i32, String) {
     }
 }
 
-/// Sends `journal sweep` steps through `step` until the cursor runs out and sums their counts.
-pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_run: bool) -> (i32, String) {
+/// Reads `journal sweep [--dry-run] [--from <cursor>]`; `None` when `args` is not a sweep.
+pub type SweepArgs = Result<(bool, Option<String>), (i32, String)>;
+
+pub fn parse_sweep_args(args: &[String]) -> Option<SweepArgs> {
+    if !matches!(args, [j, s, ..] if j == "journal" && s == "sweep") {
+        return None;
+    }
+    let refused = || (REFUSED, "journal: sweep takes only --dry-run and --from <cursor>".to_string());
+    let (mut dry_run, mut from) = (false, None);
+    let mut rest = args[2..].iter();
+    while let Some(flag) = rest.next() {
+        match flag.as_str() {
+            "--dry-run" if !dry_run => dry_run = true,
+            "--from" if from.is_none() => {
+                let Some(c) = rest.next() else { return Some(Err(refused())) };
+                if let Err(e) = c.parse::<SweepCursor>() {
+                    return Some(Err((REFUSED, e)));
+                }
+                from = Some(c.clone());
+            }
+            _ => return Some(Err(refused())),
+        }
+    }
+    Some(Ok((dry_run, from)))
+}
+
+/// Sends `journal sweep` steps through `step`, from `from`, until the cursor runs out and sums their counts.
+pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_run: bool, from: Option<String>) -> (i32, String) {
     let mut totals = [0u64; 5];
-    let mut cursor: Option<String> = None;
+    let mut cursor = from;
     let mut steps = 0;
+    let summary = |totals: &[u64; 5], steps: i32, complete: bool| {
+        json!({ "dry_run": dry_run, "idless_schedules": totals[0], "indexed_schedules": totals[1], "indexed_effects": totals[2], "legacy_deleted": totals[3], "retained": totals[4], "steps": steps, "complete": complete })
+    };
     loop {
         let mut argv: Vec<String> = vec!["journal".into(), "sweep".into()];
         if dry_run {
@@ -279,9 +308,11 @@ pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_ru
             argv.extend(["--from".into(), c.clone()]);
         }
         let (code, out) = step(&argv);
-        let after = || format!("{out}\nafter step {steps}, cursor {}", cursor.as_deref().unwrap_or("(start)"));
         if code != 0 {
-            return (code, after());
+            let mut head = summary(&totals, steps, false);
+            head["resume"] = json!(cursor);
+            let command = format!("spira-lc journal sweep{}{}", if dry_run { " --dry-run" } else { "" }, cursor.as_ref().map_or(String::new(), |c| format!(" --from {c}")));
+            return (code, format!("{head}\n{out}\nresume: {command}"));
         }
         let Ok(v) = serde_json::from_str::<Value>(&out) else { return (CANNOT_TELL, format!("cannot tell: sweep step answered {out:?}")) };
         steps += 1;
@@ -293,7 +324,7 @@ pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_ru
             None => break,
         }
     }
-    (0, json!({ "dry_run": dry_run, "idless_schedules": totals[0], "indexed_schedules": totals[1], "indexed_effects": totals[2], "legacy_deleted": totals[3], "retained": totals[4], "steps": steps }).to_string())
+    (0, summary(&totals, steps, true).to_string())
 }
 
 #[cfg(test)]
@@ -672,7 +703,7 @@ mod tests {
     }
 
     fn swept<B: state_store::Backend>(s: &crate::control::store::Store<B>, dry_run: bool) -> Value {
-        let (code, out) = sweep_until_done(&mut in_process(s), dry_run);
+        let (code, out) = sweep_until_done(&mut in_process(s), dry_run, None);
         assert_eq!(code, 0, "{out}");
         let mut v: Value = serde_json::from_str(&out).unwrap();
         v["next"] = Value::Null;
@@ -695,7 +726,7 @@ mod tests {
     #[test]
     fn the_sweep_loop_sums_the_counts_of_every_step_until_the_cursor_runs_out() {
         let (s, _raw) = seeded(2_500);
-        let (code, out) = sweep_until_done(&mut in_process(&s), false);
+        let (code, out) = sweep_until_done(&mut in_process(&s), false, None);
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(code, 0, "{out}");
         assert_eq!((v["idless_schedules"].clone(), v["indexed_schedules"].clone(), v["steps"].clone()), (json!(2_500), json!(1), json!(7)), "{v}");
@@ -711,15 +742,20 @@ mod tests {
         let (code, out) = sweep_until_done(&mut |argv| {
             calls += 1;
             if calls == 2 { (CANNOT_TELL, "cannot tell: deadline".into()) } else { inner(argv) }
-        }, false);
+        }, false, None);
         assert_eq!(code, CANNOT_TELL);
-        assert!(out.contains("cannot tell: deadline") && out.contains("after step 1, cursor schedule:"), "{out}");
+        let head: Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+        assert_eq!((head["idless_schedules"].clone(), head["steps"].clone(), head["complete"].clone()), (json!(1_000), json!(1), json!(false)), "{out}");
+        let resume = head["resume"].as_str().unwrap().to_string();
+        assert!(resume.starts_with("schedule:"), "{out}");
+        assert!(out.contains("cannot tell: deadline") && out.contains("resume: spira-lc journal sweep --from schedule:"), "{out}");
         assert_eq!(key_count("journal-meta"), 0, "not indexed while a step is missing");
-        let (code, out) = sweep_until_done(&mut in_process(&s), false);
+        let (code, out) = sweep_until_done(&mut in_process(&s), false, Some(resume));
         assert_eq!(code, 0, "{out}");
+        assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["idless_schedules"], json!(500));
         let after_rerun = (key_count("schedule"), key_count("pending"), key_count("open-effect"), key_count("journal-meta"));
         assert_eq!(after_rerun, (1, 1, 1, 1));
-        sweep_until_done(&mut in_process(&s), false);
+        sweep_until_done(&mut in_process(&s), false, None);
         assert_eq!(after_rerun, (key_count("schedule"), key_count("pending"), key_count("open-effect"), key_count("journal-meta")));
     }
 
@@ -879,5 +915,35 @@ mod tests {
     fn a_long_text_is_clipped_to_the_limit_and_an_ellipsis() {
         assert_eq!(clip(&"x".repeat(10_000)).chars().count(), CLIP + 1);
         assert_eq!(clip("short"), "short");
+    }
+
+    #[test]
+    fn the_sweep_command_line_takes_from_in_either_order_and_refuses_a_bad_cursor() {
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(parse_sweep_args(&argv(&["journal", "sweep", "--from", "effect:x", "--dry-run"])), Some(Ok((true, Some("effect:x".into())))));
+        assert_eq!(parse_sweep_args(&argv(&["journal", "sweep", "--dry-run", "--from", "effect:x"])), Some(Ok((true, Some("effect:x".into())))));
+        assert_eq!(parse_sweep_args(&argv(&["journal", "sweep"])), Some(Ok((false, None))));
+        assert_eq!(parse_sweep_args(&argv(&["journal", "due"])), None);
+        let Some(Err((code, msg))) = parse_sweep_args(&argv(&["journal", "sweep", "--from", "nope:x"])) else { panic!("accepted") };
+        assert_eq!(code, REFUSED);
+        assert!(msg.contains("is not schedule:<key>, legacy:<key> or effect:<key>"), "{msg}");
+    }
+
+    #[test]
+    fn a_sweep_malformed_flag_is_refused_and_a_stop_names_the_command_that_resumes_it() {
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        for bad in [&["--from"][..], &["--from", "effect:x", "--from", "effect:y"], &["--bogus"]] {
+            let mut a = vec!["journal", "sweep"];
+            a.extend_from_slice(bad);
+            let Some(Err((code, _))) = parse_sweep_args(&argv(&a)) else { panic!("accepted {bad:?}") };
+            assert_eq!(code, REFUSED, "{bad:?}");
+        }
+        let (code, out) = sweep_until_done(&mut |_| (CANNOT_TELL, "cannot tell: deadline".into()), true, None);
+        assert_eq!(code, CANNOT_TELL);
+        let head: Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+        assert_eq!((head["steps"].clone(), head["resume"].clone(), head["complete"].clone()), (json!(0), Value::Null, json!(false)), "{out}");
+        assert!(out.ends_with("resume: spira-lc journal sweep --dry-run"), "{out}");
+        let (_, out) = sweep_until_done(&mut |_| (CANNOT_TELL, "x".into()), true, Some("effect:k".into()));
+        assert!(out.ends_with("resume: spira-lc journal sweep --dry-run --from effect:k"), "{out}");
     }
 }
