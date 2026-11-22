@@ -307,6 +307,63 @@ fn store_pointers_reads_one_row_per_retirement_record_and_never_a_second_for_a_p
     assert_eq!(rule::code::with_store_pointers(Pointers::default(), &held).retired, rows);
 }
 
+fn change_toc(slugs: &[&str]) -> Vec<rule::code::Part> {
+    let mut toc = parse_toc(TOC).unwrap();
+    toc[0].slugs = slugs.iter().map(|s| s.to_string()).collect();
+    toc.truncate(1);
+    toc
+}
+
+fn moved(slug: &str) -> Moved {
+    Moved { section: "1.1".into(), slug: slug.into(), on: "2026-01-01".into() }
+}
+
+fn retired(slug: &str) -> Retired {
+    Retired { slug: slug.into(), reason: "r".into(), replaced_by: None, on: "2026-01-01".into() }
+}
+
+#[test_id(tzwvr94)]
+#[test]
+fn a_book_change_names_the_slugs_it_adds_and_drops_and_counts_the_records_it_writes() {
+    let _env = testkit::env_read();
+    let before = change_toc(&["law-one", "law-two", "law-three"]);
+    let after = change_toc(&["law-two", "law-three", "law-four"]);
+    let old = Pointers { moved: vec![moved("law-two")], ..Pointers::default() };
+    let new = Pointers { moved: vec![moved("law-two"), moved("law-three")], retired: vec![retired("law-one")], ..Pointers::default() };
+    let change = rule::code::book_change(&before, &old, &after, &new);
+    assert_eq!((change.added.as_slice(), change.dropped.as_slice()), (&["law-four".to_string()][..], &["law-one".to_string()][..]));
+    assert_eq!((change.moved, change.retired, change.merged), (1, 1, 0));
+    let said = change.to_string();
+    assert!(said.contains("law-four") && said.contains("law-one") && said.contains("1 move(s), 1 retirement(s)"), "{said}");
+}
+
+#[test_id(tun5x30)]
+#[test]
+fn an_unchanged_book_says_no_statute_was_added_or_dropped() {
+    let _env = testkit::env_read();
+    let toc = change_toc(&["law-one", "law-two"]);
+    let ptrs = Pointers { moved: vec![moved("law-one")], ..Pointers::default() };
+    let change = rule::code::book_change(&toc, &ptrs, &toc, &ptrs);
+    assert_eq!(change.to_string(), "no statute added or dropped, no pointer record written");
+}
+
+#[test_id(ty7zywz)]
+#[test]
+fn code_check_names_every_toc_slug_the_store_lacks() {
+    let _env = testkit::env(&[]);
+    let world = World::new("rule-check-names", "wiki/law", &["law-one", "law-two", "law-three"]);
+    world.brain_with_remote();
+    let elsewhere = testkit::TempDir::new("rule-check-names-cwd");
+    let texts = world.texts.path().to_str().unwrap().to_string();
+    let run = |args: &[&str]| world.rule(&[&["code"], args, &["--texts", &texts]].concat(), elsewhere.path());
+    assert_eq!(run(&[]).status.code(), Some(0));
+    std::fs::remove_file(world.texts.path().join("law-two.txt")).unwrap();
+    std::fs::remove_file(world.texts.path().join("law-three.txt")).unwrap();
+    let out = run(&["--check"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(said(&out).contains("law/toc.toml: lists statutes the store lacks: law-two, law-three\n"), "{}", said(&out)); // ffx-ok
+}
+
 struct World {
     dir: testkit::TempDir,
     texts: testkit::TempDir,

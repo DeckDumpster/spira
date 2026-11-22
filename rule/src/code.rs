@@ -630,3 +630,42 @@ pub fn changed_paths(wiki: &Path, rel: &str) -> Result<Vec<String>, String> {
     let text = String::from_utf8_lossy(&out.stdout);
     Ok(text.split('\0').filter(|e| e.len() > 3).map(|e| e[3..].to_string()).collect())
 }
+
+/// What a book commit does: the slugs it adds and drops and the pointer records it writes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BookChange {
+    pub added: Vec<String>,
+    pub dropped: Vec<String>,
+    pub moved: usize,
+    pub retired: usize,
+    pub merged: usize,
+}
+
+pub fn book_change(before: &[Part], before_ptrs: &Pointers, after: &[Part], after_ptrs: &Pointers) -> BookChange {
+    let slugs = |parts: &[Part]| parts.iter().flat_map(|p| p.slugs.iter().cloned()).collect::<Vec<_>>();
+    let (was, now) = (slugs(before), slugs(after));
+    BookChange {
+        added: now.iter().filter(|s| !was.contains(s)).cloned().collect(),
+        dropped: was.iter().filter(|s| !now.contains(s)).cloned().collect(),
+        moved: after_ptrs.moved.iter().filter(|r| !before_ptrs.moved.contains(r)).count(),
+        retired: after_ptrs.retired.iter().filter(|r| !before_ptrs.retired.contains(r)).count(),
+        merged: after_ptrs.merged.iter().filter(|r| !before_ptrs.merged.contains(r)).count(),
+    }
+}
+
+impl std::fmt::Display for BookChange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if *self == BookChange::default() {
+            return write!(f, "no statute added or dropped, no pointer record written");
+        }
+        write!(f, "added {}", self.added.len())?;
+        if !self.added.is_empty() {
+            write!(f, " ({})", self.added.join(", "))?;
+        }
+        write!(f, "; dropped {}", self.dropped.len())?;
+        if !self.dropped.is_empty() {
+            write!(f, " ({})", self.dropped.join(", "))?;
+        }
+        write!(f, "; {} move(s), {} retirement(s), {} merge(s) recorded", self.moved, self.retired, self.merged)
+    }
+}
