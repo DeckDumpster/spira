@@ -334,7 +334,13 @@ pub fn detect_invalid_closed(cfg: &Config, door: &LcClient) -> String {
 /// [`detect_invalid_closed`] over the closes after `after`, with no watermark read or moved:
 /// a display that must not take rows from the pass that acts on them.
 pub fn detect_invalid_closed_since(cfg: &Config, door: &LcClient, after: &str) -> String {
-    read_closed(cfg, door, Some(after)).map(|raw| classify_closed(&raw, cfg)).unwrap_or_default()
+    invalid_closed_since(cfg, door, after).unwrap_or_default()
+}
+
+/// [`detect_invalid_closed_since`] that keeps a refused read apart from an answered empty one:
+/// `None` is the store not answering, `Some("")` is it answering with no invalid close.
+pub fn invalid_closed_since(cfg: &Config, door: &LcClient, after: &str) -> Option<String> {
+    read_closed(cfg, door, Some(after)).map(|raw| classify_closed(&raw, cfg))
 }
 
 fn read_closed(cfg: &Config, door: &LcClient, after: Option<&str>) -> Option<String> {
@@ -532,6 +538,17 @@ mod tests {
         let refused = std::sync::Arc::new(Closes(Default::default(), "", 3));
         assert_eq!(detect_invalid_closed(&cfg, &LcClient::over(refused, true)), "");
         assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "2026-11-03T00:00:00Z");
+    }
+
+    #[test_id(t47n5tg)]
+    #[test]
+    fn an_answered_empty_closed_read_is_some_and_a_refused_one_is_none() {
+        let cfg = Config::test_fixture();
+        let after = "2026-11-01T00:00:00Z";
+        let empty = std::sync::Arc::new(Closes(Default::default(), "[]", 0));
+        assert_eq!(invalid_closed_since(&cfg, &LcClient::over(empty, true), after), Some(String::new()));
+        let refused = std::sync::Arc::new(Closes(Default::default(), "", 3));
+        assert_eq!(invalid_closed_since(&cfg, &LcClient::over(refused, true), after), None);
     }
 
     #[test_id(t1ap5ot)]
