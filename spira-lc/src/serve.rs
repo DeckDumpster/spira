@@ -686,19 +686,80 @@ fn stop_on_sigterm() {
     unsafe { signal(SIGTERM, on_sigterm) };
 }
 
-/// Accept on `listener` until `stopping`, serving each connection on its own thread. On the
-/// stop the path is removed first, so a new connect is refused at once; connections already
-/// queued are then accepted and served, and only afterwards does the listener drop.
+/// Hands each connection to an idle worker, and starts a worker only when none is idle, so a
+/// request that calls back into the socket always finds a thread to serve the callback.
+struct Workers<'scope, 'env, F> {
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    serve: F,
+    queue: std::sync::mpsc::Sender<UnixStream>,
+    inbox: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<UnixStream>>>,
+    idle: Arc<AtomicUsize>,
+    started: usize,
+}
+
+impl<'scope, 'env, F> Workers<'scope, 'env, F>
+where
+    F: Fn(UnixStream) + Send + Sync + Clone + 'scope,
+{
+    fn new(scope: &'scope std::thread::Scope<'scope, 'env>, serve: F, idle: Arc<AtomicUsize>) -> Self {
+        let (queue, inbox) = std::sync::mpsc::channel();
+        Workers { scope, serve, queue, inbox: Arc::new(std::sync::Mutex::new(inbox)), idle, started: 0 }
+    }
+
+    fn dispatch(&mut self, stream: UnixStream) {
+        let claimed = self.idle.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok();
+        if claimed {
+            let _ = self.queue.send(stream);
+            return;
+        }
+        self.started += 1;
+        let (serve, inbox, idle) = (self.serve.clone(), self.inbox.clone(), self.idle.clone());
+        self.scope.spawn(move || {
+            let mut next = stream;
+            loop {
+                serve(next);
+                idle.fetch_add(1, Ordering::SeqCst);
+                match inbox.lock().unwrap().recv() {
+                    Ok(stream) => next = stream,
+                    Err(_) => return,
+                }
+            }
+        });
+    }
+}
+
+/// Accept on `listener` until `stopping`, serving connections on reused worker threads and
+/// returning how many threads that took. On the stop the path is removed first, so a new
+/// connect is refused at once; connections already queued are then accepted and served, and
+/// only afterwards does the listener drop and the workers end.
 fn accept_until_stopped<'scope, 'env, F>(
     listener: &UnixListener,
     socket_path: &str,
     scope: &'scope std::thread::Scope<'scope, 'env>,
     stopping: &AtomicBool,
     serve: F,
-) where
+) -> usize
+where
+    F: Fn(UnixStream) + Send + Sync + Clone + 'scope,
+{
+    accept_counting_idle(listener, socket_path, scope, stopping, serve, Arc::default())
+}
+
+/// `accept_until_stopped` with the idle-worker count shared with the caller, which a test reads
+/// to know a worker has finished its reply's aftermath.
+fn accept_counting_idle<'scope, 'env, F>(
+    listener: &UnixListener,
+    socket_path: &str,
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    stopping: &AtomicBool,
+    serve: F,
+    idle: Arc<AtomicUsize>,
+) -> usize
+where
     F: Fn(UnixStream) + Send + Sync + Clone + 'scope,
 {
     use std::os::unix::io::AsRawFd;
+    let mut workers = Workers::new(scope, serve, idle);
     let mut ready = PollFd { fd: listener.as_raw_fd(), events: POLLIN, revents: 0 };
     while !stopping.load(Ordering::SeqCst) {
         ready.revents = 0;
@@ -707,10 +768,7 @@ fn accept_until_stopped<'scope, 'env, F>(
             continue;
         }
         match listener.accept() {
-            Ok((stream, _)) => {
-                let serve = serve.clone();
-                scope.spawn(move || serve(stream));
-            }
+            Ok((stream, _)) => workers.dispatch(stream),
             Err(e) => eprintln!("spira-lc serve: accept error: {e}"),
         }
     }
@@ -719,16 +777,13 @@ fn accept_until_stopped<'scope, 'env, F>(
     }
     if let Err(e) = listener.set_nonblocking(true) {
         eprintln!("spira-lc serve: cannot drain the queue: {e}");
-        return;
+        return workers.started;
     }
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
-                let serve = serve.clone();
-                scope.spawn(move || {
-                    let _ = stream.set_nonblocking(false);
-                    serve(stream)
-                });
+                let _ = stream.set_nonblocking(false);
+                workers.dispatch(stream);
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(e) => {
@@ -739,6 +794,7 @@ fn accept_until_stopped<'scope, 'env, F>(
             }
         }
     }
+    workers.started
 }
 
 /// One pass of the control store's GC controller; each failed step is logged under its name,

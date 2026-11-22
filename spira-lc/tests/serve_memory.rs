@@ -121,11 +121,12 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
             });
         }
     });
-    // A request past its deadline is answered and its worker runs on: wait for the workers to end.
+    // Workers are reused and stay parked, bounded by concurrency (at most 2x the clients, far below the requests), not by requests; a request past its
+    // deadline is answered and its worker runs on: wait for the count to settle at that bound.
     let mut polls = 0;
-    while threads(pid) > threads_at_ready {
+    while threads(pid) > threads_at_ready + 2 * CONNECTIONS as u64 {
         polls += 1;
-        assert!(polls < 3_000, "threads still above the {threads_at_ready} at ready: {}", thread_names(pid).join(", "));
+        assert!(polls < 3_000, "threads still above the {threads_at_ready} at ready plus the parked workers: {}", thread_names(pid).join(", "));
         std::thread::sleep(Duration::from_millis(10)); // clock-safe: polls the server's thread count, the signal waited on
     }
     let after = rss_anon(pid);
