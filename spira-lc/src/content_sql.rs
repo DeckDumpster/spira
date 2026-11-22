@@ -738,6 +738,21 @@ pub fn layout_gaps(sql: &dyn Sql, db: &str) -> Res<Vec<String>> {
     Ok(crate::plan::missing_columns(&have))
 }
 
+/// The `table.column` names of [`crate::admin_indexes::WINDOW_INDEXES`] that no index of the beads database leads with.
+pub fn index_gaps(sql: &dyn Sql, db: &str) -> Res<Vec<String>> {
+    let rows = sql.rows(&format!("SELECT table_name AS t, column_name AS c FROM information_schema.statistics WHERE table_schema = '{}' AND seq_in_index = 1", escape(db.trim_matches('`'))))?;
+    let have: BTreeSet<(String, String)> = rows.iter().filter_map(|r| Some((cell(r, "t")?.to_lowercase(), cell(r, "c")?.to_lowercase()))).collect();
+    Ok(crate::admin_indexes::WINDOW_INDEXES.iter().filter(|(t, c)| !have.contains(&(t.to_string(), c.to_string()))).map(|(t, c)| format!("{t}.{c}")).collect())
+}
+
+fn index_warning(db: &str, gaps: &[String]) -> String {
+    format!(
+        "the beads database {} has no index on {}; windowed content reads scan every bead (served anyway); run `spira-lc admin-ensure-indexes`",
+        db.trim_matches('`'),
+        gaps.join(", ")
+    )
+}
+
 /// The gaps in `tables` only: a read is refused for the columns it selects, not for another read's.
 fn gaps_in(gaps: &[String], tables: &[&str]) -> Vec<String> {
     gaps.iter().filter(|g| tables.iter().any(|t| g.strip_prefix(t).is_some_and(|rest| rest.starts_with('.')))).cloned().collect()
@@ -843,8 +858,16 @@ pub fn served() -> Result<&'static Reader, String> {
 /// Reads at server start: a layout the reads do not know is logged by name rather than found by
 /// the first caller.
 pub fn check_at_startup() -> Result<(), String> {
-    served()?.layout().map_err(|f| f.text().to_string())
+    let reader = served()?;
+    reader.layout().map_err(|f| f.text().to_string())?;
+    match index_gaps(reader.sql(), &reader.db) {
+        Ok(gaps) if !gaps.is_empty() => eprintln!("{}", index_warning(&reader.db, &gaps)),
+        _ => {}
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod index_tests;
