@@ -38,8 +38,20 @@ async fn main() -> ExitCode {
         Err(e) => eprintln!("loom: listening, but cannot name the address: {e}"),
     }
 
+    let pinned0 = cfg.render_pinned();
+    let tick = std::time::Duration::from_secs(std::env::var("SPIRA_LOOM_TICK").ok().and_then(|t| t.parse::<u64>().ok()).unwrap_or(5).max(1));
+    let conf_file = loom::confwatch::conf_file();
     let app = loom::telemetry::metered(router(Arc::new(Loom::new(cfg))), spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok());
-    if let Err(e) = axum::serve(listener, app).await {
+    let restart = async move {
+        match conf_file {
+            Some(f) => {
+                let why = loom::confwatch::changed(f, tick, pinned0).await;
+                eprintln!("loom: {why} — exiting for restart");
+            }
+            None => std::future::pending().await,
+        }
+    };
+    if let Err(e) = axum::serve(listener, app).with_graceful_shutdown(restart).await {
         eprintln!("loom: stopped serving: {e}");
         return ExitCode::from(1);
     }

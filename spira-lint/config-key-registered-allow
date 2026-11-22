@@ -453,7 +453,7 @@ SPIRA_LOGINCTL spira/owned.sh
 SPIRA_LOGINCTL spira/uninstall.sh
 SPIRA_LOOM_BIN spira-config/src/convert.rs
 SPIRA_LOOM_PROBE spira/ready.sh
-SPIRA_LOOM_TICK spira/loom.sh
+SPIRA_LOOM_TICK loom/src/main.rs
 SPIRA_MAIL_ALLOW_BLOCKING mail/src/env.rs
 SPIRA_MAIL_FROM archivist/src/seam.rs
 SPIRA_MAIL_FROM dwarf/src/run.rs
