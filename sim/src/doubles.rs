@@ -59,6 +59,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("design-asks", &["design-asks.observe", "inbox.append"]),
     ("brain-dirty", &["brain-dirty.observe", "inbox.append"]),
     ("claim-count", &["claim-count.observe", "inbox.append"]),
+    ("writer-grants", &["writer-grants.observe", "inbox.append"]),
     ("supersede-duty", &["supersede-duty.observe", "supersede-duty.act", "inbox.append"]),
     ("bead-sweep", &["bead-sweep.observe", "bead-sweep.repair", "inbox.append"]),
     ("publish-backlog", &["publish-backlog.observe", "inbox.append"]),
