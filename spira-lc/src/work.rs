@@ -836,6 +836,9 @@ fn cmd_done(bead_id: &str, args: &[String]) -> (i32, String) {
         if let Some(refusal) = skuld_draft_refusal(bead_id) {
             return refusal;
         }
+        if let Some(refusal) = skuld_review_apply(bead_id) {
+            return refusal;
+        }
         if flag(args, "--after-ask").is_none() && released_on_ask_history(bead_id) {
             return (
                 REFUSED,
@@ -937,6 +940,68 @@ fn skuld_draft_refusal(bead_id: &str) -> Option<(i32, String)> {
         Ok(notes) => skuld_draft_notes_refusal(bead_id, &notes),
         Err(e) => Some((CANNOT_TELL, format!("cannot tell: {e}"))),
     }
+}
+
+/// A Skuld request that reviews follow-ups rewrites each one's body with its draft before the
+/// request is done. `None` lets `Done` proceed.
+fn skuld_review_apply(bead_id: &str) -> Option<(i32, String)> {
+    let label = match spira_config::process::cfg("SPIRA_SKULD_LABEL") {
+        Ok(l) => l,
+        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+    };
+    let labels = match crate::bd::labels(bead_id) {
+        Ok(l) => l,
+        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+    };
+    if label.is_empty() || !labels.contains(&label) {
+        return None;
+    }
+    let dependents = match crate::bd::blocked_dependents(bead_id) {
+        Ok(d) if d.is_empty() => return None,
+        Ok(d) => d,
+        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+    };
+    let notes = match crate::bd::show(bead_id) {
+        Ok(n) => n,
+        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+    };
+    apply_reviews(bead_id, &dependents, &notes, crate::bd::amend_replace, crate::bd::amend_note)
+}
+
+fn apply_reviews(
+    request: &str,
+    dependents: &[(String, String)],
+    notes: &str,
+    mut replace: impl FnMut(&str, &str) -> Result<(), String>,
+    mut note: impl FnMut(&str, &str) -> Result<(), String>,
+) -> Option<(i32, String)> {
+    let mut drafts = Vec::new();
+    for (dep, title) in dependents {
+        match ::bead::draft_body(notes, title) {
+            Some(d) => drafts.push((dep, d)),
+            None => {
+                return Some((
+                    REFUSED,
+                    format!(
+                        "refused: work done: {request} reviews {dep} (\"{title}\"); no note holds a draft headed \"### Draft: {title}\". \
+                         Write it with work note - (the heading verbatim, a blank line, the item), then run work done again"
+                    ),
+                ))
+            }
+        }
+    }
+    for (dep, d) in drafts {
+        if let Err(e) = replace(dep, &format!("Drafted by Skuld: {request}\n\n{}\n", d.body)) {
+            return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; the draft could not replace the body of {dep}, which keeps waiting (run work done again): {e}")));
+        }
+        if let Some(open) = &d.open {
+            if let Err(e) = note(dep, open) {
+                return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; {dep}'s body was replaced but the question could not be noted on it (run work done again): {e}")));
+            }
+        }
+        crate::bd::record_event("spira_skuld_drafts_applied", "done");
+    }
+    None
 }
 
 fn skuld_draft_notes_refusal(bead_id: &str, notes: &str) -> Option<(i32, String)> {
@@ -1072,7 +1137,46 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str) -> (i32, String) {
     let actor = flag(args, "--actor").unwrap_or_default();
     let body = split_reserved(args).stdin;
     let register = |new_id: &str| crate::plane::call(&[s("create-bead"), new_id.to_string(), s("--ready"), s("--repo"), repo.clone()]);
-    file_and_bind(&Filing { verb, actor: &actor, title, persona: &persona, repo: &repo, bound: bead_id, after_landing, body: body.as_deref() }, register)
+    let filing = Filing { verb, actor: &actor, title, persona: &persona, repo: &repo, bound: bead_id, after_landing, body: body.as_deref() };
+    let filed = file_and_bind(&filing, register);
+    if verb != "file-followup" || filed.0 != 0 || !lane_requires_skuld(&persona) {
+        return filed;
+    }
+    review_followup(&filing, &filed.1, |t, b| crate::bd::file_child(t, SKULD_PERSONA, &repo, None, Some(b), None), crate::bd::add_blocker)
+}
+
+const SKULD_PERSONA: &str = "skuld";
+
+fn lane_requires_skuld(persona: &str) -> bool {
+    match spira_config::resolve::locate_home_for_process() {
+        Ok(home) => lane_requires_skuld_in(std::path::Path::new(&home), persona),
+        Err(_) => false,
+    }
+}
+
+fn lane_requires_skuld_in(home: &std::path::Path, persona: &str) -> bool {
+    spira_config::runes::rune_get(home, persona, "RUNE_REQUIRES_SKULD", "") == "1"
+}
+
+/// Files the Skuld request that reviews `followup` and makes `followup` wait on it. The first
+/// line of the answer stays the follow-up's id.
+fn review_followup(
+    f: &Filing,
+    followup: &str,
+    file: impl FnOnce(&str, &str) -> Result<String, String>,
+    wait: impl FnOnce(&str, &str) -> Result<(), String>,
+) -> (i32, String) {
+    let request_title = format!("Draft {followup}: {}", f.title);
+    let request_body = ::bead::review_request_body(followup, f.title, f.actor, f.bound, f.body.unwrap_or(""));
+    let request = match file(&request_title, &request_body) {
+        Ok(r) => r,
+        Err(e) => return (CANNOT_TELL, format!("{followup} was filed but its Skuld review could not be filed (do not file it again; file the review and make {followup} wait on it): {e}")),
+    };
+    if let Err(e) = wait(followup, &request) {
+        return (CANNOT_TELL, format!("{followup} was filed and so was its Skuld review {request}, but {followup} could not be made to wait on it (do not file it again; add the dependency): {e}"));
+    }
+    crate::bd::record_event("spira_skuld_reviews_filed", "file-followup");
+    (0, format!("{followup}\n{request} is the Skuld review of {followup}; {followup} waits on it and cannot be claimed until it is done"))
 }
 
 struct Filing<'a> {
@@ -2374,6 +2478,99 @@ mod store_tests {
 
 #[cfg(test)]
 mod tests {
+
+    fn filing<'a>() -> super::Filing<'a> {
+        super::Filing { verb: "file-followup", actor: "builder", title: "Fix x", persona: "builder", repo: "spira", bound: "sp-b0", after_landing: false, body: Some("## Build\nthe thing\n") }
+    }
+
+    #[test_id(t8eduz9)]
+    #[test]
+    fn a_followup_in_a_skuld_lane_files_a_skuld_request_and_waits_on_it() {
+        let filed = std::cell::RefCell::new(Vec::new());
+        let edges = std::cell::RefCell::new(Vec::new());
+        let (code, out) = super::review_followup(
+            &filing(),
+            "sp-f1",
+            |t, b| {
+                filed.borrow_mut().push((t.to_string(), b.to_string()));
+                Ok("sp-r1".to_string())
+            },
+            |blocked, blocker| {
+                edges.borrow_mut().push((blocked.to_string(), blocker.to_string()));
+                Ok(())
+            },
+        );
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(out.lines().next(), Some("sp-f1"));
+        assert!(out.lines().nth(1).unwrap().contains("sp-r1"));
+        assert!(filed.borrow()[0].1.contains("### Draft: Fix x\n\n"));
+        assert_eq!(*edges.borrow(), vec![("sp-f1".to_string(), "sp-r1".to_string())]);
+    }
+
+    #[test_id(tuc3jn0)]
+    #[test]
+    fn a_failed_review_filing_names_the_followup_and_says_not_to_file_it_again() {
+        let (code, out) = super::review_followup(&filing(), "sp-f1", |_, _| Err("boom".into()), |_, _| Ok(()));
+        assert_eq!(code, super::CANNOT_TELL);
+        assert!(out.contains("sp-f1") && out.contains("do not file it again"), "{out}");
+    }
+
+    #[test_id(tp9c9mm)]
+    #[test]
+    fn a_lane_without_the_skuld_key_files_one_bead() {
+        let tmp = testkit::TempDir::new("lane-home");
+        let home = tmp.path().to_path_buf();
+        let runes = spira_config::runes::runes_dir(&home);
+        std::fs::create_dir_all(&runes).unwrap();
+        std::fs::write(runes.join("plain.rune"), "RUNE_LABELS=x\n").unwrap();
+        std::fs::write(runes.join("strict.rune"), "RUNE_REQUIRES_SKULD=1\n").unwrap();
+        assert!(!super::lane_requires_skuld_in(&home, "plain"));
+        assert!(super::lane_requires_skuld_in(&home, "strict"));
+    }
+
+    fn deps() -> Vec<(String, String)> {
+        vec![("sp-f1".to_string(), "Fix x".to_string())]
+    }
+
+    #[test_id(t3yn5fy)]
+    #[test]
+    fn done_on_a_review_refuses_with_the_exit_when_no_draft_matches() {
+        let (code, out) = super::apply_reviews("sp-r1", &deps(), "### Draft: Other\n\nbody\n", |_, _| panic!("no amend"), |_, _| panic!("no note")).unwrap();
+        assert_eq!(code, super::REFUSED);
+        assert!(out.contains("### Draft: Fix x") && out.contains("work note -"), "{out}");
+    }
+
+    #[test_id(tx6bpmv)]
+    #[test]
+    fn done_on_a_review_amends_the_dependent_with_the_draft_and_notes_its_open_line() {
+        let amended = std::cell::RefCell::new(Vec::new());
+        let noted = std::cell::RefCell::new(Vec::new());
+        let notes = "### Draft: Fix x\n\n## Build\nbetter\nOpen: which?; default: a\n";
+        let out = super::apply_reviews(
+            "sp-r1",
+            &deps(),
+            notes,
+            |id, b| {
+                amended.borrow_mut().push((id.to_string(), b.to_string()));
+                Ok(())
+            },
+            |id, t| {
+                noted.borrow_mut().push((id.to_string(), t.to_string()));
+                Ok(())
+            },
+        );
+        assert!(out.is_none());
+        assert_eq!(*amended.borrow(), vec![("sp-f1".to_string(), "Drafted by Skuld: sp-r1\n\n## Build\nbetter\n".to_string())]);
+        assert_eq!(*noted.borrow(), vec![("sp-f1".to_string(), "Open: which?; default: a".to_string())]);
+    }
+
+    #[test_id(tv5jvx6)]
+    #[test]
+    fn done_on_a_review_whose_amend_fails_leaves_the_request_working() {
+        let (code, out) = super::apply_reviews("sp-r1", &deps(), "### Draft: Fix x\n\nb\n", |_, _| Err("no".into()), |_, _| Ok(())).unwrap();
+        assert_eq!(code, super::CANNOT_TELL);
+        assert!(out.contains("WORKING"), "{out}");
+    }
     fn queued_json(id: &str) -> String {
         let r = crate::control::work_requests::WorkRequest { id: id.into(), bead: "sp-x".into(), actor: "a".into(), argv: vec![], stdin: None, bound_ms: 1, state: "queued".into(), code: None, output: String::new(), truncated: false, queued_at: 0, started_at: None, finished_at: None };
         serde_json::to_string(&vec![r]).unwrap()

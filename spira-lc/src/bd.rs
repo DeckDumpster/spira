@@ -364,6 +364,35 @@ pub fn add_blocker(id: &str, depends_on: &str) -> Result<(), String> {
     bead_sh(&["dep", "add", id, depends_on, "--type", "blocks"])
 }
 
+/// `bead.sh amend <id> --body-file <file> --replace`: the body becomes `body`.
+pub fn amend_replace(id: &str, body: &str) -> Result<(), String> {
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("amend-{id}-{}.md", std::process::id()));
+    std::fs::write(&path, body).map_err(|e| format!("writing {}: {e}", path.display()))?;
+    let shown = path.to_string_lossy().into_owned();
+    let res = bead_sh(&["amend", id, "--body-file", &shown, "--replace"]);
+    let _ = std::fs::remove_file(&path);
+    res
+}
+
+/// `bead.sh amend <id> --note <text>`.
+pub fn amend_note(id: &str, text: &str) -> Result<(), String> {
+    bead_sh(&["amend", id, "--note", text])
+}
+
+/// The open beads that wait on `id` through a `blocks` edge, each with its title.
+pub fn blocked_dependents(id: &str) -> Result<Vec<(String, String)>, String> {
+    let ids = <LiveBd as crate::callers::Bd>::blocking_dependents(&mut LiveBd, id)?;
+    ids.into_iter().map(|d| { let t = title(&d)?.unwrap_or_default(); Ok((d, t)) }).collect()
+}
+
+/// Pushes a count of `name`, labelled by `op`; a failed push is dropped.
+pub fn record_event(name: &'static str, op: &str) {
+    use spira_otel::metrics::{MetricsSink, Point};
+    let Ok(endpoint) = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT") else { return };
+    MetricsSink::new(Some(&endpoint), "spira-lc", std::time::Duration::from_millis(250)).push(&[Point::Count { name, value: 1 }], &[("op", op)]);
+}
+
 pub fn label_add(id: &str, label: &str) -> Result<(), String> {
     bead_sh(&["label", "add", id, label])
 }
