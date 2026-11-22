@@ -918,7 +918,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     reply_then_settle(
         &stream,
         &ans,
-        ans.code != 0 && cut_at.is_none() && ended.reads_ended + ended.reads_overran > 0,
+        ans.code != 0 && cut_at.is_none() && ended.reads_ended + ended.reads_overran + ended.reads_ended_by_reset > 0,
         || {
             answered = read_at.elapsed();
             crate::slow::request_done(measured, &method, &caller, task.as_deref(), answered);
@@ -929,12 +929,12 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
     let store = recorder.snapshot();
-    crate::slow::reads_done(measured, store.reads_ended, store.reads_overran);
+    crate::slow::reads_done(measured, store.reads_ended, store.reads_overran, store.reads_ended_by_reset);
     let gate_wait = store.phases.iter().find(|p| p.0 == "gate_wait");
     if let Some((_, us)) = gate_wait {
         crate::slow::gate_waited(measured, Duration::from_micros(*us));
     }
-    crate::followups::request_done(&caller, measured, store.reads_ended > 0 || store.reads_overran > 0 || gate_wait.is_some(), ans.code);
+    crate::followups::request_done(&caller, measured, store.reads_ended > 0 || store.reads_overran > 0 || store.reads_ended_by_reset > 0 || gate_wait.is_some(), ans.code);
     let (handed, returned) = worked;
     let before_span = Instant::now();
     let call = spira_otel::Call {
@@ -956,7 +956,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
         commits_us: &store.commits_us,
         reads: store.reads,
         read_max_us: store.read_max_us,
-        reads_ended: store.reads_ended,
+        reads_ended: store.reads_ended + store.reads_ended_by_reset,
         reads_overran: store.reads_overran,
         open_phase: store.open,
         content_queries: store.content_queries,

@@ -23,8 +23,8 @@ struct Counters {
     gate_max: BTreeMap<String, Duration>,
 }
 
-/// Reads the store ended at its limit, and reads that ran past it without being ended.
-type ReadCounts = (u64, u64);
+/// Reads the store ended at its limit, reads that ran past it without being ended, and reads a WAL restart's gate hold ended.
+type ReadCounts = (u64, u64, u64);
 
 /// What a key has served: calls, milliseconds, and calls over the answer limit.
 type Counts = (u64, u64, u64);
@@ -38,6 +38,8 @@ static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(),
 pub const READS_ENDED: &str = "spira_lc_reads_ended";
 /// Reads that ran past the limit without being ended, by verb; expected 0.
 pub const READS_OVERRAN: &str = "spira_lc_reads_overran";
+/// Reads a WAL restart's hold of the read gate used the whole limit of, by verb; expected 0.
+pub const READS_ENDED_BY_RESET: &str = "spira_lc_reads_ended_by_reset";
 
 /// The longest wait at the store's read gate by one request of a verb, per push interval.
 pub const GATE_WAIT_MAX_SECONDS: &str = "spira_lc_gate_wait_max_seconds";
@@ -126,14 +128,15 @@ pub fn caller_of_pid(pid: i32) -> String {
     clean(&named.or_else(parent).unwrap_or(comm))
 }
 
-pub fn reads_done(verb: &str, ended: u64, overran: u64) {
-    if ended == 0 && overran == 0 {
+pub fn reads_done(verb: &str, ended: u64, overran: u64, by_reset: u64) {
+    if ended == 0 && overran == 0 && by_reset == 0 {
         return;
     }
     if let Ok(mut c) = COUNTERS.lock() {
         let r = c.reads.entry(clean(verb)).or_default();
         r.0 += ended;
         r.1 += overran;
+        r.2 += by_reset;
     }
 }
 
@@ -346,14 +349,17 @@ fn series_since(c: &Counters, pushed: &BTreeMap<Key, Counts>, at: std::time::Sys
 
 fn read_series_since(c: &Counters, pushed: &BTreeMap<String, ReadCounts>, at: std::time::SystemTime) -> Vec<spira_otel::metrics::Series> {
     let mut out = Vec::new();
-    for (verb, &(ended, overran)) in &c.reads {
-        let (pe, po) = pushed.get(verb).copied().unwrap_or_default();
+    for (verb, &(ended, overran, by_reset)) in &c.reads {
+        let (pe, po, pr) = pushed.get(verb).copied().unwrap_or_default();
         let series = |name: &str, value: u64| spira_otel::metrics::Series { name: name.into(), value: value as f64, labels: vec![("verb".to_string(), verb.clone())], at };
         if ended > pe {
             out.push(series(READS_ENDED, ended - pe));
         }
         if overran > po {
             out.push(series(READS_OVERRAN, overran - po));
+        }
+        if by_reset > pr {
+            out.push(series(READS_ENDED_BY_RESET, by_reset - pr));
         }
     }
     out
@@ -825,7 +831,7 @@ mod tests {
         assert_eq!(total(READS_ENDED, "list"), 3.0);
         assert_eq!(total(READS_OVERRAN, "show"), 4.0);
         assert_eq!(total(READS_OVERRAN, "list"), 0.0);
-        let pushed = BTreeMap::from([("list".to_string(), (3, 0))]);
+        let pushed = BTreeMap::from([("list".to_string(), (3, 0, 0))]);
         assert!(read_series_since(&c, &pushed, std::time::SystemTime::now()).iter().all(|s| s.labels[0].1 != "list"), "only the delta");
     }
 
@@ -842,12 +848,111 @@ mod tests {
         assert!(take_gate_wait_series(std::time::SystemTime::now()).iter().all(|s| s.labels[0].1 != "list"), "taken once");
     }
 
+    struct SignalClock {
+        inner: runtime::ports::VirtualClock,
+        restart_thread: Mutex<Option<std::thread::ThreadId>>,
+        started: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    }
+
+    impl runtime::ports::Clock for SignalClock {
+        fn now_ms(&self) -> u64 {
+            if *self.restart_thread.lock().unwrap() == Some(std::thread::current().id()) {
+                if let Some(tx) = self.started.lock().unwrap().take() {
+                    let _ = tx.send(());
+                }
+            }
+            self.inner.now_ms()
+        }
+    }
+
+    #[test_id(t7r5s2e)]
+    #[test]
+    fn a_read_the_forced_wal_restart_held_past_its_limit_is_counted_by_reset_and_one_ended_at_the_limit_is_not() {
+        use state_store::Backend;
+        use state_store_sqlite::{Options, SqliteBackend};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc::channel;
+        use std::sync::Arc;
+
+        let dir = testkit::TempDir::new("lc-ended-by-reset");
+        let (held_tx, held_rx) = channel::<()>();
+        let (release_tx, release_rx) = channel::<()>();
+        let (started_tx, started_rx) = channel::<()>();
+        let clock = Arc::new(SignalClock { inner: runtime::ports::VirtualClock::new(0), restart_thread: Mutex::new(None), started: Mutex::new(Some(started_tx)) });
+        let (armed, slow) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        let probe = {
+            let (armed, slow, clock) = (armed.clone(), slow.clone(), clock.clone());
+            let (held_tx, release_rx) = (Mutex::new(held_tx), Mutex::new(release_rx));
+            Arc::new(move || {
+                if armed.swap(false, Ordering::SeqCst) {
+                    held_tx.lock().unwrap().send(()).unwrap();
+                    let _ = release_rx.lock().unwrap().recv();
+                } else if slow.load(Ordering::SeqCst) {
+                    clock.inner.advance(500);
+                }
+            }) as Arc<dyn Fn() + Send + Sync>
+        };
+        let opts = Options { max_read_ms: 100, readers: 3, clock: clock.clone(), checkpoint_every: u64::MAX, wal_line_bytes: u64::MAX, read_probe: Some(probe), ..Options::default() };
+        let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
+        let head = b.head().unwrap();
+        b.commit(head, &[state_store::Write::Put { key: "k".into(), value: vec![7u8; 4096], create_rev: state_store::Rev::new(head + 1, 0), prev: None }]).unwrap();
+        let head = b.head().unwrap();
+
+        armed.store(true, Ordering::SeqCst);
+        let holder = {
+            let b = b.clone();
+            std::thread::spawn(move || b.get("k", head))
+        };
+        held_rx.recv().unwrap();
+        let restart = {
+            let (b, clock) = (b.clone(), clock.clone());
+            std::thread::spawn(move || {
+                *clock.restart_thread.lock().unwrap() = Some(std::thread::current().id());
+                b.restart_wal_now(0)
+            })
+        };
+        started_rx.recv().unwrap();
+        let read = |b: SqliteBackend| {
+            let rec = Arc::new(state_store::phases::Recorder::default());
+            let seen = rec.clone();
+            let join = std::thread::spawn(move || {
+                state_store::phases::track(seen);
+                b.get("k", head)
+            });
+            (rec, join)
+        };
+        let (held_rec, held_read) = read(b.clone());
+        while held_rec.snapshot().open != Some("gate_wait") {
+            std::thread::yield_now();
+        }
+        clock.inner.advance(200);
+        let (pass, forced) = restart.join().unwrap().unwrap();
+        assert!(pass.busy && forced, "the restart must be a forced one that gave up: {pass:?} {forced}");
+        release_tx.send(()).unwrap();
+        assert!(held_read.join().unwrap().is_err());
+        let _ = holder.join().unwrap();
+
+        slow.store(true, Ordering::SeqCst);
+        let (limit_rec, limit_read) = read(b.clone());
+        assert!(limit_read.join().unwrap().is_err());
+
+        for (verb, rec) in [("reset-probe", &held_rec), ("limit-probe", &limit_rec)] {
+            let s = rec.snapshot();
+            reads_done(verb, s.reads_ended, s.reads_overran, s.reads_ended_by_reset);
+        }
+        let got = read_series_since(&COUNTERS.lock().unwrap(), &BTreeMap::new(), std::time::SystemTime::now());
+        let total = |name: &str, verb: &str| got.iter().filter(|s| s.name == name && s.labels == [("verb".to_string(), verb.to_string())]).map(|s| s.value).sum::<f64>();
+        assert_eq!(total(READS_ENDED_BY_RESET, "reset-probe"), 1.0);
+        assert_eq!(total(READS_ENDED_BY_RESET, "limit-probe"), 0.0);
+        assert_eq!(total(READS_ENDED, "limit-probe"), 1.0);
+    }
+
     #[test_id(t4kpgzc)]
     #[test]
     fn reads_done_accumulates_into_the_counters() {
-        reads_done("reads-probe", 1, 0);
-        reads_done("reads-probe", 2, 5);
-        assert_eq!(COUNTERS.lock().unwrap().reads["reads-probe"], (3, 5));
+        reads_done("reads-probe", 1, 0, 0);
+        reads_done("reads-probe", 2, 5, 0);
+        assert_eq!(COUNTERS.lock().unwrap().reads["reads-probe"], (3, 5, 0));
     }
 
     #[test_id(towqmdb)]

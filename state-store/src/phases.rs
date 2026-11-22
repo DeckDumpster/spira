@@ -62,6 +62,7 @@ struct Inner {
     read_max: Duration,
     reads_ended: u64,
     reads_overran: u64,
+    reads_ended_by_reset: u64,
 }
 
 /// What a request recorded; shared between the worker thread and the one that answers.
@@ -83,6 +84,8 @@ pub struct Snapshot {
     pub reads_ended: u64,
     /// Reads that returned past `max_read_ms` without being stopped in time; expected 0.
     pub reads_overran: u64,
+    /// Reads a WAL restart's hold of the read gate used the whole limit of, so they were ended on release.
+    pub reads_ended_by_reset: u64,
     /// The innermost phase still running.
     pub open: Option<&'static str>,
     /// Dolt SQL statements run.
@@ -120,6 +123,7 @@ impl Recorder {
             read_max_us: g.read_max.as_micros() as u64,
             reads_ended: g.reads_ended,
             reads_overran: g.reads_overran,
+            reads_ended_by_reset: g.reads_ended_by_reset,
             open: g.open.last().map(|p| p.name()),
             content_queries: g.count[Phase::ContentQuery as usize],
             children: g.count[Phase::Child as usize],
@@ -271,6 +275,8 @@ pub enum ReadEnd {
     Ended,
     /// Returned past the limit and was ended by the final check.
     Overran,
+    /// The read gate was held past the read's limit before it began.
+    EndedByReset,
 }
 
 /// Records one read transaction's own duration and how it ended; nothing when no recorder is installed.
@@ -282,6 +288,7 @@ pub fn record_read(took: Duration, end: ReadEnd) {
             ReadEnd::Finished => {}
             ReadEnd::Ended => g.reads_ended += 1,
             ReadEnd::Overran => g.reads_overran += 1,
+            ReadEnd::EndedByReset => g.reads_ended_by_reset += 1,
         }
     }
 }

@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn the_checkpointing_row_queries_each_metric_by_its_const_and_the_wal_panel_carries_its_lines() {
-        use crate::slow::{GATE_WAIT_MAX_SECONDS, READS_ENDED, READS_OVERRAN};
+        use crate::slow::{GATE_WAIT_MAX_SECONDS, READS_ENDED, READS_ENDED_BY_RESET, READS_OVERRAN};
         use state_store_sqlite::{WAL_FORCED_GIVEN_UP, WAL_FORCED_RESETS, WAL_RESETS_COMPLETED, WAL_RESETS_GIVEN_UP};
         let board: serde_json::Value = serde_json::from_str(include_str!("../../spira/metrics/grafana/dashboards/bead-store.json")).unwrap();
         let panels = board["panels"].as_array().unwrap();
@@ -199,6 +199,7 @@ mod tests {
         }
         let reads = exprs("control store reads ended at the limit by verb");
         assert!(reads.contains(READS_ENDED) && reads.contains(READS_OVERRAN), "{reads}");
+        assert!(exprs("control store reads ended by a WAL reset by verb (expected 0)").contains(READS_ENDED_BY_RESET));
         let gate = panel("control store longest gate wait by verb");
         assert!(exprs("control store longest gate wait by verb").contains(GATE_WAIT_MAX_SECONDS));
         assert!(exprs("reads ended or held at the gate: what the caller did next").contains(crate::followups::READ_FOLLOWUPS));
