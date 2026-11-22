@@ -192,12 +192,13 @@ mod tests {
 
     #[test_id(tknfgnh)]
     #[test]
-    fn the_dashboard_counts_lc_serve_children_by_verb_under_the_metric_the_series_carries() {
+    fn the_dashboard_counts_every_lc_serve_child_and_breaks_the_request_ones_out_by_verb() {
         let board: serde_json::Value = serde_json::from_str(include_str!("../../spira/metrics/grafana/dashboards/bead-store.json")).unwrap();
         let panels = board["panels"].as_array().unwrap();
-        let panel = panels.iter().find(|p| p["title"] == "lc-serve child processes started, by verb").expect("no child-process panel");
-        let expr = panel["targets"][0]["expr"].as_str().unwrap();
-        assert_eq!(expr, format!("sum by (verb) (sum_over_time({}{{verb=~\"$verb\"}}[$__interval]))", crate::slow::CHILDREN));
+        let panel = panels.iter().find(|p| p["title"] == "lc-serve child processes started").expect("no child-process panel");
+        let expr = |i: usize| panel["targets"][i]["expr"].as_str().unwrap().to_string();
+        assert_eq!(expr(0), format!("sum(sum_over_time({}[$__interval]))", crate::slow::CHILDREN_STARTED));
+        assert_eq!(expr(1), format!("sum by (verb) (sum_over_time({}{{verb=~\"$verb\"}}[$__interval]))", crate::slow::CHILDREN));
         let ids: std::collections::BTreeSet<_> = panels.iter().map(|p| p["id"].as_u64().unwrap()).collect();
         assert_eq!(ids.len(), panels.len(), "panel ids are unique");
     }

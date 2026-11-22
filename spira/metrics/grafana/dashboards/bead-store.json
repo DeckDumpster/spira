@@ -919,7 +919,7 @@
     {
       "id": 25,
       "type": "timeseries",
-      "title": "lc-serve child processes started, by verb",
+      "title": "lc-serve child processes started",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -942,9 +942,18 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum by (verb) (sum_over_time(spira_lc_children{verb=~\"$verb\"}[$__interval]))",
-          "legendFormat": "{{verb}}",
+          "expr": "sum(sum_over_time(spira_lc_children_started[$__interval]))",
+          "legendFormat": "all",
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (verb) (sum_over_time(spira_lc_children{verb=~\"$verb\"}[$__interval]))",
+          "legendFormat": "request: {{verb}}",
+          "refId": "B"
         }
       ]
     }
