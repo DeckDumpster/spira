@@ -375,4 +375,22 @@ mod landing {
         assert_eq!(out.skipped, [pilgrim_land::FIXTURE_TEST]);
         assert_eq!(reg.denied(AT_MS).unwrap(), [pilgrim_land::FIXTURE_TEST]);
     }
+
+    #[test_id(t9w2o17)]
+    #[test]
+    fn a_landing_by_the_rows_own_bead_clears_it_with_a_cleared_landed_entry() {
+        let t = testkit::TempDir::new("pw-land-own");
+        let work = world_repo(&t);
+        let reg = Registry::new("7200").unwrap();
+        reg.disable(1000, pilgrim_land::FIXTURE_TEST, "sp-fixer", "flaky").unwrap();
+        commit_edit(&work, "sp-fixer", "assert_eq!(answer(), 42);", "assert_eq!(answer() + 1, 43);");
+
+        let out = pilgrim_land::land(&work, "local/main", "sp-fixer", &AtRegistry(&reg), &CargoTests).unwrap();
+
+        assert!(out.green, "{}", out.report());
+        assert_eq!(out.ran, [pilgrim_land::FIXTURE_TEST], "{}", out.report());
+        assert_eq!(out.cleared, [pilgrim_land::FIXTURE_TEST], "{}", out.report());
+        assert!(reg.denied(AT_MS).unwrap().is_empty(), "the row reads active");
+        assert!(history(&reg).contains("cleared-landed"), "{}", history(&reg));
+    }
 }
