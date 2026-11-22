@@ -187,9 +187,9 @@ artifacts|dev)
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
     if [ "$build" = artifacts ]; then
-        "$tenv" --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" --repeat-reason "$reason" HEAD
+        "$tenv" --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" --repeat-reason "$reason" HEAD "$d"
     else
-        "$tenv" --mode parallel --profile dev --suites "$suites" --repeat-reason "$reason" HEAD
+        "$tenv" --mode parallel --profile dev --suites "$suites" --repeat-reason "$reason" HEAD "$d"
     fi
     rc=$?
     cd "$HOME" && rm -rf "$d"
@@ -592,6 +592,23 @@ mod tests {
             assert!(env.lines().any(|l| l.starts_with("PATH=") && l.contains(&format!("{dir}/bin"))), "{build}: {env}");
             assert!(!env.contains("SPIRA_"), "{build}: {env}");
             assert!(env.lines().any(|l| l.starts_with("CARGO_TARGET_DIR=") && l.ends_with("home/attr-target")), "{build}: the target dir arrives unquoted: {env}");
+        }
+    }
+
+    #[test_id(tl4x7ms)]
+    #[test]
+    fn the_dev_and_artifacts_probes_ask_testenv_to_test_the_probes_clone_not_the_launchers_spira_repo() {
+        for build in ["dev", "artifacts"] {
+            let d = TempDir::new();
+            let tenv = d.path().join("home/round-work/target/release");
+            fs::create_dir_all(&tenv).unwrap();
+            testkit::write_exe(tenv.join("testenv"), "#!/bin/bash\necho \"$*\" > \"$HOME/testenv.args\"; echo \"$SPIRA_REPO\" > \"$HOME/testenv.repo\"\n");
+            let launcher = format!("export SPIRA_REPO={}/elsewhere\n", d.path().display());
+            attr_job_env(&d, build, "s.sh", 0, "none", Some(&launcher));
+            let args = fs::read_to_string(d.path().join("home/testenv.args")).unwrap();
+            let clone = d.path().join("home/attr/j1");
+            assert!(args.trim_end().ends_with(&format!("HEAD {}", clone.display())), "{build}: {args}");
+            assert!(fs::read_to_string(d.path().join("home/testenv.repo")).unwrap().contains("elsewhere"), "{build}: the launcher's repo is what the bare call would have tested");
         }
     }
 
