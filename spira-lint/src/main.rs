@@ -1,4 +1,4 @@
-//! spira-lint [--root <dir>] [--only <rule>] [--base <rev>] [--findings <file>]
+//! spira-lint [--root <dir>] [--only <rule>] [--base <rev>] [--findings <file>] [--deny-list <file>]
 //! spira-lint --only inventory --scan <file>
 //!
 //! Exit: 0 clean, 1 any finding, 2 usage, 3 a rule refused to report clean,
@@ -12,6 +12,9 @@
 //!
 //! `--findings <file>` also writes each reported finding as one `record::FindingRecord` JSON
 //! line, for a reader that attributes a red without parsing the text on stdout.
+//!
+//! `--deny-list <file>` is the registry `test-id-row-orphan` reads (the gate passes its `SPIRA_TEST_DENY_LIST`); an empty
+//! or missing value exits 2. Without the flag the rule reads nothing and reports `none configured`.
 //!
 //! `--base` defaults to `SPIRA_GATE_BASE` (the gate sets it). On a clean run the positive
 //! controls go to stderr: one `fence: <rule> checked <n> <unit>` per rule that reports one,
@@ -31,7 +34,7 @@ use std::process::ExitCode;
 
 use spira_lint::{all_rules, run, Tree};
 
-const USAGE: &str = "usage: spira-lint [--root <dir>] [--only <rule>] [--base <rev> | --diff <rev>] [--emit-allow] [--findings <file>]\n       spira-lint --only inventory --scan <file>";
+const USAGE: &str = "usage: spira-lint [--root <dir>] [--only <rule>] [--base <rev> | --diff <rev>] [--emit-allow] [--findings <file>] [--deny-list <file>]\n       spira-lint --only inventory --scan <file>";
 
 fn default_root() -> Option<PathBuf> {
     let out = spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output().ok()?;
@@ -45,37 +48,65 @@ fn main() -> ExitCode {
     code
 }
 
-fn real_main() -> ExitCode {
-    let mut root: Option<PathBuf> = None;
-    let mut only: Option<String> = None;
-    let mut base: Option<String> = std::env::var("SPIRA_GATE_BASE").ok();
-    let mut scan: Option<PathBuf> = None;
-    let mut diff = false;
-    let mut emit_allow = false;
-    let mut findings_file: Option<PathBuf> = None;
-    let mut args = std::env::args().skip(1);
+#[derive(Debug, Default, PartialEq)]
+struct Args {
+    root: Option<PathBuf>,
+    only: Option<String>,
+    base: Option<String>,
+    scan: Option<PathBuf>,
+    diff: bool,
+    emit_allow: bool,
+    findings_file: Option<PathBuf>,
+    deny_list: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+enum Parsed {
+    Run(Args),
+    Help,
+}
+
+fn parse_args(argv: impl Iterator<Item = String>, default_base: Option<String>) -> Result<Parsed, String> {
+    let mut out = Args { base: default_base, ..Args::default() };
+    let mut args = argv;
     while let Some(a) = args.next() {
         match a.as_str() {
-            "--root" => root = args.next().map(PathBuf::from),
-            "--only" => only = args.next(),
-            "--base" => base = args.next(),
+            "--root" => out.root = args.next().map(PathBuf::from),
+            "--only" => out.only = args.next(),
+            "--base" => out.base = args.next(),
             "--diff" => {
-                base = args.next();
-                diff = true;
+                out.base = args.next();
+                out.diff = true;
             }
-            "--emit-allow" => emit_allow = true,
-            "--findings" => findings_file = args.next().map(PathBuf::from),
-            "--scan" => scan = args.next().map(PathBuf::from),
-            "-h" | "--help" => {
-                println!("{USAGE}");
-                return ExitCode::SUCCESS;
-            }
-            _ => {
-                eprintln!("spira-lint: unknown argument {a}\n{USAGE}");
-                return ExitCode::from(2);
-            }
+            "--emit-allow" => out.emit_allow = true,
+            "--findings" => out.findings_file = args.next().map(PathBuf::from),
+            "--scan" => out.scan = args.next().map(PathBuf::from),
+            "--deny-list" => match args.next().filter(|v| !v.is_empty()) {
+                Some(v) => out.deny_list = Some(v),
+                None => {
+                    return Err("spira-lint: --deny-list names no file — the caller handed no deny list (SPIRA_TEST_DENY_LIST); refusing to check test-id-row-orphan against none".into())
+                }
+            },
+            "-h" | "--help" => return Ok(Parsed::Help),
+            _ => return Err(format!("spira-lint: unknown argument {a}\n{USAGE}")),
         }
     }
+    Ok(Parsed::Run(out))
+}
+
+fn real_main() -> ExitCode {
+    let parsed = match parse_args(std::env::args().skip(1), std::env::var("SPIRA_GATE_BASE").ok()) {
+        Ok(Parsed::Run(a)) => a,
+        Ok(Parsed::Help) => {
+            println!("{USAGE}");
+            return ExitCode::SUCCESS;
+        }
+        Err(msg) => {
+            eprintln!("{msg}");
+            return ExitCode::from(2);
+        }
+    };
+    let Args { root, only, base, scan, diff, emit_allow, findings_file, deny_list } = parsed;
     if let Some(file) = scan {
         if only.as_deref() != Some("inventory") {
             eprintln!("spira-lint: --scan is only supported with --only inventory\n{USAGE}");
@@ -118,7 +149,7 @@ fn real_main() -> ExitCode {
         return ExitCode::from(3);
     };
     let tree = match Tree::from_git(&root) {
-        Ok(t) => t.with_base(base),
+        Ok(t) => t.with_base(base).with_deny_list(deny_list),
         Err(e) => {
             eprintln!("spira-lint: {e}");
             return ExitCode::from(4);
@@ -230,4 +261,29 @@ fn real_main() -> ExitCode {
         names.join(", ")
     );
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spira_test_id::test_id;
+
+    fn argv(a: &[&str]) -> impl Iterator<Item = String> {
+        a.iter().map(|s| s.to_string()).collect::<Vec<_>>().into_iter()
+    }
+
+    #[test_id(tt5ti2m)]
+    #[test]
+    fn an_empty_deny_list_value_is_refused_naming_the_missing_input() {
+        let e = parse_args(argv(&["--deny-list", ""]), None).unwrap_err();
+        assert!(e.contains("--deny-list names no file") && e.contains("SPIRA_TEST_DENY_LIST"), "{e}");
+        assert!(parse_args(argv(&["--deny-list"]), None).is_err());
+    }
+
+    #[test_id(taz1kyq)]
+    #[test]
+    fn a_deny_list_path_is_carried_onto_the_arguments() {
+        let Ok(Parsed::Run(a)) = parse_args(argv(&["--deny-list", "x/deny"]), None) else { panic!() };
+        assert_eq!(a.deny_list.as_deref(), Some("x/deny"));
+    }
 }

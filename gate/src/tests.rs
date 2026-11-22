@@ -6182,26 +6182,41 @@ fn lint_fixture(mode: &str, files: &[(&str, &str)]) -> (testkit::TempDir, std::p
     testkit::write_exe(bin.join("release"), "#!/bin/bash\n[ \"$1\" = config-stage ] && echo \"$SPIRA_TOML\"\n");
     testkit::write_exe(
         bin.join("lint"),
-        "#!/bin/bash\nif grep -q 'ffx_vocabulary_mode = \"enforce\"' \"$SPIRA_TOML\" && grep -rq aeon rule; then echo 'ffx-vocabulary: rule/tests/vocab.rs:16: the term \"aeon\"'; exit 1; fi\n", // ffx-ok
+        concat!(
+            "#!/bin/bash\nif grep -q 'ffx_vocabulary_mode = \"enforce\"' \"$SPIRA_TOML\" && grep -rq aeon rule; then echo 'ffx-vocabulary: rule/tests/vocab.rs:16: the term \"aeon\"'; exit 1; fi\n", // ffx-ok
+            "if [ \"$1\" = --deny-list ]; then\n",
+            "  [ -n \"$2\" ] || { echo 'spira-lint: --deny-list names no file' >&2; exit 2; }\n",
+            "  echo \"fence: test-id-row-orphan checked 1 registry ($2: 1 rows, 1 test rows)\"\n",
+            "else echo 'fence: test-id-row-orphan checked 0 registry (none configured)'; fi\n",
+        ),
     );
     (t, bin)
 }
 
 fn run_lint_step(t: &testkit::TempDir, bin: &std::path::Path, caller_mode: &str) -> (bool, String) {
+    let deny = t.path().join("target/gate-deny-list");
+    std::fs::create_dir_all(deny.parent().unwrap()).unwrap();
+    std::fs::write(&deny, "disabled\ttest:t0aaaaa\tsp-1\t-\n").unwrap();
+    run_lint_step_with_deny(t, bin, caller_mode, Some(deny.to_str().unwrap()))
+}
+
+fn run_lint_step_with_deny(t: &testkit::TempDir, bin: &std::path::Path, caller_mode: &str, deny: Option<&str>) -> (bool, String) {
     let steps = checked_in_steps();
     let def = crate::def::parse(&steps).unwrap();
     let step = def.steps.iter().find(|s| s.contains("SPIRA_LINT_BIN")).expect("a spira-lint step");
     let caller = t.path().join("caller.toml");
     std::fs::write(&caller, format!("[spira]\nffx_vocabulary_mode = \"{caller_mode}\"\n")).unwrap();
-    let out = std::process::Command::new(system_paths::BIN_BASH)
-        .args(["-c", step])
+    let mut cmd = std::process::Command::new(system_paths::BIN_BASH);
+    cmd.args(["-c", step])
         .current_dir(t.path())
         .env_clear()
         .env("PATH", format!("{}:{}", bin.display(), system_paths::SYSTEM_PATH_MIN))
         .env("SPIRA_LINT_BIN", bin.join("lint"))
-        .env("SPIRA_TOML", &caller)
-        .output()
-        .unwrap();
+        .env("SPIRA_TOML", &caller);
+    if let Some(d) = deny {
+        cmd.env("SPIRA_TEST_DENY_LIST", d);
+    }
+    let out = cmd.output().unwrap();
     (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
 }
 
@@ -6219,4 +6234,24 @@ fn the_lint_step_passes_a_tree_with_no_ffx_term() {
     let (t, bin) = lint_fixture("enforce", &[("rule/tests/vocab.rs", "// nothing here\n")]);
     let (ok, out) = run_lint_step(&t, &bin, "report");
     assert!(ok, "{out}");
+}
+
+#[test_id(tj7ga9w)]
+#[test]
+fn the_lint_step_hands_spira_lint_the_gates_deny_list_file() {
+    let (t, bin) = lint_fixture("enforce", &[("rule/tests/vocab.rs", "// nothing here\n")]);
+    let deny = t.path().join("target/gate-deny-list");
+    let (ok, out) = run_lint_step(&t, &bin, "report");
+    assert!(ok, "{out}");
+    assert!(out.contains(&format!("checked 1 registry ({}", deny.display())), "{out}");
+}
+
+#[test_id(tziw3qq)]
+#[test]
+fn the_lint_step_refuses_when_the_gate_handed_no_deny_list() {
+    let (t, bin) = lint_fixture("enforce", &[("rule/tests/vocab.rs", "// nothing here\n")]);
+    for deny in [None, Some("")] {
+        let (ok, out) = run_lint_step_with_deny(&t, &bin, "report", deny);
+        assert!(!ok && out.contains("--deny-list"), "{deny:?}: {out}");
+    }
 }
