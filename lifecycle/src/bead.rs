@@ -212,6 +212,12 @@ pub struct LifecycleRow {
     /// Entries into WORKING.
     #[serde(default)]
     pub sessions: u32,
+    /// Claims made with persona `builder`, directed ones included.
+    #[serde(default)]
+    pub builder_claims: u32,
+    /// How each of the last [`SESSION_ENDS_KEPT`] builder sessions ended, oldest first.
+    #[serde(default)]
+    pub session_ends: Vec<SessionEnd>,
     /// The newest applied manual `Hold`'s raise; cleared by a manual `Unhold`.
     #[serde(default)]
     pub manual_hold: Option<ManualHold>,
@@ -219,6 +225,21 @@ pub struct LifecycleRow {
     /// or a terminal move clears it.
     #[serde(default)]
     pub ask_since: Option<i64>,
+}
+
+/// The persona a builder claims with.
+pub const BUILDER_PERSONA: &str = "builder";
+/// How many [`SessionEnd`]s a row keeps.
+pub const SESSION_ENDS_KEPT: usize = 8;
+
+/// How one builder session ended: `left` is the event that took the row out of WORKING, `back`
+/// the event that later made it claimable again. Typed fields only, never prose.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionEnd {
+    pub claim: u32,
+    pub left: String,
+    pub back: Option<String>,
+    pub at: Option<i64>,
 }
 
 /// When and why the standing manual hold was raised.
@@ -257,6 +278,8 @@ impl LifecycleRow {
             claimed_from: None,
             worked_s: 0,
             sessions: 0,
+            builder_claims: 0,
+            session_ends: Vec::new(),
             manual_hold: None,
             ask_since: None,
         }
@@ -518,6 +541,9 @@ pub fn mark_bars_tip(mark: &str) -> bool {
 /// calls "a test that fails when a state or event variant is added without an entry."
 pub fn apply(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow> {
     let mut out = apply_transition(row, ev);
+    if out.applied {
+        record_builder_session(row, ev, &mut out.row);
+    }
     let entered = out.row.state != row.state;
     if out.applied && entered {
         if out.row.state == BeadState::Working {
@@ -552,6 +578,41 @@ pub fn apply(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow> {
         out.row.ask_since = None;
     }
     out
+}
+
+fn record_builder_session(before: &LifecycleRow, ev: &BeadEvent, after: &mut LifecycleRow) {
+    if matches!(&ev.kind, BeadEventKind::Claim { persona: Some(p), .. } if p == BUILDER_PERSONA) {
+        after.builder_claims += 1;
+    }
+    let was_working = before.state == BeadState::Working;
+    if was_working && after.state != BeadState::Working && before.persona.as_deref() == Some(BUILDER_PERSONA) {
+        let mut left = kind_name(&ev.kind).to_string();
+        if let Some(d) = before.disposition {
+            left = format!("{left}/{}", d.as_str());
+        }
+        for h in &before.holds {
+            left = format!("{left}+{}", h.as_str());
+        }
+        after.session_ends.push(SessionEnd { claim: before.builder_claims, left: format!("{left} by {}", ev.actor), back: None, at: ev.at });
+        let excess = after.session_ends.len().saturating_sub(SESSION_ENDS_KEPT);
+        after.session_ends.drain(..excess);
+    }
+    let claimable = matches!(after.state, BeadState::Ready | BeadState::Rework);
+    if claimable && before.state != after.state && !was_working {
+        let why = match &ev.kind {
+            BeadEventKind::GateRed { reason, step, .. } => {
+                Some(format!("{}:{}{}", kind_name(&ev.kind), reason.as_str(), step.as_ref().map_or(String::new(), |s| format!("@{s}"))))
+            }
+            BeadEventKind::Returned { reason } => Some(format!("{}:{}", kind_name(&ev.kind), reason.as_str())),
+            _ => None,
+        };
+        let why = why.unwrap_or_else(|| kind_name(&ev.kind).to_string());
+        if let Some(last) = after.session_ends.last_mut() {
+            if last.back.is_none() {
+                last.back = Some(format!("{why} by {}", ev.actor));
+            }
+        }
+    }
 }
 
 pub fn is_full_sha(tip: &str) -> bool {
@@ -1621,6 +1682,82 @@ mod tests {
         assert_eq!((r.state, r.worked_s), (BeadState::Rework, 17580), "leaving a state other than WORKING adds nothing");
         let r = step(&r, claim, 18120);
         assert_eq!((r.sessions, r.worked_s), (2, 17580));
+    }
+
+    fn builder_claim(persona: Option<&str>, directed: bool) -> BeadEventKind {
+        let directed = directed.then(|| Direction { by: "op".into(), reason: "r".into(), previous_holder: None });
+        BeadEventKind::Claim { holder: "dwarf-a".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: persona.map(String::from), directed }
+    }
+
+    fn drive(r: &LifecycleRow, actor: &str, kind: BeadEventKind) -> LifecycleRow {
+        let mut e = ev(r.state, r.version, kind);
+        e.actor = actor.into();
+        let out = apply(r, &e);
+        assert!(out.applied, "{:?}", out.refusal);
+        let mut row = out.row;
+        row.version += 1;
+        row
+    }
+
+    #[test_id(tvuz0hw)]
+    #[test]
+    fn a_row_counts_builder_claims_and_keeps_how_each_builder_session_ended() {
+        let tip = "1111111111111111111111111111111111111111";
+        let red = |reason, step: Option<&str>| BeadEventKind::GateRed { tip: tip.into(), reason, step: step.map(String::from), message: Some("prose".into()) };
+        let submit = || BeadEventKind::Submit { tip: tip.into() };
+        let mut r = LifecycleRow::filed("sp-x");
+        r = drive(&r, "dwarf-a", builder_claim(Some("builder"), false));
+        r = drive(&r, "dwarf-a", submit());
+        r = drive(&r, "sift", red(GateRedReason::NoRebase, None));
+        r = drive(&r, "dwarf-a", builder_claim(Some("builder"), true));
+        r = drive(&r, "dwarf-a", BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some("prose".into()) });
+        r = drive(&r, "dwarf-a", BeadEventKind::Release);
+        r.holds.clear();
+        r = drive(&r, "dwarf-a", builder_claim(Some("builder"), false));
+        r = drive(&r, "dwarf-a", submit());
+        r = drive(&r, "gate", red(GateRedReason::SuitesFailed, Some("units")));
+        r = drive(&r, "dwarf-a", builder_claim(Some("builder"), false));
+        r = drive(&r, "sentinel", BeadEventKind::Disposition { status: DispositionStatus::Lapsed, note: "prose".into() });
+        r = drive(&r, "sentinel", BeadEventKind::HolderDead);
+        r = drive(&r, "queue", builder_claim(None, false));
+        r = drive(&r, "queue", BeadEventKind::Release);
+        assert_eq!((r.builder_claims, r.sessions), (4, 5));
+        let ends: Vec<(&str, Option<&str>)> = r.session_ends.iter().map(|e| (e.left.as_str(), e.back.as_deref())).collect();
+        assert_eq!(
+            ends,
+            vec![
+                ("Submit by dwarf-a", Some("GateRed:no-rebase by sift")),
+                ("Release+ask by dwarf-a", None),
+                ("Submit by dwarf-a", Some("GateRed:suites-failed@units by gate")),
+                ("HolderDead/lapsed by sentinel", None),
+            ]
+        );
+        assert_eq!(r.session_ends.iter().map(|e| e.claim).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
+    }
+
+    #[test_id(tm3k9qe)]
+    #[test]
+    fn a_row_keeps_only_the_newest_eight_builder_session_ends() {
+        let mut r = LifecycleRow::filed("sp-x");
+        for _ in 0..10 {
+            r = drive(&r, "dwarf-a", builder_claim(Some("builder"), false));
+            r = drive(&r, "dwarf-a", BeadEventKind::Release);
+        }
+        assert_eq!(r.builder_claims, 10);
+        assert_eq!(r.session_ends.len(), SESSION_ENDS_KEPT);
+        assert_eq!(r.session_ends.first().map(|e| e.claim), Some(3));
+        assert_eq!(r.session_ends.last().map(|e| e.claim), Some(10));
+    }
+
+    #[test_id(tq8d2fn)]
+    #[test]
+    fn a_record_stored_before_builder_history_reads_as_zero_and_empty() {
+        let mut v = serde_json::to_value(LifecycleRow::filed("sp-x")).unwrap();
+        let o = v.as_object_mut().unwrap();
+        o.remove("builder_claims");
+        o.remove("session_ends");
+        let r: LifecycleRow = serde_json::from_value(v).unwrap();
+        assert_eq!((r.builder_claims, r.session_ends.len()), (0, 0));
     }
 
     #[test_id(tzkzrig)]
