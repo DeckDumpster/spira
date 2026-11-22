@@ -241,7 +241,23 @@ fn an_unreachable_remote_undoes_the_commit() {
     let pre = git(&w, &["rev-parse", "HEAD"]);
     let o = run(&w, "page.md\n", "msg", "1", None);
     assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    assert!(stderr(&o).contains("push failed:"), "{}", stderr(&o));
     assert_eq!(git(&w, &["rev-parse", "HEAD"]), pre);
+    assert!(git(&w, &["status", "--porcelain"]).lines().any(|l| l == "?? page.md"));
+}
+
+#[test_id(tlkpo9t)]
+#[test]
+fn a_head_that_moved_during_the_transfer_is_left_in_place() {
+    let (t, w) = wiki("wc-moved");
+    refuse_pushes(&t);
+    let hook = w.join(".git/hooks").join(["pre", "push"].join("-"));
+    testkit::write_exe(&hook, "#!/bin/sh\ngit commit -q --allow-empty -m intruder\nexit 0\n");
+    fs::write(w.join("page.md"), "x\n").unwrap();
+    let o = run(&w, "page.md\n", "msg", "1", None);
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    assert!(stderr(&o).contains("commit left in place"), "{}", stderr(&o));
+    assert_eq!(git(&w, &["log", "-2", "--format=%s"]), "intruder\nmsg");
 }
 
 #[test_id(tsiidab)]

@@ -76,7 +76,8 @@ if [ "$rc" -eq 0 ]; then
     if ! perr=$(timeout 30 git -C "$wiki" push 2>&1); then  # batch-job: network push to the brain remote
         rc=1
         if [ "$(git -C "$wiki" rev-parse HEAD)" = "$ours" ]; then
-            git -C "$wiki" reset -q --soft "$before" && git -C "$wiki" reset -q -- "${paths[@]}"
+            git -C "$wiki" reset -q --soft "$before" && git -C "$wiki" reset -q -- "${paths[@]}" \
+                || printf 'wiki-commit.sh: could not undo the commit %s\n' "$ours" >&2
             printf 'wiki-commit.sh: push failed:\n%s\n' "$perr" >&2
         else
             printf 'wiki-commit.sh: HEAD moved past %s — commit left in place\n' "$ours" >&2
