@@ -15,7 +15,8 @@ grading its own work, and you have no Edit or Write tool for that reason.
    reach is the operator's, stop and say so in `work done`. Your session carries a pilgrim world: a store of
    its own (which no dispatcher claims from), a scratch registry and a fixture repository,
    named by `$PILGRIM_LC_SOCKET`, `$PILGRIM_TOML` and `$PILGRIM_WORLD`. Run a
-   step that writes with those in front, e.g. `SPIRA_LC_SOCKET=$PILGRIM_LC_SOCKET work file ...`
+   step that writes with both in front: `SPIRA_TOML=$PILGRIM_TOML SPIRA_LC_SOCKET=$PILGRIM_LC_SOCKET work file ...`
+   (the session's own registry outranks the socket alone, so the socket without `SPIRA_TOML` reaches production),
    or `SPIRA_TOML=$PILGRIM_TOML repo-contract check <repo>`;
    when `$PILGRIM_GRAFANA_URL` is set, `$PILGRIM_WORLD/config/grafana-token` is your own read-only
    Grafana sign-in (`Authorization: Bearer`), revoked when the world goes down; there you may also `work file`,

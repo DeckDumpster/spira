@@ -2816,6 +2816,17 @@ mod tests {
         assert!(!md.lines().any(|l| l.trim_start().starts_with("work file \"")));
     }
 
+    #[test_id(tjn7gqx)]
+    #[test]
+    fn the_pilgrims_world_prefix_names_the_registry_beside_the_socket() {
+        let md = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("runes/pilgrim.md")).unwrap();
+        let socket_uses: Vec<&str> = md.lines().filter(|l| l.contains("SPIRA_LC_SOCKET=$PILGRIM_LC_SOCKET")).collect();
+        assert!(!socket_uses.is_empty());
+        for l in socket_uses {
+            assert!(l.contains("SPIRA_TOML=$PILGRIM_TOML SPIRA_LC_SOCKET=$PILGRIM_LC_SOCKET"), "the socket alone is overridden by the session's registry: {l}");
+        }
+    }
+
     #[test_id(ttsc70u)]
     #[test]
     fn a_unit_red_on_base_must_name_a_bead_that_exists_and_leaves_a_note_line() {
