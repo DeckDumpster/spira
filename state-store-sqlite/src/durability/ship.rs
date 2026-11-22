@@ -57,7 +57,7 @@ pub struct Tick {
 pub struct Shipper {
     backend: SqliteBackend,
     cfg: ShipConfig,
-    put: Arc<dyn Put>,
+    put: Option<Arc<dyn Put>>,
     clock: Arc<dyn Clock>,
     /// The oldest revision not yet off-box, and when a tick first saw it so.
     oldest: Option<(u64, u64)>,
@@ -99,6 +99,13 @@ fn read_u64(path: &Path) -> Result<Option<u64>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(io(path)(e)),
     }
+}
+
+/// `configured`, or `run/lc-ship` while it is unset or empty.
+pub fn dir_at(configured: Option<String>, run: &Path) -> PathBuf {
+    configured
+        .filter(|d| !d.is_empty())
+        .map_or_else(|| run.join("lc-ship"), PathBuf::from)
 }
 
 /// The names in `dir`, sorted; a missing directory is empty. Half-written `.tmp` files are not
@@ -159,6 +166,25 @@ impl Shipper {
         backend: SqliteBackend,
         cfg: ShipConfig,
         put: Arc<dyn Put>,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Shipper, String> {
+        Self::open_with(backend, cfg, Some(put), clock)
+    }
+
+    /// A shipper that stages and never uploads: [`drain`], run by another process on the same
+    /// directory, moves `queue/` to `sent/` and records `shipped`, which this one reads.
+    pub fn open_staging(
+        backend: SqliteBackend,
+        cfg: ShipConfig,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Shipper, String> {
+        Self::open_with(backend, cfg, None, clock)
+    }
+
+    fn open_with(
+        backend: SqliteBackend,
+        cfg: ShipConfig,
+        put: Option<Arc<dyn Put>>,
         clock: Arc<dyn Clock>,
     ) -> Result<Shipper, String> {
         let start = cfg.dir.join("start");
@@ -367,23 +393,10 @@ impl Shipper {
     }
 
     fn upload(&self, t: &mut Tick) -> Result<(), String> {
-        for kind in [REVLOG, SNAPSHOT] {
-            for n in names(&self.queue(kind))? {
-                let (file, object) = (self.queue(kind).join(&n), format!("{kind}/{n}"));
-                if let Err(e) = self.put.put(&file, &object) {
-                    t.failed = Some(e);
-                    return Ok(());
-                }
-                let sent = self.sent(kind);
-                fs::create_dir_all(&sent).map_err(io(&sent))?;
-                fs::rename(&file, sent.join(&n)).map_err(io(&sent))?;
-                sync_dir(&sent)?;
-                if let Some((_, to)) = revlog::parse_run_name(&n).filter(|_| kind == REVLOG) {
-                    write_durably(&self.cfg.dir.join("shipped"), to.to_string().as_bytes())?;
-                }
-                t.uploaded.push(object);
-            }
-        }
+        let Some(put) = &self.put else { return Ok(()) };
+        let sent = drain(&self.cfg.dir, put.as_ref())?;
+        t.uploaded = sent.uploaded;
+        t.failed = sent.failed;
         Ok(())
     }
 
@@ -414,6 +427,40 @@ impl Shipper {
         }
         Ok(())
     }
+}
+
+/// What one [`drain`] moved off the machine, and the refusal that stopped it.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Drained {
+    pub uploaded: Vec<String>,
+    pub failed: Option<String>,
+}
+
+/// Uploads what `dir/queue/` holds, runs before snapshots and oldest first, stopping at the first
+/// refusal so a retry is the same object; each object moves to `sent/` and a run records
+/// `shipped`. It opens no store, so any process may run it on a shipper's directory.
+pub fn drain(dir: &Path, put: &dyn Put) -> Result<Drained, String> {
+    let queue = |kind: &str| dir.join("queue").join(kind);
+    let sent_dir = |kind: &str| dir.join("sent").join(kind);
+    let mut out = Drained::default();
+    for kind in [REVLOG, SNAPSHOT] {
+        for n in names(&queue(kind))? {
+            let (file, object) = (queue(kind).join(&n), format!("{kind}/{n}"));
+            if let Err(e) = put.put(&file, &object) {
+                out.failed = Some(e);
+                return Ok(out);
+            }
+            let sent = sent_dir(kind);
+            fs::create_dir_all(&sent).map_err(io(&sent))?;
+            fs::rename(&file, sent.join(&n)).map_err(io(&sent))?;
+            sync_dir(&sent)?;
+            if let Some((_, to)) = revlog::parse_run_name(&n).filter(|_| kind == REVLOG) {
+                write_durably(&dir.join("shipped"), to.to_string().as_bytes())?;
+            }
+            out.uploaded.push(object);
+        }
+    }
+    Ok(out)
 }
 
 /// The ship-age alarm's state change: a line on the crossing into red past `max_ms`, and one on

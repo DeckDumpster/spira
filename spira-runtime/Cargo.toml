@@ -170,12 +170,12 @@ kit-bump = { path = "../kit-bump" }
 mimir-trigger = { path = "../mimir-trigger" }
 
 spira-world = { path = "../spira-world" }
+state-store-sqlite = { path = "../state-store-sqlite" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 inotify = { version = "0.11", default-features = false }
 
 [dev-dependencies]
-state-store-sqlite = { path = "../state-store-sqlite" }
 spira-test-id = { path = "../spira-test-id" }
 forge = { path = "../forge" }
 sim = { path = "../sim" }

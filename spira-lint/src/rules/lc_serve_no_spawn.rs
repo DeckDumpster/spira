@@ -21,7 +21,7 @@ fn in_scope(path: &str) -> bool {
 fn start_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
-        Regex::new(r"\bCommand::new\b|\bstd::process::(?:Command\b|\{[^}]*\bCommand\b)|\bbounded::(?:bounded(?:_for)?\b|\{)").expect("static regex")
+        Regex::new(r"\bCommand::new\b|\bstd::process::(?:Command\b|\{[^}]*\bCommand\b)|\bbounded::(?:bounded(?:_for)?\b|\{)|\bSysProc\b").expect("static regex")
     })
 }
 
@@ -63,7 +63,7 @@ impl Rule for LcServeNoSpawn {
                     rule: NAME,
                     path: e.path.clone(),
                     line: Some(line),
-                    message: format!("`{what}` starts a process outside {DOOR}; build it with `proc::command`, `proc::bounded` or `proc::bounded_for`"),
+                    message: format!("`{what}` starts a process outside {DOOR}; build it with `proc::command`, `proc::bounded`, `proc::bounded_for` or `proc::sys`"),
                 });
             }
         }
@@ -73,7 +73,7 @@ impl Rule for LcServeNoSpawn {
 
     fn hint(&self) -> &'static str {
         "lc-serve starts no child process: every start in spira-lc goes through spira-lc/src/proc.rs, which refuses \
-while serving. Build the command with `proc::command`, `proc::bounded` or `proc::bounded_for`; there is no \
+while serving. Build the command with `proc::command`, `proc::bounded` or `proc::bounded_for`, and a process port with `proc::sys`; there is no \
 allow file and no marker."
     }
 }
@@ -111,6 +111,16 @@ mod tests {
             "use std::process::{Command, Stdio};\nfn a() { spira_config::bounded::bounded(\"git\"); }\nfn b() { bounded::bounded_for(\"git\", \"1\"); }\nuse spira_config::bounded::{bounded, bounded_for};\nfn c() { Command::new(\"x\"); }\n",
         );
         assert_eq!(run(&t, &["spira-lc/src/x.rs"]).len(), 5);
+    }
+
+    #[test_id(tzlv2dl)]
+    #[test]
+    fn a_system_process_port_built_in_spira_lc_is_found() {
+        let t = TempDir::new("lcns-port");
+        t.write("spira-lc/src/x.rs", "use runtime::ports::SysProc;\nfn f() { let p = Arc::new(runtime::ports::SysProc); }\n#[cfg(test)]\nmod tests {\n    fn g() { SysProc; }\n}\n");
+        let got = run(&t, &["spira-lc/src/x.rs"]);
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!(got[0].contains(":1") && got[1].contains(":2") && got[1].contains("proc::sys"), "{got:?}");
     }
 
     #[test_id(tevwz6r)]

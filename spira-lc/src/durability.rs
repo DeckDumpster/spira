@@ -22,8 +22,6 @@ pub const GAUGE: &str = "spira_lc_ship_oldest_unshipped_seconds";
 /// The watchd `log` row's file, under `SPIRA_RUN`.
 pub const ALARM_LOG: &str = "lc-ship.log";
 const MAX_MAINS: usize = 10_000;
-// batch-job: one upload, bounded by the object's size, not a round trip
-const PUT_DEADLINE: Duration = Duration::from_secs(300);
 
 pub struct Shipping {
     pub shipper: Shipper,
@@ -33,17 +31,12 @@ pub struct Shipping {
 }
 
 /// `SPIRA_LC_SHIP_DIR`, or `SPIRA_RUN/lc-ship` while it is unset.
-/// The uploader every lc-serve upload goes through: each curl it starts is counted.
-fn counted_uploader(dest: Dest, creds: Option<S3Creds>, deadline: Duration) -> Uploader {
-    Uploader { dest, creds, proc: crate::slow::CountedProc::sys(), deadline }
-}
-
 fn ship_dir(run: &Path) -> PathBuf {
     ship_dir_at(spira_config::process::cfg("SPIRA_LC_SHIP_DIR").ok(), run)
 }
 
 fn ship_dir_at(configured: Option<String>, run: &Path) -> PathBuf {
-    configured.filter(|d| !d.is_empty()).map_or_else(|| run.join("lc-ship"), PathBuf::from)
+    ship::dir_at(configured, run)
 }
 
 fn cfg_u64(key: &str) -> Result<u64, String> {
@@ -56,27 +49,26 @@ pub fn configured(backend: SqliteBackend, run: &Path) -> Option<Result<Shipping,
     let url = spira_config::process::cfg("SPIRA_LC_BACKUP_URL").ok().filter(|u| !u.is_empty())?;
     Some((|| {
         let every = cfg_u64("SPIRA_LC_SHIP_SECS")?;
-        if !(1..=5).contains(&every) {
-            return Err(format!("SPIRA_LC_SHIP_SECS is {every}; it ships every 1 to 5 seconds"));
-        }
-        let dest = Dest::parse(&url)?;
-        let creds = match dest {
-            Dest::S3 { .. } => Some(S3Creds::from_env()?),
-            Dest::File(_) => None,
-        };
-        let put = counted_uploader(dest, creds, PUT_DEADLINE);
-        let cfg = ShipConfig {
-            dir: ship_dir(run),
-            max_mains: MAX_MAINS,
-            snapshot_every_ms: cfg_u64("SPIRA_LC_SHIP_SNAPSHOT_SECS")?.saturating_mul(1_000),
-        };
-        Ok(Shipping {
-            shipper: Shipper::open(backend, cfg, Arc::new(put), Arc::new(WallClock))?,
-            every: Duration::from_secs(every),
-            max_age_ms: cfg_u64("SPIRA_LC_SHIP_MAX_AGE_SECS")?.saturating_mul(1_000),
-            alarm_log: run.join(ALARM_LOG),
-        })
+        let snapshot_secs = cfg_u64("SPIRA_LC_SHIP_SNAPSHOT_SECS")?;
+        let max_age_secs = cfg_u64("SPIRA_LC_SHIP_MAX_AGE_SECS")?;
+        staging(backend, ship_dir(run), &url, (every, snapshot_secs, max_age_secs), run)
     })())
+}
+
+/// The shipper for a destination: it stages in `dir` and uploads nothing, because lc-serve
+/// starts no process; `ship::drain`, run by the scheduler's `lc.ship` task, uploads.
+fn staging(backend: SqliteBackend, dir: PathBuf, url: &str, (every, snapshot_secs, max_age_secs): (u64, u64, u64), run: &Path) -> Result<Shipping, String> {
+    if !(1..=5).contains(&every) {
+        return Err(format!("SPIRA_LC_SHIP_SECS is {every}; it ships every 1 to 5 seconds"));
+    }
+    Dest::parse(url)?;
+    let cfg = ShipConfig { dir, max_mains: MAX_MAINS, snapshot_every_ms: snapshot_secs.saturating_mul(1_000) };
+    Ok(Shipping {
+        shipper: Shipper::open_staging(backend, cfg, Arc::new(WallClock))?,
+        every: Duration::from_secs(every),
+        max_age_ms: max_age_secs.saturating_mul(1_000),
+        alarm_log: run.join(ALARM_LOG),
+    })
 }
 
 /// One shipper tick as lc-serve runs it: the age gauge every tick, and a line in the alarm
@@ -178,7 +170,7 @@ pub fn admin_dolt_ship(args: &[String]) -> (i32, String) {
             Dest::S3 { .. } => Some(S3Creds::from_env()?),
             Dest::File(_) => None,
         };
-        let put = counted_uploader(dest, creds, TABLE_PUT_DEADLINE);
+        let put = Uploader { dest, creds, proc: crate::proc::sys()?, deadline: TABLE_PUT_DEADLINE };
         dolt::ship(&put, Path::new(sync), Path::new(state), db, stamp, head)
     };
     match run() {
@@ -223,7 +215,7 @@ pub fn admin_archive_put(args: &[String], backup_url: &str) -> (i32, String) {
             Dest::S3 { .. } => Some(S3Creds::from_env()?),
             Dest::File(_) => None,
         };
-        Ok(counted_uploader(dest, creds, ARCHIVE_PUT_DEADLINE))
+        Ok(Uploader { dest, creds, proc: crate::proc::sys()?, deadline: ARCHIVE_PUT_DEADLINE })
     }) {
         Ok(u) => u,
         Err(e) => return (CANNOT_TELL, format!("admin-archive-put: {e}")),
@@ -269,6 +261,8 @@ mod tests {
     use state_store_sqlite::Options;
     use testkit::TempDir;
 
+    const PUT_DEADLINE: Duration = Duration::from_secs(300);
+
     fn s(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|x| x.to_string()).collect()
     }
@@ -286,6 +280,49 @@ mod tests {
             sh.tick().unwrap();
         }
         sh
+    }
+
+    #[test_id(txbjuqn)]
+    #[test]
+    fn a_staging_shipper_uploads_nothing_and_the_drain_ships_what_it_queued() {
+        let dir = TempDir::new("lc-ship-staging");
+        let clock = VirtualClock::new(1_000);
+        let b = SqliteBackend::open(&dir.path().join("live.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
+        let c = suite::open(b.clone(), &clock);
+        let cfg = ShipConfig { dir: dir.path().join("lc-ship"), max_mains: 100, snapshot_every_ms: u64::MAX };
+        let mut sh = Shipper::open_staging(b, cfg, Arc::new(clock.clone())).unwrap();
+        sh.tick().unwrap();
+        let t = Txn::new().put("lifecycle/sp-1", Object::new(json!(1)));
+        assert!(c.txn(&t, &Request::new("1", "t", "t.write")).unwrap().succeeded);
+        let staged = sh.tick().unwrap();
+        assert_eq!((staged.uploaded.len(), staged.failed, staged.shipped_through), (0, None, 0));
+        assert!(!ship::names(&sh.dir().join("queue").join(REVLOG)).unwrap().is_empty(), "the run waits in queue/");
+
+        let off = dir.path().join("off");
+        let drained = ship::drain(sh.dir(), &Uploader { dest: Dest::File(off.clone()), creds: None, proc: Arc::new(runtime::ports::SysProc), deadline: PUT_DEADLINE }).unwrap();
+        assert!(drained.failed.is_none() && drained.uploaded.len() == 2, "{drained:?}");
+        assert!(off.join("revlog").is_dir());
+        assert_eq!(sh.tick().unwrap().shipped_through, 1, "the staging shipper reads what the drain recorded");
+    }
+
+    #[test_id(tbd0vxr)]
+    #[test]
+    fn the_served_shippers_tick_leaves_a_queued_segment_for_the_scheduler() {
+        let dir = TempDir::new("lc-ship-served");
+        let clock = VirtualClock::new(1_000);
+        let b = SqliteBackend::open(&dir.path().join("live.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
+        let c = suite::open(b.clone(), &clock);
+        let off = dir.path().join("off");
+        let url = format!("file://{}", off.display());
+        let mut s = staging(b, dir.path().join("lc-ship"), &url, (1, 3_600, 600), dir.path()).unwrap();
+        let metrics = MetricsSink::new(None, "spira-lc", Duration::from_millis(10));
+        tick(&mut s, false, &metrics, &clock);
+        let t = Txn::new().put("lifecycle/sp-1", Object::new(json!(1)));
+        assert!(c.txn(&t, &Request::new("1", "t", "t.write")).unwrap().succeeded);
+        tick(&mut s, false, &metrics, &clock);
+        assert!(!ship::names(&s.shipper.dir().join("queue").join(REVLOG)).unwrap().is_empty());
+        assert!(!off.exists(), "lc-serve uploads nothing");
+        assert!(matches!(staging(SqliteBackend::open(&dir.path().join("x.db"), Options::default()).unwrap(), dir.path().join("s2"), &url, (9, 1, 1), dir.path()), Err(e) if e.contains("1 to 5")));
     }
 
     #[test_id(tsse27u)]
@@ -333,16 +370,6 @@ mod tests {
         assert_eq!(ship_dir_at(Some("ssd/ship".into()), run), Path::new("ssd/ship"));
         assert_eq!(ship_dir_at(Some(String::new()), run), Path::new("run-here/lc-ship"));
         assert_eq!(ship_dir_at(None, run), Path::new("run-here/lc-ship"));
-    }
-
-    #[test_id(tq8m1ze)]
-    #[test]
-    fn an_upload_off_any_request_thread_moves_the_whole_process_child_count() {
-        let up = counted_uploader(Dest::File(PathBuf::from("off")), None, PUT_DEADLINE);
-        let before = crate::slow::process_children();
-        let spec = runtime::ports::ProcSpec { prog: "spira-no-such-program".into(), args: vec![], stdin: vec![], deadline: Duration::from_secs(1) };
-        let _ = std::thread::spawn(move || up.proc.run(&spec)).join().unwrap();
-        assert!(crate::slow::process_children() > before);
     }
 
     #[test_id(tu4wjdt)]
