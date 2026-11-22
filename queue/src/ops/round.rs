@@ -1675,20 +1675,14 @@ pub(super) fn assemble(
     members: &[Member],
     fallback: &str,
 ) -> Result<String, String> {
-    w.git.worktree_prune(path);
-    w.git.worktree_remove(path, wt);
-    if let Some(p) = wt.parent() {
-        let _ = fs::create_dir_all(p);
-    }
-    if !w.git.worktree_add_detached(path, wt, base_sha) {
-        let _ = w.git.worktree_add_detached(path, wt, fallback);
-        return Err("cannot create the round worktree".into());
+    if let Err(e) = w.git.worktree_reset(path, wt, base_sha) {
+        let _ = w.git.worktree_reset(path, wt, fallback);
+        return Err(format!("cannot create the round worktree: {e}"));
     }
     for m in members {
         if !merge_member(w, c, wt, &m.id, &m.tip) {
             w.git.merge_abort(wt);
-            w.git.worktree_remove(path, wt);
-            let _ = w.git.worktree_add_detached(path, wt, fallback);
+            let _ = w.git.worktree_reset(path, wt, fallback);
             return Err(format!("{} no longer merges onto the round", m.id));
         }
     }
@@ -4900,8 +4894,7 @@ fn eject(
     let why = bounded_text(&reason);
     if let Err((rc, out)) = lc_eject_member(w, batch, id, LC_ACTOR, &why) {
         if new_head != old_head {
-            w.git.worktree_remove(&path, &wt);
-            let _ = w.git.worktree_add_detached(&path, &wt, &old_head);
+            let _ = w.git.worktree_reset(&path, &wt, &old_head);
         }
         if w.lc.batch_state(batch).is_some_and(|(state, _)| state == "CI_RUNNING") {
             let (n, phase) = w.lc.batch_pass(batch).unwrap_or((0, String::new()));

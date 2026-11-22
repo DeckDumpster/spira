@@ -86,6 +86,22 @@ fn ok(cmd: &mut Command) -> bool {
         .unwrap_or(false)
 }
 
+fn git_checked(cmd: &mut Command) -> Result<(), String> {
+    close_inherited_fds(cmd);
+    let o = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .output()
+        .map_err(|e| format!("git: {e}"))?;
+    if o.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&o.stderr);
+    let lines: Vec<&str> = err.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let tail = lines[lines.len().saturating_sub(8)..].join("; ");
+    Err(if tail.is_empty() { format!("git exited {}", o.status) } else { tail })
+}
+
 fn stdout_of(cmd: &mut Command) -> Option<String> {
     close_inherited_fds(cmd);
     let o = cmd
@@ -303,6 +319,23 @@ impl Git for RealGit {
             .args(["worktree", "remove", "-f"])
             .arg(path)
             .stderr(Stdio::null()));
+    }
+    fn worktree_reset(&self, repo: &Path, wt: &Path, sha: &str) -> Result<(), String> {
+        if wt.join(".git").exists() {
+            git_checked(git(wt).args(["reset", "-q", "--hard", sha]))?;
+            let _ = ok(git(wt).args(["clean", "-qfd"]).stderr(Stdio::null()));
+            return Ok(());
+        }
+        let _ = ok(git(repo).args(["worktree", "prune"]).stderr(Stdio::null()));
+        if let Some(p) = wt.parent() {
+            let _ = fs::create_dir_all(p);
+        }
+        git_checked(
+            git(repo)
+                .args(["worktree", "add", "-q", "--detach"])
+                .arg(wt)
+                .arg(sha),
+        )
     }
     fn merge_no_ff(
         &self,

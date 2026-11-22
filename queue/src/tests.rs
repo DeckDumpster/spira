@@ -202,6 +202,19 @@ impl Git for FGit {
         }
         true
     }
+    fn worktree_reset(&self, _: &Path, p: &Path, sha: &str) -> Result<(), String> {
+        if self.add_refused.borrow().as_deref() == Some(sha) {
+            return Err(format!("fatal: invalid reference: {sha}"));
+        }
+        self.refs
+            .borrow_mut()
+            .insert(format!("{}:HEAD", p.display()), sha.into());
+        *self.cut_on.borrow_mut() = sha.into();
+        if self.materialise.get() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        Ok(())
+    }
     fn worktree_remove(&self, _: &Path, p: &Path) {
         if self.materialise.get() {
             let _ = std::fs::remove_dir_all(p);

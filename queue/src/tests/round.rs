@@ -4045,9 +4045,98 @@ fn a_rebuild_that_cannot_cut_the_base_restores_the_head_and_says_nothing_changed
     let (base, head) = (rec["base"].to_string(), rec["head"].to_string());
     *t.git.add_refused.borrow_mut() = Some(base);
     assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"]), 1);
-    assert!(t.err().contains("cannot create the round worktree — nothing changed"), "{}", t.err());
+    assert!(t.err().contains("cannot create the round worktree: fatal: invalid reference") && t.err().contains("— nothing changed"), "{}", t.err());
     let wt = kv_of(&t, "round")["worktree"].to_string();
     assert_eq!(t.git.refs.borrow().get(&format!("{wt}:HEAD")), Some(&head), "the worktree is back at the round's head");
+    assert!(!t.lc.has("eject-member"));
+}
+
+fn round_record(t: &T, _batch: &str) -> Kv {
+    Kv::parse(&fs::read_to_string(t.qfile("round")).unwrap())
+}
+
+fn save_round_record(t: &T, kv: &Kv) {
+    fs::write(t.qfile("round"), kv.render()).unwrap();
+}
+
+fn real_round_world(dir: &testkit::TempDir) -> (T, String, PathBuf, [String; 3], String) {
+    let t = round_world();
+    let repo = dir.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    testkit::git(&repo, &["init", "-q", "-b", "main"]);
+    let commit = |m: &str| testkit::git(&repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", m]);
+    fs::write(repo.join("base.txt"), "b\n").unwrap();
+    testkit::git(&repo, &["add", "."]);
+    commit("base");
+    let base = testkit::git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+    let mut tips = vec![];
+    for id in ["sp-a", "sp-b", "sp-c"] {
+        testkit::git(&repo, &["checkout", "-q", "-b", &format!("spira/{id}"), &base]);
+        fs::write(repo.join(format!("{id}.txt")), "x\n").unwrap();
+        testkit::git(&repo, &["add", "."]);
+        commit(id);
+        tips.push(testkit::git(&repo, &["rev-parse", "HEAD"]).trim().to_string());
+    }
+    testkit::git(&repo, &["checkout", "-q", "main"]);
+    let wt = dir.path().join("round-wt");
+    testkit::git(&repo, &["worktree", "add", "-q", "--detach", wt.to_str().unwrap(), &base]);
+    for tip in &tips {
+        testkit::git(&wt, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-ff", "--no-edit", tip]);
+    }
+    let head = testkit::git(&wt, &["rev-parse", "HEAD"]).trim().to_string();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    {
+        let mut r = t.lib.r.borrow_mut();
+        r.path = Some(repo.clone());
+        r.landref = Some("main".into());
+    }
+    let mut kv = round_record(&t, &batch);
+    for (k, v) in [("worktree", wt.to_str().unwrap()), ("base", &base), ("head", &head)] {
+        kv.remove(k);
+        kv.push(k, v);
+    }
+    let members = [("sp-a", &tips[0]), ("sp-b", &tips[1]), ("sp-c", &tips[2])]
+        .map(|(id, tip)| format!("{id}:{tip}"))
+        .join(" ");
+    kv.remove("members");
+    kv.push("members", &members);
+    save_round_record(&t, &kv);
+    *t.lc.batch_view.borrow_mut() = Some(("ATTRIBUTING".into(), 4, 1, String::new()));
+    (t, batch, wt, [tips[0].clone(), tips[1].clone(), tips[2].clone()], base)
+}
+
+#[test_id(tcs27ko)]
+#[test]
+fn an_eject_rebuilds_a_locked_round_tree_in_place_and_starts_the_second_pass() {
+    let dir = testkit::TempDir::new("eject-locked");
+    let (t, batch, wt, _tips, base) = real_round_world(&dir);
+    let repo = dir.path().join("repo");
+    testkit::git(&repo, &["worktree", "lock", wt.to_str().unwrap()]);
+    let rc = t.run_on(&crate::real::RealGit, &["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "spira-lint"]);
+    assert_eq!(rc, 0, "{}", t.err());
+    assert!(wt.join("sp-a.txt").exists() && wt.join("sp-c.txt").exists() && !wt.join("sp-b.txt").exists());
+    let head = testkit::git(&wt, &["rev-parse", "HEAD"]).trim().to_string();
+    assert_ne!(testkit::git(&wt, &["rev-parse", "HEAD^1"]).trim(), "");
+    assert_eq!(kv_of(&t, "round")["head"], head);
+    assert_eq!(testkit::git(&wt, &["merge-base", &head, &base]).trim(), base);
+    assert!(t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
+    t.run_on(&crate::real::RealGit, &["round", "certify", &batch]);
+    assert!(t.err().contains("round-vm ran and left no verdicts"), "certify started the second pass: {}", t.err());
+}
+
+#[test_id(tk0y0eg)]
+#[test]
+fn an_eject_whose_reset_is_refused_quotes_gits_stderr_and_keeps_the_head() {
+    let dir = testkit::TempDir::new("eject-refused");
+    let (t, batch, wt, _tips, _base) = real_round_world(&dir);
+    let head = round_record(&t, &batch).get("head").unwrap().to_string();
+    let gitdir = testkit::git(&wt, &["rev-parse", "--absolute-git-dir"]);
+    fs::write(Path::new(gitdir.trim()).join("index.lock"), "").unwrap();
+    let rc = t.run_on(&crate::real::RealGit, &["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "spira-lint"]);
+    assert_eq!(rc, 1, "{}", t.err());
+    assert!(t.err().contains("cannot create the round worktree: fatal:") && t.err().contains("index.lock"), "{}", t.err());
+    assert_eq!(testkit::git(&wt, &["rev-parse", "HEAD"]).trim(), head);
     assert!(!t.lc.has("eject-member"));
 }
 
