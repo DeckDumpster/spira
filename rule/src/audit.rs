@@ -29,6 +29,12 @@ fn is_verb(tok: &str) -> bool {
     c.next().is_some_and(|f| f.is_ascii_lowercase())
         && tok.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         && !tok.ends_with("ed")
+        && !is_third_person(tok)
+}
+
+/// `reads`, `exits`, `reopens`: prose after a script name, not a dispatch word (`status` is one).
+fn is_third_person(tok: &str) -> bool {
+    tok.ends_with('s') && !tok.ends_with("ss") && !tok.ends_with("us") && tok.len() > 3
 }
 
 fn is_script(tok: &str) -> bool {
@@ -306,6 +312,13 @@ mod tests {
         let look = |n: &str| shim(n).map(|t| follow_shim(&t, &shim));
         assert!(prompt_findings("x.md", "see t.sh ideas", &|_| false, &look).is_empty());
         assert_eq!(prompt_findings("x.md", "see t.sh gone", &|_| false, &look).len(), 1);
+    }
+
+    #[test]
+    fn prose_after_a_script_name_is_not_a_verb() {
+        let r = extract_refs("the stamp is read by mimir-trigger.sh reads it; bead.sh status works");
+        assert_eq!(r[0].verb, None);
+        assert_eq!(r[1].verb.as_deref(), Some("status"));
     }
 
     #[test]

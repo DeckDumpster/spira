@@ -79,3 +79,16 @@ fn every_persona_prompt_names_only_what_the_release_ships() {
     bad.sort();
     assert!(bad.is_empty(), "\n{}\n", bad.join("\n"));
 }
+
+#[test]
+fn the_tree_check_resolves_what_ships_and_flags_a_planted_miss() {
+    let root = repo_root();
+    let bins = release_bins(&root);
+    let names: BTreeSet<String> = bins.keys().cloned().collect();
+    let resolve = rule::audit::placeholder_resolver(&root, &names);
+    let look = lookup(&root, &bins);
+    let find = |t: &str| rule::audit::prompt_findings("p.md", t, &resolve, &look);
+    assert!(find("{{SPIRA_HOME}}/../bin/reply x\n{{COCKPIT}}/panel-run.sh\n{{SPIRA_HOME}}/capacity.sh").is_empty());
+    assert_eq!(find("ok\n{{COCKPIT}}/no-such.sh"), vec!["runes/p.md:2: {{COCKPIT}}/no-such.sh".to_string()]);
+    assert_eq!(find("run no-such-tool.sh now"), vec!["runes/p.md:1: no-such-tool.sh".to_string()]);
+}

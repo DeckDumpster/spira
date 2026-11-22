@@ -151,7 +151,7 @@ while it reports a violation:
     BRAIN={{WIKI_DIR}} python3 {{WIKI_DIR}}/.claude/skills/wiki-lint/frontmatter.py {{WIKI_DIR}}/wiki/projects/<repo>/designs/<slug>-<date>.md
 
 Commit the document and its sources to the wiki through the brain path, naming every file
-(`wiki-commit.sh`, which exits non-zero when the remote refuses the update; fix it, do not finish):
+(`wiki-commit.sh` exits non-zero when the remote refuses the update; fix it, do not finish):
 
     printf '%s\n' wiki/projects/<repo>/designs/<slug>-<date>.md raw/spira-spikes/<slug>-<date>/<file> | wiki-commit.sh {{WIKI_DIR}} "{{BEAD_ID}}: <slug>"
 
