@@ -168,6 +168,8 @@ filings-collect = { path = "../filings-collect" }
 kit-bump = { path = "../kit-bump" }
 mimir-trigger = { path = "../mimir-trigger" }
 
+spira-world = { path = "../spira-world" }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 inotify = { version = "0.11", default-features = false }
 
@@ -175,8 +177,6 @@ inotify = { version = "0.11", default-features = false }
 state-store-sqlite = { path = "../state-store-sqlite" }
 spira-test-id = { path = "../spira-test-id" }
 forge = { path = "../forge" }
-# dwarves.sh's live count, held to sentinel-call's on the same unit list.
-spira-world = { path = "../spira-world" }
 sim = { path = "../sim" }
 testkit = { path = "../testkit" }
 release = { path = "../release" }

@@ -71,9 +71,7 @@ space (`df` the directory of `$STORE`) before the stop. The downtime is the tria
 scheduled. Then, announcing the stop first:
 
 ```sh
-systemctl --user stop lc-serve.service
-spira-lc admin-store-compact --store "$STORE"
-systemctl --user start lc-serve.service
+world store-maintenance --owner "$USER" --why "store compaction" -- spira-lc admin-store-compact --store "$STORE"
 spira-lc store-usage --file
 ```
 
@@ -85,18 +83,20 @@ refusal naming the `-wal` means another process has the file open: find it with
 
 ## Cutover
 
-The store is down for the whole of this entry. Announce the stop first.
+The store is down for the whole of this entry. Announce the stop first. `store-maintenance`
+holds the store stopped while the command runs, starts it when the command ends, and exits with
+the command's code.
 
 ```sh
-systemctl --user stop lc-serve.service
+world store-maintenance --owner "$USER" --why "store relayout cutover" -- sh -ec '
 mv "$STORE" "${STORE%.db}-old-layout.db"
 for s in -wal -shm; do test ! -e "$STORE$s" || mv "$STORE$s" "${STORE%.db}-old-layout.db$s"; done
 spira-lc admin-store-relayout --from "${STORE%.db}-old-layout.db" --to "$STORE"
-systemctl --user start lc-serve.service
+'
 ```
 
-`SPIRA_LC_STORE_PATH` is unchanged: the new store takes the old one's name. Start the store
-only on a release that reads the new layout. Report the sizes from the report, and from
+`SPIRA_LC_STORE_PATH` is unchanged: the new store takes the old one's name. Activate only a
+release that reads the new layout before this step: the store starts when the command ends. Report the sizes from the report, and from
 `spira-lc store-usage` once the store is up.
 
 **Success:** the report says `certified`; the store starts; `$STORE` and its `*.events-*.db` and
@@ -108,15 +108,16 @@ again. A refusal naming the `-wal` means another process has the old file open: 
 
 ## Rollback
 
+Activate the previous release first: the store starts when the command ends.
+
 ```sh
-systemctl --user stop lc-serve.service
+world store-maintenance --owner "$USER" --why "store relayout rollback" -- sh -ec '
 ASIDE="$STORE.new-layout"; mkdir "$ASIDE"
 mv "$STORE" "$ASIDE"/
 for f in "${STORE%.db}".events-*.db "${STORE%.db}".receipts-*.db; do [ -e "$f" ] && mv "$f" "$ASIDE"/; done
 mv "${STORE%.db}-old-layout.db" "$STORE"
+'
 ```
-
-Then activate the previous release and start the store.
 
 **Success:** the store starts on the previous release at the old file's revision.
 **If it fails:** the old file was never written; check that the name restored is the one the

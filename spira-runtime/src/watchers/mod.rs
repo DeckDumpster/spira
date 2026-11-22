@@ -65,6 +65,16 @@ pub fn restart_wait(a: &Activation, bound_s: u64, why: &str) -> String {
     format!("WAIT BLIND: store restarting for activation of {} since {} (bound {bound_s}s): {why}", a.sha.chars().take(12).collect::<String>(), iso8601(a.since))
 }
 
+/// The non-paging line a watcher writes for an unreadable store held stopped by a live maintenance.
+pub fn maintenance_wait(m: &spira_world::freeze::Maintenance) -> String {
+    format!("WAIT BLIND: store stopped for maintenance by {} since {}: {}", m.owner, iso8601(m.since), m.why)
+}
+
+/// The one page for a maintenance whose owning process is gone with the hold still on.
+pub fn maintenance_orphaned(m: &spira_world::freeze::Maintenance) -> String {
+    format!("P0 BLIND: store maintenance by {} since {} is orphaned (pid {} gone); run world thaw-store", m.owner, iso8601(m.since), m.pid)
+}
+
 /// The name of the effect that `ev` is the outcome of, when its stream requested one.
 pub fn answered_effect(view: &Projection, ev: &Event) -> Option<String> {
     let cause = ev.cause.as_ref()?;

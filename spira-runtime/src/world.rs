@@ -369,6 +369,7 @@ impl World {
             },
             why: open.as_ref().err().cloned().unwrap_or_default(),
             activation: crate::watchers::current_activation(&self.run_dir),
+            maintenance: spira_world::freeze::read_maintenance(&self.run_dir),
             open: open.as_ref().map_or(0, |o| o.0),
             unadvanced: open.map(|o| o.1).unwrap_or_default(),
             lines,
@@ -1125,7 +1126,8 @@ impl World {
         let halt = read_halt(&self.run_dir);
         let activated_at = crate::watchers::last_activation(&self.run_dir);
         let activation = crate::watchers::current_activation(&self.run_dir);
-        let blind = |why: String| ThroughputSnapshot { readable: false, halt: halt.clone(), activated_at, activation: activation.clone(), why, ..Default::default() };
+        let maintenance = spira_world::freeze::read_maintenance(&self.run_dir);
+        let blind = |why: String| ThroughputSnapshot { readable: false, halt: halt.clone(), activated_at, activation: activation.clone(), maintenance: maintenance.clone(), why, ..Default::default() };
         let prefix = match spira_config::process::cfg("SPIRA_ID_PREFIX") {
             Ok(p) => p,
             Err(e) => return to_json(&blind(format!("SPIRA_ID_PREFIX: {e}"))),
@@ -1242,7 +1244,7 @@ impl World {
         self.push_phase_durations(&phases);
         answered.unwrap_or_else(|| {
             let why = format!("store unavailable: the {} phase of the observe had not answered in its bound of {} s", phases.current, total.as_secs());
-            let blind = crate::tasks::e::watch_transitions::Snapshot { activated_at: crate::watchers::last_activation(&self.run_dir), activation: crate::watchers::current_activation(&self.run_dir), halt: read_halt(&self.run_dir), ..crate::tasks::e::watch_transitions::blind(&why) };
+            let blind = crate::tasks::e::watch_transitions::Snapshot { activated_at: crate::watchers::last_activation(&self.run_dir), activation: crate::watchers::current_activation(&self.run_dir), maintenance: spira_world::freeze::read_maintenance(&self.run_dir), halt: read_halt(&self.run_dir), ..crate::tasks::e::watch_transitions::blind(&why) };
             serde_json::to_string(&blind).map_err(|e| e.to_string())
         })
     }
