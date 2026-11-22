@@ -549,6 +549,8 @@ mod tests {
         assert_eq!(invalid_closed_since(&cfg, &LcClient::over(empty, true), after), Some(String::new()));
         let refused = std::sync::Arc::new(Closes(Default::default(), "", 3));
         assert_eq!(invalid_closed_since(&cfg, &LcClient::over(refused, true), after), None);
+        let blank = std::sync::Arc::new(Closes(Default::default(), "  \n", 0));
+        assert_eq!(invalid_closed_since(&cfg, &LcClient::over(blank, true), after), None, "a blank answer is no answer");
     }
 
     #[test_id(t1ap5ot)]

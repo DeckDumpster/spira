@@ -1120,7 +1120,8 @@ pub fn livelock_keys() -> Kv {
     )
 }
 
-/// An empty detector answer is "none" only when the store answers at all; otherwise `?`.
+/// An empty LIVELOCK answer is "none" only when the store answers at all; otherwise `?`.
+/// The invalid-closed rows follow their own read: `None` is `?`, an answered empty list is `0`.
 fn livelock_report(ll_out: &str, ic: Option<&str>, store_answers: impl FnOnce() -> bool) -> Kv {
     let mut out = Kv::new();
     if ll_out.is_empty() && !store_answers() {
@@ -1982,7 +1983,7 @@ mod livelock_tests {
         }
     }
 
-    #[test_id(t3y6odw)]
+    #[test_id(tppl1jz)]
     #[test]
     fn livelock_keys_issues_no_whole_table_read() {
         let src = include_str!("mod.rs");
