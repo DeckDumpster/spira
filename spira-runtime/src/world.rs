@@ -1287,6 +1287,7 @@ impl World {
         #[derive(serde::Deserialize)]
         struct P {
             window_s: u64,
+            certify_par: u64,
             releases: PathBuf,
             release_repo: String,
         }
@@ -1315,10 +1316,13 @@ impl World {
             wt::ancestor_in(&root, tip, &crate::tasks::e::watch_transitions::landing_ref(&root))
         });
         phase("mark_gated");
+        let pool = spira_config::admission::gate_occupancy(&self.run_dir, p.certify_par);
         wt::mark_gated(
             &mut snap,
-            &wt::gates_of(&landing_pass::gateq::GateQueue::new(&self.run_dir).pending(), &spira_config::admission::gate_occupancy(&self.run_dir, 0).holders),
+            &wt::gates_of(&landing_pass::gateq::GateQueue::new(&self.run_dir).pending(), &pool.holders),
+            &landing_pass::records::gate_backoffs(&self.run_dir),
         );
+        snap.gate_slots_free = p.certify_par.saturating_sub(pool.used());
         progress.lock().unwrap_or_else(|e| e.into_inner()).enter("done");
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
@@ -1881,7 +1885,7 @@ mod bounded_store_tests {
         std::fs::create_dir_all(&rel).unwrap();
         release::machine::enter(&t.path().join("release"), &"a".repeat(40), release::machine::ReleaseState::Activated, "current switched").unwrap();
         let world = super::super::World { run_dir: t.path().into(), repo_map: t.path().join("map"), lc_socket: t.path().join("absent.sock"), observe_bound: Some((std::time::Instant::now(), Duration::from_millis(200))), ..Default::default() };
-        let input = serde_json::json!({ "window_s": 3600, "releases": rel, "release_repo": "spira" }).to_string();
+        let input = serde_json::json!({ "window_s": 3600, "certify_par": 2, "releases": rel, "release_repo": "spira" }).to_string();
         let snap: crate::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&world.transitions_observed(&input).unwrap()).unwrap();
         assert!(!snap.readable && snap.why.contains("store unavailable"), "{}", snap.why);
     }
@@ -1904,7 +1908,7 @@ mod bounded_store_tests {
         let listener = std::os::unix::net::UnixListener::bind(t.path().join("hangup.sock")).unwrap();
         std::thread::spawn(move || listener.incoming().flatten().for_each(drop));
         let world = super::World { run_dir: t.path().into(), repo_map: t.path().join("map"), lc_socket: t.path().join("hangup.sock"), observe_bound: Some((std::time::Instant::now(), bound)), ..Default::default() };
-        let input = serde_json::json!({ "window_s": 3600, "releases": rel, "release_repo": "spira" }).to_string();
+        let input = serde_json::json!({ "window_s": 3600, "certify_par": 2, "releases": rel, "release_repo": "spira" }).to_string();
         let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
         let hook = blocked_in(phase, release.clone());
         let snap: crate::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&world.transitions_phased(&input, hook).unwrap()).unwrap();

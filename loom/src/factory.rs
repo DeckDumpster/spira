@@ -1094,6 +1094,7 @@ mod tests {
             submit_bound_s: 3600,
             cut_bound_s: 600,
             gate_timeout_s: 2700,
+            certify_par: 2,
             deliver_bound_s: 3600,
             activate_bound_s: 3600,
             activation_bound_s: 90,

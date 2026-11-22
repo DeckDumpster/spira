@@ -18,7 +18,7 @@
 //!
 //! - WORKING→SUBMITTED: WORKING ≥ `SPIRA_TRANSITIONS_WORKING_MIN` and no Submit inside
 //!   `SPIRA_TRANSITIONS_SUBMIT_BOUND` seconds.
-//! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead waiting for a cut has itself waited `SPIRA_TRANSITIONS_CUT_BOUND` (a SUBMITTED bead whose gate is queued, or running inside `SPIRA_GATE_TIMEOUT`, is not waiting, and a CERTIFIED bead the batcher refused for an unlanded `blocked_by` that is itself WORKING, SUBMITTED, CERTIFIED or IN_DELIVERY is waiting on it, not uncovered (the rule is `watchers::dependency`, shared with `watch.throughput`; an idle prerequisite does not excuse the wait)), fewer rounds are open on the repo than `SPIRA_ROUND_MAX_OPEN`, and no Delivered inside the bound. A bead waiting behind a full set of open rounds is queued, not stalled, and the round that just closed has not been closed that long. A held bead, and one whose tip is already on the landing ref, is not waiting and is left out of the SUBMITTED and CERTIFIED rows.
+//! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead waiting for a cut has itself waited `SPIRA_TRANSITIONS_CUT_BOUND` (a SUBMITTED bead whose gate is queued behind full gate slots, backed off by the landing pass, or running inside `SPIRA_GATE_TIMEOUT`, is not waiting, and a CERTIFIED bead the batcher refused for an unlanded `blocked_by` that is itself WORKING, SUBMITTED, CERTIFIED or IN_DELIVERY is waiting on it, not uncovered (the rule is `watchers::dependency`, shared with `watch.throughput`; an idle prerequisite does not excuse the wait)), fewer rounds are open on the repo than `SPIRA_ROUND_MAX_OPEN`, and no Delivered inside the bound. A bead waiting behind a full set of open rounds is queued, not stalled, and the round that just closed has not been closed that long. A held bead, and one whose tip is already on the landing ref, is not waiting and is left out of the SUBMITTED and CERTIFIED rows.
 //! - IN_DELIVERY→LANDED: the oldest IN_DELIVERY work older than `SPIRA_TRANSITIONS_DELIVER_BOUND` and no Delivered inside it;
 //!   a bead seen to leave IN_DELIVERY for good counts as Delivered.
 //! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed a commit the
@@ -62,6 +62,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_TRANSITIONS_SUBMIT_BOUND",
     "SPIRA_TRANSITIONS_CUT_BOUND",
     "SPIRA_GATE_TIMEOUT",
+    "SPIRA_CERTIFY_PAR",
     "SPIRA_TRANSITIONS_DELIVER_BOUND",
     "SPIRA_TRANSITIONS_ACTIVATE_BOUND",
     "SPIRA_TRANSITIONS_ASK_BOUND",
@@ -97,6 +98,7 @@ pub struct Config {
     pub submit_bound_s: u64,
     pub cut_bound_s: u64,
     pub gate_timeout_s: u64,
+    pub certify_par: u64,
     pub deliver_bound_s: u64,
     pub activate_bound_s: u64,
     pub ask_bound_s: u64,
@@ -122,6 +124,7 @@ impl Config {
             submit_bound_s: cfg_parse("SPIRA_TRANSITIONS_SUBMIT_BOUND")?,
             cut_bound_s: cfg_parse("SPIRA_TRANSITIONS_CUT_BOUND")?,
             gate_timeout_s: cfg_parse("SPIRA_GATE_TIMEOUT")?,
+            certify_par: cfg_parse("SPIRA_CERTIFY_PAR")?,
             deliver_bound_s: cfg_parse("SPIRA_TRANSITIONS_DELIVER_BOUND")?,
             activate_bound_s: cfg_parse("SPIRA_TRANSITIONS_ACTIVATE_BOUND")?,
             ask_bound_s: cfg_parse("SPIRA_TRANSITIONS_ASK_BOUND")?,
@@ -239,13 +242,17 @@ pub struct Bead {
 pub enum Gating {
     Queued,
     Running { since: u64 },
+    /// The landing pass declined to queue this tip again until `until`.
+    BackingOff { until: u64 },
 }
 
 impl Bead {
-    /// The gate worker has this bead: queued, or running for less than `cap` seconds.
-    pub fn gate_live(&self, now: u64, cap: u64) -> bool {
+    /// The gate has this bead in hand: queued behind full slots, running for less than `cap`
+    /// seconds, or deliberately backed off by the landing pass.
+    pub fn gate_live(&self, now: u64, cap: u64, slots_free: u64) -> bool {
         match self.gate {
-            Some(Gating::Queued) => true,
+            Some(Gating::Queued) => slots_free == 0,
+            Some(Gating::BackingOff { until }) => now < until,
             Some(Gating::Running { since }) => now.saturating_sub(since) < cap,
             None => false,
         }
@@ -272,6 +279,9 @@ pub struct Snapshot {
     pub horizon: u64,
     #[serde(default)]
     pub beads: Vec<Bead>,
+    /// Gate admission slots not held; 0 when unread, so a queued job counts as live.
+    #[serde(default)]
+    pub gate_slots_free: u64,
     /// Per repo, the newest `Claim`, `Submit`, `Cut` and `Delivered`, epoch seconds.
     #[serde(default)]
     pub last: BTreeMap<String, BTreeMap<String, u64>>,
@@ -559,7 +569,7 @@ fn uncovered_wait(snap: &Snapshot, scope: &str, now: u64, cfg: &Config) -> u64 {
 }
 
 fn uncovered(snap: &Snapshot, b: &Bead, scope: &str, now: u64, cfg: &Config) -> bool {
-    (scope == ALL || b.repo == scope) && b.awaits_cut() && b.waits_on.is_none() && !round_slots_full(snap, &b.repo, cfg) && !(b.state == "SUBMITTED" && b.gate_live(now, cfg.gate_timeout_s))
+    (scope == ALL || b.repo == scope) && b.awaits_cut() && b.waits_on.is_none() && !round_slots_full(snap, &b.repo, cfg) && !(b.state == "SUBMITTED" && b.gate_live(now, cfg.gate_timeout_s, snap.gate_slots_free))
 }
 
 /// The oldest uncovered bead in `scope`, and what holds it back.
@@ -568,6 +578,8 @@ fn oldest_uncovered(snap: &Snapshot, scope: &str, now: u64, cfg: &Config) -> Str
     let why = match (b.state.as_str(), &b.gate) {
         ("CERTIFIED", _) => "certified, not cut".to_string(),
         (_, Some(Gating::Running { since })) => format!("gate running {}, past SPIRA_GATE_TIMEOUT {}", dur(now.saturating_sub(*since)), dur(cfg.gate_timeout_s)),
+        (_, Some(Gating::Queued)) => "queued, a gate slot free".to_string(),
+        (_, Some(Gating::BackingOff { until })) => format!("gate backed off until {}", iso8601(*until)),
         _ => "no gate queued or running".to_string(),
     };
     format!("; oldest uncovered: {} {} {} ({why})", b.id, b.state, dur(now.saturating_sub(b.wait_start())))
@@ -637,6 +649,7 @@ pub fn snapshot_of(
         why: String::new(),
         horizon,
         beads,
+        gate_slots_free: 0,
         last,
         activated_at,
         activation: None,
@@ -720,11 +733,14 @@ pub fn gates_of(jobs: &[(landing_pass::gateq::Where, landing_pass::gateq::Job)],
         .collect()
 }
 
-/// Sets `gate` on each SUBMITTED bead the gate worker has. A bead it cannot place keeps none:
-/// the page errs toward speaking.
-pub fn mark_gated(snap: &mut Snapshot, gates: &BTreeMap<String, Gating>) {
+/// Sets `gate` on each SUBMITTED bead the gate worker has, or whose tip the landing pass has
+/// backed off (`backoffs` are (tip, until)). A bead it cannot place keeps none: the page errs toward speaking.
+pub fn mark_gated(snap: &mut Snapshot, gates: &BTreeMap<String, Gating>, backoffs: &[(String, u64)]) {
     for b in snap.beads.iter_mut().filter(|b| b.state == "SUBMITTED") {
-        b.gate = gates.get(&b.id).cloned();
+        b.gate = gates.get(&b.id).cloned().or_else(|| {
+            let tip = b.tip.as_deref()?;
+            backoffs.iter().find(|(t, _)| t == tip).map(|(_, until)| Gating::BackingOff { until: *until })
+        });
     }
 }
 
@@ -1060,7 +1076,7 @@ impl Handler for WatchTransitions {
             }
         };
         if ev.kind.tag == TICK {
-            let input = serde_json::json!({ "now": ev.at / 1000, "window_s": cfg.window_s(), "releases": cfg.releases, "release_repo": cfg.release_repo }).to_string();
+            let input = serde_json::json!({ "now": ev.at / 1000, "window_s": cfg.window_s(), "certify_par": cfg.certify_par, "releases": cfg.releases, "release_repo": cfg.release_repo }).to_string();
             return pattern::tick(ev, OBSERVE, input, DEADLINE_MS, ev.at + cfg.period_ms());
         }
         if !answers_observe(view, ev, OBSERVE) {
@@ -1087,7 +1103,7 @@ mod tests {
     #[test]
     fn the_log_is_cut_to_its_last_2000_lines_past_4000() {
         let dir = testkit::TempDir::new("transitions-log");
-        let mut cfg = Config { period_s: 300, working_min: 1, submit_bound_s: 1, cut_bound_s: 1, gate_timeout_s: 1, deliver_bound_s: 1, activate_bound_s: 1, ask_bound_s: 1, release_repo: "r".into(), heartbeat_bound_s: 1, task_bound_s: 1, round_max_open: 1, releases: "".into(), repo_map: "".into(), activation_bound_s: 1, run: dir.path().to_path_buf() };
+        let mut cfg = Config { period_s: 300, working_min: 1, submit_bound_s: 1, cut_bound_s: 1, gate_timeout_s: 1, certify_par: 1, deliver_bound_s: 1, activate_bound_s: 1, ask_bound_s: 1, release_repo: "r".into(), heartbeat_bound_s: 1, task_bound_s: 1, round_max_open: 1, releases: "".into(), repo_map: "".into(), activation_bound_s: 1, run: dir.path().to_path_buf() };
         assert!(log_append(&cfg, "").is_err());
         for i in 0..4_001 {
             log_append(&cfg, &format!("line {i}")).unwrap();

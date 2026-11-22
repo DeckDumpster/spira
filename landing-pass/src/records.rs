@@ -289,9 +289,7 @@ impl Files {
     /// True while `now` is before the `until` that [`Files::back_off`] recorded for this very tip.
     pub fn backing_off(&self, branch: &str, tip: &str, now: u64) -> bool {
         let Ok(t) = fs::read_to_string(self.backoff_file(branch)) else { return false };
-        let mut l = t.lines();
-        let (Some(was), Some(until)) = (l.next(), l.next().and_then(|n| n.parse::<u64>().ok())) else { return false };
-        was == tip && now < until
+        parse_backoff(&t).is_some_and(|(was, until)| was == tip && now < until)
     }
 
     pub fn write_status(&self, st: &StatusFile) {
@@ -404,6 +402,17 @@ mod deferred_tests {
     }
 }
 
+fn parse_backoff(text: &str) -> Option<(String, u64)> {
+    let mut l = text.lines();
+    Some((l.next()?.to_string(), l.next()?.parse().ok()?))
+}
+
+/// Every (tip, until) a [`Files::back_off`] left under `run`; an unparseable file is skipped.
+pub fn gate_backoffs(run: &Path) -> Vec<(String, u64)> {
+    let Ok(dir) = fs::read_dir(run.join("gate-backoff")) else { return vec![] };
+    dir.flatten().filter_map(|e| parse_backoff(&fs::read_to_string(e.path()).ok()?)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,6 +429,20 @@ mod tests {
         assert!(!f.backing_off("spira/sp-a", "t2", 150));
         f.clear_noverdict("spira/sp-a");
         assert!(!f.backing_off("spira/sp-a", "t1", 150));
+    }
+
+    #[test_id(tajlzqy)]
+    #[test]
+    fn gate_backoffs_lists_every_recorded_tip_and_skips_a_garbled_file() {
+        let d = crate::testutil::tmpdir("backoffs");
+        let f = Files::new(&d);
+        assert_eq!(gate_backoffs(&d), vec![]);
+        f.back_off("spira/sp-a", "t1", 400);
+        f.back_off("spira/sp-b", "t2", 500);
+        fs::write(d.join("gate-backoff").join("junk"), "no-until\n").unwrap();
+        let mut got = gate_backoffs(&d);
+        got.sort();
+        assert_eq!(got, vec![("t1".to_string(), 400), ("t2".to_string(), 500)]);
     }
 
     #[test_id(t7v3pmh)]
