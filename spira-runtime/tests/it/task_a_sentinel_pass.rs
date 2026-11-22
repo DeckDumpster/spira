@@ -189,7 +189,15 @@ fn t5_check6_an_idle_snapshot_starts_no_landing_leg_and_a_submitted_row_starts_o
 #[test]
 fn t5_check6_an_idle_snapshot_does_not_escalate_for_the_age_of_the_leg() {
     let idle_stale = Snapshot { rows: idle().rows, ..stale() };
-    assert!(asks(&decide(&Carry::default(), &idle_stale).1).is_empty());
+    let (_, acts) = decide(&Carry::default(), &idle_stale);
+    assert!(asks(&acts).is_empty() && effects(&acts, LANDING_START).is_empty());
+}
+
+#[test_id(tx082tt)]
+#[test]
+fn t5_check6_unreadable_rows_still_start_the_landing_leg() {
+    let snap = Snapshot { landing_active: false, rows: None, ..idle() };
+    assert_eq!(effects(&decide(&Carry::default(), &snap).1, LANDING_START).len(), 1);
 }
 
 fn stale() -> Snapshot {
