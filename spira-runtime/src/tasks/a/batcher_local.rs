@@ -55,7 +55,7 @@
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
 //! | Corpus, Attributing, Certifying | observe: the round's open round is green on the carried head | Landing (`land`), or Certified when stacked; the carried leg is stopped in the same tick |
-//! | Attributing | observe: the round's record no longer holds a member the leg carries (ejected by another actor) | Certifying for the record's survivors at its head, certify held until no pass runs; the attribution leg is stopped |
+//! | Attributing | observe: the round's record no longer holds a member the leg carries (ejected by another actor; the batcher's own ejects are the leg's work and leave it running) | Certifying for the record's survivors at its head, certify held until no pass runs; the attribution leg is stopped |
 //! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
@@ -273,6 +273,9 @@ pub struct Round {
     /// The beads `queue round eject` took out of the round.
     #[serde(default)]
     pub ejected: Vec<String>,
+    /// Who ejected each of `ejected`, in its order.
+    #[serde(default)]
+    pub ejected_by: Vec<String>,
     /// Seconds since the round opened; the least is the newest, the one the next round stacks on.
     #[serde(default)]
     pub age_secs: u64,
@@ -1695,7 +1698,7 @@ impl Machine<'_> {
         self.land_green()
     }
 
-    /// Another actor ejected a member the attribution leg carries: the leg is stopped and the
+    /// Another actor (not the batcher's own attribution) ejected a member the attribution leg carries: the leg is stopped and the
     /// record's survivors are certified at the record's head. Once per eject: the state leaves
     /// Attributing.
     fn attribution_lost_member(&mut self, repo: &Repo) -> bool {
@@ -1708,6 +1711,12 @@ impl Machine<'_> {
         }
         let survivors: Vec<(String, String)> = open.members.iter().enumerate().filter(|(_, id)| self.rc.members.iter().any(|(m, _)| m == *id)).map(|(i, id)| (id.clone(), open.tips[i].clone())).collect();
         if survivors.is_empty() || survivors.len() == self.rc.members.len() {
+            return false;
+        }
+        let lost_to_another_actor = self.rc.members.iter().filter(|(m, _)| !survivors.iter().any(|(s, _)| s == m)).any(|(m, _)| {
+            open.ejected.iter().zip(open.ejected_by.iter()).rfind(|(e, _)| *e == m).is_none_or(|(_, by)| by != batcher_cut::io::BATCHER_ACTOR)
+        });
+        if !lost_to_another_actor {
             return false;
         }
         self.stop_carried_leg();
@@ -3090,7 +3099,7 @@ pub mod edge {
             let unfit = io::round_certifiable(env, repo, &r.id).err();
             let queue = landing_pass::gateq::GateQueue::new(&env.run);
             let gate_red = with_failing(io::gate_red_rows(env, &r.members), |id, tip| queue.failing_at(&repo.name, &format!("spira/{id}"), tip));
-            Round { id: r.id, members: r.members, tips: r.tips, head: r.head, worktree: r.worktree, driven, red: r.red, red_suites: r.red_suites, ejected: r.ejected, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
+            Round { id: r.id, members: r.members, tips: r.tips, head: r.head, worktree: r.worktree, driven, red: r.red, red_suites: r.red_suites, ejected: r.ejected, ejected_by: r.ejected_by, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
         });
         let open_round = open.next();
         let open_above: Vec<Round> = open.collect();

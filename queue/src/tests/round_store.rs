@@ -304,6 +304,34 @@ fn with_the_store_eject_acts_on_the_open_round_and_keeps_its_fields_in_the_recor
 }
 
 #[test]
+fn an_eject_records_who_made_it_beside_the_ejected_bead() {
+    let t = round_world();
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    for (id, by) in [("sp-b", "batcher"), ("sp-c", "concierge")] {
+        assert_eq!(t.run(&["round", "eject", &batch, id, "--reason", "red", "--by", by]), 0, "{}", t.err());
+    }
+    let rec = batches::batch(d, "spira", &batch).unwrap().unwrap();
+    assert_eq!((rec.kv.get("ejected"), rec.kv.get("ejected_by")), (Some("sp-b sp-c "), Some("batcher concierge ")), "{:?}", rec.kv);
+}
+
+#[test]
+fn an_eject_leaves_an_earlier_eject_with_no_recorded_actor_unclaimed_and_stamps_every_stacked_one() {
+    let t = round_world();
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--by", "concierge"]), 0, "{}", t.err());
+    let mut rec = batches::batch(d, "spira", &batch).unwrap().unwrap();
+    rec.kv.remove("ejected_by");
+    batches::save(d, "spira", &rec.kv).unwrap();
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-c", "--reason", "red", "--by", "batcher"]), 0, "{}", t.err());
+    let rec = batches::batch(d, "spira", &batch).unwrap().unwrap();
+    assert_eq!((rec.kv.get("ejected"), rec.kv.get("ejected_by")), (Some("sp-b sp-c "), Some("- batcher ")), "{:?}", rec.kv);
+}
+
+#[test]
 fn plain_eject_of_a_round_member_refuses_naming_the_round_eject_and_changes_nothing() {
     let t = round_world();
     let d = t.lc.store.get_or_init(MemDoor::default);
