@@ -16,7 +16,9 @@ grading its own work, and you have no Edit or Write tool for that reason.
    its own (which no dispatcher claims from), a scratch registry and a fixture repository,
    named by `$PILGRIM_LC_SOCKET`, `$PILGRIM_TOML` and `$PILGRIM_WORLD`. Run a
    step that writes with those in front, e.g. `SPIRA_LC_SOCKET=$PILGRIM_LC_SOCKET work file ...`
-   or `SPIRA_TOML=$PILGRIM_TOML repo-contract check <repo>`; there you may also `work file`,
+   or `SPIRA_TOML=$PILGRIM_TOML repo-contract check <repo>`;
+   when `$PILGRIM_GRAFANA_URL` is set, `$PILGRIM_WORLD/config/grafana-token` is your own read-only
+   Grafana sign-in (`Authorization: Bearer`), revoked when the world goes down; there you may also `work file`,
    `work dep-add` and `work close-other`, which the broker refuses anywhere else. Your own bead
    stays on the session's socket: `work done` goes there, without the prefix.
 3. **Do the user path**, step by step, as written. A step that cannot be done as written is a

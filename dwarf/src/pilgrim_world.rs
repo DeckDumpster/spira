@@ -10,6 +10,7 @@ use crate::ports::{s, Exec};
 pub const RUNE: &str = "pilgrim";
 pub const WORLD_ENV: &str = "PILGRIM_WORLD";
 pub const SOCKET_ENV: &str = "PILGRIM_LC_SOCKET";
+pub const GRAFANA_URL_ENV: &str = "PILGRIM_GRAFANA_URL";
 pub const TOML_ENV: &str = "PILGRIM_TOML";
 const FIXTURE_REPO: &str = "fixture:push";
 const SIM_ENV: &str = "config/sim.env";
@@ -29,11 +30,13 @@ pub fn model_env(world: &Path, sim_env: &str) -> Result<Vec<(String, String)>, S
             .filter(|v| !v.is_empty())
             .ok_or_else(|| format!("{} names no {key}", world.join(SIM_ENV).display()))
     };
-    Ok(vec![
+    let mut env = vec![
         (WORLD_ENV.to_string(), world.display().to_string()),
         (SOCKET_ENV.to_string(), get("SPIRA_LC_SOCKET")?),
         (TOML_ENV.to_string(), get(spira_config::process::TOML_ENV)?),
-    ])
+    ];
+    env.extend(get(GRAFANA_URL_ENV).ok().map(|u| (GRAFANA_URL_ENV.to_string(), u)));
+    Ok(env)
 }
 
 /// Builds the world and returns what the model is told about it. A world that does not come up
@@ -90,6 +93,14 @@ mod tests {
     }
 
     #[test_id(t3axk4y)]
+    #[test]
+    fn a_session_is_told_the_grafana_url_only_when_the_world_has_a_sign_in() {
+        let w = Path::new("w");
+        let has = |t: &str| model_env(w, t).unwrap().iter().any(|(k, v)| k == GRAFANA_URL_ENV && v == "http://g:1");
+        assert!(has(&format!("{ENV}PILGRIM_GRAFANA_URL=http://g:1\n")));
+        assert!(!has(ENV));
+    }
+
     #[test]
     fn a_world_that_does_not_come_up_refuses_and_is_taken_down() {
         let t = testkit::TempDir::new("pilgrim-world-fail");
