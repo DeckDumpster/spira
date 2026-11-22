@@ -11,6 +11,7 @@ pub const RUNE: &str = "pilgrim";
 pub const WORLD_ENV: &str = "PILGRIM_WORLD";
 pub const SOCKET_ENV: &str = "PILGRIM_LC_SOCKET";
 pub const GRAFANA_URL_ENV: &str = "PILGRIM_GRAFANA_URL";
+const NAMED_PREFIX: &str = "PILGRIM_";
 pub const TOML_ENV: &str = "PILGRIM_TOML";
 const FIXTURE_REPO: &str = "fixture:push";
 const SIM_ENV: &str = "config/sim.env";
@@ -19,7 +20,8 @@ pub fn world_dir(run_dir: &Path, bead: &str) -> PathBuf {
     run_dir.join(format!("{bead}.pilgrim-world"))
 }
 
-/// The variables that name `world` to the model, read from the `sim.env` its build wrote.
+/// The variables that name `world` to the model, read from the `sim.env` its build wrote: the
+/// three it maps, and every `PILGRIM_*` line the build wrote itself.
 pub fn model_env(world: &Path, sim_env: &str) -> Result<Vec<(String, String)>, String> {
     let get = |key: &str| {
         sim_env
@@ -35,7 +37,11 @@ pub fn model_env(world: &Path, sim_env: &str) -> Result<Vec<(String, String)>, S
         (SOCKET_ENV.to_string(), get("SPIRA_LC_SOCKET")?),
         (TOML_ENV.to_string(), get(spira_config::process::TOML_ENV)?),
     ];
-    env.extend(get(GRAFANA_URL_ENV).ok().map(|u| (GRAFANA_URL_ENV.to_string(), u)));
+    for (k, v) in sim_env.lines().filter_map(|l| l.split_once('=')) {
+        if k.starts_with(NAMED_PREFIX) && !v.is_empty() && !env.iter().any(|(n, _)| n == k) {
+            env.push((k.to_string(), v.to_string()));
+        }
+    }
     Ok(env)
 }
 
