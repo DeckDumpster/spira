@@ -2,10 +2,14 @@
 //!
 //! Every `SPIRA_TRANSITIONS_PERIOD` seconds: read the lifecycle control store (the authority on
 //! bead state, through `spira-lc dwell`) and the release machine records, and write one line to
-//! the Concierge inbox that tables, for READY, WORKING, SUBMITTED, CERTIFIED, IN_DELIVERY,
+//! the `transitions` log (`run/transitions.log`, the `transitions` row of `spira/watchers`, read on demand with
+//! `watchd tail transitions`) that tables, for READY, WORKING, SUBMITTED, CERTIFIED, IN_DELIVERY,
 //! REWORK and ask-held work, the count, the oldest age and the p50/p90 age; and per repo the
 //! time since its last Claim, Submit, Cut (a round taking a member: the bead's `Deliver`),
-//! Delivered, and, for the release repo, release activation.
+//! Delivered, and, for the release repo, release activation. The line reaches the Concierge
+//! inbox only when there is something to act on: a row that has just gone over its bound (the
+//! line is then prefixed `OVER <row> …`, once per episode) or the first readable pass after a
+//! blind stretch.
 //!
 //! A state that holds work and has seen no exit transition inside its bound is a STALL: a
 //! separate `P0 STALL` line, carrying its evidence, which wakes the Concierge. Once per episode
@@ -50,7 +54,8 @@ pub const STREAM: &str = "watch.transitions";
 pub const TICK: EventKindTag = "watch.transitions.tick";
 pub const STATE: EventKindTag = "watch.transitions.state";
 pub const OBSERVE: &str = "watch.transitions.observe";
-pub const EFFECTS: &[&str] = &[OBSERVE, INBOX_APPEND];
+pub const LOG_APPEND: &str = "watch.transitions.log_append";
+pub const EFFECTS: &[&str] = &[OBSERVE, INBOX_APPEND, LOG_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_TRANSITIONS_PERIOD",
     "SPIRA_TRANSITIONS_WORKING_MIN",
@@ -67,6 +72,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_RELEASES",
     "SPIRA_REPO_MAP",
     "SPIRA_ACTIVATION_STORE_BOUND",
+    "SPIRA_RUN",
 ];
 /// The period when the key does not resolve; the handler then refuses, so this only sizes the
 /// row's declared cadence.
@@ -101,6 +107,7 @@ pub struct Config {
     pub releases: std::path::PathBuf,
     pub repo_map: std::path::PathBuf,
     pub activation_bound_s: u64,
+    pub run: std::path::PathBuf,
 }
 
 impl Config {
@@ -125,6 +132,7 @@ impl Config {
             releases: cfg("SPIRA_RELEASES")?.into(),
             repo_map: cfg("SPIRA_REPO_MAP")?.into(),
             activation_bound_s: cfg_parse("SPIRA_ACTIVATION_STORE_BOUND")?,
+            run: cfg("SPIRA_RUN")?.into(),
         };
         cfg.bounds_fit_owners()?;
         Ok(cfg)
@@ -364,6 +372,8 @@ pub struct Carry {
     pub halted: String,
     /// The last time a halt was seen: no edge's wait counts from before it.
     pub resumed_at: u64,
+    /// The rows over their bound on the last readable pass: a row wakes the inbox only when it enters this set.
+    pub over: BTreeSet<String>,
 }
 
 /// One state's waiting work: count and ages, seconds.
@@ -828,6 +838,36 @@ pub fn observe(
     snap
 }
 
+fn log_line(now_ms: u64, line: &str) -> EffectSpec {
+    EffectSpec::keyed(LOG_APPEND, format!("{NAME}:log:{now_ms}:{:016x}", fnv1a(line)), pattern::inbox_line(now_ms, TAG, line), DEADLINE_MS)
+}
+
+const LOG_TRIM_OVER: usize = 4_000;
+const LOG_TRIM_KEEP: usize = 2_000;
+
+/// Appends `line` to `run/transitions.log`, the `transitions|log` read contract. Past
+/// `LOG_TRIM_OVER` lines the file is cut to its last `LOG_TRIM_KEEP`.
+pub fn log_append(cfg: &Config, line: &str) -> Result<String, String> {
+    use std::io::Write;
+    if line.is_empty() {
+        return Err("watch.transitions: an empty log line is refused".into());
+    }
+    let path = cfg.run.join("transitions.log");
+    let err = |e: std::io::Error| format!("{}: {e}", path.display());
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(err)?;
+    writeln!(f, "{line}").map_err(err)?;
+    drop(f);
+    let text = std::fs::read_to_string(&path).map_err(err)?;
+    let n = text.lines().count();
+    if n > LOG_TRIM_OVER {
+        let keep: Vec<&str> = text.lines().skip(n - LOG_TRIM_KEEP).collect();
+        let tmp = path.with_extension("log.trim");
+        std::fs::write(&tmp, keep.join("\n") + "\n").map_err(err)?;
+        std::fs::rename(&tmp, &path).map_err(err)?;
+    }
+    Ok(path.display().to_string())
+}
+
 fn say(now_ms: u64, line: &str) -> EffectSpec {
     EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:{now_ms}:{:016x}", fnv1a(line)), pattern::inbox_line(now_ms, TAG, line), DEADLINE_MS)
 }
@@ -862,6 +902,25 @@ fn with_delivered(snap: &Snapshot, seen: &BTreeMap<String, u64>) -> Snapshot {
     out
 }
 
+/// Each table row over its bound, with its oldest age and the bound: the oldest age of the row,
+/// or `uncovered_wait` for SUBMITTED, against the bound of the edge leaving it. READY and
+/// REWORK have no bound.
+fn over_rows(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<(&'static str, u64, u64)> {
+    let t = table(snap, ALL, now);
+    let judged = [
+        ("WORKING", t["WORKING"].oldest, "WORKING→SUBMITTED"),
+        ("SUBMITTED", uncovered_wait(snap, ALL, now, cfg), CUT_EDGE),
+        ("IN_DELIVERY", t["IN_DELIVERY"].oldest, DELIVERY_EDGE),
+        ("ASK", t["ASK"].oldest, ASK_EDGE),
+    ];
+    judged.into_iter().filter_map(|(row, age, edge)| Some((row, age, cfg.bound(edge)?)).filter(|(_, age, bound)| *age > 0 && age >= bound)).collect()
+}
+
+/// The rows over their bound, scope `ALL`.
+pub fn over(snap: &Snapshot, now: u64, cfg: &Config) -> BTreeSet<&'static str> {
+    over_rows(snap, now, cfg).into_iter().map(|(row, _, _)| row).collect()
+}
+
 pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let now = now_ms / 1000;
     let mut next = carry.clone();
@@ -883,13 +942,17 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
             return (next, acts);
         }
         if let Some(a) = &snap.activation {
-            acts.push(say(now_ms, &crate::watchers::restart_wait(a, cfg.activation_bound_s, &snap.why)));
+            let line = crate::watchers::restart_wait(a, cfg.activation_bound_s, &snap.why);
+            acts.push(log_line(now_ms, &line));
+            acts.push(say(now_ms, &line));
             return (next, acts);
         }
         if !carry.blind {
             acts.push(say(now_ms, &format!("P0 BLIND: the lifecycle control store cannot be read ({}), so no state's wait is being watched — this is not an all-clear", snap.why)));
         }
-        acts.push(say(now_ms, &format!("WAIT BLIND: {}", snap.why)));
+        let wait = format!("WAIT BLIND: {}", snap.why);
+        acts.push(log_line(now_ms, &wait));
+        acts.push(say(now_ms, &wait));
         next.blind = true;
         return (next, acts);
     }
@@ -903,7 +966,16 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     next.in_delivery = snap.beads.iter().filter(|b| b.state == "IN_DELIVERY").map(|b| (b.id.clone(), b.repo.clone())).collect();
     let amended = with_delivered(snap, &next.delivered);
     let snap = &amended;
-    acts.push(say(now_ms, &table_line(snap, now, cfg)));
+    let table = table_line(snap, now, cfg);
+    acts.push(log_line(now_ms, &table));
+    let rows = over_rows(snap, now, cfg);
+    next.over = rows.iter().map(|(row, _, _)| row.to_string()).collect();
+    let fresh: Vec<String> = rows.iter().filter(|(row, _, _)| !carry.over.contains(*row)).map(|(row, age, bound)| format!("OVER {row} {} (bound {})", dur(*age), dur(*bound))).collect();
+    if !fresh.is_empty() {
+        acts.push(say(now_ms, &format!("{} — {table}", fresh.join(", "))));
+    } else if carry.blind {
+        acts.push(say(now_ms, &table));
+    }
     let found: Vec<Stall> = stalls(snap, now, cfg).into_iter().filter(|s| carry.stalled.contains(&s.key()) || cfg.bound(s.edge).is_none_or(|b| now.saturating_sub(carry.resumed_at) >= b)).collect();
     let keys: BTreeSet<String> = found.iter().map(Stall::key).collect();
     for s in &found {
@@ -941,7 +1013,7 @@ impl WatchTransitions {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("over")];
 
 impl Handler for WatchTransitions {
     fn interests(&self) -> &[EventKindTag] {
@@ -979,5 +1051,27 @@ impl Handler for WatchTransitions {
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let (next, acts) = decide(&carry, &snap, ev.at, cfg);
         pattern::commands(STATE, &carry, &next, acts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(tqaijo7)]
+    #[test]
+    fn the_log_is_cut_to_its_last_2000_lines_past_4000() {
+        let dir = testkit::TempDir::new("transitions-log");
+        let mut cfg = Config { period_s: 300, working_min: 1, submit_bound_s: 1, cut_bound_s: 1, gate_timeout_s: 1, deliver_bound_s: 1, activate_bound_s: 1, ask_bound_s: 1, release_repo: "r".into(), heartbeat_bound_s: 1, task_bound_s: 1, round_max_open: 1, releases: "".into(), repo_map: "".into(), activation_bound_s: 1, run: dir.path().to_path_buf() };
+        assert!(log_append(&cfg, "").is_err());
+        for i in 0..4_001 {
+            log_append(&cfg, &format!("line {i}")).unwrap();
+        }
+        let text = std::fs::read_to_string(dir.path().join("transitions.log")).unwrap();
+        assert_eq!(text.lines().count(), 2_000);
+        assert_eq!(text.lines().last(), Some("line 4000"));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no temp file is left behind");
+        cfg.run = dir.path().join("missing");
+        assert!(log_append(&cfg, "x").is_err());
     }
 }
