@@ -13,11 +13,12 @@ use super::{iso8601, INBOX_APPEND};
 
 pub const STREAM: &str = "watch.publish-backlog";
 pub const TICK: EventKindTag = "publish-backlog.tick";
+pub const RECHECK: EventKindTag = "publish-backlog.recheck";
 pub const STATE: EventKindTag = "publish-backlog.state";
 pub const OBSERVE: &str = "publish-backlog.observe";
 pub const NAME: &str = "publish-backlog";
 
-const ROW_PARTS: &[Part] = &[Part::Map { name: "standing", drop: &[] }, Part::Map { name: "blind_since", drop: &[] }];
+const ROW_PARTS: &[Part] = &[Part::Map { name: "standing", drop: &[] }, Part::Map { name: "blind_since", drop: &[] }, Part::Map { name: "doubt", drop: &[] }];
 
 const DEADLINE_MS: u64 = 60_000;
 const PUBLISH_CYCLE_SECS: u64 = crate::tasks::a::publish::CADENCE_MS / 1000;
@@ -26,6 +27,7 @@ pub const REPO_MAP_KEY: &str = "_repo_map";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublishBacklog {
     pub interval_ms: u64,
+    pub recheck_ms: u64,
     pub max_count: u64,
     pub max_age_secs: u64,
 }
@@ -61,6 +63,8 @@ pub struct Carry {
     pub standing: BTreeMap<String, Standing>,
     #[serde(default)]
     pub blind_since: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub doubt: BTreeMap<String, u64>,
 }
 
 impl PublishBacklog {
@@ -72,14 +76,22 @@ impl PublishBacklog {
             let (count, arrival, stale) = match read {
                 Read::Blind(why) => {
                     if prev != Standing::Blind {
-                        say.push(format!("BLIND {name}: the backlog watcher cannot measure — {why}"));
-                        c.standing.insert(name.clone(), Standing::Blind);
-                        c.blind_since.insert(name.clone(), now);
+                        match c.doubt.remove(name) {
+                            None => {
+                                c.doubt.insert(name.clone(), now);
+                            }
+                            Some(first) => {
+                                say.push(format!("BLIND {name}: the backlog watcher cannot measure — {why}"));
+                                c.standing.insert(name.clone(), Standing::Blind);
+                                c.blind_since.insert(name.clone(), first);
+                            }
+                        }
                     }
                     continue;
                 }
                 Read::Measured { count, arrival, forge_tip_age_secs } => (*count, *arrival, *forge_tip_age_secs),
             };
+            c.doubt.remove(name);
             if prev == Standing::Blind {
                 c.standing.remove(name);
                 let spell = c.blind_since.remove(name).map_or(String::new(), |t| format!(" after {}s blind", now.saturating_sub(t)));
@@ -96,6 +108,7 @@ impl PublishBacklog {
             }
             c.standing.insert(name.clone(), if over { Standing::Over } else { Standing::Ok });
         }
+        c.doubt.retain(|name, _| snap.repos.iter().any(|(n, _)| n == name));
         (c, say)
     }
 
@@ -114,7 +127,7 @@ impl PublishBacklog {
 
 impl Handler for PublishBacklog {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED]
+        &[TICK, RECHECK, EFFECT_SUCCEEDED]
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
@@ -127,14 +140,21 @@ impl Handler for PublishBacklog {
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
+        if ev.kind.tag == RECHECK {
+            return vec![Command::Probe(EffectSpec::probe(OBSERVE, String::new(), DEADLINE_MS))];
+        }
         if !super::answers_observe(view, ev, OBSERVE) {
             return vec![];
         }
         let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else { return vec![] };
         let now = ev.at / 1000;
-        let (next, say) = self.decide(&Self::carry(view, &ev.stream), &snap, now);
+        let carry = Self::carry(view, &ev.stream);
+        let (next, say) = self.decide(&carry, &snap, now);
         ctx.event().set("publish_backlog.said", say.len() as u64);
         let mut cmds = vec![Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default()))];
+        if next.doubt.keys().any(|r| !carry.doubt.contains_key(r)) {
+            cmds.push(Command::Timer { at: ev.at + self.recheck_ms, kind: EventKind::new(RECHECK, "") });
+        }
         for m in say {
             cmds.push(Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS)));
         }
@@ -149,7 +169,7 @@ mod tests {
     const NOW: u64 = 1_000_000;
 
     fn watcher() -> PublishBacklog {
-        PublishBacklog { interval_ms: 1, max_count: 50, max_age_secs: 10_800 }
+        PublishBacklog { interval_ms: 1, recheck_ms: 1, max_count: 50, max_age_secs: 10_800 }
     }
 
     fn snap(r: Read) -> Snapshot {
@@ -204,6 +224,8 @@ mod tests {
         let w = watcher();
         let (c, _) = w.decide(&Carry::default(), &snap(measured(99, 1_801)), NOW);
         let (c, say) = w.decide(&c, &snap(Read::Blind("no reflog".into())), NOW);
+        assert!(say.is_empty(), "one failed read only doubts: {say:?}");
+        let (c, say) = w.decide(&c, &snap(Read::Blind("no reflog".into())), NOW);
         assert_eq!(say, ["BLIND r: the backlog watcher cannot measure — no reflog"]);
         assert!(w.decide(&c, &snap(Read::Blind("no reflog".into())), NOW).1.is_empty());
         let (_, say) = w.decide(&c, &snap(measured(99, 1_801)), NOW);
@@ -213,6 +235,41 @@ mod tests {
     }
 
     #[test_id(ttu2rf3)]
+    #[test]
+    fn a_read_that_fails_once_keeps_the_standing_it_had_and_says_nothing() {
+        let w = watcher();
+        let blind = || snap(Read::Blind("deadline".into()));
+        let (c, _) = w.decide(&Carry::default(), &snap(measured(99, 1_801)), NOW);
+        let (c, say) = w.decide(&c, &blind(), NOW + 1);
+        assert!(say.is_empty(), "{say:?}");
+        assert_eq!(c.standing["r"], Standing::Over);
+        let (c, say) = w.decide(&c, &snap(measured(99, 1_802)), NOW + 2);
+        assert!(say.is_empty(), "no SIGHTED and no second OVER: {say:?}");
+        assert!(c.doubt.is_empty());
+    }
+
+    #[test]
+    fn a_doubt_does_not_outlive_the_repo_leaving_the_snapshot() {
+        let w = watcher();
+        let blind = || snap(Read::Blind("deadline".into()));
+        let (c, _) = w.decide(&Carry::default(), &blind(), NOW);
+        let (c, _) = w.decide(&c, &Snapshot::default(), NOW + 1);
+        assert!(c.doubt.is_empty());
+        let (_, say) = w.decide(&c, &blind(), NOW + 2);
+        assert!(say.is_empty(), "{say:?}");
+    }
+
+    #[test]
+    fn a_blind_spell_is_counted_from_the_first_failure() {
+        let w = watcher();
+        let blind = || snap(Read::Blind("deadline".into()));
+        let (c, _) = w.decide(&Carry::default(), &blind(), NOW);
+        let (c, say) = w.decide(&c, &blind(), NOW + 60);
+        assert_eq!(say.len(), 1, "{say:?}");
+        let (_, say) = w.decide(&c, &snap(measured(0, 0)), NOW + 100);
+        assert_eq!(say, ["SIGHTED r: the backlog watcher can measure again after 100s blind"]);
+    }
+
     #[test]
     fn a_stale_forge_tip_is_named_with_its_age_in_the_line_it_qualifies() {
         let w = watcher();
@@ -238,6 +295,7 @@ mod tests {
     fn a_sighted_line_says_how_long_the_watcher_was_blind() {
         let w = watcher();
         let (c, _) = w.decide(&Carry::default(), &snap(Read::Blind("fetch timed out".into())), NOW);
+        let (c, _) = w.decide(&c, &snap(Read::Blind("fetch timed out".into())), NOW + 60);
         let (_, say) = w.decide(&c, &snap(measured(0, 0)), NOW + 125);
         assert_eq!(say, ["SIGHTED r: the backlog watcher can measure again after 125s blind"]);
     }
