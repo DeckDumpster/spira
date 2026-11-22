@@ -1427,8 +1427,9 @@ const PHASE_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
 /// `f` on a worker, abandoned when it has not answered within `left`: `None`.
 fn run_within<T: Send + 'static>(left: std::time::Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
     let (tx, rx) = std::sync::mpsc::channel();
+    let task = spira_store::lc_call::current_task();
     std::thread::spawn(move || {
-        let _ = tx.send(f());
+        let _ = tx.send(spira_store::lc_call::as_task_of(task.as_deref(), f));
     });
     rx.recv_timeout(left).ok()
 }
@@ -1942,6 +1943,13 @@ mod bounded_store_tests {
         assert!(got.is_none(), "the worker is still blocked, so the call returned on its bound");
         *release.0.lock().unwrap() = true;
         release.1.notify_all();
+    }
+
+    #[test_id(tjv9adv)]
+    #[test]
+    fn a_worker_run_within_a_task_carries_that_task() {
+        let got = spira_store::lc_call::as_task("t", || super::super::run_within(Duration::from_secs(5), spira_store::lc_call::current_task));
+        assert_eq!(got, Some(Some("t".to_string())));
     }
 }
 
