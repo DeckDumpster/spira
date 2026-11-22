@@ -631,7 +631,7 @@ impl<B: Backend> Store<B> {
     }
 
     /// Commits `t` with each branch's audit as its evidence and, on that branch, a history
-    /// entry for every id the audit names.
+    /// entry for every id the audit names, except an id whose audits here are all applied renewals.
     fn audited_txn(
         &self,
         mut t: Txn,
