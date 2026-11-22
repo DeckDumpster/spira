@@ -518,6 +518,17 @@ fn git_remotes(repo: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn gate_command(branch: &str, repo: &str, bead: &str, suites: &str, lock_wait: &str) -> Command {
+    // FORK-EDGE: machine leg gate.sh
+    let mut c = Command::new("gate.sh");
+    c.arg(branch)
+        .arg(repo)
+        .env("SPIRA_GATE_BEAD", bead)
+        .env("SPIRA_GATE_SUITES", suites)
+        .env("SPIRA_GATE_LOCK_WAIT", lock_wait);
+    c
+}
+
 /// A key the toml in force gains only at activation, after pre-activate: absent is `None`, so it
 /// stays out of `CONFIG_KEYS`, whose check would refuse the release that introduces it.
 fn unregistered_is_none<T>(r: Result<T, String>) -> Result<Option<T>, String> {
@@ -704,6 +715,10 @@ impl Lib for RealLib {
             publish_no_run_secs: unregistered_is_none(
                 spira_config::process::cfg_parse::<u64>("SPIRA_PUBLISH_NO_RUN_SECS"),
             )?,
+            gate_timeout: unregistered_is_none(spira_config::process::cfg_parse::<u64>(
+                "SPIRA_GATE_TIMEOUT",
+            ))?,
+            gate_lock_wait: unregistered_is_none(spira_config::process::cfg("SPIRA_GATE_LOCK_WAIT"))?,
         };
         let path = reg.root(&name);
         let landref = spira_config::repos::landref(&reg, &name).filter(|s| !s.is_empty());
@@ -1034,15 +1049,8 @@ impl Scripts for RealScripts {
             Err(e) => (2, e),
         }
     }
-    fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String) {
-        run_combined(
-            // FORK-EDGE: machine leg gate.sh
-            Command::new("gate.sh")
-                .arg(branch)
-                .arg(repo)
-                .env("SPIRA_GATE_BEAD", bead)
-                .env("SPIRA_GATE_SUITES", suites),
-        )
+    fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str, lock_wait: &str) -> (i32, String) {
+        run_combined(&mut gate_command(branch, repo, bead, suites, lock_wait))
     }
     fn judgement_ci(
         &self,
@@ -2734,6 +2742,18 @@ mod tests {
         assert!(err.contains("selective clean") && err.contains("emptied"), "{err}");
         assert!(!slot.join(".unit-tests-built-manifest").exists(), "the untrusted directory is emptied");
         assert_eq!(fs::read_to_string(&log).unwrap().matches("build -q").count(), builds, "nothing is built after a failed clean");
+    }
+
+    #[test]
+    fn gate_command_hands_gate_sh_the_lock_wait() {
+        let c = super::gate_command("spira/sp-a", "r", "sp-a", "off", "5400");
+        let env = |k: &str| {
+            c.get_envs()
+                .find(|(n, _)| *n == k)
+                .and_then(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+        };
+        assert_eq!(env("SPIRA_GATE_LOCK_WAIT").as_deref(), Some("5400"));
+        assert_eq!(env("SPIRA_GATE_BEAD").as_deref(), Some("sp-a"));
     }
 
     #[test]

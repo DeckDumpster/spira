@@ -4058,6 +4058,26 @@ fn staged_behind_green() -> (T, String, String) {
 }
 
 #[test]
+fn a_stage_refuses_naming_the_gate_timeout_key_when_it_does_not_resolve_and_runs_no_gate() {
+    let mut t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let n = batch_of(&t);
+    assert_eq!(t.run(&["round", "certify", &n]), 0, "{}", t.err());
+    t.lc.batch_states.borrow_mut().insert(n, ("GREEN".into(), "5".into()));
+    t.git.ancestor("ta", "merged-ta");
+    t.git.ancestor("merged-ta", "merged-tb");
+    t.git.trees.borrow_mut().insert("merged-tb".into(), T_STAGED.into());
+    t.lib.s.gate_timeout = None;
+    let gates = |t: &T| t.scripts.calls.borrow().iter().filter(|c| c.starts_with("gate ")).count();
+    let before = gates(&t);
+    assert_ne!(t.run(&["round", "stage", "--members", "sp-b:tb", "--name", "spira-staged"]), 0);
+    assert!(t.err().contains("SPIRA_GATE_TIMEOUT"), "{}", t.err());
+    assert_eq!(gates(&t), before);
+}
+
+#[test]
 fn a_staged_round_is_merged_onto_the_open_rounds_head_and_moves_no_bead() {
     let (t, n, s) = staged_behind_green();
     assert!(
@@ -4076,7 +4096,8 @@ fn a_staged_round_is_merged_onto_the_open_rounds_head_and_moves_no_bead() {
     assert!(
         t.scripts.calls.borrow().iter().any(|c| c.contains("gate")
             && c.contains("spira/round-staged/spira-staged")
-            && c.contains("off")),
+            && c.contains("off")
+            && c.ends_with("lock_wait=5400")),
         "the fences run on the staged head: {:?}",
         t.scripts.calls.borrow()
     );
