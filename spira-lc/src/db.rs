@@ -250,6 +250,7 @@ impl<S: Session> Sessions<S> {
             let started = std::time::Instant::now();
             let out = state_store::phases::time(state_store::phases::Phase::ContentQuery, || session.exec(script));
             crate::slow::record(started.elapsed(), script);
+            state_store::phases::record_content_statement(started.elapsed(), || crate::slow::shape(script));
             let healthy = out.is_ok();
             (out, healthy)
         })?
@@ -320,6 +321,7 @@ impl crate::content_write::Tx for WireTx<'_> {
         let started = std::time::Instant::now();
         let out = state_store::phases::time(state_store::phases::Phase::ContentQuery, || self.wire.exec(sql));
         crate::slow::record(started.elapsed(), sql);
+        state_store::phases::record_content_statement(started.elapsed(), || crate::slow::shape(sql));
         out.map(|_| ()).map_err(|e| match e {
             ScriptFailure::LostRace => crate::content_write::Fail::Conflict,
             ScriptFailure::CannotTell(m) => {

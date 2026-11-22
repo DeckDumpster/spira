@@ -62,6 +62,9 @@ fn span_of(snapshot: &state_store::phases::Snapshot) -> opentelemetry_proto::ton
         reads_overran: snapshot.reads_overran,
         open_phase: snapshot.open,
         content_queries: snapshot.content_queries,
+        content_query_max_us: snapshot.content_query_max_us,
+        content_query_max_shape: &snapshot.content_query_max_shape,
+        task: None,
         children: snapshot.children,
         programs: &snapshot.programs,
         subverb: None,
@@ -122,6 +125,42 @@ fn a_span_names_its_children_and_content_queries() {
     for k in ["spira.phase.child_us", "spira.phase.content_query_us", "spira.phase.content_wait_us"] {
         assert!(attr(k).is_some(), "{k}");
     }
+}
+
+#[test_id(t9gpgjg)]
+#[test]
+fn a_span_names_its_longest_content_statement() {
+    let _env = testkit::env_read();
+    use opentelemetry_proto::tonic::common::v1::any_value::Value;
+    use state_store::phases::{self, Phase};
+    let rec = std::sync::Arc::new(phases::Recorder::default());
+    phases::track(rec.clone());
+    phases::time(Phase::ContentQuery, || ());
+    phases::record_content_statement(std::time::Duration::from_micros(40), || "SELECT 1".into());
+    phases::record_content_statement(std::time::Duration::from_micros(900), || "SELECT a FROM t WHERE label = ?".into());
+    phases::record_content_statement(std::time::Duration::from_micros(10), || "SELECT 2".into());
+    phases::untrack();
+    let span = span_of(&rec.snapshot());
+    let attr = |k: &str| span.attributes.iter().find(|a| a.key == k).and_then(|a| a.value.clone()).and_then(|v| v.value);
+    assert!(matches!(attr("spira.content.query_max_us"), Some(Value::IntValue(900))));
+    assert!(matches!(attr("spira.content.query_max_shape"), Some(Value::StringValue(s)) if s.contains("WHERE label")));
+}
+
+#[test_id(td40q2j)]
+#[test]
+fn a_request_that_names_its_task_carries_it_on_the_span() {
+    let _env = testkit::env_read();
+    use opentelemetry_proto::tonic::common::v1::any_value::Value;
+    let dir = testkit::TempDir::new("lc-serve-task");
+    let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
+    ask(Some(&sink), "{\"argv\":[\"no-such-verb\"],\"task\":\"t\"}\n");
+    ask(Some(&sink), "[\"no-such-verb\"]\n");
+    let file = std::fs::read_dir(&dir).unwrap().flatten().next().unwrap();
+    let text = std::fs::read_to_string(file.path()).unwrap();
+    let spans: Vec<_> = text.lines().map(|l| serde_json::from_str::<opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone()).collect();
+    let task = |i: usize| spans[i].attributes.iter().find(|a| a.key == "spira.task").and_then(|a| a.value.clone()).and_then(|v| v.value);
+    assert!(matches!(task(0), Some(Value::StringValue(s)) if s == "t"));
+    assert!(task(1).is_none());
 }
 
 #[test_id(tkmj6qp)]

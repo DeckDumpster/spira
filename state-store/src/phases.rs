@@ -65,6 +65,8 @@ struct Inner {
     reads_overran: u64,
     reads_ended_by_reset: u64,
     reads_reset_ended: u64,
+    content_max: Duration,
+    content_max_shape: String,
 }
 
 /// What a request recorded; shared between the worker thread and the one that answers.
@@ -94,6 +96,9 @@ pub struct Snapshot {
     pub open: Option<&'static str>,
     /// Dolt SQL statements run.
     pub content_queries: u64,
+    /// The longest single Dolt statement, in microseconds, and its shape.
+    pub content_query_max_us: u64,
+    pub content_query_max_shape: String,
     /// Child processes run.
     pub children: u64,
     /// Basename of each child's program, in order.
@@ -131,6 +136,8 @@ impl Recorder {
             reads_reset_ended: g.reads_reset_ended,
             open: g.open.last().map(|p| p.name()),
             content_queries: g.count[Phase::ContentQuery as usize],
+            content_query_max_us: g.content_max.as_micros() as u64,
+            content_query_max_shape: g.content_max_shape.clone(),
             children: g.count[Phase::Child as usize],
             programs: g.programs.clone(),
         }
@@ -348,6 +355,17 @@ pub fn record_read(took: Duration, end: ReadEnd) {
             ReadEnd::Ended => g.reads_ended += 1,
             ReadEnd::Overran => g.reads_overran += 1,
             ReadEnd::EndedByReset => g.reads_ended_by_reset += 1,
+        }
+    }
+}
+
+/// Notes one Dolt statement's duration; `shape` is called only when it is the longest so far.
+pub fn record_content_statement(took: Duration, shape: impl FnOnce() -> String) {
+    if let Some(rec) = current() {
+        let mut g = rec.inner();
+        if took > g.content_max || g.content_max_shape.is_empty() {
+            g.content_max = took;
+            g.content_max_shape = shape();
         }
     }
 }
