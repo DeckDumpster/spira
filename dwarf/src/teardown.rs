@@ -218,14 +218,15 @@ impl Run<'_> {
     /// failure text instead of waiting a certification cycle to learn it.
     fn refuse_handoff(&self, red: &crate::fast_tier::Red) {
         let br = &self.s.branch;
-        let digest = format!("{}\n\n{}", crate::fast_tier::digest(&red.text), self.keep_fast_tier_output(red));
+        let digest = crate::fast_tier::digest(&red.text);
+        let kept = self.keep_fast_tier_output(red);
         if red.harness {
-            self.bead_reopen("fast-tier-harness", &format!("Reopened by dwarf.sh: the in-session fast tier could not run on {br} (a tool failed, not the work) and the handoff was refused. No attempt charged.\n\n{digest}"));
+            self.bead_reopen("fast-tier-harness", &format!("Reopened by dwarf.sh: the in-session fast tier could not run on {br} (a tool failed, not the work) and the handoff was refused. No attempt charged.\n\n{digest}\n\n{kept}"));
             self.log(&format!("{}: {} REOPENED — fast tier harness failure, no attempt charged", self.f(), self.s.bead));
             return;
         }
         self.record_fact(crate::fast_tier::KIND, &crate::fast_tier::with_tip(&digest, &self.head_tip()));
-        self.bead_reopen("fast-tier-red", &format!("Reopened by dwarf.sh: {br} failed the in-session fast tier (lint, build fence, rebase check) and was not handed to certification.\n\n{digest}"));
+        self.bead_reopen("fast-tier-red", &format!("Reopened by dwarf.sh: {br} failed the in-session fast tier (lint, build fence, rebase check) and was not handed to certification.\n\n{digest}\n\n{kept}"));
         self.log(&format!("{}: {} REOPENED — fast tier red, handoff refused", self.f(), self.s.bead));
         self.ledger.write(self.now(), &format!("reopened {} {} fast-tier-red", self.f(), self.s.bead));
     }
