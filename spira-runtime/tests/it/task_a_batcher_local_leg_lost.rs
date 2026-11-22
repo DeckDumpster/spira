@@ -411,3 +411,48 @@ fn a_green_stacked_round_whose_certify_unit_ran_has_not_arrived_is_certified_and
     assert!(!n.contains(&LAND) && !n.contains(&ABANDON), "{acts:?}");
     assert_eq!(carry.repos["spira"].above[0].state, State::Certified);
 }
+
+#[test_id(tct390h)]
+#[test]
+fn a_pass_started_after_a_gate_red_eject_begins_with_its_restart_allowance_unspent() {
+    let mut carry = certifying(NOW);
+    {
+        let rc = carry.repos.get_mut("spira").unwrap();
+        rc.leg_restarts = 1;
+        rc.members = vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())];
+        rc.head = "H0".into();
+        rc.leg_head = "H0".into();
+    }
+    let at = |head: &str| {
+        let mut snapshot = snap(NOW, Some(vec!["spira.r9.certify1".into()]));
+        let round = snapshot.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap();
+        round.members = vec!["sp-a".into(), "sp-b".into()];
+        round.head = head.into();
+        round.driven = true;
+        round.phase = "certifying".into();
+        round.gate_red = vec![("sp-a".into(), "t1".into(), "suites-failed; failing step: x".into())];
+        snapshot
+    };
+    let (carry, acts) = decide(&carry, &at("H0"));
+    assert!(acts.is_empty(), "{acts:?}");
+    let (carry, acts) = decide(&carry, &at("H1"));
+    assert!(names(&acts).contains(&EJECT_GATE_RED), "{acts:?}");
+    let eject = acts.iter().find(|a| a.effect == EJECT_GATE_RED).unwrap();
+    let leg: Leg = serde_json::from_str(&eject.input).expect("a leg");
+
+    let (carry, acts) = on_outcome(&carry, EJECT_GATE_RED, true, "{}", &leg, NOW);
+    assert_eq!(names(&acts), [CERTIFY], "{acts:?}");
+    assert_eq!(carry.repos["spira"].leg_restarts, 0);
+    let started = carry.repos["spira"].leg.clone().expect("a leg");
+
+    let from = NOW + LEG_START_GRACE_MS;
+    let (carry, acts) = observe_gone(carry, from, LEG_MISSING_OBSERVES as u64);
+    assert_eq!(names(&acts), [CERTIFY], "started once more, not abandoned: {acts:?}");
+    let restarted = carry.repos["spira"].leg.clone().expect("a leg");
+    assert_ne!(restarted, started);
+
+    let (_, acts) = observe_gone(carry, from + LEG_START_GRACE_MS + 10 * TICK, LEG_MISSING_OBSERVES as u64);
+    assert_eq!(names(&acts), [ABANDON], "{acts:?}");
+    let why = serde_json::from_str::<Leg>(&acts[0].input).unwrap().why;
+    assert!(why.contains(&restarted) && why.contains("started again once"), "{why}");
+}

@@ -1293,6 +1293,8 @@ impl Machine<'_> {
         let unit = unit_key(self.repo, &round, what, self.rc.run.max(1));
         self.rc.leg = Some(unit.clone());
         self.rc.leg_at_ms = self.now_ms;
+        self.rc.leg_restarts = 0;
+        self.rc.leg_missing = 0;
         if effect != CERTIFY {
             self.rc.certify_head.clear();
         }
@@ -1790,7 +1792,6 @@ impl Machine<'_> {
         };
         self.rc.leg_missing = 0;
         if self.rc.leg_restarts < 1 {
-            self.rc.leg_restarts += 1;
             self.go(Trigger::LegRestarted);
             match self.rc.state {
                 State::Corpus => self.corpus(self.rc.run + 1),
@@ -1800,6 +1801,7 @@ impl Machine<'_> {
                     self.certify();
                 }
             }
+            self.rc.leg_restarts = 1;
             return;
         }
         let why = format!("the {what} leg did not run: {why}, and it was started again once");

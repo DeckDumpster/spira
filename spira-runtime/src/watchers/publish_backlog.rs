@@ -20,6 +20,7 @@ pub const NAME: &str = "publish-backlog";
 const ROW_PARTS: &[Part] = &[Part::Map { name: "standing", drop: &[] }, Part::Map { name: "blind_since", drop: &[] }];
 
 const DEADLINE_MS: u64 = 60_000;
+const PUBLISH_CYCLE_SECS: u64 = crate::tasks::a::publish::CADENCE_MS / 1000;
 pub const REPO_MAP_KEY: &str = "_repo_map";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,10 +87,10 @@ impl PublishBacklog {
             }
             let tip = stale.map_or(String::new(), |a| format!("; measured against a forge tip {a}s old"));
             let age = arrival.map_or(0, |t| now.saturating_sub(t));
-            let over = count > self.max_count || age > self.max_age_secs;
+            let over = age > self.max_age_secs || (count > self.max_count && age > PUBLISH_CYCLE_SECS);
             let was_over = prev == Standing::Over;
             if over && !was_over {
-                say.push(format!("OVER {name}: {count} unpublished commit(s), oldest {age}s old (threshold {} commits / {}s) — the publish queue is falling behind{tip}", self.max_count, self.max_age_secs));
+                say.push(format!("OVER {name}: {count} unpublished commit(s), oldest {age}s old (threshold {} commits older than {}s / {}s) — the publish queue is falling behind{tip}", self.max_count, PUBLISH_CYCLE_SECS, self.max_age_secs));
             } else if !over && was_over {
                 say.push(format!("CLEAR {name}: back under threshold ({count} unpublished, oldest {age}s{tip})"));
             }
@@ -165,8 +166,8 @@ mod tests {
         let w = watcher();
         let (c, say) = w.decide(&Carry::default(), &snap(measured(50, 10_800)), NOW);
         assert!(say.is_empty(), "the thresholds are exclusive: {say:?}");
-        let (c, say) = w.decide(&c, &snap(measured(51, 5)), NOW);
-        assert_eq!(say, ["OVER r: 51 unpublished commit(s), oldest 5s old (threshold 50 commits / 10800s) — the publish queue is falling behind"]);
+        let (c, say) = w.decide(&c, &snap(measured(51, 1_801)), NOW);
+        assert_eq!(say, ["OVER r: 51 unpublished commit(s), oldest 1801s old (threshold 50 commits older than 1800s / 10800s) — the publish queue is falling behind"]);
         let (c, say) = w.decide(&c, &snap(measured(60, 9_000)), NOW);
         assert!(say.is_empty(), "a backlog that stays over is not a siren: {say:?}");
         let (c, say) = w.decide(&c, &snap(measured(3, 20)), NOW);
@@ -175,6 +176,21 @@ mod tests {
     }
 
     #[test_id(t0yfpio)]
+    #[test]
+    fn a_large_burst_younger_than_one_publish_cycle_is_silent() {
+        let (_, say) = watcher().decide(&Carry::default(), &snap(measured(54, 49)), NOW);
+        assert!(say.is_empty(), "{say:?}");
+    }
+
+    #[test_id(tsy55e9)]
+    #[test]
+    fn the_count_arm_needs_the_oldest_commit_strictly_older_than_one_publish_cycle() {
+        let w = watcher();
+        assert_eq!(w.decide(&Carry::default(), &snap(measured(51, 1_801)), NOW).1.len(), 1);
+        assert!(w.decide(&Carry::default(), &snap(measured(51, 1_800)), NOW).1.is_empty());
+    }
+
+    #[test_id(tflsg36)]
     #[test]
     fn age_alone_crosses() {
         let (_, say) = watcher().decide(&Carry::default(), &snap(measured(1, 10_801)), NOW);
@@ -186,11 +202,11 @@ mod tests {
     #[test]
     fn a_repo_that_cannot_be_measured_is_blind_once_and_sighted_once_and_forgets_it_was_over() {
         let w = watcher();
-        let (c, _) = w.decide(&Carry::default(), &snap(measured(99, 1)), NOW);
+        let (c, _) = w.decide(&Carry::default(), &snap(measured(99, 1_801)), NOW);
         let (c, say) = w.decide(&c, &snap(Read::Blind("no reflog".into())), NOW);
         assert_eq!(say, ["BLIND r: the backlog watcher cannot measure — no reflog"]);
         assert!(w.decide(&c, &snap(Read::Blind("no reflog".into())), NOW).1.is_empty());
-        let (_, say) = w.decide(&c, &snap(measured(99, 1)), NOW);
+        let (_, say) = w.decide(&c, &snap(measured(99, 1_801)), NOW);
         assert_eq!(say.len(), 2, "{say:?}");
         assert_eq!(say[0], "SIGHTED r: the backlog watcher can measure again after 0s blind");
         assert!(say[1].starts_with("OVER r:"), "blindness resets the standing: {say:?}");
@@ -200,7 +216,7 @@ mod tests {
     #[test]
     fn a_stale_forge_tip_is_named_with_its_age_in_the_line_it_qualifies() {
         let w = watcher();
-        let stale = Read::Measured { count: 51, arrival: Some(NOW - 5), forge_tip_age_secs: Some(777) };
+        let stale = Read::Measured { count: 51, arrival: Some(NOW - 1_801), forge_tip_age_secs: Some(777) };
         let (c, say) = w.decide(&Carry::default(), &snap(stale), NOW);
         assert_eq!(say.len(), 1);
         assert!(say[0].ends_with("falling behind; measured against a forge tip 777s old"), "{say:?}");

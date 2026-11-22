@@ -110,6 +110,112 @@ pub fn module_units(ix: &Index) -> Vec<Unit> {
     out
 }
 
+fn mod_path(path: &str, c: &Crate) -> Option<Vec<String>> {
+    let rel = path.strip_prefix(&format!("{}/", crate::index::join_norm(&c.dir, "src")))?.strip_suffix(".rs")?;
+    let mut segs: Vec<String> = rel.split('/').map(String::from).collect();
+    let last = segs.last().map(String::as_str);
+    if last == Some("mod") || (segs.len() == 1 && matches!(last, Some("lib" | "main"))) {
+        segs.pop();
+    }
+    Some(segs)
+}
+
+/// How one file sees a trait: which paths it can write that reach the trait.
+struct Scope<'a> {
+    name: &'a str,
+    lib: &'a str,
+    exported: &'a [Vec<String>],
+    in_def: bool,
+    fm: Option<Vec<String>>,
+    uses: Vec<rustsrc::Use>,
+    shadowed: bool,
+}
+
+impl<'a> Scope<'a> {
+    fn new(ix: &Index, file: &str, def: &'a Crate, name: &'a str, exported: &'a [Vec<String>]) -> Option<Scope<'a>> {
+        let k = ix.crate_of(file)?;
+        let in_def = k.dir == def.dir;
+        if !in_def && !k.deps.contains(&def.name) {
+            return None;
+        }
+        let code = rustsrc::code_lines(&ix.text[file]);
+        Some(Scope {
+            name,
+            lib: &def.lib,
+            exported,
+            in_def,
+            fm: if in_def { mod_path(file, def) } else { None },
+            uses: rustsrc::uses(&code.join("\n")),
+            shadowed: code.iter().any(|l| rustsrc::defines_type(l, name, false).is_some()),
+        })
+    }
+
+    fn absolute(&self, path: &[String]) -> Vec<Vec<String>> {
+        let Some((first, rest)) = path.split_first() else { return Vec::new() };
+        let mut out = Vec::new();
+        match first.as_str() {
+            "crate" => out.extend(self.fm.as_ref().map(|_| rest.to_vec())),
+            "self" => out.extend(self.fm.as_ref().map(|m| [m.as_slice(), rest].concat())),
+            "super" => {
+                let ups = path.iter().take_while(|s| *s == "super").count();
+                out.extend(self.fm.as_ref().filter(|m| m.len() >= ups).map(|m| [&m[..m.len() - ups], &path[ups..]].concat()));
+            }
+            f => {
+                if f == self.lib {
+                    out.push(rest.to_vec());
+                }
+                if self.in_def {
+                    out.push(path.to_vec());
+                    out.extend(self.fm.as_ref().map(|m| [m.as_slice(), path].concat()));
+                }
+            }
+        }
+        out
+    }
+
+    fn reaches(&self, path: &[String]) -> bool {
+        self.absolute(path).iter().any(|a| self.exported.contains(a))
+    }
+
+    fn resolves(&self, path: &[String]) -> bool {
+        let Some(first) = path.first() else { return false };
+        let mut bound = false;
+        for u in self.uses.iter().filter(|u| !u.glob && u.alias == *first) {
+            bound = true;
+            if self.reaches(&[u.path.as_slice(), &path[1..]].concat()) {
+                return true;
+            }
+        }
+        if path.len() > 1 {
+            return self.reaches(path);
+        }
+        !bound && !self.shadowed && first == self.name && self.uses.iter().any(|u| u.glob && self.reaches(&[u.path.as_slice(), path].concat()))
+    }
+}
+
+/// Every path in the defining crate that names the trait: its own, and each `pub use` of it.
+fn exported_paths(ix: &Index, def: &Crate, file: &str, name: &str) -> Vec<Vec<String>> {
+    let mut exported: Vec<Vec<String>> = mod_path(file, def).map(|m| [m, vec![name.to_string()]].concat()).into_iter().collect();
+    let reexporters: Vec<&String> = ix.files_naming(name).iter().filter(|f| *f != file && ix.crate_of(f).is_some_and(|k| k.dir == def.dir)).collect();
+    loop {
+        let mut found = Vec::new();
+        for g in &reexporters {
+            let Some(scope) = Scope::new(ix, g, def, name, &exported) else { continue };
+            let Some(gm) = mod_path(g, def) else { continue };
+            for u in scope.uses.iter().filter(|u| u.public && !u.glob && scope.reaches(&u.path)) {
+                let e = [gm.clone(), vec![u.alias.clone()]].concat();
+                if !exported.contains(&e) && !found.contains(&e) {
+                    found.push(e);
+                }
+            }
+        }
+        if found.is_empty() {
+            return exported;
+        }
+        exported.extend(found);
+    }
+}
+
 pub fn trait_units(ix: &Index) -> Vec<Unit> {
     let mut out = Vec::new();
     for (path, text) in ix.text.iter().filter(|(p, _)| ext(p) == "rs") {
@@ -125,15 +231,20 @@ pub fn trait_units(ix: &Index) -> Vec<Unit> {
             let mut paths = vec![path.clone()];
             let mut impls = Vec::new();
             let mut callers = Vec::new();
-            for f in ix.files_naming(&name) {
-                if f == path {
-                    continue;
-                }
-                let code = rustsrc::code_lines(&ix.text[f]);
-                if code.iter().any(|l| rustsrc::is_impl_of(l, &name)) {
-                    impls.push(f.clone());
-                } else if rustsrc::names_trait_object(&code.join("\n"), &name) {
-                    callers.push(f.clone());
+            if let Some(def) = ix.crate_of(path) {
+                let exported = exported_paths(ix, def, path, &name);
+                for f in ix.files_naming(&name) {
+                    if f == path {
+                        continue;
+                    }
+                    let Some(scope) = Scope::new(ix, f, def, &name, &exported) else { continue };
+                    let code = rustsrc::code_lines(&ix.text[f]);
+                    let resolves = |p: &[String]| scope.resolves(p);
+                    if code.iter().any(|l| rustsrc::is_impl_of(l, &resolves)) {
+                        impls.push(f.clone());
+                    } else if rustsrc::names_trait_object(&code.join("\n"), &resolves) {
+                        callers.push(f.clone());
+                    }
                 }
             }
             paths.extend(impls);
