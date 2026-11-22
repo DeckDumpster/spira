@@ -12,6 +12,7 @@ spira_runtime::family_a_acceptance! {
     registration: BatcherLocal::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
+    test_ids: [ #[test_id(tygoqbm)] #[test_id(tyuwv6o)] #[test_id(twntq0u)] #[test_id(tf28eym)] #[test_id(tr5s3ph)] ],
 }
 
 const NOW: u64 = 1_793_000_000_000;
