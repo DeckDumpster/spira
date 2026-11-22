@@ -57,7 +57,7 @@ impl Handler for Overrides {
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         if ev.kind.tag == runtime::units::UNIT_RAN {
             let landed = runtime::units::UnitRan::from_event_kind(&ev.kind).is_some_and(|r| r.handle.name == LANDING_UNIT);
-            return if landed { vec![Command::Effect(EffectSpec::keyed(APPLY, format!("{NAME}:apply:{}", ev.at), String::new(), DEADLINE_MS))] } else { vec![] };
+            return if landed { vec![Command::Effect(EffectSpec::keyed(APPLY, format!("{NAME}:land:{}", ev.at), String::new(), DEADLINE_MS))] } else { vec![] };
         }
         if ev.stream.0 != STREAM {
             return vec![];
@@ -183,5 +183,10 @@ mod tests {
         clock.advance(60_000);
         e.run_until_idle().unwrap();
         assert_eq!(applies(&e), 1, "no second pass within a minute");
+        let first = e.pending_effects().into_iter().find(|p| p.spec.name == APPLY).unwrap();
+        e.complete(&first.key, runtime::Outcome::Succeeded(String::new())).unwrap();
+        clock.advance(3_600_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(applies(&e), 1, "the backstop tick asks for a pass once the hour has elapsed");
     }
 }
