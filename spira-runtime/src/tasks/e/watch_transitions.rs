@@ -266,6 +266,9 @@ pub struct Snapshot {
     /// The activation whose store restart may still be under way.
     #[serde(default)]
     pub activation: Option<crate::watchers::Activation>,
+    /// A store maintenance whose hold is on.
+    #[serde(default)]
+    pub maintenance: Option<spira_world::freeze::Maintenance>,
     /// Per repo, the oldest Delivered after `activated_at`.
     #[serde(default)]
     pub landed_after: BTreeMap<String, u64>,
@@ -347,6 +350,8 @@ fn owner_acting(snap: &Snapshot, edge: &str, scope: &str, now: u64, cfg: &Config
 #[serde(default)]
 pub struct Carry {
     pub blind: bool,
+    /// The maintenance (by its start) whose orphaning was already paged.
+    pub orphan_paged: Option<u64>,
     /// The `<edge> <scope>` stalls already paged and not yet drained.
     pub stalled: BTreeSet<String>,
     /// The repo of each bead seen IN_DELIVERY last period.
@@ -614,6 +619,7 @@ pub fn snapshot_of(
         last,
         activated_at,
         activation: None,
+        maintenance: None,
         landed_after,
         open_rounds: None,
         owners: BTreeMap::new(),
@@ -781,7 +787,8 @@ pub fn observe(
         .max();
     let activated = crate::watchers::last_activation(run_dir);
     let activation = crate::watchers::current_activation(run_dir);
-    let blind = |why: &str| Snapshot { activated_at: activated, activation: activation.clone(), ..blind(why) };
+    let maintenance = spira_world::freeze::read_maintenance(run_dir);
+    let blind = |why: &str| Snapshot { activated_at: activated, activation: activation.clone(), maintenance: maintenance.clone(), ..blind(why) };
     let in_effect = releases_in_effect(&releases, releases_dir);
     let window = window_s.to_string();
     let after = if current.is_some() {
@@ -866,6 +873,15 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     }
     next.halted.clear();
     if !snap.readable {
+        if let Some(m) = &snap.maintenance {
+            if spira_world::freeze::owner_alive(m) {
+                acts.push(say(now_ms, &crate::watchers::maintenance_wait(m)));
+            } else if carry.orphan_paged != Some(m.since) {
+                acts.push(say(now_ms, &crate::watchers::maintenance_orphaned(m)));
+                next.orphan_paged = Some(m.since);
+            }
+            return (next, acts);
+        }
         if let Some(a) = &snap.activation {
             acts.push(say(now_ms, &crate::watchers::restart_wait(a, cfg.activation_bound_s, &snap.why)));
             return (next, acts);
@@ -925,7 +941,7 @@ impl WatchTransitions {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at")];
 
 impl Handler for WatchTransitions {
     fn interests(&self) -> &[EventKindTag] {

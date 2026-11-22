@@ -293,7 +293,7 @@ fn notify_dwarves(notifier: &mut spira_world::notice::Notifier, what: &str, elap
     });
 }
 
-const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--cause operator|incident|deploy|reboot|drain|landing] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] [--bead B] [--cause C] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | cutover-mode --rev REV --reason WHY [--owner O] | status | scheduler-status [--json] | guard | keep-units | freeze-store | thaw-store}";
+const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--cause operator|incident|deploy|reboot|drain|landing] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] [--bead B] [--cause C] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | cutover-mode --rev REV --reason WHY [--owner O] | status | scheduler-status [--json] | guard | keep-units | freeze-store | thaw-store | store-maintenance --owner O --why WHY -- COMMAND [ARGS...]}";
 
 fn cmd_stop(args: &[String]) -> i32 {
     let cause = cause_or_die(args, tsd::stop::Reason::Operator);
@@ -1066,14 +1066,123 @@ fn cmd_guard() -> i32 {
     }
 }
 
-type StoreVerb = fn(&spira_world::freeze::Store, &mut dyn spira_world::freeze::Units) -> Result<Vec<String>, String>;
+type StoreVerb = fn(&spira_world::freeze::Store, &mut dyn spira_world::freeze::Units, &std::path::Path) -> Result<Vec<String>, String>;
+
+struct MaintenanceArgs {
+    owner: String,
+    why: String,
+    command: Vec<String>,
+}
+
+fn maintenance_args(rest: &[String]) -> Result<MaintenanceArgs, String> {
+    let usage = "usage: world store-maintenance --owner O --why WHY -- COMMAND [ARGS...]";
+    let (flags, command) = match rest.iter().position(|a| a == "--") {
+        Some(i) => (&rest[..i], &rest[i + 1..]),
+        None => (rest, &[][..]),
+    };
+    let (mut owner, mut why) = (None, None);
+    let mut it = flags.iter();
+    while let Some(f) = it.next() {
+        let slot = match f.as_str() {
+            "--owner" => &mut owner,
+            "--why" => &mut why,
+            other => return Err(format!("{usage}   (unrecognised argument {other:?}; nothing was changed)")),
+        };
+        *slot = it.next().cloned().filter(|v| !v.is_empty());
+        if slot.is_none() {
+            return Err(format!("{usage}   ({f} needs a value; nothing was changed)"));
+        }
+    }
+    let (Some(owner), Some(why)) = (owner, why) else {
+        return Err(format!("{usage}   (--owner and --why are both required; nothing was changed)"));
+    };
+    if command.is_empty() {
+        return Err(format!("{usage}   (a command after -- is required; nothing was changed)"));
+    }
+    Ok(MaintenanceArgs { owner, why, command: command.to_vec() })
+}
+
+static SIGNALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn note_signal(_: libc::c_int) {
+    SIGNALLED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Runs the command with inherited stdio. SIGINT and SIGTERM are caught from before the stop
+/// (`catch_signals`) and passed to the child, so an interrupted run still reaches the end steps; death by signal is 128+signal.
+fn catch_signals() {
+    unsafe {
+        libc::signal(libc::SIGINT, note_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, note_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
+    }
+}
+
+fn run_command(command: &[String]) -> i32 {
+    use std::os::unix::process::ExitStatusExt;
+    // batch-job: the operator's own command, held for as long as it runs
+    let mut child = match Command::new(&command[0]).args(&command[1..]).spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("spira: store-maintenance: cannot run {:?}: {e}", command[0]);
+            return 127;
+        }
+    };
+    let mut forwarded = false;
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => return st.code().unwrap_or_else(|| 128 + st.signal().unwrap_or(0)),
+            Ok(None) => {
+                if SIGNALLED.load(std::sync::atomic::Ordering::SeqCst) && !forwarded {
+                    forwarded = true;
+                    unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => {
+                eprintln!("spira: store-maintenance: waiting for the command: {e}");
+                return 1;
+            }
+        }
+    }
+}
+
+fn cmd_store_maintenance(rest: &[String]) -> i32 {
+    let args = match maintenance_args(rest) {
+        Ok(a) => a,
+        Err(usage) => {
+            eprintln!("{usage}");
+            return 2;
+        }
+    };
+    if let Some(e) = sysctl::bus_unreachable() {
+        eprintln!("refused: {e}");
+        return 1;
+    }
+    let dir = spira_world::freeze::runtime_unit_dir(spira_config::resolve::current_uid());
+    let store = spira_world::freeze::Store::new(dir, &instance_or_die());
+    let m = spira_world::freeze::Maintenance { owner: args.owner, why: args.why, since: now_epoch(), pid: std::process::id() };
+    catch_signals();
+    let mut work = || run_command(&args.command);
+    match spira_world::freeze::maintain(&store, &mut spira_world::freeze::Systemd, &run_or_die(), &m, &mut work) {
+        Ok((rc, lines)) => {
+            for l in lines {
+                eprintln!("{l}");
+            }
+            rc
+        }
+        Err(e) => {
+            eprintln!("refused: {e}");
+            1
+        }
+    }
+}
 
 fn store_args_refusal(name: &str, rest: &[String]) -> Option<String> {
     rest.first().map(|a| format!("usage: world.sh {name}   (takes no arguments; refusing {a:?})"))
 }
 
 fn store_cmd(name: &str, rest: &[String]) -> i32 {
-    let verb: StoreVerb = if name == "freeze-store" { spira_world::freeze::freeze } else { spira_world::freeze::thaw };
+    let verb: StoreVerb = if name == "freeze-store" { |s, u, _| spira_world::freeze::freeze(s, u) } else { spira_world::freeze::thaw };
     cmd_store(name, rest, verb)
 }
 
@@ -1088,7 +1197,7 @@ fn cmd_store(name: &str, rest: &[String], verb: StoreVerb) -> i32 {
     }
     let dir = spira_world::freeze::runtime_unit_dir(spira_config::resolve::current_uid());
     let store = spira_world::freeze::Store::new(dir, &instance_or_die());
-    match verb(&store, &mut spira_world::freeze::Systemd) {
+    match verb(&store, &mut spira_world::freeze::Systemd, &run_or_die()) {
         Ok(lines) => {
             for l in lines {
                 println!("{l}");
@@ -1120,6 +1229,7 @@ fn main() {
         "guard" => cmd_guard(),
         "freeze-store" => store_cmd("freeze-store", rest),
         "thaw-store" => store_cmd("thaw-store", rest),
+        "store-maintenance" => cmd_store_maintenance(rest),
         // `scheduler status` for a shell caller: the headline and task lines, and an exit code
         // that says running (0), not answering (1) or halted (2).
         "scheduler-status" => {
@@ -1174,5 +1284,31 @@ mod tests {
             }
             assert!(store_args_refusal(name, &[]).is_none(), "the bare verb must proceed");
         }
+    }
+
+    #[test_id(twaslae)]
+    #[test]
+    fn store_maintenance_refuses_a_missing_owner_why_or_command_with_exit_2_before_acting() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        for bad in [
+            a(&["--why", "w", "--", "true"]),
+            a(&["--owner", "o", "--", "true"]),
+            a(&["--owner", "o", "--why", "w"]),
+            a(&["--owner", "o", "--why", "w", "--"]),
+            a(&["--owner", "o", "--why", "w", "--bogus", "--", "true"]),
+        ] {
+            assert!(maintenance_args(&bad).is_err(), "{bad:?}");
+            assert_eq!(cmd_store_maintenance(&bad), 2, "{bad:?}");
+        }
+        let ok = maintenance_args(&a(&["--owner", "o", "--why", "w", "--", "ls", "--owner"])).unwrap();
+        assert_eq!((ok.owner.as_str(), ok.why.as_str(), ok.command), ("o", "w", a(&["ls", "--owner"])));
+    }
+
+    #[test_id(te4yok7)]
+    #[test]
+    fn a_command_killed_by_a_signal_returns_128_plus_the_signal() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(run_command(&a(&["sh", "-c", "exit 3"])), 3);
+        assert_eq!(run_command(&a(&["sh", "-c", "kill -9 $$"])), 137);
     }
 }

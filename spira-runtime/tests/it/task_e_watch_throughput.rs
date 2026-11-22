@@ -522,7 +522,7 @@ fn filed_and_said() -> TaskRig {
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_and_said(), NAME);
-    assert_eq!(rows, ["blind", "diluted", "halted", "held", "resumed_at", "stalled/alpha", "starved", "undated", "unlanded"]);
+    assert_eq!(rows, ["blind", "diluted", "halted", "held", "orphan_paged", "resumed_at", "stalled/alpha", "starved", "undated", "unlanded"]);
 }
 
 #[test_id(t94hd7b)]
@@ -870,6 +870,33 @@ fn an_unreadable_store_inside_an_activation_window_waits_and_does_not_page() {
     assert!(!said.iter().any(|t| t.contains("P0 BLIND")), "{said:?}");
     assert_eq!(said.iter().filter(|t| t.contains("WAIT BLIND") && t.contains("0123456789ab") && t.contains("bound 75s")).count(), 1, "{said:?}");
     assert!(!v.carry.blind, "the first unreadable tick after the window pages");
+}
+
+fn maintained(pid: u32) -> spira_world::freeze::Maintenance {
+    spira_world::freeze::Maintenance { owner: "concierge".into(), why: "compact the store".into(), since: 1_000_000, pid }
+}
+
+#[test_id(t3snu7e)]
+#[test]
+fn an_unreadable_store_under_live_maintenance_waits_and_does_not_page() {
+    let snap = Snapshot { maintenance: Some(maintained(std::process::id())), ..unreadable_during(None) };
+    let v = decide(&Carry::default(), &snap, 1_000_030_000, &config());
+    let said: Vec<&str> = v.acts.iter().map(|a| a.input.as_str()).collect();
+    assert!(!said.iter().any(|t| t.contains("P0")), "{said:?}");
+    assert_eq!(said.iter().filter(|t| t.contains("WAIT BLIND: store stopped for maintenance by concierge since") && t.contains("compact the store")).count(), 1, "{said:?}");
+    assert!(!v.carry.blind);
+}
+
+#[test_id(ttd4dvz)]
+#[test]
+fn an_unreadable_store_under_orphaned_maintenance_pages_once_naming_thaw_store() {
+    let snap = Snapshot { maintenance: Some(maintained(u32::MAX)), ..unreadable_during(None) };
+    let v = decide(&Carry::default(), &snap, 1_000_030_000, &config());
+    let pages = v.acts.iter().filter(|a| a.input.contains("P0 BLIND") && a.input.contains("orphaned") && a.input.contains("world thaw-store")).count();
+    assert_eq!(pages, 1, "{:?}", v.acts);
+    assert!(!v.carry.blind);
+    let again = decide(&v.carry, &snap, 1_000_045_000, &config());
+    assert!(again.acts.iter().all(|a| !a.input.contains("P0")), "paged once");
 }
 
 #[test_id(tviqb2b)]

@@ -160,6 +160,9 @@ pub struct Snapshot {
     /// The activation whose store restart may still be under way.
     #[serde(default)]
     pub activation: Option<crate::watchers::Activation>,
+    /// A store maintenance whose hold is on.
+    #[serde(default)]
+    pub maintenance: Option<spira_world::freeze::Maintenance>,
     /// The refusal the failing read returned; empty when the snapshot is readable.
     #[serde(default)]
     pub why: String,
@@ -193,6 +196,8 @@ impl Filing {
 #[serde(default)]
 pub struct Carry {
     pub blind: bool,
+    /// The maintenance (by its start) whose orphaning was already paged.
+    pub orphan_paged: Option<u64>,
     /// Repo → the last landing of the stall episode already filed.
     pub stalled: BTreeMap<String, u64>,
     pub starved: Vec<String>,
@@ -254,6 +259,15 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     }
     next.halted.clear();
     if !snap.readable {
+        if let Some(m) = &snap.maintenance {
+            if spira_world::freeze::owner_alive(m) {
+                acts.push(say(now_ms, &crate::watchers::maintenance_wait(m)));
+            } else if carry.orphan_paged != Some(m.since) {
+                acts.push(say(now_ms, &crate::watchers::maintenance_orphaned(m)));
+                next.orphan_paged = Some(m.since);
+            }
+            return Verdict { carry: next, acts };
+        }
         if let Some(a) = &snap.activation {
             acts.push(say(now_ms, &crate::watchers::restart_wait(a, cfg.activation_bound_s, &snap.why)));
             return Verdict { carry: next, acts };
@@ -353,7 +367,7 @@ impl WatchThroughput {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("undated"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Map { name: "waiting_on", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("undated"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Map { name: "waiting_on", drop: &[] }];
 
 impl Handler for WatchThroughput {
     fn interests(&self) -> &[EventKindTag] {

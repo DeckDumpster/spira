@@ -53,6 +53,7 @@ fn healthy(now: u64) -> Snapshot {
     Snapshot {
         readable: true,
         activation: None,
+        maintenance: None,
         why: String::new(),
         horizon: now - 6 * HOUR,
         beads: vec![bead("sp-r1", "spira", "READY", now - 20 * MIN), bead("sp-w1", "spira", "WORKING", now - 40 * MIN), bead("sp-w2", "spira", "WORKING", now - 10 * MIN), bead("sp-w3", "spira", "WORKING", now - 70 * MIN), bead("sp-s1", "spira", "SUBMITTED", now - 5 * MIN), bead("sp-d1", "spira", "IN_DELIVERY", now - 15 * MIN)],
@@ -1553,6 +1554,33 @@ fn an_unreadable_store_inside_an_activation_window_waits_and_does_not_page() {
     assert!(!said.iter().any(|t| t.contains("P0 BLIND")), "{said:?}");
     assert_eq!(said.iter().filter(|t| t.contains("WAIT BLIND: store restarting") && t.contains("0123456789ab") && t.contains("bound 75s")).count(), 1, "{said:?}");
     assert!(!next.blind);
+}
+
+fn maintained(pid: u32) -> spira_world::freeze::Maintenance {
+    spira_world::freeze::Maintenance { owner: "concierge".into(), why: "compact the store".into(), since: T0 - 10, pid }
+}
+
+#[test_id(t88fza2)]
+#[test]
+fn an_unreadable_store_under_live_maintenance_waits_and_does_not_page() {
+    let snap = Snapshot { maintenance: Some(maintained(std::process::id())), ..blind("spira-lc dwell: cannot tell: deadline") };
+    let (next, acts) = decide(&Carry::default(), &snap, T0 * 1000, &config());
+    let said: Vec<&str> = acts.iter().map(|a| a.input.as_str()).collect();
+    assert!(!said.iter().any(|t| t.contains("P0")), "{said:?}");
+    assert_eq!(said.iter().filter(|t| t.contains("WAIT BLIND: store stopped for maintenance by concierge since") && t.contains("compact the store")).count(), 1, "{said:?}");
+    assert!(!next.blind);
+}
+
+#[test_id(tivttow)]
+#[test]
+fn an_unreadable_store_under_orphaned_maintenance_pages_once_naming_thaw_store() {
+    let snap = Snapshot { maintenance: Some(maintained(u32::MAX)), ..blind("spira-lc dwell: cannot tell: deadline") };
+    let (next, acts) = decide(&Carry::default(), &snap, T0 * 1000, &config());
+    let pages: Vec<&str> = acts.iter().map(|a| a.input.as_str()).filter(|t| t.contains("P0 BLIND") && t.contains("orphaned") && t.contains("world thaw-store")).collect();
+    assert_eq!(pages.len(), 1, "{acts:?}");
+    assert!(!next.blind);
+    let (_, again) = decide(&next, &snap, (T0 + 15) * 1000, &config());
+    assert!(again.iter().all(|a| !a.input.contains("P0")), "paged once");
 }
 
 #[test_id(teqoifn)]

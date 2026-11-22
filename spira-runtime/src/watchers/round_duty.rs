@@ -19,7 +19,7 @@ pub const STATE: EventKindTag = "round-duty.state";
 pub const OBSERVE: &str = "round-duty.observe";
 pub const NAME: &str = "round-duty";
 
-const ROW_PARTS: &[Part] = &[Part::Field("last_due"), Part::Field("last_unknown"), Part::Field("last_c"), Part::Field("last_certified"), Part::Field("last_change"), Part::Field("last_stopped"), Part::Field("starved_since"), Part::Field("last_starved"), Part::Field("last_unadvanced"), Part::Field("held"), Part::Field("halt_paged"), Part::Field("waited_since"), Part::Map { name: "lines", drop: &[] }];
+const ROW_PARTS: &[Part] = &[Part::Field("last_due"), Part::Field("last_unknown"), Part::Field("last_c"), Part::Field("last_certified"), Part::Field("last_change"), Part::Field("last_stopped"), Part::Field("starved_since"), Part::Field("last_starved"), Part::Field("last_unadvanced"), Part::Field("held"), Part::Field("halt_paged"), Part::Field("waited_since"), Part::Field("orphan_paged"), Part::Map { name: "lines", drop: &[] }];
 
 const DEADLINE_MS: u64 = 10_000;
 
@@ -72,6 +72,9 @@ pub struct Snapshot {
     pub why: String,
     #[serde(default)]
     pub activation: Option<crate::watchers::Activation>,
+    /// A store maintenance whose hold is on.
+    #[serde(default)]
+    pub maintenance: Option<spira_world::freeze::Maintenance>,
 }
 
 /// Carried between ticks, as the body of the latest `round-duty.state` event.
@@ -93,6 +96,8 @@ pub struct Carry {
     pub halt_paged: Option<u64>,
     #[serde(default)]
     pub waited_since: Option<u64>,
+    #[serde(default)]
+    pub orphan_paged: Option<u64>,
 }
 
 fn verdictless(line: &str) -> bool {
@@ -155,6 +160,18 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
         c.last_unadvanced = now;
     }
     if snap.state == RoundState::Unknown {
+        if let Some(m) = &snap.maintenance {
+            if spira_world::freeze::owner_alive(m) {
+                if c.waited_since != Some(m.since) {
+                    say.push(crate::watchers::maintenance_wait(m));
+                    c.waited_since = Some(m.since);
+                }
+            } else if c.orphan_paged != Some(m.since) {
+                say.push(crate::watchers::maintenance_orphaned(m));
+                c.orphan_paged = Some(m.since);
+            }
+            return (c, say);
+        }
         if let Some(a) = &snap.activation {
             if c.waited_since != Some(a.since) {
                 say.push(crate::watchers::restart_wait(a, cfg.activation_bound_s, &snap.why));
@@ -229,7 +246,7 @@ impl Handler for RoundDuty {
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let snap = match (ev.kind.tag.as_str(), serde_json::from_str::<Snapshot>(&ev.kind.body)) {
             (EFFECT_SUCCEEDED, Ok(s)) => s,
-            _ => Snapshot { certified: carry.last_certified.unwrap_or(0), lines: carry.lines.clone(), stopped: carry.last_stopped.clone(), why: if ev.kind.tag == EFFECT_FAILED && !ev.kind.body.is_empty() { ev.kind.body.clone() } else { "the observe returned no usable snapshot".into() }, activation: crate::watchers::current_activation(&self.run_dir), ..Snapshot::default() },
+            _ => Snapshot { certified: carry.last_certified.unwrap_or(0), lines: carry.lines.clone(), stopped: carry.last_stopped.clone(), why: if ev.kind.tag == EFFECT_FAILED && !ev.kind.body.is_empty() { ev.kind.body.clone() } else { "the observe returned no usable snapshot".into() }, activation: crate::watchers::current_activation(&self.run_dir), maintenance: spira_world::freeze::read_maintenance(&self.run_dir), ..Snapshot::default() },
         };
         let now = ev.at / 1000;
         let snap = with_admissible(snap, &kit::carry::<batcher_local::Carry>(&batcher_local::SHAPE, view));
@@ -381,6 +398,27 @@ mod tests {
         assert!(say[0].starts_with("WAIT BLIND: store restarting for activation of bec37562f5aa") && say[0].contains("bound 90s") && !say[0].contains("ROUND STATE UNKNOWN"), "{say:?}");
         assert_eq!(c.last_unknown, 0);
         assert!(decide(&cfg(), &c, &restarting(), 1015).1.is_empty(), "said once per activation");
+    }
+
+    fn maintained(pid: u32) -> Snapshot {
+        Snapshot { why: "stale past 1500ms: the watch is lost".into(), maintenance: Some(spira_world::freeze::Maintenance { owner: "concierge".into(), why: "compact".into(), since: 900, pid }), ..snap(RoundState::Unknown, 0) }
+    }
+
+    #[test_id(tnxomes)]
+    #[test]
+    fn an_unreadable_store_under_live_maintenance_waits_and_does_not_page() {
+        let (_, say) = decide(&cfg(), &Carry::default(), &maintained(std::process::id()), 1000);
+        assert!(say.iter().all(|l| !l.contains("P0")) && !say.is_empty(), "{say:?}");
+        assert!(say[0].starts_with("WAIT BLIND: store stopped for maintenance by concierge since"), "{say:?}");
+    }
+
+    #[test_id(t4gy0qh)]
+    #[test]
+    fn an_unreadable_store_under_orphaned_maintenance_pages_once_naming_thaw_store() {
+        let (c, say) = decide(&cfg(), &Carry::default(), &maintained(u32::MAX), 1000);
+        assert_eq!(say.len(), 1, "{say:?}");
+        assert!(say[0].starts_with("P0 BLIND: store maintenance by concierge since") && say[0].contains("world thaw-store"), "{say:?}");
+        assert!(decide(&cfg(), &c, &maintained(u32::MAX), 1015).1.is_empty(), "paged once");
     }
 
     #[test_id(t7zbodw)]
