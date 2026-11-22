@@ -4896,6 +4896,14 @@ fn eject(
             w.git.worktree_remove(&path, &wt);
             let _ = w.git.worktree_add_detached(&path, &wt, &old_head);
         }
+        if w.lc.batch_state(batch).is_some_and(|(state, _)| state == "CI_RUNNING") {
+            let (n, phase) = w.lc.batch_pass(batch).unwrap_or((0, String::new()));
+            w.err(format!(
+                "queue.sh {label}: pass {n} (phase {phase}) of round {batch} is running; {} — nothing changed",
+                lifecycle::batch::PASS_RUNNING_EXIT
+            ));
+            return PASS_RUNNING;
+        }
         w.err(format!("queue.sh {label}: spira-lc eject-member refused for {id} (rc={rc}): {out} — nothing changed"));
         return FAIL;
     }

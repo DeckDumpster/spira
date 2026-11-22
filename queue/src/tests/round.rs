@@ -3912,6 +3912,19 @@ fn a_rebuild_that_cannot_cut_the_base_restores_the_head_and_says_nothing_changed
     assert!(!t.lc.has("eject-member"));
 }
 
+#[test]
+fn an_eject_refused_because_a_pass_started_after_the_check_exits_pass_running() {
+    let (t, batch) = pass_world();
+    *t.lc.batch_view.borrow_mut() = Some(("ATTRIBUTING".into(), 4, 1, String::new()));
+    let before = kv_of(&t, "round");
+    t.lc.eject_refused_by_a_pass_starting.set(true);
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"]), crate::ops::round::PASS_RUNNING, "{}", t.err());
+    let e = t.err();
+    assert!(e.contains("pass 2") && e.contains("phase suites"), "{e}");
+    let after = kv_of(&t, "round");
+    assert_eq!((after["head"].to_string(), after["members"].to_string()), (before["head"].to_string(), before["members"].to_string()));
+}
+
 fn build_phase_world() -> (T, String) {
     let (t, batch) = pass_world();
     t.scripts.pass_alive.set(false);
