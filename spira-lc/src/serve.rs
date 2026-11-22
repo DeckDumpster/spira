@@ -956,7 +956,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
         commits_us: &store.commits_us,
         reads: store.reads,
         read_max_us: store.read_max_us,
-        reads_ended: store.reads_ended + store.reads_ended_by_reset,
+        reads_ended: store.reads_ended,
         reads_overran: store.reads_overran,
         open_phase: store.open,
         content_queries: store.content_queries,
