@@ -30,11 +30,10 @@ pub struct Backfill {
     pub more: bool,
 }
 
-/// Legacy entries one `backfill_history_audits` call rewrites, so a call answers inside the
-/// service's query deadline.
 /// Entries one rewrite txn carries, under the store's per-txn op limit.
 const BACKFILL_TXN: usize = 100;
 
+/// Legacy entries one call rewrites, so a call answers inside the service's query deadline.
 pub const BACKFILL_PER_CALL: usize = 20 * RECORD_CHUNK;
 
 #[derive(Clone, Debug, PartialEq)]
