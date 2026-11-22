@@ -469,8 +469,12 @@ pub fn part_dir(p: &Part) -> String {
 /// Every file of the tree, keyed by path relative to the book directory. `toc.toml` and `pointers.toml` are
 /// inputs, not output. A slug the book no longer holds renders its pointer record, or as a
 /// reserved section when it has none.
-pub fn generate(parts: &[Part], pointers: &Pointers, text_of: impl Fn(&str) -> Option<String>) -> BTreeMap<String, String> {
+pub fn generate(parts: &[Part], pointers: &Pointers, text_of: impl Fn(&str) -> Option<String>, prior: &BTreeMap<String, String>, today: &str) -> BTreeMap<String, String> {
     let mut files = BTreeMap::new();
+    let mut put = |path: String, tags: &[&str], body: String| {
+        let (created, updated) = page_dates(prior.get(&path).map(String::as_str), &body, today);
+        files.insert(path, with_frontmatter(&created, &updated, tags, &body));
+    };
     let mut top = String::from("# Statute code\n\n");
     for p in parts {
         top.push_str(&format!("- Part {} — {} — {}\n", p.number, p.name, p.scope));
@@ -494,12 +498,55 @@ pub fn generate(parts: &[Part], pointers: &Pointers, text_of: impl Fn(&str) -> O
                 }
             };
             idx.push_str(&format!("- §{sec} {slug} — {summary}\n"));
-            files.insert(format!("{}/{sec}-{slug}.md", part_dir(p)), format!("# §{sec} {slug}\n\n{body}\n"));
+            put(format!("{}/{sec}-{slug}.md", part_dir(p)), &["law", "statute"], format!("# §{sec} {slug}\n\n{body}\n"));
         }
-        files.insert(format!("{}/index.md", part_dir(p)), idx);
+        put(format!("{}/index.md", part_dir(p)), &["law", "statute-part"], idx);
     }
-    files.insert("index.md".to_string(), top);
+    put("index.md".to_string(), &["law"], top);
     files
+}
+
+fn is_iso_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 10 && b.iter().enumerate().all(|(i, c)| if i == 4 || i == 7 { *c == b'-' } else { c.is_ascii_digit() })
+}
+
+/// Splits a page into its leading `---` block and the text after the closing `---`.
+fn split_frontmatter(page: &str) -> Option<(&str, &str)> {
+    let rest = page.strip_prefix("---\n")?;
+    let end = rest.find("\n---\n")?;
+    Some((&rest[..end], &rest[end + 5..]))
+}
+
+/// `(created, updated)` for a page: the replaced page's dates while its body is unchanged,
+/// `updated` bumped to `today` when it changed, both `today` when there is no dated page to replace.
+pub fn page_dates(prior: Option<&str>, body: &str, today: &str) -> (String, String) {
+    let Some((block, old_body)) = prior.and_then(split_frontmatter) else { return (today.to_string(), today.to_string()) };
+    let key = |k: &str| block.lines().find_map(|l| l.strip_prefix(k)).map(str::trim).filter(|v| is_iso_date(v)).map(str::to_string);
+    let (created, updated) = (key("created:"), key("updated:"));
+    match (created, updated) {
+        (Some(c), Some(u)) if old_body == body => (c, u),
+        (c, _) => (c.unwrap_or_else(|| today.to_string()), today.to_string()),
+    }
+}
+
+pub fn with_frontmatter(created: &str, updated: &str, tags: &[&str], body: &str) -> String {
+    format!("---\ntype: note\ncreated: {created}\nupdated: {updated}\ntags: [{}]\n---\n{body}", tags.join(", "))
+}
+
+/// Refuses a tree holding a page whose date is empty: `today` could not be read.
+pub fn require_dates(files: &BTreeMap<String, String>) -> Result<(), String> {
+    if files.values().any(|f| f.contains("\ncreated: \n") || f.contains("\nupdated: \n")) {
+        return Err("rule: cannot read today's date".to_string());
+    }
+    Ok(())
+}
+
+/// Every `.md` page under `dir`, keyed like `generate`'s output.
+pub fn read_pages(dir: &Path) -> BTreeMap<String, String> {
+    let mut names = Vec::new();
+    walk(dir, dir, &mut names);
+    names.into_iter().filter(|f| f.ends_with(".md")).filter_map(|f| std::fs::read_to_string(dir.join(&f)).ok().map(|t| (f, t))).collect()
 }
 
 fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
@@ -585,8 +632,9 @@ pub fn catch_up(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, Strin
 }
 
 /// Writes `toc`, `pointers` and the generated tree under `law`.
-pub fn write_law(law: &Path, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<(), String> {
-    let files = generate(toc, pointers, |slug| book.get(slug).cloned());
+pub fn write_law(law: &Path, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>, today: &str) -> Result<(), String> {
+    let files = generate(toc, pointers, |slug| book.get(slug).cloned(), &read_pages(law), today);
+    require_dates(&files)?;
     write_tree(law, &render_toc(toc), &files).map_err(|e| format!("rule: writing {}: {e}", law.display()))?;
     std::fs::write(law.join(POINTERS_FILE), render_pointers(pointers)).map_err(|e| format!("rule: writing {}: {e}", law.display()))
 }

@@ -495,7 +495,7 @@ fn cmd_land_book(db: &str, home: &str) -> i32 {
 /// Returns how many paths were committed; 0 when the book already matched the store.
 fn land_book(home: &str, verb: &str, key: &str, toc: &[code::Part], pointers: &code::Pointers, book: &BTreeMap<String, String>) -> Result<usize, String> {
     let (wiki, rel) = code::wiki_and_book()?;
-    code::write_law(&wiki.join(&rel), toc, pointers, book)?;
+    code::write_law(&wiki.join(&rel), toc, pointers, book, &today())?;
     let paths = code::changed_paths(&wiki, &rel)?;
     if paths.is_empty() {
         return Ok(0);
@@ -604,7 +604,11 @@ fn cmd_code(db: &str, rest: &[String]) -> i32 {
     let new_moves = &pointers.moved[old.moved.len()..];
     let unrecorded: Vec<&str> = pointers.retired.iter().map(|r| r.slug.as_str()).filter(|s| !recorded_retired.iter().any(|r| r == s)).collect();
     if check {
-        let expected = code::generate(&toc, &pointers, book_texts(&book));
+        let expected = code::generate(&toc, &pointers, book_texts(&book), &code::read_pages(&law), &today());
+        if let Err(e) = code::require_dates(&expected) {
+            eprintln!("{e}");
+            return 1;
+        }
         let mut drift = code::drift(&law, &expected);
         if toc != loaded_toc {
             let store = strings(&book);
@@ -640,7 +644,7 @@ fn cmd_code(db: &str, rest: &[String]) -> i32 {
     for m in new_moves {
         println!("§{} moved: {} is now §{}", m.section, m.slug, code::section_of(&toc, &m.slug).unwrap_or_default());
     }
-    match code::write_law(&law, &toc, &pointers, &strings(&book)) {
+    match code::write_law(&law, &toc, &pointers, &strings(&book), &today()) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("{e}");

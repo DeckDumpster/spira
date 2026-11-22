@@ -4,7 +4,7 @@
 extern crate spira_test_id;
 use std::collections::BTreeMap;
 
-use rule::code::{append, drift, generate, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, Merged, Moved, Pointers, Retired};
+use rule::code::{append, drift, generate, page_dates, require_dates, with_frontmatter, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, Merged, Moved, Pointers, Retired};
 
 const TOC: &str = r#"[[part]]
 number = 1
@@ -26,6 +26,16 @@ slugs = [
 ]
 "#;
 
+const TODAY: &str = "2026-11-22";
+
+fn gen(parts: &[rule::code::Part], pointers: &Pointers, text_of: impl Fn(&str) -> Option<String>) -> BTreeMap<String, String> {
+    generate(parts, pointers, text_of, &BTreeMap::new(), TODAY)
+}
+
+fn framed(tags: &str, body: &str) -> String {
+    format!("---\ntype: note\ncreated: {TODAY}\nupdated: {TODAY}\ntags: [{tags}]\n---\n{body}")
+}
+
 fn book(slug: &str) -> Option<String> {
     match slug {
         "law-one" => Some("Do one. Then more.\n".into()),
@@ -40,17 +50,63 @@ fn book(slug: &str) -> Option<String> {
 fn three_statutes_in_two_parts_generate_the_expected_tree() {
     let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
-    let tree = generate(&parts, &Pointers::default(), book);
-    let want: BTreeMap<&str, &str> = BTreeMap::from([
-        ("index.md", "# Statute code\n\n- Part 1 — Alpha — First scope.\n- Part 2 — Beta — Second scope.\n"),
-        ("1-alpha/index.md", "# Part 1 — Alpha\n\nFirst scope.\n\n- §1.1 law-one — Do one.\n- §1.2 law-two — Do two.\n"),
-        ("1-alpha/1.1-law-one.md", "# §1.1 law-one\n\nDo one. Then more.\n"),
-        ("1-alpha/1.2-law-two.md", "# §1.2 law-two\n\nDo two.\n"),
-        ("2-beta/index.md", "# Part 2 — Beta\n\nSecond scope.\n\n- §2.1 law-three — Do three.\n"),
-        ("2-beta/2.1-law-three.md", "# §2.1 law-three\n\nDo three. Always.\n"),
+    let tree = generate(&parts, &Pointers::default(), book, &BTreeMap::new(), TODAY);
+    let want: BTreeMap<&str, String> = BTreeMap::from([
+        ("index.md", framed("law", "# Statute code\n\n- Part 1 — Alpha — First scope.\n- Part 2 — Beta — Second scope.\n")),
+        ("1-alpha/index.md", framed("law, statute-part", "# Part 1 — Alpha\n\nFirst scope.\n\n- §1.1 law-one — Do one.\n- §1.2 law-two — Do two.\n")),
+        ("1-alpha/1.1-law-one.md", framed("law, statute", "# §1.1 law-one\n\nDo one. Then more.\n")),
+        ("1-alpha/1.2-law-two.md", framed("law, statute", "# §1.2 law-two\n\nDo two.\n")),
+        ("2-beta/index.md", framed("law, statute-part", "# Part 2 — Beta\n\nSecond scope.\n\n- §2.1 law-three — Do three.\n")),
+        ("2-beta/2.1-law-three.md", framed("law, statute", "# §2.1 law-three\n\nDo three. Always.\n")),
     ]);
-    let got: BTreeMap<&str, &str> = tree.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let got: BTreeMap<&str, String> = tree.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
     assert_eq!(got, want);
+}
+
+#[test_id(t7lngxe)]
+#[test]
+fn a_regenerated_page_keeps_its_dates_until_its_body_changes() {
+    let _env = testkit::env_read();
+    let parts = parse_toc(TOC).unwrap();
+    let first = generate(&parts, &Pointers::default(), book, &BTreeMap::new(), TODAY);
+    let again = generate(&parts, &Pointers::default(), book, &first, "2026-12-01");
+    assert_eq!(again, first);
+    let changed = generate(&parts, &Pointers::default(), |s| if s == "law-two" { Some("Do two, differently.".into()) } else { book(s) }, &first, "2026-12-01");
+    for (k, v) in &changed {
+        if k == "1-alpha/1.2-law-two.md" || k == "1-alpha/index.md" {
+            assert!(v.contains("created: 2026-11-22\nupdated: 2026-12-01\n"), "{v}");
+        } else {
+            assert_eq!(v, &first[k], "{k}");
+        }
+    }
+    let bare: BTreeMap<String, String> = first.iter().map(|(k, v)| (k.clone(), v.split_once("---\n").unwrap().1.split_once("---\n").unwrap().1.to_string())).collect();
+    let fresh = generate(&parts, &Pointers::default(), book, &bare, "2026-12-01");
+    assert!(fresh.values().all(|v| v.contains("created: 2026-12-01\nupdated: 2026-12-01\n")));
+    let dated = |c: &str, u: &str| with_frontmatter(c, u, &["law"], "b\n");
+    assert_eq!(page_dates(Some(&dated("2026-01-01", "2026-02-02")), "b\n", "2026-12-01"), ("2026-01-01".into(), "2026-02-02".into()));
+    assert_eq!(page_dates(Some(&dated("2026-01-01", "soon")), "b\n", "2026-12-01"), ("2026-01-01".into(), "2026-12-01".into()));
+    assert_eq!(page_dates(Some(&dated("never", "2026-02-02")), "b\n", "2026-12-01"), ("2026-12-01".into(), "2026-12-01".into()));
+    assert!(require_dates(&BTreeMap::from([("a.md".to_string(), with_frontmatter("", "", &["law"], "b\n"))])).is_err());
+    assert!(require_dates(&first).is_ok());
+    assert_eq!(page_dates(None, "b", "2026-12-01"), ("2026-12-01".to_string(), "2026-12-01".to_string()));
+}
+
+#[test_id(tj6g6wd)]
+#[test]
+fn every_generated_page_satisfies_the_frontmatter_schema() {
+    let _env = testkit::env_read();
+    let parts = parse_toc(TOC).unwrap();
+    let tag = |t: &str| !t.is_empty() && t.split('-').all(|w| !w.is_empty() && w.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()));
+    let date = |d: &str| d.len() == 10 && d.bytes().enumerate().all(|(i, b)| if i == 4 || i == 7 { b == b'-' } else { b.is_ascii_digit() });
+    for (path, page) in gen(&parts, &Pointers::default(), book) {
+        let rest = page.strip_prefix("---\n").unwrap_or_else(|| panic!("{path}: no block"));
+        let block = rest.split_once("\n---\n").unwrap_or_else(|| panic!("{path}: unclosed")).0;
+        let get = |k: &str| block.lines().find_map(|l| l.strip_prefix(&format!("{k}: "))).unwrap_or_else(|| panic!("{path}: no {k}"));
+        assert_eq!(get("type"), "note");
+        assert!(date(get("created")) && date(get("updated")), "{path}");
+        let tags = get("tags").strip_prefix('[').and_then(|t| t.strip_suffix(']')).unwrap_or_else(|| panic!("{path}: tags not a list"));
+        assert!(tags.split(", ").all(tag), "{path}: {tags}");
+    }
 }
 
 #[test_id(thrcxc0)]
@@ -65,7 +121,7 @@ fn toc_renders_to_itself() {
 fn a_hand_edit_or_a_stray_file_is_drift() {
     let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
-    let tree = generate(&parts, &Pointers::default(), book);
+    let tree = gen(&parts, &Pointers::default(), book);
     let dir = testkit::TempDir::new("law-drift");
     write_tree(&dir, TOC, &tree).unwrap();
     assert!(drift(&dir, &tree).is_empty());
@@ -88,10 +144,10 @@ fn a_hand_edit_or_a_stray_file_is_drift() {
 fn append_adds_at_the_end_and_moves_nothing() {
     let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
-    let before = generate(&parts, &Pointers::default(), book);
+    let before = gen(&parts, &Pointers::default(), book);
     let after = append(&parts, 1, "law-four").unwrap();
     assert_eq!(after[0].slugs, ["law-one", "law-two", "law-four"]);
-    let grown = generate(&after, &Pointers::default(), |s| book(s).or(Some("Four.".into())));
+    let grown = gen(&after, &Pointers::default(), |s| book(s).or(Some("Four.".into())));
     for (path, body) in &before {
         if path != "index.md" && !path.ends_with("/index.md") {
             assert_eq!(grown.get(path), Some(body), "{path} moved");
@@ -116,13 +172,13 @@ fn a_retired_slug_keeps_its_number() {
     let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
     let gone = |s: &str| if s == "law-one" { None } else { book(s) };
-    let tree = generate(&parts, &Pointers::default(), gone);
+    let tree = gen(&parts, &Pointers::default(), gone);
     assert!(tree["1-alpha/1.1-law-one.md"].contains("[Reserved]"));
     assert!(tree.contains_key("1-alpha/1.2-law-two.md"));
 
     let p = Pointers { retired: vec![Retired { slug: "law-one".into(), reason: "Superseded by hand.".into(), replaced_by: Some("law-three".into()), on: "2026-10-28".into() }], ..Pointers::default() };
-    let tree = generate(&parts, &p, gone);
-    assert_eq!(tree["1-alpha/1.1-law-one.md"], "# §1.1 law-one\n\n[Retired 2026-10-28] Superseded by hand.\n\nReplaced by §2.1 law-three.\n");
+    let tree = gen(&parts, &p, gone);
+    assert_eq!(tree["1-alpha/1.1-law-one.md"], framed("law, statute", "# §1.1 law-one\n\n[Retired 2026-10-28] Superseded by hand.\n\nReplaced by §2.1 law-three.\n"));
     assert!(!tree["1-alpha/1.1-law-one.md"].contains("[Reserved]"));
 }
 
@@ -149,8 +205,8 @@ fn a_merged_slug_renders_where_it_went() {
     let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
     let p = Pointers { merged: vec![Merged { from: "law-one".into(), into: "law-three".into(), reason: "Same rule.".into(), on: "2026-10-28".into() }], ..Pointers::default() };
-    let tree = generate(&parts, &p, |s| if s == "law-one" { None } else { book(s) });
-    assert_eq!(tree["1-alpha/1.1-law-one.md"], "# §1.1 law-one\n\n[Merged into §2.1 law-three] Same rule.\n");
+    let tree = gen(&parts, &p, |s| if s == "law-one" { None } else { book(s) });
+    assert_eq!(tree["1-alpha/1.1-law-one.md"], framed("law, statute", "# §1.1 law-one\n\n[Merged into §2.1 law-three] Same rule.\n"));
 }
 
 #[test_id(tyb9llx)]
@@ -219,15 +275,15 @@ fn a_slug_in_two_parts_is_refused() {
 fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesis_stays_in() {
     let _env = testkit::env_read();
     let parts = parse_toc(TOC).unwrap();
-    let tree = generate(&parts, &Pointers::default(), |slug| match slug {
+    let tree = gen(&parts, &Pointers::default(), |slug| match slug {
         "law-one" => Some("Do one. (per the case that produced it: details.)\n".into()),
         "law-two" => Some("Do two (per the spec) always. (sp-abc123.1: the scar, told at length.)".into()),
         "law-three" => Some("Do three (per the spec) always. (spa-x: not a bead) (per a ruling) (sp-abc123: the scar)".into()),
         _ => None,
     });
-    assert_eq!(tree["1-alpha/1.1-law-one.md"], "# §1.1 law-one\n\nDo one.\n");
-    assert_eq!(tree["1-alpha/1.2-law-two.md"], "# §1.2 law-two\n\nDo two (per the spec) always.\n");
-    assert_eq!(tree["2-beta/2.1-law-three.md"], "# §2.1 law-three\n\nDo three (per the spec) always. (spa-x: not a bead)\n");
+    assert_eq!(tree["1-alpha/1.1-law-one.md"], framed("law, statute", "# §1.1 law-one\n\nDo one.\n"));
+    assert_eq!(tree["1-alpha/1.2-law-two.md"], framed("law, statute", "# §1.2 law-two\n\nDo two (per the spec) always.\n"));
+    assert_eq!(tree["2-beta/2.1-law-three.md"], framed("law, statute", "# §2.1 law-three\n\nDo three (per the spec) always. (spa-x: not a bead)\n"));
 }
 
 #[test_id(ttle7bw)]
@@ -271,7 +327,7 @@ fn a_dated_provenance_mark_never_reaches_a_rendered_file() {
     let _env = testkit::env_read();
     let toc = parse_toc("[[part]]\nnumber = 1\nname = \"A\"\nslug = \"a\"\nscope = \"s\"\nslugs = [\"law-one\", \"law-two\", \"law-three\"]\n").unwrap();
     let mark = |who: &str, day: &str| format!("(per {who}, 2026-{day})");
-    let tree = generate(&toc, &Pointers::default(), |slug| match slug {
+    let tree = gen(&toc, &Pointers::default(), |slug| match slug {
         "law-one" => Some(format!("Do one {}.", mark("Ann", "09-29"))),
         "law-two" => Some(format!("Do two {}. Then three.", mark("Ann", "10-15"))),
         "law-three" => Some("Do four (per the spec) always.".into()),
@@ -416,7 +472,32 @@ impl World {
         testkit::git(&w, &["config", "user.name", "t"]);
         testkit::git(&w, &["remote", "add", "origin", bare.to_str().unwrap()]);
         std::fs::write(w.join("wiki/law/toc.toml"), TOC).unwrap();
-        std::fs::write(w.join("wiki/notes/x.md"), "x\n").unwrap();
+        let hook = bare.join("hooks/pre-receive");
+        testkit::write_exe(
+            &hook,
+            r#"#!/bin/sh
+bad=""
+while read old new ref; do
+  [ "$new" = 0000000000000000000000000000000000000000 ] && continue
+  for f in $(git ls-tree -r --name-only "$new" | grep '^wiki/.*\.md$'); do
+    page=$(git show "$new:$f")
+    head=$(printf '%s\n' "$page" | sed -n '1p')
+    ok=1
+    [ "$head" = "---" ] || ok=0
+    for k in type created updated tags; do
+      printf '%s\n' "$page" | sed -n '2,/^---$/p' | grep -q "^$k: " || ok=0
+    done
+    [ $ok = 1 ] || bad="$bad$f  no valid frontmatter block\n"
+  done
+done
+if [ -n "$bad" ]; then
+  echo "REJECTED — refs/heads/main carries wiki pages that break the frontmatter schema:"
+  printf "$bad"
+  exit 1
+fi
+"#,
+        );
+        std::fs::write(w.join("wiki/notes/x.md"), "---\ntype: note\ncreated: 2026-01-01\nupdated: 2026-01-01\ntags: [x]\n---\nx\n").unwrap();
         testkit::git(&w, &["add", "-A"]);
         testkit::git(&w, &["commit", "-q", "-m", "seed"]);
         testkit::git(&w, &["push", "-q", "-u", "origin", "main"]);
@@ -457,7 +538,7 @@ fn code_land_commits_and_pushes_the_book_in_the_wiki_and_leaves_the_home_repo_un
     testkit::git(&home_repo, &["branch", "local/main"]);
     let bare = world.brain_with_remote();
     let w = world.wiki();
-    std::fs::write(w.join("wiki/notes/x.md"), "modified\n").unwrap();
+    std::fs::write(w.join("wiki/notes/x.md"), "---\ntype: note\ncreated: 2026-01-01\nupdated: 2026-01-01\ntags: [x]\n---\nmodified\n").unwrap();
     let before = (testkit::git(&home_repo, &["for-each-ref"]), testkit::git(&home_repo, &["worktree", "list"]));
     let elsewhere = testkit::TempDir::new("rule-land-book-cwd");
 
@@ -492,6 +573,13 @@ fn code_check_reads_the_book_in_the_configured_wiki() {
     assert_eq!(clean.status.code(), Some(0), "{}", said(&clean));
 
     let book = world.book();
+    let index = book.join("index.md");
+    let old = std::fs::read_to_string(&index).unwrap().replace("created: 20", "created: 19").replace("updated: 20", "updated: 19");
+    std::fs::write(&index, &old).unwrap();
+    let kept = run(&["--check"]);
+    assert_eq!(kept.status.code(), Some(0), "an older page's dates are read, not replaced: {}", said(&kept));
+    assert_eq!(run(&[]).status.code(), Some(0));
+    assert_eq!(std::fs::read_to_string(&index).unwrap(), old);
     let section = std::fs::read_dir(book.join("1-alpha")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).find(|n| n.contains("law-one")).unwrap();
     std::fs::write(book.join("1-alpha").join(&section), "edited\n").unwrap();
     std::fs::write(book.join("stray.md"), "x").unwrap();
