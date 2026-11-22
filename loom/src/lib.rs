@@ -463,7 +463,7 @@ fn store_views(loom: &Loom) -> Result<&'static store_view::Projection, String> {
                 eprintln!("loom: store views not loaded at boot: {e}");
             }
             let watcher = Arc::clone(&p);
-            std::thread::spawn(move || watcher.run(&std::sync::atomic::AtomicBool::new(false)));
+            std::thread::spawn(move || watcher.run(&std::sync::atomic::AtomicBool::new(false), &mut |_| {}));
             Ok(p)
         })
         .as_ref()
