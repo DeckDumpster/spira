@@ -445,6 +445,7 @@ pub fn stage_test(w: &World, by: &str, repo: Option<&str>) -> i32 {
         None,
         None,
         None,
+        false,
     );
     let _ = fs::remove_file(handle_of(&c, &batch));
     let mut found = Vec::new();
@@ -862,6 +863,7 @@ pub fn promote(w: &World, by: &str, repo: Option<&str>) -> i32 {
                 Some(&head),
                 Some(staged_ran),
                 None,
+                false,
                 super::round::LeaseCheck::Inside,
             );
             round_event(

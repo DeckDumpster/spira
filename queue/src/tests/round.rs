@@ -2779,6 +2779,23 @@ fn certify_writes_the_deny_list_before_round_vm_takes_a_vm_and_hands_it_over() {
 }
 
 #[test]
+fn certify_with_place_host_pins_its_round_vm_to_the_host_and_without_it_does_not() {
+    let (t, batch, _) = lint_red_world();
+    assert_eq!(t.run(&["round", "certify", &batch, "--place", "host"]), 1, "{}", t.err());
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    let calls = t.scripts.calls.borrow();
+    let vm: Vec<&String> = calls.iter().filter(|c| c.starts_with("round-vm ")).collect();
+    assert!(vm[0].contains(" place=host") && !vm[1].contains(" place=host"), "{vm:?}");
+}
+
+#[test]
+fn certify_refuses_a_place_other_than_host() {
+    let (t, batch, _) = lint_red_world();
+    assert_eq!(t.run(&["round", "certify", &batch, "--place", "ec2"]), 2);
+    assert!(t.err().contains("--place takes `host`"), "{}", t.err());
+}
+
+#[test]
 fn a_second_certify_pass_keeps_the_round_deny_list_with_its_flip_rows() {
     let (t, batch, results) = lint_red_world();
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
