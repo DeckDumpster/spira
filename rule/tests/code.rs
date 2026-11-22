@@ -479,6 +479,7 @@ fn show_resolves_a_section_through_the_wiki_book_and_follows_one_moved_hop() {
     assert_eq!(String::from_utf8_lossy(&moved.stdout).trim(), "§9.9 moved: law-two is now §1.2\nDo law-two.");
 }
 
+#[test_id(tj78yi7)]
 #[test]
 fn code_land_records_a_statute_renamed_in_the_store_as_a_pointer_and_commits_only_the_book() {
     let _env = testkit::env(&[]);
