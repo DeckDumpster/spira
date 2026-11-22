@@ -3,15 +3,14 @@
 
 use std::collections::BTreeSet;
 
-use serde_json::Value;
 use state_store::{
-    contract::Cursor, events_key, Backend, Compare, Error, Event, Item, Object, Request, Result,
+    contract::Cursor, events_key, Backend, Compare, Error, Event, Item, Request, Result,
     Selector, Txn, Watched, EVENTS_PREFIX,
 };
 
 use super::keys;
-use super::records::{encode, Audit};
-use super::store::{Store, RECORD_CHUNK};
+use super::records::Audit;
+use super::store::{history_value, Store, RECORD_CHUNK};
 
 /// One audited change: the txn's revision and the audit it carried.
 #[derive(Clone, Debug, PartialEq)]
@@ -27,7 +26,16 @@ pub struct Backfill {
     pub inline: usize,
     /// The keys of entries whose `events/` key is gone.
     pub lost: Vec<String>,
+    /// The call stopped at its cap with entries still unread.
+    pub more: bool,
 }
+
+/// Legacy entries one `backfill_history_audits` call rewrites, so a call answers inside the
+/// service's query deadline.
+/// Entries one rewrite txn carries, under the store's per-txn op limit.
+const BACKFILL_TXN: usize = 100;
+
+pub const BACKFILL_PER_CALL: usize = 20 * RECORD_CHUNK;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Feed {
@@ -143,9 +151,10 @@ impl<B: Backend> Store<B> {
         Ok(out)
     }
 
-    /// Gives every legacy (`{}`) history entry of `ids`, or of every bead, its audits and its
-    /// revision, read from its `events/` key. A dry run writes nothing. An entry whose events key
-    /// is gone is left as it is and named in `lost`.
+    /// Gives each legacy (`{}`) history entry of `ids`, or of every bead, its audits and its
+    /// revision, read from its `events/` key, and stops after [`BACKFILL_PER_CALL`] of them so a
+    /// backlog is worked down over repeated calls. A dry run counts the legacy entries and writes
+    /// nothing. An entry whose events key is gone is left as it is and named in `lost`.
     pub fn backfill_history_audits(&self, ids: &[String], apply: bool) -> Result<Backfill> {
         let prefixes: Vec<String> = if ids.is_empty() {
             vec![keys::HISTORY.to_string()]
@@ -167,7 +176,15 @@ impl<B: Backend> Store<B> {
                     .iter()
                     .partition(|e| !e.value.data["audits"].is_array() && e.value.data.get("seq").is_none());
                 done.inline += inline.len();
-                self.backfill_page(&legacy, page.list_rev, apply, &mut done)?;
+                if apply {
+                    self.backfill_page(&legacy, page.list_rev, &mut done)?;
+                } else {
+                    done.rewritten += legacy.len();
+                }
+                if apply && done.rewritten + done.lost.len() >= BACKFILL_PER_CALL {
+                    done.more = page.next.is_some();
+                    return Ok(done);
+                }
                 match page.next {
                     Some(next) => cursor = Some(next),
                     None => break,
@@ -177,7 +194,7 @@ impl<B: Backend> Store<B> {
         Ok(done)
     }
 
-    fn backfill_page(&self, legacy: &[&Item], list_rev: u64, apply: bool, done: &mut Backfill) -> Result<()> {
+    fn backfill_page(&self, legacy: &[&Item], list_rev: u64, done: &mut Backfill) -> Result<()> {
         if legacy.is_empty() {
             return Ok(());
         }
@@ -191,40 +208,20 @@ impl<B: Backend> Store<B> {
                 continue;
             };
             let id = entry.key.strip_prefix(keys::HISTORY).and_then(|k| k.split('/').next()).unwrap_or_default();
-            let audits: Vec<Value> = branch_audits(&events)
-                .iter()
-                .filter(|a| a.lc_key == id)
-                .map(encode)
-                .collect::<Result<_>>()?;
-            let data = serde_json::json!({ "rev": entry.mod_rev.main, "audits": audits });
-            rewrites.push((*entry, data));
+            let mut value = history_value(id, &branch_audits(&events), Some(entry.mod_rev.main))?;
+            value.metadata = entry.value.metadata.clone();
+            rewrites.push((entry, value));
         }
-        if !apply {
-            done.rewritten += rewrites.len();
-            return Ok(());
-        }
-        let mut t = Txn::new();
-        for (entry, data) in &rewrites {
-            t = t.when(Compare::ModRev(entry.key.clone(), Some(entry.mod_rev))).put(
-                &entry.key,
-                Object { metadata: entry.value.metadata.clone(), data: data.clone() },
-            );
-        }
-        let req = Request::new(&super::served::call_request_id(), "backfill-history-audits", "backfill-history-audits");
-        if self.contract().txn(&t, &req)?.succeeded {
-            done.rewritten += rewrites.len();
-            return Ok(());
-        }
-        for (entry, data) in rewrites {
-            let t = Txn::new()
-                .when(Compare::ModRev(entry.key.clone(), Some(entry.mod_rev)))
-                .put(&entry.key, Object { metadata: entry.value.metadata.clone(), data });
-            let req = Request::new(&super::served::call_request_id(), "backfill-history-audits", "backfill-history-audits");
-            if self.contract().txn(&t, &req)?.succeeded {
-                done.rewritten += 1;
-            } else {
-                done.inline += 1;
+        for group in rewrites.chunks(BACKFILL_TXN) {
+            let mut t = Txn::new();
+            for (entry, value) in group {
+                t = t.when(Compare::ModRev(entry.key.clone(), Some(entry.mod_rev))).put(&entry.key, value.clone());
             }
+            let req = Request::new(&super::served::call_request_id(), "backfill-history-audits", "backfill-history-audits");
+            if !self.contract().txn(&t, &req)?.succeeded {
+                return Err(Error::Backend("a history entry changed during the backfill; its txn wrote nothing, run again".into()));
+            }
+            done.rewritten += group.len();
         }
         Ok(())
     }

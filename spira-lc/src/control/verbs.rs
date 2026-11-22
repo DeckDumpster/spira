@@ -203,6 +203,9 @@ fn backfill_history_audits<B: Backend>(store: &Store<B>, args: &[String]) -> Res
     let done = store.backfill_history_audits(&ids, apply).map_err(|e| format!("backfill-history-audits: {e}"))?;
     let mut lines: Vec<String> = done.lost.iter().map(|k| format!("lost {k}: its events key is gone")).collect();
     let (verb, tail) = if apply { ("rewritten", "") } else { ("would rewrite", " (dry run; --apply to write)") };
+    if done.more {
+        lines.push(format!("stopped after {} entries; run again for the rest", super::feed::BACKFILL_PER_CALL));
+    }
     lines.push(format!(
         "backfill-history-audits: {} {verb}, {} already inline, {} lost{tail}",
         done.rewritten,
