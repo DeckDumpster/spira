@@ -36,8 +36,6 @@ pub const KEYS: [&str; 10] =
 
 /// Seconds between prunes of the server's temp spool by `run`.
 pub const TMP_PRUNE_EVERY_SECS: u64 = 60;
-/// Where a process's open files are listed; a test points `Config::proc_dir` at a fixture.
-pub const PROC_DIR: &str = "/proc";
 
 /// Seconds between the rebuilds `run` considers for a durable copy grown past its ratio.
 pub const COMPACT_EVERY_SECS: u64 = 86_400;
@@ -92,7 +90,7 @@ impl Config {
             history_keep: num(KEY_HISTORY_KEEP)?,
             tmp_pressure_pct: num(KEY_TMP_PRESSURE_PCT)?,
             tmp_ttl_secs: num(KEY_TMP_TTL)?,
-            proc_dir: PathBuf::from(PROC_DIR),
+            proc_dir: PathBuf::from(system_paths::PROC),
         };
         if cfg.history_keep == 1 {
             return Err(format!("{KEY_HISTORY_KEEP} of 1 cannot hold the root and a base; use 0 to keep all or at least 2"));
