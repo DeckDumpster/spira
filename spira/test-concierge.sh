@@ -36,6 +36,17 @@ tmux_kill_pane_dead() {
     echo "tmux_kill_pane_dead: $2 pane not dead after kill" >&2
     return 1
 }
+# wait_until <what> <command...>: poll a fixture condition rather than sleep a guess at it.
+wait_until() {
+    local what="$1" n; shift
+    # waits-on: the caller's own condition; the attempt count is only a cap
+    for ((n = 0; n < 300; n++)); do
+        "$@" && return 0
+        sleep 0.1
+    done
+    echo "wait_until: $what never held" >&2
+    return 1
+}
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # EVERY `concierge.sh start` BELOW MUST NEVER TOUCH THE OPERATOR'S REAL CLIENT SETTINGS.
@@ -793,7 +804,8 @@ is "no stray holders before one exists" "" "$(sh_holders)"
 bash -c "exec -a claude-strayx '$SH_FAKE' --remote-control '$SH_SESS'" &
 SH_PID=$!
 trap 'kill "$SH_PID" 2>/dev/null; rm -rf "$TMP"' EXIT
-sleep 0.3
+sh_execed() { tr '\0' '\n' < "/proc/$SH_PID/cmdline" 2>/dev/null | grep -x -- --remote-control >/dev/null; }
+wait_until "the stray fixture exec'd into its --remote-control argv" sh_execed
 
 is "the bare holder is found by name, with no resume id involved" "$SH_PID" "$(sh_holders)"
 
@@ -853,9 +865,11 @@ tmux -L "$WK_HOLD" new-session -d -s "$WK_HOLD" -x 80 -y 24 \
 # instant the wake delivers text + Enter — without this the session (and its screen
 # content) would vanish before the final assertion below can capture it.
 tmux -L "$WK_HOLD" set-option -t "$WK_HOLD" remain-on-exit on
-sleep 0.3
+wk_pane_has() { tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD" 2>/dev/null | grep -F -- "$1" >/dev/null; }
+wk_pane_lacks() { ! wk_pane_has "$1"; }
+wait_until "the fixture pane printed its input marker" wk_pane_has "❯ "
 tmux -L "$WK_HOLD" send-keys -t "$WK_HOLD" -l -- "half-written"
-sleep 0.3
+wait_until "the fixture pane echoed the half-written text" wk_pane_has "❯ half-written"
 want "the fixture pane shows the half-written input line (positive control)" \
     "❯ half-written" "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD")"
 
@@ -869,8 +883,10 @@ tl_config SPIRA_RUN="$WK_HOLD_RUN"
 ) &
 WK_WAKE_PID=$!
 
-# WHILE THE LINE STAYS BUSY, THE WAKE MUST NOT HAVE DELIVERED ANYTHING.
-sleep 1.5
+# WHILE THE LINE STAYS BUSY, THE WAKE MUST NOT HAVE DELIVERED ANYTHING. "wake held" is
+# printed only after a poll saw the line busy, so it orders these checks; a sleep raced
+# concierge.sh's own startup.
+wait_until "the wake reported itself held" grep -qF "wake held" "$TMP/wake-hold.out"
 want "still busy: the pane still shows only the half-written text" \
     "❯ half-written" "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD")"
 nowant "still busy: the wake has not delivered its text yet" \
@@ -884,7 +900,7 @@ is "the wake call has not returned while the line is busy" 1 \
 # "half-written" is 12 characters; one extra BSpace is a harmless no-op on an empty line.
 tmux -L "$WK_HOLD" send-keys -t "$WK_HOLD" BSpace BSpace BSpace BSpace BSpace \
     BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace
-sleep 0.3
+wait_until "the fixture pane erased the half-written text" wk_pane_lacks "half-written"
 nowant "the input line is now empty" "half-written" "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD")"
 
 # THE WAKE DELIVERS ONCE THE LINE IS EMPTY, AND RETURNS. Its own loop polls every 2s with
