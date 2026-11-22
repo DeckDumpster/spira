@@ -121,6 +121,8 @@ fn column(rec: &LifecycleRecord, r: Option<&Readiness>, view: &Value, name: &str
         "since" => number(row.since),
         "worked_s" => number(Some(row.worked_s)),
         "sessions" => number(Some(i64::from(row.sessions))),
+        "builder_claims" => number(Some(i64::from(row.builder_claims))),
+        "session_ends" => serde_json::to_value(&row.session_ends).unwrap_or(Value::Null),
         "express" => number(Some(i64::from(row.express))),
         "dwarf_phase" => text(row.phase.map(|p| p.as_str())),
         "disposition" => text(row.disposition.map(|d| d.as_str())),
@@ -156,6 +158,8 @@ const SHOWN: &[&str] = &[
     "stack_depth",
     "worked_s",
     "sessions",
+    "builder_claims",
+    "session_ends",
     "express",
     "dwarf_phase",
     "disposition",
@@ -186,6 +190,8 @@ const LISTED: &[&str] = &[
     "since",
     "worked_s",
     "sessions",
+    "builder_claims",
+    "session_ends",
     "express",
     "dwarf_phase",
     "disposition",
@@ -677,5 +683,21 @@ mod manual_hold_columns {
         let want = serde_json::json!({ "at": 7, "cause": "supersede-request", "detail": "sp-b" });
         assert_eq!(listed(&rec, None)["manual_hold"], want);
         assert_eq!(row(&rec, None, &Value::Null, SHOWN)["manual_hold"], want);
+    }
+
+    #[test_id(tn7w4xc)]
+    #[test]
+    fn list_and_show_print_builder_claims_and_session_ends_from_the_record() {
+        let mut rec = LifecycleRecord::born("sp-a", Some("spira"), None, 100);
+        let shown = |rec: &LifecycleRecord| [listed(rec, None), row(rec, None, &Value::Null, SHOWN)];
+        for v in shown(&rec) {
+            assert_eq!((&v["builder_claims"], &v["session_ends"]), (&Value::String("0".into()), &serde_json::json!([])));
+        }
+        rec.row.builder_claims = 3;
+        rec.row.session_ends = vec![lifecycle::bead::SessionEnd { claim: 3, left: "Submit by d".into(), back: None, at: Some(5) }];
+        for v in shown(&rec) {
+            assert_eq!(v["builder_claims"], "3");
+            assert_eq!(v["session_ends"], serde_json::json!([{ "claim": 3, "left": "Submit by d", "back": null, "at": 5 }]));
+        }
     }
 }
