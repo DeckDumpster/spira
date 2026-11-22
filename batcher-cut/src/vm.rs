@@ -2960,7 +2960,7 @@ mod deny_snapshot_tests {
     use super::*;
     use crate::io::{lifecycle_tests_env, Land, Repo};
 
-    const LIST: &str = "# test-registry deny-list at=2000 rows=1\ndisabled\tunit:tiny t::drop\tsp-x\t-\n";
+    const LIST: &str = "# test-registry deny-list at=2000 rows=1\ndisabled\ttest:t0aaaaa\tsp-x\t-\n";
 
     fn runner<'a>(env: &'a Env, repo: &'a Repo, d: &Path) -> VmRunner<'a> {
         let _ = d;
@@ -2990,10 +2990,10 @@ mod deny_snapshot_tests {
     #[test]
     fn a_row_added_to_a_snapshot_keeps_the_registry_shape_counts_itself_and_changes_the_digest() {
         let s = DenySnapshot { text: LIST.into(), at: 2000, lifted: vec![] };
-        let t = s.with_row("disabled", "unit:tiny t::flip", "sp-y", 9000);
+        let t = s.with_row("disabled", "test:t0flip0", "sp-y", 9000);
         assert_eq!(
             t.text,
-            "# test-registry deny-list at=2000 rows=2\ndisabled\tunit:tiny t::drop\tsp-x\t-\ndisabled\tunit:tiny t::flip\tsp-y\t9000\n"
+            "# test-registry deny-list at=2000 rows=2\ndisabled\ttest:t0aaaaa\tsp-x\t-\ndisabled\ttest:t0flip0\tsp-y\t9000\n"
         );
         assert_eq!((t.rows(), t.at), (2, 2000));
         assert_ne!(t.digest(), s.digest());
@@ -3003,15 +3003,15 @@ mod deny_snapshot_tests {
     #[test]
     fn lifting_drops_exactly_the_members_rows_fixes_the_count_and_names_them() {
         let s = DenySnapshot {
-            text: "# test-registry deny-list at=2000 rows=3\ndisabled\tsuite:a.sh\tsp-m\t9000\ndisabled\tunit:tiny t::x\tsp-other\t-\ndisabled\tunit:tiny t::y\tsp-m\t-\n".into(),
+            text: "# test-registry deny-list at=2000 rows=3\ndisabled\tsuite:a.sh\tsp-m\t9000\ndisabled\ttest:t0xxxxx\tsp-other\t-\ndisabled\ttest:t0yyyyy\tsp-m\t-\n".into(),
             at: 2000,
             lifted: vec![],
         };
         let (rest, rows) = s.lifting(&["sp-m".to_string()]);
-        assert_eq!(rest.text, "# test-registry deny-list at=2000 rows=1\ndisabled\tunit:tiny t::x\tsp-other\t-\n");
+        assert_eq!(rest.text, "# test-registry deny-list at=2000 rows=1\ndisabled\ttest:t0xxxxx\tsp-other\t-\n");
         assert_eq!(rest.rows(), 1);
-        assert_eq!(rows.iter().map(|r| (r.test.as_str(), r.until)).collect::<Vec<_>>(), [("suite:a.sh", 9000), ("unit:tiny t::y", -1)]);
-        assert_eq!(rest.fields()[2], ("deny_lifted", "suite:a.sh,unit:tiny t::y".to_string()));
+        assert_eq!(rows.iter().map(|r| (r.test.as_str(), r.until)).collect::<Vec<_>>(), [("suite:a.sh", 9000), ("test:t0yyyyy", -1)]);
+        assert_eq!(rest.fields()[2], ("deny_lifted", "suite:a.sh,test:t0yyyyy".to_string()));
         let (same, none) = s.lifting(&["sp-nobody".to_string()]);
         assert_eq!((same.text.as_str(), none.len()), (s.text.as_str(), 0));
         assert_eq!(same.fields().len(), 2);

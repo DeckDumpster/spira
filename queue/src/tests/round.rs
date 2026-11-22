@@ -10019,8 +10019,8 @@ fn resubmit_drops_a_forced_suite_the_landing_ref_deleted_and_records_why() {
     assert!(spira_config::proof::failing(&run, "sp-a").is_empty() && !run.join("ejected/sp-a").exists());
 }
 
-const TEST_A: &str = "integration:state-store-sqlite wal_stays_bounded";
-const TEST_B: &str = "unit:queue other_test";
+const TEST_A: &str = "test:t0wal00";
+const TEST_B: &str = "test:t0other";
 
 fn unit_red_world(ids: &[&str], deny: &str) -> T {
     let t = rework_world(&["manual"]);
@@ -10059,8 +10059,8 @@ fn resubmit_runs_only_the_still_active_tests_when_some_named_tests_are_disabled(
     assert_eq!(resubmit_unit_red(&t), 0, "{}", t.err());
     let runs: Vec<String> = t.scripts.calls.borrow().iter().filter(|c| c.starts_with("suite_run")).cloned().collect();
     assert_eq!(runs.len(), 1, "{runs:?}");
-    assert!(runs[0].starts_with(&format!("suite_run unit-tests {T_FIX} spira first=true tests=other_test deny=")), "{runs:?}");
-    assert!(t.out().contains(&format!("running unit-tests at {T_FIX} via testenv --tests other_test")), "{}", t.out());
+    assert!(runs[0].starts_with(&format!("suite_run unit-tests {T_FIX} spira first=true tests=::t0other deny=")), "{runs:?}");
+    assert!(t.out().contains(&format!("running unit-tests at {T_FIX} via testenv --tests ::t0other")), "{}", t.out());
 }
 
 #[test_id(tn6femf)]
@@ -10093,7 +10093,7 @@ fn deny_path_of(t: &T) -> String {
 #[test_id(tux2f78)]
 #[test]
 fn resubmit_hands_a_whole_run_the_deny_rows_when_the_eject_recorded_no_test_ids() {
-    let row = "disabled\tunit:queue other_test\tsp-quvpmf\t9999999999\n";
+    let row = "disabled\ttest:t0other\tsp-quvpmf\t9999999999\n";
     let t = unit_red_world(&[], row);
     assert_eq!(resubmit_unit_red(&t), 0, "{}", t.err());
     let text = fs::read_to_string(deny_path_of(&t)).unwrap();
@@ -10620,7 +10620,7 @@ fn a_deferred_landing_that_activates_is_a_landing_log_record_and_no_mail() {
 #[test]
 fn a_green_round_clears_its_members_registry_rows_before_the_release_activates() {
     let (t, batch) = certified_round();
-    *t.scripts.clear_landed.borrow_mut() = Some(Ok(vec!["unit:a::t".into()]));
+    *t.scripts.clear_landed.borrow_mut() = Some(Ok(vec!["test:t0aaaaa".into()]));
     assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
     let calls = t.scripts.calls.borrow();
     let clears: Vec<_> = calls.iter().enumerate().filter(|(_, c)| c.starts_with("clear-landed ")).collect();
@@ -10628,7 +10628,7 @@ fn a_green_round_clears_its_members_registry_rows_before_the_release_activates()
     assert_eq!(clears[0].1, "clear-landed sp-a,sp-b");
     let activate = calls.iter().position(|c| c == "release activate").expect("the release activated");
     assert!(clears[0].0 < activate, "{calls:?}");
-    assert!(t.out().contains("queue.sh land-local: landing cleared registry row(s) unit:a::t"), "{}", t.out());
+    assert!(t.out().contains("queue.sh land-local: landing cleared registry row(s) test:t0aaaaa"), "{}", t.out());
 }
 
 #[test_id(tu2mmj7)]

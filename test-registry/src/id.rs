@@ -10,26 +10,22 @@ pub fn valid_bead_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-/// Ok if `id` is `suite:<file>`, `unit:<binary> <test path>` or `integration:<package> <test path>`.
+/// Whether `id` is a test id: `t` and six lowercase alphanumerics.
+pub fn valid_test_id(id: &str) -> bool {
+    id.len() == 7 && id.starts_with('t') && id[1..].bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
+}
+
+/// Ok if `id` is `suite:<file>` or `test:<id>`.
 pub fn check_test_id(id: &str) -> Result<(), String> {
-    let refuse = || {
-        Err(format!(
-            "unknown test id {id:?}: want suite:<file>, unit:<binary> <test path> or integration:<package> <test path>"
-        ))
-    };
     let token = |s: &str| !s.is_empty() && !s.chars().any(|c| c.is_whitespace() || c.is_control());
-    if let Some(file) = id.strip_prefix("suite:") {
-        return if token(file) { Ok(()) } else { refuse() };
+    if id.starts_with("unit:") || id.starts_with("integration:") {
+        return Err(format!("unknown test id {id:?}: unit: and integration: rows are retired: name the test by its id, test:<id>, the last segment of its listed name"));
     }
-    for prefix in ["unit:", "integration:"] {
-        if let Some(rest) = id.strip_prefix(prefix) {
-            return match rest.split_once(' ') {
-                Some((binary, test)) if token(binary) && token(test) => Ok(()),
-                _ => refuse(),
-            };
-        }
+    match (id.strip_prefix("suite:"), id.strip_prefix("test:")) {
+        (Some(file), _) if token(file) => Ok(()),
+        (_, Some(t)) if valid_test_id(t) => Ok(()),
+        _ => Err(format!("unknown test id {id:?}: want suite:<file> or test:<id>")),
     }
-    refuse()
 }
 
 #[cfg(test)]
@@ -38,13 +34,8 @@ mod tests {
 
     #[test_id(tqccdgg)]
     #[test]
-    fn the_three_shapes_are_accepted() {
-        for ok in [
-            "suite:test-foo.sh",
-            "unit:loom factory::tests::a",
-            "unit:gate::bin/gate tests::x",
-            "integration:gate a::b",
-        ] {
+    fn the_two_shapes_are_accepted() {
+        for ok in ["suite:test-foo.sh", "suite:x.sh", "test:t0aaaaa"] {
             assert!(check_test_id(ok).is_ok(), "{ok}");
         }
     }
@@ -52,21 +43,17 @@ mod tests {
     #[test_id(tgwfflh)]
     #[test]
     fn other_shapes_are_refused() {
-        for bad in [
-            "",
-            "foo",
-            "suite:",
-            "suite:a b",
-            "suite:a\tb",
-            "unit:loom",
-            "unit:loom  t",
-            "unit: t",
-            "unit:a b c",
-            "unit:a b\n",
-            "other:x y",
-            "integration:p",
-        ] {
+        for bad in ["", "foo", "suite:", "suite:a b", "suite:a\tb", "test:T0", "test:", "test:t0aaaaaa", "test:t0aaaa", "test:t0aaaa-", "other:x y"] {
             assert!(check_test_id(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test_id(tr1e2d3)]
+    #[test]
+    fn name_keyed_rows_are_retired_with_the_fix_named() {
+        for bad in ["unit:a b", "integration:p x", "unit:loom a::b::t0aaaaa"] {
+            let e = check_test_id(bad).unwrap_err();
+            assert!(e.contains("unit: and integration: rows are retired: name the test by its id, test:<id>, the last segment of its listed name"), "{e}");
         }
     }
 

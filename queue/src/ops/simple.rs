@@ -329,7 +329,7 @@ fn checks_proven(
                 continue;
             }
             for i in active {
-                let name = i.split_once(' ').map_or(i.as_str(), |(_, t)| t).to_string();
+                let name = i.strip_prefix("test:").map_or(i.to_string(), |id| format!("::{id}"));
                 if !names.contains(&name) {
                     names.push(name);
                 }

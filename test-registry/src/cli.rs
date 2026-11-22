@@ -193,7 +193,7 @@ pub fn with_run_default(cfg: impl Fn(&str) -> Result<String, String>, run_dir: i
 pub const INTENT: &str = "A test's id is stable with the test's intent, not its name or its code. Rename or move a test and keep its id. A test rewritten to check something else is a new test: delete the attribute and run `test-registry stamp`.";
 
 pub const HELP: &str = "usage: test-registry <verb> --name value … [--json]
-  disable|quarantine --test T --bead B --reason R --actor A [--until TIME]
+  disable|quarantine --test T --bead B --reason R --actor A [--until TIME]   (T: test:<id>, the last segment of the failing line, or suite:<file>)
   activate --test T --reason R --actor A
   show --test T | history --test T | list [--at TIME] | deny-list --at TIME
   clear-landed --bead B [--bead B…] --actor A | repoint --from F --to T --actor A | backup --out FILE

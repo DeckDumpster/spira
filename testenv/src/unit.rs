@@ -55,12 +55,12 @@ pub fn write_skip(tree: &Path, names: &[String]) -> Result<(), String> {
     write_names(&tree.join(SKIP_REL), tree, names)
 }
 
-/// The test paths of the deny list's `unit:` and `integration:` rows, each the part after the
-/// binary; the file is removed when there are none. Returns the names written.
+/// `::<id>` for each `test:` row of the deny list, the substring `unit-tests.sh` skips; the file
+/// is removed when there are none. Returns the names written.
 pub fn write_deny(tree: &Path, deny: &spira_config::unit_tier::DenyList) -> Result<Vec<String>, String> {
     let mut names: Vec<String> = Vec::new();
-    for t in deny.tests("unit").into_iter().chain(deny.tests("integration")) {
-        let name = t.split_once(' ').map_or(t, |(_, p)| p).to_string();
+    for (_, id, _) in deny.test_rows() {
+        let name = format!("::{id}");
         if !names.contains(&name) {
             names.push(name);
         }
@@ -534,12 +534,12 @@ mod tests {
 
     #[test_id(tapvgok)]
     #[test]
-    fn write_deny_turns_unit_and_integration_rows_into_test_paths_and_removes_the_file_when_none() {
+    fn write_deny_turns_test_rows_into_id_suffixes_and_removes_the_file_when_none() {
         let dir = testkit::TempDir::new("deny");
         let path = dir.path().join(DENY_REL);
-        let d = spira_config::unit_tier::DenyList::parse("disabled\tunit:bin a::t\tsp-x\t9999999999\ndisabled\tintegration:crate b::u\tsp-x\t9999999999\ndisabled\tsuite:test-x.sh\tsp-x\t9999999999\n").unwrap();
-        assert_eq!(write_deny(dir.path(), &d).unwrap(), ["a::t", "b::u"]);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "a::t\nb::u\n");
+        let d = spira_config::unit_tier::DenyList::parse("disabled\ttest:t0aaaaa\tsp-x\t9999999999\nquarantined\ttest:t0bbbbb\tsp-x\t9999999999\ndisabled\tsuite:test-x.sh\tsp-x\t9999999999\n").unwrap();
+        assert_eq!(write_deny(dir.path(), &d).unwrap(), ["::t0aaaaa", "::t0bbbbb"]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "::t0aaaaa\n::t0bbbbb\n");
         write_deny(dir.path(), &spira_config::unit_tier::DenyList::default()).unwrap();
         assert!(!path.exists());
     }

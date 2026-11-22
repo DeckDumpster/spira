@@ -16,12 +16,12 @@ id = "sp-tr04"
 at = 8500000
 
 [[flip]]
-test = "unit:loom factory::tests::cleared_by_landing"
+test = "test:t0clear"
 members = ["sp-tr01"]
 follow_on = "sp-tr02"
 
 [[flip]]
-test = "unit:loom factory::tests::left_to_expire"
+test = "test:t0expir"
 members = ["sp-tr01", "sp-tr04"]
 follow_on = "sp-tr03"
 follow_on_lands = false
@@ -31,14 +31,14 @@ blocks_again_after = 8500000
 [[look]]
 at = 1500000
 rows = [
-  { test = "unit:loom factory::tests::cleared_by_landing", bead = "sp-tr02" },
-  { test = "unit:loom factory::tests::left_to_expire", bead = "sp-tr03" },
+  { test = "test:t0clear", bead = "sp-tr02" },
+  { test = "test:t0expir", bead = "sp-tr03" },
 ]
 
 # sp-tr02 has landed: its row is gone, the other stays.
 [[look]]
 at = 3000000
-rows = [{ test = "unit:loom factory::tests::left_to_expire", bead = "sp-tr03" }]
+rows = [{ test = "test:t0expir", bead = "sp-tr03" }]
 
 # Two hours and a little on: nothing is held.
 [[look]]

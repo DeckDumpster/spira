@@ -262,7 +262,7 @@ mod tests {
     fn failing_tests_round_trip_per_check_and_an_empty_record_keeps_nothing() {
         let d = run();
         let r = d.path().to_path_buf();
-        let ids = vec!["integration:state-store-sqlite a_test".to_string(), "unit:bin t".to_string()];
+        let ids = vec!["test:t0atest".to_string(), "test:t0bint0".to_string()];
         record_failing_tests(&r, "sp-a", "unit-tests", &ids).unwrap();
         assert_eq!(failing_tests(&r, "sp-a", "unit-tests"), ids);
         assert!(failing_tests(&r, "sp-a", "other").is_empty());
@@ -277,14 +277,14 @@ mod tests {
         let d = run();
         let r = d.path().to_path_buf();
         record_failing(&r, "sp-a", &["unit-tests".into(), "test-y.sh".into()]).unwrap();
-        record_failing_tests(&r, "sp-a", "unit-tests", &["unit:b t".to_string()]).unwrap();
-        record_failing_tests(&r, "sp-a", "test-y.sh", &["unit:c t".to_string()]).unwrap();
+        record_failing_tests(&r, "sp-a", "unit-tests", &["test:t0unitb".to_string()]).unwrap();
+        record_failing_tests(&r, "sp-a", "test-y.sh", &["test:t0unitc".to_string()]).unwrap();
         fs::create_dir_all(r.join("ejected")).unwrap();
         fs::write(r.join("ejected/sp-a"), "unit-tests,test-y.sh").unwrap();
         drop_disabled_checks(&r, "sp-a", &["unit-tests".to_string()]).unwrap();
         assert_eq!(failing(&r, "sp-a"), ["test-y.sh"]);
         assert!(failing_tests(&r, "sp-a", "unit-tests").is_empty());
-        assert_eq!(failing_tests(&r, "sp-a", "test-y.sh"), ["unit:c t"]);
+        assert_eq!(failing_tests(&r, "sp-a", "test-y.sh"), ["test:t0unitc"]);
         assert_eq!(fs::read_to_string(r.join("ejected/sp-a")).unwrap(), "test-y.sh");
         drop_disabled_checks(&r, "sp-a", &["test-y.sh".to_string()]).unwrap();
         assert!(failing(&r, "sp-a").is_empty());
