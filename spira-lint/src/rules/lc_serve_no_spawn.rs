@@ -138,7 +138,8 @@ mod tests {
 
     #[test]
     fn the_real_spira_lc_tree_has_no_start_outside_the_door() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let manifest = testkit::manifest_dir();
+        let root = manifest.parent().unwrap();
         let tree = Tree::from_git(root).unwrap();
         assert!(tree.entries.iter().any(|e| e.path == DOOR), "the walk must reach spira-lc for its silence to mean anything");
         let found = LcServeNoSpawn.check(&tree).unwrap();
