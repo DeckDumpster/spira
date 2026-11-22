@@ -88,7 +88,7 @@ holds the store stopped while the command runs, starts it when the command ends,
 the command's code.
 
 ```sh
-world store-maintenance --owner "$USER" --why "store relayout cutover" -- sh -ec '
+world store-maintenance --owner "$USER" --why "store relayout cutover" -- env STORE="$STORE" sh -ec '
 mv "$STORE" "${STORE%.db}-old-layout.db"
 for s in -wal -shm; do test ! -e "$STORE$s" || mv "$STORE$s" "${STORE%.db}-old-layout.db$s"; done
 spira-lc admin-store-relayout --from "${STORE%.db}-old-layout.db" --to "$STORE"
@@ -111,7 +111,7 @@ again. A refusal naming the `-wal` means another process has the old file open: 
 Activate the previous release first: the store starts when the command ends.
 
 ```sh
-world store-maintenance --owner "$USER" --why "store relayout rollback" -- sh -ec '
+world store-maintenance --owner "$USER" --why "store relayout rollback" -- env STORE="$STORE" sh -ec '
 ASIDE="$STORE.new-layout"; mkdir "$ASIDE"
 mv "$STORE" "$ASIDE"/
 for f in "${STORE%.db}".events-*.db "${STORE%.db}".receipts-*.db; do [ -e "$f" ] && mv "$f" "$ASIDE"/; done

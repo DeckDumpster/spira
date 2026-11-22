@@ -475,4 +475,14 @@ mod tests {
         assert!(owner_alive(&m));
         assert!(!owner_alive(&Maintenance { pid: u32::MAX, ..m }));
     }
+
+    #[test]
+    fn a_thaw_removes_a_maintenance_record_left_behind() {
+        let d = TempDir::new("thaw-record");
+        let s = store(&d);
+        let mut u = Fake::new(&s);
+        std::fs::write(maintenance_path(d.path()), serde_json::to_vec(&who()).unwrap()).unwrap();
+        thaw(&s, &mut u, d.path()).unwrap();
+        assert!(read_maintenance(d.path()).is_none());
+    }
 }

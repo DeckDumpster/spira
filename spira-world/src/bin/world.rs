@@ -1108,14 +1108,17 @@ extern "C" fn note_signal(_: libc::c_int) {
     SIGNALLED.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// Runs the command with inherited stdio. SIGINT and SIGTERM are caught here and passed to the
-/// child, so an interrupted run still reaches the end steps; death by signal is 128+signal.
-fn run_command(command: &[String]) -> i32 {
-    use std::os::unix::process::ExitStatusExt;
+/// Runs the command with inherited stdio. SIGINT and SIGTERM are caught from before the stop
+/// (`catch_signals`) and passed to the child, so an interrupted run still reaches the end steps; death by signal is 128+signal.
+fn catch_signals() {
     unsafe {
         libc::signal(libc::SIGINT, note_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
         libc::signal(libc::SIGTERM, note_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
     }
+}
+
+fn run_command(command: &[String]) -> i32 {
+    use std::os::unix::process::ExitStatusExt;
     // batch-job: the operator's own command, held for as long as it runs
     let mut child = match Command::new(&command[0]).args(&command[1..]).spawn() {
         Ok(c) => c,
@@ -1158,6 +1161,7 @@ fn cmd_store_maintenance(rest: &[String]) -> i32 {
     let dir = spira_world::freeze::runtime_unit_dir(spira_config::resolve::current_uid());
     let store = spira_world::freeze::Store::new(dir, &instance_or_die());
     let m = spira_world::freeze::Maintenance { owner: args.owner, why: args.why, since: now_epoch(), pid: std::process::id() };
+    catch_signals();
     let mut work = || run_command(&args.command);
     match spira_world::freeze::maintain(&store, &mut spira_world::freeze::Systemd, &run_or_die(), &m, &mut work) {
         Ok((rc, lines)) => {
