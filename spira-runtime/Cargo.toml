@@ -161,6 +161,7 @@ refusal-watch = { path = "../refusal-watch" }
 # Family D watchers (sop-lint): their libraries.
 sop = { path = "../sop" }
 release = { path = "../release" }
+lifecycle = { path = "../lifecycle" }
 cockpit-collect = { path = "../cockpit-collect" }
 groomer = { path = "../groomer" }
 idea-prompt = { path = "../idea-prompt" }
@@ -180,6 +181,7 @@ forge = { path = "../forge" }
 sim = { path = "../sim" }
 testkit = { path = "../testkit" }
 release = { path = "../release" }
+lifecycle = { path = "../lifecycle" }
 
 [profile.release]
 opt-level = "z"

@@ -2351,6 +2351,7 @@ dependencies = [
  "kit-bump",
  "landing-pass",
  "libc",
+ "lifecycle",
  "mail",
  "mimir-trigger",
  "perf-watch",

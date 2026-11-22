@@ -83,7 +83,7 @@
 # that some other component writes. Hosted, with no row:
 #
 #   pr-notify, view, inbox-keeper, publish-backlog, round-duty, asks, supersede-duty,
-#   brain-dirty, design-asks           spira-runtime handlers (spira-runtime/src/watchers)
+#   brain-dirty, design-asks, claim-count  spira-runtime handlers (spira-runtime/src/watchers)
 #   lc-backup                          task watch.backup_age (lc-backup.timer still runs the backup)
 #   round-ami-stale                    task watch.ami_stale
 #   ci-spill-guard                     task watch.ci_spill
