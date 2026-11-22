@@ -75,9 +75,10 @@ pub fn observe_with(probes: &[(String, Duration)], run: fn(&str) -> Option<Kv>) 
         }
         let (tx, rx) = mpsc::channel();
         let n = name.clone();
+        let task = spira_store::lc_call::current_task();
         let spawned = std::thread::Builder::new().name(format!("cockpit-{n}")).spawn(move || {
             let at = io::now();
-            let got = std::panic::catch_unwind(|| run(&n)).ok().flatten();
+            let got = std::panic::catch_unwind(|| spira_store::lc_call::as_task_of(task.as_deref(), || run(&n))).ok().flatten();
             let mut m = lock();
             m.running.remove(&n);
             if let Some(kv) = &got {
@@ -258,6 +259,16 @@ mod tests {
             "boom" => panic!("probe failed"),
             _ => None,
         }
+    }
+
+    #[test_id(tfvrk2i)]
+    #[test]
+    fn a_probe_thread_carries_the_task_it_was_observed_under() {
+        fn task_probe(_: &str) -> Option<Kv> {
+            Some(vec![("TASK".into(), spira_store::lc_call::current_task().unwrap_or_default())])
+        }
+        let got = spira_store::lc_call::as_task("cockpit-tier-5s", || observe_with(&[("task-probe".to_string(), Duration::from_secs(5))], task_probe));
+        assert_eq!(got[0].kv, vec![("TASK".to_string(), "cockpit-tier-5s".to_string())]);
     }
 
     #[test_id(tb23owa)]
