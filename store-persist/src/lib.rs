@@ -29,7 +29,15 @@ pub const KEY_COMPACT_PCT: &str = "SPIRA_DOLT_PERSIST_COMPACT_PCT";
 pub const KEY_GC_INTERVAL: &str = "SPIRA_DOLT_PERSIST_GC_INTERVAL_SECS";
 pub const KEY_HISTORY_KEEP: &str = "SPIRA_DOLT_PERSIST_HISTORY_KEEP";
 pub const KEY_RUN: &str = "SPIRA_RUN";
-pub const KEYS: [&str; 8] = [KEY_DATA, KEY_DURABLE, KEY_INTERVAL, KEY_MAX_LAG, KEY_COMPACT_PCT, KEY_GC_INTERVAL, KEY_RUN, KEY_HISTORY_KEEP];
+pub const KEY_TMP_PRESSURE_PCT: &str = "SPIRA_DOLT_TMP_PRESSURE_PCT";
+pub const KEY_TMP_TTL: &str = "SPIRA_DOLT_TMP_TTL";
+pub const KEYS: [&str; 10] =
+    [KEY_DATA, KEY_DURABLE, KEY_INTERVAL, KEY_MAX_LAG, KEY_COMPACT_PCT, KEY_GC_INTERVAL, KEY_RUN, KEY_HISTORY_KEEP, KEY_TMP_PRESSURE_PCT, KEY_TMP_TTL];
+
+/// Seconds between prunes of the server's temp spool by `run`.
+pub const TMP_PRUNE_EVERY_SECS: u64 = 60;
+/// Where a process's open files are listed; a test points `Config::proc_dir` at a fixture.
+pub const PROC_DIR: &str = "/proc";
 
 /// Seconds between the rebuilds `run` considers for a durable copy grown past its ratio.
 pub const COMPACT_EVERY_SECS: u64 = 86_400;
@@ -53,6 +61,11 @@ pub struct Config {
     pub run: PathBuf,
     /// Commits `compact` leaves in a database's log, the oldest squashed into one base; 0 keeps all.
     pub history_keep: u64,
+    /// Filesystem use, in percent, at or above which `prune_tmp` cuts the largest spill.
+    pub tmp_pressure_pct: u64,
+    /// Seconds past which an unheld spill is stale.
+    pub tmp_ttl_secs: u64,
+    pub proc_dir: PathBuf,
 }
 
 impl Config {
@@ -77,6 +90,9 @@ impl Config {
             gc_interval_secs: num(KEY_GC_INTERVAL)?,
             run: PathBuf::from(need(KEY_RUN)?),
             history_keep: num(KEY_HISTORY_KEEP)?,
+            tmp_pressure_pct: num(KEY_TMP_PRESSURE_PCT)?,
+            tmp_ttl_secs: num(KEY_TMP_TTL)?,
+            proc_dir: PathBuf::from(PROC_DIR),
         };
         if cfg.history_keep == 1 {
             return Err(format!("{KEY_HISTORY_KEEP} of 1 cannot hold the root and a base; use 0 to keep all or at least 2"));
@@ -671,6 +687,8 @@ pub fn compact(cfg: &Config, dolt: &dyn Dolt) -> Result<Compacted, String> {
 pub struct Upkeep {
     pub last_gc_ms: u64,
     pub last_compact_ms: u64,
+    /// In memory only: a restart prunes at once.
+    pub last_tmp_prune_ms: u64,
 }
 
 impl Upkeep {
@@ -680,7 +698,7 @@ impl Upkeep {
 
     fn parse(text: &str) -> Upkeep {
         let field = |k: &str| text.lines().find_map(|l| l.strip_prefix(k)?.strip_prefix('=')?.trim().parse().ok()).unwrap_or(0);
-        Upkeep { last_gc_ms: field("last_gc_ms"), last_compact_ms: field("last_compact_ms") }
+        Upkeep { last_gc_ms: field("last_gc_ms"), last_compact_ms: field("last_compact_ms"), last_tmp_prune_ms: 0 }
     }
 }
 
@@ -766,8 +784,87 @@ pub fn run(cfg: &Config, dolt: &dyn Dolt, clock: &dyn Clock, passes: Option<u64>
             upkeep.last_gc_ms = clock.now_ms();
             save_upkeep(layout.as_ref(), &upkeep);
         }
+        if due(upkeep.last_tmp_prune_ms, TMP_PRUNE_EVERY_SECS) {
+            prune_tmp(&cfg.data, &cfg.proc_dir, cfg.tmp_pressure_pct, cfg.tmp_ttl_secs, clock.now_ms()).iter().for_each(|l| log(&format!("store-persist: {l}")));
+            upkeep.last_tmp_prune_ms = clock.now_ms();
+        }
         clock.sleep(cfg.interval_secs);
     }
+}
+
+fn kib_on_disk(p: &Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(m) = fs::symlink_metadata(p) else { return 0 };
+    let own = m.blocks() * 512 / 1024;
+    if !m.is_dir() {
+        return own;
+    }
+    own + fs::read_dir(p).into_iter().flatten().flatten().map(|e| kib_on_disk(&e.path())).sum::<u64>()
+}
+
+fn fs_used_pct(dir: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut v: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut v) } != 0 {
+        return None;
+    }
+    let (used, avail) = ((v.f_blocks - v.f_bfree) as u64, v.f_bavail as u64);
+    (used + avail > 0).then(|| (used * 100).div_ceil(used + avail))
+}
+
+fn truncate_files(p: &Path) {
+    match fs::symlink_metadata(p) {
+        Ok(m) if m.is_dir() => fs::read_dir(p).into_iter().flatten().flatten().for_each(|e| truncate_files(&e.path())),
+        Ok(m) if m.is_file() => {
+            let _ = fs::OpenOptions::new().write(true).truncate(true).open(p);
+        }
+        _ => {}
+    }
+}
+
+fn remove_entry(p: &Path) -> bool {
+    let gone = if fs::symlink_metadata(p).is_ok_and(|m| m.is_dir()) { fs::remove_dir_all(p) } else { fs::remove_file(p) };
+    gone.is_ok()
+}
+
+/// Prunes the server's temp spool, `<data>/.dolt/tmp`, which Dolt leaves behind when it dies.
+/// At or above `pressure_pct` of the filesystem it removes the largest entry first, held open
+/// or not, truncating files so their blocks return at once; then it removes every entry older
+/// than `ttl_secs` that the server named in `<data>/.dolt/sql-server.info` holds no fd on.
+pub fn prune_tmp(data: &Path, proc_dir: &Path, pressure_pct: u64, ttl_secs: u64, now_ms: u64) -> Vec<String> {
+    let dir = data.join(".dolt/tmp");
+    prune_tmp_using(data, proc_dir, pressure_pct, ttl_secs, now_ms, &mut || fs_used_pct(&dir))
+}
+
+pub fn prune_tmp_using(data: &Path, proc_dir: &Path, pressure_pct: u64, ttl_secs: u64, now_ms: u64, used_pct: &mut dyn FnMut() -> Option<u64>) -> Vec<String> {
+    let Ok(dir) = fs::canonicalize(data.join(".dolt/tmp")) else { return vec![] };
+    let entries = || -> Vec<PathBuf> { fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).collect() };
+    let mut out = vec![];
+    while let Some(used) = used_pct().filter(|u| *u >= pressure_pct) {
+        let Some((kib, entry)) = entries().into_iter().map(|e| (kib_on_disk(&e), e)).max() else { break };
+        truncate_files(&entry);
+        if !remove_entry(&entry) {
+            break;
+        }
+        out.push(format!("pruned dolt tmp entry {} ({kib}KiB freed, filesystem at {used}% >= threshold {pressure_pct}%)", entry.display()));
+    }
+    let held: Vec<PathBuf> = server_info(data)
+        .into_iter()
+        .flat_map(|i| fs::read_dir(proc_dir.join(i.pid.to_string()).join("fd")).into_iter().flatten().flatten().filter_map(|e| fs::read_link(e.path()).ok()))
+        .collect();
+    for entry in entries() {
+        let modified = fs::symlink_metadata(&entry).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+        let age = modified.map_or(0, |m| now_ms.saturating_sub(m.as_millis() as u64) / 1000);
+        if age < ttl_secs || held.iter().any(|h| h.starts_with(&entry)) {
+            continue;
+        }
+        let kib = kib_on_disk(&entry);
+        if remove_entry(&entry) {
+            out.push(format!("pruned dolt tmp entry {} ({kib}KiB freed, age {age}s >= window {ttl_secs}s)", entry.display()));
+        }
+    }
+    out
 }
 
 fn save_upkeep(layout: Option<&Layout>, upkeep: &Upkeep) {

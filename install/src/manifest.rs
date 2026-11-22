@@ -119,8 +119,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
 
     if inputs.dolt_data_set {
         m.units.push(t("dolt-beads.service", true));
-        m.units.push(t("dolt-tmp-prune.service", false));
-        m.units.push(t("dolt-tmp-prune.timer", true));
         m.units.push(t("dolt-store-gc.service", false));
         m.units.push(t("spira-dolt-boot-check.service", false));
         m.units.push(t("spira-dolt-boot-check.timer", true));
@@ -131,8 +129,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         }
     } else {
         m.optional.push("dolt-beads.service".into());
-        m.optional.push("dolt-tmp-prune.service".into());
-        m.optional.push("dolt-tmp-prune.timer".into());
         m.optional.push("dolt-store-gc.service".into());
         m.optional.push("spira-dolt-boot-check.service".into());
         m.optional.push("spira-dolt-boot-check.timer".into());
@@ -441,8 +437,8 @@ mod tests {
         let m = build(&inputs()).unwrap();
         assert!(m.units.iter().any(|u| u.name == "dolt-beads.service" && u.enable));
         assert!(!m.optional.contains(&"dolt-beads.service".to_string()));
-        assert!(m.units.iter().any(|u| u.name == "dolt-tmp-prune.timer" && u.enable));
-        assert!(m.units.iter().any(|u| u.name == "dolt-tmp-prune.service" && !u.enable));
+        assert!(!m.units.iter().any(|u| u.name.starts_with("dolt-tmp-prune")));
+        assert!(!m.optional.iter().any(|u| u.starts_with("dolt-tmp-prune")));
         assert!(m.units.iter().any(|u| u.name == "dolt-store-gc.service" && !u.enable));
         assert!(!m.optional.contains(&"dolt-store-gc.service".to_string()));
 
@@ -452,7 +448,6 @@ mod tests {
         assert!(!m.units.iter().any(|u| u.name == "dolt-beads.service"));
         assert!(m.optional.contains(&"dolt-beads.service".to_string()));
         assert!(!m.units.iter().any(|u| u.name.starts_with("dolt-tmp-prune")));
-        assert!(m.optional.contains(&"dolt-tmp-prune.timer".to_string()));
         assert!(!m.units.iter().any(|u| u.name == "dolt-store-gc.service"));
         assert!(m.optional.contains(&"dolt-store-gc.service".to_string()));
     }
